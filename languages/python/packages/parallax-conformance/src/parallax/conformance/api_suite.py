@@ -216,6 +216,30 @@ EXAMPLES: Final[list[Example]] = [
 # from the active slice, so a corpus case whose module is absent here fails the
 # partition (see module docstring). Each reason names the COR-3 phase that brings
 # the module's developer surface online; the entry is dropped when that lands.
+#
+# The instance-native API story build-out (ledger D-23): the developer-facing
+# KEYED temporal-window verbs themselves landed (`Transaction.terminate` /
+# `.update_until` / `.terminate_until`, and an optional bitemporal
+# `business_from` on the existing `.update`) — every bucket below that cites
+# this deferral is a capability the shipped surface can now express. The
+# STORIES demonstrating them through the API Conformance Suite remain
+# unbuilt: authoring one for a temporal write needs per-story processing-
+# instant control in the `WriteStory` test harnesses
+# (`tests/api_conformance/test_write_no_drift.py`'s `_db()`,
+# `tests/api_conformance/test_story_run.py`'s `connect()` calls), which
+# default to the system clock today and have no way to pin a corpus write-
+# sequence case's own authored `at` instant(s) — an open prerequisite this
+# ledger entry's own verb landing did not itself resolve, named here rather
+# than left an unexplained absence.
+_STORY_BUILD_OUT_DEFERRAL: Final[str] = (
+    "no idiomatic TYPED-verb example exists yet: the underlying verb landed (ledger "
+    "D-23), but the story demonstrating it does not — building one needs per-story "
+    "processing-instant control in the `WriteStory` test harnesses (`test_write_no_"
+    "drift.py` / `test_story_run.py`), which default to the system clock and cannot "
+    "pin a corpus case's own authored instant(s); an open prerequisite, not a dated "
+    "promise"
+)
+
 SKIP_REASONS: Final[dict[str, str]] = {
     "m-core": (
         "m-core neutral-type behaviour has no standalone developer surface; it is "
@@ -237,8 +261,7 @@ SKIP_REASONS: Final[dict[str, str]] = {
         "(`m-temporal-read-009`..`-012`: gated success, stale-`in_z` conflict, the "
         "`when.attempts` 0-then-1 retry, and the locking-mode non-retriable stale close, "
         "COR-3 Phase 8 increment 4) — are graded end-to-end by the compile/run "
-        "conformance lanes now; no idiomatic TYPED-verb example exists yet, landing with "
-        "the instance-native API story build-out (COR-3 Phase 8 increment 7, ledger D-23)"
+        f"conformance lanes now; {_STORY_BUILD_OUT_DEFERRAL}"
     ),
     "m-db-error": (
         "the m-db-error corpus cases are graded end-to-end by the M4 run lanes — the "
@@ -248,9 +271,8 @@ SKIP_REASONS: Final[dict[str, str]] = {
     ),
     "m-pk-gen": (
         "write-side id allocation (`max`/`sequence`) is graded end-to-end by the "
-        "compile/run conformance lanes now (COR-3 Phase 8 increment 3) — no idiomatic "
-        "TYPED-verb example exists yet; landing with the instance-native API story "
-        "build-out (COR-3 Phase 8 increment 7, ledger D-23). `m-pk-gen-014` (a "
+        "compile/run conformance lanes now (COR-3 Phase 8 increment 3) — "
+        f"{_STORY_BUILD_OUT_DEFERRAL}. `m-pk-gen-014` (a "
         "temporal pk-generated insert) landed in increment 4 and has its own "
         "case-scoped entry below (`_PK_GEN_TEMPORAL_INSERT_REASON`)"
     ),
@@ -263,17 +285,15 @@ SKIP_REASONS: Final[dict[str, str]] = {
         "are now graded end-to-end by the D-17 case-driven boundary runner "
         "(`tests/api_conformance/test_boundary_run.py`, driving the REAL db.transact "
         "against the provisioned database through a fault-injecting port decorator); "
-        "no idiomatic TYPED-verb example exists yet, landing with the instance-native "
-        "API story build-out (COR-3 Phase 8 increment 7, ledger D-23)"
+        f"{_STORY_BUILD_OUT_DEFERRAL}"
     ),
     "m-opt-lock": (
         "the predicate-selected / materializing write forms (the readless "
         "unversioned/non-temporal exception, and the versioned materialize-then-lower "
         "family) landed in COR-3 Phase 8 increment 5 — graded end-to-end by the "
         "compile/run conformance lanes now (the readless forms) or the run lane alone "
-        "(the materializing ones, query-result-dependent); no idiomatic TYPED-`_where`-"
-        "verb example exists yet, landing with the instance-native API story build-out "
-        "(COR-3 Phase 8 increment 7, ledger D-23). The non-temporal keyed gate/advance/"
+        f"(the materializing ones, query-result-dependent); {_STORY_BUILD_OUT_DEFERRAL}. "
+        "The non-temporal keyed gate/advance/"
         "conflict forms landed in increment 3; the auto-retry conflict-lane witness "
         "(`-009`), the D-17 boundary runner's conflict-opt-in pair (`-010`/`-011`), and "
         "the interleaved two-session race (`-012`, over the increment 6 `peer` seam) "
@@ -283,29 +303,26 @@ SKIP_REASONS: Final[dict[str, str]] = {
         "the milestone-chaining write forms (insert / close-and-chain update / "
         "terminate, plus the TPH/TPCS and value-object compositions) landed in COR-3 "
         "Phase 8 increment 4 — graded end-to-end by the compile/run conformance lanes "
-        "now; no idiomatic TYPED-verb example exists yet, landing with the "
-        "instance-native API story build-out (COR-3 Phase 8 increment 7, ledger D-23). "
+        f"now; {_STORY_BUILD_OUT_DEFERRAL}. "
         "The materializing predicate-write scenarios (`m-audit-write-007`/`-009`) "
         "landed in increment 5 — run-lane covered (query-result-dependent), same "
-        "instance-native deferral"
+        "deferral"
     ),
     "m-bitemp-write": (
         "the rectangle-split write forms (insert / updateUntil / terminateUntil / "
         "plain update / plain terminate, the optimistic business-discriminator gate, "
         "and the TPH/TPCS compositions) landed in COR-3 Phase 8 increment 4 — graded "
-        "end-to-end by the compile/run conformance lanes now; no idiomatic TYPED-verb "
-        "example exists yet, landing with the instance-native API story build-out "
-        "(COR-3 Phase 8 increment 7, ledger D-23). The materializing predicate-write "
+        f"end-to-end by the compile/run conformance lanes now; {_STORY_BUILD_OUT_DEFERRAL}. "
+        "The materializing predicate-write "
         "scenarios (`m-bitemp-write-010`..`-013`) landed in increment 5 — run-lane "
-        "covered (query-result-dependent), same instance-native deferral"
+        "covered (query-result-dependent), same deferral"
     ),
     "m-batch-write": (
         "the set-based collapse / readless / materialize forms (multi-row INSERT "
         "collapse, batched UPDATE, IN-list DELETE, readless predicate update/delete, "
         "and the versioned materialize-then-lower family) landed in COR-3 Phase 8 "
-        "increment 5 — graded end-to-end by the compile/run conformance lanes now; no "
-        "idiomatic TYPED-verb example exists yet, landing with the instance-native API "
-        "story build-out (COR-3 Phase 8 increment 7, ledger D-23)"
+        f"increment 5 — graded end-to-end by the compile/run conformance lanes now; "
+        f"{_STORY_BUILD_OUT_DEFERRAL}"
     ),
 }
 
@@ -318,9 +335,8 @@ _COALESCING_WITNESS_REASON: Final[str] = (
     "a same-transaction coalescing witness: it buffers an insert+update / insert+delete "
     "pair whose one-statement / zero-statement collapse is m-batch-write behavior — the "
     "planner folding is unit-pinned (test_write_lowering) and, since COR-3 Phase 8 "
-    "increment 5, graded end-to-end by the compile/run conformance lanes too; no "
-    "idiomatic TYPED-verb example exists yet, landing with the instance-native API "
-    "story build-out (COR-3 Phase 8 increment 7, ledger D-23)"
+    "increment 5, graded end-to-end by the compile/run conformance lanes too; "
+    f"{_STORY_BUILD_OUT_DEFERRAL}"
 )
 
 # --------------------------------------------------------------------------- #
@@ -390,8 +406,8 @@ _CONCRETE_TARGET_TEMPORAL_ROOT_AXIS_SIBLING_REASON: Final[str] = (
 # (python.md §4: the right observation is `type(node)`, not a flattened dict),
 # so a flat `then.rows` comparison can never be reproduced from typed instances
 # for these — a permanent, structural non-fit, not a capability gap. Ledger
-# D-22 (COR-3 Phase 8 increment 7) closes the INSTANCE-FORM half: each of
-# these four now has an executed `then.graph` sibling proving the identical
+# D-22 closes the INSTANCE-FORM half: each of these four now has an executed
+# `then.graph` sibling proving the identical
 # capability through the shipped surface (m-inheritance-106/-107/-108/-109,
 # `graph_stories.py`, DQ7b "both lanes of the same behavior are now
 # expressed") — these four ROW-FORM originals stay the values-lane witnesses
@@ -419,26 +435,20 @@ _INHERITANCE_WRITE_PHASE8_REASON: Final[str] = (
     "a TEMPORAL inheritance-family write (an audit/bitemporal milestone close or chain "
     "over a table-per-hierarchy or table-per-concrete-subtype family): graded "
     "end-to-end by the compile/run conformance lanes now (COR-3 Phase 8 increment 4) — "
-    "no idiomatic TYPED-verb example exists yet in the production-reachable "
-    "`parallax.conformance` surface (`read_models.py`); landing with the "
-    "instance-native API story build-out (COR-3 Phase 8 increment 7, ledger D-23), the "
+    f"{_STORY_BUILD_OUT_DEFERRAL}, the "
     "SAME deferral the non-temporal inheritance-family write forms carry "
     "(`_INHERITANCE_WRITE_CONFORMANCE_LANE_REASON`, landed in increment 3)"
 )
 # The 11 NON-temporal inheritance-family keyed writes COR-3 Phase 8 increment 3
 # landed (TPH/TPCS insert/update/delete, the deep-chain and sibling-branch
 # create witnesses, and the opt-lock composition pair): graded end-to-end by
-# the compile/run conformance lanes now, but no idiomatic TYPED-verb example
-# exists yet in the production-reachable `parallax.conformance` surface
-# (`read_models.py`) — landing with the instance-native API story build-out
-# (COR-3 Phase 8 increment 7, ledger D-23).
+# the compile/run conformance lanes now; the instance-native story build-out
+# remains open (see `_STORY_BUILD_OUT_DEFERRAL`).
 _INHERITANCE_WRITE_CONFORMANCE_LANE_REASON: Final[str] = (
     "a non-temporal inheritance-family keyed write (table-per-hierarchy or table-per-"
     "concrete-subtype insert/update/delete, including the opt-lock composition pair): "
     "graded end-to-end by the compile/run conformance lanes now (COR-3 Phase 8 "
-    "increment 3) — no idiomatic TYPED-verb example exists yet in the production-"
-    "reachable `parallax.conformance` surface (`read_models.py`); landing with the "
-    "instance-native API story build-out (COR-3 Phase 8 increment 7, ledger D-23)"
+    f"increment 3) — {_STORY_BUILD_OUT_DEFERRAL}"
 )
 # The non-temporal `m-opt-lock` keyed write family COR-3 Phase 8 increment 3
 # landed (the conflict-shape gate/success/retry witnesses, the versioned
@@ -448,10 +458,7 @@ _INHERITANCE_WRITE_CONFORMANCE_LANE_REASON: Final[str] = (
 _OPT_LOCK_WRITE_CONFORMANCE_LANE_REASON: Final[str] = (
     "a non-temporal optimistic-lock keyed write (the version gate/advance/conflict, or "
     "a versioned batched delete's per-key materialize): graded end-to-end by the "
-    "compile/run conformance lanes now (COR-3 Phase 8 increment 3) — no idiomatic "
-    "TYPED-verb example exists yet in the production-reachable `parallax.conformance` "
-    "surface (`read_models.py`); landing with the instance-native API story build-out "
-    "(COR-3 Phase 8 increment 7, ledger D-23)"
+    f"compile/run conformance lanes now (COR-3 Phase 8 increment 3) — {_STORY_BUILD_OUT_DEFERRAL}"
 )
 # The auto-retry optimistic-conflict opt-in's OWN conflict-lane witness (COR-3
 # Phase 8 increment 6, `m-opt-lock` "Retry contract"): `retryOptimisticConflicts:
@@ -465,8 +472,7 @@ _OPT_LOCK_CONFLICT_LANE_OPT_IN_REASON: Final[str] = (
     "choreography) lands in COR-3 Phase 8 increment 6 — graded end-to-end by the run "
     "lane now (the SAME caller-visible `when.attempts` choreography `m-opt-lock-007` "
     "already exercises; the runtime auto-retry loop itself is `m-opt-lock-011`'s own "
-    "boundary witness); no idiomatic TYPED-verb example exists yet, landing with the "
-    "instance-native API story build-out (COR-3 Phase 8 increment 7, ledger D-23)"
+    f"boundary witness); {_STORY_BUILD_OUT_DEFERRAL}"
 )
 # The auto-retry optimistic-conflict opt-in's OWN boundary pair (COR-3 Phase 8
 # increment 6, D-17): the conflict surfacing after one attempt without the
@@ -477,10 +483,9 @@ _OPT_LOCK_BOUNDARY_RUNNER_REASON: Final[str] = (
     "surfacing after one attempt without the opt-in, or auto-retried to success with "
     "it) lands in COR-3 Phase 8 increment 6 — graded end-to-end by the D-17 "
     "case-driven boundary runner (`tests/api_conformance/test_boundary_run.py`) "
-    "against the real, provisioned database now; no idiomatic TYPED-verb example "
-    "exists yet (the boundary runner's own generic action mapping is deliberately not "
-    "itself an idiomatic developer surface, D-17), landing with the instance-native "
-    "API story build-out (COR-3 Phase 8 increment 7, ledger D-23)"
+    "against the real, provisioned database now (the boundary runner's own generic "
+    "action mapping is deliberately not itself an idiomatic developer surface, D-17); "
+    f"{_STORY_BUILD_OUT_DEFERRAL}"
 )
 # The interleaved two-session optimistic-lock race (COR-3 Phase 8 increment 6,
 # `m-opt-lock-012`, `m-case-format` uow grouping): two concurrently-held
@@ -539,9 +544,7 @@ _PK_GEN_TEMPORAL_INSERT_REASON: Final[str] = (
     "registry UPDATE composed with an audit-only INSERT in one writeSequence): pk-gen's "
     "non-temporal insert forms landed in COR-3 Phase 8 increment 3 (the module-bucket "
     "reason above), and this temporal composition landed in increment 4 — graded "
-    "end-to-end by the compile/run conformance lanes now; no idiomatic TYPED-verb "
-    "example exists yet, landing with the instance-native API story build-out "
-    "(COR-3 Phase 8 increment 7, ledger D-23)"
+    f"end-to-end by the compile/run conformance lanes now; {_STORY_BUILD_OUT_DEFERRAL}"
 )
 ####################################################################################
 # Subtype-write payload-shape rejects (COR-3 Phase 8 increment 2, `validate_write`  #
@@ -580,9 +583,8 @@ _INHERITANCE_SET_BASED_UNSUPPORTED_UNREACHABLE_REASON: Final[str] = (
     "`test_transact.py`'s own unit test exercises it directly through `tx.update_where`; the "
     "rejected-case's OWN keyless-row shape (`m-inheritance-089`) still has no idiomatic keyed "
     "spelling (no single typed instance construction denotes a payload with no primary key at "
-    "all), so this remains a reasoned skip for the CASE's OWN authored shape, not for the "
-    "classified rule — the instance-native usage-guide STORY for the `_where` family is "
-    "COR-3 Phase 8 increment 7 (ledger D-23)"
+    "all), so this remains a reasoned skip for the CASE's OWN authored shape — a permanent, "
+    "structural non-fit, not a deferred story"
 )
 
 # `when.model` descriptor-shape rejects (m-inheritance-020..032, plus the
@@ -662,9 +664,9 @@ _ORDERS_GRAPH_SIBLING_REASON: Final[str] = (
 # `models/person.yaml`'s own Person/Passport pair and `models/animal.yaml`'s
 # own polymorphic owner (ALSO named `Person`) were both unreachable through a
 # single, global, process-wide entity registry sharing one flat namespace
-# (`mirrored_models.Person` claimed the name first). Ledger D-20 (COR-3 Phase
-# 8 increment 7) resolves this with explicit, scoped `EntityRegistry`
-# instances: `read_models.Person`/`.Passport` are now installed (the DEFAULT
+# (`mirrored_models.Person` claimed the name first). Ledger D-20 resolves
+# this with explicit, scoped `EntityRegistry` instances:
+# `read_models.Person`/`.Passport` are now installed (the DEFAULT
 # registry), and `animal_owner.Person` (the animal family's REAL owner) is
 # installed in its OWN registry (parent-chained to the default, so it also
 # resolves `Animal`/`Pet`/`Dog`/`Cat`/`WildBoar`) — both flip to executable
@@ -721,10 +723,8 @@ _VO_TEMPORAL_WRITE_PHASE8_REASON: Final[str] = (
     "an audit-write / bitemp-write temporal write over a value-object-bearing entity "
     "(the document rides every chained/split row whole, at its columnOrder slot, "
     "absent from every close): graded end-to-end by the compile/run conformance lanes "
-    "now (COR-3 Phase 8 increment 4) — no idiomatic TYPED-verb example exists yet, "
-    "landing with the instance-native API story build-out (COR-3 Phase 8 increment 7, "
-    "ledger D-23), matching this registry's own m-audit-write/m-bitemp-write bucket "
-    "reason"
+    f"now (COR-3 Phase 8 increment 4) — {_STORY_BUILD_OUT_DEFERRAL}, matching this "
+    "registry's own m-audit-write/m-bitemp-write bucket reason"
 )
 
 # Value-object STRUCTURE rejects: each empirically confirmed (a REPL probe
@@ -781,17 +781,14 @@ _VO_BATCH_WRITE_REASON: Final[str] = (
     "atomically in columnOrder position — the set-based flush collapse landed in "
     "COR-3 Phase 8 increment 5 (m-batch-write) and is graded end-to-end by the "
     "compile/run conformance lanes now, matching this registry's own m-batch-write "
-    "bucket reason; no idiomatic TYPED-verb example exists yet (instance-native story "
-    "build-out, COR-3 Phase 8 increment 7, ledger D-23)"
+    f"bucket reason; {_STORY_BUILD_OUT_DEFERRAL}"
 )
 _VO_OPT_LOCK_CONFLICT_REASON: Final[str] = (
     "a versioned write under an optimistic-lock gate over a value-object-bearing "
     "entity: the m-opt-lock keyed-write machinery landed in COR-3 Phase 8 increment 3, "
     "and this case joins the exercised conflict set in increment 4 (already "
-    "tag-reachable) — graded end-to-end by the compile/run conformance lanes now; no "
-    "idiomatic TYPED-verb example exists yet, landing with the instance-native API "
-    "story build-out (COR-3 Phase 8 increment 7, ledger D-23), matching this "
-    "registry's own m-opt-lock bucket reason"
+    "tag-reachable) — graded end-to-end by the compile/run conformance lanes now; "
+    f"{_STORY_BUILD_OUT_DEFERRAL}, matching this registry's own m-opt-lock bucket reason"
 )
 _VO_SCENARIO_COMBO_REASON: Final[str] = (
     "a scenario combining a managed (instance-form) find, a MATERIALIZING "
@@ -800,16 +797,14 @@ _VO_SCENARIO_COMBO_REASON: Final[str] = (
     "optimistic-lock gate: the materializing predicate-write machinery landed in "
     "COR-3 Phase 8 increment 5 (m-audit-write / m-opt-lock / m-batch-write's "
     "readless/materialize split) and is run-lane covered now (query-result-dependent, "
-    "`compileEligibility: run-only`); no idiomatic TYPED-`_where`-verb example exists "
-    "yet, landing with the instance-native API story build-out (COR-3 Phase 8 "
-    "increment 7, ledger D-23)"
+    f"`compileEligibility: run-only`); {_STORY_BUILD_OUT_DEFERRAL}"
 )
 
 CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-unit-work-008": _COALESCING_WITNESS_REASON,
     "m-unit-work-010": _COALESCING_WITNESS_REASON,
     # -- m-opt-lock: non-temporal write family, conformance-lane covered ----- #
-    # (COR-3 Phase 8 increment 3; instance-native examples are increment 7) -- #
+    # (COR-3 Phase 8 increment 3; instance-native examples remain undelivered) - #
     "m-opt-lock-002": _OPT_LOCK_WRITE_CONFORMANCE_LANE_REASON,
     "m-opt-lock-005": _OPT_LOCK_WRITE_CONFORMANCE_LANE_REASON,
     "m-opt-lock-006": _OPT_LOCK_WRITE_CONFORMANCE_LANE_REASON,
@@ -853,7 +848,7 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-inheritance-015": _INHERITANCE_MULTI_CONCRETE_PROJECTION_UNREACHABLE_REASON,
     "m-inheritance-052": _INHERITANCE_MULTI_CONCRETE_PROJECTION_UNREACHABLE_REASON,
     # -- m-inheritance: non-temporal write family, conformance-lane covered -- #
-    # (COR-3 Phase 8 increment 3; instance-native examples are increment 7) -- #
+    # (COR-3 Phase 8 increment 3; instance-native examples remain undelivered) #
     "m-inheritance-007": _INHERITANCE_WRITE_CONFORMANCE_LANE_REASON,
     "m-inheritance-008": _INHERITANCE_WRITE_CONFORMANCE_LANE_REASON,
     "m-inheritance-009": _INHERITANCE_WRITE_CONFORMANCE_LANE_REASON,
