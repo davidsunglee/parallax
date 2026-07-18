@@ -80,6 +80,7 @@ from parallax.core.sql_gen import (
     compile_read,
     compile_write_predicate,
     family_variant_plan,
+    read_narrow_to,
 )
 from parallax.core.temporal_read import AXIS_ORDER, LATEST, Edge, Pin, milestone_edge, statement_pin
 from parallax.core.unit_work import (
@@ -1166,9 +1167,16 @@ def find(
     graph-local identity map); otherwise compiles and executes ONE child query
     (declared relationship ordering rendered through the dialect's NULLs-last
     rule), applies `familyVariant` materialization (`m-sql`) to its rows, and
-    feeds the assembler. Returns the root's own materialized nodes — reached
-    from them, every attached level's nodes hang off `Node.fields` — plus the
-    full ordered execution record.
+    feeds the assembler. The root's own authored narrow (if any,
+    `~parallax.core.sql_gen.read_narrow_to`) threads into
+    `Assembler.materialize_root` the SAME way a deep-fetch child level's own
+    `FetchLevel.narrow_to` already threads through `attach_level` (S3, COR-3
+    Phase 7 increment 7 round-2): a table-per-concrete-subtype root position
+    resolving to exactly one concrete emits no `familyVariant` column, so this
+    is what lets the assembler still recover the row's own concrete identity.
+    Returns the root's own materialized nodes — reached from them, every
+    attached level's nodes hang off `Node.fields` — plus the full ordered
+    execution record.
     """
     plan_ = deep_fetch.plan(target, op, meta)
     statements: list[ExecutedStatement] = []
@@ -1181,7 +1189,9 @@ def find(
     root_rows = [apply_family_variant(row, root_plan) for row in root_rows]
 
     assembler = materialize.Assembler(meta=meta)
-    root_nodes = assembler.materialize_root(target, root_rows)
+    root_nodes = assembler.materialize_root(
+        target, root_rows, narrow_to=read_narrow_to(plan_.root_operation)
+    )
     all_nodes: list[tuple[str, materialize.Node]] = [(target, node) for node in root_nodes]
 
     level_rows: list[Sequence[Row]] = []

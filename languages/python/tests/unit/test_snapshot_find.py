@@ -34,6 +34,7 @@ ORDERS = _MODELS["orders"]
 ANIMAL = _MODELS["animal"]
 INVOICE = _MODELS["invoice"]
 RATE = _MODELS["rate"]
+DOCUMENT = _MODELS["document"]
 
 _UTC = dt.UTC
 
@@ -205,6 +206,33 @@ def test_find_materializes_family_variant_on_child_level_rows() -> None:
     animal = _kids(result.nodes[0], "animals")[0]
     assert animal.fields["familyVariant"] == "Dog"
     assert "kind" not in animal.fields
+
+
+def test_find_threads_a_root_narrow_to_a_single_tpcs_concrete() -> None:
+    # S3 (COR-3 Phase 7 increment 7 round-2): a table-per-concrete-subtype
+    # ABSTRACT root narrowed to exactly ONE concrete compiles to an ordinary
+    # single-table read (`m-sql`'s `_compile_tpcs_single`) — the row carries no
+    # `familyVariant` at all. `find`'s own `read_narrow_to`-derived threading
+    # into `Assembler.materialize_root` is what lets the assembler still
+    # recover the row's own concrete identity, rather than the abstract
+    # queried `targetEntity`.
+    port = QueuePort(
+        [
+            [
+                {
+                    "id": 1,
+                    "title": "Invoice-A",
+                    "folder_id": None,
+                    "currency": "USD",
+                    "amount_due": Decimal("120.00"),
+                }
+            ]
+        ]
+    )
+    op = deserialize({"narrow": {"entity": "Document", "to": ["Invoice"], "operand": {"all": {}}}})
+    result = handle.find(op, DOCUMENT, POSTGRES, "Document", port)
+    assert "familyVariant" not in result.nodes[0].fields
+    assert result.nodes[0].resolved_entity == "Invoice"
 
 
 def test_find_history_groups_rows_into_chronologically_ordered_edge_pinned_graphs() -> None:

@@ -16,7 +16,7 @@ import pytest
 
 import mirrored_models  # noqa: F401  # pyright: ignore[reportUnusedImport] - registers Balance
 import snapshot_models as sm
-from parallax.conformance import models
+from parallax.conformance import models, read_models
 from parallax.conformance.story_models import Order as _soOrder
 from parallax.conformance.story_models import OrderItem as _soOrderItem
 from parallax.conformance.story_models import OrderStatus as _soOrderStatus
@@ -56,6 +56,15 @@ _ANIMAL_WITH_UNREGISTERED_CONCRETE = dataclasses.replace(
     ),
 )
 _BALANCE = models.load_models()["balance"]
+_DOCUMENT = metamodel(
+    [
+        read_models.Document,
+        read_models.FinancialDocument,
+        read_models.Invoice,
+        read_models.Receipt,
+        read_models.Memo,
+    ]
+)
 
 
 def _order_root() -> Node:
@@ -359,6 +368,52 @@ def _iguana() -> Node:
         fields={"id": 3, "name": "Iggy", "owner_id": 10, "familyVariant": "Iguana"},
         pk_columns=("id",),
     )
+
+
+# --------------------------------------------------------------------------- #
+# S3 (COR-3 Phase 7 increment 7 round-2): a table-per-concrete-subtype        #
+# ABSTRACT-position read narrowing (or naturally resolving) to exactly ONE    #
+# concrete emits no `familyVariant` at all (`m-sql`'s `_compile_tpcs_single`) #
+# — wrapping must still instantiate the resolved CONCRETE class, never the   #
+# (possibly abstract) declared default.                                      #
+# --------------------------------------------------------------------------- #
+def test_wrap_a_single_resolved_position_node_instantiates_the_concrete_class() -> None:
+    # `resolved_entity` is what the assembler threads through materialization
+    # (`Assembler.materialize_root`'s own `narrow_to`) — this node carries no
+    # `familyVariant` at all, mirroring the SQL `_compile_tpcs_single` emits.
+    node = Node(
+        fields={
+            "id": 1,
+            "title": "Invoice-A",
+            "folder_id": None,
+            "currency": "USD",
+            "amount_due": Decimal("120.00"),
+        },
+        pk_columns=("id",),
+        resolved_entity="Invoice",
+    )
+    (root,) = wrap.wrap_graph((node,), "FinancialDocument", _DOCUMENT, Pin())
+    assert type(root) is read_models.Invoice
+    assert root.amount_due == Decimal("120.00")
+
+
+def test_wrap_without_resolved_entity_falls_back_to_the_declared_default() -> None:
+    # The pre-fix (defensive-only) shape: a hand-built `Node` that never went
+    # through the assembler carries no `resolved_entity` at all, so wrapping
+    # falls back to the caller's OWN declared default — unchanged behavior for
+    # that defensive path, never reachable through `db.find` itself.
+    node = Node(
+        fields={
+            "id": 1,
+            "title": "Invoice-A",
+            "folder_id": None,
+            "currency": "USD",
+            "amount_due": Decimal("120.00"),
+        },
+        pk_columns=("id",),
+    )
+    (root,) = wrap.wrap_graph((node,), "Invoice", _DOCUMENT, Pin())
+    assert type(root) is read_models.Invoice
 
 
 # --------------------------------------------------------------------------- #

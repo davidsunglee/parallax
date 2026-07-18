@@ -115,6 +115,7 @@ __all__ = [
     "compile_read",
     "compile_write_predicate",
     "family_variant_plan",
+    "read_narrow_to",
 ]
 
 # The read's consumption lane (m-sql *Read projection*, *Result form*): a
@@ -908,6 +909,23 @@ class FamilyVariantPlan:
     tag_map: Mapping[str, str] | None = None
 
 
+def read_narrow_to(op: Operation) -> tuple[str, ...] | None:
+    """``op``'s own TOP-LEVEL authored narrow (its ``Narrow.to``), directives
+    peeled — or ``None`` for a bare (unnarrowed) read.
+
+    Mirrors `family_variant_plan`'s own predicate inspection (this function
+    factors out exactly the piece it shares) so a find executor can thread a
+    root read's own authored narrow into materialization
+    (:func:`~parallax.snapshot.materialize.Assembler.materialize_root`) the
+    SAME way a deep-fetch child level's own ``FetchLevel.narrow_to`` already
+    threads through ``attach_level`` — the root-level counterpart `m-deep-
+    fetch` never itself resolves, since planning a root read is `m-sql`'s own
+    job, never the planner's (S3, COR-3 Phase 7 increment 7 round-2).
+    """
+    predicate, *_directives = _peel_directives(op)
+    return predicate.to if isinstance(predicate, Narrow) else None
+
+
 def family_variant_plan(meta: Metamodel, target: str, op: Operation) -> FamilyVariantPlan | None:
     """The read's ``familyVariant`` materialization plan, or ``None`` when the
     read carries none.
@@ -922,11 +940,11 @@ def family_variant_plan(meta: Metamodel, target: str, op: Operation) -> FamilyVa
     entity = meta.entity(target)
     if entity.inheritance is None:
         return None
-    predicate, *_directives = _peel_directives(op)
+    narrow_to = read_narrow_to(op)
     root = inheritance.family_root(meta, entity)
     assert root.inheritance is not None
-    if isinstance(predicate, Narrow):
-        position = _narrow_effective_set(meta, predicate.to)
+    if narrow_to is not None:
+        position = _narrow_effective_set(meta, narrow_to)
     else:
         position = tuple(inheritance.effective_concrete_subtypes(meta, target))
 

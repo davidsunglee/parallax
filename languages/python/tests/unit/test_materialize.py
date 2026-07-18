@@ -38,6 +38,7 @@ _MODELS = models.load_models()
 ORDERS = _MODELS["orders"]
 ANIMAL = _MODELS["animal"]
 CUSTOMER = _MODELS["customer"]
+DOCUMENT = _MODELS["document"]
 
 
 def _doc(decoded: dict[str, object], key: str) -> dict[str, Any]:
@@ -183,6 +184,58 @@ def test_identity_key_is_none_without_a_declared_primary_key() -> None:
 
 
 # --------------------------------------------------------------------------- #
+# S3 (COR-3 Phase 7 increment 7 round-2): a table-per-concrete-subtype        #
+# ABSTRACT-position read narrowing (or naturally resolving) to exactly ONE    #
+# concrete emits no `familyVariant` column (`m-sql`'s `_compile_tpcs_single`) #
+# — identity must still key to the resolved CONCRETE, never the abstract     #
+# queried position, matching the `familyVariant`-carrying multi-concrete     #
+# case (`ddb0a54`'s identity_key rule).                                      #
+# --------------------------------------------------------------------------- #
+_INVOICE_ROW = {
+    "id": 1,
+    "title": "Invoice-A",
+    "folder_id": None,
+    "currency": "USD",
+    "amount_due": "120.00",
+}
+
+
+def test_identity_key_resolves_a_narrowed_single_concrete_tpcs_position() -> None:
+    # Reproduces the reviewer's defect verbatim: without the fix, this returns
+    # `("FinancialDocument", (1,))` — the ABSTRACT queried position — even
+    # though the narrow resolves to exactly one concrete and the row carries
+    # no `familyVariant` at all (the SQL legitimately omits it).
+    key = identity_key(DOCUMENT, "FinancialDocument", _INVOICE_ROW, ("Invoice",))
+    assert key == ("Invoice", (1,))
+
+
+def test_identity_key_matches_a_direct_concrete_read_of_the_same_row() -> None:
+    # Projection independence (m-snapshot-read): the narrowed-abstract route
+    # and the direct-concrete route resolve to the identical key.
+    narrowed = identity_key(DOCUMENT, "FinancialDocument", _INVOICE_ROW, ("Invoice",))
+    direct = identity_key(DOCUMENT, "Invoice", _INVOICE_ROW, None)
+    assert narrowed == direct == ("Invoice", (1,))
+
+
+def test_identity_key_stays_root_normalized_when_the_narrow_still_spans_two_concretes() -> None:
+    # `FinancialDocument` itself (no narrow) resolves to {Invoice, Receipt} — a
+    # 2+-concrete position, so the row's OWN `familyVariant` column (never this
+    # helper's fallback) is what actually decides identity there; a row that
+    # (defensively) carries none degrades to the read's own queried position.
+    key = identity_key(DOCUMENT, "FinancialDocument", _INVOICE_ROW, None)
+    assert key == ("FinancialDocument", (1,))
+
+
+def test_identity_key_tph_narrowed_to_one_concrete_stays_root_normalized() -> None:
+    # The TPH sibling check the reviewer demands: table-per-hierarchy ALWAYS
+    # carries `familyVariant` for an abstract-target read regardless of the
+    # narrow's resolved cardinality (m-inheritance-012), so `identity_key`'s
+    # TPCS-only branch never even applies here — no gap to close.
+    row = {"id": 1, "name": "Rex", "owner_id": 10, "bark_volume": 7}
+    assert identity_key(ANIMAL, "Animal", row, ("Dog",)) == ("Animal", (1,))
+
+
+# --------------------------------------------------------------------------- #
 # Assembler: node construction, pk_columns.                                   #
 # --------------------------------------------------------------------------- #
 def test_materialize_root_builds_one_node_per_row() -> None:
@@ -197,6 +250,25 @@ def test_materialize_root_pk_columns_are_family_normalized() -> None:
         "Dog", [{"id": 1, "name": "Rex", "owner_id": 10, "bark_volume": 7}]
     )
     assert nodes[0].pk_columns == ("id",)
+
+
+def test_materialize_root_threads_the_narrow_into_resolved_entity() -> None:
+    # S3: `materialize_root`'s own `narrow_to` (a find executor's
+    # `~parallax.core.sql_gen.read_narrow_to` result) lets the assembler
+    # recover a single-resolved-position TPCS row's own concrete even though
+    # the row carries no `familyVariant` at all.
+    asm = Assembler(meta=DOCUMENT)
+    nodes = asm.materialize_root("FinancialDocument", [_INVOICE_ROW], narrow_to=("Invoice",))
+    assert nodes[0].resolved_entity == "Invoice"
+    assert "familyVariant" not in nodes[0].fields
+
+
+def test_materialize_root_omitted_narrow_to_defaults_to_none() -> None:
+    # Backward compatible: an omitted `narrow_to` (every pre-S3 caller) behaves
+    # exactly as before.
+    asm = Assembler(meta=ORDERS)
+    nodes = asm.materialize_root("Order", [{"id": 1, "name": "Ada"}])
+    assert nodes[0].resolved_entity == "Order"
 
 
 # --------------------------------------------------------------------------- #

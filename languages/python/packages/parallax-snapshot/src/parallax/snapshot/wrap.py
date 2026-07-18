@@ -48,10 +48,17 @@ the rows already passed through the database) plus the implementation-private
 
 Polymorphic children materialize as their CONCRETE classes: ``familyVariant``,
 when the neutral row carries it, names the concrete entity directly; a
-single-resolved-position level (no ``familyVariant`` key) uses the level's own
-declared/default entity — resolved here from each parent node's OWN declared
-relationship, never re-derived from level bookkeeping the caller would
-otherwise have to thread through.
+single-resolved-position level (no ``familyVariant`` key — a table-per-
+concrete-subtype position resolving to exactly one concrete emits none,
+`m-sql`'s ``_compile_tpcs_single``) uses the node's OWN
+``~parallax.snapshot.materialize.Node.resolved_entity`` instead (S3, COR-3
+Phase 7 increment 7 round-2): the assembler's own compile-time-resolved
+concrete, threaded through materialization — never the entity's STATIC
+declared relationship target, which may itself be abstract (the pre-fix
+defect: an abstract-position read narrowing to one concrete wrapped as the
+ABSTRACT class). The parent's own declared relationship target survives only
+as the LAST-resort default for a defensively (test-only) hand-built ``Node``
+that carries no ``resolved_entity`` at all.
 
 Hashability is conditional, exactly per spec §3: this module does nothing
 special to make a node hashable or to guard against one — a back-reference
@@ -105,8 +112,18 @@ def wrap_graph(
 
 
 def _concrete_entity_name(node: materialize.Node, default_entity: str) -> str:
+    """``node``'s own concrete entity name (S3, COR-3 Phase 7 increment 7
+    round-2): a row-carried ``familyVariant`` names it directly (a 2+-concrete
+    union-all position); else the assembler's own statically-resolved
+    ``node.resolved_entity`` (a single-resolved-position table-per-concrete-
+    subtype row, which carries no `familyVariant` at all); ``default_entity``
+    (the caller's declared relationship target / root — possibly abstract)
+    survives only as the defensive fallback for a hand-built ``Node`` no
+    assembler ever populated ``resolved_entity`` on."""
     variant = node.fields.get("familyVariant")
-    return variant if isinstance(variant, str) else default_entity
+    if isinstance(variant, str):
+        return variant
+    return node.resolved_entity if node.resolved_entity is not None else default_entity
 
 
 def _family_relationships(meta: Metamodel, entity: Entity) -> tuple[Relationship, ...]:

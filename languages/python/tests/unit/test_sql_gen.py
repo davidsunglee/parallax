@@ -21,6 +21,7 @@ from parallax.core.sql_gen import (
     Statement,
     compile_read,
     family_variant_plan,
+    read_narrow_to,
 )
 
 pytestmark = pytest.mark.unit
@@ -539,6 +540,27 @@ def test_family_variant_plan_tpcs_is_literal_and_only_for_two_or_more_branches()
     # — the settled asymmetry with table-per-hierarchy (m-sql, explicit).
     narrowed_to_one = oa.Narrow(entity="Document", to=("Invoice",), operand=oa.All())
     assert family_variant_plan(DOCUMENT, "Document", narrowed_to_one) is None
+
+
+# --------------------------------------------------------------------------- #
+# `read_narrow_to` (S3, COR-3 Phase 7 increment 7 round-2): the root-level    #
+# authored-narrow extraction a find executor threads into                    #
+# `Assembler.materialize_root` the same way a deep-fetch child level's own    #
+# `FetchLevel.narrow_to` already threads through `attach_level`.             #
+# --------------------------------------------------------------------------- #
+def test_read_narrow_to_is_none_for_a_bare_read() -> None:
+    assert read_narrow_to(oa.All()) is None
+
+
+def test_read_narrow_to_extracts_a_top_level_narrows_authored_subtypes() -> None:
+    narrowed = oa.Narrow(entity="Document", to=("Invoice",), operand=oa.All())
+    assert read_narrow_to(narrowed) == ("Invoice",)
+
+
+def test_read_narrow_to_peels_directives_before_checking_for_a_narrow() -> None:
+    narrowed = oa.Narrow(entity="Document", to=("Invoice", "Receipt"), operand=oa.All())
+    op = oa.Limit(operand=oa.OrderBy(operand=narrowed, keys=()), count=1)
+    assert read_narrow_to(op) == ("Invoice", "Receipt")
 
 
 # --------------------------------------------------------------------------- #

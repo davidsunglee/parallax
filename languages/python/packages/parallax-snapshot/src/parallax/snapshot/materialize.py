@@ -75,10 +75,24 @@ class Node:
     never a sentinel value. ``pk_columns`` names the declared primary-key
     columns among ``fields`` (in declaration order) — what a serializer's
     back-reference-cycle truncation renders as the PK-only stub.
+
+    ``resolved_entity`` is this row's own STATICALLY known concrete entity
+    name — the compile-time-resolved position `_materialize` decoded this
+    row against (never wire-visible: unlike ``fields``, it is assembler-only
+    bookkeeping the `then.graph` renderer never walks). A table-per-concrete-
+    subtype read resolving to exactly ONE concrete emits no `familyVariant`
+    column at all (`m-sql`'s `_compile_tpcs_single`), so this is the ONLY
+    place that knowledge survives past the SQL boundary for
+    `parallax.snapshot.wrap` to recover the row's own concrete class instead
+    of falling back to a (possibly abstract) declared default (S3, COR-3
+    Phase 7 increment 7 round-2). ``None`` only for a ``Node`` built outside
+    the assembler (test-only direct construction) — a caller reading it
+    falls back to its own declared default in that defensive case.
     """
 
     fields: dict[str, object]
     pk_columns: tuple[str, ...]
+    resolved_entity: str | None = None
 
 
 def _resolved_position(
@@ -131,11 +145,17 @@ def identity_key(
     Invoice/Receipt/Memo — the rows are distinguished by their concrete
     variant, never by id"), so normalizing to the bare family-root name would
     wrongly conflate two DIFFERENT physical rows that merely share a PK
-    VALUE — identity is the row's own resolved CONCRETE name instead
-    (``familyVariant`` when the position is multi-concrete; a single-resolved-
-    position read's own ``entity_name`` is already that row's concrete, since
-    a table-per-concrete-subtype read never materializes an abstract-target
-    row at all).
+    VALUE — identity is the row's own resolved CONCRETE name instead:
+    ``familyVariant`` when the row carries one (a 2+-concrete union-all
+    position), else the compile-time-resolved position's OWN sole member
+    when it resolves to exactly one concrete (S3, COR-3 Phase 7 increment 7
+    round-2 — a single-resolved-position read's SQL legitimately omits
+    `familyVariant`, `m-sql`'s `_compile_tpcs_single`, so ``entity_name`` alone
+    is NOT already that row's concrete whenever the QUERIED position itself
+    was abstract, e.g. an abstract root/subtype narrowed, or naturally
+    resolving, down to one concrete — :func:`_resolved_position` (the SAME
+    resolution `decode_row`'s own value-object superset already shares)
+    recovers it).
 
     The coordinate component m-snapshot-read's identity triple names (the
     lowered as-of per axis) is intentionally omitted from this key: within ONE
@@ -144,7 +164,6 @@ def identity_key(
     never carry two different coordinates in the same graph — the coordinate is
     a graph-wide constant here, never a distinguishing key component.
     """
-    del narrow_to  # resolved position does not affect identity (family + PK only)
     entity = meta.entity(entity_name)
     # `inheritance.declaring_entity`: the family root for a participant (the
     # primary key, like the temporal axes, is family-wide metadata declared
@@ -162,8 +181,26 @@ def identity_key(
         "table-per-concrete-subtype"
     ):
         variant = row.get("familyVariant")
-        name = variant if isinstance(variant, str) else entity_name
+        name = (
+            variant
+            if isinstance(variant, str)
+            else _resolved_concrete(meta, entity_name, narrow_to)
+        )
     return (name, pk)
+
+
+def _resolved_concrete(meta: Metamodel, entity_name: str, narrow_to: tuple[str, ...] | None) -> str:
+    """``entity_name``'s own statically-known concrete entity name for THIS
+    decode call (S3, COR-3 Phase 7 increment 7 round-2): the resolved position
+    (:func:`_resolved_position`) reduced to its sole member when it resolves
+    to exactly one concrete — the SAME position `decode_row`'s value-object
+    superset already derives from ``narrow_to``, so identity and decoding can
+    never disagree on what a `familyVariant`-less row's own concrete is.
+    Degrades to ``entity_name`` unchanged when the position spans 2+ concretes
+    (a row's own ``familyVariant`` field is authoritative there instead — this
+    helper is consulted only when the row carries none)."""
+    position = _resolved_position(meta, entity_name, narrow_to)
+    return position[0] if len(position) == 1 else entity_name
 
 
 def _pk_columns(meta: Metamodel, entity_name: str) -> tuple[str, ...]:
@@ -271,10 +308,23 @@ class Assembler:
     _identity: dict[tuple[str, tuple[object, ...]], Node] = field(default_factory=_new_identity_map)
 
     def materialize_root(
-        self, entity_name: str, rows: Sequence[Mapping[str, object]]
+        self,
+        entity_name: str,
+        rows: Sequence[Mapping[str, object]],
+        narrow_to: tuple[str, ...] | None = None,
     ) -> list[Node]:
-        """Decode the root query's own rows into fresh, identity-registered nodes."""
-        return self._materialize(entity_name, rows, narrow_to=None)
+        """Decode the root query's own rows into fresh, identity-registered nodes.
+
+        ``narrow_to`` is the root read's OWN top-level authored narrow (S3,
+        COR-3 Phase 7 increment 7 round-2), when the caller's find executor
+        supplies one (:func:`~parallax.core.sql_gen.compile.read_narrow_to`)
+        — the root-level analogue of a deep-fetch child level's own
+        ``FetchLevel.narrow_to``, which :meth:`attach_level` already threads.
+        Omitted (``None``) for a bare, un-narrowed root read, or a caller that
+        predates this parameter — a non-family or already-concrete
+        ``entity_name`` resolves identically either way.
+        """
+        return self._materialize(entity_name, rows, narrow_to=narrow_to)
 
     def attach_level(
         self,
@@ -341,10 +391,13 @@ class Assembler:
         narrow_to: tuple[str, ...] | None,
     ) -> list[Node]:
         pk_columns = _pk_columns(self.meta, entity_name)
+        resolved_entity = _resolved_concrete(self.meta, entity_name, narrow_to)
         nodes: list[Node] = []
         for row in rows:
             node = Node(
-                fields=decode_row(self.meta, entity_name, row, narrow_to), pk_columns=pk_columns
+                fields=decode_row(self.meta, entity_name, row, narrow_to),
+                pk_columns=pk_columns,
+                resolved_entity=resolved_entity,
             )
             key = identity_key(self.meta, entity_name, row, narrow_to)
             if key is not None:
