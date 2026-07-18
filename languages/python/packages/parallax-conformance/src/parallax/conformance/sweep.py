@@ -41,13 +41,18 @@ matrix: the single-connection shared-suffix witness, the runtime lock/omit
 cases the case-driven D-17 runner grades, and the optimistic-conflict
 auto-retry conflict-lane witness), closing the correctness modules'
 remaining honest gaps — the 15-case flip enumerated in that increment's own
-implementer prompt. ``m-db-error``'s own five ``when.concurrency`` error
-cases are NOT part of this flip (deliberately, not an oversight): the SAME
-rounds-runner choreography this increment builds for the m-read-lock
-two-session matrix (``parallax.conformance.concurrency_runner``) could grade
-them with zero extra machinery — a reported observation for the next
-increment (``tests/conformance/test_run_sweep.py``'s own rounds-runner
-dispatch filter), not something this filter accidentally admits.
+implementer prompt (that increment's own report also names ``m-db-error``'s
+five ``when.concurrency`` error cases as a reachable, ungraded gap: the SAME
+rounds-runner choreography built for the m-read-lock two-session matrix could
+grade them with zero extra machinery). The increment 7 completion round's
+D-28 flip closes that gap: ``m-db-error-004``/``-005``/``-006``/``-007``/
+``-009`` (deadlock cycle/reverse, lock-wait timeout x2, serialization
+failure) now grade case-driven through the SAME rounds runner
+(``parallax.conformance.concurrency_runner``, ``tests/conformance/
+test_run_sweep.py``'s dispatch filter broadened from ``m-read-lock`` alone to
+both modules) — one case (``-009``) needs its two sessions under genuine
+Postgres SERIALIZABLE isolation, a runner-level knob (``run_rounds``'s own
+``isolation`` argument) rather than a new schema field.
 """
 
 from __future__ import annotations

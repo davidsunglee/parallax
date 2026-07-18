@@ -4,10 +4,14 @@ Exercises the reusable provider obligations over the container — reset, applyD
 loadFixtures, query, exec, execRolledBack, peer — plus a minimal psycopg adapter
 smoke (construction, scalar read, bytes round trip through the dialect bind seam,
 affected-row semantics, and a transaction callback that commits its value). The
-`m-db-error` transient-classification proof completes the smoke: two crossed-update
+`m-db-error` translation-boundary proof completes the smoke: two crossed-update
 `peer` connections provoke a genuine `40P01`, and the port boundary re-raises it as
-a neutral, retriable ``DatabaseError`` carrying the preserved SQLSTATE and driver
-message. Docker-gated; a skip is reported, never silent (spec §6).
+a neutral ``DatabaseError`` -- narrowed (COR-3 Phase 8 increment 7 completion
+round, D-28) to the FULL-shape assertions (`is_retriable`, `violates_unique_index`,
+the preserved driver message) the corpus's own case-driven grading of this SAME
+choreography (`m-db-error-004`, `parallax.conformance.concurrency_runner`) does not
+check; the exact `errorClass`/`nativeCode` pin lives there now. Docker-gated; a
+skip is reported, never silent (spec §6).
 """
 
 from __future__ import annotations
@@ -91,8 +95,8 @@ def test_exec_rolled_back_leaves_no_effect(provisioner: Any) -> None:
 
 @pytest.mark.adapter_smoke
 def test_deadlock_is_reraised_as_a_retriable_database_error(provisioner: Any) -> None:
-    """A genuine two-connection `40P01` surfaces above the port as a neutral,
-    retriable ``DatabaseError`` — the `m-db-error` transient-classification proof.
+    """A genuine two-connection `40P01` surfaces above the port as a neutral
+    ``DatabaseError`` — the adapter's own translation-boundary contract.
 
     Round 1 acquires the crossed row locks (A holds row 1, B holds row 2); Round 2
     crosses them (A waits for row 2, B waits for row 1), forming a cycle Postgres
@@ -100,6 +104,17 @@ def test_deadlock_is_reraised_as_a_retriable_database_error(provisioner: Any) ->
     rolls back in its ``finally`` so the victim releases its locks and the survivor
     completes, so exactly one victim is observed. The victim choice is
     non-deterministic; the classification is not.
+
+    NARROWED (COR-3 Phase 8 increment 7 completion round, D-28): the trigger
+    choreography here is now structurally identical to `m-db-error-004`'s own
+    corpus case, which grades case-driven, byte-exact against the golden
+    `errorClass`/`nativeCode` through `parallax.conformance.concurrency_runner`
+    (`tests/conformance/test_run_sweep.py::test_concurrency_rounds`) — so the
+    `category`/`native_code` exact-value pins retire from here (redundant with
+    that grading) and only the assertions the corpus's own `then` block never
+    declares survive: the adapter populates the FULL `DatabaseError` shape
+    (`is_retriable`, `violates_unique_index`, the preserved driver `message`),
+    a provider-contract obligation the case format has no vocabulary for.
     """
     port = provisioner.port
     for statement in provision.reset_statements():
@@ -143,8 +158,9 @@ def test_deadlock_is_reraised_as_a_retriable_database_error(provisioner: Any) ->
 
     assert len(victims) == 1, f"expected exactly one deadlock victim, got {len(victims)}"
     victim = victims[0]
-    assert victim.category == "deadlock"
+    # `category`/`native_code` exact-value pins retired (D-28): graded
+    # byte-exact against the corpus golden by `m-db-error-004`'s own
+    # case-driven proof now (`test_run_sweep.test_concurrency_rounds`).
     assert victim.is_retriable
     assert not victim.violates_unique_index
-    assert victim.native_code == "40P01"
     assert victim.message  # the preserved driver message crosses the port

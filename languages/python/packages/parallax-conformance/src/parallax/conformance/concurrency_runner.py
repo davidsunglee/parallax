@@ -1,12 +1,16 @@
 """``parallax.conformance.concurrency_runner`` — the `when.concurrency` rounds
-runner (m-read-lock behavioral matrix, COR-3 Phase 8 increment 6).
+runner (the m-read-lock behavioral matrix, COR-3 Phase 8 increment 6; joined
+by `m-db-error`'s own five two-session error cases at the increment 7
+completion round's D-28 flip).
 
 A `concurrencySuccess` / `error`-with-`when.concurrency` case proves a
 GENUINELY two-session concurrency property — the shared read lock actually
-blocks a writer, admits a second shared reader, or a projection's own
-omission admits a writer — that a single-connection harness cannot provoke
-(`m-case-format` "Error cases" / "concurrencySuccess"). This module hosts the
-case-driven, TWO-SESSION choreography every such case shares:
+blocks a writer, admits a second shared reader, a projection's own omission
+admits a writer, or a genuine two-connection contention (crossed row locks,
+a real lock-wait timeout, a Postgres SSI write-skew) raises the classified
+error — that a single-connection harness cannot provoke (`m-case-format`
+"Error cases" / "concurrencySuccess"). This module hosts the case-driven,
+TWO-SESSION choreography every such case shares:
 
 - :func:`parse_rounds` parses a case's own `when.concurrency.rounds` into an
   ordered, per-node step plan (`ConcurrencyStep`) — the language-neutral
@@ -224,9 +228,26 @@ def run_rounds(
     rounds: Sequence[Mapping[str, ConcurrencyStep]],
     dialect: Dialect,
     peer_factory: Callable[[], PeerSession],
+    *,
+    isolation: str | None = None,
 ) -> RoundsRun:
-    """Drive ``rounds`` over two independently-held peer sessions (m-read-lock
-    behavioral matrix; `m-case-format` "Error cases" / "concurrencySuccess").
+    """Drive ``rounds`` over two independently-held peer sessions (the
+    m-read-lock behavioral matrix and, since the COR-3 Phase 8 increment 7
+    completion round's D-28 flip, `m-db-error`'s own five two-session error
+    cases; `m-case-format` "Error cases" / "concurrencySuccess").
+
+    ``isolation`` (D-28) is an OPTIONAL transaction-isolation override (e.g.
+    ``"serializable"``), applied to BOTH sessions as the SQL-standard `SET
+    TRANSACTION ISOLATION LEVEL` — deliberately the very FIRST statement
+    either session issues (before even `lock_timeout`), since a peer
+    session's whole choreography is ONE continuous transaction and that verb
+    is only legal as a transaction's own first statement: `m-db-error-009`'s
+    own serialization-failure witness needs genuine Postgres SSI (its golden
+    SIREAD-predicate-lock write-skew never arises at the default READ
+    COMMITTED), a runner-level fact about ONE case `m-case-format` declares
+    no schema field for. ``None`` (every pre-D-28 case, unchanged) issues no
+    override at all — the driver's own default isolation, preserving
+    byte-identical behavior for the already-exercised m-read-lock matrix.
 
     Opens exactly two sessions via ``peer_factory`` (never constructs a
     connection itself) with INCREMENTAL protection (`contextlib.ExitStack`,
@@ -267,6 +288,14 @@ def run_rounds(
             stack.callback(session.close)
             sessions[node] = session
         for session in sessions.values():
+            # The isolation override (when present) MUST run first: a peer
+            # session's whole choreography is ONE continuous transaction
+            # (`PeerSession`'s own docstring), and the SQL-standard `SET
+            # TRANSACTION ISOLATION LEVEL` is only legal as a transaction's
+            # OWN first statement — never after `lock_timeout` (a plain
+            # session GUC, safe at any point) has already opened it.
+            if isolation is not None:
+                session.execute(f"set transaction isolation level {isolation}", [])
             session.execute(f"set lock_timeout = '{_LOCK_TIMEOUT}'", [])
 
         barrier = threading.Barrier(len(_NODES))
@@ -285,6 +314,30 @@ def run_rounds(
                             result.outcomes[index] = NodeOutcome(rows=rows)
                         except DatabaseError as exc:
                             result.outcomes[index] = NodeOutcome(error=exc)
+                    barrier.wait()
+                # A genuine SSI (`isolation="serializable"`) write-skew conflict
+                # is detected AT COMMIT, never during the conflicting writes
+                # themselves (`m-db-error-009`'s own commentary) — so an
+                # explicit, barrier-synchronized COMMIT round follows the
+                # authored rounds whenever an isolation override is in play
+                # (both barrier waits are UNCONDITIONAL so a node that skips
+                # its own commit attempt still meets its partner at the SAME
+                # boundary, never stranding it), via `execute` (never the raw
+                # driver connection) so a commit-time driver error crosses the
+                # port translated exactly like any other. The attempt itself
+                # is skipped for a node that already recorded an error (its
+                # transaction is already aborted; a COMMIT there would raise a
+                # spurious "transaction aborted" error, never the genuine one)
+                # — unreachable for `m-db-error-009` itself (neither node's
+                # own reads/writes ever raise), kept for honesty should a
+                # future isolation-override case need it.
+                if isolation is not None:
+                    barrier.wait()
+                    if not any(outcome.error is not None for outcome in result.outcomes.values()):
+                        try:
+                            session.execute("commit", [])
+                        except DatabaseError as exc:
+                            result.outcomes[len(rounds)] = NodeOutcome(error=exc)
                     barrier.wait()
             except BaseException as exc:
                 result.failure = exc
@@ -322,6 +375,14 @@ def run_rounds(
         secondary = next((exc for node, exc in failures.items() if node != originating_node), None)
         raise originating from secondary
 
+    # `+ 1` when an isolation override is in play (D-28): the SYNTHETIC final
+    # commit round the worker above appends at index `len(rounds)`, one past
+    # the corpus's own authored rounds — included here so its own outcome
+    # (the SSI conflict a write-skew case like `m-db-error-009` can only
+    # surface at commit) reaches the caller's grading exactly like any other
+    # round's. Absent for every pre-D-28 case (`isolation is None`),
+    # preserving byte-identical `RoundsRun` shape there.
+    total_rounds = len(rounds) + (1 if isolation is not None else 0)
     return RoundsRun(
         rounds=tuple(
             {
@@ -329,6 +390,6 @@ def run_rounds(
                 for node in _NODES
                 if index in results[node].outcomes
             }
-            for index in range(len(rounds))
+            for index in range(total_rounds)
         )
     )

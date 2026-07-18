@@ -632,43 +632,62 @@ def test_run_only_write_sequence_run_sweep(case: case_format.Case, provisioner: 
 
 
 # --------------------------------------------------------------------------- #
-# The `when.concurrency` rounds runner (m-read-lock behavioral matrix, COR-3  #
-# Phase 8 increment 6): a case-driven, two-session choreography over the      #
-# `Provisioner.peer` seam (`parallax.conformance.concurrency_runner`) —       #
-# `m-read-lock-006` (error / lockWaitTimeout) and `-007`/`-008`               #
-# (concurrencySuccess). Restricted to `primary_module == "m-read-lock"`:      #
-# `m-db-error`'s own five `when.concurrency` error cases ALSO carry the       #
-# reachable `error` shape today, but stay OUT of this increment's flip (see   #
-# `sweep`'s own module docstring) — the runner could grade them with zero     #
-# extra machinery (the SAME barrier/thread choreography), an observation for #
-# the next increment, not something this filter accidentally admits.         #
+# The `when.concurrency` rounds runner (COR-3 Phase 8 increment 6 adds the    #
+# m-read-lock behavioral matrix; the increment 7 completion round's D-28     #
+# flip admits `m-db-error`'s own five two-session error cases too, case-     #
+# driven through the SAME `Provisioner.peer` choreography with zero new      #
+# machinery beyond the isolation-level knob below): `m-read-lock-006`        #
+# (error / lockWaitTimeout), `-007`/`-008` (concurrencySuccess), and          #
+# `m-db-error-004/-005/-006/-007/-009` (deadlock cycle/reverse, lock-wait     #
+# timeout x2, serialization failure) — structurally identical to the         #
+# m-read-lock matrix: two barrier-synchronized peer sessions, verbatim       #
+# statement execution, error-shape classification (`sweep`'s own module      #
+# docstring named this gap; it is closed here).                              #
 # --------------------------------------------------------------------------- #
-def _reachable_read_lock_concurrency_cases() -> list[case_format.Case]:
+_CONCURRENCY_MODULES: Final[frozenset[str]] = frozenset({"m-read-lock", "m-db-error"})
+
+# `m-db-error-009` (serialization-failure) needs its two peer sessions under
+# genuine SERIALIZABLE isolation (Postgres SSI): the golden SIREAD-predicate-
+# lock write-skew it pins never arises at the default READ COMMITTED every
+# other concurrency case runs under (deadlock/lock-wait are ordinary row-lock
+# contention, isolation-independent). `m-case-format` declares no isolation
+# field — this is a runner-level fact about ONE case, not corpus data — so it
+# is named here rather than added to the shared schema; every other case
+# passes `isolation=None` (`concurrency_runner.run_rounds`'s own default,
+# unchanged), preserving byte-identical behavior for the already-exercised
+# m-read-lock matrix.
+_SERIALIZABLE_ISOLATION_CASES: Final[frozenset[str]] = frozenset({"m-db-error-009"})
+
+
+def _reachable_concurrency_rounds_cases() -> list[case_format.Case]:
     from parallax.conformance import sweep
 
     return [
         c
         for c in sweep.reachable_cases()
-        if c.primary_module == "m-read-lock" and c.shape in ("error", "concurrencySuccess")
+        if c.primary_module in _CONCURRENCY_MODULES
+        and c.shape in ("error", "concurrencySuccess")
+        and "concurrency" in (case_document(c).get("when") or {})
     ]
 
 
-_CONCURRENCY_CASES = _reachable_read_lock_concurrency_cases()
+_CONCURRENCY_CASES = _reachable_concurrency_rounds_cases()
 
 
 @pytest.mark.parametrize("case", _CONCURRENCY_CASES, ids=[c.case_id for c in _CONCURRENCY_CASES])
-def test_read_lock_concurrency_rounds(case: case_format.Case, provisioner: Any) -> None:
+def test_concurrency_rounds(case: case_format.Case, provisioner: Any) -> None:
     """Run one `when.concurrency` case's rounds over two independently-held
     peer sessions and grade its own shape's assertion.
 
-    An `error`-shape case (`m-read-lock-006`) asserts EXACTLY one raised,
-    classified `DatabaseError` across the whole choreography (`errorClass` /
-    `nativeCode`, the `m-db-error` vocabulary) and that every OTHER present
-    step succeeded — the contention round's own well-formedness guard. A
-    `concurrencySuccess`-shape case (`-007`/`-008`) asserts NO node ever
-    raised, and grades each `kind: "read"` step's observed rows against its
-    own `expectRows` (order-insensitive, `compare_rows`); a `kind: "write"`
-    step asserts only that it reached this point at all (no block/no raise).
+    An `error`-shape case (`m-read-lock-006`, `m-db-error-004/-005/-006/-007/
+    -009`) asserts EXACTLY one raised, classified `DatabaseError` across the
+    whole choreography (`errorClass` / `nativeCode`, the `m-db-error`
+    vocabulary) and that every OTHER present step succeeded — the contention
+    round's own well-formedness guard. A `concurrencySuccess`-shape case
+    (`-007`/`-008`) asserts NO node ever raised, and grades each `kind:
+    "read"` step's observed rows against its own `expectRows` (order-
+    insensitive, `compare_rows`); a `kind: "write"` step asserts only that it
+    reached this point at all (no block/no raise).
     """
     meta = engine.load_case_metamodel(case)
     from parallax.conformance import provision
@@ -677,7 +696,10 @@ def test_read_lock_concurrency_rounds(case: case_format.Case, provisioner: Any) 
 
     rounds = concurrency_runner.parse_rounds(case, "postgres")
     dialect = dialect_for("postgres")
-    run = concurrency_runner.run_rounds(rounds, dialect, lambda: provisioner.peer(autocommit=False))
+    isolation = "serializable" if case.case_id in _SERIALIZABLE_ISOLATION_CASES else None
+    run = concurrency_runner.run_rounds(
+        rounds, dialect, lambda: provisioner.peer(autocommit=False), isolation=isolation
+    )
 
     if case.shape == "error":
         raised = [
