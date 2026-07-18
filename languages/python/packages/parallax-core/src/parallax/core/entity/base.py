@@ -40,6 +40,7 @@ from parallax.core.descriptor import ValueObject as ValueObjectRecord
 from parallax.core.descriptor.neutral_type import infer_neutral_type as _infer_neutral_type_lookup
 from parallax.core.descriptor.neutral_type import snake_to_camel
 from parallax.core.descriptor.records import Unset as _UnsetType
+from parallax.core.entity._validation import require_entity_record
 from parallax.core.entity.errors import (
     EntityDefinitionError,
     NameCollisionError,
@@ -534,14 +535,14 @@ def _registry_of_classes(classes: Sequence[type]) -> EntityRegistry | None:
 
 def _entity_record_for(cls: type) -> EntityRecord:
     """``cls``'s compiled metamodel record, or a loud ``TypeError`` naming
-    ``cls`` -- the class-branch of :func:`~parallax.core.entity.meta._entity_of`,
-    duplicated here (never imported FROM ``meta.py``, which itself imports
-    from THIS module -- importing back would cycle) since :func:`metamodel`
-    needs it and lives here (R1/R3, COR-3 Phase 7 increment 7 round-2)."""
-    record = entity_record_of(cls)
-    if record is None:
-        raise TypeError(f"{cls!r} is not a Parallax entity class")
-    return record
+    ``cls`` -- the class-branch validation :func:`~parallax.core.entity.meta.
+    meta`'s ``_entity_of`` also applies to a class argument, both calling the
+    shared, package-internal :func:`~parallax.core.entity._validation.
+    require_entity_record` seam (never one importing the check from the
+    other, which would cycle: ``meta.py`` already imports from THIS module at
+    module level) since :func:`metamodel` needs it and lives here (R1/R3,
+    COR-3 Phase 7 increment 7 round-2; P3, round-3)."""
+    return require_entity_record(cls, entity_record_of(cls))
 
 
 def metamodel(classes: Sequence[type]) -> MetamodelRecord:

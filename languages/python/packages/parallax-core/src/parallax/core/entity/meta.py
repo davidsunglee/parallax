@@ -27,6 +27,7 @@ from parallax.core.descriptor import (
     effective_temporal,
     serialize,
 )
+from parallax.core.entity._validation import require_entity_record
 from parallax.core.entity.base import (
     entity_record_of,
     entity_records,
@@ -51,10 +52,7 @@ def _entity_of(target: type | str) -> Entity:
         if target not in registry:
             raise KeyError(f"no entity named {target!r} is registered")
         target = registry[target]
-    record = entity_record_of(target)
-    if record is None:
-        raise TypeError(f"{target!r} is not a Parallax entity class")
-    return record
+    return require_entity_record(target, entity_record_of(target))
 
 
 @dataclass(frozen=True, slots=True)
