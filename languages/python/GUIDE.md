@@ -559,6 +559,41 @@ self-contained without a system `libpq`.
   unchanged); `just python-static` exit 0 (diff-cover 100%,
   Pyright/coverage clean); `gen-usage-guide --check` exit 0; `just lint`
   exit 0; `just core-dep-graph` 311/333/197 (unchanged).
+- **Phase 8 increments 6–7 and the increment-7 completion round (the write
+  family closed).** Increment 6 (the case-driven `when.concurrency` rounds
+  runner, interleaved `uow` groups, and the D-17 boundary runner) and
+  increment 7 part 1 (D-20 explicit scoped entity registries; the
+  Supplier/Branch/Contact/Shipment, Person/Passport, and animal-owner
+  mirrors; D-22 typed per-variant instances through `db.find`; the typed
+  temporal window verbs) landed through their own externally-reviewed
+  cycles. The completion round then closed the remaining scope: per-story
+  clock control for `WriteStory` (ledger D-29 — an optional zero-argument
+  `clock` factory field; a scripted clock yields one authored instant per
+  flushing transaction, exhaustion loud, so multi-instant temporal stories
+  match their corpus goldens); the audit-only chain-update fix (D-30 —
+  `audit_write.plan`'s update now merges the sparse authored row onto the
+  observed payload, the `bitemp_write` `_merged_payload` precedent,
+  matching Reladomo's full-row-copy-plus-overlay chaining); axis-attribute
+  construction optionality plus `tx.insert_until` (D-31 — milestone
+  columns are framework-owned; a caller-supplied axis value on a fresh
+  insert rejects loudly instead of being silently discarded); the
+  write-family typed-verb story build-out with instance-native
+  physical-column grading (retiring `_as_rows`, D-23); the spec §3
+  stale-web-edit recipe, audit-only and bitemporal variants, with
+  public-verb negative pins and Docker-free unit halves; the
+  Customer/Location/Depot mirror family (13 cases flipped; descriptor
+  no-drift now spans 12 families); the five `m-db-error` two-session
+  concurrency cases flipped case-driven through the rounds runner with an
+  isolation override and a synthetic commit round (D-28); and the 15
+  branch-introduced Pyright suppressions removed by restructuring
+  (baseline 110 → 95, zero behavior change). Measured post-round: unit
+  lane 2184 passed / 97 skipped; compile sweep 222 passed / 97 skipped
+  byte-identical; rejected sweep 39 / 0; combined Docker lane 549 passed /
+  0 skipped; API-suite partition exact over 311 active cases (94
+  exercised / 217 reasoned-skip — every residual reason a
+  graded-elsewhere or representative-sibling statement, no open
+  blockers); `just python-static` exit 0 (Pyright 0/0/0, diff-cover
+  100%); `gen-usage-guide --check` exit 0.
 
 ## Blockers
 

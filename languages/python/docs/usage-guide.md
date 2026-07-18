@@ -6,6 +6,216 @@ Idiomatic public-API usage, generated from the API Conformance Suite's
 examples. Each example mirrors a compatibility-corpus case, so the guide
 cannot drift from graded behavior.
 
+## Audit-only insert opens a current milestone
+
+Corpus case: `m-audit-write-001`
+
+```python
+def audit_only_insert_opens_a_current_milestone(db: Database) -> None:
+    def fn(tx: Transaction) -> None:
+        tx.insert(Balance(id=1, acct_num="A", value=Decimal("100.00")))
+
+    db.transact(fn)
+```
+
+## Audit-only chain update via a sparse edited copy
+
+Corpus case: `m-audit-write-002`
+
+```python
+def audit_only_chain_update_via_a_sparse_copy(db: Database) -> None:
+    def insert(tx: Transaction) -> None:
+        tx.insert(Balance(id=1, acct_num="A", value=Decimal("100.00")))
+
+    def update(tx: Transaction) -> None:
+        current = tx.find(Balance.where(Balance.id == 1)).result()  # observe the milestone
+        # The edited copy touches ONLY `value` — the D-30 fix merges the
+        # observed payload onto it, so the chained row still carries `A`.
+        tx.update(current.model_copy(update={"value": Decimal("150.00")}))
+
+    db.transact(insert)
+    db.transact(update)
+```
+
+## Audit-only terminate closes the current milestone
+
+Corpus case: `m-audit-write-003`
+
+```python
+def audit_only_terminate_closes_the_current_milestone(db: Database) -> None:
+    def insert(tx: Transaction) -> None:
+        tx.insert(Balance(id=1, acct_num="A", value=Decimal("100.00")))
+
+    def close(tx: Transaction) -> None:
+        # `terminate` keys off the primary key alone (D-31: no placeholder axis
+        # values, and none are needed — a terminate never observes a prior
+        # milestone to chain forward).
+        tx.terminate(Balance(id=1, acct_num="A", value=Decimal("100.00")))
+
+    db.transact(insert)
+    db.transact(close)
+```
+
+## Audit-only chain update carries every new attribute
+
+Corpus case: `m-audit-write-004`
+
+```python
+def audit_only_chain_update_carries_every_new_attribute(db: Database) -> None:
+    def insert(tx: Transaction) -> None:
+        tx.insert(Balance(id=1, acct_num="A", value=Decimal("100.00")))
+
+    def update(tx: Transaction) -> None:
+        current = tx.find(Balance.where(Balance.id == 1)).result()  # observe the milestone
+        tx.update(current.model_copy(update={"acct_num": "B", "value": Decimal("250.00")}))
+
+    db.transact(insert)
+    db.transact(update)
+```
+
+## Audit-only chain update starting from existing history
+
+Corpus case: `m-audit-write-005`
+
+```python
+def audit_only_chain_update_from_existing_history(db: Database) -> None:
+    # m-audit-write-005: the fixtures are loaded (`given.fixtures: true`) —
+    # id 1 already carries a superseded [2024-01-01, 2024-06-01) milestone
+    # (value 100.00) and a CURRENT [2024-06-01, infinity) milestone (value
+    # 150.00). The close predicate (bal_id AND out_z = infinity) selects
+    # exactly the ONE current row even with a superseded prior on record.
+    def update(tx: Transaction) -> None:
+        current = tx.find(Balance.where(Balance.id == 1)).result()  # observe the CURRENT milestone
+        tx.update(current.model_copy(update={"value": Decimal("175.00")}))
+
+    db.transact(update)
+```
+
+## A predicate-selected delete over an unversioned entity is readless
+
+Corpus case: `m-batch-write-005`
+
+```python
+def wallet_predicate_delete_is_readless(db: Database) -> list[Entity]:
+    # m-batch-write-005: Wallet carries no version and no temporal axis, so a
+    # predicate-selected delete has nothing to gate per row — it lowers
+    # DIRECTLY to one set-shaped `delete ... where balance < ?`, no
+    # materializing read at all (contrast the versioned set delete,
+    # m-opt-lock-015/m-batch-write-004). The verifying find carries no shared
+    # read lock (the case's own lock-free golden) — optimistic concurrency,
+    # never the locking-mode default (which would take one on ANY
+    # transactional entity's find, m-read-lock-001).
+    def fn(tx: Transaction) -> list[Entity]:
+        tx.delete_where(Wallet.where(Wallet.balance < 200.00))
+        return list(tx.find(Wallet.where(Wallet.balance < 200.00)).results())
+
+    return db.transact(fn, concurrency="optimistic")
+```
+
+## Bitemporal update-until splits head/middle/tail
+
+Corpus case: `m-bitemp-write-001`
+
+```python
+def bitemporal_update_until_splits_head_middle_tail(db: Database) -> None:
+    def insert(tx: Transaction) -> None:
+        tx.insert(
+            Position(id=1, acct_num="A", value=Decimal("100.00")),
+            business_from=dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+        )
+
+    def split(tx: Transaction) -> None:
+        current = tx.find(Position.where(Position.id == 1)).result()  # observe the rectangle
+        tx.update_until(
+            current.model_copy(update={"value": Decimal("200.00")}),
+            business_from=dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
+            until=dt.datetime(2024, 9, 1, tzinfo=dt.UTC),
+        )
+
+    db.transact(insert)
+    db.transact(split)
+```
+
+## Bitemporal insert-until opens one bounded rectangle
+
+Corpus case: `m-bitemp-write-003`
+
+```python
+def bitemporal_insert_until_opens_one_bounded_rectangle(db: Database) -> None:
+    def fn(tx: Transaction) -> None:
+        tx.insert_until(
+            Position(id=1, acct_num="A", value=Decimal("100.00")),
+            business_from=dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
+            until=dt.datetime(2024, 9, 1, tzinfo=dt.UTC),
+        )
+
+    db.transact(fn)
+```
+
+## Bitemporal plain update splits head and new tail
+
+Corpus case: `m-bitemp-write-006`
+
+```python
+def bitemporal_plain_update_splits_head_and_new_tail(db: Database) -> None:
+    # m-bitemp-write-006: a plain (unbounded) bitemporal `tx.update` is the
+    # two-way degenerate of the rectangle split — no middle, no old tail (the
+    # correction runs to infinity): inactivate the original on the processing
+    # axis, then chain head (the OLD value, business [from_z, B)) + a new tail
+    # (the NEW value, business [B, infinity)).
+    def insert(tx: Transaction) -> None:
+        tx.insert(
+            Position(id=1, acct_num="A", value=Decimal("100.00")),
+            business_from=dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+        )
+
+    def correct(tx: Transaction) -> None:
+        current = tx.find(Position.where(Position.id == 1)).result()  # observe the rectangle
+        tx.update(
+            current.model_copy(update={"value": Decimal("200.00")}),
+            business_from=dt.datetime(2024, 6, 1, tzinfo=dt.UTC),
+        )
+
+    db.transact(insert)
+    db.transact(correct)
+```
+
+## Bitemporal plain insert opens a fully-current rectangle
+
+Corpus case: `m-bitemp-write-009`
+
+```python
+def bitemporal_plain_insert_opens_a_fully_current_rectangle(db: Database) -> None:
+    # m-bitemp-write-009: a plain (unbounded) bitemporal insert is a SINGLE
+    # insert of a fully-current rectangle — business [B, infinity) at
+    # processing [txInstant, infinity), current on BOTH axes. No prior row to
+    # close, unlike the plain update/terminate splits.
+    def fn(tx: Transaction) -> None:
+        tx.insert(
+            Position(id=1, acct_num="A", value=Decimal("100.00")),
+            business_from=dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+        )
+
+    db.transact(fn)
+```
+
+## A deep fetch materializes the child's own value-object document too
+
+Corpus case: `m-deep-fetch-018`
+
+```python
+def customer_locations_deep_fetch_materializes_the_child_document_too(
+    db: Database,
+) -> Snapshot[Any]:
+    """Both the root (Customer) and the child (Location) levels of a deep
+    fetch materialize their OWN value-object document (`m-deep-fetch-018`,
+    design note 14 §3): the child level projects Location's own instance-form
+    list (id, customer_id, label, address), decoded with LOCATION's
+    descriptor — never the root's — and a null child document (Location 101)
+    collapses to null exactly like a null-address Customer does at the root."""
+    return db.find(Customer.where().include(Customer.locations))
+```
+
 ## Table-per-hierarchy concrete-target read
 
 Corpus case: `m-inheritance-001`
@@ -382,6 +592,24 @@ Corpus case: `m-op-algebra-032`
 op = Order.where().order_by(Order.active.desc(), Order.qty.asc()).limit(2)
 ```
 
+## Versioned update advances the version ungated in locking mode
+
+Corpus case: `m-opt-lock-002`
+
+```python
+def versioned_update_advances_the_version_ungated_in_locking_mode(db: Database) -> None:
+    # m-opt-lock-002: the DEFAULT `locking` mode's in-transaction read already
+    # took a shared row lock, so the keyed update needs no version check — it
+    # advances the version with NO `and version = ?` gate (contrast optimistic
+    # mode, m-opt-lock-005/-006). A writeSequence story (the corpus case's own
+    # shape): no trailing find, the committed table state is the oracle.
+    def fn(tx: Transaction) -> None:
+        current = tx.find(Account.where(Account.id == 2)).result()  # observe the version
+        tx.update(current.model_copy(update={"balance": Decimal("500.00")}))
+
+    db.transact(fn)
+```
+
 ## A locking-mode object find carries the shared read lock
 
 Corpus case: `m-read-lock-002`
@@ -509,10 +737,10 @@ op = Balance.where().as_of(processing=datetime(2024, 4, 1, tzinfo=UTC))
 Corpus case: `m-unit-work-001`
 
 ```python
-def insert_then_read_your_own_write(db: Database) -> list[Row]:
-    def fn(tx: Transaction) -> list[Row]:
+def insert_then_read_your_own_write(db: Database) -> list[Entity]:
+    def fn(tx: Transaction) -> list[Entity]:
         tx.insert(Account(id=7, owner="Newton", balance=Decimal("5.00"), version=1))
-        return _as_rows(tx.find(Account.where(Account.id == 7)))
+        return list(tx.find(Account.where(Account.id == 7)).results())
 
     return db.transact(fn)  # the dependent find observes the flushed insert
 ```
@@ -522,7 +750,7 @@ def insert_then_read_your_own_write(db: Database) -> list[Row]:
 Corpus case: `m-unit-work-002`
 
 ```python
-def aborted_update_is_discarded(db: Database) -> list[Row]:
+def aborted_update_is_discarded(db: Database) -> list[Entity]:
     fetched = db.transact(lambda tx: tx.find(Account.where(Account.id == 1))).result()
     edited = fetched.model_copy(update={"balance": Decimal("999.00")})
 
@@ -533,7 +761,7 @@ def aborted_update_is_discarded(db: Database) -> list[Row]:
     with contextlib.suppress(RuntimeError):
         db.transact(doomed)
     # The same find re-resolves and observes the ORIGINAL balance, not 999.00.
-    return _as_rows(db.transact(lambda tx: tx.find(Account.where(Account.id == 1))))
+    return list(db.transact(lambda tx: tx.find(Account.where(Account.id == 1))).results())
 ```
 
 ## Foreign-key-ordered inserts in one transaction
@@ -564,8 +792,8 @@ def fk_ordered_inserts(db: Database) -> None:
 Corpus case: `m-unit-work-004`
 
 ```python
-def callback_value_withheld_on_abort(db: Database) -> list[Row]:
-    def fn(tx: Transaction) -> list[Row]:
+def callback_value_withheld_on_abort(db: Database) -> list[Entity]:
+    def fn(tx: Transaction) -> list[Entity]:
         current = tx.find(Account.where(Account.id == 1)).result()  # observe the row
         tx.update(current.model_copy(update={"balance": Decimal("175.00")}))
         tx.find(Account.where(Account.id == 1))  # forces the flush
@@ -579,11 +807,11 @@ def callback_value_withheld_on_abort(db: Database) -> list[Row]:
 Corpus case: `m-unit-work-005`
 
 ```python
-def keyed_update_observed_in_transaction(db: Database) -> list[Row]:
-    def fn(tx: Transaction) -> list[Row]:
+def keyed_update_observed_in_transaction(db: Database) -> list[Entity]:
+    def fn(tx: Transaction) -> list[Entity]:
         current = tx.find(Account.where(Account.id == 1)).result()  # observe the version
         tx.update(current.model_copy(update={"balance": Decimal("175.00")}))
-        return _as_rows(tx.find(Account.where(Account.id == 1)))
+        return list(tx.find(Account.where(Account.id == 1)).results())
 
     return db.transact(fn)
 ```
@@ -593,11 +821,11 @@ def keyed_update_observed_in_transaction(db: Database) -> list[Row]:
 Corpus case: `m-unit-work-006`
 
 ```python
-def keyed_delete_observed_in_transaction(db: Database) -> list[Row]:
-    def fn(tx: Transaction) -> list[Row]:
+def keyed_delete_observed_in_transaction(db: Database) -> list[Entity]:
+    def fn(tx: Transaction) -> list[Entity]:
         current = tx.find(Account.where(Account.id == 3)).result()  # observe the version
         tx.delete(current)
-        return _as_rows(tx.find(Account.where(Account.id == 3)))
+        return list(tx.find(Account.where(Account.id == 3)).results())
 
     return db.transact(fn)  # [] — the dependent find observes the deletion
 ```
@@ -645,14 +873,14 @@ def create_then_delete_a_parent_child_pair(db: Database) -> None:
 Corpus case: `m-unit-work-009`
 
 ```python
-def one_flush_combined_mixed_verb_order(db: Database) -> list[Row]:
-    def fn(tx: Transaction) -> list[Row]:
+def one_flush_combined_mixed_verb_order(db: Database) -> list[Entity]:
+    def fn(tx: Transaction) -> list[Entity]:
         current = tx.find(Account.where(Account.id == 1)).result()  # observe the version
         deleted = tx.find(Account.where(Account.id == 3)).result()  # observe the version
         tx.insert(Account(id=9, owner="Noether", balance=Decimal("5.00"), version=1))
         tx.update(current.model_copy(update={"balance": Decimal("20.00")}))
         tx.delete(deleted)
-        return _as_rows(tx.find(Account.where(Account.balance < 50.00)))
+        return list(tx.find(Account.where(Account.balance < 50.00)).results())
 
     return db.transact(fn)  # observe, then one flush: insert, update, delete — then the find
 ```
@@ -662,7 +890,7 @@ def one_flush_combined_mixed_verb_order(db: Database) -> list[Row]:
 Corpus case: `m-unit-work-011`
 
 ```python
-def aborted_insert_never_becomes_durable(db: Database) -> list[Row]:
+def aborted_insert_never_becomes_durable(db: Database) -> list[Entity]:
     def doomed(tx: Transaction) -> None:
         tx.insert(Account(id=7, owner="Newton", balance=Decimal("5.00"), version=1))
         raise RuntimeError("abort")
@@ -670,7 +898,7 @@ def aborted_insert_never_becomes_durable(db: Database) -> list[Row]:
     with contextlib.suppress(RuntimeError):
         db.transact(doomed)
     # The aborted insert was discarded: the find observes NO rows for account 7.
-    return _as_rows(db.transact(lambda tx: tx.find(Account.where(Account.id == 7))))
+    return list(db.transact(lambda tx: tx.find(Account.where(Account.id == 7))).results())
 ```
 
 ## An aborted delete leaves the row standing
@@ -678,7 +906,7 @@ def aborted_insert_never_becomes_durable(db: Database) -> list[Row]:
 Corpus case: `m-unit-work-012`
 
 ```python
-def aborted_delete_leaves_the_row_standing(db: Database) -> list[Row]:
+def aborted_delete_leaves_the_row_standing(db: Database) -> list[Entity]:
     def doomed(tx: Transaction) -> None:
         current = tx.find(Account.where(Account.id == 3)).result()  # observe the version
         tx.delete(current)
@@ -688,7 +916,124 @@ def aborted_delete_leaves_the_row_standing(db: Database) -> list[Row]:
     with contextlib.suppress(RuntimeError):
         db.transact(doomed)
     # The aborted delete was discarded: account 3 still stands.
-    return _as_rows(db.transact(lambda tx: tx.find(Account.where(Account.id == 3))))
+    return list(db.transact(lambda tx: tx.find(Account.where(Account.id == 3))).results())
+```
+
+## A nested equality predicate through a value-object attribute
+
+Corpus case: `m-value-object-001`
+
+```python
+def customer_nested_eq_city_selects_matching_owners(db: Database) -> Snapshot[Any]:
+    """A nested equality predicate through a value-object attribute
+    (`m-value-object-001`): the id/name SET this filter selects is the
+    behavior under test — see the module docstring's own note on why this
+    lands here, not as a `ReadStory`."""
+    return db.find(Customer.where(Customer.address.city == "Oslo"))
+```
+
+## A DEEP nested equality predicate, two levels into the composite
+
+Corpus case: `m-value-object-002`
+
+```python
+def customer_deep_nested_eq_country_selects_the_matching_owner(db: Database) -> Snapshot[Any]:
+    """A DEEP nested equality predicate, two levels into the composite
+    (`m-value-object-002`): only Grace (Boston, US) qualifies."""
+    return db.find(Customer.where(Customer.address.geo.country == "US"))
+```
+
+## A nested is-null presence test collapsing every not-present state
+
+Corpus case: `m-value-object-007`
+
+```python
+def customer_nested_is_null_collapses_every_not_present_state(db: Database) -> Snapshot[Any]:
+    """A nested is-null presence test (`m-value-object-007`): the null
+    column, the missing key, and the explicit JSON-null leaf all collapse to
+    the SAME not-present state."""
+    return db.find(Customer.where(Customer.address.city.is_null()))
+```
+
+## A to-many nested existence test (non-empty)
+
+Corpus case: `m-value-object-015`
+
+```python
+def customer_to_many_nested_exists_is_a_nonempty_test(db: Database) -> Snapshot[Any]:
+    """A to-many nested existence test (`m-value-object-015`): true for a row
+    whose `phones` array has at least one element; every not-present state
+    (empty, absent, or non-array) is excluded."""
+    return db.find(Customer.where(Customer.address.phones.any()))
+```
+
+## A to-many nested absence test folding every not-present state
+
+Corpus case: `m-value-object-016`
+
+```python
+def customer_to_many_nested_not_exists_folds_every_not_present_state(db: Database) -> Snapshot[Any]:
+    """A to-many nested absence test (`m-value-object-016`): empty, absent,
+    and non-array `phones` states are all INDISTINGUISHABLE to the algebra —
+    the negated sibling of `customer_to_many_nested_exists_is_a_nonempty_test`."""
+    return db.find(Customer.where(Customer.address.phones.none()))
+```
+
+## An any-element predicate through a to-many nested member
+
+Corpus case: `m-value-object-017`
+
+```python
+def customer_to_many_any_element_eq_matches_some_element(db: Database) -> Snapshot[Any]:
+    """A flat predicate through a `many` segment is ANY-ELEMENT
+    (`m-value-object-017`): true iff SOME `phones` element has `type` =
+    "home"."""
+    return db.find(Customer.where(Customer.address.phones.type == "home"))
+```
+
+## A scoped to-many predicate requiring ONE element to satisfy both fields
+
+Corpus case: `m-value-object-019`
+
+```python
+def customer_to_many_scoped_exists_requires_one_element_to_satisfy_both(
+    db: Database,
+) -> Snapshot[Any]:
+    """A scoped `where` requires ONE element to satisfy the WHOLE compound —
+    SAME-element, not the unscoped AND (`m-value-object-019`): Linus's single
+    phone carries both fields; Ada's carry them on DIFFERENT elements."""
+    return db.find(
+        Customer.where(
+            Customer.address.phones.any(
+                CustomerPhone.type == "home", CustomerPhone.number == "555-9999"
+            )
+        )
+    )
+```
+
+## The whole nested composite materializes with its owner in one round trip
+
+Corpus case: `m-value-object-023`
+
+```python
+def customer_owner_materializes_its_whole_nested_composite(db: Database) -> Snapshot[Any]:
+    """The whole nested composite arrives WITH the owner in ONE round trip
+    (`m-value-object-023`): no deep-fetch, no per-value-object fetch — the
+    positive proof of the getter-navigation contract to arbitrary depth."""
+    return db.find(Customer.where())
+```
+
+## The same materialization rides a filtered owner read too
+
+Corpus case: `m-value-object-024`
+
+```python
+def customer_owner_materializes_its_composite_under_a_filter(db: Database) -> Snapshot[Any]:
+    """The SAME materialization rides a FILTERED owner read too
+    (`m-value-object-024`, the SAME `nestedEq` as
+    `customer_nested_eq_city_selects_matching_owners`): materialization is
+    independent of whether the owner's own read is filtered."""
+    return db.find(Customer.where(Customer.address.city == "Oslo"))
 ```
 
 ## A value object rides its unitemporal-processing owner's current milestone
@@ -742,6 +1087,95 @@ def bitemporal_vo_owner_as_of_a_past_audit_point(db: Database) -> Snapshot[Any]:
             processing=dt.datetime(2024, 2, 1, tzinfo=dt.UTC),
         )
     )
+```
+
+## Supplier audit chain update carries the address document
+
+Corpus case: `m-value-object-032`
+
+```python
+def supplier_audit_chain_update_carries_the_document(db: Database) -> None:
+    def insert(tx: Transaction) -> None:
+        tx.insert(
+            Supplier(
+                id=1,
+                name="Nordic Foods",
+                address=Address(
+                    street="1 Old Street",
+                    city="Oslo",
+                    geo=Geo(country="NO"),
+                    phones=(Phone(type="home", number="555-0100"),),
+                ),
+            )
+        )
+
+    def update(tx: Transaction) -> None:
+        current = tx.find(Supplier.where(Supplier.id == 1)).result()  # observe the milestone
+        # The edited copy touches ONLY `address` — the D-30 fix merges the
+        # observed payload onto it, so the chained row still carries `name`.
+        tx.update(
+            current.model_copy(
+                update={
+                    "address": Address(
+                        street="2 New Avenue",
+                        city="Bergen",
+                        geo=Geo(country="NO"),
+                        phones=(
+                            Phone(type="work", number="555-0200"),
+                            Phone(type="home", number="555-0201"),
+                        ),
+                    )
+                }
+            )
+        )
+
+    db.transact(insert)
+    db.transact(update)
+```
+
+## Branch bitemporal rectangle split carries the address document
+
+Corpus case: `m-value-object-033`
+
+```python
+def branch_bitemporal_rectangle_split_carries_the_document(db: Database) -> None:
+    def insert(tx: Transaction) -> None:
+        tx.insert(
+            Branch(
+                id=1,
+                name="Central Branch",
+                address=Address(
+                    street="10 Old Road",
+                    city="Helsinki",
+                    geo=Geo(country="FI"),
+                    phones=(Phone(type="main", number="555-1000"),),
+                ),
+            ),
+            business_from=dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+        )
+
+    def split(tx: Transaction) -> None:
+        current = tx.find(Branch.where(Branch.id == 1)).result()  # observe the rectangle
+        tx.update_until(
+            current.model_copy(
+                update={
+                    "address": Address(
+                        street="30 New Road",
+                        city="Tampere",
+                        geo=Geo(country="FI"),
+                        phones=(
+                            Phone(type="main", number="555-3000"),
+                            Phone(type="fax", number="555-3001"),
+                        ),
+                    )
+                }
+            ),
+            business_from=dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
+            until=dt.datetime(2024, 9, 1, tzinfo=dt.UTC),
+        )
+
+    db.transact(insert)
+    db.transact(split)
 ```
 
 ## A nested comparison whose literal type mismatches the declared attribute
