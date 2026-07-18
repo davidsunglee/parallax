@@ -28,8 +28,49 @@ __all__ = [
     "is_selected",
     "load_case",
     "load_cases",
+    "safe_load_yaml",
     "select",
 ]
+
+
+class _Yaml12BoolLoader(yaml.SafeLoader):
+    """A ``yaml.SafeLoader`` restricted to the YAML 1.2 core schema's own
+    boolean literal set (``true``/``false``, any casing) — never PyYAML's
+    default YAML 1.1 resolver, which ALSO folds ``yes``/``no``/``on``/``off``
+    into booleans. The corpus authors ISO country codes as bare scalars
+    (``country: NO`` for Norway, ``core/compatibility/fixtures/
+    customer.yaml``) — a genuine string under any modern YAML reading, but
+    silently ``False`` under PyYAML's own default resolver (empirically
+    confirmed): every ``yaml.safe_load`` call over the compatibility corpus
+    (models/cases/fixtures) uses THIS loader instead, so an ISO code (or any
+    other bare corpus scalar) that happens to collide with the YAML 1.1
+    yes/no/on/off vocabulary parses as the STRING the corpus author wrote,
+    never a silently-wrong boolean."""
+
+
+_Yaml12BoolLoader.yaml_implicit_resolvers = {
+    first_char: [(tag, regexp) for tag, regexp in resolvers if tag != "tag:yaml.org,2002:bool"]
+    for first_char, resolvers in yaml.SafeLoader.yaml_implicit_resolvers.items()
+}
+# Reimplements `BaseResolver.add_implicit_resolver`'s own body directly (its
+# classmethod signature carries no type annotations in the `types-PyYAML`
+# stub, so calling it through the class reports `reportUnknownMemberType`;
+# `yaml_implicit_resolvers` itself IS typed `Any` in that same stub, so
+# appending to it directly — PyYAML's own registration logic, verified
+# against `yaml.resolver.BaseResolver.add_implicit_resolver`'s source — needs
+# no suppression).
+for _first_char in "tTfF":
+    _Yaml12BoolLoader.yaml_implicit_resolvers.setdefault(_first_char, []).append(
+        ("tag:yaml.org,2002:bool", re.compile(r"^(?:true|True|TRUE|false|False|FALSE)$"))
+    )
+
+
+def safe_load_yaml(text: str) -> object:
+    """Parse one YAML document with the corpus-wide :class:`_Yaml12BoolLoader`
+    (the single seam every compatibility-corpus YAML read shares — models,
+    cases, and fixtures alike, see that loader's own docstring)."""
+    return yaml.load(text, Loader=_Yaml12BoolLoader)
+
 
 # A ``tags`` entry matching this grammar names a module (m-case-format reserved
 # ``m-`` namespace); every other tag is a free-form feature or slice tag.
@@ -93,7 +134,7 @@ def _case_id(stem: str) -> str:
 
 def load_case(path: Path) -> Case:
     """Parse one compatibility-case YAML file into a :class:`Case`."""
-    loaded = yaml.safe_load(path.read_text(encoding="utf-8"))
+    loaded = safe_load_yaml(path.read_text(encoding="utf-8"))
     if not isinstance(loaded, dict):
         raise ValueError(f"{path.name}: case document is not a mapping")
     document = cast("dict[str, Any]", loaded)

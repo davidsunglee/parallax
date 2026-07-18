@@ -12,8 +12,6 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import cast
 
-import yaml
-
 from parallax.conformance import case_format
 from parallax.core.descriptor import Metamodel, deserialize
 
@@ -27,7 +25,7 @@ def default_models_dir() -> Path:
 
 def load_model(path: Path) -> Metamodel:
     """Ingest one canonical model descriptor into a :class:`Metamodel`."""
-    document = yaml.safe_load(path.read_text(encoding="utf-8"))
+    document = case_format.safe_load_yaml(path.read_text(encoding="utf-8"))
     if not isinstance(document, dict):
         raise ValueError(f"{path.name}: model descriptor is not a mapping")
     return deserialize(cast("Mapping[str, object]", document))

@@ -18,8 +18,6 @@ from contextlib import suppress
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
-import yaml
-
 from parallax.conformance import case_format
 from parallax.core import inheritance
 from parallax.core.db_port import DbPort, JsonDocument
@@ -369,7 +367,7 @@ def load_fixtures(model_ref: str) -> dict[str, object]:
     fixture_path = root / "core" / "compatibility" / "fixtures" / f"{stem}.yaml"
     if not fixture_path.exists():
         return {}
-    loaded = yaml.safe_load(fixture_path.read_text(encoding="utf-8"))
+    loaded = case_format.safe_load_yaml(fixture_path.read_text(encoding="utf-8"))
     if not isinstance(loaded, Mapping):  # pragma: no cover - defensive: corpus fixtures are maps
         return {}
     return dict(cast("Mapping[str, object]", loaded))
