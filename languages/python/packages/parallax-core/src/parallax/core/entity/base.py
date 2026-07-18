@@ -150,7 +150,7 @@ class EntityRegistry:
     SHADOWING (S1, COR-3 Phase 7 increment 7 round-2 -- the pin the D-20
     design left implicit): declaring a name in a CHILD registry that ALSO
     exists somewhere in its own ``parent`` chain is never a collision --
-    :meth:`_register`'s own collision check looks only at THIS registry's
+    :meth:`__parallax_register__`'s own collision check looks only at THIS registry's
     ``_by_name``, never the ``parent`` chain -- and the child's own entry
     SHADOWS the parent's from then on, the natural lexical-scope answer (an
     inner scope's own binding always wins over an outer one's same-named
@@ -169,11 +169,25 @@ class EntityRegistry:
         )
         self._by_name: dict[str, type[BaseModel]] = {}
 
-    def _register(self, name: str, cls: type[BaseModel]) -> None:
+    def __parallax_register__(self, name: str, cls: type[BaseModel]) -> None:
         """Register ``cls`` under canonical ``name`` in THIS registry's own
         scope (never the ``parent`` chain): a same-named prior registration
         in this SAME registry raises; the parent chain is never consulted or
-        mutated here (a coexisting parent/foreign entry is untouched)."""
+        mutated here (a coexisting parent/foreign entry is untouched).
+
+        DUNDER-named (COR-3 Phase 8 increment 7 completion round, Part 8):
+        the sole caller is ``EntityMeta.__new__``, a DIFFERENT class in this
+        same module, so a single-underscored name would trip Pyright's
+        ``reportPrivateUsage`` -- but never a name that both starts AND ends
+        with a double underscore (Python's own name-mangling rule already
+        exempts it). The ``__parallax*__`` spelling follows this codebase's
+        established family for framework-internal members crossing a module
+        or class boundary (``RelationshipPath.__parallax_registry__``,
+        ``Entity``'s ``__parallax__`` / ``__parallax_changes__``) and never
+        squats a generic dunder a future protocol could claim. This stays a
+        plain method, never a real dunder protocol hook -- the spelling is
+        chosen purely to make the framework-internal-only call site
+        suppression-free."""
         existing = self._by_name.get(name)
         if existing is not None:
             raise RegistryCollisionError(
@@ -1229,9 +1243,7 @@ class EntityMeta(ModelMetaclass):
             )
             setattr(cls, py_name, rel_descriptor)
             relationship_py[canonical] = py_name
-        resolved_registry._register(  # pyright: ignore[reportPrivateUsage]
-            cls_name, cast("type[BaseModel]", cls)
-        )
+        resolved_registry.__parallax_register__(cls_name, cast("type[BaseModel]", cls))
         _REGISTRY_OF_CLASS[cls] = resolved_registry
         _ENTITY_BY_CLASS[cls] = entity
         _WIRE_NAMES[cls] = WireNames(

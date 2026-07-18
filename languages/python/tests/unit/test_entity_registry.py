@@ -61,68 +61,61 @@ class _CannedPort:
 # --------------------------------------------------------------------------- #
 # Duplicate registration is a loud error EVERYWHERE (default registry too).   #
 # --------------------------------------------------------------------------- #
-def test_duplicate_registration_in_the_default_registry_raises() -> None:
-    class DuplicateRegistrationDefaultProbe(  # pyright: ignore[reportUnusedClass, reportRedeclaration]
-        Entity, frozen=True
-    ):
-        __parallax__ = EntityConfig(table="dup_default_probe_1", mutability="transactional")
+def _declare_duplicate_default_probe(table: str):
+    """Declare (and thereby register) the probe in the process-default
+    registry. One class statement per call, in its own function scope, so
+    calling this twice IS the duplicate registration under test -- with no
+    redeclared binding for Pyright to flag (each canonical name is declared
+    once per Python scope; the registry, not the scope, sees the collision)."""
+
+    class DuplicateRegistrationDefaultProbe(Entity, frozen=True):
+        __parallax__ = EntityConfig(table=table, mutability="transactional")
 
         id: Attr[int] = Field(primary_key=True, pk_generator="none")
 
+    return DuplicateRegistrationDefaultProbe
+
+
+def test_duplicate_registration_in_the_default_registry_raises() -> None:
+    _declare_duplicate_default_probe("dup_default_probe_1")
     with pytest.raises(RegistryCollisionError, match="DuplicateRegistrationDefaultProbe"):
+        _declare_duplicate_default_probe("dup_default_probe_2")
 
-        class DuplicateRegistrationDefaultProbe(  # pyright: ignore[reportUnusedClass]
-            Entity, frozen=True
-        ):
-            __parallax__ = EntityConfig(table="dup_default_probe_2", mutability="transactional")
 
-            id: Attr[int] = Field(primary_key=True, pk_generator="none")
+def _declare_duplicate_scoped_probe(table: str, registry: EntityRegistry):
+    class DuplicateRegistrationScopedProbe(Entity, frozen=True, registry=registry):
+        __parallax__ = EntityConfig(table=table, mutability="transactional")
+
+        id: Attr[int] = Field(primary_key=True, pk_generator="none")
+
+    return DuplicateRegistrationScopedProbe
 
 
 def test_duplicate_registration_in_a_scoped_registry_raises() -> None:
     scoped = EntityRegistry()
-
-    class DuplicateRegistrationScopedProbe(  # pyright: ignore[reportUnusedClass, reportRedeclaration]
-        Entity, frozen=True, registry=scoped
-    ):
-        __parallax__ = EntityConfig(table="dup_scoped_probe_1", mutability="transactional")
-
-        id: Attr[int] = Field(primary_key=True, pk_generator="none")
-
+    _declare_duplicate_scoped_probe("dup_scoped_probe_1", scoped)
     with pytest.raises(RegistryCollisionError, match="DuplicateRegistrationScopedProbe"):
-
-        class DuplicateRegistrationScopedProbe(  # pyright: ignore[reportUnusedClass]
-            Entity, frozen=True, registry=scoped
-        ):
-            __parallax__ = EntityConfig(table="dup_scoped_probe_2", mutability="transactional")
-
-            id: Attr[int] = Field(primary_key=True, pk_generator="none")
+        _declare_duplicate_scoped_probe("dup_scoped_probe_2", scoped)
 
 
 # --------------------------------------------------------------------------- #
 # The SAME canonical name coexists across TWO DIFFERENT registries.           #
 # --------------------------------------------------------------------------- #
+def _declare_coexisting_probe(table: str, registry: EntityRegistry, marker_default: str):
+    class CoexistingProbe(Entity, frozen=True, registry=registry):
+        __parallax__ = EntityConfig(table=table, mutability="transactional")
+
+        id: Attr[int] = Field(primary_key=True, pk_generator="none")
+        marker: Attr[str] = Field(default=marker_default)
+
+    return CoexistingProbe
+
+
 def test_same_name_in_two_registries_coexists() -> None:
     registry_a = EntityRegistry()
     registry_b = EntityRegistry()
-
-    class CoexistingProbe(  # pyright: ignore[reportRedeclaration]
-        Entity, frozen=True, registry=registry_a
-    ):
-        __parallax__ = EntityConfig(table="coexist_probe_a", mutability="transactional")
-
-        id: Attr[int] = Field(primary_key=True, pk_generator="none")
-        marker: Attr[str] = Field(default="a")
-
-    class_a = CoexistingProbe
-
-    class CoexistingProbe(Entity, frozen=True, registry=registry_b):
-        __parallax__ = EntityConfig(table="coexist_probe_b", mutability="transactional")
-
-        id: Attr[int] = Field(primary_key=True, pk_generator="none")
-        marker: Attr[str] = Field(default="b")
-
-    class_b = CoexistingProbe
+    class_a = _declare_coexisting_probe("coexist_probe_a", registry_a, "a")
+    class_b = _declare_coexisting_probe("coexist_probe_b", registry_b, "b")
 
     assert class_a is not class_b
     assert registry_a.resolve("CoexistingProbe") is class_a
@@ -167,6 +160,19 @@ def _build_hub_family(registry: EntityRegistry) -> tuple[Any, Any, Any]:
     return Hub, Spoke, Detail
 
 
+def _declare_bare_spoke(registry: EntityRegistry):
+    """A relationship-free "Spoke" -- the same canonical name as
+    `_build_hub_family`'s, declared in a FOREIGN registry purely for its
+    registration side effect."""
+
+    class Spoke(Entity, frozen=True, registry=registry):
+        __parallax__ = EntityConfig(table="spoke_y", mutability="transactional")
+
+        id: Attr[int] = Field(primary_key=True, pk_generator="none")
+
+    return Spoke
+
+
 def test_dynamic_relationship_hop_resolves_within_the_declaring_registry() -> None:
     registry_x = EntityRegistry()
     registry_y = EntityRegistry()
@@ -176,10 +182,7 @@ def test_dynamic_relationship_hop_resolves_within_the_declaring_registry() -> No
     # `registry_x`'s, but declares NO relationship at all -- a same-named
     # foreign class registered elsewhere must be INVISIBLE to the dynamic hop
     # resolving `Hub.spokes.extra` inside `registry_x`'s own scope.
-    class Spoke(Entity, frozen=True, registry=registry_y):  # pyright: ignore[reportUnusedClass]
-        __parallax__ = EntityConfig(table="spoke_y", mutability="transactional")
-
-        id: Attr[int] = Field(primary_key=True, pk_generator="none")
+    _declare_bare_spoke(registry_y)
 
     path = hub_x.spokes.extra  # first hop typed (Rel[T]); second hop dynamic (__getattr__)
     assert path.target == "Detail"
@@ -245,25 +248,21 @@ def test_attribute_expr_set_validates_within_the_declaring_registry() -> None:
 # The regression pin: `db.find` instantiates the CONNECTED metamodel's own    #
 # class even with a same-named class registered elsewhere.                    #
 # --------------------------------------------------------------------------- #
+def _declare_sample_probe(table: str, registry: EntityRegistry, flavor_default: str):
+    class Sample(Entity, frozen=True, registry=registry):
+        __parallax__ = EntityConfig(table=table, mutability="transactional")
+
+        id: Attr[int] = Field(primary_key=True, pk_generator="none")
+        flavor: Attr[str] = Field(default=flavor_default)
+
+    return Sample
+
+
 def test_db_find_instantiates_the_connected_registrys_own_class() -> None:
     registry_a = EntityRegistry()
     registry_b = EntityRegistry()
-
-    class Sample(  # pyright: ignore[reportRedeclaration]
-        Entity, frozen=True, registry=registry_a
-    ):
-        __parallax__ = EntityConfig(table="sample_a", mutability="transactional")
-
-        id: Attr[int] = Field(primary_key=True, pk_generator="none")
-        flavor: Attr[str] = Field(default="a")
-
-    sample_a = Sample
-
-    class Sample(Entity, frozen=True, registry=registry_b):
-        __parallax__ = EntityConfig(table="sample_b", mutability="transactional")
-
-        id: Attr[int] = Field(primary_key=True, pk_generator="none")
-        flavor: Attr[str] = Field(default="b")
+    sample_a = _declare_sample_probe("sample_a", registry_a, "a")
+    _declare_sample_probe("sample_b", registry_b, "b")
 
     port = _CannedPort([{"id": 1, "flavor": "a"}])
     db = Database.connect(port, registry_a.metamodel())
@@ -305,15 +304,21 @@ def test_family_subclass_registry_mismatch_raises() -> None:
 
         id: Attr[int] = Field(primary_key=True, pk_generator="none")
 
-    other = EntityRegistry()
-    with pytest.raises(EntityDefinitionError, match="registry"):
+    def declare_mismatched_leaf(registry: EntityRegistry):
+        """Declare a concrete leaf under the root with an EXPLICIT
+        (mismatched) ``registry=`` -- the class-definition-time rejection
+        under test."""
 
-        class FamilyLeafProbe(  # pyright: ignore[reportUnusedClass]
-            FamilyRootProbe, frozen=True, registry=other
-        ):
+        class FamilyLeafProbe(FamilyRootProbe, frozen=True, registry=registry):
             __parallax__ = EntityConfig(
                 mutability="transactional", inheritance=Concrete(tag_value="leaf")
             )
+
+        return FamilyLeafProbe
+
+    other = EntityRegistry()
+    with pytest.raises(EntityDefinitionError, match="registry"):
+        declare_mismatched_leaf(other)
 
 
 # --------------------------------------------------------------------------- #
@@ -321,6 +326,19 @@ def test_family_subclass_registry_mismatch_raises() -> None:
 # regression -- a table-per-hierarchy family's SHARED-TABLE default must      #
 # never cross a registry boundary, even for two SAME-NAMED roots.            #
 # --------------------------------------------------------------------------- #
+def _declare_tph_animal_root(table: str, registry: EntityRegistry):
+    class Animal(Entity, frozen=True, registry=registry):
+        __parallax__ = EntityConfig(
+            table=table,
+            mutability="transactional",
+            inheritance=FamilyRoot(strategy="table-per-hierarchy", tag="kind"),
+        )
+
+        id: Attr[int] = Field(primary_key=True, pk_generator="none")
+
+    return Animal
+
+
 def test_family_shared_table_does_not_leak_across_registries() -> None:
     """Reproduces the reviewer's defect verbatim: a bare-canonical-name-keyed
     shared-table cache let a SECOND registry's same-named TPH root overwrite
@@ -331,31 +349,12 @@ def test_family_shared_table_does_not_leak_across_registries() -> None:
     order."""
     registry_a = EntityRegistry()
     registry_b = EntityRegistry()
-
-    class Animal(  # pyright: ignore[reportRedeclaration]
-        Entity, frozen=True, registry=registry_a
-    ):
-        __parallax__ = EntityConfig(
-            table="animals_a",
-            mutability="transactional",
-            inheritance=FamilyRoot(strategy="table-per-hierarchy", tag="kind"),
-        )
-
-        id: Attr[int] = Field(primary_key=True, pk_generator="none")
-
-    animal_a = Animal
+    animal_a = _declare_tph_animal_root("animals_a", registry_a)
 
     # A SAME-NAMED root in a DIFFERENT registry, compiled AFTER `animal_a` but
     # BEFORE its own concrete subtype below -- exactly the interleaving that
     # let the bare-name-keyed bookkeeping overwrite registry A's entry pre-fix.
-    class Animal(Entity, frozen=True, registry=registry_b):
-        __parallax__ = EntityConfig(
-            table="animals_b",
-            mutability="transactional",
-            inheritance=FamilyRoot(strategy="table-per-hierarchy", tag="kind"),
-        )
-
-        id: Attr[int] = Field(primary_key=True, pk_generator="none")
+    _declare_tph_animal_root("animals_b", registry_b)
 
     class Dog(animal_a, frozen=True):
         __parallax__ = EntityConfig(
@@ -372,28 +371,24 @@ def test_family_shared_table_does_not_leak_across_registries() -> None:
 # a name that ALSO exists in its own `parent` chain is never a collision --   #
 # the child's own entry shadows the parent's, the parent itself unaffected.   #
 # --------------------------------------------------------------------------- #
-def test_child_registry_entry_shadows_a_same_named_parent_entry() -> None:
-    parent = EntityRegistry(parent=None)
-
-    class ShadowProbe(  # pyright: ignore[reportRedeclaration]
-        Entity, frozen=True, registry=parent
-    ):
-        __parallax__ = EntityConfig(table="shadow_probe_parent", mutability="transactional")
+def _declare_shadow_probe(table: str, registry: EntityRegistry):
+    class ShadowProbe(Entity, frozen=True, registry=registry):
+        __parallax__ = EntityConfig(table=table, mutability="transactional")
 
         id: Attr[int] = Field(primary_key=True, pk_generator="none")
 
-    parent_class = ShadowProbe
+    return ShadowProbe
+
+
+def test_child_registry_entry_shadows_a_same_named_parent_entry() -> None:
+    parent = EntityRegistry(parent=None)
+    parent_class = _declare_shadow_probe("shadow_probe_parent", parent)
     child = EntityRegistry(parent=parent)
 
     # Declaring the SAME name in the CHILD raises no `RegistryCollisionError`
-    # at all -- `_register`'s own collision check looks only at the
-    # registering registry's OWN scope, never its `parent` chain.
-    class ShadowProbe(Entity, frozen=True, registry=child):
-        __parallax__ = EntityConfig(table="shadow_probe_child", mutability="transactional")
-
-        id: Attr[int] = Field(primary_key=True, pk_generator="none")
-
-    child_class = ShadowProbe
+    # at all -- `__parallax_register__`'s own collision check looks only at
+    # the registering registry's OWN scope, never its `parent` chain.
+    child_class = _declare_shadow_probe("shadow_probe_child", child)
 
     # The child's own entry shadows the parent's from here on...
     assert child.resolve("ShadowProbe") is child_class
@@ -433,16 +428,12 @@ def test_bare_metamodel_over_an_incompatible_mixed_set_raises() -> None:
     registry_a = EntityRegistry(parent=None)
     registry_b = EntityRegistry(parent=None)
 
-    class IncompatibleProbeA(  # pyright: ignore[reportUnusedClass]
-        Entity, frozen=True, registry=registry_a
-    ):
+    class IncompatibleProbeA(Entity, frozen=True, registry=registry_a):
         __parallax__ = EntityConfig(table="incompatible_probe_a", mutability="transactional")
 
         id: Attr[int] = Field(primary_key=True, pk_generator="none")
 
-    class IncompatibleProbeB(  # pyright: ignore[reportUnusedClass]
-        Entity, frozen=True, registry=registry_b
-    ):
+    class IncompatibleProbeB(Entity, frozen=True, registry=registry_b):
         __parallax__ = EntityConfig(table="incompatible_probe_b", mutability="transactional")
 
         id: Attr[int] = Field(primary_key=True, pk_generator="none")
@@ -501,26 +492,21 @@ def test_bare_metamodel_over_a_same_name_pair_shadowed_within_one_registry_chain
     # the shadowed PARENT class is the SAME conflict as the cross-registry
     # reproduction above, just one level removed.
     parent = EntityRegistry(parent=None)
-
-    class ShadowConflictProbe(  # pyright: ignore[reportRedeclaration]
-        Entity, frozen=True, registry=parent
-    ):
-        __parallax__ = EntityConfig(table="shadow_conflict_parent", mutability="transactional")
-
-        id: Attr[int] = Field(primary_key=True, pk_generator="none")
-
-    parent_class = ShadowConflictProbe
+    parent_class = _declare_shadow_conflict_probe("shadow_conflict_parent", parent)
     child = EntityRegistry(parent=parent)
-
-    class ShadowConflictProbe(Entity, frozen=True, registry=child):
-        __parallax__ = EntityConfig(table="shadow_conflict_child", mutability="transactional")
-
-        id: Attr[int] = Field(primary_key=True, pk_generator="none")
-
-    child_class = ShadowConflictProbe
+    child_class = _declare_shadow_conflict_probe("shadow_conflict_child", child)
 
     with pytest.raises(ValueError, match="conflicting same-name classes"):
         metamodel([parent_class, child_class])
+
+
+def _declare_shadow_conflict_probe(table: str, registry: EntityRegistry):
+    class ShadowConflictProbe(Entity, frozen=True, registry=registry):
+        __parallax__ = EntityConfig(table=table, mutability="transactional")
+
+        id: Attr[int] = Field(primary_key=True, pk_generator="none")
+
+    return ShadowConflictProbe
 
 
 # --------------------------------------------------------------------------- #

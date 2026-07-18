@@ -474,16 +474,14 @@ def test_meta_of_a_scoped_class_resolves_family_siblings_from_its_own_registry()
 
         id: Attr[int] = Field(primary_key=True, pk_generator="none")
 
-    class ScopedFamilyLeaf(  # pyright: ignore[reportUnusedClass]
-        ScopedFamilyRoot, frozen=True
-    ):
+    class ScopedFamilyLeaf(ScopedFamilyRoot, frozen=True):
         __parallax__ = EntityConfig(
             mutability="transactional", inheritance=Concrete(tag_value="leaf")
         )
 
     family = meta(ScopedFamilyRoot).family
     assert family is not None
-    assert family.subtypes == ("ScopedFamilyLeaf",)
+    assert family.subtypes == (ScopedFamilyLeaf.__name__,)
 
 
 def test_meta_temporal_is_the_family_effective_classification() -> None:
