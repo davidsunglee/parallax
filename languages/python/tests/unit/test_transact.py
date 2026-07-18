@@ -2050,3 +2050,83 @@ def test_keyed_terminate_on_a_non_temporal_target_forbids_business_from() -> Non
 
     with pytest.raises(ValueError, match="takes no business_from"):
         _db(port).transact(fn)
+
+
+# --------------------------------------------------------------------------- #
+# Window-order validation (S4, COR-3 Phase 8 increment 7 remediation):        #
+# `python.md` §5 "the `*_until` trio additionally requires `until`, with      #
+# `business_from < until` ... all validated at build" — an EQUAL and a        #
+# REVERSED window both reject, at the verb call, before any buffering, for    #
+# BOTH the KEYED (`update_until`/`terminate_until`) and `_where`              #
+# (`update_until_where`/`terminate_until_where`) verb families — the ONE      #
+# shared `_validate_until` validator (`handle.py`) makes all four converge.   #
+# --------------------------------------------------------------------------- #
+def test_keyed_update_until_rejects_an_equal_window_bound() -> None:
+    port = _RecordingPort(rows=[_position_row_dt()])
+    business_from = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
+
+    def fn(tx: Transaction) -> None:
+        fetched = tx.find(WherePosition.where(WherePosition.id == 1)).result()
+        tx.update_until(
+            fetched.model_copy(update={"value": Decimal("200.00")}),
+            business_from=business_from,
+            until=business_from,
+        )
+
+    with pytest.raises(ValueError, match="requires business_from < until"):
+        Database.connect(port, _WHERE_POSITION_META, clock=FixedClock(_FIXED)).transact(
+            fn, concurrency="optimistic"
+        )
+
+
+def test_keyed_terminate_until_rejects_a_reversed_window_bound() -> None:
+    port = _RecordingPort(rows=[_position_row_dt()])
+    business_from = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
+    until = dt.datetime(2024, 3, 1, tzinfo=dt.UTC)  # BEFORE business_from — reversed
+
+    def fn(tx: Transaction) -> None:
+        fetched = tx.find(WherePosition.where(WherePosition.id == 1)).result()
+        tx.terminate_until(fetched, business_from=business_from, until=until)
+
+    with pytest.raises(ValueError, match="requires business_from < until"):
+        Database.connect(port, _WHERE_POSITION_META, clock=FixedClock(_FIXED)).transact(
+            fn, concurrency="optimistic"
+        )
+
+
+def test_materializing_update_until_where_rejects_an_equal_window_bound() -> None:
+    # No resolving read ever fires — the window rejects at build, before any
+    # buffering (`_buffer_predicate`, before `_materialize_predicate_write`).
+    port = _RecordingPort()
+    business_from = dt.datetime(2024, 7, 1, tzinfo=dt.UTC)
+
+    def fn(tx: Transaction) -> None:
+        tx.update_until_where(
+            WherePosition.where(WherePosition.id == 1),
+            WherePosition.value.set(Decimal("300.00")),
+            business_from=business_from,
+            until=business_from,
+        )
+
+    with pytest.raises(ValueError, match="requires business_from < until"):
+        Database.connect(port, _WHERE_POSITION_META, clock=FixedClock(_FIXED)).transact(
+            fn, concurrency="optimistic"
+        )
+    assert not any(op[0] in ("read", "write") for op in port.ops)  # never reached the resolve
+
+
+def test_materializing_terminate_until_where_rejects_a_reversed_window_bound() -> None:
+    port = _RecordingPort()
+    business_from = dt.datetime(2024, 7, 1, tzinfo=dt.UTC)
+    until = dt.datetime(2024, 4, 1, tzinfo=dt.UTC)  # BEFORE business_from — reversed
+
+    def fn(tx: Transaction) -> None:
+        tx.terminate_until_where(
+            WherePosition.where(WherePosition.id == 1), business_from=business_from, until=until
+        )
+
+    with pytest.raises(ValueError, match="requires business_from < until"):
+        Database.connect(port, _WHERE_POSITION_META, clock=FixedClock(_FIXED)).transact(
+            fn, concurrency="optimistic"
+        )
+    assert not any(op[0] in ("read", "write") for op in port.ops)  # never reached the resolve

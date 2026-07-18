@@ -1449,14 +1449,12 @@ class Transaction:
         Mirrors ``update_where``'s own bitemporal-only-required
         :func:`_validate_business_from`: an audit-only or non-temporal target
         takes none (no business axis to bound)."""
-        record = _entity_record_of_instance(copy)
-        declaring = inheritance.declaring_entity(self._meta, record)
-        business_from_literal = _validate_business_from(declaring, "update", business_from)
-        effective = effective_change_set(copy)
-        if not effective:
+        record, _declaring, business_from_literal = self._prepare_keyed_write(
+            copy, "update", business_from
+        )
+        row = _prepare_sparse_row(copy)
+        if row is None:
             return
-        row: dict[str, object] = primary_key_row(copy)
-        row.update(canonical_row(copy, effective))
         self._buffer("update", record.name, row, business_from=business_from_literal)
 
     def delete(self, node_or_instance: EntityBase) -> None:
@@ -1489,9 +1487,9 @@ class Transaction:
         axis to bound); bitemporal REQUIRES it (the mutation's own business
         instant, mirrors ``terminate_where``'s own
         :func:`_validate_business_from`)."""
-        record = _entity_record_of_instance(node_or_instance)
-        declaring = inheritance.declaring_entity(self._meta, record)
-        business_from_literal = _validate_business_from(declaring, "terminate", business_from)
+        record, _declaring, business_from_literal = self._prepare_keyed_write(
+            node_or_instance, "terminate", business_from
+        )
         self._buffer(
             "terminate",
             record.name,
@@ -1508,21 +1506,24 @@ class Transaction:
         (`m-bitemp-write` "The rectangle split") — bitemporal-only (mirrors
         ``update_until_where``'s own required, non-optional ``business_from``
         / ``until``). An EMPTY effective change set issues no DML at all,
-        exactly like keyed ``update``."""
-        record = _entity_record_of_instance(copy)
-        declaring = inheritance.declaring_entity(self._meta, record)
-        business_from_literal = _validate_business_from(declaring, "updateUntil", business_from)
-        effective = effective_change_set(copy)
-        if not effective:
+        exactly like keyed ``update`` — checked BEFORE the window-order
+        validation below, so the no-op-first rule (spec §3/§5) takes
+        precedence. A window that does not satisfy ``business_from < until``
+        (equal or reversed bounds) raises at THIS call, before any buffering
+        (:func:`_validate_until`, `python.md` §5)."""
+        record, declaring, business_from_literal = self._prepare_keyed_write(
+            copy, "updateUntil", business_from
+        )
+        row = _prepare_sparse_row(copy)
+        if row is None:
             return
-        row: dict[str, object] = primary_key_row(copy)
-        row.update(canonical_row(copy, effective))
+        until_literal = _validate_until(declaring, "updateUntil", business_from, until)
         self._buffer(
             "updateUntil",
             record.name,
             row,
             business_from=business_from_literal,
-            business_to=instant_literal(until),
+            business_to=until_literal,
         )
 
     def terminate_until(
@@ -1532,17 +1533,42 @@ class Transaction:
         single business window ``[business_from, until)`` on
         ``node_or_instance``'s current milestone, keyed off its primary key
         alone (`m-bitemp-write`) — bitemporal-only (mirrors
-        ``terminate_until_where``)."""
-        record = _entity_record_of_instance(node_or_instance)
-        declaring = inheritance.declaring_entity(self._meta, record)
-        business_from_literal = _validate_business_from(declaring, "terminateUntil", business_from)
+        ``terminate_until_where``). A window that does not satisfy
+        ``business_from < until`` (equal or reversed bounds) raises at THIS
+        call, before any buffering (:func:`_validate_until`, `python.md`
+        §5)."""
+        record, declaring, business_from_literal = self._prepare_keyed_write(
+            node_or_instance, "terminateUntil", business_from
+        )
+        until_literal = _validate_until(declaring, "terminateUntil", business_from, until)
         self._buffer(
             "terminateUntil",
             record.name,
             primary_key_row(node_or_instance),
             business_from=business_from_literal,
-            business_to=instant_literal(until),
+            business_to=until_literal,
         )
+
+    def _prepare_keyed_write(
+        self, node_or_instance: EntityBase, mutation: str, business_from: dt.datetime | None
+    ) -> tuple[Entity, Entity, str | None]:
+        """The keyed-verb prep every verb above (``insert``/``delete``
+        excepted — neither takes a business-window bound) opens with (N2,
+        COR-3 Phase 8 increment 7 remediation): resolve the written
+        instance's own :class:`~parallax.core.descriptor.Entity` record and
+        its family's DECLARING entity
+        (:func:`~parallax.core.inheritance.declaring_entity` — the entity
+        that actually carries the temporal/versioned shape), then validate +
+        render ``business_from`` against that declaring entity's own
+        temporality (:func:`_validate_business_from`, spec §5). Returns the
+        record (``_buffer``'s own entity-name argument), the declaring entity
+        (a ``*Until`` verb's own :func:`_validate_until` needs it too, for
+        its error message), and the rendered instant literal (``None`` for a
+        non-temporal/audit-only target)."""
+        record = _entity_record_of_instance(node_or_instance)
+        declaring = inheritance.declaring_entity(self._meta, record)
+        business_from_literal = _validate_business_from(declaring, mutation, business_from)
+        return record, declaring, business_from_literal
 
     def find(self, statement: EntityStatement) -> Snapshot[Any]:
         """Run a participating read for ``statement`` and return ``Snapshot[T]``
@@ -1712,7 +1738,10 @@ class Transaction:
         3. **Business-bound validation** — a bitemporal target REQUIRES
            ``business_from`` (its own business instant); an audit-only or
            non-temporal target takes none (no business axis to bound); the
-           ``*Until`` forms additionally require ``until``.
+           ``*Until`` forms additionally require ``until``, with
+           ``business_from < until`` — an equal or reversed window rejects
+           HERE, at build, before any buffering (:func:`_validate_until`, S4
+           COR-3 Phase 8 increment 7 remediation).
         4. **Build + validate the canonical instruction** (the SAME
            deserialize/`validate_instruction` round trip a keyed write buys in
            :meth:`_buffer` — non-empty/no-duplicate assignments are the schema's
@@ -1731,7 +1760,10 @@ class Transaction:
         inheritance.reject_predicate_write(entity)
         declaring = inheritance.declaring_entity(self._meta, entity)
         business_from_literal = _validate_business_from(declaring, mutation, business_from)
-        until_literal = instant_literal(until) if until is not None else None
+        until_literal: str | None = None
+        if until is not None:
+            assert business_from is not None  # `*_until_where` verbs require both together
+            until_literal = _validate_until(declaring, mutation, business_from, until)
 
         doc: dict[str, object] = {
             "mutation": mutation,
@@ -2066,9 +2098,12 @@ def _row_payload(
 # --------------------------------------------------------------------------- #
 # Predicate-write materialization (COR-3 Phase 8 increment 5; m-opt-lock      #
 # "Predicate-selected writes materialize when observations are needed";       #
-# ADR 0014). Pure functions the SOLE caller (`Transaction.                    #
-# _materialize_predicate_write`) drives against its OWN resolved rows — never #
-# an implicit read of their own.                                              #
+# ADR 0014) — plus the build-time window/no-op validators every keyed AND     #
+# `_where` temporal verb shares (`_validate_business_from` / `_validate_until`#
+# / `_prepare_sparse_row`, S4/N2 COR-3 Phase 8 increment 7 remediation).       #
+# `_materialize_row`/`_apply_assignments` below are pure functions the SOLE   #
+# caller (`Transaction._materialize_predicate_write`) drives against its OWN  #
+# resolved rows — never an implicit read of their own.                        #
 # --------------------------------------------------------------------------- #
 def _validate_business_from(
     declaring: Entity, mutation: str, business_from: dt.datetime | None
@@ -2092,6 +2127,41 @@ def _validate_business_from(
             f"({declaring.name!r} declares no business axis to bound)"
         )
     return None
+
+
+def _prepare_sparse_row(copy: EntityBase) -> dict[str, object] | None:
+    """The sparse keyed ``update``/``updateUntil`` row (N2, COR-3 Phase 8
+    increment 7 remediation): primary key + the edited copy's own effective
+    change set (:func:`effective_change_set`) — ``None`` for an EMPTY
+    effective set (the no-op-first rule, spec §3/§5): both keyed verbs return
+    immediately on ``None``, BEFORE ``updateUntil``'s own window-order
+    validation ever runs (:func:`_validate_until`)."""
+    effective = effective_change_set(copy)
+    if not effective:
+        return None
+    row: dict[str, object] = primary_key_row(copy)
+    row.update(canonical_row(copy, effective))
+    return row
+
+
+def _validate_until(
+    declaring: Entity, mutation: str, business_from: dt.datetime, until: dt.datetime
+) -> str:
+    """Validate + render a ``*Until`` verb's window bound (`python.md` §5:
+    "the `*_until` trio additionally requires `until`, with `business_from <
+    until` ... all validated at build"): reject an equal or reversed window
+    — ``until`` must be STRICTLY later than ``business_from`` — at the verb
+    call, before any buffering (never at flush time). Shared by every keyed
+    AND ``_where`` ``*Until`` verb (``update_until`` / ``terminate_until`` /
+    ``update_until_where`` / ``terminate_until_where``, S4 COR-3 Phase 8
+    increment 7 remediation) — one validator, so none of the four can drift
+    from the others."""
+    if until <= business_from:
+        raise ValueError(
+            f"{declaring.name}: {mutation!r} requires business_from < until "
+            f"(python.md §5) — got business_from={business_from!r}, until={until!r}"
+        )
+    return instant_literal(until)
 
 
 def _materialize_row(
