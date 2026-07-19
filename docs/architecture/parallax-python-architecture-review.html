@@ -1,0 +1,411 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Architecture review — Parallax Python</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script type="module">
+      import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+      mermaid.initialize({
+        startOnLoad: true,
+        theme: "neutral",
+        securityLevel: "loose",
+        flowchart: { curve: "basis", htmlLabels: true }
+      });
+    </script>
+    <style>
+      :root { color-scheme: light; }
+      html { scroll-behavior: smooth; }
+      body { background: #f7f5f0; }
+      .seam { border-style: dashed; }
+      .deep { background: linear-gradient(145deg, #172033, #263653); color: #fff; }
+      .paper { box-shadow: 0 18px 50px rgba(15, 23, 42, .07); }
+      .diagram-grid { background-image: radial-gradient(#cbd5e1 0.7px, transparent 0.7px); background-size: 14px 14px; }
+      .code-path { overflow-wrap: anywhere; }
+      .mass-bar { transition: width .2s ease; }
+      .module-chip { box-shadow: inset 0 0 0 1px rgba(15, 23, 42, .08); }
+      .leak-arrow { color: #dc2626; font-weight: 800; }
+      .mermaid { min-width: 0; }
+      @media print {
+        body { background: white; }
+        .paper { box-shadow: none; break-inside: avoid; }
+      }
+    </style>
+  </head>
+  <body class="text-slate-900 font-sans antialiased">
+    <main class="max-w-6xl mx-auto px-5 py-10 md:px-8 md:py-14 space-y-12">
+      <header class="border-b border-slate-300 pb-8">
+        <div class="flex flex-col gap-5 md:flex-row md:items-end md:justify-between">
+          <div>
+            <p class="text-xs uppercase tracking-[.24em] text-emerald-700 font-semibold">Architecture review</p>
+            <h1 class="mt-2 text-4xl md:text-5xl font-serif tracking-tight">Parallax · Python implementation</h1>
+            <p class="mt-3 font-mono text-sm text-slate-500">languages/python · 2026-07-19</p>
+          </div>
+          <div class="flex flex-wrap gap-3 text-xs text-slate-600">
+            <span class="inline-flex items-center gap-2"><span class="h-4 w-7 rounded border border-slate-500 bg-white"></span> module</span>
+            <span class="inline-flex items-center gap-2"><span class="h-4 w-7 rounded border-2 border-dashed border-indigo-500 bg-white"></span> seam</span>
+            <span class="inline-flex items-center gap-2"><span class="h-4 w-7 rounded bg-slate-800"></span> deep module</span>
+            <span class="inline-flex items-center gap-2"><span class="text-red-600 font-bold">→</span> leakage</span>
+          </div>
+        </div>
+      </header>
+
+      <section id="candidates" class="space-y-10">
+        <div class="grid lg:grid-cols-[1.05fr_.95fr] gap-6">
+          <div class="paper rounded-2xl border border-slate-200 bg-white p-6">
+            <div class="flex items-center justify-between gap-4">
+              <h2 class="text-xl font-serif">Hotspot mass</h2>
+              <span class="text-xs uppercase tracking-wider text-slate-500">Python files</span>
+            </div>
+            <div class="mt-5 space-y-3 text-sm">
+              <div><div class="flex justify-between"><span class="font-mono">conformance/engine.py</span><span>3,468 · dev</span></div><div class="mt-1 h-2 rounded bg-slate-100"><div class="mass-bar h-2 w-full rounded bg-amber-500"></div></div></div>
+              <div><div class="flex justify-between"><span class="font-mono">snapshot/handle.py</span><span>2,723 · prod</span></div><div class="mt-1 h-2 rounded bg-slate-100"><div class="mass-bar h-2 w-[78%] rounded bg-emerald-600"></div></div></div>
+              <div><div class="flex justify-between"><span class="font-mono">sql_gen/compile.py</span><span>1,553 · prod</span></div><div class="mt-1 h-2 rounded bg-slate-100"><div class="mass-bar h-2 w-[45%] rounded bg-emerald-600"></div></div></div>
+              <div><div class="flex justify-between"><span class="font-mono">entity/base.py</span><span>1,393 · prod</span></div><div class="mt-1 h-2 rounded bg-slate-100"><div class="mass-bar h-2 w-[40%] rounded bg-emerald-600"></div></div></div>
+              <div><div class="flex justify-between"><span class="font-mono">conformance/api_suite.py</span><span>1,182 · dev</span></div><div class="mt-1 h-2 rounded bg-slate-100"><div class="mass-bar h-2 w-[34%] rounded bg-amber-500"></div></div></div>
+              <div><div class="flex justify-between"><span class="font-mono">conformance/stories.py</span><span>892 · dev</span></div><div class="mt-1 h-2 rounded bg-slate-100"><div class="mass-bar h-2 w-[26%] rounded bg-amber-500"></div></div></div>
+              <div><div class="flex justify-between"><span class="font-mono">inheritance/__init__.py</span><span>778 · prod</span></div><div class="mt-1 h-2 rounded bg-slate-100"><div class="mass-bar h-2 w-[22%] rounded bg-emerald-600"></div></div></div>
+              <div><div class="flex justify-between"><span class="font-mono">entity/expressions.py</span><span>713 · prod</span></div><div class="mt-1 h-2 rounded bg-slate-100"><div class="mass-bar h-2 w-[21%] rounded bg-slate-400"></div></div></div>
+            </div>
+            <p class="mt-5 text-xs text-slate-500">713 and below already sits inside the requested 500–750 line band.</p>
+          </div>
+
+          <div class="paper rounded-2xl border border-slate-200 bg-slate-900 text-white p-6">
+            <p class="text-xs uppercase tracking-[.2em] text-emerald-300 font-semibold">Dependency verdict</p>
+            <h2 class="mt-2 text-2xl font-serif">Keep the artifact seams. Refine source ownership.</h2>
+            <div class="mt-6 space-y-4 text-sm text-slate-200">
+              <div class="flex gap-3"><span class="text-emerald-300 font-bold">✓</span><span><strong class="text-white">ADR 0022 is earning leverage:</strong> core, Snapshot, Postgres, and conformance remain honest deployable artifacts.</span></div>
+              <div class="flex gap-3"><span class="text-emerald-300 font-bold">✓</span><span><strong class="text-white">The behavioral DAG is sound:</strong> no illegal modeled production import was found.</span></div>
+              <div class="flex gap-3"><span class="text-amber-300 font-bold">!</span><span><strong class="text-white">Support scopes are coarse:</strong> handle and entity permit wide fan-in without internal locality.</span></div>
+              <div class="flex gap-3"><span class="text-red-300 font-bold">!</span><span><strong class="text-white">Ownership is incomplete:</strong> <code class="text-emerald-200">parallax.snapshot.wrap</code> and package interface modules are not modeled.</span></div>
+            </div>
+            <div class="mt-6 rounded-xl border border-slate-700 bg-slate-800/70 p-4 text-xs text-slate-300">
+              Evidence: <code>check_dag_sync.py:46–109</code>, <code>python.md:841–923</code>, <code>wrap.py:75–82</code>.
+            </div>
+          </div>
+        </div>
+
+        <article id="snapshot-handle" class="paper rounded-2xl border border-slate-200 bg-white overflow-hidden">
+          <div class="p-6 md:p-8">
+            <div class="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+              <div>
+                <p class="text-xs uppercase tracking-[.2em] text-slate-500">Candidate 01</p>
+                <h2 class="mt-1 text-3xl font-serif">Deepen the Snapshot handle as a package</h2>
+              </div>
+              <div class="flex flex-wrap gap-2">
+                <span class="rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-800">Strong</span>
+                <span class="rounded-full bg-indigo-100 px-3 py-1 text-xs font-semibold text-indigo-800">local-substitutable</span>
+              </div>
+            </div>
+
+            <div class="mt-5 rounded-lg bg-slate-50 p-4 font-mono text-xs text-slate-700 code-path">
+              packages/parallax-snapshot/src/parallax/snapshot/handle.py:1–2723<br />
+              packages/parallax-snapshot/src/parallax/snapshot/wrap.py:1–401<br />
+              tests/unit/test_transact.py:1–2444 · test_snapshot_find.py · test_snapshot_wrap.py
+            </div>
+
+            <div class="mt-7 grid lg:grid-cols-2 gap-5">
+              <div>
+                <p class="mb-2 text-xs uppercase tracking-wider text-slate-500">Before · one physical file, five change reasons</p>
+                <div class="diagram-grid relative h-[330px] rounded-xl border border-slate-200 bg-white p-5">
+                  <div class="absolute left-3 top-4 bottom-4 w-1 rounded bg-red-500"></div>
+                  <div class="ml-5 h-full rounded-xl border-2 border-slate-700 overflow-hidden bg-white">
+                    <div class="h-[31%] border-b border-slate-300 bg-rose-50 p-4"><div class="text-xs uppercase tracking-wider">Write lowering</div><div class="mt-1 text-2xl font-serif">~863 lines</div><div class="mt-2 text-xs text-slate-500">keyed · temporal · batch · predicate</div></div>
+                    <div class="h-[13%] border-b border-slate-300 bg-sky-50 px-4 py-2"><span class="text-xs uppercase tracking-wider">Snapshot + read execution · ~337</span></div>
+                    <div class="h-[41%] border-b border-slate-300 bg-amber-50 p-4"><div class="text-xs uppercase tracking-wider">Transaction + observations</div><div class="mt-1 text-2xl font-serif">~1,117 lines</div><div class="mt-2 text-xs text-slate-500">keyed verbs · where verbs · row preparation</div></div>
+                    <div class="h-[15%] bg-violet-50 px-4 py-3"><span class="text-xs uppercase tracking-wider">Database · retry · flush · ~262</span></div>
+                  </div>
+                  <div class="absolute right-3 top-6 rounded bg-red-50 px-2 py-1 text-[10px] font-mono text-red-700">13 declared dependencies</div>
+                </div>
+              </div>
+              <div>
+                <p class="mb-2 text-xs uppercase tracking-wider text-slate-500">After · one deep external seam, private locality</p>
+                <div class="diagram-grid h-[330px] rounded-xl border-2 border-dashed border-indigo-500 bg-indigo-50/40 p-4">
+                  <div class="flex items-center justify-between rounded-lg bg-slate-900 px-4 py-3 text-white">
+                    <span class="text-xs uppercase tracking-wider">parallax.snapshot.handle interface</span><span class="text-xs text-emerald-300">stable</span>
+                  </div>
+                  <div class="mt-3 grid grid-cols-2 gap-2 text-xs">
+                    <div class="module-chip rounded-lg bg-white p-3"><strong>Snapshot results</strong><br /><span class="text-slate-500">~160</span></div>
+                    <div class="module-chip rounded-lg bg-white p-3"><strong>Read execution</strong><br /><span class="text-slate-500">~360</span></div>
+                    <div class="module-chip rounded-lg bg-white p-3"><strong>Keyed lowering</strong><br /><span class="text-slate-500">~550</span></div>
+                    <div class="module-chip rounded-lg bg-white p-3"><strong>Temporal + set lowering</strong><br /><span class="text-slate-500">~350</span></div>
+                    <div class="module-chip rounded-lg bg-white p-3"><strong>Transaction verbs</strong><br /><span class="text-slate-500">~650</span></div>
+                    <div class="module-chip rounded-lg bg-white p-3"><strong>Write inputs + observations</strong><br /><span class="text-slate-500">~450</span></div>
+                    <div class="module-chip rounded-lg bg-white p-3"><strong>Database demarcation</strong><br /><span class="text-slate-500">~320</span></div>
+                    <div class="module-chip rounded-lg bg-emerald-100 p-3"><strong>Frozen-node wrapping</strong><br /><span class="text-emerald-800">owned, not orphaned</span></div>
+                  </div>
+                  <div class="mt-3 text-center text-[11px] text-indigo-700">same lifecycle extension · same DbPort seam · no new public interface</div>
+                </div>
+              </div>
+            </div>
+
+            <div class="mt-7 grid md:grid-cols-3 gap-5 text-sm">
+              <div><h3 class="font-semibold">Problem</h3><p class="mt-1 text-slate-600">A valid composition seam has become one 2,723-line implementation, while frozen-node wrapping sits outside every enforcement scope.</p></div>
+              <div><h3 class="font-semibold">Solution</h3><p class="mt-1 text-slate-600">Keep the handle interface and lifecycle artifact; package its private implementation by change reason and bring wrapping under explicit ownership.</p></div>
+              <div><h3 class="font-semibold">Benefits</h3><ul class="mt-1 space-y-1 text-slate-600"><li>• locality: changes stop colliding</li><li>• leverage: interface stays stable</li><li>• tests follow owned modules</li><li>• wrapping gains enforcement</li></ul></div>
+            </div>
+            <div class="mt-5 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">Preserves ADR 0019, ADR 0022, and ADR 0025: Snapshot remains a lifecycle extension above shared fetch; Postgres remains an injected adapter.</div>
+          </div>
+        </article>
+
+        <article id="enforcement-ownership" class="paper rounded-2xl border border-slate-200 bg-white overflow-hidden">
+          <div class="p-6 md:p-8">
+            <div class="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+              <div>
+                <p class="text-xs uppercase tracking-[.2em] text-slate-500">Candidate 02</p>
+                <h2 class="mt-1 text-3xl font-serif">Make source ownership exhaustive</h2>
+              </div>
+              <div class="flex flex-wrap gap-2"><span class="rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-800">Strong</span><span class="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700">in-process</span></div>
+            </div>
+            <div class="mt-5 rounded-lg bg-slate-50 p-4 font-mono text-xs text-slate-700 code-path">
+              languages/python/tools/check_dag_sync.py:46–235<br />
+              languages/python/spec/python.md:841–923<br />
+              languages/python/pyproject.toml:395–738 · parallax/core/__init__.py · parallax/snapshot/__init__.py
+            </div>
+
+            <div class="mt-7 grid lg:grid-cols-2 gap-5">
+              <div class="rounded-xl border border-slate-200 bg-white p-4 min-h-[320px]">
+                <p class="text-xs uppercase tracking-wider text-slate-500">Before · knowledge spread</p>
+                <pre class="mermaid">
+flowchart TD
+  A[core/spec/modules.md] --> D[generated TOML]
+  B[python.md §7 table] -. manual sync .-> C[MODULE_SCOPE + SUPPORT_SCOPE_DEPS]
+  C --> D
+  E[filesystem] --> F[wrap.py unowned]
+  E --> G[interface modules implicit]
+  C --> H[handle: pk_gen + navigate grants]
+  classDef leak fill:#fff1f2,stroke:#dc2626,color:#7f1d1d;
+  class F,G,H leak;
+                </pre>
+              </div>
+              <div class="rounded-xl border-2 border-dashed border-indigo-500 bg-indigo-50/30 p-4 min-h-[320px]">
+                <p class="text-xs uppercase tracking-wider text-slate-500">After · one owned map, four proofs</p>
+                <pre class="mermaid">
+flowchart TD
+  A[Authoritative scope map] --> B[Python spec table]
+  A --> C[Forbidden-edge complement]
+  A --> D[Filesystem ownership audit]
+  A --> E[Unused-grant report]
+  D --> F[Every production module owned]
+  D --> G[Interface modules explicitly exempt]
+  C --> H[No illegal edge]
+  E --> I[Minimal support fan-in]
+  classDef deep fill:#172033,stroke:#172033,color:#fff;
+  class A deep;
+                </pre>
+              </div>
+            </div>
+
+            <div class="mt-7 grid md:grid-cols-3 gap-5 text-sm">
+              <div><h3 class="font-semibold">Problem</h3><p class="mt-1 text-slate-600">The DAG is generated, but scope ownership and support edges are manually duplicated and do not cover every production module.</p></div>
+              <div><h3 class="font-semibold">Solution</h3><p class="mt-1 text-slate-600">Generate documentation and contracts from one scope map; fail when a production module is unowned or a support grant is unused.</p></div>
+              <div><h3 class="font-semibold">Benefits</h3><ul class="mt-1 space-y-1 text-slate-600"><li>• locality: dependency truth concentrates</li><li>• leverage: one map, four proofs</li><li>• no silent source escape</li><li>• broad grants become visible</li></ul></div>
+            </div>
+          </div>
+        </article>
+
+        <article id="value-object" class="paper rounded-2xl border border-slate-200 bg-white overflow-hidden">
+          <div class="p-6 md:p-8">
+            <div class="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+              <div><p class="text-xs uppercase tracking-[.2em] text-slate-500">Candidate 03</p><h2 class="mt-1 text-3xl font-serif">Give m-value-object real depth</h2></div>
+              <div class="flex flex-wrap gap-2"><span class="rounded-full bg-amber-100 px-3 py-1 text-xs font-semibold text-amber-800">Worth exploring</span><span class="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700">in-process</span></div>
+            </div>
+            <div class="mt-5 rounded-lg bg-slate-50 p-4 font-mono text-xs text-slate-700 code-path">
+              parallax/core/value_object/__init__.py:1–104<br />
+              parallax/core/descriptor/vo_path.py · descriptor/vo_document.py<br />
+              parallax/core/op_algebra/validate.py:1–537 · unit_work/write_validate.py:1–271 · sql_gen/compile.py:1307–1532
+            </div>
+            <div class="mt-7 grid lg:grid-cols-2 gap-5">
+              <div class="rounded-xl border border-slate-200 p-4 min-h-[320px]"><p class="text-xs uppercase tracking-wider text-slate-500">Before · shallow and isolated</p><pre class="mermaid">
+flowchart TB
+  VO[m-value-object<br/>104 lines] --> D[m-descriptor]
+  T[unit-work validation] --> VP[descriptor VO helpers]
+  O[operation validation] --> VP
+  S[SQL lowering] --> VP
+  VO -. production imports: 0 .-> X[unit test only]
+  classDef leak fill:#fff1f2,stroke:#dc2626,color:#7f1d1d;
+  class VO leak;
+              </pre></div>
+              <div class="rounded-xl border-2 border-dashed border-indigo-500 bg-indigo-50/30 p-4 min-h-[320px]"><p class="text-xs uppercase tracking-wider text-slate-500">After · behavior concentrates</p><pre class="mermaid">
+flowchart TB
+  VO[Deep value-object module]
+  T[write validation] --> VO
+  O[operation validation] --> VO
+  S[SQL lowering] --> VO
+  VO --> D[descriptor records]
+  VO --> P[path + document behavior]
+  classDef deep fill:#172033,stroke:#172033,color:#fff;
+  class VO deep;
+              </pre></div>
+            </div>
+            <div class="mt-7 grid md:grid-cols-3 gap-5 text-sm">
+              <div><h3 class="font-semibold">Problem</h3><p class="mt-1 text-slate-600">The source module owns almost no production behavior; real consumers route through descriptor helpers because current DAG directions refuse the seam.</p></div>
+              <div><h3 class="font-semibold">Solution</h3><p class="mt-1 text-slate-600">Revisit source ownership and DAG edges so value-object path and document behavior concentrate in the behavioral module that names them.</p></div>
+              <div><h3 class="font-semibold">Benefits</h3><ul class="mt-1 space-y-1 text-slate-600"><li>• deletion test becomes positive</li><li>• locality: one semantic owner</li><li>• leverage across three consumers</li><li>• duplicated reasoning disappears</li></ul></div>
+            </div>
+            <div class="mt-5 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-950"><strong>Core decision required.</strong> This changes the behavioral DAG/source-ownership decision; do not smuggle it through as a Python-only file move.</div>
+          </div>
+        </article>
+
+        <article id="conformance-engine" class="paper rounded-2xl border border-slate-200 bg-white overflow-hidden">
+          <div class="p-6 md:p-8">
+            <div class="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+              <div><p class="text-xs uppercase tracking-[.2em] text-slate-500">Candidate 04</p><h2 class="mt-1 text-3xl font-serif">Split conformance execution by case lane</h2></div>
+              <div class="flex flex-wrap gap-2"><span class="rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-800">Strong</span><span class="rounded-full bg-indigo-100 px-3 py-1 text-xs font-semibold text-indigo-800">local-substitutable</span></div>
+            </div>
+            <div class="mt-5 rounded-lg bg-slate-50 p-4 font-mono text-xs text-slate-700 code-path">
+              packages/parallax-conformance/src/parallax/conformance/engine.py:1–3468<br />
+              packages/parallax-conformance/src/parallax/conformance/adapter.py:137–348<br />
+              tests/unit/test_engine.py:1–2814
+            </div>
+            <div class="mt-7 grid lg:grid-cols-2 gap-5">
+              <div class="diagram-grid h-[330px] rounded-xl border border-slate-200 p-4">
+                <p class="text-xs uppercase tracking-wider text-slate-500">Before · adapter and tests see one namespace</p>
+                <div class="mt-5 grid grid-cols-[1fr_auto_1.2fr_auto_1fr] items-center gap-2 text-center text-xs">
+                  <div class="rounded-lg border bg-white p-4">adapter<br /><span class="text-slate-500">12 entry points</span></div><div>→</div><div class="rounded-xl border-4 border-amber-500 bg-amber-50 p-8"><strong class="text-lg">engine.py</strong><br /><span>3,468 lines</span><br /><span class="text-slate-500">read · graph · writes · interleave · conflict · error · reject</span></div><div>←</div><div class="rounded-lg border border-red-400 bg-red-50 p-4">test_engine.py<br /><span class="text-red-700">24 private names</span></div>
+                </div>
+                <div class="mt-8 text-center text-sm text-red-700">interface leaks into concurrency and termination implementation</div>
+              </div>
+              <div class="diagram-grid h-[330px] rounded-xl border-2 border-dashed border-indigo-500 bg-indigo-50/30 p-4">
+                <p class="text-xs uppercase tracking-wider text-slate-500">After · one package interface, lane-owned implementation</p>
+                <div class="mt-3 rounded-lg bg-slate-900 p-3 text-center text-xs uppercase tracking-wider text-white">conformance.engine interface</div>
+                <div class="mt-3 grid grid-cols-2 gap-2 text-xs">
+                  <div class="module-chip rounded bg-white p-3"><strong>read + graph</strong><br />~450</div>
+                  <div class="module-chip rounded bg-white p-3"><strong>write translation</strong><br />~600</div>
+                  <div class="module-chip rounded bg-white p-3"><strong>write execution</strong><br />~650</div>
+                  <div class="module-chip rounded bg-white p-3"><strong>interleaving</strong><br />~450</div>
+                  <div class="module-chip rounded bg-white p-3"><strong>termination control</strong><br />~350</div>
+                  <div class="module-chip rounded bg-white p-3"><strong>conflict/error/reject</strong><br />~600</div>
+                </div>
+                <div class="mt-3 text-center text-xs text-indigo-700">tests mirror lanes; private seams stay internal</div>
+              </div>
+            </div>
+            <div class="mt-7 grid md:grid-cols-3 gap-5 text-sm">
+              <div><h3 class="font-semibold">Problem</h3><p class="mt-1 text-slate-600">The conformance importer exemption is correct, but one engine module now owns unrelated execution lanes and its tests reach past the interface.</p></div>
+              <div><h3 class="font-semibold">Solution</h3><p class="mt-1 text-slate-600">Preserve the engine interface; move read, write, interleaving, termination, and terminal-case implementation into lane-owned private modules.</p></div>
+              <div><h3 class="font-semibold">Benefits</h3><ul class="mt-1 space-y-1 text-slate-600"><li>• locality: lanes change independently</li><li>• interface becomes test surface</li><li>• private leakage contracts</li><li>• dev-only exemption stays honest</li></ul></div>
+            </div>
+          </div>
+        </article>
+
+        <article id="sql-compiler" class="paper rounded-2xl border border-slate-200 bg-white overflow-hidden">
+          <div class="p-6 md:p-8">
+            <div class="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+              <div><p class="text-xs uppercase tracking-[.2em] text-slate-500">Candidate 05</p><h2 class="mt-1 text-3xl font-serif">Keep SQL generation deep; split its implementation</h2></div>
+              <div class="flex flex-wrap gap-2"><span class="rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-800">Strong</span><span class="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700">in-process</span></div>
+            </div>
+            <div class="mt-5 rounded-lg bg-slate-50 p-4 font-mono text-xs text-slate-700 code-path">
+              parallax/core/sql_gen/compile.py:145–1553<br />
+              parallax/core/sql_gen/__init__.py:1–37<br />
+              tests/unit/test_sql_gen.py:1–998
+            </div>
+            <div class="mt-7 grid lg:grid-cols-2 gap-5">
+              <div class="rounded-xl border border-slate-200 p-5 h-[320px]">
+                <p class="text-xs uppercase tracking-wider text-slate-500">Before · deep interface, monolithic body</p>
+                <div class="mt-5 mx-auto max-w-md">
+                  <div class="h-16 rounded-t-xl border-2 border-slate-700 bg-white p-3 text-center text-sm"><strong>sql_gen interface</strong><br /><span class="text-slate-500">small and stable</span></div>
+                  <div class="h-48 rounded-b-xl border-x-4 border-b-4 border-slate-700 bg-slate-100 p-4">
+                    <div class="grid h-full grid-cols-4 gap-1 text-[10px] text-center">
+                      <div class="rounded bg-sky-100 p-2">general read</div><div class="rounded bg-amber-100 p-2">inheritance</div><div class="rounded bg-violet-100 p-2">navigation</div><div class="rounded bg-emerald-100 p-2">VO + scalar predicates</div>
+                    </div>
+                  </div>
+                  <div class="mt-2 text-center text-xs text-slate-500">1,553 lines in compile.py</div>
+                </div>
+              </div>
+              <div class="rounded-xl border-2 border-dashed border-indigo-500 bg-indigo-50/30 p-5 h-[320px]">
+                <p class="text-xs uppercase tracking-wider text-slate-500">After · same depth, internal locality</p>
+                <div class="mt-5 mx-auto max-w-md rounded-xl border-4 border-slate-800 overflow-hidden">
+                  <div class="bg-slate-900 p-3 text-center text-sm text-white"><strong>sql_gen interface</strong> · unchanged</div>
+                  <div class="grid grid-cols-2 gap-2 bg-white p-3 text-xs">
+                    <div class="rounded bg-sky-50 p-3"><strong>context + result shape</strong><br />~250</div><div class="rounded bg-sky-50 p-3"><strong>read orchestration</strong><br />~350</div><div class="rounded bg-amber-50 p-3"><strong>inheritance reads</strong><br />~480</div><div class="rounded bg-violet-50 p-3"><strong>navigation</strong><br />~300</div><div class="col-span-2 rounded bg-emerald-50 p-3 text-center"><strong>scalar + value-object predicates</strong> · ~450</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="mt-7 grid md:grid-cols-3 gap-5 text-sm">
+              <div><h3 class="font-semibold">Problem</h3><p class="mt-1 text-slate-600">The compiler passes the deletion test and has a small interface, but four independently changing lowering concerns share one file.</p></div>
+              <div><h3 class="font-semibold">Solution</h3><p class="mt-1 text-slate-600">Retain the sql_gen seam and shared private context; separate lowering concerns only inside its implementation.</p></div>
+              <div><h3 class="font-semibold">Benefits</h3><ul class="mt-1 space-y-1 text-slate-600"><li>• depth remains intact</li><li>• locality by lowering concern</li><li>• tests keep one interface</li><li>• no new public seams</li></ul></div>
+            </div>
+          </div>
+        </article>
+
+        <article id="entity-frontend" class="paper rounded-2xl border border-slate-200 bg-white overflow-hidden">
+          <div class="p-6 md:p-8">
+            <div class="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+              <div><p class="text-xs uppercase tracking-[.2em] text-slate-500">Candidate 06</p><h2 class="mt-1 text-3xl font-serif">Deepen the Metamodel Hub class frontend</h2></div>
+              <div class="flex flex-wrap gap-2"><span class="rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-800">Strong</span><span class="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700">in-process</span></div>
+            </div>
+            <div class="mt-5 rounded-lg bg-slate-50 p-4 font-mono text-xs text-slate-700 code-path">
+              parallax/core/entity/base.py:121–1393<br />
+              parallax/core/entity/expressions.py:1–713 · statement.py · meta.py · graph_state.py<br />
+              tests/unit/test_entity_frontend.py:1–614 · test_entity_registry.py:1–551 · test_model_copy.py
+            </div>
+            <div class="mt-7 grid lg:grid-cols-2 gap-5">
+              <div class="rounded-xl border border-slate-200 p-4 min-h-[320px]"><p class="text-xs uppercase tracking-wider text-slate-500">Before · broad support scope hides internal cycles</p><pre class="mermaid">
+flowchart TD
+  B[base.py<br/>1,393] --> E[expressions.py]
+  B --> S[statement.py]
+  B --> V[value_object.py]
+  E -. lazy import .-> B
+  S -. lazy import .-> B
+  M[meta.py] --> B
+  G[graph_state.py] --> B
+  classDef leak fill:#fff1f2,stroke:#dc2626,color:#7f1d1d;
+  class B leak;
+              </pre></div>
+              <div class="rounded-xl border-2 border-dashed border-indigo-500 bg-indigo-50/30 p-4 min-h-[320px]"><p class="text-xs uppercase tracking-wider text-slate-500">After · one frontend, explicit internal direction</p><pre class="mermaid">
+flowchart TD
+  I[parallax.core.entity interface] --> R[Registry + Scoped Metamodel]
+  I --> C[Class declaration compiler]
+  I --> Q[Find Statement expressions]
+  I --> P[Rows + Edited Copy provenance]
+  C --> R
+  Q --> R
+  P --> R
+  classDef deep fill:#172033,stroke:#172033,color:#fff;
+  class I deep;
+              </pre></div>
+            </div>
+            <div class="mt-7 grid md:grid-cols-3 gap-5 text-sm">
+              <div><h3 class="font-semibold">Problem</h3><p class="mt-1 text-slate-600">Registry state, class compilation, row translation, query expressions, and copy provenance converge in base.py and depend back on it.</p></div>
+              <div><h3 class="font-semibold">Solution</h3><p class="mt-1 text-slate-600">Keep the entity interface; separate registry, declaration compilation, row/provenance, and Entity implementation, then enforce their internal direction.</p></div>
+              <div><h3 class="font-semibold">Benefits</h3><ul class="mt-1 space-y-1 text-slate-600"><li>• Metamodel Hub gains locality</li><li>• lazy cycles disappear</li><li>• interface remains familiar</li><li>• child scopes become enforceable</li></ul></div>
+            </div>
+          </div>
+        </article>
+
+        <article id="inheritance" class="paper rounded-2xl border border-slate-200 bg-white overflow-hidden">
+          <div class="p-6 md:p-8">
+            <div class="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+              <div><p class="text-xs uppercase tracking-[.2em] text-slate-500">Candidate 07</p><h2 class="mt-1 text-3xl font-serif">Move inheritance implementation out of __init__</h2></div>
+              <div class="flex flex-wrap gap-2"><span class="rounded-full bg-amber-100 px-3 py-1 text-xs font-semibold text-amber-800">Worth exploring</span><span class="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700">in-process</span></div>
+            </div>
+            <div class="mt-5 rounded-lg bg-slate-50 p-4 font-mono text-xs text-slate-700 code-path">
+              parallax/core/inheritance/__init__.py:48–778<br />
+              parallax/core/inheritance/_position.py:1–72<br />
+              tests/unit/test_inheritance.py:1–551
+            </div>
+            <div class="mt-7 grid lg:grid-cols-2 gap-5">
+              <div class="rounded-xl border border-slate-200 p-5 h-[300px]"><p class="text-xs uppercase tracking-wider text-slate-500">Before · implementation sits in the interface file</p><div class="mt-6 space-y-2 text-sm"><div class="border-l-4 border-sky-500 bg-sky-50 p-4"><strong>Family resolution</strong><span class="float-right">~230</span></div><div class="border-l-4 border-amber-500 bg-amber-50 p-4"><strong>Descriptor-family validation</strong><span class="float-right">~230</span></div><div class="border-l-4 border-rose-500 bg-rose-50 p-4"><strong>Write validation</strong><span class="float-right">~280</span></div></div><p class="mt-3 text-center text-xs text-slate-500">__init__.py · 778 lines</p></div>
+              <div class="rounded-xl border-2 border-dashed border-indigo-500 bg-indigo-50/30 p-5 h-[300px]"><p class="text-xs uppercase tracking-wider text-slate-500">After · package interface over three private concerns</p><div class="mt-4 rounded-lg bg-slate-900 p-3 text-center text-xs uppercase tracking-wider text-white">inheritance interface</div><div class="mt-3 grid grid-cols-3 gap-2 text-center text-xs"><div class="module-chip rounded bg-white p-4"><strong>family</strong><br />resolution</div><div class="module-chip rounded bg-white p-4"><strong>model</strong><br />validation</div><div class="module-chip rounded bg-white p-4"><strong>write</strong><br />validation</div></div><div class="mt-4 rounded-lg border border-emerald-300 bg-emerald-50 p-3 text-center text-xs text-emerald-900">one shared family-root resolver</div></div>
+            </div>
+            <div class="mt-7 grid md:grid-cols-3 gap-5 text-sm">
+              <div><h3 class="font-semibold">Problem</h3><p class="mt-1 text-slate-600">The package interface file also owns family queries, descriptor rejection order, and write validation.</p></div>
+              <div><h3 class="font-semibold">Solution</h3><p class="mt-1 text-slate-600">Keep the inheritance interface and move its three implementation concerns into private modules.</p></div>
+              <div><h3 class="font-semibold">Benefits</h3><ul class="mt-1 space-y-1 text-slate-600"><li>• locality by invariant family</li><li>• interface file becomes concise</li><li>• tests mirror three concerns</li><li>• low-risk line reduction</li></ul></div>
+            </div>
+            <div class="mt-5 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">Preserve ADR 0026 and ADR 0027: temporal axes and optimistic locking must share one family-root resolution, never duplicate across internal modules.</div>
+          </div>
+        </article>
+      </section>
+
+      <section id="top-recommendation" class="rounded-3xl bg-slate-900 p-8 md:p-10 text-white paper">
+        <p class="text-xs uppercase tracking-[.22em] text-emerald-300 font-semibold">Top recommendation</p>
+        <a href="#snapshot-handle" class="mt-2 inline-block text-3xl md:text-4xl font-serif underline decoration-emerald-400 decoration-2 underline-offset-8">Deepen the Snapshot handle as a package</a>
+        <p class="mt-6 max-w-3xl text-lg text-slate-200">It removes the highest-risk production monolith without changing the public interface or deployable artifact topology, and its first increment can close the real <code class="text-emerald-300">snapshot.wrap</code> enforcement hole.</p>
+      </section>
+    </main>
+  </body>
+</html>

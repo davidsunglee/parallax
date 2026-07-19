@@ -45,5 +45,25 @@
     "Snapshot",
     "TooManyResultsFound",
     "connect"
+  ],
+  "parallax.snapshot.handle": [
+    "Database",
+    "ExecutedStatement",
+    "Execution",
+    "FindResult",
+    "HistoryFindResult",
+    "LoweredStatement",
+    "MilestoneGraph",
+    "NoResultFound",
+    "Snapshot",
+    "TooManyResultsFound",
+    "Transaction",
+    "TransactionOptionConflictError",
+    "WriteLoweringError",
+    "connect",
+    "find",
+    "find_history",
+    "lower_temporal_close",
+    "lower_write"
   ]
 }
