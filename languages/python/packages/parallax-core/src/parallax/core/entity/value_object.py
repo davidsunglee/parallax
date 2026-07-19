@@ -347,17 +347,31 @@ def to_document(value: ValueObject | None) -> dict[str, object] | None:
     """Serialize a ``ValueObject`` instance to its canonical nested-dict document
     (canonical member names) — a write input's json-column value. ``None``
     passes through unchanged (an absent/nullable value object). Filtered by
-    Pydantic's own ``model_fields_set`` (D-33), mirroring ``full_row``'s own
-    top-level policy exactly: an OPTIONAL inner member the caller never
-    populated (relying on its declared default) is OMITTED, never bound as an
-    explicit ``null`` the corpus's own narrower document never authors; a
-    REQUIRED member always renders because construction cannot succeed without
-    the caller setting it (so it is always present in ``model_fields_set``); a
-    member the caller explicitly set — even to a value equal to its own
-    default — still renders (the same explicit-vs-defaulted distinction
-    ``full_row`` draws). Applied recursively: a nested ``ValueObject`` member
-    and each ``tuple[VOClass, ...]`` element filter by their OWN
-    ``model_fields_set`` via this same function."""
+    Pydantic's own ``model_fields_set`` alone (D-33), mirroring ``full_row``'s
+    own top-level policy exactly: a member the caller never populated (relying
+    on its declared default) is OMITTED, never bound as an explicit ``null``
+    the corpus's own narrower document never authors; a member the caller
+    explicitly set — even to a value equal to its own default — still renders
+    (the same explicit-vs-defaulted distinction ``full_row`` draws). This
+    filtering is UNCONDITIONAL on the member's own descriptor-declared
+    nullability: a DESCRIPTOR-required member the caller never set is OMITTED
+    exactly like an optional one, never coerced into rendering (e.g.
+    ``to_document(ContactGeo())`` — every member absent — is ``{}``, not a
+    document padded with placeholder nulls). This is deliberate, not an
+    oversight: ``parallax.conformance.vo_models`` (e.g. ``ContactPoint``,
+    ``ContactGeo``, ``CustomerGeo``) declares its descriptor-required members
+    Python-optional (defaulted to ``None``) precisely so a caller CAN
+    construct a structurally-incomplete instance — refusing one is
+    ``parallax.core.unit_work.write_validate.validate_write``'s job, never
+    this serializer's: an omitted (or explicit-``null``) required scalar
+    attribute classifies to ``write-required-attribute-missing``, an omitted
+    (or explicit-``null``) required nested value object to
+    ``write-required-value-object-missing`` (the shared
+    ``parallax.core.descriptor.vo_document.vo_document_violation`` walk treats
+    "absent key" and "explicit null" identically, so this function's own
+    omit-vs-null choice never changes which rule fires). Applied recursively:
+    a nested ``ValueObject`` member and each ``tuple[VOClass, ...]`` element
+    filter by their OWN ``model_fields_set`` via this same function."""
     if value is None:
         return None
     names = wire_names_of(type(value))

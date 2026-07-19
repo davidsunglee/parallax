@@ -611,6 +611,30 @@ self-contained without a system `libpq`.
   `api_conformance`) 555 passed / 0 skipped (+6: the three new stories
   through both the real-Postgres `test_story_run.py` runner and the
   fake-port `test_write_no_drift.py` no-drift guard).
+- **D-33 review remediation.** External review of the D-33 fix returned one
+  should-fix: `to_document`'s docstring claimed a required member always
+  renders because construction cannot succeed without the caller setting it —
+  false under `parallax.conformance.vo_models`'s own deliberate design
+  (descriptor-required inner members stay Python-optional so `validate_write`,
+  never Pydantic, refuses an incomplete instance). The docstring is corrected
+  to state the resolved contract (filtering is by `model_fields_set` alone,
+  regardless of descriptor nullability; `validate_write` classifies an omitted
+  required member, naming `write-required-attribute-missing` /
+  `write-required-value-object-missing`), and three regression pins joined the
+  existing five D-33 pins: `to_document(ContactGeo())`/`CustomerGeo()` both
+  `== {}` as INTENDED, an explicitly-set required member at its own default
+  value still rendering, and the `to_document` → `validate_write` pipeline
+  classifying a structurally-incomplete `Contact` instance to the
+  `m-value-object-039` corpus-pinned rule. No emission change. Measured
+  post-fix: unit lane 2199 passed / 97 skipped (+3); compile sweep 222 passed
+  / 97 skipped, byte-identical; rejected sweep 39 / 0 (unchanged); all 26
+  write stories green; API-suite partition exact over 311 active cases (97
+  exercised / 214 reasoned-skip, `stale_skip_reasons` empty); suppressions 95;
+  `just python-static` steps green individually (Pyright 0/0/0, ruff clean,
+  diff-cover 100%); `gen-usage-guide --check` exit 0 (unchanged — no new
+  public-surface renders); combined Docker lane
+  (`conformance`/`provider_contract`/`adapter_smoke`/`api_conformance`) 555
+  passed / 0 skipped (unchanged).
 
 ## Blockers
 

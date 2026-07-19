@@ -250,6 +250,82 @@ def test_to_document_applies_the_omission_policy_to_each_cardinality_many_elemen
     }
 
 
+def test_to_document_omits_every_member_of_a_structurally_incomplete_required_composite() -> None:
+    # D-33 review remediation: `ContactGeo`/`CustomerGeo`
+    # (`parallax.conformance.vo_models`) declare DESCRIPTOR-required members
+    # (`country`, etc.) that stay PYTHON-optional (default `None`,
+    # `ContactPoint`'s own docstring) so a caller CAN construct a
+    # structurally-incomplete instance — `to_document` filters PURELY by
+    # `model_fields_set`, with no descriptor-nullability awareness (mirroring
+    # `full_row` exactly): an entirely-unset instance of a REQUIRED-member
+    # composite still serializes to an empty document, exactly like an
+    # optional one. This is the RESOLVED contract, not a gap — required-member
+    # enforcement is `validate_write`'s job (see the pipeline pin below),
+    # never this serializer's.
+    from parallax.conformance.vo_models import ContactGeo, CustomerGeo
+    from parallax.core.entity.value_object import to_document
+
+    assert to_document(ContactGeo()) == {}
+    assert to_document(CustomerGeo()) == {}
+
+
+def test_to_document_renders_an_explicitly_set_required_member_at_its_default_value() -> None:
+    # `country` is DESCRIPTOR-required (`ContactGeo`'s own docstring) but
+    # stays PYTHON-optional (default `None`); explicitly setting it to that
+    # SAME default value still renders (`model_fields_set` records it as SET),
+    # exactly like the optional `elevation` pin above — required-ness plays NO
+    # role in `to_document`'s own filtering, only `model_fields_set` does.
+    from parallax.conformance.vo_models import ContactGeo
+    from parallax.core.entity.value_object import to_document
+
+    document = to_document(ContactGeo(country=None))
+    assert document == {"country": None}
+
+
+def test_to_document_omission_of_a_required_member_still_classifies_to_the_pinned_rule() -> None:
+    # The downstream pipeline pin: the D-33 fix changed HOW an unset required
+    # inner member serializes (an omitted key, never an explicit `null`) but
+    # not WHICH rule fires. `write_validate`'s own required-attribute check
+    # and the shared `vo_document_violation` walk both treat "absent key" and
+    # "explicit null" identically (`if not present or value is None`), so the
+    # SAME structurally-incomplete `Contact` instance
+    # `test_write_no_drift.py`'s own build-time proof constructs for
+    # `m-value-object-039` still classifies to that case's own corpus-pinned
+    # rule here, at the `to_document` -> `validate_write` seam directly.
+    from conftest import case_document
+    from parallax.conformance import case_format, models
+    from parallax.conformance.vo_models import Contact, ContactAddress, ContactGeo, ContactPoint
+    from parallax.core.entity.base import full_row
+    from parallax.core.unit_work import WriteRejectedError, validate_write
+
+    contact = Contact(
+        id=1,
+        name="Acme",
+        address=ContactAddress(
+            city="Oslo",
+            geo=ContactGeo(country="NO", point=ContactPoint(lat=59.9, lon=10.7)),
+        ),
+    )
+    row = full_row(contact)
+    address_document = row["address"]
+    assert isinstance(address_document, dict)
+    assert "street" not in address_document  # the D-33 omission, never an explicit null
+
+    case_path = (
+        case_format.find_repo_root()
+        / "core"
+        / "compatibility"
+        / "cases"
+        / "m-value-object-039-rejected-write-required-attribute-depth-1.yaml"
+    )
+    expected_rule = case_document(case_format.load_case(case_path))["then"]["rejectedRule"]
+
+    meta = models.load_models()["contact"]
+    with pytest.raises(WriteRejectedError) as exc_info:
+        validate_write(meta.entity("Contact"), row, meta, mutation="insert")
+    assert exc_info.value.rule == expected_rule
+
+
 def test_a_cardinality_many_value_object_member_rejects_a_list_not_a_tuple() -> None:
     with pytest.raises(Exception, match="never a raw dict/list"):
         vm.Address(
