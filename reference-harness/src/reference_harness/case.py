@@ -729,32 +729,72 @@ def _load_yaml(path: Path) -> Any:
         return yaml.safe_load(handle)
 
 
+# One parsed template per corpus artifact, for the life of the process.
+#
+# Un-memoized, ``discover_cases`` opens 1,186 YAML files to read a 463-file
+# corpus — every case re-reads its model descriptor and that model's fixtures —
+# and the harness suite calls it from ~40 sites. Memoizing is sound only because
+# the parsed graph is deeply frozen (see :func:`discover_cases`): every caller
+# gets the *same* objects, and a caller that needs to damage a case takes its own
+# ``copy.deepcopy`` first. This is a pure memoization of a pure function of the
+# filesystem, so it holds no semantic state.
+#
+# Every key is a ``.resolve()``d path, so a relative, symlinked, or
+# ``..``-containing spelling of the same root cannot produce a second parse. The
+# corollary is that these caches assume the corpus does not change on disk within
+# a process; nothing in the suite writes to a corpus it has already read, and a
+# test that builds a throwaway corpus gets a distinct ``tmp_path`` root and so a
+# distinct key.
+_MODEL_CACHE: dict[tuple[Path, str], Model] = {}
+_CASE_CACHE: dict[tuple[Path, Path], Case] = {}
+_TEMPLATE_CACHE: dict[Path, tuple[Case, ...]] = {}
+
+
 def load_model(compatibility_root: Path, model_rel: str) -> Model:
     """Load a model descriptor (relative to ``core/compatibility``) + its fixtures.
 
-    The returned descriptor and fixtures are deeply frozen — see
+    Memoized per resolved root + ``model_rel``. The returned descriptor and
+    fixtures are deeply frozen and shared between callers — see
     :func:`discover_cases` for the contract.
     """
-    model_path = (compatibility_root / model_rel).resolve()
+    root = compatibility_root.resolve()
+    key = (root, model_rel)
+    cached = _MODEL_CACHE.get(key)
+    if cached is not None:
+        return cached
+
+    model_path = (root / model_rel).resolve()
     descriptor = _freeze(_load_yaml(model_path))
 
-    fixtures_path = compatibility_root / "fixtures" / f"{model_path.stem}.yaml"
+    fixtures_path = root / "fixtures" / f"{model_path.stem}.yaml"
     fixtures: dict[str, list[dict[str, Any]]] = FrozenDict()
     if fixtures_path.is_file():
         loaded = _load_yaml(fixtures_path)
         if loaded:
             fixtures = _freeze(loaded)
-    return Model(path=model_path, descriptor=descriptor, fixtures=fixtures)
+    model = Model(path=model_path, descriptor=descriptor, fixtures=fixtures)
+    _MODEL_CACHE[key] = model
+    return model
 
 
 def load_case(compatibility_root: Path, case_path: Path) -> Case:
     """Load a single compatibility case, resolving and loading its model.
 
-    The returned case is deeply frozen — see :func:`discover_cases`.
+    Memoized per resolved root + resolved case path. The returned case is deeply
+    frozen and shared between callers — see :func:`discover_cases`.
     """
-    raw = _freeze(_load_yaml(case_path))
-    model = load_model(compatibility_root, raw["model"])
-    return Case(path=case_path.resolve(), raw=raw, model=model)
+    root = compatibility_root.resolve()
+    resolved_case_path = case_path.resolve()
+    key = (root, resolved_case_path)
+    cached = _CASE_CACHE.get(key)
+    if cached is not None:
+        return cached
+
+    raw = _freeze(_load_yaml(resolved_case_path))
+    model = load_model(root, raw["model"])
+    case = Case(path=resolved_case_path, raw=raw, model=model)
+    _CASE_CACHE[key] = case
+    return case
 
 
 def discover_cases(compatibility_root: Path) -> list[Case]:
@@ -774,7 +814,16 @@ def discover_cases(compatibility_root: Path) -> list[Case]:
     ``dict``/``list``, so the copy is writable all the way down. Stating the
     contract this way — enforced by the objects rather than by the accident of a
     fresh parse per call — is what lets the graph be shared instead of re-parsed.
+
+    The corpus is parsed at most once per resolved root per process. Repeat calls
+    return the same :class:`Case` objects in a fresh ``list``, so a caller may
+    filter or re-sort the list it is handed without disturbing the next caller's.
     """
-    cases_dir = compatibility_root / "cases"
-    case_files = sorted(cases_dir.glob("**/*.yaml")) + sorted(cases_dir.glob("**/*.yml"))
-    return [load_case(compatibility_root, p) for p in sorted(set(case_files))]
+    root = compatibility_root.resolve()
+    cached = _TEMPLATE_CACHE.get(root)
+    if cached is None:
+        cases_dir = root / "cases"
+        case_files = sorted(cases_dir.glob("**/*.yaml")) + sorted(cases_dir.glob("**/*.yml"))
+        cached = tuple(load_case(root, path) for path in sorted(set(case_files)))
+        _TEMPLATE_CACHE[root] = cached
+    return list(cached)
