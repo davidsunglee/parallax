@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 import {
   allProfileCases,
   casesForProfile,
@@ -24,6 +24,13 @@ function idsFor(profile: typeof POSTGRES_FULL_PROFILE): readonly string[] {
 }
 
 describe("m-case-format matrix profiles", () => {
+  // Warm the once-per-process corpus cache here rather than letting the first
+  // `it` pay the ~200-YAML discovery+parse cost — under v8 coverage that
+  // first-touch can exceed the default 5s per-test budget and flake.
+  beforeAll(() => {
+    allProfileCases();
+  }, 60_000);
+
   it("declares stable, unique profile names", () => {
     const names = MATRIX_PROFILES.map((profile) => profile.name);
     expect(new Set(names).size).toBe(names.length);
