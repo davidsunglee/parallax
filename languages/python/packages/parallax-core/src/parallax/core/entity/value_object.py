@@ -234,7 +234,7 @@ class ValueObjectMeta(ModelMetaclass):
         if not any(isinstance(base, ValueObjectMeta) for base in bases):
             return super().__new__(mcs, cls_name, bases, namespace, **kwargs)
 
-        annotations: dict[str, Any] = dict(namespace.get("__annotations__", {}))
+        annotations: dict[str, Any] = _class_body_annotations(namespace)
         globalns = _module_globalns(namespace)
         attributes: list[ValueObjectAttribute] = []
         nested: list[NestedValueObject] = []
@@ -310,6 +310,30 @@ def _module_globalns(namespace: dict[str, Any]) -> dict[str, Any]:
     module_name = namespace.get("__module__")
     module = sys.modules.get(module_name) if isinstance(module_name, str) else None
     return dict(getattr(module, "__dict__", {}))
+
+
+def _class_body_annotations(namespace: dict[str, Any]) -> dict[str, Any]:
+    """The class-body annotations, read from the metaclass ``namespace`` cross-version.
+
+    Mirrors ``parallax.core.entity.base._class_body_annotations`` (kept local to
+    avoid a cross-module metaclass import the module DAG forbids). Value-object
+    modules also omit ``from __future__ import annotations``, so on Python 3.14+
+    (PEP 649 / PEP 749) the live ``VoField`` / ``Attr[T]`` annotations are deferred
+    behind ``__annotate_func__`` rather than eagerly present in ``__annotations__``.
+    """
+    eager = namespace.get("__annotations__")
+    if eager is not None:
+        return dict(eager)  # pragma: no cover - eager annotations, Python <= 3.13
+    if sys.version_info < (3, 14):  # pragma: no cover - deferred arm below is Python >= 3.14 only
+        return {}
+    import annotationlib  # pragma: no cover - Python >= 3.14 only (PEP 649 / PEP 749)
+
+    annotate = namespace.pop("__annotate_func__", None)  # pragma: no cover - Python >= 3.14 only
+    if annotate is None:  # pragma: no cover - a class declaring no annotations at all
+        return {}
+    return dict(  # pragma: no cover - Python >= 3.14 only
+        annotationlib.call_annotate_function(annotate, annotationlib.Format.VALUE)
+    )
 
 
 def _attr_inner(annotation: object, globalns: dict[str, Any]) -> object | None:
