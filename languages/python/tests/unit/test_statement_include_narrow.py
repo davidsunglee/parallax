@@ -8,11 +8,11 @@ never deferred to execution.
 
 from __future__ import annotations
 
-import inheritance_models as im
 import pytest
-import snapshot_models as sm
 
+import inheritance_models as im
 import mirrored_models as mm
+import snapshot_models as sm
 from parallax.core.entity.statement import UnsupportedFeatureError
 from parallax.core.op_algebra import (
     All,
