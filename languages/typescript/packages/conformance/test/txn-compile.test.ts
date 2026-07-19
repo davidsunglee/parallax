@@ -159,6 +159,11 @@ const EXPECTED_IDS: readonly string[] = [
   // `m-value-object-046` (carries `m-opt-lock`).
   "m-value-object-045",
   "m-value-object-046",
+  // COR-3 snapshot slice — the unit-of-work rollback breadth cases cross-tagged
+  // slice-mvp-1: the aborting-callback INSERT `m-unit-work-011` and DELETE
+  // `m-unit-work-012` (both scenario shape, carrying `m-unit-work`).
+  "m-unit-work-011",
+  "m-unit-work-012",
 ];
 
 const CASES = txnCases();

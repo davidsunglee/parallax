@@ -274,6 +274,18 @@ export const SKIP_MANIFEST: readonly SkippedCase[] = [
       "grading tableState) and the conformance runner's run lane (slice-run). No idiomatic developer query spells " +
       "the coalesce/max or the sequence-reservation SQL.",
   })),
+  // --- unit-of-work rollback breadth (COR-3 snapshot-slice additions) ---------
+  ...["m-unit-work-011", "m-unit-work-012"].map((id) => ({
+    id,
+    reason:
+      "unit-of-work rollback breadth (an INSERT discarded by an aborting callback; a DELETE discarded by an " +
+      "aborting callback): the observable — the buffered INSERT / DELETE never reaching the database once the " +
+      "callback aborts — is proven end-to-end by the reference harness AND the conformance runner's run lane " +
+      "(slice-run drives @parallax/conformance's scenario plan, grading the unchanged tableState). The " +
+      "rollback-discards-writes developer idiom is already exercised by m-unit-work-002 in " +
+      "transactions.api-conformance.test.ts — these are the INSERT- and DELETE-form variants whose specific " +
+      "goldens the run lane grades.",
+  })),
 ];
 
 /** The set of skipped case ids, for the coverage check. */

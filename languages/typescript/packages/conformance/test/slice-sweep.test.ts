@@ -85,7 +85,7 @@ function readGolden(loaded: LoadedCase): { sql: string; binds: readonly unknown[
 }
 
 group("full-slice compile sweep (Docker-free)", () => {
-  it("discovers the harness-lane slice-mvp-1 slice (183 cases)", () => {
+  it("discovers the harness-lane slice-mvp-1 slice (185 cases)", () => {
     // The slice is include-driven; the exact count guards against a discovery
     // regression that silently drops (or over-collects) a tagged case. This is the
     // harness-executable subset (api-conformance-lane cases are filtered out). It
@@ -100,8 +100,10 @@ group("full-slice compile sweep (Docker-free)", () => {
     // The read-projection amendment then removed the two underivable reads
     // `m-op-algebra-028` (`distinct` on a projected column) and `m-value-object-003`
     // (inner-field projection) and added the deep-fetch × value-object witness
-    // `m-deep-fetch-018` (net -1): 184 → 183.
-    expect(CASES.length).toBe(183);
+    // `m-deep-fetch-018` (net -1): 184 → 183. The COR-3 snapshot slice then tagged
+    // the two unit-of-work rollback breadth cases `m-unit-work-011` (compile-eligible)
+    // / `m-unit-work-012` (run-only) into slice-mvp-1 (+2): 183 → 185.
+    expect(CASES.length).toBe(185);
   });
 
   it.each(CASES)("$id compiles ok (in-claim ⇒ never unsupported)", ({ loaded }) => {
@@ -197,14 +199,17 @@ group("case-matrix report — the slice is green at a glance", () => {
     // The rendered report is the human-facing artifact; surface it on failure so
     // a regression names the exact residual case IDs.
     expect(report.green, `\n${renderMatrixReport(report)}`).toBe(true);
-    expect(report.total).toBe(183);
-    // 172 non-rejected cases compile `ok`. The read-projection amendment took this
-    // from 173: it removed the two underivable reads `m-op-algebra-028` and
-    // `m-value-object-003` and added the deep-fetch × value-object read witness
-    // `m-deep-fetch-018` (net -1). The 11 `rejected` cases are graded `pass` (a
-    // correct pre-SQL refusal naming the rule — the 10 value-object negatives plus
-    // the Phase-5 m-value-object-044), unchanged by the amendment.
-    expect(report.counts.ok).toBe(172);
+    expect(report.total).toBe(185);
+    // 174 non-rejected cases contribute a green `ok` outcome. The read-projection
+    // amendment had taken this to 172 (it removed the two underivable reads
+    // `m-op-algebra-028` and `m-value-object-003` and added the deep-fetch ×
+    // value-object read witness `m-deep-fetch-018`); the COR-3 snapshot slice then
+    // added the two unit-of-work rollback breadth cases `m-unit-work-011`
+    // (compile-eligible) and `m-unit-work-012` (run-only, whose correct `run-only`
+    // compile outcome the sweep folds into `ok`) (+2 → 174). The 11 `rejected`
+    // cases are graded `pass` (a correct pre-SQL refusal naming the rule — the 10
+    // value-object negatives plus the Phase-5 m-value-object-044).
+    expect(report.counts.ok).toBe(174);
     expect(report.counts.pass).toBe(11);
     expect(report.residuals).toEqual([]);
   });
