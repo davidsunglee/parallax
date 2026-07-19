@@ -16,12 +16,117 @@ the single-entity cases always query).
 
 from __future__ import annotations
 
+import copy
 from dataclasses import dataclass, field
 from decimal import Decimal
 from pathlib import Path
-from typing import Any
+from typing import Any, NoReturn
 
 import yaml
+
+
+def _frozen(self: Any, *_args: Any, **_kwargs: Any) -> NoReturn:  # noqa: ARG001
+    """Reject every in-place mutation of a parsed-corpus container.
+
+    The first parameter must be named ``self``: these are bound as methods on
+    :class:`FrozenDict`/:class:`FrozenList`, and the type checker matches the
+    overridden signatures by parameter name.
+    """
+    raise TypeError(
+        "the parsed compatibility corpus is immutable and shared between callers; "
+        "take a copy.deepcopy() of the case (or of the sub-structure being damaged) "
+        "before mutating it"
+    )
+
+
+class FrozenDict(dict[str, Any]):
+    """A read-only ``dict`` — every mutator raises :class:`TypeError`.
+
+    A *subclass* of ``dict`` rather than a ``MappingProxyType`` on purpose. The
+    harness runs ~140 ``isinstance(x, dict)`` / ``isinstance(x, list)`` shape
+    tests over parsed corpus documents (``schema_validate``, ``op_validate``,
+    ``sql_lint``, ``inheritance``, ``case_runner``, …); a proxy would fail every
+    one of them *silently*, turning a freeze into a behavior change. A subclass
+    keeps ``isinstance``, equality against plain ``dict`` literals, and C-speed
+    reads, while making a write a loud error.
+
+    ``copy.deepcopy`` deliberately yields a plain, fully-mutable ``dict`` — that
+    is the sanctioned escape hatch for a negative test that needs to build
+    malformed input (see :func:`discover_cases`).
+    """
+
+    __slots__ = ()
+
+    __setitem__ = _frozen
+    __delitem__ = _frozen
+    __ior__ = _frozen
+    clear = _frozen
+    pop = _frozen
+    popitem = _frozen
+    setdefault = _frozen
+    update = _frozen
+
+    def __copy__(self) -> dict[str, Any]:
+        return dict(self)
+
+    def __deepcopy__(self, memo: dict[int, Any]) -> dict[str, Any]:
+        thawed: dict[str, Any] = {}
+        memo[id(self)] = thawed
+        for key, value in self.items():
+            thawed[key] = copy.deepcopy(value, memo)
+        return thawed
+
+
+class FrozenList(list[Any]):
+    """A read-only ``list`` — every mutator raises :class:`TypeError`.
+
+    Companion to :class:`FrozenDict`; see that docstring for why this subclasses
+    ``list`` instead of freezing to a ``tuple``. ``copy.deepcopy`` yields a
+    plain, fully-mutable ``list``.
+    """
+
+    __slots__ = ()
+
+    __setitem__ = _frozen
+    __delitem__ = _frozen
+    __iadd__ = _frozen
+    __imul__ = _frozen
+    append = _frozen
+    clear = _frozen
+    extend = _frozen
+    insert = _frozen
+    pop = _frozen
+    remove = _frozen
+    reverse = _frozen
+    sort = _frozen
+
+    def __copy__(self) -> list[Any]:
+        return list(self)
+
+    def __deepcopy__(self, memo: dict[int, Any]) -> list[Any]:
+        thawed: list[Any] = []
+        memo[id(self)] = thawed
+        thawed.extend(copy.deepcopy(item, memo) for item in self)
+        return thawed
+
+
+def _freeze(value: Any) -> Any:
+    """Recursively wrap *value*'s ``dict``/``list`` nodes in read-only views.
+
+    Applied once, at parse time, to a whole document. The recursion is what makes
+    the freeze load-bearing: ``inheritance._merge_ancestry_attributes`` splices
+    the *original* ancestor attribute dicts into the list it returns, and
+    ``resolve_effective_definition`` returns a non-inheritance entity's definition
+    unchanged — so an aliased inner node left mutable would keep the whole graph
+    writable through a side door. Scalars (including ``str``) are returned as-is.
+    """
+    if isinstance(value, (FrozenDict, FrozenList)):
+        return value
+    if isinstance(value, dict):
+        return FrozenDict({key: _freeze(item) for key, item in value.items()})
+    if isinstance(value, list):
+        return FrozenList(_freeze(item) for item in value)
+    return value
 
 
 @dataclass(frozen=True)
@@ -625,28 +730,51 @@ def _load_yaml(path: Path) -> Any:
 
 
 def load_model(compatibility_root: Path, model_rel: str) -> Model:
-    """Load a model descriptor (relative to ``core/compatibility``) + its fixtures."""
+    """Load a model descriptor (relative to ``core/compatibility``) + its fixtures.
+
+    The returned descriptor and fixtures are deeply frozen — see
+    :func:`discover_cases` for the contract.
+    """
     model_path = (compatibility_root / model_rel).resolve()
-    descriptor = _load_yaml(model_path)
+    descriptor = _freeze(_load_yaml(model_path))
 
     fixtures_path = compatibility_root / "fixtures" / f"{model_path.stem}.yaml"
-    fixtures: dict[str, list[dict[str, Any]]] = {}
+    fixtures: dict[str, list[dict[str, Any]]] = FrozenDict()
     if fixtures_path.is_file():
         loaded = _load_yaml(fixtures_path)
         if loaded:
-            fixtures = loaded
+            fixtures = _freeze(loaded)
     return Model(path=model_path, descriptor=descriptor, fixtures=fixtures)
 
 
 def load_case(compatibility_root: Path, case_path: Path) -> Case:
-    """Load a single compatibility case, resolving and loading its model."""
-    raw = _load_yaml(case_path)
+    """Load a single compatibility case, resolving and loading its model.
+
+    The returned case is deeply frozen — see :func:`discover_cases`.
+    """
+    raw = _freeze(_load_yaml(case_path))
     model = load_model(compatibility_root, raw["model"])
     return Case(path=case_path.resolve(), raw=raw, model=model)
 
 
 def discover_cases(compatibility_root: Path) -> list[Case]:
-    """Discover and load every case under ``cases/`` (sorted by path)."""
+    """Discover and load every case under ``cases/`` (sorted by path).
+
+    The returned :class:`Case` / :class:`Model` graph — ``raw``, ``descriptor``,
+    ``fixtures``, and every nested document node — is **deeply immutable**.
+    Writing through any of it (item assignment, ``append``, ``+=``, …) raises
+    :class:`TypeError`. A caller that needs to modify a case — every such caller
+    today is a negative test building malformed input — must ``copy.deepcopy``
+    it, or the sub-structure it damages, first::
+
+        case = copy.deepcopy(next(c for c in discover_cases(root) if ...))
+        case.when["writeSequence"][0]["statements"] += 1
+
+    ``copy.deepcopy`` of any frozen node yields a plain, fully-mutable
+    ``dict``/``list``, so the copy is writable all the way down. Stating the
+    contract this way — enforced by the objects rather than by the accident of a
+    fresh parse per call — is what lets the graph be shared instead of re-parsed.
+    """
     cases_dir = compatibility_root / "cases"
     case_files = sorted(cases_dir.glob("**/*.yaml")) + sorted(cases_dir.glob("**/*.yml"))
     return [load_case(compatibility_root, p) for p in sorted(set(case_files))]

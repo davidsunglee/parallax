@@ -13,6 +13,7 @@ exercised end-to-end against real Postgres by the compatibility suite.
 
 from __future__ import annotations
 
+import copy
 import re
 from pathlib import Path
 
@@ -166,8 +167,10 @@ def test_temporal_write_input_holds_for_authored_cases() -> None:
 
 
 def test_temporal_write_input_at_corruption_is_rejected() -> None:
-    case = next(
-        c for c in _temporal_write_input_cases() if c.path.stem.startswith("m-audit-write-001")
+    case = copy.deepcopy(
+        next(
+            c for c in _temporal_write_input_cases() if c.path.stem.startswith("m-audit-write-001")
+        )
     )
     step = next(s for s in case.write_sequence if s.get("rows"))
     # Corrupt the transaction instant: the DERIVED in_z bind no longer matches the
@@ -208,7 +211,9 @@ def test_until_write_input_holds_for_authored_cases() -> None:
 
 
 def test_until_write_input_window_corruption_is_rejected() -> None:
-    case = next(c for c in _until_write_cases() if c.path.stem.startswith("m-bitemp-write-001"))
+    case = copy.deepcopy(
+        next(c for c in _until_write_cases() if c.path.stem.startswith("m-bitemp-write-001"))
+    )
     step = next(s for s in case.write_sequence if s.get("until"))
     # Corrupt the business valid-time window end: `until` no longer appears among the
     # chained inserts' business-axis binds, so the `*Until` ① ↔ ② window gate MUST
@@ -274,8 +279,8 @@ def test_plain_close_with_trailing_binds_but_no_gate_predicate_is_rejected() -> 
     # that happen to match the observed rectangle's (from_z, in_z) — is a shape mismatch
     # (3 placeholders, 5 binds), which the loose branch tolerated as "gated". It MUST now
     # raise rather than reconstruct the open rectangle and pass.
-    case = next(
-        c for c in _plain_split_write_cases() if c.path.stem.startswith("m-bitemp-write-006")
+    case = copy.deepcopy(
+        next(c for c in _plain_split_write_cases() if c.path.stem.startswith("m-bitemp-write-006"))
     )
     # Sanity: as authored the plain split cross-checks cleanly.
     _assert_write_input_columns(case, "postgres")
@@ -316,7 +321,7 @@ def test_gated_rectangle_split_close_reconstructs_the_observed_open_rectangle() 
 
 
 def test_gated_rectangle_split_gate_bind_corruption_is_rejected() -> None:
-    case = _gated_split_case()
+    case = copy.deepcopy(_gated_split_case())
     # Corrupt the golden's observed-from_z gate bind so it no longer matches the
     # reconstructed open rectangle: the gate is cross-checked against the row it
     # inactivates (drawn from the replayed open row), so the ① ↔ ② gate MUST fail.
@@ -351,7 +356,7 @@ def test_partial_temporal_gate_missing_processing_discriminator_is_rejected() ->
     # single predicate would treat it as gated, reconstruct the open rectangle, and
     # PASS; the BOTH-required shape check instead reports the close plain, so its five
     # placeholders mismatch the derived three-bind plain shape and MUST raise.
-    case = _gated_split_case()
+    case = copy.deepcopy(_gated_split_case())
     _assert_write_input_columns(case, "postgres")  # sanity: valid as authored
     close = case.then["statements"][1]
     authored = close["sql"]["postgres"]
@@ -372,7 +377,7 @@ def test_gated_close_with_extra_placeholder_arity_mismatch_is_rejected() -> None
     # stay at the five-value gated shape. The bind-count backstop (`_assert_write_values`)
     # still sees five == five, so ONLY the placeholder-vs-derived-shape arity check
     # catches the surplus placeholder — which MUST raise rather than tolerate it.
-    case = _gated_split_case()
+    case = copy.deepcopy(_gated_split_case())
     _assert_write_input_columns(case, "postgres")  # sanity: valid as authored
     close = case.then["statements"][1]
     authored = close["sql"]["postgres"]
@@ -414,7 +419,9 @@ def test_business_write_input_holds_for_authored_cases() -> None:
 
 
 def test_business_write_input_business_at_corruption_is_rejected() -> None:
-    case = next(c for c in _business_write_cases() if c.path.stem.startswith("m-business-only-003"))
+    case = copy.deepcopy(
+        next(c for c in _business_write_cases() if c.path.stem.startswith("m-business-only-003"))
+    )
     step = next(s for s in case.write_sequence if s.get("businessAt"))
     # Corrupt the business instant: the DERIVED from_z bind no longer matches the
     # golden from_z bind, so the business-temporal ① ↔ ② gate MUST fail (from_z is
@@ -453,10 +460,12 @@ def test_bitemporal_conflict_close_input_holds_for_authored_cases() -> None:
 
 
 def test_bitemporal_conflict_close_business_from_corruption_is_rejected() -> None:
-    case = next(
-        c
-        for c in _bitemporal_conflict_close_cases()
-        if c.path.stem.startswith("m-bitemp-write-004")
+    case = copy.deepcopy(
+        next(
+            c
+            for c in _bitemporal_conflict_close_cases()
+            if c.path.stem.startswith("m-bitemp-write-004")
+        )
     )
     # Corrupt the business discriminator VALUE: the DERIVED from_z gate bind no longer
     # matches the golden bind, so the bitemporal close ① ↔ ② gate MUST fail.
@@ -537,7 +546,7 @@ def test_tph_bitemporal_inactivation_is_tag_guarded() -> None:
 def test_tph_temporal_close_missing_tag_guard_is_rejected() -> None:
     # Dropping the `and kind = ?` guard from a table-per-hierarchy temporal close leaves the
     # subtype's milestones indistinguishable in the shared table — it MUST fail.
-    case = _inheritance_case("m-inheritance-090")
+    case = copy.deepcopy(_inheritance_case("m-inheritance-090"))
     _assert_write_input_columns(case, "postgres")  # sanity: valid as authored
     close = case.then["statements"][1]
     close["sql"]["postgres"] = "update reading set out_z = ? where id = ? and out_z = ?"
@@ -549,7 +558,7 @@ def test_tph_temporal_close_missing_tag_guard_is_rejected() -> None:
 def test_tph_temporal_close_wrong_tag_bind_is_rejected() -> None:
     # The temporal close's tag bind is pinned to the model's tagValue; a wrong value MUST
     # fail (the tag is framework-derived, never authored).
-    case = _inheritance_case("m-inheritance-090")
+    case = copy.deepcopy(_inheritance_case("m-inheritance-090"))
     case.then["statements"][1]["binds"][2] = "cash"
     with pytest.raises(CaseFailure):
         _assert_write_input_columns(case, "postgres")
@@ -568,7 +577,7 @@ def test_tpcs_temporal_terminate_routes_to_own_table_no_tag() -> None:
 def test_tpcs_temporal_close_routed_to_wrong_table_is_rejected() -> None:
     # A table-per-concrete-subtype temporal close MUST target the subtype's own table;
     # routing it elsewhere MUST fail the routing oracle.
-    case = _inheritance_case("m-inheritance-091")
+    case = copy.deepcopy(_inheritance_case("m-inheritance-091"))
     _assert_write_input_columns(case, "postgres")  # sanity
     case.then["statements"][1]["sql"]["postgres"] = (
         "update wrong_table set out_z = ? where id = ? and out_z = ?"
@@ -590,7 +599,7 @@ def test_tpcs_temporal_union_read_per_branch_asof_binds() -> None:
 def test_tpcs_temporal_union_read_corrupt_branch_asof_bind_is_rejected() -> None:
     # Corrupting the SECOND branch's business-from as-of bind (index 3) breaks the recomputed
     # per-branch propagation, so the oracle MUST fail.
-    case = _inheritance_case("m-inheritance-093")
+    case = copy.deepcopy(_inheritance_case("m-inheritance-093"))
     case.then["statements"][0]["binds"][3] = "1999-12-31T00:00:00+00:00"
     with pytest.raises(CaseFailure):
         _assert_temporal_union_binds(case, "postgres")
@@ -599,7 +608,7 @@ def test_tpcs_temporal_union_read_corrupt_branch_asof_bind_is_rejected() -> None
 def test_tpcs_temporal_union_read_dropped_branch_binds_is_rejected() -> None:
     # Dropping the second branch's as-of binds entirely fails the per-branch arity (two
     # branches x three as-of binds each).
-    case = _inheritance_case("m-inheritance-093")
+    case = copy.deepcopy(_inheritance_case("m-inheritance-093"))
     case.then["statements"][0]["binds"] = case.then["statements"][0]["binds"][:3]
     with pytest.raises(CaseFailure):
         _assert_temporal_union_binds(case, "postgres")

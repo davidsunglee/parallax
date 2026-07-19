@@ -10,6 +10,7 @@ is exercised end-to-end against real Postgres by the compatibility suite.
 
 from __future__ import annotations
 
+import copy
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from pathlib import Path
@@ -186,7 +187,7 @@ def test_scenario_count_consistency_holds_for_authored_cases() -> None:
 
 
 def test_scenario_step_count_mismatch_is_rejected() -> None:
-    case = next(iter(_scenario_cases()))
+    case = copy.deepcopy(next(iter(_scenario_cases())))
     # Corrupt a step's declared roundTrips so it no longer matches the golden SQL
     # statement count it lists; the consistency check MUST fail.
     case.when["scenario"][0]["roundTrips"] += 1
@@ -195,7 +196,7 @@ def test_scenario_step_count_mismatch_is_rejected() -> None:
 
 
 def test_scenario_total_mismatch_is_rejected() -> None:
-    case = next(iter(_scenario_cases()))
+    case = copy.deepcopy(next(iter(_scenario_cases())))
     # Corrupt the case-level roundTrips so it no longer equals the per-step sum.
     case.then["roundTrips"] += 1
     with pytest.raises(CaseFailure):
@@ -218,7 +219,7 @@ class _ReferenceDb:
 
 
 def test_scenario_read_reference_sql_is_a_bind_free_naive_oracle() -> None:
-    case = _scenario_by_id("m-opt-lock-003")
+    case = copy.deepcopy(_scenario_by_id("m-opt-lock-003"))
     step = case.scenario[0]
     step["referenceSql"] = "select id from account where balance < 200.00"
     expected = [{"id": 1}, {"id": 3}]
@@ -230,7 +231,7 @@ def test_scenario_read_reference_sql_is_a_bind_free_naive_oracle() -> None:
 
 
 def test_scenario_read_reference_sql_mismatch_fails_loudly() -> None:
-    case = _scenario_by_id("m-opt-lock-003")
+    case = copy.deepcopy(_scenario_by_id("m-opt-lock-003"))
     step = case.scenario[0]
     step["referenceSql"] = "select id from account where balance < 200.00"
 
@@ -245,7 +246,7 @@ def test_scenario_read_reference_sql_mismatch_fails_loudly() -> None:
 
 
 def test_scenario_reference_sql_map_must_cover_its_golden_dialects() -> None:
-    case = _scenario_by_id("m-opt-lock-003")
+    case = copy.deepcopy(_scenario_by_id("m-opt-lock-003"))
     case.scenario[0]["referenceSql"] = {"mariadb": "select id from account"}
 
     with pytest.raises(CaseFailure, match="referenceSql map keys"):
@@ -253,7 +254,7 @@ def test_scenario_reference_sql_map_must_cover_its_golden_dialects() -> None:
 
 
 def test_scenario_read_golden_sql_must_be_canonical() -> None:
-    case = _scenario_by_id("m-opt-lock-003")
+    case = copy.deepcopy(_scenario_by_id("m-opt-lock-003"))
     case.scenario[0]["statements"][0]["sql"]["postgres"] = "SELECT t0.id FROM account t0"
 
     with pytest.raises(CaseFailure, match="not canonical"):
