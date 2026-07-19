@@ -148,8 +148,23 @@ just oracle-test
 just verify
 ```
 
-Docker must be available for database-backed commands. Use `just --list` for
-the full command catalog.
+Docker must be available for database-backed commands. Testcontainers locates
+the daemon by itself under Docker Desktop and on CI, where the socket sits at
+`/var/run/docker.sock`. Alternative runtimes such as OrbStack, Colima, and
+Podman place it elsewhere and publish it through a Docker CLI context. The
+Python client reads that context; the Node client does not, so the TypeScript
+lanes fail with `Could not find a working container runtime strategy`. Point
+both clients at the socket once instead of exporting `DOCKER_HOST` per shell:
+
+```bash
+docker context inspect --format '{{ .Endpoints.docker.Host }}'
+```
+
+Write that endpoint to `~/.testcontainers.properties` as a `docker.host` entry,
+for example `docker.host=unix:///Users/you/.orbstack/run/docker.sock`. The file
+is per-machine and untracked; both clients read it.
+
+Use `just --list` for the full command catalog.
 
 ## Extending Parallax
 
