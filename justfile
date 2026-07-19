@@ -11,6 +11,14 @@
 #   core-      validation of the core spec + compatibility corpus
 #   oracle-    the Python reference harness (its own checks + running the oracle)
 #   ts-        the TypeScript implementation (future: java-, rust-, py-, ...)
+#
+# Database-backed recipes (verify, ts-db, ts-db-all, oracle-test, python-verify)
+# start Testcontainers containers and need a reachable Docker daemon. Runtimes
+# other than Docker Desktop -- OrbStack, Colima, Podman -- do not create
+# /var/run/docker.sock, and the Node client cannot read Docker CLI contexts, so
+# the ts- lanes fail there with "Could not find a working container runtime
+# strategy". README.md "Running And Inspecting The Project" has the one-time
+# ~/.testcontainers.properties fix.
 
 # Path to the reference harness module.
 harness := "reference-harness"
