@@ -595,6 +595,9 @@ self-contained without a system `libpq`.
 
 ## Blockers
 
-- None. Docker is required for the database-backed lanes (`just python-verify` /
+- The value-object write-serialization gap (ledger D-33) keeps
+  `m-value-object-025/-026/-027` reasoned-skipped; it blocks only those three
+  case flips, not any milestone or gate.
+- Docker is required for the database-backed lanes (`just python-verify` /
   the `python-database` CI job); the database-free lane (`just python-static`,
   which now includes `-m dialect` and `-m compile_sweep`) needs no Docker.
