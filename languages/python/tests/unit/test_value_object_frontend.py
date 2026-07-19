@@ -186,6 +186,70 @@ def test_to_document_serializes_a_nested_single_value_object_field() -> None:
     assert document["geo"] == {"country": "DE", "elevation": None, "point": None}
 
 
+def test_to_document_omits_an_unset_optional_inner_member() -> None:
+    # D-33: `elevation`/`point` are OPTIONAL (declared with a default) and
+    # never populated here — omitted entirely, never bound as `null`
+    # (`full_row`'s own `model_fields_set` policy, mirrored).
+    from parallax.core.entity.value_object import to_document
+
+    document = to_document(vm.Geo(country="DE"))
+    assert document == {"country": "DE"}
+
+
+def test_to_document_renders_a_set_optional_inner_member() -> None:
+    from parallax.core.entity.value_object import to_document
+
+    document = to_document(vm.Geo(country="DE", elevation=10.0))
+    assert document == {"country": "DE", "elevation": 10.0}
+
+
+def test_to_document_renders_an_explicitly_set_member_even_at_its_default_value() -> None:
+    # The unset-vs-explicitly-set distinction `full_row` draws: `elevation`
+    # is explicitly assigned `None` here (its own default value) rather than
+    # simply omitted at construction — `model_fields_set` still records it as
+    # SET, so it renders as an explicit `null`, unlike the omitted case above.
+    from parallax.core.entity.value_object import to_document
+
+    document = to_document(vm.Geo(country="DE", elevation=None))
+    assert document == {"country": "DE", "elevation": None}
+
+
+def test_to_document_applies_the_omission_policy_recursively_to_a_nested_value_object() -> None:
+    # The nested `geo` member filters by its OWN `model_fields_set`: `point`
+    # is set but only sets `lat` on it, so `point`'s own `lon` is omitted too
+    # — recursive, not just one level deep. The outer `Address`'s own unset
+    # `phones` member is omitted entirely (never an empty-tuple `[]`).
+    from parallax.core.entity.value_object import to_document
+
+    address = vm.Address(
+        street="Main St", city="Berlin", geo=vm.Geo(country="DE", point=vm.Point(lat=1.0))
+    )
+    document = to_document(address)
+    assert document == {
+        "street": "Main St",
+        "city": "Berlin",
+        "geo": {"country": "DE", "point": {"lat": 1.0}},
+    }
+
+
+def test_to_document_applies_the_omission_policy_to_each_cardinality_many_element() -> None:
+    # Each `phones` tuple element filters by ITS OWN `model_fields_set`,
+    # independent of its siblings.
+    from parallax.core.entity.value_object import to_document
+
+    address = vm.Address(
+        street="Main St",
+        city="Berlin",
+        phones=(vm.Phone(type="home"), vm.Phone(number="555-1234")),
+    )
+    document = to_document(address)
+    assert document == {
+        "street": "Main St",
+        "city": "Berlin",
+        "phones": [{"type": "home"}, {"number": "555-1234"}],
+    }
+
+
 def test_a_cardinality_many_value_object_member_rejects_a_list_not_a_tuple() -> None:
     with pytest.raises(Exception, match="never a raw dict/list"):
         vm.Address(

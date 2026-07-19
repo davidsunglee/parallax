@@ -346,12 +346,26 @@ class ValueObject(BaseModel, metaclass=ValueObjectMeta):
 def to_document(value: ValueObject | None) -> dict[str, object] | None:
     """Serialize a ``ValueObject`` instance to its canonical nested-dict document
     (canonical member names) — a write input's json-column value. ``None``
-    passes through unchanged (an absent/nullable value object)."""
+    passes through unchanged (an absent/nullable value object). Filtered by
+    Pydantic's own ``model_fields_set`` (D-33), mirroring ``full_row``'s own
+    top-level policy exactly: an OPTIONAL inner member the caller never
+    populated (relying on its declared default) is OMITTED, never bound as an
+    explicit ``null`` the corpus's own narrower document never authors; a
+    REQUIRED member always renders because construction cannot succeed without
+    the caller setting it (so it is always present in ``model_fields_set``); a
+    member the caller explicitly set — even to a value equal to its own
+    default — still renders (the same explicit-vs-defaulted distinction
+    ``full_row`` draws). Applied recursively: a nested ``ValueObject`` member
+    and each ``tuple[VOClass, ...]`` element filter by their OWN
+    ``model_fields_set`` via this same function."""
     if value is None:
         return None
     names = wire_names_of(type(value))
+    fields_set = value.model_fields_set
     document: dict[str, object] = {}
     for py_name, canonical in names.py_to_name.items():
+        if py_name not in fields_set:
+            continue
         raw = getattr(value, py_name)
         if isinstance(raw, ValueObject):
             document[canonical] = to_document(raw)

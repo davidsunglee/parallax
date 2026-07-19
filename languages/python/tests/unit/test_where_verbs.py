@@ -102,23 +102,19 @@ def test_set_on_a_nested_value_object_path_raises() -> None:
 
 
 def test_set_on_a_top_level_value_object_serializes_to_its_document() -> None:
+    # D-33: `geo`/`phones` stay unset (relying on their own declared
+    # defaults), so `to_document` omits them entirely rather than binding an
+    # explicit `null`/`[]`.
     address = vom.Address(street="1 Aurora Ave", city="Oslo")
     assignment = vom.Customer.address.set(address)
-    assert assignment.value == {
-        "street": "1 Aurora Ave",
-        "city": "Oslo",
-        "geo": None,
-        "phones": [],
-    }
+    assert assignment.value == {"street": "1 Aurora Ave", "city": "Oslo"}
 
 
 def test_set_on_a_many_value_object_member_serializes_to_a_document_list() -> None:
+    # D-33: neither `Tag` sets its own optional `detail`/`details`.
     tags = (sm.Tag(label="a"), sm.Tag(label="b"))
     assignment = sm.SnapOrderStatus.tags.set(tags)
-    assert assignment.value == [
-        {"label": "a", "detail": None, "details": []},
-        {"label": "b", "detail": None, "details": []},
-    ]
+    assert assignment.value == [{"label": "a"}, {"label": "b"}]
 
 
 def test_set_on_a_scalar_passes_a_plain_literal_through_unchanged() -> None:
