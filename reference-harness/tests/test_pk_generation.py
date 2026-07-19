@@ -7,6 +7,7 @@ DB state. These tests pin the pure derivation math and the failure path.
 
 from __future__ import annotations
 
+import copy
 import re
 from pathlib import Path
 from types import SimpleNamespace
@@ -213,7 +214,7 @@ def test_pkgen_max_computed_literal_corruption_is_rejected() -> None:
     # `m-pk-gen-001` is a pk-gen `max` insert: `{ id: { computed: maxPlusOne }, name: Ada }`.
     # The DB-computed `id` bind is skipped, but the LITERAL `name` is still cross-
     # checked — corrupt it so its ① value no longer matches the golden bind.
-    case = _pkgen_case("m-pk-gen-001")
+    case = copy.deepcopy(_pkgen_case("m-pk-gen-001"))
     step = next(s for s in case.write_sequence if s.get("rows"))
     step["rows"][0]["name"] = "NotAda"
     with pytest.raises(CaseFailure):
@@ -223,7 +224,7 @@ def test_pkgen_max_computed_literal_corruption_is_rejected() -> None:
 def test_pkgen_sequence_increment_amount_corruption_is_rejected() -> None:
     # `m-pk-gen-004` step 1 advances the registry via `next_val = next_val + ?` by 1. Corrupt
     # the `{ increment: <n> }` amount so the DERIVED bind no longer matches the golden.
-    case = _pkgen_case("m-pk-gen-004")
+    case = copy.deepcopy(_pkgen_case("m-pk-gen-004"))
     step = next(s for s in case.write_sequence if s["entity"] == "PkSequence")
     step["rows"][0]["nextVal"] = {"increment": 99}
     with pytest.raises(CaseFailure):

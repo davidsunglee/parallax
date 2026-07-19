@@ -17,6 +17,7 @@ exercise that derivation with no database:
 
 from __future__ import annotations
 
+import copy
 from pathlib import Path
 from typing import Any
 
@@ -649,7 +650,7 @@ def test_tpcs_mariadb_varchar_cast_golden_is_rejected() -> None:
 def test_tpcs_family_variant_column_collision_is_rejected() -> None:
     # A concrete subtype that declares a real column named `family_variant` collides
     # with the synthetic variant alias; the oracle rejects it with a clear diagnostic.
-    case = _document_case("Document", {"all": {}})
+    case = copy.deepcopy(_document_case("Document", {"all": {}}))
     for definition in case.model.entity_defs:
         if definition["name"] == "Memo":
             definition["attributes"].append(

@@ -10,6 +10,7 @@ exercised end-to-end against real Postgres by the compatibility suite.
 
 from __future__ import annotations
 
+import copy
 from pathlib import Path
 
 import pytest
@@ -62,7 +63,7 @@ def test_write_step_count_consistency_holds_for_authored_cases() -> None:
 
 
 def test_write_step_count_mismatch_is_rejected() -> None:
-    case = next(c for c in discover_cases(COMPATIBILITY_ROOT) if c.is_write_sequence)
+    case = copy.deepcopy(next(c for c in discover_cases(COMPATIBILITY_ROOT) if c.is_write_sequence))
     # Corrupt the declared per-step statement count so the sum no longer matches
     # the then.statements DML count; the consistency check MUST fail.
     case.when["writeSequence"][0]["statements"] += 1
@@ -87,10 +88,12 @@ def test_write_input_columns_hold_for_authored_cases() -> None:
 
 
 def test_write_input_column_corruption_is_rejected() -> None:
-    case = next(
-        c
-        for c in discover_cases(COMPATIBILITY_ROOT)
-        if c.is_write_sequence and _non_temporal_row_step(c) is not None
+    case = copy.deepcopy(
+        next(
+            c
+            for c in discover_cases(COMPATIBILITY_ROOT)
+            if c.is_write_sequence and _non_temporal_row_step(c) is not None
+        )
     )
     step = _non_temporal_row_step(case)
     assert step is not None
@@ -150,19 +153,19 @@ def test_collapsed_delete_input_requires_exact_ordered_binds() -> None:
     _assert_write_input_columns(case, "postgres")
 
     # Reordered binds (same set, wrong order) MUST now be rejected.
-    reordered = _write_case_by_id("m-batch-write-003")
+    reordered = copy.deepcopy(_write_case_by_id("m-batch-write-003"))
     reordered.then["statements"][0]["binds"] = [3, 2, 1]
     with pytest.raises(CaseFailure):
         _assert_write_input_columns(reordered, "postgres")
 
     # An EXTRA bind (superset of the pks) MUST be rejected.
-    extra = _write_case_by_id("m-batch-write-003")
+    extra = copy.deepcopy(_write_case_by_id("m-batch-write-003"))
     extra.then["statements"][0]["binds"] = [1, 2, 3, 4]
     with pytest.raises(CaseFailure):
         _assert_write_input_columns(extra, "postgres")
 
     # A DUPLICATED bind (a pk repeated, another dropped) MUST be rejected.
-    duplicated = _write_case_by_id("m-batch-write-003")
+    duplicated = copy.deepcopy(_write_case_by_id("m-batch-write-003"))
     duplicated.then["statements"][0]["binds"] = [1, 2, 2]
     with pytest.raises(CaseFailure):
         _assert_write_input_columns(duplicated, "postgres")
@@ -200,7 +203,7 @@ def test_tag_helper_reads_the_inheritance_metadata() -> None:
 def test_tph_insert_rejects_wrong_tag_bind() -> None:
     # Corrupting the tag bind to the wrong tagValue MUST fail the cross-check: the
     # derived value is pinned to the model's tagValue.
-    case = _write_case_by_id("m-inheritance-007")
+    case = copy.deepcopy(_write_case_by_id("m-inheritance-007"))
     case.then["statements"][0]["binds"][1] = "cash"
     with pytest.raises(CaseFailure):
         _assert_write_input_columns(case, "postgres")
@@ -209,7 +212,7 @@ def test_tph_insert_rejects_wrong_tag_bind() -> None:
 def test_tph_insert_rejects_tag_authored_in_row() -> None:
     # Authoring the tag column in ① MUST be rejected — it is framework-derived from
     # tagValue, never authored (m-inheritance).
-    case = _write_case_by_id("m-inheritance-007")
+    case = copy.deepcopy(_write_case_by_id("m-inheritance-007"))
     case.write_sequence[0]["rows"][0]["kind"] = "card"
     with pytest.raises(CaseFailure):
         _assert_write_input_columns(case, "postgres")
@@ -271,7 +274,7 @@ def test_tph_update_missing_tag_guard_is_rejected() -> None:
     # Dropping the `and kind = ?` guard from a table-per-hierarchy existing-row update
     # MUST fail the cross-check: the concrete subtype's rows are indistinguishable in the
     # shared table without it.
-    case = _write_case_by_id("m-inheritance-008")
+    case = copy.deepcopy(_write_case_by_id("m-inheritance-008"))
     case.then["statements"][0]["sql"]["postgres"] = "update payment set amount = ? where id = ?"
     case.then["statements"][0]["binds"] = [130.00, 1]
     with pytest.raises(CaseFailure):
@@ -281,7 +284,7 @@ def test_tph_update_missing_tag_guard_is_rejected() -> None:
 def test_tph_update_wrong_tag_bind_is_rejected() -> None:
     # The tag guard binds the concrete subtype's tagValue, pinned to the model. Binding
     # the wrong subtype's value ('cash' for a CardPayment) MUST fail.
-    case = _write_case_by_id("m-inheritance-008")
+    case = copy.deepcopy(_write_case_by_id("m-inheritance-008"))
     case.then["statements"][0]["binds"][2] = "cash"
     with pytest.raises(CaseFailure):
         _assert_write_input_columns(case, "postgres")
@@ -299,7 +302,7 @@ def test_tpcs_delete_targets_concrete_table() -> None:
 def test_tpcs_write_routed_to_wrong_table_is_rejected() -> None:
     # A table-per-concrete-subtype write MUST target the subtype's own table. Routing an
     # Invoice delete to a different table MUST fail the routing oracle.
-    case = _write_case_by_id("m-inheritance-085")
+    case = copy.deepcopy(_write_case_by_id("m-inheritance-085"))
     case.then["statements"][0]["sql"]["postgres"] = "delete from receipt where id = ?"
     with pytest.raises(CaseFailure):
         _assert_write_input_columns(case, "postgres")

@@ -12,6 +12,7 @@ compatibility suite.
 
 from __future__ import annotations
 
+import copy
 import re
 from pathlib import Path
 
@@ -132,10 +133,12 @@ def test_conflict_input_holds_for_authored_versioned_cases() -> None:
 
 
 def test_conflict_input_observed_version_corruption_is_rejected() -> None:
-    case = next(
-        c
-        for c in _versioned_conflict_cases()
-        if isinstance(c.write, dict) and "observedVersion" in c.write
+    case = copy.deepcopy(
+        next(
+            c
+            for c in _versioned_conflict_cases()
+            if isinstance(c.write, dict) and "observedVersion" in c.write
+        )
     )
     # Corrupt the observed version in ①: the derived advance (`observedVersion + 1`)
     # AND the trailing gate bind no longer agree with the authored golden binds, so
@@ -184,8 +187,12 @@ def test_audit_write_optimistic_gated_close_binds_in_z_gate() -> None:
 
 
 def test_temporal_conflict_close_observed_in_z_corruption_is_rejected() -> None:
-    case = next(
-        c for c in _temporal_conflict_close_cases() if c.path.stem.startswith("m-temporal-read-009")
+    case = copy.deepcopy(
+        next(
+            c
+            for c in _temporal_conflict_close_cases()
+            if c.path.stem.startswith("m-temporal-read-009")
+        )
     )
     # Corrupt the observed in_z gate token: the DERIVED `and in_z = ?` gate bind no
     # longer matches the golden gate bind, so the ① ↔ ② temporal-close gate MUST fail
@@ -196,8 +203,12 @@ def test_temporal_conflict_close_observed_in_z_corruption_is_rejected() -> None:
 
 
 def test_temporal_conflict_close_retry_gates_each_attempt() -> None:
-    case = next(
-        c for c in _temporal_conflict_close_cases() if c.path.stem.startswith("m-temporal-read-011")
+    case = copy.deepcopy(
+        next(
+            c
+            for c in _temporal_conflict_close_cases()
+            if c.path.stem.startswith("m-temporal-read-011")
+        )
     )
     # The retry form carries a close ① per attempt; corrupting the retry attempt's
     # observed in_z desyncs its derived gate bind from the golden, so the per-attempt
@@ -285,6 +296,7 @@ def test_conflict_abort_rejects_non_optimistic_unit_of_work() -> None:
     # work is not `concurrency: optimistic`, there is no gate to conflict on, so the
     # helper MUST reject even the genuine 0-row conflict shape.
     case, index, gated_sql, non_gated = _conflict_abort_scenario()
+    case = copy.deepcopy(case)
     case.when["uow"]["concurrency"] = "locking"
     assert case.concurrency_mode != "optimistic"
     executed = [(sql, 1) for sql in non_gated] + [(gated_sql, 0)]
@@ -297,6 +309,7 @@ def test_conflict_abort_rejects_affected_rows_one_as_no_conflict() -> None:
     # gate): then.affectedRows == 1 is NOT a conflict, so the helper rejects it before
     # ever inspecting the executed writes.
     case, index, gated_sql, non_gated = _conflict_abort_scenario()
+    case = copy.deepcopy(case)
     case.then["affectedRows"] = 1
     executed = [(sql, 1) for sql in non_gated] + [(gated_sql, 1)]
     with pytest.raises(CaseFailure):
