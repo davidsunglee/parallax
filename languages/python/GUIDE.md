@@ -606,10 +606,11 @@ self-contained without a system `libpq`.
   active cases (97 exercised / 214 reasoned-skip, `stale_skip_reasons`
   empty); suppressions 95; `just python-static` steps green individually
   (Pyright 0/0/0, ruff clean, diff-cover 100%); `gen-usage-guide --check`
-  exit 0 (regenerated: the three new stories render). The real-Postgres
-  `test_story_run.py` lane could not be re-run this session (Docker
-  unavailable in the working environment); the fake-port wire no-drift
-  guard (Docker-free) confirms the three stories' golden DML byte-exact.
+  exit 0 (regenerated: the three new stories render); combined Docker
+  lane (`conformance`/`provider_contract`/`adapter_smoke`/
+  `api_conformance`) 555 passed / 0 skipped (+6: the three new stories
+  through both the real-Postgres `test_story_run.py` runner and the
+  fake-port `test_write_no_drift.py` no-drift guard).
 
 ## Blockers
 
