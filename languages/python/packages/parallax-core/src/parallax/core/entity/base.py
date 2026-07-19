@@ -40,6 +40,7 @@ from parallax.core.descriptor import ValueObject as ValueObjectRecord
 from parallax.core.descriptor.neutral_type import infer_neutral_type as _infer_neutral_type_lookup
 from parallax.core.descriptor.neutral_type import snake_to_camel
 from parallax.core.descriptor.records import Unset as _UnsetType
+from parallax.core.entity._annotations import class_body_annotations
 from parallax.core.entity._validation import require_entity_record
 from parallax.core.entity.errors import (
     EntityDefinitionError,
@@ -778,36 +779,6 @@ def _module_globalns(namespace: dict[str, Any]) -> dict[str, Any]:
     return dict(getattr(module, "__dict__", {}))
 
 
-def _class_body_annotations(namespace: dict[str, Any]) -> dict[str, Any]:
-    """The class-body annotations, read from the metaclass ``namespace`` cross-version.
-
-    The model modules deliberately omit ``from __future__ import annotations`` so
-    the metaclass introspects the **live** ``Attr[T]`` / ``Rel[T]`` objects. On
-    Python 3.12/3.13 those live objects sit in ``namespace["__annotations__"]``.
-    Under PEP 649 / PEP 749 (Python 3.14+) annotations are deferred: the namespace
-    carries no ``__annotations__`` but a ``__annotate_func__`` instead, so evaluate
-    it in ``VALUE`` format to recover the same live objects. The deferred function
-    is popped so the resolved ``__annotations__`` this metaclass writes back stays
-    authoritative for Pydantic and the finished class. Each arm runs on exactly one
-    Python-version band, so each is coverage-excluded on the other bands' lanes; the
-    ``sys.version_info`` guard also keeps the 3.14-only ``annotationlib`` import off
-    the type-checked (3.12-target) path.
-    """
-    eager = namespace.get("__annotations__")
-    if eager is not None:
-        return dict(eager)  # pragma: no cover - eager annotations, Python <= 3.13
-    if sys.version_info < (3, 14):  # pragma: no cover - deferred arm below is Python >= 3.14 only
-        return {}
-    import annotationlib  # pragma: no cover - Python >= 3.14 only (PEP 649 / PEP 749)
-
-    annotate = namespace.pop("__annotate_func__", None)  # pragma: no cover - Python >= 3.14 only
-    if annotate is None:  # pragma: no cover - a class declaring no annotations at all
-        return {}
-    return dict(  # pragma: no cover - Python >= 3.14 only
-        annotationlib.call_annotate_function(annotate, annotationlib.Format.VALUE)
-    )
-
-
 def _resolve_annotation_type(inner: object, globalns: dict[str, Any]) -> object:
     """Resolve a stringized inner **attribute** type to a real object.
 
@@ -1124,7 +1095,7 @@ class EntityMeta(ModelMetaclass):
             column for aoa in config.as_of for column in (aoa.from_column, aoa.to_column)
         )
 
-        annotations: dict[str, Any] = _class_body_annotations(namespace)
+        annotations: dict[str, Any] = class_body_annotations(namespace)
         globalns = _module_globalns(namespace)
         attr_decls: list[_AttrDecl] = []
         rel_decls: list[_RelDecl] = []
