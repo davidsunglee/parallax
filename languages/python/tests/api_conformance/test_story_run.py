@@ -107,7 +107,16 @@ _STORY_IDS = [story.case_id for story in _EXECUTED_STORIES]
 
 @pytest.mark.parametrize("story", _EXECUTED_STORIES, ids=_STORY_IDS)
 def test_story_runs_through_the_shipped_surface(story: WriteStory, provisioner: Any) -> None:
-    meta = _reset_for(story.case_id, provisioner)
+    # D-33: a story compiled under its OWN `registry` (the Customer/Location/
+    # Depot mirror's `CUSTOMER_REGISTRY`, ledger D-20) provisions/connects
+    # through THAT registry's own metamodel, the SAME `_reset_for_registry`
+    # scoping the graph stories below already use — never the bare ingested
+    # corpus descriptor `_reset_for` resolves every other story through.
+    meta = (
+        _reset_for_registry(story.case_id, provisioner, story.registry)
+        if story.registry is not None
+        else _reset_for(story.case_id, provisioner)
+    )
     # D-29: a story's own scripted-clock FACTORY (never a shared instance) —
     # this consumer's fresh clock, independent of `test_write_no_drift.py`'s.
     clock = story.clock() if story.clock is not None else None

@@ -146,6 +146,29 @@ _SEED_ROWS_BY_CASE: Final[dict[str, list[Row]]] = {
             "out_z": _INFINITY,
         }
     ],
+    # `m-value-object-026`/`-027` (D-33, Phase-9 sweep): each story's own
+    # SECOND `db.transact` observes its Customer row before replacing/nulling
+    # the address out — a per-CASE seed (never per-model: the two stories use
+    # different ids AND different original address documents).
+    "m-value-object-026": [
+        {
+            "id": 200,
+            "name": "Ingrid",
+            "address": {
+                "street": "3 Old Road",
+                "city": "Bergen",
+                "geo": {"country": "NO"},
+                "phones": [{"type": "home", "number": "555-1111"}],
+            },
+        }
+    ],
+    "m-value-object-027": [
+        {
+            "id": 300,
+            "name": "Bjorn",
+            "address": {"street": "7 Fjord Vei", "city": "Alesund", "geo": {"country": "NO"}},
+        }
+    ],
 }
 
 
@@ -303,7 +326,13 @@ def _db(port: _RecordingPort, story: WriteStory) -> Database:
     # D-29: a story's own scripted-clock FACTORY (never a shared instance) —
     # this consumer's fresh clock, independent of `test_story_run.py`'s own.
     clock = story.clock() if story.clock is not None else None
-    return Database.connect(port, _MODELS[story.model], clock=clock)
+    # D-33: a story compiled under its OWN `registry` (the Customer/Location/
+    # Depot mirror's `CUSTOMER_REGISTRY`, ledger D-20) connects through THAT
+    # registry's metamodel, never the bare ingested corpus descriptor
+    # (`_MODELS`) — the same `resolve_entity_class` scoping
+    # `test_story_run.py`'s own `_reset_for_registry` observes.
+    meta = story.registry.metamodel() if story.registry is not None else _MODELS[story.model]
+    return Database.connect(port, meta, clock=clock)
 
 
 # The no-drift guard grades every EXERCISED story (`m-api-conformance.md`) —

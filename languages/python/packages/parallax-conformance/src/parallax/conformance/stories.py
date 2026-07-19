@@ -82,8 +82,19 @@ from typing import Final, Literal
 from parallax.conformance.read_models import Balance
 from parallax.conformance.scripted_clock import ScriptedClock
 from parallax.conformance.story_models import Account, Order, OrderItem, Position, Wallet
-from parallax.conformance.vo_models import Address, Branch, Geo, Phone, Supplier
-from parallax.core.entity import Entity
+from parallax.conformance.vo_models import (
+    CUSTOMER_REGISTRY,
+    Address,
+    Branch,
+    Customer,
+    CustomerAddress,
+    CustomerGeo,
+    CustomerPhone,
+    Geo,
+    Phone,
+    Supplier,
+)
+from parallax.core.entity import Entity, EntityRegistry
 from parallax.core.unit_work import Clock
 from parallax.snapshot.handle import Database, Transaction
 
@@ -117,7 +128,17 @@ class WriteStory:
     guard, the real-Postgres story runner) drives its own fresh clock rather
     than exhausting a script the other consumer already advanced. ``None``
     (every pre-D-29 story, unchanged) connects with no explicit clock at all —
-    the system clock (`Database.connect`'s own default)."""
+    the system clock (`Database.connect`'s own default).
+
+    ``registry`` (D-33, Phase-9 ledger sweep) is the OPTIONAL
+    :class:`~parallax.core.entity.base.EntityRegistry` a story's own entity
+    classes are compiled under, needed only when that differs from the
+    process default (ledger D-20's fix: the Customer/Location/Depot mirror
+    lives in its OWN `vo_models.CUSTOMER_REGISTRY`, exactly like the graph
+    stories' `_reset_for_registry` precedent in `test_story_run.py`) —
+    `None` (every other story, unchanged) connects through the ingested
+    corpus descriptor, the process-default-registry `resolve_entity_class`
+    seam finds every other story's classes through."""
 
     case_id: str
     title: str
@@ -125,6 +146,7 @@ class WriteStory:
     model: str
     run: Callable[[Database], list[Entity] | None]
     clock: Callable[[], Clock] | None = None
+    registry: EntityRegistry | None = None
 
 
 def story_snippet(story: WriteStory) -> str:
@@ -528,6 +550,92 @@ def branch_bitemporal_rectangle_split_carries_the_document(db: Database) -> None
 
 
 # --------------------------------------------------------------------------- #
+# m-value-object: Customer (non-temporal) VO-owner write stories (D-33, the   #
+# Phase-9 ledger sweep) — the recursive `address` composite (`CustomerGeo`    #
+# declares OPTIONAL `elevation`/`point`, unlike Supplier/Branch's own `Geo`),  #
+# so these are the FIRST write stories to exercise `to_document`'s D-33       #
+# omit-unset-optional-inner-members fix. Compiled under the Customer/         #
+# Location/Depot family's OWN `CUSTOMER_REGISTRY` (ledger D-20), never the    #
+# process default — see `WriteStory.registry`'s own docstring.               #
+# --------------------------------------------------------------------------- #
+def customer_insert_carries_the_whole_address_document(db: Database) -> None:
+    def fn(tx: Transaction) -> None:
+        tx.insert(
+            Customer(
+                id=100,
+                name="Solveig",
+                address=CustomerAddress(
+                    street="12 Aurora Ave",
+                    city="Tromso",
+                    geo=CustomerGeo(country="NO"),
+                    phones=(
+                        CustomerPhone(type="home", number="555-0001"),
+                        CustomerPhone(type="work", number="555-0002"),
+                    ),
+                ),
+            )
+        )
+
+    db.transact(fn)
+
+
+def customer_update_replaces_the_whole_address_document(db: Database) -> None:
+    def insert(tx: Transaction) -> None:
+        tx.insert(
+            Customer(
+                id=200,
+                name="Ingrid",
+                address=CustomerAddress(
+                    street="3 Old Road",
+                    city="Bergen",
+                    geo=CustomerGeo(country="NO"),
+                    phones=(CustomerPhone(type="home", number="555-1111"),),
+                ),
+            )
+        )
+
+    def replace(tx: Transaction) -> None:
+        current = tx.find(Customer.where(Customer.id == 200)).result()  # observe the row
+        # The new document drops `geo` and shrinks `phones` to one element —
+        # a WHOLE-document replace, never a path-level merge with the prior
+        # value (`m-value-object-026`'s own note).
+        tx.update(
+            current.model_copy(
+                update={
+                    "address": CustomerAddress(
+                        street="9 New Way",
+                        city="Stavanger",
+                        phones=(CustomerPhone(type="work", number="555-2222"),),
+                    )
+                }
+            )
+        )
+
+    db.transact(insert)
+    db.transact(replace)
+
+
+def customer_update_nulls_the_address_document_out(db: Database) -> None:
+    def insert(tx: Transaction) -> None:
+        tx.insert(
+            Customer(
+                id=300,
+                name="Bjorn",
+                address=CustomerAddress(
+                    street="7 Fjord Vei", city="Alesund", geo=CustomerGeo(country="NO")
+                ),
+            )
+        )
+
+    def null_out(tx: Transaction) -> None:
+        current = tx.find(Customer.where(Customer.id == 300)).result()  # observe the row
+        tx.update(current.model_copy(update={"address": None}))
+
+    db.transact(insert)
+    db.transact(null_out)
+
+
+# --------------------------------------------------------------------------- #
 # Per-story scripted clocks (D-29): one scripted instant per `db.transact`    #
 # call above, in entry order, matching each mirrored case's own authored     #
 # `at`/`until` instants.                                                     #
@@ -756,5 +864,29 @@ WRITE_STORIES: Final[tuple[WriteStory, ...]] = (
         "branch",
         branch_bitemporal_rectangle_split_carries_the_document,
         clock=_value_object_033_clock,
+    ),
+    WriteStory(
+        "m-value-object-025",
+        "Customer insert carries the whole address document atomically",
+        "commit",
+        "customer",
+        customer_insert_carries_the_whole_address_document,
+        registry=CUSTOMER_REGISTRY,
+    ),
+    WriteStory(
+        "m-value-object-026",
+        "Customer update replaces the whole address document",
+        "commit",
+        "customer",
+        customer_update_replaces_the_whole_address_document,
+        registry=CUSTOMER_REGISTRY,
+    ),
+    WriteStory(
+        "m-value-object-027",
+        "Customer update nulls the address document out",
+        "commit",
+        "customer",
+        customer_update_nulls_the_address_document_out,
+        registry=CUSTOMER_REGISTRY,
     ),
 )

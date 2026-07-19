@@ -1039,6 +1039,98 @@ def customer_owner_materializes_its_composite_under_a_filter(db: Database) -> Sn
     return db.find(Customer.where(Customer.address.city == "Oslo"))
 ```
 
+## Customer insert carries the whole address document atomically
+
+Corpus case: `m-value-object-025`
+
+```python
+def customer_insert_carries_the_whole_address_document(db: Database) -> None:
+    def fn(tx: Transaction) -> None:
+        tx.insert(
+            Customer(
+                id=100,
+                name="Solveig",
+                address=CustomerAddress(
+                    street="12 Aurora Ave",
+                    city="Tromso",
+                    geo=CustomerGeo(country="NO"),
+                    phones=(
+                        CustomerPhone(type="home", number="555-0001"),
+                        CustomerPhone(type="work", number="555-0002"),
+                    ),
+                ),
+            )
+        )
+
+    db.transact(fn)
+```
+
+## Customer update replaces the whole address document
+
+Corpus case: `m-value-object-026`
+
+```python
+def customer_update_replaces_the_whole_address_document(db: Database) -> None:
+    def insert(tx: Transaction) -> None:
+        tx.insert(
+            Customer(
+                id=200,
+                name="Ingrid",
+                address=CustomerAddress(
+                    street="3 Old Road",
+                    city="Bergen",
+                    geo=CustomerGeo(country="NO"),
+                    phones=(CustomerPhone(type="home", number="555-1111"),),
+                ),
+            )
+        )
+
+    def replace(tx: Transaction) -> None:
+        current = tx.find(Customer.where(Customer.id == 200)).result()  # observe the row
+        # The new document drops `geo` and shrinks `phones` to one element —
+        # a WHOLE-document replace, never a path-level merge with the prior
+        # value (`m-value-object-026`'s own note).
+        tx.update(
+            current.model_copy(
+                update={
+                    "address": CustomerAddress(
+                        street="9 New Way",
+                        city="Stavanger",
+                        phones=(CustomerPhone(type="work", number="555-2222"),),
+                    )
+                }
+            )
+        )
+
+    db.transact(insert)
+    db.transact(replace)
+```
+
+## Customer update nulls the address document out
+
+Corpus case: `m-value-object-027`
+
+```python
+def customer_update_nulls_the_address_document_out(db: Database) -> None:
+    def insert(tx: Transaction) -> None:
+        tx.insert(
+            Customer(
+                id=300,
+                name="Bjorn",
+                address=CustomerAddress(
+                    street="7 Fjord Vei", city="Alesund", geo=CustomerGeo(country="NO")
+                ),
+            )
+        )
+
+    def null_out(tx: Transaction) -> None:
+        current = tx.find(Customer.where(Customer.id == 300)).result()  # observe the row
+        tx.update(current.model_copy(update={"address": None}))
+
+    db.transact(insert)
+    db.transact(null_out)
+```
+
 ## A value object rides its unitemporal-processing owner's current milestone
 
 Corpus case: `m-value-object-028`

@@ -592,12 +592,27 @@ self-contained without a system `libpq`.
   exercised / 217 reasoned-skip); suppressions 95; `just python-static`
   exit 0 (Pyright 0/0/0, diff-cover 100%); `gen-usage-guide --check`
   exit 0.
+- **Phase-9 ledger sweep, chunk 1: the D-33 value-object write-serializer
+  fix.** `to_document` now omits a value object's unset OPTIONAL inner
+  members (`full_row`'s own `model_fields_set` filtering, mirrored
+  recursively into nested value objects and `tuple[VOClass, ...]`
+  elements); `m-value-object-025/-026/-027` flip from reasoned-skip to
+  exercised (three new `CUSTOMER_REGISTRY`-scoped Customer write stories),
+  closing the Customer family at 13 of 13. Measured post-fix: unit lane
+  2196 passed / 97 skipped (+8: 5 `to_document` pins, 3 new write-no-drift
+  stories); compile sweep 222 passed / 97 skipped, byte-identical (the
+  three flips exercise no case in the compile sweep's own reviewed set);
+  rejected sweep 39 / 0 (unchanged); API-suite partition exact over 311
+  active cases (97 exercised / 214 reasoned-skip, `stale_skip_reasons`
+  empty); suppressions 95; `just python-static` steps green individually
+  (Pyright 0/0/0, ruff clean, diff-cover 100%); `gen-usage-guide --check`
+  exit 0 (regenerated: the three new stories render). The real-Postgres
+  `test_story_run.py` lane could not be re-run this session (Docker
+  unavailable in the working environment); the fake-port wire no-drift
+  guard (Docker-free) confirms the three stories' golden DML byte-exact.
 
 ## Blockers
 
-- The value-object write-serialization gap (ledger D-33) keeps
-  `m-value-object-025/-026/-027` reasoned-skipped; it blocks only those three
-  case flips, not any milestone or gate.
 - Docker is required for the database-backed lanes (`just python-verify` /
   the `python-database` CI job); the database-free lane (`just python-static`,
   which now includes `-m dialect` and `-m compile_sweep`) needs no Docker.

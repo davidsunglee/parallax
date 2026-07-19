@@ -775,36 +775,6 @@ _VO_PREDICATE_SIBLING_REASON: Final[str] = (
     "shape to add, the SAME mechanism already proven against Postgres"
 )
 
-# Customer VO-document WRITE cases (m-value-object-025/026/027): the
-# Customer/Location/Depot mirror now exists and drives the family's READ
-# cases for real (D-20 residue, COR-3 Phase 8 increment 7 completion round —
-# `vo_models.Customer`, `graph_stories.py`), but these three writeSequence
-# cases hit a DIFFERENT, genuine blocker: `CustomerGeo` declares OPTIONAL
-# inner members (`elevation`/`point`) Supplier/Branch's own simpler `Geo`
-# composite does not, and the value-object write serializer
-# (`parallax.core.entity.value_object.to_document`) renders EVERY declared
-# inner member unconditionally — never filtered by that value object's OWN
-# `model_fields_set`, unlike `full_row`'s own top-level filtering (empirically
-# confirmed: `CustomerGeo(country="NO")` serializes to `{"country": "NO",
-# "elevation": None, "point": None}`, never the corpus's own narrower
-# `{"country": "NO"}` these three cases author). Supplier/Branch's own VO
-# write stories (m-value-object-032/-033) never exercise this path because
-# their `Geo` composite has no optional inner member to omit — closing this
-# gap is a value-object write-serialization change no part of this round's
-# charter touches.
-_CUSTOMER_VO_WRITE_SERIALIZATION_REASON: Final[str] = (
-    "the Customer/Location/Depot mirror now drives this family's READ cases for real, "
-    "but `CustomerGeo` declares OPTIONAL inner members (`elevation`/`point`) the "
-    "value-object write serializer (`to_document`) renders unconditionally rather than "
-    "omitting when unset (unlike `full_row`'s own top-level `model_fields_set` "
-    "filtering) — an idiomatic write would bind an extra `elevation`/`point: null` the "
-    "corpus's own narrower document never authors; Supplier/Branch's own VO write "
-    "stories (m-value-object-032/-033) never exercise this path because their `Geo` "
-    "composite has no optional inner member to omit — closing it is the value-object "
-    "write-serialization change ledger D-33 records"
-)
-
-
 # Value-object STRUCTURE rejects: each empirically confirmed (a REPL probe
 # against the shipped surface) to have NO idiomatic spelling that reaches
 # `validate_operation` with the corpus's own invalid shape — four DISTINCT
@@ -1009,12 +979,6 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-value-object-020": _VO_PREDICATE_SIBLING_REASON,
     "m-value-object-021": _VO_PREDICATE_SIBLING_REASON,
     "m-value-object-022": _VO_PREDICATE_SIBLING_REASON,
-    # -- m-value-object: Customer VO-document WRITE cases (m-value-object-025/ #
-    # 026/027 only -- the family's 10 read cases are now executed for real,   #
-    # `graph_stories.py`) -------------------------------------------------- #
-    "m-value-object-025": _CUSTOMER_VO_WRITE_SERIALIZATION_REASON,
-    "m-value-object-026": _CUSTOMER_VO_WRITE_SERIALIZATION_REASON,
-    "m-value-object-027": _CUSTOMER_VO_WRITE_SERIALIZATION_REASON,
     # -- m-value-object: structural rejects (no idiomatic spelling exists) --- #
     "m-value-object-034": _VO_UNKNOWN_NESTED_FIELD_REASON,
     "m-value-object-035": _VO_DEEPFETCH_SEGMENT_REASON,
