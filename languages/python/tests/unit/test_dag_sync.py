@@ -6,7 +6,12 @@ Covers the two Phase 1 canaries required by the structure outline:
 * a deliberately illegal scope import fails ``lint-imports``.
 
 plus generator correctness (DAG parsing, closure, and the conformance-family
-importer exemption).
+importer exemption), and the COR-42 Phase 7 additions:
+
+* ``SUPPORT_SCOPE_DEPS`` is parity-checked against the ``support-scope-graph``
+  fence in ``spec/python.md`` §7, with a drift canary in each direction; and
+* child scopes are emitted as contract *sources* only, with a ``lint-imports``
+  canary proving a child contract blocks an import its parent's row permits.
 """
 
 from __future__ import annotations
@@ -112,6 +117,181 @@ def test_conformance_scopes_are_exempt_importers() -> None:
 
 def test_render_block_is_deterministic() -> None:
     assert dag.generate() == dag.generate()
+
+
+# --------------------------------------------------------------------------
+# §7 support-scope parity: the spec fence is the third input.
+# --------------------------------------------------------------------------
+def test_parse_support_scope_graph_reads_the_spec_fence() -> None:
+    declared = dag.parse_support_scope_graph(dag.PYTHON_MD.read_text())
+    assert "parallax.snapshot.materialize" in declared["parallax.snapshot.handle"]
+    assert declared["parallax.postgres"] == frozenset(
+        {"parallax.core.db_port", "parallax.core.db_error", "parallax.core.dialect"}
+    )
+
+
+def test_parse_support_scope_graph_rejects_missing_block() -> None:
+    with pytest.raises(ValueError, match="support-scope-graph"):
+        dag.parse_support_scope_graph("no fenced block here")
+
+
+def test_parse_support_scope_graph_rejects_a_malformed_line() -> None:
+    with pytest.raises(ValueError, match="unparseable support-scope-graph line"):
+        dag.parse_support_scope_graph("```support-scope-graph\nnot an edge\n```")
+
+
+def test_committed_support_scope_table_matches_the_spec() -> None:
+    # Parity holds today, so `generate()` never raises on the committed tree.
+    dag.check_support_scope_parity(dag.parse_support_scope_graph(dag.PYTHON_MD.read_text()))
+
+
+def test_support_scope_parity_fails_on_a_dropped_grant() -> None:
+    declared = dict(dag.parse_support_scope_graph(dag.PYTHON_MD.read_text()))
+    declared["parallax.postgres"] = declared["parallax.postgres"] - {"parallax.core.dialect"}
+    with pytest.raises(ValueError, match=r"'parallax\.postgres' has drifted"):
+        dag.check_support_scope_parity(declared)
+
+
+def test_support_scope_parity_fails_on_a_scope_only_the_spec_declares() -> None:
+    declared = dict(dag.parse_support_scope_graph(dag.PYTHON_MD.read_text()))
+    declared["parallax.core.ghost"] = frozenset({"parallax.core.base"})
+    with pytest.raises(ValueError, match="declared only in the spec"):
+        dag.check_support_scope_parity(declared)
+
+
+def test_support_scope_parity_fails_on_a_scope_only_the_tool_declares() -> None:
+    declared = dict(dag.parse_support_scope_graph(dag.PYTHON_MD.read_text()))
+    del declared["parallax.snapshot.handle._wrap"]
+    with pytest.raises(ValueError, match="declared only in the tool"):
+        dag.check_support_scope_parity(declared)
+
+
+def test_a_tampered_spec_fence_fails_generation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The full canary: editing §7 without editing the tool (or the reverse) makes
+    # `check_dag_sync.py` refuse to generate, so `python-static` blocks.
+    tampered = tmp_path / "python.md"
+    original = dag.PYTHON_MD.read_text()
+    edited = original.replace("parallax.snapshot.handle --> parallax.core.navigate\n", "", 1)
+    assert edited != original
+    tampered.write_text(edited)
+    monkeypatch.setattr(dag, "PYTHON_MD", tampered)
+
+    with pytest.raises(ValueError, match=r"'parallax\.snapshot\.handle' has drifted"):
+        dag.generate()
+
+
+# --------------------------------------------------------------------------
+# The handle grant row after the COR-42 Phase 7 audit.
+# --------------------------------------------------------------------------
+def test_handle_scope_no_longer_grants_pk_gen() -> None:
+    handle = dag.SUPPORT_SCOPE_DEPS["parallax.snapshot.handle"]
+    assert "parallax.core.pk_gen" not in handle
+    # Removing it genuinely forbids the scope: nothing else reaches pk_gen.
+    adjacency = dag.build_adjacency(dag.parse_dependency_graph(dag.MODULES_MD.read_text()))
+    forbidden = dag.compute_forbidden(adjacency)
+    assert "parallax.core.pk_gen" in forbidden["parallax.snapshot.handle"]
+
+
+def test_handle_scope_still_grants_navigate() -> None:
+    # Deliberate, per spec/python.md §7: `Transaction.find` is a claimed find and
+    # composes `parallax.core.navigate.canonicalize` directly.
+    assert "parallax.core.navigate" in dag.SUPPORT_SCOPE_DEPS["parallax.snapshot.handle"]
+
+
+# --------------------------------------------------------------------------
+# Child scopes: sources only.
+# --------------------------------------------------------------------------
+def test_child_scopes_are_declared_under_their_parent() -> None:
+    dag.check_child_scopes()
+    for child, parent in dag.CHILD_SCOPE_PARENT.items():
+        assert child.startswith(f"{parent}.")
+        assert child in dag.SUPPORT_SCOPE_DEPS
+
+
+def test_check_child_scopes_rejects_an_undeclared_parent(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        dag, "CHILD_SCOPE_PARENT", {"parallax.core.ghost.child": "parallax.core.ghost"}
+    )
+    with pytest.raises(ValueError, match="undeclared parent scope"):
+        dag.check_child_scopes()
+
+
+def test_check_child_scopes_rejects_a_child_outside_its_parent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        dag, "CHILD_SCOPE_PARENT", {"parallax.core.base": "parallax.snapshot.handle"}
+    )
+    with pytest.raises(ValueError, match="not nested inside its parent"):
+        dag.check_child_scopes()
+
+
+def test_child_scopes_are_never_forbidden_targets() -> None:
+    # import-linter >= 2.12 silently skips a forbidden module that overlaps the
+    # contract's own source package, so a child inside its parent's row would be
+    # a contract that looks present and enforces nothing. Children are sources
+    # only; the parent's row already covers every descendant for other scopes.
+    adjacency = dag.build_adjacency(dag.parse_dependency_graph(dag.MODULES_MD.read_text()))
+    forbidden = dag.compute_forbidden(adjacency)
+    assert set(dag.CHILD_SCOPE_PARENT) <= set(forbidden)
+    for scope, blocked in forbidden.items():
+        assert not (set(blocked) & set(dag.CHILD_SCOPE_PARENT)), scope
+
+
+def test_a_child_row_omits_its_own_ancestors() -> None:
+    adjacency = dag.build_adjacency(dag.parse_dependency_graph(dag.MODULES_MD.read_text()))
+    forbidden = dag.compute_forbidden(adjacency)
+    assert "parallax.snapshot.handle" not in forbidden["parallax.snapshot.handle._wrap"]
+    assert dag.scope_ancestors("parallax.snapshot.handle._wrap") == frozenset(
+        {"parallax.snapshot.handle"}
+    )
+    assert dag.scope_ancestors("parallax.snapshot.handle") == frozenset()
+
+
+def test_child_rows_are_narrower_than_the_parent_row() -> None:
+    # The whole point of the audit: each child forbids strictly more than the
+    # broad parent scope does.
+    adjacency = dag.build_adjacency(dag.parse_dependency_graph(dag.MODULES_MD.read_text()))
+    forbidden = dag.compute_forbidden(adjacency)
+    parent = set(forbidden["parallax.snapshot.handle"])
+    for child in dag.CHILD_SCOPE_PARENT:
+        assert parent < set(forbidden[child]), child
+    # `_wrap` may not reach SQL generation; the lowering cluster may not reach
+    # the read side. Neither restriction exists on the parent.
+    assert "parallax.core.sql_gen" in forbidden["parallax.snapshot.handle._wrap"]
+    assert "parallax.snapshot.materialize" in forbidden["parallax.snapshot.handle._keyed_sql"]
+
+
+# --------------------------------------------------------------------------
+# Canary 3: a child contract blocks what the parent contract permits.
+# --------------------------------------------------------------------------
+def test_child_scope_contract_blocks_an_import_the_parent_permits() -> None:
+    lint_imports = shutil.which("lint-imports")
+    assert lint_imports is not None, "lint-imports must be installed in the dev env"
+
+    # `m-sql` IS in the parent handle grant row, so the broad contract permits
+    # this import; only the `_wrap` child contract can reject it.
+    assert "parallax.core.sql_gen" in dag.SUPPORT_SCOPE_DEPS["parallax.snapshot.handle"]
+    target = PY_ROOT / "packages/parallax-snapshot/src/parallax/snapshot/handle/_wrap.py"
+    original = target.read_text()
+    target.write_text(
+        f"{original}import parallax.core.sql_gen  # deliberate child-scope violation\n"
+    )
+    try:
+        result = subprocess.run(
+            [lint_imports],
+            cwd=PY_ROOT,
+            capture_output=True,
+            text=True,
+        )
+    finally:
+        target.write_text(original)
+
+    assert result.returncode != 0, result.stdout
+    assert "parallax.snapshot.handle._wrap" in result.stdout
+    assert "not allowed to import parallax.core.sql_gen" in result.stdout
 
 
 # --------------------------------------------------------------------------
