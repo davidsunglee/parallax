@@ -82,26 +82,31 @@ __all__ = [
 # BOTH values are load-bearing, and `_DEADLOCK_TIMEOUT` MUST stay strictly
 # BELOW `_LOCK_TIMEOUT`. The reason is a timer race inside Postgres, not a
 # preference: when a backend begins waiting for a lock, `ProcSleep`
-# (`src/backend/storage/lmgr/proc.c`) arms the DEADLOCK_TIMEOUT and
-# LOCK_TIMEOUT interval timers TOGETHER, as two independent timers, and
-# whichever fires first wins outright --
+# (`src/backend/storage/lmgr/proc.c`, read at 16.4) arms the DEADLOCK_TIMEOUT
+# and LOCK_TIMEOUT interval timers TOGETHER, as two independent timers, and
+# whichever fires first wins outright -- ABRIDGED below, `...` marks dropped
+# lines (the local declaration and each entry's `.type = TMPARAM_AFTER`):
 #
 #     if (LockTimeout > 0) {
-#         timeouts[0].id = DEADLOCK_TIMEOUT; timeouts[0].delay_ms = DeadlockTimeout;
-#         timeouts[1].id = LOCK_TIMEOUT;     timeouts[1].delay_ms = LockTimeout;
+#         ...
+#         timeouts[0].id = DEADLOCK_TIMEOUT; ... timeouts[0].delay_ms = DeadlockTimeout;
+#         timeouts[1].id = LOCK_TIMEOUT;     ... timeouts[1].delay_ms = LockTimeout;
 #         enable_timeouts(timeouts, 2);
 #     } else
 #         enable_timeout_after(DEADLOCK_TIMEOUT, DeadlockTimeout);
 #
-# -- so with `lock_timeout` at or below `deadlock_timeout`, LOCK_TIMEOUT fires
-# first, `LockErrorCleanup` pulls the backend out of the wait queue, and
-# `CheckDeadLock` never runs at all. `deadlock_timeout` is ONLY a delay before
-# the detector runs; by itself it aborts nothing. The observable consequence is
-# that a GENUINE deadlock cycle (m-db-error-004 / m-db-error-005) stops
-# producing one `40P01` / `deadlock` victim and instead surfaces as TWO `55P03`
-# / `lockWaitTimeout` errors -- which breaks those cases' grading, since exactly
-# one node across the whole choreography may raise. Postgres's own manual does
-# not state this interaction; it follows from the timer arming above.
+# -- so with `lock_timeout` strictly BELOW `deadlock_timeout`, LOCK_TIMEOUT
+# fires first, `LockErrorCleanup` pulls the backend out of the wait queue, and
+# `CheckDeadLock` never runs at all. (At EQUAL deadlines 16.4 happens to favor
+# DEADLOCK_TIMEOUT on timeout-ID priority, so equality works today -- but that
+# is timer-ID ordering, not a documented guarantee, so keep a real margin.)
+# `deadlock_timeout` is ONLY a delay before the detector runs; by itself it
+# aborts nothing. The consequence is that a GENUINE deadlock cycle
+# (m-db-error-004 / m-db-error-005) stops producing one `40P01` / `deadlock`
+# victim and instead surfaces as TWO `55P03` / `lockWaitTimeout` errors --
+# breaking those cases' grading, since exactly one node across the whole
+# choreography may raise. Postgres's manual does not state this interaction;
+# it follows from the timer arming above.
 #
 # So lowering the lock-wait budget from the former 2000ms (with
 # `deadlock_timeout` left at the server default of 1s, comfortably below it)
