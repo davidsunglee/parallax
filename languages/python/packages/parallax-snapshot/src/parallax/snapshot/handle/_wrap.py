@@ -1,5 +1,9 @@
-"""``parallax.snapshot.wrap`` — frozen developer-surface node wrapping (COR-3
-Phase 7 increment 6a; spec §3/§4).
+"""``parallax.snapshot.handle._wrap`` — frozen developer-surface node wrapping
+(COR-3 Phase 7 increment 6a; spec §3/§4).
+
+Private handle implementation, never re-exported through
+``parallax.snapshot.handle``'s own ``__init__.py``: ``_read`` is its only
+caller, and the frozen graphs it builds reach callers as ``Snapshot`` roots.
 
 Converts one materialized neutral graph
 (:class:`~parallax.snapshot.materialize.Node`) into frozen instances of the

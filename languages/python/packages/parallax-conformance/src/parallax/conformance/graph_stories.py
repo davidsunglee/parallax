@@ -11,7 +11,7 @@ write stories, needed for the SAME reason (checkpoint 3's S1 lesson): an
 example whose behavior is only observable by EXECUTING it must run through the
 shipped surface, not merely serialize a statement — a wire-level ``graph``
 grade proves the assembled NEUTRAL nodes are correct, but says nothing about
-the frozen-node WRAPPING (`parallax.snapshot.wrap`) layered on top by
+the frozen-node WRAPPING (`parallax.snapshot.handle._wrap`) layered on top by
 ``db.find`` — identity surviving the wrap, `is_loaded`/
 `UnloadedRelationshipError`, closed-world zero-SQL access, `pin_of`/`edge_of`
 on a materialized node. Those developer-facing guarantees are exactly what the

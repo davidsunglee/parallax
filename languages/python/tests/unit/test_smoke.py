@@ -5,6 +5,8 @@ from __future__ import annotations
 import importlib
 import importlib.util
 import pkgutil
+import subprocess
+import sys
 
 import pytest
 
@@ -60,6 +62,23 @@ def test_every_scope_submodule_imports() -> None:
     assert "parallax.snapshot.materialize" in imported
     assert "parallax.postgres.adapter" in imported
     assert "parallax.conformance.cli" in imported
+
+
+@pytest.mark.parametrize(
+    "module",
+    ["parallax.snapshot", "parallax.snapshot.handle", "parallax.snapshot.handle._wrap"],
+)
+def test_snapshot_imports_cold_in_a_fresh_interpreter(module: str) -> None:
+    # The in-process checks above cannot see an import cycle: by the time they
+    # run, pytest collection has already imported `parallax.snapshot`, so a
+    # partially-initialized-module failure is masked. `handle._wrap` imports
+    # `parallax.snapshot.materialize` back through the parent package — the shape
+    # that breaks only on a cold import, and only for some entry points, so each
+    # entry point gets its own probe.
+    result = subprocess.run(
+        [sys.executable, "-c", f"import {module}"], capture_output=True, text=True
+    )
+    assert result.returncode == 0, result.stderr
 
 
 def test_conformance_cli_describe_exits_ok(capsys: pytest.CaptureFixture[str]) -> None:
