@@ -226,7 +226,7 @@ def require_observed(entity: str, observation: Observation | None) -> int:
     version — this unit of work never observed the row (`m-opt-lock` "Version
     values are framework-owned"). A row that itself carries an explicit
     version value is refused earlier, by :func:`reject_caller_authored_version`
-    (`parallax.snapshot.handle._lower_update`) — this function's own row is
+    (`parallax.snapshot.handle`'s `lower_update`) — this function's own row is
     always the framework-derived one, never a caller-authored version.
     """
     if observation is None or observation.version is None:

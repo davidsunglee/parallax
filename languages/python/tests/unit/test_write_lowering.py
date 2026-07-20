@@ -510,7 +510,7 @@ def test_milestone_verb_on_a_non_temporal_entity_is_refused() -> None:
 def test_multi_row_insert_collapses_to_one_statement_many_value_tuples() -> None:
     # m-batch-write-001's own insert entry: the multi-row INSERT collapse
     # renders ONE statement with one value tuple per row, in row order —
-    # `_lower_multi_insert`'s own m-batch-write set-based flush.
+    # `lower_multi_insert`'s own m-batch-write set-based flush.
     insert = KeyedWrite(
         "insert",
         "Wallet",

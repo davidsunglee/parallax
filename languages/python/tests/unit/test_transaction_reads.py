@@ -374,7 +374,7 @@ def test_db_find_returns_one_snapshot_root_per_milestone_for_a_history_statement
 
     port = RecordingPort(rows=_balance_history_rows())
     db = Database.connect(port, BALANCE, clock=FixedClock(FIXED))
-    # `.distinct()` after `.history()` also exercises `_is_milestone_set_op`'s
+    # `.distinct()` after `.history()` also exercises `is_milestone_set_op`'s
     # own directive-peeling loop (a result-shaping wrapper around the scan).
     statement = mm.Balance.where(mm.Balance.id == 1).history("processing").distinct()
     snapshot = db.find(statement)
