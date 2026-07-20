@@ -886,9 +886,13 @@ already machine-readable from the fenced `dependency-graph` block in
 only declaration of their edges. The fenced `support-scope-graph` block below is
 the machine-readable form of exactly those rows, written in the same
 `A --> B` grammar and naming enforcement scopes on both sides.
-`tools/check_dag_sync.py` parses it and fails when its own `SUPPORT_SCOPE_DEPS`
-table disagrees, so the generated contracts cannot drift from this section. The
-prose rows and the block MUST agree.
+The prose rows and the block MUST agree. `tools/check_dag_sync.py` parses
+**both** — the rows' "Allowed direct dependencies" column and the block — and
+fails when they disagree with each other or when its own `SUPPORT_SCOPE_DEPS`
+table disagrees with either, so the generated contracts cannot drift from this
+section and no single representation can be edited alone. In the rows, only a
+backticked module tag or `parallax.*` scope declares a grant; unbackticked
+prose (`psycopg`) names no enforcement scope.
 
 ```support-scope-graph
 parallax.core.entity --> parallax.core.descriptor
@@ -1075,7 +1079,7 @@ subsection of the template is deleted from this completed spec.
 
 | Quality concern | Tool and version policy | Configuration path(s) | Local command | Blocking CI command/job | Threshold, exclusions, and enforcement policy |
 |---|---|---|---|---|---|
-| Dependency directions within and across artifacts | import-linter (pinned in `uv.lock`) + `check_dag_sync.py` + `check_scope_ownership.py` | `languages/python/pyproject.toml` `[tool.importlinter]`; `languages/python/tools/check_dag_sync.py`; `languages/python/tools/check_scope_ownership.py` | `uv run python tools/check_dag_sync.py && uv run python tools/check_scope_ownership.py && uv run lint-imports` | `python-static` job, same commands | any production-scope import outside the DAG's transitive closure fails — the forbidden-edge complement generated from `modules.md` rejects illegal non-edges, not just wrong directions, with only the §7 conformance-family importer exemption; generated-contract drift fails, as does drift between `check_dag_sync.py`'s support-scope table and the §7 `support-scope-graph` block; a production source file owned by no §7 scope (and so covered by no contract), owned by undeclared overlapping scopes, or covered by a stale exemption also fails |
+| Dependency directions within and across artifacts | import-linter (pinned in `uv.lock`) + `check_dag_sync.py` + `check_scope_ownership.py` | `languages/python/pyproject.toml` `[tool.importlinter]`; `languages/python/tools/check_dag_sync.py`; `languages/python/tools/check_scope_ownership.py` | `uv run python tools/check_dag_sync.py && uv run python tools/check_scope_ownership.py && uv run lint-imports` | `python-static` job, same commands | any production-scope import outside the DAG's transitive closure fails — the forbidden-edge complement generated from `modules.md` rejects illegal non-edges, not just wrong directions, with only the §7 conformance-family importer exemption; generated-contract drift fails, as does any disagreement among the three declarations of the support-scope graph — `check_dag_sync.py`'s support-scope table, the §7 prose rows, and the §7 `support-scope-graph` block — including the case where two of the three are edited consistently and the third is left stale; a production source file owned by no §7 scope (and so covered by no contract), owned by undeclared overlapping scopes, or covered by a stale exemption also fails |
 | Unit tests | pytest (pinned) | `languages/python/pyproject.toml` `[tool.pytest.ini_options]` | `uv run pytest -m unit` | `python-static` job | unit = no container/socket I/O; any failure blocks |
 | Code coverage | coverage.py via pytest-cov, branch mode + diff-cover (both pinned) | `[tool.coverage]` in `languages/python/pyproject.toml` | `uv run pytest -m unit --cov --cov-branch --cov-report=xml && uv run diff-cover coverage.xml --compare-branch origin/main --fail-under 100` | `python-static` job with `--cov-fail-under=90` plus the same diff-cover gate | **90% branch minimum** overall; diff-cover requires **100%** of changed lines vs the merge-base with `main`, making the no-new-uncovered-code policy executable; no generated/vendor code exists to exclude; conformance CLI included |
 | Linting | ruff (pinned) | `[tool.ruff]` in `languages/python/pyproject.toml` | `uv run ruff check` | `python-static` job | rule sets E, F, W, I, UP, B, SIM, RUF; `# noqa` requires rule code + one-line justification |

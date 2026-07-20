@@ -9,10 +9,14 @@ dependency closure, and emits the *complement*: every production scope pair the
 closure does not permit becomes a forbidden import. This rejects illegal
 non-edges, not merely wrong-direction edges (a ``layers`` contract cannot).
 
-Support-scope edges carry no module tag, so §7 is their only declaration.
-:data:`SUPPORT_SCOPE_DEPS` is parity-checked against the fenced
-``support-scope-graph`` block in ``spec/python.md`` on every run: the table and
-the spec cannot drift apart without failing generation.
+Support-scope edges carry no module tag, so §7 is their only declaration, and
+§7 states them **twice** — once in the prose table's "Allowed direct
+dependencies" column and once in the fenced ``support-scope-graph`` block —
+requiring that "the prose rows and the block MUST agree". All three
+representations are therefore parity-checked against each other on every run:
+the §7 prose rows, the §7 fence, and :data:`SUPPORT_SCOPE_DEPS`. Editing any one
+of them alone fails generation, and so does editing two of them consistently
+while the third disagrees.
 
 The core conformance-family exception (``modules.md``) is encoded structurally:
 conformance scopes (``parallax.conformance.*``) are exempt on the *importing*
@@ -102,9 +106,10 @@ _LOWERING_GROUP_DEPS: frozenset[str] = frozenset(
 )
 
 # Support scopes carry no module tag in modules.md; their permitted direct
-# dependencies come from the spec/python.md §7 table, whose machine-readable
-# form is the fenced `support-scope-graph` block that :func:`check_support_scope_parity`
-# reads back.
+# dependencies come from the spec/python.md §7 table. Both of that section's
+# representations — the prose rows and the fenced `support-scope-graph` block —
+# are read back and compared against this table by
+# :func:`check_support_scope_parity`.
 SUPPORT_SCOPE_DEPS: Mapping[str, frozenset[str]] = {
     "parallax.core.entity": frozenset(
         {
@@ -193,21 +198,35 @@ ROOT_PACKAGES: tuple[str, ...] = (
 )
 
 
-def parse_dependency_graph(text: str) -> list[tuple[str, str]]:
-    """Extract ``A --> B`` edges from the fenced ``dependency-graph`` block."""
-    match = re.search(r"```dependency-graph\n(.*?)\n```", text, re.DOTALL)
+_EDGE = re.compile(r"(\S+)\s*-->\s*(\S+)")
+
+
+def _parse_edge_fence(text: str, fence: str, source: str) -> list[tuple[str, str]]:
+    """Extract the ``A --> B`` edges from the fenced ``fence`` block in ``text``.
+
+    The single owner of the fence grammar. ``dependency-graph`` (module tags,
+    from ``modules.md``) and ``support-scope-graph`` (enforcement scopes, from
+    ``spec/python.md`` §7) are the same notation over different vocabularies,
+    so they differ only in fence name and in how the caller shapes the result.
+    """
+    match = re.search(rf"```{re.escape(fence)}\n(.*?)\n```", text, re.DOTALL)
     if match is None:
-        raise ValueError("no fenced ```dependency-graph``` block found in modules.md")
+        raise ValueError(f"no fenced ```{fence}``` block found in {source}")
     edges: list[tuple[str, str]] = []
     for line in match.group(1).splitlines():
         stripped = line.strip()
         if not stripped:
             continue
-        edge = re.fullmatch(r"(\S+)\s*-->\s*(\S+)", stripped)
+        edge = _EDGE.fullmatch(stripped)
         if edge is None:
-            raise ValueError(f"unparseable dependency-graph line: {line!r}")
+            raise ValueError(f"unparseable {fence} line: {line!r}")
         edges.append((edge.group(1), edge.group(2)))
     return edges
+
+
+def parse_dependency_graph(text: str) -> list[tuple[str, str]]:
+    """Extract ``A --> B`` edges from the fenced ``dependency-graph`` block."""
+    return _parse_edge_fence(text, "dependency-graph", "modules.md")
 
 
 def parse_support_scope_graph(text: str) -> dict[str, frozenset[str]]:
@@ -217,44 +236,170 @@ def parse_support_scope_graph(text: str) -> dict[str, frozenset[str]]:
     name Python enforcement scopes rather than module tags, because support
     scopes carry no tag in ``modules.md``.
     """
-    match = re.search(r"```support-scope-graph\n(.*?)\n```", text, re.DOTALL)
-    if match is None:
-        raise ValueError("no fenced ```support-scope-graph``` block found in spec/python.md")
     declared: dict[str, set[str]] = {}
-    for line in match.group(1).splitlines():
-        stripped = line.strip()
-        if not stripped:
-            continue
-        edge = re.fullmatch(r"(\S+)\s*-->\s*(\S+)", stripped)
-        if edge is None:
-            raise ValueError(f"unparseable support-scope-graph line: {line!r}")
-        declared.setdefault(edge.group(1), set()).add(edge.group(2))
+    for importer, imported in _parse_edge_fence(text, "support-scope-graph", "spec/python.md"):
+        declared.setdefault(importer, set()).add(imported)
     return {scope: frozenset(deps) for scope, deps in declared.items()}
 
 
-def check_support_scope_parity(declared: Mapping[str, frozenset[str]]) -> None:
-    """Fail when :data:`SUPPORT_SCOPE_DEPS` and spec §7 disagree.
+# The §7 prose table. `_TABLE_HEADER` opens it; contiguous `|`-prefixed lines
+# are its rows. A support-scope row is marked by "(support" in its first cell —
+# behavioural rows carry an `m-…` module tag there instead and take their edges
+# from `modules.md`, not from §7.
+_TABLE_HEADER = "| Behavioral/support module |"
+_SUPPORT_ROW = "(support"
+_APPLICATION_OWNED = "(application-owned)"
+_BACKTICKED = re.compile(r"`([^`]+)`")
 
-    The spec is authoritative, so any difference is reported as spec-relative:
-    a scope the spec declares and the table omits, a scope the table invents,
-    or a grant row whose members differ.
+
+def _table_rows(text: str) -> list[list[str]]:
+    """The §7 enforcement-topology table as cell lists, separator row dropped."""
+    lines = text.splitlines()
+    header = next((i for i, line in enumerate(lines) if line.startswith(_TABLE_HEADER)), None)
+    if header is None:
+        raise ValueError("no §7 enforcement-topology table found in spec/python.md")
+    rows: list[list[str]] = []
+    for line in lines[header + 1 :]:
+        if not line.startswith("|"):
+            break
+        cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+        if all(set(cell) <= set("-: ") for cell in cells):
+            continue
+        if len(cells) != 5:
+            raise ValueError(f"§7 table row does not have 5 cells: {line!r}")
+        rows.append(cells)
+    if not rows:
+        raise ValueError("§7 enforcement-topology table has no rows")
+    return rows
+
+
+def _row_scopes(scope_cell: str, owner_cell: str) -> list[str]:
+    """The enforcement scopes a §7 row declares.
+
+    Normally the "Enforcement scope" cell names them. The write-lowering child
+    group states "those four scopes, sharing one grant row" there and enumerates
+    them in the "Source owner/path" cell instead, so a scope cell naming none
+    falls back to the owner cell. Within a cell, a backticked token starting
+    with a dot (``._write_types``) abbreviates a sibling of the preceding full
+    name and is expanded against it.
     """
-    spec_only = sorted(set(declared) - set(SUPPORT_SCOPE_DEPS))
-    table_only = sorted(set(SUPPORT_SCOPE_DEPS) - set(declared))
-    if spec_only or table_only:
-        raise ValueError(
-            "SUPPORT_SCOPE_DEPS has drifted from the spec/python.md §7 "
-            f"support-scope-graph block: declared only in the spec {spec_only}, "
-            f"declared only in the tool {table_only}"
-        )
-    for scope in sorted(declared):
-        if declared[scope] != SUPPORT_SCOPE_DEPS[scope]:
+    for cell in (scope_cell, owner_cell):
+        names: list[str] = []
+        for token in _BACKTICKED.findall(cell):
+            if token.startswith("."):
+                if not names:
+                    raise ValueError(f"abbreviated §7 scope {token!r} has no preceding full name")
+                names.append(f"{names[-1].rsplit('.', 1)[0]}{token}")
+            elif token.startswith("parallax."):
+                names.append(token)
+        if names:
+            return names
+    raise ValueError(f"§7 support row names no enforcement scope: {scope_cell!r}")
+
+
+def _row_grants(cell: str, scope: str) -> frozenset[str]:
+    """The scopes a §7 row's "Allowed direct dependencies" cell grants.
+
+    Only backticked tokens declare a grant: a module tag resolved through
+    :data:`MODULE_SCOPE`, or a ``parallax.*`` scope named outright. Unbackticked
+    prose in that cell names no enforcement scope (``psycopg`` is a third-party
+    distribution, not a scope) and is not a grant. A backticked token that is
+    neither shape is a spec error rather than something to skip quietly.
+    """
+    grants: set[str] = set()
+    for token in _BACKTICKED.findall(cell):
+        if token.startswith("parallax."):
+            grants.add(token)
+        elif token.startswith("m-"):
+            mapped = MODULE_SCOPE.get(token)
+            if mapped is None:
+                raise ValueError(
+                    f"§7 prose row for {scope!r} grants module tag {token!r}, which "
+                    "MODULE_SCOPE does not model"
+                )
+            grants.add(mapped)
+        else:
             raise ValueError(
-                f"support scope {scope!r} has drifted from the spec/python.md §7 "
-                f"support-scope-graph block: spec grants "
-                f"{sorted(declared[scope])}, tool grants "
-                f"{sorted(SUPPORT_SCOPE_DEPS[scope])}"
+                f"§7 prose row for {scope!r} grants {token!r}, which is neither a "
+                "module tag nor a `parallax.*` enforcement scope"
             )
+    return frozenset(grants)
+
+
+def parse_support_scope_table(text: str) -> dict[str, frozenset[str]]:
+    """Extract the declared support-scope edges from ``spec/python.md`` §7's prose rows.
+
+    §7 states support-scope grants twice and requires the two to agree, so the
+    prose rows are a first-class input rather than commentary on the fence. The
+    composition-root row is the one support row that declares no enforcement
+    scope — it is application-owned code, outside every scope — and is skipped
+    by that exact marker, not by shape.
+    """
+    declared: dict[str, frozenset[str]] = {}
+    for module, owner, scope_cell, deps_cell, _rule in _table_rows(text):
+        if _SUPPORT_ROW not in module:
+            continue
+        if scope_cell == _APPLICATION_OWNED:
+            continue
+        scopes = _row_scopes(scope_cell, owner)
+        grants = _row_grants(deps_cell, scopes[0])
+        for scope in scopes:
+            declared[scope] = grants
+    return declared
+
+
+def _compare_declarations(
+    left_name: str,
+    left: Mapping[str, frozenset[str]],
+    right_name: str,
+    right: Mapping[str, frozenset[str]],
+    subject: str,
+) -> None:
+    """Fail when two declarations of the support-scope graph disagree."""
+    left_only = sorted(set(left) - set(right))
+    right_only = sorted(set(right) - set(left))
+    if left_only or right_only:
+        raise ValueError(
+            f"{subject}: declared only in {left_name} {left_only}, "
+            f"declared only in {right_name} {right_only}"
+        )
+    for scope in sorted(left):
+        if left[scope] != right[scope]:
+            raise ValueError(
+                f"support scope {scope!r} has drifted between {left_name} and "
+                f"{right_name}: {left_name} grants {sorted(left[scope])}, "
+                f"{right_name} grants {sorted(right[scope])}"
+            )
+
+
+def check_support_scope_parity(
+    declared: Mapping[str, frozenset[str]],
+    prose: Mapping[str, frozenset[str]],
+) -> None:
+    """Fail when §7's prose rows, §7's fence, and :data:`SUPPORT_SCOPE_DEPS` disagree.
+
+    Three declarations of one graph, so two comparisons. §7 itself requires
+    that "the prose rows and the block MUST agree", so that arm runs first and
+    reports a spec-internal inconsistency; only then is the spec compared
+    against the tool's table, spec-relative, because the spec is authoritative.
+    Checking both arms is what makes editing any single representation — or two
+    of the three consistently — fail rather than pass.
+    """
+    _compare_declarations(
+        "the spec/python.md §7 prose table",
+        prose,
+        "the spec/python.md §7 support-scope-graph block",
+        declared,
+        "spec/python.md §7 is internally inconsistent: its prose rows and its "
+        "support-scope-graph block declare different support scopes",
+    )
+    _compare_declarations(
+        "the spec",
+        declared,
+        "the tool",
+        SUPPORT_SCOPE_DEPS,
+        "SUPPORT_SCOPE_DEPS has drifted from the spec/python.md §7 support-scope-graph block",
+    )
 
 
 def check_child_scopes() -> None:
@@ -389,7 +534,10 @@ def splice(current: str, block: str) -> str:
 
 
 def generate() -> str:
-    check_support_scope_parity(parse_support_scope_graph(PYTHON_MD.read_text()))
+    python_md = PYTHON_MD.read_text()
+    check_support_scope_parity(
+        parse_support_scope_graph(python_md), parse_support_scope_table(python_md)
+    )
     check_child_scopes()
     edges = parse_dependency_graph(MODULES_MD.read_text())
     adjacency = build_adjacency(edges)

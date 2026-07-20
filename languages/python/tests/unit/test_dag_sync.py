@@ -8,8 +8,10 @@ Covers the two Phase 1 canaries required by the structure outline:
 plus generator correctness (DAG parsing, closure, and the conformance-family
 importer exemption), and the COR-42 Phase 7 additions:
 
-* ``SUPPORT_SCOPE_DEPS`` is parity-checked against the ``support-scope-graph``
-  fence in ``spec/python.md`` §7, with a drift canary in each direction; and
+* ``SUPPORT_SCOPE_DEPS`` is parity-checked against **both** §7 declarations of
+  the support-scope graph — the prose table rows and the ``support-scope-graph``
+  fence — with a drift canary per representation, including the state in which
+  two of the three are edited consistently and the third is left stale; and
 * child scopes are emitted as contract *sources* only, with a ``lint-imports``
   canary proving a child contract blocks an import its parent's row permits.
 """
@@ -28,6 +30,9 @@ import check_dag_sync as dag
 pytestmark = pytest.mark.unit
 
 PY_ROOT = Path(__file__).resolve().parents[2]
+
+# The §7 table header the prose parser keys on, for synthetic one-row fixtures.
+_HEADER = "| Behavioral/support module | a | b | c | d |"
 
 
 # --------------------------------------------------------------------------
@@ -140,30 +145,47 @@ def test_parse_support_scope_graph_rejects_a_malformed_line() -> None:
         dag.parse_support_scope_graph("```support-scope-graph\nnot an edge\n```")
 
 
+def test_the_shared_fence_grammar_skips_blank_lines() -> None:
+    # One grammar backs both fences, so this holds for `dependency-graph` too.
+    assert dag.parse_support_scope_graph("```support-scope-graph\n\na --> b\n\n```") == {
+        "a": frozenset({"b"})
+    }
+    assert dag.parse_dependency_graph("```dependency-graph\n\nm-a --> m-b\n```") == [("m-a", "m-b")]
+
+
+def _spec_declarations() -> tuple[dict[str, frozenset[str]], dict[str, frozenset[str]]]:
+    """§7's two declarations of the support-scope graph: the fence, then the prose."""
+    text = dag.PYTHON_MD.read_text()
+    return dag.parse_support_scope_graph(text), dag.parse_support_scope_table(text)
+
+
 def test_committed_support_scope_table_matches_the_spec() -> None:
     # Parity holds today, so `generate()` never raises on the committed tree.
-    dag.check_support_scope_parity(dag.parse_support_scope_graph(dag.PYTHON_MD.read_text()))
+    dag.check_support_scope_parity(*_spec_declarations())
 
 
 def test_support_scope_parity_fails_on_a_dropped_grant() -> None:
-    declared = dict(dag.parse_support_scope_graph(dag.PYTHON_MD.read_text()))
+    declared, prose = _spec_declarations()
     declared["parallax.postgres"] = declared["parallax.postgres"] - {"parallax.core.dialect"}
+    prose["parallax.postgres"] = declared["parallax.postgres"]
     with pytest.raises(ValueError, match=r"'parallax\.postgres' has drifted"):
-        dag.check_support_scope_parity(declared)
+        dag.check_support_scope_parity(declared, prose)
 
 
 def test_support_scope_parity_fails_on_a_scope_only_the_spec_declares() -> None:
-    declared = dict(dag.parse_support_scope_graph(dag.PYTHON_MD.read_text()))
+    declared, prose = _spec_declarations()
     declared["parallax.core.ghost"] = frozenset({"parallax.core.base"})
+    prose["parallax.core.ghost"] = frozenset({"parallax.core.base"})
     with pytest.raises(ValueError, match="declared only in the spec"):
-        dag.check_support_scope_parity(declared)
+        dag.check_support_scope_parity(declared, prose)
 
 
 def test_support_scope_parity_fails_on_a_scope_only_the_tool_declares() -> None:
-    declared = dict(dag.parse_support_scope_graph(dag.PYTHON_MD.read_text()))
+    declared, prose = _spec_declarations()
     del declared["parallax.snapshot.handle._wrap"]
+    del prose["parallax.snapshot.handle._wrap"]
     with pytest.raises(ValueError, match="declared only in the tool"):
-        dag.check_support_scope_parity(declared)
+        dag.check_support_scope_parity(declared, prose)
 
 
 def test_a_tampered_spec_fence_fails_generation(
@@ -180,6 +202,211 @@ def test_a_tampered_spec_fence_fails_generation(
 
     with pytest.raises(ValueError, match=r"'parallax\.snapshot\.handle' has drifted"):
         dag.generate()
+
+
+# --------------------------------------------------------------------------
+# §7 prose parity: the authoritative rows are the third input.
+#
+# §7 states support-scope grants twice ("The prose rows and the block MUST
+# agree"), so a check reading only the fence lets a prose row silently disagree
+# with what is enforced. These canaries prove each representation is load-bearing.
+# --------------------------------------------------------------------------
+def test_parse_support_scope_table_reads_the_prose_rows() -> None:
+    prose = dag.parse_support_scope_table(dag.PYTHON_MD.read_text())
+    assert "parallax.snapshot.materialize" in prose["parallax.snapshot.handle"]
+    # `psycopg` sits unbackticked in the Postgres row: a third-party
+    # distribution, not an enforcement scope, and so not a grant.
+    assert prose["parallax.postgres"] == frozenset(
+        {"parallax.core.db_port", "parallax.core.db_error", "parallax.core.dialect"}
+    )
+    # The composition-root row is application-owned and declares no scope.
+    assert "parallax.snapshot" not in prose
+
+
+def test_parse_support_scope_table_expands_the_child_group_row() -> None:
+    # The write-lowering row names four scopes in the *owner* cell, three of
+    # them abbreviated (`._write_types`), because its enforcement-scope cell
+    # says "those four scopes". All four must resolve, sharing one grant row.
+    prose = dag.parse_support_scope_table(dag.PYTHON_MD.read_text())
+    group = [
+        "parallax.snapshot.handle._family",
+        "parallax.snapshot.handle._write_types",
+        "parallax.snapshot.handle._keyed_sql",
+        "parallax.snapshot.handle._write_lowering",
+    ]
+    assert set(group) <= set(prose)
+    assert len({prose[scope] for scope in group}) == 1
+
+
+def test_the_three_declarations_agree_on_the_committed_tree() -> None:
+    fence, prose = _spec_declarations()
+    assert prose == fence
+    assert prose == dict(dag.SUPPORT_SCOPE_DEPS)
+
+
+def test_parse_support_scope_table_rejects_a_missing_table() -> None:
+    with pytest.raises(ValueError, match="no §7 enforcement-topology table"):
+        dag.parse_support_scope_table("no table here")
+
+
+def test_parse_support_scope_table_rejects_an_empty_table() -> None:
+    with pytest.raises(ValueError, match="has no rows"):
+        dag.parse_support_scope_table(f"{_HEADER}\n|---|---|---|---|---|")
+
+
+def test_parse_support_scope_table_rejects_a_row_of_the_wrong_width() -> None:
+    with pytest.raises(ValueError, match="does not have 5 cells"):
+        dag.parse_support_scope_table(f"{_HEADER}\n| one | two |\n")
+
+
+def test_parse_support_scope_table_rejects_a_support_row_naming_no_scope() -> None:
+    with pytest.raises(ValueError, match="names no enforcement scope"):
+        dag.parse_support_scope_table(
+            f"{_HEADER}\n| Thing (support) | prose | prose | `m-core` | x |\n"
+        )
+
+
+def test_a_scope_cell_of_backticked_prose_falls_back_to_the_owner_cell() -> None:
+    # The fallback is keyed on "names no scope", not on the group row's exact
+    # wording, so a scope cell whose backticks hold prose rather than a dotted
+    # name resolves from the owner column just as the group row does.
+    prose = dag.parse_support_scope_table(
+        f"{_HEADER}\n| Thing (support) | `parallax.core.thing` | `see owner` | `m-core` | x |\n"
+    )
+    assert prose == {"parallax.core.thing": frozenset({"parallax.core.base"})}
+
+
+def test_parse_support_scope_table_rejects_a_leading_dot_with_no_antecedent() -> None:
+    with pytest.raises(ValueError, match="has no preceding full name"):
+        dag.parse_support_scope_table(
+            f"{_HEADER}\n| Thing (support) | `._orphan` | those scopes | `m-core` | x |\n"
+        )
+
+
+def test_parse_support_scope_table_rejects_an_unmodeled_module_tag() -> None:
+    with pytest.raises(ValueError, match="MODULE_SCOPE does not model"):
+        dag.parse_support_scope_table(
+            f"{_HEADER}\n| Thing (support) | `parallax.core.thing` | "
+            "`parallax.core.thing` | `m-ghost-999` | x |\n"
+        )
+
+
+def test_parse_support_scope_table_rejects_a_backticked_non_scope_grant() -> None:
+    # Backticking `psycopg` would make it read as a declared grant; a token
+    # that is neither a module tag nor a scope is a spec error, not a skip.
+    with pytest.raises(ValueError, match="neither a module tag nor"):
+        dag.parse_support_scope_table(
+            f"{_HEADER}\n| Thing (support) | `parallax.core.thing` | "
+            "`parallax.core.thing` | `psycopg` | x |\n"
+        )
+
+
+def test_a_tampered_prose_row_alone_fails_generation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # THE canary this arm exists for: the fence and `SUPPORT_SCOPE_DEPS` are
+    # untouched and agree, so the pre-existing comparison passes; only the
+    # prose row is edited, and generation must still refuse.
+    tampered = tmp_path / "python.md"
+    original = dag.PYTHON_MD.read_text()
+    edited = original.replace(
+        "| `parallax.snapshot.handle._wrap` | `parallax.snapshot.materialize`, "
+        "`parallax.core.entity`, `m-descriptor`,",
+        "| `parallax.snapshot.handle._wrap` | `parallax.snapshot.materialize`, "
+        "`parallax.core.entity`, `m-sql`, `m-descriptor`,",
+        1,
+    )
+    assert edited != original
+    tampered.write_text(edited)
+    monkeypatch.setattr(dag, "PYTHON_MD", tampered)
+
+    # The fence still matches the tool exactly — the pre-existing arm passes,
+    # so only the new prose arm can reject this edit.
+    assert dag.parse_support_scope_graph(edited) == dict(dag.SUPPORT_SCOPE_DEPS)
+    with pytest.raises(ValueError, match=r"'parallax\.snapshot\.handle\._wrap' has drifted"):
+        dag.generate()
+
+
+def test_a_prose_row_deleted_alone_fails_generation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The set-difference arm, prose side: dropping a whole support row leaves
+    # the fence declaring a scope the prose does not.
+    tampered = tmp_path / "python.md"
+    original = dag.PYTHON_MD.read_text()
+    edited = "\n".join(
+        line
+        for line in original.splitlines()
+        if not line.startswith("| Snapshot handle wrapping (support")
+    )
+    assert edited != original
+    tampered.write_text(edited)
+    monkeypatch.setattr(dag, "PYTHON_MD", tampered)
+
+    with pytest.raises(ValueError, match="internally inconsistent"):
+        dag.generate()
+
+
+def test_fence_and_tool_edited_consistently_still_fail_a_stale_prose_row(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The third state: two of the three representations edited together and
+    # agreeing, the third left behind. Before the prose arm this passed
+    # silently and shipped the over-grant.
+    tampered = tmp_path / "python.md"
+    original = dag.PYTHON_MD.read_text()
+    edited = original.replace(
+        "parallax.snapshot.handle._wrap --> parallax.core.descriptor\n",
+        "parallax.snapshot.handle._wrap --> parallax.core.descriptor\n"
+        "parallax.snapshot.handle._wrap --> parallax.core.sql_gen\n",
+        1,
+    )
+    assert edited != original
+    tampered.write_text(edited)
+    monkeypatch.setattr(dag, "PYTHON_MD", tampered)
+    monkeypatch.setattr(
+        dag,
+        "SUPPORT_SCOPE_DEPS",
+        {
+            **dag.SUPPORT_SCOPE_DEPS,
+            "parallax.snapshot.handle._wrap": dag.SUPPORT_SCOPE_DEPS[
+                "parallax.snapshot.handle._wrap"
+            ]
+            | {"parallax.core.sql_gen"},
+        },
+    )
+
+    with pytest.raises(ValueError, match=r"'parallax\.snapshot\.handle\._wrap' has drifted"):
+        dag.generate()
+
+
+def test_a_tampered_prose_row_alone_exits_one_at_the_command() -> None:
+    # Command level, not library level: `python-static` runs the script, so the
+    # prose arm has to block there too. Same write-run-restore shape as the
+    # `lint-imports` canaries below, against the real committed spec.
+    original = dag.PYTHON_MD.read_text()
+    edited = original.replace(
+        "| `parallax.snapshot.handle._wrap` | `parallax.snapshot.materialize`, "
+        "`parallax.core.entity`, `m-descriptor`,",
+        "| `parallax.snapshot.handle._wrap` | `parallax.snapshot.materialize`, "
+        "`parallax.core.entity`, `m-sql`, `m-descriptor`,",
+        1,
+    )
+    assert edited != original
+    dag.PYTHON_MD.write_text(edited)
+    try:
+        result = subprocess.run(
+            [sys.executable, str(PY_ROOT / "tools/check_dag_sync.py")],
+            cwd=PY_ROOT,
+            capture_output=True,
+            text=True,
+        )
+    finally:
+        dag.PYTHON_MD.write_text(original)
+
+    assert result.returncode == 1, result.stdout
+    assert "parallax.snapshot.handle._wrap" in result.stderr
+    assert "prose table" in result.stderr
 
 
 # --------------------------------------------------------------------------
