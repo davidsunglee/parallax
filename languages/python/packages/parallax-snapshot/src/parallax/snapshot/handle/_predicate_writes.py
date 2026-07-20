@@ -29,7 +29,6 @@ from __future__ import annotations
 
 import datetime as dt
 from collections.abc import Sequence
-from typing import Any, cast
 
 from parallax.core import deep_fetch, inheritance, op_algebra, read_lock
 from parallax.core.db_port import DbPort, Row
@@ -43,6 +42,7 @@ from parallax.core.unit_work import (
     KeyedWrite,
     ObjectKey,
     Observation,
+    PredicateMutation,
     PredicateWrite,
     UnitOfWork,
     instructions,
@@ -60,7 +60,7 @@ def buffer_predicate(
     meta: Metamodel,
     conn: DbPort,
     dialect: Dialect,
-    mutation: str,
+    mutation: PredicateMutation,
     statement: EntityStatement,
     assignments: Sequence[AttributeAssignment],
     *,
@@ -291,7 +291,7 @@ def _materialize_predicate_write(
             continue  # per-row no-op elimination (assignment-bearing verbs only)
         writes.append(
             KeyedWrite(
-                mutation=cast("Any", instruction.mutation),
+                mutation=instruction.mutation,
                 entity=instruction.target.entity,
                 rows=(new_row,),
                 business_from=instruction.business_from,

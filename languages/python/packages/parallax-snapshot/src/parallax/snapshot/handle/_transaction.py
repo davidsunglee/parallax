@@ -38,6 +38,7 @@ from parallax.core.entity import Statement as EntityStatement
 from parallax.core.entity import full_row, primary_key_row
 from parallax.core.entity.expressions import AttributeAssignment
 from parallax.core.unit_work import (
+    KeyedMutation,
     ObjectKey,
     PredicateWrite,
     UnitOfWork,
@@ -294,7 +295,10 @@ class Transaction:
         )
 
     def _prepare_keyed_write(
-        self, node_or_instance: EntityBase, mutation: str, business_from: dt.datetime | None
+        self,
+        node_or_instance: EntityBase,
+        mutation: KeyedMutation,
+        business_from: dt.datetime | None,
     ) -> tuple[Entity, Entity, str | None]:
         """The keyed-verb prep every verb above (``delete`` excepted — it takes
         no business-window bound) opens with (N2, COR-3 Phase 8 increment 7
@@ -384,7 +388,7 @@ class Transaction:
 
     def _buffer(
         self,
-        mutation: str,
+        mutation: KeyedMutation,
         entity: str,
         row: Mapping[str, object],
         *,
