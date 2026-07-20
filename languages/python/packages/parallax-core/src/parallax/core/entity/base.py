@@ -232,7 +232,7 @@ class EntityRegistry:
     def metamodel(self) -> ScopedMetamodel:
         """This scope's :class:`~parallax.core.descriptor.Metamodel`, tagged
         with itself -- the D-20 wrap/meta bridge (correction 1): a caller that
-        wants `db.find` (`parallax.snapshot.handle._wrap`) to resolve THROUGH this
+        wants `db.find` (`parallax.snapshot.handle`) to resolve THROUGH this
         registry connects a ``Database`` with THIS method's result, never a
         bare, untagged one."""
         return ScopedMetamodel(entities=tuple(self.records().values()), registry=self)
@@ -254,7 +254,7 @@ def default_registry() -> EntityRegistry:
 class ScopedMetamodel(MetamodelRecord):
     """A :class:`~parallax.core.descriptor.Metamodel` tagged with the
     :class:`EntityRegistry` that produced it (ledger D-20 correction 1's
-    wrap/meta bridge): `parallax.snapshot.handle._wrap` resolves a decoded row's class
+    wrap/meta bridge): `parallax.snapshot.handle` resolves a decoded row's class
     through THIS registry, never the process-global default, when a connected
     ``Database``'s metamodel carries one. A class-authored assembly
     (:func:`metamodel` over a NON-EMPTY class list) is ALWAYS tagged this way
@@ -288,7 +288,7 @@ def registry_of(meta: MetamodelRecord) -> EntityRegistry:
 
 def resolve_entity_class(meta: MetamodelRecord, name: str) -> type[BaseModel] | None:
     """The Python class ``name`` resolves to within ``meta``'s own D-20 scope
-    (:func:`registry_of`) -- the sole seam `parallax.snapshot.handle._wrap` uses to
+    (:func:`registry_of`) -- the sole seam `parallax.snapshot.handle` uses to
     turn a decoded row's canonical entity name into a class, never the
     process-global registry directly."""
     return registry_of(meta).resolve(name)
@@ -1361,7 +1361,7 @@ class Entity(BaseModel, metaclass=EntityMeta):
         Postgres current row's `out_z`/`thru_z` decodes to exactly this,
         `parallax.postgres.adapter._InfinityTimestamptzLoader`), which the
         WRAP construction that first produced this node never validated
-        either (`model_construct`, `parallax.snapshot.handle._wrap`) — the declared
+        either (`model_construct`, `parallax.snapshot.handle`) — the declared
         ``Attr[dt.datetime]`` type was never meant to admit it at the
         Pydantic level, so passing it back through the validating
         constructor below would reject an entirely ordinary "edit one field

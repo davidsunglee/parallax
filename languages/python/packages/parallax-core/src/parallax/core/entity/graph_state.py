@@ -1,7 +1,7 @@
 """Closed-world relationship load-state introspection (spec §3).
 
 ``is_loaded`` / ``narrowed`` read the frozen-node wrapping the snapshot
-materializer attaches (``parallax.snapshot.handle._wrap``, COR-3 Phase 7 increment
+materializer attaches (``parallax.snapshot.handle``, COR-3 Phase 7 increment
 6a): a PLAIN relationship name checks the ``Rel[T]`` descriptor's own
 per-instance storage (the ``UNLOADED`` sentinel vs. a loaded value); a
 NARROWED-view request — a :class:`~parallax.core.entity.expressions.RelationshipPath`

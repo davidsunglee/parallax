@@ -83,7 +83,7 @@ class Node:
     subtype read resolving to exactly ONE concrete emits no `familyVariant`
     column at all (`m-sql`'s `_compile_tpcs_single`), so this is the ONLY
     place that knowledge survives past the SQL boundary for
-    `parallax.snapshot.handle._wrap` to recover the row's own concrete class instead
+    `parallax.snapshot.handle` to recover the row's own concrete class instead
     of falling back to a (possibly abstract) declared default (S3, COR-3
     Phase 7 increment 7 round-2). ``None`` only for a ``Node`` built outside
     the assembler (test-only direct construction) — a caller reading it
@@ -274,7 +274,7 @@ def decode_row(
     between the row-form values-lane witnesses (whose `then.graph` / wire
     rendering, `parallax.conformance.engine._render_node`, WANTS the padded
     superset, e.g. `m-snapshot-read-012`'s own root-typed `animals` level) and
-    `parallax.snapshot.handle._wrap`'s object-lane wrapping. Per-variant narrowing is
+    `parallax.snapshot.handle`'s object-lane wrapping. Per-variant narrowing is
     `wrap`'s OWN job (see its module docstring / `_wrap`): it already resolves
     each column through the CONCRETE class's own `wire_names_of`, so a
     sibling's column — absent from that class's own declared members — is
