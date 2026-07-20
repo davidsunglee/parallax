@@ -315,9 +315,20 @@ predicate lowering.
 
 #### Direction
 
-Retain the existing SQL-generation interface and shared private compilation
-context. Separate the implementation concerns internally without creating new
-public seams. Continue testing through the compiler interface.
+Retain `parallax.core.sql_gen` as the sole SQL-generation seam and keep a shared
+private lowering-state context. Keep ordinary projection, clause-tail assembly,
+and normalization with read orchestration; keep inheritance projection policy
+with inheritance. Because the target has no external users yet, deepen the
+package interface around `CompiledRead` and `CompiledPredicate` rather than
+preserving coordinated helper calls or the implementation-submodule path.
+`CompiledRead` owns a frozen private identity/TPH/TPCS row-transform value, and
+one resolution-scoped recursive predicate dispatcher handles both entity and
+value-object-element paths. Enforce the five private modules' source order plus
+an exact-module prohibition on their back-importing the supported package seam.
+Continue testing only through that seam.
+
+The full accepted design is recorded in
+[parallax-python-sql-generation-design.md](parallax-python-sql-generation-design.md).
 
 ### 6. Deepen the Metamodel Hub class frontend — Strong
 

@@ -314,20 +314,21 @@ flowchart TB
                 </div>
               </div>
               <div class="rounded-xl border-2 border-dashed border-indigo-500 bg-indigo-50/30 p-5 h-[320px]">
-                <p class="text-xs uppercase tracking-wider text-slate-500">After · same depth, internal locality</p>
+                <p class="text-xs uppercase tracking-wider text-slate-500">After · deeper seam, internal locality</p>
                 <div class="mt-5 mx-auto max-w-md rounded-xl border-4 border-slate-800 overflow-hidden">
-                  <div class="bg-slate-900 p-3 text-center text-sm text-white"><strong>sql_gen interface</strong> · unchanged</div>
+                  <div class="bg-slate-900 p-3 text-center text-sm text-white"><strong>sql_gen seam</strong> · CompiledRead + CompiledPredicate</div>
                   <div class="grid grid-cols-2 gap-2 bg-white p-3 text-xs">
-                    <div class="rounded bg-sky-50 p-3"><strong>context + result shape</strong><br />~250</div><div class="rounded bg-sky-50 p-3"><strong>read orchestration</strong><br />~350</div><div class="rounded bg-amber-50 p-3"><strong>inheritance reads</strong><br />~480</div><div class="rounded bg-violet-50 p-3"><strong>navigation</strong><br />~300</div><div class="col-span-2 rounded bg-emerald-50 p-3 text-center"><strong>scalar + value-object predicates</strong> · ~450</div>
+                    <div class="rounded bg-sky-50 p-3"><strong>lowering state</strong><br />private context</div><div class="rounded bg-sky-50 p-3"><strong>orchestration + ordinary assembly</strong><br />private</div><div class="rounded bg-amber-50 p-3"><strong>inheritance plans + projection</strong><br />private</div><div class="rounded bg-violet-50 p-3"><strong>navigation plans</strong><br />private</div><div class="col-span-2 rounded bg-emerald-50 p-3 text-center"><strong>one resolution-scoped recursive predicate dispatcher</strong> · private</div>
                   </div>
                 </div>
               </div>
             </div>
             <div class="mt-7 grid md:grid-cols-3 gap-5 text-sm">
               <div><h3 class="font-semibold">Problem</h3><p class="mt-1 text-slate-600">The compiler passes the deletion test and has a small interface, but four independently changing lowering concerns share one file.</p></div>
-              <div><h3 class="font-semibold">Solution</h3><p class="mt-1 text-slate-600">Retain the sql_gen seam and shared private context; separate lowering concerns only inside its implementation.</p></div>
-              <div><h3 class="font-semibold">Benefits</h3><ul class="mt-1 space-y-1 text-slate-600"><li>• depth remains intact</li><li>• locality by lowering concern</li><li>• tests keep one interface</li><li>• no new public seams</li></ul></div>
+              <div><h3 class="font-semibold">Solution</h3><p class="mt-1 text-slate-600">Retain the sql_gen seam, deepen it around compiled results with a frozen private row-transform value, and separate plan-first concerns behind one resolution-scoped recursive predicate owner.</p></div>
+              <div><h3 class="font-semibold">Benefits</h3><ul class="mt-1 space-y-1 text-slate-600"><li>• greater interface depth</li><li>• locality by lowering concern</li><li>• tests keep one supported seam</li><li>• acyclic private direction</li></ul></div>
             </div>
+            <div class="mt-5 rounded-lg border border-indigo-200 bg-indigo-50 px-4 py-3 text-sm text-indigo-900">Private enforcement pairs the five-module source-order layers contract with an exact-module ban on back-imports to <span class="font-mono">sql_gen.__init__</span>; the generated behavioral-DAG contracts remain authoritative.</div>
           </div>
         </article>
 
