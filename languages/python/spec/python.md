@@ -1011,9 +1011,15 @@ parallax.postgres --> parallax.core.dialect
   described above.
 - **Filesystem ownership.** `languages/python/tools/check_scope_ownership.py`
   walks every `packages/*/src/**/*.py` file in the production distributions and
-  proves it resolves to exactly one enforcement scope of this section or to an
-  exact, listed package-interface exemption. Zero owners, overlapping owners,
-  and stale exemptions each fail the check, which runs in `just python-static`.
+  proves it resolves to exactly one **most-specific** enforcement scope of this
+  section — plus, where child scopes are declared, that scope's declared
+  ancestors — or to an exact, listed package-interface exemption. A file inside
+  a child scope is deliberately owned by both the child and its parent: that is
+  the state child scopes exist to create, and the child's tighter grant row is
+  what governs it. Zero owners, **undeclared** overlapping owners (two or more
+  matching scopes that are not a parent/child chain declared in
+  `check_dag_sync.CHILD_SCOPE_PARENT`), and stale exemptions each fail the
+  check, which runs in `just python-static`.
 - **Scopes sharing one artifact.** Every behavioral module in `parallax-core`
   is its own submodule; the generated forbidden contracts operate at
   submodule granularity, so co-location in one wheel cannot legalize a

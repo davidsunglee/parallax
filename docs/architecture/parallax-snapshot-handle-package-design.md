@@ -332,9 +332,11 @@ extraction phases. Once the source graph is settled:
 3. fail and correct cycles or unjustified opposite-direction imports;
 4. add a blocking filesystem-ownership check that discovers every production
    Python file under the production distributions and proves it belongs to
-   exactly one enforcement scope or to an exact, explicitly justified
-   package-interface exemption. Zero owners, overlapping owners, and stale
-   exemptions all fail; a review-time inventory is not sufficient;
+   exactly one most-specific enforcement scope — plus that scope's declared
+   ancestors, should step 8 add child scopes — or to an exact, explicitly
+   justified package-interface exemption. Zero owners, *undeclared* overlapping
+   owners, and stale exemptions all fail; a review-time inventory is not
+   sufficient;
 5. inventory every private module's direct external-scope imports, including
    imports that are legal for the broad parent only through transitive closure;
    the current monolith directly imports `m-core`, `m-descriptor`, `m-inheritance`,
@@ -458,11 +460,17 @@ deferred, per this section's own mandate for anything not yet settled.
   nothing else in the closure reaches it, so the generated complement now
   forbids it outright. `m-navigate` was retained on this document's reasoning:
   its removal is enforcement-neutral.
-- `SUPPORT_SCOPE_DEPS` is parity-checked against the fenced
-  `support-scope-graph` block in `spec/python.md` §7.
+- `SUPPORT_SCOPE_DEPS` is parity-checked against **both** of §7's declarations
+  of the support-scope graph: the fenced `support-scope-graph` block and the
+  prose table rows §7 requires it to agree with. Any one of the three editable
+  alone fails generation, as does two of them edited consistently over a third
+  left stale.
 - `tools/check_scope_ownership.py` proves every production file under the three
-  production distributions resolves to exactly one scope or to one of two
-  machine-checked package-interface exemptions.
+  production distributions resolves to exactly one *most-specific* scope — plus
+  that scope's declared ancestors, where child scopes exist — or to one of two
+  machine-checked package-interface exemptions. Five files (the write-lowering
+  group and `_wrap`) match two scopes each, which is the state the child-scope
+  decisions above deliberately create; only *undeclared* overlap fails.
 - Child scopes are emitted as contract **sources** only. A child named inside
   its own parent's `forbidden_modules` overlaps that contract's source package
   and is silently skipped by import-linter, which would leave a contract that
@@ -556,7 +564,9 @@ modules or duplicate large model/port fixtures merely to avoid a test helper.
   only through the parent's transitive closure, and proves the tooling map
   agrees with authoritative spec §7.
 - A blocking filesystem-discovery check proves every production Python file has
-  exactly one enforcement owner or an exact package-interface exemption.
+  exactly one most-specific enforcement owner — plus that owner's declared
+  ancestor scopes, where a child scope is declared over it — or an exact
+  package-interface exemption. Undeclared overlap is what fails.
 - Transaction tests are split by observable behavior and no longer reach
   through the handle interface to transaction helper functions. The complete
   private-test allowlist is the read-owned `_pin_from_milestone` defensive
