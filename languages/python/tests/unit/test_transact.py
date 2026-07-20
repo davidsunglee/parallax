@@ -59,9 +59,13 @@ _ORDERS = models.load_models()["orders"]
 _FIXED = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
 
 
-# A LOCAL bitemporal entity (no shared mirror exists for `models/position.yaml`
-# yet) — the `_where`-verb materialization tests' own bounded/plain rectangle-
-# split fixture.
+# A LOCAL bitemporal entity — the `_where`-verb materialization tests' own
+# bounded/plain rectangle-split fixture. `models/position.yaml` DOES have a
+# shared mirror now (`parallax.conformance.story_models.Position`, installed by
+# D-31), but it is not a drop-in: it maps to table `position` with columns
+# `pos_id`/`val`, while the assertions below pin emitted SQL against
+# `where_position`/`id`/`value`. Swapping would rewrite every one of them for no
+# gain, so the local fixture stays.
 class WherePosition(Entity, frozen=True):
     __parallax__ = EntityConfig(
         table="where_position",
