@@ -325,9 +325,10 @@ class Transaction:
         """The `python.md` §5 prior-observation license for a keyed TEMPORAL
         update/terminate (:func:`opt_lock.require_observed_milestone` — the
         temporal sibling of the versioned ``require_observed`` seam in
-        ``_lower_update``): the close must target a milestone THIS unit of
-        work observed via a transaction-scoped find. Enforced HERE at the
-        developer verb, never in ``_lower_temporal_write`` — the shared
+        ``_keyed_sql.lower_update``): the close must target a milestone THIS
+        unit of work observed via a transaction-scoped find. Enforced HERE at
+        the developer verb, never in
+        ``_write_lowering._lower_temporal_write`` — the shared
         lowering also serves the neutral engine lane, whose case documents
         author their observation control keys (or legitimately none) and are
         graded against their own goldens. An object this SAME transaction

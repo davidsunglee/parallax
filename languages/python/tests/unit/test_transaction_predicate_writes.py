@@ -177,7 +177,7 @@ def test_readless_delete_where_buffers_one_statement_no_read() -> None:
 
 def test_readless_update_where_reorders_assignments_to_column_order() -> None:
     # Round-6 remaining (c): the SET clause orders by descriptor column order
-    # (`_lower_predicate_write`'s own `_ordered_cells` reuse), never the
+    # (`lower_predicate_write`'s own `_ordered_cells` reuse), never the
     # AUTHORED assignment order -- reversing the two `.set(...)` calls below
     # (price before name, the opposite of Order's own declared column order)
     # emits BYTE-IDENTICAL SQL to the natural order (mirrors `test_insert_
@@ -729,7 +729,7 @@ def test_materializing_terminate_until_where_bitemporal_carries_the_document_on_
 
 def test_materializing_terminate_where_audit_only_stays_document_free() -> None:
     # An AUDIT-ONLY terminate is close-only (`audit_write.plan` — no chained
-    # row, `_materialize_row`'s own `assignment_bearing` set excludes it), so
+    # row, `materialize_row`'s own `assignment_bearing` set excludes it), so
     # the resolving read stays document-free even on a VALUE-OBJECT-bearing
     # target — unlike its BITEMPORAL counterpart, above
     # (`m-value-object-047`'s own row-form-omits-slot-4 witness, unchanged).

@@ -377,7 +377,7 @@ self-contained without a system `libpq`.
   over 311 active cases (48 exercised / 263 reasoned-skip — increment 3's own
   new cases are conformance-lane-covered reasoned skips, no new idiomatic
   examples yet); `just python-static` exit 0. Known debt carried forward: the
-  M4-era literal-version passthrough (`_lower_update` recognizes an explicit
+  M4-era literal-version passthrough (`lower_update` recognizes an explicit
   row-carried `version` field and skips the observation rule entirely,
   `m-unit-work-005`/`-009`'s own authoring shape) is core corpus debt, not
   fixed here.
@@ -399,7 +399,7 @@ self-contained without a system `libpq`.
   (`test_rejected_sweep.py`) 39 passed / 0 skipped; API-suite partition exact
   over 311 active cases (48 exercised / 263 reasoned-skip); `just
   python-static` exit 0. Known debt/gaps carried forward, closed by the
-  Phase-8 mid-phase review remediation below: `_lower_delete` let an
+  Phase-8 mid-phase review remediation below: `lower_delete` let an
   unobserved versioned DELETE through ungated instead of raising (the
   `m-opt-lock` rule this increment's own UPDATE gate already enforced);
   `Transaction.find`'s observation recording covered only VERSION
@@ -414,7 +414,7 @@ self-contained without a system `libpq`.
   documented, engine-local override (`_CONCURRENCY_OVERRIDES`) standing in for
   a corpus amendment — core debt, not fixed here.
 - **Phase 8 mid-phase review remediation (increments 2–4).** Closed the four
-  gaps increment 4's own entry named above: `_lower_delete` now requires the
+  gaps increment 4's own entry named above: `lower_delete` now requires the
   SAME prior observation a keyed UPDATE does for a versioned row, in either
   concurrency mode (`m-unit-work-006`/`-009`/`-012`'s own corpus authoring
   predates the rule and no longer round-trips through the compile/run
@@ -456,7 +456,7 @@ self-contained without a system `libpq`.
   story constructed its delete's provenance outside the transaction and raised
   its own deliberate abort before ever flushing, so it coincidentally passed
   while no longer mirroring the corpus's own force-flushed-then-rolled-back
-  DELETE choreography (`_lower_delete`'s prior-observation gate, per the round
+  DELETE choreography (`lower_delete`'s prior-observation gate, per the round
   above); the corrected idiom (observe, force-flush the delete for real, then
   let the deliberate abort roll it back) joins the guide-only set
   (`api_suite.GUIDE_ONLY_WRITE_STORY_IDS`) with the same case-scoped reasoned

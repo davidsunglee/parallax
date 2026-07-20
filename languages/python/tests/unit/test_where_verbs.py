@@ -32,7 +32,7 @@ _FIXED = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
 # A small LOCAL temporal (audit-only) entity, unregistered elsewhere — the
 # `.as_of()` / `.history()` bare-statement-guard tests need a real temporal
 # class, and no shared test-fixture entity mirror declares one (mirroring the
-# same local-class pattern `test_snapshot_wrap.py`'s own `_WrapTemporalRoot`
+# same local-class pattern `test_snapshot_wrap_values.py`'s own `_WrapTemporalRoot`
 # uses).
 class _WhereTemporalLedger(Entity, frozen=True):
     __parallax__ = EntityConfig(

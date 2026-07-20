@@ -434,7 +434,7 @@ def _position_row_dt() -> Row:
 # own optional bitemporal `business_from`, `terminate`, `update_until`, and    #
 # `terminate_until` — the KEYED siblings of `update_where` / `terminate_where` #
 # / `update_until_where` / `terminate_until_where`, sharing the SAME           #
-# `_buffer` seam and the SAME `_validate_business_from` gate, so a keyed and a #
+# `_buffer` seam and the SAME `validate_business_from` gate, so a keyed and a  #
 # predicate-selected write over the identical bitemporal correction lower to  #
 # the identical rectangle split (`m-bitemp-write-001/002/006/007`'s own       #
 # witnessed shape, replayed here through the KEYED verb instead of `_where`). #
@@ -561,7 +561,7 @@ def test_keyed_update_until_with_an_empty_change_set_still_rejects_equal_bounds(
 
 def test_keyed_update_until_with_a_naive_until_raises_the_proper_value_error() -> None:
     # R2: a naive `until` (no tzinfo) must raise the SAME `ValueError` shape
-    # `_validate_business_from`'s own `instant_literal` normalization raises
+    # `validate_business_from`'s own `instant_literal` normalization raises
     # for a naive `business_from` (never a bare `TypeError` leaked by
     # comparing a naive `until` against an already-aware `business_from`,
     # the pre-fix defect: comparison ran before normalization).

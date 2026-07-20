@@ -944,7 +944,8 @@ def _seed_insert_version(
     (`opt_lock.INITIAL_VERSION`) — a no-op for every other mutation/entity/row
     shape.
 
-    `lower_write`'s own `_lower_insert` / `_lower_multi_insert` derive the
+    `parallax.snapshot.handle`'s `lower_insert` / `lower_multi_insert`, the
+    keyed builders `lower_write` dispatches to, derive the
     INITIAL version at the version column's own columnOrder position
     UNCONDITIONALLY, "ignoring any row-carried value" (their own docstrings)
     — every reachable insert witness already authors an explicit `version`
