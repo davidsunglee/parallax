@@ -54,6 +54,17 @@ def test_core_wheel_contains_spine_scopes(wheelhouse: Wheelhouse) -> None:
     assert "parallax/core/op_algebra/__init__.py" in names
 
 
+def test_snapshot_wheel_ships_handle_package(wheelhouse: Wheelhouse) -> None:
+    # The checks above see `parallax/snapshot` only at the top-package prefix, so
+    # they cannot tell a handle.py from a handle/ directory. Hatch discovers the
+    # tree rather than enumerating modules, which makes the absent old path the
+    # load-bearing half: it is what would catch a stale build or a half-applied
+    # split. Grows to the full private-module list as the extraction proceeds.
+    names = _names(wheelhouse, "parallax-snapshot")
+    assert "parallax/snapshot/handle/__init__.py" in names
+    assert "parallax/snapshot/handle.py" not in names
+
+
 def test_conformance_wheel_declares_console_script(wheelhouse: Wheelhouse) -> None:
     with zipfile.ZipFile(wheelhouse.wheels["parallax-conformance"]) as archive:
         entry_points = next(
