@@ -861,10 +861,10 @@ def test_engine_and_transaction_buffer_share_the_identical_write_validator() -> 
     # Neither caller forks its own copy of the shared validator, so a rule
     # dropped from the ONE implementation fails both lanes identically.
     from parallax.conformance import engine as engine_module
-    from parallax.snapshot import handle as handle_module
+    from parallax.snapshot.handle import _transaction as transaction_module
 
     assert engine_module.validate_write is validate_write  # pyright: ignore[reportPrivateImportUsage]
-    assert handle_module.validate_write is validate_write  # pyright: ignore[reportPrivateImportUsage]
+    assert transaction_module.validate_write is validate_write  # pyright: ignore[reportPrivateImportUsage]
 
 
 def test_buffer_rejects_a_required_attribute_missing_at_any_depth() -> None:
