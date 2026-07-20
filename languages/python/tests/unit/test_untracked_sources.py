@@ -37,7 +37,7 @@ def test_production_classifier_matches_package_src_only() -> None:
 
 
 def test_test_classifier_matches_test_tree_only() -> None:
-    assert untracked.is_test_source("tests/unit/test_transact.py")
+    assert untracked.is_test_source("tests/unit/test_database_transact.py")
     assert untracked.is_test_source("tests/unit/_transact_support.py")
     assert not untracked.is_test_source("tests/api_surface/public_api.json")
     assert not untracked.is_test_source("tools/check_dag_sync.py")

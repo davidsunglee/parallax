@@ -1,14 +1,18 @@
 """`Database` demarcation unit tests (spec §5, Docker-free fake ports).
 
-`Database.transact` composes M3's unit-of-work shell, increment 1's write
-lowering, and the `m-auto-retry` bounded loop over an injected `m-db-port`:
-commit and abort wiring, join semantics (same Transaction, option conflicts,
-rollback-only foreclosure), withheld values on abort, and the retry
-classification matrix — including the spec §5 requirement that a rollback-only
-commit refusal keeps its original cause's retriability.
+The observable behavior of `parallax.snapshot.handle._database`, driven entirely
+through the public `Database` surface: `Database.transact` composes M3's
+unit-of-work shell, increment 1's write lowering, and the `m-auto-retry` bounded
+loop over an injected `m-db-port` — commit and abort wiring, join semantics (same
+Transaction, option conflicts, rollback-only foreclosure), withheld values on
+abort, escaped transaction references, and the retry classification matrix,
+including the spec §5 requirement that a rollback-only commit refusal keeps its
+original cause's retriability.
 
-The keyed, predicate-selected, and read halves of the transaction surface moved
-to `test_transaction_{writes,predicate_writes,reads}.py` in COR-42 Phase 5.
+Everything a `Transaction` itself does is elsewhere: keyed verbs in
+`test_transaction_writes.py`, the `*_where` family in
+`test_transaction_predicate_writes.py`, participating reads in
+`test_transaction_reads.py`.
 """
 
 from __future__ import annotations
