@@ -471,9 +471,9 @@ def test_materializing_predicate_write_reaching_lower_write_is_refused() -> None
     # A predicate write on a VERSIONED (or temporal) target never reaches
     # `lower_write` directly in production — materialization decomposes it to
     # per-row keyed writes at BUFFER time (`parallax.snapshot.handle`'s
-    # `Transaction` `_where` verb family, ADR 0014), before it is ever
-    # planned. Reaching here with one is a caller wiring defect this seam
-    # still refuses loudly, never mis-emits.
+    # `buffer_predicate`, which the `_where` verbs only delegate to; ADR 0014),
+    # before it is ever planned. Reaching here with one is a caller wiring
+    # defect this seam still refuses loudly, never mis-emits.
     predicate = PredicateWrite("delete", WriteTarget("Account", oa.All()))
     with pytest.raises(WriteLoweringError, match="materialize to keyed writes"):
         _lower(predicate, ACCOUNT)

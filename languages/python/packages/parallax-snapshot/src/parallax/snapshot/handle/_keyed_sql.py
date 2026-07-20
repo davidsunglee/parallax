@@ -441,10 +441,10 @@ def _tag_guard(
 # Readless predicate-write lowering (COR-3 Phase 8 increment 5; ADR 0014's    #
 # unversioned/non-temporal exception, `m-batch-write.md` "Predicate-selected  #
 # readless forms"). A MATERIALIZING predicate write (versioned or temporal    #
-# target) never reaches here — `Transaction`'s `_where` verb family           #
-# decomposes it to per-row keyed writes at BUFFER time, before it is ever     #
-# planned; the defensive check below only ever catches a caller wiring       #
-# defect, never a legal readless write.                                       #
+# target) never reaches here — `_predicate_writes.buffer_predicate` decomposes #
+# it to per-row keyed writes at BUFFER time, before it is ever planned; the   #
+# defensive check below only ever catches a caller wiring defect, never a     #
+# legal readless write.                                                       #
 # --------------------------------------------------------------------------- #
 def lower_predicate_write(
     instruction: PredicateWrite, meta: Metamodel, dialect: Dialect

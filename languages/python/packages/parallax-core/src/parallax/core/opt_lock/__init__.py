@@ -292,8 +292,8 @@ def classify_mismatch(
     """The affected-row-mismatch error for one lowered statement whose actual
     ``execute_write`` count disagreed with its ``expected_affected`` count.
 
-    The single classification both render-seam call sites share: the render
-    seam's flush executor (``parallax.snapshot.handle._flush_executor``, every
+    The single classification both render-seam call sites share: the flush
+    executor ``parallax.snapshot.handle`` injects into the unit of work (every
     non-temporal expectation and every gated temporal close) and the
     conformance engine's standalone conflict-close probe
     (``parallax.conformance.engine._run_conflict_close``, the one caller

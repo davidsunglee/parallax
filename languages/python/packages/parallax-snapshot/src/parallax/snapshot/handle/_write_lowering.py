@@ -93,8 +93,9 @@ def lower_write(
     (`m-batch-write.md` "Predicate-selected readless forms") when its target is
     unversioned and non-temporal — the only shape ever reaches here: a versioned
     or temporal predicate write MATERIALIZES to per-row keyed writes at BUFFER
-    time (`~parallax.snapshot.handle.Transaction`'s ``_where`` verb family;
-    ADR 0014), before ever entering a :class:`FlushPlan`.
+    time (:func:`~parallax.snapshot.handle._predicate_writes.buffer_predicate`,
+    which ``Transaction``'s ``_where`` verbs only delegate to; ADR 0014), before
+    ever entering a :class:`FlushPlan`.
     """
     instruction = planned.instruction
     if isinstance(instruction, PredicateWrite):
