@@ -360,6 +360,123 @@ declare the actual direct external imports each child needs from within the
 parent's permitted transitive closure; blindly copying only the parent's direct
 grant row would strand the seven existing transitive imports listed above.
 
+## Phase 7 audit record (2026-07-20)
+
+The audit ran against the settled ten-module package. Its inputs are the actual
+per-module import blocks, not the plan.
+
+### Realised internal direction
+
+```text
+_family, _write_types, _wrap   (leaves)
+_keyed_sql        -> _family, _write_types
+_write_lowering   -> _family, _write_types, _keyed_sql
+_read             -> _wrap
+_write_inputs     -> _family, _read
+_predicate_writes -> _family, _write_inputs
+_transaction      -> _read, _write_inputs, _predicate_writes
+_database         -> _read, _transaction, _write_lowering, _write_types
+handle.__init__   -> _database, _read, _transaction, _write_lowering, _write_types
+```
+
+This matches the intended direction above exactly, with one recorded
+divergence: `_transaction` no longer reaches `_family`, because the three
+lookups it used left with the predicate lane in Phase 5. There is no cycle and
+no opposite-direction import to correct.
+
+**Sibling-import corrections during Phases 2–6: zero in the implemented tree,
+one in the plan.** The Phase 3 outline corrected the design discussion's
+placement table for `_MARKER_KEYS`, which would have forced a
+`_keyed_sql -> _write_lowering` back-edge had it been homed as first written.
+The constant was placed correctly before any code moved, so no realised import
+was ever reversed — but the near-miss is the reason the lowering cluster is
+enforced as a group rather than per module (below).
+
+### Direct external-scope inventory
+
+Entering the audit the parent scope declared 13 direct grants whose transitive
+closure reached 21 scopes, leaving only `parallax.core.value_object` and
+`parallax.postgres` forbidden — a scope that forbids almost nothing. Removing
+`m-pk-gen` leaves 12 grants, a 20-scope closure, and three forbidden production
+scopes. Seven of the scopes the package actually imports (`m-core`,
+`m-descriptor`, `m-inheritance`, `m-op-algebra`, `m-dialect`,
+`m-temporal-read`, `m-deep-fetch`) are legal for the parent only through that
+closure, exactly as this design predicted.
+
+| Module | Direct external scopes | Scopes a child contract would newly forbid |
+|---|---:|---:|
+| `_family` | 2 | 17 |
+| `_write_types` | 1 | 14 |
+| `_wrap` | 5 | 9 |
+| `_keyed_sql` | 7 | 10 |
+| `_write_inputs` | 7 | 12 |
+| `_transaction` | 8 | 9 |
+| `_database` | 9 | 7 |
+| `_write_lowering` | 9 | 8 |
+| `_read` | 9 | 8 |
+| `_predicate_writes` | 10 | 7 |
+
+(Counts are against the post-audit grant row, i.e. with `m-pk-gen` removed.)
+
+### Decisions
+
+**Added — `_wrap`.** All three criteria hold. It is a pure leaf: it imports no
+sibling and no sibling but `_read` imports it, a shape unchanged since Phase 2.
+Its five direct grants (`m-snapshot-read`, `parallax.core.entity`,
+`m-descriptor`, `m-inheritance`, `m-temporal-read`) are the narrowest in the
+package, and the contract newly forbids nine scopes — including `m-sql`,
+`m-dialect`, `m-opt-lock` and the whole write side — none of which the parent
+row forbids. Expressed as one `SUPPORT_SCOPE_DEPS` row and regenerated.
+
+**Added as a group — `_family`, `_write_types`, `_keyed_sql`,
+`_write_lowering`.** The four share one grant row (the cluster's union: 10
+direct scopes) rather than each declaring its own. The group boundary is what
+carries the value: no module in the lowering cluster may reach
+`m-snapshot-read`, `m-deep-fetch`, `m-navigate`, `parallax.core.entity`,
+`m-read-lock`, `m-auto-retry`, `m-batch-write`, or `m-db-error` — eight edges
+the parent row permits. Per-module rows would be tighter still (`_family` alone
+would forbid 17), but the cluster's internal homes are precisely what moved
+during Phase 3, and a per-module row would make every such internal re-homing a
+spec edit. This is the "tiny leaf modules may remain grouped" allowance applied
+to the cluster rather than to the leaves individually.
+
+**Deferred — `_read`, `_write_inputs`, `_predicate_writes`, `_transaction`,
+`_database`.** Criterion 2 fails for the transaction lane taken as the group its
+own cross-imports force it to be: the union of those five modules' direct grants
+is 16 scopes whose closure differs from the parent's by exactly `m-audit-write`
+and `m-bitemp-write`, so a group contract would forbid two edges and restate the
+parent row for the rest. Splitting the lane instead fails criterion 1: three of
+the five are one or two phases old (`_predicate_writes` and the rewritten
+`_transaction` from Phase 5, `_database` from Phase 6), and `_read` and
+`_write_inputs` are coupled to them by the `FindResult`/`Pin` seam and the
+predicate lane's resolving read. The evidence is recorded and the contracts are
+deferred, per this section's own mandate for anything not yet settled.
+
+### Enforcement landed alongside
+
+- `m-pk-gen` left the handle grant row. Nothing under the package imports it and
+  nothing else in the closure reaches it, so the generated complement now
+  forbids it outright. `m-navigate` was retained on this document's reasoning:
+  its removal is enforcement-neutral.
+- `SUPPORT_SCOPE_DEPS` is parity-checked against the fenced
+  `support-scope-graph` block in `spec/python.md` §7.
+- `tools/check_scope_ownership.py` proves every production file under the three
+  production distributions resolves to exactly one scope or to one of two
+  machine-checked package-interface exemptions.
+- Child scopes are emitted as contract **sources** only. A child named inside
+  its own parent's `forbidden_modules` overlaps that contract's source package
+  and is silently skipped by import-linter, which would leave a contract that
+  looks present and enforces nothing.
+
+### Private test seams after the audit
+
+Still exactly three, all import seams into handle implementation modules, as
+the acceptance criteria require: `_read._pin_from_milestone` (its defensive
+absent-axis branch), the single-`validate_write` object-identity invariant at
+`_transaction`, and the `_wrap.wrap_graph` suites. The nine `tx._buffer(...)`
+call sites in `test_transaction_writes.py` are attribute access on the public
+`Transaction` class, not imports, and are not seams.
+
 ## Test design
 
 Tests follow observable handle behavior rather than mirroring every private
