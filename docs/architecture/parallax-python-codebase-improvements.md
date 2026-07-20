@@ -68,7 +68,8 @@ snapshot before the first runtime move.
 - `parallax.snapshot.handle` is a legitimate, deep composition seam. The
   problem is its 2,723-line implementation, not the existence of the seam.
 - `parallax.snapshot.wrap` is production code outside every generated
-  enforcement scope. This is a real enforcement gap.
+  enforcement scope. This is a real enforcement gap. **(Resolved by COR-42; see
+  the resolution note under "Concrete gaps and over-grants" below.)**
 - `parallax.core.value_object` appears shallow: the behavioral source module is
   used only by its tests, while actual production consumers use parallel
   descriptor helpers. Improving it requires an explicit core DAG/design
@@ -128,6 +129,36 @@ Concrete gaps and over-grants found during the review:
 - The broad `parallax.core.entity` support scope cannot detect the internal
   dependency cycles and lazy back-imports among `base.py`, `expressions.py`,
   `statement.py`, `meta.py`, and `graph_state.py`.
+
+**Resolution note (2026-07-20, COR-42 Phase 7).** The findings above were
+written against `8e26b84` and four of them are now closed by executable checks
+rather than by review. This note is local because the header's repository pin is
+global, so a reader deep-linking to a single bullet would otherwise see a closed
+finding stated in the present tense.
+
+- Wrapping is now `parallax.snapshot.handle._wrap`, inside the handle scope and
+  additionally covered by its own child contract; `parallax/snapshot/wrap.py`
+  does not exist.
+- `parallax.core.__init__` and `parallax.snapshot.__init__` are exactly the two
+  machine-checked package-interface exemptions in
+  `languages/python/tools/check_scope_ownership.py`, which fails on an exemption
+  that stops describing the tree.
+- The unused `m-pk-gen` grant is gone, so the generated complement forbids it;
+  `m-navigate` is retained deliberately, on this document's own reasoning.
+- `SUPPORT_SCOPE_DEPS` is parity-checked against the fenced
+  `support-scope-graph` block in `spec/python.md` §7 on every
+  `tools/check_dag_sync.py` run, so the constant can no longer drift from the
+  spec table.
+
+The `parallax.core.entity` internal-cycle finding is untouched and still open.
+Of the recommended enforcement change below, item 2 (contracts generated from
+the verified mapping) and item 3 (exhaustive filesystem ownership) are
+implemented, and item 1 only for `SUPPORT_SCOPE_DEPS` — `MODULE_SCOPE` still has
+no parity check against the §7 behavioral rows, and a stale behavioral mapping
+is caught only indirectly, when `build_adjacency` meets a mapped module with an
+unmodeled dependency. Item 4 (a report of support-scope grants that no observed
+import uses) is not implemented: the `m-pk-gen` over-grant it would have
+surfaced was found by a hand audit instead.
 
 ### Recommended enforcement change
 
