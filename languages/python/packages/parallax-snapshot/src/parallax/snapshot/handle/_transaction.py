@@ -18,8 +18,9 @@ the pin / result-conversion helpers ``find`` needs),
 :mod:`parallax.snapshot.handle._write_inputs` (verb-input validation, the
 sparse-row build, and the observation machinery), and
 :mod:`parallax.snapshot.handle._predicate_writes`. Demarcation — ``Database``,
-``_Demarcation``, and :class:`TransactionOptionConflictError` — stays in the
-package's composition surface and imports this module, never the reverse.
+``_Demarcation``, and ``TransactionOptionConflictError`` — lives in
+:mod:`parallax.snapshot.handle._database`, which imports this module, never the
+reverse.
 """
 
 from __future__ import annotations
