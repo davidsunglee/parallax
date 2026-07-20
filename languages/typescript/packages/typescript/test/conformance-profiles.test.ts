@@ -78,14 +78,17 @@ describe("m-case-format matrix profiles", () => {
     }
     expect(exclusions.length).toBe(postgresFull.length - 25);
     // Four exclusion reasons now: the historical no-mariadb-golden reason; the
-    // value-object cases (which carry mariadb golden but are proven by the Phase-10
-    // direct compile tests); and the COR-26 Phase-5 pk-gen and writable-scalar write
-    // cases (proven by the reference-harness oracle on both dialects, not this
-    // run-lane profile).
+    // value-object cases (which carry mariadb golden, but whose Phase-10 proof is
+    // compile-only — the reason states that limit rather than implying execution
+    // parity); and the COR-26 Phase-5 pk-gen and writable-scalar write cases
+    // (proven by the reference-harness oracle on both dialects, not this run-lane
+    // profile).
     expect(new Set(exclusions.map(({ reason }) => reason))).toEqual(
       new Set([
         "no goldenSql.mariadb in this partial MariaDB profile",
-        "value-object MariaDB parity is proven by the Phase-10 direct compile tests, not this run-lane profile",
+        "value-object MariaDB parity is compile-only — the Docker-free Phase-10 lanes prove golden-SQL " +
+          "lowering for the read-shape cases; no TypeScript lane executes a value-object write against a " +
+          "live MariaDB, and this run-lane profile claims no such execution parity",
         "pk-gen MariaDB parity is proven by the reference-harness oracle on both dialects, not this run-lane profile",
         "writable-scalar MariaDB parity is proven by the reference-harness oracle on both dialects, not this run-lane profile",
       ]),

@@ -39,7 +39,7 @@ import {
   type CaseFixture,
   provisionCase,
 } from "./_harness.js";
-import { HAS_DOCKER, selectedProviders } from "./_providers.js";
+import { caseGuarded, guardedCases, HAS_DOCKER, selectedProviders } from "./_providers.js";
 import { VALUE_OBJECTS } from "./covered.js";
 
 // --- entity symbols (as codegen emits them) ---------------------------------
@@ -167,9 +167,20 @@ it("the value-objects suite covers exactly the VALUE_OBJECTS family", () => {
   expect(CASES.map((c) => c.stem).sort()).toEqual([...VALUE_OBJECTS].sort());
 });
 
+// The nested-predicate READS are dialect-agnostic and run on every selected database. The one
+// WRITE case is guarded off MariaDB by `MARIADB_GUARDED_CASES` (`_providers.ts`) for a named
+// adapter defect — dialect-scoped, so Postgres (the V1 claim's dialect) still EXERCISES it, and
+// it stays in `EXERCISED` rather than the dialect-blind `SKIPPED_IDS`. The guard reports itself
+// with its reason below, so the MariaDB run names which check it skipped and why.
 group.skipIf(!HAS_DOCKER).each(selectedProviders())("value-objects suite ($label)", (dbp) => {
   const BOOT_TIMEOUT = 600_000;
   let provider: ApiConformanceProvider;
+  const runnableReads = CASES.filter((c) => c.kind !== "write" && !caseGuarded(dbp, c.stem));
+  const runnableWrites = CASES.filter((c) => c.kind === "write" && !caseGuarded(dbp, c.stem));
+  const guarded = guardedCases(
+    dbp,
+    CASES.map((c) => c.stem),
+  );
 
   beforeAll(async () => {
     provider = await dbp.start();
@@ -179,7 +190,7 @@ group.skipIf(!HAS_DOCKER).each(selectedProviders())("value-objects suite ($label
     await provider?.close();
   });
 
-  it.each(CASES.filter((c) => c.kind !== "write"))(
+  it.each(runnableReads)(
     "$stem: a developer nested-predicate read reproduces the corpus",
     async (row) => {
       const fixture: CaseFixture = await provisionCase(provider, row.stem);
@@ -199,15 +210,25 @@ group.skipIf(!HAS_DOCKER).each(selectedProviders())("value-objects suite ($label
     BOOT_TIMEOUT,
   );
 
-  it.each(CASES.filter((c) => c.kind === "write"))(
-    "$stem: a developer create binds the whole document atomically",
-    async (row) => {
-      const fixture = await provisionCase(provider, row.stem);
-      await fixture.px.transaction(async (tx) => {
-        await tx.entity("Customer").create(row.input ?? {});
-      });
-      await assertTableState(fixture);
-    },
-    BOOT_TIMEOUT,
-  );
+  if (runnableWrites.length > 0) {
+    it.each(runnableWrites)(
+      "$stem: a developer create binds the whole document atomically",
+      async (row) => {
+        const fixture = await provisionCase(provider, row.stem);
+        await fixture.px.transaction(async (tx) => {
+          await tx.entity("Customer").create(row.input ?? {});
+        });
+        await assertTableState(fixture);
+      },
+      BOOT_TIMEOUT,
+    );
+  }
+
+  // An explicit loop, NOT `it.skip.each` with a `$reason` placeholder: vitest
+  // truncates each `$`-interpolated value at ~35 characters, which would clip the
+  // reason to "known MariaDB adapter defect — the de…" and defeat the point of
+  // surfacing it. A title built here is printed in full.
+  for (const { stem, reason } of guarded) {
+    it.skip(`${stem}: guarded on MariaDB — ${reason}`, () => {});
+  }
 });

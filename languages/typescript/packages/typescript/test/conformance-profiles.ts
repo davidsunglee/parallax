@@ -228,18 +228,28 @@ export const POSTGRES_TEMPORAL_PROFILE: MatrixProfile = fixedIdProfile(
 );
 
 /**
- * The value-object cases carry `mariadb` golden SQL, but MariaDB parity for them
- * is proven directly by the Phase-10 dialect-lowering compile tests
- * (`value-object-lowering.test.ts` / `value-object.test.ts`), NOT this run-lane
- * curated profile. Excluding them keeps the curated profile at its original
- * 25-case marquee set (impl-spec §5.4) rather than ballooning it with every
- * value-object golden. COR-26 grew the marquee write set by the three audit-chaining
- * MariaDB backfill cases (m-audit-write-002/-003/-004), lifting the profile to 28, then
- * by the eight full-bitemporal `position` write/conflict cases (m-bitemp-write-001..008)
- * once the harness reserved-word set became per-dialect, lifting it to 36.
+ * The value-object cases carry `mariadb` golden SQL, but what the Phase-10 lanes
+ * prove about them is LOWERING, not execution: `value-object-compile.test.ts`
+ * compiles every READ-shape case to its Postgres AND MariaDB golden statements, and
+ * `value-object-lowering.test.ts` / `value-object.test.ts` pin the per-dialect
+ * fragments — all Docker-free. No TypeScript lane executes a value-object WRITE
+ * against a live MariaDB, and the developer write path in fact fails there (see
+ * `MARIADB_GUARDED_CASES` in `api-conformance/_providers.ts`), so the reason below
+ * must not be read as a claim of execution parity. It was previously worded that
+ * way — "proven by the Phase-10 direct compile tests" — which implied a parity the
+ * compile lanes do not establish.
+ *
+ * Excluding these cases keeps the curated profile at its original 25-case marquee
+ * set (impl-spec §5.4) rather than ballooning it with every value-object golden.
+ * COR-26 grew the marquee write set by the three audit-chaining MariaDB backfill
+ * cases (m-audit-write-002/-003/-004), lifting the profile to 28, then by the eight
+ * full-bitemporal `position` write/conflict cases (m-bitemp-write-001..008) once the
+ * harness reserved-word set became per-dialect, lifting it to 36.
  */
 const VALUE_OBJECT_MARIADB_REASON =
-  "value-object MariaDB parity is proven by the Phase-10 direct compile tests, not this run-lane profile";
+  "value-object MariaDB parity is compile-only — the Docker-free Phase-10 lanes prove golden-SQL " +
+  "lowering for the read-shape cases; no TypeScript lane executes a value-object write against a " +
+  "live MariaDB, and this run-lane profile claims no such execution parity";
 
 // COR-26 Phase 5 — the pk-gen and writable-scalar write cases carry goldenSql.mariadb
 // (pk-gen SQL is portable; the scalar round-trips are dual-dialect witnesses), but
