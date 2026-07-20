@@ -157,7 +157,7 @@ def _temporal_observation(
     real ``timestamptz`` column may be a driver-native ``datetime.datetime``
     or the native-infinity sentinel, never pre-rendered to a wire string here)
     — the SAME driver-native-passthrough contract every other temporal bind in
-    this seam already carries (`test_transact.py::
+    this seam already carries (`test_transaction_reads.py::
     test_optimistic_mode_temporal_write_after_an_as_of_find_gates_on_observed_in_z`);
     wire-rendering for REPORTING is the conformance ADAPTER's own boundary
     concern (`parallax.conformance.engine._json_bind`), never this seam's.

@@ -52,7 +52,7 @@ _STORIES = {story.case_id: story for story in WRITE_STORIES}
 # The driver-native infinity sentinel (`m-core`/`m-dialect`): a real Postgres
 # open upper bound renders through `engine.wire_value` as the literal
 # `"infinity"` string every golden binds/asserts — a plain far-future
-# `datetime` (as `test_transact.py`'s own gate-focused pins use, which never
+# `datetime` (as `test_transaction_writes.py`'s own gate-focused pins use, which never
 # compare THIS column) would instead render as an ordinary ISO instant and
 # fail the byte-exact DML compare here.
 _INFINITY: Final[TemporalBound] = INFINITY
