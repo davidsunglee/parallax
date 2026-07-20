@@ -3,8 +3,9 @@
 "synthetic Widget model" convention `test_op_algebra_validate.py` uses for
 `_literal_matches_type`'s full neutral-type sweep, applied here to the write
 side's own `_type_matches`. The 10 in-slice `when.write` rejected corpus
-cases are exercised through the real corpus models in `test_transact.py`
-(the developer-verb frontend) and `test_engine.py` (the rejected lane); this
+cases are exercised through the real corpus models in
+`test_transaction_writes.py` (the developer-verb frontend) and `test_engine.py`
+(the rejected lane); this
 module covers the declared-composite walk's OWN internal branches the ten
 witnessed shapes do not reach on their own: depth-0 entity-attribute
 required-ness (a corpus shape none of the ten witness — every witnessed case

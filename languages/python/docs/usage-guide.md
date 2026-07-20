@@ -1350,7 +1350,7 @@ grade it end-to-end (never a borrowed case id).
 
 ### Stale web edit — audit-only (Balance)
 
-Spec: `python.md` §3 (the recipe) and §5 (why it runs optimistic). Graded by `tests/api_conformance/test_stale_web_edit.py` (real Postgres: the clean submit, the concurrent-supersession conflict, and both negative pins) and `tests/unit/test_transact.py`'s Docker-free recipe halves.
+Spec: `python.md` §3 (the recipe) and §5 (why it runs optimistic). Graded by `tests/api_conformance/test_stale_web_edit.py` (real Postgres: the clean submit, the concurrent-supersession conflict, and both negative pins) and `tests/unit/test_transaction_reads.py`'s Docker-free recipe halves.
 
 ```python
 def render_balance_milestone(db: Database, *, id: int) -> tuple[Balance, Edge]:
@@ -1381,7 +1381,7 @@ def submit_balance_edit(db: Database, *, id: int, edge: Edge, fields: Mapping[st
 
 ### Stale web edit — bitemporal (Branch, both axes transported)
 
-Spec: `python.md` §3 (the recipe) and §5 (why it runs optimistic). Graded by `tests/api_conformance/test_stale_web_edit.py` (real Postgres) and `tests/unit/test_transact.py`'s Docker-free recipe halves.
+Spec: `python.md` §3 (the recipe) and §5 (why it runs optimistic). Graded by `tests/api_conformance/test_stale_web_edit.py` (real Postgres) and `tests/unit/test_transaction_reads.py`'s Docker-free recipe halves.
 
 ```python
 def render_branch_milestone(db: Database, *, id: int) -> tuple[Branch, Edge]:

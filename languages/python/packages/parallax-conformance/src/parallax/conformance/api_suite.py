@@ -79,7 +79,7 @@ RECIPES: Final[list[Recipe]] = [
         graded_by=(
             "`tests/api_conformance/test_stale_web_edit.py` (real Postgres: the clean "
             "submit, the concurrent-supersession conflict, and both negative pins) and "
-            "`tests/unit/test_transact.py`'s Docker-free recipe halves"
+            "`tests/unit/test_transaction_reads.py`'s Docker-free recipe halves"
         ),
         snippet=(
             inspect.getsource(stale_web_edit.render_balance_milestone)
@@ -92,7 +92,7 @@ RECIPES: Final[list[Recipe]] = [
         spec="`python.md` §3 (the recipe) and §5 (why it runs optimistic)",
         graded_by=(
             "`tests/api_conformance/test_stale_web_edit.py` (real Postgres) and "
-            "`tests/unit/test_transact.py`'s Docker-free recipe halves"
+            "`tests/unit/test_transaction_reads.py`'s Docker-free recipe halves"
         ),
         snippet=(
             inspect.getsource(stale_web_edit.render_branch_milestone)
@@ -626,7 +626,7 @@ _PK_GEN_TEMPORAL_INSERT_REASON: Final[str] = (
 # Subtype-write payload-shape rejects (COR-3 Phase 8 increment 2, `validate_write`  #
 # / `parallax.core.inheritance.validate_subtype_write`): the rejected sweep now     #
 # grades all four (m-inheritance-086..089) through the SAME shared validator        #
-# `Transaction._buffer` calls (`test_transact.py`'s own per-rule unit tests exercise#
+# `Transaction._buffer` calls (`test_transaction_writes.py`'s per-rule unit tests exercise#
 # it directly at the neutral seam) — `m-inheritance-088` (abstract-write-target)    #
 # gets an idiomatic build/buffer-time proof below (`Payment`/`CardPayment`/         #
 # `CashPayment` already have a production-reachable mirror, `read_models.py`); the  #
@@ -640,7 +640,7 @@ _INHERITANCE_SIBLING_ATTRIBUTE_UNREACHABLE_REASON: Final[str] = (
     "DROPS a field the target class does not declare (empirically verified: "
     "`CardPayment(..., tendered=...)` constructs successfully but never carries `tendered`), "
     "so no single typed instance can reproduce this payload's cross-branch shape to drive "
-    "`tx.insert`/`tx.update` through it — `test_transact.py`'s own unit test exercises the "
+    "`tx.insert`/`tx.update` through it — `test_transaction_writes.py` exercises the "
     "classified rule directly at the neutral seam (`Transaction._buffer`) instead"
 )
 _INHERITANCE_METADATA_FIELD_UNREACHABLE_REASON: Final[str] = (
@@ -648,7 +648,7 @@ _INHERITANCE_METADATA_FIELD_UNREACHABLE_REASON: Final[str] = (
     '(m-inheritance "Metadata is framework-owned, never authored"), derived from '
     "`EntityConfig(inheritance=Concrete(tag_value=...))` at CLASS-DEFINITION time, never a "
     "per-instance Pydantic field a caller can pass to `tx.insert`/`tx.update` — "
-    "`test_transact.py`'s own unit test exercises the classified rule directly at the neutral "
+    "`test_transaction_writes.py` exercises the classified rule directly at the neutral "
     "seam (`Transaction._buffer`) instead"
 )
 _INHERITANCE_SET_BASED_UNSUPPORTED_UNREACHABLE_REASON: Final[str] = (
@@ -656,7 +656,7 @@ _INHERITANCE_SET_BASED_UNSUPPORTED_UNREACHABLE_REASON: Final[str] = (
     "developer-facing trigger is a set-based `_where` verb (`tx.update_where` / "
     "`tx.delete_where`) targeting an inheritance family (python.md §5), landed with the "
     "`_where` verb family (COR-3 Phase 8 increment 5; `inheritance.reject_predicate_write`) — "
-    "`test_transact.py`'s own unit test exercises it directly through `tx.update_where`; the "
+    "`test_transaction_predicate_writes.py` exercises it through `tx.update_where`; the "
     "rejected-case's OWN keyless-row shape (`m-inheritance-089`) still has no idiomatic keyed "
     "spelling (no single typed instance construction denotes a payload with no primary key at "
     "all), so this remains a reasoned skip for the CASE's OWN authored shape — a permanent, "
