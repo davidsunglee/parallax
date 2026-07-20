@@ -99,9 +99,9 @@ parallax/snapshot/
 | Private module | Ownership |
 |---|---|
 | `handle.__init__` | The stable handle interface. It documents and re-exports the existing names; it contains no lasting runtime orchestration. |
-| `_family` | Shared family-effective descriptor lookups: temporal axes, version attributes, member-to-column resolution, and family column order. This is a small private leaf shared by lowering and write-input preparation, not a public seam. |
+| `_family` | Shared family-effective descriptor lookups: temporal axes, version attributes, and member-to-column resolution. This is a small private leaf shared by lowering and write-input preparation, not a public seam. |
 | `_write_types` | `WriteLoweringError` and lowering result values shared by the lowering and flush paths. This is a small private leaf, not a public seam. |
-| `_keyed_sql` | Primitive keyed and collapsed-batch INSERT, UPDATE, and DELETE rendering, including markers, tags, keys, and ordered cells. Named for the SQL side of the lowering boundary: inside this package "write" keeps meaning the neutral instruction level, so this is the one module named for what it emits. |
+| `_keyed_sql` | Primitive keyed and collapsed-batch INSERT, UPDATE, and DELETE rendering, including markers, tags, keys, and ordered cells over the module-local family column order. Named for the SQL side of the lowering boundary: inside this package "write" keeps meaning the neutral instruction level, so this is the one module named for what it emits. |
 | `_write_lowering` | `lower_write` dispatch plus temporal and predicate-selected lowering. It composes neutral write plans with keyed DML primitives and owns `lower_temporal_close`. |
 | `_read` | `Snapshot` and execution/result values, `find` and `find_history`, history grouping, all read-side pin derivation (`deep_fetch_statement_pin`, `is_milestone_set_op`, and the module-local `_pin_from_milestone`), and conversion of neutral results into Snapshots. |
 | `_wrap` | Conversion of neutral materialized nodes into frozen developer entity graphs, including graph-local identity, projection merging, inheritance, value objects, and temporal metadata. |
@@ -112,6 +112,15 @@ parallax/snapshot/
 The small `_family` and `_write_types` leaf modules prevent dependency cycles
 between substantive concerns. Their interfaces are private to the handle
 package and should not be re-exported independently.
+
+**Correction (2026-07-20, post-acceptance).** As accepted, the `_family` row
+also claimed "family column order". It does not own that: `_family` holds
+exactly `processing_axis`, `business_axis`, `version_attribute`,
+`assignment_member`, and `members`. Family column order is
+`_keyed_sql._family_column_order`, whose sole caller is that module's own
+`_ordered_cells`, so it is module-local to `_keyed_sql` and never crosses the
+package boundary. Phase 3 implemented the correct placement; only this table
+was stale. Later placement audits should read the `_keyed_sql` row for it.
 
 ### Private-module naming
 

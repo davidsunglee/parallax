@@ -104,14 +104,14 @@ def lower_write(
     # docstring above.
     declaring = inheritance.declaring_entity(meta, entity)
     if declaring.is_temporal:
-        if len(instruction.rows) != 1:  # pragma: no cover - materialization never batches
+        if len(instruction.rows) != 1:
             raise WriteLoweringError(
                 f"multi-row temporal {instruction.mutation!r} on {entity.name!r} "
                 f"({len(instruction.rows)} rows): a temporal keyed write lowers one row at a "
                 "time (m-audit-write / m-bitemp-write) — the set-based batch collapse never "
                 "applies to a temporal entity's own milestone chain (m-batch-write)"
             )
-        if tx_instant is None:  # pragma: no cover - defends a caller that skips the Clock
+        if tx_instant is None:
             raise WriteLoweringError(
                 f"temporal write on {entity.name!r}: no transaction instant supplied "
                 "(FlushPlan.tx_instant) — a temporal write cannot lower without one"

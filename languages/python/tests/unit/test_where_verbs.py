@@ -303,3 +303,25 @@ def test_delete_where_rejects_a_distinct_statement_end_to_end() -> None:
 
     with pytest.raises(ValueError, match="bare statement"):
         Database.connect(_NoIoPort(), _PERSON_META, clock=FixedClock(_FIXED)).transact(fn)
+
+
+# --------------------------------------------------------------------------- #
+# The KEYED verbs' own entity-class guard (`_write_inputs.                     #
+# entity_record_of_instance`). Placed here rather than in a keyed-verb suite   #
+# because it needs exactly the `_NoIoPort` harness above and nothing else —    #
+# it travels to `test_transaction_writes.py` with the rest of the keyed-verb   #
+# region in COR-42 Phase 5, the same way Phase 4's replacement observation     #
+# tests travel with the reads region.                                          #
+# --------------------------------------------------------------------------- #
+def test_a_keyed_verb_refuses_an_instance_of_an_uncompiled_class() -> None:
+    # `Entity` (the frontend BASE) is never itself compiled into a metamodel
+    # record — `EntityMeta.__new__` short-circuits for a class with no
+    # Parallax-entity base — so an instance of it is a registered-class lookup
+    # miss while still satisfying every caller's `EntityBase` annotation. The
+    # keyed verbs must name that as a TypeError rather than fail later on a
+    # `None` record; the raising port proves the guard runs before any I/O.
+    def fn(tx: Transaction) -> None:
+        tx.delete(Entity())
+
+    with pytest.raises(TypeError, match="Entity is not a registered Parallax entity class"):
+        Database.connect(_NoIoPort(), _PERSON_META, clock=FixedClock(_FIXED)).transact(fn)

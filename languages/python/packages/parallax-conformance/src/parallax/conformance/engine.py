@@ -615,7 +615,7 @@ def _strip_observation(row: Mapping[str, object]) -> tuple[dict[str, object], Ob
 
 # An object-key -> Observation map (m-opt-lock; ADR 0013) — the same neutral
 # shape a REAL `Transaction.find` populates on the production path
-# (`parallax.snapshot.handle._record_observations` -> `uow.observe`).
+# (`parallax.snapshot.handle` records observations into `uow.observe`).
 # `_write_sequence_lowered` / `run_write_sequence_case` pass a permanently
 # EMPTY instance (a writeSequence carries no find steps at all): every keyed
 # write's observation there comes solely from its own row's reserved
@@ -660,7 +660,7 @@ def _row_object_key(
     lane's authored ``expectRows`` are ATTRIBUTE-named (`m-case-format`'s flat
     attribute-named row vocabulary); the run lane's real ``port.execute`` rows
     are COLUMN-named (the raw driver row — the SAME convention
-    `parallax.snapshot.handle._record_observations` reads via
+    `parallax.snapshot.handle`'s own observation recording reads via
     ``node.fields[attr.column]``). ``None`` when the (family-effective)
     primary key is absent from ``row`` — never reachable for a well-formed
     corpus find, but this seam takes no data on faith."""
@@ -691,13 +691,13 @@ def _observe_group_find(
     :func:`_run_uow_group`) and the REAL transaction's own unit of work
     (``tx._uow.observe`` — the same neutral seam :func:`_execute_write_unit`
     pokes at, mirroring the production path a real ``Transaction.find``
-    builds, `parallax.snapshot.handle._record_observations` -> `uow.observe`)
-    (COR-3 Phase 8 amendment-review remediation), so a later keyed write of
-    the SAME object in this SAME group derives its version bind from a
-    genuine transaction-scoped observation — never an oracle, never a
-    scenario-wide map. Rows are always COLUMN-named here (the real
+    builds, where `parallax.snapshot.handle` records observations into
+    `uow.observe`) (COR-3 Phase 8 amendment-review remediation), so a later
+    keyed write of the SAME object in this SAME group derives its version
+    bind from a genuine transaction-scoped observation — never an oracle,
+    never a scenario-wide map. Rows are always COLUMN-named here (the real
     ``port.execute`` row shape — the SAME convention
-    `parallax.snapshot.handle._record_observations` reads via
+    `parallax.snapshot.handle`'s own observation recording reads via
     ``node.fields[attr.column]``); the scenario compile lane never calls this
     at all. A no-op for a temporal or unversioned target
     (:func:`_versioned_non_temporal_version_attribute` returns ``None``) and
@@ -2961,8 +2961,8 @@ def _execute_reads(port: DbPort, dialect: Dialect, statements: Sequence[Statemen
     step is always single-statement (:func:`_lower_find`), so ``statements`` is
     always a one-tuple in practice; the raw, COLUMN-keyed rows are a GROUPED
     find's own source for :func:`_observe_group_find` (mirroring the
-    production ``Transaction.find`` -> ``uow.observe`` seam, `parallax.
-    snapshot.handle._record_observations`) when called on the transaction's
+    production ``Transaction.find`` -> ``uow.observe`` seam that
+    `parallax.snapshot.handle` owns) when called on the transaction's
     own connection (``tx._conn``, :func:`_run_uow_group`), and an ungrouped
     find's plain read when called on the top-level ``port``."""
     rows: list[Row] = []

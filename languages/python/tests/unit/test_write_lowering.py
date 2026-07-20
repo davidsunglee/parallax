@@ -26,8 +26,8 @@ from collections.abc import Mapping
 import pytest
 
 from parallax.conformance import models
+from parallax.core import descriptor, opt_lock
 from parallax.core import op_algebra as oa
-from parallax.core import opt_lock
 from parallax.core.db_port import JsonDocument
 from parallax.core.descriptor import Metamodel
 from parallax.core.dialect import POSTGRES, Dialect
@@ -476,6 +476,25 @@ def test_materializing_predicate_write_reaching_lower_write_is_refused() -> None
         _lower(predicate, ACCOUNT)
 
 
+def test_multi_row_insert_with_differing_row_shapes_is_refused() -> None:
+    # m-batch-write's collapse eligibility groups only rows carrying the SAME
+    # members, so a mixed-shape collapsed instruction is a caller wiring defect
+    # — but a silent one: the emitted INSERT names the FIRST row's columns, so
+    # every later value tuple would bind positionally against a column list it
+    # does not match (here `balance`'s hole would take `Omar`'s absent member).
+    # `lower_multi_insert` refuses instead of mis-emitting.
+    mixed = KeyedWrite(
+        "insert",
+        "Wallet",
+        (
+            {"id": 10, "owner": "Mira", "balance": 100.00},
+            {"id": 11, "owner": "Omar"},
+        ),
+    )
+    with pytest.raises(WriteLoweringError, match="row column sets differ"):
+        _lower(mixed, WALLET)
+
+
 def test_milestone_verb_on_a_non_temporal_entity_is_refused() -> None:
     # The temporal milestone verb set (terminate / *Until) stays refused on a
     # NON-temporal entity — permanently: `Account` has no processing/business
@@ -556,6 +575,62 @@ def test_multi_row_delete_collapses_to_one_in_list_statement() -> None:
     statement = _lower(delete, WALLET)[0]
     assert statement.sql == "delete from wallet where id in (?, ?, ?)"
     assert statement.binds == (1, 2, 3)
+
+
+def test_batched_writes_on_an_inheritance_participant_carry_the_family_tag_guard() -> None:
+    # A collapsed IN-list statement reuses the SAME family tag guard the
+    # single-row identity predicate carries (`_tag_guard`). CardPayment and
+    # CashPayment share the `payment` table, so an UNGUARDED
+    # `delete from payment where id in (...)` would remove a sibling subtype's
+    # rows whose ids happen to be in the list — the tag is what keeps a batch
+    # collapse inside one concrete subtype.
+    delete = KeyedWrite("delete", "CardPayment", ({"id": 1}, {"id": 2}))
+    statement = _lower(delete, PAYMENT)[0]
+    assert statement.sql == "delete from payment where id in (?, ?) and kind = ?"
+    assert statement.binds == (1, 2, "card")
+
+    update = KeyedWrite(
+        "update", "CardPayment", ({"id": 1, "amount": 5.00}, {"id": 2, "amount": 5.00})
+    )
+    updated = _lower(update, PAYMENT)[0]
+    assert updated.sql == "update payment set amount = ? where id in (?, ?) and kind = ?"
+    assert updated.binds == (5.00, 1, 2, "card")
+
+
+# A COMPOSITE-key entity: the corpus declares none, but a composite primary key
+# is an ordinary well-formed model, and `_keys_in_list` renders it as a row-
+# constructor IN-list rather than the single-column form.
+_LEDGER = descriptor.Metamodel(
+    entities=(
+        descriptor.Entity(
+            name="LedgerEntry",
+            table="ledger_entry",
+            mutability="transactional",
+            attributes=(
+                descriptor.Attribute(
+                    name="bookId", type="int64", column="book_id", primary_key=True
+                ),
+                descriptor.Attribute(
+                    name="lineNo", type="int64", column="line_no", primary_key=True
+                ),
+                descriptor.Attribute(name="amount", type="decimal(18,2)", column="amount"),
+            ),
+        ),
+    )
+)
+
+
+def test_multi_row_delete_on_a_composite_key_uses_a_row_constructor_in_list() -> None:
+    # `(<pk1>, <pk2>) in ((?, ?), …)`, one entry per row in row order, binds
+    # grouped per row in key-declaration order — never the single-column
+    # `<pk> in (?, …)` form, which would silently key on `book_id` alone and
+    # delete every line of the book.
+    delete = KeyedWrite(
+        "delete", "LedgerEntry", ({"bookId": 7, "lineNo": 1}, {"bookId": 7, "lineNo": 2})
+    )
+    statement = _lower(delete, _LEDGER)[0]
+    assert statement.sql == "delete from ledger_entry where (book_id, line_no) in ((?, ?), (?, ?))"
+    assert statement.binds == (7, 1, 7, 2)
 
 
 def test_readless_predicate_delete_lowers_to_one_statement() -> None:
