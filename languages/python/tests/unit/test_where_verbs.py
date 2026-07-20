@@ -60,9 +60,10 @@ class _WhereTemporalLedger(Entity, frozen=True):
 # shape — the "required top-level value object missing" exemplar
 # (`destination` is `nullable: false`, unlike every other value-object owner
 # in the corpus) — confirmation-pass residual B's own typed-path fixture
-# (round 2, `inheritance/__init__.py:667`): no existing mirror class carries
-# a NON-nullable top-level value object. `note` is a nullable scalar, so the
-# SAME fixture also carries the scalar-None accept counterpart.
+# (round 2, `inheritance/__init__.py:667`). D-21 has since installed
+# `vo_models.Shipment`, which carries that same non-nullable `destination`; this
+# fixture stays local because it ALSO pairs it with the nullable scalar `note`,
+# giving one fixture both the refusal and the scalar-None accept counterpart.
 class _WhereShipmentDestination(ValueObject, frozen=True):
     street: Attr[str] = VoField(type="string")
     city: Attr[str] = VoField(type="string")

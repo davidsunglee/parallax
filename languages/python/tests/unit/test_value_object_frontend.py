@@ -1,15 +1,14 @@
 """D-7 value-object class frontend: unit-level no-drift proof against
 ``models/customer.yaml``'s recursive ``Address`` / ``Geo`` / ``Point`` /
 ``Phone`` composite (COR-3 Phase 7 increment 6a). Ledger D-20's structural
-registry-collision block is resolved (an installed Customer mirror could now
-coexist with this test-only one via a separate ``EntityRegistry``, or simply
-redeclare it under the default registry the same way ``vo_models.Supplier``/
-``Branch``/``Contact``/``Shipment`` now do, D-21); no installed Customer
-mirror exists yet, a coverage-surface breadth item this increment's own
-scale judgment deprioritized (Part D item 4). This file's own proof stays
-scoped to the build-time structural comparison: the ``ValueObject`` class
-frontend threads its declared structure into the compiled entity record
-exactly as an ingested descriptor would.
+registry-collision block is resolved, and D-21 has since installed
+``vo_models.Customer`` under its own ``CUSTOMER_REGISTRY`` — the very
+coexistence mechanism that unblocked it — alongside ``vo_models.Supplier``/
+``Branch``/``Contact``/``Shipment``. The test-only mirror here is retained
+deliberately: this file's proof is the build-time structural comparison, which
+wants a declaration it fully controls rather than one that may evolve with the
+corpus. The ``ValueObject`` class frontend threads its declared structure into
+the compiled entity record exactly as an ingested descriptor would.
 """
 
 from __future__ import annotations
