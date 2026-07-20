@@ -36,8 +36,9 @@ m-opt-lock.md`; `python.md` §5 L584-641; ADR 0013):
    processing-axis pin through :attr:`~parallax.core.unit_work.Observation.
    latest_pinned` (Phase-8 mid-phase review remediation), so a locking-mode
    write whose only transaction-scoped observation is historical or
-   edge-pinned genuinely raises here today, ahead of the developer-facing
-   typed temporal verbs (COR-3 Phase 8 increment 7).
+   edge-pinned genuinely raises here. This landed ahead of the developer-facing
+   typed temporal verbs, which COR-3 Phase 8 increment 7 has since shipped, so
+   the gate is now reachable through those verbs too.
 5. **Conflict classification** (:class:`OptimisticLockConflictError`,
    :class:`StaleWriteError`): the two zero-row-close outcomes `m-opt-lock` /
    `m-audit-write` / `m-bitemp-write` distinguish. ``OptimisticLockConflictError``
