@@ -327,7 +327,7 @@ SKIP_REASONS: Final[dict[str, str]] = {
     ),
     "m-auto-retry": (
         "the bounded retry loop is implemented (parallax.core.auto_retry) and proven "
-        "by fake-port unit tests of db.transact (test_transact), including the "
+        "by fake-port unit tests of db.transact (test_database_transact), including the "
         "optimistic-lock opt-in classification; the five boundary-shape cases (transient "
         "retry with the opt-in unset/set, the opt-in inert in locking mode, `retries: 0` "
         "disabling the loop, and bound exhaustion) are graded end-to-end by the D-17 "

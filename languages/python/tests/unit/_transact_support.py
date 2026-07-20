@@ -1,8 +1,9 @@
 """Shared fixtures for the `parallax.snapshot.handle` transaction suites.
 
 The recording fake `m-db-port`, the two `Database` builders over it, the mirrored
-model handles, and the SQL/row goldens that more than one successor suite drives.
-Split out of `test_transact.py` in COR-42 Phase 5, when that file became four.
+model handles, and the SQL/row goldens that more than one suite drives. Shared by
+`test_database_transact.py` and the three `test_transaction_*.py` suites, which
+COR-42 split apart by observable behavior.
 
 Exported names carry no leading underscore: importing an underscored name across
 modules is a `reportPrivateUsage` error under pyright strict, so privacy is
