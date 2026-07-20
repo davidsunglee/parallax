@@ -59,9 +59,11 @@ def test_snapshot_wheel_ships_handle_package(wheelhouse: Wheelhouse) -> None:
     # they cannot tell a handle.py from a handle/ directory. Hatch discovers the
     # tree rather than enumerating modules, which makes the absent old path the
     # load-bearing half: it is what would catch a stale build or a half-applied
-    # split. Grows to the full private-module list as the extraction proceeds.
+    # split. This is the complete package as of COR-42 Phase 6 — the ten private
+    # modules plus the re-exporting interface.
     names = _names(wheelhouse, "parallax-snapshot")
     assert "parallax/snapshot/handle/__init__.py" in names
+    assert "parallax/snapshot/handle/_database.py" in names
     assert "parallax/snapshot/handle/_family.py" in names
     assert "parallax/snapshot/handle/_keyed_sql.py" in names
     assert "parallax/snapshot/handle/_predicate_writes.py" in names
