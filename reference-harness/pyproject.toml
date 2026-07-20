@@ -18,7 +18,7 @@ dependencies = [
 dev = [
     "basedpyright>=1.31",
     "pytest>=8.0",
-    "ruff>=0.15.21",
+    "ruff>=0.15.22",
 ]
 
 [build-system]
@@ -37,7 +37,7 @@ default-groups = ["dev"]
 dev = [
     "basedpyright>=1.31",
     "pytest>=8.0",
-    "ruff>=0.15.21",
+    "ruff>=0.15.22",
 ]
 
 [tool.pytest.ini_options]
