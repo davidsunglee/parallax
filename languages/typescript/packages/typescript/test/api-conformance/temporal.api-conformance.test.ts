@@ -28,7 +28,7 @@ import {
   assertSameOperation,
   provisionCase,
 } from "./_harness.js";
-import { HAS_DOCKER, readCaseGuarded, selectedProviders } from "./_providers.js";
+import { caseGuarded, guardedCases, HAS_DOCKER, selectedProviders } from "./_providers.js";
 import { TEMPORAL } from "./covered.js";
 
 const attr = (ref: string): AttributeExpression => new AttributeExpression(ref);
@@ -211,14 +211,18 @@ it("the temporal suite covers exactly the TEMPORAL family", () => {
 
 // Temporal reads are dialect-agnostic (the m-temporal-read axis wrapping lowers through the m-dialect seam),
 // so the suite fans out over every database `PARALLAX_DATABASES` selects. `MARIADB_GUARDED_
-// READS` (`_providers.ts`) is currently empty — the bitemporal `Position` cases (m-temporal-read-013–m-temporal-read-017)
-// used to be guarded off MariaDB (a reserved-word gap), now fixed — but the guard mechanism
-// stays wired for a future dialect-specific gap.
+// CASES` (`_providers.ts`) holds no TEMPORAL-family stem — the bitemporal `Position` cases
+// (m-temporal-read-013–m-temporal-read-017) used to be guarded off MariaDB (a reserved-word gap), now
+// fixed — so this suite runs the same case count on every selected database; the guard stays wired
+// for a future dialect-specific gap, and reports each one WITH its reason.
 group.skipIf(!HAS_DOCKER).each(selectedProviders())("temporal reads suite ($label)", (dbp) => {
   const BOOT_TIMEOUT = 600_000;
   let provider: ApiConformanceProvider;
-  const runnable = CASES.filter((c) => !readCaseGuarded(dbp, c.stem));
-  const guarded = CASES.filter((c) => readCaseGuarded(dbp, c.stem));
+  const runnable = CASES.filter((c) => !caseGuarded(dbp, c.stem));
+  const guarded = guardedCases(
+    dbp,
+    CASES.map((c) => c.stem),
+  );
 
   beforeAll(async () => {
     provider = await dbp.start();
@@ -248,9 +252,11 @@ group.skipIf(!HAS_DOCKER).each(selectedProviders())("temporal reads suite ($labe
     BOOT_TIMEOUT,
   );
 
-  if (guarded.length > 0) {
-    it.skip.each(
-      guarded,
-    )("$stem: guarded on MariaDB — reserved-word table not quoted (see _providers.ts)", () => {});
+  // An explicit loop, NOT `it.skip.each` with a `$reason` placeholder: vitest
+  // truncates each `$`-interpolated value at ~35 characters, which would clip the
+  // reason mid-sentence. A title built here is printed in full. (Empty today, so
+  // nothing renders — but the mechanism has to be right before an entry lands.)
+  for (const { stem, reason } of guarded) {
+    it.skip(`${stem}: guarded on MariaDB — ${reason}`, () => {});
   }
 });

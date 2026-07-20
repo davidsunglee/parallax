@@ -84,9 +84,11 @@ export function selectedProviders(): readonly SelectedProvider[] {
 }
 
 /**
- * Whether the developer WRITE surface runs against `provider`. All registered
- * providers support it; this helper remains so mixed read/write suites can keep a
- * single guard point for future provider-specific gaps.
+ * Whether the developer WRITE surface runs against `provider` AT ALL — the
+ * WHOLE-DIALECT capability gate. All registered providers support it; this helper
+ * remains so a future database that cannot host the write surface can be dropped
+ * from {@link writeProviders} wholesale. A gap in ONE case is not this gate's
+ * business — that is {@link MARIADB_GUARDED_CASES}.
  */
 export function supportsDeveloperWrites(provider: SelectedProvider): boolean {
   void provider;
@@ -102,10 +104,29 @@ export function writeProviders(): readonly SelectedProvider[] {
 }
 
 /**
- * READ/temporal cases guarded OFF MariaDB, each for a SPECIFIC dialect/runtime gap
- * (developer-WRITE cases guard separately via {@link supportsDeveloperWrites}).
+ * Cases guarded OFF MariaDB — READ and WRITE alike — each for a SPECIFIC, named
+ * dialect/runtime gap, mapped `stem -> reason`.
  *
- * Currently EMPTY — the two gaps that used to live here are both fixed:
+ * This is the PER-CASE gap seam. It is deliberately distinct from
+ * {@link supportsDeveloperWrites}, which is the WHOLE-DIALECT capability gate
+ * ("does this database run the developer write surface at all?", `true` for every
+ * registered provider). The two axes are orthogonal: a per-case gap must not be
+ * expressed by turning off a whole dialect's write surface, and a dialect that
+ * cannot write at all is not a list of stems. Read-versus-write is NOT an axis
+ * here — stems are disjoint, so one map is unambiguous and keeps read/write parity
+ * structural rather than maintained by hand across a mirrored pair.
+ *
+ * Guarding is dialect-scoped, never a suite-wide skip: a guarded case still runs on
+ * every other selected database. `m-value-object-025` below stays fully exercised
+ * under Postgres — the V1 claim's dialect — and stays in `EXERCISED` for
+ * `coverage.test.ts`'s exercised-∪-skipped partition rather than moving to
+ * `SKIPPED_IDS`, which is dialect-blind and would drop the claimed Postgres coverage.
+ *
+ * Each reason is rendered into the consuming suite's `it.skip` title (see
+ * {@link guardedCases}), so the test output names WHICH check was skipped and WHY,
+ * as `core/spec/database-provider-test-contract.md:90-95` requires.
+ *
+ * Two gaps that used to live here are both fixed and are gone:
  *  - `m-core-001` (a RAW `bytes` read) — the shipped MariaDB adapter's `typeCast` now
  *    reads a raw (un-wrapped) `bytes` column via the driver's raw `Buffer`
  *    (`field.buffer()`) instead of parsing `field.string()` through the hex-text
@@ -119,15 +140,42 @@ export function writeProviders(): readonly SelectedProvider[] {
  *    both the DDL derivation's reserved-word set AND the m-sql compiler's root/
  *    EXISTS-child `from` clause (now routed through `dialect.quoteIdentifier`,
  *    same as every column) quote it.
- *
- * Kept as an (empty) `ReadonlyMap` + {@link readCaseGuarded} helper — a
- * ready-made guard point for a future dialect/runtime gap.
  */
-export const MARIADB_GUARDED_READS: ReadonlyMap<string, string> = new Map();
+export const MARIADB_GUARDED_CASES: ReadonlyMap<string, string> = new Map([
+  [
+    "m-value-object-025-write-insert-document",
+    "known MariaDB adapter defect — the developer write path binds a value-object " +
+      "document as a plain object, which reaches mysql2's query() text protocol and " +
+      "escapes to the literal SQL text '[object Object]', failing MariaDB's json_valid " +
+      "CHECK with error 4025; unclaimed by the Postgres-only V1 conformance profile, and " +
+      "unfixed because slice-mvp-1 is scheduled for retirement with the slice-managed-1 " +
+      "migration",
+  ],
+]);
 
-/** Whether a READ/temporal case is guarded off `provider` (a MariaDB-specific dialect gap). */
-export function readCaseGuarded(provider: SelectedProvider, stem: string): boolean {
-  return provider.dialect === MARIADB_DIALECT && MARIADB_GUARDED_READS.has(stem);
+/** Whether a case is guarded off `provider` (a MariaDB-specific per-case gap). */
+export function caseGuarded(provider: SelectedProvider, stem: string): boolean {
+  return provider.dialect === MARIADB_DIALECT && MARIADB_GUARDED_CASES.has(stem);
+}
+
+/** One guarded case as a suite reports it: the stem, and why it was guarded. */
+export interface GuardedCase {
+  readonly stem: string;
+  readonly reason: string;
+}
+
+/**
+ * The guarded subset of `stems` for `provider`, each paired with its reason — the
+ * rows a suite feeds to `it.skip.each` so the reason lands IN the test output
+ * rather than only in this file. Empty for every non-guarded provider/stem set.
+ */
+export function guardedCases(
+  provider: SelectedProvider,
+  stems: readonly string[],
+): readonly GuardedCase[] {
+  return stems
+    .filter((stem) => caseGuarded(provider, stem))
+    .map((stem) => ({ stem, reason: MARIADB_GUARDED_CASES.get(stem) ?? "" }));
 }
 
 /** True when a Docker daemon is reachable (gates the Testcontainers lane). */

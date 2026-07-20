@@ -33,7 +33,7 @@ import {
   type CaseFixture,
   provisionCase,
 } from "./_harness.js";
-import { HAS_DOCKER, readCaseGuarded, selectedProviders } from "./_providers.js";
+import { caseGuarded, guardedCases, HAS_DOCKER, selectedProviders } from "./_providers.js";
 import { READS } from "./covered.js";
 
 // --- entity symbols (as codegen emits them) ---------------------------------
@@ -170,13 +170,17 @@ it("the reads suite covers exactly the READS family", () => {
 
 // Reads are dialect-agnostic (the m-sql compiler is behind the m-dialect seam), so the suite fans
 // out over every database `PARALLAX_DATABASES` selects (default Postgres). `MARIADB_GUARDED_
-// READS` (`_providers.ts`) is currently empty — the raw `bytes` read case (`m-core-001`) used to be
-// guarded off MariaDB, now fixed — but the guard mechanism stays wired for a future gap.
+// CASES` (`_providers.ts`) holds no READS-family stem — the raw `bytes` read case (`m-core-001`)
+// used to be guarded off MariaDB, now fixed — so this suite runs the same case count on every
+// selected database; the guard stays wired for a future gap, and reports each one WITH its reason.
 group.skipIf(!HAS_DOCKER).each(selectedProviders())("reads suite ($label)", (dbp) => {
   const BOOT_TIMEOUT = 600_000;
   let provider: ApiConformanceProvider;
-  const runnable = CASES.filter((c) => !readCaseGuarded(dbp, c.stem));
-  const guarded = CASES.filter((c) => readCaseGuarded(dbp, c.stem));
+  const runnable = CASES.filter((c) => !caseGuarded(dbp, c.stem));
+  const guarded = guardedCases(
+    dbp,
+    CASES.map((c) => c.stem),
+  );
 
   beforeAll(async () => {
     provider = await dbp.start();
@@ -211,9 +215,11 @@ group.skipIf(!HAS_DOCKER).each(selectedProviders())("reads suite ($label)", (dbp
     BOOT_TIMEOUT,
   );
 
-  if (guarded.length > 0) {
-    it.skip.each(
-      guarded,
-    )("$stem: guarded on MariaDB — dialect-specific gap (see _providers.ts)", () => {});
+  // An explicit loop, NOT `it.skip.each` with a `$reason` placeholder: vitest
+  // truncates each `$`-interpolated value at ~35 characters, which would clip the
+  // reason mid-sentence. A title built here is printed in full. (Empty today, so
+  // nothing renders — but the mechanism has to be right before an entry lands.)
+  for (const { stem, reason } of guarded) {
+    it.skip(`${stem}: guarded on MariaDB — ${reason}`, () => {});
   }
 });
