@@ -14,7 +14,14 @@ languages/python/
   uv.lock               committed lockfile (one per workspace)
   tools/
     check_dag_sync.py   generates/checks the import-linter forbidden-edge
-                        complement from core/spec/modules.md (§7)
+                        complement from core/spec/modules.md, and parity-checks
+                        its support-scope table against spec/python.md §7
+    check_scope_ownership.py
+                        proves every production source file belongs to exactly
+                        one §7 enforcement scope or an exact exemption
+    check_untracked_sources.py
+                        fails on a Python source file that exists on disk but
+                        not in git (the changed-line coverage gate reads git)
   packages/
     parallax-core/        the class-free engine spine (production)
     parallax-snapshot/     snapshot lifecycle + handle (production)
@@ -59,6 +66,7 @@ Run from the repo root (via `just`) or from `languages/python` (via `uv`).
 | Unit tests | `cd languages/python && uv run pytest -m unit` |
 | Regenerate import-linter complement | `cd languages/python && uv run python tools/check_dag_sync.py --write` |
 | Verify the complement is in sync | `cd languages/python && uv run python tools/check_dag_sync.py` |
+| Verify every production file has a scope owner | `cd languages/python && uv run python tools/check_scope_ownership.py` |
 
 Pytest markers (§6): `unit`, `dialect`, `compile_sweep`, `adapter_smoke`,
 `provider_contract`, `conformance`, `api_conformance`, `artifact`,

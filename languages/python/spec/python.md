@@ -870,13 +870,91 @@ directions; artifact co-location never legalizes a forbidden edge.
 | `m-navigate` | `parallax.core.navigate` | `parallax.core.navigate` | `m-op-algebra`, `m-unit-work`, `m-temporal-read`, `m-inheritance` | generated forbidden contracts |
 | `m-deep-fetch` | `parallax.core.deep_fetch` | `parallax.core.deep_fetch` | `m-navigate` | generated forbidden contracts |
 | `m-snapshot-read` | `parallax.snapshot.materialize` | `parallax.snapshot.materialize` | `m-deep-fetch` | generated forbidden contracts + cross-package contract |
-| Snapshot handle and composition surface (support) | `parallax.snapshot.handle` | `parallax.snapshot.handle` | `parallax.snapshot.materialize`, `m-unit-work`, `m-auto-retry`, `m-read-lock`, `m-opt-lock`, `m-batch-write`, `m-audit-write`, `m-bitemp-write`, `m-pk-gen`, `m-sql`, `m-navigate`, `m-db-port`, `parallax.core.entity` | generated forbidden contracts + cross-package contract |
+| Snapshot handle and composition surface (support) | `parallax.snapshot.handle` | `parallax.snapshot.handle` | `parallax.snapshot.materialize`, `m-unit-work`, `m-auto-retry`, `m-read-lock`, `m-opt-lock`, `m-batch-write`, `m-audit-write`, `m-bitemp-write`, `m-sql`, `m-navigate`, `m-db-port`, `parallax.core.entity` | generated forbidden contracts + cross-package contract |
+| Snapshot handle wrapping (support, child of `parallax.snapshot.handle`) | `parallax.snapshot.handle._wrap` | `parallax.snapshot.handle._wrap` | `parallax.snapshot.materialize`, `parallax.core.entity`, `m-descriptor`, `m-inheritance`, `m-temporal-read` | generated forbidden contracts |
+| Snapshot handle write lowering (support, child group of `parallax.snapshot.handle`) | `parallax.snapshot.handle._family`, `._write_types`, `._keyed_sql`, `._write_lowering` | those four scopes, sharing one grant row | `m-core`, `m-descriptor`, `m-inheritance`, `m-dialect`, `m-db-port`, `m-sql`, `m-unit-work`, `m-opt-lock`, `m-audit-write`, `m-bitemp-write` | generated forbidden contracts |
 | `m-case-format` | `parallax.conformance.case_format` (dev-only) | `parallax.conformance.case_format` | `m-core` | generated forbidden contracts (dev tree) |
 | `m-conformance-adapter` | `parallax.conformance.cli` (dev-only) | `parallax.conformance.cli` | `m-case-format`, plus any claimed behavioral or support scope it harnesses — the core conformance-family exception | generated forbidden contracts (dev tree) |
 | `m-api-conformance` | `languages/python/tests/api_conformance` (dev-only) | `tests.api_conformance` | `m-case-format` (harnesses the public surface) | pytest collection boundary |
 | Entity and statement frontend (support) | `parallax.core.entity` | `parallax.core.entity` | `m-descriptor`, `m-op-algebra`, `m-temporal-read` | generated forbidden contracts |
 | Concrete Postgres adapter (support) | `parallax.postgres.adapter` | `parallax.postgres` | `m-db-port`, `m-db-error`, `m-dialect`, psycopg | generated forbidden contracts + cross-package contract |
 | Composition root (support) | application/test code calling `parallax.snapshot.connect` | (application-owned) | `parallax.snapshot`, `parallax.postgres` | only the root imports a concrete adapter |
+
+Behavioral modules carry a module tag, so their allowed direct dependencies are
+already machine-readable from the fenced `dependency-graph` block in
+`core/spec/modules.md`. Support scopes carry no tag, so their rows above are the
+only declaration of their edges. The fenced `support-scope-graph` block below is
+the machine-readable form of exactly those rows, written in the same
+`A --> B` grammar and naming enforcement scopes on both sides.
+`tools/check_dag_sync.py` parses it and fails when its own `SUPPORT_SCOPE_DEPS`
+table disagrees, so the generated contracts cannot drift from this section. The
+prose rows and the block MUST agree.
+
+```support-scope-graph
+parallax.core.entity --> parallax.core.descriptor
+parallax.core.entity --> parallax.core.op_algebra
+parallax.core.entity --> parallax.core.temporal_read
+parallax.snapshot.handle --> parallax.snapshot.materialize
+parallax.snapshot.handle --> parallax.core.unit_work
+parallax.snapshot.handle --> parallax.core.auto_retry
+parallax.snapshot.handle --> parallax.core.read_lock
+parallax.snapshot.handle --> parallax.core.opt_lock
+parallax.snapshot.handle --> parallax.core.batch_write
+parallax.snapshot.handle --> parallax.core.audit_write
+parallax.snapshot.handle --> parallax.core.bitemp_write
+parallax.snapshot.handle --> parallax.core.sql_gen
+parallax.snapshot.handle --> parallax.core.navigate
+parallax.snapshot.handle --> parallax.core.db_port
+parallax.snapshot.handle --> parallax.core.entity
+parallax.snapshot.handle._wrap --> parallax.snapshot.materialize
+parallax.snapshot.handle._wrap --> parallax.core.entity
+parallax.snapshot.handle._wrap --> parallax.core.descriptor
+parallax.snapshot.handle._wrap --> parallax.core.inheritance
+parallax.snapshot.handle._wrap --> parallax.core.temporal_read
+parallax.snapshot.handle._family --> parallax.core.base
+parallax.snapshot.handle._family --> parallax.core.descriptor
+parallax.snapshot.handle._family --> parallax.core.inheritance
+parallax.snapshot.handle._family --> parallax.core.dialect
+parallax.snapshot.handle._family --> parallax.core.db_port
+parallax.snapshot.handle._family --> parallax.core.sql_gen
+parallax.snapshot.handle._family --> parallax.core.unit_work
+parallax.snapshot.handle._family --> parallax.core.opt_lock
+parallax.snapshot.handle._family --> parallax.core.audit_write
+parallax.snapshot.handle._family --> parallax.core.bitemp_write
+parallax.snapshot.handle._write_types --> parallax.core.base
+parallax.snapshot.handle._write_types --> parallax.core.descriptor
+parallax.snapshot.handle._write_types --> parallax.core.inheritance
+parallax.snapshot.handle._write_types --> parallax.core.dialect
+parallax.snapshot.handle._write_types --> parallax.core.db_port
+parallax.snapshot.handle._write_types --> parallax.core.sql_gen
+parallax.snapshot.handle._write_types --> parallax.core.unit_work
+parallax.snapshot.handle._write_types --> parallax.core.opt_lock
+parallax.snapshot.handle._write_types --> parallax.core.audit_write
+parallax.snapshot.handle._write_types --> parallax.core.bitemp_write
+parallax.snapshot.handle._keyed_sql --> parallax.core.base
+parallax.snapshot.handle._keyed_sql --> parallax.core.descriptor
+parallax.snapshot.handle._keyed_sql --> parallax.core.inheritance
+parallax.snapshot.handle._keyed_sql --> parallax.core.dialect
+parallax.snapshot.handle._keyed_sql --> parallax.core.db_port
+parallax.snapshot.handle._keyed_sql --> parallax.core.sql_gen
+parallax.snapshot.handle._keyed_sql --> parallax.core.unit_work
+parallax.snapshot.handle._keyed_sql --> parallax.core.opt_lock
+parallax.snapshot.handle._keyed_sql --> parallax.core.audit_write
+parallax.snapshot.handle._keyed_sql --> parallax.core.bitemp_write
+parallax.snapshot.handle._write_lowering --> parallax.core.base
+parallax.snapshot.handle._write_lowering --> parallax.core.descriptor
+parallax.snapshot.handle._write_lowering --> parallax.core.inheritance
+parallax.snapshot.handle._write_lowering --> parallax.core.dialect
+parallax.snapshot.handle._write_lowering --> parallax.core.db_port
+parallax.snapshot.handle._write_lowering --> parallax.core.sql_gen
+parallax.snapshot.handle._write_lowering --> parallax.core.unit_work
+parallax.snapshot.handle._write_lowering --> parallax.core.opt_lock
+parallax.snapshot.handle._write_lowering --> parallax.core.audit_write
+parallax.snapshot.handle._write_lowering --> parallax.core.bitemp_write
+parallax.postgres --> parallax.core.db_port
+parallax.postgres --> parallax.core.db_error
+parallax.postgres --> parallax.core.dialect
+```
 
 - **Dependency-analysis tool.** import-linter; configuration in
   `languages/python/pyproject.toml` (`[tool.importlinter]`) **generated** by
@@ -911,6 +989,27 @@ directions; artifact co-location never legalizes a forbidden edge.
   `uv run python tools/check_dag_sync.py && uv run lint-imports`. CI: the
   same pair as a blocking job; any import outside the closure, and any
   generated-contract drift, fails.
+- **Child enforcement scopes.** A support scope MAY declare child scopes over
+  its own private implementation modules when the child's declared grants are
+  materially narrower than the parent's closure. The two declared children of
+  `parallax.snapshot.handle` are the wrapping leaf and the write-lowering
+  cluster; both are generated exactly like any other scope, and neither is a
+  new supported import path. Because import-linter's `forbidden` contracts are
+  package-scoped on both sides, a child is emitted only as a contract
+  **source**: naming it as a forbidden target of its own parent would overlap
+  the parent's source package and be skipped, and the parent's existing row
+  already forbids the same targets for every descendant. The handle scope
+  declares no `m-pk-gen` grant: nothing under `parallax.snapshot.handle`
+  imports primary-key generation, so the generated complement forbids it. The
+  unused direct `m-navigate` grant is retained on purpose — navigation stays
+  reachable through `m-snapshot-read` → `m-deep-fetch` → `m-navigate`, so
+  removing it would forbid nothing while contradicting the deliberate edge
+  described above.
+- **Filesystem ownership.** `languages/python/tools/check_scope_ownership.py`
+  walks every `packages/*/src/**/*.py` file in the production distributions and
+  proves it resolves to exactly one enforcement scope of this section or to an
+  exact, listed package-interface exemption. Zero owners, overlapping owners,
+  and stale exemptions each fail the check, which runs in `just python-static`.
 - **Scopes sharing one artifact.** Every behavioral module in `parallax-core`
   is its own submodule; the generated forbidden contracts operate at
   submodule granularity, so co-location in one wheel cannot legalize a
@@ -976,7 +1075,7 @@ subsection of the template is deleted from this completed spec.
 
 | Quality concern | Tool and version policy | Configuration path(s) | Local command | Blocking CI command/job | Threshold, exclusions, and enforcement policy |
 |---|---|---|---|---|---|
-| Dependency directions within and across artifacts | import-linter (pinned in `uv.lock`) + `check_dag_sync.py` | `languages/python/pyproject.toml` `[tool.importlinter]`; `languages/python/tools/check_dag_sync.py` | `uv run python tools/check_dag_sync.py && uv run lint-imports` | `python-static` job, same commands | any production-scope import outside the DAG's transitive closure fails — the forbidden-edge complement generated from `modules.md` rejects illegal non-edges, not just wrong directions, with only the §7 conformance-family importer exemption; generated-contract drift fails |
+| Dependency directions within and across artifacts | import-linter (pinned in `uv.lock`) + `check_dag_sync.py` + `check_scope_ownership.py` | `languages/python/pyproject.toml` `[tool.importlinter]`; `languages/python/tools/check_dag_sync.py`; `languages/python/tools/check_scope_ownership.py` | `uv run python tools/check_dag_sync.py && uv run python tools/check_scope_ownership.py && uv run lint-imports` | `python-static` job, same commands | any production-scope import outside the DAG's transitive closure fails — the forbidden-edge complement generated from `modules.md` rejects illegal non-edges, not just wrong directions, with only the §7 conformance-family importer exemption; generated-contract drift fails, as does drift between `check_dag_sync.py`'s support-scope table and the §7 `support-scope-graph` block; a production source file owned by no §7 scope (and so covered by no contract), owned by undeclared overlapping scopes, or covered by a stale exemption also fails |
 | Unit tests | pytest (pinned) | `languages/python/pyproject.toml` `[tool.pytest.ini_options]` | `uv run pytest -m unit` | `python-static` job | unit = no container/socket I/O; any failure blocks |
 | Code coverage | coverage.py via pytest-cov, branch mode + diff-cover (both pinned) | `[tool.coverage]` in `languages/python/pyproject.toml` | `uv run pytest -m unit --cov --cov-branch --cov-report=xml && uv run diff-cover coverage.xml --compare-branch origin/main --fail-under 100` | `python-static` job with `--cov-fail-under=90` plus the same diff-cover gate | **90% branch minimum** overall; diff-cover requires **100%** of changed lines vs the merge-base with `main`, making the no-new-uncovered-code policy executable; no generated/vendor code exists to exclude; conformance CLI included |
 | Linting | ruff (pinned) | `[tool.ruff]` in `languages/python/pyproject.toml` | `uv run ruff check` | `python-static` job | rule sets E, F, W, I, UP, B, SIM, RUF; `# noqa` requires rule code + one-line justification |

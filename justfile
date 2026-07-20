@@ -183,12 +183,17 @@ python := "languages/python"
 # diff-cover derives its line inventory from git, so an untracked production
 # module scores zero changed lines and `--fail-under 100` passes vacuously over
 # whatever was tracked. The guard makes that state a hard failure.
+#
+# `check_scope_ownership.py` sits beside it and before `lint-imports`, because
+# lint-imports can only judge the files a declared scope covers: a production
+# module outside every §7 scope passes it by never being examined.
 python-static:
     cd {{python}} && uv run ruff format --check .
     cd {{python}} && uv run ruff check .
     cd {{python}} && uv run pyright
     cd {{python}} && uv run python tools/check_dag_sync.py
     cd {{python}} && uv run python tools/check_untracked_sources.py
+    cd {{python}} && uv run python tools/check_scope_ownership.py
     cd {{python}} && uv run lint-imports
     cd {{python}} && uv run pytest -m unit --cov --cov-branch --cov-report=xml --cov-report=term-missing --cov-fail-under=90
     cd {{python}} && uv run diff-cover coverage.xml --compare-branch origin/main --fail-under 100
