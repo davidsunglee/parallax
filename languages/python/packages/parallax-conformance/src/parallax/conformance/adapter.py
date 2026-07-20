@@ -146,9 +146,10 @@ def _boundary_lane_error(case: case_format.Case) -> engine.EngineError:
 def _scenario_lane_error(case: case_format.Case) -> engine.EngineError:
     # A `scenario`-shape case whose top-level `lane` is `api-conformance` (m-
     # snapshot-read-009, `action: access`'s closed-world absence witness): its
-    # observable is a per-language surfacing (the developer-facing surface a
-    # later increment builds), not a wire-observable golden this lane can grade
-    # — the SAME `_boundary_lane_error` precedent, extended to a second shape.
+    # observable is a per-language surfacing (the developer-facing surface
+    # `parallax.snapshot.handle` builds), not a wire-observable golden this
+    # lane can grade — the SAME `_boundary_lane_error` precedent, extended to
+    # a second shape.
     return engine.EngineError(
         f"{case.path.name}: this scenario's lane is `api-conformance` (m-case-format); "
         "the API Conformance Suite verifies it, not compile/run"

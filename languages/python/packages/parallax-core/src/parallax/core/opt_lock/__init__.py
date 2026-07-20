@@ -51,10 +51,12 @@ m-opt-lock.md`; `python.md` §5 L584-641; ADR 0013):
    consistency violation, not a detected-and-retriable conflict. Neither
    ``!= 1`` shape ever exceeds 1 (a PK-keyed or milestone-current-row
    statement structurally cannot affect more than one row) — Reladomo's
-   separate corruption class for ``> 1`` is deliberately not mirrored. Not
-   wired to ``m-auto-retry``'s retriability predicate yet (the opt-in joins
-   the retriable set once a later increment's boundary runner exists, COR-3
-   Phase 8 increment 6).
+   separate corruption class for ``> 1`` is deliberately not mirrored. COR-3
+   Phase 8 increment 6 wired the opt-in into ``m-auto-retry``'s retriability
+   predicate: ``parallax.snapshot.handle``'s :meth:`Database.transact` passes
+   ``OptimisticLockConflictError`` and the resolved
+   ``retry_optimistic_conflicts`` verdict into
+   :func:`~parallax.core.auto_retry.run_with_retry`.
 
 Prior art (Reladomo; semantics, not idioms): the gate plus the
 ``updatedRows != 1`` conflict mirrors ``MithraAbstractDatabaseObject.

@@ -25,9 +25,8 @@ read's own shape (``distinct``) is visible; :func:`mode_for` is the SEPARATE,
 mode-driven half every transactional read consumer re-derives through, rather
 than re-deriving the mode -> lock mapping inline at each call site:
 :meth:`~parallax.snapshot.handle.Transaction.find`, the materializing
-predicate-write resolve (`~parallax.snapshot.handle.Transaction.
-_materialize_predicate_write`), and the conformance engine's own
-`~parallax.conformance.engine._lower_find`.
+predicate-write resolve in `~parallax.snapshot.handle`, and the conformance
+engine's own `~parallax.conformance.engine._lower_find`.
 
 Prior art (Reladomo; semantics, not idioms): the shared read lock mirrors
 ``FullTransactionalParticipationMode`` (a read enrolls with

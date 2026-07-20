@@ -168,7 +168,7 @@ def _temporal_observation(
     projects every document unconditionally (`m-sql`), so ``fields`` already
     carries it there; a materializing predicate-write resolve's ROW-form
     ``fields`` carries one whenever its own need-sensitive projection
-    requested it (`Transaction._materialize_predicate_write`'s
+    requested it (`_predicate_writes._materialize_predicate_write`'s
     ``needs_documents``, which — completing residual P2 — requests it for
     EVERY bitemporal mutation this branch ever sees: update, updateUntil,
     terminate, terminateUntil alike, since the rectangle split chains all
@@ -246,8 +246,8 @@ def _row_payload(
 # `_where` temporal verb shares (`validate_business_from` / `validate_until`#
 # / `prepare_sparse_row`, S4/N2 COR-3 Phase 8 increment 7 remediation).       #
 # `materialize_row`/`_apply_assignments` below are pure functions the SOLE   #
-# caller (`Transaction._materialize_predicate_write`) drives against its OWN  #
-# resolved rows — never an implicit read of their own.                        #
+# caller (`_predicate_writes._materialize_predicate_write`) drives against    #
+# its OWN resolved rows — never an implicit read of their own.                #
 # --------------------------------------------------------------------------- #
 def validate_business_from(
     declaring: Entity, mutation: str, business_from: dt.datetime | None

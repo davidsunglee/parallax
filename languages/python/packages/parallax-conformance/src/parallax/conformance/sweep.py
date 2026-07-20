@@ -73,8 +73,9 @@ __all__ = ["IMPLEMENTED_MODULES", "reachable_cases"]
 # read-your-own-writes / rollback / mixed-op flushes + FK-ordered writeSequence),
 # making those write cases reachable. This also unblocks the `m-pk-gen` writeSequence
 # cases (which tag `m-unit-work`), whose WRITE-side id allocation is reasoned-skipped
-# forward to the pk-gen write path. `m-batch-write` is deliberately NOT added, so the
-# set-based coalescing witnesses stay unreachable (Option B: implemented = done).
+# forward to the pk-gen write path. `m-batch-write` joined the set in COR-3 Phase 8
+# increment 5 — see that entry's own comment below for why every one of its cases is
+# now reachable rather than merely tagged online.
 IMPLEMENTED_MODULES: Final[frozenset[str]] = frozenset(
     {
         "m-core",

@@ -57,25 +57,14 @@ __all__ = [
 ]
 
 
-ACCOUNT = models.load_models()["account"]
-
-
-BALANCE = models.load_models()["balance"]
-
-
-CONTACT = models.load_models()["contact"]
-
-
-SHIPMENT = models.load_models()["shipment"]
-
-
-PAYMENT = models.load_models()["payment"]
-
-
-PERSON = models.load_models()["person"]
-
-
-ORDERS = models.load_models()["orders"]
+_MODELS = models.load_models()
+ACCOUNT = _MODELS["account"]
+BALANCE = _MODELS["balance"]
+CONTACT = _MODELS["contact"]
+SHIPMENT = _MODELS["shipment"]
+PAYMENT = _MODELS["payment"]
+PERSON = _MODELS["person"]
+ORDERS = _MODELS["orders"]
 
 
 FIXED = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)

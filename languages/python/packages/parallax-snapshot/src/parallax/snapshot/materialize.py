@@ -3,8 +3,9 @@
 The **one assembler**: rows-per-level in, neutral (class-free) graph nodes out.
 :class:`Node` is the whole vocabulary — a plain mutable field dict plus its
 declared primary-key columns (for cycle-stub rendering) — because corpus models
-have no Python classes and the production developer surface (`Snapshot[T]`) is a
-later increment's frozen wrapping over these SAME nodes, not a different graph.
+have no Python classes and the production developer surface (`Snapshot[T]`, in
+`parallax.snapshot.handle`) is a frozen wrapping over these SAME nodes, not a
+different graph.
 
 :class:`Assembler` is the stateful per-materialization builder a production find
 executor (``parallax.snapshot.handle``) or the conformance run lane drives, one
