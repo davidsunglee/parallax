@@ -90,9 +90,11 @@ _WHERE_POSITION_META = metamodel([WherePosition])
 
 
 # A LOCAL audit-only, value-object-bearing entity — the `supplier.yaml` shape
-# (`m-value-object-047`'s own model) has no idiomatic mirror class yet (ledger
-# D-21), so the VO-bearing `update_where` carry-forward pin (finding 2, D-26)
-# builds its own minimal fixture rather than waiting on that mirror.
+# (`m-value-object-047`'s own model). This fixture predates the idiomatic
+# mirror: ledger D-21 has since installed `mm.Supplier` for real, so the
+# VO-bearing `update_where` carry-forward pin (finding 2, D-26) could now be
+# rewritten onto it. It stays local because a minimal self-contained shape is
+# all this pin needs, not because the mirror is missing.
 class WhereLedgerAddress(ValueObject, frozen=True):
     city: Attr[str] = VoField(type="string")
 
