@@ -594,6 +594,87 @@ def test_audit_only_update_via_a_sparse_edited_copy_carries_the_untouched_field(
     assert chain_binds == (1, "A-1", Decimal("150.00"), "2024-06-01T00:00:00+00:00", "infinity")
 
 
+def _branch_row(*, address: dict[str, object] | None) -> Row:
+    return {
+        "br_id": 1,
+        "name": "Central Branch",
+        "address": address,
+        "from_z": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+        "thru_z": _INFINITY_INSTANT,
+        "in_z": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+        "out_z": _INFINITY_INSTANT,
+    }
+
+
+def test_bitemporal_update_after_a_find_carries_the_observed_business_bounds() -> None:
+    # COR-42 Phase 4: the observable replacement for the former private
+    # observation-recording drive. What that test asserted by reading
+    # `uow._observations` directly — that a BITEMPORAL node's observation
+    # records business_from/business_to and the full payload — is exactly what
+    # `bitemp_write.plan` consumes to split the rectangle, so a real
+    # `tx.find` -> `tx.update` makes it observable in the emitted DML: the
+    # chained row can only carry `from_z`/`thru_z` and the untouched
+    # `acct_num` if the observation recorded them.
+    port = _RecordingPort(rows=[_branch_row(address=None)])
+    db = _db_for(models.load_models()["branch"], port)
+
+    def fn(tx: Transaction) -> None:
+        fetched = tx.find(mm.Branch.where(mm.Branch.id == 1)).result()
+        tx.update(
+            fetched.model_copy(update={"name": "Renamed Branch"}),
+            business_from=dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
+        )
+
+    db.transact(fn)
+    write_ops = [op for op in port.ops if op[0] == "write"]
+    assert len(write_ops) == 3  # close the rectangle, then chain head + tail
+    head_binds = cast("tuple[object, ...]", write_ops[1][2])
+    tail_binds = cast("tuple[object, ...]", write_ops[2][2])
+    # The HEAD rectangle runs from the OBSERVED business_from up to the
+    # mutation instant, and carries the OBSERVED name. Neither value appears
+    # anywhere in the sparse edited copy, so both can only have come from the
+    # recorded observation.
+    assert head_binds[1] == "Central Branch"
+    assert head_binds[2] == dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
+    assert head_binds[3] == "2024-03-01T00:00:00+00:00"
+    # The TAIL rectangle opens at the mutation instant with the new payload.
+    assert tail_binds[1] == "Renamed Branch"
+    assert tail_binds[2] == "2024-03-01T00:00:00+00:00"
+
+
+def test_bitemporal_update_after_a_find_keeps_the_observed_value_object_document() -> None:
+    # The second former private drive, made observable. A keyed write derives
+    # its carry-forward from the recorded observation's payload, so a value-
+    # object document the sparse copy never mentions must survive the round
+    # trip. Reverting `_temporal_observation` to drop the document makes the
+    # chained bind `None` instead of the address mapping — the same regression
+    # the private-seam test pinned, now proven through the public verbs.
+    address: dict[str, object] = {
+        "street": "10 Old Road",
+        "city": "Helsinki",
+        "geo": {"country": "FI"},
+        "phones": [],
+    }
+    port = _RecordingPort(rows=[_branch_row(address=address)])
+    db = _db_for(models.load_models()["branch"], port)
+
+    def fn(tx: Transaction) -> None:
+        fetched = tx.find(mm.Branch.where(mm.Branch.id == 1)).result()
+        tx.update(
+            fetched.model_copy(update={"name": "Renamed Branch"}),
+            business_from=dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
+        )
+
+    db.transact(fn)
+    write_ops = [op for op in port.ops if op[0] == "write"]
+    assert len(write_ops) == 3
+    # BOTH chained rectangles carry the document, not just the one whose
+    # payload the edited copy supplied.
+    for op in write_ops[1:]:
+        binds = cast("tuple[object, ...]", op[2])
+        assert binds[-1] == JsonDocument(value=address), binds
+
+
 # --------------------------------------------------------------------------- #
 # D-31 (COR-3 Phase 8 increment 7 completion round): axis-attribute           #
 # construction optionality + `tx.insert_until`, through the PUBLIC verbs.     #
@@ -664,101 +745,6 @@ def test_a_materialized_temporal_node_still_populates_real_axis_values() -> None
     fetched = db.transact(lambda tx: tx.find(mm.Balance.where(mm.Balance.id == 1)).result())
     assert fetched.processing_from == dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
     assert fetched.processing_to is not None
-
-
-def test_record_observations_captures_bitemporal_business_bounds_and_payload() -> None:
-    # Finding B's completeness half ("record the observation fields temporal
-    # lowering already consumes ... so a transaction-scoped find -> temporal
-    # write sequence works end-to-end"): a BITEMPORAL node's recorded
-    # observation carries business_from/business_to/payload too — the SAME
-    # fields `bitemp_write.plan` consumes for the head/middle/tail split —
-    # not just the licensing `in_z`/`latest_pinned` pair the audit-only tests
-    # above pin. No idiomatic `Position` mirror class is production-reachable
-    # yet (bitemporal typed verbs are COR-3 Phase 8 increment 7), so this
-    # drives the neutral seam directly, exactly as the conformance engine's
-    # own translation layer does.
-    from parallax.core.temporal_read import Pin
-    from parallax.snapshot import handle, materialize
-
-    position = models.load_models()["position"]
-    node = materialize.Node(
-        fields={
-            "pos_id": 1,
-            "acct_num": "A",
-            "val": Decimal("100.00"),
-            "from_z": "2024-01-01T00:00:00+00:00",
-            "thru_z": "infinity",
-            "in_z": "2024-01-01T00:00:00+00:00",
-            "out_z": "infinity",
-        },
-        pk_columns=("pos_id",),
-    )
-    find_result = handle.FindResult(
-        nodes=(node,), execution=handle.Execution(()), all_nodes=(("Position", node),)
-    )
-    uow = UnitOfWork(
-        settings=TransactionSettings(concurrency="locking"),
-        clock=FixedClock(_FIXED),
-        meta=position,
-        flush_executor=lambda _plan: None,
-    )
-    handle._record_observations(uow, position, find_result, Pin())  # pyright: ignore[reportPrivateUsage]
-    observation = uow._observations[("Position", (("id", 1),))]  # pyright: ignore[reportPrivateUsage]
-    assert observation.in_z == "2024-01-01T00:00:00+00:00"
-    assert observation.business_from == "2024-01-01T00:00:00+00:00"
-    assert observation.business_to == "infinity"
-    assert observation.payload == {"id": 1, "acctNum": "A", "value": Decimal("100.00")}
-    assert observation.latest_pinned is True  # an empty Pin() ⇒ omitted axis ⇒ latest
-
-
-def test_record_observations_keep_the_bitemporal_document_for_keyed_carry_forward() -> None:
-    # Confirmation-pass residual P2, second-caller question: the SAME
-    # `_temporal_observation` `_record_observations` drives for every real
-    # `tx.find` is the one `Transaction._materialize_predicate_write`'s own
-    # materializing resolve reuses (`test_materializing_...bitemporal...`
-    # below) — a production KEYED write (a later `tx.update(copy)`/
-    # `tx.terminate` of a row this SAME unit of work already `tx.find`-
-    # observed) derives its `bitemp_write.plan` head/tail carry-forward from
-    # THIS recorded observation's own payload, so it must not silently drop a
-    # value-object document either. `find`'s own read is always INSTANCE-form
-    # (`m-sql`), which projects every document unconditionally, so `node.
-    # fields` already carries `address` here — proving the gap was
-    # `_temporal_observation` never asking to KEEP it, not a missing
-    # projection (unlike the materializing-resolve half, `needs_documents`).
-    from parallax.core.temporal_read import Pin
-    from parallax.snapshot import handle, materialize
-
-    branch = models.load_models()["branch"]
-    address: dict[str, object] = {
-        "street": "10 Old Road",
-        "city": "Helsinki",
-        "geo": {"country": "FI"},
-        "phones": [],
-    }
-    node = materialize.Node(
-        fields={
-            "br_id": 1,
-            "name": "Central Branch",
-            "address": address,
-            "from_z": "2024-01-01T00:00:00+00:00",
-            "thru_z": "infinity",
-            "in_z": "2024-01-01T00:00:00+00:00",
-            "out_z": "infinity",
-        },
-        pk_columns=("br_id",),
-    )
-    find_result = handle.FindResult(
-        nodes=(node,), execution=handle.Execution(()), all_nodes=(("Branch", node),)
-    )
-    uow = UnitOfWork(
-        settings=TransactionSettings(concurrency="locking"),
-        clock=FixedClock(_FIXED),
-        meta=branch,
-        flush_executor=lambda _plan: None,
-    )
-    handle._record_observations(uow, branch, find_result, Pin())  # pyright: ignore[reportPrivateUsage]
-    observation = uow._observations[("Branch", (("id", 1),))]  # pyright: ignore[reportPrivateUsage]
-    assert observation.payload == {"id": 1, "name": "Central Branch", "address": address}
 
 
 def _balance_history_rows() -> list[Row]:
