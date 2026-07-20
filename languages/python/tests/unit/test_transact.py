@@ -1666,7 +1666,7 @@ def _position_row_dt() -> Row:
     """The KEYED-verb tests' own row fixture: real ``datetime`` values (never
     the bare ISO strings :func:`_position_row` uses) — a KEYED verb's own
     first read runs through the ordinary developer-facing ``tx.find`` (wrap
-    into a real node, milestone-edge computation, `parallax.snapshot.handle._wrap`),
+    into a real node, milestone-edge computation, `parallax.snapshot.handle`),
     unlike a ``_where`` verb's internal resolving read, which never wraps."""
     return {
         "id": 1,

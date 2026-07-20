@@ -178,11 +178,17 @@ python := "languages/python"
 # lint-imports, unit tests + branch coverage + diff-cover, the built-artifact /
 # clean-install / api-surface proofs, dead-code scan, and the supply-chain
 # audit. The Docker-free compile-sweep row joins here in COR-3 Phase 5.
+#
+# `check_untracked_sources.py` runs before the coverage rows on purpose:
+# diff-cover derives its line inventory from git, so an untracked production
+# module scores zero changed lines and `--fail-under 100` passes vacuously over
+# whatever was tracked. The guard makes that state a hard failure.
 python-static:
     cd {{python}} && uv run ruff format --check .
     cd {{python}} && uv run ruff check .
     cd {{python}} && uv run pyright
     cd {{python}} && uv run python tools/check_dag_sync.py
+    cd {{python}} && uv run python tools/check_untracked_sources.py
     cd {{python}} && uv run lint-imports
     cd {{python}} && uv run pytest -m unit --cov --cov-branch --cov-report=xml --cov-report=term-missing --cov-fail-under=90
     cd {{python}} && uv run diff-cover coverage.xml --compare-branch origin/main --fail-under 100

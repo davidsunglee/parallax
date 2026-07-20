@@ -58,7 +58,7 @@ _STORIES = {story.case_id: story for story in WRITE_STORIES}
 _INFINITY: Final[TemporalBound] = INFINITY
 
 # Per-model seed rows every registered story's own finds may need, COLUMN-keyed
-# (the real driver-row convention `parallax.snapshot.handle._wrap` decodes) — one small
+# (the real driver-row convention `parallax.snapshot.handle` decodes) — one small
 # fixed row set per model, keyed by `story.model` (D-29/D-30 completion round:
 # the temporal stories' own observing finds need model-shaped seed data too,
 # not just Account's). Id 2 (Linus, balance 250.00) joins ids 1/3 here for
