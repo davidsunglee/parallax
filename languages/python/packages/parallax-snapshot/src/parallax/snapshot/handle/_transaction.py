@@ -3,15 +3,21 @@
 :class:`Transaction` is what a ``db.transact`` closure receives: a facade over
 the active unit of work and the transaction's own connection. It owns the
 graduated D-16 keyed verbs (``insert`` / ``update`` / ``delete`` and the typed
-temporal-window family), the participating :meth:`Transaction.find`, the neutral
-``_buffer`` instruction seam every keyed verb shares, and the predicate-selected
-``_where`` verb family.
+temporal-window family), the participating :meth:`Transaction.find`, and the
+neutral ``_buffer`` instruction seam every keyed verb shares.
 
-Depends on :mod:`parallax.snapshot.handle._family` (family-effective axes and
-the version attribute), :mod:`parallax.snapshot.handle._read` (the shared find
-executor plus the pin / result-conversion helpers ``find`` needs), and
+The predicate-selected ``_where`` family is NOT owned here: those six methods —
+the five public verbs plus the frozen ``_buffer_predicate_instruction`` seam the
+conformance engine calls — are thin delegates that thread
+``(uow, meta, conn, dialect)`` into
+:mod:`parallax.snapshot.handle._predicate_writes`, which buffers through
+``uow.buffer`` and never reaches back into this class.
+
+Depends on :mod:`parallax.snapshot.handle._read` (the shared find executor plus
+the pin / result-conversion helpers ``find`` needs),
 :mod:`parallax.snapshot.handle._write_inputs` (verb-input validation, the
-sparse-row build, and the observation machinery). Demarcation — ``Database``,
+sparse-row build, and the observation machinery), and
+:mod:`parallax.snapshot.handle._predicate_writes`. Demarcation — ``Database``,
 ``_Demarcation``, and :class:`TransactionOptionConflictError` — stays in the
 package's composition surface and imports this module, never the reverse.
 """
@@ -19,23 +25,19 @@ package's composition surface and imports this module, never the reverse.
 from __future__ import annotations
 
 import datetime as dt
-from collections.abc import Mapping, Sequence
-from typing import Any, cast
+from collections.abc import Mapping
+from typing import Any
 
-from parallax.core import deep_fetch, inheritance, op_algebra, opt_lock, read_lock
-from parallax.core.db_port import DbPort, Row
-from parallax.core.descriptor import Attribute, Entity, Metamodel
-from parallax.core.dialect import Dialect, LockMode
+from parallax.core import inheritance, opt_lock, read_lock
+from parallax.core.db_port import DbPort
+from parallax.core.descriptor import Entity, Metamodel
+from parallax.core.dialect import Dialect
 from parallax.core.entity import Entity as EntityBase
 from parallax.core.entity import Statement as EntityStatement
 from parallax.core.entity import full_row, primary_key_row
 from parallax.core.entity.expressions import AttributeAssignment
-from parallax.core.sql_gen import Statement, compile_read
 from parallax.core.unit_work import (
-    AtomicUnit,
-    KeyedWrite,
     ObjectKey,
-    Observation,
     PredicateWrite,
     UnitOfWork,
     instructions,
@@ -47,7 +49,10 @@ from parallax.core.unit_work import (
 # by the private MODULE names and by the package's frozen `__all__`, not by
 # per-name underscores, which under pyright strict would make every intra-package
 # import a reportPrivateUsage error.
-from parallax.snapshot.handle._family import assignment_member, members, version_attribute
+from parallax.snapshot.handle._predicate_writes import (
+    buffer_predicate,
+    buffer_predicate_instruction,
+)
 from parallax.snapshot.handle._read import (
     Snapshot,
     deep_fetch_statement_pin,
@@ -59,7 +64,6 @@ from parallax.snapshot.handle._read import (
 )
 from parallax.snapshot.handle._write_inputs import (
     entity_record_of_instance,
-    materialize_row,
     observation_key,
     prepare_sparse_row,
     record_observations,
@@ -84,7 +88,8 @@ class Transaction:
     :meth:`update_until_where`, :meth:`terminate_until_where` — mirrors the
     keyed surface over a bare predicate: readless for an unversioned,
     non-temporal target, materializing to per-row keyed writes otherwise
-    (:meth:`_materialize_predicate_write`, ADR 0014). A reference used after
+    (:mod:`parallax.snapshot.handle._predicate_writes`, ADR 0014, which those
+    five verbs delegate to). A reference used after
     its owning scope ends raises
     :class:`~parallax.core.unit_work.EscapedTransactionError` (every verb
     delegates to the unit of work, which fences use-after-scope).
@@ -431,9 +436,18 @@ class Transaction:
         ``Attr.set(value)`` calls, non-empty, no duplicate field. Readless
         (one statement) for an unversioned, non-temporal target; a versioned
         or temporal target MATERIALIZES (`m-opt-lock`, ADR 0014) — see
-        :meth:`_buffer_predicate`, the neutral seam this and every other
-        ``_where`` verb share."""
-        self._buffer_predicate("update", statement, assignments, business_from=business_from)
+        :func:`~parallax.snapshot.handle._predicate_writes.buffer_predicate`,
+        the neutral seam this and every other ``_where`` verb share."""
+        buffer_predicate(
+            self._uow,
+            self._meta,
+            self._conn,
+            self._dialect,
+            "update",
+            statement,
+            assignments,
+            business_from=business_from,
+        )
 
     def delete_where(self, statement: EntityStatement) -> None:
         """A predicate-selected ``delete`` over a NON-temporal target
@@ -441,7 +455,16 @@ class Transaction:
         MATERIALIZES to one gated per-row delete per resolved row (no
         no-op elimination — a delete changes a row's existence, never a value,
         `m-opt-lock`)."""
-        self._buffer_predicate("delete", statement, (), business_from=None)
+        buffer_predicate(
+            self._uow,
+            self._meta,
+            self._conn,
+            self._dialect,
+            "delete",
+            statement,
+            (),
+            business_from=None,
+        )
 
     def terminate_where(
         self, statement: EntityStatement, *, business_from: dt.datetime | None = None
@@ -451,7 +474,16 @@ class Transaction:
         axis to bound); bitemporal REQUIRES it (the plain terminate's own
         business instant ``B``). Always materializes — a temporal predicate
         write has no readless template."""
-        self._buffer_predicate("terminate", statement, (), business_from=business_from)
+        buffer_predicate(
+            self._uow,
+            self._meta,
+            self._conn,
+            self._dialect,
+            "terminate",
+            statement,
+            (),
+            business_from=business_from,
+        )
 
     def update_until_where(
         self,
@@ -463,8 +495,16 @@ class Transaction:
         """A predicate-selected, business-window-BOUNDED ``updateUntil`` over a
         bitemporal target (`python.md` §5; `m-bitemp-write` "The rectangle
         split"): always materializes to a close plus head/middle/tail."""
-        self._buffer_predicate(
-            "updateUntil", statement, assignments, business_from=business_from, until=until
+        buffer_predicate(
+            self._uow,
+            self._meta,
+            self._conn,
+            self._dialect,
+            "updateUntil",
+            statement,
+            assignments,
+            business_from=business_from,
+            until=until,
         )
 
     def terminate_until_where(
@@ -474,240 +514,30 @@ class Transaction:
         a bitemporal target (`python.md` §5): always materializes to a close
         plus head/tail (no middle — the window becomes a hole in business
         time)."""
-        self._buffer_predicate(
-            "terminateUntil", statement, (), business_from=business_from, until=until
+        buffer_predicate(
+            self._uow,
+            self._meta,
+            self._conn,
+            self._dialect,
+            "terminateUntil",
+            statement,
+            (),
+            business_from=business_from,
+            until=until,
         )
-
-    def _buffer_predicate(
-        self,
-        mutation: str,
-        statement: EntityStatement,
-        assignments: Sequence[AttributeAssignment],
-        *,
-        business_from: dt.datetime | None,
-        until: dt.datetime | None = None,
-    ) -> None:
-        """The neutral seam every ``_where`` verb shares — the SAME seam the
-        conformance engine's predicate-write translation drives (COR-3 Phase 8
-        increment 5), so the developer-facing verbs and the corpus-driven
-        engine path can never diverge in behavior.
-
-        1. **Bare-statement guard** (`python.md` §5 "A statement becomes a
-           write target only as a bare statement") — one carrying nothing but
-           a predicate; every other clause is rejected (`EntityStatement.
-           is_bare`, subsuming ``.distinct()``).
-        2. **Inheritance rejection** (`m-inheritance` "Per-object writes are
-           keyed; set-based inheritance writes are out of scope") — BEFORE any
-           SQL, the SAME ``subtype-write-set-based-unsupported`` classification
-           a keyless keyed write raises.
-        3. **Business-bound validation** — a bitemporal target REQUIRES
-           ``business_from`` (its own business instant); an audit-only or
-           non-temporal target takes none (no business axis to bound); the
-           ``*Until`` forms additionally require ``until``, with
-           ``business_from < until`` — an equal or reversed window rejects
-           HERE, at build, before any buffering (:func:`validate_until`, S4
-           COR-3 Phase 8 increment 7 remediation).
-        4. **Build + validate the canonical instruction** (the SAME
-           deserialize/`validate_instruction` round trip a keyed write buys in
-           :meth:`_buffer` — non-empty/no-duplicate assignments are the schema's
-           own check).
-        5. **Dispatch**: an unversioned, non-temporal target buffers READLESS
-           (one statement, `m-batch-write`); a versioned or temporal one
-           MATERIALIZES (:meth:`_materialize_predicate_write`, ADR 0014).
-        """
-        if not statement.is_bare():
-            raise ValueError(
-                f"{statement.target}: a set-based write target must be a bare statement "
-                "(nothing but a predicate) — order_by / limit / distinct / as_of / history / "
-                "as_of_range / narrow / include are all rejected on a write target (python.md §5)"
-            )
-        entity = self._meta.entity(statement.target)
-        inheritance.reject_predicate_write(entity)
-        declaring = inheritance.declaring_entity(self._meta, entity)
-        business_from_literal = validate_business_from(declaring, mutation, business_from)
-        until_literal: str | None = None
-        if until is not None:
-            assert business_from is not None  # `*_until_where` verbs require both together
-            until_literal = validate_until(declaring, mutation, business_from, until)
-
-        doc: dict[str, object] = {
-            "mutation": mutation,
-            "target": {
-                "entity": statement.target,
-                "predicate": op_algebra.serialize(statement.predicate),
-            },
-        }
-        if assignments:
-            doc["assignments"] = [{"attr": str(a.attr), "value": a.value} for a in assignments]
-        if business_from_literal is not None:
-            doc["businessFrom"] = business_from_literal
-        if until_literal is not None:
-            doc["businessTo"] = until_literal
-        instruction = instructions.deserialize(doc)
-        assert isinstance(
-            instruction, PredicateWrite
-        )  # this seam always builds the predicate shape
-        instructions.validate_instruction(instruction, self._meta)
-        self._buffer_predicate_instruction(instruction)
 
     def _buffer_predicate_instruction(self, instruction: PredicateWrite) -> None:
-        """The neutral seam UNDERLYING every ``_where`` verb and the
-        conformance engine's own predicate-write translation (COR-3 Phase 8
-        increment 5; `m-case-format` "predicate-shaped case entries deserialize
-        to PredicateWrite through the existing serde and buffer through
-        Transaction's own seam"): given an ALREADY-BUILT, already-validated
-        :class:`~parallax.core.unit_work.PredicateWrite` instruction, reject an
-        inheritance-family target (`m-inheritance`), then dispatch READLESS
-        (`m-batch-write`) or MATERIALIZE (`m-opt-lock`, ADR 0014). The typed
-        ``_where`` verbs (:meth:`_buffer_predicate`) build ``instruction`` from
-        a bare :class:`~parallax.core.entity.Statement` plus typed
-        ``Attr.set(...)`` assignments first; the engine builds it directly
-        from the case's own canonical write-instruction document — both
-        converge HERE, so the two callers can never diverge in behavior.
+        """Buffer an ALREADY-BUILT, already-validated predicate write
+        (:func:`~parallax.snapshot.handle._predicate_writes.buffer_predicate_instruction`).
+
+        This method is a FROZEN external seam, not an ordinary private helper:
+        the conformance engine's predicate-write translation calls it directly
+        (`parallax.conformance.engine`), so its name and signature are fixed and
+        it keeps its leading underscore despite crossing a module boundary
+        (COR-3 Phase 8 increment 5; `m-case-format` "predicate-shaped case
+        entries deserialize to PredicateWrite through the existing serde and
+        buffer through Transaction's own seam"). The typed ``_where`` verbs
+        above and the engine converge on the SAME free function below, so the
+        two callers can never diverge in behavior.
         """
-        entity = self._meta.entity(instruction.target.entity)
-        inheritance.reject_predicate_write(entity)
-        declaring = inheritance.declaring_entity(self._meta, entity)
-        version_attr = version_attribute(declaring)
-        if not declaring.is_temporal and version_attr is None:
-            # Readless (`m-batch-write.md` "Predicate-selected readless forms"):
-            # one statement, no materialization, no equality-elimination pass.
-            self._uow.buffer(instruction)
-            return
-        self._materialize_predicate_write(instruction, entity, declaring, version_attr)
-
-    def _materialize_predicate_write(
-        self,
-        instruction: PredicateWrite,
-        entity: Entity,
-        declaring: Entity,
-        version_attr: Attribute | None,
-    ) -> None:
-        """Materialize a predicate write on a VERSIONED or TEMPORAL target
-        (`m-opt-lock` "Predicate-selected writes materialize when observations
-        are needed"; ADR 0014): resolve the predicate through a MINIMAL
-        row-form read on THIS transaction's own connection (never instance-form
-        — the resolve constructs no object, `m-value-object-047`), record each
-        matched row's observation through ``uow.observe`` (the SAME
-        transaction-scoped seam a real :meth:`find` uses — never an engine-side
-        map), then buffer one keyed per-row write per row the verb WRITES (the
-        per-row no-op elimination below) as an ORDERED ATOMIC PLANNED UNIT
-        (`m-unit-work`, :class:`AtomicUnit`) at the call position. Zero
-        resolved rows -> zero keyed writes, success (no unit buffered at all).
-        The lock suffix on the resolve derives from the transaction's own
-        concurrency mode (``locking`` ⇒ the shared read lock, ``optimistic`` ⇒
-        none) — the SAME rule a real ``Transaction.find`` applies.
-
-        A TEMPORAL target's raw predicate carries no as-of wrapper (a bare
-        statement forbids ``.as_of()``/``.history()``, python.md §5) — exactly
-        like an ordinary find's omitted axis, it must still default every
-        declared axis to its CURRENT milestone (`m-temporal-read` "default-
-        latest"), so the resolve routes through the SAME
-        :func:`~parallax.core.deep_fetch.plan` root-canonicalization every
-        other read uses (:func:`find`, above) rather than compiling the raw
-        predicate directly — otherwise a temporal target's resolve would match
-        every historical milestone too, not just the open one(s).
-        """
-        lock: LockMode | None = read_lock.mode_for(self._uow.settings.concurrency)
-        plan_ = deep_fetch.plan(instruction.target.entity, instruction.target.predicate, self._meta)
-        assignments = {
-            assignment_member(assignment.attr): assignment.value
-            for assignment in instruction.assignments
-        }
-        # Need-sensitive projection (`m-case-format.md:727`): the resolving
-        # read projects the resolved row's own value-object document(s) for
-        # TWO independent needs, on EVERY target class — never gated on
-        # temporality alone (confirmation-pass residual A, completing P2).
-        #
-        # CHAIN need: the verb's OWN milestone plan writes a CHAINED row
-        # from the resolved one. A BITEMPORAL target's rectangle split
-        # (`bitemp_write.plan`) chains on EVERY close-bearing mutation —
-        # update, updateUntil, terminate, AND terminateUntil alike, since
-        # head (and tail, for the `*Until` forms) always carry the OLD
-        # payload forward, not just an assignment-bearing one
-        # (`m-bitemp-write` "head/tail old values come from the observed
-        # prior rectangle"). An AUDIT-ONLY target's plan (`audit_write.
-        # plan`) chains ONLY an ASSIGNMENT-BEARING `update`
-        # (`materialize_row`'s own `assignment_bearing` set) — its
-        # `terminate` is close-only, no chained row, so it stays
-        # document-free (`m-value-object-047`'s own row-form-omits-slot-4
-        # witness stays byte-identical); audit-only never reaches the
-        # `*Until` forms (bitemporal-only, `validate_business_from`). The
-        # chain need projects EVERY declared document, never just the
-        # assigned ones — a chained row must carry forward whichever
-        # documents the assignments do NOT themselves reassign. Either way,
-        # an AUDIT-ONLY target's own `full_row` merge (`materialize_row`)
-        # reads this read's row directly, while a BITEMPORAL target's split
-        # reads it indirectly, through `_temporal_observation`'s payload,
-        # which keeps a value-object document whenever THIS read actually
-        # projected it (`m-value-object` "the document rides every
-        # chained/split row whole").
-        #
-        # COMPARISON need: an assignment-bearing verb's per-row no-op
-        # elimination (below, `materialize_row` -> `_apply_assignments`)
-        # compares each assigned member's new value against the resolved
-        # row's own — a value-object member's comparison can only ever see
-        # the STORED document when this read actually projected its column
-        # (`m-opt-lock.md:92-95` "when all assignments already equal that
-        # row's values, it issues no DML, advances no version"). A TEMPORAL
-        # target's chain need above already projects every document
-        # whenever it is assignment-bearing, so this need is a strict no-op
-        # there; a VERSIONED NON-TEMPORAL target never chains (no milestone
-        # to carry a payload across — `m-opt-lock`/`m-descriptor`: versioned
-        # and temporal are mutually exclusive), so it reaches this need
-        # ALONE. Minimal-read discipline (`m-sql`) then projects the
-        # ASSIGNED value-object document(s) only — never every declared
-        # one, matching an ordinary read's own need-driven projection.
-        assignment_bearing = instruction.mutation in ("update", "updateUntil")
-        chain_need = (
-            version_attr is None
-            and declaring.is_temporal
-            and (declaring.temporal == "bitemporal" or instruction.mutation == "update")
-        )
-        needs_documents: bool | frozenset[str]
-        if chain_need:
-            needs_documents = True
-        elif assignment_bearing:
-            member_columns = members(self._meta, entity)
-            needs_documents = frozenset(
-                member for member in assignments if member_columns[member][1]
-            )
-        else:
-            needs_documents = False
-        statement = compile_read(
-            plan_.root_operation,
-            self._meta,
-            self._dialect,
-            instruction.target.entity,
-            result_form="row",
-            lock=lock,
-            include_value_objects=needs_documents,
-        )
-        rows = self._uow.read(lambda: self._resolve_rows(statement))
-        writes: list[KeyedWrite] = []
-        pending: list[tuple[ObjectKey, Observation | None]] = []
-        for row in rows:
-            key, observation, new_row = materialize_row(
-                self._meta, entity, declaring, version_attr, instruction.mutation, assignments, row
-            )
-            if new_row is None:
-                continue  # per-row no-op elimination (assignment-bearing verbs only)
-            writes.append(
-                KeyedWrite(
-                    mutation=cast("Any", instruction.mutation),
-                    entity=instruction.target.entity,
-                    rows=(new_row,),
-                    business_from=instruction.business_from,
-                    business_to=instruction.business_to,
-                )
-            )
-            pending.append((key, observation))
-        if not writes:
-            return
-        for key, observation in pending:
-            if observation is not None:
-                self._uow.observe(key, observation)
-        self._uow.buffer(AtomicUnit(writes=tuple(writes)))
-
-    def _resolve_rows(self, statement: Statement) -> list[Row]:
-        return self._conn.execute(self._dialect.to_driver_sql(statement.sql), list(statement.binds))
+        buffer_predicate_instruction(self._uow, self._meta, self._conn, self._dialect, instruction)

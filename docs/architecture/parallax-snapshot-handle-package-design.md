@@ -90,6 +90,7 @@ parallax/snapshot/
     _read.py
     _wrap.py
     _write_inputs.py
+    _predicate_writes.py
     _transaction.py
     _database.py
 ```
@@ -106,7 +107,8 @@ parallax/snapshot/
 | `_read` | `Snapshot` and execution/result values, `find` and `find_history`, history grouping, all read-side pin derivation (`deep_fetch_statement_pin`, `is_milestone_set_op`, and the module-local `_pin_from_milestone`), and conversion of neutral results into Snapshots. |
 | `_wrap` | Conversion of neutral materialized nodes into frozen developer entity graphs, including graph-local identity, projection merging, inheritance, value objects, and temporal metadata. |
 | `_write_inputs` | Observation capture, write-input validation, sparse/full row preparation, assignment application, and materialized predicate-write row preparation. It consumes `FindResult`/`Pin` values from `_read`; `_read` never imports observation code. |
-| `_transaction` | `Transaction` verbs, transactional find participation, buffering, prior-observation rules, and predicate-write orchestration. |
+| `_predicate_writes` | The predicate-selected (`*_where`) write lane as free functions threading `(uow, meta, conn, dialect)`: bare-statement and business-window validation into a canonical `PredicateWrite`, readless-versus-materialize dispatch, the minimal resolving read, per-row no-op elimination, observation recording, and atomic keyed-unit buffering. It buffers through `uow.buffer` and never reaches back into `Transaction`. |
+| `_transaction` | `Transaction` verbs, transactional find participation, buffering, and prior-observation rules. The five `*_where` verbs plus the frozen `_buffer_predicate_instruction` seam are thin delegates into `_predicate_writes`, which owns the lane itself. |
 | `_database` | `Database`, `connect`, callback demarcation, joining, retry policy, flush execution, and conflict classification. |
 
 The small `_family` and `_write_types` leaf modules prevent dependency cycles
@@ -176,7 +178,8 @@ _keyed_sql      -> _family, _write_types
 _write_lowering -> _family, _write_types, _keyed_sql
 _read           -> _wrap
 _write_inputs   -> _family, _read
-_transaction    -> _family, _read, _write_inputs
+_predicate_writes -> _family, _write_inputs
+_transaction    -> _read, _write_inputs, _predicate_writes
 _database       -> _read, _transaction, _write_lowering, _write_types
 handle.__init__ -> exported implementation modules
 ```
@@ -187,7 +190,13 @@ More precisely:
 - `_write_lowering` may depend on `_family`, `_write_types`, and `_keyed_sql`.
 - `_read` may depend on `_wrap`.
 - `_write_inputs` may depend on `_family` and read result values from `_read`.
-- `_transaction` may depend on `_family`, `_read`, and `_write_inputs`.
+- `_predicate_writes` may depend on `_family` and `_write_inputs`. It must not
+  import `_transaction`: the lane buffers through `uow.buffer`, so the delegation
+  edge stays one-way.
+- `_transaction` may depend on `_read`, `_write_inputs`, and `_predicate_writes`.
+  It no longer reaches `_family` directly — the three lookups it used
+  (`assignment_member`, `members`, `version_attribute`) were read only by the
+  predicate lane and moved with it.
 - `_database` may depend on `_read`, `_transaction`, `_write_lowering`, and
   `_write_types`.
 - `handle.__init__` may import the modules required to re-export the existing
