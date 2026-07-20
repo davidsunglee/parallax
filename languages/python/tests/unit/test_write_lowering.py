@@ -13,10 +13,12 @@ inheritance tag derivation/guard/opt-lock composition, and the pk-gen
 ``max``/``increment`` marker lowering; the TEMPORAL keyed forms (COR-3 Phase 8
 increment 4: close-and-chain, the rectangle split, the observed-``in_z``/business-
 discriminator gate, `StaleWriteError` vs `OptimisticLockConflictError`) are pinned
-in ``test_temporal_write_lowering.py``. Every remaining not-yet-lowered form
-(predicate-selected, multi-row batch, an unrecognized marker) is refused with a
-loud ``WriteLoweringError`` — never a wrong emission — mirroring the read
-compiler's forward-error posture.
+in ``test_temporal_write_lowering.py``. The predicate-selected and multi-row
+batch forms both lower as of COR-3 Phase 8 increment 5; what this seam still
+refuses — a materializing predicate write that reaches it, a mixed-shape
+multi-row instruction, a milestone verb on a non-temporal entity, an unsupported
+DB-computed marker — raises a loud ``WriteLoweringError``, never a wrong
+emission, mirroring the read compiler's forward-error posture.
 """
 
 from __future__ import annotations
@@ -468,9 +470,10 @@ def test_insert_then_delete_cancels_to_no_dml() -> None:
 def test_materializing_predicate_write_reaching_lower_write_is_refused() -> None:
     # A predicate write on a VERSIONED (or temporal) target never reaches
     # `lower_write` directly in production — materialization decomposes it to
-    # per-row keyed writes at BUFFER time (`Transaction._buffer_predicate`,
-    # ADR 0014), before it is ever planned. Reaching here with one is a
-    # caller wiring defect this seam still refuses loudly, never mis-emits.
+    # per-row keyed writes at BUFFER time (`parallax.snapshot.handle`'s
+    # `Transaction` `_where` verb family, ADR 0014), before it is ever
+    # planned. Reaching here with one is a caller wiring defect this seam
+    # still refuses loudly, never mis-emits.
     predicate = PredicateWrite("delete", WriteTarget("Account", oa.All()))
     with pytest.raises(WriteLoweringError, match="materialize to keyed writes"):
         _lower(predicate, ACCOUNT)
@@ -522,14 +525,15 @@ def test_multi_row_insert_collapses_to_one_statement_many_value_tuples() -> None
 
 
 def test_multi_row_insert_on_a_versioned_entity_derives_initial_version_per_row() -> None:
-    # `_lower_multi_insert`'s versioned-entity branch mirrors `_lower_insert`'s
-    # single-row one (`handle.py:506-507`): every collapsed row derives the SAME
-    # `opt_lock.INITIAL_VERSION` at the version column's family columnOrder
-    # position, ignoring any row-carried value — a batched insert is exactly as
-    # safe as a single-row one because the initial version is a constant, never
-    # observed. No corpus witness collapses a multi-row insert on a versioned
-    # entity (Wallet/Customer, m-batch-write-001/m-value-object-045, are both
-    # non-versioned), so this is a unit-level pin.
+    # `lower_multi_insert`'s versioned-entity branch mirrors `lower_insert`'s
+    # single-row one (`parallax.snapshot.handle`'s keyed-SQL builders): every
+    # collapsed row derives the SAME `opt_lock.INITIAL_VERSION` at the version
+    # column's family columnOrder position, ignoring any row-carried value — a
+    # batched insert is exactly as safe as a single-row one because the initial
+    # version is a constant, never observed. No corpus witness collapses a
+    # multi-row insert on a versioned entity (Wallet/Customer,
+    # m-batch-write-001/m-value-object-045, are both non-versioned), so this
+    # is a unit-level pin.
     insert = KeyedWrite(
         "insert",
         "Account",

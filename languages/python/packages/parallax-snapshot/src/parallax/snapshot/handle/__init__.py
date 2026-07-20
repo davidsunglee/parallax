@@ -15,10 +15,14 @@ M4 lowered the non-temporal keyed write forms; COR-3 Phase 8 increment 3 added t
 **temporal** milestone forms — audit-only close-and-chain and full-bitemporal
 rectangle splits (``insert`` / ``update`` / ``terminate`` and the bounded ``*Until``
 trio), composing `parallax.core.audit_write` / `.bitemp_write`'s neutral milestone
-planning with the ``m-opt-lock`` gate policy this seam already owns. Predicate-
-selected (set-based) writes and multi-row batch collapse still land with a later
-write increment; reaching one raises a loud :class:`WriteLoweringError` naming the
-deferral, never a wrong emission — mirroring the read compiler's forward-error
+planning with the ``m-opt-lock`` gate policy this seam already owns; increment 5
+added the predicate-selected (set-based) and multi-row batch-collapse forms — an
+unversioned, non-temporal predicate write lowers READLESS (`m-batch-write`
+"Predicate-selected readless forms"), while a versioned or temporal one
+MATERIALIZES to per-row keyed writes at buffer time (:class:`Transaction`'s
+``_where`` verb family, ADR 0014) before ever entering a flush plan. A form this
+seam cannot lower still raises a loud :class:`WriteLoweringError` naming the
+reason, never a wrong emission — mirroring the read compiler's forward-error
 posture.
 
 The **developer transaction surface** (spec §5) also composes here:

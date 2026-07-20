@@ -1205,9 +1205,9 @@ def _lower_find(
     byte-identical there, so this default flip changes no existing golden).
     A materializing predicate write's OWN internal resolving read is ROW-form
     (`m-value-object-047` pins the VO-omission contrast) but is compiled by
-    ``Transaction._materialize_predicate_write`` directly
-    (`parallax.snapshot.handle`), never through this function — the RUN lane
-    reports its ACTUAL executed SQL via a capturing port
+    the materializing predicate-write resolve in `parallax.snapshot.handle`
+    directly, never through this function — the RUN lane reports its ACTUAL
+    executed SQL via a capturing port
     (:func:`_run_materializing_pair`), not a separate pure re-lowering (its
     binds are query-result-dependent, so no pure oracle exists to compute them
     from).

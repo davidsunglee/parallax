@@ -271,12 +271,12 @@ def _projection(
     write's own internal resolving read stays row-form (it constructs no
     instance, `m-value-object-047`) but an assignment-bearing verb still needs
     the raw VO document(s) its own no-op comparison or chained/carried-forward
-    row must read (confirmation-pass residual A) — the caller (`parallax.
-    snapshot.handle.Transaction._materialize_predicate_write`) derives this
-    from the verb's own needs, never from `result_form`. ``True`` projects
-    EVERY declared value object (a chain-bearing need, which must carry
-    forward whichever documents the assignments do NOT themselves reassign);
-    a ``frozenset`` of value-object NAMES projects ONLY those (a
+    row must read (confirmation-pass residual A) — the caller (the
+    materializing predicate-write resolve in `parallax.snapshot.handle`)
+    derives this from the verb's own needs, never from `result_form`. ``True``
+    projects EVERY declared value object (a chain-bearing need, which must
+    carry forward whichever documents the assignments do NOT themselves
+    reassign); a ``frozenset`` of value-object NAMES projects ONLY those (a
     comparison-only need on a target that never chains — minimal-read
     discipline, `m-sql`) — in EITHER case the declared value-object order is
     preserved, never the caller's own set iteration order.

@@ -115,9 +115,10 @@ _WHERE_RECTANGLE_META = metamodel([WhereRectangle])
 
 # A LOCAL versioned NON-TEMPORAL, value-object-bearing entity — mirrors
 # `models/subscriber.yaml`'s own shape (a versioned document owner) —
-# confirmation-pass residual A's own fixture (round 2, `handle.py:1733`): TWO
-# value objects, so a pin can prove minimal-read discipline (the resolving
-# read projects the ASSIGNED document only, never every declared one).
+# confirmation-pass residual A's own fixture (round 2, the `needs_documents`
+# gate in `parallax.snapshot.handle`'s predicate-write lane): TWO value
+# objects, so a pin can prove minimal-read discipline (the resolving read
+# projects the ASSIGNED document only, never every declared one).
 class WhereSubscriberAddress(ValueObject, frozen=True):
     city: Attr[str] = VoField(type="string")
 
@@ -755,16 +756,17 @@ def test_materializing_terminate_where_audit_only_stays_document_free() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Confirmation-pass residual A (round 2, `handle.py:1733`): a VERSIONED       #
-# NON-TEMPORAL VO-bearing target (`WhereSubscriber`, mirroring `models/       #
-# subscriber.yaml`'s own shape) never chains, so the `needs_documents` gate   #
-# used to exclude it categorically -- an assignment-bearing `update_where`    #
-# assigning an UNCHANGED document could never be recognized by per-row        #
-# no-op elimination (the comparison could not see the stored document),       #
-# emitting an unnecessary gated UPDATE (`m-opt-lock.md:92-95`). The fix adds  #
-# a COMPARISON need, projecting the ASSIGNED document(s) only (minimal-read   #
-# discipline) -- `profile` (never assigned by these tests) proves the         #
-# projection stays minimal, not "every declared value object".                #
+# Confirmation-pass residual A (round 2, the `needs_documents` gate in the    #
+# predicate-write lane): a VERSIONED NON-TEMPORAL VO-bearing target           #
+# (`WhereSubscriber`, mirroring `models/subscriber.yaml`'s own shape) never   #
+# chains, so that gate used to exclude it categorically -- an                 #
+# assignment-bearing `update_where` assigning an UNCHANGED document could     #
+# never be recognized by per-row no-op elimination (the comparison could not  #
+# see the stored document), emitting an unnecessary gated UPDATE              #
+# (`m-opt-lock.md:92-95`). The fix adds a COMPARISON need, projecting the     #
+# ASSIGNED document(s) only (minimal-read discipline) -- `profile` (never     #
+# assigned by these tests) proves the projection stays minimal, not "every    #
+# declared value object".                                                     #
 # --------------------------------------------------------------------------- #
 def test_materializing_versioned_update_where_eliminates_a_no_op_value_object_row() -> None:
     port = RecordingPort(rows=[{"id": 1, "version": 1, "address": {"city": "Bergen"}}])
@@ -826,7 +828,7 @@ def test_materializing_versioned_update_where_projects_only_the_assigned_value_o
 
 def test_materializing_update_until_where_rejects_an_equal_window_bound() -> None:
     # No resolving read ever fires — the window rejects at build, before any
-    # buffering (`_buffer_predicate`, before `_materialize_predicate_write`).
+    # buffering (`buffer_predicate`, before `_materialize_predicate_write`).
     port = RecordingPort()
     business_from = dt.datetime(2024, 7, 1, tzinfo=dt.UTC)
 

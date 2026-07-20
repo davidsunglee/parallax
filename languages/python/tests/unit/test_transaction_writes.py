@@ -635,7 +635,8 @@ def test_keyed_terminate_on_a_non_temporal_target_forbids_business_from() -> Non
 # REVERSED window both reject, at the verb call, before any buffering, for    #
 # BOTH the KEYED (`update_until`/`terminate_until`) and `_where`              #
 # (`update_until_where`/`terminate_until_where`) verb families — the ONE      #
-# shared `_validate_until` validator (`handle.py`) makes all four converge.   #
+# shared `validate_until` validator (`parallax.snapshot.handle`) makes all    #
+# four converge.                                                              #
 # --------------------------------------------------------------------------- #
 def test_keyed_update_until_rejects_an_equal_window_bound() -> None:
     port = RecordingPort(rows=[_position_row_dt()])
@@ -732,11 +733,10 @@ def test_same_transaction_insert_then_temporal_update_is_licensed() -> None:
 
 # --------------------------------------------------------------------------- #
 # The KEYED verbs' own entity-class guard (`_write_inputs.                     #
-# entity_record_of_instance`). Placed here rather than in a keyed-verb suite   #
-# because it needs exactly the `NoIoPort` harness above and nothing else —    #
-# it travels to `test_transaction_writes.py` with the rest of the keyed-verb   #
-# region in COR-42 Phase 5, the same way Phase 4's replacement observation     #
-# tests travel with the reads region.                                          #
+# entity_record_of_instance`). Placed beside the `NoIoPort` harness above,     #
+# which is the only fixture it needs — it travelled here with the rest of the  #
+# keyed-verb region in COR-42 Phase 5, the same way Phase 4's replacement      #
+# observation tests travelled with the reads region.                           #
 # --------------------------------------------------------------------------- #
 def test_a_keyed_verb_refuses_an_instance_of_an_uncompiled_class() -> None:
     # `Entity` (the frontend BASE) is never itself compiled into a metamodel
