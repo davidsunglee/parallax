@@ -19,10 +19,12 @@ TWO-SESSION choreography every such case shares:
 - :func:`run_rounds` drives it: each node (`A` / `B`) gets its OWN
   independent, non-autocommit session (the `Provisioner.peer` seam, threaded
   in EXPLICITLY as `peer_factory` — this module constructs no connections
-  itself, m-db-port), tuned with a short session-scoped `lock_timeout` so a
-  genuinely blocked lock wait fails fast rather than hanging the suite
-  (`m-case-format` "Error cases": "the dialect's lock-contention tuning ...
-  applied so a blocked lock fails fast"). Two persistent worker THREADS (one
+  itself, m-db-port), tuned with a short session-scoped `deadlock_timeout` /
+  `lock_timeout` pair so a genuinely blocked lock wait fails fast rather than
+  hanging the suite, WITHOUT starving the deadlock detector (`m-case-format`
+  "Error cases": "the dialect's lock-contention tuning ... applied so a
+  blocked lock fails fast"; see the constants below for why the pair is
+  inseparable). Two persistent worker THREADS (one
   per node) execute the rounds in AUTHORED order, synchronized by a
   `threading.Barrier` at every round boundary, so a round where BOTH nodes
   act races genuinely (the deadlock shape) while a round where only one node
@@ -76,7 +78,38 @@ __all__ = [
 # admitted (non-blocking) statement never spuriously times out, short enough
 # that a genuinely blocked one (m-read-lock-006's contended writer) fails
 # fast rather than hanging the suite.
-_LOCK_TIMEOUT: str = "2000ms"
+#
+# BOTH values are load-bearing, and `_DEADLOCK_TIMEOUT` MUST stay strictly
+# BELOW `_LOCK_TIMEOUT`. The reason is a timer race inside Postgres, not a
+# preference: when a backend begins waiting for a lock, `ProcSleep`
+# (`src/backend/storage/lmgr/proc.c`) arms the DEADLOCK_TIMEOUT and
+# LOCK_TIMEOUT interval timers TOGETHER, as two independent timers, and
+# whichever fires first wins outright --
+#
+#     if (LockTimeout > 0) {
+#         timeouts[0].id = DEADLOCK_TIMEOUT; timeouts[0].delay_ms = DeadlockTimeout;
+#         timeouts[1].id = LOCK_TIMEOUT;     timeouts[1].delay_ms = LockTimeout;
+#         enable_timeouts(timeouts, 2);
+#     } else
+#         enable_timeout_after(DEADLOCK_TIMEOUT, DeadlockTimeout);
+#
+# -- so with `lock_timeout` at or below `deadlock_timeout`, LOCK_TIMEOUT fires
+# first, `LockErrorCleanup` pulls the backend out of the wait queue, and
+# `CheckDeadLock` never runs at all. `deadlock_timeout` is ONLY a delay before
+# the detector runs; by itself it aborts nothing. The observable consequence is
+# that a GENUINE deadlock cycle (m-db-error-004 / m-db-error-005) stops
+# producing one `40P01` / `deadlock` victim and instead surfaces as TWO `55P03`
+# / `lockWaitTimeout` errors -- which breaks those cases' grading, since exactly
+# one node across the whole choreography may raise. Postgres's own manual does
+# not state this interaction; it follows from the timer arming above.
+#
+# So lowering the lock-wait budget from the former 2000ms (with
+# `deadlock_timeout` left at the server default of 1s, comfortably below it)
+# REQUIRES lowering the detector delay in step. 100ms/250ms keeps the same
+# order-of-magnitude separation the 1s/2000ms pair had, while letting an
+# intentionally-blocked case fail in a quarter second instead of two.
+_DEADLOCK_TIMEOUT: str = "100ms"
+_LOCK_TIMEOUT: str = "250ms"
 
 _NODES: tuple[str, ...] = ("A", "B")
 
@@ -239,7 +272,7 @@ def run_rounds(
     ``isolation`` (D-28) is an OPTIONAL transaction-isolation override (e.g.
     ``"serializable"``), applied to BOTH sessions as the SQL-standard `SET
     TRANSACTION ISOLATION LEVEL` — deliberately the very FIRST statement
-    either session issues (before even `lock_timeout`), since a peer
+    either session issues (before even the lock-contention GUCs), since a peer
     session's whole choreography is ONE continuous transaction and that verb
     is only legal as a transaction's own first statement: `m-db-error-009`'s
     own serialization-failure witness needs genuine Postgres SSI (its golden
@@ -292,10 +325,16 @@ def run_rounds(
             # session's whole choreography is ONE continuous transaction
             # (`PeerSession`'s own docstring), and the SQL-standard `SET
             # TRANSACTION ISOLATION LEVEL` is only legal as a transaction's
-            # OWN first statement — never after `lock_timeout` (a plain
-            # session GUC, safe at any point) has already opened it.
+            # OWN first statement — never after `deadlock_timeout` /
+            # `lock_timeout` (plain session GUCs, safe at any point) have
+            # already opened it.
             if isolation is not None:
                 session.execute(f"set transaction isolation level {isolation}", [])
+            # Then both lock-contention GUCs, `deadlock_timeout` FIRST and
+            # strictly BELOW `lock_timeout` -- see the constants' own timer-race
+            # derivation. (Their relative order here is immaterial; their
+            # relative VALUES are not.)
+            session.execute(f"set deadlock_timeout = '{_DEADLOCK_TIMEOUT}'", [])
             session.execute(f"set lock_timeout = '{_LOCK_TIMEOUT}'", [])
 
         barrier = threading.Barrier(len(_NODES))

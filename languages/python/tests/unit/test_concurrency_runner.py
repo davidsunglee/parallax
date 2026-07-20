@@ -154,13 +154,36 @@ def _rounds(*specs: dict[str, ConcurrencyStep]) -> tuple[dict[str, ConcurrencySt
     return tuple(specs)
 
 
-def test_run_rounds_applies_the_lock_timeout_tuning_to_both_sessions() -> None:
+def _is_session_setup(sql: str) -> bool:
+    """True for the per-session setup statements `run_rounds` issues BEFORE the
+    authored rounds -- the optional `set transaction isolation level ...`
+    override plus both lock-contention GUCs. The hand-rolled fakes below use
+    this to let setup through untouched and act only on a genuine authored
+    step. Deliberately a `set `-prefix test rather than a `"lock_timeout" in
+    sql` substring: `"lock_timeout"` is also a substring of
+    `"deadlock_timeout"`, so a substring guard would keep working here for the
+    wrong reason and would silently stop matching if either GUC were renamed.
+    No authored step in this module's corpus begins with `set ` (a DML
+    `update t set x = 1` does not).
+    """
+    return sql.startswith("set ")
+
+
+def test_run_rounds_applies_both_contention_gucs_to_both_sessions() -> None:
+    # With no isolation override the setup is EXACTLY the two lock-contention
+    # GUCs, in full. `deadlock_timeout` must be strictly BELOW `lock_timeout`:
+    # Postgres arms both interval timers together at wait start, so a
+    # `lock_timeout` at or under `deadlock_timeout` preempts the deadlock
+    # detector entirely and a genuine cycle surfaces as two `55P03`
+    # lock-wait errors instead of one `40P01` victim.
     a, b = _FakeSession(), _FakeSession()
     peers = iter([a, b])
     concurrency_runner.run_rounds(_rounds({}), POSTGRES, lambda: next(peers))
     for session in (a, b):
-        assert session.calls[0][0] == "execute"
-        assert "lock_timeout" in session.calls[0][1]
+        assert session.calls == [
+            ("execute", "set deadlock_timeout = '100ms'", ()),
+            ("execute", "set lock_timeout = '250ms'", ()),
+        ]
 
 
 def test_run_rounds_dispatches_read_and_write_kinds_to_the_right_verb() -> None:
@@ -183,11 +206,13 @@ def test_run_rounds_dispatches_read_and_write_kinds_to_the_right_verb() -> None:
     assert run.rounds[0]["B"].rows == ()
     assert run.rounds[0]["B"].error is None
     # `A`'s statement dispatched via `execute` (a read); `B`'s via `execute_write`.
+    # Both lists open with the two contention-GUC SETs.
     assert [call[0] for call in a.calls] == [
         "execute",
         "execute",
-    ]  # lock_timeout SET, then the read
-    assert [call[0] for call in b.calls] == ["execute", "execute_write"]
+        "execute",
+    ]  # deadlock_timeout SET, lock_timeout SET, then the read
+    assert [call[0] for call in b.calls] == ["execute", "execute", "execute_write"]
 
 
 def test_run_rounds_an_undeclared_kind_step_executes_verbatim() -> None:
@@ -211,7 +236,9 @@ def test_run_rounds_an_undeclared_kind_step_executes_verbatim() -> None:
     )
     run = concurrency_runner.run_rounds(rounds, POSTGRES, lambda: next(peers))
     assert run.rounds[0]["A"].rows == ({"id": 2},)
-    assert [call[0] for call in b.calls] == ["execute", "execute"]
+    # Two contention-GUC SETs, then B's own UPDATE -- via `execute`, not
+    # `execute_write`, since the step declares no `kind`.
+    assert [call[0] for call in b.calls] == ["execute", "execute", "execute"]
 
 
 def test_run_rounds_captures_a_database_error_on_its_own_node_and_round() -> None:
@@ -292,7 +319,7 @@ def test_run_rounds_raises_the_originating_failure_not_a_partners_barrier_break(
     # fixes) — with the secondary chained as its own `__cause__`.
     class _Broken:
         def execute(self, sql: str, binds: Sequence[Any]) -> list[dict[str, Any]]:
-            if "lock_timeout" in sql:
+            if _is_session_setup(sql):
                 return []
             raise RuntimeError("B's own genuine defect")
 
@@ -321,7 +348,7 @@ def test_run_rounds_reraises_an_unexpected_non_database_error() -> None:
     # the caller's thread once both workers join.
     class _Broken:
         def execute(self, sql: str, binds: Sequence[Any]) -> list[dict[str, Any]]:
-            if "lock_timeout" in sql:
+            if _is_session_setup(sql):
                 return []
             raise RuntimeError("a worker thread's own unexpected defect")
 
@@ -366,7 +393,7 @@ def test_run_rounds_barrier_blocks_the_next_round_until_both_sides_finish() -> N
 
     class _NoOpA:
         def execute(self, sql: str, binds: Sequence[Any]) -> list[dict[str, Any]]:
-            if "lock_timeout" not in sql:
+            if not _is_session_setup(sql):
                 with order_lock:
                     order.append("A")
             return []
@@ -379,7 +406,7 @@ def test_run_rounds_barrier_blocks_the_next_round_until_both_sides_finish() -> N
 
     class _SlowB:
         def execute(self, sql: str, binds: Sequence[Any]) -> list[dict[str, Any]]:
-            if "lock_timeout" in sql:
+            if _is_session_setup(sql):
                 return []
             with order_lock:
                 order.append("B-start")
@@ -420,11 +447,11 @@ def test_run_rounds_barrier_blocks_the_next_round_until_both_sides_finish() -> N
 
 def test_run_rounds_isolation_override_runs_first_and_adds_a_commit_round() -> None:
     # D-28: an `isolation=` override (`m-db-error-009`'s serializable SSI
-    # write-skew) must be each transaction's OWN first statement -- BEFORE the
-    # `lock_timeout` GUC -- and appends ONE synthetic, barrier-synchronized
-    # COMMIT round after the authored rounds (SSI surfaces the conflict at
-    # COMMIT, never during the writes). A clean commit records NO outcome:
-    # the synthetic round's dict stays empty on success.
+    # write-skew) must be each transaction's OWN first statement -- BEFORE
+    # either lock-contention GUC -- and appends ONE synthetic, barrier-
+    # synchronized COMMIT round after the authored rounds (SSI surfaces the
+    # conflict at COMMIT, never during the writes). A clean commit records NO
+    # outcome: the synthetic round's dict stays empty on success.
     a, b = _FakeSession(), _FakeSession()
     peers = iter([a, b])
     rounds = _rounds(
@@ -433,10 +460,21 @@ def test_run_rounds_isolation_override_runs_first_and_adds_a_commit_round() -> N
     run = concurrency_runner.run_rounds(
         rounds, POSTGRES, lambda: next(peers), isolation="serializable"
     )
-    for session in (a, b):
-        assert session.calls[0][1] == "set transaction isolation level serializable"
-        assert "lock_timeout" in session.calls[1][1]
-        assert session.calls[-1][1] == "commit"
+    # A's own authored step is the `select 1` between setup and commit; B is
+    # idle every authored round, so its list is setup + commit exactly.
+    assert a.calls == [
+        ("execute", "set transaction isolation level serializable", ()),
+        ("execute", "set deadlock_timeout = '100ms'", ()),
+        ("execute", "set lock_timeout = '250ms'", ()),
+        ("execute", "select 1", ()),
+        ("execute", "commit", ()),
+    ]
+    assert b.calls == [
+        ("execute", "set transaction isolation level serializable", ()),
+        ("execute", "set deadlock_timeout = '100ms'", ()),
+        ("execute", "set lock_timeout = '250ms'", ()),
+        ("execute", "commit", ()),
+    ]
     assert len(run.rounds) == 2  # the authored round + the synthetic commit round
     assert run.rounds[1] == {}
 
