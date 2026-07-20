@@ -12,6 +12,12 @@ plus the coupling that makes the overlap arm load-bearing: a nested scope
 present in ``SUPPORT_SCOPE_DEPS`` but missing from ``CHILD_SCOPE_PARENT`` is
 exactly the state in which ``check_dag_sync`` would emit it into its own
 parent's forbidden row, where import-linter silently skips it.
+
+The guarantee under test is **one most-specific owner plus any declared
+ancestor scopes**, not one owner outright: five committed files legitimately
+match both a child scope and its parent, which is what child scopes are for.
+``test_declared_child_scope_files_are_owned_twice`` pins that, so the
+documented claim and the implemented behaviour cannot drift apart again.
 """
 
 from __future__ import annotations
@@ -75,12 +81,56 @@ def test_every_exemption_is_genuinely_unowned_today() -> None:
         assert own.owning_scopes(own.module_path(relative), scopes) == [], relative
 
 
+def test_declared_child_scope_files_are_owned_twice() -> None:
+    # The check does NOT promise one owner per file. It promises one
+    # most-specific owner plus declared ancestors, and these five files are the
+    # intended two-owner state child scopes exist to create — not a defect and
+    # not something to weaken the check into forbidding.
+    scopes = own.declared_scopes()
+    doubled = {
+        path: own.owning_scopes(own.module_path(path), scopes)
+        for path in own.production_files()
+        if len(own.owning_scopes(own.module_path(path), scopes)) > 1
+    }
+    assert sorted(Path(path).name for path in doubled) == [
+        "_family.py",
+        "_keyed_sql.py",
+        "_wrap.py",
+        "_write_lowering.py",
+        "_write_types.py",
+    ]
+    for path, owners in doubled.items():
+        assert own.is_declared_chain(owners, dag.CHILD_SCOPE_PARENT), path
+        assert owners[0] == "parallax.snapshot.handle", path
+        assert owners[-1].startswith("parallax.snapshot.handle."), path
+    # ...and the tree is clean regardless: declared overlap never fails.
+    assert own.main([]) == 0
+
+
 # --------------------------------------------------------------------------
 # The settled tree passes.
 # --------------------------------------------------------------------------
 def test_settled_tree_passes() -> None:
     assert own.main([]) == 0
     assert own.main(["--check"]) == 0
+
+
+def test_the_success_message_states_the_guarantee_it_actually_proves(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # The message is the only thing most readers of this gate ever see, so it
+    # must not promise one owner per file when five files have two.
+    scopes = own.declared_scopes()
+    nested = sum(
+        1
+        for path in own.production_files()
+        if len(own.owning_scopes(own.module_path(path), scopes)) > 1
+    )
+    assert own.main([]) == 0
+    out = capsys.readouterr().out
+    assert "most-specific" in out
+    assert "declared ancestor scopes" in out
+    assert f"{nested} file(s) sit inside a declared child scope" in out
 
 
 # --------------------------------------------------------------------------

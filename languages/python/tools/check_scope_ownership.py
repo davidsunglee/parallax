@@ -10,15 +10,26 @@ production code owned by no scope until COR-42 retired it; a review-time
 inventory found it, and only because someone went looking.
 
 This walks the filesystem instead. Every ``packages/*/src/**/*.py`` file in the
-production distributions must resolve to exactly one enforcement scope, or to an
-exact, justified package-interface exemption. Three findings fail the check:
+production distributions must resolve to exactly one *most-specific*
+enforcement scope — plus that scope's declared ancestors, if it has any — or to
+an exact, justified package-interface exemption.
+
+**A file matching two scopes is not by itself a finding.** Where §7 declares a
+child scope over a private implementation module, every file inside it matches
+both the child and the parent, and that is the point: the child carries a
+tighter grant row than the parent, and the file is governed by the tighter one.
+Five files are in exactly that state today (the ``handle`` write-lowering group
+and ``handle._wrap``). What fails is overlap that *nobody declared*.
+
+Three findings fail the check:
 
 * **unowned** — the file matches no declared scope and is not exempt;
-* **overlapping owners** — the file matches several scopes that are not a
-  declared parent/child chain (:data:`check_dag_sync.CHILD_SCOPE_PARENT`).
-  Nesting must be declared, because a nested scope the generator does not know
-  about is emitted into its own parent's forbidden row, where import-linter
-  silently skips it — a contract that looks present and enforces nothing;
+* **undeclared overlapping owners** — the file matches several scopes that do
+  not form a parent/child chain declared in
+  :data:`check_dag_sync.CHILD_SCOPE_PARENT`. Nesting must be declared, because a
+  nested scope the generator does not know about is emitted into its own
+  parent's forbidden row, where import-linter silently skips it — a contract
+  that looks present and enforces nothing;
 * **stale exemption** — an exempt path that no longer exists, or that a scope
   now owns, so the exemption is carrying nothing.
 
@@ -120,7 +131,12 @@ def audit(
     children: Mapping[str, str],
     exemptions: Mapping[str, str],
 ) -> dict[str, list[str]]:
-    """Group every ownership finding by kind; an empty result means the tree is clean."""
+    """Group every ownership finding by kind; an empty result means the tree is clean.
+
+    A file with several owners is a finding only when they are not a declared
+    chain: a file inside a declared child scope legitimately matches the child
+    and every ancestor above it.
+    """
     unowned: list[str] = []
     overlapping: list[str] = []
     claimed_exemptions: list[str] = []
@@ -150,23 +166,30 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--check",
         action="store_true",
-        help="verify every production source file has exactly one scope owner (default)",
+        help="verify every production source file has one most-specific scope owner (default)",
     )
     parser.parse_args(argv)
 
     paths = production_files()
-    findings = audit(paths, declared_scopes(), dag.CHILD_SCOPE_PARENT, EXEMPTIONS)
+    scopes = declared_scopes()
+    findings = audit(paths, scopes, dag.CHILD_SCOPE_PARENT, EXEMPTIONS)
     if not findings:
+        nested = sum(1 for path in paths if len(owning_scopes(module_path(path), scopes)) > 1)
         print(
-            f"{_TOOL}: all {len(paths)} production source files resolve to one "
-            f"enforcement scope or an exact exemption ({len(EXEMPTIONS)})"
+            f"{_TOOL}: all {len(paths)} production source files resolve to exactly one "
+            f"most-specific enforcement scope (plus any declared ancestor scopes: "
+            f"{nested} file(s) sit inside a declared child scope) or an exact "
+            f"exemption ({len(EXEMPTIONS)})"
         )
         return 0
 
     print(
         f"{_TOOL}: enforcement-scope ownership findings. A production file outside\n"
         "  every scope of spec/python.md §7 is covered by no import-linter contract,\n"
-        "  so no gate constrains what it imports.",
+        "  so no gate constrains what it imports; a file under several scopes that\n"
+        "  are not a declared parent/child chain has an enforcement model nothing\n"
+        "  agrees on, and a child scope missing from CHILD_SCOPE_PARENT generates a\n"
+        "  contract import-linter silently skips.",
         file=sys.stderr,
     )
     for label in sorted(findings):
