@@ -311,7 +311,7 @@ def lower_multi_insert(
         row_columns = [column for column, _ in cells]
         if columns is None:
             columns = row_columns
-        elif row_columns != columns:  # pragma: no cover - a well-formed collapse never mixes shapes
+        elif row_columns != columns:
             raise WriteLoweringError(
                 f"multi-row insert on {entity.name!r}: row column sets differ within one "
                 f"collapsed instruction ({columns} vs {row_columns}) — a batch collapse "
@@ -352,9 +352,10 @@ def lower_batched_update(
     reaches here — `m-batch-write` never collapses one (the per-row gate binds
     a per-row observed version no shared statement can carry).
     """
-    assert version_attr is None, (  # pragma: no cover - m-batch-write.update_collapses excludes it
-        "a versioned entity's update never collapses (m-batch-write)"
-    )
+    # `m-batch-write.update_collapses` excludes a versioned entity outright, so
+    # this assertion's failure arm is unreachable from any planner-produced
+    # instruction (see the outline's retained-assertion record, COR-42).
+    assert version_attr is None, "a versioned entity's update never collapses (m-batch-write)"
     pk_attrs = inheritance.family_primary_key(meta, entity)
     pk_names = {attr.name for attr in pk_attrs}
     first_row = dict(instruction.rows[0])
@@ -390,9 +391,10 @@ def lower_multi_delete(
     `m-batch-write` never collapses one (each row must be removed under its
     own observed version, `m-batch-write-004`).
     """
-    assert version_attr is None, (  # pragma: no cover - m-batch-write.delete_collapses excludes it
-        "a versioned entity's delete never collapses (m-batch-write)"
-    )
+    # `m-batch-write.delete_collapses` excludes a versioned entity outright, so
+    # this assertion's failure arm is unreachable from any planner-produced
+    # instruction (see the outline's retained-assertion record, COR-42).
+    assert version_attr is None, "a versioned entity's delete never collapses (m-batch-write)"
     pk_attrs = inheritance.family_primary_key(meta, entity)
     in_sql, in_binds = _keys_in_list(pk_attrs, instruction.rows, dialect)
     tag_sql, tag_binds = _tag_guard(entity, declaring, dialect)
@@ -459,7 +461,7 @@ def lower_predicate_write(
     entity = meta.entity(instruction.target.entity)
     declaring = inheritance.declaring_entity(meta, entity)
     if declaring.is_temporal or version_attribute(declaring) is not None:
-        raise WriteLoweringError(  # pragma: no cover - materialization always intercepts this
+        raise WriteLoweringError(
             f"{instruction.target.entity!r}: a predicate write on a versioned or temporal "
             "target has no readless template — it must materialize to keyed writes before "
             "reaching lower_write (m-opt-lock; ADR 0014); this is a caller wiring defect"

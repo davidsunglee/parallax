@@ -436,6 +436,6 @@ def _apply_assignments(
 
 def entity_record_of_instance(instance: EntityBase) -> Entity:
     record = entity_record_of(type(instance))
-    if record is None:  # pragma: no cover - guards a non-Parallax-compiled class
+    if record is None:
         raise TypeError(f"{type(instance).__name__} is not a registered Parallax entity class")
     return record

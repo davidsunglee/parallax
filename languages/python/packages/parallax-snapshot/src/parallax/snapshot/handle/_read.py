@@ -301,9 +301,8 @@ def find_history(
     """
     plan_ = deep_fetch.plan(target, op, meta)
     if plan_.levels:
-        raise ValueError(  # pragma: no cover - m-case-format: v1 carries no includes
-            "a milestone-set (history / asOfRange) read carries no deep-fetch levels"
-        )
+        # m-case-format: a v1 milestone-set read carries no includes.
+        raise ValueError("a milestone-set (history / asOfRange) read carries no deep-fetch levels")
     # `inheritance.declaring_entity` resolves the entity whose `as_of_attributes`
     # are this target's FAMILY's actual temporal declaration (the root, for a
     # participant — temporality is family-wide, `m-inheritance`); every

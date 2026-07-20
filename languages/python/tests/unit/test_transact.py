@@ -615,8 +615,8 @@ def test_bitemporal_update_after_a_find_carries_the_observed_business_bounds() -
     # records business_from/business_to and the full payload — is exactly what
     # `bitemp_write.plan` consumes to split the rectangle, so a real
     # `tx.find` -> `tx.update` makes it observable in the emitted DML: the
-    # chained row can only carry `from_z`/`thru_z` and the untouched
-    # `acct_num` if the observation recorded them.
+    # chained rows can only carry `from_z`/`thru_z` and the untouched `name`
+    # if the observation recorded them.
     port = _RecordingPort(rows=[_branch_row(address=None)])
     db = _db_for(models.load_models()["branch"], port)
 
@@ -639,9 +639,14 @@ def test_bitemporal_update_after_a_find_carries_the_observed_business_bounds() -
     assert head_binds[1] == "Central Branch"
     assert head_binds[2] == dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
     assert head_binds[3] == "2024-03-01T00:00:00+00:00"
-    # The TAIL rectangle opens at the mutation instant with the new payload.
+    # The TAIL rectangle opens at the mutation instant with the new payload and
+    # closes at the OBSERVED business_to. That upper bound is the third value
+    # only the observation carries: the edited copy never names it, and without
+    # this assertion a corrupted `observation.business_to` goes undetected —
+    # the gap the Phases 3-4 review caught by mutating it to 2099.
     assert tail_binds[1] == "Renamed Branch"
     assert tail_binds[2] == "2024-03-01T00:00:00+00:00"
+    assert tail_binds[3] == _INFINITY_INSTANT
 
 
 def test_bitemporal_update_after_a_find_keeps_the_observed_value_object_document() -> None:

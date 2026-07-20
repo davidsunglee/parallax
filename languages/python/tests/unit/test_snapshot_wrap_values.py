@@ -14,7 +14,7 @@ import pytest
 
 import snapshot_models as sm
 from parallax.conformance import models
-from parallax.core import AsOfAttribute, Attr, Entity, EntityConfig, Field
+from parallax.core import AsOfAttribute, Attr, Entity, EntityConfig, Field, descriptor
 from parallax.core.entity import metamodel
 from parallax.core.entity.base import Concrete, FamilyRoot
 from parallax.core.temporal_read import Pin, edge_of, pin_of
@@ -80,6 +80,60 @@ def test_a_null_cardinality_many_value_object_column_wraps_to_an_empty_tuple() -
     (root,) = wrap_graph((empty_status,), "SnapOrderStatus", _ORDERS, Pin())
     assert isinstance(root, sm.SnapOrderStatus)
     assert root.tags == ()
+
+
+# --------------------------------------------------------------------------- #
+# A metamodel / registry disagreement about a member's SHAPE.                   #
+#                                                                               #
+# `metamodel([...])` compiles the descriptor FROM the classes, so the two agree #
+# by construction there — but they are two independent sources in the           #
+# conformance lane, where the descriptor is authored YAML and the class is a    #
+# hand-written Python mirror. A descriptor that calls a member a value object   #
+# while the registered class maps it as a scalar has no ValueObject class to    #
+# construct, and `_wrap_member` must say so rather than hand back the raw       #
+# decoded dict typed as the declared VO (spec §3's instances-only contract).    #
+# --------------------------------------------------------------------------- #
+class _WrapScalarProfile(Entity, frozen=True):
+    __parallax__ = EntityConfig(
+        table="wrap_scalar_profile",
+        namespace="parallax.compatibility",
+        mutability="transactional",
+    )
+
+    id: Attr[int] = Field(primary_key=True, pk_generator="none", type="int64")
+    profile: Attr[str] = Field(type="string", max_length=32)
+
+
+# The SAME entity as the class above, except `profile` is declared a value
+# object rather than the scalar attribute the class registers.
+_PROFILE_AS_VALUE_OBJECT = descriptor.Metamodel(
+    entities=(
+        descriptor.Entity(
+            name="_WrapScalarProfile",
+            table="wrap_scalar_profile",
+            namespace="parallax.compatibility",
+            mutability="transactional",
+            attributes=(
+                descriptor.Attribute(name="id", type="int64", column="id", primary_key=True),
+            ),
+            value_objects=(descriptor.ValueObject(name="profile", column="profile"),),
+        ),
+    )
+)
+
+
+def test_a_value_object_member_with_no_registered_class_is_refused() -> None:
+    # The premise: the CLASS really does map `profile` as a scalar, so the
+    # refusal below comes from the disagreement with the descriptor above and
+    # not from a malformed class declaration.
+    compiled = metamodel([_WrapScalarProfile]).entity("_WrapScalarProfile")
+    assert [attr.name for attr in compiled.attributes] == ["id", "profile"]
+    assert compiled.value_objects == ()
+
+    node = Node(fields={"id": 1, "profile": {"note": "x"}}, pk_columns=("id",))
+    match = r"_WrapScalarProfile\.profile: no registered ValueObject"
+    with pytest.raises(LookupError, match=match):
+        wrap_graph((node,), "_WrapScalarProfile", _PROFILE_AS_VALUE_OBJECT, Pin())
 
 
 # --------------------------------------------------------------------------- #

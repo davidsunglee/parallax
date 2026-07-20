@@ -21,7 +21,12 @@ from parallax.core.db_port import JsonDocument
 from parallax.core.descriptor import Metamodel
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.unit_work import Concurrency, KeyedWrite, Observation, PlannedWrite
-from parallax.snapshot.handle import LoweredStatement, lower_temporal_close, lower_write
+from parallax.snapshot.handle import (
+    LoweredStatement,
+    WriteLoweringError,
+    lower_temporal_close,
+    lower_write,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -720,11 +725,25 @@ def test_bitemporal_update_until_carries_the_value_object_document_on_every_chai
 # --------------------------------------------------------------------------- #
 # Zero-row close: the two distinct outcomes (m-opt-lock / m-audit-write).      #
 # --------------------------------------------------------------------------- #
+def test_multi_row_temporal_write_is_refused() -> None:
+    # A temporal keyed write lowers ONE row at a time: each row opens its own
+    # milestone chain (`m-audit-write` / `m-bitemp-write`), so there is no
+    # shared statement a collapse could render. `m-batch-write`'s eligibility
+    # never collapses a temporal entity, so reaching here with two rows is a
+    # caller wiring defect — refused, never lowered as if only the first row
+    # existed.
+    batched = KeyedWrite(
+        "update",
+        "Balance",
+        ({"id": 1, "value": 100.00}, {"id": 2, "value": 200.00}),
+    )
+    with pytest.raises(WriteLoweringError, match="multi-row temporal 'update' on 'Balance'"):
+        _lower(batched, BALANCE, "2024-02-15T00:00:00+00:00")
+
+
 def test_temporal_write_requires_a_transaction_instant() -> None:
     # A defensive backstop (`FlushPlan.tx_instant` is always populated by a real
     # flush; no reachable case skips it) — never a wrong emission.
-    from parallax.snapshot.handle import WriteLoweringError
-
     insert = KeyedWrite("insert", "Balance", ({"id": 1, "acctNum": "A", "value": 100.00},))
     with pytest.raises(WriteLoweringError, match="no transaction instant supplied"):
         lower_write(PlannedWrite(instruction=insert), BALANCE, POSTGRES, "locking")

@@ -375,7 +375,7 @@ def _vo_class_for(entity: Entity, vo_name: str, meta: Metamodel) -> type[ValueOb
             vo_class = names.vo_classes.get(py_name)
             if vo_class is not None:
                 return cast("type[ValueObjectBase]", vo_class)
-    raise LookupError(  # pragma: no cover - guards an internally-inconsistent registry
+    raise LookupError(
         f"{entity.name}.{vo_name}: no registered ValueObject class for this value-object member"
     )
 
