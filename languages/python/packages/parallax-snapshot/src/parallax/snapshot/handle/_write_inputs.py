@@ -48,7 +48,13 @@ from parallax.core.entity import (
     primary_key_row,
 )
 from parallax.core.temporal_read import LATEST, Pin
-from parallax.core.unit_work import ObjectKey, Observation, UnitOfWork, instant_literal
+from parallax.core.unit_work import (
+    KeyedMutation,
+    ObjectKey,
+    Observation,
+    UnitOfWork,
+    instant_literal,
+)
 from parallax.snapshot.handle._family import (
     business_axis,
     members,
@@ -250,7 +256,7 @@ def _row_payload(
 # its OWN resolved rows — never an implicit read of their own.                #
 # --------------------------------------------------------------------------- #
 def validate_business_from(
-    declaring: Entity, mutation: str, business_from: dt.datetime | None
+    declaring: Entity, mutation: KeyedMutation, business_from: dt.datetime | None
 ) -> str | None:
     """Validate + render a ``_where`` verb's ``business_from`` (`python.md` §5):
     a BITEMPORAL target REQUIRES it (the mutation's own business instant
@@ -292,7 +298,7 @@ def prepare_sparse_row(copy: EntityBase) -> dict[str, object] | None:
 
 
 def validate_until(
-    declaring: Entity, mutation: str, business_from: dt.datetime, until: dt.datetime
+    declaring: Entity, mutation: KeyedMutation, business_from: dt.datetime, until: dt.datetime
 ) -> str:
     """Validate + render a ``*Until`` verb's window bound (`python.md` §5:
     "both aware-UTC-microsecond datetimes, all validated at build" ... "the
@@ -329,7 +335,7 @@ def materialize_row(
     entity: Entity,
     declaring: Entity,
     version_attr: Attribute | None,
-    mutation: str,
+    mutation: KeyedMutation,
     assignments: Mapping[str, object],
     row: Row,
 ) -> tuple[ObjectKey, Observation | None, dict[str, object] | None]:
