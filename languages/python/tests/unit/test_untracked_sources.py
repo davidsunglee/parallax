@@ -9,6 +9,7 @@ ever returns 0 is indistinguishable from no guard.
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -94,3 +95,30 @@ def test_untracked_non_python_file_is_ignored() -> None:
         assert untracked.main([]) == 0
     finally:
         canary.unlink()
+
+
+def test_gitignored_production_source_still_fails() -> None:
+    # `--exclude-standard` is deliberately not passed: being ignored on purpose
+    # does not make a module visible to diff-cover. Coverage follows imports, so
+    # an ignored module under packages/*/src is still measured while
+    # contributing zero changed lines — the same vacuous pass an untracked file
+    # produces. A local `.gitignore` is the cheapest way to prove the flag is
+    # really absent; `git check-ignore` confirms the rule actually bites first,
+    # so this cannot pass for the trivial reason that nothing was ignored.
+    directory = PY_ROOT / "packages/parallax-core/src/parallax/core/base"
+    canary = directory / "_canary_ignored.py"
+    ignore_file = directory / ".gitignore"
+    ignore_file.write_text("_canary_ignored.py\n")
+    canary.write_text("# deliberately gitignored production module\n")
+    try:
+        ignored = subprocess.run(
+            ["git", "check-ignore", "-q", str(canary)],
+            cwd=PY_ROOT,
+            check=False,
+        )
+        assert ignored.returncode == 0, "canary was not actually ignored by git"
+        assert untracked.main([]) == 1
+    finally:
+        canary.unlink()
+        ignore_file.unlink()
+    assert untracked.main([]) == 0

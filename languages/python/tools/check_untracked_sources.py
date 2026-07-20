@@ -67,15 +67,25 @@ def is_test_source(relative_path: str) -> bool:
 
 
 def untracked_paths(root: Path | None = None) -> list[str]:
-    """Paths git neither tracks nor ignores under :data:`PATHSPECS`.
+    """Every path git does not track under :data:`PATHSPECS`, ignored or not.
 
-    ``--exclude-standard`` honours ``.gitignore``: a deliberately ignored file is
-    not a forgotten one. Raises rather than returning empty when git is
-    unavailable — a gate that cannot see the index must not report success.
+    ``--exclude-standard`` is deliberately NOT passed. Being ignored on purpose
+    does not make a file visible to diff-cover: a ``.gitignore``-d module under
+    ``packages/*/src`` is still imported and still measured by ``coverage``
+    (``source_pkgs = ["parallax"]`` follows imports, not the index), yet still
+    contributes zero changed lines. That is the same vacuous pass an untracked
+    file produces, so the guard must catch both to mean what it claims.
+
+    The only ignore rule that can match a ``.py`` under the guarded roots is
+    ``__pycache__/``, whose contents are ``.pyc`` and fall out at the extension
+    check in :func:`is_production_source` / :func:`is_test_source`.
+
+    Raises rather than returning empty when git is unavailable — a gate that
+    cannot see the index must not report success.
     """
     workdir = PY_ROOT if root is None else root
     result = subprocess.run(
-        ["git", "ls-files", "--others", "--exclude-standard", "-z", "--", *PATHSPECS],
+        ["git", "ls-files", "--others", "-z", "--", *PATHSPECS],
         cwd=workdir,
         capture_output=True,
         text=True,
