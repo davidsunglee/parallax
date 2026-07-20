@@ -85,7 +85,7 @@ parallax/snapshot/
     __init__.py
     _family.py
     _write_types.py
-    _keyed_dml.py
+    _keyed_sql.py
     _write_lowering.py
     _read.py
     _wrap.py
@@ -101,9 +101,9 @@ parallax/snapshot/
 | `handle.__init__` | The stable handle interface. It documents and re-exports the existing names; it contains no lasting runtime orchestration. |
 | `_family` | Shared family-effective descriptor lookups: temporal axes, version attributes, member-to-column resolution, and family column order. This is a small private leaf shared by lowering and write-input preparation, not a public seam. |
 | `_write_types` | `WriteLoweringError` and lowering result values shared by the lowering and flush paths. This is a small private leaf, not a public seam. |
-| `_keyed_dml` | Primitive keyed and collapsed-batch INSERT, UPDATE, and DELETE rendering, including markers, tags, keys, and ordered cells. |
+| `_keyed_sql` | Primitive keyed and collapsed-batch INSERT, UPDATE, and DELETE rendering, including markers, tags, keys, and ordered cells. Named for the SQL side of the lowering boundary: inside this package "write" keeps meaning the neutral instruction level, so this is the one module named for what it emits. |
 | `_write_lowering` | `lower_write` dispatch plus temporal and predicate-selected lowering. It composes neutral write plans with keyed DML primitives and owns `lower_temporal_close`. |
-| `_read` | `Snapshot` and execution/result values, `find` and `find_history`, history grouping, all read-side pin derivation (`_statement_pin`, `_is_milestone_set_op`, and `_pin_from_milestone`), and conversion of neutral results into Snapshots. |
+| `_read` | `Snapshot` and execution/result values, `find` and `find_history`, history grouping, all read-side pin derivation (`deep_fetch_statement_pin`, `is_milestone_set_op`, and the module-local `_pin_from_milestone`), and conversion of neutral results into Snapshots. |
 | `_wrap` | Conversion of neutral materialized nodes into frozen developer entity graphs, including graph-local identity, projection merging, inheritance, value objects, and temporal metadata. |
 | `_write_inputs` | Observation capture, write-input validation, sparse/full row preparation, assignment application, and materialized predicate-write row preparation. It consumes `FindResult`/`Pin` values from `_read`; `_read` never imports observation code. |
 | `_transaction` | `Transaction` verbs, transactional find participation, buffering, prior-observation rules, and predicate-write orchestration. |
@@ -130,6 +130,21 @@ implementation, and are deliberately absent from `entity.__all__`. The handle
 private modules use the same package-internal convention; the underscore does
 not create another public seam or enforcement scope.
 
+The underscore belongs on the module, not on every name inside it. A helper
+called from a *sibling* module is spelled bare: under pyright's strict mode an
+underscored name imported across a module boundary is a `reportPrivateUsage`
+error, and `pyrightconfig.json` carries no per-rule relaxation. Privacy for the
+cluster is already carried by the private module name and by the frozen
+`handle.__all__`, so per-name underscores would buy nothing and cost a
+suppression at every call site. The `entity/_annotations.py` precedent settles
+this too: a private module exposing a bare `class_body_annotations`. Two cases
+keep the underscore — a helper whose every caller lives in its own module, and a
+frozen external seam such as `Transaction._buffer_predicate_instruction`, which
+the conformance engine calls directly and so cannot be renamed. When dropping an
+underscore, check the bare name against the module's existing imports: `_read`'s
+`_statement_pin` became `deep_fetch_statement_pin`, not `statement_pin`, because
+the plain name collided with the `parallax.core.temporal_read` function it wraps.
+
 ### Read result co-location
 
 Keeping `ExecutedStatement`, `Execution`, `FindResult`, `MilestoneGraph`,
@@ -148,8 +163,8 @@ independent change reason, not merely to mirror type-versus-function syntax.
 ## Intended internal direction
 
 ```text
-_keyed_dml      -> _family, _write_types
-_write_lowering -> _family, _write_types, _keyed_dml
+_keyed_sql      -> _family, _write_types
+_write_lowering -> _family, _write_types, _keyed_sql
 _read           -> _wrap
 _write_inputs   -> _family, _read
 _transaction    -> _family, _read, _write_inputs
@@ -159,8 +174,8 @@ handle.__init__ -> exported implementation modules
 
 More precisely:
 
-- `_keyed_dml` may depend on `_family` and `_write_types`.
-- `_write_lowering` may depend on `_family`, `_write_types`, and `_keyed_dml`.
+- `_keyed_sql` may depend on `_family` and `_write_types`.
+- `_write_lowering` may depend on `_family`, `_write_types`, and `_keyed_sql`.
 - `_read` may depend on `_wrap`.
 - `_write_inputs` may depend on `_family` and read result values from `_read`.
 - `_transaction` may depend on `_family`, `_read`, and `_write_inputs`.
@@ -259,7 +274,7 @@ criterion is executable rather than inferred from Hatch discovery.
 ### Phase 3 — Write lowering
 
 Extract the complete lowering cluster together: `_family.py`,
-`_write_types.py`, `_keyed_dml.py`, and `_write_lowering.py`. Existing keyed and
+`_write_types.py`, `_keyed_sql.py`, and `_write_lowering.py`. Existing keyed and
 temporal lowering tests continue to exercise the exported handle functions.
 
 ### Phase 4 — Write inputs and observations

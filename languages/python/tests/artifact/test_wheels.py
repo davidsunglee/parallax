@@ -62,8 +62,12 @@ def test_snapshot_wheel_ships_handle_package(wheelhouse: Wheelhouse) -> None:
     # split. Grows to the full private-module list as the extraction proceeds.
     names = _names(wheelhouse, "parallax-snapshot")
     assert "parallax/snapshot/handle/__init__.py" in names
+    assert "parallax/snapshot/handle/_family.py" in names
+    assert "parallax/snapshot/handle/_keyed_sql.py" in names
     assert "parallax/snapshot/handle/_read.py" in names
     assert "parallax/snapshot/handle/_wrap.py" in names
+    assert "parallax/snapshot/handle/_write_lowering.py" in names
+    assert "parallax/snapshot/handle/_write_types.py" in names
     assert "parallax/snapshot/handle.py" not in names
     # `wrap.py` moved INTO the package rather than being copied; a wheel carrying
     # both would mean two live copies of `wrap_graph`.
