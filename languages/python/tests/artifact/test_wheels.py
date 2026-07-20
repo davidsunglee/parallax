@@ -66,6 +66,7 @@ def test_snapshot_wheel_ships_handle_package(wheelhouse: Wheelhouse) -> None:
     assert "parallax/snapshot/handle/_keyed_sql.py" in names
     assert "parallax/snapshot/handle/_read.py" in names
     assert "parallax/snapshot/handle/_wrap.py" in names
+    assert "parallax/snapshot/handle/_write_inputs.py" in names
     assert "parallax/snapshot/handle/_write_lowering.py" in names
     assert "parallax/snapshot/handle/_write_types.py" in names
     assert "parallax/snapshot/handle.py" not in names
