@@ -47,7 +47,7 @@ pytestmark = pytest.mark.conformance
 # already-exercised multi-concrete graph levels like `m-snapshot-read-012`'s
 # own root-typed `animals` attachment) need PADDED, unnarrowed, so the SAME
 # `Node` cannot satisfy both oracles through one rendering path. Per-variant
-# narrowing is `parallax.snapshot.wrap`'s OWN job (it resolves each column
+# narrowing is `parallax.snapshot.handle._wrap`'s OWN job (it resolves each column
 # through the CONCRETE class's own declared members, skipping a sibling's) —
 # these four are the OBJECT-lane (developer-surface `db.find`) witnesses each
 # case's own comment names, graded by the API Conformance Suite instead

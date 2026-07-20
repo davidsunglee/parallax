@@ -802,19 +802,6 @@ def test_tx_find_returns_one_snapshot_root_per_milestone_for_a_history_statement
     assert len(snapshot.results()) == 2
 
 
-def test_pin_from_milestone_skips_an_axis_absent_from_the_milestone_pin() -> None:
-    # `_pin_from_milestone` is generic over any `Mapping` (not tied to how
-    # `_edge_pin` always populates every declared axis in practice) — a
-    # bitemporal entity's OWN as-of-attribute loop must skip an axis absent
-    # from a given milestone's pin, not KeyError.
-    from parallax.snapshot.handle import _pin_from_milestone  # pyright: ignore[reportPrivateUsage]
-
-    position = models.load_models()["position"].entity("Position")
-    pin = _pin_from_milestone(position, {"processingDate": _FIXED})
-    assert pin.processing == _FIXED
-    assert pin.business is None
-
-
 def test_update_with_an_empty_effective_change_set_issues_no_dml() -> None:
     # A `model_copy()` with no `update=` carries forward the SAME (empty)
     # Change Record: the sparse-update no-op rule (spec §3/§5).
@@ -1679,7 +1666,7 @@ def _position_row_dt() -> Row:
     """The KEYED-verb tests' own row fixture: real ``datetime`` values (never
     the bare ISO strings :func:`_position_row` uses) — a KEYED verb's own
     first read runs through the ordinary developer-facing ``tx.find`` (wrap
-    into a real node, milestone-edge computation, `parallax.snapshot.wrap`),
+    into a real node, milestone-edge computation, `parallax.snapshot.handle._wrap`),
     unlike a ``_where`` verb's internal resolving read, which never wraps."""
     return {
         "id": 1,

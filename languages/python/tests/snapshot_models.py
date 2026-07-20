@@ -3,7 +3,7 @@ narrowed-view unit tests (COR-3 Phase 7 increment 6a).
 
 Shaped after ``models/orders.yaml`` (relationships, deep-fetch paths) and
 ``models/animal.yaml`` (table-per-hierarchy inheritance, a polymorphic owner,
-narrowed views) closely enough to drive ``parallax.snapshot.wrap`` against
+narrowed views) closely enough to drive ``parallax.snapshot.handle._wrap`` against
 corpus-shaped rows, but ``SnapOrder``/``SnapOrderItem``/``SnapOrderStatus``
 stay under class names distinct from the corpus's own ``Order``/``OrderItem``/
 ``OrderStatus`` (``parallax.conformance.story_models`` already claims those
@@ -32,7 +32,7 @@ sidestep the collision entirely. D-20's explicit
 coexist (the REAL, production-reachable animal-family owner is installed as
 `parallax.conformance.animal_owner.Person`, scoped to its own registry, and
 drives the owner-relationship stories for real) — but ``AnimalOwner`` here
-tests `parallax.snapshot.wrap`'s narrowed-view / closed-world MECHANICS in the
+tests `parallax.snapshot.handle._wrap`'s narrowed-view / closed-world MECHANICS in the
 unit lane and needs no corpus-exact name to do that, so it stays as its own
 structural fixture rather than becoming a third alias for the same class.
 """
@@ -142,7 +142,7 @@ class SnapOrderStatus(Entity, frozen=True):
 
 
 class AnimalOwner(Entity, frozen=True):
-    """A LOCAL structural fixture for ``parallax.snapshot.wrap``'s narrowed-
+    """A LOCAL structural fixture for ``parallax.snapshot.handle._wrap``'s narrowed-
     view / closed-world unit tests: the animal family's polymorphic-owner
     SHAPE (``models/animal.yaml``'s own ``Person`` entity), under a distinct
     name by choice, not necessity (see module docstring) — the REAL,

@@ -222,7 +222,7 @@ self-contained without a system `libpq`.
   (real Postgres), combined Docker lane 224 passed / 10 skipped.
 - **Phase 7 increment 6a COMPLETE — developer surface, D-7 spellings, D-16
   graduation (`5386081`).** `Snapshot[T]`, `db.find`/`tx.find`, frozen-node
-  wrapping (`parallax.snapshot.wrap`), the `.include`/`.narrow`/`.any`/`.none`
+  wrapping (`parallax.snapshot.handle._wrap`), the `.include`/`.narrow`/`.any`/`.none`
   statement spellings, the D-7 value-object and inheritance class spellings,
   and D-16's full write-verb graduation (`tx.insert`/`tx.update`/`tx.delete`
   over entity instances/edited copies) all land. Counts: unit lane 1541,
@@ -235,7 +235,7 @@ self-contained without a system `libpq`.
   executable graph stories prove developer-facing guarantees (diamond
   identity, back-reference cycles, closed-world access, pin/edge) against
   real Postgres; fixing the diamond-identity story surfaced and fixed a
-  wrap-time identity bug (`parallax.snapshot.wrap` now dedupes by logical
+  wrap-time identity bug (`parallax.snapshot.handle._wrap` now dedupes by logical
   identity, not python object identity). Counts: unit lane 1543, compile
   sweep unchanged at 164, combined Docker lane 271 passed / 10 skipped,
   rejected sweep 25 passed / 10 skipped. **Phase 7 (the snapshot branch) is

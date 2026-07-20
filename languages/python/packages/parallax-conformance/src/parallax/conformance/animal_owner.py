@@ -16,7 +16,7 @@ THIS family's real owner, never colliding with it.
 A ``Database`` exercising the animal-owner relationship connects with
 ``ANIMAL_OWNER_REGISTRY.metamodel()`` (never the bare ``metamodel(classes)``
 helper, and never an ingested corpus descriptor) so ``db.find`` resolves
-``Person`` through THIS scope specifically (`parallax.snapshot.wrap`'s D-20
+``Person`` through THIS scope specifically (`parallax.snapshot.handle._wrap`'s D-20
 bridge, ``registry_of`` / ``resolve_entity_class``) — the SAME real
 ``rel: Person.pets`` / ``Person.animals`` operation text the corpus's own
 ``models/animal.yaml`` authors, at last reproducible from a production-reachable
