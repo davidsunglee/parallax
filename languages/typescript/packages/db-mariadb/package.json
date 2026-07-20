@@ -21,7 +21,7 @@
     "@parallax/core": "workspace:*",
     "@parallax/db": "workspace:*",
     "@parallax/dialect": "workspace:*",
-    "mysql2": "^3.22.6"
+    "mysql2": "^3.23.1"
   },
   "devDependencies": {
     "@types/node": "^26.1.1"
