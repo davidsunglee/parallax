@@ -241,6 +241,70 @@ def test_nested_exists_scoped_where_composes_or_not_and_group() -> None:
     )
 
 
+@pytest.mark.parametrize(
+    "node",
+    [
+        pytest.param(oa.All(), id="all"),
+        pytest.param(oa.NoneOp(), id="none"),
+        pytest.param(oa.Comparison(op="eq", attr="Customer.name", value="x"), id="comparison"),
+        pytest.param(oa.Between(attr="Customer.name", lower="a", upper="b"), id="between"),
+        pytest.param(oa.NullCheck(op="isNull", attr="Customer.name"), id="nullCheck"),
+        pytest.param(oa.StringMatch(op="like", attr="Customer.name", value="a%"), id="stringMatch"),
+        pytest.param(oa.Membership(op="in", attr="Customer.name", values=("a",)), id="membership"),
+        pytest.param(oa.NestedExists(path="Customer.address.phones"), id="nestedExists"),
+        pytest.param(oa.NestedNotExists(path="Customer.address.phones"), id="nestedNotExists"),
+        pytest.param(oa.Narrow(entity="Customer", to=("Customer",), operand=oa.All()), id="narrow"),
+        pytest.param(oa.Navigate(rel="Customer.orders"), id="navigate"),
+        pytest.param(oa.Exists(rel="Customer.orders"), id="exists"),
+        pytest.param(oa.NotExists(rel="Customer.orders"), id="notExists"),
+        pytest.param(oa.DeepFetch(operand=oa.All()), id="deepFetch"),
+        pytest.param(
+            oa.AsOf(operand=oa.All(), as_of_attr="Customer.asOf", date="2024-01-01"), id="asOf"
+        ),
+        pytest.param(oa.Limit(operand=oa.All(), count=1), id="limit"),
+        pytest.param(oa.Distinct(operand=oa.All()), id="distinct"),
+    ],
+)
+def test_entity_vocabulary_inside_an_element_where_is_refused_as_one_grammar(
+    node: oa.Operation,
+) -> None:
+    # The element `where` and the entity predicate share ONE dispatcher, so what
+    # keeps them different vocabularies is only where the element refusal sits in
+    # it — after the shared sub-grammar (`and`/`or`/`not`/`group` and the flat
+    # `nested*` family, pinned above), before everything else. Every entity-only
+    # node therefore refuses with `elementPredicate`'s single message, NOT with
+    # the differentiated deep-fetch / temporal / directive refusals the same node
+    # gets at the top level — `m-op-algebra`'s `elementPredicate` is one named
+    # production, so what an element `where` gets wrong is always the same thing.
+    with pytest.raises(SqlGenError, match=r"is not a legal nestedExists/nestedNotExists element"):
+        compile_read(
+            oa.NestedExists(path="Customer.address.phones", where=node),
+            CUSTOMER,
+            POSTGRES,
+            "Customer",
+        )
+
+
+def test_element_where_refusal_names_the_offending_node_not_its_parent() -> None:
+    # Reached through the shared combinators: the refusal reports the INNER node,
+    # which is what makes the boundary readable when a `where` is a compound.
+    with pytest.raises(SqlGenError, match=r"^Comparison\(op='eq', attr='Customer\.name'"):
+        compile_read(
+            oa.NestedExists(
+                path="Customer.address.phones",
+                where=oa.And(
+                    operands=(
+                        oa.NestedComparison(op="nestedEq", path="type", value="home"),
+                        oa.Comparison(op="eq", attr="Customer.name", value="x"),
+                    )
+                ),
+            ),
+            CUSTOMER,
+            POSTGRES,
+            "Customer",
+        )
+
+
 def test_flat_any_element_predicates_are_independent_not_same_element() -> None:
     # m-value-object-018's discriminating witness: two ANDed flat predicates
     # through the same `many` member open TWO independent subqueries (t1, t2),

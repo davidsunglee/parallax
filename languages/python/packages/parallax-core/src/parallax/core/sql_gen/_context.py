@@ -5,18 +5,24 @@ every other private module may import it. That is what forces :class:`SqlGenErro
 to live here — it is the one name the whole package raises, so any other home
 would make some module import sideways.
 
-:class:`Ctx` is the state a single compiled statement threads through lowering:
-the metamodel and dialect it renders against, its ordered bind list, and its
-alias counter. Constructing a `Ctx` declares a new statement scope (a plain
-read, a table-per-hierarchy read, each table-per-concrete-subtype `union all`
-branch); :meth:`Ctx.child` is the one seam that shares the bind list and alias
-counter BY IDENTITY, which is what keeps a correlated subquery's aliases and
-binds continuing the enclosing statement's single sequence.
+:class:`Ctx` is the whole of that state, and it is deliberately small: the
+metamodel and dialect a statement renders against, its ordered bind list, and its
+alias counter. It holds **no resolution policy** — no active entity, no alias, no
+aliased-versus-unaliased rendering decision, no attribute search. Those are the
+`_predicate` resolution scope's, which is also what makes a `Ctx` a plain mutable
+accumulator: with nothing per-scope left on it, exactly ONE exists per statement
+(a plain read, a table-per-hierarchy read, each table-per-concrete-subtype `union
+all` branch), nested scopes just keep pointing at it, and the frozen-dataclass
+costume plus its one-element `alias_seq` cell — a workaround for incrementing an
+int on a frozen field — both retire. Precedent for the `slots`-only mutable
+builder: `parallax.snapshot.materialize.Node`.
 
-:class:`ColumnScope` and :class:`PlanScope` are the NARROWED views of that state
-handed to the plan-only modules. `Ctx` satisfies both structurally; neither
-exposes `bind` or `binds`, which is how "a plan never binds" is a type rule
-rather than a convention (see the comment above them).
+:class:`ColumnScope` and :class:`PlanScope` are the NARROWED views of a
+resolution scope handed to the plan-only modules (`_inheritance`, `_navigation`),
+which sit BELOW the module that defines the concrete scope and so cannot name it.
+Neither exposes `bind` or `binds`, which is how "a plan never binds" is a type
+rule rather than a convention (see the comment above them). They are signatures
+only: every decision they describe is implemented one layer up.
 
 Named without a leading underscore because the MODULE carries the privacy: this
 package's supported seam is the six names `__init__` re-exports, and nothing
@@ -26,16 +32,10 @@ here reaches it. Importers alias to the module-private spelling
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 from typing import Protocol
 
-from parallax.core import inheritance
-from parallax.core.descriptor import Attribute, Entity, Metamodel
+from parallax.core.descriptor import Entity, Metamodel
 from parallax.core.dialect import Dialect
-
-
-def _new_binds() -> list[object]:
-    return []
 
 
 class SqlGenError(ValueError):
@@ -50,16 +50,18 @@ class SqlGenError(ValueError):
 # binds the caller has not lowered yet, and the emitted SQL text — which still  #
 # puts the guard last — silently disagrees with the bind tuple. That is the     #
 # COR-43 defect, and `compile_sweep` cannot see it: the SQL is byte-identical   #
-# whenever only one bind is in flight.                                          #
+# whenever only one bind is in flight.                                         #
 #                                                                              #
 # So the rule is enforced by what a planner can HOLD rather than by what its    #
-# author remembers. A planner is handed one of the protocols below instead of a #
-# :class:`Ctx`; neither exposes `bind` or `binds`, so `scope.bind(...)` is a    #
-# type error, not a review finding. :class:`Ctx` satisfies both structurally,   #
-# so the narrowing costs the caller nothing — it just passes `ctx`.             #
+# author remembers. A planner is handed one of the protocols below instead of   #
+# the concrete resolution scope; neither exposes `bind`, `binds`, nor the `ctx` #
+# that owns them, so `scope.bind(...)` and `scope.ctx.bind(...)` are both type  #
+# errors rather than review findings. `_predicate.EntityScope` satisfies both   #
+# structurally, so the narrowing costs the caller nothing — it just passes its  #
+# own scope.                                                                   #
 # --------------------------------------------------------------------------- #
 class ColumnScope(Protocol):
-    """Renders one of the active target's own columns (see :meth:`Ctx.own_column`).
+    """Renders one of the active target's own columns.
 
     The whole capability a guard FRAGMENT needs: which alias (if any) qualifies
     this statement's own columns. No resolution, no allocation, no binding.
@@ -83,8 +85,8 @@ class PlanScope(ColumnScope, Protocol):
     travel out of a plan as VALUES and are pushed by the caller, after it has
     lowered its own interior predicate.
 
-    :meth:`child` returns another ``PlanScope`` rather than the concrete
-    :class:`Ctx`, so descending never widens the capability back out.
+    :meth:`child` returns another ``PlanScope`` rather than the concrete scope,
+    so descending never widens the capability back out.
     """
 
     @property
@@ -100,97 +102,33 @@ class PlanScope(ColumnScope, Protocol):
     def child(self, entity: Entity, alias: str) -> PlanScope: ...
 
 
-def _new_alias_seq() -> list[int]:
-    # The next alias INDEX after this context's own `t0` — a one-element mutable
-    # cell so every `Ctx` created via `.child()` (a correlated-EXISTS interior,
-    # nested however deep) shares and advances the SAME counter, continuing the
-    # single `t0, t1, …` sequence (m-sql rule 1). A fresh top-level statement
-    # (a plain read, a TPH read, or each TPCS `union all` branch — which restarts
-    # its own alias scheme at `t0`) gets its own counter via this default factory.
-    return [1]
-
-
-@dataclass(frozen=True, slots=True)
 class Ctx:
-    """Lowering context: the resolved target entity, its dialect, and its alias."""
+    """One statement's shared lowering state: ordered binds and the alias counter.
 
-    meta: Metamodel
-    dialect: Dialect
-    entity: Entity
-    alias: str = "t0"
-    binds: list[object] = field(default_factory=_new_binds)
-    alias_seq: list[int] = field(default_factory=_new_alias_seq)
-    # A write-appropriate column formatter (m-batch-write readless predicate
-    # lowering, `m-batch-write.md` "Predicate-selected readless forms"): a
-    # write's rendered predicate is UNALIASED (`where balance < ?`), contrasting
-    # the resolving read's aliased `t0.balance < ?` form. ``False`` (the read
-    # compiler's own default) for every ordinary read context.
-    unaliased: bool = False
+    Constructing a ``Ctx`` declares a new statement scope — a plain read, a
+    table-per-hierarchy read, or each table-per-concrete-subtype `union all`
+    branch (which is exactly why each such branch restarts its own aliases at
+    `t0` and keeps its binds separable). Nothing copies a ``Ctx``: every nested
+    resolution scope holds this same object, so a correlated subquery's aliases
+    and binds continue the enclosing statement's single sequence by identity
+    rather than by an argument someone has to remember to thread.
+    """
 
-    def own_column(self, column: str) -> str:
-        """Render one of THIS context's own columns, honoring :attr:`unaliased`.
+    __slots__ = ("_next_alias_index", "binds", "dialect", "meta")
 
-        The single consultant of :attr:`unaliased` — every reference to a column
-        of the active target must route through here so a write's bare-column
-        form can never be bypassed. :meth:`column_of` is the attribute-resolving
-        front door; a value object's backing DOCUMENT column is not an
-        ``Attribute`` and so has no `attr_ref` to resolve, but it is just as much
-        this target's own column and takes the same rendering decision.
-
-        Not every column reference is "this context's own": an unnested array
-        element's ``t1.value`` is always alias-qualified, because the subquery
-        that produced it declares that alias itself regardless of whether the
-        enclosing statement is a read or a write. Those callers reach for
-        :meth:`Dialect.qualified` directly, and correctly so.
-        """
-        if self.unaliased:
-            return self.dialect.quote(column)
-        return self.dialect.qualified(self.alias, column)
-
-    def column_of(self, attr_ref: str) -> str:
-        return self.own_column(self.entity_attribute(attr_ref).column)
+    def __init__(self, meta: Metamodel, dialect: Dialect) -> None:
+        self.meta = meta
+        self.dialect = dialect
+        self.binds: list[object] = []
+        # The next alias INDEX after this statement's own `t0`, which is never
+        # allocated here — it is the base scope's default alias (m-sql rule 1).
+        self._next_alias_index = 1
 
     def next_alias(self) -> str:
         """The next alias in this statement's single continuing sequence."""
-        index = self.alias_seq[0]
-        self.alias_seq[0] = index + 1
+        index = self._next_alias_index
+        self._next_alias_index = index + 1
         return f"t{index}"
-
-    def child(self, entity: Entity, alias: str) -> Ctx:
-        """A nested context for a correlated hop's interior: the SAME bind list
-        and alias counter (so a nested hop's binds/aliases continue this
-        statement's single sequence), a different active entity/alias."""
-        return Ctx(
-            meta=self.meta,
-            dialect=self.dialect,
-            entity=entity,
-            alias=alias,
-            binds=self.binds,
-            alias_seq=self.alias_seq,
-        )
-
-    def entity_attribute(self, attr_ref: str) -> Attribute:
-        _, _, name = attr_ref.partition(".")
-        for attribute in self._searchable_attributes():
-            if attribute.name == name:
-                return attribute
-        raise SqlGenError(f"{attr_ref!r} names no attribute on {self.entity.name}")
-
-    def _searchable_attributes(self) -> tuple[Attribute, ...]:
-        """The attributes an `attr_ref`'s class-name-qualified name may resolve to.
-
-        A plain entity resolves only against its own declared attributes
-        (unchanged). An inheritance participant resolves against its **whole
-        family** (`parallax.core.inheritance.family_attributes`): the read's own
-        predicate may reference a root-inherited attribute through a concrete
-        target's own class name, and a `narrow` branch predicate references that
-        branch's own attribute by its own class name — narrow-position validity
-        for the reference is enforced upstream (`m-op-algebra`'s model-aware
-        validator), so this need only widen the search, never re-validate scope.
-        """
-        if self.entity.inheritance is None:
-            return self.entity.attributes
-        return inheritance.family_attributes(self.meta, self.entity)
 
     def bind(self, value: object) -> None:
         self.binds.append(value)

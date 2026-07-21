@@ -846,6 +846,7 @@ name = "parallax.core.sql_gen private modules are layered"
 type = "layers"
 layers = [
     "parallax.core.sql_gen._compile",
+    "parallax.core.sql_gen._predicate",
     "parallax.core.sql_gen._navigation",
     "parallax.core.sql_gen._inheritance",
     "parallax.core.sql_gen._context",
@@ -856,6 +857,7 @@ name = "parallax.core.sql_gen private modules must not import the package root"
 type = "forbidden"
 source_modules = [
     "parallax.core.sql_gen._compile",
+    "parallax.core.sql_gen._predicate",
     "parallax.core.sql_gen._navigation",
     "parallax.core.sql_gen._inheritance",
     "parallax.core.sql_gen._context",
