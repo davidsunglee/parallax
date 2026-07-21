@@ -844,11 +844,19 @@ forbidden_modules = [
 [[tool.importlinter.contracts]]
 name = "parallax.core.sql_gen private modules are layered"
 type = "layers"
-layers = ["parallax.core.sql_gen._compile", "parallax.core.sql_gen._context"]
+layers = [
+    "parallax.core.sql_gen._compile",
+    "parallax.core.sql_gen._inheritance",
+    "parallax.core.sql_gen._context",
+]
 
 [[tool.importlinter.contracts]]
 name = "parallax.core.sql_gen private modules must not import the package root"
 type = "forbidden"
-source_modules = ["parallax.core.sql_gen._compile", "parallax.core.sql_gen._context"]
+source_modules = [
+    "parallax.core.sql_gen._compile",
+    "parallax.core.sql_gen._inheritance",
+    "parallax.core.sql_gen._context",
+]
 forbidden_modules = ["parallax.core.sql_gen"]
 as_packages = false
