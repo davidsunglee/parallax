@@ -214,3 +214,86 @@ def test_tpcs_relationship_narrow_to_a_single_concrete_is_one_exists_no_grouping
     assert compiled.statement.sql.endswith(
         "where exists (select 1 from invoice t1 where t1.folder_id = t0.id)"
     )
+
+
+def test_tpcs_branches_take_their_aliases_as_each_branch_opens() -> None:
+    # A grouped TPCS hop allocates each branch's alias AT THE POINT THAT BRANCH
+    # OPENS, not all branches up front: branch 2's number follows everything
+    # branch 1's own interior allocated.
+    #
+    # Every other TPCS branch pin above has a NON-NAVIGATING interior (`All()` or
+    # a bare `Exists`), so its branches allocate nothing between them and `t1, t2,
+    # t3` reads the same under either strategy. Only a branch whose interior
+    # itself opens a subquery can tell them apart: per-branch gives
+    # `inv t1 -> owner t2` then `rec t3 -> owner t4`, while up-front allocation
+    # would give `inv t1 / rec t2` and interiors `t3 / t4`.
+    #
+    # No corpus model reaches this shape — it needs a TPCS-target relationship
+    # whose concretes are themselves navigable, and `document`'s are not — so this
+    # synthetic family is the witness, in the idiom of the TPCS branch-context pin
+    # in `test_sql_gen_inheritance.py`.
+    from parallax.core.descriptor import Attribute, Entity, Inheritance, Metamodel, Relationship
+
+    doc = Entity(
+        name="Doc",
+        inheritance=Inheritance(role="root", strategy="table-per-concrete-subtype"),
+        attributes=(
+            Attribute(name="id", type="int64", column="id", primary_key=True),
+            Attribute(name="ownerId", type="int64", column="owner_id", nullable=True),
+            Attribute(name="folderId", type="int64", column="folder_id", nullable=True),
+        ),
+        relationships=(
+            Relationship(
+                name="owner",
+                related_entity="Owner",
+                cardinality="many-to-one",
+                join="this.ownerId = Owner.id",
+            ),
+        ),
+    )
+    inv = Entity(
+        name="Inv",
+        table="inv",
+        inheritance=Inheritance(role="concrete-subtype", parent="Doc"),
+        attributes=(Attribute(name="due", type="int32", column="due"),),
+    )
+    rec = Entity(
+        name="Rec",
+        table="rec",
+        inheritance=Inheritance(role="concrete-subtype", parent="Doc"),
+        attributes=(Attribute(name="paid", type="int32", column="paid"),),
+    )
+    owner = Entity(
+        name="Owner",
+        table="owner",
+        attributes=(
+            Attribute(name="id", type="int64", column="id", primary_key=True),
+            Attribute(name="name", type="string", column="name", max_length=32),
+        ),
+    )
+    folder = Entity(
+        name="Folder",
+        table="folder",
+        attributes=(Attribute(name="id", type="int64", column="id", primary_key=True),),
+        relationships=(
+            Relationship(
+                name="docs",
+                related_entity="Doc",
+                cardinality="one-to-many",
+                join="this.id = Doc.folderId",
+            ),
+        ),
+    )
+    meta = Metamodel(entities=(doc, inv, rec, owner, folder))
+
+    op = oa.Exists(
+        rel="Folder.docs",
+        op=oa.Exists(rel="Doc.owner", op=oa.Comparison(op="eq", attr="Owner.name", value="N")),
+    )
+    compiled = compile_read(op, meta, POSTGRES, "Folder")
+    assert compiled.statement.sql.endswith(
+        "where (exists (select 1 from inv t1 where t1.folder_id = t0.id and "
+        "exists (select 1 from owner t2 where t2.id = t1.owner_id and t2.name = ?)) "
+        "or exists (select 1 from rec t3 where t3.folder_id = t0.id and "
+        "exists (select 1 from owner t4 where t4.id = t3.owner_id and t4.name = ?)))"
+    )

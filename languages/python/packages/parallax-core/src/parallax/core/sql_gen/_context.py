@@ -13,6 +13,11 @@ branch); :meth:`Ctx.child` is the one seam that shares the bind list and alias
 counter BY IDENTITY, which is what keeps a correlated subquery's aliases and
 binds continuing the enclosing statement's single sequence.
 
+:class:`ColumnScope` and :class:`PlanScope` are the NARROWED views of that state
+handed to the plan-only modules. `Ctx` satisfies both structurally; neither
+exposes `bind` or `binds`, which is how "a plan never binds" is a type rule
+rather than a convention (see the comment above them).
+
 Named without a leading underscore because the MODULE carries the privacy: this
 package's supported seam is the six names `__init__` re-exports, and nothing
 here reaches it. Importers alias to the module-private spelling
@@ -22,6 +27,7 @@ here reaches it. Importers alias to the module-private spelling
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Protocol
 
 from parallax.core import inheritance
 from parallax.core.descriptor import Attribute, Entity, Metamodel
@@ -34,6 +40,64 @@ def _new_binds() -> list[object]:
 
 class SqlGenError(ValueError):
     """An operation cannot be lowered to SQL (unsupported node or unbound reference)."""
+
+
+# --------------------------------------------------------------------------- #
+# Planner capabilities.                                                        #
+#                                                                              #
+# A PLAN-only module (`_inheritance`, `_navigation`) must never push a bind:    #
+# a framework guard bound while a plan is being built lands AHEAD of the user   #
+# binds the caller has not lowered yet, and the emitted SQL text — which still  #
+# puts the guard last — silently disagrees with the bind tuple. That is the     #
+# COR-43 defect, and `compile_sweep` cannot see it: the SQL is byte-identical   #
+# whenever only one bind is in flight.                                          #
+#                                                                              #
+# So the rule is enforced by what a planner can HOLD rather than by what its    #
+# author remembers. A planner is handed one of the protocols below instead of a #
+# :class:`Ctx`; neither exposes `bind` or `binds`, so `scope.bind(...)` is a    #
+# type error, not a review finding. :class:`Ctx` satisfies both structurally,   #
+# so the narrowing costs the caller nothing — it just passes `ctx`.             #
+# --------------------------------------------------------------------------- #
+class ColumnScope(Protocol):
+    """Renders one of the active target's own columns (see :meth:`Ctx.own_column`).
+
+    The whole capability a guard FRAGMENT needs: which alias (if any) qualifies
+    this statement's own columns. No resolution, no allocation, no binding.
+    """
+
+    def own_column(self, column: str) -> str: ...
+
+
+class PlanScope(ColumnScope, Protocol):
+    """What a plan-only module may do: resolve against the model, render its own
+    and its children's columns, and ALLOCATE an alias — nothing else.
+
+    Alias allocation is deliberately included: a hop plan must take its child
+    alias at the point the hop opens, before anything descends into the hop's
+    interior, which is what keeps the `t0, t1, …` sequence depth-first in source
+    order (m-sql rule 1). Allocation is order-visible but not order-FRAGILE — an
+    alias is consumed by the very fragment that took it.
+
+    Binding is the opposite, and is deliberately absent: `bind` / `binds` appear
+    nowhere here, so a planner cannot push a bind even by accident. Guard binds
+    travel out of a plan as VALUES and are pushed by the caller, after it has
+    lowered its own interior predicate.
+
+    :meth:`child` returns another ``PlanScope`` rather than the concrete
+    :class:`Ctx`, so descending never widens the capability back out.
+    """
+
+    @property
+    def meta(self) -> Metamodel: ...
+
+    @property
+    def entity(self) -> Entity: ...
+
+    def column_of(self, attr_ref: str) -> str: ...
+
+    def next_alias(self) -> str: ...
+
+    def child(self, entity: Entity, alias: str) -> PlanScope: ...
 
 
 def _new_alias_seq() -> list[int]:
