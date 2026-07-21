@@ -839,3 +839,16 @@ forbidden_modules = [
     "parallax.snapshot.handle",
 ]
 # <<< check_dag_sync.py: END GENERATED IMPORT-LINTER CONTRACTS <<<
+
+# Additive private source-order enforcement; generated contracts remain the core behavioral-DAG authority.
+[[tool.importlinter.contracts]]
+name = "parallax.core.sql_gen private modules are layered"
+type = "layers"
+layers = ["parallax.core.sql_gen._compile", "parallax.core.sql_gen._context"]
+
+[[tool.importlinter.contracts]]
+name = "parallax.core.sql_gen private modules must not import the package root"
+type = "forbidden"
+source_modules = ["parallax.core.sql_gen._compile", "parallax.core.sql_gen._context"]
+forbidden_modules = ["parallax.core.sql_gen"]
+as_packages = false
