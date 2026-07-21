@@ -14,12 +14,15 @@ Two `inheritance` names meet in this file, and they are not the same thing:
   metamodel module.
 
 **This module returns PLANS and never lowers a predicate.** Every plan below
-carries its family read's `inner` operation as an un-lowered node, and the tag
-guard as a fragment plus its bind VALUES. `_compile` constructs the statement's
-:class:`~parallax.core.sql_gen._context.Ctx`, lowers `inner` through it, and only
-then appends the guard's binds. That split is what keeps the m-sql "Grouped
-branch predicates" ordering (binds read branch-predicate-first, then tag)
-structural rather than contingent.
+carries its read's own operation as an un-lowered node, and the tag guard as its
+INPUTS (:class:`TagPredicate`) rather than as anything bound. `_compile`
+constructs the statement's :class:`~parallax.core.sql_gen._context.Ctx` and
+assembles the family reads; `_predicate` owns every descent, including the
+mid-predicate `narrow` that :func:`plan_branch_narrow` describes. Either way the
+caller lowers its own operand first and only THEN calls :func:`tag_guard` and
+appends what it returns. That split is what keeps the m-sql "Grouped branch
+predicates" ordering (binds read branch-predicate-first, then tag) structural
+rather than contingent.
 
 Two rules make it checkable by reading this file alone. **Nothing here lowers a
 predicate**: the module imports no predicate lowering, and contains no `match`
@@ -49,7 +52,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import cast
+from typing import Literal, cast
 
 from parallax.core import inheritance
 from parallax.core.descriptor import Attribute, Entity, Metamodel, ValueObject
@@ -212,12 +215,43 @@ def family_tag_pairs(meta: Metamodel, root: Entity) -> tuple[tuple[str, str], ..
     )
 
 
+TagKind = Literal["eq", "in"]
+
+
+@dataclass(frozen=True, slots=True)
+class TagPredicate:
+    """The inputs ONE tag guard needs, as one value (m-sql *Tag-predicate
+    selection*).
+
+    These travelled as three separate parameters and as three fields on each of
+    two plans, and they are meaningless apart — a tag column with nothing to
+    compare it against, or a position with no column to compare it in, is not a
+    guard. A read or hop carrying NO tag predicate at all (an untouched abstract
+    ROOT target) spells that as ``None`` rather than as a sentinel string, so
+    "is there a guard here?" is a question the type answers.
+
+    :attr:`kind` is DERIVED rather than stored: m-sql keys the guard's shape
+    purely to the resolved position's size, so this cannot describe a
+    one-concrete position guarded by `in`, or several guarded by `=`, even by
+    accident. The rule is therefore written once, here.
+    """
+
+    column: str
+    position: tuple[str, ...]
+
+    @property
+    def kind(self) -> TagKind:
+        """`=` for a single concrete, `in` for several (m-sql *Tag-predicate
+        selection*)."""
+        return "eq" if len(self.position) == 1 else "in"
+
+
 def tag_guard(
-    scope: _ColumnScope, meta: Metamodel, tag_col: str, tag_kind: str, position: Sequence[str]
+    scope: _ColumnScope, meta: Metamodel, tag: TagPredicate
 ) -> tuple[str, tuple[object, ...]]:
-    """PLAN the tag-predicate guard for ``position`` (m-sql *Tag-predicate
+    """PLAN the tag-predicate guard for ``tag`` (m-sql *Tag-predicate
     selection*): `t0.<tag> = ?` for one concrete, `t0.<tag> in (?, …)` for several
-    — the `in` list in ``position``'s already-canonical alphabetical order, so its
+    — the `in` list in the position's already-canonical alphabetical order, so its
     tag values follow suit.
 
     This returns the fragment AND its bind values and pushes nothing; every caller
@@ -237,19 +271,20 @@ def tag_guard(
     whole context: the ONE capability rendering a guard needs is "how does this
     statement spell its own column", and taking no more than that is what makes
     the paragraph above a type rule rather than a promise. A caller still just
-    passes its `Ctx`.
+    passes its own resolution scope, which satisfies the protocol structurally.
 
-    The tag column is THIS context's own column, so it renders through
-    :meth:`Ctx.own_column` like every other one: the framework-owned tag is no
-    more alias-qualified than a declared attribute is. In every read context
-    ``unaliased`` is ``False`` and this is exactly ``qualified(alias, tag_col)``,
-    so no emitted read SQL depends on the distinction — it exists so the leak
-    cannot reopen from a caller that arrives with an unaliased context, rather
-    than resting on every such caller being rejected upstream first.
+    The tag column is THIS scope's own column, so it renders through
+    :meth:`ColumnScope.own_column` like every other one: the framework-owned tag
+    is no more alias-qualified than a declared attribute is. In every read
+    context ``unaliased`` is ``False`` and this is exactly ``qualified(alias,
+    tag.column)``, so no emitted read SQL depends on the distinction — it exists
+    so the leak cannot reopen from a caller that arrives with an unaliased
+    context, rather than resting on every such caller being rejected upstream
+    first.
     """
-    col = scope.own_column(tag_col)
-    tag_values = [tag_value(meta, name) for name in position]
-    if tag_kind == "eq":
+    col = scope.own_column(tag.column)
+    tag_values = [tag_value(meta, name) for name in tag.position]
+    if tag.kind == "eq":
         return f"{col} = ?", (tag_values[0],)
     holes = ", ".join("?" for _ in tag_values)
     return f"{col} in ({holes})", tuple(tag_values)
@@ -264,48 +299,82 @@ def tag_guard(
 # guard's inputs, and the row transform. Nothing here holds a `Ctx`, a bind     #
 # list, or an alias.                                                           #
 # --------------------------------------------------------------------------- #
+def _single_table_projection(
+    dialect: Dialect,
+    alias: str,
+    columns: Sequence[tuple[Attribute, str]],
+    tag_column: str | None,
+    value_objects: Sequence[ValueObject],
+) -> tuple[str, tuple[object, ...]]:
+    """The m-sql projection SLOT ORDER for a single-table family read, once.
+
+    * **Slot 1** — the resolved position's stable superset columns, each through
+      the dialect's own select-list expression (a `bytes` column projects
+      `encode(col, ?)`, which is where a projection BIND comes from and why
+      projection binds lead the statement's bind tuple).
+    * **Slot 2** (m-sql resolved Q6) — the raw tag column, projected iff the
+      read's OWN `targetEntity` is abstract, NEVER derived from the resolved
+      position. ``None`` is "this read projects no tag": a table-per-hierarchy
+      read whose own `targetEntity` is concrete, and every
+      table-per-concrete-subtype single-concrete read, which reads a table that
+      carries no tag column at all.
+    * **Slot 4** — the value-object document columns, LAST among all columns, in
+      declared order.
+
+    Both single-table family plans render through here instead of each spelling
+    the order out. That order is contractual, so two copies means a future
+    slot-order correction can be applied to one and missed in the other — the
+    duplication's real cost, well before its size. :class:`TpcsBranchPlan`
+    deliberately does NOT share it: a `union all` branch projects `cast(null as
+    …)` placeholders for the superset columns it does not own plus a slot-3
+    variant-name literal, which is a genuinely different list rather than this
+    one minus a slot.
+    """
+    exprs: list[str] = []
+    binds: list[object] = []
+    for attribute, _owner in columns:
+        expr, extra = dialect.project(alias, attribute.column, attribute.type)
+        exprs.append(expr)
+        binds.extend(extra)
+    if tag_column is not None:
+        exprs.append(dialect.qualified(alias, tag_column))
+    exprs.extend(dialect.qualified(alias, vo.column) for vo in value_objects)
+    return ", ".join(exprs), tuple(binds)
+
+
 @dataclass(frozen=True, slots=True)
 class TphPlan:
     """Table-per-hierarchy: one shared single-table SELECT (m-sql "Inheritance —
     table-per-hierarchy lowering").
 
-    The tag PREDICATE (`tag_kind`: none / `=` / `in`) is keyed purely to the
-    resolved position's SIZE — one concrete lowers to `=` whether reached by a
-    direct concrete `targetEntity` or a narrow, several lower to `in`, and only an
-    untouched abstract-**root** `targetEntity` (no top-level narrow at all) gets no
-    tag predicate at all. The raw tag column PROJECTION (`project_tag`, slot 2) is
-    instead keyed to whether `targetEntity` itself is abstract — independent of the
-    narrow's resolved cardinality (`m-inheritance-012`: `Animal` narrowed to the
-    single concrete `Dog` still projects `t0.kind` and still carries
-    `familyVariant`, because the caller queried the polymorphic `Animal` position).
-    These are deliberately two different conditions.
+    The tag PREDICATE (:attr:`tag`) is keyed purely to the resolved position's
+    SIZE — one concrete lowers to `=` whether reached by a direct concrete
+    `targetEntity` or a narrow, several lower to `in`, and only an untouched
+    abstract-**root** `targetEntity` (no top-level narrow at all) carries no tag
+    predicate at all, which is ``None``. The raw tag column PROJECTION
+    (:attr:`projected_tag_column`, slot 2) is instead keyed to whether
+    `targetEntity` itself is abstract — independent of the narrow's resolved
+    cardinality (`m-inheritance-012`: `Animal` narrowed to the single concrete
+    `Dog` still projects `t0.kind` and still carries `familyVariant`, because the
+    caller queried the polymorphic `Animal` position). These are deliberately two
+    different conditions, and each is spelled as its OWN optional so neither can
+    be read off the other: a bare abstract root projects the tag it does not
+    guard on, and a concrete target guards on the tag it does not project.
     """
 
     table: str
     columns: tuple[tuple[Attribute, str], ...]
-    tag_column: str
-    project_tag: bool
+    projected_tag_column: str | None
     value_objects: tuple[ValueObject, ...]
     inner: Operation
-    tag_kind: str
-    position: tuple[str, ...]
+    tag: TagPredicate | None
     transform: RowTransform
 
     def projection(self, dialect: Dialect, alias: str) -> tuple[str, tuple[object, ...]]:
         """The select list and its ordered projection binds, against ``alias``."""
-        exprs: list[str] = []
-        binds: list[object] = []
-        for attribute, _owner in self.columns:
-            expr, extra = dialect.project(alias, attribute.column, attribute.type)
-            exprs.append(expr)
-            binds.extend(extra)
-        if self.project_tag:
-            # Slot 2 (m-sql resolved Q6): the raw tag column, projected iff the
-            # read's OWN targetEntity is abstract — never derived from the
-            # resolved position.
-            exprs.append(dialect.qualified(alias, self.tag_column))
-        exprs.extend(dialect.qualified(alias, vo.column) for vo in self.value_objects)
-        return ", ".join(exprs), tuple(binds)
+        return _single_table_projection(
+            dialect, alias, self.columns, self.projected_tag_column, self.value_objects
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -325,14 +394,12 @@ class TpcsSinglePlan:
     transform: RowTransform
 
     def projection(self, dialect: Dialect, alias: str) -> tuple[str, tuple[object, ...]]:
-        exprs: list[str] = []
-        binds: list[object] = []
-        for attribute, _owner in self.columns:
-            expr, extra = dialect.project(alias, attribute.column, attribute.type)
-            exprs.append(expr)
-            binds.extend(extra)
-        exprs.extend(dialect.qualified(alias, vo.column) for vo in self.value_objects)
-        return ", ".join(exprs), tuple(binds)
+        """The select list and its ordered projection binds, against ``alias``.
+
+        Slot 2 is always absent: this reads the resolved concrete's OWN table,
+        which declares no tag column to project.
+        """
+        return _single_table_projection(dialect, alias, self.columns, None, self.value_objects)
 
 
 @dataclass(frozen=True, slots=True)
@@ -388,9 +455,7 @@ class BranchNarrowPlan:
     """
 
     operand: Operation
-    tag_column: str
-    tag_kind: str
-    position: tuple[str, ...]
+    tag: TagPredicate
 
 
 # --------------------------------------------------------------------------- #
@@ -451,12 +516,13 @@ def _plan_tph_read(
     if isinstance(predicate, Narrow):
         position = narrow_effective_set(meta, predicate.to)
         inner = predicate.operand
-        tag_kind = "eq" if len(position) == 1 else "in"
+        guarded = True
     else:
         position = tuple(inheritance.effective_concrete_subtypes(meta, target))
         inner = predicate
-        is_bare_root = entity.inheritance is not None and entity.inheritance.role == "root"
-        tag_kind = "none" if is_bare_root else ("eq" if len(position) == 1 else "in")
+        # Only an UNTOUCHED abstract root queries the whole family, so only it
+        # carries no tag predicate at all.
+        guarded = not (entity.inheritance is not None and entity.inheritance.role == "root")
 
     table = meta.entity(position[0]).table
     if table is None:  # pragma: no cover - a validated TPH concrete always declares one
@@ -473,12 +539,10 @@ def _plan_tph_read(
     return TphPlan(
         table=table,
         columns=tuple(superset_columns(meta, position)),
-        tag_column=tag_col,
-        project_tag=abstract_target,
+        projected_tag_column=tag_col if abstract_target else None,
         value_objects=tuple(superset_value_objects(meta, position)) if instance_form else (),
         inner=inner,
-        tag_kind=tag_kind,
-        position=position,
+        tag=TagPredicate(tag_col, position) if guarded else None,
         transform=transform,
     )
 
@@ -580,11 +644,7 @@ def plan_branch_narrow(meta: Metamodel, entity: Entity, narrow: Narrow) -> Branc
             "a narrow nested inside and/or/not/group over a table-per-concrete-subtype "
             "family has no goldened lowering yet"
         )
-    tag_col = tph_tag_column(root)
-    position = narrow_effective_set(meta, narrow.to)
     return BranchNarrowPlan(
         operand=narrow.operand,
-        tag_column=tag_col,
-        tag_kind="eq" if len(position) == 1 else "in",
-        position=position,
+        tag=TagPredicate(tph_tag_column(root), narrow_effective_set(meta, narrow.to)),
     )

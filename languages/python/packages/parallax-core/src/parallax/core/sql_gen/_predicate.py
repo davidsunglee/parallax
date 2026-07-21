@@ -406,9 +406,7 @@ def _lower_branch_narrow(narrow: Narrow, scope: EntityScope) -> str:
     # Branch predicate first, THEN the guard's binds — the same explicit ordering
     # the top-level read states, for the same reason.
     branch_sql = lower_predicate(plan.operand, scope)
-    tag_sql, tag_binds = _tph_tag_guard(
-        scope, scope.meta, plan.tag_column, plan.tag_kind, plan.position
-    )
+    tag_sql, tag_binds = _tph_tag_guard(scope, scope.meta, plan.tag)
     scope.ctx.binds.extend(tag_binds)
     if not branch_sql:
         return tag_sql

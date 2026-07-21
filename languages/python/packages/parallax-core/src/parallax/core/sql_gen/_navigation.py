@@ -14,12 +14,12 @@ canonicalize` injected it upstream — so nothing here is temporal-aware.
 
 **This module returns PLANS and never lowers anything.** A plan carries the
 hop's un-lowered interior operation and, for a table-per-hierarchy hop, its tag
-guard as a fragment plus bind VALUES; `_compile` lowers the interior and only
-then pushes those values. It also contains no `match` over the predicate node
-union: the two operation nodes it inspects are the hop node itself (to read
-`rel` / `op` / negation) and a TOP-LEVEL `narrow` inside the hop's `op` (to
-resolve the hop's position, `m-navigate` "Polymorphic navigation"), never a
-descent into either.
+guard as a fragment plus bind VALUES; `_predicate` — the package's one recursive
+owner — lowers the interior and only then pushes those values. It also contains
+no `match` over the predicate node union: the two operation nodes it inspects are
+the hop node itself (to read `rel` / `op` / negation) and a TOP-LEVEL `narrow`
+inside the hop's `op` (to resolve the hop's position, `m-navigate` "Polymorphic
+navigation"), never a descent into either.
 
 That "never binds" rule is STRUCTURAL, not remembered. Every entry point here
 takes a :class:`~parallax.core.sql_gen._context.PlanScope`, which exposes model
@@ -57,6 +57,7 @@ from parallax.core.descriptor import Entity, Metamodel, Relationship
 from parallax.core.op_algebra import Exists, Narrow, Navigate, NotExists, Operation
 from parallax.core.sql_gen._context import PlanScope as _PlanScope
 from parallax.core.sql_gen._context import SqlGenError
+from parallax.core.sql_gen._inheritance import TagPredicate as _TagPredicate
 from parallax.core.sql_gen._inheritance import narrow_effective_set as _narrow_effective_set
 from parallax.core.sql_gen._inheritance import tag_guard as _tag_guard
 from parallax.core.sql_gen._inheritance import tph_tag_column as _tph_tag_column
@@ -64,21 +65,14 @@ from parallax.core.sql_gen._inheritance import tph_tag_column as _tph_tag_column
 
 # --------------------------------------------------------------------------- #
 # The plans.                                                                   #
+#                                                                              #
+# A table-per-hierarchy hop's tag guard travels as `_inheritance.TagPredicate`  #
+# — the same value a top-level family read's plan carries, deliberately not a   #
+# second local spelling of the same three facts. It is the guard's INPUTS and   #
+# not a rendered fragment because the fragment needs the child alias, which     #
+# does not exist until the branch opens: `open_branch` turns it into the        #
+# fragment plus its bind VALUES, and nothing binds either way.                  #
 # --------------------------------------------------------------------------- #
-@dataclass(frozen=True, slots=True)
-class TagGuard:
-    """A table-per-hierarchy hop's tag guard, as its INPUTS.
-
-    Deliberately not a rendered fragment: the fragment needs the child alias,
-    which does not exist until the branch opens. :func:`open_branch` turns this
-    into the fragment plus its bind values; nothing binds either way.
-    """
-
-    column: str
-    kind: str
-    position: tuple[str, ...]
-
-
 @dataclass(frozen=True, slots=True)
 class HopBranch:
     """One correlated `EXISTS` this hop will open, RESOLVED but not yet opened.
@@ -95,7 +89,7 @@ class HopBranch:
     related_attr: str
     parent_column: str
     inner: Operation | None
-    tag: TagGuard | None
+    tag: _TagPredicate | None
     keyword: str
 
 
@@ -177,8 +171,8 @@ def plan_hop(op: Navigate | Exists | NotExists, scope: _PlanScope) -> HopPlan:
     The parent side of the correlation is rendered here, against ``scope``'s own
     active entity and alias — so a write predicate's UNALIASED parent column
     (`t1.folder_id = id`, `m-batch-write` readless forms) falls out of the same
-    :meth:`~parallax.core.sql_gen._context.Ctx.own_column` decision every other
-    reference to the target's own columns takes.
+    :meth:`~parallax.core.sql_gen._context.ColumnScope.own_column` decision every
+    other reference to the target's own columns takes.
 
     No alias is allocated and no fragment that needs one is rendered; see
     :func:`open_branch`.
@@ -216,8 +210,9 @@ def open_branch(branch: HopBranch, scope: _PlanScope) -> OpenBranch:
     alias = scope.next_alias()
     # A read-only child view, purely to resolve the correlation and the tag
     # column against the branch's own entity and alias. The caller builds its own
-    # child `Ctx` for lowering; both share the enclosing statement's bind list and
-    # alias counter by identity, and neither of these two calls allocates.
+    # child resolution scope for lowering; both point at the enclosing statement's
+    # single `Ctx` — its bind list and alias counter — by identity, and neither of
+    # these two calls allocates.
     child = scope.child(branch.entity, alias)
     correlation = (
         f"{child.column_of(f'{branch.entity.name}.{branch.related_attr}')} = {branch.parent_column}"
@@ -225,9 +220,7 @@ def open_branch(branch: HopBranch, scope: _PlanScope) -> OpenBranch:
     tag_fragment: tuple[str, ...] = ()
     tag_binds: tuple[object, ...] = ()
     if branch.tag is not None:
-        tag_sql, tag_binds = _tag_guard(
-            child, scope.meta, branch.tag.column, branch.tag.kind, branch.tag.position
-        )
+        tag_sql, tag_binds = _tag_guard(child, scope.meta, branch.tag)
         tag_fragment = (tag_sql,)
     return OpenBranch(
         entity=branch.entity,
@@ -309,7 +302,6 @@ def _plan_polymorphic_hop(
     assert root.inheritance is not None
     position, remaining_inner, is_bare_root = _hop_position(scope.meta, related_entity, inner)
     if root.inheritance.strategy == "table-per-hierarchy":
-        tag_kind = "none" if is_bare_root else ("eq" if len(position) == 1 else "in")
         return _plan_tph_hop(
             root,
             position,
@@ -317,7 +309,7 @@ def _plan_polymorphic_hop(
             parent_column,
             related_attr,
             scope,
-            tag_kind,
+            is_bare_root=is_bare_root,
             negate=negate,
         )
     return _plan_tpcs_hop(
@@ -332,11 +324,14 @@ def _plan_tph_hop(
     parent_column: str,
     related_attr: str,
     scope: _PlanScope,
-    tag_kind: str,
     *,
+    is_bare_root: bool,
     negate: bool,
 ) -> HopPlan:
-    tag_col = _tph_tag_column(root)
+    # An UNTOUCHED abstract root hops to the whole family, so it carries no tag
+    # predicate at all — the same rule a top-level family read applies, spelled
+    # here as the absence of a `TagPredicate` rather than as a sentinel kind.
+    tag = None if is_bare_root else _TagPredicate(_tph_tag_column(root), tuple(position))
     table = scope.meta.entity(position[0]).table
     if table is None:  # pragma: no cover - a validated TPH concrete always declares one
         raise SqlGenError(f"{position[0]}: table-per-hierarchy concrete subtype declares no table")
@@ -352,7 +347,7 @@ def _plan_tph_hop(
                 related_attr=related_attr,
                 parent_column=parent_column,
                 inner=remaining_inner,
-                tag=None if tag_kind == "none" else TagGuard(tag_col, tag_kind, tuple(position)),
+                tag=tag,
                 keyword=_keyword(negate),
             ),
         ),
