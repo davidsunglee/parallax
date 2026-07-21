@@ -22,86 +22,29 @@ transitively through `m-op-algebra`. `validate_operation` runs upstream (the
 conformance engine / statement frontend), so a narrow reaching this compiler is
 already known position-valid; nothing in this package re-validates it.
 
-Navigation (`navigate` / `exists` / `notExists`) is assembled here the same way
-(COR-3 Phase 7 increment 3, `m-sql` "Joins by navigation"): `_navigation`
-resolves the relationship, derives the correlation mechanically from the
-declared `join` predicate, and resolves a polymorphic hop's effective
-concrete-subtype set exactly as the family lane does — this module opens each
-planned branch and lowers its interior. Nothing here needs the per-hop as-of
-predicate to be anything but an ordinary, pre-injected `m-op-algebra` node
-(`parallax.core.navigate.canonicalize` runs upstream, the composition-at-the-
-engine M2 precedent, since the DAG forbids `m-sql` from importing
-`m-temporal-read`). The correlated-`EXISTS` alias sequence continues the single
-`t0, t1, …` numbering across nested hops via `_Ctx.next_alias`, sharing one
-mutable counter and one bind list with its parent context.
-
-To-many value-object array traversal (`nestedExists` / `nestedNotExists`, and a
-flat `nested*` predicate whose path crosses a `cardinality: many` member) lowers
-here too (COR-3 Phase 7 increment 4, `m-sql` "To-many — exists / notExists and
-any-element predicates"): a correlated `EXISTS` over a guarded `jsonb_array_
-elements` unnest, continuing the same `_Ctx.next_alias` sequence navigation
-already uses. The array-type guard (`Dialect.array_guard`, abbreviated `<arr>`
-below) keeps the strict `jsonb_array_elements` from erroring on a non-array
-value, folding it to zero elements exactly like a NULL column or a missing key
-(m-op-algebra absence collapse). A flat predicate crossing a `many` member is
-**any-element** and self-guards independently per predicate (two ANDed flat
-predicates open two independent `EXISTS` subqueries, `m-value-object-018`); a
-scoped `nestedExists`/`nestedNotExists` `where` is **same-element** — every
-element predicate lowers against the SAME unnested alias, element-relative
-(no `Class.valueObject` prefix). This claim is Postgres-only; MariaDB's
-`json_contains`/`json_length` containment family is documented in `m-sql` but
-not goldened for this target and is not implemented here.
+Predicate lowering itself is NOT here. `_predicate` owns every descent into an
+operation — the scalar vocabulary, navigation, value-object traversal, and the
+mid-predicate `narrow` — behind one entry point (`lower_predicate`) taking an
+immutable resolution scope. This module builds each statement's scope, calls
+that entry point for the read's own predicate (per `union all` branch, where
+there is one), and assembles the clause tail around the fragment it returns.
 """
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Literal, assert_never
 
-from parallax.core.descriptor import (
-    Entity,
-    Metamodel,
-    NestedValueObject,
-    ValueObject,
-    ValueObjectAttribute,
-    VoPathMiss,
-    column_order,
-    find_value_object,
-    find_vo_member,
-    resolve_vo_leaf,
-)
+from parallax.core.descriptor import Entity, Metamodel, column_order
 from parallax.core.dialect import Dialect, LockMode
 from parallax.core.op_algebra import (
-    All,
-    And,
-    AsOf,
-    AsOfRange,
-    Between,
-    Comparison,
-    DeepFetch,
     Distinct,
-    Exists,
-    Group,
-    History,
     Limit,
-    Membership,
     Narrow,
-    Navigate,
-    NestedComparison,
-    NestedExists,
-    NestedMembership,
-    NestedNotExists,
-    NestedNullCheck,
-    NoneOp,
-    Not,
-    NotExists,
-    NullCheck,
     Operation,
-    Or,
     OrderBy,
     OrderKey,
-    StringMatch,
 )
 from parallax.core.sql_gen._context import Ctx as _Ctx
 from parallax.core.sql_gen._context import SqlGenError
@@ -115,14 +58,14 @@ from parallax.core.sql_gen._inheritance import RowTransform as _RowTransform
 from parallax.core.sql_gen._inheritance import TpcsSinglePlan as _TpcsSinglePlan
 from parallax.core.sql_gen._inheritance import TpcsUnionPlan as _TpcsUnionPlan
 from parallax.core.sql_gen._inheritance import TphPlan as _TphPlan
-from parallax.core.sql_gen._inheritance import plan_branch_narrow as _plan_branch_narrow
 from parallax.core.sql_gen._inheritance import plan_inheritance_read as _plan_inheritance_read
 from parallax.core.sql_gen._inheritance import tag_guard as _tph_tag_guard
 
-# The navigation LANE: hop plans in, one correlated `EXISTS` (or a grouped `or`
-# of them) out. Same aliasing-down convention as the family lane above.
-from parallax.core.sql_gen._navigation import open_branch as _open_branch
-from parallax.core.sql_gen._navigation import plan_hop as _plan_hop
+# The predicate lane: an entity resolution scope in, one `where`-clause fragment
+# out, with this statement's binds pushed on the shared context in order. Same
+# aliasing-down convention as the family lane above.
+from parallax.core.sql_gen._predicate import EntityScope as _EntityScope
+from parallax.core.sql_gen._predicate import lower_predicate as _lower_predicate
 
 __all__ = [
     "CompiledPredicate",
@@ -142,23 +85,6 @@ __all__ = [
 # two literals inline (`Literal["row", "instance"]`) rather than importing a name
 # whose only job is to abbreviate them.
 _ResultForm = Literal["row", "instance"]
-
-_COMPARATORS: dict[str, str] = {
-    "eq": "=",
-    "notEq": "<>",
-    "greaterThan": ">",
-    "greaterThanEquals": ">=",
-    "lessThan": "<",
-    "lessThanEquals": "<=",
-}
-_NESTED_COMPARATORS: dict[str, str] = {
-    "nestedEq": "=",
-    "nestedNotEq": "<>",
-    "nestedGt": ">",
-    "nestedGte": ">=",
-    "nestedLt": "<",
-    "nestedLte": "<=",
-}
 
 
 @dataclass(frozen=True, slots=True)
@@ -369,19 +295,22 @@ def compile_read(
             relationship_order,
         )
         return CompiledRead(statement, narrow_to, transform)
-    ctx = _Ctx(meta=meta, dialect=dialect, entity=entity)
+    # One context per statement (the mutable accumulator), one resolution scope
+    # over it (the immutable "what does a leaf resolve against" half).
+    ctx = _Ctx(meta, dialect)
+    scope = _EntityScope(ctx, entity)
 
     proj_sql, proj_binds = _projection(
-        entity, dialect, ctx.alias, result_form, include_value_objects=include_value_objects
+        entity, dialect, scope.alias, result_form, include_value_objects=include_value_objects
     )
     ctx.binds.extend(proj_binds)
     select = f"select {'distinct ' if distinct else ''}{proj_sql}"
-    parts = [select, f"from {entity.table} {ctx.alias}"]
+    parts = [select, f"from {entity.table} {scope.alias}"]
 
-    where_sql = _lower_predicate(predicate, ctx)
+    where_sql = _lower_predicate(predicate, scope)
     if where_sql:
         parts.append(f"where {where_sql}")
-    _append_result_shape(parts, ctx, distinct, order_keys, limit, lock, relationship_order)
+    _append_result_shape(parts, scope, distinct, order_keys, limit, lock, relationship_order)
 
     statement = _normalize(Statement(" ".join(parts), tuple(ctx.binds)))
     # A non-family read projects no tag and no variant literal, so there is
@@ -396,25 +325,27 @@ def compile_write_predicate(
     readless forms"): the UNALIASED where-clause SQL and its ordered binds —
     `balance < ?`, never the resolving read's aliased `t0.balance < ?`.
 
-    Reuses the op-algebra predicate lowering (:func:`_lower_predicate`) with an
-    unaliased column formatter (:attr:`_Ctx.unaliased`) rather than forking SQL
-    text assembly — the same `And`/`Or`/`Group`/`Comparison`/... dispatch a read's
-    `where` clause lowers through, so a write's rendered predicate can never drift
-    from the read compiler's own operator vocabulary. ``op`` MUST be a bare
-    predicate (no result-shaping directive survives here — a set-based write
-    target is validated bare upstream, `m-unit-work` write-instruction vocabulary
-    / `python.md` §5 bare-statement guard); a directive reaching this raises
-    :class:`SqlGenError` exactly as it would inside an ordinary read's predicate.
+    Reuses the op-algebra predicate lowering (`_predicate.lower_predicate`) with
+    an unaliased column formatter (:attr:`_EntityScope.unaliased`) rather than
+    forking SQL text assembly — the same `And`/`Or`/`Group`/`Comparison`/...
+    dispatch a read's `where` clause lowers through, so a write's rendered
+    predicate can never drift from the read compiler's own operator vocabulary.
+    ``op`` MUST be a bare predicate (no result-shaping directive survives here —
+    a set-based write target is validated bare upstream, `m-unit-work`
+    write-instruction vocabulary / `python.md` §5 bare-statement guard); a
+    directive reaching this raises :class:`SqlGenError` exactly as it would
+    inside an ordinary read's predicate.
     """
     entity = meta.entity(target)
-    ctx = _Ctx(meta=meta, dialect=dialect, entity=entity, unaliased=True)
-    where_sql = _lower_predicate(op, ctx)
+    ctx = _Ctx(meta, dialect)
+    scope = _EntityScope(ctx, entity, unaliased=True)
+    where_sql = _lower_predicate(op, scope)
     return CompiledPredicate(where_sql, tuple(ctx.binds))
 
 
 def _append_result_shape(
     parts: list[str],
-    ctx: _Ctx,
+    scope: _EntityScope,
     distinct: bool,
     order_keys: tuple[OrderKey, ...],
     limit: int | None,
@@ -434,24 +365,24 @@ def _append_result_shape(
     if order_keys:
         # An authored key that omitted `direction` (serde `None`) lowers to the
         # schema default `asc`.
-        terms = [_order_term(ctx, key, relationship_order) for key in order_keys]
+        terms = [_order_term(scope, key, relationship_order) for key in order_keys]
         parts.append("order by " + ", ".join(terms))
     if limit is not None:
-        parts.append(ctx.dialect.limit_clause())
-        ctx.bind(limit)
+        parts.append(scope.dialect.limit_clause())
+        scope.ctx.bind(limit)
     if lock == "locking" and not distinct:
         # The shared-row-lock suffix is the last thing in the statement (after any
         # `where` / `order by` / `limit`); a `distinct` object read suppresses it.
-        parts.append(ctx.dialect.read_lock_suffix(ctx.alias))
+        parts.append(scope.dialect.read_lock_suffix(scope.alias))
 
 
-def _order_term(ctx: _Ctx, key: OrderKey, relationship_order: bool) -> str:
+def _order_term(scope: _EntityScope, key: OrderKey, relationship_order: bool) -> str:
     """One ``order by`` term: `m-deep-fetch`'s declared-relationship NULLs-last
     rule for a NULLABLE key under ``relationship_order``, else the plain form."""
     direction = key.direction or "asc"
-    column_sql = ctx.column_of(key.attr)
-    if relationship_order and ctx.entity_attribute(key.attr).nullable:
-        return ctx.dialect.null_order(column_sql, direction)
+    column_sql = scope.column_of(key.attr)
+    if relationship_order and scope.entity_attribute(key.attr).nullable:
+        return scope.dialect.null_order(column_sql, direction)
     return f"{column_sql} {direction}"
 
 
@@ -572,54 +503,31 @@ def _compile_tph_read(
     is projected — is decided by :func:`_plan_inheritance_read`; this builds the
     statement's context and sequences the four bind phases.
     """
-    ctx = _Ctx(meta=meta, dialect=dialect, entity=entity)
-    proj_sql, proj_binds = plan.projection(dialect, ctx.alias)
+    ctx = _Ctx(meta, dialect)
+    scope = _EntityScope(ctx, entity)
+    proj_sql, proj_binds = plan.projection(dialect, scope.alias)
     ctx.binds.extend(proj_binds)
 
     select = f"select {'distinct ' if distinct else ''}{proj_sql}"
-    parts = [select, f"from {plan.table} {ctx.alias}"]
+    parts = [select, f"from {plan.table} {scope.alias}"]
 
-    inner_sql = _lower_predicate(plan.inner, ctx)
+    inner_sql = _lower_predicate(plan.inner, scope)
     where_terms = [inner_sql] if inner_sql else []
     if plan.tag_kind != "none":
         # Planned, then bound HERE — after the user predicate above has pushed its
         # own binds (m-sql "Grouped branch predicates": branch-predicate-first,
         # then tag).
         tag_sql, tag_binds = _tph_tag_guard(
-            ctx, meta, plan.tag_column, plan.tag_kind, plan.position
+            scope, meta, plan.tag_column, plan.tag_kind, plan.position
         )
         where_terms.append(tag_sql)
         ctx.binds.extend(tag_binds)
     if where_terms:
         parts.append("where " + " and ".join(where_terms))
 
-    _append_result_shape(parts, ctx, distinct, order_keys, limit, lock, relationship_order)
+    _append_result_shape(parts, scope, distinct, order_keys, limit, lock, relationship_order)
     statement = _normalize(Statement(" ".join(parts), tuple(ctx.binds)))
     return statement, plan.transform
-
-
-def _lower_branch_narrow(narrow: Narrow, ctx: _Ctx) -> str:
-    """A `narrow` node reached MID-predicate (nested inside and/or/not/group) — a
-    **grouped branch predicate** (m-sql "Grouped branch predicates"): the
-    branch's own operand composes with its own tag guard via `and`, and the
-    composition is wrapped in parens whenever there is a branch predicate to
-    disambiguate against a sibling branch joined by `or` (`m-inheritance-015`).
-    A single narrow with a branch predicate and nothing to combine against
-    needs no grouping — but that is the **top-level** narrow shape, intercepted
-    before `_lower_predicate` ever runs (`_compile_tph_read`); every narrow this
-    function receives is nested, so it always groups when it has two terms.
-    """
-    plan = _plan_branch_narrow(ctx.meta, ctx.entity, narrow)
-    # Branch predicate first, THEN the guard's binds — the same explicit ordering
-    # the top-level read above states, for the same reason.
-    branch_sql = _lower_predicate(plan.operand, ctx)
-    tag_sql, tag_binds = _tph_tag_guard(
-        ctx, ctx.meta, plan.tag_column, plan.tag_kind, plan.position
-    )
-    ctx.binds.extend(tag_binds)
-    if not branch_sql:
-        return tag_sql
-    return f"({branch_sql} and {tag_sql})"
 
 
 def _compile_tpcs_read(
@@ -640,11 +548,12 @@ def _compile_tpcs_read(
     branch_sqls: list[str] = []
     all_binds: list[object] = []
     for branch in plan.branches:
-        branch_ctx = _Ctx(meta=meta, dialect=dialect, entity=entity)
-        proj_sql, proj_binds = branch.projection(dialect, branch_ctx.alias)
+        branch_ctx = _Ctx(meta, dialect)
+        branch_scope = _EntityScope(branch_ctx, entity)
+        proj_sql, proj_binds = branch.projection(dialect, branch_scope.alias)
         branch_ctx.binds.extend(proj_binds)
-        parts = [f"select {proj_sql}", f"from {branch.table} {branch_ctx.alias}"]
-        where_sql = _lower_predicate(plan.inner, branch_ctx)
+        parts = [f"select {proj_sql}", f"from {branch.table} {branch_scope.alias}"]
+        where_sql = _lower_predicate(plan.inner, branch_scope)
         if where_sql:
             parts.append(f"where {where_sql}")
         branch_sqls.append(" ".join(parts))
@@ -672,411 +581,18 @@ def _compile_tpcs_single(
     position narrowed down to this one concrete), matching the
     table-per-hierarchy concrete-target form.
     """
-    ctx = _Ctx(meta=meta, dialect=dialect, entity=entity)
-    proj_sql, proj_binds = plan.projection(dialect, ctx.alias)
+    ctx = _Ctx(meta, dialect)
+    scope = _EntityScope(ctx, entity)
+    proj_sql, proj_binds = plan.projection(dialect, scope.alias)
     ctx.binds.extend(proj_binds)
     select = f"select {'distinct ' if distinct else ''}{proj_sql}"
-    parts = [select, f"from {plan.table} {ctx.alias}"]
-    where_sql = _lower_predicate(plan.inner, ctx)
+    parts = [select, f"from {plan.table} {scope.alias}"]
+    where_sql = _lower_predicate(plan.inner, scope)
     if where_sql:
         parts.append(f"where {where_sql}")
-    _append_result_shape(parts, ctx, distinct, order_keys, limit, lock, relationship_order)
+    _append_result_shape(parts, scope, distinct, order_keys, limit, lock, relationship_order)
     statement = _normalize(Statement(" ".join(parts), tuple(ctx.binds)))
     return statement, plan.transform
-
-
-# --------------------------------------------------------------------------- #
-# Navigation (m-sql "Joins by navigation"; COR-3 Phase 7 increment 3).         #
-#                                                                               #
-# `_navigation` resolves the hop and hands back an immutable plan; this is its   #
-# only consumer. The loop below is the whole lowering: OPEN a branch (which     #
-# takes its alias and renders its correlation and its DEFERRED tag guard), lower #
-# that branch's own interior against a child context, and only THEN push the     #
-# guard's binds — the m-sql "Grouped branch predicates" order, stated here       #
-# rather than left to an evaluation-order accident.                             #
-# --------------------------------------------------------------------------- #
-def _lower_navigation(op: Navigate | Exists | NotExists, ctx: _Ctx) -> str:
-    plan = _plan_hop(op, ctx)
-    fragments: list[str] = []
-    for branch in plan.branches:
-        # Opened INSIDE the loop, not up front: a branch takes its alias
-        # immediately before its own interior lowers, so a later branch's alias
-        # follows everything the preceding branch's interior allocated. Hoisting
-        # this would renumber a grouped table-per-concrete-subtype hop whose
-        # interior itself navigates.
-        opened = _open_branch(branch, ctx)
-        child_ctx = ctx.child(opened.entity, opened.alias)
-        where = _hop_where(opened.inner, opened.correlation, child_ctx, *opened.tag_fragment)
-        # AFTER the interior: the plan carried the guard's bind VALUES precisely so
-        # this push is the caller's own visible statement (`_navigation` holds no
-        # capability to have pushed them itself).
-        child_ctx.binds.extend(opened.tag_binds)
-        fragments.append(opened.render(where))
-    return plan.combine(fragments)
-
-
-def _hop_where(inner: Operation | None, correlation: str, child_ctx: _Ctx, *extra: str) -> str:
-    """The correlated sub-select's `where` clause: correlation, then the (optional)
-    interior predicate, then any trailing fragment (a TPH tag guard) — the shared
-    term order every hop shape composes (m-sql "Grouped branch predicates":
-    a user/interior predicate binds before a framework-injected guard)."""
-    terms = [correlation]
-    if inner is not None:
-        inner_sql = _lower_predicate(inner, child_ctx)
-        if inner_sql:
-            terms.append(inner_sql)
-    terms.extend(extra)
-    return " and ".join(terms)
-
-
-# --------------------------------------------------------------------------- #
-# Predicate lowering.                                                          #
-# --------------------------------------------------------------------------- #
-def _lower_predicate(op: Operation, ctx: _Ctx) -> str:
-    """Lower one predicate node to a SQL fragment, appending binds in order."""
-    match op:
-        case All():
-            return ""
-        case NoneOp():
-            return "1 = 0"
-        case Comparison(op=tag, attr=attr, value=value):
-            ctx.bind(value)
-            return f"{ctx.column_of(attr)} {_COMPARATORS[tag]} ?"
-        case Between(attr=attr, lower=lower, upper=upper):
-            ctx.bind(lower)
-            ctx.bind(upper)
-            return f"{ctx.column_of(attr)} between ? and ?"
-        case NullCheck(op=tag, attr=attr):
-            col = ctx.column_of(attr)
-            return f"{col} is null" if tag == "isNull" else f"not {col} is null"
-        case StringMatch():
-            return _lower_string(op, ctx)
-        case Membership(op=tag, attr=attr, values=values):
-            holes = ", ".join("?" for _ in values)
-            for value in values:
-                ctx.bind(value)
-            fragment = f"{ctx.column_of(attr)} in ({holes})"
-            return fragment if tag == "in" else f"not {fragment}"
-        case And(operands=operands):
-            return " and ".join(_lower_predicate(o, ctx) for o in operands)
-        case Or(operands=operands):
-            return " or ".join(_lower_predicate(o, ctx) for o in operands)
-        case Not(operand=operand):
-            return f"not {_lower_predicate(operand, ctx)}"
-        case Group(operand=operand):
-            return f"({_lower_predicate(operand, ctx)})"
-        case NestedComparison() | NestedMembership() | NestedNullCheck():
-            return _lower_nested(op, ctx)
-        case NestedExists() | NestedNotExists():
-            return _lower_nested_exists(op, ctx)
-        case Narrow():
-            return _lower_branch_narrow(op, ctx)
-        case Navigate() | Exists() | NotExists():
-            return _lower_navigation(op, ctx)
-        case DeepFetch():
-            raise SqlGenError(
-                "deep fetch (eager graph materialization across relationship levels) lands "
-                "with the snapshot branch's deep-fetch + materialization increment (COR-3 "
-                "Phase 7 increment 5; ledger D-12) — relationship navigation itself lowers "
-                "(increment 3)"
-            )
-        case AsOf() | AsOfRange() | History():
-            # Temporal reads are lowered by `m-temporal-read` (auto-injected as-of
-            # predicate + default-latest injection) into ordinary predicate nodes
-            # BEFORE compile_read runs — the module DAG forbids m-sql from importing
-            # m-temporal-read, so the composition happens in the caller (the
-            # conformance engine's canonicalize step). Reaching this branch means a
-            # temporal wrapper survived un-canonicalized, which is a wiring error, not
-            # an unsupported node.
-            raise SqlGenError(
-                "temporal wrapper reached m-sql un-lowered; canonicalize the read with "
-                "m-temporal-read.inject_as_of before compile_read (m-sql cannot import "
-                "m-temporal-read per the module DAG)"
-            )
-        case OrderBy() | Limit() | Distinct():
-            raise SqlGenError("result-shaping directive nested inside a predicate")
-        case _:  # pragma: no cover - exhaustiveness guard
-            assert_never(op)
-
-
-def _lower_string(op: StringMatch, ctx: _Ctx) -> str:
-    col = ctx.column_of(op.attr)
-    if op.op in ("like", "notLike"):
-        ctx.bind(op.value)
-        col_expr = f"lower({col})" if op.case_insensitive else col
-        rhs = "lower(?)" if op.case_insensitive else "?"
-        fragment = f"{col_expr} like {rhs}"
-        return fragment if op.op == "like" else fragment.replace(" like ", " not like ", 1)
-    # The affix pattern is folded to lower case under case-insensitive matching,
-    # so the pattern bind is already lowercased (the corpus's affix convention);
-    # `like`/`notLike` keep the pattern verbatim and rely on `lower(?)` alone.
-    literal = op.value.lower() if op.case_insensitive else op.value
-    pattern, needs_escape = _affix_pattern(op.op, literal)
-    ctx.bind(pattern)
-    col_expr = f"lower({col})" if op.case_insensitive else col
-    rhs = "lower(?)" if op.case_insensitive else "?"
-    fragment = f"{col_expr} like {rhs}"
-    if needs_escape:
-        ctx.bind("\\")
-        fragment = f"{fragment} escape ?"
-    return fragment
-
-
-def _affix_pattern(kind: str, value: str) -> tuple[str, bool]:
-    escaped = value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-    needs_escape = escaped != value
-    if kind == "startsWith":
-        return f"{escaped}%", needs_escape
-    if kind == "endsWith":
-        return f"%{escaped}", needs_escape
-    return f"%{escaped}%", needs_escape
-
-
-# --------------------------------------------------------------------------- #
-# Value-object nested predicates (m-value-object; resolved inline — the DAG    #
-# forbids m-op-algebra / m-sql from importing m-value-object).                 #
-# --------------------------------------------------------------------------- #
-def _lower_nested(op: NestedComparison | NestedMembership | NestedNullCheck, ctx: _Ctx) -> str:
-    """Lower a flat `nested*` predicate (m-op-algebra "Nested value-object
-    predicates"): a scalar extraction against `ctx.alias` when the path stays
-    within `one`-cardinality members, or — when it crosses a `cardinality: many`
-    member — the any-element array-traversal form (m-sql "To-many — exists /
-    notExists and any-element predicates"; `m-value-object-017/-018/-021`)."""
-    vo, segments = _flat_vo_path(op.path, ctx.entity)
-    crossing = _split_at_many(vo, segments)
-    if crossing is not None:
-        return _lower_any_element(op, vo, crossing, ctx)
-    leaf = _resolve_leaf(vo, segments)
-    # The document column is the TARGET's own, so it renders through `own_column`
-    # and goes bare in a write's unaliased predicate (m-sql rule 1).
-    extraction, path_binds = ctx.dialect.nested_extract(ctx.own_column(vo.column), segments)
-    ctx.binds.extend(path_binds)
-    return _lower_comparator(op, extraction, leaf.type, ctx)
-
-
-def _flat_vo_path(path: str, entity: Entity) -> tuple[ValueObject, tuple[str, ...]]:
-    """Parse a flat `Class.valueObject(.valueObject)*.attribute` reference
-    (m-op-algebra) into its top-level value object and the path segments after
-    it (which may cross zero or more nested value objects before reaching a
-    leaf, or a `many` member — `_split_at_many` tells the two apart)."""
-    parts = path.split(".")
-    if len(parts) < 3:
-        raise SqlGenError(f"nested path {path!r} needs Class.valueObject.attribute")
-    _entity_name, vo_name, *segments = parts
-    return _value_object(entity, vo_name), tuple(segments)
-
-
-def _lower_comparator(
-    op: NestedComparison | NestedMembership | NestedNullCheck,
-    extraction: str,
-    leaf_type: str,
-    ctx: _Ctx,
-) -> str:
-    """Render one resolved extraction's comparator fragment (m-sql "valueObject
-    — structured-column read and filter" / "The flat `nested*` operator
-    family"), binding extraction-then-comparator in that order. Shared by the
-    plain scalar path, the flat any-element lowering, and the same-element
-    scoped `where` lowering below — only how `extraction` was resolved differs.
-    """
-    if isinstance(op, NestedComparison):
-        casted = ctx.dialect.nested_cast(extraction, leaf_type)
-        ctx.bind(op.value)
-        # nestedNotEq lowers to `not <ext> = ?` (the corpus form), not `<ext> <> ?`.
-        if op.op == "nestedNotEq":
-            return f"not {casted} = ?"
-        return f"{casted} {_NESTED_COMPARATORS[op.op]} ?"
-    if isinstance(op, NestedMembership):
-        casted = ctx.dialect.nested_cast(extraction, leaf_type)
-        holes = ", ".join("?" for _ in op.values)
-        for value in op.values:
-            ctx.bind(value)
-        return f"{casted} in ({holes})"
-    if op.op == "nestedIsNull":
-        return f"{extraction} is null"
-    return f"not {extraction} is null"
-
-
-def _split_at_many(
-    vo: ValueObject, segments: Sequence[str]
-) -> tuple[ValueObject | NestedValueObject, tuple[str, ...], tuple[str, ...]] | None:
-    """Split a flat predicate's path at the first `cardinality: many` hop
-    crossed while walking from `vo` (m-op-algebra "Flat predicates through a
-    `many` segment mean any element matches"). Returns ``(the many container,
-    the segments reaching it from vo's own document column, the remaining
-    segments addressing a field WITHIN the element)`` — or ``None`` when the
-    walk never crosses a `many` member (the plain scalar-extraction case
-    `_lower_nested` handles directly).
-    """
-    if vo.cardinality == "many":
-        return vo, (), tuple(segments)
-    container: ValueObject | NestedValueObject = vo
-    for index, segment in enumerate(segments):
-        member = find_vo_member(container, segment)
-        if not isinstance(member, NestedValueObject):
-            return None  # reached a scalar leaf (or an unresolved segment) uncrossed
-        if member.cardinality == "many":
-            return member, tuple(segments[: index + 1]), tuple(segments[index + 1 :])
-        container = member
-    return None
-
-
-def _lower_any_element(
-    op: NestedComparison | NestedMembership | NestedNullCheck,
-    vo: ValueObject,
-    crossing: tuple[ValueObject | NestedValueObject, tuple[str, ...], tuple[str, ...]],
-    ctx: _Ctx,
-) -> str:
-    """Any-element lowering for a flat `nested*` predicate crossing a `many`
-    member (m-sql "To-many — exists / notExists and any-element predicates"):
-    an independent correlated `EXISTS` over the guarded unnest, the field
-    resolved against the SAME unnested element alias (never against `t0`).
-    Each such predicate self-guards and self-aliases — two ANDed flat
-    predicates through the same array open TWO independent subqueries
-    (`m-value-object-018`'s any-element-independence witness), never one
-    shared alias (that would be the same-element `nestedExists`/`where` form
-    below).
-    """
-    container, pre, post = crossing
-    if not post:
-        raise SqlGenError(
-            f"nested path {op.path!r} ends on the `many` array itself, not a field "
-            "within its elements"
-        )
-    leaf = _resolve_leaf(container, post)
-    # The owning document column is the target's own (bare under `unaliased`); the
-    # unnested ELEMENT is not, and stays alias-qualified either way — this very
-    # subquery declares `array_alias`, so there is no alias here to leak.
-    guard_sql, guard_binds = ctx.dialect.array_guard(ctx.own_column(vo.column), pre)
-    ctx.binds.extend(guard_binds)
-    array_alias = ctx.next_alias()
-    extraction, path_binds = ctx.dialect.nested_extract(
-        ctx.dialect.qualified(array_alias, "value"), post
-    )
-    ctx.binds.extend(path_binds)
-    comparator = _lower_comparator(op, extraction, leaf.type, ctx)
-    return (
-        f"exists (select 1 from jsonb_array_elements({guard_sql}) {array_alias} where {comparator})"
-    )
-
-
-# --------------------------------------------------------------------------- #
-# `nestedExists` / `nestedNotExists` (m-sql "To-many — exists / notExists and  #
-# any-element predicates"; COR-3 Phase 7 increment 4).                        #
-# --------------------------------------------------------------------------- #
-def _lower_nested_exists(op: NestedExists | NestedNotExists, ctx: _Ctx) -> str:
-    """A bare form is a non-empty / empty-or-absent test over the guarded
-    unnest; a scoped `where` composes its element predicate on the SAME
-    unnested alias (same-element semantics, m-value-object — as opposed to the
-    any-element flat form above, which never shares an alias across
-    predicates). Postgres `EXISTS` is never NULL, so the negated forms need no
-    `coalesce` wrap: `not exists (...)` over zero unnested elements is already
-    true (m-sql, explicit). MariaDB's containment form DOES need one — but this
-    claim is Postgres-only and that form is not implemented here.
-    """
-    vo, pre, container = _resolve_vo_terminus(op.path, ctx.entity)
-    if container.cardinality != "many":
-        raise SqlGenError(
-            f"nestedExists/nestedNotExists over a `one`-cardinality value object "
-            f"({op.path!r}) has no goldened lowering yet"
-        )
-    guard_sql, guard_binds = ctx.dialect.array_guard(ctx.own_column(vo.column), pre)
-    ctx.binds.extend(guard_binds)
-    array_alias = ctx.next_alias()
-    inner = f"select 1 from jsonb_array_elements({guard_sql}) {array_alias}"
-    if op.where is not None:
-        where_sql = _lower_element_predicate(op.where, container, array_alias, ctx)
-        inner = f"{inner} where {where_sql}"
-    keyword = "not exists" if isinstance(op, NestedNotExists) else "exists"
-    return f"{keyword} ({inner})"
-
-
-def _resolve_vo_terminus(
-    path: str, entity: Entity
-) -> tuple[ValueObject, tuple[str, ...], ValueObject | NestedValueObject]:
-    """Resolve a `nestedExists`/`nestedNotExists` value-object-TERMINATED path
-    (`Class.valueObject(.valueObject)*`, m-op-algebra) to its top-level value
-    object, the full segment chain from that object's own document column to
-    the terminal member, and the terminal container itself (`vo` unchanged
-    when the path names the top-level object directly, no further segments).
-    """
-    parts = path.split(".")
-    if len(parts) < 2:
-        raise SqlGenError(f"nested path {path!r} needs at least Class.valueObject")
-    _entity_name, vo_name, *segments = parts
-    vo = _value_object(entity, vo_name)
-    container: ValueObject | NestedValueObject = vo
-    for segment in segments:
-        member = find_vo_member(container, segment)
-        if not isinstance(member, NestedValueObject):
-            raise SqlGenError(
-                f"nested path {path!r}: {segment!r} does not name a nested value object"
-            )
-        container = member
-    return vo, tuple(segments), container
-
-
-def _lower_element_predicate(
-    op: Operation, container: ValueObject | NestedValueObject, alias: str, ctx: _Ctx
-) -> str:
-    """Lower a scoped `nestedExists`/`nestedNotExists` `where` compound
-    (m-op-algebra `elementPredicate`; m-value-object same-element semantics):
-    every leaf's path is element-relative (`type`, `geo.country` — no leading
-    `Class.valueObject`) and resolves against `container`, the SAME array
-    element every predicate here shares — extracted via the unnested element
-    alias (`t1.value`), never re-descending through `Class.valueObject`. The
-    serde's `elementPredicate` grammar admits only the nested* family plus the
-    boolean combinators here, so this dispatch need not re-derive that
-    restriction.
-    """
-    match op:
-        case NestedComparison(path=path) | NestedMembership(path=path) | NestedNullCheck(path=path):
-            segments = tuple(path.split("."))
-            leaf = _resolve_leaf(container, segments)
-            # `alias` names the unnest this statement itself declared, so the
-            # element reference is alias-qualified in a write's predicate too.
-            extraction, path_binds = ctx.dialect.nested_extract(
-                ctx.dialect.qualified(alias, "value"), segments
-            )
-            ctx.binds.extend(path_binds)
-            return _lower_comparator(op, extraction, leaf.type, ctx)
-        case And(operands=operands):
-            return " and ".join(
-                _lower_element_predicate(o, container, alias, ctx) for o in operands
-            )
-        case Or(operands=operands):
-            return " or ".join(_lower_element_predicate(o, container, alias, ctx) for o in operands)
-        case Not(operand=operand):
-            return f"not {_lower_element_predicate(operand, container, alias, ctx)}"
-        case Group(operand=operand):
-            return f"({_lower_element_predicate(operand, container, alias, ctx)})"
-        case _:  # pragma: no cover - the elementPredicate schema admits nothing else here
-            raise SqlGenError(
-                f"{op!r} is not a legal nestedExists/nestedNotExists element predicate "
-                "(m-op-algebra elementPredicate)"
-            )
-
-
-def _value_object(entity: Entity, name: str) -> ValueObject:
-    vo = find_value_object(entity, name)
-    if vo is None:
-        raise SqlGenError(f"{entity.name}: {name!r} is not a declared value object")
-    return vo
-
-
-def _resolve_leaf(
-    vo: ValueObject | NestedValueObject, segments: Sequence[str]
-) -> ValueObjectAttribute:
-    """Resolve dotted ``segments`` against ``vo`` via the shared, error-neutral
-    `parallax.core.descriptor.vo_path` walk (S3: the same one `m-op-algebra`'s
-    operation validator uses), classifying a miss into `SqlGenError` verbatim."""
-    result = resolve_vo_leaf(vo, segments)
-    if isinstance(result, VoPathMiss):
-        if result.reason == "scalar-continues":
-            raise SqlGenError(f"value-object path continues past scalar {result.segment!r}")
-        if result.reason == "ends-on-nested":
-            raise SqlGenError("value-object path does not reach a scalar leaf")
-        raise SqlGenError(f"value-object path segment {result.segment!r} is undeclared")
-    return result
 
 
 # --------------------------------------------------------------------------- #
