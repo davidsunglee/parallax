@@ -32,13 +32,7 @@ from parallax.core import deep_fetch, inheritance, op_algebra
 from parallax.core.db_port import DbPort, Row
 from parallax.core.descriptor import Entity, Metamodel
 from parallax.core.dialect import Dialect, LockMode
-from parallax.core.sql_gen import (
-    Statement,
-    apply_family_variant,
-    compile_read,
-    family_variant_plan,
-    read_narrow_to,
-)
+from parallax.core.sql_gen import Statement, compile_read
 from parallax.core.temporal_read import AXIS_ORDER, Edge, Pin, milestone_edge, statement_pin
 from parallax.snapshot import materialize
 from parallax.snapshot.handle._wrap import wrap_graph
@@ -220,9 +214,12 @@ def find(
     graph-local identity map); otherwise compiles and executes ONE child query
     (declared relationship ordering rendered through the dialect's NULLs-last
     rule), applies `familyVariant` materialization (`m-sql`) to its rows, and
-    feeds the assembler. The root's own authored narrow (if any,
-    `~parallax.core.sql_gen.read_narrow_to`) threads into
-    `Assembler.materialize_root` the SAME way a deep-fetch child level's own
+    feeds the assembler. Every level is the same three steps — compile,
+    execute, transform — with `familyVariant` materialization coming from that
+    level's OWN `~parallax.core.sql_gen.CompiledRead.transform_row`, never
+    re-derived here from the operation a second time. The root's own authored
+    narrow (if any, `~parallax.core.sql_gen.CompiledRead.narrow_to`) threads
+    into `Assembler.materialize_root` the SAME way a deep-fetch child level's own
     `FetchLevel.narrow_to` already threads through `attach_level` (S3, COR-3
     Phase 7 increment 7 round-2): a table-per-concrete-subtype root position
     resolving to exactly one concrete emits no `familyVariant` column, so this
@@ -234,17 +231,16 @@ def find(
     plan_ = deep_fetch.plan(target, op, meta)
     statements: list[ExecutedStatement] = []
 
-    root_statement = compile_read(
+    root_compiled = compile_read(
         plan_.root_operation, meta, dialect, target, result_form="instance", lock=lock
     )
-    root_rows = _execute(port, dialect, root_statement, statements)
-    root_plan = family_variant_plan(meta, target, plan_.root_operation)
-    root_rows = [apply_family_variant(row, root_plan) for row in root_rows]
+    root_rows = [
+        root_compiled.transform_row(row)
+        for row in _execute(port, dialect, root_compiled.statement, statements)
+    ]
 
     assembler = materialize.Assembler(meta=meta)
-    root_nodes = assembler.materialize_root(
-        target, root_rows, narrow_to=read_narrow_to(plan_.root_operation)
-    )
+    root_nodes = assembler.materialize_root(target, root_rows, narrow_to=root_compiled.narrow_to)
     all_nodes: list[tuple[str, materialize.Node]] = [(target, node) for node in root_nodes]
 
     level_rows: list[Sequence[Row]] = []
@@ -265,7 +261,7 @@ def find(
             level_nodes.append(nodes)
             continue
         child_target, child_op = level.child_operation(keys)
-        child_statement = compile_read(
+        child_compiled = compile_read(
             child_op,
             meta,
             dialect,
@@ -274,9 +270,13 @@ def find(
             lock=lock,
             relationship_order=True,
         )
-        rows = _execute(port, dialect, child_statement, statements)
-        variant_plan = family_variant_plan(meta, child_target, child_op)
-        rows = [apply_family_variant(row, variant_plan) for row in rows]
+        # A child level takes its narrow from `FetchLevel.narrow_to` (consumed
+        # inside `attach_level`), never from the compiled read — only the ROOT
+        # has no planner-supplied narrow to fall back on.
+        rows = [
+            child_compiled.transform_row(row)
+            for row in _execute(port, dialect, child_compiled.statement, statements)
+        ]
         nodes = assembler.attach_level(level, parent_nodes, parent_rows, rows)
         level_rows.append(rows)
         level_nodes.append(nodes)
@@ -310,9 +310,9 @@ def find_history(
     # `_edge_pin`, `_edge_sort_key`) MUST resolve through it rather than the
     # queried target's own (possibly locally-empty) `as_of_attributes`.
     entity = inheritance.declaring_entity(meta, meta.entity(target))
-    statement = compile_read(plan_.root_operation, meta, dialect, target, result_form="instance")
+    compiled = compile_read(plan_.root_operation, meta, dialect, target, result_form="instance")
     statements: list[ExecutedStatement] = []
-    rows = _execute(port, dialect, statement, statements)
+    rows = _execute(port, dialect, compiled.statement, statements)
 
     order: list[Edge] = []
     groups: dict[Edge, list[Row]] = {}

@@ -212,8 +212,8 @@ def test_find_threads_a_root_narrow_to_a_single_tpcs_concrete() -> None:
     # S3 (COR-3 Phase 7 increment 7 round-2): a table-per-concrete-subtype
     # ABSTRACT root narrowed to exactly ONE concrete compiles to an ordinary
     # single-table read (`m-sql`'s `_compile_tpcs_single`) — the row carries no
-    # `familyVariant` at all. `find`'s own `read_narrow_to`-derived threading
-    # into `Assembler.materialize_root` is what lets the assembler still
+    # `familyVariant` at all. `find`'s own `CompiledRead.narrow_to`-derived
+    # threading into `Assembler.materialize_root` is what lets the assembler still
     # recover the row's own concrete identity, rather than the abstract
     # queried `targetEntity`.
     port = QueuePort(

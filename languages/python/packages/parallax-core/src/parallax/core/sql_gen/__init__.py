@@ -5,30 +5,30 @@ normalize) that turns an ``m-op-algebra`` operation into one canonical
 ``Statement`` per dialect. Lowering is a set of per-concern ``match`` functions
 over the node union; dialect variation enters only through the injected
 ``Dialect`` strategy. ``m-sql`` depends on ``m-op-algebra`` and ``m-dialect``.
+
+The six names below are the whole supported seam; everything else in this
+package is private implementation. ``compile_read`` returns a self-contained
+:class:`CompiledRead` — statement, root narrow, and row transform together — so
+a caller executes and transforms without re-deriving anything from the
+operation it just compiled.
 """
 
 from __future__ import annotations
 
-from parallax.core.sql_gen.compile import (
-    FamilyVariantPlan,
-    ResultForm,
+from parallax.core.sql_gen._compile import (
+    CompiledPredicate,
+    CompiledRead,
     SqlGenError,
     Statement,
-    apply_family_variant,
     compile_read,
     compile_write_predicate,
-    family_variant_plan,
-    read_narrow_to,
 )
 
 __all__ = [
-    "FamilyVariantPlan",
-    "ResultForm",
+    "CompiledPredicate",
+    "CompiledRead",
     "SqlGenError",
     "Statement",
-    "apply_family_variant",
     "compile_read",
     "compile_write_predicate",
-    "family_variant_plan",
-    "read_narrow_to",
 ]

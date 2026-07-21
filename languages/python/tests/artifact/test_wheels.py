@@ -54,6 +54,18 @@ def test_core_wheel_contains_spine_scopes(wheelhouse: Wheelhouse) -> None:
     assert "parallax/core/op_algebra/__init__.py" in names
 
 
+def test_core_wheel_ships_sql_gen_package(wheelhouse: Wheelhouse) -> None:
+    # Same idiom, same reasoning as the handle package below: Hatch discovers the
+    # tree rather than enumerating modules, so the ABSENT old path is the
+    # load-bearing half — it is what catches a stale build or a half-applied
+    # split. This grows with each COR-43 phase; the complete five-module layout
+    # is asserted in Phase 6.
+    names = _names(wheelhouse, "parallax-core")
+    assert "parallax/core/sql_gen/__init__.py" in names
+    assert "parallax/core/sql_gen/_compile.py" in names
+    assert "parallax/core/sql_gen/compile.py" not in names
+
+
 def test_snapshot_wheel_ships_handle_package(wheelhouse: Wheelhouse) -> None:
     # The checks above see `parallax/snapshot` only at the top-package prefix, so
     # they cannot tell a handle.py from a handle/ directory. Hatch discovers the
