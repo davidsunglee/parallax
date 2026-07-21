@@ -52,7 +52,7 @@ _P = "2024-02-01T00:00:00+00:00"
 def _where(op: oa.Operation, entity: Entity) -> tuple[str, tuple[object, ...]]:
     """Inject the as-of predicate, compile through m-sql, return the WHERE + binds."""
     injected = inject_as_of(op, entity)
-    statement = compile_read(injected, _META[entity.name], POSTGRES, entity.name)
+    statement = compile_read(injected, _META[entity.name], POSTGRES, entity.name).statement
     _, _, where = statement.sql.partition(" where ")
     return where, statement.binds
 

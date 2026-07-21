@@ -487,9 +487,10 @@ def lower_predicate_write(
             "target has no readless template — it must materialize to keyed writes before "
             "reaching lower_write (m-opt-lock; ADR 0014); this is a caller wiring defect"
         )
-    where_sql, predicate_binds = compile_write_predicate(
+    predicate = compile_write_predicate(
         instruction.target.predicate, meta, dialect, instruction.target.entity
     )
+    where_sql, predicate_binds = predicate.sql, predicate.binds
     if instruction.mutation == "delete":
         return Statement(f"delete from {entity.table} where {where_sql}", predicate_binds)
     assignment_row = {

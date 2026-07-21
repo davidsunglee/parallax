@@ -21,7 +21,7 @@ import threading
 import uuid
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Final, Protocol, cast, runtime_checkable
+from typing import Final, Literal, Protocol, cast, runtime_checkable
 
 from parallax.conformance import case_format, models, provision, temporal_state
 from parallax.conformance.temporal_state import TemporalShadow
@@ -34,14 +34,7 @@ from parallax.core.descriptor import deserialize as deserialize_metamodel
 from parallax.core.dialect import Dialect, dialect_for
 from parallax.core.op_algebra import Operation, OperationError, OperationRejectedError, deserialize
 from parallax.core.op_algebra import validate_operation as validate_op_algebra_operation
-from parallax.core.sql_gen import (
-    ResultForm,
-    SqlGenError,
-    Statement,
-    apply_family_variant,
-    compile_read,
-    family_variant_plan,
-)
+from parallax.core.sql_gen import CompiledRead, SqlGenError, Statement, compile_read
 from parallax.core.temporal_read import TemporalReadError, inject_as_of, resolve_pinned_instants
 from parallax.core.unit_work import (
     Concurrency,
@@ -168,7 +161,7 @@ def _read_target_and_operation(case: case_format.Case) -> tuple[str, object]:
     return target, body["operation"]
 
 
-def _result_form(case: case_format.Case) -> ResultForm:
+def _result_form(case: case_format.Case) -> Literal["row", "instance"]:
     """The read's result form from its asserted result member (m-case-format / m-sql).
 
     A top-level read case declares its consumption lane by which result member it
@@ -244,9 +237,7 @@ def _read_case_concurrency(case: case_format.Case) -> Concurrency | None:
     return None
 
 
-def _compile_statement(
-    case: case_format.Case, dialect_name: str
-) -> tuple[str, Statement, Metamodel, Operation]:
+def _compile_statement(case: case_format.Case, dialect_name: str) -> CompiledRead:
     if case.shape != "read":
         raise EngineError(
             f"{case.path.name}: only `read`-shape compile is implemented (a write/rejected/"
@@ -258,17 +249,16 @@ def _compile_statement(
     lock = read_lock.mode_for(_read_case_concurrency(case))
     try:
         operation = _canonicalize_read(operation_doc, meta.entity(target), meta)
-        statement = compile_read(
+        return compile_read(
             operation, meta, dialect, target, result_form=_result_form(case), lock=lock
         )
     except (OperationError, SqlGenError, TemporalReadError, KeyError) as exc:
         raise EngineError(f"{case.path.name}: {exc}") from exc
-    return target, statement, meta, operation
 
 
 def compile_read_case(case: case_format.Case, dialect_name: str) -> tuple[list[Emission], int]:
     """Compile a read case to its ordered emissions and round-trip count."""
-    _target, statement, _meta, _operation = _compile_statement(case, dialect_name)
+    statement = _compile_statement(case, dialect_name).statement
     emission = Emission("/operation", statement.sql, statement.binds)
     return [emission], 1
 
@@ -285,19 +275,23 @@ def run_read_case(
     wire/grading logic and the observation envelope JSON-serializable.
 
     An **abstract-target** inheritance read (m-case-format / m-sql resolved Q6)
-    additionally materializes `familyVariant` into each wire row from the read's
-    `~parallax.core.sql_gen.family_variant_plan`: a table-per-hierarchy read
-    derives it from the projected raw tag column via the tag-metadata map (the
-    tag column itself is popped, never left on the wire row); a table-per-
-    concrete-subtype read renames its projected `family_variant` literal column.
-    A concrete-target (or single-resolved-position TPCS) read carries neither.
+    additionally materializes `familyVariant` into each wire row through the
+    compiled read's own `~parallax.core.sql_gen.CompiledRead.transform_row`: a
+    table-per-hierarchy read derives it from the projected raw tag column via
+    the tag-metadata map (the tag column itself is popped, never left on the
+    wire row); a table-per-concrete-subtype read renames its projected
+    `family_variant` literal column. A concrete-target (or
+    single-resolved-position TPCS) read carries neither and transforms by
+    identity. The lane is therefore exactly compile -> execute -> transform:
+    `m-sql` decided at COMPILE time what each row needs, so this adapter never
+    re-derives it from the operation.
     """
-    target, statement, meta, operation = _compile_statement(case, dialect_name)
+    compiled = _compile_statement(case, dialect_name)
+    statement = compiled.statement
     dialect = dialect_for(dialect_name)
     managed = port.execute(dialect.to_driver_sql(statement.sql), _driver_binds(statement.binds))
     emission = Emission("/operation", statement.sql, statement.binds)
-    plan = family_variant_plan(meta, target, operation)
-    rows = [apply_family_variant(wire_row(row), plan) for row in managed]
+    rows = [compiled.transform_row(wire_row(row)) for row in managed]
     return [emission], rows, 1
 
 
@@ -1179,7 +1173,7 @@ def _lower_find(
     dialect: Dialect,
     concurrency: Concurrency | None,
     *,
-    result_form: ResultForm = "instance",
+    result_form: Literal["row", "instance"] = "instance",
 ) -> Statement:
     """Compile a scenario ``find`` step through the read path with the read-lock suffix.
 
@@ -1232,7 +1226,12 @@ def _lower_find(
         raise EngineError("scenario find step needs `targetEntity` and `find`")
     operation = _canonicalize_read(find_doc, meta.entity(target), meta)
     lock = read_lock.mode_for(concurrency)
-    return compile_read(operation, meta, dialect, target, result_form=result_form, lock=lock)
+    # A scenario find's emission is graded on SQL text and binds alone — the
+    # compiled read's row transform belongs to whoever consumes the rows, and a
+    # scenario find step's rows are consumed by the production find executor.
+    return compile_read(
+        operation, meta, dialect, target, result_form=result_form, lock=lock
+    ).statement
 
 
 def _scenario_lowered(case: case_format.Case, dialect_name: str) -> list[_LoweredStep]:
@@ -1387,7 +1386,9 @@ def _compile_snapshot_scenario(
                     f"{case.path.name}: scenario find step needs `targetEntity` and `find`"
                 )
             operation = _canonicalize_read(find_doc, meta.entity(target), meta)
-            statement = compile_read(operation, meta, dialect, target, result_form="instance")
+            statement = compile_read(
+                operation, meta, dialect, target, result_form="instance"
+            ).statement
             emissions.append(Emission(f"/scenario/{index}/find", statement.sql, statement.binds))
     except (OperationError, SqlGenError, TemporalReadError, KeyError) as exc:
         raise EngineError(f"{case.path.name}: {exc}") from exc

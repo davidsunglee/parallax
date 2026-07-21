@@ -271,6 +271,10 @@ def _materialize_predicate_write(
         needs_documents = frozenset(member for member in assignments if member_columns[member][1])
     else:
         needs_documents = False
+    # A materializing predicate write's resolving read is row-form over a
+    # non-family target (a family predicate write is rejected before SQL), so
+    # its compiled row transform is always the identity — only the statement is
+    # consumed here.
     statement = compile_read(
         plan_.root_operation,
         meta,
@@ -279,7 +283,7 @@ def _materialize_predicate_write(
         result_form="row",
         lock=lock,
         include_value_objects=needs_documents,
-    )
+    ).statement
     rows = uow.read(lambda: _resolve_rows(conn, dialect, statement))
     writes: list[KeyedWrite] = []
     pending: list[tuple[ObjectKey, Observation | None]] = []

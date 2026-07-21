@@ -34,7 +34,7 @@ _P = "2024-02-01T00:00:00+00:00"
 
 
 def _where(op: oa.Operation, meta: object, target: str) -> tuple[str, tuple[object, ...]]:
-    statement = compile_read(op, meta, POSTGRES, target)  # type: ignore[arg-type]
+    statement = compile_read(op, meta, POSTGRES, target).statement  # type: ignore[arg-type]
     _, _, where = statement.sql.partition(" where ")
     return where, statement.binds
 

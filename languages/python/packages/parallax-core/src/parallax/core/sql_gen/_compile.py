@@ -107,22 +107,23 @@ from parallax.core.op_algebra import (
 )
 
 __all__ = [
-    "FamilyVariantPlan",
-    "ResultForm",
+    "CompiledPredicate",
+    "CompiledRead",
     "SqlGenError",
     "Statement",
-    "apply_family_variant",
     "compile_read",
     "compile_write_predicate",
-    "family_variant_plan",
-    "read_narrow_to",
 ]
 
 # The read's consumption lane (m-sql *Read projection*, *Result form*): a
 # ``row``-form read (the values lane) projects scalars only; an ``instance``-form
 # read (the object lane — a find / snapshot / deep-fetch whose rows materialize
 # into instances) additionally projects the value-object document columns (slot 4).
-ResultForm = Literal["row", "instance"]
+# PRIVATE: `compile_read`'s ``result_form`` keyword and its semantics are part of
+# the supported interface, but the alias naming them is not — a caller spells the
+# two literals inline (`Literal["row", "instance"]`) rather than importing a name
+# whose only job is to abbreviate them.
+_ResultForm = Literal["row", "instance"]
 
 _COMPARATORS: dict[str, str] = {
     "eq": "=",
@@ -156,6 +157,126 @@ class Statement:
 
     sql: str
     binds: tuple[object, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class CompiledPredicate:
+    """A compiled write predicate: an UNALIASED `where`-clause fragment
+    (`balance < ?`, never `t0.balance < ?`) and its ordered binds.
+
+    Deliberately NOT a :class:`Statement`: this is a predicate fragment, not a
+    complete statement — the caller splices it into its own `update … where` /
+    `delete from … where` template (`m-batch-write.md` "Predicate-selected
+    readless forms").
+    """
+
+    sql: str
+    binds: tuple[object, ...] = ()
+
+
+# --------------------------------------------------------------------------- #
+# Row transforms: how a read's own `familyVariant` is materialized onto each   #
+# observed row (m-case-format / m-conformance-adapter). Table-per-hierarchy    #
+# derives it from the projected raw tag column, table-per-concrete-subtype     #
+# reads it straight from the projected literal column, and every other read    #
+# carries none.                                                               #
+#                                                                              #
+# A UNION of three frozen forms rather than one class with a `kind` tag and    #
+# optional fields: every field of every form is required, so there is no       #
+# illegal state to assert against at apply time, and each form's `apply` is    #
+# total — which is what lets `CompiledRead.transform_row` be a single          #
+# structural delegation with no dispatch. This is the module's own documented  #
+# style (the `m-op-algebra` node union), and each form pickles, compares, and  #
+# reprs as a plain dataclass with no `__reduce__` and no stored callable.      #
+# --------------------------------------------------------------------------- #
+@dataclass(frozen=True, slots=True)
+class _IdentityTransform:
+    """No `familyVariant` to materialize: a non-family read, a concrete-target
+    table-per-hierarchy read, or a table-per-concrete-subtype read whose
+    position resolved to a single concrete. Still returns a FRESH dict, so
+    every caller may mutate the result regardless of which form it got."""
+
+    def apply(self, row: Mapping[str, object]) -> dict[str, object]:
+        return dict(row)
+
+
+@dataclass(frozen=True, slots=True)
+class _TagTransform:
+    """Table-per-hierarchy: pop the framework-owned raw tag column (it never
+    reaches the caller) and map its value to the declaring concrete's name.
+
+    ``tag_pairs`` is the WHOLE family's `(tagValue, concreteName)` mapping in
+    `inheritance.effective_concrete_subtypes`' canonical alphabetical order —
+    never the read's own resolved position, since a narrowed abstract read
+    still projects the shared table's tag column and may observe any of them.
+    A tuple of pairs rather than a `Mapping` is what keeps :class:`CompiledRead`
+    hashable and its `repr` stable.
+    """
+
+    column: str
+    tag_pairs: tuple[tuple[str, str], ...]
+
+    def apply(self, row: Mapping[str, object]) -> dict[str, object]:
+        materialized = dict(row)
+        raw = materialized.pop(self.column)
+        materialized["familyVariant"] = dict(self.tag_pairs)[cast("str", raw)]
+        return materialized
+
+
+@dataclass(frozen=True, slots=True)
+class _LiteralTransform:
+    """Table-per-concrete-subtype `union all`: rename the per-branch projected
+    subtype-name literal column — there is no tag column to derive it from."""
+
+    column: str
+
+    def apply(self, row: Mapping[str, object]) -> dict[str, object]:
+        materialized = dict(row)
+        materialized["familyVariant"] = materialized.pop(self.column)
+        return materialized
+
+
+_RowTransform = _IdentityTransform | _TagTransform | _LiteralTransform
+
+# The identity form is stateless, so one shared instance serves every read that
+# carries no `familyVariant`; equality is structural, so a copied/unpickled
+# `CompiledRead` still compares equal to one holding this very object.
+_IDENTITY_TRANSFORM = _IdentityTransform()
+
+
+@dataclass(frozen=True, slots=True)
+class CompiledRead:
+    """One compiled read: its :class:`Statement`, the root narrow to materialize
+    under, and the row transform that materializes `familyVariant`.
+
+    Self-contained by design (COR-43): everything a caller needs to turn driver
+    rows into observed rows travels WITH the compiled statement, so the two
+    execution lanes (the conformance engine's flat wire rows and the production
+    snapshot find executor's instance-form graph rows) each shrink to "compile,
+    execute, transform" and can no longer drift from what was actually
+    projected.
+
+    ``narrow_to`` is the read's own TOP-LEVEL authored narrow (its ``Narrow.to``,
+    result-shaping directives peeled) or ``None`` for a bare read: a
+    table-per-concrete-subtype position resolving to exactly one concrete emits
+    no `familyVariant` column at all, so this is what lets
+    :meth:`~parallax.snapshot.materialize.Assembler.materialize_root` still
+    recover the row's own concrete identity. A deep-fetch CHILD level takes its
+    narrow from its own ``FetchLevel.narrow_to`` instead.
+    """
+
+    statement: Statement
+    narrow_to: tuple[str, ...] | None
+    _transform: _RowTransform
+
+    def transform_row(self, row: Mapping[str, object]) -> dict[str, object]:
+        """Materialize `familyVariant` on one observed row.
+
+        Accepts any ``Mapping`` (a wire-rendered row or a raw driver row alike)
+        and always returns a FRESH ``dict``, including when there is nothing to
+        materialize.
+        """
+        return self._transform.apply(row)
 
 
 def _new_alias_seq() -> list[int]:
@@ -261,7 +382,7 @@ def _projection(
     entity: Entity,
     dialect: Dialect,
     alias: str,
-    result_form: ResultForm,
+    result_form: _ResultForm,
     *,
     include_value_objects: bool | frozenset[str] = False,
 ) -> tuple[str, list[object]]:
@@ -328,12 +449,17 @@ def compile_read(
     dialect: Dialect,
     target: str,
     *,
-    result_form: ResultForm = "row",
+    result_form: _ResultForm = "row",
     lock: LockMode | None = None,
     relationship_order: bool = False,
     include_value_objects: bool | frozenset[str] = False,
-) -> Statement:
-    """Compile a read operation to one canonical ``Statement`` for ``dialect``.
+) -> CompiledRead:
+    """Compile a read operation to one self-contained :class:`CompiledRead`.
+
+    The result carries everything the caller needs to consume the read's rows —
+    the canonical ``Statement`` for ``dialect``, the root ``narrow_to`` to
+    materialize under, and :meth:`CompiledRead.transform_row` — so no caller
+    re-derives `familyVariant` or narrowing from the operation a second time.
 
     ``result_form`` selects the projection lane (m-sql *Read projection*): a
     **row-form** read (the values lane — the corpus predicate `read` cases and the
@@ -380,8 +506,12 @@ def compile_read(
     """
     entity = meta.entity(target)
     predicate, distinct, order_keys, limit = _peel_directives(op)
+    # The read's own TOP-LEVEL authored narrow, taken from the SAME peel the
+    # lowering below uses — so what the caller materializes under can never
+    # disagree with what was compiled.
+    narrow_to = predicate.to if isinstance(predicate, Narrow) else None
     if entity.inheritance is not None:
-        return _compile_inheritance_read(
+        statement, transform = _compile_inheritance_read(
             entity,
             predicate,
             distinct,
@@ -394,6 +524,7 @@ def compile_read(
             lock,
             relationship_order,
         )
+        return CompiledRead(statement, narrow_to, transform)
     ctx = _Ctx(meta=meta, dialect=dialect, entity=entity)
 
     proj_sql, proj_binds = _projection(
@@ -408,12 +539,15 @@ def compile_read(
         parts.append(f"where {where_sql}")
     _append_result_shape(parts, ctx, distinct, order_keys, limit, lock, relationship_order)
 
-    return _normalize(Statement(" ".join(parts), tuple(ctx.binds)))
+    statement = _normalize(Statement(" ".join(parts), tuple(ctx.binds)))
+    # A non-family read projects no tag and no variant literal, so there is
+    # nothing to materialize.
+    return CompiledRead(statement, narrow_to, _IDENTITY_TRANSFORM)
 
 
 def compile_write_predicate(
     op: Operation, meta: Metamodel, dialect: Dialect, target: str
-) -> tuple[str, tuple[object, ...]]:
+) -> CompiledPredicate:
     """Render a BARE write predicate (`m-batch-write.md` "Predicate-selected
     readless forms"): the UNALIASED where-clause SQL and its ordered binds —
     `balance < ?`, never the resolving read's aliased `t0.balance < ?`.
@@ -431,7 +565,7 @@ def compile_write_predicate(
     entity = meta.entity(target)
     ctx = _Ctx(meta=meta, dialect=dialect, entity=entity, unaliased=True)
     where_sql = _lower_predicate(op, ctx)
-    return where_sql, tuple(ctx.binds)
+    return CompiledPredicate(where_sql, tuple(ctx.binds))
 
 
 def _append_result_shape(
@@ -578,13 +712,18 @@ def _compile_inheritance_read(
     meta: Metamodel,
     dialect: Dialect,
     target: str,
-    result_form: ResultForm,
+    result_form: _ResultForm,
     lock: LockMode | None,
     relationship_order: bool = False,
-) -> Statement:
+) -> tuple[Statement, _RowTransform]:
     """Dispatch an inheritance-family read to its strategy's lowering (m-inheritance
     admits exactly two strategies; a third is rejected long before SQL, by the
-    model-aware descriptor validator)."""
+    model-aware descriptor validator).
+
+    Returns the statement AND its row transform together: whether a read carries
+    `familyVariant` is decided by the very same resolved position that decides
+    what it projects, so the two are computed once, at one site.
+    """
     root = inheritance.family_root(meta, entity)
     assert root.inheritance is not None  # a family root always carries its own block
     strategy = root.inheritance.strategy
@@ -635,10 +774,10 @@ def _compile_tph_read(
     meta: Metamodel,
     dialect: Dialect,
     target: str,
-    result_form: ResultForm,
+    result_form: _ResultForm,
     lock: LockMode | None,
     relationship_order: bool = False,
-) -> Statement:
+) -> tuple[Statement, _RowTransform]:
     """Table-per-hierarchy: one shared correlated `EXISTS`-free single-table SELECT
     (m-sql "Inheritance — table-per-hierarchy lowering").
 
@@ -708,7 +847,31 @@ def _compile_tph_read(
         parts.append("where " + " and ".join(where_terms))
 
     _append_result_shape(parts, ctx, distinct, order_keys, limit, lock, relationship_order)
-    return _normalize(Statement(" ".join(parts), tuple(ctx.binds)))
+    statement = _normalize(Statement(" ".join(parts), tuple(ctx.binds)))
+    # `familyVariant` rides the SAME condition as the slot-2 tag projection: the
+    # transform reads the column this read just projected, or there is no column
+    # to read and nothing to materialize.
+    transform: _RowTransform = (
+        _TagTransform(tag_col, _family_tag_pairs(meta, root))
+        if abstract_target
+        else _IDENTITY_TRANSFORM
+    )
+    return statement, transform
+
+
+def _family_tag_pairs(meta: Metamodel, root: Entity) -> tuple[tuple[str, str], ...]:
+    """The WHOLE family's `(tagValue, concreteName)` pairs, in
+    `effective_concrete_subtypes`' canonical alphabetical order.
+
+    Deliberately the family's set, not the read's resolved position: a narrowed
+    abstract read still projects the shared table's raw tag column, and the
+    mapping that interprets it is a property of the family, not of the narrow
+    (`m-inheritance-012`).
+    """
+    return tuple(
+        (_tag_value(meta, name), name)
+        for name in inheritance.effective_concrete_subtypes(meta, root.name)
+    )
 
 
 def _tph_tag_guard(
@@ -796,10 +959,10 @@ def _compile_tpcs_read(
     meta: Metamodel,
     dialect: Dialect,
     target: str,
-    result_form: ResultForm,
+    result_form: _ResultForm,
     lock: LockMode | None,
     relationship_order: bool = False,
-) -> Statement:
+) -> tuple[Statement, _RowTransform]:
     """Table-per-concrete-subtype (m-sql "Inheritance — table-per-concrete-subtype
     lowering"): a position resolving to ONE concrete is an ordinary single-table
     read (no union, no `familyVariant`) regardless of how that single concrete was
@@ -887,7 +1050,10 @@ def _compile_tpcs_read(
         branch_sqls.append(" ".join(parts))
         all_binds.extend(branch_ctx.binds)
 
-    return _normalize(Statement(" union all ".join(branch_sqls), tuple(all_binds)))
+    statement = _normalize(Statement(" union all ".join(branch_sqls), tuple(all_binds)))
+    # Every branch above projected its own `family_variant` literal, so the
+    # transform is a plain rename — no tag map, no metamodel lookup.
+    return statement, _LiteralTransform("family_variant")
 
 
 def _compile_tpcs_single(
@@ -899,11 +1065,11 @@ def _compile_tpcs_single(
     meta: Metamodel,
     dialect: Dialect,
     entity: Entity,
-    result_form: ResultForm,
+    result_form: _ResultForm,
     lock: LockMode | None,
     position: Sequence[str],
     relationship_order: bool = False,
-) -> Statement:
+) -> tuple[Statement, _RowTransform]:
     """A table-per-concrete-subtype read resolving to exactly one concrete: an
     ordinary single-table read of that subtype's own table, no tag, no union, no
     `familyVariant` — attribute resolution still widens across the family (`ctx.entity`
@@ -929,102 +1095,11 @@ def _compile_tpcs_single(
     if where_sql:
         parts.append(f"where {where_sql}")
     _append_result_shape(parts, ctx, distinct, order_keys, limit, lock, relationship_order)
-    return _normalize(Statement(" ".join(parts), tuple(ctx.binds)))
-
-
-# --------------------------------------------------------------------------- #
-# familyVariant materialization plan (engine-facing; m-case-format /            #
-# m-conformance-adapter): TPH derives it from the projected raw tag column at   #
-# row construction, TPCS reads it straight from the projected literal column.   #
-# A concrete-target read (TPH) or a single-resolved-position read (TPCS)        #
-# carries neither, and `family_variant_plan` returns `None`.                    #
-# --------------------------------------------------------------------------- #
-@dataclass(frozen=True, slots=True)
-class FamilyVariantPlan:
-    """How the conformance engine derives ``familyVariant`` for one read's wire
-    rows, or graph leaves (m-case-format). Never used for a concrete-target read.
-    """
-
-    kind: Literal["tag", "literal"]
-    column: str
-    tag_map: Mapping[str, str] | None = None
-
-
-def read_narrow_to(op: Operation) -> tuple[str, ...] | None:
-    """``op``'s own TOP-LEVEL authored narrow (its ``Narrow.to``), directives
-    peeled — or ``None`` for a bare (unnarrowed) read.
-
-    Mirrors `family_variant_plan`'s own predicate inspection (this function
-    factors out exactly the piece it shares) so a find executor can thread a
-    root read's own authored narrow into materialization
-    (:func:`~parallax.snapshot.materialize.Assembler.materialize_root`) the
-    SAME way a deep-fetch child level's own ``FetchLevel.narrow_to`` already
-    threads through ``attach_level`` — the root-level counterpart `m-deep-
-    fetch` never itself resolves, since planning a root read is `m-sql`'s own
-    job, never the planner's (S3, COR-3 Phase 7 increment 7 round-2).
-    """
-    predicate, *_directives = _peel_directives(op)
-    return predicate.to if isinstance(predicate, Narrow) else None
-
-
-def family_variant_plan(meta: Metamodel, target: str, op: Operation) -> FamilyVariantPlan | None:
-    """The read's ``familyVariant`` materialization plan, or ``None`` when the
-    read carries none.
-
-    Mirrors `compile_read`'s own top-level-narrow / position resolution so the
-    engine's row post-processing can never drift from what was actually
-    projected: a table-per-hierarchy read materializes it whenever `target`
-    itself is abstract (regardless of a narrow's resolved cardinality,
-    `m-inheritance-012`); a table-per-concrete-subtype read carries it only when
-    the resolved position spans two or more concretes (the union-all form).
-    """
-    entity = meta.entity(target)
-    if entity.inheritance is None:
-        return None
-    narrow_to = read_narrow_to(op)
-    root = inheritance.family_root(meta, entity)
-    assert root.inheritance is not None
-    if narrow_to is not None:
-        position = _narrow_effective_set(meta, narrow_to)
-    else:
-        position = tuple(inheritance.effective_concrete_subtypes(meta, target))
-
-    if root.inheritance.strategy == "table-per-hierarchy":
-        if entity.inheritance.role not in ("root", "abstract-subtype"):
-            return None
-        tag_col = root.inheritance.tag_column
-        assert tag_col is not None
-        family_concretes = inheritance.effective_concrete_subtypes(meta, root.name)
-        tag_map = {_tag_value(meta, name): name for name in family_concretes}
-        return FamilyVariantPlan(kind="tag", column=tag_col, tag_map=tag_map)
-    # table-per-concrete-subtype
-    if len(position) <= 1:
-        return None
-    return FamilyVariantPlan(kind="literal", column="family_variant")
-
-
-def apply_family_variant(
-    row: Mapping[str, object], plan: FamilyVariantPlan | None
-) -> dict[str, object]:
-    """Materialize ``familyVariant`` on one observed row from its ``plan`` (or
-    return ``row`` unchanged when ``plan`` is ``None``).
-
-    The single application of a :class:`FamilyVariantPlan` every consumer shares —
-    the conformance engine's flat wire rows and the production snapshot find
-    executor's instance-form graph rows alike (COR-3 Phase 7 increment 5) — so
-    the `tag` (pop the raw tag column, look it up in ``plan.tag_map``) / `literal`
-    (rename the projected literal column) derivation lives once, in `m-sql`.
-    """
-    if plan is None:
-        return dict(row)
-    materialized = dict(row)
-    raw = materialized.pop(plan.column)
-    if plan.kind == "tag":
-        assert plan.tag_map is not None
-        materialized["familyVariant"] = plan.tag_map[cast("str", raw)]
-    else:
-        materialized["familyVariant"] = raw
-    return materialized
+    statement = _normalize(Statement(" ".join(parts), tuple(ctx.binds)))
+    # A single resolved concrete projects neither a tag column nor a variant
+    # literal — the settled asymmetry with table-per-hierarchy, whose abstract
+    # target keeps its tag however narrow the position resolves.
+    return statement, _IDENTITY_TRANSFORM
 
 
 # --------------------------------------------------------------------------- #

@@ -35,15 +35,15 @@ def test_nested_null_check_and_membership() -> None:
         POSTGRES,
         "Customer",
     )
-    assert "jsonb_extract_path_text(t0.address, ?) is null" in is_null.sql
+    assert "jsonb_extract_path_text(t0.address, ?) is null" in is_null.statement.sql
     membership = compile_read(
         oa.NestedMembership(path="Customer.address.city", values=("Oslo", "Boston")),
         CUSTOMER,
         POSTGRES,
         "Customer",
     )
-    assert membership.sql.endswith("in (?, ?)")
-    assert membership.binds == ("city", "Oslo", "Boston")
+    assert membership.statement.sql.endswith("in (?, ?)")
+    assert membership.statement.binds == ("city", "Oslo", "Boston")
 
 
 def test_malformed_value_object_paths() -> None:
@@ -118,18 +118,18 @@ def test_top_level_many_value_object_any_element_needs_no_path_descent() -> None
         ),
     )
     meta = Metamodel(entities=(doc,))
-    statement = compile_read(
+    compiled = compile_read(
         oa.NestedComparison(op="nestedEq", path="Doc.tags.label", value="x"),
         meta,
         POSTGRES,
         "Doc",
     )
-    assert statement.sql == (
+    assert compiled.statement.sql == (
         "select t0.id from doc t0 where exists (select 1 from jsonb_array_elements("
         "case when jsonb_typeof(t0.tags) = ? then t0.tags else cast(? as jsonb) end) "
         "t1 where jsonb_extract_path_text(t1.value, ?) = ?)"
     )
-    assert statement.binds == ("array", "[]", "label", "x")
+    assert compiled.statement.binds == ("array", "[]", "label", "x")
 
 
 # --------------------------------------------------------------------------- #
@@ -137,27 +137,29 @@ def test_top_level_many_value_object_any_element_needs_no_path_descent() -> None
 # and any-element predicates"; COR-3 Phase 7 increment 4).                     #
 # --------------------------------------------------------------------------- #
 def test_nested_exists_bare_is_a_non_empty_test_no_where() -> None:
-    statement = compile_read(
+    compiled = compile_read(
         oa.NestedExists(path="Customer.address.phones"), CUSTOMER, POSTGRES, "Customer"
     )
-    assert statement.sql == (
+    assert compiled.statement.sql == (
         "select t0.id, t0.name from customer t0 where exists (select 1 from "
         "jsonb_array_elements(case when jsonb_typeof(jsonb_extract_path(t0.address, ?)) = ? "
         "then jsonb_extract_path(t0.address, ?) else cast(? as jsonb) end) t1)"
     )
-    assert statement.binds == ("phones", "array", "phones", "[]")
+    assert compiled.statement.binds == ("phones", "array", "phones", "[]")
 
 
 def test_nested_not_exists_bare_negates_with_no_coalesce() -> None:
     # Postgres `EXISTS` is never NULL — unlike MariaDB's containment form (not
     # implemented; this claim is Postgres-only), the negated bare form needs no
     # `coalesce` wrap at all.
-    statement = compile_read(
+    compiled = compile_read(
         oa.NestedNotExists(path="Customer.address.phones"), CUSTOMER, POSTGRES, "Customer"
     )
-    assert statement.sql.startswith("select t0.id, t0.name from customer t0 where not exists (")
-    assert "coalesce" not in statement.sql
-    assert statement.binds == ("phones", "array", "phones", "[]")
+    assert compiled.statement.sql.startswith(
+        "select t0.id, t0.name from customer t0 where not exists ("
+    )
+    assert "coalesce" not in compiled.statement.sql
+    assert compiled.statement.binds == ("phones", "array", "phones", "[]")
 
 
 def test_nested_exists_scoped_where_reuses_one_alias_for_every_conjunct() -> None:
@@ -173,15 +175,15 @@ def test_nested_exists_scoped_where_reuses_one_alias_for_every_conjunct() -> Non
             )
         ),
     )
-    statement = compile_read(op, CUSTOMER, POSTGRES, "Customer")
-    assert statement.sql.count("jsonb_array_elements(") == 1  # ONE guarded unnest, not two
-    assert statement.sql == (
+    compiled = compile_read(op, CUSTOMER, POSTGRES, "Customer")
+    assert compiled.statement.sql.count("jsonb_array_elements(") == 1  # ONE guarded unnest, not two
+    assert compiled.statement.sql == (
         "select t0.id, t0.name from customer t0 where exists (select 1 from "
         "jsonb_array_elements(case when jsonb_typeof(jsonb_extract_path(t0.address, ?)) = ? "
         "then jsonb_extract_path(t0.address, ?) else cast(? as jsonb) end) t1 where "
         "jsonb_extract_path_text(t1.value, ?) = ? and jsonb_extract_path_text(t1.value, ?) = ?)"
     )
-    assert statement.binds == (
+    assert compiled.statement.binds == (
         "phones",
         "array",
         "phones",
@@ -198,11 +200,13 @@ def test_nested_not_exists_scoped_where_negates_the_same_element_check() -> None
         path="Customer.address.phones",
         where=oa.NestedComparison(op="nestedEq", path="number", value="555-0000"),
     )
-    statement = compile_read(op, CUSTOMER, POSTGRES, "Customer")
-    assert statement.sql.startswith("select t0.id, t0.name from customer t0 where not exists (")
-    assert "coalesce" not in statement.sql
-    assert statement.sql.endswith("where jsonb_extract_path_text(t1.value, ?) = ?)")
-    assert statement.binds == ("phones", "array", "phones", "[]", "number", "555-0000")
+    compiled = compile_read(op, CUSTOMER, POSTGRES, "Customer")
+    assert compiled.statement.sql.startswith(
+        "select t0.id, t0.name from customer t0 where not exists ("
+    )
+    assert "coalesce" not in compiled.statement.sql
+    assert compiled.statement.sql.endswith("where jsonb_extract_path_text(t1.value, ?) = ?)")
+    assert compiled.statement.binds == ("phones", "array", "phones", "[]", "number", "555-0000")
 
 
 def test_nested_exists_scoped_where_composes_or_not_and_group() -> None:
@@ -220,12 +224,21 @@ def test_nested_exists_scoped_where_composes_or_not_and_group() -> None:
             )
         ),
     )
-    statement = compile_read(op, CUSTOMER, POSTGRES, "Customer")
-    assert statement.sql.endswith(
+    compiled = compile_read(op, CUSTOMER, POSTGRES, "Customer")
+    assert compiled.statement.sql.endswith(
         "where (jsonb_extract_path_text(t1.value, ?) = ? or "
         "not jsonb_extract_path_text(t1.value, ?) = ?))"
     )
-    assert statement.binds == ("phones", "array", "phones", "[]", "type", "home", "type", "work")
+    assert compiled.statement.binds == (
+        "phones",
+        "array",
+        "phones",
+        "[]",
+        "type",
+        "home",
+        "type",
+        "work",
+    )
 
 
 def test_flat_any_element_predicates_are_independent_not_same_element() -> None:
@@ -241,9 +254,9 @@ def test_flat_any_element_predicates_are_independent_not_same_element() -> None:
             ),
         )
     )
-    statement = compile_read(op, CUSTOMER, POSTGRES, "Customer")
-    assert statement.sql.count("jsonb_array_elements(") == 2  # TWO independent unnests
-    assert statement.sql == (
+    compiled = compile_read(op, CUSTOMER, POSTGRES, "Customer")
+    assert compiled.statement.sql.count("jsonb_array_elements(") == 2  # TWO independent unnests
+    assert compiled.statement.sql == (
         "select t0.id, t0.name from customer t0 where exists (select 1 from jsonb_array_elements("
         "case when jsonb_typeof(jsonb_extract_path(t0.address, ?)) = ? then "
         "jsonb_extract_path(t0.address, ?) else cast(? as jsonb) end) t1 where "
@@ -252,7 +265,7 @@ def test_flat_any_element_predicates_are_independent_not_same_element() -> None:
         "jsonb_extract_path(t0.address, ?) else cast(? as jsonb) end) t2 where "
         "jsonb_extract_path_text(t2.value, ?) = ?)"
     )
-    assert statement.binds == (
+    assert compiled.statement.binds == (
         "phones",
         "array",
         "phones",
@@ -285,8 +298,8 @@ def test_flat_any_element_scalar_collapse_uses_the_same_guard_fragment() -> None
     bare = compile_read(
         oa.NestedExists(path="Customer.address.phones"), CUSTOMER, POSTGRES, "Customer"
     )
-    assert guard in flat.sql
-    assert guard in bare.sql
+    assert guard in flat.statement.sql
+    assert guard in bare.statement.sql
 
 
 def test_nested_exists_over_a_one_cardinality_value_object_has_no_lowering_yet() -> None:
@@ -373,15 +386,24 @@ def test_many_member_nested_two_levels_deep_binds_every_path_segment_twice() -> 
         POSTGRES,
         "Store",
     )
-    assert flat.sql == (
+    assert flat.statement.sql == (
         "select t0.id from store t0 where exists (select 1 from jsonb_array_elements("
         "case when jsonb_typeof(jsonb_extract_path(t0.profile, ?, ?)) = ? then "
         "jsonb_extract_path(t0.profile, ?, ?) else cast(? as jsonb) end) t1 where "
         "jsonb_extract_path_text(t1.value, ?) = ?)"
     )
-    assert flat.binds == ("shipping", "rates", "array", "shipping", "rates", "[]", "zone", "west")
+    assert flat.statement.binds == (
+        "shipping",
+        "rates",
+        "array",
+        "shipping",
+        "rates",
+        "[]",
+        "zone",
+        "west",
+    )
 
     bare_exists = compile_read(
         oa.NestedExists(path="Store.profile.shipping.rates"), meta, POSTGRES, "Store"
     )
-    assert bare_exists.binds == ("shipping", "rates", "array", "shipping", "rates", "[]")
+    assert bare_exists.statement.binds == ("shipping", "rates", "array", "shipping", "rates", "[]")

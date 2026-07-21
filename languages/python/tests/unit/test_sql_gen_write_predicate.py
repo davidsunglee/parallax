@@ -20,7 +20,12 @@ import pytest
 from parallax.conformance import models
 from parallax.core import op_algebra as oa
 from parallax.core.dialect import POSTGRES
-from parallax.core.sql_gen import SqlGenError, compile_read, compile_write_predicate
+from parallax.core.sql_gen import (
+    CompiledPredicate,
+    SqlGenError,
+    compile_read,
+    compile_write_predicate,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -35,12 +40,13 @@ PAYMENT = _MODELS["payment"]
 # Unaliased column rendering — the one thing that differs from a read.        #
 # --------------------------------------------------------------------------- #
 def test_comparison_renders_the_column_unaliased() -> None:
-    sql, binds = compile_write_predicate(
+    predicate = compile_write_predicate(
         oa.Comparison(op="lessThan", attr="Account.balance", value=100),
         ACCOUNT,
         POSTGRES,
         "Account",
     )
+    sql, binds = predicate.sql, predicate.binds
     assert sql == "balance < ?"
     assert binds == (100,)
 
@@ -48,20 +54,28 @@ def test_comparison_renders_the_column_unaliased() -> None:
 def test_the_rendered_fragment_is_a_predicate_not_a_statement() -> None:
     # A bare fragment: no `select`, no `from`, no owning table alias anywhere —
     # it is spliced into `update <table> set … where <fragment>` by the caller.
-    sql, _ = compile_write_predicate(
+    predicate = compile_write_predicate(
         oa.Comparison(op="lessThan", attr="Account.balance", value=100),
         ACCOUNT,
         POSTGRES,
         "Account",
     )
+    sql = predicate.sql
     assert "select" not in sql
     assert "from" not in sql
     assert "t0." not in sql
 
 
 def test_all_renders_the_empty_fragment_and_none_renders_unsatisfiable() -> None:
-    assert compile_write_predicate(oa.All(), ACCOUNT, POSTGRES, "Account") == ("", ())
-    assert compile_write_predicate(oa.NoneOp(), ACCOUNT, POSTGRES, "Account") == ("1 = 0", ())
+    # Compared as whole `CompiledPredicate` values: the frozen result object is
+    # part of the seam, so equality against a freshly constructed literal pins
+    # BOTH members at once and would catch a silently reordered pair.
+    assert compile_write_predicate(oa.All(), ACCOUNT, POSTGRES, "Account") == CompiledPredicate(
+        "", ()
+    )
+    assert compile_write_predicate(oa.NoneOp(), ACCOUNT, POSTGRES, "Account") == CompiledPredicate(
+        "1 = 0", ()
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -132,7 +146,8 @@ def test_all_renders_the_empty_fragment_and_none_renders_unsatisfiable() -> None
 def test_write_predicate_vocabulary_matches_the_read_dispatch(
     op: oa.Operation, expected_sql: str, expected_binds: tuple[object, ...]
 ) -> None:
-    sql, binds = compile_write_predicate(op, ACCOUNT, POSTGRES, "Account")
+    predicate = compile_write_predicate(op, ACCOUNT, POSTGRES, "Account")
+    sql, binds = predicate.sql, predicate.binds
     assert sql == expected_sql
     assert binds == expected_binds
     # The same node lowers through the same dispatch inside a read's `where`
@@ -140,15 +155,15 @@ def test_write_predicate_vocabulary_matches_the_read_dispatch(
     # root alias from the read's clause and the two fragments coincide exactly,
     # binds included.
     read = compile_read(op, ACCOUNT, POSTGRES, "Account")
-    read_where = read.sql.split(" where ", 1)[1]
+    read_where = read.statement.sql.split(" where ", 1)[1]
     assert read_where.replace("t0.", "") == expected_sql
-    assert read.binds == expected_binds
+    assert read.statement.binds == expected_binds
 
 
 def test_write_predicate_binds_follow_operand_order() -> None:
     # `And.operands` order is significant precisely because it drives bind order;
     # the write lane accumulates into the same ordered bind list a read does.
-    sql, binds = compile_write_predicate(
+    predicate = compile_write_predicate(
         oa.And(
             operands=(
                 oa.Comparison(op="lessThan", attr="Account.balance", value=100),
@@ -160,6 +175,7 @@ def test_write_predicate_binds_follow_operand_order() -> None:
         POSTGRES,
         "Account",
     )
+    sql, binds = predicate.sql, predicate.binds
     assert sql == "balance < ? and owner = ? and version = ?"
     assert binds == (100, "ada", 3)
 
@@ -168,7 +184,8 @@ def test_navigation_correlates_an_aliased_subquery_against_the_unaliased_owner()
     # A hop opens its own aliased sub-select exactly as it does in a read, but the
     # correlation's OWNER side stays unaliased — the readless `delete from orders
     # where exists (...)` shape.
-    sql, binds = compile_write_predicate(oa.Exists(rel="Order.items"), ORDERS, POSTGRES, "Order")
+    predicate = compile_write_predicate(oa.Exists(rel="Order.items"), ORDERS, POSTGRES, "Order")
+    sql, binds = predicate.sql, predicate.binds
     assert sql == "exists (select 1 from order_item t1 where t1.order_id = id)"
     assert binds == ()
 
@@ -181,12 +198,13 @@ def test_value_object_document_column_renders_unaliased() -> None:
     # `update customer set … where <fragment>` template — where a leaked `t0` names
     # an alias the statement never declares (m-sql rule 1: DML is unaliased with
     # bare columns).
-    sql, binds = compile_write_predicate(
+    predicate = compile_write_predicate(
         oa.NestedComparison(op="nestedEq", path="Customer.address.city", value="Boston"),
         CUSTOMER,
         POSTGRES,
         "Customer",
     )
+    sql, binds = predicate.sql, predicate.binds
     assert sql == "jsonb_extract_path_text(address, ?) = ?"
     assert binds == ("city", "Boston")
     # The read lane is the control: identical but for the alias qualification, so
@@ -197,7 +215,7 @@ def test_value_object_document_column_renders_unaliased() -> None:
         POSTGRES,
         "Customer",
     )
-    read_where = read.sql.split(" where ", 1)[1]
+    read_where = read.statement.sql.split(" where ", 1)[1]
     assert read_where == "jsonb_extract_path_text(t0.address, ?) = ?"
     assert read_where.replace("t0.", "") == sql
 
@@ -212,7 +230,7 @@ def test_to_many_value_object_traversal_keeps_only_its_own_element_alias() -> No
         oa.NestedComparison(op="nestedEq", path="Customer.address.phones.number", value="555"),
         oa.NestedExists(path="Customer.address.phones"),
     ):
-        sql, _ = compile_write_predicate(op, CUSTOMER, POSTGRES, "Customer")
+        sql = compile_write_predicate(op, CUSTOMER, POSTGRES, "Customer").sql
         assert "t0." not in sql
         assert "jsonb_extract_path(address, ?)" in sql
         assert "jsonb_array_elements(" in sql and " t1" in sql
@@ -239,7 +257,8 @@ def test_inheritance_tag_guard_renders_unaliased() -> None:
         to=("CardPayment",),
         operand=oa.Comparison(op="eq", attr="CardPayment.cardNetwork", value="Visa"),
     )
-    sql, binds = compile_write_predicate(op, PAYMENT, POSTGRES, "CardPayment")
+    predicate = compile_write_predicate(op, PAYMENT, POSTGRES, "CardPayment")
+    sql, binds = predicate.sql, predicate.binds
     assert sql == "(card_network = ? and kind = ?)"
     assert binds == ("Visa", "card")
     assert "t0." not in sql
@@ -251,14 +270,15 @@ def test_inheritance_tag_guard_renders_unaliased() -> None:
     # — so the comparison is against the read's leading grouped term, which does
     # coincide exactly modulo alias qualification, tag bind last in both.
     grouped = oa.Group(operand=op)
-    write_sql, write_binds = compile_write_predicate(grouped, PAYMENT, POSTGRES, "CardPayment")
+    grouped_write = compile_write_predicate(grouped, PAYMENT, POSTGRES, "CardPayment")
+    write_sql, write_binds = grouped_write.sql, grouped_write.binds
     read = compile_read(grouped, PAYMENT, POSTGRES, "CardPayment")
-    read_where = read.sql.split(" where ", 1)[1]
+    read_where = read.statement.sql.split(" where ", 1)[1]
     assert read_where == "((t0.card_network = ? and t0.kind = ?)) and t0.kind = ?"
     read_branch, _, _target_guard = read_where.rpartition(" and ")
     assert read_branch.replace("t0.", "") == write_sql
     assert write_binds == ("Visa", "card")
-    assert read.binds == ("Visa", "card", "card")
+    assert read.statement.binds == ("Visa", "card", "card")
 
 
 # --------------------------------------------------------------------------- #
