@@ -25,9 +25,11 @@ Two rules make it checkable by reading this file alone. **Nothing here lowers a
 predicate**: the module imports no predicate lowering, and contains no `match`
 over the node union — the one operation node it inspects is a TOP-LEVEL `narrow`,
 and only to resolve the read's position, never to descend into it. **Nothing here
-binds**: `Ctx` appears in exactly one signature, :func:`tag_guard`, which reads it
-(`own_column`) and returns the fragment plus its bind VALUES; no function in this
-module touches `ctx.binds`, `ctx.bind`, or `ctx.next_alias`.
+binds**, and that is now checked rather than asserted: lowering state reaches
+this module through exactly one signature, :func:`tag_guard`, and it arrives as a
+:class:`~parallax.core.sql_gen._context.ColumnScope` — a protocol carrying
+`own_column` and nothing else, so `bind`, `binds`, and `next_alias` are not
+merely unused here, they are unreachable.
 
 The read's queried **position** is the resolved effective concrete-subtype set
 the whole read targets: a top-level `narrow` (the read's ENTIRE predicate after
@@ -53,7 +55,7 @@ from parallax.core import inheritance
 from parallax.core.descriptor import Attribute, Entity, Metamodel, ValueObject
 from parallax.core.dialect import Dialect, LockMode
 from parallax.core.op_algebra import Narrow, Operation, OrderKey
-from parallax.core.sql_gen._context import Ctx as _Ctx
+from parallax.core.sql_gen._context import ColumnScope as _ColumnScope
 from parallax.core.sql_gen._context import SqlGenError
 
 
@@ -211,7 +213,7 @@ def family_tag_pairs(meta: Metamodel, root: Entity) -> tuple[tuple[str, str], ..
 
 
 def tag_guard(
-    ctx: _Ctx, meta: Metamodel, tag_col: str, tag_kind: str, position: Sequence[str]
+    scope: _ColumnScope, meta: Metamodel, tag_col: str, tag_kind: str, position: Sequence[str]
 ) -> tuple[str, tuple[object, ...]]:
     """PLAN the tag-predicate guard for ``position`` (m-sql *Tag-predicate
     selection*): `t0.<tag> = ?` for one concrete, `t0.<tag> in (?, …)` for several
@@ -231,6 +233,12 @@ def tag_guard(
     branch-predicate-first then tag". Returning data makes the ordering the
     caller's explicit, visible statement rather than an evaluation-order accident.
 
+    ``scope`` is a :class:`~parallax.core.sql_gen._context.ColumnScope`, not the
+    whole context: the ONE capability rendering a guard needs is "how does this
+    statement spell its own column", and taking no more than that is what makes
+    the paragraph above a type rule rather than a promise. A caller still just
+    passes its `Ctx`.
+
     The tag column is THIS context's own column, so it renders through
     :meth:`Ctx.own_column` like every other one: the framework-owned tag is no
     more alias-qualified than a declared attribute is. In every read context
@@ -239,7 +247,7 @@ def tag_guard(
     cannot reopen from a caller that arrives with an unaliased context, rather
     than resting on every such caller being rejected upstream first.
     """
-    col = ctx.own_column(tag_col)
+    col = scope.own_column(tag_col)
     tag_values = [tag_value(meta, name) for name in position]
     if tag_kind == "eq":
         return f"{col} = ?", (tag_values[0],)

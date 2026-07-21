@@ -14,25 +14,26 @@ yet lower, raises a clear :class:`SqlGenError` so a mis-routed case fails
 loudly, never silently.
 
 Inheritance-family reads (table-per-hierarchy tag predicates / abstract-read
-superset projection, table-per-concrete-subtype union-all) are lowered here too
-(COR-3 Phase 7 increment 2, `m-sql` "Metamodel-extension lowering"): narrow
-resolution imports `parallax.core.inheritance` directly — a legal edge, since
-`modules.md` already reaches `m-inheritance` transitively through
-`m-op-algebra`. `validate_operation` runs upstream (the conformance engine /
-statement frontend), so a narrow reaching this compiler is already known
-position-valid; this module only resolves and lowers, it never re-validates.
+superset projection, table-per-concrete-subtype union-all) are ASSEMBLED here
+(COR-3 Phase 7 increment 2, `m-sql` "Metamodel-extension lowering") from plans
+`_inheritance` resolves — which is where the `parallax.core.inheritance` edge now
+lives, a legal one since `modules.md` already reaches `m-inheritance`
+transitively through `m-op-algebra`. `validate_operation` runs upstream (the
+conformance engine / statement frontend), so a narrow reaching this compiler is
+already known position-valid; nothing in this package re-validates it.
 
-Navigation (`navigate` / `exists` / `notExists`) lowers here too (COR-3 Phase 7
-increment 3, `m-sql` "Joins by navigation"): a hop's correlation columns are
-derived mechanically from the relationship's declared `join` predicate, and a
-polymorphic hop's effective concrete-subtype set is resolved the same way the
-top-level inheritance reads above already do — this module never needs the
-per-hop as-of predicate to be anything but an ordinary, pre-injected
-`m-op-algebra` node (`parallax.core.navigate.canonicalize` runs upstream, the
-composition-at-the-engine M2 precedent, since the DAG forbids `m-sql` from
-importing `m-temporal-read`). The correlated-`EXISTS` alias sequence continues
-the single `t0, t1, …` numbering across nested hops via `_Ctx.next_alias`,
-sharing one mutable counter and one bind list with its parent context.
+Navigation (`navigate` / `exists` / `notExists`) is assembled here the same way
+(COR-3 Phase 7 increment 3, `m-sql` "Joins by navigation"): `_navigation`
+resolves the relationship, derives the correlation mechanically from the
+declared `join` predicate, and resolves a polymorphic hop's effective
+concrete-subtype set exactly as the family lane does — this module opens each
+planned branch and lowers its interior. Nothing here needs the per-hop as-of
+predicate to be anything but an ordinary, pre-injected `m-op-algebra` node
+(`parallax.core.navigate.canonicalize` runs upstream, the composition-at-the-
+engine M2 precedent, since the DAG forbids `m-sql` from importing
+`m-temporal-read`). The correlated-`EXISTS` alias sequence continues the single
+`t0, t1, …` numbering across nested hops via `_Ctx.next_alias`, sharing one
+mutable counter and one bind list with its parent context.
 
 To-many value-object array traversal (`nestedExists` / `nestedNotExists`, and a
 flat `nested*` predicate whose path crosses a `cardinality: many` member) lowers
@@ -58,12 +59,10 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Literal, assert_never
 
-from parallax.core import inheritance
 from parallax.core.descriptor import (
     Entity,
     Metamodel,
     NestedValueObject,
-    Relationship,
     ValueObject,
     ValueObjectAttribute,
     VoPathMiss,
@@ -116,11 +115,14 @@ from parallax.core.sql_gen._inheritance import RowTransform as _RowTransform
 from parallax.core.sql_gen._inheritance import TpcsSinglePlan as _TpcsSinglePlan
 from parallax.core.sql_gen._inheritance import TpcsUnionPlan as _TpcsUnionPlan
 from parallax.core.sql_gen._inheritance import TphPlan as _TphPlan
-from parallax.core.sql_gen._inheritance import narrow_effective_set as _narrow_effective_set
 from parallax.core.sql_gen._inheritance import plan_branch_narrow as _plan_branch_narrow
 from parallax.core.sql_gen._inheritance import plan_inheritance_read as _plan_inheritance_read
 from parallax.core.sql_gen._inheritance import tag_guard as _tph_tag_guard
-from parallax.core.sql_gen._inheritance import tph_tag_column as _tph_tag_column
+
+# The navigation LANE: hop plans in, one correlated `EXISTS` (or a grouped `or`
+# of them) out. Same aliasing-down convention as the family lane above.
+from parallax.core.sql_gen._navigation import open_branch as _open_branch
+from parallax.core.sql_gen._navigation import plan_hop as _plan_hop
 
 __all__ = [
     "CompiledPredicate",
@@ -686,54 +688,37 @@ def _compile_tpcs_single(
 # --------------------------------------------------------------------------- #
 # Navigation (m-sql "Joins by navigation"; COR-3 Phase 7 increment 3).         #
 #                                                                               #
-# A `navigate` / `exists` / `notExists` node lowers to a correlated `EXISTS`   #
-# (`notExists`: negated) semi-join: the correlation columns are derived        #
-# MECHANICALLY from the relationship's declared `join` predicate (the user    #
-# never writes a join), never authored or guessed. A polymorphic target       #
-# resolves its effective concrete-subtype set exactly as a top-level          #
-# inheritance read does (`_narrow_effective_set` / `effective_concrete_       #
-# subtypes`, above); the per-hop as-of predicate (if any) already rides       #
-# inside `op` as a plain predicate node — `parallax.core.navigate.            #
-# canonicalize` injected it upstream — so nothing here is temporal-aware.     #
+# `_navigation` resolves the hop and hands back an immutable plan; this is its   #
+# only consumer. The loop below is the whole lowering: OPEN a branch (which     #
+# takes its alias and renders its correlation and its DEFERRED tag guard), lower #
+# that branch's own interior against a child context, and only THEN push the     #
+# guard's binds — the m-sql "Grouped branch predicates" order, stated here       #
+# rather than left to an evaluation-order accident.                             #
 # --------------------------------------------------------------------------- #
-def _resolve_relationship_ref(rel_ref: str, meta: Metamodel) -> Relationship:
-    class_name, _, member_name = rel_ref.partition(".")
-    entity = meta.entity(class_name)
-    for relationship in entity.relationships:
-        if relationship.name == member_name:
-            return relationship
-    raise SqlGenError(  # pragma: no cover - guards an unvalidated operation
-        f"{rel_ref!r} names no declared relationship on {entity.name}"
-    )
-
-
-def _parse_join(join: str) -> tuple[str, str]:
-    """Split a relationship's `this.<attr> = <Entity>.<attr>` join predicate into
-    ``(owner attribute name, related attribute name)`` — the mechanical
-    correlation-column derivation `m-navigate` requires."""
-    lhs, _, rhs = join.partition(" = ")
-    _, _, owner_attr = lhs.partition(".")
-    _, _, related_attr = rhs.partition(".")
-    return owner_attr, related_attr
-
-
 def _lower_navigation(op: Navigate | Exists | NotExists, ctx: _Ctx) -> str:
-    negate = isinstance(op, NotExists)
-    relationship = _resolve_relationship_ref(op.rel, ctx.meta)
-    target_entity = ctx.meta.entity(relationship.related_entity)
-    owner_attr, related_attr = _parse_join(relationship.join)
-    parent_col = ctx.column_of(f"{ctx.entity.name}.{owner_attr}")
-    if target_entity.inheritance is not None:
-        return _lower_polymorphic_hop(
-            relationship, target_entity, op.op, parent_col, related_attr, ctx, negate=negate
-        )
-    return _lower_simple_hop(target_entity, op.op, parent_col, related_attr, ctx, negate=negate)
+    plan = _plan_hop(op, ctx)
+    fragments: list[str] = []
+    for branch in plan.branches:
+        # Opened INSIDE the loop, not up front: a branch takes its alias
+        # immediately before its own interior lowers, so a later branch's alias
+        # follows everything the preceding branch's interior allocated. Hoisting
+        # this would renumber a grouped table-per-concrete-subtype hop whose
+        # interior itself navigates.
+        opened = _open_branch(branch, ctx)
+        child_ctx = ctx.child(opened.entity, opened.alias)
+        where = _hop_where(opened.inner, opened.correlation, child_ctx, *opened.tag_fragment)
+        # AFTER the interior: the plan carried the guard's bind VALUES precisely so
+        # this push is the caller's own visible statement (`_navigation` holds no
+        # capability to have pushed them itself).
+        child_ctx.binds.extend(opened.tag_binds)
+        fragments.append(opened.render(where))
+    return plan.combine(fragments)
 
 
 def _hop_where(inner: Operation | None, correlation: str, child_ctx: _Ctx, *extra: str) -> str:
     """The correlated sub-select's `where` clause: correlation, then the (optional)
     interior predicate, then any trailing fragment (a TPH tag guard) — the shared
-    term order every hop shape below composes (m-sql "Grouped branch predicates":
+    term order every hop shape composes (m-sql "Grouped branch predicates":
     a user/interior predicate binds before a framework-injected guard)."""
     terms = [correlation]
     if inner is not None:
@@ -742,159 +727,6 @@ def _hop_where(inner: Operation | None, correlation: str, child_ctx: _Ctx, *extr
             terms.append(inner_sql)
     terms.extend(extra)
     return " and ".join(terms)
-
-
-def _lower_simple_hop(
-    target_entity: Entity,
-    inner: Operation | None,
-    parent_col: str,
-    related_attr: str,
-    ctx: _Ctx,
-    *,
-    negate: bool,
-) -> str:
-    """A monomorphic relationship target: one correlated `EXISTS` over its own
-    table (m-sql "Joins by navigation")."""
-    child_alias = ctx.next_alias()
-    child_ctx = ctx.child(target_entity, child_alias)
-    correlation = f"{child_ctx.column_of(f'{target_entity.name}.{related_attr}')} = {parent_col}"
-    where = _hop_where(inner, correlation, child_ctx)
-    keyword = "not exists" if negate else "exists"
-    return f"{keyword} (select 1 from {target_entity.table} {child_alias} where {where})"
-
-
-def _hop_position(
-    meta: Metamodel, relatable_entity: str, inner: Operation | None
-) -> tuple[tuple[str, ...], Operation | None, bool]:
-    """The polymorphic hop's resolved effective position + remaining interior
-    predicate, mirroring `_compile_tph_read`'s own top-level narrow interception:
-    a top-level `narrow` in the hop's `op` (`m-navigate` "Polymorphic navigation")
-    replaces the target's own effective set with its resolved `to` set; otherwise
-    the target's own effective concrete-subtype set stands. The third element is
-    whether the UNTOUCHED target itself is the family's abstract root (the TPH
-    "no tag predicate at all" case, `m-inheritance`).
-    """
-    if isinstance(inner, Narrow):
-        return _narrow_effective_set(meta, inner.to), inner.operand, False
-    target = meta.entity(relatable_entity)
-    is_bare_root = target.inheritance is not None and target.inheritance.role == "root"
-    return (
-        tuple(inheritance.effective_concrete_subtypes(meta, relatable_entity)),
-        inner,
-        is_bare_root,
-    )
-
-
-def _lower_polymorphic_hop(
-    relationship: Relationship,
-    target_entity: Entity,
-    inner: Operation | None,
-    parent_col: str,
-    related_attr: str,
-    ctx: _Ctx,
-    *,
-    negate: bool,
-) -> str:
-    """A polymorphic relationship target: table-per-hierarchy lowers to a single
-    correlated `EXISTS` with the interior tag predicate (reusing increment 2's
-    tag-fragment machinery); table-per-concrete-subtype lowers to a grouped `OR`
-    of one correlated `EXISTS` per effective concrete, alphabetical, continuing
-    the single alias sequence (m-sql "Polymorphic navigation lowering")."""
-    root = inheritance.family_root(ctx.meta, target_entity)
-    assert root.inheritance is not None
-    position, remaining_inner, is_bare_root = _hop_position(
-        ctx.meta, relationship.related_entity, inner
-    )
-    if root.inheritance.strategy == "table-per-hierarchy":
-        tag_kind = "none" if is_bare_root else ("eq" if len(position) == 1 else "in")
-        return _lower_tph_hop(
-            root, position, remaining_inner, parent_col, related_attr, ctx, tag_kind, negate=negate
-        )
-    return _lower_tpcs_hop(position, remaining_inner, parent_col, related_attr, ctx, negate=negate)
-
-
-def _lower_tph_hop(
-    root: Entity,
-    position: Sequence[str],
-    remaining_inner: Operation | None,
-    parent_col: str,
-    related_attr: str,
-    ctx: _Ctx,
-    tag_kind: str,
-    *,
-    negate: bool,
-) -> str:
-    tag_col = _tph_tag_column(root)
-    table = ctx.meta.entity(position[0]).table
-    if table is None:  # pragma: no cover - a validated TPH concrete always declares one
-        raise SqlGenError(f"{position[0]}: table-per-hierarchy concrete subtype declares no table")
-    child_alias = ctx.next_alias()
-    # The child context's active entity is the hop's TARGET (possibly abstract):
-    # family-wide attribute resolution (`_searchable_attributes`) needs only that
-    # `inheritance is not None`, exactly like a top-level inheritance read's ctx.
-    child_ctx = ctx.child(ctx.meta.entity(root.name), child_alias)
-    correlation = f"{child_ctx.column_of(f'{root.name}.{related_attr}')} = {parent_col}"
-    # The guard is PLANNED here but BOUND below, after `_hop_where` has lowered the
-    # interior predicate. Passing a bind-as-you-render fragment as an ARGUMENT to
-    # `_hop_where` would push the tag bind during argument evaluation — ahead of
-    # the interior's own binds — so the SQL text (guard last) and the bind order
-    # (guard first) would disagree, which is the COR-43 defect this shape retires.
-    tag_fragment: tuple[str, ...] = ()
-    tag_binds: tuple[object, ...] = ()
-    if tag_kind != "none":
-        tag_sql, tag_binds = _tph_tag_guard(child_ctx, ctx.meta, tag_col, tag_kind, position)
-        tag_fragment = (tag_sql,)
-    where = _hop_where(remaining_inner, correlation, child_ctx, *tag_fragment)
-    child_ctx.binds.extend(tag_binds)
-    keyword = "not exists" if negate else "exists"
-    return f"{keyword} (select 1 from {table} {child_alias} where {where})"
-
-
-def _lower_tpcs_hop(
-    position: Sequence[str],
-    remaining_inner: Operation | None,
-    parent_col: str,
-    related_attr: str,
-    ctx: _Ctx,
-    *,
-    negate: bool,
-) -> str:
-    if len(position) == 1:
-        return _lower_tpcs_branch(
-            ctx.meta.entity(position[0]),
-            remaining_inner,
-            parent_col,
-            related_attr,
-            ctx,
-            negate=negate,
-        )
-    branch_sqls = [
-        _lower_tpcs_branch(
-            ctx.meta.entity(name), remaining_inner, parent_col, related_attr, ctx, negate=False
-        )
-        for name in position
-    ]
-    grouped = f"({' or '.join(branch_sqls)})"
-    return f"not {grouped}" if negate else grouped
-
-
-def _lower_tpcs_branch(
-    concrete: Entity,
-    remaining_inner: Operation | None,
-    parent_col: str,
-    related_attr: str,
-    ctx: _Ctx,
-    *,
-    negate: bool,
-) -> str:
-    if concrete.table is None:  # pragma: no cover - a validated TPCS concrete always has one
-        raise SqlGenError(f"{concrete.name}: table-per-concrete-subtype subtype declares no table")
-    child_alias = ctx.next_alias()
-    child_ctx = ctx.child(concrete, child_alias)
-    correlation = f"{child_ctx.column_of(f'{concrete.name}.{related_attr}')} = {parent_col}"
-    where = _hop_where(remaining_inner, correlation, child_ctx)
-    keyword = "not exists" if negate else "exists"
-    return f"{keyword} (select 1 from {concrete.table} {child_alias} where {where})"
 
 
 # --------------------------------------------------------------------------- #
