@@ -39,10 +39,11 @@ Rule provenance:
 
 DAG note: `m-op-algebra` depends only on `m-descriptor` and `m-inheritance`
 (`modules.md`); it may **not** import `m-value-object` (the same constraint
-`m-sql`'s `sql_gen/compile.py` already documents), so the value-object
+`m-sql`'s `sql_gen/_predicate.py` already documents), so the value-object
 structural checks below resolve paths through
 `parallax.core.descriptor.vo_path`'s shared, error-neutral walk — the same one
-`sql_gen/compile.py` uses — rather than `parallax.core.value_object`'s helpers.
+`sql_gen/_predicate.py` uses — rather than `parallax.core.value_object`'s
+helpers.
 """
 
 from __future__ import annotations
@@ -337,8 +338,8 @@ def _check_deep_fetch_path(path: tuple[PathSegment, ...], meta: Metamodel) -> No
 # predicates"; resolved against the shared, error-neutral                     #
 # `parallax.core.descriptor.vo_path` walk — the DAG forbids m-op-algebra from  #
 # importing m-value-object, but both it and m-sql already depend on           #
-# m-descriptor, so the walk `sql_gen/compile.py` needs too lives there rather  #
-# than staying duplicated (S3 remediation)).                                  #
+# m-descriptor, so the walk `sql_gen/_predicate.py` needs too lives there     #
+# rather than staying duplicated (S3 remediation)).                           #
 # --------------------------------------------------------------------------- #
 def _is_value_object_name_anywhere(meta: Metamodel, name: str) -> bool:
     return any(find_value_object(entity, name) is not None for entity in meta.entities)

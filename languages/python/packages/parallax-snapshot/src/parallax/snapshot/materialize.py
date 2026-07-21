@@ -34,12 +34,12 @@ alone (transitively reaching ``m-descriptor`` / ``m-inheritance`` /
 ``m-temporal-read``, all of which this module imports directly — the same
 transitive-reachability latitude every other scope in this DAG already uses).
 It never imports ``m-sql`` / ``m-dialect``: `familyVariant` materialization
-(the raw tag column -> subtype name, or the projected literal rename) is a
-`m-sql`-owned plan (`~parallax.core.sql_gen.family_variant_plan` /
-`apply_family_variant`) the CALLER applies to a level's rows before handing
-them here — this module only ever sees rows whose keys are already the neutral
-wire-shaped ones (scalars, a `familyVariant` string when present, and each
-declared value-object's own document column).
+(the raw tag column -> subtype name, or the projected literal rename) is
+`m-sql`-owned, carried by the compiled read itself
+(`~parallax.core.sql_gen.CompiledRead.transform_row`) and applied by the CALLER
+to a level's rows before handing them here — this module only ever sees rows
+whose keys are already the neutral wire-shaped ones (scalars, a `familyVariant`
+string when present, and each declared value-object's own document column).
 """
 
 from __future__ import annotations
@@ -318,7 +318,7 @@ class Assembler:
 
         ``narrow_to`` is the root read's OWN top-level authored narrow (S3,
         COR-3 Phase 7 increment 7 round-2), when the caller's find executor
-        supplies one (:func:`~parallax.core.sql_gen.compile.read_narrow_to`)
+        supplies one (`~parallax.core.sql_gen.CompiledRead.narrow_to`)
         — the root-level analogue of a deep-fetch child level's own
         ``FetchLevel.narrow_to``, which :meth:`attach_level` already threads.
         Omitted (``None``) for a bare, un-narrowed root read, or a caller that

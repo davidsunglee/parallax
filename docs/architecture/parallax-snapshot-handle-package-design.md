@@ -133,6 +133,14 @@ is different: `parallax.snapshot.handle` remains the one caller-facing seam, and
 none of its new implementation modules is independently supported. Leading
 underscores make that intent visible without expanding `handle.__all__`.
 
+**Correction (2026-07-21, post-acceptance).** `sql_gen.compile` no longer exists:
+COR-43 split it into `sql_gen/_compile.py`, `_predicate.py`, `_navigation.py`,
+`_inheritance.py`, and `_context.py`, which adopt exactly the convention this
+section introduces. `descriptor.serde` and `unit_work.planner` still stand as
+non-underscored examples. The reasoning above is unaffected — sql_gen simply
+became a second instance of the private-module case rather than a counterexample
+to it — but a reader should not go looking for the third file.
+
 The relevant repository precedent is `entity/_annotations.py` and
 `entity/_validation.py`, not the dominant behavioral-package convention. Those
 files extract cycle-avoiding leaf concerns shared inside the broad

@@ -178,7 +178,8 @@ class Dialect:
         to Postgres ``varchar(n)`` (MariaDB ``char(n)`` — MariaDB's ``CAST`` grammar
         rejects ``varchar``) and an unbounded string to ``text``, matching the DDL
         mapping; a ``decimal`` casts to ``decimal(p, s)`` on every dialect —
-        identical to `~parallax.core.sql_gen.compile`'s nested-extraction cast, but
+        identical to `~parallax.core.sql_gen._predicate`'s nested-extraction cast
+        (which reaches it through :meth:`nested_cast`), but
         **not** :meth:`column_type`'s own ``numeric(p, s)`` DDL spelling.
         """
         if _base_type(neutral_type) == "decimal":

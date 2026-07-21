@@ -254,7 +254,7 @@ def test_materialize_root_pk_columns_are_family_normalized() -> None:
 
 def test_materialize_root_threads_the_narrow_into_resolved_entity() -> None:
     # S3: `materialize_root`'s own `narrow_to` (a find executor's
-    # `~parallax.core.sql_gen.read_narrow_to` result) lets the assembler
+    # `~parallax.core.sql_gen.CompiledRead.narrow_to`) lets the assembler
     # recover a single-resolved-position TPCS row's own concrete even though
     # the row carries no `familyVariant` at all.
     asm = Assembler(meta=DOCUMENT)
