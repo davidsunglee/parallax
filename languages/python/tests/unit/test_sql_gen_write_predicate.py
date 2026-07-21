@@ -251,7 +251,7 @@ def test_inheritance_tag_guard_renders_unaliased() -> None:
     # entry point rejects inheritance families first" — was WRONG (the exported
     # `lower_write` and `engine._lower_predicate_write_step` both bypassed the
     # buffer-time guards), which is the whole reason this renders through
-    # `_Ctx.own_column` now rather than trusting a caller.
+    # `EntityScope.own_column` now rather than trusting a caller.
     op = oa.Narrow(
         entity="Payment",
         to=("CardPayment",),

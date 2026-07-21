@@ -513,13 +513,11 @@ def _compile_tph_read(
 
     inner_sql = _lower_predicate(plan.inner, scope)
     where_terms = [inner_sql] if inner_sql else []
-    if plan.tag_kind != "none":
+    if plan.tag is not None:
         # Planned, then bound HERE — after the user predicate above has pushed its
         # own binds (m-sql "Grouped branch predicates": branch-predicate-first,
         # then tag).
-        tag_sql, tag_binds = _tph_tag_guard(
-            scope, meta, plan.tag_column, plan.tag_kind, plan.position
-        )
+        tag_sql, tag_binds = _tph_tag_guard(scope, meta, plan.tag)
         where_terms.append(tag_sql)
         ctx.binds.extend(tag_binds)
     if where_terms:
@@ -577,9 +575,13 @@ def _compile_tpcs_single(
     """Assemble a table-per-concrete-subtype read resolving to exactly one
     concrete: an ordinary single-table read of that subtype's own table, no tag,
     no union, no `familyVariant` — attribute resolution still widens across the
-    family (``ctx.entity`` stays the read's own `targetEntity`, e.g. an abstract
-    position narrowed down to this one concrete), matching the
+    family (the lowering context's entity stays the read's own `targetEntity`,
+    e.g. an abstract position narrowed down to this one concrete), matching the
     table-per-hierarchy concrete-target form.
+
+    Like :func:`_compile_tph_read` this builds the statement's context and
+    sequences its bind phases explicitly — here projection, then user predicate,
+    then limit; there is no framework tag guard on this lane.
     """
     ctx = _Ctx(meta, dialect)
     scope = _EntityScope(ctx, entity)
