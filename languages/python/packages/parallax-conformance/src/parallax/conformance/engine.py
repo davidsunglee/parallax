@@ -4,10 +4,13 @@ The adapter path compiles and runs a compatibility case directly against the
 class-free engine spine (no dynamic class synthesis): the case's model YAML is
 ingested through the ``m-descriptor`` deserializer, its ``when.operation`` through
 the ``m-op-algebra`` deserializer, and the tree is lowered by ``m-sql``
-``compile_read`` to one canonical ``Statement``. ``compile`` emits that statement;
-``run`` executes it through the injected ``m-db-port`` and records the observed
-rows. Compile eligibility (``m-case-format`` ``compileEligibility``) is read from
-the case; the run-only minority is never compiled.
+``compile_read`` to one ``CompiledRead`` — its canonical ``Statement`` together
+with the row transform that statement's own resolved position decided.
+``compile`` emits that statement; ``run`` executes it through the injected
+``m-db-port``, renders each observed row to wire form, and passes it through the
+compiled read's own ``transform_row``. Compile eligibility (``m-case-format``
+``compileEligibility``) is read from the case; the run-only minority is never
+compiled.
 """
 
 from __future__ import annotations

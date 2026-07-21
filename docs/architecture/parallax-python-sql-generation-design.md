@@ -125,17 +125,21 @@ operation to the same dispatcher. The element scope admits only the
 node raises the existing `SqlGenError`. There is no second element dispatcher,
 and element resolution state is not added to `_context`.
 
-**Correction (2026-07-21, post-acceptance).** Two details of the paragraph above
-are design intent that the implementation deliberately departed from; both are
-recorded here rather than edited in place, so this section keeps reading as the
-accepted design.
+**Correction (2026-07-21, post-acceptance).** Three details of the paragraph
+above are design intent that the implementation departed from; they are recorded
+here rather than edited in place, so this section keeps reading as the accepted
+design.
 
 - The shipped type is `ResolutionScope`, not `_ResolutionScope`. A private
   *module* carries the privacy in this codebase and its published names are not
   underscore-prefixed — pyright's `reportPrivateUsage` fails the static gate on a
-  cross-module underscore import — so the leading underscore could not survive
-  contact with `_navigation` and `_inheritance`. The same applies to `EntityScope`
-  and `ElementScope`, the two arms of the sum.
+  cross-module underscore import. The naming convention is right; the reason
+  first recorded here was not. The scope types have exactly one cross-module
+  importer, `_compile` (`_compile.py:67`, `EntityScope as _EntityScope`).
+  `_navigation` and `_inheritance` never import them and could not: both sit
+  *below* `_predicate` in the enforced layer order and take the narrowed
+  `ColumnScope` / `PlanScope` protocols from `_context` instead. The same naming
+  rule applies to `EntityScope` and `ElementScope`, the two arms of the sum.
 - The dispatcher takes **two** arguments, not three: `lower_predicate(op, scope)`.
   The scope *holds* the shared lowering context rather than travelling beside it,
   because the alternatives were to duplicate the metamodel and dialect onto every
@@ -144,8 +148,29 @@ accepted design.
   capability protocols. Every bind site therefore spells `scope.ctx.bind(...)`,
   which keeps the bind ordering this refactor exists to protect greppable in one
   expression.
+- Neither a navigation plan nor a scoped `nestedExists` *produces* a resolution
+  scope; `_predicate` constructs both. `_navigation.open_branch` returns an
+  `OpenBranch` carrying the branch's entity and alias, and `_predicate` builds the
+  child scope from that data (`_predicate.py:437-438`,
+  `scope.child(opened.entity, opened.alias)`). A scoped `nestedExists` has no plan
+  at all: `_lower_nested_exists` resolves the path and constructs the
+  `ElementScope` inline (`_predicate.py:633`). Plans carry the *inputs*; scope
+  construction belongs to the dispatcher, which is precisely what keeps
+  `_navigation` and `_inheritance` free of any scope type. The paragraph's
+  following claim — that both hand the inner operation back to the same
+  dispatcher — does hold.
 
-Everything else in the paragraph holds as written.
+The paragraph's remaining claims were each re-checked against the shipped code
+and hold: one recursive entry point (`lower_predicate`); an entity scope carrying
+the active entity, its alias, and aliased-versus-unaliased column resolution
+(`EntityScope`, `_predicate.py:145-162`); an element scope carrying the active
+value-object container and the unnested element alias (`ElementScope`,
+`_predicate.py:234-250`); boolean recursion preserving the current scope
+(`_predicate.py:287-294`); an element scope admitting only the `elementPredicate`
+vocabulary and raising the existing `SqlGenError` on anything else
+(`_predicate.py:300-304`); no second element dispatcher; and no element
+resolution state on `_context` (`Ctx.__slots__` is exactly
+`_next_alias_index`, `binds`, `dialect`, `meta`).
 
 Navigation and inheritance do not call back into `_predicate`; instead they
 return immutable private plans containing the resolved tables, positions,
