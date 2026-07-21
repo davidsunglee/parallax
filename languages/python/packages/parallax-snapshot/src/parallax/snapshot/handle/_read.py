@@ -32,7 +32,7 @@ from parallax.core import deep_fetch, inheritance, op_algebra
 from parallax.core.db_port import DbPort, Row
 from parallax.core.descriptor import Entity, Metamodel
 from parallax.core.dialect import Dialect, LockMode
-from parallax.core.sql_gen import Statement, compile_read
+from parallax.core.sql_gen import CompiledRead, Statement, compile_read
 from parallax.core.temporal_read import AXIS_ORDER, Edge, Pin, milestone_edge, statement_pin
 from parallax.snapshot import materialize
 from parallax.snapshot.handle._wrap import wrap_graph
@@ -234,10 +234,7 @@ def find(
     root_compiled = compile_read(
         plan_.root_operation, meta, dialect, target, result_form="instance", lock=lock
     )
-    root_rows = [
-        root_compiled.transform_row(row)
-        for row in _execute(port, dialect, root_compiled.statement, statements)
-    ]
+    root_rows = _execute_compiled(port, dialect, root_compiled, statements)
 
     assembler = materialize.Assembler(meta=meta)
     root_nodes = assembler.materialize_root(target, root_rows, narrow_to=root_compiled.narrow_to)
@@ -273,10 +270,7 @@ def find(
         # A child level takes its narrow from `FetchLevel.narrow_to` (consumed
         # inside `attach_level`), never from the compiled read — only the ROOT
         # has no planner-supplied narrow to fall back on.
-        rows = [
-            child_compiled.transform_row(row)
-            for row in _execute(port, dialect, child_compiled.statement, statements)
-        ]
+        rows = _execute_compiled(port, dialect, child_compiled, statements)
         nodes = assembler.attach_level(level, parent_nodes, parent_rows, rows)
         level_rows.append(rows)
         level_nodes.append(nodes)
@@ -331,6 +325,27 @@ def find_history(
         for edge in order
     )
     return HistoryFindResult(graphs=graphs, execution=Execution(tuple(statements)))
+
+
+def _execute_compiled(
+    port: DbPort, dialect: Dialect, compiled: CompiledRead, statements: list[ExecutedStatement]
+) -> list[Row]:
+    """Execute one compiled read, materializing its rows through its OWN transform.
+
+    Takes the whole `~parallax.core.sql_gen.CompiledRead` rather than a statement
+    plus a transform, so the two can only ever come from the same compile. That
+    matters because `find` holds the root's and a child level's compiled reads in
+    scope at the same time: crossing them is otherwise an ordinary-looking edit
+    that raises deep inside the tag transform in one direction and, in the other,
+    silently leaves the raw tag column standing where `familyVariant` should be.
+    Keeping the pair bundled here is the caller-side half of `CompiledRead`'s own
+    self-containment (COR-43) — it makes `find`'s "compile, execute, transform"
+    structural rather than a convention every level has to remember.
+    """
+    return [
+        compiled.transform_row(row)
+        for row in _execute(port, dialect, compiled.statement, statements)
+    ]
 
 
 def _execute(
