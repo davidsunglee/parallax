@@ -95,7 +95,13 @@ def lower_write(
     or temporal predicate write MATERIALIZES to per-row keyed writes at BUFFER
     time (:func:`~parallax.snapshot.handle._predicate_writes.buffer_predicate`,
     which ``Transaction``'s ``_where`` verbs only delegate to; ADR 0014), before
-    ever entering a :class:`FlushPlan`.
+    ever entering a :class:`FlushPlan`. An INHERITANCE-FAMILY target is refused
+    the same way — but NOT only upstream: this function is exported, and the
+    conformance engine's readless predicate-write step reaches it straight from
+    a deserialized instruction, so the buffer-time rejection is not on every
+    road. :func:`~parallax.snapshot.handle._keyed_sql.lower_predicate_write`
+    carries its own ``subtype-write-set-based-unsupported`` guard for that
+    reason (`python.md` §5 "rejected before SQL").
     """
     instruction = planned.instruction
     if isinstance(instruction, PredicateWrite):

@@ -28,6 +28,7 @@ _MODELS = models.load_models()
 ORDERS = _MODELS["orders"]
 ACCOUNT = _MODELS["account"]
 CUSTOMER = _MODELS["customer"]
+PAYMENT = _MODELS["payment"]
 
 
 # --------------------------------------------------------------------------- #
@@ -215,6 +216,49 @@ def test_to_many_value_object_traversal_keeps_only_its_own_element_alias() -> No
         assert "t0." not in sql
         assert "jsonb_extract_path(address, ?)" in sql
         assert "jsonb_array_elements(" in sql and " t1" in sql
+
+
+def test_inheritance_tag_guard_renders_unaliased() -> None:
+    # The framework-owned TAG column is this target's own column and takes the
+    # same rendering decision every declared attribute does. It is not reachable
+    # through `column_of` (the tag is metadata, not an `Attribute`), so it leaks
+    # independently — exactly as the value-object DOCUMENT column above does.
+    #
+    # This is a STRUCTURAL pin, deliberately independent of the write lane's own
+    # `subtype-write-set-based-unsupported` rejection
+    # (`_keyed_sql.lower_predicate_write`, pinned in `test_write_lowering.py`):
+    # that rejection is policy and lives at the write boundary; `sql_gen` is a
+    # pure renderer that must not depend on some caller having applied it. The
+    # previous unreachability argument for this site — "every predicate-write
+    # entry point rejects inheritance families first" — was WRONG (the exported
+    # `lower_write` and `engine._lower_predicate_write_step` both bypassed the
+    # buffer-time guards), which is the whole reason this renders through
+    # `_Ctx.own_column` now rather than trusting a caller.
+    op = oa.Narrow(
+        entity="Payment",
+        to=("CardPayment",),
+        operand=oa.Comparison(op="eq", attr="CardPayment.cardNetwork", value="Visa"),
+    )
+    sql, binds = compile_write_predicate(op, PAYMENT, POSTGRES, "CardPayment")
+    assert sql == "(card_network = ? and kind = ?)"
+    assert binds == ("Visa", "card")
+    assert "t0." not in sql
+    # The read lane is the control, and it must be the MID-predicate spelling to
+    # compare like with like: a TOP-LEVEL narrow is intercepted by the TPH read
+    # compiler before `_lower_predicate` ever runs. Wrapped in a `group` both
+    # lanes reach `_lower_branch_narrow`; the read then additionally appends the
+    # concrete TARGET's own guard, which a bare write fragment has no analogue of
+    # — so the comparison is against the read's leading grouped term, which does
+    # coincide exactly modulo alias qualification, tag bind last in both.
+    grouped = oa.Group(operand=op)
+    write_sql, write_binds = compile_write_predicate(grouped, PAYMENT, POSTGRES, "CardPayment")
+    read = compile_read(grouped, PAYMENT, POSTGRES, "CardPayment")
+    read_where = read.sql.split(" where ", 1)[1]
+    assert read_where == "((t0.card_network = ? and t0.kind = ?)) and t0.kind = ?"
+    read_branch, _, _target_guard = read_where.rpartition(" and ")
+    assert read_branch.replace("t0.", "") == write_sql
+    assert write_binds == ("Visa", "card")
+    assert read.binds == ("Visa", "card", "card")
 
 
 # --------------------------------------------------------------------------- #

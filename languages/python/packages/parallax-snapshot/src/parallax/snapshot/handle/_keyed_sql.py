@@ -457,8 +457,29 @@ def lower_predicate_write(
     predicate binds come AFTER assignment binds. The rendered predicate is
     UNALIASED (`compile_write_predicate`), contrasting the resolving read's
     `t0`-aliased form.
+
+    Rejects an INHERITANCE-FAMILY target here, at the lowering boundary, BEFORE
+    any SQL (`python.md` §5 "a set-based write whose target entity belongs to an
+    inheritance family is rejected before SQL"; `m-inheritance` "Per-object
+    writes are keyed; set-based inheritance writes are out of scope"), with the
+    SAME ``subtype-write-set-based-unsupported`` classification the buffer-time
+    seams raise (:func:`~parallax.snapshot.handle._predicate_writes.
+    buffer_predicate` / :func:`~parallax.snapshot.handle._predicate_writes.
+    buffer_predicate_instruction`). Those two guard the DEVELOPER `_where` verbs
+    and the engine's own buffering translation, but they are NOT the only road
+    here: `lower_write` is exported (`parallax.snapshot.handle.__all__`), and the
+    conformance engine's readless predicate-write step
+    (`conformance.engine._lower_predicate_write_step`) reaches `lower_write`
+    straight from a deserialized instruction, never through a buffer seam. The
+    rejection therefore belongs on the lowering side of the boundary as well,
+    where EVERY caller passes — the tightest total point, since this function is
+    `compile_write_predicate`'s only production caller. Without it a family
+    target renders its tag guard into unaliased DML (`delete from payment where
+    (card_network = ? and t0.kind = ?)`), naming a `t0` the statement never
+    declares.
     """
     entity = meta.entity(instruction.target.entity)
+    inheritance.reject_predicate_write(entity)
     declaring = inheritance.declaring_entity(meta, entity)
     if declaring.is_temporal or version_attribute(declaring) is not None:
         raise WriteLoweringError(
