@@ -275,11 +275,11 @@ def tag_guard(
 
     The tag column is THIS scope's own column, so it renders through
     :meth:`ColumnScope.own_column` like every other one: the framework-owned tag
-    is no more alias-qualified than a declared attribute is. In every read
-    context ``unaliased`` is ``False`` and this is exactly ``qualified(alias,
+    is no more alias-qualified than a declared attribute is. On every read
+    scope ``unaliased`` is ``False`` and this is exactly ``qualified(alias,
     tag.column)``, so no emitted read SQL depends on the distinction — it exists
     so the leak cannot reopen from a caller that arrives with an unaliased
-    context, rather than resting on every such caller being rejected upstream
+    scope, rather than resting on every such caller being rejected upstream
     first.
     """
     col = scope.own_column(tag.column)
@@ -382,9 +382,11 @@ class TpcsSinglePlan:
     """A table-per-concrete-subtype read resolving to exactly one concrete: an
     ordinary single-table read of that subtype's own table, no tag, no union, no
     `familyVariant` — attribute resolution still widens across the family (the
-    lowering context's entity stays the read's own `targetEntity`, e.g. an abstract
-    position narrowed down to this one concrete), matching the
-    table-per-hierarchy concrete-target form.
+    RESOLUTION SCOPE's entity stays the read's own `targetEntity`, e.g. an
+    abstract position narrowed down to this one concrete, so its attribute search
+    spans :func:`parallax.core.inheritance.family_attributes` rather than only
+    that entity's own declared attributes), matching the table-per-hierarchy
+    concrete-target form.
     """
 
     table: str

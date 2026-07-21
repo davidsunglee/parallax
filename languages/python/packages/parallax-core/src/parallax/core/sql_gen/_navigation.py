@@ -341,7 +341,7 @@ def _plan_tph_hop(
                 # The interior's active entity is the hop's TARGET FAMILY ROOT
                 # (possibly abstract): family-wide attribute resolution needs only
                 # that `inheritance is not None`, exactly like a top-level
-                # inheritance read's context.
+                # inheritance read's resolution scope.
                 entity=scope.meta.entity(root.name),
                 table=table,
                 related_attr=related_attr,
