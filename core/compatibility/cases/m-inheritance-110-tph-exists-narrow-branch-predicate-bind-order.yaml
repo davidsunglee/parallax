@@ -1,0 +1,40 @@
+# A narrowed polymorphic hop carrying its OWN branch predicate binds that predicate
+# BEFORE the injected tag guard (m-sql "Grouped branch predicates", m-navigate).
+#
+# m-inheritance-062 narrows the same `Person.pets` hop to one concrete but its operand
+# is `all`, so the guard is the only bind in the subquery and no ordering can be
+# observed. Giving the narrow a REAL operand puts a user bind and a framework bind in
+# the same correlated EXISTS, where the contract is exact: the guard is appended after
+# the branch predicate and binds read branch-predicate-first then tag — so the SQL
+# `bark_volume = ? and kind = ?` pairs with binds [7, dog], never [dog, 7].
+#
+# Rex (bark_volume 7) is Alice's Dog; Fido (3) is Bob's, so only Alice matches. The
+# `rows` and the independent oracle are what make this decisive rather than a text
+# assertion: a reversed bind order compares the int64 bark_volume against 'dog' and the
+# tag against 7, which no row can satisfy.
+#
+# Non-trivial (semi-join + branch predicate + tag) => referenceSql is the naive
+# `id in (select fk …)` oracle.
+model: models/animal.yaml
+tags: [m-navigate, m-op-algebra, m-inheritance, m-sql, table-per-hierarchy, polymorphic, narrow, exists, slice-snapshot-1, slice-managed-1]
+shape: read
+when:
+  targetEntity: Person
+  operation:
+    exists:
+      rel: Person.pets
+      op:
+        narrow:
+          entity: Pet
+          to: [Dog]
+          operand:
+            eq: { attr: Dog.barkVolume, value: 7 }
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.name from person t0 where exists (select 1 from animal t1 where t1.owner_id = t0.id and t1.bark_volume = ? and t1.kind = ?)
+      binds: [7, dog]
+  referenceSql: select id, name from person where id in (select owner_id from animal where bark_volume = 7 and kind = 'dog')
+  rows:
+    - { id: 10, name: Alice }
+  roundTrips: 1

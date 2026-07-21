@@ -27,6 +27,7 @@ pytestmark = pytest.mark.unit
 _MODELS = models.load_models()
 ORDERS = _MODELS["orders"]
 ACCOUNT = _MODELS["account"]
+CUSTOMER = _MODELS["customer"]
 
 
 # --------------------------------------------------------------------------- #
@@ -169,6 +170,51 @@ def test_navigation_correlates_an_aliased_subquery_against_the_unaliased_owner()
     sql, binds = compile_write_predicate(oa.Exists(rel="Order.items"), ORDERS, POSTGRES, "Order")
     assert sql == "exists (select 1 from order_item t1 where t1.order_id = id)"
     assert binds == ()
+
+
+def test_value_object_document_column_renders_unaliased() -> None:
+    # A value object's structured-DOCUMENT column is not an `Attribute`, so it does
+    # not reach the unaliased formatter through `column_of` the way a scalar does.
+    # It must render bare all the same: Customer is transactional/non-temporal and
+    # unversioned, so this fragment is spliced into the READLESS
+    # `update customer set … where <fragment>` template — where a leaked `t0` names
+    # an alias the statement never declares (m-sql rule 1: DML is unaliased with
+    # bare columns).
+    sql, binds = compile_write_predicate(
+        oa.NestedComparison(op="nestedEq", path="Customer.address.city", value="Boston"),
+        CUSTOMER,
+        POSTGRES,
+        "Customer",
+    )
+    assert sql == "jsonb_extract_path_text(address, ?) = ?"
+    assert binds == ("city", "Boston")
+    # The read lane is the control: identical but for the alias qualification, so
+    # this pins the DIFFERENCE rather than merely the write's own text.
+    read = compile_read(
+        oa.NestedComparison(op="nestedEq", path="Customer.address.city", value="Boston"),
+        CUSTOMER,
+        POSTGRES,
+        "Customer",
+    )
+    read_where = read.sql.split(" where ", 1)[1]
+    assert read_where == "jsonb_extract_path_text(t0.address, ?) = ?"
+    assert read_where.replace("t0.", "") == sql
+
+
+def test_to_many_value_object_traversal_keeps_only_its_own_element_alias() -> None:
+    # The array paths reach the document column through a different dialect helper
+    # (`array_guard`) than the scalar extraction above, so they leak independently.
+    # The `t1` element alias MUST survive — this subquery declares it itself — while
+    # the owning document column must go bare, exactly as the navigation hop above
+    # keeps `t1` and drops the owner's alias.
+    for op in (
+        oa.NestedComparison(op="nestedEq", path="Customer.address.phones.number", value="555"),
+        oa.NestedExists(path="Customer.address.phones"),
+    ):
+        sql, _ = compile_write_predicate(op, CUSTOMER, POSTGRES, "Customer")
+        assert "t0." not in sql
+        assert "jsonb_extract_path(address, ?)" in sql
+        assert "jsonb_array_elements(" in sql and " t1" in sql
 
 
 # --------------------------------------------------------------------------- #

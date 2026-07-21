@@ -763,9 +763,22 @@ def test_real_corpus_declares_the_two_lifecycle_slices() -> None:
         # node shape DQ7b's Option C decision defines. All eight raise slice-snapshot-1
         # and slice-managed-1 by 8 each: 303 -> 311, 325 -> 333; slice-mvp-1 is
         # unchanged. Final counts: 197 / 311 / 333.
+        #
+        # COR-43's interstitial sql_gen defect fix authors TWO cases, neither tagged
+        # slice-mvp-1 (both reach lowering the TypeScript claim does not implement, and
+        # keeping them out leaves its hardcoded counts untouched). m-inheritance-110
+        # gives m-inheritance-062's narrowed polymorphic hop a REAL branch predicate, so
+        # a user bind and the injected tag guard share one correlated EXISTS and their
+        # order becomes observable (m-sql "Grouped branch predicates"); it copies -062's
+        # slice-snapshot-1 + slice-managed-1 pair, raising both by 1. m-batch-write-007
+        # puts a valueObject extraction in a READLESS predicate write, pinning that DML
+        # renders it with the unaliased bare column (m-sql rule 1) rather than a read's
+        # `t0.`; it copies m-batch-write-005's slice-snapshot-1 ONLY, so it raises just
+        # that one. Net: 311 -> 313, 333 -> 334; slice-mvp-1 unchanged.
+        # Final counts: 197 / 313 / 334.
         ("slice-mvp-1", 197),
-        ("slice-snapshot-1", 311),
-        ("slice-managed-1", 333),
+        ("slice-snapshot-1", 313),
+        ("slice-managed-1", 334),
     ],
 )
 def test_profile_slice_tag_counts(slice_tag: str, expected: int) -> None:

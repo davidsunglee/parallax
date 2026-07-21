@@ -77,9 +77,14 @@ def test_bytes_projection_shape(dialect: Dialect) -> None:
 
 @pytest.mark.parametrize("dialect", DIALECTS, ids=IDS)
 def test_nested_extraction_and_cast(dialect: Dialect) -> None:
-    extract, binds = dialect.nested_extract("t0", "address", ("geo", "country"))
+    extract, binds = dialect.nested_extract("t0.address", ("geo", "country"))
     assert extract == "jsonb_extract_path_text(t0.address, ?, ?)"
     assert binds == ["geo", "country"]
+    # The document reference is rendered by the CALLER, so the same helper serves a
+    # write's unaliased bare-column form (m-sql rule 1) with no second code path.
+    bare, bare_binds = dialect.nested_extract("address", ("geo", "country"))
+    assert bare == "jsonb_extract_path_text(address, ?, ?)"
+    assert bare_binds == ["geo", "country"]
     assert dialect.nested_cast("EXT", "string") == "EXT"  # text compares directly
     assert dialect.nested_cast("EXT", "int64") == "cast(EXT as bigint)"
     assert dialect.nested_cast("EXT", "float64") == "cast(EXT as double precision)"
@@ -92,7 +97,7 @@ def test_array_guard_fragment_binds_the_path_twice(dialect: Dialect) -> None:
     # guard: the path segment(s) reaching the array are bound TWICE (the
     # `jsonb_typeof` probe, then the `then` branch's re-extraction), followed by
     # the `array` type-name literal and the `[]` empty-array fallback.
-    fragment, binds = dialect.array_guard("t0", "address", ("phones",))
+    fragment, binds = dialect.array_guard("t0.address", ("phones",))
     assert fragment == (
         "case when jsonb_typeof(jsonb_extract_path(t0.address, ?)) = ? "
         "then jsonb_extract_path(t0.address, ?) else cast(? as jsonb) end"
@@ -104,7 +109,7 @@ def test_array_guard_fragment_binds_the_path_twice(dialect: Dialect) -> None:
 def test_array_guard_fragment_multi_segment_path_doubles_every_segment(dialect: Dialect) -> None:
     # A `many` member reached through an intermediate nested value object binds
     # EVERY segment of the path twice, in the same order (m-sql rule 4).
-    fragment, binds = dialect.array_guard("t0", "profile", ("shipping", "rates"))
+    fragment, binds = dialect.array_guard("t0.profile", ("shipping", "rates"))
     assert fragment == (
         "case when jsonb_typeof(jsonb_extract_path(t0.profile, ?, ?)) = ? "
         "then jsonb_extract_path(t0.profile, ?, ?) else cast(? as jsonb) end"
@@ -117,7 +122,7 @@ def test_array_guard_fragment_top_level_many_needs_no_path_descent(dialect: Dial
     # A `many` value object declared AT THE TOP LEVEL is itself the array — no
     # `jsonb_extract_path` call is needed to reach it, so the guard probes the
     # plain column reference directly and binds only the type-name/fallback pair.
-    fragment, binds = dialect.array_guard("t0", "tags", ())
+    fragment, binds = dialect.array_guard("t0.tags", ())
     assert fragment == "case when jsonb_typeof(t0.tags) = ? then t0.tags else cast(? as jsonb) end"
     assert binds == ["array", "[]"]
 

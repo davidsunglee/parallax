@@ -185,11 +185,28 @@ class _Ctx:
     # compiler's own default) for every ordinary read context.
     unaliased: bool = False
 
-    def column_of(self, attr_ref: str) -> str:
-        attribute = self.entity_attribute(attr_ref)
+    def own_column(self, column: str) -> str:
+        """Render one of THIS context's own columns, honoring :attr:`unaliased`.
+
+        The single consultant of :attr:`unaliased` — every reference to a column
+        of the active target must route through here so a write's bare-column
+        form can never be bypassed. :meth:`column_of` is the attribute-resolving
+        front door; a value object's backing DOCUMENT column is not an
+        ``Attribute`` and so has no `attr_ref` to resolve, but it is just as much
+        this target's own column and takes the same rendering decision.
+
+        Not every column reference is "this context's own": an unnested array
+        element's ``t1.value`` is always alias-qualified, because the subquery
+        that produced it declares that alias itself regardless of whether the
+        enclosing statement is a read or a write. Those callers reach for
+        :meth:`Dialect.qualified` directly, and correctly so.
+        """
         if self.unaliased:
-            return self.dialect.quote(attribute.column)
-        return self.dialect.qualified(self.alias, attribute.column)
+            return self.dialect.quote(column)
+        return self.dialect.qualified(self.alias, column)
+
+    def column_of(self, attr_ref: str) -> str:
+        return self.own_column(self.entity_attribute(attr_ref).column)
 
     def next_alias(self) -> str:
         """The next alias in this statement's single continuing sequence."""
@@ -681,7 +698,12 @@ def _compile_tph_read(
     inner_sql = _lower_predicate(inner, ctx)
     where_terms = [inner_sql] if inner_sql else []
     if tag_kind != "none":
-        where_terms.append(_tph_tag_fragment(ctx, meta, tag_col, tag_kind, position))
+        # Planned, then bound HERE — after the user predicate above has pushed its
+        # own binds (m-sql "Grouped branch predicates": branch-predicate-first,
+        # then tag).
+        tag_sql, tag_binds = _tph_tag_guard(ctx, meta, tag_col, tag_kind, position)
+        where_terms.append(tag_sql)
+        ctx.binds.extend(tag_binds)
     if where_terms:
         parts.append("where " + " and ".join(where_terms))
 
@@ -689,23 +711,33 @@ def _compile_tph_read(
     return _normalize(Statement(" ".join(parts), tuple(ctx.binds)))
 
 
-def _tph_tag_fragment(
+def _tph_tag_guard(
     ctx: _Ctx, meta: Metamodel, tag_col: str, tag_kind: str, position: Sequence[str]
-) -> str:
-    """The tag-predicate fragment for ``position`` (m-sql *Tag-predicate
+) -> tuple[str, tuple[object, ...]]:
+    """PLAN the tag-predicate guard for ``position`` (m-sql *Tag-predicate
     selection*): `t0.<tag> = ?` for one concrete, `t0.<tag> in (?, …)` for several
     — the `in` list in ``position``'s already-canonical alphabetical order, so its
-    tag values follow suit. Binds append to ``ctx`` in that same order.
+    tag values follow suit.
+
+    This returns the fragment AND its bind values and pushes nothing; every caller
+    binds them itself, after it has lowered its own interior predicate. That split
+    is not stylistic. A bind-as-you-render helper can only be sequenced correctly
+    if the caller never evaluates it early — and the natural spelling at the
+    correlated-hop call site was to pass it as an ARGUMENT to the function that
+    lowers the interior, which Python evaluates BEFORE the call. The guard's bind
+    then landed ahead of the interior's own while the emitted text still put the
+    guard last, so SQL and binds disagreed (`bark_volume = ? and kind = ?` against
+    `('dog', 5)`). m-sql "Grouped branch predicates" fixes the contract exactly:
+    the guard is appended after the branch predicate and "binds read
+    branch-predicate-first then tag". Returning data makes the ordering the
+    caller's explicit, visible statement rather than an evaluation-order accident.
     """
     col = ctx.dialect.qualified(ctx.alias, tag_col)
     tag_values = [_tag_value(meta, name) for name in position]
     if tag_kind == "eq":
-        ctx.bind(tag_values[0])
-        return f"{col} = ?"
+        return f"{col} = ?", (tag_values[0],)
     holes = ", ".join("?" for _ in tag_values)
-    for value in tag_values:
-        ctx.bind(value)
-    return f"{col} in ({holes})"
+    return f"{col} in ({holes})", tuple(tag_values)
 
 
 def _tag_value(meta: Metamodel, concrete_name: str) -> str:
@@ -740,7 +772,8 @@ def _lower_branch_narrow(narrow: Narrow, ctx: _Ctx) -> str:
     position = _narrow_effective_set(ctx.meta, narrow.to)
     tag_kind = "eq" if len(position) == 1 else "in"
     branch_sql = _lower_predicate(narrow.operand, ctx)
-    tag_sql = _tph_tag_fragment(ctx, ctx.meta, tag_col, tag_kind, position)
+    tag_sql, tag_binds = _tph_tag_guard(ctx, ctx.meta, tag_col, tag_kind, position)
+    ctx.binds.extend(tag_binds)
     if not branch_sql:
         return tag_sql
     return f"({branch_sql} and {tag_sql})"
@@ -1140,12 +1173,18 @@ def _lower_tph_hop(
     # `inheritance is not None`, exactly like a top-level inheritance read's ctx.
     child_ctx = ctx.child(ctx.meta.entity(root.name), child_alias)
     correlation = f"{child_ctx.column_of(f'{root.name}.{related_attr}')} = {parent_col}"
-    tag_fragment = (
-        ()
-        if tag_kind == "none"
-        else (_tph_tag_fragment(child_ctx, ctx.meta, tag_col, tag_kind, position),)
-    )
+    # The guard is PLANNED here but BOUND below, after `_hop_where` has lowered the
+    # interior predicate. Passing a bind-as-you-render fragment as an ARGUMENT to
+    # `_hop_where` would push the tag bind during argument evaluation — ahead of
+    # the interior's own binds — so the SQL text (guard last) and the bind order
+    # (guard first) would disagree, which is the COR-43 defect this shape retires.
+    tag_fragment: tuple[str, ...] = ()
+    tag_binds: tuple[object, ...] = ()
+    if tag_kind != "none":
+        tag_sql, tag_binds = _tph_tag_guard(child_ctx, ctx.meta, tag_col, tag_kind, position)
+        tag_fragment = (tag_sql,)
     where = _hop_where(remaining_inner, correlation, child_ctx, *tag_fragment)
+    child_ctx.binds.extend(tag_binds)
     keyword = "not exists" if negate else "exists"
     return f"{keyword} (select 1 from {table} {child_alias} where {where})"
 
@@ -1315,7 +1354,9 @@ def _lower_nested(op: NestedComparison | NestedMembership | NestedNullCheck, ctx
     if crossing is not None:
         return _lower_any_element(op, vo, crossing, ctx)
     leaf = _resolve_leaf(vo, segments)
-    extraction, path_binds = ctx.dialect.nested_extract(ctx.alias, vo.column, segments)
+    # The document column is the TARGET's own, so it renders through `own_column`
+    # and goes bare in a write's unaliased predicate (m-sql rule 1).
+    extraction, path_binds = ctx.dialect.nested_extract(ctx.own_column(vo.column), segments)
     ctx.binds.extend(path_binds)
     return _lower_comparator(op, extraction, leaf.type, ctx)
 
@@ -1409,10 +1450,15 @@ def _lower_any_element(
             "within its elements"
         )
     leaf = _resolve_leaf(container, post)
-    guard_sql, guard_binds = ctx.dialect.array_guard(ctx.alias, vo.column, pre)
+    # The owning document column is the target's own (bare under `unaliased`); the
+    # unnested ELEMENT is not, and stays alias-qualified either way — this very
+    # subquery declares `array_alias`, so there is no alias here to leak.
+    guard_sql, guard_binds = ctx.dialect.array_guard(ctx.own_column(vo.column), pre)
     ctx.binds.extend(guard_binds)
     array_alias = ctx.next_alias()
-    extraction, path_binds = ctx.dialect.nested_extract(array_alias, "value", post)
+    extraction, path_binds = ctx.dialect.nested_extract(
+        ctx.dialect.qualified(array_alias, "value"), post
+    )
     ctx.binds.extend(path_binds)
     comparator = _lower_comparator(op, extraction, leaf.type, ctx)
     return (
@@ -1440,7 +1486,7 @@ def _lower_nested_exists(op: NestedExists | NestedNotExists, ctx: _Ctx) -> str:
             f"nestedExists/nestedNotExists over a `one`-cardinality value object "
             f"({op.path!r}) has no goldened lowering yet"
         )
-    guard_sql, guard_binds = ctx.dialect.array_guard(ctx.alias, vo.column, pre)
+    guard_sql, guard_binds = ctx.dialect.array_guard(ctx.own_column(vo.column), pre)
     ctx.binds.extend(guard_binds)
     array_alias = ctx.next_alias()
     inner = f"select 1 from jsonb_array_elements({guard_sql}) {array_alias}"
@@ -1493,7 +1539,11 @@ def _lower_element_predicate(
         case NestedComparison(path=path) | NestedMembership(path=path) | NestedNullCheck(path=path):
             segments = tuple(path.split("."))
             leaf = _resolve_leaf(container, segments)
-            extraction, path_binds = ctx.dialect.nested_extract(alias, "value", segments)
+            # `alias` names the unnest this statement itself declared, so the
+            # element reference is alias-qualified in a write's predicate too.
+            extraction, path_binds = ctx.dialect.nested_extract(
+                ctx.dialect.qualified(alias, "value"), segments
+            )
             ctx.binds.extend(path_binds)
             return _lower_comparator(op, extraction, leaf.type, ctx)
         case And(operands=operands):

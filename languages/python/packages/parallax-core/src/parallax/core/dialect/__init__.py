@@ -92,15 +92,19 @@ class Dialect:
         return f"for share of {root_alias}"
 
     # -- structured documents (m-value-object) ----------------------------- #
-    def nested_extract(
-        self, alias: str, column: str, segments: tuple[str, ...]
-    ) -> tuple[str, list[object]]:
-        """The document text-extraction expression and its per-segment path binds."""
+    def nested_extract(self, document: str, segments: tuple[str, ...]) -> tuple[str, list[object]]:
+        """The document text-extraction expression and its per-segment path binds.
+
+        ``document`` is an ALREADY-RENDERED document-column reference, not an
+        ``(alias, column)`` pair: how that reference is spelled is the caller's
+        decision, because it differs by statement kind — a read qualifies it
+        (`t0.address`) while a write's bare predicate does not (`address`,
+        m-sql rule 1's unaliased DML shape) — and by what it addresses (an
+        unnested element's `t1.value` is always alias-qualified, since the
+        subquery declares that alias itself).
+        """
         holes = ", ".join(["?"] * len(segments))
-        return (
-            f"jsonb_extract_path_text({self.qualified(alias, column)}, {holes})",
-            list(segments),
-        )
+        return (f"jsonb_extract_path_text({document}, {holes})", list(segments))
 
     def nested_cast(self, extraction: str, neutral_type: str) -> str:
         """Cast a text extraction to a non-text declared type before comparing."""
@@ -114,9 +118,7 @@ class Dialect:
             return extraction  # string / text — compare directly
         return f"cast({extraction} as {target})"
 
-    def array_guard(
-        self, alias: str, column: str, segments: tuple[str, ...]
-    ) -> tuple[str, list[object]]:
+    def array_guard(self, document: str, segments: tuple[str, ...]) -> tuple[str, list[object]]:
         """The array-type guard fragment for a `cardinality: many` value-object
         member (m-sql "To-many — exists / notExists and any-element predicates",
         abbreviated `<arr>`): the strict `jsonb_array_elements` ERRORS on a
@@ -130,14 +132,16 @@ class Dialect:
         An empty ``segments`` (the value object's own top-level `many` column IS
         the array, no further descent) needs no `jsonb_extract_path` call at all;
         the guard then probes the plain column reference directly.
+
+        ``document`` is an ALREADY-RENDERED document-column reference, for the
+        same reason :meth:`nested_extract` takes one.
         """
-        qualified = self.qualified(alias, column)
         if segments:
             holes = ", ".join(["?"] * len(segments))
-            extract = f"jsonb_extract_path({qualified}, {holes})"
+            extract = f"jsonb_extract_path({document}, {holes})"
             path_binds: list[object] = list(segments)
         else:
-            extract = qualified
+            extract = document
             path_binds = []
         fragment = f"case when jsonb_typeof({extract}) = ? then {extract} else cast(? as jsonb) end"
         return fragment, [*path_binds, "array", *path_binds, "[]"]

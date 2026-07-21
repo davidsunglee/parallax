@@ -133,6 +133,39 @@ def test_tph_grouped_branch_predicates_join_by_or() -> None:
     assert statement.binds == (5, "dog", True, "cat")
 
 
+def test_user_binds_precede_framework_tag_binds() -> None:
+    # m-sql "Grouped branch predicates": the tag guard is appended AFTER the branch
+    # predicate and "binds read branch-predicate-first then tag". The two top-level
+    # paths above already honor it; this pins the THIRD, deepest one — a narrow
+    # inside a polymorphic navigation hop, where the guard is injected into a
+    # correlated subquery's `where` alongside the interior predicate.
+    #
+    # This is the shape that regressed: when the guard fragment was built by a
+    # bind-as-you-render helper passed as an ARGUMENT to the function that lowers
+    # the interior, Python's argument evaluation pushed the tag bind FIRST, so the
+    # SQL read `bark_volume = ? and kind = ?` while the binds read `('dog', 5)` —
+    # executing as `bark_volume = 'dog' and kind = 5`. Asserting SQL and binds
+    # TOGETHER is the point: either half alone stays green under that defect.
+    statement = compile_read(
+        oa.Exists(
+            rel="Person.animals",
+            op=oa.Narrow(
+                entity="Animal",
+                to=("Dog",),
+                operand=oa.Comparison(op="eq", attr="Dog.barkVolume", value=5),
+            ),
+        ),
+        ANIMAL,
+        POSTGRES,
+        "Person",
+    )
+    assert statement.sql.endswith(
+        "where exists (select 1 from animal t1 "
+        "where t1.owner_id = t0.id and t1.bark_volume = ? and t1.kind = ?)"
+    )
+    assert statement.binds == (5, "dog")
+
+
 def test_tph_abstract_superset_projection_ordering() -> None:
     # Ancestry prefix (Animal's own, then Pet's own) first, never alphabetized
     # across the chain, THEN each concrete's own block in alphabetical subtype

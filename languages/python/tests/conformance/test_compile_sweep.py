@@ -124,9 +124,13 @@ _NAVIGATE_READS: Final[frozenset[str]] = frozenset(
 # hops over document.yaml (070-071) — all row-form. The 3 narrowed-deep-fetch
 # inheritance reads (065-067) stay OUT of this set for the same declared-run-only
 # reason as the navigate deep-fetch reads above.
+# -110 is -062's bind-order sibling: the same narrowed-to-concrete hop, but with a
+# REAL branch predicate, so the subquery carries a user bind AND the injected tag
+# guard and their order is observable (m-sql "Grouped branch predicates"). It is
+# row-form and compile-eligible exactly as -062 is.
 _NAVIGATE_INHERITANCE_READS: Final[frozenset[str]] = frozenset(
     {"m-inheritance-060", "m-inheritance-061", "m-inheritance-062", "m-inheritance-063"}
-    | {"m-inheritance-070", "m-inheritance-071"}
+    | {"m-inheritance-070", "m-inheritance-071", "m-inheritance-110"}
 )
 # Milestone-set snapshot reads (COR-3 Phase 7 increment 5, m-snapshot-read
 # "Milestone-set graphs"): `history` / `asOfRange` compile to a single, pure
@@ -235,8 +239,16 @@ _WRITE_SCENARIOS: Final[frozenset[str]] = frozenset(f"m-unit-work-{n:03d}" for n
 # read, no equality-elimination pass. `m-batch-write-006` additionally pins
 # descriptor-declared column order (SET columns/binds) independent of the
 # authored assignment order.
+# `m-batch-write-007` widens this set to the valueObject write lane, which was
+# outside the reviewed keyed set until now. It earns inclusion on the same terms as
+# its two siblings — one statement, no materializing read, a fully authored golden —
+# and it is the only case that grades the DML spelling of a document extraction:
+# a readless predicate write must render `jsonb_extract_path_text(address, ?)`, not
+# the read lane's `t0.address` (m-sql rule 1's unaliased DML shape). Nothing else in
+# the corpus compiles a valueObject predicate through the WRITE lane, so leaving it
+# out would leave that rendering ungraded.
 _READLESS_PREDICATE_WRITE_SCENARIOS: Final[frozenset[str]] = frozenset(
-    {"m-batch-write-005", "m-batch-write-006"}
+    {"m-batch-write-005", "m-batch-write-006", "m-batch-write-007"}
 )
 # COR-3 Phase 8 increment 3's 17 compile-eligible flips: the non-temporal opt-lock
 # versioned advance (m-opt-lock-002), the inheritance-family keyed write family
