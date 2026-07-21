@@ -13,13 +13,16 @@ rides inside the hop's `op` as a plain predicate node — `parallax.core.navigat
 canonicalize` injected it upstream — so nothing here is temporal-aware.
 
 **This module returns PLANS and never lowers anything.** A plan carries the
-hop's un-lowered interior operation and, for a table-per-hierarchy hop, its tag
-guard as a fragment plus bind VALUES; `_predicate` — the package's one recursive
-owner — lowers the interior and only then pushes those values. It also contains
-no `match` over the predicate node union: the two operation nodes it inspects are
-the hop node itself (to read `rel` / `op` / negation) and a TOP-LEVEL `narrow`
-inside the hop's `op` (to resolve the hop's position, `m-navigate` "Polymorphic
-navigation"), never a descent into either.
+hop's un-lowered interior operation and, for a table-per-hierarchy hop, the tag
+guard's INPUTS as an `_inheritance.TagPredicate` — never a rendered fragment,
+since the fragment needs a child alias no plan has yet. :func:`open_branch`
+renders it to a fragment plus bind VALUES once the branch takes its alias;
+`_predicate` — the package's one recursive owner — lowers the interior and only
+then pushes those values. It also contains no `match` over the predicate node
+union: the two operation nodes it inspects are the hop node itself (to read
+`rel` / `op` / negation) and a TOP-LEVEL `narrow` inside the hop's `op` (to
+resolve the hop's position, `m-navigate` "Polymorphic navigation"), never a
+descent into either.
 
 That "never binds" rule is STRUCTURAL, not remembered. Every entry point here
 takes a :class:`~parallax.core.sql_gen._context.PlanScope`, which exposes model

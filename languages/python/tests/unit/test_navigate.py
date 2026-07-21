@@ -6,8 +6,8 @@ latest default, a non-temporal hop carrying no term, a temporal hop reached from
 a polymorphic position resolving through the family root), multi-hop
 propagation of the SAME root pin, and the strict-identity rule for a
 navigation-free operation. Correlation-column / polymorphic-tag SQL emission is
-`m-sql`'s own concern, covered in `test_sql_gen.py`; these tests feed the
-rewritten operation straight to `compile_read` only to assert the FRAGMENT
+`m-sql`'s own concern, covered in `test_sql_gen_navigation.py`; these tests feed
+the rewritten operation straight to `compile_read` only to assert the FRAGMENT
 `canonicalize` injected, never the join columns.
 """
 
