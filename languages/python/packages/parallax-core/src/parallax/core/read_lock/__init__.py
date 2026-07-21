@@ -15,7 +15,7 @@ render it) — the two DAG edges `modules.md` declares for `m-read-lock`.
 
 This module renders **no SQL** and owns **no append site**: `m-dialect` keeps
 :meth:`~parallax.core.dialect.Dialect.read_lock_suffix` (the suffix text) and
-``m-sql``/`~parallax.core.sql_gen.compile` keeps the append decision (a
+``m-sql``/`~parallax.core.sql_gen` keeps the append decision (a
 `distinct` projection/aggregation suppresses the suffix and never errors —
 `m-sql` *Read-lock suffix*, `m-read-lock.md` "Automatic read-lock
 correctness": a projection's result rows have no identifiable base row to
@@ -57,7 +57,7 @@ def mode_for(concurrency: Concurrency | None) -> LockMode | None:
     legally names BOTH vocabularies and states that coincidence as POLICY,
     rather than three call sites each silently assuming it holds.
     ``locking`` carries through to `m-sql`'s append site
-    (`~parallax.core.sql_gen.compile._append_result_shape`), which appends
+    (`~parallax.core.sql_gen._compile._append_result_shape`), which appends
     the dialect's shared-row-lock suffix; ``optimistic`` carries through
     unchanged too, but the SAME append site never triggers for it (only
     ``"locking"`` does) — the "optimistic mode takes no lock, ever" half of

@@ -1,12 +1,12 @@
 """The three-stage read compiler (m-sql): canonicalize -> lower -> normalize.
 
 ``compile_read`` turns an ``m-op-algebra`` operation into one canonical
-``Statement`` for a dialect. Lowering is per-concern ``match`` functions over the
-node union (no visitor framework); the dialect strategy supplies every
-dialect-specific string. The emitted SQL is produced directly in canonical
-normalized form (alias-qualified columns, lowercase, single-space separated,
-canonical clause order), so ``normalize`` is a fixed-point identity check rather
-than a rewrite — the language target never depends on the reference harness's
+``Statement`` for a dialect. Lowering descends through `_predicate`'s one
+dispatcher (no visitor framework — see the third paragraph); the dialect strategy
+supplies every dialect-specific string. The emitted SQL is produced directly in
+canonical normalized form (alias-qualified columns, lowercase, single-space
+separated, canonical clause order), so ``normalize`` is a fixed-point identity
+check rather than a rewrite — the language target never depends on the reference harness's
 sqlglot normalizer (non-normative). Temporal reads are canonicalized upstream by
 ``m-temporal-read`` (``inject_as_of``) into ordinary predicate nodes before they
 reach this compiler; deep fetch (`DeepFetch`), the one node this phase does not

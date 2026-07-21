@@ -125,6 +125,28 @@ operation to the same dispatcher. The element scope admits only the
 node raises the existing `SqlGenError`. There is no second element dispatcher,
 and element resolution state is not added to `_context`.
 
+**Correction (2026-07-21, post-acceptance).** Two details of the paragraph above
+are design intent that the implementation deliberately departed from; both are
+recorded here rather than edited in place, so this section keeps reading as the
+accepted design.
+
+- The shipped type is `ResolutionScope`, not `_ResolutionScope`. A private
+  *module* carries the privacy in this codebase and its published names are not
+  underscore-prefixed — pyright's `reportPrivateUsage` fails the static gate on a
+  cross-module underscore import — so the leading underscore could not survive
+  contact with `_navigation` and `_inheritance`. The same applies to `EntityScope`
+  and `ElementScope`, the two arms of the sum.
+- The dispatcher takes **two** arguments, not three: `lower_predicate(op, scope)`.
+  The scope *holds* the shared lowering context rather than travelling beside it,
+  because the alternatives were to duplicate the metamodel and dialect onto every
+  scope (two sources of truth, and a scope pairable with a foreign context) or to
+  thread the context through roughly ninety lowering sites and both plan-only
+  capability protocols. Every bind site therefore spells `scope.ctx.bind(...)`,
+  which keeps the bind ordering this refactor exists to protect greppable in one
+  expression.
+
+Everything else in the paragraph holds as written.
+
 Navigation and inheritance do not call back into `_predicate`; instead they
 return immutable private plans containing the resolved tables, positions,
 correlations, tag guards, branches, resolution-scope inputs, and any inner

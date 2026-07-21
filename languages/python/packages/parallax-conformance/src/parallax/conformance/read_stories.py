@@ -296,7 +296,7 @@ READ_STORIES: Final[tuple[ReadStory, ...]] = (
     # concrete class's fields (never a sibling's nullable column the wire
     # row's superset includes), and table-per-concrete-subtype instance-form
     # projection over 2+ resolved concretes has no goldened lowering at all
-    # yet (`SqlGenError`, `sql_gen.compile._compile_tpcs_read`) — a genuine
+    # yet (`SqlGenError`, `sql_gen._compile._compile_tpcs_read`) — a genuine
     # engine gap, not a Spec-1 partition-honesty concern to paper over. See
     # `api_suite.CASE_SKIP_REASONS` for the reasoned skip.
     ReadStory(

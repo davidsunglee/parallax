@@ -56,10 +56,12 @@ def test_core_wheel_contains_spine_scopes(wheelhouse: Wheelhouse) -> None:
 
 def test_core_wheel_ships_sql_gen_package(wheelhouse: Wheelhouse) -> None:
     # Same idiom, same reasoning as the handle package below: Hatch discovers the
-    # tree rather than enumerating modules, so the ABSENT old path is the
-    # load-bearing half — it is what catches a stale build or a half-applied
-    # split. This grows with each COR-43 phase; the complete five-module layout
-    # is asserted in Phase 6.
+    # tree rather than enumerating modules, so the ABSENT `sql_gen/compile.py` is
+    # the load-bearing half — every required path below would still pass against a
+    # tree that kept the old single-file compiler beside the split, which is
+    # exactly what a stale build or a half-applied split looks like. This is the
+    # complete package as of COR-43 Phase 6 — the five private modules plus the
+    # re-exporting interface, and nothing else.
     names = _names(wheelhouse, "parallax-core")
     assert "parallax/core/sql_gen/__init__.py" in names
     assert "parallax/core/sql_gen/_compile.py" in names

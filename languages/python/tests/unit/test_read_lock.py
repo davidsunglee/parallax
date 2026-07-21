@@ -23,7 +23,7 @@ def test_locking_mode_selects_the_shared_lock() -> None:
 def test_optimistic_mode_selects_the_optimistic_lock_mode() -> None:
     # `mode_for` is the mode -> LockMode identity mapping; the "never a lock"
     # half of optimistic mode's own contract is enforced at the `m-sql` APPEND
-    # SITE (`sql_gen.compile._append_result_shape`'s own `lock == "locking"`
+    # SITE (`sql_gen._compile._append_result_shape`'s own `lock == "locking"`
     # check — this module renders no SQL and owns no append site, see the
     # module docstring), proven end to end by the compile sweep
     # (`m-read-lock-005`).
