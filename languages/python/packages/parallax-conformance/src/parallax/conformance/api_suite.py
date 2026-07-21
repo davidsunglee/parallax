@@ -889,6 +889,12 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-inheritance-061": _TPH_POLYMORPHIC_EXISTS_SIBLING_REASON,
     "m-inheritance-062": _TPH_POLYMORPHIC_EXISTS_SIBLING_REASON,
     "m-inheritance-063": _TPH_POLYMORPHIC_EXISTS_SIBLING_REASON,
+    # -110 adds a branch predicate to -062's narrowed hop to pin BIND ORDER inside
+    # the correlated EXISTS (m-sql "Grouped branch predicates"). Both halves of that
+    # spelling — the narrow and the comparison — are already exercised developer
+    # surface; what it adds is an emitted-SQL contract, which the compile/run sweeps
+    # grade byte-exact rather than a story.
+    "m-inheritance-110": _TPH_POLYMORPHIC_EXISTS_SIBLING_REASON,
     "m-inheritance-092": _TEMPORAL_INHERITANCE_ROW_SIBLING_REASON,
     "m-inheritance-093": _TEMPORAL_INHERITANCE_ROW_SIBLING_REASON,
     "m-inheritance-101": _CONCRETE_TARGET_TEMPORAL_ROOT_AXIS_SIBLING_REASON,
