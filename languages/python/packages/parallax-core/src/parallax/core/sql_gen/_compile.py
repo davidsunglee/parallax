@@ -55,7 +55,7 @@ not goldened for this target and is not implemented here.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Literal, assert_never, cast
 
 from parallax.core import inheritance
@@ -105,6 +105,8 @@ from parallax.core.op_algebra import (
     OrderKey,
     StringMatch,
 )
+from parallax.core.sql_gen._context import Ctx as _Ctx
+from parallax.core.sql_gen._context import SqlGenError
 
 __all__ = [
     "CompiledPredicate",
@@ -141,14 +143,6 @@ _NESTED_COMPARATORS: dict[str, str] = {
     "nestedLt": "<",
     "nestedLte": "<=",
 }
-
-
-def _new_binds() -> list[object]:
-    return []
-
-
-class SqlGenError(ValueError):
-    """An operation cannot be lowered to SQL (unsupported node or unbound reference)."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -277,102 +271,6 @@ class CompiledRead:
         materialize.
         """
         return self._transform.apply(row)
-
-
-def _new_alias_seq() -> list[int]:
-    # The next alias INDEX after this context's own `t0` — a one-element mutable
-    # cell so every `_Ctx` created via `.child()` (a correlated-EXISTS interior,
-    # nested however deep) shares and advances the SAME counter, continuing the
-    # single `t0, t1, …` sequence (m-sql rule 1). A fresh top-level statement
-    # (a plain read, a TPH read, or each TPCS `union all` branch — which restarts
-    # its own alias scheme at `t0`) gets its own counter via this default factory.
-    return [1]
-
-
-@dataclass(frozen=True, slots=True)
-class _Ctx:
-    """Lowering context: the resolved target entity, its dialect, and its alias."""
-
-    meta: Metamodel
-    dialect: Dialect
-    entity: Entity
-    alias: str = "t0"
-    binds: list[object] = field(default_factory=_new_binds)
-    alias_seq: list[int] = field(default_factory=_new_alias_seq)
-    # A write-appropriate column formatter (m-batch-write readless predicate
-    # lowering, `m-batch-write.md` "Predicate-selected readless forms"): a
-    # write's rendered predicate is UNALIASED (`where balance < ?`), contrasting
-    # the resolving read's aliased `t0.balance < ?` form. ``False`` (the read
-    # compiler's own default) for every ordinary read context.
-    unaliased: bool = False
-
-    def own_column(self, column: str) -> str:
-        """Render one of THIS context's own columns, honoring :attr:`unaliased`.
-
-        The single consultant of :attr:`unaliased` — every reference to a column
-        of the active target must route through here so a write's bare-column
-        form can never be bypassed. :meth:`column_of` is the attribute-resolving
-        front door; a value object's backing DOCUMENT column is not an
-        ``Attribute`` and so has no `attr_ref` to resolve, but it is just as much
-        this target's own column and takes the same rendering decision.
-
-        Not every column reference is "this context's own": an unnested array
-        element's ``t1.value`` is always alias-qualified, because the subquery
-        that produced it declares that alias itself regardless of whether the
-        enclosing statement is a read or a write. Those callers reach for
-        :meth:`Dialect.qualified` directly, and correctly so.
-        """
-        if self.unaliased:
-            return self.dialect.quote(column)
-        return self.dialect.qualified(self.alias, column)
-
-    def column_of(self, attr_ref: str) -> str:
-        return self.own_column(self.entity_attribute(attr_ref).column)
-
-    def next_alias(self) -> str:
-        """The next alias in this statement's single continuing sequence."""
-        index = self.alias_seq[0]
-        self.alias_seq[0] = index + 1
-        return f"t{index}"
-
-    def child(self, entity: Entity, alias: str) -> _Ctx:
-        """A nested context for a correlated hop's interior: the SAME bind list
-        and alias counter (so a nested hop's binds/aliases continue this
-        statement's single sequence), a different active entity/alias."""
-        return _Ctx(
-            meta=self.meta,
-            dialect=self.dialect,
-            entity=entity,
-            alias=alias,
-            binds=self.binds,
-            alias_seq=self.alias_seq,
-        )
-
-    def entity_attribute(self, attr_ref: str) -> Attribute:
-        _, _, name = attr_ref.partition(".")
-        for attribute in self._searchable_attributes():
-            if attribute.name == name:
-                return attribute
-        raise SqlGenError(f"{attr_ref!r} names no attribute on {self.entity.name}")
-
-    def _searchable_attributes(self) -> tuple[Attribute, ...]:
-        """The attributes an `attr_ref`'s class-name-qualified name may resolve to.
-
-        A plain entity resolves only against its own declared attributes
-        (unchanged). An inheritance participant resolves against its **whole
-        family** (`parallax.core.inheritance.family_attributes`): the read's own
-        predicate may reference a root-inherited attribute through a concrete
-        target's own class name, and a `narrow` branch predicate references that
-        branch's own attribute by its own class name — narrow-position validity
-        for the reference is enforced upstream (`m-op-algebra`'s model-aware
-        validator), so this need only widen the search, never re-validate scope.
-        """
-        if self.entity.inheritance is None:
-            return self.entity.attributes
-        return inheritance.family_attributes(self.meta, self.entity)
-
-    def bind(self, value: object) -> None:
-        self.binds.append(value)
 
 
 # --------------------------------------------------------------------------- #
