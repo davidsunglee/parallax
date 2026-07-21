@@ -28,7 +28,7 @@ from collections.abc import Mapping
 import pytest
 
 from parallax.conformance import models
-from parallax.core import descriptor, opt_lock
+from parallax.core import descriptor, inheritance, opt_lock
 from parallax.core import op_algebra as oa
 from parallax.core.db_port import JsonDocument
 from parallax.core.descriptor import Metamodel
@@ -477,6 +477,45 @@ def test_materializing_predicate_write_reaching_lower_write_is_refused() -> None
     predicate = PredicateWrite("delete", WriteTarget("Account", oa.All()))
     with pytest.raises(WriteLoweringError, match="materialize to keyed writes"):
         _lower(predicate, ACCOUNT)
+
+
+@pytest.mark.parametrize(
+    "predicate",
+    [
+        # A bare family predicate: the guard is TARGET-driven, so the plainest
+        # shape refuses too.
+        oa.Comparison(op="eq", attr="CardPayment.cardNetwork", value="Visa"),
+        # The shape that actually mis-emitted: a `narrow` renders the family's
+        # framework-owned tag guard, which a read alias-qualifies.
+        oa.Narrow(
+            entity="Payment",
+            to=("CardPayment",),
+            operand=oa.Comparison(op="eq", attr="CardPayment.cardNetwork", value="Visa"),
+        ),
+    ],
+    ids=["bare-predicate", "narrow"],
+)
+def test_inheritance_family_predicate_write_is_rejected_before_sql(
+    predicate: oa.Operation,
+) -> None:
+    # `python.md` §5: "a set-based write whose target entity belongs to an
+    # inheritance family is REJECTED BEFORE SQL with the corpus's
+    # `subtype-write-set-based-unsupported` classification (m-inheritance-089)".
+    #
+    # The buffer-time seams (`_predicate_writes.buffer_predicate` /
+    # `buffer_predicate_instruction`) guard the developer `_where` verbs and the
+    # engine's buffering translation — but they are NOT on every road here.
+    # `lower_write` is EXPORTED (`parallax.snapshot.handle.__all__`,
+    # `tests/api_surface/public_api.json`), and the conformance engine's readless
+    # predicate-write step (`engine._lower_predicate_write_step`) reaches it
+    # straight from a deserialized instruction. Before the lowering-side guard,
+    # the `narrow` case below emitted
+    # `delete from payment where (card_network = ? and t0.kind = ?)` — an alias
+    # the unaliased DML never declares (m-sql rule 1).
+    write = PredicateWrite("delete", WriteTarget("CardPayment", predicate))
+    with pytest.raises(inheritance.InheritanceError) as excinfo:
+        _lower(write, PAYMENT)
+    assert excinfo.value.rule == "subtype-write-set-based-unsupported"
 
 
 def test_multi_row_insert_with_differing_row_shapes_is_refused() -> None:

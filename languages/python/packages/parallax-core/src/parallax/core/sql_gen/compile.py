@@ -731,8 +731,16 @@ def _tph_tag_guard(
     the guard is appended after the branch predicate and "binds read
     branch-predicate-first then tag". Returning data makes the ordering the
     caller's explicit, visible statement rather than an evaluation-order accident.
+
+    The tag column is THIS context's own column, so it renders through
+    :meth:`_Ctx.own_column` like every other one: the framework-owned tag is no
+    more alias-qualified than a declared attribute is. In every read context
+    ``unaliased`` is ``False`` and this is exactly ``qualified(alias, tag_col)``,
+    so no emitted read SQL depends on the distinction — it exists so the leak
+    cannot reopen from a caller that arrives with an unaliased context, rather
+    than resting on every such caller being rejected upstream first.
     """
-    col = ctx.dialect.qualified(ctx.alias, tag_col)
+    col = ctx.own_column(tag_col)
     tag_values = [_tag_value(meta, name) for name in position]
     if tag_kind == "eq":
         return f"{col} = ?", (tag_values[0],)
