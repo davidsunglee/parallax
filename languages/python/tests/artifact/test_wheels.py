@@ -64,6 +64,7 @@ def test_core_wheel_ships_sql_gen_package(wheelhouse: Wheelhouse) -> None:
     assert "parallax/core/sql_gen/__init__.py" in names
     assert "parallax/core/sql_gen/_compile.py" in names
     assert "parallax/core/sql_gen/_context.py" in names
+    assert "parallax/core/sql_gen/_inheritance.py" in names
     assert "parallax/core/sql_gen/compile.py" not in names
 
 
