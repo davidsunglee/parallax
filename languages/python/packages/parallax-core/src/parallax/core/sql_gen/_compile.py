@@ -575,8 +575,10 @@ def _compile_tpcs_single(
     """Assemble a table-per-concrete-subtype read resolving to exactly one
     concrete: an ordinary single-table read of that subtype's own table, no tag,
     no union, no `familyVariant` — attribute resolution still widens across the
-    family (the lowering context's entity stays the read's own `targetEntity`,
-    e.g. an abstract position narrowed down to this one concrete), matching the
+    family (the RESOLUTION SCOPE's entity stays the read's own `targetEntity`,
+    e.g. an abstract position narrowed down to this one concrete, so
+    :meth:`_EntityScope._searchable_attributes` searches the whole family rather
+    than only that entity's own declared attributes), matching the
     table-per-hierarchy concrete-target form.
 
     Like :func:`_compile_tph_read` this builds the statement's context and
