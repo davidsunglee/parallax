@@ -33,10 +33,14 @@ public-surface check promises. Where the exported names live:
   ``m-opt-lock`` conflict lane's :func:`lower_temporal_close`.
 - :mod:`~parallax.snapshot.handle._write_types` — :class:`WriteLoweringError` and
   :class:`LoweredStatement`.
+- :mod:`~parallax.snapshot.handle._write_inputs` —
+  :class:`TransactionTimePinReadOnlyError` and :func:`validate_source_pin`, the
+  finite-Transaction-Time-pin refusal the keyed verbs and the conformance
+  engine's scenario grading share.
 
-The five modules behind no exported name (``_wrap``, ``_family``, ``_keyed_sql``,
-``_write_inputs``, ``_predicate_writes``) are reached only through the modules
-above; each documents its own place in the package's acyclic internal graph.
+The four modules behind no exported name (``_wrap``, ``_family``, ``_keyed_sql``,
+``_predicate_writes``) are reached only through the modules above; each
+documents its own place in the package's acyclic internal graph.
 """
 
 from __future__ import annotations
@@ -59,6 +63,10 @@ from parallax.snapshot.handle._read import (
     find_history,
 )
 from parallax.snapshot.handle._transaction import Transaction
+from parallax.snapshot.handle._write_inputs import (
+    TransactionTimePinReadOnlyError,
+    validate_source_pin,
+)
 from parallax.snapshot.handle._write_lowering import lower_temporal_close, lower_write
 from parallax.snapshot.handle._write_types import LoweredStatement, WriteLoweringError
 
@@ -75,10 +83,12 @@ __all__ = [
     "TooManyResultsFound",
     "Transaction",
     "TransactionOptionConflictError",
+    "TransactionTimePinReadOnlyError",
     "WriteLoweringError",
     "connect",
     "find",
     "find_history",
     "lower_temporal_close",
     "lower_write",
+    "validate_source_pin",
 ]

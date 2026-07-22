@@ -155,7 +155,10 @@ def test_locking_mode_temporal_write_after_an_as_of_find_raises_historical_obser
     # would have nothing but the shared read lock protecting a milestone that
     # is not the current one, so it raises before any DML (`m-opt-lock`
     # "Locking mode additionally requires that the observation be of the
-    # current milestone").
+    # current milestone"). The write goes through an EDITED COPY: the pinned
+    # view itself is read-only at the verb (`transaction-time-pin-read-only`),
+    # while the copy carries no pin — so it is the OBSERVATION-provenance
+    # license, not the verb-time pin refusal, this pin exercises.
     port = RecordingPort(rows=[balance_row(in_z=dt.datetime(2024, 1, 1, tzinfo=dt.UTC))])
     db = db_for(BALANCE, port)
 
@@ -165,7 +168,7 @@ def test_locking_mode_temporal_write_after_an_as_of_find_raises_historical_obser
                 tx_time=dt.datetime(2024, 2, 1, tzinfo=dt.UTC)
             )
         ).result()
-        tx.terminate(fetched)
+        tx.update(fetched.model_copy(update={"value": Decimal("9.00")}))
 
     with pytest.raises(opt_lock.HistoricalObservationError, match="latest-pinned"):
         db.transact(fn)  # locking is the default concurrency
@@ -184,11 +187,11 @@ def test_optimistic_mode_temporal_write_after_an_as_of_find_gates_on_observed_in
                 tx_time=dt.datetime(2024, 2, 1, tzinfo=dt.UTC)
             )
         ).result()
-        tx.terminate(fetched)
+        tx.update(fetched.model_copy(update={"value": Decimal("9.00")}))
 
     db.transact(fn, concurrency="optimistic")
     write_ops = [op for op in port.ops if op[0] == "write"]
-    assert len(write_ops) == 1
+    assert len(write_ops) == 2  # the gated close, then the chained replacement
     sql = write_ops[0][1]
     binds = cast("tuple[object, ...]", write_ops[0][2])
     assert sql == POSTGRES.to_driver_sql(

@@ -336,6 +336,16 @@ _TEMPORAL_WRITE_SEQUENCES: Final[frozenset[str]] = frozenset(
 _TEMPORAL_COALESCING_SCENARIOS: Final[frozenset[str]] = frozenset(
     {"m-txtime-write-008", "m-bitemp-write-014"}
 )
+# The finite-pin mutation contrast pair (m-bitemp-write / m-temporal-read's
+# finite-pin mutation row): `expectError`-bearing api-conformance-lane mutate
+# scenarios the engine's own lanes grade — compile emits the find step's golden
+# (the mutate contributes nothing, `_SNAPSHOT_MUTATE_SCENARIOS`' own precedent),
+# and run additionally grades the `errors` observation (the raised
+# `transaction-time-pin-read-only` for `-016`; none for the writable Valid-Time
+# pin, `-015`) in `test_run_sweep.test_write_run_sweep`.
+_PIN_CONTRAST_SCENARIOS: Final[frozenset[str]] = frozenset(
+    {"m-bitemp-write-015", "m-bitemp-write-016"}
+)
 WRITE_EXERCISED: Final[frozenset[str]] = (
     _WRITE_SCENARIOS
     | _WRITE_SEQUENCES
@@ -343,6 +353,7 @@ WRITE_EXERCISED: Final[frozenset[str]] = (
     | _TEMPORAL_WRITE_SEQUENCES
     | _TEMPORAL_COALESCING_SCENARIOS
     | _READLESS_PREDICATE_WRITE_SCENARIOS
+    | _PIN_CONTRAST_SCENARIOS
 )
 
 _REACHABLE = sweep.reachable_cases()
@@ -582,24 +593,39 @@ def test_error_and_boundary_lane_partition() -> None:
         assert engine.eligibility(case) is not None, case.case_id
 
 
+def _actions_all_mutate(case: case_format.Case) -> bool:
+    steps = cast("list[dict[str, Any]]", case_document(case).get("when", {}).get("scenario", []))
+    actions = [step["action"] for step in steps if "action" in step]
+    return bool(actions) and all(action == "mutate" for action in actions)
+
+
 def test_scenario_lane_dispatch_is_honest() -> None:
     """Every reachable scenario-shape case whose top-level `lane` is
-    `api-conformance` (m-snapshot-read-009's `action: access` closed-world
-    witness) answers a lane-honest `error` from
+    `api-conformance` and is NOT a mutate-action-only scenario
+    (m-snapshot-read-009's `action: access` closed-world witness) answers a
+    lane-honest `error` from
     `compile` — the SAME `_boundary_lane_error` precedent, extended to a second
     shape (m-case-format "Case lanes"). It carries NO `compileEligibility`
     declaration (neither closed reason — `single-connection` /
     `query-result-dependent` — honestly describes why; the lane dispatch alone
     is the compile-time refusal), unlike a boundary case's mechanical
-    run-only backstop.
+    run-only backstop. A MUTATE-action-only one is the exception: the engine
+    grades the mutate verb itself — including an `expectError` step through
+    the `errors` observation (`m-conformance-adapter`) — so it stays in the
+    compile/run lanes as a member of `WRITE_EXERCISED`
+    (`_PIN_CONTRAST_SCENARIOS`), graded like every other exercised scenario
+    rather than refused.
     """
     lane_dispatched = [
         c
         for c in _REACHABLE
         if c.shape == "scenario" and case_document(c).get("lane") == "api-conformance"
     ]
-    assert lane_dispatched, "the reachable intersection lost its scenario api-conformance-lane case"
-    for case in lane_dispatched:
+    refused = [c for c in lane_dispatched if not _actions_all_mutate(c)]
+    engine_graded = [c for c in lane_dispatched if _actions_all_mutate(c)]
+    assert refused, "the reachable intersection lost its scenario api-conformance-lane case"
+    assert engine_graded, "the reachable intersection lost its finite-pin contrast pair"
+    for case in refused:
         assert engine.eligibility(case) is None, case.case_id
         envelope = adapter.compile_case(case.path, "postgres")
         assert envelope["status"] == "error", (case.case_id, envelope)
@@ -607,6 +633,8 @@ def test_scenario_lane_dispatch_is_honest() -> None:
         # (a `None` port would raise loudly on any attempted use — it never is).
         run_envelope = adapter.run_case(case.path, "postgres", cast("Any", None))
         assert run_envelope["status"] == "error", (case.case_id, run_envelope)
+    for case in engine_graded:
+        assert case.case_id in WRITE_EXERCISED, case.case_id
 
 
 def _skip_text(case_id: str) -> str:

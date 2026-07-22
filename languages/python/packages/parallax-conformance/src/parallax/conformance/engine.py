@@ -38,7 +38,13 @@ from parallax.core.dialect import Dialect, dialect_for
 from parallax.core.op_algebra import Operation, OperationError, OperationRejectedError, deserialize
 from parallax.core.op_algebra import validate_operation as validate_op_algebra_operation
 from parallax.core.sql_gen import CompiledRead, SqlGenError, Statement, compile_read
-from parallax.core.temporal_read import TemporalReadError, inject_as_of, resolve_pinned_instants
+from parallax.core.temporal_read import (
+    Pin,
+    TemporalReadError,
+    inject_as_of,
+    resolve_pinned_instants,
+    statement_pin,
+)
 from parallax.core.unit_work import (
     Concurrency,
     FixedClock,
@@ -54,7 +60,14 @@ from parallax.core.unit_work import (
 )
 from parallax.core.unit_work.instructions import WriteInstruction
 from parallax.snapshot import handle, materialize
-from parallax.snapshot.handle import WriteLoweringError, find, find_history, lower_write
+from parallax.snapshot.handle import (
+    TransactionTimePinReadOnlyError,
+    WriteLoweringError,
+    find,
+    find_history,
+    lower_write,
+    validate_source_pin,
+)
 
 __all__ = [
     "Emission",
@@ -1370,23 +1383,33 @@ def _run_snapshot_scenario(
     dialect_name: str,
     port: DbPort,
     steps: Sequence[Mapping[str, object]],
-) -> tuple[list[Emission], int]:
+) -> tuple[list[Emission], int, list[dict[str, object]]]:
     """Run a snapshot-read scenario: each find step materializes fresh neutral
     nodes through the SAME production find executor every graph read uses (no
-    engine-local level loop); `mutate` applies its `set` directly to the
-    referenced step's own materialized node — a plain in-memory field update,
-    zero round trips, nothing at the port (m-snapshot-read closed world: a
-    snapshot node is never enrolled in a unit of work, so mutating it can never
-    write back)."""
+    engine-local level loop); `mutate` runs the production write seam's
+    finite-Transaction-Time-pin refusal against the referenced find step's own
+    statement pin (:func:`_grade_mutate_step`) and, when accepted, applies its
+    `set` directly to that step's own materialized node — a plain in-memory
+    field update, zero round trips, nothing at the port (m-snapshot-read
+    closed world: a snapshot node is never enrolled in a unit of work, so
+    mutating it can never write back). Returns the ordered emissions, the
+    total round trips, and one `errors` observation entry per `expectError`
+    step whose verb raised its declared application-lifecycle error
+    (`m-conformance-adapter`)."""
     meta = load_case_metamodel(case)
     dialect = dialect_for(dialect_name)
     emissions: list[Emission] = []
     round_trips = 0
     results: list[list[materialize.Node]] = []
+    pins: list[Pin | None] = []
+    errors: list[dict[str, object]] = []
     for index, step in enumerate(steps):
         if "action" in step:
-            _apply_mutate_step(case, step, results)
+            error_class = _grade_mutate_step(case, step, steps, results, pins)
+            if error_class is not None:
+                errors.append({"at": f"/scenario/{index}", "errorClass": error_class})
             results.append([])
+            pins.append(None)
             continue
         target = step.get("targetEntity")
         find_doc = step.get("find")
@@ -1397,13 +1420,69 @@ def _run_snapshot_scenario(
         try:
             raw_op = deserialize(find_doc)
             result = find(raw_op, meta, dialect, target, port)
+            pin = _find_step_pin(meta, target, raw_op)
         except (OperationError, SqlGenError, TemporalReadError, KeyError) as exc:
             raise EngineError(f"{case.path.name}: {exc}") from exc
         for statement in result.execution.statements:
             emissions.append(Emission(f"/scenario/{index}/find", statement.sql, statement.binds))
         round_trips += result.execution.round_trips
         results.append(list(result.nodes))
-    return emissions, round_trips
+        pins.append(pin)
+    return emissions, round_trips, errors
+
+
+def _find_step_pin(meta: Metamodel, target: str, raw_op: Operation) -> Pin:
+    """A scenario find step's own statement pin — the whole-graph as-of
+    coordinates the materialized view carries (`m-snapshot-read`), read from
+    the SAME raw operation the find executor consumes. This is the pin
+    :func:`_grade_mutate_step` hands the production write seam's finite-pin
+    rule, resolved through the family-declaring entity exactly as the read
+    path resolves it."""
+    declaring = inheritance.declaring_entity(meta, meta.entity(target))
+    return statement_pin(raw_op, declaring)
+
+
+def _grade_mutate_step(
+    case: case_format.Case,
+    step: Mapping[str, object],
+    steps: Sequence[Mapping[str, object]],
+    results: Sequence[list[materialize.Node]],
+    pins: Sequence[Pin | None],
+) -> str | None:
+    """Grade one scenario `mutate` action step through the SAME production
+    validator the keyed developer verbs run
+    (:func:`~parallax.snapshot.handle.validate_source_pin`): a mutation
+    through a view pinned at a finite Transaction-Time instant raises the
+    neutral `transaction-time-pin-read-only` error and applies nothing, while
+    a Latest or finite-Valid-Time pin is accepted and the `set` applies
+    in-memory (:func:`_apply_mutate_step`). Returns the raised error's
+    `errorClass` when the step's own declared `expectError` matched it, else
+    ``None`` for an accepted mutation; a mismatch in either direction — an
+    undeclared refusal, or a declared expectation the verb never raised — is
+    a loud :class:`EngineError`, never a silently dropped observation."""
+    _check_action_step(case, step)
+    on = step.get("on")
+    if not isinstance(on, int) or not (0 <= on < len(results)):
+        raise EngineError(f"{case.path.name}: `mutate` names an invalid `on` step index {on!r}")
+    target = steps[on].get("targetEntity")
+    expected = step.get("expectError")
+    try:
+        validate_source_pin(str(target), pins[on])
+    except TransactionTimePinReadOnlyError as exc:
+        if expected != exc.code:
+            declared = f"expectError {expected!r}" if expected is not None else "no expectError"
+            raise EngineError(
+                f"{case.path.name}: the `mutate` verb raised {exc.code!r} but the step "
+                f"declares {declared}"
+            ) from exc
+        return exc.code
+    if expected is not None:
+        raise EngineError(
+            f"{case.path.name}: the step declares expectError {expected!r} but the "
+            "mutation was accepted"
+        )
+    _apply_mutate_step(case, step, results)
+    return None
 
 
 def _apply_mutate_step(
@@ -2722,7 +2801,7 @@ def run_interleaved_scenario_case(
 
 def run_scenario_case(
     case: case_format.Case, dialect_name: str, port: DbPort
-) -> tuple[list[Emission], int]:
+) -> tuple[list[Emission], int, list[dict[str, object]]]:
     """Run a scenario: an UNGROUPED write step commits (or aborts) as its OWN
     unit of work through ``db.transact`` (COR-3 Phase 8 increment 4, DQ4
     re-route) and an ungrouped find reads committed state, exactly as before.
@@ -2736,7 +2815,10 @@ def run_scenario_case(
     detected by a one-step LOOK-AHEAD before that find is lowered as an
     ordinary standalone step, since `m-case-format`'s own "Materializing
     cases" convention makes the preceding find the resolve. Reports the
-    ordered emissions and total round trips."""
+    ordered emissions, the total round trips, and the `errors` observation
+    entries (`m-conformance-adapter`) — populated only by the snapshot
+    action-step lane's `expectError` grading (:func:`_run_snapshot_scenario`);
+    every keyed unit-of-work scenario reports an empty list."""
     steps = _scenario_steps(case)
     if _has_action_step(steps):
         return _run_snapshot_scenario(case, dialect_name, port, steps)
@@ -2820,7 +2902,7 @@ def run_scenario_case(
     except _LOWERING_ERRORS as exc:
         raise EngineError(f"{case.path.name}: {exc}") from exc
     emissions = _emissions([(step.pointer, step.statements) for step in lowered])
-    return emissions, len(emissions)
+    return emissions, len(emissions), []
 
 
 def run_write_sequence_case(

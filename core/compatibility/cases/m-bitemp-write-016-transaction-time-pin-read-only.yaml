@@ -1,0 +1,51 @@
+# A finite Transaction-Time-axis pinned view is READ-ONLY (m-bitemp-write): the
+# read-only half of the finite-pin mutation contrast — mutating a view of a
+# bitemporal target pinned at a finite Transaction-Time instant raises the
+# neutral `transaction-time-pin-read-only` error and emits NO DML, because the
+# Transaction-Time past records what the system knew and is never rewritten. The
+# error is distinct from the m-db-error database taxonomy. (Contrast the finite
+# Valid-Time pin, which is writable — m-bitemp-write-015; the audit-only sibling
+# of this witness is m-identity-map-010.)
+#
+# This is an api-conformance-lane case: its defining observable is a raised
+# application-lifecycle error, which the single-connection wire harness cannot
+# grade, so the harness schema-validates it and each language's conformance run
+# lane executes the step, reporting the error observation. Step 0 pins Position
+# id 1 at the finite Transaction-Time instant 2024-02-01 (Valid Time defaulted
+# Latest) — the superseded original belief 90.00, a read-only
+# Transaction-Time-past view. Step 1 attempts to mutate it (`set` value 999.00);
+# because the pin is on the finite Transaction-Time dimension, the mutation is
+# rejected with `expectError: transaction-time-pin-read-only` and buffers zero
+# DML (roundTrips 0).
+model: models/position.yaml
+lane: api-conformance
+tags: [m-bitemp-write, m-temporal-read, bitemporal, temporal, as-of, read-only, scenario, slice-snapshot-1]
+shape: scenario
+when:
+  scenario:
+    - targetEntity: Position
+      find:
+        asOf:
+          operand:
+            eq:
+              attr: Position.id
+              value: 1
+          dimension: transactionTime
+          coordinate: "2024-02-01T00:00:00+00:00"
+      roundTrips: 1
+      note: pin id 1 at the finite Transaction-Time instant 2024-02-01 (Valid Time defaulted Latest) — a READ-ONLY Transaction-Time-past view (the superseded belief, 90.00)
+      statements:
+        - sql:
+            postgres: select t0.pos_id, t0.acct_num, t0.val, t0.from_z, t0.thru_z, t0.in_z, t0.out_z from position t0 where t0.pos_id = ? and t0.thru_z = ? and t0.in_z <= ? and t0.out_z > ?
+          binds: [1, infinity, "2024-02-01T00:00:00+00:00", "2024-02-01T00:00:00+00:00"]
+      expectRows:
+        - { pos_id: 1, acct_num: A, val: 90.00, from_z: "2024-01-01T00:00:00+00:00", thru_z: infinity, in_z: "2024-01-01T00:00:00+00:00", out_z: "2024-04-01T00:00:00+00:00" }
+    - action: mutate
+      "on": 0
+      set:
+        value: 999.00
+      roundTrips: 0
+      expectError: transaction-time-pin-read-only
+      note: mutating a finite Transaction-Time-axis view raises transaction-time-pin-read-only and emits NO DML
+then:
+  roundTrips: 1

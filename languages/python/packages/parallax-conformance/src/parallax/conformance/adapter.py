@@ -13,7 +13,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Final
+from typing import Any, Final, cast
 
 from parallax.conformance import case_format, engine
 from parallax.conformance.claim import ADAPTER, SNAPSHOT_CLAIM, Adapter, Claim
@@ -149,7 +149,11 @@ def _scenario_lane_error(case: case_format.Case) -> engine.EngineError:
     # observable is a per-language surfacing (the developer-facing surface
     # `parallax.snapshot.handle` builds), not a wire-observable golden this
     # lane can grade — the SAME `_boundary_lane_error` precedent, extended to
-    # a second shape.
+    # a second shape. A `mutate`-action-only scenario is the one exception:
+    # the engine grades the mutate verb itself, including its `expectError`
+    # application-lifecycle-error step through the `errors` observation
+    # (`m-conformance-adapter`), so the dispatch below never classifies one
+    # out.
     return engine.EngineError(
         f"{case.path.name}: this scenario's lane is `api-conformance` (m-case-format); "
         "the API Conformance Suite verifies it, not compile/run"
@@ -157,7 +161,31 @@ def _scenario_lane_error(case: case_format.Case) -> engine.EngineError:
 
 
 def _is_scenario_lane_dispatched(case: case_format.Case) -> bool:
-    return case.shape == "scenario" and case.document.get("lane") == "api-conformance"
+    if case.shape != "scenario" or case.document.get("lane") != "api-conformance":
+        return False
+    return not _scenario_actions_all_mutate(case)
+
+
+def _scenario_actions_all_mutate(case: case_format.Case) -> bool:
+    """Whether the scenario carries lifecycle action steps and every one is a
+    `mutate` — the one action verb the engine's snapshot lane grades, including
+    a step's declared `expectError` through the `errors` observation
+    (`m-conformance-adapter` / `errorObservation.errorClass`). Such an
+    api-conformance-lane scenario stays in the compile/run lanes (the finite-pin
+    mutation contrast pair); any other action verb (`access`, …) is a
+    per-language surfacing only the API Conformance Suite can verify."""
+    when = case.document.get("when")
+    if not isinstance(when, Mapping):
+        return False
+    steps = cast("Mapping[str, object]", when).get("scenario")
+    if not isinstance(steps, list):
+        return False
+    actions = [
+        cast("Mapping[str, object]", step)["action"]
+        for step in cast("list[object]", steps)
+        if isinstance(step, Mapping) and "action" in cast("Mapping[str, object]", step)
+    ]
+    return bool(actions) and all(action == "mutate" for action in actions)
 
 
 def _compile(case: case_format.Case, dialect: str) -> tuple[list[engine.Emission], int]:
@@ -235,8 +263,10 @@ def _run(
     sequence) and, when the case authors it, the resulting ``tableState``; an
     error run records the raised failure's classification (``errorClass`` /
     ``nativeCode``). A scenario run reports the contract observations
-    (``roundTrips``); its per-step find rows are observable at the injected
-    port seam, where the run sweep grades them against each step's
+    (``roundTrips``, plus one ``errors`` entry per `expectError` step whose
+    verb raised its declared application-lifecycle error); its per-step find
+    rows are observable at the injected port seam, where the run sweep grades
+    them against each step's
     ``expectRows``. A rejected run touches no database and no port: it reports
     the classified ``rejectedRule`` with ``roundTrips: 0`` (m-conformance-
     adapter, resolved DQ3/DQ8).
@@ -244,8 +274,11 @@ def _run(
     if _is_scenario_lane_dispatched(case):
         raise _scenario_lane_error(case)
     if case.shape == "scenario":
-        emissions, round_trips = engine.run_scenario_case(case, dialect, port)
-        return emissions, {"roundTrips": round_trips}
+        emissions, round_trips, errors = engine.run_scenario_case(case, dialect, port)
+        scenario_observations: dict[str, Any] = {"roundTrips": round_trips}
+        if errors:
+            scenario_observations["errors"] = errors
+        return emissions, scenario_observations
     if case.shape == "writeSequence":
         emissions, table_state, round_trips = engine.run_write_sequence_case(case, dialect, port)
         return emissions, {"tableState": table_state, "roundTrips": round_trips}

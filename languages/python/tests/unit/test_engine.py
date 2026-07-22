@@ -307,8 +307,11 @@ def _synthetic_write(shape: str, document: dict[str, object]) -> case_format.Cas
 
 def test_run_scenario_case_commits_writes_and_reads_committed_state() -> None:
     port = FakeWritePort(find_rows=[{"id": 7}])
-    emissions, round_trips = engine.run_scenario_case(_case("m-unit-work-001"), "postgres", port)
+    emissions, round_trips, errors = engine.run_scenario_case(
+        _case("m-unit-work-001"), "postgres", port
+    )
     assert round_trips == 2
+    assert errors == []  # a keyed unit-of-work scenario reports no error observation
     assert [e.case_pointer for e in emissions] == ["/scenario/0/write", "/scenario/1/find"]
     assert emissions[0].sql.startswith("insert into account")
     assert emissions[1].sql.endswith("for share of t0")  # the read-lock suffix renders
@@ -318,7 +321,9 @@ def test_run_scenario_case_commits_writes_and_reads_committed_state() -> None:
 
 def test_run_scenario_case_rollback_step_aborts_but_counts_the_round_trip() -> None:
     port = FakeWritePort(find_rows=[])
-    emissions, round_trips = engine.run_scenario_case(_case("m-unit-work-011"), "postgres", port)
+    emissions, round_trips, _errors = engine.run_scenario_case(
+        _case("m-unit-work-011"), "postgres", port
+    )
     assert round_trips == 2  # the aborted insert still counts one round trip
     assert len(port.writes) == 1  # the DML executed before the abort
     assert port.rollbacks == 1 and port.commits == 0
@@ -343,7 +348,9 @@ def test_run_scenario_case_groups_a_committing_uow_span_into_one_transaction() -
     # dependent find) share ONE `uow` group — a single `db.transact` call, not
     # three separate ones, so exactly one port-level commit fires.
     port = FakeWritePort(find_rows=[{"id": 1, "owner": "Ada", "balance": 100.00, "version": 1}])
-    emissions, round_trips = engine.run_scenario_case(_case("m-unit-work-005"), "postgres", port)
+    emissions, round_trips, _errors = engine.run_scenario_case(
+        _case("m-unit-work-005"), "postgres", port
+    )
     assert round_trips == 3
     assert [e.case_pointer for e in emissions] == [
         "/scenario/0/find",
@@ -366,7 +373,9 @@ def test_run_scenario_case_doomed_uow_span_rolls_back_as_one_unit() -> None:
     # The GROUP rolls back as ONE unit (one port-level rollback, zero commits)
     # — never a separate transaction per step.
     port = FakeWritePort(find_rows=[{"id": 1, "owner": "Ada", "balance": 100.00, "version": 1}])
-    emissions, round_trips = engine.run_scenario_case(_case("m-unit-work-002"), "postgres", port)
+    emissions, round_trips, _errors = engine.run_scenario_case(
+        _case("m-unit-work-002"), "postgres", port
+    )
     assert round_trips == 3
     assert [e.case_pointer for e in emissions] == [
         "/scenario/0/find",
@@ -1882,7 +1891,7 @@ def test_run_scenario_case_executes_a_readless_predicate_write() -> None:
         },
     )
     port = FakeWritePort()
-    emissions, round_trips = engine.run_scenario_case(case, "postgres", port)
+    emissions, round_trips, _errors = engine.run_scenario_case(case, "postgres", port)
     assert round_trips == 1
     assert emissions[0].case_pointer == "/scenario/0/write"
     assert emissions[0].sql == "delete from wallet where balance < ?"
@@ -1919,7 +1928,7 @@ def test_run_scenario_case_executes_a_materializing_predicate_write_pair() -> No
         },
     )
     port = FakeWritePort(find_rows=[{"id": 1, "owner": "Ada", "balance": 100.00, "version": 1}])
-    emissions, round_trips = engine.run_scenario_case(case, "postgres", port)
+    emissions, round_trips, _errors = engine.run_scenario_case(case, "postgres", port)
     assert round_trips == 2
     assert [e.case_pointer for e in emissions] == ["/scenario/0/find", "/scenario/1/write"]
     assert emissions[1].sql == "delete from account where id = ? and version = ?"
@@ -1956,7 +1965,7 @@ def test_run_scenario_case_readless_predicate_write_rollback_aborts_but_counts_t
         },
     )
     port = FakeWritePort()
-    emissions, round_trips = engine.run_scenario_case(case, "postgres", port)
+    emissions, round_trips, _errors = engine.run_scenario_case(case, "postgres", port)
     assert round_trips == 1
     assert emissions[0].sql == "delete from wallet where balance < ?"
     assert len(port.writes) == 1
@@ -1995,7 +2004,7 @@ def test_materializing_predicate_write_rollback_aborts_but_counts_the_round_trip
         },
     )
     port = FakeWritePort(find_rows=[{"id": 1, "owner": "Ada", "balance": 100.00, "version": 1}])
-    emissions, round_trips = engine.run_scenario_case(case, "postgres", port)
+    emissions, round_trips, _errors = engine.run_scenario_case(case, "postgres", port)
     assert round_trips == 2
     assert [e.case_pointer for e in emissions] == ["/scenario/0/find", "/scenario/1/write"]
     assert emissions[1].sql == "delete from account where id = ? and version = ?"
@@ -2807,10 +2816,105 @@ def test_run_scenario_case_snapshot_lane_mutates_in_memory_with_no_writeback() -
             }
         ]
     )
-    emissions, round_trips = engine.run_scenario_case(
+    emissions, round_trips, errors = engine.run_scenario_case(
         _case("m-snapshot-read-010"), "postgres", port
     )
     assert round_trips == 2
     assert [e.case_pointer for e in emissions] == ["/scenario/0/find", "/scenario/2/find"]
     assert len(port.reads) == 2
     assert len(port.writes) == 0
+    assert errors == []  # an unpinned mutate is accepted: no error observation
+
+
+# --------------------------------------------------------------------------- #
+# The scenario `expectError` grading (m-conformance-adapter `errors`): the      #
+# snapshot lane's `mutate` runs the SAME finite-Transaction-Time-pin refusal    #
+# the keyed developer verbs run, against the referenced find step's own         #
+# statement pin, and reports one `errors` entry per matched `expectError`.      #
+# --------------------------------------------------------------------------- #
+_POSITION_R1_ROW: dict[str, object] = {
+    "pos_id": 1,
+    "acct_num": "A",
+    "val": decimal.Decimal("90.00"),
+    "from_z": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+    "thru_z": dt.datetime(9999, 12, 31, tzinfo=dt.UTC),
+    "in_z": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+    "out_z": dt.datetime(2024, 4, 1, tzinfo=dt.UTC),
+}
+
+
+def test_run_scenario_case_grades_a_transaction_time_pin_read_only_mutate() -> None:
+    port = FakeDbPort([dict(_POSITION_R1_ROW)])
+    emissions, round_trips, errors = engine.run_scenario_case(
+        _case("m-bitemp-write-016"), "postgres", port
+    )
+    assert round_trips == 1
+    assert [e.case_pointer for e in emissions] == ["/scenario/0/find"]
+    assert errors == [{"at": "/scenario/1", "errorClass": "transaction-time-pin-read-only"}]
+
+
+def test_run_scenario_case_accepts_a_finite_valid_time_pin_mutate() -> None:
+    # The writable half of the finite-pin contrast: a finite Valid-Time pin
+    # (Transaction Time defaulted Latest) passes the SAME validator, so the
+    # mutate applies in-memory and no error observation is reported.
+    row = dict(_POSITION_R1_ROW, val=decimal.Decimal("100.00"))
+    port = FakeDbPort([row])
+    _emissions, round_trips, errors = engine.run_scenario_case(
+        _case("m-bitemp-write-015"), "postgres", port
+    )
+    assert round_trips == 1
+    assert errors == []
+
+
+def test_run_scenario_case_reports_an_undeclared_pin_refusal_loudly() -> None:
+    # The mutate verb raised, but the step declares no expectError — a corpus/
+    # implementation mismatch this lane names loudly, never a silently dropped
+    # error observation.
+    when = {
+        "scenario": [
+            {
+                "targetEntity": "Position",
+                "find": {
+                    "asOf": {
+                        "operand": {"eq": {"attr": "Position.id", "value": 1}},
+                        "dimension": "transactionTime",
+                        "coordinate": "2024-02-01T00:00:00+00:00",
+                    }
+                },
+            },
+            {"action": "mutate", "on": 0, "set": {"value": 999.00}},
+        ]
+    }
+    case = _synthetic_write("scenario", {"model": "models/position.yaml", "when": when})
+    with pytest.raises(engine.EngineError, match="declares no expectError"):
+        engine.run_scenario_case(case, "postgres", FakeDbPort([dict(_POSITION_R1_ROW)]))
+
+
+def test_run_scenario_case_mutate_grading_rejects_an_out_of_range_on_index() -> None:
+    # The grading wrapper guards `on` itself (its pin lookup indexes the find
+    # steps' own recorded pins), before the in-memory apply ever runs.
+    when = {"scenario": [{"action": "mutate", "on": 5, "set": {"name": "Mutant"}}]}
+    case = _synthetic_write("scenario", {"model": "models/orders.yaml", "when": when})
+    with pytest.raises(engine.EngineError, match="invalid `on`"):
+        engine.run_scenario_case(case, "postgres", FakeDbPort([]))
+
+
+def test_run_scenario_case_reports_an_unraised_expect_error_loudly() -> None:
+    # The step declares expectError but the mutation was accepted (the find
+    # carries no finite Transaction-Time pin) — the same loud mismatch, the
+    # other direction.
+    when = {
+        "scenario": [
+            {"targetEntity": "Order", "find": {"eq": {"attr": "Order.id", "value": 1}}},
+            {
+                "action": "mutate",
+                "on": 0,
+                "set": {"name": "Mutant"},
+                "expectError": "transaction-time-pin-read-only",
+            },
+        ]
+    }
+    case = _synthetic_write("scenario", {"model": "models/orders.yaml", "when": when})
+    port = FakeDbPort([{"id": 1, "name": "Ada"}])
+    with pytest.raises(engine.EngineError, match="but the mutation was accepted"):
+        engine.run_scenario_case(case, "postgres", port)

@@ -11,6 +11,7 @@ validation, and the §5 prior-observation license enforced at the developer verb
 from __future__ import annotations
 
 import datetime as dt
+from collections.abc import Callable
 from decimal import Decimal
 from typing import Any, cast
 
@@ -38,7 +39,7 @@ from _transact_support import (
 
 import mirrored_models as mm
 from parallax.conformance import models
-from parallax.core import Entity, opt_lock
+from parallax.core import LATEST, Entity, opt_lock
 from parallax.core.db_port import Row
 from parallax.core.dialect import POSTGRES
 from parallax.core.unit_work import (
@@ -47,7 +48,7 @@ from parallax.core.unit_work import (
     WriteRejectedError,
     validate_write,
 )
-from parallax.snapshot.handle import Database, Transaction
+from parallax.snapshot.handle import Database, Transaction, TransactionTimePinReadOnlyError
 
 pytestmark = pytest.mark.unit
 
@@ -725,6 +726,109 @@ def test_same_transaction_insert_then_temporal_update_is_licensed() -> None:
     write_ops = [op for op in port.ops if op[0] == "write"]
     assert len(write_ops) == 1  # coalesced to one INSERT
     assert Decimal("2.00") in cast("tuple[object, ...]", write_ops[0][2])
+
+
+# --------------------------------------------------------------------------- #
+# The finite-Transaction-Time-pin refusal (`m-temporal-read`'s finite-pin      #
+# mutation row; `_write_inputs.validate_source_pin`): a view pinned at a       #
+# FINITE Transaction-Time instant is read-only — every keyed verb refuses it   #
+# at the call, before any buffering, with the neutral                          #
+# `transaction-time-pin-read-only` error. A LATEST Transaction-Time pin and a  #
+# finite Valid-Time pin stay writable (the Valid-Time case is the retroactive  #
+# correction), and an EDITED COPY carries no pin at all — the stale-web-edit   #
+# recipe's optimistic edge-pinned re-fetch keeps working.                      #
+# --------------------------------------------------------------------------- #
+_TX_PIN = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
+_VALID_PIN = dt.datetime(2024, 3, 1, tzinfo=dt.UTC)
+_CORRECTION_FROM = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
+_CORRECTION_UNTIL = dt.datetime(2024, 9, 1, tzinfo=dt.UTC)
+
+
+def _find_pinned_position(tx: Transaction, **as_of: Any) -> Any:
+    return tx.find(WherePosition.where(WherePosition.id == 1).as_of(**as_of)).result()
+
+
+# Every keyed mutation verb, driven with a pinned source node — the dict type
+# gives each lambda its contextual parameter typing.
+_PINNED_SOURCE_VERBS: dict[str, Callable[[Transaction, Any], None]] = {
+    "insert": lambda tx, node: tx.insert(node, valid_from=_CORRECTION_FROM),
+    "insert_until": lambda tx, node: tx.insert_until(
+        node, valid_from=_CORRECTION_FROM, until=_CORRECTION_UNTIL
+    ),
+    "update": lambda tx, node: tx.update(node, valid_from=_CORRECTION_FROM),
+    "delete": lambda tx, node: tx.delete(node),
+    "terminate": lambda tx, node: tx.terminate(node, valid_from=_CORRECTION_FROM),
+    "update_until": lambda tx, node: tx.update_until(
+        node, valid_from=_CORRECTION_FROM, until=_CORRECTION_UNTIL
+    ),
+    "terminate_until": lambda tx, node: tx.terminate_until(
+        node, valid_from=_CORRECTION_FROM, until=_CORRECTION_UNTIL
+    ),
+}
+
+
+@pytest.mark.parametrize("verb_name", sorted(_PINNED_SOURCE_VERBS))
+def test_every_keyed_verb_refuses_a_finite_transaction_time_pinned_source(
+    verb_name: str,
+) -> None:
+    verb = _PINNED_SOURCE_VERBS[verb_name]
+    port = RecordingPort(rows=[_position_row_dt()])
+
+    def fn(tx: Transaction) -> None:
+        node = _find_pinned_position(tx, tx_time=_TX_PIN)
+        verb(tx, node)
+
+    with pytest.raises(TransactionTimePinReadOnlyError, match="transaction-time-pin-read-only"):
+        Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(
+            fn, concurrency="optimistic"
+        )
+    assert not any(op[0] == "write" for op in port.ops)  # refused before any buffering
+
+
+def test_a_latest_transaction_time_pinned_source_stays_writable() -> None:
+    port = RecordingPort(rows=[_position_row_dt()])
+
+    def fn(tx: Transaction) -> None:
+        node = _find_pinned_position(tx, tx_time=LATEST)
+        tx.terminate(node, valid_from=_CORRECTION_FROM)
+
+    Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(
+        fn, concurrency="optimistic"
+    )
+    assert len([op for op in port.ops if op[0] == "write"]) == 2  # close + head
+
+
+def test_a_finite_valid_time_pinned_source_stays_writable() -> None:
+    # The writable half of the finite-pin contrast (m-bitemp-write-015): a
+    # finite Valid-Time pin is the retroactive correction, never read-only.
+    port = RecordingPort(rows=[_position_row_dt()])
+
+    def fn(tx: Transaction) -> None:
+        node = _find_pinned_position(tx, valid_time=_VALID_PIN)
+        tx.terminate(node, valid_from=_CORRECTION_FROM)
+
+    Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(
+        fn, concurrency="optimistic"
+    )
+    assert len([op for op in port.ops if op[0] == "write"]) == 2  # close + head
+
+
+def test_an_edited_copy_of_a_finite_transaction_time_pinned_node_stays_writable() -> None:
+    # The pin stays with the VIEW: `model_copy(update=...)` builds a fresh
+    # validated instance carrying no pin, so the spec §3 stale-web-edit
+    # recipe's optimistic edge-pinned re-fetch -> edited copy -> `tx.update`
+    # lands (a concurrent supersession is detected by the observed-`in_z`
+    # gate at flush, never by this verb-time refusal).
+    port = RecordingPort(rows=[_position_row_dt()])
+
+    def fn(tx: Transaction) -> None:
+        node = _find_pinned_position(tx, tx_time=_TX_PIN)
+        tx.update(node.model_copy(update={"value": Decimal("200.00")}), valid_from=_CORRECTION_FROM)
+
+    Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(
+        fn, concurrency="optimistic"
+    )
+    assert len([op for op in port.ops if op[0] == "write"]) == 3  # close + head + new tail
 
 
 # --------------------------------------------------------------------------- #

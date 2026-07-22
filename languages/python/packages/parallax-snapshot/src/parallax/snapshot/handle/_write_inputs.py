@@ -4,8 +4,11 @@ Everything a write verb needs BEFORE an instruction reaches the unit of work,
 plus the observation machinery a read leaves behind for it:
 
 * build-time window validation every keyed AND ``_where`` temporal verb shares
-  (:func:`validate_valid_from`, :func:`validate_until`) and the sparse keyed
-  ``update`` row (:func:`prepare_sparse_row`);
+  (:func:`validate_valid_from`, :func:`validate_until`), the finite-Transaction-
+  Time-pin refusal every keyed verb runs on its source instance
+  (:class:`TransactionTimePinReadOnlyError`, :func:`validate_source_pin`,
+  :func:`source_pin`), and the sparse keyed ``update`` row
+  (:func:`prepare_sparse_row`);
 * instance -> record resolution (:func:`entity_record_of_instance`) and the
   verb-time license key (:func:`observation_key`);
 * observation recording after a real :func:`~parallax.snapshot.handle.find`
@@ -23,14 +26,17 @@ in ``_read``, so ``_read`` never imports this module.
 Names crossing a module boundary (read from ``_transaction`` / ``_predicate_writes``)
 are spelled bare; a helper whose every caller lives here keeps its underscore.
 Privacy is carried by this MODULE's leading underscore and by the package's
-frozen ``__all__``, never by per-name underscores.
+frozen ``__all__``, never by per-name underscores —
+:class:`TransactionTimePinReadOnlyError` and :func:`validate_source_pin` are
+additionally re-exported through that ``__all__`` (the conformance engine's
+scenario grading shares the exact validator the developer verbs run).
 """
 
 from __future__ import annotations
 
 import datetime as dt
 from collections.abc import Mapping
-from typing import cast
+from typing import Final, cast
 
 from parallax.core import inheritance
 from parallax.core.base import normalize_instant
@@ -47,7 +53,7 @@ from parallax.core.entity import (
     entity_record_of,
     primary_key_row,
 )
-from parallax.core.temporal_read import LATEST, Pin
+from parallax.core.temporal_read import LATEST, Latest, Pin
 from parallax.core.unit_work import (
     KeyedMutation,
     ObjectKey,
@@ -65,14 +71,33 @@ from parallax.snapshot.handle._family import (
 from parallax.snapshot.handle._read import FindResult
 
 __all__ = [
+    "TransactionTimePinReadOnlyError",
     "entity_record_of_instance",
     "materialize_row",
     "observation_key",
     "prepare_sparse_row",
     "record_observations",
+    "source_pin",
+    "validate_source_pin",
     "validate_until",
     "validate_valid_from",
 ]
+
+
+class TransactionTimePinReadOnlyError(ValueError):
+    """A mutation verb's source view is pinned at a finite Transaction-Time
+    instant (`m-temporal-read`'s finite-pin mutation row; `m-identity-map`):
+    the Transaction-Time past records what the system knew and is never
+    rewritten, so the verb refuses at the call — before any buffering — and
+    emits no DML. This is the neutral application-lifecycle error the
+    conformance contract reports as ``errorClass:
+    transaction-time-pin-read-only`` (`m-conformance-adapter`), distinct from
+    the `m-db-error` database taxonomy. A ``LATEST`` Transaction-Time pin and
+    a finite Valid-Time pin stay writable — the Valid-Time case is the
+    retroactive correction that lowers to the `m-bitemp-write` rectangle
+    split."""
+
+    code: Final[str] = "transaction-time-pin-read-only"
 
 
 def observation_key(record: Entity, declaring: Entity, instance: object) -> ObjectKey:
@@ -267,6 +292,50 @@ def _row_payload(
 # caller (`_predicate_writes._materialize_predicate_write`) drives against    #
 # its OWN resolved rows — never an implicit read of their own.                #
 # --------------------------------------------------------------------------- #
+# The private slot `parallax.snapshot.handle._wrap` attaches a materialized
+# temporal node's whole-graph Pin under — the same spelling
+# `parallax.core.temporal_read.pin_of` reads.
+_PIN_ATTR: Final[str] = "__parallax_pin__"
+
+
+def source_pin(instance: object) -> Pin | None:
+    """The whole-graph as-of :class:`Pin` a materialized snapshot node carries,
+    or ``None`` for anything else — a fresh instance, or an edited copy
+    (``model_copy(update=...)`` builds a new validated instance, so the pin
+    stays with the materialized view it describes; that is what keeps the
+    spec §3 stale-web-edit recipe's edge-pinned re-fetch -> edited-copy ->
+    optimistic ``tx.update`` writable while the view itself stays
+    read-only)."""
+    pin = getattr(instance, _PIN_ATTR, None)
+    return pin if isinstance(pin, Pin) else None
+
+
+def validate_source_pin(entity_name: str, pin: Pin | None) -> None:
+    """Reject a mutation sourced from a view pinned at a FINITE Transaction-Time
+    instant (`m-temporal-read`'s finite-pin mutation row): raise
+    :class:`TransactionTimePinReadOnlyError` at the verb call, before any
+    buffering, so no DML is ever emitted. An absent pin, a ``LATEST``
+    Transaction-Time pin, and a finite Valid-Time pin all pass — the finite
+    Valid-Time pin is the writable retroactive correction (`m-bitemp-write`).
+    Shared by every keyed developer verb (`_prepare_keyed_write` / ``delete``)
+    and the conformance engine's scenario ``mutate`` grading, so the two
+    callers can never drift. The predicate-selected ``_where`` family needs no
+    counterpart: a set-based write target must be a bare statement, so it can
+    never carry an as-of pin at all."""
+    if pin is None:
+        return
+    tx_time = pin.tx_time
+    if tx_time is None or isinstance(tx_time, Latest):
+        return
+    raise TransactionTimePinReadOnlyError(
+        f"{entity_name}: the write's source view is pinned at the finite Transaction-Time "
+        f"instant {tx_time.isoformat()} and is read-only — the Transaction-Time past "
+        "records what the system knew and is never rewritten "
+        "(transaction-time-pin-read-only); read the current milestone "
+        "(Transaction Time Latest) to mutate it"
+    )
+
+
 def validate_valid_from(
     declaring: Entity, mutation: KeyedMutation, valid_from: dt.datetime | None
 ) -> str | None:

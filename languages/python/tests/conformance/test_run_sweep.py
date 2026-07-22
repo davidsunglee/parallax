@@ -338,6 +338,18 @@ def test_write_run_sweep(case: case_format.Case, provisioner: Any) -> None:
         for observed, expected in zip(port.reads, expected_per_find, strict=True):
             if expected is not None:
                 compare_rows([engine.wire_row(row) for row in observed], expected)
+        # `expectError` steps grade through the adapter's `errors` observation
+        # (`m-conformance-adapter` / `errorObservation.errorClass`): one entry
+        # per declaring step, in step order — and NO entry for any other
+        # scenario (the adapter omits an empty `errors` array entirely).
+        steps = cast("list[dict[str, Any]]", case_document(case)["when"]["scenario"])
+        expected_errors = [
+            {"at": f"/scenario/{index}", "errorClass": step["expectError"]}
+            for index, step in enumerate(steps)
+            if "expectError" in step
+        ]
+        observed_errors = envelope["observations"].get("errors", [])
+        assert observed_errors == expected_errors, (case.case_id, observed_errors)
     else:
         expected_state = cast(
             "dict[str, list[dict[str, Any]]]", case_document(case)["then"]["tableState"]
