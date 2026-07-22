@@ -156,7 +156,7 @@ def test_schema_accepts_shared_reader_concurrency_success_case() -> None:
             "read-lock",
             "concurrency",
             "shared-lock-compatible",
-            "slice-mvp-1",
+            "slice-example-1",
         ],
     }
     assert list(_case_validator().iter_errors(case)) == []
@@ -193,7 +193,7 @@ def test_schema_accepts_projection_admits_writer_concurrency_success_case() -> N
             "read-lock",
             "concurrency",
             "projection-omits-lock",
-            "slice-mvp-1",
+            "slice-example-1",
         ],
     }
     assert list(_case_validator().iter_errors(case)) == []

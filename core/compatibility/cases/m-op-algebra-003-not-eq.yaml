@@ -1,6 +1,6 @@
 # notEq — inequality predicate. Lowers to `<>` with one bind.
 model: models/orders.yaml
-tags: [m-op-algebra, notEq, slice-mvp-1, slice-snapshot-1, slice-managed-1]
+tags: [m-op-algebra, notEq, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
   targetEntity: Order

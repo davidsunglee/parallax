@@ -17,7 +17,7 @@
 # proven separately by the versioned set-based UPDATE scenarios (m-opt-lock-003/004);
 # this case pins the versioned DELETE *write* shape.
 model: models/account.yaml
-tags: [m-batch-write, m-opt-lock, m-sql, write-sequence, materialize, slice-mvp-1, slice-snapshot-1, slice-managed-1]
+tags: [m-batch-write, m-opt-lock, m-sql, write-sequence, materialize, slice-snapshot-1, slice-managed-1]
 shape: writeSequence
 given:
   fixtures: true

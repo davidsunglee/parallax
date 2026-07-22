@@ -14,7 +14,7 @@
 # leaving the table empty. The harness applies the golden DML and reads the table
 # back empty — the collapse is proven by the rows it removes, not merely asserted.
 model: models/wallet.yaml
-tags: [m-batch-write, m-sql, write-sequence, slice-mvp-1, slice-snapshot-1, slice-managed-1]
+tags: [m-batch-write, m-sql, write-sequence, slice-snapshot-1, slice-managed-1]
 shape: writeSequence
 given:
   fixtures: true

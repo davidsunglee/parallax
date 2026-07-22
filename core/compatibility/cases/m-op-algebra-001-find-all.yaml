@@ -7,7 +7,7 @@
 # normalization, and the operation/metamodel serde round-trip — hence the
 # `m-case-format` tag.
 model: models/orders.yaml
-tags: [m-op-algebra, m-conformance-adapter, m-case-format, all, slice-mvp-1, slice-snapshot-1, slice-managed-1]
+tags: [m-op-algebra, m-conformance-adapter, m-case-format, all, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
   targetEntity: Order

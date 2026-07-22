@@ -4,7 +4,7 @@
 # m-navigate-019, proving the propagated instant selects the milestone whose interval
 # contains it.
 model: models/invoice.yaml
-tags: [m-navigate, m-temporal-read, temporal, relationship, propagation, audit-only, slice-mvp-1, slice-snapshot-1, slice-managed-1]
+tags: [m-navigate, m-temporal-read, temporal, relationship, propagation, audit-only, slice-snapshot-1, slice-managed-1]
 shape: read
 compileEligibility:
   mode: run-only

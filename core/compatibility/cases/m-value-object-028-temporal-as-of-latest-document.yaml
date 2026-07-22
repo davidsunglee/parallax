@@ -18,7 +18,7 @@
 # (a different formulation selecting the same current rows on both dialects) and pins
 # the matched owner identities; `then.graph`'s to-many `phones` compares order-insensitively.
 model: models/supplier.yaml
-tags: [m-value-object, m-temporal-read, m-sql, nested, json, temporal, as-of, audit-only, materialization, graph, slice-mvp-1, slice-snapshot-1, slice-managed-1]
+tags: [m-value-object, m-temporal-read, m-sql, nested, json, temporal, as-of, audit-only, materialization, graph, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
   targetEntity: Supplier

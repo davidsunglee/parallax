@@ -2,7 +2,7 @@
 # keyword pair. A NULL sku yields NULL (not true), so id 4 is excluded — exactly
 # the SQL three-valued-logic the naive referenceSql also produces.
 model: models/orders.yaml
-tags: [m-op-algebra, notLike, string, slice-mvp-1, slice-snapshot-1, slice-managed-1]
+tags: [m-op-algebra, notLike, string, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
   targetEntity: Order

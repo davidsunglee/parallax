@@ -3,7 +3,7 @@
 # root pin to propagate; per the rule it DEFAULTS every axis to LATEST -> the
 # child carries `out_z = ?` (bind infinity). Lease 10 -> the current term "24mo".
 model: models/lease.yaml
-tags: [m-navigate, m-temporal-read, temporal, relationship, propagation, mixed, slice-mvp-1, slice-snapshot-1, slice-managed-1]
+tags: [m-navigate, m-temporal-read, temporal, relationship, propagation, mixed, slice-snapshot-1, slice-managed-1]
 shape: read
 compileEligibility:
   mode: run-only

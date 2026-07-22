@@ -17,7 +17,7 @@
 # id 2, and id 3's closed-but-overlapping milestone — while excluding id 1's
 # superseded row (proving the overlap predicate filters, unlike `history`).
 model: models/balance.yaml
-tags: [m-temporal-read, m-sql, as-of-range, audit-only, slice-mvp-1, slice-snapshot-1, slice-managed-1]
+tags: [m-temporal-read, m-sql, as-of-range, audit-only, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
   targetEntity: Balance

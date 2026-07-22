@@ -14,7 +14,7 @@
 # Together with m-opt-lock-005 this proves `updatedRows != 1` is the conflict signal — a
 # fresh version provably touches one row, a stale version provably touches zero.
 model: models/account.yaml
-tags: [m-opt-lock, m-sql, success, optimistic-lock-success, slice-mvp-1, slice-snapshot-1, slice-managed-1]
+tags: [m-opt-lock, m-sql, success, optimistic-lock-success, slice-snapshot-1, slice-managed-1]
 shape: conflict
 compileEligibility:
   mode: run-only

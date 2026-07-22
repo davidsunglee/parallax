@@ -12,7 +12,7 @@
 # dialect-neutral); this case stays Postgres-only because its `then.referenceSql`
 # uses the Postgres-specific `'infinity'::timestamptz` cast.
 model: models/balance.yaml
-tags: [m-temporal-read, m-sql, m-core, as-of, audit-only, defaulted, infinity, slice-mvp-1, slice-snapshot-1, slice-managed-1]
+tags: [m-temporal-read, m-sql, m-core, as-of, audit-only, defaulted, infinity, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
   targetEntity: Balance

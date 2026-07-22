@@ -18,7 +18,7 @@
 # timestamp-literal spelling diverges (Postgres `'…'::timestamptz`, MariaDB a
 # space-separated DATETIME); both select the same then-believed rectangle.
 model: models/branch.yaml
-tags: [m-value-object, m-temporal-read, m-sql, nested, json, temporal, bitemporal, as-of, both-axes, past, audit, materialization, graph, slice-mvp-1, slice-snapshot-1, slice-managed-1]
+tags: [m-value-object, m-temporal-read, m-sql, nested, json, temporal, bitemporal, as-of, both-axes, past, audit, materialization, graph, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
   targetEntity: Branch

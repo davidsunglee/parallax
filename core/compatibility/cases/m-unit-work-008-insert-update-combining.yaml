@@ -16,7 +16,7 @@
 # shared-row-lock suffix (`for share of t0`). roundTrips = 2 (the one combined
 # insert + the find).
 model: models/account.yaml
-tags: [m-unit-work, m-batch-write, insert-update-combining, scenario, slice-mvp-1, slice-snapshot-1, slice-managed-1]
+tags: [m-unit-work, m-batch-write, insert-update-combining, scenario, slice-snapshot-1, slice-managed-1]
 shape: scenario
 when:
   scenario:

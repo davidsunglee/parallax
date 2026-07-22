@@ -6,7 +6,7 @@
 # so the expected row is stable text; the Postgres provider reads time/uuid as
 # stable text for the same reason.
 model: models/scalars.yaml
-tags: [m-core, m-descriptor, m-sql, scalar, postgres, slice-mvp-1, slice-snapshot-1, slice-managed-1]
+tags: [m-core, m-descriptor, m-sql, scalar, postgres, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
   targetEntity: ScalarThing

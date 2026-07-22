@@ -9,7 +9,7 @@
 # case-insensitive on its own, but the explicit `lower()` folding is the portable
 # contract and matches the same rows.)
 model: models/orders.yaml
-tags: [m-op-algebra, like, string, caseInsensitive, slice-mvp-1, slice-snapshot-1, slice-managed-1]
+tags: [m-op-algebra, like, string, caseInsensitive, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
   targetEntity: Order

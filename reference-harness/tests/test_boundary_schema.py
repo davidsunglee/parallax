@@ -34,7 +34,7 @@ def _valid_boundary_case() -> dict:
     """A minimal well-formed boundary case (models the `m-unit-work-004` abort case)."""
     return {
         "model": "models/account.yaml",
-        "tags": ["m-unit-work", "abort", "slice-mvp-1"],
+        "tags": ["m-unit-work", "abort", "slice-example-1"],
         "shape": "boundary",
         "lane": "api-conformance",
         "when": {

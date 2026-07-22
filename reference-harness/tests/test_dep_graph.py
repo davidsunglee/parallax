@@ -333,7 +333,7 @@ def test_deferred_to_active_edge_is_allowed() -> None:
 def _claim_block(
     modules: str = '["m-core","m-op-algebra"]',
     shapes: str = '["read","writeSequence"]',
-    case_tags: str = '{ "include": ["slice-mvp-1"] }',
+    case_tags: str = '{ "include": ["slice-example-1"] }',
 ) -> str:
     return textwrap.dedent(
         f"""\
@@ -358,7 +358,7 @@ def _claim_block(
 def _synthetic_slices(
     modules: str = '["m-core","m-op-algebra"]',
     shapes: str = '["read","writeSequence"]',
-    case_tags: str = '{ "include": ["slice-mvp-1"] }',
+    case_tags: str = '{ "include": ["slice-example-1"] }',
     extra_claims: str = "",
 ) -> str:
     """A minimal slices.md: a heading, one json claim, optional extra claims."""
@@ -390,15 +390,15 @@ def _clean_read_case(tags: list[str]) -> dict:
 
 def test_parse_profile_claims_extracts_every_embedded_claim() -> None:
     claims = parse_profile_claims(_synthetic_slices())
-    assert list(claims) == ["slice-mvp-1"]
-    assert claims["slice-mvp-1"]["modules"] == ["m-core", "m-op-algebra"]
-    assert claims["slice-mvp-1"]["caseShapes"] == ["read", "writeSequence"]
+    assert list(claims) == ["slice-example-1"]
+    assert claims["slice-example-1"]["modules"] == ["m-core", "m-op-algebra"]
+    assert claims["slice-example-1"]["caseShapes"] == ["read", "writeSequence"]
 
 
 def test_parse_profile_claims_keys_multiple_claims_by_slice_tag() -> None:
     two = _synthetic_slices(extra_claims=_claim_block(case_tags='{ "include": ["slice-other-1"] }'))
     claims = parse_profile_claims(two)
-    assert sorted(claims) == ["slice-mvp-1", "slice-other-1"]
+    assert sorted(claims) == ["slice-example-1", "slice-other-1"]
 
 
 def test_parse_profile_claims_rejects_duplicate_slice_tags() -> None:
@@ -409,8 +409,10 @@ def test_parse_profile_claims_rejects_duplicate_slice_tags() -> None:
 
 def test_profile_gate_passes_on_a_consistent_slice(tmp_path: Path) -> None:
     cases = tmp_path / "cases"
-    _write_case(cases, "m-op-algebra-001.yaml", _clean_read_case(["m-core", "slice-mvp-1"]))
-    _write_case(cases, "m-op-algebra-002.yaml", _clean_read_case(["m-op-algebra", "slice-mvp-1"]))
+    _write_case(cases, "m-op-algebra-001.yaml", _clean_read_case(["m-core", "slice-example-1"]))
+    _write_case(
+        cases, "m-op-algebra-002.yaml", _clean_read_case(["m-op-algebra", "slice-example-1"])
+    )
     # an untagged case with a stray module must be ignored entirely.
     _write_case(cases, "m-core-001.yaml", _clean_read_case(["m-ghost", "other"]))
     assert profile_errors(_synthetic_slices(), tmp_path) == []
@@ -418,13 +420,15 @@ def test_profile_gate_passes_on_a_consistent_slice(tmp_path: Path) -> None:
 
 def test_profile_gate_requires_a_single_wellformed_include_tag(tmp_path: Path) -> None:
     cases = tmp_path / "cases"
-    _write_case(cases, "m-op-algebra-001.yaml", _clean_read_case(["m-core", "slice-mvp-1"]))
-    _write_case(cases, "m-op-algebra-002.yaml", _clean_read_case(["m-op-algebra", "slice-mvp-1"]))
+    _write_case(cases, "m-op-algebra-001.yaml", _clean_read_case(["m-core", "slice-example-1"]))
+    _write_case(
+        cases, "m-op-algebra-002.yaml", _clean_read_case(["m-op-algebra", "slice-example-1"])
+    )
 
     for case_tags in (
         "{}",
         '{ "include": ["renamed-slice"] }',
-        '{ "include": ["slice-mvp-1", "slice-extra-1"] }',
+        '{ "include": ["slice-example-1", "slice-extra-1"] }',
     ):
         errors = profile_errors(_synthetic_slices(case_tags=case_tags), tmp_path)
         assert any("caseTags.include" in e for e in errors)
@@ -432,11 +436,11 @@ def test_profile_gate_requires_a_single_wellformed_include_tag(tmp_path: Path) -
 
 def test_profile_gate_fails_on_a_slice_tag_with_no_claim(tmp_path: Path) -> None:
     cases = tmp_path / "cases"
-    _write_case(cases, "m-op-algebra-001.yaml", _clean_read_case(["m-core", "slice-mvp-1"]))
+    _write_case(cases, "m-op-algebra-001.yaml", _clean_read_case(["m-core", "slice-example-1"]))
     _write_case(
         cases,
         "m-op-algebra-002.yaml",
-        _clean_read_case(["m-op-algebra", "slice-mvp-1", "slice-ghost-1"]),
+        _clean_read_case(["m-op-algebra", "slice-example-1", "slice-ghost-1"]),
     )
     errors = profile_errors(_synthetic_slices(), tmp_path)
     assert any("slice-ghost-1" in e and "no claim" in e for e in errors)
@@ -444,37 +448,37 @@ def test_profile_gate_fails_on_a_slice_tag_with_no_claim(tmp_path: Path) -> None
 
 def test_profile_gate_checks_every_claim_independently(tmp_path: Path) -> None:
     cases = tmp_path / "cases"
-    # slice-mvp-1 is fully consistent; slice-other-1 claims m-op-algebra with no
+    # slice-example-1 is fully consistent; slice-other-1 claims m-op-algebra with no
     # tagged case carrying it -> exactly the second slice fails.
-    _write_case(cases, "m-op-algebra-001.yaml", _clean_read_case(["m-core", "slice-mvp-1"]))
+    _write_case(cases, "m-op-algebra-001.yaml", _clean_read_case(["m-core", "slice-example-1"]))
     _write_case(
         cases,
         "m-op-algebra-002.yaml",
-        _clean_read_case(["m-op-algebra", "slice-mvp-1"]),
+        _clean_read_case(["m-op-algebra", "slice-example-1"]),
     )
     _write_case(cases, "m-core-001.yaml", _clean_read_case(["m-core", "slice-other-1"]))
     two = _synthetic_slices(extra_claims=_claim_block(case_tags='{ "include": ["slice-other-1"] }'))
     errors = profile_errors(two, tmp_path)
     assert any("[slice-other-1]" in e and "m-op-algebra" in e for e in errors)
-    assert not any("[slice-mvp-1]" in e for e in errors)
+    assert not any("[slice-example-1]" in e for e in errors)
 
 
 def test_profile_gate_fails_when_a_claimed_module_is_uncovered(tmp_path: Path) -> None:
     cases = tmp_path / "cases"
     # only m-core is carried; the claim also lists m-op-algebra -> uncovered.
-    _write_case(cases, "m-op-algebra-001.yaml", _clean_read_case(["m-core", "slice-mvp-1"]))
+    _write_case(cases, "m-op-algebra-001.yaml", _clean_read_case(["m-core", "slice-example-1"]))
     errors = profile_errors(_synthetic_slices(), tmp_path)
     assert any("m-op-algebra" in e and "no tagged case" in e for e in errors)
 
 
 def test_profile_gate_fails_on_a_stray_module_tag(tmp_path: Path) -> None:
     cases = tmp_path / "cases"
-    _write_case(cases, "m-op-algebra-001.yaml", _clean_read_case(["m-core", "slice-mvp-1"]))
+    _write_case(cases, "m-op-algebra-001.yaml", _clean_read_case(["m-core", "slice-example-1"]))
     # m-detach is on a tagged case but not in the claim's modules.
     _write_case(
         cases,
         "m-op-algebra-002.yaml",
-        _clean_read_case(["m-op-algebra", "m-detach", "slice-mvp-1"]),
+        _clean_read_case(["m-op-algebra", "m-detach", "slice-example-1"]),
     )
     errors = profile_errors(_synthetic_slices(), tmp_path)
     assert any("m-op-algebra-002.yaml" in e and "'m-detach'" in e for e in errors)
@@ -482,15 +486,17 @@ def test_profile_gate_fails_on_a_stray_module_tag(tmp_path: Path) -> None:
 
 def test_profile_gate_fails_on_a_shape_outside_the_claim(tmp_path: Path) -> None:
     cases = tmp_path / "cases"
-    _write_case(cases, "m-op-algebra-001.yaml", _clean_read_case(["m-core", "slice-mvp-1"]))
-    _write_case(cases, "m-op-algebra-002.yaml", _clean_read_case(["m-op-algebra", "slice-mvp-1"]))
+    _write_case(cases, "m-op-algebra-001.yaml", _clean_read_case(["m-core", "slice-example-1"]))
+    _write_case(
+        cases, "m-op-algebra-002.yaml", _clean_read_case(["m-op-algebra", "slice-example-1"])
+    )
     # a conflict-shaped tagged case while the claim allows only read/writeSequence.
     _write_case(
         cases,
         "m-core-001.yaml",
         {
             "model": "models/account.yaml",
-            "tags": ["m-op-algebra", "slice-mvp-1"],
+            "tags": ["m-op-algebra", "slice-example-1"],
             "shape": "conflict",
             "when": {"write": {"id": 2, "balance": 250.00, "observedVersion": 1}},
             "then": {
@@ -510,8 +516,8 @@ def test_profile_gate_fails_on_a_shape_outside_the_claim(tmp_path: Path) -> None
 
 def test_profile_gate_fails_on_a_missing_postgres_golden(tmp_path: Path) -> None:
     cases = tmp_path / "cases"
-    _write_case(cases, "m-op-algebra-001.yaml", _clean_read_case(["m-core", "slice-mvp-1"]))
-    no_golden = _clean_read_case(["m-op-algebra", "slice-mvp-1"])
+    _write_case(cases, "m-op-algebra-001.yaml", _clean_read_case(["m-core", "slice-example-1"]))
+    no_golden = _clean_read_case(["m-op-algebra", "slice-example-1"])
     no_golden["then"]["statements"] = [{"sql": {"mariadb": "select t0.id from orders t0"}}]
     _write_case(cases, "m-op-algebra-002.yaml", no_golden)
     errors = profile_errors(_synthetic_slices(), tmp_path)
@@ -522,13 +528,15 @@ def test_profile_gate_fails_on_an_excluded_tag_when_the_claim_lists_exclude(
     tmp_path: Path,
 ) -> None:
     cases = tmp_path / "cases"
-    _write_case(cases, "m-op-algebra-001.yaml", _clean_read_case(["m-core", "slice-mvp-1"]))
+    _write_case(cases, "m-op-algebra-001.yaml", _clean_read_case(["m-core", "slice-example-1"]))
     _write_case(
         cases,
         "m-op-algebra-002.yaml",
-        _clean_read_case(["m-op-algebra", "aggregate", "slice-mvp-1"]),
+        _clean_read_case(["m-op-algebra", "aggregate", "slice-example-1"]),
     )
-    slices = _synthetic_slices(case_tags='{ "include": ["slice-mvp-1"], "exclude": ["aggregate"] }')
+    slices = _synthetic_slices(
+        case_tags='{ "include": ["slice-example-1"], "exclude": ["aggregate"] }'
+    )
     errors = profile_errors(slices, tmp_path)
     assert any(
         "m-op-algebra-002.yaml" in e and "excluded" in e and "aggregate" in e for e in errors
@@ -539,13 +547,13 @@ def test_profile_gate_accepts_a_scenario_with_per_step_golden(tmp_path: Path) ->
     # The scenario shape carries Postgres golden SQL per step, not at the top
     # level; the shape-aware golden check must accept it.
     cases = tmp_path / "cases"
-    _write_case(cases, "m-op-algebra-001.yaml", _clean_read_case(["m-core", "slice-mvp-1"]))
+    _write_case(cases, "m-op-algebra-001.yaml", _clean_read_case(["m-core", "slice-example-1"]))
     _write_case(
         cases,
         "m-op-algebra-002.yaml",
         {
             "model": "models/account.yaml",
-            "tags": ["m-core", "m-op-algebra", "m-unit-work", "slice-mvp-1"],
+            "tags": ["m-core", "m-op-algebra", "m-unit-work", "slice-example-1"],
             "shape": "scenario",
             "when": {
                 "scenario": [
@@ -612,78 +620,75 @@ def test_real_corpus_profile_is_consistent() -> None:
 
 
 def test_real_corpus_declares_the_two_lifecycle_slices() -> None:
-    # slice-mvp-1 is deprecated and survives only until the TypeScript claim
-    # migrates to slice-managed-1 (see slices.md).
     slices = (_SPEC_DIR / "slices.md").read_text(encoding="utf-8")
     claims = parse_profile_claims(slices)
-    assert sorted(claims) == ["slice-managed-1", "slice-mvp-1", "slice-snapshot-1"]
+    assert sorted(claims) == ["slice-managed-1", "slice-snapshot-1"]
 
 
 @pytest.mark.parametrize(
     ("slice_tag", "expected"),
     [
         # The standalone plain-bitemporal-insert witness m-bitemp-write-009 (COR-9
-        # Phase 1 extension) carries all three lifecycle slice tags, matching its
+        # Phase 1 extension) carries both lifecycle slice tags, matching its
         # plain update/terminate siblings m-bitemp-write-006/-007, so each count
         # ticked up by one.
         #
         # COR-9 Phase 3 adds 13 inheritance model-negative `when.model` rejected cases
-        # (m-inheritance-020..032), each tagged slice-snapshot-1 + slice-managed-1
-        # (never slice-mvp-1), so those two counts rise by 13 and slice-mvp-1 is
-        # unchanged. (The Phase 3 review added -031 tph-missing-tag-value and -032
-        # missing-root, closing the tagValue-presence and exactly-one-root holes.)
+        # (m-inheritance-020..032), each tagged slice-snapshot-1 + slice-managed-1,
+        # so those two counts rise by 13. (The Phase 3 review added -031
+        # tph-missing-tag-value and -032 missing-root, closing the tagValue-presence
+        # and exactly-one-root holes.)
         #
         # COR-9 Phase 4 adds 8 more inheritance cases tagged slice-snapshot-1 +
-        # slice-managed-1 (never slice-mvp-1): the 6 table-per-hierarchy abstract /
+        # slice-managed-1: the 6 table-per-hierarchy abstract /
         # narrow read cases (m-inheritance-011..016) and the 2 operation-level
         # narrow / subtype-scope `rejected` cases (m-inheritance-040/-041). The four
         # rewritten reads (m-inheritance-001..004) keep their existing slice tags, so
-        # those two counts rise by 8 and slice-mvp-1 is unchanged.
+        # those two counts rise by 8.
         #
         # The Phase 4 review then added one more narrow `rejected` case
         # (m-inheritance-042: a nested narrow that broadens back out of the position
         # the enclosing narrow established), tagged slice-snapshot-1 + slice-managed-1,
-        # so those two counts rise by one more (229 / 249) and slice-mvp-1 is unchanged.
+        # so those two counts rise by one more (229 / 249).
         #
         # A follow-up Phase 4 review then added one zero-row abstract-root read
         # (m-inheritance-017: an abstract read whose predicate matches no fixture row,
         # `then.rows: []`), tagged slice-snapshot-1 + slice-managed-1, exercising the now
         # row-count-independent abstract-read projection oracle against Postgres; those
-        # two counts rise by one more (230 / 250) and slice-mvp-1 is unchanged.
+        # two counts rise by one more (230 / 250).
         #
         # COR-9 Phase 5 adds 4 table-per-concrete-subtype `union all` abstract-read
-        # cases tagged slice-snapshot-1 + slice-managed-1 (never slice-mvp-1):
+        # cases tagged slice-snapshot-1 + slice-managed-1:
         # the abstract-root and abstract-subtype union reads (m-inheritance-050/-051)
         # and the two narrowed union reads (m-inheritance-052 narrow-to-abstract-subtype,
         # -053 narrow-to-multiple-concrete). The two rewritten TPCS concrete reads
         # (m-inheritance-005/-006, renamed off the table-per-leaf spelling) keep their
-        # existing slice tags, so those two counts rise by 4 and slice-mvp-1 is unchanged.
+        # existing slice tags, so those two counts rise by 4.
         #
         # COR-9 Phase 6 adds 8 polymorphic-relationship / narrowed-deep-fetch cases
-        # (m-inheritance-060..067) tagged slice-snapshot-1 + slice-managed-1 (never
-        # slice-mvp-1): two abstract-root / abstract-subtype relationship existence reads,
+        # (m-inheritance-060..067) tagged slice-snapshot-1 + slice-managed-1:
+        # two abstract-root / abstract-subtype relationship existence reads,
         # two relationship-scope narrows, one relationship-scope narrow rejection, and
         # three narrowed deep fetches (single-view, equivalent-spellings dedup, two-view
-        # prefix dedup). Both counts rise by 8 and slice-mvp-1 is unchanged.
+        # prefix dedup). Both counts rise by 8.
         #
         # A COR-9 Phase 6 design-change pass (canonical concrete-subtype ordering ->
         # alphabetical) then closes the table-per-concrete-subtype polymorphic-navigation
-        # coverage gap with 2 more cases tagged slice-snapshot-1 + slice-managed-1
-        # (never slice-mvp-1): m-inheritance-070 (grouped-`OR` per-branch `EXISTS` over
+        # coverage gap with 2 more cases tagged slice-snapshot-1 + slice-managed-1:
+        # m-inheritance-070 (grouped-`OR` per-branch `EXISTS` over
         # the abstract root Document, via the new `Folder.documents` relationship) and
         # -071 (the same narrowed to the abstract subtype FinancialDocument, dropping the
-        # memo branch). Both counts rise by 2 more (244 / 264) and slice-mvp-1 is unchanged.
+        # memo branch). Both counts rise by 2 more (244 / 264).
         #
         # A COR-9 Phase 6 review (Finding 1) then adds one relationship-scope narrow
-        # `rejected` case tagged slice-snapshot-1 + slice-managed-1 (never slice-mvp-1):
+        # `rejected` case tagged slice-snapshot-1 + slice-managed-1:
         # m-inheritance-072, a narrow in a navigation filter's `op` whose `entity` names
         # the abstract ROOT Animal instead of the relationship target Pet — the
         # entity-mismatch trigger of `narrow-outside-relationship-target` (the same rule
-        # as -064's to-outside-target trigger). Both counts rise by one more (245 / 265)
-        # and slice-mvp-1 is unchanged.
+        # as -064's to-outside-target trigger). Both counts rise by one more (245 / 265).
         #
         # COR-9 Phase 7 adds 10 net-new concrete-subtype WRITE cases tagged
-        # slice-snapshot-1 + slice-managed-1 (never slice-mvp-1): two deep-chain creates
+        # slice-snapshot-1 + slice-managed-1: two deep-chain creates
         # (m-inheritance-080 table-per-hierarchy Dog, -081 table-per-concrete-subtype
         # Memo), two tag-guarded updates of inherited attributes (-082 abstract-ancestor,
         # -083 subtype-own), the opt-lock composition witness (-084, the resolved-Q9 bind
@@ -691,11 +696,10 @@ def test_real_corpus_declares_the_two_lifecycle_slices() -> None:
         # delete (-085), and the four rejected-write negatives (-086 sibling attribute,
         # -087 metadata payload, -088 abstract target, -089 set-based). The 007..010
         # rewrites (table-per-hierarchy update/delete gain tag guards; 010 renamed to the
-        # tpcs slug) keep their existing slice tags, so both counts rise by 10 and
-        # slice-mvp-1 is unchanged.
+        # tpcs slug) keep their existing slice tags, so both counts rise by 10.
         #
         # COR-9 Phase 8 adds 8 net-new TEMPORAL-composition cases tagged slice-snapshot-1
-        # + slice-managed-1 (never slice-mvp-1), on NEW small temporal inheritance families
+        # + slice-managed-1, on NEW small temporal inheritance families
         # (instrument/rate = bitemporal, reading/quote = audit-only — the existing
         # payment/animal/document/vehicle families stay non-temporal): the two audit-only
         # concrete-subtype terminates (m-inheritance-090 table-per-hierarchy tag-guarded
@@ -704,45 +708,43 @@ def test_real_corpus_declares_the_two_lifecycle_slices() -> None:
         # table-per-concrete-subtype `union all` with per-branch as-of binds), the two
         # bitemporal terminates (-094 table-per-hierarchy tag-guarded inactivation, -095
         # table-per-concrete-subtype), and the two bitemporal terminateUntils (-096
-        # table-per-hierarchy, -097 table-per-concrete-subtype). Both counts rise by 8 and
-        # slice-mvp-1 is unchanged.
+        # table-per-hierarchy, -097 table-per-concrete-subtype). Both counts rise by 8.
         #
         # COR-30 Phase 1 retags the nine PostgreSQL-capable m-db-error cases
-        # (m-db-error-001..009) with slice-snapshot-1 + slice-managed-1 (never
-        # slice-mvp-1); both slices already claim m-db-error. The excluded cases stay
+        # (m-db-error-001..009) with slice-snapshot-1 + slice-managed-1; both slices
+        # already claim m-db-error. The excluded cases stay
         # untagged (m-temporal-read-021 MariaDB-fallback and m-read-lock-009
-        # MariaDB-specific). Both counts rise by 9 (272 / 292) and
-        # slice-mvp-1 is unchanged.
+        # MariaDB-specific). Both counts rise by 9 (272 / 292).
         #
         # COR-30 Phase 2 adds the 8 managed-only deferred-load / operation-backed-list
         # cases (m-deep-fetch-013..017, m-op-list-001..003), all scenario-shape and
-        # tagged slice-managed-1 only (never slice-snapshot-1 or slice-mvp-1). This
+        # tagged slice-managed-1 only (never slice-snapshot-1). This
         # also gives m-op-list its first owned case family. slice-managed-1 rises by 8
-        # (292 -> 300); slice-snapshot-1 and slice-mvp-1 are unchanged.
+        # (292 -> 300); slice-snapshot-1 is unchanged.
         #
         # COR-30 Phase 3 adds the 9 managed-only identity-map cases
         # (m-identity-map-003..011), all scenario-shape and tagged slice-managed-1 only
-        # (never slice-snapshot-1 or slice-mvp-1): the omitted-vs-explicit-now and
+        # (never slice-snapshot-1): the omitted-vs-explicit-now and
         # different-pins-same-milestone coordinate views (003/004, the first
         # differentObjectFrom user), family root-vs-leaf interning (005), assigned- and
         # generated-key interning timing (006/007), audit-write held-view refresh (008),
         # bitemporal history edge-pinned views (009), the processing-past read-only
         # error (010, the first new api-conformance-lane case), and the business-past
         # rectangle split (011). slice-managed-1 rises by 9 (300 -> 309); slice-snapshot-1
-        # and slice-mvp-1 are unchanged.
+        # is unchanged.
         #
         # COR-30 Phase 4 adds the 8 managed-only detach cases (m-detach-007..014),
         # completing the five-state detach lifecycle and tagged slice-managed-1 only
-        # (never slice-snapshot-1 or slice-mvp-1): auto-detach on commit / abort-reverts
+        # (never slice-snapshot-1): auto-detach on commit / abort-reverts
         # (007/008), deliberate-copy independence (009), isModified edit/revert (010),
         # deep-copy relationship independence (011), loaded-relationship readable after
         # detach (012), and the deferred-load-on-detached error (013) are api-conformance
         # lane; merge-back reinserts a deleted original (014) is a harness write-sequence.
-        # slice-managed-1 rises by 8 (309 -> 317, its final count); slice-snapshot-1 and
-        # slice-mvp-1 are unchanged.
+        # slice-managed-1 rises by 8 (309 -> 317, its final count); slice-snapshot-1 is
+        # unchanged.
         #
         # COR-30 Phase 5 adds the 12 snapshot cases (m-snapshot-read-003..014), all
-        # tagged slice-snapshot-1 only (never slice-managed-1 or slice-mvp-1) and
+        # tagged slice-snapshot-1 only (never slice-managed-1) and
         # m-snapshot-read + m-deep-fetch but NOT m-op-list: the six snapshot twins of the
         # op-list materialization shapes (003 null-to-one, 004 empty-root, 005
         # empty-intermediate, 006 shared-prefix, 007 one-to-one, 008 declared-child-
@@ -751,31 +753,29 @@ def test_real_corpus_declares_the_two_lifecycle_slices() -> None:
         # (010, harness scenario), the back-reference cycle with then.identityChecks (011,
         # api-conformance), the family projection-independent diamond (012), and the
         # history / asOfRange edge-pinned then.graphs reads (013/014). slice-snapshot-1
-        # rises by 12 (272 -> 284); slice-managed-1 and slice-mvp-1 are unchanged.
-        # Counts at that stage: 198 / 284 / 317.
+        # rises by 12 (272 -> 284); slice-managed-1 is unchanged.
+        # Counts at that stage: 284 / 317.
         #
-        # COR-35 removes the deprecated slice-mvp-1 tag from the two upgraded legacy
-        # materialized Account updates m-opt-lock-003/-004 (they retain snapshot +
-        # managed), so MVP falls 198 -> 196. It also adds nine predicate-selected write
+        # COR-35 adds nine predicate-selected write
         # cases tagged slice-snapshot-1 only
-        # (never slice-managed-1 or slice-mvp-1): versioned materialized update/delete,
+        # (never slice-managed-1): versioned materialized update/delete,
         # non-versioned readless update/delete, audit terminate, and four bitemporal
         # materialized write flavors. snapshot rises 284 -> 293; the deliberate tag
-        # omission leaves managed unchanged. Final counts: 196 / 293 / 317.
+        # omission leaves managed unchanged. Final counts: 293 / 317.
         #
         # COR-3 Phase 4 (core amendment) adds the 3 same-transaction coalescing witnesses
-        # tagged slice-snapshot-1 only (never slice-managed-1 or slice-mvp-1): audit-only
+        # tagged slice-snapshot-1 only (never slice-managed-1): audit-only
         # (m-audit-write-008) and bitemporal (m-bitemp-write-014) insert-then-update
         # coalescing, and non-temporal insert-then-delete cancellation (m-unit-work-010).
-        # snapshot rises 293 -> 296; managed and mvp unchanged. Final counts: 196 / 296 / 317.
+        # snapshot rises 293 -> 296; managed unchanged. Final counts: 296 / 317.
         #
         # COR-3 Phase 5b (read-projection core amendment) deletes m-op-algebra-028-distinct:
         # under the base read-projection rule (m-sql) the full scalar set — including the PK —
         # is always projected, so `distinct` over an entity read is row-preserving and 028
         # deduplicates nothing; its one prod-shaped semantic (read-lock suppression) is already
-        # witnessed by m-read-lock-003/-008. The deleted case was tagged slice-mvp-1 +
+        # witnessed by m-read-lock-003/-008. The deleted case was tagged
         # slice-snapshot-1 + slice-managed-1, so every slice count falls by 1:
-        # 196 -> 195, 296 -> 295, 317 -> 316. Counts at that stage: 195 / 295 / 316.
+        # 296 -> 295, 317 -> 316. Counts at that stage: 295 / 316.
         #
         # COR-3 Phase 5b (inheritance + value-object facet re-golden) also deletes
         # m-value-object-003-project-nested-field: it projected an aliased inner
@@ -783,8 +783,8 @@ def test_real_corpus_declares_the_two_lifecycle_slices() -> None:
         # column from `all {}`, which no operation-algebra node can request — payload
         # reshaping, not the pruning of a declared branch, so the base read-projection rule
         # (m-sql) leaves it underivable and it is removed. The deleted case was tagged
-        # slice-mvp-1 + slice-snapshot-1 + slice-managed-1, so every slice count falls by 1
-        # again: 195 -> 194, 295 -> 294, 316 -> 315. Counts at that stage: 194 / 294 / 315.
+        # slice-snapshot-1 + slice-managed-1, so every slice count falls by 1
+        # again: 295 -> 294, 316 -> 315. Counts at that stage: 294 / 315.
         #
         # COR-3 Phase 5b (deep-fetch x value-object composition witness) authors one NEW
         # read case, m-deep-fetch-018-value-object-child-materialization: a
@@ -792,11 +792,10 @@ def test_real_corpus_declares_the_two_lifecycle_slices() -> None:
         # (Customer) and child (Location) BOTH declare a value object, pinning that the
         # instance-form read projection materializes the structured-document column at
         # EVERY graph level (m-sql "Read projection", slot 4) — including a null-document
-        # child collapsing at depth. It is tagged m-deep-fetch + m-value-object with all
-        # three slice tags (mirroring the value-object materialization graphs
-        # m-value-object-023/-024, and entering the TypeScript claim's slice-mvp-1 so its
-        # conformance lane exercises the witness), so every slice count rises by 1:
-        # 194 -> 195, 294 -> 295, 315 -> 316. Counts at that stage: 195 / 295 / 316.
+        # child collapsing at depth. It is tagged m-deep-fetch + m-value-object with both
+        # slice tags (mirroring the value-object materialization graphs
+        # m-value-object-023/-024), so every slice count rises by 1:
+        # 294 -> 295, 315 -> 316. Counts at that stage: 295 / 316.
         #
         # COR-3 Phase 5b (re-review round 2) authors one NEW scenario case,
         # m-value-object-047-scenario-result-form-contrast: the value-object-bearing
@@ -807,8 +806,8 @@ def test_real_corpus_declares_the_two_lifecycle_slices() -> None:
         # other scenario read is value-object-free. It is a predicate-write / materialize
         # case tagged slice-snapshot-1 only (matching the m-audit-write-007 /
         # m-bitemp-write-010..013 predicate-write family), so slice-snapshot-1 rises by 1
-        # (295 -> 296) and slice-mvp-1 / slice-managed-1 are unchanged.
-        # Counts at that stage: 195 / 296 / 316.
+        # (295 -> 296) and slice-managed-1 is unchanged.
+        # Counts at that stage: 296 / 316.
         #
         # COR-3 Phase 5b (re-review round 3) authors one NEW scenario case,
         # m-deep-fetch-019-deferred-load-value-object-child: the value-object-bearing
@@ -820,8 +819,8 @@ def test_real_corpus_declares_the_two_lifecycle_slices() -> None:
         # a `load` step is instance-form). Tagged m-deep-fetch + m-value-object and
         # slice-managed-1 ONLY (a deferred load is the managed-object surface, like its
         # siblings m-deep-fetch-013..016), so slice-managed-1 rises by 1 (316 -> 317) and
-        # slice-snapshot-1 / slice-mvp-1 are unchanged.
-        # Final counts: 195 / 296 / 317.
+        # slice-snapshot-1 is unchanged.
+        # Final counts: 296 / 317.
         #
         # COR-3 Phase 5b (re-review round 4) authors TWO NEW scenario witnesses that make
         # the per-step read-entity resolution regression-sensitive via a DIVERGENT
@@ -829,8 +828,8 @@ def test_real_corpus_declares_the_two_lifecycle_slices() -> None:
         # m-deep-fetch-020 (a deferred `action: load` of `Customer.depots`) and
         # m-op-list-004 (the operation-list FIRST `action: access` over `all(Depot)`).
         # Both are managed-object-surface reads tagged slice-managed-1 ONLY, so
-        # slice-managed-1 rises by 2 (317 -> 319) and slice-snapshot-1 / slice-mvp-1 are
-        # unchanged. Counts at that stage: 195 / 296 / 319.
+        # slice-managed-1 rises by 2 (317 -> 319) and slice-snapshot-1 is
+        # unchanged. Counts at that stage: 296 / 319.
         #
         # COR-3 Phase 6a (D-3 write-instruction migration, core amendment) authors two
         # NEW rollback witnesses that complete the abort-discards contract across the
@@ -839,9 +838,9 @@ def test_real_corpus_declares_the_two_lifecycle_slices() -> None:
         # row) and m-unit-work-012 (a DELETE of a pre-existing row applied then rolled
         # back; the post-abort find sees the original row). Both are pure m-unit-work
         # scenario cases authored in the generalized single-keyed buffer and tagged
-        # slice-mvp-1 + slice-snapshot-1 + slice-managed-1 (mirroring m-unit-work-002), so
-        # every slice count rises by 2: 195 -> 197, 296 -> 298, 319 -> 321.
-        # Counts at that stage: 197 / 298 / 321.
+        # slice-snapshot-1 + slice-managed-1 (mirroring m-unit-work-002), so
+        # every slice count rises by 2: 296 -> 298, 319 -> 321.
+        # Counts at that stage: 298 / 321.
         #
         # COR-3 Phase 6a also fills the one predicate-write matrix gap: a predicate-
         # selected UPDATE on an audit-only entity (m-audit-write-009-predicate-update-
@@ -849,8 +848,8 @@ def test_real_corpus_declares_the_two_lifecycle_slices() -> None:
         # `terminate` swapped for an `update` + assignment. It materializes per resolved
         # row to the audit-only close-and-chain. Tagged slice-snapshot-1 ONLY (matching
         # the m-audit-write-007 / m-bitemp-write-010..013 predicate-write family), so
-        # slice-snapshot-1 rises by 1 (298 -> 299) and slice-mvp-1 / slice-managed-1 are
-        # unchanged. Counts at that stage: 197 / 299 / 321.
+        # slice-snapshot-1 rises by 1 (298 -> 299) and slice-managed-1 is
+        # unchanged. Counts at that stage: 299 / 321.
         #
         # COR-3 Phase 7 review remediation (the binding root-ownership decision:
         # temporality is family-wide, only the family root may declare `asOfAxes`)
@@ -862,14 +861,14 @@ def test_real_corpus_declares_the_two_lifecycle_slices() -> None:
         # strengthened multi-milestone Rate fixture's closed historical row;
         # m-inheritance-101, a TPH Bond read pinning its ROOT-inherited `validTime`,
         # composing with the tag predicate). All four are tagged slice-snapshot-1 +
-        # slice-managed-1 ONLY (never slice-mvp-1), so both counts rise by 4:
-        # 299 -> 303, 321 -> 325; slice-mvp-1 is unchanged. Counts at that stage:
-        # 197 / 303 / 325.
+        # slice-managed-1 ONLY, so both counts rise by 4:
+        # 299 -> 303, 321 -> 325. Counts at that stage:
+        # 303 / 325.
         #
         # COR-3 Phase 8 increment 1 (the core-amendment bundle: D-25 root-owned
         # optimistic locking, the DQ2 spec-gap riders, and DQ7b's instance-form corpus
         # support) authors EIGHT new inheritance cases, all tagged slice-snapshot-1 +
-        # slice-managed-1 ONLY (never slice-mvp-1): two `when.model` rejected witnesses
+        # slice-managed-1 ONLY: two `when.model` rejected witnesses
         # for `inheritance-optimistic-locking-not-root-owned` (m-inheritance-102, a
         # non-versioned TPH root whose abstract-subtype declares its own version
         # attribute; m-inheritance-103, a versioned TPCS root whose concrete subtype adds
@@ -882,12 +881,10 @@ def test_real_corpus_declares_the_two_lifecycle_slices() -> None:
         # existing row-form multi-concrete abstract reads (m-inheritance-106/-107/-108/
         # -109, siblings of -003/-013/-015/-052 respectively), pinning the per-variant
         # node shape DQ7b's Option C decision defines. All eight raise slice-snapshot-1
-        # and slice-managed-1 by 8 each: 303 -> 311, 325 -> 333; slice-mvp-1 is
-        # unchanged. Final counts: 197 / 311 / 333.
+        # and slice-managed-1 by 8 each: 303 -> 311, 325 -> 333.
+        # Final counts: 311 / 333.
         #
-        # COR-43's interstitial sql_gen defect fix authors TWO cases, neither tagged
-        # slice-mvp-1 (both reach lowering the TypeScript claim does not implement, and
-        # keeping them out leaves its hardcoded counts untouched). m-inheritance-110
+        # COR-43's interstitial sql_gen defect fix authors TWO cases. m-inheritance-110
         # gives m-inheritance-062's narrowed polymorphic hop a REAL branch predicate, so
         # a user bind and the injected tag guard share one correlated EXISTS and their
         # order becomes observable (m-sql "Grouped branch predicates"); it copies -062's
@@ -895,9 +892,8 @@ def test_real_corpus_declares_the_two_lifecycle_slices() -> None:
         # puts a valueObject extraction in a READLESS predicate write, pinning that DML
         # renders it with the unaliased bare column (m-sql rule 1) rather than a read's
         # `t0.`; it copies m-batch-write-005's slice-snapshot-1 ONLY, so it raises just
-        # that one. Net: 311 -> 313, 333 -> 334; slice-mvp-1 unchanged.
-        # Final counts: 197 / 313 / 334.
-        ("slice-mvp-1", 197),
+        # that one. Net: 311 -> 313, 333 -> 334.
+        # Final counts: 313 / 334.
         ("slice-snapshot-1", 313),
         ("slice-managed-1", 334),
     ],

@@ -10,7 +10,7 @@
 # 8; Grace (5.0) does not, and every not-present row (4/5/6/7) casts SQL NULL and
 # is excluded.
 model: models/customer.yaml
-tags: [m-value-object, m-sql, m-dialect, nested, json, cast, numeric, slice-mvp-1, slice-snapshot-1, slice-managed-1]
+tags: [m-value-object, m-sql, m-dialect, nested, json, cast, numeric, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
   targetEntity: Customer

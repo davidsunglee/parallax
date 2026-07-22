@@ -36,12 +36,6 @@ is a prerequisite for the other. If a new slice does not identify its lifecycle
 unambiguously, define that choice in [`slices.md`](slices.md) before completing a
 language spec.
 
-The deprecated `slice-mvp-1` predates these lifecycle-complete authoring paths
-and is not a starting point for a new language spec. An existing implementation
-may retain its historical spec until its claim migrates; do not invent unclaimed
-identity or detach behavior merely to force the legacy claim through this
-template.
-
 ## 1. Scope and exact claim
 
 Complete this table first. Its claim fields copy, rather than reinterpret, the

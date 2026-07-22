@@ -12,7 +12,7 @@
 # read-lock SELECT -- the runner runs A's round-1 statement verbatim, so a round-1 read
 # holds a lock exactly like a round-1 write.
 model: models/account.yaml
-tags: [m-read-lock, m-dialect, m-db-error, concurrency, lockWaitTimeout, slice-mvp-1, slice-snapshot-1, slice-managed-1]
+tags: [m-read-lock, m-dialect, m-db-error, concurrency, lockWaitTimeout, slice-snapshot-1, slice-managed-1]
 shape: error
 compileEligibility:
   mode: run-only

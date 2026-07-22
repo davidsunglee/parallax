@@ -2,7 +2,7 @@
 # `contains 'A'` ignoring case lowers both sides and wraps the lowered literal in
 # `%...%`. Every name containing an `a`/`A` matches except `Linus`.
 model: models/orders.yaml
-tags: [m-op-algebra, contains, string, caseInsensitive, slice-mvp-1, slice-snapshot-1, slice-managed-1]
+tags: [m-op-algebra, contains, string, caseInsensitive, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
   targetEntity: Order

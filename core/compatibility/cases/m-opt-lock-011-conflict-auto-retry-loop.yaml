@@ -13,7 +13,7 @@
 # `lane: api-conformance`: injected conflict, re-executed closure; suite-driven via a
 # fault-injecting decorator around the shipped adapter.
 model: models/account.yaml
-tags: [m-opt-lock, m-auto-retry, m-api-conformance, conflict, success, slice-mvp-1, slice-snapshot-1, slice-managed-1]
+tags: [m-opt-lock, m-auto-retry, m-api-conformance, conflict, success, slice-snapshot-1, slice-managed-1]
 lane: api-conformance
 shape: boundary
 compileEligibility:

@@ -27,8 +27,8 @@ jobs:
 
   # Static checks: lint + schema/meta-schema validation + sqlglot-parse +
   # dependency-graph DAG check + the coverage gate (every in-scope module has a
-  # fixture) + the slice-mvp-1 profile gate (the tagged slice is
-  # consistent with its canonical describe claim). No Docker required.
+  # fixture) + the profile gate (each tagged slice is consistent with its
+  # canonical describe claim). No Docker required.
   lint:
     runs-on: ubuntu-latest
     steps:

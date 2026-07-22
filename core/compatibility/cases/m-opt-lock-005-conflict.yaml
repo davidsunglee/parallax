@@ -16,7 +16,7 @@
 # the precondition's values (the concurrent writer's balance 999.00, version 2),
 # never our stale-version balance.
 model: models/account.yaml
-tags: [m-opt-lock, m-sql, conflict, optimistic-lock-conflict, slice-mvp-1, slice-snapshot-1, slice-managed-1]
+tags: [m-opt-lock, m-sql, conflict, optimistic-lock-conflict, slice-snapshot-1, slice-managed-1]
 shape: conflict
 compileEligibility:
   mode: run-only

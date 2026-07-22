@@ -8,7 +8,7 @@
 # exact decimal space (never binary float), so all four fractional digits must
 # survive the bind + read round-trip.
 model: models/writable-scalars.yaml
-tags: [m-core, m-sql, scalar, decimal, write-sequence, slice-mvp-1, slice-snapshot-1, slice-managed-1]
+tags: [m-core, m-sql, scalar, decimal, write-sequence, slice-snapshot-1, slice-managed-1]
 shape: writeSequence
 when:
   writeSequence:

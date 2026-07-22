@@ -12,7 +12,7 @@
 # Non-trivial (deep fetch) ⇒ referenceSql REQUIRED: it is the naive single-
 # statement oracle for the ROOT row set (all order items).
 model: models/orders.yaml
-tags: [m-deep-fetch, m-op-list, to-one, relationship, slice-mvp-1, slice-managed-1]
+tags: [m-deep-fetch, m-op-list, to-one, relationship, slice-managed-1]
 shape: read
 when:
   targetEntity: OrderItem

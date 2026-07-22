@@ -15,7 +15,7 @@
 # nullif(json_unquote(json_extract(...)),'null'), a different function family from
 # json_value that collapses the JSON-`null` leaf via nullif).
 model: models/customer.yaml
-tags: [m-value-object, m-sql, nested, json, slice-mvp-1, slice-snapshot-1, slice-managed-1]
+tags: [m-value-object, m-sql, nested, json, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
   targetEntity: Customer

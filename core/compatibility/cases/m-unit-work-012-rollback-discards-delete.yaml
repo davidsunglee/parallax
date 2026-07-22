@@ -47,7 +47,7 @@
 # observing find + the rolled-back delete, whose DML still executes, + the two
 # re-resolving finds).
 model: models/account.yaml
-tags: [m-unit-work, rollback, abort, scenario, slice-mvp-1, slice-snapshot-1, slice-managed-1]
+tags: [m-unit-work, rollback, abort, scenario, slice-snapshot-1, slice-managed-1]
 shape: scenario
 compileEligibility:
   mode: run-only

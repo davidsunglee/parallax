@@ -39,7 +39,7 @@
 # (the observing find + the dependent verify find; the no-op write costs
 # nothing).
 model: models/account.yaml
-tags: [m-opt-lock, m-unit-work, no-op, scenario, slice-mvp-1, slice-snapshot-1, slice-managed-1]
+tags: [m-opt-lock, m-unit-work, no-op, scenario, slice-snapshot-1, slice-managed-1]
 shape: scenario
 compileEligibility:
   mode: run-only

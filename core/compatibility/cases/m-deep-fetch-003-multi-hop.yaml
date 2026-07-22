@@ -11,7 +11,7 @@
 # status rows (order_item_id NULL) are correctly absent — the hop keys on
 # order_item_id — and item 422, which has no statuses, yields an empty list.
 model: models/orders.yaml
-tags: [m-deep-fetch, m-op-list, multi-hop, relationship, slice-mvp-1, slice-managed-1]
+tags: [m-deep-fetch, m-op-list, multi-hop, relationship, slice-managed-1]
 shape: read
 when:
   targetEntity: Order

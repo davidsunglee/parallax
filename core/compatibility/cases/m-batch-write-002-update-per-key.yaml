@@ -12,7 +12,7 @@
 # set-based update MUST materialize into per-object version-advancing updates
 # (m-opt-lock / ADR 0014).
 model: models/wallet.yaml
-tags: [m-batch-write, m-sql, write-sequence, per-key, slice-mvp-1, slice-snapshot-1, slice-managed-1]
+tags: [m-batch-write, m-sql, write-sequence, per-key, slice-snapshot-1, slice-managed-1]
 shape: writeSequence
 given:
   fixtures: true

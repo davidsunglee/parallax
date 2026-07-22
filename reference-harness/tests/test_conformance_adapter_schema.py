@@ -12,52 +12,12 @@ from reference_harness.paths import schemas_dir
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _COMPATIBILITY_ROOT = _REPO_ROOT / "core" / "compatibility"
-_SPEC_DIR = _REPO_ROOT / "core" / "spec"
 
 
 def _validator() -> Draft202012Validator:
     schema_path = schemas_dir(_COMPATIBILITY_ROOT) / "conformance-adapter.schema.json"
     schema = json.loads(schema_path.read_text(encoding="utf-8"))
     return Draft202012Validator(schema)
-
-
-def _first_json_fence_under_heading(markdown: str, heading_prefix: str, heading_text: str) -> str:
-    """Return the first ```json fenced block under the matching heading.
-
-    ``heading_prefix`` is the exact markdown heading marker (e.g. ``"## "`` or
-    ``"### "``); a heading at the same depth (matching ``heading_prefix``) whose
-    text does *not* match ``heading_text`` ends the section. Matching is
-    case-insensitive and trims trailing punctuation/whitespace.
-    """
-    target = heading_text.strip().lower()
-    depth = len(heading_prefix.strip())
-    in_section = False
-    fence: list[str] | None = None
-    for line in markdown.splitlines():
-        if line.startswith(heading_prefix):
-            in_section = line[len(heading_prefix) :].strip().lower() == target
-            continue
-        # A new heading at the same depth (or shallower) closes the section.
-        if in_section and line.startswith("#"):
-            level = len(line) - len(line.lstrip("#"))
-            if level <= depth:
-                break
-        if not in_section:
-            continue
-        if fence is None:
-            if line.strip() == "```json":
-                fence = []
-            continue
-        if line.strip() == "```":
-            return "\n".join(fence)
-        fence.append(line)
-    raise AssertionError(f"no ```json block found under heading {heading_text!r}")
-
-
-def _slice_claim_block() -> str:
-    """Extract the canonical slice describe JSON fenced under the slice heading."""
-    slices = (_SPEC_DIR / "slices.md").read_text(encoding="utf-8")
-    return _first_json_fence_under_heading(slices, "## ", "First-implementation Conformance Slice")
 
 
 def _valid_describe() -> dict:
@@ -358,28 +318,3 @@ def test_benchmark_rejects_legacy_metrics_shape() -> None:
     }
 
     assert list(_validator().iter_errors(benchmark))
-
-
-# --- the canonical slice-mvp-1 slice claim ----------------------
-
-
-def test_canonical_slice_claim_is_schema_valid() -> None:
-    # The embedded slice describe claim in slices.md is the single source
-    # of truth; it must be a legal describe document.
-    claim = json.loads(_slice_claim_block())
-    errors = list(_validator().iter_errors(claim))
-    assert errors == []
-
-
-def test_canonical_slice_claim_carries_no_profile_wire_key() -> None:
-    # The `profile` name is documentation only; describeOk is
-    # additionalProperties:false at the top level and inside capabilities, so the
-    # canonical claim must NOT carry a `profile` key (Question C).
-    claim = json.loads(_slice_claim_block())
-    assert "profile" not in claim
-    assert "profile" not in claim["capabilities"]
-
-
-def test_canonical_slice_claim_is_include_driven() -> None:
-    claim = json.loads(_slice_claim_block())
-    assert claim["capabilities"]["caseTags"] == {"include": ["slice-mvp-1"]}

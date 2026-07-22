@@ -2,7 +2,7 @@
 # binds (lower, upper). `between` is a convenience over `>= lower and <= upper`,
 # which is exactly what the naive referenceSql spells out.
 model: models/orders.yaml
-tags: [m-op-algebra, between, slice-mvp-1, slice-snapshot-1, slice-managed-1]
+tags: [m-op-algebra, between, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
   targetEntity: Order

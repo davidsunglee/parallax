@@ -37,7 +37,7 @@
 # so the emissions are not a pure function of `when` + `given` (the exact criterion
 # the schema's reason text names for deep-fetch fan-out binds).
 model: models/customer.yaml
-tags: [m-deep-fetch, m-value-object, relationship, to-many, graph, materialization, json, slice-mvp-1, slice-snapshot-1, slice-managed-1]
+tags: [m-deep-fetch, m-value-object, relationship, to-many, graph, materialization, json, slice-snapshot-1, slice-managed-1]
 shape: read
 compileEligibility:
   mode: run-only

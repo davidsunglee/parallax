@@ -3,7 +3,7 @@
 # matching every status row for the order (order-level and item-level). Only
 # order 2 has a SHIPPED status (row 102), so the result is {2}.
 model: models/orders.yaml
-tags: [m-navigate, navigate, relationship, slice-mvp-1, slice-snapshot-1, slice-managed-1]
+tags: [m-navigate, navigate, relationship, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
   targetEntity: Order
