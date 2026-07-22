@@ -73,7 +73,7 @@ class Recipe:
 
 RECIPES: Final[list[Recipe]] = [
     Recipe(
-        title="Stale web edit — audit-only (Balance)",
+        title="Stale web edit — Transaction-Time-Only (Balance)",
         spec="`python.md` §3 (the recipe) and §5 (why it runs optimistic)",
         graded_by=(
             "`tests/api_conformance/test_stale_web_edit.py` (real Postgres: the clean "
@@ -581,11 +581,11 @@ _READ_LOCK_TWO_SESSION_REASON: Final[str] = (
     "reference harness remains its own independent cross-check"
 )
 # `m-pk-gen-014` composes a non-temporal sequence-registry update with an
-# audit-only insert in one write sequence and two transactions. It is graded
+# Transaction-Time-Only insert in one write sequence and two transactions. It is graded
 # end-to-end but has no idiomatic story.
 _PK_GEN_TEMPORAL_INSERT_REASON: Final[str] = (
     "a `sequence`-strategy primary-key allocation on a TEMPORAL entity (a non-temporal "
-    "registry UPDATE composed with an audit-only INSERT in one writeSequence): this "
+    "registry UPDATE composed with a Transaction-Time-Only INSERT in one writeSequence): this "
     "temporal composition landed in increment 4 — graded end-to-end by the compile/run "
     "conformance lanes; no idiomatic story exists — the SAME pk-generated-column "
     "construction-optionality blocker the `m-pk-gen` module-bucket reason above names"

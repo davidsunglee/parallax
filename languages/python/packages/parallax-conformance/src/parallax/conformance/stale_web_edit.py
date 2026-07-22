@@ -1,4 +1,4 @@
-"""The specification's audit-only and bitemporal stale-web-edit recipes.
+"""The specification's Transaction-Time-Only and Bitemporal stale-web-edit recipes.
 
 The idiom (`python.md` §3 `:429-461`; the locking-mode-vs-optimistic rule and
 WHY the recipe runs optimistic, §5 `:602-617`): a web form displays one
@@ -8,7 +8,7 @@ milestone's :class:`~parallax.core.temporal_read.Edge` — every declared
 axis's finite from-instant (never the :data:`~parallax.core.temporal_read.
 LATEST` sentinel, which re-resolves at submit time and would silently let a
 stale edit "succeed" against whatever is current then; never a wall-clock
-display instant, which is racy against assignment-ordered processing
+display instant, which is racy against assignment-ordered Transaction-Time
 instants). Submit time re-fetches **with every declared axis pinned at the
 transported edge** inside an **optimistic** ``db.transact`` (never
 ``locking``: an edge-pinned observation is never latest-pinned, so a
@@ -29,7 +29,7 @@ values) is everything a real form need transport, and the public verb
 surface (``db.find`` / ``edge_of`` / ``model_copy`` / ``tx.update``) is
 everything it needs to replay.
 
-Two variants, one shape each — audit-only (a single Transaction-Time dimension,
+Two variants, one shape each — Transaction-Time-Only (a single Transaction-Time dimension,
 :class:`~parallax.conformance.read_models.Balance`) and bitemporal (both
 axes, :class:`~parallax.conformance.vo_models.Branch`) — split into a
 RENDER half (a plain, non-transactional ``db.find`` capturing the edge) and
@@ -59,7 +59,7 @@ __all__ = [
 
 
 def render_balance_milestone(db: Database, *, id: int) -> tuple[Balance, Edge]:
-    """RENDER time (audit-only): a plain, non-transactional find — the
+    """RENDER time (Transaction-Time-Only): a plain, non-transactional find — the
     displayed milestone plus its edge (the Transaction-Time dimension's own from-instant,
     ``in_z``), the whole of what the form needs to transport."""
     node = db.find(Balance.where(Balance.id == id)).result()
@@ -67,7 +67,7 @@ def render_balance_milestone(db: Database, *, id: int) -> tuple[Balance, Edge]:
 
 
 def submit_balance_edit(db: Database, *, id: int, edge: Edge, fields: Mapping[str, Any]) -> None:
-    """SUBMIT time (audit-only): re-fetch pinned at the transported edge,
+    """SUBMIT time (Transaction-Time-Only): re-fetch pinned at the transported edge,
     inside an OPTIMISTIC transaction (`python.md` §5: an edge-pinned
     observation is never latest-pinned, so a locking-mode write over it
     raises ``HistoricalObservationError`` before any DML), apply ``fields``

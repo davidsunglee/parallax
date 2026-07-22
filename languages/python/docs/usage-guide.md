@@ -6,24 +6,24 @@ Idiomatic public-API usage, generated from the API Conformance Suite's
 examples. Each example mirrors a compatibility-corpus case, so the guide
 cannot drift from graded behavior.
 
-## Audit-only insert opens a current milestone
+## Transaction-Time-Only insert opens a current milestone
 
 Corpus case: `m-audit-write-001`
 
 ```python
-def audit_only_insert_opens_a_current_milestone(db: Database) -> None:
+def transaction_time_only_insert_opens_a_current_milestone(db: Database) -> None:
     def fn(tx: Transaction) -> None:
         tx.insert(Balance(id=1, acct_num="A", value=Decimal("100.00")))
 
     db.transact(fn)
 ```
 
-## Audit-only chain update via a sparse edited copy
+## Transaction-Time-Only chain update via a sparse edited copy
 
 Corpus case: `m-audit-write-002`
 
 ```python
-def audit_only_chain_update_via_a_sparse_copy(db: Database) -> None:
+def transaction_time_only_chain_update_via_a_sparse_copy(db: Database) -> None:
     def insert(tx: Transaction) -> None:
         tx.insert(Balance(id=1, acct_num="A", value=Decimal("100.00")))
 
@@ -37,12 +37,12 @@ def audit_only_chain_update_via_a_sparse_copy(db: Database) -> None:
     db.transact(update)
 ```
 
-## Audit-only terminate closes the current milestone
+## Transaction-Time-Only terminate closes the current milestone
 
 Corpus case: `m-audit-write-003`
 
 ```python
-def audit_only_terminate_closes_the_current_milestone(db: Database) -> None:
+def transaction_time_only_terminate_closes_the_current_milestone(db: Database) -> None:
     def insert(tx: Transaction) -> None:
         tx.insert(Balance(id=1, acct_num="A", value=Decimal("100.00")))
 
@@ -59,12 +59,12 @@ def audit_only_terminate_closes_the_current_milestone(db: Database) -> None:
     db.transact(close)
 ```
 
-## Audit-only chain update carries every new attribute
+## Transaction-Time-Only chain update carries every new attribute
 
 Corpus case: `m-audit-write-004`
 
 ```python
-def audit_only_chain_update_carries_every_new_attribute(db: Database) -> None:
+def transaction_time_only_chain_update_carries_every_new_attribute(db: Database) -> None:
     def insert(tx: Transaction) -> None:
         tx.insert(Balance(id=1, acct_num="A", value=Decimal("100.00")))
 
@@ -76,12 +76,12 @@ def audit_only_chain_update_carries_every_new_attribute(db: Database) -> None:
     db.transact(update)
 ```
 
-## Audit-only chain update starting from existing history
+## Transaction-Time-Only chain update starting from existing history
 
 Corpus case: `m-audit-write-005`
 
 ```python
-def audit_only_chain_update_from_existing_history(db: Database) -> None:
+def transaction_time_only_chain_update_from_existing_history(db: Database) -> None:
     # m-audit-write-005: the fixtures are loaded (`given.fixtures: true`) —
     # id 1 already carries a superseded [2024-01-01, 2024-06-01) milestone
     # (value 100.00) and a CURRENT [2024-06-01, infinity) milestone (value
@@ -1184,12 +1184,12 @@ def bitemporal_vo_owner_as_of_a_past_audit_point(db: Database) -> Snapshot[Any]:
     )
 ```
 
-## Supplier audit chain update carries the address document
+## Supplier Transaction-Time-Only chain update carries the address document
 
 Corpus case: `m-value-object-032`
 
 ```python
-def supplier_audit_chain_update_carries_the_document(db: Database) -> None:
+def supplier_transaction_time_only_chain_update_carries_the_document(db: Database) -> None:
     def insert(tx: Transaction) -> None:
         tx.insert(
             Supplier(
@@ -1348,20 +1348,20 @@ Spec-level idioms whose choreography spans more than any single corpus
 case: each recipe cites its normative spec section and the tests that
 grade it end-to-end (never a borrowed case id).
 
-### Stale web edit — audit-only (Balance)
+### Stale web edit — Transaction-Time-Only (Balance)
 
 Spec: `python.md` §3 (the recipe) and §5 (why it runs optimistic). Graded by `tests/api_conformance/test_stale_web_edit.py` (real Postgres: the clean submit, the concurrent-supersession conflict, and both negative pins) and `tests/unit/test_transaction_reads.py`'s Docker-free recipe halves.
 
 ```python
 def render_balance_milestone(db: Database, *, id: int) -> tuple[Balance, Edge]:
-    """RENDER time (audit-only): a plain, non-transactional find — the
+    """RENDER time (Transaction-Time-Only): a plain, non-transactional find — the
     displayed milestone plus its edge (the Transaction-Time dimension's own from-instant,
     ``in_z``), the whole of what the form needs to transport."""
     node = db.find(Balance.where(Balance.id == id)).result()
     return node, edge_of(node)
 
 def submit_balance_edit(db: Database, *, id: int, edge: Edge, fields: Mapping[str, Any]) -> None:
-    """SUBMIT time (audit-only): re-fetch pinned at the transported edge,
+    """SUBMIT time (Transaction-Time-Only): re-fetch pinned at the transported edge,
     inside an OPTIMISTIC transaction (`python.md` §5: an edge-pinned
     observation is never latest-pinned, so a locking-mode write over it
     raises ``HistoricalObservationError`` before any DML), apply ``fields``

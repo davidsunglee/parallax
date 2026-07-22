@@ -55,7 +55,7 @@ distinct Transaction-Time instants via a scripted clock (`clock=`,
 :class:`~parallax.conformance.scripted_clock.ScriptedClock`) — one corpus
 writeSequence entry, one flushing `db.transact` call, one scripted instant,
 in entry order. A "chain-update via a sparse edited copy" story
-(`audit_only_chain_update_via_a_sparse_copy`, the Supplier value-object
+(`transaction_time_only_chain_update_via_a_sparse_copy`, the Supplier value-object
 sibling) proves that the edited copy
 touches only the field it changes, and the framework merges the observed
 payload onto it so the chained row still carries every untouched field.
@@ -287,16 +287,16 @@ def aborted_delete_leaves_the_row_standing(db: Database) -> list[Entity]:
 
 
 # --------------------------------------------------------------------------- #
-# m-audit-write: Balance audit-only milestone-chaining stories.               #
+# m-audit-write: Balance Transaction-Time-Only milestone-chaining stories.    #
 # --------------------------------------------------------------------------- #
-def audit_only_insert_opens_a_current_milestone(db: Database) -> None:
+def transaction_time_only_insert_opens_a_current_milestone(db: Database) -> None:
     def fn(tx: Transaction) -> None:
         tx.insert(Balance(id=1, acct_num="A", value=Decimal("100.00")))
 
     db.transact(fn)
 
 
-def audit_only_terminate_closes_the_current_milestone(db: Database) -> None:
+def transaction_time_only_terminate_closes_the_current_milestone(db: Database) -> None:
     def insert(tx: Transaction) -> None:
         tx.insert(Balance(id=1, acct_num="A", value=Decimal("100.00")))
 
@@ -313,7 +313,7 @@ def audit_only_terminate_closes_the_current_milestone(db: Database) -> None:
     db.transact(close)
 
 
-def audit_only_chain_update_via_a_sparse_copy(db: Database) -> None:
+def transaction_time_only_chain_update_via_a_sparse_copy(db: Database) -> None:
     def insert(tx: Transaction) -> None:
         tx.insert(Balance(id=1, acct_num="A", value=Decimal("100.00")))
 
@@ -327,7 +327,7 @@ def audit_only_chain_update_via_a_sparse_copy(db: Database) -> None:
     db.transact(update)
 
 
-def audit_only_chain_update_carries_every_new_attribute(db: Database) -> None:
+def transaction_time_only_chain_update_carries_every_new_attribute(db: Database) -> None:
     def insert(tx: Transaction) -> None:
         tx.insert(Balance(id=1, acct_num="A", value=Decimal("100.00")))
 
@@ -339,7 +339,7 @@ def audit_only_chain_update_carries_every_new_attribute(db: Database) -> None:
     db.transact(update)
 
 
-def audit_only_chain_update_from_existing_history(db: Database) -> None:
+def transaction_time_only_chain_update_from_existing_history(db: Database) -> None:
     # m-audit-write-005: the fixtures are loaded (`given.fixtures: true`) —
     # id 1 already carries a superseded [2024-01-01, 2024-06-01) milestone
     # (value 100.00) and a CURRENT [2024-06-01, infinity) milestone (value
@@ -458,11 +458,11 @@ def bitemporal_update_until_splits_head_middle_tail(db: Database) -> None:
 
 
 # --------------------------------------------------------------------------- #
-# m-value-object: Supplier (audit-only) / Branch (bitemporal) VO-owner        #
-# stories — the value-object document rides milestone chaining/splitting     #
-# exactly like a scalar column.                                               #
+# Supplier (Transaction-Time-Only) and Branch (Bitemporal) stories carry     #
+# Value Object documents through milestone chaining/splitting like scalar    #
+# columns.                                                                    #
 # --------------------------------------------------------------------------- #
-def supplier_audit_chain_update_carries_the_document(db: Database) -> None:
+def supplier_transaction_time_only_chain_update_carries_the_document(db: Database) -> None:
     def insert(tx: Transaction) -> None:
         tx.insert(
             Supplier(
@@ -757,42 +757,42 @@ WRITE_STORIES: Final[tuple[WriteStory, ...]] = (
     ),
     WriteStory(
         "m-audit-write-001",
-        "Audit-only insert opens a current milestone",
+        "Transaction-Time-Only insert opens a current milestone",
         "commit",
         "balance",
-        audit_only_insert_opens_a_current_milestone,
+        transaction_time_only_insert_opens_a_current_milestone,
         clock=_audit_write_001_clock,
     ),
     WriteStory(
         "m-audit-write-002",
-        "Audit-only chain update via a sparse edited copy",
+        "Transaction-Time-Only chain update via a sparse edited copy",
         "commit",
         "balance",
-        audit_only_chain_update_via_a_sparse_copy,
+        transaction_time_only_chain_update_via_a_sparse_copy,
         clock=_audit_write_002_clock,
     ),
     WriteStory(
         "m-audit-write-003",
-        "Audit-only terminate closes the current milestone",
+        "Transaction-Time-Only terminate closes the current milestone",
         "commit",
         "balance",
-        audit_only_terminate_closes_the_current_milestone,
+        transaction_time_only_terminate_closes_the_current_milestone,
         clock=_audit_write_003_clock,
     ),
     WriteStory(
         "m-audit-write-004",
-        "Audit-only chain update carries every new attribute",
+        "Transaction-Time-Only chain update carries every new attribute",
         "commit",
         "balance",
-        audit_only_chain_update_carries_every_new_attribute,
+        transaction_time_only_chain_update_carries_every_new_attribute,
         clock=_audit_write_002_clock,
     ),
     WriteStory(
         "m-audit-write-005",
-        "Audit-only chain update starting from existing history",
+        "Transaction-Time-Only chain update starting from existing history",
         "commit",
         "balance",
-        audit_only_chain_update_from_existing_history,
+        transaction_time_only_chain_update_from_existing_history,
         clock=_audit_write_005_clock,
     ),
     WriteStory(
@@ -843,10 +843,10 @@ WRITE_STORIES: Final[tuple[WriteStory, ...]] = (
     ),
     WriteStory(
         "m-value-object-032",
-        "Supplier audit chain update carries the address document",
+        "Supplier Transaction-Time-Only chain update carries the address document",
         "commit",
         "supplier",
-        supplier_audit_chain_update_carries_the_document,
+        supplier_transaction_time_only_chain_update_carries_the_document,
         clock=_value_object_032_clock,
     ),
     WriteStory(
