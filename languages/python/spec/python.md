@@ -285,7 +285,14 @@ metaclass; `frozen=True`, `EntityConfig`, `__parallax__`, `Field`,
 deprecated. The grammar below is exhaustive: an authoring form not listed
 here does not exist. The API Conformance Suite closes the frontend loop by
 authoring idiomatic classes for corpus models and asserting their exported
-descriptors equal the corpus YAML (the no-drift guard).
+descriptors structurally equal the corpus YAML, which is authored in
+canonical minimal spelling (the no-drift guard). Frontend equivalence is
+qualified by authoring reach: for models both grammars can author, the two
+frontends expose identical normalized facts and formation outcomes;
+grammar-level failures stay representation-specific — the descriptor rejects
+through its ingestion phases, Python through class creation — so a shape
+only one grammar can spell, or can reject before the shared seam, carries no
+equivalence obligation.
 
 #### Class headers
 
@@ -539,7 +546,10 @@ All three yield the same `UNSEALED` fixed-source hub on success. The phase
 boundaries are exact: syntax failures raise
 `DescriptorSyntaxError(descriptor-invalid-syntax)` before a hub exists;
 canonical-schema violations raise
-`DescriptorSchemaError(descriptor-schema-invalid)` before a hub exists; every
+`DescriptorSchemaError(descriptor-schema-invalid)` before a hub exists;
+value-phase rejections (`m-descriptor` "Type spellings" — e.g. the
+schema-valid but unconstructible `decimal(0,9)`) raise
+`DescriptorValueError(descriptor-value-invalid)` before a hub exists; every
 semantic model rule fails later, inside `seal()`, as
 `MetamodelValidationError`. A document uses the schema's two top-level forms:
 `entity:` for one Entity or `entities:` for several. The same model flows
@@ -580,7 +590,6 @@ entities:
     indices:
       - name: book_author_id
         attributes: [authorId]
-        unique: false
 ```
 
 ```python
@@ -693,9 +702,11 @@ class Truck(Vehicle, table="truck", inheritance=ConcreteSubtype):
 
 - **Metamodel serde ownership.** Source owner `parallax.core.descriptor`
   (enforcement scope of the same name), shipped in the `parallax-core`
-  artifact. JSON and YAML round-trip tests run in the unit lane
-  (`uv run pytest -m unit`), and every corpus descriptor must parse,
-  round-trip deterministically, and re-export equal to its canonical form.
+  artifact. JSON and YAML canonicalization tests run in the unit lane
+  (`uv run pytest -m unit`), and every corpus descriptor must import, export
+  deterministically, and re-export structurally equal to its canonical
+  corpus spelling (`m-descriptor` "Metamodel serde": the canonicalization
+  law and its omission set).
 
 ### Code generation or runtime realization
 

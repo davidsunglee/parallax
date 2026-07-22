@@ -1,0 +1,7 @@
+phase: value
+code: descriptor-value-invalid
+violations:
+  - path: [entity, attributes, 1, type]
+    rule: type-spelling-invalid
+  - path: [entity, attributes, 2, type]
+    rule: type-spelling-invalid

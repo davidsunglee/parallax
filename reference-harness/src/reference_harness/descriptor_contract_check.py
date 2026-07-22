@@ -9,12 +9,17 @@ Two contract facts are asserted, both Docker-free:
    fixture is a raw document (``<stem>.json`` / ``<stem>.yaml``, byte-exact and
    deliberately outside ``models/``) paired by stem with an expectation sidecar
    (``<stem>.expected.yaml``) carrying the expected phase and code and, for the
-   schema phase, the expected canonically ordered violation list. This module
+   schema and value phases, the expected canonically ordered violation list.
+   This module
    implements the m-descriptor canonical violation ordering once — equality and
    order are ``(path, rule)`` with ``message`` excluded, a strict path prefix
    first, member names by codepoint, array indices numeric, branching keywords
    (``oneOf`` / ``anyOf`` / ``not``) collapsed to one violation at the branching
-   path, and equal ``(path, rule)`` violations collapsed to one.
+   path, and equal ``(path, rule)`` violations collapsed to one. The value
+   phase judges only schema-valid documents and realizes the m-descriptor
+   named rejections ("Type spellings"): a ``type-spelling-invalid`` violation
+   for a decimal spelling whose parameters break the m-core bounds or carry
+   non-canonical digits.
 2. **Export determinism** — every corpus model under ``models/`` canonicalizes
    to a byte-identical fixed point in both JSON and YAML (serialize ->
    deserialize -> serialize), the m-descriptor byte-deterministic export law
@@ -28,6 +33,7 @@ directory — is itself a loud failure, never a vacuous pass.
 from __future__ import annotations
 
 import json
+import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -44,6 +50,7 @@ from .schemas import load_json
 
 __all__ = [
     "Violation",
+    "canonical_value_violations",
     "canonical_violations",
     "export_determinism_errors",
     "fixture_errors",
@@ -103,11 +110,62 @@ def canonical_violations(document: Any, schema: dict[str, Any]) -> list[Violatio
     return sorted(identities, key=violation_sort_key)
 
 
+_DECIMAL_SPELLING = re.compile(r"^decimal\(([0-9]+),([0-9]+)\)$")
+_CANONICAL_DIGITS = re.compile(r"^(?:0|[1-9][0-9]*)$")
+
+
+def _decimal_spelling_invalid(spelling: str) -> bool:
+    """True when a schema-valid decimal ``type`` spelling denotes an
+    unconstructible core value: a parameter with non-canonical digits (a
+    superfluous leading zero), a zero precision, or a scale exceeding the
+    precision. A non-decimal spelling is never judged here — the schema owns
+    its validity."""
+    match = _DECIMAL_SPELLING.match(spelling)
+    if match is None:
+        return False
+    precision_text, scale_text = match.groups()
+    if not (_CANONICAL_DIGITS.match(precision_text) and _CANONICAL_DIGITS.match(scale_text)):
+        return True
+    precision, scale = int(precision_text), int(scale_text)
+    return precision < 1 or scale > precision
+
+
+def canonical_value_violations(document: Any) -> list[Violation]:
+    """The document's value-phase violations (m-descriptor "Phase 3 — value"),
+    deduplicated and canonically ordered.
+
+    Meaningful only for a schema-valid document. The named rejection set is
+    exactly the m-descriptor "Type spellings" rules: every ``type`` member
+    holding a decimal spelling whose parameters break the m-core bounds or
+    carry non-canonical digits is one ``type-spelling-invalid`` violation at
+    that member's document path. An empty result means the document is
+    value-valid."""
+    identities: set[Violation] = set()
+
+    def walk(node: Any, path: tuple[str | int, ...]) -> None:
+        if isinstance(node, dict):
+            spelling = node.get("type")
+            if isinstance(spelling, str) and _decimal_spelling_invalid(spelling):
+                identities.add(Violation((*path, "type"), "type-spelling-invalid"))
+            for key, child in node.items():
+                walk(child, (*path, key))
+        elif isinstance(node, list):
+            for index, child in enumerate(node):
+                walk(child, (*path, index))
+
+    walk(document, ())
+    return sorted(identities, key=violation_sort_key)
+
+
 # --- the ingestion fixture gate ----------------------------------------------
 
 _DOCUMENT_FORMATS = {".json": serde.JSON, ".yaml": serde.YAML}
 _EXPECTED_SUFFIX = ".expected.yaml"
-_PHASE_CODES = {"syntax": "descriptor-invalid-syntax", "schema": "descriptor-schema-invalid"}
+_PHASE_CODES = {
+    "syntax": "descriptor-invalid-syntax",
+    "schema": "descriptor-schema-invalid",
+    "value": "descriptor-value-invalid",
+}
 
 
 def _format_path(path: tuple[str | int, ...]) -> str:
@@ -151,7 +209,7 @@ def _expected_violations(raw: object, label: str, errors: list[str]) -> list[Vio
             errors.append(f"{entry_label} path must be a list of member names and array indices")
             return None
         if not isinstance(rule, str) or not rule:
-            errors.append(f"{entry_label} rule must be a nonempty JSON-Schema keyword")
+            errors.append(f"{entry_label} rule must be a nonempty rule name")
             return None
         parsed.append(Violation(tuple(path), rule))
     return parsed
@@ -180,7 +238,7 @@ def _load_expectation(expected_path: Path, errors: list[str]) -> tuple[str, list
             f"got {raw.get('code')!r}"
         )
         return None
-    expected_keys = {"phase", "code"} | ({"violations"} if phase == "schema" else set())
+    expected_keys = {"phase", "code"} | ({"violations"} if phase in ("schema", "value") else set())
     if set(raw) != expected_keys:
         errors.append(f"{label}: expectation keys must be exactly {sorted(expected_keys)}")
         return None
@@ -195,8 +253,10 @@ def _load_expectation(expected_path: Path, errors: list[str]) -> tuple[str, list
 def _fixture_pair_errors(
     document_path: Path, expected_path: Path, schema: dict[str, Any]
 ) -> list[str]:
-    """Run one document/sidecar pair through the syntax and schema phases and
-    compare the outcome with the sidecar's expectation."""
+    """Run one document/sidecar pair through the ingestion phases and compare
+    the outcome with the sidecar's expectation. A violation-carrying phase
+    (schema / value) additionally asserts every earlier phase passes — no
+    phase reports another phase's failures."""
     errors: list[str] = []
     expectation = _load_expectation(expected_path, errors)
     if expectation is None:
@@ -219,13 +279,27 @@ def _fixture_pair_errors(
 
     if not parsed:
         errors.append(
-            f"{label}: expected phase-2 schema violations but the {fmt} text does not parse"
+            f"{label}: expected phase-{'2 schema' if phase == 'schema' else '3 value'} "
+            f"violations but the {fmt} text does not parse"
         )
         return errors
-    actual = canonical_violations(document, schema)
-    if not actual:
-        errors.append(f"{label}: expected schema violations but the document is schema-valid")
-        return errors
+    schema_violations = canonical_violations(document, schema)
+    if phase == "schema":
+        actual = schema_violations
+        if not actual:
+            errors.append(f"{label}: expected schema violations but the document is schema-valid")
+            return errors
+    else:
+        if schema_violations:
+            errors.append(
+                f"{label}: expected phase-3 value violations but the document is "
+                f"schema-invalid: [{_format_violations(schema_violations)}]"
+            )
+            return errors
+        actual = canonical_value_violations(document)
+        if not actual:
+            errors.append(f"{label}: expected value violations but the document is value-valid")
+            return errors
     canonical_expected = sorted(set(expected), key=violation_sort_key)
     if set(expected) != set(actual):
         errors.append(

@@ -239,14 +239,21 @@ only through Entity declarations and is not passed to the hub separately.
   exists, carrying its format, optional one-based line/column, and parser
   cause. A decoded document that violates the canonical schema raises
   `DescriptorSchemaError(code="descriptor-schema-invalid")`, also before a
-  hub exists, carrying a canonically ordered immutable violation sequence.
-  Only a schema-valid document creates an `UNSEALED` hub; missing references,
-  invalid families, relationship incoherence, and all other model semantics
-  then fail through `MetamodelValidationError` during `seal()`.
+  hub exists, carrying a canonically ordered immutable violation sequence. A
+  schema-valid document whose denoted core value is unconstructible — an
+  out-of-bounds or non-canonical decimal type spelling — raises
+  `DescriptorValueError(code="descriptor-value-invalid")`, also before a hub
+  exists, carrying the same canonically ordered violation shape over
+  `m-descriptor`'s value-rule vocabulary.
+  Only a document every phase accepts creates an `UNSEALED` hub; missing
+  references, invalid families, relationship incoherence, and all other model
+  semantics then fail through `MetamodelValidationError` during `seal()`.
 - `DescriptorError(ValueError)` is the public descriptor-ingestion base.
   `DescriptorSchemaViolation` contains a structured document path of string
   keys and nonnegative array indices, a stable schema-rule name, and an
-  explanatory message. Violations sort by the typed path and then rule name;
+  explanatory message; `DescriptorValueViolation` is the same shape with the
+  rule drawn from `m-descriptor`'s closed value-rule vocabulary.
+  Violations sort by the typed path and then rule name;
   message and validator emission order do not participate. Descriptor document
   paths never enter `MetamodelIssue` or semantic `ModelLocation` values.
 
@@ -764,8 +771,10 @@ only through Entity declarations and is not passed to the hub separately.
 - `DescriptorError(ValueError)` is the base for descriptor ingestion before a
   hub exists. `DescriptorSyntaxError` uses stable code
   `descriptor-invalid-syntax`; `DescriptorSchemaError` uses
-  `descriptor-schema-invalid` and exposes canonical structured violations.
-  Neither is a `MetamodelValidationError`, whose locations are semantic rather
+  `descriptor-schema-invalid` and exposes canonical structured violations;
+  `DescriptorValueError` uses `descriptor-value-invalid` and exposes the same
+  violation shape over `m-descriptor`'s value-rule vocabulary.
+  None is a `MetamodelValidationError`, whose locations are semantic rather
   than document-relative.
 - `DescriptorExportError(RuntimeError)` is the descriptor adapter-defect
   boundary after successful sealing. It has stable code

@@ -71,9 +71,10 @@ def test_real_fixture_set_passes() -> None:
     assert fixture_errors(_FIXTURE_DIR, _schema()) == []
 
 
-def test_real_fixture_set_covers_both_failing_phases() -> None:
+def test_real_fixture_set_covers_every_failing_phase() -> None:
     # A sanity floor: the canonical set carries the phase-1 minimal pair (one
-    # malformed JSON, one malformed YAML) and at least one schema fixture.
+    # malformed JSON, one malformed YAML) and at least one schema and one
+    # value fixture.
     expectations = sorted(_FIXTURE_DIR.glob("*.expected.yaml"))
     phases = [yaml.safe_load(path.read_text(encoding="utf-8"))["phase"] for path in expectations]
     syntax_documents = {
@@ -84,6 +85,7 @@ def test_real_fixture_set_covers_both_failing_phases() -> None:
     assert phases.count("syntax") == 2
     assert syntax_documents == {".json", ".yaml"}
     assert phases.count("schema") >= 1
+    assert phases.count("value") >= 1
 
 
 def test_real_corpus_export_is_deterministic() -> None:

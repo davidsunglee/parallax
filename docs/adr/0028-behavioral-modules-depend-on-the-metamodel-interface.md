@@ -25,15 +25,26 @@ Descriptor ingestion is complete before that adapter exists. Malformed
 JSON/YAML raises `DescriptorSyntaxError(descriptor-invalid-syntax)` with format,
 optional source coordinates, and cause; a decoded document outside the
 canonical schema raises `DescriptorSchemaError(descriptor-schema-invalid)`
-with canonically ordered structured document-path violations. Both derive from
-`DescriptorError` and create no hub. A schema-valid document alone becomes an
-Unresolved Metamodel, after which invalid references and semantic model rules
-use representation-independent `MetamodelIssue` and
-`MetamodelValidationError`; descriptor paths never become Model Locations.
+with canonically ordered structured document-path violations; schema-valid
+text whose denoted core value is unconstructible — an out-of-bounds or
+non-canonical decimal type spelling — raises
+`DescriptorValueError(descriptor-value-invalid)` with the same canonically
+ordered document-path violation shape over the value-rule vocabulary
+`m-descriptor` owns. All three derive from `DescriptorError` and create no
+hub. Only a document every ingestion phase accepts becomes an Unresolved
+Metamodel, after which invalid references and semantic model rules use
+representation-independent `MetamodelIssue` and `MetamodelValidationError`;
+descriptor paths never become Model Locations.
 
-Both frontends must expose equivalent unresolved facts, name resolution, and
-validation outcomes. Conformance continues to require deterministic canonical
-descriptor export and corpus round-trips, but behavioral-module dependency
+Frontend equivalence is qualified by authoring reach: for models both
+grammars can author, the two frontends must expose identical normalized
+facts, name resolution, and formation outcomes, while grammar-level failures
+stay representation-specific — each grammar rejects its own unspellable or
+ill-formed inputs through its own error surface (the descriptor's ingestion
+phases; Python class creation), and a shape only one grammar can spell
+carries no equivalence obligation. Conformance continues to require
+deterministic canonical descriptor export and the corpus canonicalization
+law, but behavioral-module dependency
 edges move from `m-descriptor` to the accepted Metamodel Interface wherever
 serialization is not the concern. The accepted graph and its lookup indexes are
 created once by compilation and frozen before the interface becomes usable, so

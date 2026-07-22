@@ -1,0 +1,17 @@
+# Phase-3 value fixture: both decimal spellings are schema-valid text (the
+# schema admits any digit strings) whose denoted core value is
+# unconstructible — decimal(0,9) breaks the m-core bounds (zero precision,
+# scale exceeding precision) and decimal(09,2) carries non-canonical digits.
+# Ingestion reports every violation in one DescriptorValueError, in canonical
+# (path, rule) order, and never as a schema or formation failure.
+entity:
+  name: Measurement
+  table: measurement
+  attributes:
+    - name: id
+      type: int64
+      primaryKey: true
+    - name: ratio
+      type: decimal(0,9)
+    - name: reading
+      type: decimal(09,2)

@@ -320,27 +320,69 @@ after domain Attributes, with Valid Time before Transaction Time, preserving
 
 ## Metamodel serde (protocol seam)
 
-The descriptor is **serializable and deserializable** through the same
+The descriptor is **importable and exportable** through the same
 format-agnostic canonical serde seam as the operation algebra (`m-op-algebra`),
-with concrete writers for **JSON and YAML**. The descriptor **is** the serialized
-metamodel: `serialize(deserialize(descriptor)) == descriptor` **MUST** hold, in
-both formats. The reference harness asserts this round-trip for every model
-referenced by a compatibility case. *How* a language populates its in-memory model
-(descriptor files, annotations, decorators, builders) is a per-language choice;
-the serializable canonical form is the portable backbone.
+with concrete writers for **JSON and YAML**. **Import** is the three-phase
+ingestion below; **export** is canonical export of the accepted Metamodel;
+their composition is **canonicalization**: `canonicalize(d) =
+export(import(d))`. For every document `d` that ingestion and Model Formation
+accept, the serde law is:
+
+- `export(import(d)) == canonicalize(d)` — export depends only on the
+  accepted Metamodel, never on which spelling of the model was imported;
+- `canonicalize` is idempotent: `canonicalize(canonicalize(d)) ==
+  canonicalize(d)` — a canonical document re-imports and re-exports to
+  itself;
+- byte identity holds exactly where the contract promises it: repeated
+  JSON and YAML exports of one accepted Metamodel are byte-identical
+  ("Canonical export"), and a document already in canonical form reproduces
+  its exact bytes — `export(import(d)) == d`.
+
+A valid but non-canonical document — a conventional fact spelled out
+explicitly — imports to the same accepted Metamodel as its canonical form and
+re-exports minimally; spelling redundancy is never a rejection. The corpus
+models are authored in canonical form, so a frontend's canonical export MUST
+equal each corpus model structurally (comments are not structure) — the
+no-drift baseline. *How* a language populates its in-memory model
+(descriptor files, annotations, decorators, builders) is a per-language
+choice; the serializable canonical form is the portable backbone.
+
+### Canonical form: the omission set
+
+Canonical form is minimal spelling. Canonical export omits exactly the
+properties below and nothing else — each is a fact the adapter re-derives on
+import, so its explicit spelling carries no information:
+
+| Omitted property | When |
+|---|---|
+| `column` | equal to the member name (an Attribute or a top-level Value Object occurrence) |
+| `persistence` | on a standalone Entity or family root whose normalized mode is Read Write (a descendant never spells `persistence` at all) |
+| `pkGeneration` | on a `primaryKey: true` Attribute whose normalized generation is Application Assigned |
+| Sequence `batchSize` / `initialValue` / `incrementSize` | equal to the semantic defaults (`1` / `1` / `1`) |
+| `primaryKey`, `nullable`, `readOnly`, `optimisticLocking`, `dependent`, `unique` | equal to the schema-declared default `false` |
+| `multiplicity` | equal to the default `one` |
+| an `orderBy` entry's `direction` | equal to the default `asc` |
+
+A one-Entity model's canonical spelling is the single-`entity` form;
+`entities` is canonical exactly for a multi-Entity model.
 
 ## Descriptor ingestion
 
 Descriptor ingestion is a fixed three-phase contract. Each phase either passes
 the document forward or fails with that phase's error; no phase reports another
 phase's failures, no failing phase produces an Unresolved Metamodel, and only a
-schema-valid document reaches semantic formation.
+document every phase accepts becomes an Unresolved Metamodel for semantic
+formation.
 
 | Phase | Judged against | Failure |
 |---|---|---|
 | 1 — syntax | the format's grammar (JSON or YAML text) | `DescriptorSyntaxError` |
 | 2 — schema | [`metamodel.schema.json`](../schemas/metamodel.schema.json) (JSON Schema Draft 2020-12) | `DescriptorSchemaError` |
-| 3 — semantic | adapter normalization, then Model Formation over the Unresolved Metamodel | adapter rejection, or `MetamodelValidationError` (`m-model-formation`) |
+| 3 — value | adapter normalization and the semantic rejections named under "Type spellings" | `DescriptorValueError` |
+
+Model Formation is beyond ingestion: every failure past the Unresolved seam
+is a representation-independent `MetamodelValidationError`
+(`m-model-formation`), never a `DescriptorError`.
 
 ```text
 DescriptorError(ValueError)
@@ -349,12 +391,17 @@ DescriptorError(ValueError)
 │     format: json | yaml
 │     line, column: one-based source coordinates | absent
 │     cause: the parser failure, preserved
-└── DescriptorSchemaError
-      code = "descriptor-schema-invalid"
+├── DescriptorSchemaError
+│     code = "descriptor-schema-invalid"
+│     violations: nonempty immutable canonically ordered
+│                 sequence<DescriptorSchemaViolation>
+└── DescriptorValueError
+      code = "descriptor-value-invalid"
       violations: nonempty immutable canonically ordered
-                  sequence<DescriptorSchemaViolation>
+                  sequence<DescriptorValueViolation>
 
 DescriptorSchemaViolation(path, rule, message)
+DescriptorValueViolation(path, rule, message)
 ```
 
 **Phase 1 — syntax.** Text that is not well-formed in its format raises
@@ -401,22 +448,36 @@ there). Canonical ordering is `(path, rule)`:
 Frontend, validator, and emission order never participate. The schema's
 one-or-many-entities requirement makes an empty document a phase-2 failure:
 Model Formation never receives an empty Unresolved Metamodel from this
-adapter. Both failing phases are pinned by the canonical descriptor-error
+adapter. Every failing phase is pinned by the canonical descriptor-error
 fixtures below.
 
-**Phase 3 — semantic.** Only a schema-valid document is normalized to the
-`m-metamodel` Unresolved Metamodel seam. The adapter — not the schema, and not
-the fixed resolver — completes normalization first: it expands every omitted
+**Phase 3 — value.** Only a schema-valid document reaches the value phase,
+where the adapter — not the schema, and not the fixed resolver — normalizes
+it to the `m-metamodel` Unresolved Metamodel seam: it expands every omitted
 `column` to its conventional member name and populates omitted Sequence
 defaults, so candidate and accepted Metadata never expose an absent Storage
-Location or a partially configured Sequence. The adapter also owns the
-representation-bound semantic rejections this specification names under "Type
-spellings" — out-of-bounds or non-canonical decimal parameters are
-schema-valid text rejected here, before the Unresolved seam.
-Beyond that seam, failures are representation-independent `MetamodelIssue` /
-`MetamodelValidationError` values: a descriptor document path never appears in
-a `MetamodelIssue` or `ModelLocation`. A frontend MAY map semantic locations
-back to source coordinates separately.
+Location or a partially configured Sequence. The same phase owns the
+representation-bound semantic rejections this specification names under
+"Type spellings": schema-valid text whose denoted core value is
+unconstructible raises one `DescriptorValueError` carrying every violation.
+A `DescriptorValueViolation` mirrors `DescriptorSchemaViolation` exactly —
+`path` is the document path to the value the rejection applies to, and
+`message` is explanatory text excluded from identity — except that `rule` is
+drawn from the closed vocabulary this specification owns rather than from
+JSON-Schema keywords:
+
+| Rule | Meaning |
+|---|---|
+| `type-spelling-invalid` | a `type` spelling whose parameters break the `m-core` bounds or carry non-canonical digits — e.g. `decimal(0,9)`, `decimal(2,5)`, `decimal(09,2)` |
+
+The vocabulary grows only with a rejection named in this specification. A
+conforming adapter evaluates the whole document, and violation equality,
+deduplication, and canonical ordering are the schema phase's `(path, rule)`
+rules unchanged. Beyond the Unresolved seam, failures are
+representation-independent `MetamodelIssue` / `MetamodelValidationError`
+values: a descriptor document path never appears in a `MetamodelIssue` or
+`ModelLocation`. A frontend MAY map semantic locations back to source
+coordinates separately.
 
 ### Descriptor-error fixtures
 
@@ -435,15 +496,16 @@ others:
 
 | Key | Requirement |
 |---|---|
-| `phase` | the closed phase vocabulary: `syntax` or `schema` |
-| `code` | the phase's code: `descriptor-invalid-syntax` for `syntax`, `descriptor-schema-invalid` for `schema` |
-| `violations` | required for `schema` sidecars; absent for `syntax` sidecars |
+| `phase` | the closed phase vocabulary: `syntax`, `schema`, or `value` |
+| `code` | the phase's code: `descriptor-invalid-syntax` for `syntax`, `descriptor-schema-invalid` for `schema`, `descriptor-value-invalid` for `value` |
+| `violations` | required for `schema` and `value` sidecars; absent for `syntax` sidecars |
 
 `violations` is the nonempty, duplicate-free expected violation list in the
 canonical `(path, rule)` order defined above. Each entry carries exactly
 `path` — the sequence of object member names and array indices from the
 document root, empty for the root itself — and `rule` — the failing
-JSON-Schema keyword. `message` is explanatory text excluded from violation
+JSON-Schema keyword for a `schema` sidecar, the named value rule for a
+`value` sidecar. `message` is explanatory text excluded from violation
 identity, so sidecars never carry it.
 
 ## Canonical export
@@ -454,7 +516,7 @@ validation and no state change. Export is deterministic and all-or-none:
 
 - repeated document exports of one accepted Metamodel are structurally equal;
 - repeated JSON and YAML exports are byte-identical, and export composes with
-  the serde round-trip law above: a model authored in canonical form
+  the canonicalization law above: a model authored in canonical form
   reproduces its exact bytes;
 - export returns its complete result or fails with no partial output.
 
@@ -472,7 +534,7 @@ DescriptorExportError(RuntimeError)
 accepted Metamodel is exportable by contract, so export performs no model
 validation and can fail only through an implementation defect. It leaves the
 accepted Metamodel unchanged, and it is never raised as or translated to a
-`DescriptorError`, whose two subtypes are ingestion failures over documents.
+`DescriptorError`, whose three subtypes are ingestion failures over documents.
 The reference harness asserts export byte-determinism over every corpus model.
 
 ## Contract activation
