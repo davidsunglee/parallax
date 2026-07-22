@@ -107,7 +107,7 @@ parallax/snapshot/
 | `_read` | `Snapshot` and execution/result values, `find` and `find_history`, history grouping, all read-side pin derivation (`deep_fetch_statement_pin`, `is_milestone_set_op`, and the module-local `_pin_from_milestone`), and conversion of neutral results into Snapshots. |
 | `_wrap` | Conversion of neutral materialized nodes into frozen developer entity graphs, including graph-local identity, projection merging, inheritance, value objects, and temporal metadata. |
 | `_write_inputs` | Observation capture, write-input validation, sparse/full row preparation, assignment application, and materialized predicate-write row preparation. It consumes `FindResult`/`Pin` values from `_read`; `_read` never imports observation code. |
-| `_predicate_writes` | The predicate-selected (`*_where`) write lane as free functions threading `(uow, meta, conn, dialect)`: bare-statement and business-window validation into a canonical `PredicateWrite`, readless-versus-materialize dispatch, the minimal resolving read, per-row no-op elimination, observation recording, and atomic keyed-unit buffering. It buffers through `uow.buffer` and never reaches back into `Transaction`. |
+| `_predicate_writes` | The predicate-selected (`*_where`) write lane as free functions threading `(uow, meta, conn, dialect)`: bare-statement and valid-time-window validation into a canonical `PredicateWrite`, readless-versus-materialize dispatch, the minimal resolving read, per-row no-op elimination, observation recording, and atomic keyed-unit buffering. It buffers through `uow.buffer` and never reaches back into `Transaction`. |
 | `_transaction` | `Transaction` verbs, transactional find participation, buffering, and prior-observation rules. The five `*_where` verbs plus the frozen `_buffer_predicate_instruction` seam are thin delegates into `_predicate_writes`, which owns the lane itself. |
 | `_database` | `Database`, `connect`, callback demarcation, joining, retry policy, flush execution, and conflict classification. |
 
@@ -117,7 +117,7 @@ package and should not be re-exported independently.
 
 **Correction (2026-07-20, post-acceptance).** As accepted, the `_family` row
 also claimed "family column order". It does not own that: `_family` holds
-exactly `processing_axis`, `business_axis`, `version_attribute`,
+exactly `transaction_time_axis`, `valid_time_axis`, `version_attribute`,
 `assignment_member`, and `members`. Family column order is
 `_keyed_sql._family_column_order`, whose sole caller is that module's own
 `_ordered_cells`, so it is module-local to `_keyed_sql` and never crosses the

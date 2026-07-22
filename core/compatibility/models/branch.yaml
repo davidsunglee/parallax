@@ -6,11 +6,11 @@
 # SAME recursive `address` value object rides a `bitemporal` owner with TWO as-of
 # dimensions.
 #
-#   business   (from_z / thru_z) — WHEN A FACT IS TRUE IN THE WORLD.
-#   processing (in_z   / out_z ) — WHEN THE SYSTEM KNEW that fact (audit-only axis).
+#   validTime       (from_z / thru_z) — WHEN A FACT IS TRUE IN THE WORLD.
+#   transactionTime (in_z   / out_z ) — WHEN THE SYSTEM KNEW that fact (audit axis).
 #
-# A row is the milestone at the intersection of a business interval and a processing
-# interval — a "rectangle" in (business x processing) space. A row is CURRENT on an
+# A row is the milestone at the intersection of a Valid-Time interval and a
+# Transaction-Time interval — a "rectangle" in (valid x transaction) space. A row is CURRENT on an
 # axis when its `to` on that axis equals infinity; the fully-Latest row is current
 # on BOTH (thru_z = out_z = infinity). The `address` value object declares NO
 # asOfAxes of its own (the schema forbids them) — it inherits BOTH of the
@@ -20,7 +20,7 @@
 # The signature bitemporal write is the RECTANGLE SPLIT (m-bitemp-write): an
 # `updateUntil` over a bounded Valid-Time window inactivates the original (closes its
 # Transaction-Time dimension at the transaction instant) and chains up to THREE new rows at
-# fresh processing time — head (old address before the window), middle (NEW address
+# fresh Transaction Time — head (old address before the window), middle (NEW address
 # for the window), tail (old address after the window). The address DOCUMENT is
 # carried across every chained rectangle exactly like a scalar column; there is no
 # value-object-specific temporal machinery (m-value-object "Inherited temporality").

@@ -1,4 +1,4 @@
-# valueObject on a UNITEMPORAL (processing) owner: the document RIDES milestone
+# valueObject on a UNITEMPORAL (Transaction-Time) owner: the document RIDES milestone
 # chaining exactly like a scalar column (m-value-object "Inherited temporality",
 # m-txtime-write), on Postgres AND MariaDB.
 #
@@ -19,7 +19,7 @@
 #                   document is carried, never a path-level merge)             (2 statements)
 #
 # Resulting state: the superseded D1 row (out_z finite) AND the current D2 row
-# (out_z = infinity) — the audit trail of the address over processing time. The INSERT
+# (out_z = infinity) — the audit trail of the address over Transaction Time. The INSERT
 # DML is identical on both dialects (a plain column bind, no JSON function); only the
 # document VALUE is adapted at bind time (Postgres `jsonb`, MariaDB `json` text), so the
 # hole structure is shared and `binds` is one flat array with the document riding as one

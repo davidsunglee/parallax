@@ -1,4 +1,4 @@
-# Processing as-of exactly on a milestone boundary proves half-open interval
+# Transaction-Time as-of exactly on a milestone boundary proves half-open interval
 # semantics: in_z <= asOf < out_z. The row ending at 2024-06-01 is excluded and
 # the row beginning at 2024-06-01 is included.
 model: models/balance.yaml

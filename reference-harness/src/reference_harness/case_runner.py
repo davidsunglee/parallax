@@ -2282,12 +2282,12 @@ _SET_CLAUSE_RE = re.compile(r"\bset\s+(.+?)\s+where\b", re.IGNORECASE)
 # at the following whitespace or `(` (the tight `insert into t(` column list).
 _DML_TARGET_RE = re.compile(r"^(?:insert\s+into|delete\s+from|update)\s+([^\s(]+)", re.IGNORECASE)
 
-# The full-bitemporal `*Until` rectangle-split mutations (DQ11): a business-bounded
+# The full-bitemporal `*Until` rectangle-split mutations (DQ11): a Valid-Time-bounded
 # write whose ① carries the valid-time window (`at`/`until`/`validFrom`).
 _UNTIL_MUTATIONS = ("insertUntil", "updateUntil", "terminateUntil")
 
-# The plain (UNBOUNDED) bitemporal rectangle-split mutations: an everyday business
-# correction/termination from an instant onward with no upper business bound
+# The plain (UNBOUNDED) bitemporal rectangle-split mutations: an everyday retroactive
+# correction/termination from an instant onward with no upper Valid-Time bound
 # (`m-bitemp-write-006` / `m-bitemp-write-007`). Like the `*Until` trio they close
 # the original on the Transaction-Time dimension and chain head / (new-)tail milestones, but
 # the residual window runs to the open bound (thru_z), so ① carries no `until`.
@@ -2295,7 +2295,7 @@ _PLAIN_SPLIT_MUTATIONS = ("update", "terminate")
 
 
 def _is_bitemporal(entity: Entity) -> bool:
-    """Whether an entity carries BOTH as-of axes (business + processing) — the
+    """Whether an entity carries BOTH as-of axes (Valid Time + Transaction Time) — the
     full-bitemporal rectangle profile, where a plain `update` / `terminate` is a
     milestone rectangle split (close + chain), not the audit-only close-and-open."""
     axes = {dim.get("dimension") for dim in entity.temporal_runtime_axes}
@@ -2434,7 +2434,7 @@ def _version_column(entity: Entity) -> str | None:
     A VERSIONED entity carries an attribute-level ``optimisticLocking: true`` version
     (m-opt-lock); the value advance (``initial 1`` / ``observed + 1``) and gate are DERIVED,
     so the column never appears in the neutral write input (①). A temporal entity
-    locks via its processing ``in_z`` timestamp and declares no such attribute.
+    locks via its Transaction-Time ``in_z`` timestamp and declares no such attribute.
     """
     for attribute in entity.attributes:
         if attribute.get("optimisticLocking"):
@@ -2671,7 +2671,7 @@ def _assert_write_input_columns(case: Case, dialect: str) -> None:
         mutation = step["mutation"]
         # A full-bitemporal step is a RECTANGLE SPLIT: the windowed `*Until` trio, or
         # a plain (unbounded) `update` / `terminate` on a two-axis entity (the everyday
-        # business correction / termination, `m-bitemp-write-006` / `-007`). Both close
+        # retroactive correction / termination, `m-bitemp-write-006` / `-007`). Both close
         # the original on the Transaction-Time dimension and chain head / (new-)tail milestones, so
         # both route through the rectangle-split cross-check — never the audit-only
         # close-and-open, which would mis-count the chained inserts.
@@ -3062,9 +3062,9 @@ def _assert_until_input(
 ) -> None:
     """Cross-check a full-bitemporal RECTANGLE-SPLIT step's ① against its golden (②).
 
-    A rectangle-split write inactivates the original on the PROCESSING axis at the
-    transaction instant and chains head / (middle) / (new-)tail rows at fresh
-    processing time ``[at, infinity)``, partitioned on the BUSINESS axis around the
+    A rectangle-split write inactivates the original on the TRANSACTION-TIME axis at
+    the transaction instant and chains head / (middle) / (new-)tail rows at fresh
+    Transaction Time ``[at, infinity)``, partitioned on the VALID-TIME axis around the
     mutation instant. Two forms share this cross-check:
 
       * a WINDOWED ``*Until`` write bounds the change to ``[validFrom, until)``
@@ -3086,8 +3086,8 @@ def _assert_until_input(
         replaying prior insert steps, :func:`_open_rectangle_binds`), NOT the closing
         step's own ①, and DISTINCT from the window boundary; the gate rides the golden
         directly (no ``observedTxStart`` token on the writeSequence step);
-      * every chained INSERT opens a fresh processing milestone, so its ``in_z`` bind
-        equals ``at`` and its ``out_z`` bind equals ``infinity``;
+      * every chained INSERT opens a fresh Transaction-Time milestone, so its ``in_z``
+        bind equals ``at`` and its ``out_z`` bind equals ``infinity``;
       * the Valid-Time window bounds — ``validFrom`` (the window start, an ① row
         attribute) and, for a windowed write, ``until`` (the window end, step-level) —
         appear among the chained inserts' Valid-Time (``from_z`` / ``thru_z``) binds.
@@ -3136,17 +3136,17 @@ def _assert_until_input(
     # concrete-subtype / non-inheritance entity (an ordinary own-table inactivation).
     tag = _tag(entity)
 
-    business_binds: list[Any] = []
+    valid_binds: list[Any] = []
     for statement, binds in zip(step_statements, step_binds, strict=True):
         if "insert into" in statement.lower():
-            # A chained milestone opens at fresh processing time [at, infinity).
+            # A chained milestone opens at fresh Transaction Time [at, infinity).
             _assert_write_values(case, [at], [binds[in_z_pos]], statement)
             _assert_write_values(case, [infinity], [binds[out_z_pos]], statement)
-            business_binds.extend([binds[from_z_pos], binds[thru_z_pos]])
+            valid_binds.extend([binds[from_z_pos], binds[thru_z_pos]])
         else:
-            # The inactivating close: out_z = at, keyed on the current-on-processing row.
+            # The inactivating close: out_z = at, keyed on the Transaction-Time-current row.
             # Whether the close is GATED (optimistic) is decided by the SQL SHAPE — it MUST
-            # carry the observed rectangle's business + processing gate predicates
+            # carry the observed rectangle's Valid-Time + Transaction-Time gate predicates
             # (`and from_z = ? and in_z = ?`) — NEVER merely by a longer bind row, so a
             # plain close with spurious trailing binds fails as a mismatch rather than being
             # tolerated as gated. A gated close then pairs those two predicates with EXACTLY
@@ -3180,11 +3180,11 @@ def _assert_until_input(
     if until is not None:
         bounds.append((until, "until"))
     for bound, label in bounds:
-        if not any(_write_value_equal(bound, value) for value in business_binds):
+        if not any(_write_value_equal(bound, value) for value in valid_binds):
             raise CaseFailure(
                 f"{case.path.name}: the rectangle-split Valid-Time window bound "
                 f"{label}={bound!r} appears in none of the chained inserts' Valid-Time "
-                f"binds {business_binds!r}."
+                f"binds {valid_binds!r}."
             )
 
 
@@ -3194,7 +3194,7 @@ def _open_rectangle_binds(
     """Reconstruct the currently-open rectangle's ``(from_z, in_z)`` for a gated close.
 
     A gated bitemporal close (`m-bitemp-write-008`) gates on the observed rectangle's
-    business-from and Transaction-Time start — neither present in the closing step's own ①
+    Valid-Time and Transaction-Time starts — neither present in the closing step's own ①
     row (the row carries the NEW value + window start, distinct from the observed
     ``from_z``). Replay the prior insert / insertUntil steps in the same write sequence
     and return the last-opened rectangle's ``(validFrom → from_z, at → in_z)`` for
@@ -3218,8 +3218,8 @@ def _has_temporal_gate(statement: str, from_z: str, in_z: str) -> bool:
     """True when a bitemporal close's SQL carries the OPTIMISTIC gate predicates.
 
     A gated (optimistic) bitemporal close (`m-bitemp-write-008`) targets EXACTLY the
-    observed rectangle, so its inactivating ``UPDATE``'s ``WHERE`` adds the business +
-    processing discriminators — ``and <from_z> = ? and <in_z> = ?`` — beyond the plain
+    observed rectangle, so its inactivating ``UPDATE``'s ``WHERE`` adds the Valid-Time +
+    Transaction-Time discriminators — ``and <from_z> = ? and <in_z> = ?`` — beyond the plain
     ``and <out_z> = ?`` current-row key. BOTH predicates are required, matched
     word-bounded so ``out_z = ?`` is never mistaken for ``in_z = ?``; a plain close is
     then never mis-read as gated on the strength of a longer bind row alone.
@@ -3250,7 +3250,7 @@ def _conflict_temporal_entity(case: Case) -> Entity | None:
     A temporal / bitemporal conflict close (``m-temporal-read-009`` through
     ``m-temporal-read-012`` / ``m-bitemp-write-004`` / ``m-bitemp-write-005``) carries no
     version column; it locks via the observed Transaction-Time start (``in_z``),
-    so the target is the first CONCRETE (row-owning) entity with a processing
+    so the target is the first CONCRETE (row-owning) entity with a Transaction-Time
     as-of axis. An inheritance family's abstract root (m-inheritance) resolves
     the SAME family-wide axis (`resolve_effective_definition` flattens it onto
     every descendant), but is tableless and rowless — a conflict case's golden
@@ -3357,7 +3357,7 @@ def _assert_temporal_conflict_input(case: Case, dialect: str) -> None:
     (``out_z``), so the cross-check is BINDS-only (OQ3 → Option A). ① carries the
     milestone pk (→ the ``where`` key), the close instant ``at`` (→ the new
     ``out_z``), and — in optimistic mode — ``observedTxStart`` (the ``and in_z = ?``
-    gate); a BITEMPORAL close additionally carries the business discriminator (e.g.
+    gate); a BITEMPORAL close additionally carries the Valid-Time discriminator (e.g.
     ``validFrom`` → the ``from_z = ?`` gate whose VALUE the metamodel cannot know).
     The single form reads root ``write`` / ``at`` / ``observedTxStart``; the retry form
     reads them per attempt.
@@ -3414,10 +3414,10 @@ def _assert_temporal_conflict_close(
     keyed update follows (m-inheritance x m-opt-lock "Optimistic locking composes
     with inheritance", resolved Q9), extended to a temporal close
     (``m-inheritance-105``): the tag guard rides the identity predicates, the
-    observed-in_z gate still binds LAST. A bitemporal close inserts the business
+    observed-in_z gate still binds LAST. A bitemporal close inserts the Valid-Time
     discriminator's VALUE (the classified ``set`` coordinate, e.g. ``from_z``)
     between ``out_z`` and ``in_z`` in model column order, so the derived binds are
-    ``[at, pk, (tagValue), infinity, …businessCoords, (observedTxStart if gated)]`` —
+    ``[at, pk, (tagValue), infinity, …validTimeCoords, (observedTxStart if gated)]`` —
     the tag slots right after the pk (a no-op, ``None`` skipped, for a
     non-inheritance or table-per-concrete-subtype entity).
     """
@@ -3440,12 +3440,12 @@ def _assert_temporal_conflict_close(
     axis = next(a for a in entity.temporal_runtime_axes if a["dimension"] == "transactionTime")
     infinity = axis.get("infinity", "infinity")
     _, pk, set_cols, _ = _classify_write_row(case, entity, write)
-    # A bitemporal close's business discriminator (e.g. from_z) slots between out_z
+    # A bitemporal close's Valid-Time discriminator (e.g. from_z) slots between out_z
     # and in_z in model column order; a Transaction-Time-Only close has none.
-    business_coords = [set_cols[column] for column in column_order(entity) if column in set_cols]
+    valid_coords = [set_cols[column] for column in column_order(entity) if column in set_cols]
     tag = _tag(entity)
     tag_binds = [tag[1]] if tag is not None else []
-    expected = [at, pk, *tag_binds, infinity, *business_coords]
+    expected = [at, pk, *tag_binds, infinity, *valid_coords]
     if gated:
         if observed_tx_start is None:
             raise CaseFailure(
@@ -3792,7 +3792,7 @@ def _run_scenario_action(
     statement (a coordinate-grouped or multi-level load lists one per group / level)
     and aggregates the returned rows; a zero-round-trip re-access reuses the source
     rows. Any other verb (`mutate` / `detachCopy` / `abort`) commits any authored
-    golden DML (a business-past correction's split write) and captures no rows.
+    golden DML (a Valid-Time-past correction's split write) and captures no rows.
     """
     _assert_action_on(case, index, step, pairs)
     verb = step["action"]

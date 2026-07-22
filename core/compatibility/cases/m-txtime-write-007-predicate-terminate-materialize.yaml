@@ -1,8 +1,8 @@
-# Predicate-selected TERMINATE over an audit-only (processing-temporal) entity
+# Predicate-selected TERMINATE over an audit-only (Transaction-Time-Only) entity
 # materializes per resolved row (m-txtime-write + m-opt-lock, ADR 0014).
 #
 # Balance carries a SINGLE Transaction-Time dimension [in_z, out_z); a terminate merely CLOSES the
-# current row's processing interval — there is no business-date split and no re-inserted
+# current row's Transaction-Time interval — there is no Valid-Time split and no re-inserted
 # successor (contrast the bitemporal terminates, m-bitemp-write-011/013). Because the
 # write gates each row on its own open interval, the set predicate cannot collapse to
 # one statement: it MATERIALIZES to one `set out_z = <at>` per resolved row, gated on the
@@ -10,9 +10,9 @@
 #
 # The unit of work runs in LOCKING mode, so the materializing read takes `for share` row
 # locks (`for share of t0`) over the two matches (bal_id 1 and 2, both value < 250, both
-# currently open). The terminate then closes both at the processing instant
+# currently open). The terminate then closes both at the Transaction-Time instant
 # at = 2024-10-01: two keyed UPDATEs, each binding [at, bal_id, infinity]. A
-# processing-only close needs no old payload, so the materialization observes only the
+# Transaction-Time-only close needs no old payload, so the materialization observes only the
 # id and interval columns (m-txtime-write).
 #
 # The trailing find re-reads the still-open set (out_z = infinity) and expects NO rows:

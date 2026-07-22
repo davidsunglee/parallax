@@ -5,13 +5,13 @@
 # asks: as the system BELIEVED on 2024-02-01, what was true in the world on
 # 2024-03-01? — reconstructing a historical belief, the signature bitemporal read.
 #
-# Over the id-1 history that is R1 (value 90): R1's processing interval
-# [2024-01-01, 2024-04-01) contains 2024-02-01 AND its business interval
+# Over the id-1 history that is R1 (value 90): R1's Transaction-Time interval
+# [2024-01-01, 2024-04-01) contains 2024-02-01 AND its Valid-Time interval
 # [2024-01-01, infinity) contains 2024-03-01. R2/R3 were not yet known on
-# 2024-02-01 (their processing starts 2024-04-01), so the audit read returns the
+# 2024-02-01 (their Transaction-Time starts 2024-04-01), so the audit read returns the
 # ORIGINAL belief 90 — distinct from the 100 the system knows about that same
-# business date NOW (case m-temporal-read-014). The four binds read business-axis-first (outer
-# pin), then processing.
+# Valid Time NOW (case m-temporal-read-014). The four binds read Valid-Time-first (outer
+# pin), then Transaction Time.
 model: models/position.yaml
 tags: [m-temporal-read, m-sql, bitemporal, temporal, as-of, both-axes, past, audit, slice-snapshot-1, slice-managed-1]
 shape: read

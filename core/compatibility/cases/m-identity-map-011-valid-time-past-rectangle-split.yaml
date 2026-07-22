@@ -1,19 +1,19 @@
-# A finite business-axis pinned view is WRITABLE (m-identity-map): mutating a view
-# pinned at a finite business-axis instant is the retroactive correction that lowers
-# to the m-bitemp-write RECTANGLE SPLIT. (Contrast a finite processing-axis pin,
+# A finite Valid-Time-axis pinned view is WRITABLE (m-identity-map): mutating a view
+# pinned at a finite Valid-Time-axis instant is the retroactive correction that lowers
+# to the m-bitemp-write RECTANGLE SPLIT. (Contrast a finite Transaction-Time-axis pin,
 # which is read-only — m-identity-map-010.)
 #
 # Step 0 establishes a fresh managed bitemporal object, Position id 2, as ONE clean
-# Latest rectangle: value 100, business [2024-01-01, infinity), processing
+# Latest rectangle: value 100, valid [2024-01-01, infinity), transaction
 # [2024-01-01, infinity). (The shared position fixture's id 1 already carries a
 # multi-rectangle history, so this case constructs its own single-rectangle target
 # on a distinct primary key rather than adding rows to the shared fixture.) Step 1
-# pins id 2 at the finite business instant 2024-03-01 (processing latest) — a
-# WRITABLE business-past view. Step 2 mutates its value to 200 in memory over the
+# pins id 2 at the finite Valid-Time instant 2024-03-01 (Transaction Time latest) — a
+# WRITABLE Valid-Time-past view. Step 2 mutates its value to 200 in memory over the
 # Valid-Time window [2024-03-01, 2024-09-01): roundTrips 0, no DML. Step 3 flushes,
 # and the buffered correction lowers to the exact m-bitemp-write rectangle split —
 # inactivate the original (close its Transaction-Time dimension at the transaction instant
-# 2024-02-15, keyed by the current-on-processing predicate) then chain HEAD
+# 2024-02-15, keyed by the Transaction-Time-current predicate) then chain HEAD
 # [2024-01-01, 2024-03-01) value 100, MIDDLE [2024-03-01, 2024-09-01) value 200
 # (new), and TAIL [2024-09-01, infinity) value 100. Step 4 re-reads inside the
 # window and observes the corrected 200, so the value changed ONLY inside the
@@ -47,7 +47,7 @@ when:
           dimension: validTime
           coordinate: "2024-03-01T00:00:00+00:00"
       roundTrips: 1
-      note: pin id 2 at the finite business instant 2024-03-01 (processing latest) — a WRITABLE business-past view (100)
+      note: pin id 2 at the finite Valid-Time instant 2024-03-01 (Transaction Time latest) — a WRITABLE Valid-Time-past view (100)
       statements:
         - sql:
             postgres: select t0.pos_id, t0.acct_num, t0.val, t0.from_z, t0.thru_z, t0.in_z, t0.out_z from position t0 where t0.pos_id = ? and t0.from_z <= ? and t0.thru_z > ? and t0.out_z = ?
@@ -91,7 +91,7 @@ when:
           dimension: validTime
           coordinate: "2024-04-01T00:00:00+00:00"
       roundTrips: 1
-      note: re-read inside the corrected window (business 2024-04-01, processing latest) -> the MIDDLE's new value 200
+      note: re-read inside the corrected window (Valid Time 2024-04-01, Transaction Time latest) -> the MIDDLE's new value 200
       statements:
         - sql:
             postgres: select t0.pos_id, t0.acct_num, t0.val, t0.from_z, t0.thru_z, t0.in_z, t0.out_z from position t0 where t0.pos_id = ? and t0.from_z <= ? and t0.thru_z > ? and t0.out_z = ?

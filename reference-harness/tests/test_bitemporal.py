@@ -69,7 +69,7 @@ def test_bitemporal_ddl_primary_key_spans_both_as_of_from_columns() -> None:
     (create,) = ddl_for(_position_model(), "postgres")
     # The business key alone (pos_id) is not unique across rectangles; the
     # physical primary key MUST include BOTH axes' start columns (from_z, in_z) so a
-    # business-bounded rectangle and its inactivated original coexist.
+    # valid-time-bounded rectangle and its inactivated original coexist.
     assert "primary key (pos_id, from_z, in_z)" in create
     for column in ("from_z", "thru_z", "in_z", "out_z"):
         assert f"{column} timestamptz not null" in create
@@ -91,10 +91,10 @@ def test_bitemporal_history_case_suppresses_both_axes() -> None:
     history_case = next(
         c for c in _phase8_cases() if c.path.stem == "m-temporal-read-016-bitemporal-history"
     )
-    business_history = history_case.operation["history"]
-    processing_history = business_history["operand"]["history"]
-    assert business_history["dimension"] == "validTime"
-    assert processing_history["dimension"] == "transactionTime"
+    valid_history = history_case.operation["history"]
+    tx_history = valid_history["operand"]["history"]
+    assert valid_history["dimension"] == "validTime"
+    assert tx_history["dimension"] == "transactionTime"
 
 
 def test_until_trio_write_step_counts_are_consistent() -> None:
@@ -173,7 +173,7 @@ def test_until_write_input_holds_for_authored_cases() -> None:
     }
     for case in cases:
         # Must not raise: the close binds [at, pk, infinity], every chained insert
-        # opens at fresh processing [at, infinity), and the Valid-Time window bounds
+        # opens at fresh Transaction Time [at, infinity), and the Valid-Time window bounds
         # (validFrom / until) appear among the chained inserts' Valid-Time binds.
         _assert_write_input_columns(case, "postgres")
 
@@ -183,7 +183,7 @@ def test_until_write_input_window_corruption_is_rejected() -> None:
         next(c for c in _until_write_cases() if c.path.stem.startswith("m-bitemp-write-001"))
     )
     step = next(s for s in case.write_sequence if s.get("until"))
-    # Corrupt the business valid-time window end: `until` no longer appears among the
+    # Corrupt the Valid-Time window end: `until` no longer appears among the
     # chained inserts' Valid-Time binds, so the `*Until` ① ↔ ② window gate MUST
     # fail (the window bounds are DERIVED from `at`/`until`, never read from golden).
     step["until"] = "1999-12-31T00:00:00+00:00"
@@ -213,7 +213,7 @@ def test_plain_split_write_input_holds_for_authored_cases() -> None:
     for case in cases:
         # Must not raise: routed through the rectangle-split cross-check (not the
         # audit-only close-and-open), the close binds [at, pk, infinity], the chained
-        # head / new-tail open at fresh processing [at, infinity), and validFrom
+        # head / new-tail open at fresh Transaction Time [at, infinity), and validFrom
         # appears among the chained inserts' Valid-Time binds (until is absent).
         _assert_write_input_columns(case, "postgres")
 
@@ -276,13 +276,13 @@ def test_gated_rectangle_split_close_reconstructs_the_observed_open_rectangle() 
     # step's row + `at` — distinct from the `updateUntil` window boundary (2024-03-01).
     case = _gated_split_case()
     opening = next(s for s in case.write_sequence if s["mutation"] == "insert")
-    open_business_from = opening["validFrom"]
+    open_valid_from = opening["validFrom"]
     open_at = opening["at"]
     # The golden close is the second statement (after the opening insert): its binds are
     # [at, pk, infinity, observedFromZ, observedTxStart].
     close_binds = case.statement_binds(1)
     assert len(close_binds) == 5
-    assert str(close_binds[3]) == str(open_business_from)  # observed from_z (not the window)
+    assert str(close_binds[3]) == str(open_valid_from)  # observed from_z (not the window)
     assert str(close_binds[4]) == str(open_at)  # observed in_z
     # The whole cross-check holds as authored.
     _assert_write_input_columns(case, "postgres")
@@ -300,7 +300,7 @@ def test_gated_rectangle_split_gate_bind_corruption_is_rejected() -> None:
 
 def test_has_temporal_gate_requires_both_discriminators_word_bounded() -> None:
     # Direct seam check on the gated-close shape detector: "gated" requires BOTH the
-    # business (`from_z = ?`) AND processing (`in_z = ?`) discriminators, matched
+    # Valid-Time (`from_z = ?`) AND Transaction-Time (`in_z = ?`) discriminators, matched
     # word-bounded. A close carrying only ONE (a PARTIAL gate) is NOT a valid gated
     # close; the plain current-row key (`out_z = ?`) alone is likewise not a gate.
     both = (
@@ -315,10 +315,10 @@ def test_has_temporal_gate_requires_both_discriminators_word_bounded() -> None:
     assert not _has_temporal_gate(plain, "from_z", "in_z")
 
 
-def test_partial_temporal_gate_missing_processing_discriminator_is_rejected() -> None:
+def test_partial_temporal_gate_missing_transaction_discriminator_is_rejected() -> None:
     # A PARTIAL gate — only ONE of the two discriminators — must be REJECTED, never
-    # tolerated as a valid gated close. Here the close keeps the business predicate
-    # (`from_z = ?`) but drops the processing one (`in_z = ?`), swapping in a
+    # tolerated as a valid gated close. Here the close keeps the Valid-Time predicate
+    # (`from_z = ?`) but drops the Transaction-Time one (`in_z = ?`), swapping in a
     # `thru_z = ?` decoy so it still declares five placeholders (the gated arity) and
     # its authored five gated binds still line up. A detector that loosened to accept a
     # single predicate would treat it as gated, reconstruct the open rectangle, and
@@ -359,7 +359,7 @@ def test_gated_close_with_extra_placeholder_arity_mismatch_is_rejected() -> None
 
 def _bitemporal_conflict_close_cases():
     """Bitemporal conflict-close cases (`m-bitemp-write-004` / `m-bitemp-write-005`):
-    a business + Transaction-Time dimension."""
+    a Valid-Time + Transaction-Time dimension."""
     return [
         case
         for case in discover_cases(COMPATIBILITY_ROOT)
@@ -385,7 +385,7 @@ def test_bitemporal_conflict_close_input_holds_for_authored_cases() -> None:
         _assert_conflict_input(case, "postgres")
 
 
-def test_bitemporal_conflict_close_business_from_corruption_is_rejected() -> None:
+def test_bitemporal_conflict_close_valid_from_corruption_is_rejected() -> None:
     case = copy.deepcopy(
         next(
             c
@@ -393,7 +393,7 @@ def test_bitemporal_conflict_close_business_from_corruption_is_rejected() -> Non
             if c.path.stem.startswith("m-bitemp-write-004")
         )
     )
-    # Corrupt the business discriminator VALUE: the DERIVED from_z gate bind no longer
+    # Corrupt the Valid-Time discriminator VALUE: the DERIVED from_z gate bind no longer
     # matches the golden bind, so the bitemporal close ① ↔ ② gate MUST fail.
     case.when["write"]["validFrom"] = "1999-12-31T00:00:00+00:00"
     with pytest.raises(CaseFailure):
@@ -418,7 +418,7 @@ def test_rectangle_split_has_inactivate_plus_three_inserts() -> None:
 # temporal statement (an audit close, a bitemporal inactivation) carries the tag GUARD
 # right after the pk; chained inserts set the tag COLUMN. Under table-per-concrete-subtype
 # every statement targets the subtype's own table with no tag. A temporal TPCS abstract
-# `union all` read carries the injected as-of predicate PER BRANCH (business-first, repeated
+# `union all` read carries the injected as-of predicate PER BRANCH (Valid-Time-first, repeated
 # in alphabetical branch order). The temporal families are NEW (instrument / rate /
 # reading / quote); the existing families stay non-temporal.
 
@@ -517,7 +517,7 @@ def test_tpcs_temporal_close_routed_to_wrong_table_is_rejected() -> None:
 
 def test_tpcs_temporal_union_read_per_branch_asof_binds() -> None:
     # m-inheritance-093: the temporal abstract `union all` read carries the per-branch as-of
-    # binds — business-first [b, b, infinity], repeated in alphabetical branch order. The
+    # binds — Valid-Time-first [b, b, infinity], repeated in alphabetical branch order. The
     # oracle recomputes them from the read's pin, independent of the authored golden.
     case = _inheritance_case("m-inheritance-093")
     assert _read_asof_pins(case) == {"validTime": "2024-06-01T00:00:00+00:00"}
@@ -526,7 +526,7 @@ def test_tpcs_temporal_union_read_per_branch_asof_binds() -> None:
 
 
 def test_tpcs_temporal_union_read_corrupt_branch_asof_bind_is_rejected() -> None:
-    # Corrupting the SECOND branch's business-from as-of bind (index 3) breaks the recomputed
+    # Corrupting the SECOND branch's Valid-Time-start as-of bind (index 3) breaks the recomputed
     # per-branch propagation, so the oracle MUST fail.
     case = copy.deepcopy(_inheritance_case("m-inheritance-093"))
     case.then["statements"][0]["binds"][3] = "1999-12-31T00:00:00+00:00"

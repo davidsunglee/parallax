@@ -318,9 +318,9 @@ def test_expected_suffix_both_latest():
     assert _expected_asof_suffix(coverage, {}) == ["infinity", "infinity"]
 
 
-def test_expected_suffix_business_past_processing_latest():
+def test_expected_suffix_valid_past_transaction_latest():
     coverage = _policy_model().entity("Coverage")
-    pins = {"validTime": "2024-03-01T00:00:00+00:00"}  # processing defaults to latest
+    pins = {"validTime": "2024-03-01T00:00:00+00:00"}  # Transaction Time defaults to latest
     assert _expected_asof_suffix(coverage, pins) == [
         "2024-03-01T00:00:00+00:00",
         "2024-03-01T00:00:00+00:00",
@@ -328,9 +328,9 @@ def test_expected_suffix_business_past_processing_latest():
     ]
 
 
-def test_expected_suffix_business_latest_processing_past():
+def test_expected_suffix_valid_latest_transaction_past():
     coverage = _policy_model().entity("Coverage")
-    pins = {"transactionTime": "2024-02-01T00:00:00+00:00"}  # business defaults to latest
+    pins = {"transactionTime": "2024-02-01T00:00:00+00:00"}  # Valid Time defaults to latest
     assert _expected_asof_suffix(coverage, pins) == [
         "infinity",
         "2024-02-01T00:00:00+00:00",
@@ -338,7 +338,7 @@ def test_expected_suffix_business_latest_processing_past():
     ]
 
 
-def test_expected_suffix_both_past_is_business_first():
+def test_expected_suffix_both_past_is_valid_time_first():
     coverage = _policy_model().entity("Coverage")
     pins = {
         "validTime": "2024-03-01T00:00:00+00:00",
@@ -352,7 +352,7 @@ def test_expected_suffix_both_past_is_business_first():
     ]
 
 
-def test_expected_suffix_processing_only_latest():
+def test_expected_suffix_transaction_only_latest():
     line = load_model(COMPATIBILITY_ROOT, "models/invoice.yaml").entity("InvoiceLine")
     assert _expected_asof_suffix(line, {}) == ["infinity"]
 
@@ -541,7 +541,7 @@ def test_existing_non_temporal_deep_fetch_still_passes():
 # and coverage still held — a silent partition violation. These tests guard that
 # overlap is now a loud failure.
 
-# InvoiceLine 1000's two processing milestones (models/invoice.yaml): the superseded
+# InvoiceLine 1000's two Transaction-Time milestones (models/invoice.yaml): the superseded
 # 50.00 row [2024-01-01, 2024-04-01) and the current 75.00 row [2024-04-01, infinity).
 _EARLY_PIN = "2024-01-01T00:00:00+00:00"
 _LATE_PIN = "2024-04-01T00:00:00+00:00"
@@ -564,7 +564,7 @@ _LATE_GRAPH = {
 
 
 class _InvoiceMilestonesDb:
-    """Returns InvoiceLine 1000's two processing milestones for every query — the
+    """Returns InvoiceLine 1000's two Transaction-Time milestones for every query — the
     single `history` statement AND the `referenceSql` cross-check both see the whole
     milestone set (one round trip)."""
 

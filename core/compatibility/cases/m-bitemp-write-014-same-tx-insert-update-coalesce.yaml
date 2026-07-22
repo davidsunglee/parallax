@@ -10,15 +10,18 @@
 # The scenario runs against the loaded Position fixtures (id 1); position 9 is the NEW
 # object the unit of work creates. Optimistic mode, so the observing find takes no read
 # lock:
-#   step 0 write : buffer a plain INSERT of Position 9 (value 100, business
-#                  [2024-01-01, infinity), processing [2024-01-01, infinity)), then
+#   step 0 write : buffer a plain INSERT of Position 9 (value 100, valid
+#                  [2024-01-01, infinity), transaction [2024-01-01, infinity)), then
 #                  buffer an UPDATE of its value to 150 — COALESCED into ONE
 #                  fully-Latest rectangle INSERT (thru_z = out_z = infinity) carrying
 #                  the FINAL value 150. No inactivation UPDATE, no head/tail split.
 #                  (1 round trip)
 #   step 1 find  : bitemporal Latest on BOTH dimensions over position 9 observes ONE
 #                  fully-Latest rectangle at value 150.
-# roundTrips = 2 (the one coalesced insert + the find).
+# roundTrips = 2 (the one coalesced insert + the find). In the neutral write input
+# `validFrom` is the canonical Valid-Time lower bound (from_z) and a plain insert
+# omits `until` (the window runs to infinity); `at` is the Clock-supplied
+# Transaction-Time instant (in_z), never an instruction field.
 model: models/position.yaml
 tags: [m-bitemp-write, m-unit-work, m-temporal-read, bitemporal, same-transaction-coalescing, scenario, slice-snapshot-1]
 shape: scenario
@@ -27,11 +30,6 @@ when:
     concurrency: optimistic
   scenario:
     - write:
-        # Buffer the plain keyed INSERT of the new position 9 (value 100, business
-        # [2024-01-01, infinity)), then buffer the keyed UPDATE to value 150.
-        # `validFrom` is the canonical business-axis lower bound (from_z); a plain
-        # insert omits `until`, so the window runs to infinity. `at` is the
-        # Clock-supplied processing instant (in_z), never an instruction field.
         - mutation: insert
           entity: Position
           rows:

@@ -1,4 +1,4 @@
-# Mixed: deep fetch Lease.notes — a TEMPORAL parent (read as of processing
+# Mixed: deep fetch Lease.notes — a TEMPORAL parent (read as of Transaction Time
 # LATEST) to a NON-temporal child. The root Lease carries its as-of, but the
 # child LeaseNote is non-temporal, so it carries NO as-of term: a plain
 # `lease_id in (?)` with binds = parent keys only. Lease 10 -> notes signed,

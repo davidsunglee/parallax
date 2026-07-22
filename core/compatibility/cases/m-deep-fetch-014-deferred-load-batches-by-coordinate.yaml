@@ -3,7 +3,7 @@
 # child statement PER coordinate group, each carrying that group's propagated
 # as-of binds.
 #
-# Invoice 100 is held at two pins in one unit of work: step 0 at processing-latest
+# Invoice 100 is held at two pins in one unit of work: step 0 at Transaction-Time-latest
 # (out_z = infinity) and step 1 at the finite instant 2024-02-01 (a DISTINCT pinned
 # view, m-identity-map). The `load` of `lines` over both views (on: [0, 1]) cannot
 # collapse into one query — each group propagates its own coordinate — so it emits
@@ -24,7 +24,7 @@ when:
           dimension: transactionTime
           coordinate: latest
       roundTrips: 1
-      note: source A -> invoice 100 pinned at processing-latest (out_z = infinity)
+      note: source A -> invoice 100 pinned at Transaction-Time-latest (out_z = infinity)
       statements:
         - sql:
             postgres: select t0.id, t0.name, t0.in_z, t0.out_z from invoice t0 where t0.id = ? and t0.out_z = ?

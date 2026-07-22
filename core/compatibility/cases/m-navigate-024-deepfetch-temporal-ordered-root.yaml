@@ -1,17 +1,17 @@
 # Deep fetch with a DIRECTIVE-WRAPPED temporal root: the top-1 Policy (ordered by
-# id, `limit 1`) as of business PAST 2024-03-01 / processing LATEST, eager-loading
+# id, `limit 1`) as of Valid Time PAST 2024-03-01 / Transaction Time LATEST, eager-loading
 # its coverages as of the SAME instant. The root operand is
 # `limit(orderBy(asOf(asOf(all))))` — the result directives wrap the temporal
 # wrappers. A conforming compiler peels `distinct`/`orderBy`/`limit` BEFORE the
-# temporal wrappers on the root (so the root query injects the business-past
+# temporal wrappers on the root (so the root query injects the Valid-Time-past
 # predicate) AND collects the same as-of pins to PROPAGATE into the child level.
 #
 # This catches a propagation-pin collector that only walks the OUTERMOST `asOf`
 # nodes: with the directives wrapping them it would see no pins and the child
 # Coverage level would wrongly default to Latest, returning coverage 10's CURRENT
-# value 700 (C-R3) instead of the business-2024-03-01 HEAD 600 (C-R2). The propagated
-# child suffix is the ordered `[business, business, processing]` binds `[B, B,
-# infinity]`, appended after the IN list. Mirrors m-navigate-013 (business-past deep fetch) but
+# value 700 (C-R3) instead of the Valid-Time 2024-03-01 HEAD 600 (C-R2). The propagated
+# child suffix is the ordered `[valid, valid, transaction]` binds `[B, B,
+# infinity]`, appended after the IN list. Mirrors m-navigate-013 (Valid-Time-past deep fetch) but
 # proves propagation survives the directive peel; `limit 1` keeps only Policy 1.
 model: models/policy.yaml
 tags: [m-navigate, m-temporal-read, temporal, relationship, propagation, bitemporal, orderBy, limit, slice-snapshot-1, slice-managed-1]

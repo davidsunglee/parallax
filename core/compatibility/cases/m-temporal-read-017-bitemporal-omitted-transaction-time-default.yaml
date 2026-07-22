@@ -1,4 +1,4 @@
-# Bitemporal read with only the Valid-Time dimension pinned. The omitted processing
+# Bitemporal read with only the Valid-Time dimension pinned. The omitted Transaction-Time
 # dimension defaults to Latest, so the golden SQL includes the current Transaction-Time
 # predicate out_z = infinity.
 model: models/position.yaml

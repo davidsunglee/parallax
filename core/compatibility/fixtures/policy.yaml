@@ -1,7 +1,7 @@
 # Milestone history for the as-of-propagation READ cases. Keyed by class name;
 # rows speak attribute names (loader maps to columns). Instants are ISO-8601 UTC;
 # the open bound is `infinity`. Coverage 10 mirrors position id 1's correction:
-#   C-R1 500  superseded on processing; C-R2 600 head; C-R3 700 corrected.
+#   C-R1 500  superseded on Transaction Time; C-R2 600 head; C-R3 700 corrected.
 # Coverage 21 is a historical-only high-amount row for Policy 2. It exists so
 # 0330 catches an EXISTS lowering that drops the propagated child as-of terms:
 # correct latest-as-of excludes it, but a child query with no Coverage as-of

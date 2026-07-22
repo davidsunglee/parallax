@@ -1,4 +1,4 @@
-# Semi-join across a temporal hop: Policies (as of business+processing LATEST)
+# Semi-join across a temporal hop: Policies (as of Valid+Transaction Time LATEST)
 # that HAVE a coverage (as of the same LATEST) with amount >= 600. The as-of
 # propagates into the EXISTS subquery: BOTH the outer Policy and the inner
 # Coverage carry the current-row predicate. As of latest, only coverage 10 (700)

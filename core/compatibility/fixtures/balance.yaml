@@ -1,5 +1,5 @@
 # Fixture rows for the Balance model (models/balance.yaml) — the audit-only
-# (processing-temporal) milestone history the as-of READ cases query.
+# (Transaction-Time-Only) milestone history the as-of READ cases query.
 #
 # Keyed by class name; each row is a map of attribute-name -> value. Instant
 # columns are authored as ISO-8601 UTC strings; the open upper bound is the

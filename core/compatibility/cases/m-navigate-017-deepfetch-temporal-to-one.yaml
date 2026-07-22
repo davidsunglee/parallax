@@ -1,5 +1,5 @@
 # Deep fetch Coverage.policy — a to-ONE temporal hop (many-to-one back-reference),
-# business LATEST / processing LATEST. The single-object attach path: each
+# Valid Time LATEST / Transaction Time LATEST. The single-object attach path: each
 # coverage's `policy` is the propagated-as-of Policy milestone. Root Coverage
 # resolves to the fully-Latest coverages (10 -> 700, 20 -> 300); the propagated
 # pin fetches policies 1 and 2 (`id in (?, ?) and thru_z = ? and out_z = ?`),

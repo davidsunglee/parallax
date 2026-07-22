@@ -88,8 +88,6 @@ then:
                 point: { lat: 59.91, lon: 10.75 }
               phones:
                 - { type: work, number: '555-0100' }
-          # Location 101: null document child -> address materializes null (the
-          # absence collapse pinned AT DEPTH, the analogue of Customer id 4).
           - id: 101
             customer_id: 1
             label: Depot
@@ -128,7 +126,6 @@ then:
             point: { lat: 42.3, lon: -71.0 }
           phones: []
         locations: []
-      # id 4: SQL-NULL address column -> the whole value object materializes null.
       - id: 4
         name: Mary
         address: null

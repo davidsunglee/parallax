@@ -1,18 +1,18 @@
-# A finite processing-axis pinned view is READ-ONLY (m-identity-map): mutating a
-# view pinned at a finite processing-axis instant raises the neutral
-# `transaction-time-pin-read-only` error and emits NO DML — the processing past records
-# what the system knew and is never rewritten.
+# A finite Transaction-Time-axis pinned view is READ-ONLY (m-identity-map): mutating a
+# view pinned at a finite Transaction-Time-axis instant raises the neutral
+# `transaction-time-pin-read-only` error and emits NO DML — the Transaction-Time past
+# records what the system knew and is never rewritten.
 #
 # This is an api-conformance-lane case: its defining observable is a raised
 # application-lifecycle error, which the single-connection wire harness cannot grade,
 # so the harness schema-validates it and each language's API Conformance Suite
 # returns and verifies the error observation. Step 0 pins Balance id 1 at the finite
-# processing instant 2024-03-01 — the superseded milestone value 100.00, a
-# read-only processing-past view. Step 1 attempts to mutate it (`set` value 999.00);
+# Transaction-Time instant 2024-03-01 — the superseded milestone value 100.00, a
+# read-only Transaction-Time-past view. Step 1 attempts to mutate it (`set` value 999.00);
 # because the pin is on the finite Transaction-Time dimension, the mutation is rejected with
 # `expectError: transaction-time-pin-read-only` and buffers zero DML (roundTrips 0). The
 # error is distinct from the m-db-error database taxonomy. (Contrast a finite
-# BUSINESS-axis pin, which is writable — m-identity-map-011.)
+# Valid-Time-axis pin, which is writable — m-identity-map-011.)
 model: models/balance.yaml
 lane: api-conformance
 tags: [m-identity-map, m-temporal-read, identity, as-of, temporal, audit-only, read-only, scenario, slice-managed-1]
@@ -31,7 +31,7 @@ when:
           dimension: transactionTime
           coordinate: "2024-03-01T00:00:00+00:00"
       roundTrips: 1
-      note: pin id 1 at the finite processing instant 2024-03-01 — a READ-ONLY processing-past view (100.00)
+      note: pin id 1 at the finite Transaction-Time instant 2024-03-01 — a READ-ONLY Transaction-Time-past view (100.00)
       statements:
         - sql:
             postgres: select t0.bal_id, t0.acct_num, t0.val, t0.in_z, t0.out_z from balance t0 where t0.bal_id = ? and t0.in_z <= ? and t0.out_z > ?
@@ -44,6 +44,6 @@ when:
         value: 999.00
       roundTrips: 0
       expectError: transaction-time-pin-read-only
-      note: mutating a finite processing-axis view raises transaction-time-pin-read-only and emits NO DML
+      note: mutating a finite Transaction-Time-axis view raises transaction-time-pin-read-only and emits NO DML
 then:
   roundTrips: 1

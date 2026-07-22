@@ -77,8 +77,8 @@ def _parse_iso_instant(text: str) -> _dt.datetime | None:
     """Parse an ISO-8601 instant to a naive UTC ``datetime``, else ``None``.
 
     Only strings that are full ISO-8601 timestamps (carrying a ``T`` separator)
-    are treated as instants, so a plain ``date`` / ``time`` / business string is
-    left alone. The result is shifted to UTC and made naive to match MariaDB's
+    are treated as instants, so a plain ``date`` / ``time`` / ordinary domain string
+    is left alone. The result is shifted to UTC and made naive to match MariaDB's
     timezone-naive ``DATETIME`` storage.
     """
     if "T" not in text:

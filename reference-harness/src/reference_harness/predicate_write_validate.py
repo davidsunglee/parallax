@@ -200,7 +200,7 @@ def _materialization_columns(entity: Entity, instruction: dict[str, Any]) -> set
 
     This is intentionally column-based because ``expectRows`` represents the SQL
     projection.  The descriptor identifies observed state; output values generated
-    by a write (a bumped version, fresh processing instants, open bounds, or an
+    by a write (a bumped version, fresh Transaction-Time instants, open bounds, or an
     inheritance discriminator) are not requested from the materialization.
     """
     temporal_columns = _temporal_columns(entity)

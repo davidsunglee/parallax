@@ -3,7 +3,7 @@
 `write-instruction.schema.json` is the write-side analogue of
 `operation.schema.json`: the canonical, axis-explicit vocabulary a unit of work
 buffers. These tests pin the two instruction shapes (keyed + predicate), the
-axis-explicit business bounds, the absence of a processing-instant field, and the
+axis-explicit Valid-Time bounds, the absence of a Transaction-Time-instant field, and the
 verb / bound conditionals.
 """
 
@@ -41,7 +41,7 @@ def test_keyed_plain_insert_is_valid() -> None:
     assert _valid({"mutation": "insert", "entity": "Balance", "rows": [{"id": 1, "value": 100.0}]})
 
 
-def test_keyed_plain_temporal_carries_business_from_only() -> None:
+def test_keyed_plain_temporal_carries_valid_from_only() -> None:
     assert _valid(
         {
             "mutation": "update",
@@ -52,7 +52,7 @@ def test_keyed_plain_temporal_carries_business_from_only() -> None:
     )
 
 
-def test_keyed_until_requires_both_business_bounds() -> None:
+def test_keyed_until_requires_both_valid_time_bounds() -> None:
     # Every bounded `*Until` operation is over `[validFrom, until)`
     # (m-bitemp-write), so BOTH bounds are required — dropping either rejects it.
     doc = {
@@ -67,14 +67,14 @@ def test_keyed_until_requires_both_business_bounds() -> None:
     assert not _valid({key: value for key, value in doc.items() if key != "validFrom"})
 
 
-def test_keyed_plain_mutation_rejects_business_to() -> None:
+def test_keyed_plain_mutation_rejects_a_window_end() -> None:
     assert not _valid(
         {"mutation": "insert", "entity": "Balance", "rows": [{"id": 1}], "until": "x"}
     )
 
 
-def test_keyed_rejects_a_processing_instant_field() -> None:
-    # The processing instant is Clock-supplied context, never an instruction field.
+def test_keyed_rejects_a_transaction_instant_field() -> None:
+    # The Transaction-Time instant is Clock-supplied context, never an instruction field.
     assert not _valid(
         {"mutation": "insert", "entity": "Balance", "rows": [{"id": 1}], "at": "2024-01-01"}
     )
@@ -179,7 +179,7 @@ def test_predicate_delete_rejects_assignments() -> None:
     )
 
 
-def test_predicate_until_requires_both_business_bounds() -> None:
+def test_predicate_until_requires_both_valid_time_bounds() -> None:
     # A bounded `*Until` predicate write is over `[validFrom, until)`
     # (m-bitemp-write); both bounds are required.
     doc = {

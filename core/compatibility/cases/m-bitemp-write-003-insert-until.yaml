@@ -1,17 +1,17 @@
 # Write sequence: insertUntil — the third of the *Until trio (DQ11). Insert a
 # bitemporal value scoped to a BOUNDED Valid-Time window, with no prior row to close.
 #
-# An insertUntil opens a single new milestone whose BUSINESS interval is the
+# An insertUntil opens a single new milestone whose Valid-Time interval is the
 # bounded window [validFrom, until) (rather than [validFrom, infinity)),
-# at fresh processing time [txInstant, infinity). There is no existing current row
+# at fresh Transaction Time [txInstant, infinity). There is no existing current row
 # to inactivate, so it is a single INSERT — the bitemporal analogue of the
-# audit-only insert, but business-bounded.
+# audit-only insert, but Valid-Time-bounded.
 #
 # The sequence (self-contained, from an empty table):
 #   step 1 insertUntil : open value 100 for Valid-Time window [2024-03-01, 2024-09-01)
-#                        at txInstant 2024-01-01, processing [2024-01-01, infinity)  (1 statement)
+#                        at txInstant 2024-01-01, transaction [2024-01-01, infinity)  (1 statement)
 #
-# Resulting state (1 row): a single rectangle current on processing whose business
+# Resulting state (1 row): a single rectangle current on Transaction Time whose Valid-Time
 # interval is bounded — outside [2024-03-01, 2024-09-01) no value exists.
 model: models/position.yaml
 tags: [m-bitemp-write, m-sql, bitemporal, temporal, write-sequence, insert-until, slice-snapshot-1, slice-managed-1]
@@ -21,7 +21,7 @@ when:
     - mutation: insertUntil
       entity: Position
       statements: 1
-      note: open a single business-bounded rectangle [2024-03-01, 2024-09-01)
+      note: open a single Valid-Time-bounded rectangle [2024-03-01, 2024-09-01)
       rows:
         - { id: 1, acctNum: A, value: 100.00 }
       validFrom: "2024-03-01T00:00:00+00:00"

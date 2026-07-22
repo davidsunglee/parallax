@@ -1,7 +1,7 @@
 # History returns one edge-pinned snapshot graph per milestone (m-snapshot-read,
 # resolved Q5a): each graph is pinned to that milestone's own from-instant.
 #
-# InvoiceLine 1000 has a processing-milestone history of two rows: the superseded
+# InvoiceLine 1000 has a Transaction-Time-milestone history of two rows: the superseded
 # 50.00 milestone [2024-01-01, 2024-04-01) and the current 75.00 milestone
 # [2024-04-01, infinity) (models/invoice.yaml). `history` returns the FULL milestone
 # set in one query (no as-of predicate), and each milestone materializes as a SEPARATE

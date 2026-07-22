@@ -2,7 +2,7 @@
 # milestone (m-snapshot-read, resolved Q5a): each graph is pinned to its own
 # milestone's from-instant, never to the window bounds.
 #
-# InvoiceLine 1000 has two processing milestones: 50.00 [2024-01-01, 2024-04-01) and
+# InvoiceLine 1000 has two Transaction-Time milestones: 50.00 [2024-01-01, 2024-04-01) and
 # 75.00 [2024-04-01, infinity) (models/invoice.yaml). The window [2024-02-01,
 # 2024-05-01) OVERLAPS both (overlap predicate `in_z < to and out_z > from`), so the
 # range returns both — but each materializes as a SEPARATE graph edge-pinned to its

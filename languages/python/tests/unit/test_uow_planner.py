@@ -77,7 +77,7 @@ def test_audit_insert_then_update_coalesces_in_place() -> None:
     assert plan.writes[0].instruction.mutation == "insert"  # one current milestone, no close
 
 
-def test_bitemporal_insert_then_update_keeps_the_business_bound() -> None:
+def test_bitemporal_insert_then_update_keeps_the_valid_time_bound() -> None:
     insert = KeyedWrite(
         "insert", "Position", ({"id": 9, "acctNum": "D", "value": 100.00},), valid_from=_B1
     )

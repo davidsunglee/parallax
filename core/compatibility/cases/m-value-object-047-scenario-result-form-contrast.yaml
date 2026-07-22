@@ -23,7 +23,7 @@
 #      (out_z = at), GATED on the observed in_z step 1's resolving read returned
 #      (2024-06-01) — an OPTIMISTIC audit-only close binds `and in_z = ?` last, the
 #      same gate-last shape a keyed temporal terminate already carries
-#      (m-txtime-write-006, m-opt-lock "the gate binds last"). A processing-only close
+#      (m-txtime-write-006, m-opt-lock "the gate binds last"). A Transaction-Time-only close
 #      copies no payload, so no document rides a read here; a reassigned document
 #      would ride the write instruction, not the read.
 #   3  find (Nordic Foods, asOf transactionTime = 2024-08-01) : verify — INSTANCE-FORM
@@ -101,7 +101,7 @@ when:
             eq: { attr: Supplier.name, value: Nordic Foods }
         at: "2024-10-01T00:00:00+00:00"
       roundTrips: 1
-      note: close the resolved current row (out_z = at), gated on step 1's observed in_z; a processing-only close copies no payload, so no document rides this write's read
+      note: close the resolved current row (out_z = at), gated on step 1's observed in_z; a Transaction-Time-only close copies no payload, so no document rides this write's read
       statements:
         - sql:
             postgres: update supplier set out_z = ? where sup_id = ? and out_z = ? and in_z = ?

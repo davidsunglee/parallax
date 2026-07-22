@@ -56,7 +56,7 @@ def _versioned_conflict_cases():
 
 
 def _temporal_conflict_close_cases():
-    """Processing-only temporal conflict-close cases (no version, no Valid-Time dimension).
+    """Transaction-Time-only temporal conflict-close cases (no version, no Valid-Time dimension).
 
     The audit-only optimistic / locking closes (`m-temporal-read-009` through
     `m-temporal-read-012`) gate on the observed Transaction-Time start (`in_z`), never a
@@ -169,7 +169,7 @@ def test_temporal_conflict_close_input_holds_for_authored_cases() -> None:
 def test_txtime_write_optimistic_gated_close_binds_in_z_gate() -> None:
     # m-txtime-write-006 witnesses the OPTIMISTIC-gated close of an audit-only chaining
     # update: a single gated close UPDATE keyed on the observed Transaction-Time start (in_z),
-    # with no business discriminator (balance has no Valid-Time dimension). It is the audit-only
+    # with no Valid-Time discriminator (balance has no Valid-Time dimension). It is the audit-only
     # analogue of the bitemporal gate (m-bitemp-write-004), reusing that shape.
     case = next(c for c in _conflict_cases() if c.path.stem.startswith("m-txtime-write-006"))
     assert "m-txtime-write" in case.tags and "m-opt-lock" in case.tags
@@ -177,7 +177,7 @@ def test_txtime_write_optimistic_gated_close_binds_in_z_gate() -> None:
     assert case.observed_tx_start is not None  # the in_z gate token
     assert case.expected_affected_rows == 1  # the gate MATCHES the observed milestone
     (statement,) = case.golden_statements("postgres")
-    # The gated audit close carries the `and in_z = ?` gate but NO business `from_z`
+    # The gated audit close carries the `and in_z = ?` gate but NO Valid-Time `from_z`
     # gate (audit-only), unlike the bitemporal close.
     assert "in_z = ?" in statement
     assert "from_z" not in statement

@@ -1,4 +1,4 @@
-# valueObject on a UNITEMPORAL (processing) owner: the SUPERSEDED document is visible
+# valueObject on a UNITEMPORAL (Transaction-Time) owner: the SUPERSEDED document is visible
 # as-of a PAST instant — the discriminating half of the milestone proof
 # (m-value-object "Inherited temporality", m-temporal-read), on Postgres AND MariaDB.
 #
@@ -8,7 +8,7 @@
 # THEN-KNOWN milestone D1a (Oslo, home phone) — the document superseded on 2024-06-01
 # — distinct from the current D1b (Bergen) case 028 returns at Latest. id 2's single
 # milestone [2024-02-01, infinity) contains 2024-04-01, so it returns its D2 unchanged.
-# Reading the SAME owner at different processing instants returns a DIFFERENT address
+# Reading the SAME owner at different Transaction-Time instants returns a DIFFERENT address
 # document: the document rides the milestone exactly like a scalar column.
 #
 # The golden SQL is IDENTICAL on both dialects (a bare column projection + the injected

@@ -9,8 +9,8 @@
 # The loader resolves attribute names to columns (valid_start/valid_end ->
 # from_z/thru_z, tx_start/tx_end -> in_z/out_z).
 #
-# Each instrument is a single fully-Latest rectangle (business [2024-01-01, infinity),
-# processing [2024-01-01, infinity)), so a read pinned business-past 2024-06-01 /
+# Each instrument is a single fully-Latest rectangle (valid [2024-01-01, infinity),
+# transaction [2024-01-01, infinity)), so a read pinned Valid-Time-past 2024-06-01 /
 # Transaction-Time Latest returns both, each carrying its familyVariant (bond -> Bond,
 # stock -> Stock). Inner subtype columns not applicable to a row load as null.
 Bond:

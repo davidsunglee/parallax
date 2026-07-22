@@ -1,5 +1,5 @@
 # Fixture rows for the Supplier model (models/supplier.yaml) — the audit-only
-# (processing-temporal) milestone history the as-of READ cases query. Each `address`
+# (Transaction-Time-Only) milestone history the as-of READ cases query. Each `address`
 # fixture value is a whole embedded-composite document loaded into the one structured
 # document column; it rides the milestoned row exactly like the scalar columns.
 #

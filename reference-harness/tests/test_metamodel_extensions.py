@@ -436,7 +436,7 @@ def test_schema_rejects_optimistic_locking_on_temporal_entity() -> None:
     """
     model = load_model(COMPATIBILITY_ROOT, "models/balance.yaml")
     descriptor = copy.deepcopy(model.descriptor)
-    # Balance is a single-`entity` descriptor with `asOfAxes` (processing).
+    # Balance is a single-`entity` descriptor with `asOfAxes` (transactionTime).
     # Inject `optimisticLocking` on its `value` attribute -> the forbidden combo.
     value_attr = next(a for a in descriptor["entity"]["attributes"] if a["name"] == "value")
     value_attr["optimisticLocking"] = True

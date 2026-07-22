@@ -6,7 +6,7 @@
 # the read lowers to `union all` over those concrete tables, and the injected as-of
 # predicate is applied PER BRANCH: each branch carries its own `from_z <= ? and thru_z > ?
 # and out_z = ?` fragment (validTime pinned past 2024-06-01, transactionTime defaulted
-# NOW), in BUSINESS-AXIS-FIRST bind order. Because every concrete branch inherits the same
+# NOW), in Valid-Time-first bind order. Because every concrete branch inherits the same
 # axes from the root, each branch's as-of fragment is identical, so the union's binds are
 # the per-branch suffix [2024-06-01, 2024-06-01, infinity] repeated in alphabetical branch
 # order — the harness recomputes and asserts this per-branch propagation from the read's pin.
@@ -19,7 +19,7 @@
 # identical — hence the per-dialect goldens. The interval columns are inherited, so they
 # are real references in EVERY branch (never NULL-cast).
 #
-# DepositRate now carries TWO processing milestones sharing business key id=1 (the
+# DepositRate now carries TWO Transaction-Time milestones sharing business key id=1 (the
 # strengthened fixtures/rate.yaml, m-inheritance-100's own witness); this read's
 # Transaction-Time Latest default (`out_z = ?` bind `infinity`) still resolves to exactly the
 # CURRENT row (amount 2.50 / grade A) — the same current-result values this case always

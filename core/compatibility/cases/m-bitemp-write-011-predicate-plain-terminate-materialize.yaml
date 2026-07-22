@@ -1,13 +1,13 @@
-# Predicate-selected PLAIN bitemporal TERMINATE materializes per row to a processing
+# Predicate-selected PLAIN bitemporal TERMINATE materializes per row to a Transaction-Time
 # close + a single head re-insert (m-bitemp-write + m-opt-lock, ADR 0014 / 0021).
 #
-# The terminate complement of the plain update (m-bitemp-write-010). Ending business
-# validity at validFrom = 2024-07-01 keeps the pre-validFrom history but adds NO
+# The terminate complement of the plain update (m-bitemp-write-010). Ending Valid-Time
+# coverage at validFrom = 2024-07-01 keeps the pre-validFrom history but adds NO
 # successor value, so the resolved row (pos 1, value 200) materializes to only two
 # statements:
-#   1. close the current processing row (set out_z = at = 2024-10-01), gated on key +
+#   1. close the current Transaction-Time row (set out_z = at = 2024-10-01), gated on key +
 #      open out_z + observed from_z/in_z (optimistic coordinate gate);
-#   2. re-insert the OLD payload (value 200) for the surviving business slice
+#   2. re-insert the OLD payload (value 200) for the surviving Valid-Time slice
 #      [2024-06-01, 2024-07-01) with in_z = at.
 # There is no [validFrom, infinity) insert — that absence is exactly what makes this a
 # terminate rather than an update.

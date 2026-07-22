@@ -7,7 +7,7 @@
 # the read returns the rectangle current on both axes. Over branch id 1's history that
 # is R3 — the corrected address D3 (Tampere, two phones), true in the world now and
 # known now. R1 is superseded on the Transaction-Time dimension; R2 (the head) is current on
-# processing but its business thru_z is finite, so validTime=Latest excludes it. Only R3's
+# Transaction Time but its Valid-Time thru_z is finite, so validTime=Latest excludes it. Only R3's
 # document materializes, decoded from the one structured-document column with the owner.
 #
 # The golden SQL is IDENTICAL on both dialects (a bare column projection + the two

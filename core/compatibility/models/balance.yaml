@@ -1,20 +1,20 @@
-# Balance: an audit-only (processing-temporal) model — the temporal MVP.
+# Balance: an audit-only (Transaction-Time-Only) model — the temporal MVP.
 #
 # This descriptor is an instance of core/schemas/metamodel.schema.json. It models
-# the most-used temporal profile (DQ7): a SINGLE `processing` as-of dimension
+# the most-used temporal profile (DQ7): a SINGLE `transactionTime` as-of dimension
 # (audit-only / Transaction-Time-Only). A row's [in_z, out_z) interval records
 # WHEN THE SYSTEM KNEW the balance value; out_z = infinity marks the current row.
 #
 # Milestone-chaining writes (insert / update / terminate) never mutate a value in
 # place — they close the current row (set out_z = the transaction instant) and,
 # for an update, chain a new current row [in_z = txInstant, out_z = infinity).
-# The Transaction-Time dimension has no business-date residual split (that is the bitemporal
+# The Transaction-Time dimension has no Valid-Time residual split (that is the bitemporal
 # rectangle-split, deferred to Phase 8), so audit-only chaining is the simplest
 # observable form of the contract.
 #
 # The interval columns are `timestamp` (m-core: instants are UTC `timestamptz`); the
 # open upper bound is the database-native infinity (m-core/m-dialect). The non-temporal
-# attributes (id, acctNum, value) are the business payload.
+# attributes (id, acctNum, value) are the domain payload.
 #
 # Row data lives in the sibling fixtures/balance.yaml (used by the as-of READ
 # cases). The write-sequence cases construct their own milestone history from

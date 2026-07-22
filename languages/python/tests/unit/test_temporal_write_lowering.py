@@ -484,7 +484,7 @@ def test_bitemporal_plain_insert_opens_one_fully_current_rectangle() -> None:
     ]
 
 
-def test_bitemporal_close_composes_the_business_discriminator_and_in_z_gate() -> None:
+def test_bitemporal_close_composes_the_valid_time_discriminator_and_in_z_gate() -> None:
     # m-bitemp-write-004/008: the gated close binds `from_z` BEFORE `in_z`, LAST.
     # A standalone close-only probe (the m-opt-lock conflict lane's own shape) is
     # NOT a real bitemporal mutation (every real close-bearing verb chains at

@@ -106,8 +106,6 @@ when:
               point: { lat: 59.91, lon: 10.75 }
             phones:
               - { type: work, number: '555-0100' }
-        # Location 101: SQL-NULL document child -> address materializes null (the
-        # absence collapse pinned AT DEPTH, the analogue of a null-address Customer).
         - id: 101
           customer_id: 1
           label: Depot

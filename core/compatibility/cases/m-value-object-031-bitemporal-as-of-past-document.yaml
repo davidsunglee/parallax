@@ -5,11 +5,11 @@
 # Pin validTime = 2024-03-01 AND transactionTime = 2024-02-01: as the system BELIEVED
 # on 2024-02-01, what address was true in the world on 2024-03-01? Both pins are past
 # instants, so each axis injects its [from, to) containment predicate (four binds,
-# business-axis-first then processing). Over branch id 1's history that returns R1 — the
+# Valid-Time-first then Transaction Time). Over branch id 1's history that returns R1 — the
 # original belief D1 (Helsinki, one phone). R2/R3 were not yet known on 2024-02-01
-# (their processing starts 2024-04-01), so the audit read reconstructs the superseded
+# (their Transaction-Time starts 2024-04-01), so the audit read reconstructs the superseded
 # document — distinct from the D3 (Tampere) the system knows now (case 030). The SAME
-# owner read at a different (business x processing) point returns a DIFFERENT address
+# owner read at a different (valid x transaction) point returns a DIFFERENT address
 # document: the document rides the bitemporal milestone like a scalar column.
 #
 # The golden SQL is IDENTICAL on both dialects (a bare column projection + the four

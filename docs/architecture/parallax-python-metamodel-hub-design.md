@@ -2294,7 +2294,7 @@ Acceptance requires:
   accepted start/end Attribute Identity contract;
 - omitted coordinates mean Latest (`end = infinity`), while Now remains a
   distinct finite containment read and is never the serde spelling of Latest;
-- old business/processing axis vocabulary, `fromColumn`, and `toColumn` are
+- the retired `axis: business|processing` vocabulary, `fromColumn`, and `toColumn` are
   absent from active specifications, schemas, cases, generated artifacts,
   implementation, and public APIs;
 - no public alias or dual-read wire format remains;

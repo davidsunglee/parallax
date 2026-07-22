@@ -1,8 +1,8 @@
-# Optimistic temporal close with a FRESH observed in_z gates on the processing-from
+# Optimistic temporal close with a FRESH observed in_z gates on the Transaction-Time start
 # the unit of work observed and closes EXACTLY one row (m-temporal-read + m-opt-lock).
 #
-# A processing-axis (audit-only) temporal entity has no version column, so the
-# observed processing-from (in_z) is the optimistic-lock version analogue (Reladomo's
+# A Transaction-Time-axis (audit-only) temporal entity has no version column, so the
+# observed Transaction-Time start (in_z) is the optimistic-lock version analogue (Reladomo's
 # IN_Z rule). In optimistic mode the milestone-closing UPDATE gains an `and in_z = ?`
 # gate bound to the in_z the unit of work read; a fresh, still-current in_z matches
 # the one current milestone, so the close affects 1 row. Balance id 2 (acct B) has a

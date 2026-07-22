@@ -2,8 +2,8 @@
 # injected on either dimension.
 #
 # Scoped to position id 1 with an inner `eq`, history returns ALL THREE rectangles
-# — the superseded original belief R1 (processing out_z finite), the head R2, and
-# the corrected R3 — because neither the business nor the Transaction-Time dimension is pinned
+# — the superseded original belief R1 (Transaction-Time out_z finite), the head R2, and
+# the corrected R3 — because neither the Valid-Time nor the Transaction-Time dimension is pinned
 # to an instant. The projection includes all four interval columns so the result
 # carries each rectangle's bounds, exercising native-infinity reads on BOTH axes
 # (the current rows read back thru_z = infinity and/or out_z = infinity).

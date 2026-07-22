@@ -5,10 +5,10 @@
 # The signature bitemporal write is the RECTANGLE SPLIT: an `updateUntil` over a
 # bounded Valid-Time window inactivates the original Latest rectangle (closes its
 # Transaction-Time dimension at the transaction instant) and chains THREE new rows at fresh
-# processing time [txInstant, infinity):
-#   head   : business [from_z, validFrom)     — the OLD address D1 before the window
-#   middle : business [validFrom, until) — the NEW address D2, for the window
-#   tail   : business [until, infinity)     — the OLD address D1 after the window
+# Transaction Time [txInstant, infinity):
+#   head   : valid [from_z, validFrom)     — the OLD address D1 before the window
+#   middle : valid [validFrom, until) — the NEW address D2, for the window
+#   tail   : valid [until, infinity)     — the OLD address D1 after the window
 # so the address changes ONLY inside the window. The `address` value object carries NO
 # value-object-specific write machinery: it is one document bind in columnOrder position
 # ([br_id, name, from_z, thru_z, in_z, out_z, address]) in every full-row INSERT, and it
@@ -18,14 +18,14 @@
 #
 # The sequence (self-contained, from an empty table):
 #   step 1 insert      : open the Latest rectangle, address D1,
-#                        business [2024-01-01, infinity), processing [2024-01-01, infinity)  (1 statement)
+#                        valid [2024-01-01, infinity), transaction [2024-01-01, infinity)  (1 statement)
 #   step 2 updateUntil : set address D2 for Valid-Time window [2024-03-01, 2024-09-01)
 #                        at txInstant 2024-02-15 — inactivate the original
 #                        (out_z = 2024-02-15) and chain head / middle / tail
-#                        at processing [2024-02-15, infinity)                    (4 statements)
+#                        at transaction [2024-02-15, infinity)                    (4 statements)
 #
 # Resulting state (4 rows): the inactivated original (out_z finite, address D1) + head
-# (D1) + middle (D2) + tail (D1), the three new rows current on processing. The INSERT
+# (D1) + middle (D2) + tail (D1), the three new rows current on Transaction Time. The INSERT
 # DML is identical on both dialects (a plain column bind, no JSON function); only the
 # document VALUE is adapted at bind time (Postgres `jsonb`, MariaDB `json` text), so the
 # hole structure is shared and `binds` is one flat array with the document riding as one

@@ -421,7 +421,7 @@ self-contained without a system `libpq`.
   sweeps — a corpus conflict reported upstream, not resolved by editing
   `core/compatibility`); `Transaction.find` now records a TEMPORAL
   observation (observed `in_z` plus pin provenance, and — for a bitemporal
-  entity — the business bounds/payload temporal lowering already consumes),
+  entity — the Valid-Time bounds/payload temporal lowering already consumes),
   so a locking-mode write after a historical/edge-pinned find genuinely
   raises `HistoricalObservationError` instead of a permanent no-op; the
   conformance engine's row-decomposition discriminator is now derived

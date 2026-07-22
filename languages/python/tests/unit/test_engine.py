@@ -1516,7 +1516,7 @@ def test_run_write_sequence_case_records_the_temporal_observation_on_the_unit_of
     assert table_state is not None and "balance" in table_state
 
 
-def test_run_write_sequence_case_buffers_a_bounded_bitemporal_business_window() -> None:
+def test_run_write_sequence_case_buffers_a_bounded_bitemporal_valid_time_window() -> None:
     # m-bitemp-write-001 (COR-3 Phase 8 increment 4): the updateUntil entry's
     # canonical instruction carries BOTH `validFrom` and `until`
     # (its bounded rectangle-split window) — `_execute_write_unit` threads both
