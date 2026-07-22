@@ -19,7 +19,7 @@ never something an application developer hand-writes.
 | Exact `describe` claim | The complete canonical `describeOk` envelope below; structurally equal to the canonical claim after JSON parsing, except for the `adapter` identity. |
 | Claimed capability coverage | Copied verbatim from the canonical claim: the 26 `modules` below, `dialects: ["postgres"]`, the eight `caseShapes`, `caseTags.include: ["slice-snapshot-1"]`, `commands: ["describe", "compile", "run"]`, `provisioning: "self-managed"`. `modules` is the tagged-case union of the slice, **not** a dependency closure and not a packaging plan. |
 | Unclaimed implementation prerequisites | `m-db-port` — reached via `m-unit-work` and `m-db-error`; abstract port supplied by the `parallax.core.db_port` scope, concrete adapter by `parallax-postgres`; contract-covered, never case-advertised. |
-| Deferred capabilities | MariaDB (dialect); `benchmark` command and `m-perf-bench`; `m-agg` / `m-sql-agg`; Valid-Time-Only models; `m-process-cache` / `m-coherence`; `m-cascade-delete`; the `snapshot-history-includes` feature; the managed-object lifecycle (`m-identity-map`, `m-detach`, public operation-backed lists); an async developer surface; MAY-tier mutations (`insertWithIncrement`, `incrementUntil`, `purge`, `inactivateForArchiving`); template-database reset optimization; isolation-level configuration; handle-level default concurrency override; statement `where`-refinement chaining and `as_of` re-pinning. Deferral is roadmap intent; **unsupported classification** is the adapter's wire behavior for out-of-claim requests — the two are recorded separately and never conflated. |
+| Deferred capabilities | MariaDB (dialect); `benchmark` command and `m-perf-bench`; `m-agg` / `m-sql-agg`; Valid-Time-Only models; `m-process-cache` / `m-coherence`; `m-cascade-delete`; the `snapshot-history-includes` feature; the managed-object lifecycle (`m-identity-map`, `m-detach`, public operation-backed lists); an async developer surface; MAY-tier mutations (`insertWithIncrement`, `incrementUntil`, `purge`, `inactivateForArchiving`); template-database reset optimization; isolation-level configuration; handle-level default concurrency override; statement `where`-refinement chaining and `as_of` re-pinning; the class-header temporal-axis column-mapping override. Deferral is roadmap intent; **unsupported classification** is the adapter's wire behavior for out-of-claim requests — the two are recorded separately and never conflated. |
 | Supported dialects and commands | Postgres only; `describe`, `compile`, `run`. Exercised locally and in CI by `uv run pytest -m compile_sweep` (Docker-free compile of every compile-eligible claimed case) and `uv run pytest -m conformance` (the `pg-full` run profile, every claimed case), aggregated by `just python-static` and `just python-verify`. |
 
 ```json
@@ -298,11 +298,27 @@ equivalence obligation.
 
 | Keyword | Value | Applies to | Meaning |
 |---|---|---|---|
-| `table=` | `str` | standalone entities, TPH roots, TPCS concrete subtypes | the physical `Table(name)` Storage Container; forbidden on TPH descendants and TPCS roots/abstract subtypes (seal-time family rules) |
-| `namespace=` | `str` | any Entity | the Entity Identity namespace; omitted means unnamespaced |
+| `table=` | `str` | standalone entities, TPH roots, TPCS concrete subtypes | the physical `Table(name)` Storage Container — always explicit, never derived from a name; forbidden on TPH descendants and TPCS roots/abstract subtypes (seal-time family rules) |
+| `name=` | `str` | any Entity | canonical Entity-name override — any nonempty dot-free string; omission means the class `__name__` verbatim |
+| `namespace=` | `str` | any Entity | the Entity Identity namespace, declared per class and never inherited from a base class or module; omitted means unnamespaced |
 | `persistence=` | `ReadOnly` | standalone entities and family roots | the exceptional read-only mapping; omission means Read Write; any descendant declaration is a seal-time issue |
 | `inheritance=` | role value (below) | every family participant | the participant's inheritance role |
 | `indices=` | tuple of `index(...)` values | any Entity | the local physical indices |
+
+The Entity name is the class `__name__` verbatim — no case conversion —
+and `name=` overrides it for spellings a Python class name cannot carry,
+mirroring `attr(name=)`. A standalone Entity (no `inheritance=`) that omits
+`table=` fails at class creation (`entity-header-missing-option`), the parity
+of the descriptor schema's phase-2 `table` requirement; family table
+incoherence (a TPH descendant declaring `table=`, a TPCS concrete omitting
+it) stays the seal-time `inheritance-*` issue family.
+
+Every Entity Class declares exactly one Parallax base: a framework root
+(`Entity`, `TxTemporal`, `Bitemporal`) or exactly one domain Entity
+parent. A second Entity base or any non-Parallax mixin is outside the
+grammar, and a domain-Entity subclass must declare `inheritance=` — omission
+is never an implicit role. Both fail at class creation
+(`entity-base-invalid`).
 
 Temporality is selected by the base class — `Entity`, `TxTemporal`, or
 `Bitemporal` — never by a keyword. `TxTemporal` supplies the reserved
@@ -332,10 +348,17 @@ zero or multiple roots, missing or duplicate tag values) are seal-time
 `inheritance-*` issues, identical to the descriptor frontend's.
 
 `index(name, *members, unique=False)` declares one local index: a nonempty
-ordered sequence of this Entity's members by Python member name, with the
-component order preserved. The factory rejects an empty member list at call
-time; an unknown, duplicate, or non-local member name is the seal-time
-`metamodel-index-*` issue family.
+ordered sequence of members by Python member name, with the component order
+preserved and every component a local scalar Attribute of the declaring
+Entity — never a relationship, Value Object, or inherited member. The
+factory rejects an empty member list at call time; an unknown, duplicate, or
+non-local member name is the seal-time `metamodel-index-*` issue family.
+
+Member references are uniform across the grammar: the strings in `join=`,
+`reverse_of=`, `order_by=`, and `index(...)` are Python declaration names
+(snake_case, exactly as declared), lowered to canonical identities at the
+authoring boundary. Canonical camelCase spellings are descriptor surface and
+are never accepted in a class declaration.
 
 #### Attributes — `Attr[T]` and `attr(...)`
 
@@ -346,7 +369,7 @@ bare value (`qty: Attr[int] = 5`) fails at class creation. The complete
 
 | Option | Value | Meaning |
 |---|---|---|
-| `primary_key=` | `False` (default), `True`, `Max`, or `Sequence(name=..., batch_size=..., initial_value=..., increment_size=...)` | the `NotPrimaryKey \| PrimaryKey(generation)` sum: `True` means `ApplicationAssigned`; a generation value implies primary key, so a generation without a key is unspellable |
+| `primary_key=` | `False` (default), `True`, `Max`, or `Sequence(name=..., batch_size=..., initial_value=..., increment_size=...)` | the `NotPrimaryKey \| PrimaryKey(generation)` sum: `True` means `ApplicationAssigned`; a generation value implies primary key, so a generation without a key is unspellable; `Max`/`Sequence` require an `Int32`/`Int64` member (`m-pk-gen`) and fail at class creation on any other (`entity-option-context-invalid`), while `True` is unrestricted |
 | `column=` | `str` | physical Storage Location override; omission normalizes to `Column(<canonical name>)` |
 | `name=` | `str` | canonical-name override (below) |
 | `max_length=` | `int` | bounded string length |
@@ -363,7 +386,12 @@ Python type inside `Attr[...]` maps to the Neutral Type per the scalar table
 below; a `decimal.Decimal` member requires `attr(precision=..., scale=...)`
 because the core `Decimal` variant has no default parameters, a Value Object
 class reference declares an embedded composite, and `tuple[VO, ...]` declares
-a Many occurrence.
+a Many occurrence. The exported `Json` alias declares a **direct** `json`
+attribute — `Attr[Json]` — for a structured document that is not a modeled
+Value Object: its value is the immutable `m-core` `Json` tree (a bare
+top-level `None` is not a member; nullability stays annotation-only via
+`Attr[Json | None]`), materialized as immutable nested values, never a
+mutable `dict`.
 
 Generation values and structured narrowing use the same option surface — the
 corpus `max` and `sequence` spellings and the two-variant scalar families
@@ -392,14 +420,16 @@ boundary, with a class-creation collision check. `attr(name="...")` and
 vocabularies and acronym spellings the conversion cannot produce:
 
 ```python
-class LegacyPart(Entity, table="legacy_part"):
+class LegacyPart(Entity, table="legacy_part", name="LEGACY_PART"):
     id: Attr[int] = attr(primary_key=True)
     tax_id: Attr[str] = attr(name="taxID")     # canonical name: taxID
     bin_no: Attr[str] = attr(column="BIN_NO")  # canonical binNo, legacy column
 ```
 
 `name=` is who the member is in the model (its Attribute Identity and
-descriptor spelling); `column=` is where it is stored. Ingested descriptors
+descriptor spelling); `column=` is where it is stored. The class-header
+`name=` is the same idea for the Entity itself — here the schema entity name
+`LEGACY_PART`, which the snake→camel member conversion never touches. Ingested descriptors
 keep canonical names; the ambiguous camel→snake direction is never needed
 because classes are not generated. Reserved class-level names (`where`,
 other query-root classmethods, the `model_*` Pydantic space) may not be
@@ -429,12 +459,16 @@ rel(reverse_of=target_relationship_name, order_by=(...), name=...)
 - **Multiplicity by annotation.** `Rel[T]` and `Rel[T | None]` are to-one;
   `Rel[tuple[T, ...]]` is to-many. A to-many is never `| None`: loaded-empty
   is `()`.
-- **Optional to-one agreement.** `Rel[T | None]` is required exactly where a
-  loaded-null answer is possible — a defining to-one whose join source
-  attribute is nullable, and every reverse to-one — and is forbidden
-  elsewhere. The rule is checked during `seal()`'s Python realization phase
-  from the accepted model; every mismatch is reported together, in canonical
-  order, as `EntityDefinitionError(code=
+- **Annotation-shape agreement.** The whole `Rel` annotation shape must
+  agree with the accepted model: a direction whose compiled multiplicity is
+  Many is spelled `Rel[tuple[T, ...]]`; a One direction is scalar `Rel[T]` /
+  `Rel[T | None]`; and scalar optionality follows the loaded-null rule —
+  `Rel[T | None]` exactly where a loaded-null answer is possible (a defining
+  to-one whose join source attribute is nullable, and every reverse to-one),
+  forbidden elsewhere. The rule is checked during `seal()`'s Python
+  realization phase from the accepted model; every mismatch — multiplicity
+  and optionality alike — is reported together, in canonical order, as
+  `EntityDefinitionError(code=
   "entity-relationship-annotation-mismatch")`, and the hub is rejected. The
   annotation never absorbs the *unloaded* state, which always raises
   (`UnloadedRelationshipError`); `None` means exactly "loaded, and there is
@@ -501,9 +535,15 @@ referenced by each occurrence's annotation. Neither form is a hub candidate
 or requires registration — occurrences are reached only through Entity
 declarations. `Attr[Address]` is a One occurrence, `Attr[Address | None]` is
 One-nullable, `Attr[tuple[Address, ...]]` is Many (never nullable; a
-`| None` Many surfaces at seal as `value-object-many-nullable`). On Value
-Object scalar members, `attr(...)` admits only `name=`; Entity-only options
-(storage, keys, generation, locking) fail at class creation. An
+`| None` Many surfaces at seal as `value-object-many-nullable`). A Value
+Object scalar carries the full Neutral Type algebra (the schema admits any
+`type` spelling on a Value Object attribute; the corpus `float64` Value
+Object members exercise a non-string scalar), so on Value Object scalar
+members `attr(...)` admits the naming and type-shaping options — `name=`,
+`type=` (`Int32`/`Float32` narrowing), and `precision=`/`scale=` (mandatory
+together on a `decimal.Decimal` member). Entity-only options fail at class
+creation: storage, keys, generation, locking, and `max_length=` (the schema
+gives a Value Object attribute no length bound). An
 Entity-level occurrence member additionally admits `column=`, the occurrence's
 Structured Column override. Containment cycles and empty composites are the
 seal-time `value-object-*` issues shared with the descriptor frontend.
@@ -515,20 +555,28 @@ only what prevents a coherent Python class or Unresolved declaration; every
 model-semantic rule — cross-member, cross-class, family, index, ordering, and
 reference resolution — fails at `seal()` through the same `MetamodelIssue`
 codes the descriptor frontend produces, so the two frontends report
-equivalent outcomes. The Python realization phase after formation adds only
-Python-fact checks: the Entity Class claim and the relationship-annotation
-agreement rule. The closed `EntityDefinitionError` code set is:
+equivalent outcomes for models both can author. The Python realization phase
+after formation adds only
+Python-fact checks: the Entity Class claim and the annotation-shape
+agreement rule. An intrinsically invalid factory argument fails at the
+factory call itself (`entity-option-invalid-value`); an option whose
+legality depends on the annotation or class context fails at class creation
+(`entity-option-context-invalid`). The closed `EntityDefinitionError` code
+set is:
 
 | Code | Rejected at | Meaning |
 |---|---|---|
 | `entity-header-unknown-option` | class creation | unknown class-header keyword |
 | `entity-header-invalid-value` | class creation | ill-typed or malformed header value, including malformed `inheritance=` and `indices=` values |
+| `entity-header-missing-option` | class creation | a required header omitted: a standalone Entity without `table=` |
+| `entity-base-invalid` | class creation | an invalid base shape: zero or multiple Parallax bases, a non-Parallax mixin, or a domain-Entity subclass omitting `inheritance=` |
 | `entity-annotation-invalid` | class creation | malformed `Attr`/`Rel` annotation: a bare un-aliased annotation, an unsupported inner type, or an optionality/multiplicity shape outside this grammar |
 | `entity-member-value-invalid` | class creation | the assignment slot holds a bare value, an `attr(...)` under `Rel[...]`, or a `rel(...)` under `Attr[...]` |
-| `entity-option-context-invalid` | factory call / class creation | an option illegal in context: mixed defining/reverse `rel(...)` forms, Entity-only options on a Value Object member, an empty `index(...)` member list |
+| `entity-option-invalid-value` | factory call | an intrinsically invalid argument value: an ill-typed or out-of-range `attr(...)`, `rel(...)`, `index(...)`, or `Sequence(...)` argument |
+| `entity-option-context-invalid` | factory call / class creation | an option illegal in context: mixed defining/reverse `rel(...)` forms, Entity-only options on a Value Object member, an empty `index(...)` member list, a `Max`/`Sequence` generation on a non-integer member |
 | `entity-reserved-member-name` | class creation | a reserved query-root, `model_*`, or framework-temporal member name |
 | `entity-canonical-name-collision` | class creation | two members converting to one canonical name |
-| `entity-relationship-annotation-mismatch` | seal (realization) | a `Rel` optionality annotation disagreeing with the accepted model; all mismatches reported together in canonical order |
+| `entity-relationship-annotation-mismatch` | seal (realization) | a `Rel` annotation shape — multiplicity or optionality — disagreeing with the accepted model; all mismatches reported together in canonical order |
 
 #### Canonical descriptor input
 
@@ -699,6 +747,7 @@ class Truck(Vehicle, table="truck", inheritance=ConcreteSubtype):
   | `timestamp` | tz-aware `datetime` | naive rejected; normalized UTC; microseconds | `timestamptz`; aware UTC on read |
   | `uuid` | `uuid.UUID` | `UUID` or canonical string | driver uuid |
   | `json` (value object) | nested frozen value-object class | the VO class instance; never a raw dict | structured column per dialect |
+  | `json` (direct, `Attr[Json]`) | immutable JSON tree | nested mappings/sequences/scalars per the `m-core` `Json` space; a bare top-level `None` rejected | structured column per dialect |
 
 - **Metamodel serde ownership.** Source owner `parallax.core.descriptor`
   (enforcement scope of the same name), shipped in the `parallax-core`

@@ -87,9 +87,17 @@ selection are not part of the target interface.
 
 ### Class declaration and model composition are separate
 
-- Typed class-header keywords declare table, namespace, Persistence Mode, and
-  inheritance role. Temporality is selected by the framework Entity base:
+- Typed class-header keywords declare table, canonical-name override,
+  namespace, Persistence Mode, and
+  inheritance role. The Entity name is the class `__name__` verbatim unless
+  `name=` overrides it; `namespace=` is per-class and never inherited;
+  `table=` is always explicit, never derived from a name. Temporality is
+  selected by the framework Entity base:
   ordinary `Entity`, `TxTemporal`, or `Bitemporal`.
+- Every Entity Class has exactly one Parallax base — a framework root or one
+  domain Entity parent — with no non-Parallax mixins, and a domain-Entity
+  subclass always declares its `inheritance=` role explicitly; violations
+  fail at class creation.
 - Persistence Mode is omitted for the ordinary Read Write mapping. A root uses
   `persistence=ReadOnly` only for the exceptional mapping on which Parallax
   must reject persistence writes. Persistence Mode is family-wide and
@@ -311,9 +319,11 @@ only through Entity declarations and is not passed to the hub separately.
 ### Model Formation boundary
 
 - Class creation immediately rejects errors that prevent a coherent Python
-  class: unknown class-header keywords, invalid keyword types or literals,
-  reserved names, malformed `Attr`/`Rel` annotations, and Pydantic definition
-  errors.
+  class: unknown class-header keywords, invalid keyword types or literals, a
+  standalone entity's missing `table=`, an invalid base shape, reserved
+  names, malformed `Attr`/`Rel` annotations, context-invalid options, and
+  Pydantic definition errors. Intrinsically invalid factory arguments fail
+  at the factory call itself.
 - Hub construction produces an immutable **Unresolved Metamodel**. `seal()`
   submits it to the runtime's explicit Formation Profile; it does not implement
   reference resolution or semantic rules itself.
@@ -759,7 +769,8 @@ only through Entity declarations and is not passed to the hub separately.
   and declaration-grammar violations; its closed stable code set is normative
   in the Python spec's declaration grammar (§2). One code is seal-phase
   rather than class-creation: `entity-relationship-annotation-mismatch`, the
-  realization check that a `Rel` optionality annotation agrees with the
+  realization check that a `Rel` annotation shape — multiplicity and
+  optionality — agrees with the
   accepted model, reported with every mismatch in canonical order before any
   class claim and rejecting the hub like any failed seal.
 - `MetamodelDefinitionError(TypeError)` covers an invalid class-backed hub
