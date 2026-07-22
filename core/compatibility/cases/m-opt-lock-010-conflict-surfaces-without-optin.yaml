@@ -1,11 +1,11 @@
 # Boundary case (m-opt-lock): an optimistic-lock conflict SURFACES to the caller when the
 # unit of work does NOT opt into conflict retry — `api-conformance` lane.
 #
-# The default retry posture (ADR 0008 / TS ADR 0026): transient database failures
+# The default retry posture (ADR 0008): transient database failures
 # auto-retry, but an optimistic-lock conflict is NOT automatically retried unless
 # the unit of work sets `retryOptimisticConflicts`. With the flag UNSET, an
 # injected conflict surfaces after ONE attempt as the `optimistic-lock-conflict`
-# error kind (TypeScript: `ParallaxOptimisticLockError`) — the caller inspects the
+# error kind — the caller inspects the
 # winning change and decides, exactly as `m-opt-lock-007`'s caller-driven narrative does.
 #
 # `lane: api-conformance`: it needs an injected conflict a single-connection

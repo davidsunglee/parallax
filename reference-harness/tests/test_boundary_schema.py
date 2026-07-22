@@ -7,8 +7,7 @@ Suite. The
 compatibility-case schema ENFORCES that invariant: a boundary case must pin
 `lane: api-conformance` and carry no golden SQL. Without the pin, a boundary case
 that forgets `lane` would default to `harness`, then hit compile/run paths not
-shaped for it (the TypeScript `runCompile` would fall through to read compilation
-on an absent `operation`; the reference harness would bypass its early skip).
+shaped for it (the reference harness would bypass its early skip).
 """
 
 from __future__ import annotations

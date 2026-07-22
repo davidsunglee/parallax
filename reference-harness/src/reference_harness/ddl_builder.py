@@ -71,10 +71,9 @@ _SIMPLE_IDENTIFIER = re.compile(r"^[a-z_][a-z0-9_]*$")
 # DECISION — not merely the quote character — diverges. The curated base below is
 # the words shared by both dialects (enough to cover identifiers a model might
 # realistically use, e.g. `order`); a non-simple name (uppercase / special) is
-# caught by the regex regardless. This mirrors the per-dialect sets the TypeScript
-# dialects already carry (`postgres.ts` / `mariadb.ts` `RESERVED_WORDS`); it is a
-# non-normative harness fix bringing the harness into line with the already-
-# normative per-dialect rule (m-dialect), and introduces no new normative surface.
+# caught by the regex regardless. It is a non-normative harness fix bringing the
+# harness into line with the already-normative per-dialect rule (m-dialect), and
+# introduces no new normative surface.
 _RESERVED_WORDS_BASE = frozenset(
     {
         "all",

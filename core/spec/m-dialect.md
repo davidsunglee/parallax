@@ -225,14 +225,14 @@ a set-returning unnest can be normalized (or a set-returning dialect such as
 Snowflake `LATERAL FLATTEN` supplies one behind this seam). The compatibility
 corpus's to-many coverage is equality-based, consistent with this scope.
 
-**Phase-10 flag (TS MariaDB lowering).** Because the schema (`operation.schema.json`)
+**MariaDB-lowering flag.** Because the schema (`operation.schema.json`)
 *admits* these forms — the scoped `nested*` family and the flat `many`-crossing
 family are schema-valid at every operator — a MariaDB implementation MUST NOT emit
 wrong SQL for one it cannot lower. It **MUST reject it with a clear capability
 diagnostic** (an unsupported-operation rejection naming the containment-golden
 scope), exactly as it rejects any other unsupported operation, rather than silently
 producing a `json_contains` that does not mean what the predicate says. This is the
-Phase-10 TypeScript MariaDB-lowering boundary: lower the equality shapes above to the
+MariaDB-lowering boundary: lower the equality shapes above to the
 containment golden, reject every non-equality to-many element predicate until a
 set-returning unnest is available.
 

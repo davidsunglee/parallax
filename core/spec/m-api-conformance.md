@@ -116,24 +116,9 @@ the documented examples identical to executed, passing tests: prose and proof
 cannot diverge. The rendering and drift-check mechanism is language-local; core
 requires only the property.
 
-## Worked example
+## Mechanism is language-local
 
-The TypeScript implementation is the worked example of this contract, not a
-mandate on other languages:
-
-- the suite lives at
-  `languages/typescript/packages/typescript/test/api-conformance/`, running the
-  idiomatic `px.*` / `px.transaction` surface over the shipped `@parallax/db-postgres`
-  adapter against a Testcontainers `postgres:17`;
-- `coverage.test.ts` is the Docker-free partition assertion (exercised ∪ skipped ==
-  the adapter-described case set, no strays, every skip reasoned), with the
-  exercised map in `covered.ts` and the reasoned skips in `skip-manifest.ts`;
-- the no-drift guard is `assertSameOperation` in `_harness.ts`;
-- the value-shape assertion is `assertManagedShape` in `_harness.ts`;
-- the Usage Guide is `languages/typescript/docs/guide/*.md`, rendered from the
-  suite source by `scripts/render-guide.mjs` and re-checked in CI with
-  `render-guide.mjs --check`.
-
-Nothing above mandates the TypeScript mechanism. Another language satisfies this
-contract with its own test framework, its own partition assertion, and its own
-guide renderer, as long as the required properties hold.
+Nothing in this contract mandates a particular mechanism. A language
+implementation satisfies it with its own test framework, its own coverage
+partition assertion, its own no-drift and value-shape guards, and its own guide
+renderer, as long as the required properties above hold.
