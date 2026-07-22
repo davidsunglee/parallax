@@ -1,0 +1,11 @@
+entity:
+  name: Order
+  table: orders
+  attributes:
+    - name: id
+      type: int64
+      primaryKey: true
+      pkGeneration:
+        strategy: sequence
+        name: order_ids
+        sequenceName: order_ids

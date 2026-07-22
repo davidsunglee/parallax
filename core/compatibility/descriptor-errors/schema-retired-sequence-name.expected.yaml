@@ -1,0 +1,11 @@
+# The retired Sequence member `sequenceName` is replaced by `name` inside the
+# `pkGeneration` Sequence object. `pkGeneration` is a closed union (bare
+# strategy enum or Sequence object), so an object carrying the retired member
+# fails every branch and — by the branching-keyword collapse rule — reports
+# exactly one `oneOf` violation at the pkGeneration value, never per-branch
+# sub-errors.
+phase: schema
+code: descriptor-schema-invalid
+violations:
+  - path: [entity, attributes, 0, pkGeneration]
+    rule: oneOf

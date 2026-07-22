@@ -1,0 +1,11 @@
+# The retired entity property `mutability` (values `read-only` /
+# `transactional`, defaulting to read-only) is replaced by the root-owned
+# `persistence` capability defaulting to read-write. Entity values are frozen,
+# so mutability never was a mapping fact. The entity's closed key set rejects
+# the retired property as one `additionalProperties` violation at the entity,
+# whatever value it carries.
+phase: schema
+code: descriptor-schema-invalid
+violations:
+  - path: [entity]
+    rule: additionalProperties

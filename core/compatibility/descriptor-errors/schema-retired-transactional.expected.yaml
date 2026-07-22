@@ -1,0 +1,10 @@
+# The retired `transactional` value has no home in the persistence
+# capability: `persistence` admits only `read-write` / `read-only`, because
+# transaction vocabulary belongs to Unit of Work demarcation and Transaction
+# Time, not to whether Parallax accepts persistence writes. The retired value
+# fails the closed enum as one violation at the persistence value.
+phase: schema
+code: descriptor-schema-invalid
+violations:
+  - path: [entity, persistence]
+    rule: enum

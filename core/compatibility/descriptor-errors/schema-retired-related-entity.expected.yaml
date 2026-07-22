@@ -1,0 +1,11 @@
+# The retired `relatedEntity` named a relationship target beside the join;
+# the structured `join.target.entity` reference is the sole target source, so
+# the duplicate never exists. Beside an otherwise well-formed defining branch
+# the closed relationship key set rejects the retired key as one
+# `additionalProperties` violation at the relationship object — not a `oneOf`
+# failure, because the defining/reverse union itself is satisfied.
+phase: schema
+code: descriptor-schema-invalid
+violations:
+  - path: [entities, 0, relationships, 0]
+    rule: additionalProperties

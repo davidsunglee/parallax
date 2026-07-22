@@ -1,0 +1,16 @@
+entity:
+  name: Trade
+  table: trade
+  attributes:
+    - name: id
+      type: int64
+      primaryKey: true
+    - name: tx_start
+      type: timestamp
+    - name: tx_end
+      type: timestamp
+  asOfAxes:
+    - dimension: transactionTime
+      startAttribute: tx_start
+      endAttribute: tx_end
+      toColumn: out_z

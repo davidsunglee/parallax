@@ -1,0 +1,11 @@
+# The retired `fromColumn` bound a temporal axis's lower bound directly to a
+# physical column. A canonical axis references its inclusive start through
+# `startAttribute`; physical placement stays an ordinary attribute `column`
+# override and is never repeated on the axis. The axis object's closed key set
+# rejects the retired key as one `additionalProperties` violation at the axis,
+# even beside a fully canonical dimension/start/end triple.
+phase: schema
+code: descriptor-schema-invalid
+violations:
+  - path: [entity, asOfAxes, 0]
+    rule: additionalProperties

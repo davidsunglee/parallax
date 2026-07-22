@@ -1,0 +1,11 @@
+# The retired temporal container `asOfAttributes` is replaced by `asOfAxes`:
+# an axis is identified by its Temporal Dimension, not by a named as-of
+# attribute. The entity's closed key set rejects the retired container itself,
+# whatever its entries carry, as one `additionalProperties` violation at the
+# entity — the spelling can never be re-admitted silently by loosening the
+# entry shape alone.
+phase: schema
+code: descriptor-schema-invalid
+violations:
+  - path: [entity]
+    rule: additionalProperties
