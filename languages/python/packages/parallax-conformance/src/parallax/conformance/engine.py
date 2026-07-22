@@ -2803,14 +2803,12 @@ def run_scenario_case(
     case: case_format.Case, dialect_name: str, port: DbPort
 ) -> tuple[list[Emission], int, list[dict[str, object]]]:
     """Run a scenario: an UNGROUPED write step commits (or aborts) as its OWN
-    unit of work through ``db.transact`` (COR-3 Phase 8 increment 4, DQ4
-    re-route) and an ungrouped find reads committed state, exactly as before.
-    A `uow`-GROUPED contiguous span of steps instead runs inside ONE
-    ``db.transact`` (COR-3 Phase 8 amendment-review remediation,
-    :func:`_run_uow_group`): the observing find and the versioned write it
-    licenses execute in the SAME unit of work, so the write's version bind is
-    a genuine transaction-scoped observation, never an oracle. A MATERIALIZING
-    predicate-write step (COR-3 Phase 8 increment 5) pairs with its
+    unit of work through ``db.transact``, and an ungrouped find reads
+    committed state. A `uow`-GROUPED contiguous span of steps instead runs
+    inside ONE ``db.transact`` (:func:`_run_uow_group`): the observing find
+    and the versioned write it licenses execute in the SAME unit of work, so
+    the write's version bind is a genuine transaction-scoped observation,
+    never an oracle. A MATERIALIZING predicate-write step pairs with its
     IMMEDIATELY PRECEDING find step (:func:`_run_materializing_pair`) —
     detected by a one-step LOOK-AHEAD before that find is lowered as an
     ordinary standalone step, since `m-case-format`'s own "Materializing

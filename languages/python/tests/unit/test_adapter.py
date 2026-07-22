@@ -353,6 +353,80 @@ def test_compile_case_compiles_an_expect_error_scenarios_find_steps() -> None:
     assert [e["casePointer"] for e in envelope["emissions"]] == ["/scenario/0/find"]
 
 
+_TX_PAST_READ_ONLY_CASE = (
+    case_format.default_cases_dir() / "m-identity-map-010-transaction-time-past-is-read-only.yaml"
+)
+# A test-only claim admitting exactly the managed-lifecycle pin case above:
+# `spec/python.md` defers the managed-object lifecycle, so the public
+# `SNAPSHOT_CLAIM` never claims `m-identity-map` or the `slice-managed-1`
+# tag — grading this case through the real run path needs a claim scoped to
+# the case's own routing (its module tags, shape, and slice tag).
+_TX_PAST_READ_ONLY_CLAIM = Claim(
+    modules=("m-identity-map", "m-temporal-read"),
+    dialects=("postgres",),
+    case_shapes=("scenario",),
+    include=("slice-managed-1",),
+    exclude=(),
+    commands=("run",),
+    provisioning="self-managed",
+)
+
+
+class _BalancePort:
+    """A port returning the superseded balance milestone the finite
+    Transaction-Time pin selects (no Docker)."""
+
+    def execute(self, sql: str, binds: Sequence[object]) -> list[Row]:
+        return [
+            {
+                "bal_id": 1,
+                "acct_num": "A",
+                "val": decimal.Decimal("100.00"),
+                "in_z": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+                "out_z": dt.datetime(2024, 6, 1, tzinfo=dt.UTC),
+            }
+        ]
+
+    def execute_write(self, sql: str, binds: Sequence[object]) -> int:  # pragma: no cover
+        raise NotImplementedError
+
+    def transaction[T](self, body: Callable[[DbPort], T]) -> T:  # pragma: no cover
+        return body(self)
+
+
+def test_run_case_grades_the_managed_pin_case_end_to_end_under_a_scoped_claim() -> None:
+    # The managed-lifecycle read-only-pin case (m-identity-map / m-temporal-
+    # read's finite-pin mutation row) runs END-TO-END through the real
+    # adapter/engine path: the pinned find materializes through the port, and
+    # the mutate step's `expectError: transaction-time-pin-read-only` is
+    # GRADED through the `errorObservation.errorClass` contract
+    # (`m-conformance-adapter`), not schema-validated only. The `errors`
+    # assertion fails if the run lane ever stops reporting the observation;
+    # the write-raising port and the single find emission prove the refused
+    # mutation emitted no DML.
+    envelope = adapter.run_case(
+        _TX_PAST_READ_ONLY_CASE, "postgres", _BalancePort(), claim=_TX_PAST_READ_ONLY_CLAIM
+    )
+    jsonschema.validate(envelope, _SCHEMA)
+    assert envelope["status"] == "ok", envelope
+    assert [e["casePointer"] for e in envelope["emissions"]] == ["/scenario/0/find"]
+    assert envelope["observations"]["roundTrips"] == 1
+    assert envelope["observations"]["errors"] == [
+        {"at": "/scenario/1", "errorClass": "transaction-time-pin-read-only"}
+    ]
+
+
+def test_the_public_snapshot_claim_still_classifies_the_managed_pin_case_out() -> None:
+    # Under the public claim the same case stays `unsupported` (first failed
+    # filter: its `m-identity-map` module tag) — the deferred managed
+    # lifecycle is graded only through the scoped test claim above, never by
+    # widening `SNAPSHOT_CLAIM`.
+    envelope = adapter.run_case(_TX_PAST_READ_ONLY_CASE, "postgres", _BalancePort())
+    jsonschema.validate(envelope, _SCHEMA)
+    assert envelope["status"] == "unsupported"
+    assert envelope["diagnostics"][0]["code"] == "unsupported-module"
+
+
 def test_scenario_lane_without_expect_error_is_still_dispatched_out() -> None:
     compile_envelope = adapter.compile_case(_ACCESS_WITNESS_CASE, "postgres")
     assert compile_envelope["status"] == "error"
