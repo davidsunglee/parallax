@@ -1087,8 +1087,11 @@ The header follows a fixed house style:
 - It does **not narrate mechanics the structure now shows** — no describing
   positional binds, key-presence shape sniffing, or field pairings that no longer
   exist.
-- It stays **roughly a dozen lines at most**; a case that needs more explanation
-  than that is usually two cases.
+- **Length follows content**: keep the header concise and focused on the
+  contract, the semantic distinction, and the information a reader needs to
+  trust the assertions. A longer header is appropriate when the YAML cannot
+  clearly express an important mapping or edge-case rationale; a header that
+  narrates several unrelated behaviors usually signals the case should be split.
 
 ```yaml
 # Optimistic-lock conflict (m-opt-lock): a stale-version UPDATE affects ZERO rows.
