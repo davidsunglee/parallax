@@ -41,9 +41,8 @@ from parallax.core.unit_work import (
 )
 from parallax.snapshot.handle import Database, Transaction
 
-# One of the three sanctioned private test seams (COR-42): `_pin_from_milestone`
-# keeps its underscore because nothing outside `_read` calls it in production, so
-# this defensive branch is only reachable from a test.
+# `_pin_from_milestone` stays private because production callers are confined to
+# `_read`; this test import exercises its defensive missing-axis branch directly.
 from parallax.snapshot.handle._read import (
     _pin_from_milestone,  # pyright: ignore[reportPrivateUsage]
 )
@@ -123,7 +122,7 @@ def test_db_find_resolves_a_concrete_inheritance_targets_inherited_pin_and_edge(
     # `DepositRate` declares NO `as_of` of its own (`Rate`, the family root,
     # does) — `_temporal_entity` (`parallax.snapshot.handle`) must resolve
     # through the root to compute both the statement pin and the row's own
-    # milestone edge (COR-3 Phase 7 review remediation, P3/P4).
+    # milestone edge.
     from parallax.core import LATEST, edge_of
 
     port = RecordingPort(
@@ -218,18 +217,9 @@ def test_locking_mode_temporal_write_after_a_latest_find_is_licensed() -> None:
     )
 
 
-def test_audit_only_update_via_a_sparse_edited_copy_carries_the_untouched_field() -> None:
-    # D-30 (COR-3 Phase 8 increment 7 completion round) — the revert-to-red
-    # regression pin: a real, PUBLIC `tx.update` of a SPARSE edited copy
-    # (`model_copy` touching ONLY `value`, never `acct_num`) against a genuine
-    # in-transaction observation (`tx.find`, same as every other keyed-write
-    # story here) still chains a row carrying `acct_num` — the merge onto the
-    # observed payload (`audit_write.plan`'s own `_merged_row`), never a
-    # silent drop of the untouched field. Reverting the D-30 fix (chaining
-    # `instruction.rows[0]` verbatim instead of the merged row) makes this
-    # assertion fail with `chain_binds[1] is None` (the sparse row carries no
-    # `acctNum` at all) instead of `"A-1"` — proven by hand against the
-    # pre-fix `audit_write.plan` during development of this pin.
+def test_transaction_time_only_update_via_a_sparse_copy_carries_untouched_fields() -> None:
+    # A sparse edited copy contains only the changed value, so chaining must merge
+    # it with the observed payload rather than dropping untouched fields.
     port = RecordingPort(rows=[balance_row(in_z=dt.datetime(2024, 1, 1, tzinfo=dt.UTC))])
     db = db_for(BALANCE, port)
 
@@ -264,15 +254,9 @@ def _branch_row(*, address: dict[str, object] | None) -> Row:
     }
 
 
-def test_bitemporal_update_after_a_find_carries_the_observed_business_bounds() -> None:
-    # COR-42 Phase 4: the observable replacement for the former private
-    # observation-recording drive. What that test asserted by reading
-    # `uow._observations` directly — that a BITEMPORAL node's observation
-    # records valid_from/valid_end and the full payload — is exactly what
-    # `bitemp_write.plan` consumes to split the rectangle, so a real
-    # `tx.find` -> `tx.update` makes it observable in the emitted DML: the
-    # chained rows can only carry `from_z`/`thru_z` and the untouched `name`
-    # if the observation recorded them.
+def test_bitemporal_update_after_a_find_carries_observed_valid_time_bounds() -> None:
+    # Rectangle splitting consumes the observed Valid-Time bounds and full payload.
+    # A real find-then-update makes both facts observable in the emitted DML.
     port = RecordingPort(rows=[_branch_row(address=None)])
     db = db_for(models.load_models()["branch"], port)
 
@@ -298,20 +282,15 @@ def test_bitemporal_update_after_a_find_carries_the_observed_business_bounds() -
     # The TAIL rectangle opens at the mutation instant with the new payload and
     # closes at the OBSERVED valid_end. That upper bound is the third value
     # only the observation carries: the edited copy never names it, and without
-    # this assertion a corrupted `observation.valid_end` goes undetected —
-    # the gap the Phases 3-4 review caught by mutating it to 2099.
+    # this assertion a corrupted `observation.valid_end` would go undetected.
     assert tail_binds[1] == "Renamed Branch"
     assert tail_binds[2] == "2024-03-01T00:00:00+00:00"
     assert tail_binds[3] == INFINITY_INSTANT
 
 
 def test_bitemporal_update_after_a_find_keeps_the_observed_value_object_document() -> None:
-    # The second former private drive, made observable. A keyed write derives
-    # its carry-forward from the recorded observation's payload, so a value-
-    # object document the sparse copy never mentions must survive the round
-    # trip. Reverting `_temporal_observation` to drop the document makes the
-    # chained bind `None` instead of the address mapping — the same regression
-    # the private-seam test pinned, now proven through the public verbs.
+    # A keyed write derives carry-forward values from the observed payload, so a
+    # Value Object document omitted by the sparse copy must survive in both chains.
     address: dict[str, object] = {
         "street": "10 Old Road",
         "city": "Helsinki",
@@ -339,9 +318,8 @@ def test_bitemporal_update_after_a_find_keeps_the_observed_value_object_document
 
 
 def test_a_materialized_temporal_node_still_populates_real_axis_values() -> None:
-    # D-31's construction optionality only affects a FRESH instance — a
-    # materialized read explicitly passes every fetched column, so the
-    # resulting node's axis fields are the row's own REAL values, never `None`.
+    # A materialized read passes every fetched column, so its axis fields contain
+    # the row's coordinates rather than fresh-instance defaults.
     port = RecordingPort(rows=[balance_row(in_z=dt.datetime(2024, 1, 1, tzinfo=dt.UTC))])
     db = db_for(BALANCE, port)
     fetched = db.transact(lambda tx: tx.find(mm.Balance.where(mm.Balance.id == 1)).result())
@@ -403,7 +381,7 @@ def test_stale_web_edit_balance_render_then_submit_gates_on_the_transported_edge
     node, edge = stale_web_edit.render_balance_milestone(db, id=1)
     assert node.value == Decimal("5.00")
     assert edge.transaction_time == in_z
-    assert edge.valid_time_or_none is None  # audit-only: no Valid-Time dimension declared
+    assert edge.valid_time_or_none is None  # Transaction-Time-Only declares no Valid Time
 
     stale_web_edit.submit_balance_edit(db, id=1, edge=edge, fields={"value": Decimal("9.00")})
     write_ops = [op for op in port.ops if op[0] == "write"]
@@ -413,8 +391,7 @@ def test_stale_web_edit_balance_render_then_submit_gates_on_the_transported_edge
         "update balance set out_z = ? where bal_id = ? and out_z = ? and in_z = ?"
     )
     assert close_binds[-1] == in_z  # the TRANSPORTED edge, never a re-resolved latest
-    # The chained replacement row carries the UNTOUCHED field too (the D-30
-    # observed-payload merge, proven at the recipe's own altitude).
+    # The chained replacement row preserves fields omitted from the submitted edit.
     chain_binds = cast("tuple[object, ...]", write_ops[1][2])
     assert "A-1" in chain_binds
     assert Decimal("9.00") in chain_binds
@@ -463,7 +440,7 @@ def test_stale_web_edit_branch_render_then_submit_pins_both_axes() -> None:
     close_sql = cast("str", write_ops[0][1])
     close_binds = cast("tuple[object, ...]", write_ops[0][2])
     assert close_sql.startswith("update branch set out_z = ")
-    assert in_z in close_binds  # the transported PROCESSING edge gates the close
+    assert in_z in close_binds  # the transported Transaction-Time coordinate gates the close
     # The correction's replacement rows carry the edited field.
     assert any("New Name" in cast("tuple[object, ...]", op[2]) for op in write_ops[1:])
 
