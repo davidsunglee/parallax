@@ -14,8 +14,7 @@ objects** interned in a transaction-scoped **Identity Map** and mutates them
 through operation-buffered setters. Two new modules carry the distinguishing
 behavior: `m-snapshot-read` (graph materialization) and `m-identity-map`
 (interning); `m-unit-work` sheds its identity promise (previously delegated to
-deferred `m-process-cache`, unproven, and disclaimed by the TypeScript
-implementation) and becomes purely operational.
+deferred `m-process-cache`, unproven) and becomes purely operational.
 
 **Identity scope is the unit of work; there is no session.** A
 Hibernate/SQLAlchemy-style scope spanning transactions was rejected: the
@@ -64,5 +63,5 @@ transaction — and on abort their visible state first reverts to
 as-materialized values, so an escaped object never shows discarded writes.
 Write-through outside transactions (the Reladomo/ActiveRecord model, where a
 bare setter executes standalone DML) was rejected as hidden I/O,
-consistent with the TypeScript decision that writes require explicit
-transactions (TS ADR 0021).
+consistent with the decision that writes require explicit
+transactions (ADR 0004).

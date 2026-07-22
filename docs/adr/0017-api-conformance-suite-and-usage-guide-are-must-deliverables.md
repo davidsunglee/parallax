@@ -9,7 +9,7 @@ deliverables; the mechanics are specified language-neutrally in
 
 **Considered options.** MUST vs SHOULD vs self-declared scope was the real
 trade-off. SHOULD was rejected because it recreates the discoverability failure the
-suite fixes: the TypeScript implementation invented this proof under the name
+suite fixes: an earlier implementation invented this proof under the name
 "showcase," found it caught developer-facing bugs the wire grade ignores, but no
 core document told the next implementer to build one or what makes it trustworthy.
 Self-declared scope was rejected because it removes the no-silent-gaps property —

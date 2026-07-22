@@ -14,8 +14,8 @@ the binding product definition; nothing here overrides it.
 
 ## Binding constraint — no cross-implementation prior art
 
-Other Parallax language implementations (e.g. `languages/typescript/`, its
-`ts-*` justfile recipes, tests, adapters, and operational docs) are
+Other Parallax language implementations — sibling `languages/*` targets, their
+justfile recipes, tests, adapters, and operational docs — are
 **non-normative and MUST NOT** be used as prior art or design input. Derive
 everything from `spec/python.md`, the core specs, `core/schemas/`, the
 compatibility corpus, and the conformance-adapter contract. Resolve gaps in

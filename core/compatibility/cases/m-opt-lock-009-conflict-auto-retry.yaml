@@ -12,7 +12,7 @@
 # sequence), so the m-case-format harness runs it against real Postgres exactly as it runs
 # `m-opt-lock-007`. What differs is the `uow` block: the loop is automatic, not caller-driven.
 # The API Conformance Suite additionally proves the auto-retry-via-flag path (no
-# caller catch/re-read), registered against this id in `covered.ts`.
+# caller catch/re-read).
 #
 # Account 2 (Linus) is read at version 1. A concurrent transaction commits first
 # (the `precondition`: balance 999.00, version 2). Then the automatic loop:

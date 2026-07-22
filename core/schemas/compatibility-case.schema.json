@@ -206,7 +206,7 @@
       "default": "harness"
     },
     "shape": {
-      "description": "The explicit case-shape discriminator: cases are self-describing, and the `oneOf` keys on this `const` for precise validation errors. The reference harness and the TypeScript conformance loader read this field directly instead of sniffing which keys happen to be present. The schema still enforces shape-consistent required members (per branch), so a mislabeled case cannot validate.",
+      "description": "The explicit case-shape discriminator: cases are self-describing, and the `oneOf` keys on this `const` for precise validation errors. The reference harness reads this field directly instead of sniffing which keys happen to be present. The schema still enforces shape-consistent required members (per branch), so a mislabeled case cannot validate.",
       "enum": [
         "read",
         "writeSequence",

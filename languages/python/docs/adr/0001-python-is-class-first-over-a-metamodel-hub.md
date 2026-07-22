@@ -1,9 +1,9 @@
 # Python is class-first over a metamodel hub
 
-The Python implementation inverts the TypeScript v1 direction (TS ADR 0001,
-descriptor-first with generated API): developers author SQLModel-style frozen
-Pydantic entity classes, and the canonical YAML/JSON descriptor is derived
-output, never hand-written application input. The in-memory metamodel is the
+The Python implementation is class-first rather than descriptor-first:
+developers author SQLModel-style frozen Pydantic entity classes, and the
+canonical YAML/JSON descriptor is derived output, never hand-written
+application input. The in-memory metamodel is the
 single hub with two frontends — entity classes on the developer path, direct
 ingestion of canonical YAML on the conformance path — so the adapter compiles
 and runs corpus cases without any Python model classes existing, and no code

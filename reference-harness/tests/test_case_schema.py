@@ -7,9 +7,7 @@ curated set of malformed documents — the legacy flat layout, a mislabeled
 extra key inside a closed group, and ``binds`` authored outside a statement
 entry — is REJECTED.
 
-This fixture set is the regression gate for the grouped layout; Phase 4 reuses it
-verbatim as the TypeScript validator's fidelity suite, so the accept/reject
-corpus stays in lockstep across the two harnesses.
+This fixture set is the regression gate for the grouped layout.
 """
 
 from __future__ import annotations

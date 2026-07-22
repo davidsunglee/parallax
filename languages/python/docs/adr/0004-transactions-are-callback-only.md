@@ -20,9 +20,9 @@ retry — is defined at the boundary. The one-off cost is a single lambda:
 per-operation transactions; we deliberately do not. A decorator form is a
 possible additive extension.
 
-Nested calls join the active transaction, as Reladomo and the TypeScript
-target do (TS ADR 0022; repo ADR 0005): the inner closure receives the same
-transaction — no savepoint, no independent commit — and commit, abort, and
+Nested calls join the active transaction, as Reladomo does (repo ADR 0005):
+the inner closure receives the same transaction — no savepoint, no independent
+commit — and commit, abort, and
 the bounded retry loop belong to the outermost boundary only, so an inner
 body re-executes only as part of the outermost retry. An inner failure marks
 the root transaction rollback-only before the exception propagates: even if

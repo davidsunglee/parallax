@@ -1115,8 +1115,8 @@ satisfies it:
   branch (an injected transient, retry counting, error surfacing, the emitted
   read-lock proof) that a single-connection harness cannot provoke. **Each
   language's API Conformance Suite MUST satisfy every `api-conformance`-lane
-  case**, with coverage enforced the way the suite's own partition assertion
-  (`covered.ts`) self-asserts today. This keeps every clarified branch specified in
+  case**, with coverage enforced by the suite's own partition assertion. This
+  keeps every clarified branch specified in
   core and executably covered, even the ones the harness itself cannot run. Every
   `boundary`-shape case is `api-conformance`; the read-lock matrix reads (object
   find locks, projection omits the lock, deep fetch locks every level, optimistic

@@ -548,7 +548,7 @@ mutations, exceptions, or exports.
   `retry_optimistic_conflicts=True`.
 - **Nesting, ownership, and participation mode.** A `db.transact` call while
   a transaction is already active on the current thread **joins** it —
-  aligning with Reladomo and the TypeScript target (ADR 0004): the inner
+  aligning with Reladomo (ADR 0004): the inner
   closure receives the **same** Parallax Transaction (no nested database
   transaction, no savepoint) and its return value is returned immediately;
   commit, abort, and the bounded retry loop belong exclusively to the

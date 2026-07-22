@@ -2570,8 +2570,7 @@ def _bytes_to_hex(value: Any) -> Any:
     lowercase hex STRING (a ``bytes`` object is not a JSON type the write-row schema
     admits), while the golden bind carries the raw bytes (a ``!!binary`` tag). Both
     collapse to the same lowercase hex text here so ① ↔ golden cross-checking and
-    table-state read-back compare a ``bytes`` column dialect-agnostically (the same
-    hex form the TypeScript adapter's ``toWire`` produces).
+    table-state read-back compare a ``bytes`` column dialect-agnostically.
     """
     if isinstance(value, (bytes, bytearray, memoryview)):
         return bytes(value).hex()
@@ -3474,8 +3473,7 @@ def _read_table(db: DatabaseProvider, entity: Entity) -> list[dict[str, Any]]:
     document_columns = {value_object["column"] for value_object in entity.value_objects}
     # A `bytes` column reads back as raw driver bytes (Postgres ``memoryview`` /
     # MariaDB ``bytes``); render it to lowercase hex text so a write round-trip's
-    # ``then.tableState`` compares dialect-agnostically to the authored hex string
-    # (the same wire form the TypeScript adapter's ``toWire`` produces on read).
+    # ``then.tableState`` compares dialect-agnostically to the authored hex string.
     bytes_columns = {
         attribute["column"] for attribute in entity.attributes if attribute.get("type") == "bytes"
     }
