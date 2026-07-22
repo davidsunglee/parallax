@@ -6,7 +6,8 @@ record fields are snake_case; canonical descriptor keys are camelCase.
 
 ``deserialize`` reads a descriptor document (JSON- or YAML-derived) into records;
 ``serialize`` re-emits the **canonical minimal** form, dropping every optional
-key whose value equals its schema default and normalizing ``pkGeneration`` plus
+key whose value equals the fact import re-derives — including an
+application-assigned ``pkGeneration`` on a declared key — and normalizing
 the single-vs-multi ``entity``/``entities`` form. ``canonicalize``
 composes the two, giving the fixpoint the no-drift guard and round-trip tests
 compare against: ``serialize(deserialize(canonical)) == canonical``.
@@ -181,7 +182,11 @@ def _attribute_from(value: object, where: str) -> Attribute:
         max_length=_opt_int(m, "maxLength", f"{where}.{name}"),
         read_only=_bool(m, "readOnly", default=False, where=f"{where}.{name}"),
         optimistic_locking=_bool(m, "optimisticLocking", default=False, where=f"{where}.{name}"),
-        pk_generator=_pk_from(pk, f"{where}.{name}") if pk is not None else None,
+        pk_generator=(
+            _pk_from(pk, f"{where}.{name}")
+            if pk is not None
+            else (PkGenerator(strategy="none") if primary_key else None)
+        ),
         default=m.get("default", UNSET),
     )
 
@@ -566,8 +571,6 @@ def deserialize(document: Mapping[str, object]) -> Metamodel:
 # Serialize (canonical minimal form).                                          #
 # --------------------------------------------------------------------------- #
 def _pk_to_json(pk: PkGenerator) -> object:
-    if pk.strategy == "none":
-        return "application-assigned"
     extras: dict[str, object] = {}
     if pk.sequence_name is not None:
         extras["name"] = pk.sequence_name
@@ -596,7 +599,7 @@ def _attribute_to_json(attr: Attribute) -> dict[str, object]:
         out["readOnly"] = True
     if attr.optimistic_locking:
         out["optimisticLocking"] = True
-    if attr.pk_generator is not None:
+    if attr.pk_generator is not None and attr.pk_generator.strategy != "none":
         out["pkGeneration"] = _pk_to_json(attr.pk_generator)
     if attr.default is not UNSET:
         out["default"] = attr.default

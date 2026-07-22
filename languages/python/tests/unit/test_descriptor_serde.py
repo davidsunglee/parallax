@@ -22,6 +22,7 @@ from parallax.core.descriptor import (
     Entity,
     Metamodel,
     NestedValueObject,
+    PkGenerator,
     Relationship,
     RelationshipJoin,
     RelationshipTarget,
@@ -71,7 +72,7 @@ def test_canonical_form_validates_against_metamodel_schema(path: Path) -> None:
     _validate(canonicalize(_raw(path)), _SCHEMA)
 
 
-def test_pk_generation_application_assigned_is_canonicalized() -> None:
+def test_pk_generation_application_assigned_is_omitted() -> None:
     document = {
         "entity": {
             "name": "A",
@@ -86,7 +87,15 @@ def test_pk_generation_application_assigned_is_canonicalized() -> None:
             ],
         }
     }
-    assert canonicalize(document) == document
+    canonical = {
+        "entity": {
+            "name": "A",
+            "table": "a",
+            "attributes": [{"name": "id", "type": "int64", "primaryKey": True}],
+        }
+    }
+    assert canonicalize(document) == canonical
+    assert canonicalize(canonical) == canonical
 
 
 def test_pk_generation_sequence_object_is_preserved() -> None:
@@ -132,7 +141,13 @@ def test_read_only_and_default_survive_round_trip() -> None:
         table="flag",
         mutability="transactional",
         attributes=(
-            Attribute(name="id", type="int64", column="id", primary_key=True),
+            Attribute(
+                name="id",
+                type="int64",
+                column="id",
+                primary_key=True,
+                pk_generator=PkGenerator(strategy="none"),
+            ),
             Attribute(name="on", type="boolean", column="on", read_only=True, default=True),
             Attribute(name="note", type="string", column="note", nullable=True, default=None),
         ),
@@ -462,7 +477,15 @@ def test_serialize_covers_optional_relationship_and_value_object_shapes() -> Non
         name="Rich",
         table="rich",
         mutability="transactional",
-        attributes=(Attribute(name="id", type="int64", column="id", primary_key=True),),
+        attributes=(
+            Attribute(
+                name="id",
+                type="int64",
+                column="id",
+                primary_key=True,
+                pk_generator=PkGenerator(strategy="none"),
+            ),
+        ),
         relationships=(
             DefiningRelationship(
                 name="peer",
@@ -492,7 +515,15 @@ def test_serialize_covers_optional_relationship_and_value_object_shapes() -> Non
     other = Entity(
         name="Other",
         table="other",
-        attributes=(Attribute(name="id", type="int64", column="id", primary_key=True),),
+        attributes=(
+            Attribute(
+                name="id",
+                type="int64",
+                column="id",
+                primary_key=True,
+                pk_generator=PkGenerator(strategy="none"),
+            ),
+        ),
     )
     metamodel = Metamodel(entities=(entity, other))
     document = serialize(metamodel)
