@@ -73,9 +73,9 @@ class Wallet(Entity, frozen=True):
 class Position(Bitemporal, frozen=True):
     """Mirror of ``models/position.yaml`` (full bitemporal): the write-family
     stories' own bitemporal-insert / ``insertUntil`` / ``updateUntil`` witness
-    (``m-bitemp-write-001/-003``, D-31). Every axis-governed attribute
+    (``m-bitemp-write-001/-003``). Every axis-governed attribute
     (``valid_start``/``valid_end``/``tx_start``/``tx_end``) is optional at
-    construction (D-31): a fresh instance names only its payload, and the
+    construction: a fresh instance names only its payload, and the
     write path stamps the rest."""
 
     __parallax__ = EntityConfig(table="position", namespace=_NS, mutability="transactional")

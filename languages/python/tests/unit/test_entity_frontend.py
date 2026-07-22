@@ -17,6 +17,8 @@ from parallax.core import (
     Entity,
     EntityConfig,
     EntityDefinitionError,
+    EntityRegistry,
+    FamilyRoot,
     Field,
     NameCollisionError,
     Rel,
@@ -502,3 +504,186 @@ def test_extending_both_temporal_bases_is_rejected() -> None:
             __parallax__ = EntityConfig(table="frontend_bad_dual_base")
 
             id: Attr[int] = Field(primary_key=True, pk_generator="none", type="int64")
+
+
+def test_extending_both_temporal_bases_is_rejected_bitemporal_first() -> None:
+    with pytest.raises(EntityDefinitionError, match="mutually exclusive"):
+
+        class _FrontendBadDualBaseSwap(  # pyright: ignore[reportUnusedClass]
+            Bitemporal, TxTemporal, frozen=True
+        ):
+            __parallax__ = EntityConfig(table="frontend_bad_dual_base_swap")
+
+            id: Attr[int] = Field(primary_key=True, pk_generator="none", type="int64")
+
+
+_DUAL_REGISTRY = EntityRegistry(parent=None)
+
+
+class _FrontendDualTxRoot(TxTemporal, frozen=True, registry=_DUAL_REGISTRY):
+    """A compiled Transaction-Time-Only family root for the one-compiled-base
+    rejection cases."""
+
+    __parallax__ = EntityConfig(
+        table="frontend_dual_tx_root",
+        inheritance=FamilyRoot(strategy="table-per-hierarchy", tag="kind"),
+    )
+
+    id: Attr[int] = Field(primary_key=True, pk_generator="none", type="int64")
+    a: Attr[str] = Field(max_length=8)
+
+
+class _FrontendDualBiRoot(Bitemporal, frozen=True, registry=_DUAL_REGISTRY):
+    """A compiled Bitemporal family root for the one-compiled-base rejection
+    cases."""
+
+    __parallax__ = EntityConfig(
+        table="frontend_dual_bi_root",
+        inheritance=FamilyRoot(strategy="table-per-hierarchy", tag="kind"),
+    )
+
+    id: Attr[int] = Field(primary_key=True, pk_generator="none", type="int64")
+    b: Attr[str] = Field(max_length=8)
+
+
+class _FrontendDualTxInterior(_FrontendDualTxRoot, frozen=True):
+    """An abstract-subtype interior member of the Transaction-Time family — the
+    intermediate hop for the indirect dual-base rejection case."""
+
+    __parallax__ = EntityConfig()
+
+
+def test_two_compiled_entity_bases_are_rejected_tx_family_first() -> None:
+    with pytest.raises(
+        EntityDefinitionError,
+        match=(
+            r"more than one compiled Parallax entity base "
+            r"\(_FrontendDualTxRoot, _FrontendDualBiRoot\)"
+        ),
+    ):
+
+        class _FrontendDualBothTxFirst(  # pyright: ignore[reportUnusedClass]
+            _FrontendDualTxRoot, _FrontendDualBiRoot, frozen=True
+        ):
+            __parallax__ = EntityConfig()
+
+
+def test_two_compiled_entity_bases_are_rejected_bitemporal_family_first() -> None:
+    with pytest.raises(
+        EntityDefinitionError,
+        match=(
+            r"more than one compiled Parallax entity base "
+            r"\(_FrontendDualBiRoot, _FrontendDualTxRoot\)"
+        ),
+    ):
+
+        class _FrontendDualBothBiFirst(  # pyright: ignore[reportUnusedClass]
+            _FrontendDualBiRoot, _FrontendDualTxRoot, frozen=True
+        ):
+            __parallax__ = EntityConfig()
+
+
+def test_two_compiled_entity_bases_via_an_intermediate_class_are_rejected() -> None:
+    with pytest.raises(
+        EntityDefinitionError,
+        match=(
+            r"more than one compiled Parallax entity base "
+            r"\(_FrontendDualTxInterior, _FrontendDualBiRoot\)"
+        ),
+    ):
+
+        class _FrontendDualBothViaInterior(  # pyright: ignore[reportUnusedClass]
+            _FrontendDualTxInterior, _FrontendDualBiRoot, frozen=True
+        ):
+            __parallax__ = EntityConfig()
+
+
+def test_user_declared_framework_root_marker_is_rejected() -> None:
+    # Framework-root status is metaclass-private identity (the fixed set
+    # Entity/TxTemporal/Bitemporal): a class-body marker cannot mint an inert,
+    # unregistered root, and the attempt fails loudly at class definition
+    # rather than silently compiling or silently skipping compilation.
+    with pytest.raises(EntityDefinitionError, match="not a user-declarable"):
+
+        class _FrontendForgedRoot(TxTemporal, frozen=True):  # pyright: ignore[reportUnusedClass]
+            __parallax_framework_root__ = True
+
+            id: Attr[int] = Field(primary_key=True, pk_generator="none", type="int64")
+
+    assert entity_record_of(Entity) is None
+    assert entity_record_of(TxTemporal) is None
+    assert entity_record_of(Bitemporal) is None
+
+
+def test_unannotated_temporal_name_assignment_is_rejected() -> None:
+    # A bare (unannotated) class-body assignment under a standard temporal name
+    # is a redeclaration too: without the rejection the injection step would
+    # silently overwrite the user's FieldSpec with the framework's own.
+    with pytest.raises(EntityDefinitionError, match=r"tx_start.*reserved"):
+
+        class _FrontendBareTemporalAssign(  # pyright: ignore[reportUnusedClass]
+            TxTemporal, frozen=True
+        ):
+            __parallax__ = EntityConfig(table="frontend_bare_temporal_assign")
+
+            id: Attr[int] = Field(primary_key=True, pk_generator="none", type="int64")
+            tx_start = Field(name="tx_start", column="weird_col")
+
+
+def test_temporal_name_redeclaration_below_the_family_root_is_rejected() -> None:
+    # The four standard temporal names are reserved family-wide, not only on
+    # the shape owner: a subclass rebinding one to a different column would
+    # corrupt the family's MRO-merged wire maps.
+    with pytest.raises(EntityDefinitionError, match=r"valid_start.*reserved.*family root"):
+
+        class _FrontendDualBadSub(  # pyright: ignore[reportUnusedClass]
+            _FrontendDualBiRoot, frozen=True
+        ):
+            __parallax__ = EntityConfig()
+
+            valid_start: Attr[dt.datetime] = Field(name="valid_start", column="other_col")
+
+
+def test_type_checking_mirror_matches_the_injection_tables() -> None:
+    # The `if TYPE_CHECKING:` blocks on TxTemporal/Bitemporal are the one
+    # hand-maintained static duplicate of the runtime injection metadata; drift
+    # would typecheck a surface the metaclass never installs (or hide one it
+    # does), so pin declared name order, annotation, and Field(name=, column=)
+    # against the injection tables themselves.
+    import ast
+    import inspect
+
+    from parallax.core.entity import base as entity_base
+
+    tree = ast.parse(inspect.getsource(entity_base))
+    mirrors: dict[str, list[tuple[str, str, dict[str, object]]]] = {}
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.ClassDef) and node.name in ("TxTemporal", "Bitemporal")):
+            continue
+        for stmt in node.body:
+            if not (
+                isinstance(stmt, ast.If)
+                and isinstance(stmt.test, ast.Name)
+                and stmt.test.id == "TYPE_CHECKING"
+            ):
+                continue
+            entries: list[tuple[str, str, dict[str, object]]] = []
+            for decl in stmt.body:
+                assert isinstance(decl, ast.AnnAssign), ast.dump(decl)
+                assert isinstance(decl.target, ast.Name)
+                assert isinstance(decl.value, ast.Call)
+                kwargs: dict[str, object] = {}
+                for keyword in decl.value.keywords:
+                    assert keyword.arg is not None
+                    kwargs[keyword.arg] = ast.literal_eval(keyword.value)
+                entries.append((decl.target.id, ast.unparse(decl.annotation), kwargs))
+            mirrors[node.name] = entries
+    columns = entity_base._STANDARD_TEMPORAL_COLUMNS  # pyright: ignore[reportPrivateUsage]
+    expected = {
+        base.__name__: [
+            (py_name, "Attr[_dt.datetime]", {"name": py_name, "column": columns[py_name]})
+            for py_name in attrs
+        ]
+        for base, attrs in entity_base._TEMPORAL_BASE_ATTRS.items()  # pyright: ignore[reportPrivateUsage]
+    }
+    assert mirrors == expected

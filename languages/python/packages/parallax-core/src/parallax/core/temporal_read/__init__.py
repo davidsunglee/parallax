@@ -112,7 +112,9 @@ class TemporalDimensionConstant:
     singleton per dimension of the closed two-member algebra, giving completion
     and static checking where a string offers neither. A string dimension
     spelling is rejected at statement build — a dual-accept surface would be an
-    alias.
+    alias. Instances are immutable: the statement surface accepts the constants
+    by identity, so a mutable dimension could silently flip what an accepted
+    constant lowers to.
     """
 
     __slots__ = ("_dimension",)
@@ -120,7 +122,16 @@ class TemporalDimensionConstant:
     _dimension: TemporalDimension
 
     def __init__(self, dimension: TemporalDimension) -> None:
-        self._dimension = dimension
+        # Frozen by hand, matching `Edge`: construction writes through
+        # `object.__setattr__`, and the overrides below refuse every later
+        # assignment or deletion.
+        object.__setattr__(self, "_dimension", dimension)
+
+    def __setattr__(self, name: str, value: object) -> None:
+        raise AttributeError(f"TemporalDimensionConstant is frozen; cannot assign {name!r}")
+
+    def __delattr__(self, name: str) -> None:
+        raise AttributeError(f"TemporalDimensionConstant is frozen; cannot delete {name!r}")
 
     @property
     def dimension(self) -> TemporalDimension:
@@ -132,7 +143,18 @@ class TemporalDimensionConstant:
 
 
 VALID_TIME: Final[TemporalDimensionConstant] = TemporalDimensionConstant("validTime")
+"""The Valid Time dimension constant: the sole developer-surface spelling of the
+``validTime`` dimension wherever a statement takes a dimension argument
+(``.history(VALID_TIME)``). A frozen module-level singleton — the statement
+surface accepts exactly this instance, by identity, never an equal copy or a
+string."""
+
 TX_TIME: Final[TemporalDimensionConstant] = TemporalDimensionConstant("transactionTime")
+"""The Transaction Time dimension constant: the sole developer-surface spelling
+of the ``transactionTime`` dimension wherever a statement takes a dimension
+argument (``.history(TX_TIME)``). A frozen module-level singleton — the
+statement surface accepts exactly this instance, by identity, never an equal
+copy or a string."""
 
 
 @dataclass(frozen=True, slots=True)

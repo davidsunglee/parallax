@@ -64,6 +64,13 @@ one framework Entity base:
 - `Bitemporal`, which additionally supplies read-only
   `valid_start`/`valid_end` Attributes mapped to `from_z`/`thru_z`.
 
+Read-only here means framework-stamped write semantics: a fresh instance that
+sets one of the supplied Attributes is rejected at construction/write time with
+the framework-owned-axis error, because the temporal write path derives every
+interval bound itself. It is not the record-level `readOnly` Attribute flag —
+the supplied Attributes compile with exactly the flags a hand-authored
+declaration carries, so the exported record stays byte-identical.
+
 The normalized Metamodel still exposes `AsOfAxisMetadata` through the core
 interface, keyed by `TemporalDimension`. This leaves a future additive seam for
 advanced column overrides without making ordinary Python authors repeat
