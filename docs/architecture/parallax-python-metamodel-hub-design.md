@@ -869,8 +869,8 @@ only through Entity declarations and is not passed to the hub separately.
   A Neutral Value is a value drawn from its declared Neutral Type's logical
   value space (`m-core`); there is no tagged wrapper type, and null belongs to
   no value space — a position admits null only through its own contract, such
-  as a `nullable` member or the Attribute Default's `DefaultValue(null)`
-  branch. The `Json` space is an immutable structured tree that excludes a
+  as a `nullable` member.
+  The `Json` space is an immutable structured tree that excludes a
   bare top-level null. An implementation uses idiomatic immutable
   host-language values while preserving the logical type.
 - Primary-Key Generation is the structured
@@ -961,11 +961,10 @@ only through Entity declarations and is not passed to the hub separately.
     max_length: integer | absent
     read_only: boolean
     optimistic_locking: boolean
-    default: NoDefault | DefaultValue(null | ValueOf(type))
   ```
 
   Value Object Attribute Metadata is not this protocol: nested values have no
-  Entity identity, Storage Location, generation, locking, or default facts.
+  Entity identity, Storage Location, generation, or locking facts.
 - Core **Index Identity** is `(Entity Identity, index name)`, and Index Metadata
   has the exact contract:
 
@@ -1073,12 +1072,7 @@ only through Entity declarations and is not passed to the hub separately.
   axes, table mappings, or other effective facts onto descendants. References
   are normalized to canonical entity identity, but semantic owner modules
   derive their consequences.
-- Attribute Metadata represents its `default` as the language-neutral narrow
-  algebra `AttributeDefault = NoDefault | DefaultValue(null | ValueOf(type))`,
-  where `ValueOf(type)` is the declared Neutral Type's logical value space
-  (`m-core`). A `DefaultValue` may contain null — null belongs to no Neutral
-  Value space, so the slot admits it explicitly — and omitted and explicitly
-  null defaults stay distinct. Other optional properties use ordinary absence
+- Optional Attribute Metadata properties use ordinary absence
   when null is not a valid value, and properties with semantic defaults
   normalize omission to the default value. There is no tagged value wrapper,
   generic `Optional`, `Presence`, descriptor `Unset`, or public parser
@@ -2018,7 +2012,7 @@ exposes `UnresolvedMetamodel`, `CandidateMetamodel`, `Metamodel`,
 `ValueObjectIdentity`, `ValueObjectAttributeIdentity`,
 `ValueObjectMetadata`, `NestedValueObjectMetadata`,
 `ValueObjectAttributeMetadata`, `AsOfAxisMetadata`, `InheritanceMetadata`,
-`AttributeDefault`, `NoDefault`, `DefaultValue`, `NotPrimaryKey`, `PrimaryKey`,
+`NotPrimaryKey`, `PrimaryKey`,
 `PrimaryKeyGeneration`, `ApplicationAssigned`, `Max`, `Sequence`, and the nested member
 protocols. It also exposes `FacetKey` for first-party semantic modules; the
 generic `Metamodel.facet(...)` method is not a top-level developer
@@ -2238,8 +2232,8 @@ Acceptance requires:
   configuration is complete and default-resolved, and a non-primary-key
   attribute cannot carry generation;
 - the exact Attribute Metadata protocol is self-identifying and contains only
-  identity, Neutral Type, Storage Location, primary-key sum, normalized scalar
-  flags, and Attribute Default; it has no duplicate name or descriptor-shaped
+  identity, Neutral Type, Storage Location, primary-key sum, and normalized
+  scalar flags; it has no duplicate name or descriptor-shaped
   fields;
 - Index Metadata is self-identifying, local-only, component-ordered, and uses
   Attribute Identities without duplicated column names;
@@ -2250,10 +2244,6 @@ Acceptance requires:
 - class-free identity/local-name lookup is non-throwing, local-only, and
   expected amortized `O(1)`; misses return absence and ordered enumeration is
   separate;
-- Attribute Default is exactly
-  `NoDefault | DefaultValue(null | ValueOf(type))`, its value position typed
-  by the declared Neutral Type; no tagged value wrapper, descriptor sentinel,
-  or generic presence wrapper appears in the interface;
 - top-level, nested, and inner-attribute Value Object metadata are distinct
   recursive protocols, so nested members cannot carry storage facts;
 - every inheritable Entity Metadata member uses the accepted `declared_`
@@ -2529,9 +2519,6 @@ Acceptance requires:
   `MetamodelLookupError` codes;
 - class constructor order does not affect `models.entities` or export, while
   each class's member order is preserved exactly;
-- descriptor-backed and alternate Metamodel implementations produce the same
-  `AttributeDefault` variants, including distinct no-default and explicit-null
-  cases;
 - both implementations expose the same three recursive Value Object shapes and
   preserve declaration order at every depth;
 - `parallax.core.model_formation` implements the accepted Formation Manifest,

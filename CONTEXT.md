@@ -92,7 +92,7 @@ _Avoid_: Relationship ID, target name, relationship string, Python descriptor
 The self-identifying, read-only Metamodel Interface view of one locally
 declared Entity scalar attribute. It contains its Attribute Identity, Neutral
 Type, Storage Location, a Not-Primary-Key or Primary-Key state (the latter owns
-Primary-Key Generation), normalized flags, and Attribute Default; it never
+Primary-Key Generation), and normalized flags; it never
 contains inherited context or descriptor spellings.
 _Avoid_: attribute record, reflected field, effective attribute
 
@@ -108,8 +108,8 @@ _Avoid_: type string, database type, Python type annotation
 A value drawn from the declared Neutral Type's `m-core` logical value space:
 boolean, integer, float, decimal, string, bytes, date, time, timestamp, UUID,
 or an immutable JSON value. Null is not a Neutral Value; a position admits
-null only through its own contract, such as a nullable member or
-`DefaultValue(null)`. Languages represent these idiomatically while preserving
+null only through its own contract, such as a nullable member.
+Languages represent these idiomatically while preserving
 their logical type and immutability.
 _Avoid_: untyped object, descriptor literal, database value
 
@@ -153,12 +153,6 @@ The symmetric, execution-ready description of one relationship direction,
 including its join, cardinality, reverse name, dependency, and ordering. It is
 derived in the Relationship Facet rather than stored as a local declaration.
 _Avoid_: relationship declaration, descriptor relationship, join configuration
-
-**Attribute Default**:
-The declared default state of an attribute: either No Default or a Default
-Value, which may itself be null. Absence and an explicitly declared null are
-different states.
-_Avoid_: optional value, nullable default, unset sentinel
 
 **Primary-Key Generation**:
 The normalized strategy by which a primary-key value is supplied: Application

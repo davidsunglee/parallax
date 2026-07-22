@@ -378,8 +378,6 @@ PrimaryKey =
     NotPrimaryKey
   | PrimaryKey(generation: PrimaryKeyGeneration)
 
-AttributeDefault = NoDefault | DefaultValue(value: null | ValueOf(type))
-
 AttributeMetadata
   identity: AttributeIdentity
   type: NeutralType
@@ -389,15 +387,9 @@ AttributeMetadata
   max_length: positive integer | absent
   read_only: boolean
   optimistic_locking: boolean
-  default: AttributeDefault
 ```
 
-`ValueOf(type)` is dependent notation for the logical value space of the
-containing Attribute's declared Neutral Type (`m-core` `NeutralValue`): the
-declaration already types the slot, so the value carries no tagged wrapper.
-Null belongs to no Neutral Value space, so the `DefaultValue` branch admits it
-explicitly — `DefaultValue(null)` is legal for every declared type and is
-distinct from `NoDefault`. Primary-key
+Primary-key
 generation is available only through the `PrimaryKey` branch; a
 non-primary-key attribute cannot carry a meaningless ApplicationAssigned,
 Max, or Sequence value. Frontends normalize an omitted generator on a declared

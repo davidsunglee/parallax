@@ -347,7 +347,6 @@ bare value (`qty: Attr[int] = 5`) fails at class creation. The complete
 | `precision=`, `scale=` | `int` | the required `Decimal(precision, scale)` parameters — mandatory together on a `decimal.Decimal` member, forbidden on every other type |
 | `read_only=` | `bool` | framework-computed member |
 | `optimistic_locking=` | `bool` | names the version column |
-| `default=` | any value, including `None` | the Attribute Default (below) |
 
 **Nullability is annotation-only.** `Attr[int | None]` (equivalently
 `Optional[int]`) declares `nullable=True`; `Attr[int]` declares
@@ -358,23 +357,6 @@ below; a `decimal.Decimal` member requires `attr(precision=..., scale=...)`
 because the core `Decimal` variant has no default parameters, a Value Object
 class reference declares an embedded composite, and `tuple[VO, ...]` declares
 a Many occurrence.
-
-**Defaults distinguish absence from null by presence, exactly like the
-canonical descriptor.** An omitted `default=` parameter is `NoDefault`;
-`attr(default=None)` is `DefaultValue(null)` — legal for every declared type
-and distinct from `NoDefault`; any other value is `DefaultValue(value)` in
-the declared type's value space. The not-passed sentinel is private and never
-exported.
-
-```python
-class Product(Entity, table="product"):
-    id: Attr[int] = attr(primary_key=True)
-    status: Attr[str] = attr(default="draft")      # DefaultValue("draft")
-    discount: Attr[Decimal | None] = attr(         # DefaultValue(null)
-        precision=5, scale=2, default=None,
-    )
-    note: Attr[str | None]                         # NoDefault (omitted)
-```
 
 Generation values and structured narrowing use the same option surface — the
 corpus `max` and `sequence` spellings and the two-variant scalar families
@@ -514,7 +496,7 @@ declarations. `Attr[Address]` is a One occurrence, `Attr[Address | None]` is
 One-nullable, `Attr[tuple[Address, ...]]` is Many (never nullable; a
 `| None` Many surfaces at seal as `value-object-many-nullable`). On Value
 Object scalar members, `attr(...)` admits only `name=`; Entity-only options
-(storage, keys, generation, locking, defaults) fail at class creation. An
+(storage, keys, generation, locking) fail at class creation. An
 Entity-level occurrence member additionally admits `column=`, the occurrence's
 Structured Column override. Containment cycles and empty composites are the
 seal-time `value-object-*` issues shared with the descriptor frontend.

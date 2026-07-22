@@ -174,10 +174,7 @@ local declarations. `models.meta(...)` therefore remains the declaration view;
 callers obtain contextual effective answers only through the owning facet.
 
 The interface preserves semantic absence without preserving irrelevant source
-spelling. In particular, an Attribute Default is the narrow algebra
-`NoDefault | DefaultValue(null | ValueOf(type))` — `ValueOf(type)` being the
-declared Neutral Type's logical value space — so an absent default differs
-from `DefaultValue(null)`; generic Optional/Presence wrappers and
+spelling; generic Optional/Presence wrappers and
 descriptor-owned unset sentinels are not part of the contract.
 
 Ordering distinguishes sets from declared sequences. Entity enumeration and
@@ -364,11 +361,10 @@ Neutral Type algebra—Boolean, Int32, Int64, Float32, Float64, String, Bytes,
 Date, Time, Timestamp, Uuid, Json, and Decimal with precision and scale—and the
 corresponding Neutral Value vocabulary. Metadata, operation literals,
 assignments, and neutral rows reuse those dependency-free values. Accepted
-Attribute Metadata exposes Neutral Type and its Attribute Default contains
-null or a type-compatible Neutral Value, not descriptor text or an untyped
+Attribute Metadata exposes Neutral Type, not descriptor text or an untyped
 object.
-`m-descriptor` alone parses and renders spellings such as `decimal(18,2)` and
-serialized values. Behavioral modules therefore never parse type strings.
+`m-descriptor` alone parses and renders spellings such as `decimal(18,2)`.
+Behavioral modules therefore never parse type strings.
 
 Primary-Key Generation is normalized to the closed algebra
 `ApplicationAssigned | Max | Sequence`. Sequence carries a required name and
@@ -392,7 +388,6 @@ AttributeMetadata
   max_length: integer | absent
   read_only: boolean
   optimistic_locking: boolean
-  default: NoDefault | DefaultValue(null | ValueOf(type))
 ```
 
 Language authoring may omit a conventional physical name, but the Metamodel
@@ -405,8 +400,8 @@ override, and deterministically exports the same abbreviated canonical form.
 It does not duplicate `identity.name` as a second `name` member. An omitted
 allocator on a primary-key Attribute normalizes to
 `PrimaryKey(ApplicationAssigned)`. Value Object Attribute Metadata remains a
-separate nested shape without Entity identity, column, generation, locking, or
-default facts.
+separate nested shape without Entity identity, column, generation, or locking
+facts.
 
 Read-only interface protocols use the full `Metadata` suffix:
 `EntityMetadata`, `AttributeMetadata`, and their peers. Symmetric

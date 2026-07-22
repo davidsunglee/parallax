@@ -1,6 +1,5 @@
 """DB-free unit tests for the metamodel schema and derivation contract: the
-inheritance and valueObject extensions, plus the typed attribute-default
-encodings.
+inheritance and valueObject extensions.
 
 These pin the invariants that need no database:
 
@@ -12,10 +11,7 @@ These pin the invariants that need no database:
   and vocabulary (``discriminator`` / ``discriminatorValue``), enforces the
   role-conditional ``table`` / ``attributes`` requirements (resolved Q5), and the
   harness derives a concrete subtype's full inherited attribute chain (plus, for
-  table-per-hierarchy, the synthesized tag column) from the ancestry;
-* the per-type ``default`` subschemas (m-descriptor "Value encodings") accept a
-  well-encoded or explicit-null default for every neutral-type spelling and
-  reject type-mismatched or malformed encodings at the schema phase.
+  table-per-hierarchy, the synthesized tag column) from the ancestry.
 
 The full tag-filter and Postgres read/write golden SQL is exercised end-to-end
 against real Postgres by the compatibility suite (m-inheritance-*); these tests
@@ -474,141 +470,6 @@ def test_schema_rejects_two_optimistic_locking_attributes_on_one_entity() -> Non
     assert not _is_valid(descriptor), (
         "an entity declaring two optimisticLocking attributes must be rejected "
         "at the schema level (maxContains: 1)"
-    )
-
-
-# --- typed attribute defaults: encodings are schema-constrained per type -----
-
-
-def test_default_bearing_model_validates() -> None:
-    """The default-bearing corpus model carries every `default` presence form the
-    contract distinguishes (m-descriptor "Value encodings"): a canonical decimal
-    string at the declared scale, a UTC `+00:00` timestamp instant, a native
-    boolean, and an explicit `default: null` (`DefaultValue(null)`, distinct from
-    the omitted-key `NoDefault` on `id`)."""
-    model = load_model(COMPATIBILITY_ROOT, "models/preference.yaml")
-    assert _is_valid(model.descriptor)
-    attributes = {a["name"]: a for a in model.root_entity.definition["attributes"]}
-    assert "default" not in attributes["id"]  # omitted key == NoDefault
-    assert attributes["threshold"]["default"] == "12.30"
-    assert attributes["activatedAt"]["default"] == "2024-01-01T00:00:00+00:00"
-    assert attributes["notify"]["default"] is True
-    assert "default" in attributes["nickname"]  # present null == DefaultValue(null)
-    assert attributes["nickname"]["default"] is None
-
-
-@pytest.mark.parametrize(
-    ("attribute", "bad_default"),
-    [
-        ("threshold", 12.30),  # decimal must be a canonical string, not a JSON number
-        ("threshold", "12.3.0"),  # not a decimal digit string
-        ("activatedAt", "2024-01-01"),  # timestamp needs the full UTC instant form
-        ("activatedAt", "2024-01-01T00:00:00Z"),  # the offset spelling is +00:00, never Z
-        ("id", "7"),  # int64 must be a JSON integer, not a digit string
-        ("notify", "true"),  # boolean must be a JSON boolean, not a string
-    ],
-)
-def test_schema_rejects_type_mismatched_defaults(attribute: str, bad_default: object) -> None:
-    """A `default` whose encoding does not match the declared `type` MUST fail the
-    schema phase (the per-type `if/then` subschemas), never leak through to the
-    semantic phase as typed garbage."""
-    model = load_model(COMPATIBILITY_ROOT, "models/preference.yaml")
-    descriptor = copy.deepcopy(model.descriptor)
-    target = next(a for a in descriptor["entity"]["attributes"] if a["name"] == attribute)
-    target["default"] = bad_default
-    assert not _is_valid(descriptor), f"{attribute} default {bad_default!r} must be rejected"
-
-
-def _descriptor_with_appended_default(spelling: str, default: object) -> dict:
-    """A deep copy of the preference model with one synthetic attribute of the
-    given neutral-type spelling carrying the given default appended."""
-    model = load_model(COMPATIBILITY_ROOT, "models/preference.yaml")
-    descriptor = copy.deepcopy(model.descriptor)
-    descriptor["entity"]["attributes"].append(
-        {"name": "probe", "type": spelling, "column": "probe", "default": default}
-    )
-    return descriptor
-
-
-# One well-encoded default per neutral-type spelling (m-descriptor "Value
-# encodings"). `json` is the deliberately unconstrained branch: its value space
-# is the JSON data model's structured content, so a nested null inside it is
-# ordinary content (m-core), while a TOP-LEVEL null on any spelling is always
-# DefaultValue(null) — covered by the null-parametrized test below.
-_WELL_ENCODED_DEFAULTS = [
-    ("boolean", True),
-    ("int32", 7),
-    ("int64", 9000000000),
-    ("float32", 0.5),
-    ("float64", -2.5),
-    ("decimal(9,2)", "12.30"),
-    ("string", "plain"),
-    ("bytes", "AQID"),
-    ("date", "2024-01-01"),
-    ("time", "08:30:00.25"),
-    ("timestamp", "2024-06-01T12:00:00.000001+00:00"),
-    ("uuid", "123e4567-e89b-12d3-a456-426614174000"),
-    ("json", {"tags": ["a", None], "note": None}),
-]
-
-_ALL_SPELLINGS = [spelling for spelling, _ in _WELL_ENCODED_DEFAULTS]
-
-# Encodings each constrained spelling's subschema must reject: plain type
-# mismatches plus the regex boundaries (canonical decimal digits, two-digit
-# date/time fields, the microsecond fractional-digit cap, base64 padding,
-# lowercase uuid hex). `json` has no entry — every JSON value is a legal
-# `json` default by design.
-_REJECTED_DEFAULTS = [
-    ("boolean", "true"),  # boolean must be a JSON boolean, not a string
-    ("int32", "7"),  # int must be a JSON integer, not a digit string
-    ("int64", 7.5),  # a fractional number is not an integer
-    ("float32", "0.5"),  # float must be a JSON number, not a string
-    ("float64", "NaN"),  # no NaN encoding exists; the string spelling is a mismatch
-    ("decimal(9,2)", "012.30"),  # superfluous leading zero breaks the canonical digits
-    ("decimal(9,2)", "+12.30"),  # a leading + is invalid; only - is a legal sign
-    ("string", 7),  # string must be a JSON string
-    ("bytes", "%%not-base64%%"),  # not base64 at all
-    ("bytes", "AQI"),  # missing RFC 4648 padding
-    ("date", "2024-1-1"),  # calendar fields are two-digit
-    ("time", "8:30"),  # wall-clock fields are two-digit hh:mm:ss
-    ("time", "08:30:00.1234567"),  # seven fractional digits exceed microseconds
-    ("timestamp", "2024-06-01T12:00:00.1234567+00:00"),  # microsecond cap again
-    ("uuid", "not-a-uuid"),  # not a hyphenated UUID
-    ("uuid", "123E4567-E89B-12D3-A456-426614174000"),  # uppercase is non-canonical
-]
-
-
-@pytest.mark.parametrize(("spelling", "default"), _WELL_ENCODED_DEFAULTS)
-def test_schema_accepts_a_well_encoded_default_for_every_spelling(
-    spelling: str, default: object
-) -> None:
-    """Every neutral-type spelling admits a default in its declared wire encoding
-    (m-descriptor "Value encodings") — the per-type subschemas constrain, never
-    forbid, a typed default."""
-    assert _is_valid(_descriptor_with_appended_default(spelling, default)), (
-        f"well-encoded {spelling} default {default!r} must validate"
-    )
-
-
-@pytest.mark.parametrize("spelling", _ALL_SPELLINGS)
-def test_schema_accepts_a_null_default_for_every_spelling(spelling: str) -> None:
-    """`default: null` is `DefaultValue(null)` and is legal for every declared type
-    (m-descriptor "`default` presence semantics") — each per-type subschema admits
-    null alongside the typed encoding."""
-    assert _is_valid(_descriptor_with_appended_default(spelling, None)), (
-        f"default: null on a {spelling} attribute must validate"
-    )
-
-
-@pytest.mark.parametrize(("spelling", "bad_default"), _REJECTED_DEFAULTS)
-def test_schema_rejects_a_malformed_default_for_every_constrained_spelling(
-    spelling: str, bad_default: object
-) -> None:
-    """A default whose encoding mismatches the declared spelling — wrong JSON type
-    or a string outside the canonical pattern — fails the schema phase for every
-    constrained spelling (all but the deliberately unconstrained `json`)."""
-    assert not _is_valid(_descriptor_with_appended_default(spelling, bad_default)), (
-        f"{spelling} default {bad_default!r} must be rejected"
     )
 
 

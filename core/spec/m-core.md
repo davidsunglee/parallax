@@ -27,10 +27,9 @@ parameter, a zero precision (e.g. `Decimal(0, 9)`), or a scale exceeding the
 precision — is unconstructible, so every structured `Decimal` value has a
 serializable descriptor spelling (`m-descriptor` "Type spellings").
 
-Descriptor type spellings and serialized value encodings belong to
-`m-descriptor` alone (`m-descriptor` "Type spellings" / "Value encodings"): a
-structured `NeutralType` value carries no spelling, and no behavioral module
-parses a type string or a serialized value.
+Descriptor type spellings belong to `m-descriptor` alone (`m-descriptor`
+"Type spellings"): a structured `NeutralType` value carries no spelling, and
+no behavioral module parses a type string.
 
 An implementation **MUST** support the full variant set and **MUST** map each
 variant to an equivalent concrete column type through the dialect seam
@@ -60,11 +59,13 @@ variant to an equivalent concrete column type through the dialect seam
 
 A `NeutralValue` is a value drawn from the declared `NeutralType`'s logical
 value space. There is no tagged wrapper type: every position that carries a
-`NeutralValue` — an attribute default (`m-metamodel` `AttributeDefault`), an
-operation literal or assignment value (`m-op-algebra`), a neutral row cell —
+`NeutralValue` — an operation literal or assignment value (`m-op-algebra`), a
+neutral row cell —
 is already typed by its declaration, so the declared type identifies the value
 space and a stored tag could never carry information the declaration does not.
-Wire encodings of these values belong to `m-descriptor` alone.
+Wire encodings of these values belong to the serde seam that carries them
+(the `m-op-algebra` operation encoding, the `m-case-format` fixture forms),
+never to a behavioral algorithm.
 
 | `NeutralType` | Logical value space | Equality / normalization laws |
 |---|---|---|
@@ -84,17 +85,16 @@ Wire encodings of these values belong to `m-descriptor` alone.
 content; a self-describing payload is that type's job, never a tagged scalar.
 
 The float value spaces are deliberately finite. NaN admits no total equality
-law and the non-finite values have no portable descriptor encoding
-(`m-descriptor` encodes a float value as a JSON number), so no
-`NeutralValue`-carrying position — a default, a literal, an assignment, a row
+law and the non-finite values have no portable serialized encoding
+(the carrying serde seams encode a float value as a JSON number), so no
+`NeutralValue`-carrying position — a literal, an assignment, a row
 cell — can hold one. What a dialect column may physically store is the dialect
 seam's concern, outside the neutral contract.
 
 Null is not a member of any value space — `Json` included: JSON `null` is
 ordinary structured content *inside* a `Json` value, never a value of the
 space itself. A position admits null only through its own contract (a
-`nullable` member, or `m-metamodel`'s `AttributeDefault`, whose
-`DefaultValue(null)` branch is legal for every declared type), so a null at
+`nullable` member), so a null at
 such a position always denotes that contractual null rather than a value drawn
 from any value space, and null equals only itself.
 
