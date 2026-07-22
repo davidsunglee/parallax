@@ -66,11 +66,13 @@
     "TooManyResultsFound",
     "Transaction",
     "TransactionOptionConflictError",
+    "TransactionTimePinReadOnlyError",
     "WriteLoweringError",
     "connect",
     "find",
     "find_history",
     "lower_temporal_close",
-    "lower_write"
+    "lower_write",
+    "validate_source_pin"
   ]
 }

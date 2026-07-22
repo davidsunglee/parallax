@@ -1,0 +1,49 @@
+# A finite Valid-Time-axis pinned view is WRITABLE (m-bitemp-write): the writable
+# half of the finite-pin mutation contrast — mutating a view pinned at a finite
+# Valid-Time instant is the retroactive correction, so the mutation verb accepts
+# the finite Valid-Time pin and raises no application-lifecycle error. The
+# correction's flush lowering is the m-bitemp-write RECTANGLE SPLIT, pinned by
+# m-bitemp-write-006 and m-identity-map-011; this case pins the verb-time
+# ACCEPTANCE itself. (Contrast the finite Transaction-Time pin, which is
+# read-only — m-bitemp-write-016.)
+#
+# This is an api-conformance-lane case: its defining observable is the ABSENCE of
+# a raised application-lifecycle error at the mutate verb, which the
+# single-connection wire harness cannot grade, so the harness schema-validates it
+# and each language's conformance run lane executes the step, reporting an empty
+# error observation. Step 0 pins Position id 1 at the finite Valid-Time instant
+# 2024-03-01 (Transaction Time defaulted Latest) — the rectangle-split HEAD value
+# 100.00, a WRITABLE Valid-Time-past view. Step 1 mutates it (`set` value 250.00):
+# the verb accepts the finite Valid-Time pin (no expectError) and the change stays
+# in memory in this closed-world lane — roundTrips 0, no DML.
+model: models/position.yaml
+lane: api-conformance
+tags: [m-bitemp-write, m-temporal-read, bitemporal, temporal, as-of, retroactive, scenario, slice-snapshot-1]
+shape: scenario
+when:
+  scenario:
+    - targetEntity: Position
+      find:
+        asOf:
+          operand:
+            eq:
+              attr: Position.id
+              value: 1
+          dimension: validTime
+          coordinate: "2024-03-01T00:00:00+00:00"
+      roundTrips: 1
+      note: pin id 1 at the finite Valid-Time instant 2024-03-01 (Transaction Time defaulted Latest) — a WRITABLE Valid-Time-past view (the head, 100.00)
+      statements:
+        - sql:
+            postgres: select t0.pos_id, t0.acct_num, t0.val, t0.from_z, t0.thru_z, t0.in_z, t0.out_z from position t0 where t0.pos_id = ? and t0.from_z <= ? and t0.thru_z > ? and t0.out_z = ?
+          binds: [1, "2024-03-01T00:00:00+00:00", "2024-03-01T00:00:00+00:00", infinity]
+      expectRows:
+        - { pos_id: 1, acct_num: A, val: 100.00, from_z: "2024-01-01T00:00:00+00:00", thru_z: "2024-06-01T00:00:00+00:00", in_z: "2024-04-01T00:00:00+00:00", out_z: infinity }
+    - action: mutate
+      "on": 0
+      set:
+        value: 250.00
+      roundTrips: 0
+      note: mutating a finite Valid-Time-axis view is ACCEPTED (the writable retroactive correction) — no error, no DML in this closed-world lane
+then:
+  roundTrips: 1

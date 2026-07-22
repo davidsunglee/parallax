@@ -808,6 +808,22 @@ _VO_OPT_LOCK_CONFLICT_REASON: Final[str] = (
     "compile/run conformance lanes; no idiomatic story was authored for this VO-bearing "
     "optimistic-conflict shape, matching this registry's own m-opt-lock bucket reason"
 )
+# The finite-pin mutation contrast pair (a finite Valid-Time pin stays writable;
+# a finite Transaction-Time pin is read-only) is graded end-to-end by the run
+# sweep through the conformance adapter's `errors` observation, and the
+# developer-facing refusal itself is unit-pinned at every keyed verb.
+_BITEMP_PIN_CONTRAST_REASON: Final[str] = (
+    "the finite-pin mutation contrast witness (a finite Valid-Time pin stays writable — "
+    "the retroactive correction; a finite Transaction-Time pin is read-only, "
+    "`transaction-time-pin-read-only`): graded end-to-end by the run sweep's "
+    "`expectError` grading through the adapter's `errors` observation "
+    "(`m-conformance-adapter`), and the developer-facing refusal itself is unit-pinned "
+    "at every keyed verb (`TransactionTimePinReadOnlyError`, "
+    "test_transaction_writes.py); no idiomatic story exists beyond that refusal — the "
+    "writable half's full rectangle-split lowering already has its own idiomatic story "
+    "(`m-bitemp-write-006`)"
+)
+
 _VO_SCENARIO_COMBO_REASON: Final[str] = (
     "a scenario combining a managed (instance-form) find, a MATERIALIZING "
     "predicate-write resolving read (row-form, the VO document omitted — the "
@@ -962,6 +978,9 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-value-object-045": _VO_BATCH_WRITE_REASON,
     "m-value-object-046": _VO_OPT_LOCK_CONFLICT_REASON,
     "m-value-object-047": _VO_SCENARIO_COMBO_REASON,
+    # -- m-bitemp-write: the finite-pin mutation contrast pair ---------------- #
+    "m-bitemp-write-015": _BITEMP_PIN_CONTRAST_REASON,
+    "m-bitemp-write-016": _BITEMP_PIN_CONTRAST_REASON,
 }
 
 

@@ -297,6 +297,98 @@ def test_run_case_error_on_an_engine_gap() -> None:
     assert envelope["diagnostics"][0]["code"] == "run-failed"
 
 
+# --------------------------------------------------------------------------- #
+# The api-conformance-lane scenario dispatch: an `expectError`-bearing scenario #
+# stays in the compile/run lanes (the engine grades the raised application-    #
+# lifecycle error through the `errors` observation); every other one is still  #
+# lane-honestly classified out to the API Conformance Suite.                   #
+# --------------------------------------------------------------------------- #
+_PIN_READ_ONLY_CASE = (
+    case_format.default_cases_dir() / "m-bitemp-write-016-transaction-time-pin-read-only.yaml"
+)
+_ACCESS_WITNESS_CASE = (
+    case_format.default_cases_dir() / "m-snapshot-read-009-closed-world-unloaded-access.yaml"
+)
+
+
+class _PositionPort:
+    """A port returning the superseded position milestone the pin-read-only
+    contrast's find step selects (no Docker)."""
+
+    def execute(self, sql: str, binds: Sequence[object]) -> list[Row]:
+        return [
+            {
+                "pos_id": 1,
+                "acct_num": "A",
+                "val": decimal.Decimal("90.00"),
+                "from_z": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+                "thru_z": dt.datetime(9999, 12, 31, tzinfo=dt.UTC),
+                "in_z": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+                "out_z": dt.datetime(2024, 4, 1, tzinfo=dt.UTC),
+            }
+        ]
+
+    def execute_write(self, sql: str, binds: Sequence[object]) -> int:  # pragma: no cover
+        raise NotImplementedError
+
+    def transaction[T](self, body: Callable[[DbPort], T]) -> T:  # pragma: no cover
+        return body(self)
+
+
+def test_run_case_grades_a_scenario_expect_error_through_the_errors_observation() -> None:
+    envelope = adapter.run_case(_PIN_READ_ONLY_CASE, "postgres", _PositionPort())
+    jsonschema.validate(envelope, _SCHEMA)
+    assert envelope["status"] == "ok", envelope
+    assert envelope["observations"]["roundTrips"] == 1
+    assert envelope["observations"]["errors"] == [
+        {"at": "/scenario/1", "errorClass": "transaction-time-pin-read-only"}
+    ]
+
+
+def test_compile_case_compiles_an_expect_error_scenarios_find_steps() -> None:
+    envelope = adapter.compile_case(_PIN_READ_ONLY_CASE, "postgres")
+    jsonschema.validate(envelope, _SCHEMA)
+    assert envelope["status"] == "ok", envelope
+    assert envelope["roundTrips"] == 1
+    assert [e["casePointer"] for e in envelope["emissions"]] == ["/scenario/0/find"]
+
+
+def test_scenario_lane_without_expect_error_is_still_dispatched_out() -> None:
+    compile_envelope = adapter.compile_case(_ACCESS_WITNESS_CASE, "postgres")
+    assert compile_envelope["status"] == "error"
+    assert "api-conformance" in compile_envelope["diagnostics"][0]["message"]
+    run_envelope = adapter.run_case(_ACCESS_WITNESS_CASE, "postgres", port=None)  # type: ignore[arg-type]
+    assert run_envelope["status"] == "error"
+    assert "api-conformance" in run_envelope["diagnostics"][0]["message"]
+
+
+def test_scenario_actions_all_mutate_guards_malformed_and_action_free_documents() -> None:
+    def scenario_case(document: dict[str, object]) -> case_format.Case:
+        return case_format.Case(
+            path=Path("m-op-algebra-001-x.yaml"),
+            case_id="m-op-algebra-001",
+            shape="scenario",
+            tags=("m-op-algebra", "slice-snapshot-1"),
+            model="models/orders.yaml",
+            document=document,
+        )
+
+    checks: list[tuple[dict[str, object], bool]] = [
+        ({}, False),  # no `when` at all
+        ({"when": {"scenario": "not-a-list"}}, False),
+        # No lifecycle action step at all: nothing for the mutate lane to
+        # grade, so the ordinary api-conformance dispatch still applies.
+        ({"when": {"scenario": [{"find": {}, "targetEntity": "Order"}]}}, False),
+        ({"when": {"scenario": [{"action": "mutate"}, {"action": "access"}]}}, False),
+        ({"when": {"scenario": [{"action": "mutate", "on": 0}]}}, True),
+    ]
+    for document, expected in checks:
+        observed = adapter._scenario_actions_all_mutate(  # pyright: ignore[reportPrivateUsage]
+            scenario_case(document)
+        )
+        assert observed is expected, document
+
+
 def test_unsupported_helper_envelope() -> None:
     envelope = adapter.unsupported("compile", adapter.Diagnostic("unsupported-dialect", "nope"))
     jsonschema.validate(envelope, _SCHEMA)

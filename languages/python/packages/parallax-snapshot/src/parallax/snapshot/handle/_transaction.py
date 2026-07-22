@@ -69,6 +69,8 @@ from parallax.snapshot.handle._write_inputs import (
     observation_key,
     prepare_sparse_row,
     record_observations,
+    source_pin,
+    validate_source_pin,
     validate_until,
     validate_valid_from,
 )
@@ -201,8 +203,12 @@ class Transaction:
     def delete(self, node_or_instance: EntityBase) -> None:
         """Buffer a keyed ``delete``, keyed off ``node_or_instance``'s primary
         key (a frozen ``Snapshot`` node, a fresh instance, or an edited copy —
-        all carry valid primary-key values, spec §5)."""
+        all carry valid primary-key values, spec §5). A source view pinned at a
+        finite Transaction-Time instant is read-only and raises
+        :class:`~parallax.snapshot.handle.TransactionTimePinReadOnlyError`
+        before any buffering, exactly as every other keyed verb does."""
         record = entity_record_of_instance(node_or_instance)
+        validate_source_pin(record.name, source_pin(node_or_instance))
         self._buffer("delete", record.name, primary_key_row(node_or_instance))
 
     # --- typed keyed temporal-window verbs (python.md §5). Every mutation   #
@@ -302,7 +308,11 @@ class Transaction:
         instance's own :class:`~parallax.core.descriptor.Entity` record and
         its family's DECLARING entity
         (:func:`~parallax.core.inheritance.declaring_entity` — the entity
-        that actually carries the temporal/versioned shape), then validate +
+        that actually carries the temporal/versioned shape), refuse a source
+        view pinned at a finite Transaction-Time instant
+        (:func:`validate_source_pin` — the Transaction-Time past is read-only;
+        an edited copy carries no pin, so the stale-web-edit recipe's
+        optimistic edge-pinned re-fetch stays writable), then validate +
         render ``valid_from`` against that declaring entity's own
         temporality (:func:`validate_valid_from`, spec §5). Returns the
         record (``_buffer``'s own entity-name argument), the declaring entity
@@ -311,6 +321,7 @@ class Transaction:
         non-temporal/audit-only target)."""
         record = entity_record_of_instance(node_or_instance)
         declaring = inheritance.declaring_entity(self._meta, record)
+        validate_source_pin(record.name, source_pin(node_or_instance))
         valid_from_literal = validate_valid_from(declaring, mutation, valid_from)
         return record, declaring, valid_from_literal
 
