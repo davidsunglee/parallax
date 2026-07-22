@@ -18,7 +18,7 @@ _Avoid_: table class, generated model, managed entity, DTO
 The typed class-header metadata that declares an Entity Class's table,
 namespace, Persistence Mode, and inheritance role without enrolling it in a
 model.
-The framework base—`Entity`, `TransactionTimeOnly`, or `Bitemporal`—declares
+The framework base—`Entity`, `TxTemporal`, or `Bitemporal`—declares
 its temporal shape. Python exposes no separate As-Of Axis authoring value.
 Entity Classes are always frozen, so declaration headers do
 not carry Pydantic's `frozen=True` option.
@@ -98,8 +98,8 @@ _Avoid_: request shape, range marker, date parameter
 **Edge**:
 The frozen value `edge_of` returns for a temporal node, answering every
 declared temporal dimension with the milestone's own finite start instant
-(core's Edge Pin) through strict dimension accessors — `transaction_time`
-raises for an undeclared dimension and `transaction_time_or_none` returns None
+(core's Edge Pin) through strict dimension accessors — `tx_time`
+raises for an undeclared dimension and `tx_time_or_none` returns None
 — so replay code needs no narrowing. Unlike a Pin, every declared dimension is
 answered and every value is finite: never LATEST and never absent because a
 dimension was scanned.
@@ -109,6 +109,12 @@ _Avoid_: pin, display instant, wall-clock timestamp, version stamp
 The module-level value spelling an explicit latest pin; it lowers to the
 infinity coordinate and is deliberately not called "now".
 _Avoid_: now, current timestamp, infinity literal
+
+**Temporal Dimension Constant**:
+One of the module-level values `VALID_TIME` and `TX_TIME` spelling a Temporal
+Dimension wherever the developer surface takes a dimension argument, such as
+`history(...)`; a string dimension spelling is rejected at statement build.
+_Avoid_: dimension string literal, axis name argument
 
 **Execution Record**:
 The per-statement provenance carried by a Snapshot — placeholder SQL, binds,

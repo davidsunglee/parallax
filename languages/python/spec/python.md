@@ -59,7 +59,7 @@ never something an application developer hand-writes.
 Python exposes no public `AsOfAxis` declaration type. Authors select exactly
 one framework Entity base:
 
-- `TransactionTimeOnly`, which supplies read-only `tx_start`/`tx_end`
+- `TxTemporal`, which supplies read-only `tx_start`/`tx_end`
   Attributes mapped to `in_z`/`out_z`; or
 - `Bitemporal`, which additionally supplies read-only
   `valid_start`/`valid_end` Attributes mapped to `from_z`/`thru_z`.
@@ -71,12 +71,12 @@ Attributes, Timestamp types, flags, interval semantics, or columns.
 
 | Python surface | Valid Time | Transaction Time |
 |---|---|---|
-| Framework base | supplied by `Bitemporal` | supplied by `TransactionTimeOnly` and `Bitemporal` |
+| Framework base | supplied by `Bitemporal` | supplied by `TxTemporal` and `Bitemporal` |
 | Metadata dimension | `TemporalDimension.ValidTime` | `TemporalDimension.TransactionTime` |
-| Query keyword | `valid_time` | `transaction_time` |
-| `history` dimension literal | `"valid_time"` | `"transaction_time"` |
-| `Pin` accessor | `valid_time` | `transaction_time` |
-| `Edge` accessor | `valid_time` | `transaction_time` |
+| Query keyword | `valid_time` | `tx_time` |
+| `history` dimension constant | `VALID_TIME` | `TX_TIME` |
+| `Pin` accessor | `valid_time` | `tx_time` |
+| `Edge` accessor | `valid_time` | `tx_time` |
 | Conventional Attributes | `valid_start`, `valid_end` | `tx_start`, `tx_end` |
 | Physical columns | `from_z`, `thru_z` | `in_z`, `out_z` |
 | Bitemporal mutation input | `valid_from`; bounded verbs also use `until` | finite clock instant supplied by the Database handle |
@@ -239,12 +239,16 @@ mutations, exceptions, or exports.
   Time and Transaction Time as the only public vocabulary:
 
   ```python
-  Balance.where(...).as_of(transaction_time=t)
-  Position.where(...).as_of(valid_time=v, transaction_time=t)
-  Balance.where(...).history("transaction_time")
-  Balance.where(...).as_of_range(transaction_time=(start, end))
+  Balance.where(...).as_of(tx_time=t)
+  Position.where(...).as_of(valid_time=v, tx_time=t)
+  Balance.where(...).history(TX_TIME)
+  Balance.where(...).as_of_range(tx_time=(start, end))
   ```
 
+  `history` takes its dimension as the module-level `VALID_TIME` / `TX_TIME`
+  constants — `Final` singleton values exported from `parallax.core` in the
+  `LATEST` sentinel's pattern; a string dimension argument is rejected at
+  statement build.
   Timestamps are timezone-aware `datetime` values, normalized to UTC,
   microsecond precision; naive datetimes are rejected at statement build. An
   omitted axis defaults to **latest** per the core default-injection rule; the
@@ -396,9 +400,9 @@ mutations, exceptions, or exports.
   reports a temporal node's **milestone edge** as a distinct frozen `Edge`
   value exposing one strict-typed accessor pair per dimension — the established
   arity-accessor house pattern (§2's `result()` / `result_or_none()`) applied
-  to dimension access: `edge.transaction_time -> datetime` raises
+  to dimension access: `edge.tx_time -> datetime` raises
   `UndeclaredAxisError` when the Entity does not declare the dimension,
-  `edge.transaction_time_or_none -> datetime | None` returns `None` instead,
+  `edge.tx_time_or_none -> datetime | None` returns `None` instead,
   and `edge.valid_time` / `edge.valid_time_or_none` behave identically for
   Valid Time. Every value a declared dimension yields is the **finite**
   from-instant of the node's milestone on that axis (core's edge pin) —
@@ -408,7 +412,7 @@ mutations, exceptions, or exports.
   carry the `LATEST` sentinel, while an `Edge` answers every declared axis
   and is always finite — never `LATEST`, never absent-because-scanned. The
   strict accessors keep replay code narrowing-free: a caller replaying an
-  Entity's declared dimensions reads `edge.transaction_time` as a plain `datetime` and
+  Entity's declared dimensions reads `edge.tx_time` as a plain `datetime` and
   passes it straight to `as_of(...)` (the stale-web-edit recipe below). The
   `snapshot-history-includes` feature
   is **deferred, not invalid**: combining `.history()` with `.include()`
@@ -466,13 +470,13 @@ mutations, exceptions, or exports.
   transports the displayed milestone's **edge on every declared dimension**: at
   render time the service reads the row and captures `edge_of(node)` — the
   `Edge` answers each declared dimension's start instant as a plain `datetime`
-  (`edge.transaction_time` is the displayed milestone's own `tx_start`, mapped
+  (`edge.tx_time` is the displayed milestone's own `tx_start`, mapped
   to `in_z`) — and sends the
   whole edge with the form. On submit, the service re-fetches with **every
   declared dimension** pinned at the transported edge —
-  `as_of(transaction_time=edge.transaction_time)` for a
+  `as_of(tx_time=edge.tx_time)` for a
   Transaction-Time-Only Entity,
-  `as_of(transaction_time=edge.transaction_time,
+  `as_of(tx_time=edge.tx_time,
   valid_time=edge.valid_time)` for a Bitemporal one; a replay passes exactly
   its Entity's declared dimensions, so
   every `as_of` argument is strictly `datetime`-typed with no narrowing —
@@ -1176,7 +1180,7 @@ hatchling.
 
 | Artifact/package | Production or development-only | Included source scopes | External runtime dependencies | Depends on artifacts | Public exports/entry points |
 |---|---|---|---|---|---|
-| `parallax-core` (the common runtime) | production | all `parallax.core.*` scopes of §7 (behavioral modules, entity/statement frontend, driver-free postgres dialect strategy) | `pydantic`, `pyyaml` | (none) | `parallax.core`: entity base, `Field`, `Relationship`, `Attr`, `Rel`, statement API, `LATEST`, `Pin`, `Edge`, `pin_of`, `edge_of`, `is_loaded`, `narrowed`, errors |
+| `parallax-core` (the common runtime) | production | all `parallax.core.*` scopes of §7 (behavioral modules, entity/statement frontend, driver-free postgres dialect strategy) | `pydantic`, `pyyaml` | (none) | `parallax.core`: entity base, `Field`, `Relationship`, `Attr`, `Rel`, statement API, `LATEST`, `VALID_TIME`, `TX_TIME`, `Pin`, `Edge`, `pin_of`, `edge_of`, `is_loaded`, `narrowed`, errors |
 | `parallax-snapshot` (snapshot lifecycle extension) | production | `parallax.snapshot.*` (`materialize`, `handle`) | (none beyond core) | `parallax-core` | `parallax.snapshot`: `connect()`, `Snapshot[T]`, `Execution` |
 | `parallax-postgres` (Postgres database adapter) | production | `parallax.postgres.*` (concrete port over psycopg) | `psycopg[binary]` (sole declarer) | `parallax-core` | `parallax.postgres`: `PostgresAdapter` |
 | `parallax-conformance` | development-only | `parallax.conformance.*` (CLI, case format, corpus loading, provider harness) | `testcontainers`, `jsonschema` | `parallax-core`, `parallax-snapshot`, `parallax-postgres` | `parallax-conformance` console script (`describe` / `compile` / `run`) |
