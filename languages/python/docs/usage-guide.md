@@ -275,7 +275,7 @@ db.transact(lambda tx: tx.insert(Payment(id=10, amount=Decimal("200.00"))))
 Corpus case: `m-inheritance-100`
 
 ```python
-op = DepositRate.where().as_of(transaction_time=datetime(2024, 1, 15, tzinfo=UTC))
+op = DepositRate.where().as_of(tx_time=datetime(2024, 1, 15, tzinfo=UTC))
 ```
 
 ## A table-per-hierarchy abstract-root read materializes typed per-variant instances
@@ -404,7 +404,7 @@ Corpus case: `m-navigate-013`
 def pinned_graph_at_a_past_valid_time_instant(db: Database) -> Snapshot[Any]:
     return db.find(
         Policy.where()
-        .as_of(valid_time=dt.datetime(2024, 3, 1, tzinfo=dt.UTC), transaction_time=LATEST)
+        .as_of(valid_time=dt.datetime(2024, 3, 1, tzinfo=dt.UTC), tx_time=LATEST)
         .include(Policy.coverages)
     )
 ```
@@ -415,7 +415,7 @@ Corpus case: `m-navigate-018`
 
 ```python
 op = Policy.where(Policy.coverages.any(Coverage.amount >= 600.00)).as_of(
-    transaction_time=LATEST, valid_time=LATEST
+    tx_time=LATEST, valid_time=LATEST
 )
 ```
 
@@ -644,7 +644,7 @@ def animal_owner_reaches_root_and_narrowed_subtype_view(db: Database) -> Snapsho
 Corpus case: `m-temporal-read-003`
 
 ```python
-op = Balance.where().as_of(transaction_time=datetime(2024, 4, 1, tzinfo=UTC))
+op = Balance.where().as_of(tx_time=datetime(2024, 4, 1, tzinfo=UTC))
 ```
 
 ## Transaction-Time-Only insert opens a current milestone
@@ -1140,7 +1140,7 @@ def transaction_time_only_vo_owner_as_of_latest(db: Database) -> Snapshot[Any]:
     """A value object rides its Transaction-Time-only owner's milestone
     (`m-value-object-028`): an Latest read returns each supplier's CURRENT
     address document — no value-object-specific temporal machinery."""
-    return db.find(Supplier.where().as_of(transaction_time=LATEST))
+    return db.find(Supplier.where().as_of(tx_time=LATEST))
 ```
 
 ## A value object rides its Transaction-Time-only owner's superseded milestone
@@ -1152,7 +1152,7 @@ def transaction_time_only_vo_owner_as_of_a_past_instant(db: Database) -> Snapsho
     """The SAME owner read at a past Transaction-Time instant returns the
     SUPERSEDED address document (`m-value-object-029`) — the document rides
     the milestone exactly like a scalar column."""
-    return db.find(Supplier.where().as_of(transaction_time=dt.datetime(2024, 4, 1, tzinfo=dt.UTC)))
+    return db.find(Supplier.where().as_of(tx_time=dt.datetime(2024, 4, 1, tzinfo=dt.UTC)))
 ```
 
 ## A value object rides a full bitemporal owner's fully-current rectangle
@@ -1164,7 +1164,7 @@ def bitemporal_vo_owner_as_of_latest(db: Database) -> Snapshot[Any]:
     """A value object rides a FULL bitemporal owner's rectangle
     (`m-value-object-030`): pinning both dimensions to Latest returns the
     fully-current document."""
-    return db.find(Branch.where().as_of(valid_time=LATEST, transaction_time=LATEST))
+    return db.find(Branch.where().as_of(valid_time=LATEST, tx_time=LATEST))
 ```
 
 ## A bitemporal audit read reconstructs the originally-believed document
@@ -1179,7 +1179,7 @@ def bitemporal_vo_owner_as_of_a_past_audit_point(db: Database) -> Snapshot[Any]:
     return db.find(
         Branch.where().as_of(
             valid_time=dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
-            transaction_time=dt.datetime(2024, 2, 1, tzinfo=dt.UTC),
+            tx_time=dt.datetime(2024, 2, 1, tzinfo=dt.UTC),
         )
     )
 ```
@@ -1371,9 +1371,7 @@ def submit_balance_edit(db: Database, *, id: int, edge: Edge, fields: Mapping[st
     and the edit lands."""
 
     def fn(tx: Transaction) -> None:
-        current = tx.find(
-            Balance.where(Balance.id == id).as_of(transaction_time=edge.transaction_time)
-        ).result()
+        current = tx.find(Balance.where(Balance.id == id).as_of(tx_time=edge.tx_time)).result()
         tx.update(current.model_copy(update=dict(fields)))
 
     db.transact(fn, concurrency="optimistic")
@@ -1395,7 +1393,7 @@ def submit_branch_edit(
     db: Database, *, id: int, edge: Edge, fields: Mapping[str, Any], valid_from: dt.datetime
 ) -> None:
     """SUBMIT time (bitemporal): re-fetch with EVERY declared axis pinned at
-    the transported edge (`as_of(transaction_time=..., valid_time=...)` — the DISPLAY
+    the transported edge (`as_of(tx_time=..., valid_time=...)` — the DISPLAY
     coordinate, licensing the optimistic re-fetch) inside an OPTIMISTIC
     transaction, apply ``fields`` via ``model_copy``, and issue a PLAIN
     (unbounded) bitemporal correction effective from ``valid_from`` (the
@@ -1412,9 +1410,7 @@ def submit_branch_edit(
 
     def fn(tx: Transaction) -> None:
         current = tx.find(
-            Branch.where(Branch.id == id).as_of(
-                transaction_time=edge.transaction_time, valid_time=edge.valid_time
-            )
+            Branch.where(Branch.id == id).as_of(tx_time=edge.tx_time, valid_time=edge.valid_time)
         ).result()
         tx.update(current.model_copy(update=dict(fields)), valid_from=valid_from)
 

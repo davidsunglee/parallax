@@ -22,7 +22,7 @@ from parallax.core import AsOfAxisMetadata, Attr, Entity, EntityConfig, Field
 from parallax.core.entity import ModelCopyError
 from parallax.core.entity.expressions import AttributeAssignment
 from parallax.core.entity.value_object import ValueObject, VoField
-from parallax.core.temporal_read import LATEST
+from parallax.core.temporal_read import LATEST, TX_TIME
 
 pytestmark = pytest.mark.unit
 
@@ -240,14 +240,12 @@ def test_is_bare_false_with_distinct() -> None:
 
 
 def test_is_bare_false_with_as_of() -> None:
-    statement = _WhereTemporalLedger.where(_WhereTemporalLedger.id == 1).as_of(
-        transaction_time=LATEST
-    )
+    statement = _WhereTemporalLedger.where(_WhereTemporalLedger.id == 1).as_of(tx_time=LATEST)
     assert statement.is_bare() is False
 
 
 def test_is_bare_false_with_history() -> None:
-    statement = _WhereTemporalLedger.where(_WhereTemporalLedger.id == 1).history("transaction_time")
+    statement = _WhereTemporalLedger.where(_WhereTemporalLedger.id == 1).history(TX_TIME)
     assert statement.is_bare() is False
 
 

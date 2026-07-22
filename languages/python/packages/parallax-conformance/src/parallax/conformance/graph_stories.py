@@ -80,7 +80,7 @@ from parallax.conformance.read_models import (
 )
 from parallax.conformance.story_models import Order
 from parallax.conformance.vo_models import Branch, Customer, CustomerPhone, Supplier
-from parallax.core.temporal_read import LATEST
+from parallax.core.temporal_read import LATEST, TX_TIME
 from parallax.snapshot.handle import Database, Snapshot
 
 __all__ = ["GRAPH_STORIES", "GraphStory", "graph_story_snippet"]
@@ -124,7 +124,7 @@ def empty_intermediate_level_short_circuits(db: Database) -> Snapshot[Any]:
 def pinned_graph_at_a_past_valid_time_instant(db: Database) -> Snapshot[Any]:
     return db.find(
         Policy.where()
-        .as_of(valid_time=dt.datetime(2024, 3, 1, tzinfo=dt.UTC), transaction_time=LATEST)
+        .as_of(valid_time=dt.datetime(2024, 3, 1, tzinfo=dt.UTC), tx_time=LATEST)
         .include(Policy.coverages)
     )
 
@@ -142,13 +142,13 @@ def history_of_a_concrete_temporal_node_distinguishes_milestones(db: Database) -
     by its `ReadStory`, `parallax.conformance.read_stories`, graded by
     ``test_read_story_runs_through_the_shipped_surface``). Proves the separate
     milestone-HISTORY shape: `DepositRate` declares no `as_of` of its own
-    (`Rate`, the family root, does); `.history(...)` still accepts
-    `DepositRate`'s own inherited axis spelling, and the strengthened
+    (`Rate`, the family root, does); `.history(TX_TIME)` still resolves
+    `DepositRate`'s own inherited axis, and the strengthened
     ``fixtures/rate.yaml`` milestone history surfaces the closed historical
     correction and the current row as two distinct, edge-pinned nodes sharing
         one domain key.
     """
-    return db.find(DepositRate.where().history("transaction_time"))
+    return db.find(DepositRate.where().history(TX_TIME))
 
 
 def one_to_one_peer_attaches_as_a_single_object(db: Database) -> Snapshot[Any]:
@@ -205,21 +205,21 @@ def transaction_time_only_vo_owner_as_of_latest(db: Database) -> Snapshot[Any]:
     """A value object rides its Transaction-Time-only owner's milestone
     (`m-value-object-028`): an Latest read returns each supplier's CURRENT
     address document — no value-object-specific temporal machinery."""
-    return db.find(Supplier.where().as_of(transaction_time=LATEST))
+    return db.find(Supplier.where().as_of(tx_time=LATEST))
 
 
 def transaction_time_only_vo_owner_as_of_a_past_instant(db: Database) -> Snapshot[Any]:
     """The SAME owner read at a past Transaction-Time instant returns the
     SUPERSEDED address document (`m-value-object-029`) — the document rides
     the milestone exactly like a scalar column."""
-    return db.find(Supplier.where().as_of(transaction_time=dt.datetime(2024, 4, 1, tzinfo=dt.UTC)))
+    return db.find(Supplier.where().as_of(tx_time=dt.datetime(2024, 4, 1, tzinfo=dt.UTC)))
 
 
 def bitemporal_vo_owner_as_of_latest(db: Database) -> Snapshot[Any]:
     """A value object rides a FULL bitemporal owner's rectangle
     (`m-value-object-030`): pinning both dimensions to Latest returns the
     fully-current document."""
-    return db.find(Branch.where().as_of(valid_time=LATEST, transaction_time=LATEST))
+    return db.find(Branch.where().as_of(valid_time=LATEST, tx_time=LATEST))
 
 
 def bitemporal_vo_owner_as_of_a_past_audit_point(db: Database) -> Snapshot[Any]:
@@ -229,7 +229,7 @@ def bitemporal_vo_owner_as_of_a_past_audit_point(db: Database) -> Snapshot[Any]:
     return db.find(
         Branch.where().as_of(
             valid_time=dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
-            transaction_time=dt.datetime(2024, 2, 1, tzinfo=dt.UTC),
+            tx_time=dt.datetime(2024, 2, 1, tzinfo=dt.UTC),
         )
     )
 

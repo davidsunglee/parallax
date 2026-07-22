@@ -230,10 +230,10 @@ def test_pinned_graph_at_a_past_valid_time_instant(provisioner: Any) -> None:
     assert coverage.amount == Decimal("600.00")  # the HEAD as of 2024-03-01, not the current 700
     edge = edge_of(coverage)
     assert edge.valid_time == dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
-    assert edge.transaction_time == dt.datetime(2024, 4, 1, tzinfo=dt.UTC)
+    assert edge.tx_time == dt.datetime(2024, 4, 1, tzinfo=dt.UTC)
     pin = snapshot.pin
     assert pin.valid_time == dt.datetime(2024, 3, 1, tzinfo=dt.UTC)
-    assert pin.transaction_time is LATEST
+    assert pin.tx_time is LATEST
 
 
 def test_mutation_has_no_writeback(provisioner: Any) -> None:
@@ -269,9 +269,9 @@ def test_history_of_a_concrete_temporal_node_distinguishes_milestones(provisione
     historical_edge = edge_of(historical)
     current_edge = edge_of(current)
     assert historical_edge.valid_time == dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
-    assert historical_edge.transaction_time == dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
+    assert historical_edge.tx_time == dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
     assert current_edge.valid_time == dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
-    assert current_edge.transaction_time == dt.datetime(2024, 2, 1, tzinfo=dt.UTC)
+    assert current_edge.tx_time == dt.datetime(2024, 2, 1, tzinfo=dt.UTC)
     # Both `pin_of` calls succeed (the root-owned axes attach a pin to a
     # concrete node exactly as they would at the abstract root or an
     # abstract-subtype position).

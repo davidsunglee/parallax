@@ -87,7 +87,7 @@ BUILDERS: dict[str, Callable[[], Statement]] = {
     "m-snapshot-read-011": lambda: Order.where(Order.id == 1).include(Order.items.order),
     "m-navigate-013": lambda: (
         Policy.where()
-        .as_of(valid_time=dt.datetime(2024, 3, 1, tzinfo=dt.UTC), transaction_time=LATEST)
+        .as_of(valid_time=dt.datetime(2024, 3, 1, tzinfo=dt.UTC), tx_time=LATEST)
         .include(Policy.coverages)
     ),
     # Multi-concrete polymorphic PROJECTING reads (m-inheritance): build-only —
@@ -141,14 +141,14 @@ BUILDERS: dict[str, Callable[[], Statement]] = {
     ),
     # Value-object-bearing temporal reads over the now-installed Supplier/
     # Branch mirrors (ledger D-21).
-    "m-value-object-028": lambda: Supplier.where().as_of(transaction_time=LATEST),
+    "m-value-object-028": lambda: Supplier.where().as_of(tx_time=LATEST),
     "m-value-object-029": lambda: Supplier.where().as_of(
-        transaction_time=dt.datetime(2024, 4, 1, tzinfo=dt.UTC)
+        tx_time=dt.datetime(2024, 4, 1, tzinfo=dt.UTC)
     ),
-    "m-value-object-030": lambda: Branch.where().as_of(valid_time=LATEST, transaction_time=LATEST),
+    "m-value-object-030": lambda: Branch.where().as_of(valid_time=LATEST, tx_time=LATEST),
     "m-value-object-031": lambda: Branch.where().as_of(
         valid_time=dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
-        transaction_time=dt.datetime(2024, 2, 1, tzinfo=dt.UTC),
+        tx_time=dt.datetime(2024, 2, 1, tzinfo=dt.UTC),
     ),
     # Multi-concrete polymorphic INSTANCE-FORM reads (ledger D-22): the SAME
     # statement expression as their row-form values-lane siblings

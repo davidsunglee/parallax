@@ -151,10 +151,10 @@ def test_temporal_node_carries_the_whole_graph_pin_and_its_own_edge() -> None:
         },
         pk_columns=("bal_id",),
     )
-    pin = Pin(transaction_time=dt.datetime(2024, 2, 1, tzinfo=dt.UTC))
+    pin = Pin(tx_time=dt.datetime(2024, 2, 1, tzinfo=dt.UTC))
     (root,) = wrap_graph((row,), "Balance", _BALANCE, pin)
     assert pin_of(root) is pin
-    assert edge_of(root).transaction_time == dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
+    assert edge_of(root).tx_time == dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
 
 
 # --------------------------------------------------------------------------- #
@@ -218,13 +218,13 @@ def test_temporal_tpcs_concrete_node_carries_pin_and_edge() -> None:
     )
     pin = Pin(
         valid_time=dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
-        transaction_time=dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
+        tx_time=dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
     )
     (root,) = wrap_graph((row,), "_WrapTemporalLeaf", _TEMPORAL_TPCS, pin)
     assert isinstance(root, _WrapTemporalLeaf)
     assert pin_of(root) is pin
     assert edge_of(root).valid_time == dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
-    assert edge_of(root).transaction_time == dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
+    assert edge_of(root).tx_time == dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
 
 
 # --------------------------------------------------------------------------- #
@@ -265,7 +265,7 @@ def test_snapshot_has_no_iteration_len_or_indexing() -> None:
 
 
 def test_snapshot_pin_and_execution_and_repr() -> None:
-    pin = Pin(transaction_time=dt.datetime(2024, 1, 1, tzinfo=dt.UTC))
+    pin = Pin(tx_time=dt.datetime(2024, 1, 1, tzinfo=dt.UTC))
     snapshot = Snapshot((1,), pin, Execution(()))
     assert snapshot.pin is pin
     assert snapshot.execution.round_trips == 0

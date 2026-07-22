@@ -36,7 +36,7 @@ from parallax.core.op_algebra import (
     serialize,
     validate_operation,
 )
-from parallax.core.temporal_read import Latest
+from parallax.core.temporal_read import TX_TIME, VALID_TIME, Latest, TemporalDimensionConstant
 
 if TYPE_CHECKING:
     from parallax.core.entity.base import EntityRegistry
@@ -61,7 +61,7 @@ _UNSET = _Unset()
 # Latest sentinel; a range pin is a ``(start, end)`` instant pair.
 _Pin = dt.datetime | Latest
 _Window = tuple[dt.datetime, dt.datetime]
-_DimensionName = Literal["valid_time", "transaction_time"]
+_DimensionName = Literal["valid_time", "tx_time"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -116,7 +116,7 @@ class Statement:
         self,
         *,
         valid_time: _Pin | _Unset = _UNSET,
-        transaction_time: _Pin | _Unset = _UNSET,
+        tx_time: _Pin | _Unset = _UNSET,
     ) -> Statement:
         """Pin one or both temporal axes to an instant (or the ``LATEST`` sentinel).
 
@@ -128,11 +128,11 @@ class Statement:
         corpus's bitemporal nesting order). A naive ``datetime`` is rejected here.
         """
         op = self.predicate
-        if not isinstance(transaction_time, _Unset):
+        if not isinstance(tx_time, _Unset):
             op = AsOf(
                 operand=op,
-                dimension=self._dimension("transaction_time"),
-                coordinate=_instant(transaction_time),
+                dimension=self._dimension("tx_time"),
+                coordinate=_instant(tx_time),
             )
         if not isinstance(valid_time, _Unset):
             op = AsOf(
@@ -146,7 +146,7 @@ class Statement:
         self,
         *,
         valid_time: _Window | _Unset = _UNSET,
-        transaction_time: _Window | _Unset = _UNSET,
+        tx_time: _Window | _Unset = _UNSET,
     ) -> Statement:
         """Scan one or both axes across a half-open ``[from, to)`` window (edge points)."""
         if self.include_paths:
@@ -155,11 +155,11 @@ class Statement:
                 "(snapshot-history-includes, spec §3)"
             )
         op = self.predicate
-        if not isinstance(transaction_time, _Unset):
-            start, end = transaction_time
+        if not isinstance(tx_time, _Unset):
+            start, end = tx_time
             op = AsOfRange(
                 operand=op,
-                dimension=self._dimension("transaction_time"),
+                dimension=self._dimension("tx_time"),
                 start=_instant(start),
                 end=_instant(end),
             )
@@ -173,16 +173,25 @@ class Statement:
             )
         return self._with_temporal(op)
 
-    def history(self, dimension: _DimensionName) -> Statement:
-        """Return the full milestone set on ``dimension`` (no predicate injected)."""
+    def history(self, dimension: TemporalDimensionConstant) -> Statement:
+        """Return the full milestone set on ``dimension`` (no predicate injected).
+
+        ``dimension`` is one of the exported ``VALID_TIME`` / ``TX_TIME``
+        constants (the ``LATEST`` sentinel pattern); a string dimension
+        spelling is rejected here, at statement build.
+        """
+        if dimension is not VALID_TIME and dimension is not TX_TIME:
+            raise ValueError(
+                "history() takes its dimension as the exported VALID_TIME / TX_TIME "
+                f"constant; a string dimension spelling is rejected (got {dimension!r})"
+            )
         if self.include_paths:
             raise UnsupportedFeatureError(
                 "`.history()` combined with `.include(...)` is deferred "
                 "(snapshot-history-includes, spec §3)"
             )
-        return self._with_temporal(
-            History(operand=self.predicate, dimension=self._dimension(dimension))
-        )
+        name: _DimensionName = "valid_time" if dimension.dimension == "validTime" else "tx_time"
+        return self._with_temporal(History(operand=self.predicate, dimension=self._dimension(name)))
 
     def include(self, *paths: RelationshipPath) -> Statement:
         """Deep-fetch one or more relationship paths (python.md §2):
@@ -278,12 +287,14 @@ class Statement:
             )
         if op is self.predicate:
             raise ValueError(
-                "a temporal clause requires at least one dimension "
-                "(valid_time= / transaction_time=)"
+                "a temporal clause requires at least one dimension (valid_time= / tx_time=)"
             )
         return replace(self, temporal=op)
 
     def _dimension(self, name: _DimensionName) -> TemporalDimension:
+        """The canonical wire dimension for the developer-surface coordinate
+        spelling ``name`` (the snake→camel boundary: ``tx_time`` maps to
+        ``transactionTime``), validated against the target's declared axes."""
         dimension: TemporalDimension = "validTime" if name == "valid_time" else "transactionTime"
         for axis in self.as_of_axes:
             if axis.dimension == dimension:

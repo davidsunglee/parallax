@@ -58,7 +58,7 @@ from parallax.core.unit_work import (
 from parallax.snapshot.handle._family import (
     axis_columns,
     members,
-    transaction_time_axis,
+    tx_time_axis,
     valid_time_axis,
     version_attribute,
 )
@@ -112,7 +112,7 @@ def record_observations(uow: UnitOfWork, meta: Metamodel, result: FindResult, pi
     as-of instant is not (`~parallax.core.opt_lock.check_locking_license`'s
     own historical-observation rule).
     """
-    latest_pinned = pin.transaction_time is None or pin.transaction_time is LATEST
+    latest_pinned = pin.tx_time is None or pin.tx_time is LATEST
     for entity_name, node in result.all_nodes:
         entity = meta.entity(entity_name)
         declaring = inheritance.declaring_entity(meta, entity)
@@ -132,7 +132,7 @@ def record_observations(uow: UnitOfWork, meta: Metamodel, result: FindResult, pi
             continue
         if not declaring.is_temporal:
             continue
-        tx_axis = transaction_time_axis(declaring)
+        tx_axis = tx_time_axis(declaring)
         tx_start_column, _tx_end_column = axis_columns(declaring, tx_axis)
         if tx_start_column not in node.fields:  # pragma: no cover - malformed model/projection
             continue
@@ -374,7 +374,7 @@ def materialize_row(
         new_row, changed = _apply_assignments(meta, entity, pk_row, row, assignments)
         return key, observation, (new_row if changed else None)
 
-    tx_axis = transaction_time_axis(declaring)
+    tx_axis = tx_time_axis(declaring)
     tx_start_column, tx_end_column = axis_columns(declaring, tx_axis)
     tx_start = cast("str", row[tx_start_column])
     if declaring.temporal == "bitemporal":

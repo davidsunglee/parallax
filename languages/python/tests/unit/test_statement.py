@@ -15,6 +15,8 @@ import pytest
 
 from parallax.core import (
     LATEST,
+    TX_TIME,
+    VALID_TIME,
     Attr,
     AttributeExpr,
     Entity,
@@ -223,14 +225,14 @@ def _position_stmt() -> Statement:
 
 
 def test_as_of_latest_serializes_the_current_pin_wrapper() -> None:
-    assert _balance_stmt().as_of(transaction_time=LATEST).serialize() == {
+    assert _balance_stmt().as_of(tx_time=LATEST).serialize() == {
         "asOf": {"operand": {"all": {}}, "dimension": "transactionTime", "coordinate": "latest"}
     }
 
 
 def test_as_of_past_instant_normalizes_to_utc_iso() -> None:
     d = dt.datetime(2024, 4, 1, tzinfo=dt.UTC)
-    assert _balance_stmt().as_of(transaction_time=d).serialize() == {
+    assert _balance_stmt().as_of(tx_time=d).serialize() == {
         "asOf": {
             "operand": {"all": {}},
             "dimension": "transactionTime",
@@ -239,8 +241,8 @@ def test_as_of_past_instant_normalizes_to_utc_iso() -> None:
     }
 
 
-def test_bitemporal_as_of_nests_valid_time_outside_transaction_time() -> None:
-    stmt = _position_stmt().as_of(valid_time=LATEST, transaction_time=LATEST)
+def test_bitemporal_as_of_nests_valid_time_outside_tx_time() -> None:
+    stmt = _position_stmt().as_of(valid_time=LATEST, tx_time=LATEST)
     assert stmt.serialize() == {
         "asOf": {
             "operand": {
@@ -259,7 +261,7 @@ def test_bitemporal_as_of_nests_valid_time_outside_transaction_time() -> None:
 def test_as_of_range_scans_the_window() -> None:
     frm = dt.datetime(2024, 6, 15, tzinfo=dt.UTC)
     to = dt.datetime(2024, 7, 1, tzinfo=dt.UTC)
-    assert _balance_stmt().as_of_range(transaction_time=(frm, to)).serialize() == {
+    assert _balance_stmt().as_of_range(tx_time=(frm, to)).serialize() == {
         "asOfRange": {
             "operand": {"all": {}},
             "dimension": "transactionTime",
@@ -283,14 +285,25 @@ def test_as_of_range_on_valid_time() -> None:
 
 
 def test_history_wraps_the_predicate() -> None:
-    assert _balance_stmt().history("transaction_time").serialize() == {
+    assert _balance_stmt().history(TX_TIME).serialize() == {
         "history": {"operand": {"all": {}}, "dimension": "transactionTime"}
     }
 
 
+def test_history_on_valid_time() -> None:
+    assert _position_stmt().history(VALID_TIME).serialize() == {
+        "history": {"operand": {"all": {}}, "dimension": "validTime"}
+    }
+
+
+def test_history_rejects_a_string_dimension() -> None:
+    with pytest.raises(ValueError, match="VALID_TIME / TX_TIME"):
+        _balance_stmt().history("tx_time")  # type: ignore[arg-type]
+
+
 def test_temporal_clause_is_single_shot() -> None:
     with pytest.raises(ValueError, match="single-shot"):
-        _balance_stmt().as_of(transaction_time=LATEST).as_of(transaction_time=LATEST)
+        _balance_stmt().as_of(tx_time=LATEST).as_of(tx_time=LATEST)
 
 
 def test_temporal_clause_requires_an_axis() -> None:
@@ -305,4 +318,4 @@ def test_undeclared_axis_is_rejected_at_build() -> None:
 
 def test_naive_datetime_is_rejected_at_build() -> None:
     with pytest.raises(ValueError, match="naive"):
-        _balance_stmt().as_of(transaction_time=dt.datetime(2024, 4, 1))
+        _balance_stmt().as_of(tx_time=dt.datetime(2024, 4, 1))

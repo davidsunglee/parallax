@@ -132,10 +132,10 @@ def test_as_of_composes_after_a_user_predicate() -> None:
 # --------------------------------------------------------------------------- #
 # Bitemporal composition (Valid-Time first, Transaction-Time inner).           #
 # --------------------------------------------------------------------------- #
-def _bitemporal(valid_time: str | None, transaction_time: str | None) -> oa.Operation:
+def _bitemporal(valid_time: str | None, tx_time: str | None) -> oa.Operation:
     op: oa.Operation = oa.All()
-    if transaction_time is not None:
-        op = oa.AsOf(operand=op, dimension="transactionTime", coordinate=transaction_time)
+    if tx_time is not None:
+        op = oa.AsOf(operand=op, dimension="transactionTime", coordinate=tx_time)
     if valid_time is not None:
         op = oa.AsOf(operand=op, dimension="validTime", coordinate=valid_time)
     return op
@@ -147,7 +147,7 @@ def test_bitemporal_both_latest() -> None:
     assert binds == ("infinity", "infinity")
 
 
-def test_bitemporal_valid_time_past_transaction_time_latest() -> None:
+def test_bitemporal_valid_time_past_tx_time_latest() -> None:
     where, binds = _where(_bitemporal(_B, "latest"), POSITION)
     assert where == "t0.from_z <= ? and t0.thru_z > ? and t0.out_z = ?"
     assert binds == (_B, _B, "infinity")
@@ -159,7 +159,7 @@ def test_bitemporal_both_past_reads_valid_time_first() -> None:
     assert binds == (_B, _B, _P, _P)
 
 
-def test_bitemporal_omitted_transaction_time_defaults_to_latest() -> None:
+def test_bitemporal_omitted_tx_time_defaults_to_latest() -> None:
     where, binds = _where(_bitemporal(_B, None), POSITION)
     assert where == "t0.from_z <= ? and t0.thru_z > ? and t0.out_z = ?"
     assert binds == (_B, _B, "infinity")
@@ -236,28 +236,28 @@ def test_milestone_edge_reads_each_axis_from_column() -> None:
     }
     edge = milestone_edge(POSITION, row)
     assert edge.valid_time == dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
-    assert edge.transaction_time == dt.datetime(2024, 4, 1, tzinfo=dt.UTC)
+    assert edge.tx_time == dt.datetime(2024, 4, 1, tzinfo=dt.UTC)
 
 
 def test_edge_strict_accessor_raises_on_undeclared_axis() -> None:
     edge = milestone_edge(BALANCE, {"in_z": dt.datetime(2024, 6, 1, tzinfo=dt.UTC)})
-    assert edge.transaction_time == dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
-    assert edge.transaction_time_or_none == dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
+    assert edge.tx_time == dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
+    assert edge.tx_time_or_none == dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
     assert edge.valid_time_or_none is None
     with pytest.raises(UndeclaredAxisError, match="valid_time"):
         _ = edge.valid_time
 
 
-def test_edge_transaction_time_accessor_raises_when_undeclared() -> None:
+def test_edge_tx_time_accessor_raises_when_undeclared() -> None:
     edge = Edge(valid_time=dt.datetime(2024, 6, 1, tzinfo=dt.UTC))
-    with pytest.raises(UndeclaredAxisError, match="transaction_time"):
-        _ = edge.transaction_time
+    with pytest.raises(UndeclaredAxisError, match="tx_time"):
+        _ = edge.tx_time
 
 
 def test_edge_equality_and_hashing() -> None:
-    a = Edge(transaction_time=dt.datetime(2024, 4, 1, tzinfo=dt.UTC))
-    b = Edge(transaction_time=dt.datetime(2024, 4, 1, tzinfo=dt.UTC))
-    c = Edge(transaction_time=dt.datetime(2024, 5, 1, tzinfo=dt.UTC))
+    a = Edge(tx_time=dt.datetime(2024, 4, 1, tzinfo=dt.UTC))
+    b = Edge(tx_time=dt.datetime(2024, 4, 1, tzinfo=dt.UTC))
+    c = Edge(tx_time=dt.datetime(2024, 5, 1, tzinfo=dt.UTC))
     assert a == b
     assert a != c
     assert a != "not an edge"
@@ -281,8 +281,8 @@ def test_directive_distinct_survives_injection() -> None:
 
 
 def test_pin_reports_only_pinned_axes() -> None:
-    pin = Pin(transaction_time=LATEST)
-    assert pin.transaction_time is LATEST
+    pin = Pin(tx_time=LATEST)
+    assert pin.tx_time is LATEST
     assert pin.valid_time is None
     assert not pin.is_empty
     assert Pin().is_empty
@@ -295,7 +295,7 @@ def test_statement_pin_reads_both_bitemporal_axes() -> None:
         coordinate="latest",
     )
     pin = statement_pin(op, POSITION)
-    assert pin.transaction_time is LATEST
+    assert pin.tx_time is LATEST
     assert pin.valid_time == dt.datetime.fromisoformat(_B)
 
 
@@ -326,8 +326,8 @@ class _PlainNode:
 
 
 def test_edge_of_and_pin_of_read_materialized_coordinates() -> None:
-    edge = Edge(transaction_time=dt.datetime(2024, 4, 1, tzinfo=dt.UTC))
-    pin = Pin(transaction_time=dt.datetime(2024, 4, 1, tzinfo=dt.UTC))
+    edge = Edge(tx_time=dt.datetime(2024, 4, 1, tzinfo=dt.UTC))
+    pin = Pin(tx_time=dt.datetime(2024, 4, 1, tzinfo=dt.UTC))
     node = _TemporalNode(edge, pin)
     assert edge_of(node) is edge
     assert pin_of(node) is pin
@@ -341,8 +341,8 @@ def test_edge_of_and_pin_of_read_materialized_coordinates() -> None:
 def test_edge_is_frozen() -> None:
     # An Edge is hashable, so it must be immutable: reassigning or deleting an
     # axis after construction would silently invalidate any dict/set holding it.
-    edge = Edge(transaction_time=dt.datetime(2024, 1, 1, tzinfo=dt.UTC))
+    edge = Edge(tx_time=dt.datetime(2024, 1, 1, tzinfo=dt.UTC))
     with pytest.raises(AttributeError, match="frozen"):
-        edge._transaction_time = dt.datetime(2025, 1, 1, tzinfo=dt.UTC)  # type: ignore[misc]
+        edge._tx_time = dt.datetime(2025, 1, 1, tzinfo=dt.UTC)  # type: ignore[misc]
     with pytest.raises(AttributeError, match="frozen"):
         del edge._valid_time  # type: ignore[misc]

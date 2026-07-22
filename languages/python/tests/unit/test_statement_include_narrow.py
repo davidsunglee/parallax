@@ -13,6 +13,7 @@ import pytest
 import inheritance_models as im
 import mirrored_models as mm
 import snapshot_models as sm
+from parallax.core import TX_TIME
 from parallax.core.entity.statement import UnsupportedFeatureError
 from parallax.core.op_algebra import (
     All,
@@ -215,9 +216,9 @@ def test_narrow_clause_after_an_out_of_scope_where_predicate_never_legalizes_it(
 # --------------------------------------------------------------------------- #
 def test_history_then_include_is_deferred() -> None:
     with pytest.raises(UnsupportedFeatureError, match="snapshot-history-includes"):
-        mm.Balance.where().history("transaction_time").include(sm.SnapOrder.items)
+        mm.Balance.where().history(TX_TIME).include(sm.SnapOrder.items)
 
 
 def test_include_then_history_is_deferred() -> None:
     with pytest.raises(UnsupportedFeatureError, match="snapshot-history-includes"):
-        mm.Balance.where().include(sm.SnapOrder.items).history("transaction_time")
+        mm.Balance.where().include(sm.SnapOrder.items).history(TX_TIME)
