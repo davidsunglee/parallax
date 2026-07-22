@@ -329,7 +329,7 @@ When a language implementation routes case execution through its `m-db-port`
 runtime database port, read/result statements and DML outcome statements remain
 separate: row-returning reads use the port's row execution method, while
 write-sequence and conflict affected counts come from the port's affected-row
-write method (`executeWrite` in the TypeScript port). An adapter MUST NOT weaken
+write method. An adapter MUST NOT weaken
 the emitted SQL by adding dialect-specific row-returning clauses solely to compute
 affected rows.
 

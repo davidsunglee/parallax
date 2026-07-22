@@ -4,8 +4,6 @@
     "allow": [
       "Bash(docker info *)",
       "Bash(just matrix *)",
-      "Bash(just ts-conformance-compile *)",
-      "Bash(just ts-conformance-run *)",
       "Bash(just lint *)",
       "Bash(just core-dep-graph *)",
       "Bash(pnpm install *)",
