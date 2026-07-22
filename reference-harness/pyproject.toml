@@ -11,7 +11,7 @@ dependencies = [
     "psycopg[binary]>=3.3.4",
     "pymysql>=1.1",
     "pyyaml>=6.0",
-    "sqlglot>=25.0",
+    "sqlglot>=30.13.0",
 ]
 
 [project.optional-dependencies]
