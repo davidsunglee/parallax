@@ -1,4 +1,4 @@
-# asOfRange(processingDate, 2024-06-15, 2024-07-01): scan every milestone whose
+# asOfRange(transactionTime, 2024-06-15, 2024-07-01): scan every milestone whose
 # [in_z, out_z) interval OVERLAPS the half-open window [from, to) — the edge-point
 # read, distinct from both a single-instant `asOf` pin (one milestone per key) and
 # `history` (no predicate at all). The overlap predicate for half-open intervals is
@@ -12,7 +12,7 @@
 #         before the window opened (2024-06-15), so the range filters it out.
 #   id 2: 200.00 [2024-02-01, infinity)   — current.
 #   id 3:  50.00 [2024-03-01, 2024-08-01) — a TERMINATED milestone that still
-#         overlaps the window; as-of-now would NOT return it (id 3 has no current row).
+#         overlaps the window; as-of-Latest would NOT return it (id 3 has no current row).
 # So the range returns a mix no single instant pin can produce: id 1's current value,
 # id 2, and id 3's closed-but-overlapping milestone — while excluding id 1's
 # superseded row (proving the overlap predicate filters, unlike `history`).
@@ -25,9 +25,9 @@ when:
     asOfRange:
       operand:
         all: {}
-      asOfAttr: Balance.processingDate
-      from: "2024-06-15T00:00:00+00:00"
-      to: "2024-07-01T00:00:00+00:00"
+      dimension: transactionTime
+      start: "2024-06-15T00:00:00+00:00"
+      end: "2024-07-01T00:00:00+00:00"
 then:
   statements:
     - sql:

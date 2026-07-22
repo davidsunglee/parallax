@@ -64,7 +64,7 @@ def test_crosses_many_is_true_for_a_many_top_level_value_object() -> None:
     many = ValueObject(
         name="tags",
         column="tags",
-        cardinality="many",
+        multiplicity="many",
         attributes=(ValueObjectAttribute(name="label", type="string"),),
     )
     assert vo.crosses_many(many, ["label"]) is True

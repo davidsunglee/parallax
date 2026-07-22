@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://parallax.dev/schemas/compatibility-case.schema.json",
   "title": "Parallax Compatibility Case (m-case-format)",
-  "description": "The case envelope, grouped as given / when / then. Identity and routing (`model`, `tags`, `lane`) plus the explicit `shape` discriminator and the optional `compileEligibility` declaration (present only to mark a case RUN-ONLY for the compile sweep) stay top-level; everything else is bucketed into `given` (ambient world-state before the action: `fixtures`, `apply`, `fault`), `when` (the action under test and how the client performs it: `operation` | `writeSequence` | `scenario` | `coherence` | `concurrency` | `boundary` | `attempts` | `write`, plus context `uow` / `at` / `observedInZ` / `equivalentEncodings`), and `then` (everything the case asserts: `statements`, `referenceSql`, `rows`, `graph`, `tableState`, `affectedRows`, `errorClass`, `nativeCode`, `outcome`, `rejectedRule`, `roundTrips`, `tolerance`). Every SQL statement — golden or naive — is a `{sql, binds}` statement entry (`$defs/statementEntry`): its `sql` is a dialect-keyed map (`postgres` / `mariadb`) at golden locations (`then.statements`, per-step `statements`) and a plain string at naive locations (`given.apply`); `binds` is authored once per statement and defaults to `[]`. A case is one of nine shapes, named by the required top-level `shape`: a `read` case (a queryable `when.operation`, asserting `then.rows` / `then.graph`); a `writeSequence` case (ordered DML under `when.writeSequence`, asserting `then.tableState`); a `scenario` case (m-unit-work — ordered operation steps under `when.scenario`, golden SQL per step); a `conflict` case (m-opt-lock — a single-attempt optimistic-lock UPDATE asserted by `then.affectedRows`, or an ordered `when.attempts` retry sequence); a `coherence` case (cross-process cache coherence — a two-node sequence under `when.coherence`); an `error` case (m-db-error — `then.errorClass` + `then.nativeCode`, triggered by top-level `then.statements` or a `when.concurrency` choreography); a `concurrencySuccess` case (m-read-lock behavioral read lock — a `when.concurrency` choreography with NO `then.errorClass`); a `boundary` case (m-auto-retry/m-opt-lock bounded automatic retry — `when.boundary` ordered actions + `then.outcome`, on the `api-conformance` lane, carrying no golden SQL); or a `rejected` case (m-value-object / m-op-algebra negative validation — a schema-valid `when.operation` OR a `when.write` a model-aware validator MUST refuse PRE-SQL, naming the violated normative rule in `then.rejectedRule`, carrying no golden SQL). Every case carries an optional `lane` (`harness` default | `api-conformance`): a `harness`-lane case executes as today, while an `api-conformance`-lane case (every boundary case, plus the read-lock matrix reads) is schema-validated by the harness but satisfied by each language's API Conformance Suite.",
+  "description": "The case envelope, grouped as given / when / then. Identity and routing (`model`, `tags`, `lane`) plus the explicit `shape` discriminator and the optional `compileEligibility` declaration (present only to mark a case RUN-ONLY for the compile sweep) stay top-level; everything else is bucketed into `given` (ambient world-state before the action: `fixtures`, `apply`, `fault`), `when` (the action under test and how the client performs it: `operation` | `writeSequence` | `scenario` | `coherence` | `concurrency` | `boundary` | `attempts` | `write`, plus context `uow` / `at` / `observedTxStart` / `equivalentEncodings`), and `then` (everything the case asserts: `statements`, `referenceSql`, `rows`, `graph`, `tableState`, `affectedRows`, `errorClass`, `nativeCode`, `outcome`, `rejectedRule`, `roundTrips`, `tolerance`). Every SQL statement — golden or naive — is a `{sql, binds}` statement entry (`$defs/statementEntry`): its `sql` is a dialect-keyed map (`postgres` / `mariadb`) at golden locations (`then.statements`, per-step `statements`) and a plain string at naive locations (`given.apply`); `binds` is authored once per statement and defaults to `[]`. A case is one of nine shapes, named by the required top-level `shape`: a `read` case (a queryable `when.operation`, asserting `then.rows` / `then.graph`); a `writeSequence` case (ordered DML under `when.writeSequence`, asserting `then.tableState`); a `scenario` case (m-unit-work — ordered operation steps under `when.scenario`, golden SQL per step); a `conflict` case (m-opt-lock — a single-attempt optimistic-lock UPDATE asserted by `then.affectedRows`, or an ordered `when.attempts` retry sequence); a `coherence` case (cross-process cache coherence — a two-node sequence under `when.coherence`); an `error` case (m-db-error — `then.errorClass` + `then.nativeCode`, triggered by top-level `then.statements` or a `when.concurrency` choreography); a `concurrencySuccess` case (m-read-lock behavioral read lock — a `when.concurrency` choreography with NO `then.errorClass`); a `boundary` case (m-auto-retry/m-opt-lock bounded automatic retry — `when.boundary` ordered actions + `then.outcome`, on the `api-conformance` lane, carrying no golden SQL); or a `rejected` case (m-value-object / m-op-algebra negative validation — a schema-valid `when.operation` OR a `when.write` a model-aware validator MUST refuse PRE-SQL, naming the violated normative rule in `then.rejectedRule`, carrying no golden SQL). Every case carries an optional `lane` (`harness` default | `api-conformance`): a `harness`-lane case executes as today, while an `api-conformance`-lane case (every boundary case, plus the read-lock matrix reads) is schema-validated by the harness but satisfied by each language's API Conformance Suite.",
   "type": "object",
   "additionalProperties": false,
   "required": ["model", "tags", "shape"],
@@ -57,7 +57,7 @@
       "properties": {
         "shape": { "const": "conflict" },
         "when": {
-          "propertyNames": { "enum": ["uow", "write", "at", "observedInZ", "attempts"] }
+          "propertyNames": { "enum": ["uow", "write", "at", "observedTxStart", "attempts"] }
         }
       },
       "anyOf": [
@@ -168,7 +168,7 @@
   ],
   "allOf": [
     {
-      "description": "A TEMPORAL / bitemporal optimistic conflict CLOSE — a single-form conflict whose `when.at` is the close instant (→ the new out_z) — run under OPTIMISTIC concurrency (`when.uow.concurrency: optimistic`) MUST carry `when.observedInZ`, the observed processing-from (in_z) the close gates on (`and in_z = ?`). A VERSIONED conflict carries no `when.at`, so this never fires on it; a LOCKING-mode temporal close is ungated and omits `observedInZ`. (The retry form carries `at` / `observedInZ` per attempt; the reference-harness gate + generating adapter enforce the per-attempt token, which a subschema cannot condition on the root `uow`.)",
+      "description": "A temporal optimistic close records `when.at` as the finite Transaction-Time close instant and requires `when.observedTxStart`, the observed Transaction-Time start (`in_z`) used by the optimistic gate. Locking-mode closes omit the observation.",
       "if": {
         "required": ["when"],
         "properties": {
@@ -184,7 +184,7 @@
         }
       },
       "then": {
-        "properties": { "when": { "required": ["observedInZ"] } }
+        "properties": { "when": { "required": ["observedTxStart"] } }
       }
     }
   ],
@@ -266,7 +266,7 @@
       }
     },
     "when": {
-      "description": "The action under test and how the client performs it. Exactly one action member is present per shape (`operation` | `writeSequence` | `scenario` | `coherence` | `concurrency` | `boundary` | `attempts`, plus the single-attempt conflict's `write`); the context members (`uow`, `at`, `observedInZ`, `equivalentEncodings`) describe the unit-of-work mode, transaction instant, observed version, and alternate surface encodings.",
+      "description": "The action under test and how the client performs it. Exactly one action member is present per shape (`operation` | `writeSequence` | `scenario` | `coherence` | `concurrency` | `boundary` | `attempts`, plus the single-attempt conflict's `write`); the context members (`uow`, `at`, `observedTxStart`, `equivalentEncodings`) describe the unit-of-work mode, transaction instant, observed version, and alternate surface encodings.",
       "type": "object",
       "additionalProperties": false,
       "properties": {
@@ -318,27 +318,27 @@
             "required": ["mutation", "entity", "rows"],
             "allOf": [
               {
-                "description": "A bitemporal `*Until` step (the rectangle split) bounds a mutation to a business valid-time window: it MUST carry both `at` (the transaction instant → in_z) and `until` (the business window end → thru_z).",
+                "description": "A Bitemporal `*Until` step bounds a mutation to `[validFrom, until)` and records the Clock-supplied Transaction-Time instant in `at`.",
                 "if": {
                   "required": ["mutation"],
                   "properties": {
                     "mutation": { "enum": ["insertUntil", "updateUntil", "terminateUntil"] }
                   }
                 },
-                "then": { "required": ["at", "until"] }
+                "then": { "required": ["at", "validFrom", "until"] }
               },
               {
-                "description": "A milestone-close `terminate` step MUST carry its close instant — `at` (the processing axis → out_z) for an audit-only entity, or `businessAt` (the business axis → thru_z) for a business-only one.",
+                "description": "A milestone-close `terminate` step carries the handle-supplied Transaction-Time instant in `at` for Transaction-Time-Only and Bitemporal entities.",
                 "if": {
                   "required": ["mutation"],
                   "properties": { "mutation": { "const": "terminate" } }
                 },
-                "then": { "anyOf": [{ "required": ["at"] }, { "required": ["businessAt"] }] }
+                "then": { "anyOf": [{ "required": ["at"] }, { "required": ["validFrom"] }] }
               }
             ],
             "properties": {
               "mutation": {
-                "description": "The mutation kind. insert / update / terminate are the m-audit-write audit-only mutation surface and also cover the m-batch-write batched non-temporal writes; delete covers ordinary non-temporal delete / detached-delete merge-back; cascadeDelete is the minimal dependent-delete witness over m-descriptor dependent relationships; insertUntil / updateUntil / terminateUntil are the full-bitemporal `*Until` trio that bound a mutation to a business window.",
+                "description": "The mutation kind. The `*Until` trio bounds a Bitemporal mutation to a Valid-Time window.",
                 "enum": [
                   "insert",
                   "update",
@@ -368,17 +368,17 @@
                 "items": { "$ref": "#/$defs/writeRow" }
               },
               "at": {
-                "description": "The transaction / PROCESSING instant a TEMPORAL write records — the milestone's `in_z`. A GENERATING adapter DERIVES the bookkeeping from it (open `in_z = at`, `out_z = infinity`; close `out_z = at`). Present on a processing-axis temporal step; absent on a non-temporal batched write (and replaced by `businessAt` on a business-only step). Required for a `*Until` step and for a processing-axis `terminate` close. AUTHORING ALIAS (m-unit-work `write-instruction.schema.json`): `at` ALWAYS names the Clock-supplied PROCESSING instant — it is NOT an instruction field in the canonical schema, on an audit-only step OR a bitemporal `*Until` step. `at` NEVER aliases `businessFrom`: a bitemporal `*Until` step carries its business-axis lower bound separately as the row's `businessFrom` (already the canonical spelling), distinct from this processing instant (e.g. `m-bitemp-write-001`: row `businessFrom` 2024-03-01, `at` 2024-02-15). The corpus-wide re-authoring to the unambiguous canonical spellings is deferred.",
+                "description": "The Clock-supplied finite Transaction-Time instant recorded in `in_z`/`out_z`. It is execution context, not a durable write-instruction member, and is distinct from the Valid-Time `validFrom` bound.",
                 "type": "string",
                 "minLength": 1
               },
               "until": {
-                "description": "The bitemporal valid-time end bound a `*Until` write closes the business window at (consumed by the full-bitemporal rectangle-split cases) — the business analogue of `at`. Absent on an audit-only step. AUTHORING ALIAS of the canonical `businessTo` (m-unit-work `write-instruction.schema.json`).",
+                "description": "The exclusive Valid-Time upper bound of a Bitemporal `*Until` write, paired with `validFrom`.",
                 "type": "string",
                 "minLength": 1
               },
-              "businessAt": {
-                "description": "The BUSINESS-axis instant a business-temporal milestone-chaining write records — the milestone's `from_z` (and, on a close, the prior row's `thru_z`). Present on a business-only temporal step; a processing (audit-only) step carries `at` instead. Required for a business-only `terminate` close. AUTHORING ALIAS of the canonical `businessFrom` (m-unit-work `write-instruction.schema.json`).",
+              "validFrom": {
+                "description": "The Valid-Time lower bound (`from_z`). Required by Bitemporal writes.",
                 "type": "string",
                 "minLength": 1
               },
@@ -529,8 +529,8 @@
                 "enum": ["in-memory", "persisted", "deleted", "detached", "detached-deleted"]
               },
               "expectError": {
-                "description": "A neutral application-lifecycle error this step's verb MUST raise, from a closed vocabulary defined where each error is defined: `detached-relationship-load` (a deferred relationship load on a detached object — m-detach) or `processing-pin-read-only` (a mutation through a finite processing-axis pinned view — m-identity-map). Distinct from the m-db-error DB-error taxonomy. An adapter-delegated observable — graded by each language's API Conformance Suite via the m-conformance-adapter `errors` observation, and skipped by the wire harness.",
-                "enum": ["detached-relationship-load", "processing-pin-read-only"]
+                "description": "A neutral application-lifecycle error this step's verb must raise: `detached-relationship-load` or `transaction-time-pin-read-only` for a mutation through a finite Transaction-Time-pinned view.",
+                "enum": ["detached-relationship-load", "transaction-time-pin-read-only"]
               },
               "identityAttr": {
                 "description": "The result-column name carrying the primary-key identity, used to check `sameObjectAs`. Defaults to the queried entity's primary-key column.",
@@ -660,7 +660,7 @@
                 "$ref": "#/$defs/goldenStatements"
               },
               "write": {
-                "description": "This attempt's neutral write input (①): the flat attribute-named row (`$defs/writeRow`) the attempt operates on. For a VERSIONED conflict its reserved `observedVersion` is the version THIS attempt gates on; for a TEMPORAL close it carries the milestone pk (+ a bitemporal business discriminator), with the close instant and observed gate in this attempt's `at` / `observedInZ`. REQUIRED on every retry attempt.",
+                "description": "This attempt's neutral write input (①): the flat attribute-named row (`$defs/writeRow`) the attempt operates on. For a VERSIONED conflict its reserved `observedVersion` is the version THIS attempt gates on; for a TEMPORAL close it carries the milestone pk (+ a Bitemporal Valid-Time discriminator), with the close instant and observed gate in this attempt's `at` / `observedTxStart`. REQUIRED on every retry attempt.",
                 "$ref": "#/$defs/writeRow"
               },
               "at": {
@@ -668,8 +668,8 @@
                 "type": "string",
                 "minLength": 1
               },
-              "observedInZ": {
-                "description": "conflict RETRY cases (m-opt-lock), temporal-close form. THIS attempt's observed processing-from (`in_z`) — the optimistic gate the attempt binds (`and in_z = ?`). Absent in locking mode.",
+              "observedTxStart": {
+                "description": "This temporal-close attempt's observed Transaction-Time start (`in_z`), bound by the optimistic gate. Absent in locking mode.",
                 "type": "string",
                 "minLength": 1
               },
@@ -686,7 +686,7 @@
           }
         },
         "write": {
-          "description": "conflict cases (m-opt-lock), single-attempt form. The neutral write input (①) for this conflict's versioned UPDATE (or a temporal / bitemporal close), as a flat attribute-named literal (`$defs/writeRow`): the primary-key attribute (classified to the `where` key), every assigned domain attribute (the `set` columns), and the reserved `observedVersion` control key. A TEMPORAL / bitemporal close carries only the milestone pk (+ a bitemporal business discriminator); its close instant and observed gate ride in `when.at` / `when.observedInZ`. Either way the golden UPDATE + binds become an INDEPENDENT cross-check rather than a golden-parse tautology.",
+          "description": "conflict cases (m-opt-lock), single-attempt form. The neutral write input (①) for this conflict's versioned UPDATE (or a temporal / bitemporal close), as a flat attribute-named literal (`$defs/writeRow`): the primary-key attribute (classified to the `where` key), every assigned domain attribute (the `set` columns), and the reserved `observedVersion` control key. A TEMPORAL / Bitemporal close carries only the milestone pk (+ a Bitemporal Valid-Time discriminator); its close instant and observed gate ride in `when.at` / `when.observedTxStart`. Either way the golden UPDATE + binds become an INDEPENDENT cross-check rather than a golden-parse tautology.",
           "$ref": "#/$defs/writeRow"
         },
         "at": {
@@ -694,8 +694,8 @@
           "type": "string",
           "minLength": 1
         },
-        "observedInZ": {
-          "description": "conflict cases (m-opt-lock), temporal-close form. The processing-from (`in_z`) the unit of work observed — the optimistic-lock version analogue a TEMPORAL / bitemporal entity gates on. In optimistic mode the close gains the `and in_z = ?` gate bound to this value; ABSENT in locking mode. It is the temporal analogue of a versioned write's `observedVersion`.",
+        "observedTxStart": {
+          "description": "The observed Transaction-Time start (`in_z`) used as a temporal optimistic-lock token. Absent in locking mode.",
           "type": "string",
           "minLength": 1
         }
@@ -737,9 +737,10 @@
             "required": ["pin", "graph"],
             "properties": {
               "pin": {
-                "description": "The milestone edge coordinate this graph is pinned at, keyed by the as-of ATTRIBUTE name (`processingDate` / `businessDate`) whose value is the milestone's own from-instant (ISO-8601 UTC). Each graph in the array carries its OWN pin — edge-pinning, so a milestone-set read yields independently-pinned graphs, one per milestone, never a shared root pin.",
+                "description": "The milestone edge coordinate keyed by `validTime` and/or `transactionTime`; each value is that milestone's own finite start instant.",
                 "type": "object",
                 "minProperties": 1,
+                "propertyNames": { "enum": ["validTime", "transactionTime"] },
                 "additionalProperties": { "type": "string", "minLength": 1 }
               },
               "graph": {
@@ -807,7 +808,7 @@
           ]
         },
         "rejectedRule": {
-          "description": "rejected cases (m-value-object / m-op-algebra / m-inheritance negative validation, resolved Q7 + Q3/Q4). The normative rule the input violates, from a small closed vocabulary a model-aware PRE-SQL validator (and every language implementation) MUST enforce, asserted BEFORE any SQL is emitted. OPERATION rules: `nested-path-first-segment-not-value-object` (a nested path's first segment names no declared value object on the queried entity — m-op-algebra nested-predicate resolver MUST); `nested-path-unknown-member` (an intermediate segment names no declared nested value object, or a leaf names no declared attribute); `nested-literal-type-mismatch` (a nested comparison/membership literal's type differs from the leaf attribute's declared neutral type — m-op-algebra typed-literal MUST); `deep-fetch-value-object-segment` (a `deepFetch` path segment names a value object — m-value-object materialization/navigation contract 4, m-deep-fetch); `navigate-value-object-target` (a `navigate`/`exists`/`notExists` targets a value object — m-value-object contract 4, m-navigate); `find-root-value-object` (a find() is rooted at a value object — m-value-object contract 5). WRITE rules: `write-required-attribute-missing` (a required `nullable:false` attribute is absent at some depth — m-value-object write validation); `write-required-value-object-missing` (a required `nullable:false` nested value object is absent, or a required `many` array is absent — emptiness is fine); `write-value-type-mismatch` (a document field value's type differs from the declared attribute's neutral type). SUBTYPE-WRITE rules (m-inheritance x concrete-subtype writes — a schema-valid neutral write input a model-aware validator MUST refuse pre-SQL because it violates the concrete-subtype write protocol): `subtype-write-set-based-unsupported` (a keyless / predicate-driven write to an inheritance family — a per-object concrete-subtype write is KEYED, so a payload carrying no primary-key attribute denotes an unsupported set-based inheritance write, out of scope for this slice); `subtype-write-metadata-field` (a payload carries a FRAMEWORK-OWNED metadata field — the tag column, `tag`, `tagValue`, or `familyVariant` — which a concrete-subtype write DERIVES from the subtype's tagValue and never accepts as input); `subtype-write-sibling-attribute` (a payload carries an attribute declared on a SIBLING / unrelated concrete branch, so no single concrete subtype in the target's effective set accepts every authored field — the accepted fields are exactly the target's ancestry chain: root + abstract ancestors + own); `abstract-write-target` (a create / update / delete / terminate handle aimed at an ABSTRACT root or abstract subtype — writes are concrete-subtype only). MODEL rules (m-inheritance closed-tree family invariants, one per invariant per resolved Q4): `inheritance-unknown-parent` (a `parent` names no entity in the descriptor); `inheritance-cycle` (parent links form a cycle); `inheritance-missing-root` (the descriptor declares inheritance participants but NO root — a zero-root/abstract-orphan family; distinct from `inheritance-multiple-roots`, which is strictly more than one); `inheritance-multiple-roots` (a family reaches strictly MORE THAN ONE root, or the descriptor declares two roots for one tree; a family has exactly one root, so both zero and more-than-one are rejected, by `inheritance-missing-root` and this rule respectively); `inheritance-concrete-without-abstract-root` (a concrete subtype whose ancestry has no abstract root); `inheritance-abstract-node-with-table` (a `root` / `abstract-subtype` declares a physical table — also caught by the entity `table` conditional); `inheritance-abstract-node-fixture-rows` (fixture rows are keyed to an abstract root / abstract subtype — enforced at fixture load); `inheritance-strategy-redeclared` (a non-root participant redeclares `strategy`); `inheritance-missing-tag-value` (a table-per-hierarchy concrete subtype declares no `tagValue` — the shared table cannot discriminate its rows without one; the per-entity schema leaves `tagValue` optional and delegates its presence-under-table-per-hierarchy to this semantic rule); `inheritance-duplicate-tag-value` (two concrete subtypes in one table-per-hierarchy family share a `tagValue`); `inheritance-inconsistent-hierarchy-table` (table-per-hierarchy concrete subtypes map to different physical tables); `inheritance-tag-on-concrete-subtype-strategy` (a table-per-concrete-subtype family declares a `tag` or `tagValue`); `inheritance-temporal-axes-not-root-owned` (an `abstract-subtype` or `concrete-subtype` declares its own `asOfAttributes` — temporal axes are family-wide metadata that only the root may declare; every descendant inherits the root's complete axis set unchanged, whether the root itself is non-temporal or temporal, so this fires for both a non-temporal root with an axis-declaring descendant and a temporal root whose descendant redeclares, adds, removes, overrides, or shadows an axis); `inheritance-optimistic-locking-not-root-owned` (an `abstract-subtype` or `concrete-subtype` declares its own `optimisticLocking` attribute — the version attribute is family-wide metadata that only the root may declare; every descendant inherits the root's version column unchanged, whether the root itself is versioned or not, so this fires for both a non-versioned root with a version-declaring descendant and a versioned root whose descendant redeclares or adds a second version attribute). NARROW / SUBTYPE-SCOPE operation rules (m-op-algebra × m-inheritance — a schema-valid operation a model-aware validator MUST refuse pre-SQL): `narrow-outside-position` (a `narrow` node's resolved effective concrete-subtype set is not a SUBSET of the ACTIVE polymorphic position — the position threaded into the node, the read's `targetEntity` or the enclosing narrow's resolved set, CLAMPED to (intersected with) the position the node's `entity` names — so narrowing broadens beyond the position in scope, e.g. narrowing to a concrete outside the active set, or a nested narrow broadening back out of the set the enclosing narrow established); `narrow-empty-effective-set` (a `narrow`'s authored `to` list resolves to the EMPTY concrete-subtype set); `subtype-attribute-outside-narrow-scope` (a predicate references a concrete-subtype-declared attribute at a polymorphic position that is not narrowed to that subtype, so the attribute is not available to every concrete in the effective set); `narrow-outside-relationship-target` (a `narrow` in a navigation filter's `op`, or a deep-fetch path segment's `narrow`, either names an `entity` that is not the RELATIONSHIP TARGET exactly — a relationship-scope narrow MUST set `entity` to the target and reach subtypes via `to`, never by naming a broader or other position — or resolves its `to` set to a concrete-subtype set that is NOT a SUBSET of the RELATIONSHIP TARGET's effective concrete set; narrowing a polymorphic relationship to a concrete outside its reachable set, even one sharing the broader family root, is rejected; m-navigate / m-deep-fetch, resolved Q10).",
+          "description": "The stable pre-SQL validation rule violated by a rejected case. The closed enum below is authoritative. Model-formation codes distinguish TPH root-owned storage, forbidden TPH descendant tables, TPCS abstract/concrete storage, root-owned temporal axes, root-owned persistence, and root-owned optimistic locking; operation and write codes retain declaration-owned member identity while validating effective applicability.",
           "enum": [
             "nested-path-first-segment-not-value-object",
             "nested-path-unknown-member",
@@ -827,15 +828,18 @@
             "inheritance-missing-root",
             "inheritance-multiple-roots",
             "inheritance-concrete-without-abstract-root",
-            "inheritance-abstract-node-with-table",
+            "inheritance-tph-root-table-required",
+            "inheritance-tph-descendant-table-forbidden",
+            "inheritance-tpcs-abstract-table-forbidden",
+            "inheritance-tpcs-concrete-table-required",
             "inheritance-abstract-node-fixture-rows",
             "inheritance-strategy-redeclared",
             "inheritance-missing-tag-value",
             "inheritance-duplicate-tag-value",
-            "inheritance-inconsistent-hierarchy-table",
             "inheritance-tag-on-concrete-subtype-strategy",
             "inheritance-temporal-axes-not-root-owned",
             "inheritance-optimistic-locking-not-root-owned",
+            "inheritance-persistence-not-root-owned",
             "narrow-outside-position",
             "narrow-empty-effective-set",
             "subtype-attribute-outside-narrow-scope",
@@ -880,7 +884,7 @@
       ]
     },
     "predicateWrite": {
-      "description": "A predicate-selected set-based write (m-unit-work): the CASE-FORMAT wrapper over `write-instruction.schema.json`'s `predicateWriteInstruction`. The instruction, rather than a language method name or golden SQL, is the canonical compile/run input; assignment list order is data only (descriptor column order determines emitted SET and bind order). The shared vocabulary — the `predicateMutation` enum, the `writeTarget`, and each `writeAssignment` — is REFERENCED from the canonical schema rather than redefined; this wrapper layers only the corpus's `at` / `businessFrom` / `until` authoring aliases (the axis-explicit canonical spellings are `businessFrom` / `businessTo`; the processing instant is Clock context, never an instruction field).",
+      "description": "A predicate-selected write over the canonical instruction shape. `validFrom` and `until` are Valid-Time bounds; `at` is Clock-supplied Transaction-Time context and is not a durable instruction member.",
       "type": "object",
       "additionalProperties": false,
       "required": ["mutation", "target"],
@@ -893,17 +897,17 @@
           "items": { "$ref": "write-instruction.schema.json#/$defs/writeAssignment" }
         },
         "at": {
-          "description": "The transaction / processing instant a temporal predicate write records. AUTHORING ALIAS of the Clock-supplied processing context in the canonical `write-instruction.schema.json` (which carries no processing-instant field, on any axis).",
+          "description": "The Clock-supplied finite Transaction-Time instant for a temporal predicate write.",
           "type": "string",
           "minLength": 1
         },
-        "businessFrom": {
-          "description": "The business-axis lower bound of the plain or bounded temporal operation. Already the canonical spelling in `write-instruction.schema.json`; REQUIRED on a bounded `*Until` write (whose window is `[businessFrom, until)`).",
+        "validFrom": {
+          "description": "The Valid-Time lower bound of a plain or bounded temporal operation.",
           "type": "string",
           "minLength": 1
         },
         "until": {
-          "description": "The bounded (`*Until`) operation's exclusive upper business bound (`thru_z`). AUTHORING ALIAS of the canonical `businessTo` (m-unit-work `write-instruction.schema.json`); always paired with `businessFrom`.",
+          "description": "The exclusive Valid-Time upper bound of a bounded operation (`thru_z`), paired with `validFrom`.",
           "type": "string",
           "minLength": 1
         }
@@ -915,15 +919,15 @@
           "else": { "not": { "required": ["assignments"] } }
         },
         {
-          "description": "A bounded `*Until` predicate write is over `[businessFrom, until)` (m-bitemp-write), so it MUST carry BOTH business bounds (`businessFrom` plus the `until` alias of `businessTo`); the unbounded forms MUST NOT carry `until`.",
+          "description": "A bounded predicate write is over `[validFrom, until)`, so it must carry both Valid-Time bounds; unbounded forms must omit `until`.",
           "if": { "properties": { "mutation": { "enum": ["updateUntil", "terminateUntil"] } } },
-          "then": { "required": ["businessFrom", "until"] },
+          "then": { "required": ["validFrom", "until"] },
           "else": { "not": { "required": ["until"] } }
         }
       ]
     },
     "keyedWrite": {
-      "description": "A keyed write instruction inside a buffered scenario write (m-unit-work same-transaction coalescing) — the CASE-FORMAT analogue of `write-instruction.schema.json`'s `keyedWriteInstruction`: a `mutation` on one `entity` carrying the flat attribute-named neutral write input (`rows`). The shared vocabulary — the `keyedMutation` enum, the `entityName`, and each durable `writeRow` (which FORBIDS the framework-owned `observedVersion` / `observedInZ` observation, since a buffered instruction is durable, not a flush-time gated write) — is REFERENCED from the canonical schema. Business bounds are the axis-explicit canonical `businessFrom` / `businessTo`; `at` is the corpus authoring alias of the Clock-supplied PROCESSING instant (never an instruction field). A bounded `*Until` write is over `[businessFrom, businessTo)`, so it carries both.",
+      "description": "A keyed write inside a buffered scenario. `validFrom` and `until` are Valid-Time bounds; `at` is Clock-supplied Transaction-Time context. Flush-only observations are not durable row members.",
       "type": "object",
       "additionalProperties": false,
       "required": ["mutation", "entity", "rows"],
@@ -935,33 +939,33 @@
           "minItems": 1,
           "items": { "$ref": "write-instruction.schema.json#/$defs/writeRow" }
         },
-        "businessFrom": {
-          "description": "The business-axis lower bound of a temporal keyed write (`from_z`); REQUIRED on a bounded `*Until` write.",
+        "validFrom": {
+          "description": "The Valid-Time lower bound of a temporal keyed write (`from_z`).",
           "type": "string",
           "minLength": 1
         },
-        "businessTo": {
-          "description": "The business-axis exclusive upper bound of a bounded (`*Until`) keyed write (`thru_z`); present ONLY on `insertUntil` / `updateUntil` / `terminateUntil`, always paired with `businessFrom`.",
+        "until": {
+          "description": "The exclusive Valid-Time upper bound of a bounded keyed write (`thru_z`), paired with `validFrom`.",
           "type": "string",
           "minLength": 1
         },
         "at": {
-          "description": "The Clock-supplied PROCESSING instant this buffered write flushes at (`in_z`). AUTHORING ALIAS of the processing context in the canonical schema (which carries no processing-instant field); never an instruction field.",
+          "description": "The Clock-supplied finite Transaction-Time instant this buffered write flushes at (`in_z`).",
           "type": "string",
           "minLength": 1
         }
       },
       "allOf": [
         {
-          "description": "A bounded `*Until` keyed write is over `[businessFrom, businessTo)` (m-bitemp-write), so it MUST carry BOTH business bounds; a plain (unbounded) write MUST NOT carry `businessTo`.",
+          "description": "A bounded keyed write is over `[validFrom, until)`, so it must carry both Valid-Time bounds; a plain write must omit `until`.",
           "if": {
             "required": ["mutation"],
             "properties": {
               "mutation": { "enum": ["insertUntil", "updateUntil", "terminateUntil"] }
             }
           },
-          "then": { "required": ["businessFrom", "businessTo"] },
-          "else": { "not": { "required": ["businessTo"] } }
+          "then": { "required": ["validFrom", "until"] },
+          "else": { "not": { "required": ["until"] } }
         }
       ]
     },

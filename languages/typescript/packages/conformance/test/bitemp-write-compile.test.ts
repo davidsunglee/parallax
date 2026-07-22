@@ -8,7 +8,7 @@
  *
  *  - **windowed rectangle split** (`updateUntil` `-001`, `terminateUntil` `-002`,
  *    `insertUntil` `-003`): inactivate + head / (middle) / tail chained milestones
- *    bounded to `[businessFrom, until)`;
+ *    bounded to `[validFrom, until)`;
  *  - **plain (unbounded) write** (`insert` `-009`, `update` `-006`, `terminate` `-007`):
  *    a single fully-current INSERT (insert), or inactivate + head + new-tail (update) /
  *    head only (terminate), the residual window running to the open row's `thru_z`;
@@ -142,7 +142,7 @@ describe("m-bitemp-write compile lane — multi-step same-pk replay evolves open
     // step 1 insert : value 100, business [T1, ∞)
     // step 2 updateUntil : value 200 over [T3, T9) at T215 (splits the original — -008)
     //                      → open head [T1,T3)=100, middle [T3,T9)=200, tail [T9,∞)=100
-    // step 3 updateUntil : value 300 over [T4, T5) at T6 — its businessFrom T4 lands in
+    // step 3 updateUntil : value 300 over [T4, T5) at T6 — its validFrom T4 lands in
     //                      the MIDDLE rectangle [T3, T9)=200, so the close gates on that
     //                      row's (from_z=T3, in_z=T215) and the head/tail carry its OLD
     //                      value 200 and its thru_z T9 — none of which the stale original
@@ -154,23 +154,26 @@ describe("m-bitemp-write compile lane — multi-step same-pk replay evolves open
             mutation: "insert",
             entity: "Position",
             statements: 1,
-            rows: [{ id: 1, acctNum: "A", value: 100, businessFrom: T1, businessTo: INF }],
+            rows: [{ id: 1, acctNum: "A", value: 100 }],
             at: T1,
+            validFrom: T1,
           },
           {
             mutation: "updateUntil",
             entity: "Position",
             statements: 4,
-            rows: [{ id: 1, value: 200, businessFrom: T3 }],
+            rows: [{ id: 1, value: 200 }],
             at: T215,
+            validFrom: T3,
             until: T9,
           },
           {
             mutation: "updateUntil",
             entity: "Position",
             statements: 4,
-            rows: [{ id: 1, value: 300, businessFrom: T4 }],
+            rows: [{ id: 1, value: 300 }],
             at: T6,
+            validFrom: T4,
             until: T5,
           },
         ],
@@ -210,7 +213,7 @@ describe("m-bitemp-write compile lane — multi-step same-pk replay evolves open
     // step 2 terminateUntil : end the value over [T3, T7) at T215 (splits the original) —
     //                         → open head [T1,T3)=100, tail [T7,∞)=100; the window
     //                           [T3,T7) is TERMINATED (no open row — the gap).
-    // step 3 updateUntil    : value 300 over [T8, T9) at T6 — its businessFrom T8 lands in
+    // step 3 updateUntil    : value 300 over [T8, T9) at T6 — its validFrom T8 lands in
     //                         the surviving TAIL [T7, ∞), so the close gates on that tail's
     //                         (from_z=T7, in_z=T215) and the head/tail carry its thru_z ∞ —
     //                         none of which the stale original (100, T1, T1, ∞) would give.
@@ -221,23 +224,26 @@ describe("m-bitemp-write compile lane — multi-step same-pk replay evolves open
             mutation: "insert",
             entity: "Position",
             statements: 1,
-            rows: [{ id: 1, acctNum: "A", value: 100, businessFrom: T1, businessTo: INF }],
+            rows: [{ id: 1, acctNum: "A", value: 100 }],
             at: T1,
+            validFrom: T1,
           },
           {
             mutation: "terminateUntil",
             entity: "Position",
             statements: 3,
-            rows: [{ id: 1, businessFrom: T3 }],
+            rows: [{ id: 1 }],
             at: T215,
+            validFrom: T3,
             until: T7,
           },
           {
             mutation: "updateUntil",
             entity: "Position",
             statements: 4,
-            rows: [{ id: 1, value: 300, businessFrom: T8 }],
+            rows: [{ id: 1, value: 300 }],
             at: T6,
+            validFrom: T8,
             until: T9,
           },
         ],

@@ -11,7 +11,7 @@ from parallax.conformance import case_format
 from parallax.conformance import models as corpus_models
 from parallax.core import inheritance
 from parallax.core.descriptor import (
-    AsOfAttribute,
+    AsOfAxisMetadata,
     Attribute,
     Entity,
     Inheritance,
@@ -185,7 +185,7 @@ def test_concrete_descendants_terminates_on_a_cyclic_family() -> None:
 
 # --------------------------------------------------------------------------- #
 # Binding decision (COR-3 Phase 7 review remediation, P3/P4): temporality is a #
-# family-wide property; only the root may declare `asOfAttributes`, and every #
+# family-wide property; only the root may declare `asOfAxes`, and every       #
 # descendant — abstract-subtype or concrete-subtype — inherits exactly that   #
 # set. `declaring_entity` always resolves to the family root; a non-root      #
 # participant that declares its own axes is rejected pre-SQL.                 #
@@ -196,11 +196,16 @@ def _synthetic_temporal_family() -> Metamodel:
     EVERY position in the chain, not just the immediate parent."""
     root = Entity(
         name="Root",
+        table="root_tbl",
         inheritance=Inheritance(role="root", strategy="table-per-hierarchy", tag_column="kind"),
-        attributes=(Attribute(name="id", type="int64", column="id", primary_key=True),),
-        as_of_attributes=(
-            AsOfAttribute(
-                name="processingDate", from_column="in_z", to_column="out_z", axis="processing"
+        attributes=(
+            Attribute(name="id", type="int64", column="id", primary_key=True),
+            Attribute(name="tx_start", type="timestamp", column="in_z"),
+            Attribute(name="tx_end", type="timestamp", column="out_z"),
+        ),
+        as_of_axes=(
+            AsOfAxisMetadata(
+                dimension="transactionTime", start_attribute="tx_start", end_attribute="tx_end"
             ),
         ),
     )
@@ -210,7 +215,6 @@ def _synthetic_temporal_family() -> Metamodel:
     )
     leaf = Entity(
         name="Leaf",
-        table="root_tbl",
         inheritance=Inheritance(role="concrete-subtype", parent="Mid", tag_value="leaf"),
         attributes=(Attribute(name="x", type="int32", column="x"),),
     )
@@ -222,7 +226,7 @@ def test_declaring_entity_resolves_to_the_family_root_from_every_position() -> N
     for name in ("Root", "Mid", "Leaf"):
         declaring = inheritance.declaring_entity(meta, meta.entity(name))
         assert declaring.name == "Root", name
-        assert declaring.as_of_attributes == meta.entity("Root").as_of_attributes
+        assert declaring.as_of_axes == meta.entity("Root").as_of_axes
 
 
 def test_declaring_entity_is_the_entity_itself_outside_a_family() -> None:
@@ -231,10 +235,14 @@ def test_declaring_entity_is_the_entity_itself_outside_a_family() -> None:
     plain = Entity(
         name="Balance",
         table="balance",
-        attributes=(Attribute(name="id", type="int64", column="bal_id", primary_key=True),),
-        as_of_attributes=(
-            AsOfAttribute(
-                name="processingDate", from_column="in_z", to_column="out_z", axis="processing"
+        attributes=(
+            Attribute(name="id", type="int64", column="bal_id", primary_key=True),
+            Attribute(name="tx_start", type="timestamp", column="in_z"),
+            Attribute(name="tx_end", type="timestamp", column="out_z"),
+        ),
+        as_of_axes=(
+            AsOfAxisMetadata(
+                dimension="transactionTime", start_attribute="tx_start", end_attribute="tx_end"
             ),
         ),
     )
@@ -250,15 +258,16 @@ def test_reject_descendant_temporal_axes_under_a_non_temporal_root() -> None:
     # A non-temporal TPH root with an abstract-subtype that declares its own axes.
     root = Entity(
         name="Animal",
+        table="animal",
         inheritance=Inheritance(role="root", strategy="table-per-hierarchy", tag_column="kind"),
         attributes=_minimal_attrs(),
     )
     pet = Entity(
         name="Pet",
         inheritance=Inheritance(role="abstract-subtype", parent="Animal"),
-        as_of_attributes=(
-            AsOfAttribute(
-                name="processingDate", from_column="in_z", to_column="out_z", axis="processing"
+        as_of_axes=(
+            AsOfAxisMetadata(
+                dimension="transactionTime", start_attribute="tx_start", end_attribute="tx_end"
             ),
         ),
     )
@@ -281,9 +290,9 @@ def test_reject_descendant_temporal_axes_under_a_temporal_root() -> None:
         name="Rate",
         inheritance=Inheritance(role="root", strategy="table-per-concrete-subtype"),
         attributes=_minimal_attrs(),
-        as_of_attributes=(
-            AsOfAttribute(
-                name="processingDate", from_column="in_z", to_column="out_z", axis="processing"
+        as_of_axes=(
+            AsOfAxisMetadata(
+                dimension="transactionTime", start_attribute="tx_start", end_attribute="tx_end"
             ),
         ),
     )
@@ -292,9 +301,9 @@ def test_reject_descendant_temporal_axes_under_a_temporal_root() -> None:
         table="deposit_rate",
         inheritance=Inheritance(role="concrete-subtype", parent="Rate"),
         attributes=(Attribute(name="grade", type="string", column="grade"),),
-        as_of_attributes=(
-            AsOfAttribute(
-                name="businessDate", from_column="from_z", to_column="thru_z", axis="business"
+        as_of_axes=(
+            AsOfAxisMetadata(
+                dimension="validTime", start_attribute="valid_start", end_attribute="valid_end"
             ),
         ),
     )
@@ -317,6 +326,7 @@ def test_reject_descendant_optimistic_locking_under_a_non_versioned_root() -> No
     # declares its own optimisticLocking attribute.
     root = Entity(
         name="Animal",
+        table="animal",
         inheritance=Inheritance(role="root", strategy="table-per-hierarchy", tag_column="kind"),
         attributes=_minimal_attrs(),
     )
@@ -329,7 +339,6 @@ def test_reject_descendant_optimistic_locking_under_a_non_versioned_root() -> No
     )
     dog = Entity(
         name="Dog",
-        table="animal",
         inheritance=Inheritance(role="concrete-subtype", parent="Pet", tag_value="dog"),
         attributes=(Attribute(name="barkVolume", type="int32", column="bark_volume"),),
     )
@@ -445,7 +454,7 @@ _VO_ENTITY = Entity(
                 NestedValueObject(
                     name="grid",
                     nullable=True,
-                    cardinality="many",
+                    multiplicity="many",
                     attributes=(ValueObjectAttribute(name="cell", type="string"),),
                 ),
             ),
@@ -453,7 +462,7 @@ _VO_ENTITY = Entity(
         ValueObject(
             name="tags",
             column="tags",
-            cardinality="many",
+            multiplicity="many",
             nullable=True,
             attributes=(ValueObjectAttribute(name="label", type="string"),),
         ),

@@ -38,7 +38,7 @@ class Address(ValueObject, frozen=True):
     street: Attr[str] = VoField(type="string")
     city: Attr[str] = VoField(type="string")
     geo: Attr[Geo | None] = VoField(nullable=True, default=None)
-    phones: Attr[tuple[Phone, ...]] = VoField(nullable=True, default=())
+    phones: Attr[tuple[Phone, ...]] = VoField(default=())
 
 
 class Customer(Entity, frozen=True):

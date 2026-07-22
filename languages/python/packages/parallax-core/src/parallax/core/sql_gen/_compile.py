@@ -206,7 +206,7 @@ def _projection(
         projected_vos = tuple(vo for vo in entity.value_objects if vo.name in include_value_objects)
     else:
         projected_vos = ()
-    exprs.extend(dialect.qualified(alias, vo.column) for vo in projected_vos)
+    exprs.extend(dialect.qualified(alias, vo.storage_column) for vo in projected_vos)
     return ", ".join(exprs), binds
 
 

@@ -1,4 +1,4 @@
-# Table-per-concrete-subtype AUDIT-ONLY concrete-subtype TERMINATE: the milestone close
+# Table-per-concrete-subtype Transaction-Time-Only concrete-subtype TERMINATE: the milestone close
 # targets the subtype's OWN table with NO tag guard (m-inheritance x m-audit-write x
 # m-sql — Phase 8 temporal composition).
 #

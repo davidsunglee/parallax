@@ -21,10 +21,10 @@ when:
               rel: Policy.coverages
               op:
                 greaterThanEquals: { attr: Coverage.amount, value: 600.00 }
-          asOfAttr: Policy.processingDate
-          date: now
-      asOfAttr: Policy.businessDate
-      date: now
+          dimension: transactionTime
+          coordinate: latest
+      dimension: validTime
+      coordinate: latest
 then:
   statements:
     - sql:

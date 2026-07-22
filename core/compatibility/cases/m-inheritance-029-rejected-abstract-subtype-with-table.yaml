@@ -2,9 +2,8 @@
 # table.
 #
 # `Pet` is an interior `role: abstract-subtype` but also declares `table: animal`.
-# Like the abstract root, an abstract subtype is tableless and rowless (its concrete
-# descendants own the rows), so a model-aware validator MUST reject a table on it —
-# the abstract-node-with-table rule applies to every abstract node, not only the root.
+# The TPH root owns the shared table. Every descendant, abstract or concrete, must
+# omit a table mapping and inherit the root-owned container.
 model: models/payment.yaml
 tags: [m-inheritance, m-descriptor, rejected, negative, slice-snapshot-1, slice-managed-1]
 shape: rejected
@@ -12,6 +11,7 @@ when:
   model:
     entities:
       - name: Animal
+        table: animal
         inheritance:
           strategy: table-per-hierarchy
           role: root
@@ -26,7 +26,6 @@ when:
         attributes:
           - { name: licenseId, type: string, column: license_id, nullable: true }
       - name: Dog
-        table: animal
         inheritance:
           role: concrete-subtype
           parent: Pet
@@ -34,4 +33,4 @@ when:
         attributes:
           - { name: barkVolume, type: int32, column: bark_volume, nullable: true }
 then:
-  rejectedRule: inheritance-abstract-node-with-table
+  rejectedRule: inheritance-tph-descendant-table-forbidden

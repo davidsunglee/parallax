@@ -2,7 +2,7 @@
 
 The set-based half of the spec §5 write surface (COR-3 Phase 8 increment 5), as
 free functions rather than :class:`~parallax.snapshot.handle.Transaction`
-methods: bare-statement and business-window validation into a canonical
+methods: bare-statement and Valid-Time-window validation into a canonical
 :class:`~parallax.core.unit_work.PredicateWrite`, the readless-vs-materialize
 dispatch, the minimal resolving read, per-row no-op elimination, observation
 recording, and atomic keyed-unit buffering.
@@ -50,8 +50,8 @@ from parallax.core.unit_work import (
 from parallax.snapshot.handle._family import assignment_member, members, version_attribute
 from parallax.snapshot.handle._write_inputs import (
     materialize_row,
-    validate_business_from,
     validate_until,
+    validate_valid_from,
 )
 
 
@@ -64,7 +64,7 @@ def buffer_predicate(
     statement: EntityStatement,
     assignments: Sequence[AttributeAssignment],
     *,
-    business_from: dt.datetime | None,
+    valid_from: dt.datetime | None,
     until: dt.datetime | None = None,
 ) -> None:
     """The neutral seam every ``_where`` verb shares — the SAME seam the
@@ -80,11 +80,10 @@ def buffer_predicate(
        keyed; set-based inheritance writes are out of scope") — BEFORE any
        SQL, the SAME ``subtype-write-set-based-unsupported`` classification
        a keyless keyed write raises.
-    3. **Business-bound validation** — a bitemporal target REQUIRES
-       ``business_from`` (its own business instant); an audit-only or
-       non-temporal target takes none (no business axis to bound); the
+    3. **Valid-Time-bound validation** — a Bitemporal target requires
+       ``valid_from``; a Transaction-Time-Only or non-temporal target takes none; the
        ``*Until`` forms additionally require ``until``, with
-       ``business_from < until`` — an equal or reversed window rejects
+       ``valid_from < until`` — an equal or reversed window rejects
        HERE, at build, before any buffering (:func:`validate_until`, S4
        COR-3 Phase 8 increment 7 remediation).
     4. **Build + validate the canonical instruction** (the SAME
@@ -104,11 +103,11 @@ def buffer_predicate(
     entity = meta.entity(statement.target)
     inheritance.reject_predicate_write(entity)
     declaring = inheritance.declaring_entity(meta, entity)
-    business_from_literal = validate_business_from(declaring, mutation, business_from)
+    valid_from_literal = validate_valid_from(declaring, mutation, valid_from)
     until_literal: str | None = None
     if until is not None:
-        assert business_from is not None  # `*_until_where` verbs require both together
-        until_literal = validate_until(declaring, mutation, business_from, until)
+        assert valid_from is not None  # `*_until_where` verbs require both together
+        until_literal = validate_until(declaring, mutation, valid_from, until)
 
     doc: dict[str, object] = {
         "mutation": mutation,
@@ -119,10 +118,10 @@ def buffer_predicate(
     }
     if assignments:
         doc["assignments"] = [{"attr": str(a.attr), "value": a.value} for a in assignments]
-    if business_from_literal is not None:
-        doc["businessFrom"] = business_from_literal
+    if valid_from_literal is not None:
+        doc["validFrom"] = valid_from_literal
     if until_literal is not None:
-        doc["businessTo"] = until_literal
+        doc["until"] = until_literal
     instruction = instructions.deserialize(doc)
     assert isinstance(instruction, PredicateWrite)  # this seam always builds the predicate shape
     instructions.validate_instruction(instruction, meta)
@@ -231,7 +230,7 @@ def _materialize_predicate_write(
     # `terminate` is close-only, no chained row, so it stays
     # document-free (`m-value-object-047`'s own row-form-omits-slot-4
     # witness stays byte-identical); audit-only never reaches the
-    # `*Until` forms (bitemporal-only, `validate_business_from`). The
+    # `*Until` forms (Bitemporal-only, `validate_valid_from`). The
     # chain need projects EVERY declared document, never just the
     # assigned ones — a chained row must carry forward whichever
     # documents the assignments do NOT themselves reassign. Either way,
@@ -298,8 +297,8 @@ def _materialize_predicate_write(
                 mutation=instruction.mutation,
                 entity=instruction.target.entity,
                 rows=(new_row,),
-                business_from=instruction.business_from,
-                business_to=instruction.business_to,
+                valid_from=instruction.valid_from,
+                until=instruction.until,
             )
         )
         pending.append((key, observation))

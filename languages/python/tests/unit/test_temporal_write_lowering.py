@@ -14,6 +14,8 @@ one).
 
 from __future__ import annotations
 
+import dataclasses
+
 import pytest
 
 from parallax.conformance import models
@@ -102,7 +104,7 @@ def test_audit_only_update_closes_then_chains_the_authored_full_row() -> None:
     # (D-30), which here carries no `payload` at all, so the merge is an
     # identity and the chain is exactly the authored row.
     update = KeyedWrite("update", "Balance", ({"id": 1, "acctNum": "A", "value": 150.00},))
-    observation = Observation(in_z="2024-01-01T00:00:00+00:00")
+    observation = Observation(tx_start="2024-01-01T00:00:00+00:00")
     statements = _lower(update, BALANCE, "2024-06-01T00:00:00+00:00", observation=observation)
     assert statements == [
         (
@@ -131,7 +133,7 @@ def test_audit_only_terminate_closes_only() -> None:
 def test_audit_only_update_carries_every_new_attribute() -> None:
     # m-audit-write-004: the chained row carries ALL corrected attributes.
     update = KeyedWrite("update", "Balance", ({"id": 1, "acctNum": "B", "value": 250.00},))
-    observation = Observation(in_z="2024-01-01T00:00:00+00:00")
+    observation = Observation(tx_start="2024-01-01T00:00:00+00:00")
     statements = _lower(update, BALANCE, "2024-06-01T00:00:00+00:00", observation=observation)
     assert statements[1] == (
         "insert into balance(bal_id, acct_num, val, in_z, out_z) values (?, ?, ?, ?, ?)",
@@ -147,7 +149,7 @@ def test_audit_only_update_merges_a_sparse_row_onto_the_observed_payload() -> No
     # carries `acctNum` even though the instruction's own row never named it.
     sparse_update = KeyedWrite("update", "Balance", ({"id": 1, "value": 150.00},))
     observation = Observation(
-        in_z="2024-01-01T00:00:00+00:00", payload={"id": 1, "acctNum": "A", "value": 100.00}
+        tx_start="2024-01-01T00:00:00+00:00", payload={"id": 1, "acctNum": "A", "value": 100.00}
     )
     statements = _lower(
         sparse_update, BALANCE, "2024-06-01T00:00:00+00:00", observation=observation
@@ -167,7 +169,7 @@ def test_audit_only_plan_merges_the_sparse_row_at_the_planner_seam() -> None:
 
     sparse_update = KeyedWrite("update", "Balance", ({"id": 1, "value": 150.00},))
     observation = Observation(
-        in_z="2024-01-01T00:00:00+00:00", payload={"id": 1, "acctNum": "A", "value": 100.00}
+        tx_start="2024-01-01T00:00:00+00:00", payload={"id": 1, "acctNum": "A", "value": 100.00}
     )
     plan = audit_write.plan(
         sparse_update, BALANCE.entity("Balance"), "2024-06-01T00:00:00+00:00", observation
@@ -179,8 +181,8 @@ def test_audit_only_plan_merges_the_sparse_row_at_the_planner_seam() -> None:
         "id": 1,
         "acctNum": "A",
         "value": 150.00,
-        "processingFrom": "2024-06-01T00:00:00+00:00",
-        "processingTo": "infinity",
+        "tx_start": "2024-06-01T00:00:00+00:00",
+        "tx_end": "infinity",
     }
 
 
@@ -190,7 +192,7 @@ def test_audit_only_plan_carries_a_full_row_unchanged_when_no_payload_is_observe
     # observation`) — the merge is then a strict identity, so no exercised
     # compile-lane emission can ever change (the Part 2 byte-identical guard).
     full_update = KeyedWrite("update", "Balance", ({"id": 1, "acctNum": "A", "value": 150.00},))
-    observation = Observation(in_z="2024-01-01T00:00:00+00:00")  # no payload at all
+    observation = Observation(tx_start="2024-01-01T00:00:00+00:00")  # no payload at all
     from parallax.core import audit_write
 
     plan = audit_write.plan(
@@ -206,7 +208,7 @@ def test_audit_only_close_is_ungated_under_locking_regardless_of_observation() -
     # m-audit-write-005: a locking-mode close never binds `in_z`, even when one
     # was observed.
     update = KeyedWrite("update", "Balance", ({"id": 1, "acctNum": "A", "value": 175.00},))
-    observation = Observation(in_z="2024-06-01T00:00:00+00:00")
+    observation = Observation(tx_start="2024-06-01T00:00:00+00:00")
     statements = _lower_full(
         update, BALANCE, "2024-09-01T00:00:00+00:00", observation=observation, concurrency="locking"
     )
@@ -219,7 +221,7 @@ def test_audit_only_close_is_ungated_under_locking_regardless_of_observation() -
 def test_audit_only_close_gates_on_observed_in_z_under_optimistic() -> None:
     # m-audit-write-006: the gated close binds the observed in_z LAST.
     close_only = KeyedWrite("terminate", "Balance", ({"id": 1},))
-    observation = Observation(in_z="2024-06-01T00:00:00+00:00")
+    observation = Observation(tx_start="2024-06-01T00:00:00+00:00")
     statements = _lower_full(
         close_only,
         BALANCE,
@@ -264,13 +266,13 @@ def test_bitemporal_update_until_splits_head_middle_tail() -> None:
         "updateUntil",
         "Position",
         ({"id": 1, "value": 200.00},),
-        business_from="2024-03-01T00:00:00+00:00",
-        business_to="2024-09-01T00:00:00+00:00",
+        valid_from="2024-03-01T00:00:00+00:00",
+        until="2024-09-01T00:00:00+00:00",
     )
     observation = Observation(
-        in_z="2024-01-01T00:00:00+00:00",
-        business_from="2024-01-01T00:00:00+00:00",
-        business_to="infinity",
+        tx_start="2024-01-01T00:00:00+00:00",
+        valid_start="2024-01-01T00:00:00+00:00",
+        valid_end="infinity",
         payload=_R1_PAYLOAD,
     )
     statements = _lower(
@@ -329,13 +331,13 @@ def test_bitemporal_terminate_until_chains_head_and_tail_no_middle() -> None:
         "terminateUntil",
         "Position",
         ({"id": 1},),
-        business_from="2024-03-01T00:00:00+00:00",
-        business_to="2024-09-01T00:00:00+00:00",
+        valid_from="2024-03-01T00:00:00+00:00",
+        until="2024-09-01T00:00:00+00:00",
     )
     observation = Observation(
-        in_z="2024-01-01T00:00:00+00:00",
-        business_from="2024-01-01T00:00:00+00:00",
-        business_to="infinity",
+        tx_start="2024-01-01T00:00:00+00:00",
+        valid_start="2024-01-01T00:00:00+00:00",
+        valid_end="infinity",
         payload=_R1_PAYLOAD,
     )
     statements = _lower(
@@ -353,8 +355,8 @@ def test_bitemporal_insert_until_opens_one_bounded_rectangle() -> None:
         "insertUntil",
         "Position",
         ({"id": 1, "acctNum": "A", "value": 100.00},),
-        business_from="2024-03-01T00:00:00+00:00",
-        business_to="2024-09-01T00:00:00+00:00",
+        valid_from="2024-03-01T00:00:00+00:00",
+        until="2024-09-01T00:00:00+00:00",
     )
     statements = _lower(insert_until, POSITION, "2024-01-01T00:00:00+00:00")
     assert statements == [
@@ -380,12 +382,12 @@ def test_bitemporal_plain_update_splits_head_and_new_tail_only() -> None:
         "update",
         "Position",
         ({"id": 1, "value": 200.00},),
-        business_from="2024-06-01T00:00:00+00:00",
+        valid_from="2024-06-01T00:00:00+00:00",
     )
     observation = Observation(
-        in_z="2024-01-01T00:00:00+00:00",
-        business_from="2024-01-01T00:00:00+00:00",
-        business_to="infinity",
+        tx_start="2024-01-01T00:00:00+00:00",
+        valid_start="2024-01-01T00:00:00+00:00",
+        valid_end="infinity",
         payload=_R1_PAYLOAD,
     )
     statements = _lower(update, POSITION, "2024-07-01T00:00:00+00:00", observation=observation)
@@ -426,12 +428,12 @@ def test_bitemporal_plain_update_splits_head_and_new_tail_only() -> None:
 def test_bitemporal_plain_terminate_chains_head_only() -> None:
     # m-bitemp-write-007.
     terminate = KeyedWrite(
-        "terminate", "Position", ({"id": 1},), business_from="2024-06-01T00:00:00+00:00"
+        "terminate", "Position", ({"id": 1},), valid_from="2024-06-01T00:00:00+00:00"
     )
     observation = Observation(
-        in_z="2024-01-01T00:00:00+00:00",
-        business_from="2024-01-01T00:00:00+00:00",
-        business_to="infinity",
+        tx_start="2024-01-01T00:00:00+00:00",
+        valid_start="2024-01-01T00:00:00+00:00",
+        valid_end="infinity",
         payload=_R1_PAYLOAD,
     )
     statements = _lower(terminate, POSITION, "2024-07-01T00:00:00+00:00", observation=observation)
@@ -462,7 +464,7 @@ def test_bitemporal_plain_insert_opens_one_fully_current_rectangle() -> None:
         "insert",
         "Position",
         ({"id": 1, "acctNum": "A", "value": 100.00},),
-        business_from="2024-01-01T00:00:00+00:00",
+        valid_from="2024-01-01T00:00:00+00:00",
     )
     statements = _lower(insert, POSITION, "2024-01-01T00:00:00+00:00")
     assert statements == [
@@ -528,6 +530,21 @@ def test_bitemporal_close_is_fully_ungated_under_locking() -> None:
     assert lowered.stale_error is True
 
 
+def test_temporal_close_requires_an_effective_table() -> None:
+    balance = dataclasses.replace(BALANCE.entity("Balance"), table=None)
+    malformed = Metamodel(entities=(balance,))
+    with pytest.raises(WriteLoweringError, match="temporal write target has no effective table"):
+        lower_temporal_close(
+            {"id": 1},
+            "Balance",
+            malformed,
+            POSTGRES,
+            "locking",
+            "2024-10-01T00:00:00+00:00",
+            None,
+        )
+
+
 # --------------------------------------------------------------------------- #
 # Inheritance composition (m-inheritance x m-audit-write / m-bitemp-write).    #
 # --------------------------------------------------------------------------- #
@@ -560,12 +577,12 @@ def test_tpcs_audit_terminate_has_no_tag_guard() -> None:
 def test_tph_bitemporal_terminate_carries_the_tag_guard() -> None:
     # m-inheritance-094.
     terminate = KeyedWrite(
-        "terminate", "Bond", ({"id": 1},), business_from="2024-06-01T00:00:00+00:00"
+        "terminate", "Bond", ({"id": 1},), valid_from="2024-06-01T00:00:00+00:00"
     )
     observation = Observation(
-        in_z="2024-01-01T00:00:00+00:00",
-        business_from="2024-01-01T00:00:00+00:00",
-        business_to="infinity",
+        tx_start="2024-01-01T00:00:00+00:00",
+        valid_start="2024-01-01T00:00:00+00:00",
+        valid_end="infinity",
         payload={"id": 1, "price": 100.00, "coupon": 5.00},
     )
     statements = _lower(terminate, INSTRUMENT, "2024-07-01T00:00:00+00:00", observation=observation)
@@ -579,12 +596,12 @@ def test_tph_bitemporal_terminate_carries_the_tag_guard() -> None:
 def test_tpcs_bitemporal_terminate_has_no_tag_guard() -> None:
     # m-inheritance-095: routes to the concrete `deposit_rate` table.
     terminate = KeyedWrite(
-        "terminate", "DepositRate", ({"id": 1},), business_from="2024-06-01T00:00:00+00:00"
+        "terminate", "DepositRate", ({"id": 1},), valid_from="2024-06-01T00:00:00+00:00"
     )
     observation = Observation(
-        in_z="2024-01-01T00:00:00+00:00",
-        business_from="2024-01-01T00:00:00+00:00",
-        business_to="infinity",
+        tx_start="2024-01-01T00:00:00+00:00",
+        valid_start="2024-01-01T00:00:00+00:00",
+        valid_end="infinity",
         payload={"id": 1, "amount": 2.50, "grade": "A"},
     )
     statements = _lower(terminate, RATE, "2024-07-01T00:00:00+00:00", observation=observation)
@@ -600,13 +617,13 @@ def test_tph_bitemporal_terminate_until_chains_head_and_tail() -> None:
         "terminateUntil",
         "Stock",
         ({"id": 2},),
-        business_from="2024-03-01T00:00:00+00:00",
-        business_to="2024-09-01T00:00:00+00:00",
+        valid_from="2024-03-01T00:00:00+00:00",
+        until="2024-09-01T00:00:00+00:00",
     )
     observation = Observation(
-        in_z="2024-01-01T00:00:00+00:00",
-        business_from="2024-01-01T00:00:00+00:00",
-        business_to="infinity",
+        tx_start="2024-01-01T00:00:00+00:00",
+        valid_start="2024-01-01T00:00:00+00:00",
+        valid_end="infinity",
         payload={"id": 2, "price": 100.00, "ticker": "ACME"},
     )
     statements = _lower(
@@ -625,13 +642,13 @@ def test_tpcs_bitemporal_terminate_until_chains_head_and_tail() -> None:
         "terminateUntil",
         "LoanRate",
         ({"id": 2},),
-        business_from="2024-03-01T00:00:00+00:00",
-        business_to="2024-09-01T00:00:00+00:00",
+        valid_from="2024-03-01T00:00:00+00:00",
+        until="2024-09-01T00:00:00+00:00",
     )
     observation = Observation(
-        in_z="2024-01-01T00:00:00+00:00",
-        business_from="2024-01-01T00:00:00+00:00",
-        business_to="infinity",
+        tx_start="2024-01-01T00:00:00+00:00",
+        valid_start="2024-01-01T00:00:00+00:00",
+        valid_end="infinity",
         payload={"id": 2, "amount": 6.75, "spread": 1.25},
     )
     statements = _lower(terminate_until, RATE, "2024-02-15T00:00:00+00:00", observation=observation)
@@ -645,7 +662,7 @@ def test_tpcs_bitemporal_terminate_until_chains_head_and_tail() -> None:
 def test_tph_audit_optlock_composed_conflict_orders_tag_then_gate_last() -> None:
     # m-inheritance-105: tag guard rides identity predicates, in_z gate LAST.
     close_only = KeyedWrite("terminate", "MeterReading", ({"id": 1},))
-    observation = Observation(in_z="2024-01-01T00:00:00+00:00")
+    observation = Observation(tx_start="2024-01-01T00:00:00+00:00")
     statements = _lower_full(
         close_only,
         READING,
@@ -678,7 +695,7 @@ def test_audit_only_update_carries_the_value_object_document_on_the_chain() -> N
         "phones": [],
     }
     update = KeyedWrite("update", "Supplier", ({"id": 1, "name": "Nordic Foods", "address": d2},))
-    observation = Observation(in_z="2024-01-01T00:00:00+00:00")
+    observation = Observation(tx_start="2024-01-01T00:00:00+00:00")
     statements = _lower_full(update, SUPPLIER, "2024-06-01T00:00:00+00:00", observation=observation)
     close, chain = statements
     assert close.statement.sql == "update supplier set out_z = ? where sup_id = ? and out_z = ?"
@@ -703,13 +720,13 @@ def test_bitemporal_update_until_carries_the_value_object_document_on_every_chai
         "updateUntil",
         "Branch",
         ({"id": 1, "name": "Central Branch", "address": d2},),
-        business_from="2024-03-01T00:00:00+00:00",
-        business_to="2024-09-01T00:00:00+00:00",
+        valid_from="2024-03-01T00:00:00+00:00",
+        until="2024-09-01T00:00:00+00:00",
     )
     observation = Observation(
-        in_z="2024-01-01T00:00:00+00:00",
-        business_from="2024-01-01T00:00:00+00:00",
-        business_to="infinity",
+        tx_start="2024-01-01T00:00:00+00:00",
+        valid_start="2024-01-01T00:00:00+00:00",
+        valid_end="infinity",
         payload={"name": "Central Branch", "address": d1},
     )
     statements = _lower_full(
@@ -753,11 +770,11 @@ def test_temporal_write_requires_a_transaction_instant() -> None:
 # audit_write.axis_attr_names: the declared-axis lookup, direct.              #
 # --------------------------------------------------------------------------- #
 def test_axis_attr_names_refuses_an_axis_the_entity_does_not_declare() -> None:
-    # Balance is audit-only (processing axis only) — a caller asking this pure
-    # lookup for its (undeclared) business axis is a defensive backstop the
+    # Balance is audit-only (Transaction-Time dimension only) — a caller asking this pure
+    # lookup for its (undeclared) Valid-Time dimension is a defensive backstop the
     # render seam is responsible for never reaching with a well-formed
     # instruction (`audit_write._axis`), not a normal-path outcome.
     from parallax.core import audit_write
 
-    with pytest.raises(audit_write.TemporalPlanningError, match="declares no 'business'"):
-        audit_write.axis_attr_names(BALANCE.entity("Balance"), "business")
+    with pytest.raises(audit_write.TemporalPlanningError, match="declares no 'validTime'"):
+        audit_write.axis_attr_names(BALANCE.entity("Balance"), "validTime")

@@ -23,6 +23,7 @@ emission, mirroring the read compiler's forward-error posture.
 
 from __future__ import annotations
 
+import dataclasses
 from collections.abc import Mapping
 
 import pytest
@@ -97,6 +98,13 @@ def _flush_and_lower(
         for planned in plan.writes
         for lowered in lower_write(planned, meta, POSTGRES, concurrency)
     ]
+
+
+def test_non_temporal_write_requires_an_effective_table() -> None:
+    account = dataclasses.replace(ACCOUNT.entity("Account"), table=None)
+    malformed = Metamodel(entities=(account,))
+    with pytest.raises(WriteLoweringError, match="write target has no effective table"):
+        _lower(KeyedWrite("insert", "Account", ({"id": 1},)), malformed)
 
 
 # --------------------------------------------------------------------------- #

@@ -2,13 +2,13 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://parallax.dev/schemas/operation.schema.json",
   "title": "Parallax Operation Algebra (m-op-algebra)",
-  "description": "Canonical, format-agnostic serialization of an m-op-algebra operation node. Each node is a single-key tagged object. Grown one algebra phase at a time; this revision covers the full non-temporal single-entity algebra (identities, equality/range, null, string with case-insensitive + escape rules, membership, boolean incl. the first-class group node, orderBy / limit / distinct), the relationship algebra (navigate(rel) -> predicate, exists / notExists, the deepFetch directive), AND the aggregation algebra (groupBy with aggregate functions sum/avg/count/min/max/stdDev*/variance* and an optional having expression built from gt/gte/lt/lte/eq/notEq comparisons composed with and/or), AND the temporal algebra (asOf / asOfRange pin a temporal dimension and history returns the full milestone set; the from/to as-of predicates are auto-injected from the m-temporal-read as-of model, never written by the user), AND nested-attribute access into a valueObject (the flat `nested*` predicate family — `nestedEq` / `nestedNotEq` / `nestedGt` / `nestedGte` / `nestedLt` / `nestedLte` compare an inner structured-document field referenced by a dotted path `Class.valueObject.field` against a TYPED literal, `nestedIn` against a list of typed literals, and `nestedIsNull` / `nestedIsNotNull` test presence — each lowering to a dialect-specific document extraction, cast to the declared type before comparing where the attribute is non-text; PLUS the to-many forms `nestedExists` / `nestedNotExists` over a value-object-terminated path `Class.valueObject(.valueObject)*` — presence of a `one` member or NON-EMPTY-ness of a `many` array, with an optional element-scoped `where` requiring ONE element to satisfy the whole compound sub-predicate (any-element vs same-element semantics), the sub-predicate spelled with element-relative paths inside a parallel scoped `nested*` family — each lowering to the m-dialect array-traversal form). A BITEMPORAL entity is pinned on both axes by NESTING two asOf nodes (one per asOfAttribute), so a read can fix business date and processing date independently (Phase 8), AND subtype `narrow` (constrain a polymorphic entity position — the queried `targetEntity` — to a NON-EMPTY subset of its subtypes; validation resolves the authored `to` list to the effective concrete-subtype set and accepts iff it is a subset of the position's, m-inheritance).",
+  "description": "Canonical, format-agnostic serialization of an m-op-algebra operation node. Each node is a single-key tagged object. The temporal algebra addresses axes by the closed dimensions `validTime` and `transactionTime`: `asOf` carries `dimension` plus `coordinate`, `asOfRange` carries `dimension` plus finite `start`/`end`, and `history` carries `dimension`. Omitted dimensions default to Latest; an explicit Latest coordinate is serialized as `latest`, while Now is a finite clock instant serialized as an ordinary timestamp. Physical interval predicates are injected by m-temporal-read and never authored in the operation. The remaining nodes cover the full predicate, relationship, aggregation, nested-value-object, result-directive, and inheritance-narrowing algebra.",
   "$ref": "#/$defs/operation",
   "$defs": {
     "attributeRef": {
       "description": "A metamodel attribute reference of the form Class.attribute.",
       "type": "string",
-      "pattern": "^[A-Za-z][A-Za-z0-9]*\\.[a-z][A-Za-z0-9]*$"
+      "pattern": "^[A-Za-z][A-Za-z0-9]*\\.[a-z][A-Za-z0-9_]*$"
     },
     "entityName": {
       "description": "A bare metamodel entity name (no dotted member) — the `Class` grammar the attribute/relationship refs use before the dot. Used by `narrow` to name a polymorphic entity position and each authored subtype it narrows to (m-op-algebra, m-inheritance).",
@@ -18,7 +18,7 @@
     "relationshipRef": {
       "description": "A metamodel relationship reference of the form Class.relationship.",
       "type": "string",
-      "pattern": "^[A-Za-z][A-Za-z0-9]*\\.[a-z][A-Za-z0-9]*$"
+      "pattern": "^[A-Za-z][A-Za-z0-9]*\\.[a-z][A-Za-z0-9_]*$"
     },
     "aggregateAlias": {
       "description": "An aggregate result-column name (the `as` of an aggregate function). Lowercase, snake_case allowed (e.g. total_quantity, sample_count), matching the canonical SQL alias.",
@@ -659,18 +659,24 @@
       }
     },
 
-    "asOfAttributeRef": {
-      "description": "A metamodel as-of-attribute reference of the form Class.asOfAttribute.",
-      "type": "string",
-      "pattern": "^[A-Za-z][A-Za-z0-9]*\\.[a-z][A-Za-z0-9]*$"
+    "temporalDimension": {
+      "description": "The closed temporal dimension vocabulary.",
+      "enum": ["validTime", "transactionTime"]
     },
-    "temporalDate": {
-      "description": "A temporal pin value: an ISO-8601 UTC instant string, or the keyword `now` (as-of the current instant ⇒ the current milestone).",
+    "temporalCoordinate": {
+      "description": "A temporal point: the literal `latest` or a finite ISO-8601 UTC instant. A finite instant obtained from the current clock is Now; `now` is not a wire alias.",
       "type": "string",
-      "minLength": 1
+      "minLength": 1,
+      "not": { "const": "now" }
+    },
+    "finiteTemporalInstant": {
+      "description": "A finite ISO-8601 UTC instant; `latest` and `now` are not valid range bounds.",
+      "type": "string",
+      "minLength": 1,
+      "not": { "enum": ["latest", "now"] }
     },
     "asOf": {
-      "description": "asOf(asOfAttr, date): pin a temporal dimension to a single instant. The queried entity's rows are restricted to the milestone whose [from, to) interval contains `date` (date = `now` ⇒ the current row, to = infinity). The temporal predicate is AUTO-INJECTED from the as-of model; the user never writes the from/to comparisons by hand. An omitted dimension defaults to `now` (m-temporal-read default-injection rule). A BITEMPORAL entity pins BOTH axes by nesting one asOf per axis (the inner asOf's `operand` is the next axis's pin); each axis injects its own interval predicate (Phase 8).",
+      "description": "asOf(dimension, coordinate): pin one temporal dimension to Latest or a finite instant. Latest lowers to end = infinity; a finite current-clock instant is Now and lowers to interval containment. An omitted declared dimension defaults to Latest. A Bitemporal operation may nest one wrapper per dimension in Valid-Time-then-Transaction-Time order.",
       "type": "object",
       "additionalProperties": false,
       "required": ["asOf"],
@@ -678,17 +684,17 @@
         "asOf": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["operand", "asOfAttr", "date"],
+          "required": ["operand", "dimension", "coordinate"],
           "properties": {
             "operand": { "$ref": "#/$defs/operation" },
-            "asOfAttr": { "$ref": "#/$defs/asOfAttributeRef" },
-            "date": { "$ref": "#/$defs/temporalDate" }
+            "dimension": { "$ref": "#/$defs/temporalDimension" },
+            "coordinate": { "$ref": "#/$defs/temporalCoordinate" }
           }
         }
       }
     },
     "asOfRange": {
-      "description": "asOfRange(asOfAttr, from, to): scan a temporal dimension across a half-open instant range, returning every milestone that overlaps [from, to). Reads the interval columns as edge points (the milestone's own from/to satisfy the overlap), not a single containment pin.",
+      "description": "asOfRange(dimension, start, end): scan a temporal dimension across a finite half-open instant range, returning every milestone that overlaps [start, end).",
       "type": "object",
       "additionalProperties": false,
       "required": ["asOfRange"],
@@ -696,18 +702,18 @@
         "asOfRange": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["operand", "asOfAttr", "from", "to"],
+          "required": ["operand", "dimension", "start", "end"],
           "properties": {
             "operand": { "$ref": "#/$defs/operation" },
-            "asOfAttr": { "$ref": "#/$defs/asOfAttributeRef" },
-            "from": { "$ref": "#/$defs/temporalDate" },
-            "to": { "$ref": "#/$defs/temporalDate" }
+            "dimension": { "$ref": "#/$defs/temporalDimension" },
+            "start": { "$ref": "#/$defs/finiteTemporalInstant" },
+            "end": { "$ref": "#/$defs/finiteTemporalInstant" }
           }
         }
       }
     },
     "history": {
-      "description": "history(asOfAttr): return the FULL set of milestone rows for a temporal dimension (Reladomo's equalsEdgePoint, renamed). No as-of predicate is injected on that axis, so every interval (current and superseded) is returned.",
+      "description": "history(dimension): return the full milestone set for a temporal dimension. No as-of predicate is injected on that dimension.",
       "type": "object",
       "additionalProperties": false,
       "required": ["history"],
@@ -715,10 +721,10 @@
         "history": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["operand", "asOfAttr"],
+          "required": ["operand", "dimension"],
           "properties": {
             "operand": { "$ref": "#/$defs/operation" },
-            "asOfAttr": { "$ref": "#/$defs/asOfAttributeRef" }
+            "dimension": { "$ref": "#/$defs/temporalDimension" }
           }
         }
       }
@@ -727,7 +733,7 @@
     "nestedRef": {
       "description": "A reference into a valueObject's inner field: `Class.valueObject` followed by one or more dotted path segments into the embedded document (e.g. Customer.address.city, Customer.address.geo.lat). Lowers to a dialect-specific text extraction on the value object's backing column (m-sql/m-dialect).",
       "type": "string",
-      "pattern": "^[A-Za-z][A-Za-z0-9]*\\.[a-z][A-Za-z0-9]*(\\.[a-z][A-Za-z0-9]*)+$"
+      "pattern": "^[A-Za-z][A-Za-z0-9]*\\.[a-z][A-Za-z0-9_]*(\\.[a-z][A-Za-z0-9_]*)+$"
     },
     "nestedComparison": {
       "description": "A nested-field comparison: a valueObject inner attribute (referenced by a dotted path) compared against a TYPED literal. The `path` resolves against the model's declared valueObject structure (first segment a declared valueObject on the entity, intermediates nested valueObjects, leaf a declared attribute); the `value` is a polymorphic `literal` whose type MUST match the leaf attribute's declared type (m-op-algebra). The dialect-specific document extraction (m-sql/m-dialect) casts to that declared type before comparing.",
@@ -827,14 +833,14 @@
     },
 
     "valueObjectRef": {
-      "description": "A path that TERMINATES at a valueObject member (not an inner attribute): `Class.valueObject` optionally followed by nested valueObject segments (e.g. Customer.address, Customer.address.phones). Unlike `nestedRef` — which requires an ATTRIBUTE leaf and so has ≥3 components — this path may be just `Class.valueObject` (2 components) because its subject is the value OBJECT itself. It resolves against the declared structure (first segment a declared valueObject on the entity, each further segment a nested valueObject declared on the preceding member); the final member's cardinality (`one` / `many`) selects the presence vs non-empty semantics of nestedExists/nestedNotExists (m-op-algebra).",
+      "description": "A path that TERMINATES at a valueObject member (not an inner attribute): `Class.valueObject` optionally followed by nested valueObject segments (e.g. Customer.address, Customer.address.phones). Unlike `nestedRef` — which requires an ATTRIBUTE leaf and so has ≥3 components — this path may be just `Class.valueObject` (2 components) because its subject is the value OBJECT itself. It resolves against the declared structure (first segment a declared valueObject on the entity, each further segment a nested valueObject declared on the preceding member); the final member's multiplicity (`one` / `many`) selects the presence vs non-empty semantics of nestedExists/nestedNotExists (m-op-algebra).",
       "type": "string",
-      "pattern": "^[A-Za-z][A-Za-z0-9]*(\\.[a-z][A-Za-z0-9]*)+$"
+      "pattern": "^[A-Za-z][A-Za-z0-9]*(\\.[a-z][A-Za-z0-9_]*)+$"
     },
     "elementRef": {
       "description": "An ELEMENT-RELATIVE path used ONLY inside a scoped `where` (nestedExists/nestedNotExists over a `many` member). It has NO leading `Class.valueObject` — the subject is the array element bound by the enclosing exists — so it is one or more lowercase dotted segments naming declared members of that element (`type`, `number`, or `geo.country` to descend a nested value object of the element). Each segment resolves against the element's declared structure (intermediates nested valueObjects, leaf a declared attribute).",
       "type": "string",
-      "pattern": "^[a-z][A-Za-z0-9]*(\\.[a-z][A-Za-z0-9]*)*$"
+      "pattern": "^[a-z][A-Za-z0-9]*(\\.[a-z][A-Za-z0-9_]*)*$"
     },
 
     "elementComparison": {

@@ -18,8 +18,7 @@ ordinary import time, not only under pytest's test-path magic): they are
 declared there ONCE, so the unit lane's frontend/no-drift tests here and the
 API-suite's execution both resolve the exact SAME registered class, never a
 second, differently-scoped copy that would silently race it in the shared,
-global, process-wide entity registry. ``WirePayment`` stays local: a
-standalone structural fixture no corpus no-drift proof or read example needs.
+global, process-wide entity registry.
 
 Lives at the top level of ``tests/`` (moved from ``tests/unit/`` in increment
 6b) rather than lane-local: the unit lane's frontend/no-drift tests AND the API
@@ -42,8 +41,6 @@ from parallax.conformance.read_models import (
     Rate,
     Receipt,
 )
-from parallax.core import Attr, EntityConfig, Field
-from parallax.core.entity.base import Concrete
 
 __all__ = [
     "CardPayment",
@@ -58,23 +55,4 @@ __all__ = [
     "Payment",
     "Rate",
     "Receipt",
-    "WirePayment",
 ]
-
-_NS = "parallax.compatibility"
-
-
-class WirePayment(Payment, frozen=True):
-    """A TPH concrete subtype with an EXPLICIT table override — D-7's escape
-    hatch: ``EntityConfig(table=...)`` wins over the strategy's own shared-
-    table default (not part of the payment.yaml no-drift proof; a standalone
-    structural fixture)."""
-
-    __parallax__ = EntityConfig(
-        table="wire_payment",
-        namespace=_NS,
-        mutability="transactional",
-        inheritance=Concrete(tag_value="wire"),
-    )
-
-    reference: Attr[str | None] = Field(type="string", max_length=32, nullable=True)

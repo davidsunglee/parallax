@@ -26,7 +26,7 @@ import datetime as dt
 from decimal import Decimal
 
 from parallax.core import (
-    AsOfAttribute,
+    AsOfAxisMetadata,
     Attr,
     Entity,
     EntityConfig,
@@ -34,6 +34,9 @@ from parallax.core import (
     OrderByTerm,
     Rel,
     Relationship,
+    RelationshipJoin,
+    RelationshipTarget,
+    ReverseRelationship,
 )
 
 _NS = "parallax.compatibility"
@@ -72,20 +75,20 @@ class Position(Entity, frozen=True):
     signature shape): the write-family stories' own bitemporal-insert /
     ``insertUntil`` / ``updateUntil`` witness (``m-bitemp-write-001/-003``,
     D-31, COR-3 Phase 8 increment 7 completion round). Every axis-governed
-    attribute (``business_from``/``business_to``/``processing_from``/
-    ``processing_to``) is optional at construction (D-31): a fresh instance
-    names only its business payload, and the write path stamps the rest."""
+    attribute (``valid_start``/``valid_end``/``tx_start``/``tx_end``) is
+    optional at construction (D-31): a fresh instance names only its payload,
+    and the write path stamps the rest."""
 
     __parallax__ = EntityConfig(
         table="position",
         namespace=_NS,
         mutability="transactional",
         as_of=(
-            AsOfAttribute(
-                name="businessDate", from_column="from_z", to_column="thru_z", axis="business"
+            AsOfAxisMetadata(
+                dimension="validTime", start_attribute="valid_start", end_attribute="valid_end"
             ),
-            AsOfAttribute(
-                name="processingDate", from_column="in_z", to_column="out_z", axis="processing"
+            AsOfAxisMetadata(
+                dimension="transactionTime", start_attribute="tx_start", end_attribute="tx_end"
             ),
         ),
     )
@@ -93,10 +96,10 @@ class Position(Entity, frozen=True):
     id: Attr[int] = Field(primary_key=True, pk_generator="none", column="pos_id", type="int64")
     acct_num: Attr[str] = Field(max_length=32, column="acct_num")
     value: Attr[Decimal] = Field(type="decimal(18,2)", column="val")
-    business_from: Attr[dt.datetime] = Field(column="from_z")
-    business_to: Attr[dt.datetime] = Field(column="thru_z")
-    processing_from: Attr[dt.datetime] = Field(column="in_z")
-    processing_to: Attr[dt.datetime] = Field(column="out_z")
+    valid_start: Attr[dt.datetime] = Field(name="valid_start", column="from_z")
+    valid_end: Attr[dt.datetime] = Field(name="valid_end", column="thru_z")
+    tx_start: Attr[dt.datetime] = Field(name="tx_start", column="in_z")
+    tx_end: Attr[dt.datetime] = Field(name="tx_end", column="out_z")
 
 
 class Order(Entity, frozen=True):
@@ -115,27 +118,24 @@ class Order(Entity, frozen=True):
     ordered_on: Attr[dt.date] = Field(column="ordered_on")
     items: Rel[tuple["OrderItem", ...]] = Relationship(
         cardinality="one-to-many",
-        join="this.id = OrderItem.orderId",
-        related_entity="OrderItem",
-        reverse_name="order",
+        join=RelationshipJoin(
+            source="id", target=RelationshipTarget(entity="OrderItem", attribute="orderId")
+        ),
         dependent=True,
-        foreign_key="order_id",
         order_by=[OrderByTerm(attr="id", direction="desc")],
     )
     statuses: Rel[tuple["OrderStatus", ...]] = Relationship(
         cardinality="one-to-many",
-        join="this.id = OrderStatus.orderId",
-        related_entity="OrderStatus",
-        reverse_name="order",
+        join=RelationshipJoin(
+            source="id", target=RelationshipTarget(entity="OrderStatus", attribute="orderId")
+        ),
         dependent=True,
-        foreign_key="order_id",
     )
     tags: Rel[tuple["OrderTag", ...]] = Relationship(
         cardinality="one-to-many",
-        join="this.id = OrderTag.orderId",
-        related_entity="OrderTag",
-        reverse_name="order",
-        foreign_key="order_id",
+        join=RelationshipJoin(
+            source="id", target=RelationshipTarget(entity="OrderTag", attribute="orderId")
+        ),
         order_by=[
             OrderByTerm(attr="priority", direction="desc"),
             OrderByTerm(attr="label", direction="asc"),
@@ -143,9 +143,9 @@ class Order(Entity, frozen=True):
     )
     items_by_ship_date: Rel[tuple["OrderItem", ...]] = Relationship(
         cardinality="one-to-many",
-        join="this.id = OrderItem.orderId",
-        related_entity="OrderItem",
-        foreign_key="order_id",
+        join=RelationshipJoin(
+            source="id", target=RelationshipTarget(entity="OrderItem", attribute="orderId")
+        ),
         order_by=[OrderByTerm(attr="shippedOn", direction="asc")],
     )
 
@@ -163,20 +163,14 @@ class OrderItem(Entity, frozen=True):
     shipped_on: Attr[dt.date | None] = Field(
         type="date", column="shipped_on", nullable=True, default=None
     )
-    order: Rel["Order"] = Relationship(
-        cardinality="many-to-one",
-        join="this.orderId = Order.id",
-        related_entity="Order",
-        reverse_name="items",
-        foreign_key="order_id",
-    )
+    order: Rel["Order"] = ReverseRelationship(reverse_of="Order.items")
     statuses: Rel[tuple["OrderStatus", ...]] = Relationship(
         cardinality="one-to-many",
-        join="this.id = OrderStatus.orderItemId",
-        related_entity="OrderStatus",
-        reverse_name="orderItem",
+        join=RelationshipJoin(
+            source="id",
+            target=RelationshipTarget(entity="OrderStatus", attribute="orderItemId"),
+        ),
         dependent=True,
-        foreign_key="order_item_id",
         order_by=[OrderByTerm(attr="code", direction="asc")],
     )
 
@@ -194,20 +188,8 @@ class OrderStatus(Entity, frozen=True):
         type="int64", column="order_item_id", nullable=True, default=None
     )
     code: Attr[str] = Field(max_length=16)
-    order: Rel["Order"] = Relationship(
-        cardinality="many-to-one",
-        join="this.orderId = Order.id",
-        related_entity="Order",
-        reverse_name="statuses",
-        foreign_key="order_id",
-    )
-    order_item: Rel["OrderItem"] = Relationship(
-        cardinality="many-to-one",
-        join="this.orderItemId = OrderItem.id",
-        related_entity="OrderItem",
-        reverse_name="statuses",
-        foreign_key="order_item_id",
-    )
+    order: Rel["Order"] = ReverseRelationship(reverse_of="Order.statuses")
+    order_item: Rel["OrderItem"] = ReverseRelationship(reverse_of="OrderItem.statuses")
 
 
 class OrderTag(Entity, frozen=True):
@@ -219,10 +201,4 @@ class OrderTag(Entity, frozen=True):
     order_id: Attr[int] = Field(column="order_id", type="int64")
     label: Attr[str] = Field(max_length=32)
     priority: Attr[int] = Field(type="int32")
-    order: Rel["Order"] = Relationship(
-        cardinality="many-to-one",
-        join="this.orderId = Order.id",
-        related_entity="Order",
-        reverse_name="tags",
-        foreign_key="order_id",
-    )
+    order: Rel["Order"] = ReverseRelationship(reverse_of="Order.tags")

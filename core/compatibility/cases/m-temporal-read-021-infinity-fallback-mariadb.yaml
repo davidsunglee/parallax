@@ -1,6 +1,6 @@
 # Infinity-fallback temporal read (Phase 10): the second cross-dialect seam point.
 #
-# The as-of-now current-row predicate is `t0.out_z = ?` with `binds: [infinity]`
+# The as-of-Latest current-row predicate is `t0.out_z = ?` with `binds: [infinity]`
 # — IDENTICAL golden SQL on both dialects. The divergence is the PHYSICAL infinity
 # the `?` bind carries, owned entirely by the m-dialect seam:
 #

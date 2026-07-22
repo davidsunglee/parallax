@@ -88,7 +88,7 @@ _WITNESS_BITEMP = [
         "mutation": "insert",
         "entity": "Position",
         "rows": [{"id": 9, "acctNum": "D", "value": 100.00}],
-        "businessFrom": "2024-01-01T00:00:00+00:00",
+        "validFrom": "2024-01-01T00:00:00+00:00",
         "at": "2024-01-01T00:00:00+00:00",
     },
     {

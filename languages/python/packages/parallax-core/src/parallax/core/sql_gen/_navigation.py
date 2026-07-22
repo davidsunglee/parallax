@@ -145,24 +145,13 @@ class OpenBranch:
 # Relationship resolution.                                                     #
 # --------------------------------------------------------------------------- #
 def _resolve_relationship_ref(rel_ref: str, meta: Metamodel) -> Relationship:
-    class_name, _, member_name = rel_ref.partition(".")
-    entity = meta.entity(class_name)
-    for relationship in entity.relationships:
-        if relationship.name == member_name:
-            return relationship
-    raise SqlGenError(  # pragma: no cover - guards an unvalidated operation
-        f"{rel_ref!r} names no declared relationship on {entity.name}"
-    )
-
-
-def _parse_join(join: str) -> tuple[str, str]:
-    """Split a relationship's `this.<attr> = <Entity>.<attr>` join predicate into
-    ``(owner attribute name, related attribute name)`` — the mechanical
-    correlation-column derivation `m-navigate` requires."""
-    lhs, _, rhs = join.partition(" = ")
-    _, _, owner_attr = lhs.partition(".")
-    _, _, related_attr = rhs.partition(".")
-    return owner_attr, related_attr
+    class_name, _, member_name = rel_ref.rpartition(".")
+    try:
+        return meta.relationship(class_name, member_name)
+    except KeyError as exc:
+        raise SqlGenError(  # pragma: no cover - guards an unvalidated operation
+            f"{rel_ref!r} names no declared relationship on {class_name}"
+        ) from exc
 
 
 # --------------------------------------------------------------------------- #
@@ -182,20 +171,21 @@ def plan_hop(op: Navigate | Exists | NotExists, scope: _PlanScope) -> HopPlan:
     """
     negate = isinstance(op, NotExists)
     relationship = _resolve_relationship_ref(op.rel, scope.meta)
-    target_entity = scope.meta.entity(relationship.related_entity)
-    owner_attr, related_attr = _parse_join(relationship.join)
+    target = scope.meta.entity(relationship.join.target.entity)
+    owner_attr = relationship.join.source
+    related_attr = relationship.join.target.attribute
     parent_column = scope.column_of(f"{scope.entity.name}.{owner_attr}")
-    if target_entity.inheritance is not None:
+    if target.inheritance is not None:
         return _plan_polymorphic_hop(
-            relationship.related_entity,
-            target_entity,
+            relationship.join.target.entity,
+            target,
             op.op,
             parent_column,
             related_attr,
             scope,
             negate=negate,
         )
-    return _plan_simple_hop(target_entity, op.op, parent_column, related_attr, negate=negate)
+    return _plan_simple_hop(target, op.op, parent_column, related_attr, negate=negate)
 
 
 def open_branch(branch: HopBranch, scope: _PlanScope) -> OpenBranch:
@@ -238,7 +228,7 @@ def open_branch(branch: HopBranch, scope: _PlanScope) -> OpenBranch:
 
 
 def _plan_simple_hop(
-    target_entity: Entity,
+    target: Entity,
     inner: Operation | None,
     parent_column: str,
     related_attr: str,
@@ -250,8 +240,8 @@ def _plan_simple_hop(
     return HopPlan(
         branches=(
             HopBranch(
-                entity=target_entity,
-                table=target_entity.table,
+                entity=target,
+                table=target.table,
                 related_attr=related_attr,
                 parent_column=parent_column,
                 inner=inner,
@@ -280,7 +270,7 @@ def _hop_position(
     target = meta.entity(relatable_entity)
     is_bare_root = target.inheritance is not None and target.inheritance.role == "root"
     return (
-        tuple(inheritance.effective_concrete_subtypes(meta, relatable_entity)),
+        tuple(inheritance.effective_concrete_subtypes(meta, target.name)),
         inner,
         is_bare_root,
     )
@@ -288,7 +278,7 @@ def _hop_position(
 
 def _plan_polymorphic_hop(
     related_entity: str,
-    target_entity: Entity,
+    target: Entity,
     inner: Operation | None,
     parent_column: str,
     related_attr: str,
@@ -301,7 +291,7 @@ def _plan_polymorphic_hop(
     machinery); table-per-concrete-subtype plans one `EXISTS` per effective
     concrete, alphabetical, grouped by `or` (m-sql "Polymorphic navigation
     lowering")."""
-    root = inheritance.family_root(scope.meta, target_entity)
+    root = inheritance.family_root(scope.meta, target)
     assert root.inheritance is not None
     position, remaining_inner, is_bare_root = _hop_position(scope.meta, related_entity, inner)
     if root.inheritance.strategy == "table-per-hierarchy":
@@ -335,9 +325,9 @@ def _plan_tph_hop(
     # predicate at all — the same rule a top-level family read applies, spelled
     # here as the absence of a `TagPredicate` rather than as a sentinel kind.
     tag = None if is_bare_root else _TagPredicate(_tph_tag_column(root), tuple(position))
-    table = scope.meta.entity(position[0]).table
-    if table is None:  # pragma: no cover - a validated TPH concrete always declares one
-        raise SqlGenError(f"{position[0]}: table-per-hierarchy concrete subtype declares no table")
+    table = inheritance.effective_table(scope.meta, root)
+    if table is None:  # pragma: no cover - validated TPH roots always declare one
+        raise SqlGenError(f"{root.name}: table-per-hierarchy root declares no table")
     return HopPlan(
         branches=(
             HopBranch(

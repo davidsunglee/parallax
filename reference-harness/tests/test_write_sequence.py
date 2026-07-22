@@ -3,7 +3,7 @@
 These pin the DB-free invariants of a milestone-chaining write case: the
 statement-count consistency check (sum of per-step counts == then.statements DML count
 == roundTrips), the temporal DDL (a temporal entity's physical primary key spans
-the as-of fromColumn so the milestone chain is admissible), and the as-of-aware
+the as-of start_column so the milestone chain is admissible), and the as-of-aware
 descriptor accessors. The full apply-DML-and-assert-table-state behavior is
 exercised end-to-end against real Postgres by the compatibility suite.
 """
@@ -520,7 +520,7 @@ def test_temporal_ddl_primary_key_spans_the_as_of_from_column() -> None:
     model = _balance_model()
     (create,) = ddl_for(model, "postgres")
     # The business key alone (bal_id) is not unique across milestones; the
-    # physical primary key MUST include the as-of fromColumn (in_z).
+    # physical primary key MUST include the as-of start_column (in_z).
     assert "primary key (bal_id, in_z)" in create
     # The interval columns are present and typed as instants.
     assert "in_z timestamptz not null" in create
@@ -534,7 +534,7 @@ def test_temporal_unique_index_matches_physical_primary_key() -> None:
     )
     assert unique_index == {
         "name": "balance_pk",
-        "attributes": ["id", "processingFrom"],
+        "attributes": ["id", "tx_start"],
         "unique": True,
     }
 
@@ -543,6 +543,6 @@ def test_balance_entity_is_unitemporal_processing() -> None:
     model = _balance_model()
     entity = model.root_entity
     assert entity.is_temporal
-    (dimension,) = entity.as_of_attributes
-    assert dimension["axis"] == "processing"
-    assert entity.definition["temporal"] == "unitemporal-processing"
+    (dimension,) = entity.temporal_runtime_axes
+    assert dimension["dimension"] == "transactionTime"
+    assert [axis["dimension"] for axis in entity.temporal_runtime_axes] == ["transactionTime"]

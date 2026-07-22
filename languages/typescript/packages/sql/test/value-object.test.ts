@@ -29,12 +29,12 @@ import {
 
 /** The declared recursive `address` value-object structure the stub resolves against. */
 interface Member {
-  readonly cardinality: "one" | "many";
+  readonly multiplicity: "one" | "many";
   readonly attributes: Readonly<Record<string, string>>;
   readonly valueObjects: Readonly<Record<string, Member>>;
 }
 const ADDRESS: Member = {
-  cardinality: "one",
+  multiplicity: "one",
   // `unit` (int64) and `verified` (boolean) are off-corpus to-one non-string leaves
   // exercising the typed-cast / JSON-text-boolean nested-comparison surface.
   attributes: {
@@ -45,18 +45,18 @@ const ADDRESS: Member = {
   },
   valueObjects: {
     geo: {
-      cardinality: "one",
+      multiplicity: "one",
       attributes: { country: "string", elevation: "float64" },
       valueObjects: {
         point: {
-          cardinality: "one",
+          multiplicity: "one",
           attributes: { lat: "float64", lon: "float64" },
           valueObjects: {},
         },
       },
     },
     phones: {
-      cardinality: "many",
+      multiplicity: "many",
       attributes: { type: "string", number: "string", rank: "int64" },
       valueObjects: {},
     },
@@ -87,19 +87,19 @@ function customerResolver(): SchemaResolver {
       let member: Member = ADDRESS;
       // Full-path convention: the top-level value object is index 0, so a nested
       // `many` at `rest[k]` is `k + 1` and a top-level `many` is `0` (root array).
-      let manyIndex = ADDRESS.cardinality === "many" ? 0 : -1;
+      let manyIndex = ADDRESS.multiplicity === "many" ? 0 : -1;
       let leafIsAttribute = false;
       let leafType: string | undefined;
-      let leafIsMany = rest.length === 0 && ADDRESS.cardinality === "many";
+      let leafIsMany = rest.length === 0 && ADDRESS.multiplicity === "many";
       rest.forEach((segment, index) => {
         const nested = member.valueObjects[segment];
         if (nested !== undefined) {
-          if (nested.cardinality === "many" && manyIndex === -1) {
+          if (nested.multiplicity === "many" && manyIndex === -1) {
             manyIndex = index + 1;
           }
           member = nested;
           if (index === rest.length - 1) {
-            leafIsMany = nested.cardinality === "many";
+            leafIsMany = nested.multiplicity === "many";
           }
           return;
         }

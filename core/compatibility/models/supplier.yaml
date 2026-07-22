@@ -4,8 +4,8 @@
 # This descriptor is an instance of core/schemas/metamodel.schema.json. It is the
 # temporal analogue of models/customer.yaml: the SAME recursive `address` value
 # object (street/city, a nested `geo` one, a to-many `phones`) rides a
-# `unitemporal-processing` (audit-only) owner instead of a non-temporal one. A
-# value object declares NO asOfAttributes of its own (the schema forbids them) — it
+# `Transaction-Time-Only` (audit-only) owner instead of a non-temporal one. A
+# value object declares NO asOfAxes of its own (the schema forbids them) — it
 # inherits the owner's single `processing` dimension and its backing `address`
 # column rides the milestoned row exactly like the scalar `name` column.
 #
@@ -29,37 +29,31 @@ entity:
   name: Supplier
   namespace: parallax.compatibility
   table: supplier
-  mutability: transactional
-  temporal: unitemporal-processing
+  persistence: read-write
   attributes:
     - name: id
       type: int64
       column: sup_id
       primaryKey: true
-      pkGenerator: none
+      pkGeneration: application-assigned
     - name: name
       type: string
       column: name
       maxLength: 64
-    - name: processingFrom
+    - name: tx_start
       type: timestamp
       column: in_z
-    - name: processingTo
+    - name: tx_end
       type: timestamp
       column: out_z
-  asOfAttributes:
-    - name: processingDate
-      fromColumn: in_z
-      toColumn: out_z
-      axis: processing
-      toIsInclusive: false
-      infinity: infinity
-      default: now
+  asOfAxes:
+    - dimension: transactionTime
+      startAttribute: tx_start
+      endAttribute: tx_end
   valueObjects:
     - name: address
       column: address
-      mapping: json
-      cardinality: one
+      multiplicity: one
       nullable: true
       attributes:
         - name: street
@@ -70,15 +64,14 @@ entity:
           nullable: true
       valueObjects:
         - name: geo
-          cardinality: one
+          multiplicity: one
           nullable: true
           attributes:
             - name: country
               type: string
               nullable: true
         - name: phones
-          cardinality: many
-          nullable: true
+          multiplicity: many
           attributes:
             - name: type
               type: string
@@ -88,7 +81,7 @@ entity:
               nullable: true
   indices:
     - name: supplier_pk
-      attributes: [id, processingFrom]
+      attributes: [id, tx_start]
       unique: true
     - name: supplier_name
       attributes: [name]

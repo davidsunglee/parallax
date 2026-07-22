@@ -42,7 +42,12 @@ def reset_statements() -> list[str]:
 
 
 def _tables(meta: Metamodel) -> list[tuple[Entity, str]]:
-    return [(entity, entity.table) for entity in meta.entities if entity.table is not None]
+    tables: list[tuple[Entity, str]] = []
+    for entity in meta.entities:
+        table = inheritance.effective_table(meta, entity)
+        if table is not None:
+            tables.append((entity, table))
+    return tables
 
 
 def schema_statements(meta: Metamodel, dialect: Dialect = POSTGRES) -> list[str]:
@@ -63,10 +68,11 @@ def schema_statements(meta: Metamodel, dialect: Dialect = POSTGRES) -> list[str]
     column order and the tag column's own type are this provisioning path's own
     choice, not a golden.
 
-    A **temporal** entity's physical primary key is its business key **plus each
-    as-of axis's ``fromColumn``** (``m-descriptor``): many milestone rows share one
-    business key, so a single-column PK would reject a second milestone. The
-    from-columns are appended in declared axis order (business before processing),
+    A **temporal** Entity's physical primary key is its declared primary key plus
+    the physical column of each As-Of Axis's ``startAttribute``
+    (``m-descriptor``): many milestone rows share one domain identity, so the
+    declared key alone would reject a second milestone. Start-Attribute columns
+    are appended in declared axis order (Valid-Time before Transaction-Time),
     matching each model's declared composite unique index.
     """
     statements: list[str] = []
@@ -95,8 +101,10 @@ def _plain_table_ddl(entity: Entity, table: str, dialect: Dialect) -> str:
         if attribute.primary_key:
             pk_columns.append(dialect.quote(attribute.column))
     for value_object in entity.value_objects:
-        columns.append(f"{dialect.quote(value_object.column)} jsonb")
-    pk_columns.extend(dialect.quote(aoa.from_column) for aoa in entity.as_of_attributes)
+        columns.append(f"{dialect.quote(value_object.storage_column)} jsonb")
+    pk_columns.extend(
+        dialect.quote(_attribute_column(entity, axis.start_attribute)) for axis in entity.as_of_axes
+    )
     if pk_columns:
         columns.append(f"primary key ({', '.join(pk_columns)})")
     columns.extend(_unique_constraints((entity,), pk_columns, dialect))
@@ -136,8 +144,14 @@ def _tph_table_ddl(meta: Metamodel, root: Entity, table: str, dialect: Dialect) 
     """
     assert root.inheritance is not None
     concretes = sorted(
-        (e for e in meta.entities if e.inheritance is not None and e.table == table),
-        key=lambda e: e.name,
+        (
+            entity
+            for entity in meta.entities
+            if entity.inheritance is not None
+            and entity.inheritance.role == "concrete-subtype"
+            and inheritance.family_root(meta, entity).name == root.name
+        ),
+        key=lambda entity: entity.name,
     )
     columns: list[str] = []
     pk_columns: list[str] = []
@@ -167,12 +181,14 @@ def _tph_table_ddl(meta: Metamodel, root: Entity, table: str, dialect: Dialect) 
     members = (*ancestors, *concretes)
     for member in members:
         for value_object in member.value_objects:
-            columns.append(f"{dialect.quote(value_object.column)} jsonb")
+            columns.append(f"{dialect.quote(value_object.storage_column)} jsonb")
 
     # The root's own as-of axes — the family's ONLY legal declaration site
     # (temporality is family-wide; `validate` rejects a descendant that
     # declares any) — appended as the table's milestone-interval PK suffix.
-    pk_columns.extend(dialect.quote(aoa.from_column) for aoa in root.as_of_attributes)
+    pk_columns.extend(
+        dialect.quote(_attribute_column(root, axis.start_attribute)) for axis in root.as_of_axes
+    )
 
     if pk_columns:
         columns.append(f"primary key ({', '.join(pk_columns)})")
@@ -190,10 +206,10 @@ def _tpcs_table_ddl(meta: Metamodel, concrete: Entity, dialect: Dialect) -> str:
     derived through `inheritance.declaring_entity` (which resolves to the
     root for any participant) rather than read off `concrete` directly:
     reading them off the concrete alone would silently omit the
-    milestone-interval from-columns from the physical primary key, leaving no
-    way to store a second milestone for the same business key (`m-descriptor`
-    "a temporal entity's physical primary key is the business key plus each
-    dimension's fromColumn"). Any unique secondary index, though, MAY be
+    milestone start-Attribute columns from the physical primary key, leaving no
+    way to store a second milestone for the same domain identity
+    (`m-descriptor`: the physical key includes each dimension's start Attribute
+    column). Any unique secondary index, though, MAY be
     declared on any ancestor along ``concrete``'s own chain (m-inheritance
     "Inherited members" places no such restriction on non-temporal members),
     so value objects and unique indices are unioned across the whole chain
@@ -211,9 +227,12 @@ def _tpcs_table_ddl(meta: Metamodel, concrete: Entity, dialect: Dialect) -> str:
                 pk_columns.append(dialect.quote(attribute.column))
     for member in chain:
         for value_object in member.value_objects:
-            columns.append(f"{dialect.quote(value_object.column)} jsonb")
+            columns.append(f"{dialect.quote(value_object.storage_column)} jsonb")
     declaring = inheritance.declaring_entity(meta, concrete)
-    pk_columns.extend(dialect.quote(aoa.from_column) for aoa in declaring.as_of_attributes)
+    pk_columns.extend(
+        dialect.quote(_attribute_column(declaring, axis.start_attribute))
+        for axis in declaring.as_of_axes
+    )
     if pk_columns:
         columns.append(f"primary key ({', '.join(pk_columns)})")
     columns.extend(_unique_constraints(chain, pk_columns, dialect))
@@ -230,10 +249,10 @@ def _unique_constraints(
     composite, is otherwise invisible from a concrete descriptor alone).
 
     An index's attribute names resolve to physical columns through the WHOLE
-    chain's scalar attributes and each as-of axis's from-column (the corpus
-    convention: the composite milestone indices name the as-of attribute, e.g.
-    ``processingFrom`` → ``in_z``), so an index declared on one chain member
-    may reference an attribute inherited from another. The index matching the
+    chain's scalar attributes. The composite milestone indices name the
+    start Attribute (for example, ``tx_start`` maps to ``in_z``), so an index
+    declared on one chain member may reference an attribute inherited from
+    another. The index matching the
     physical primary key is skipped — ``primary key (…)`` already enforces it
     — what remains are the true secondaries (a unique business column, a
     one-to-one FK column), which must be enforced for the `m-db-error`
@@ -245,7 +264,6 @@ def _unique_constraints(
     resolve: dict[str, str] = {}
     for member in chain:
         resolve.update({attribute.name: attribute.column for attribute in member.attributes})
-        resolve.update({aoa.name: aoa.from_column for aoa in member.as_of_attributes})
     constraints: list[str] = []
     seen: set[frozenset[str]] = set()
     for member in chain:
@@ -269,6 +287,13 @@ def _unique_constraints(
     return constraints
 
 
+def _attribute_column(entity: Entity, attribute_name: str) -> str:
+    for attribute in entity.attributes:
+        if attribute.name == attribute_name:
+            return attribute.column
+    raise ValueError(f"{entity.name}: no attribute {attribute_name!r}")
+
+
 def _fixture_columns(
     meta: Metamodel, entity: Entity
 ) -> tuple[list[str], dict[str, tuple[str, bool]], tuple[str, object] | None]:
@@ -289,7 +314,7 @@ def _fixture_columns(
         member_by_column: dict[str, tuple[str, bool]] = {
             attr.column: (attr.name, False) for attr in entity.attributes
         }
-        member_by_column.update((vo.column, (vo.name, True)) for vo in entity.value_objects)
+        member_by_column.update((vo.storage_column, (vo.name, True)) for vo in entity.value_objects)
         return list(column_order(entity)), member_by_column, None
 
     chain = (*inheritance.ancestor_chain(meta, (entity.name,)), entity)
@@ -300,8 +325,8 @@ def _fixture_columns(
             col_order.append(attribute.column)
             member_by_column[attribute.column] = (attribute.name, False)
         for vo in member.value_objects:
-            col_order.append(vo.column)
-            member_by_column[vo.column] = (vo.name, True)
+            col_order.append(vo.storage_column)
+            member_by_column[vo.storage_column] = (vo.name, True)
 
     tag_assignment: tuple[str, object] | None = None
     root = inheritance.family_root(meta, entity)

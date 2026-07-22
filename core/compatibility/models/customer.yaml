@@ -49,14 +49,13 @@ entities:
   - name: Customer
     namespace: parallax.compatibility
     table: customer
-    mutability: transactional
-    temporal: non-temporal
+    persistence: read-write
     attributes:
       - name: id
         type: int64
         column: id
         primaryKey: true
-        pkGenerator: none
+        pkGeneration: application-assigned
       - name: name
         type: string
         column: name
@@ -64,8 +63,7 @@ entities:
     valueObjects:
       - name: address
         column: address
-        mapping: json
-        cardinality: one
+        multiplicity: one
         nullable: true
         attributes:
           - name: street
@@ -74,7 +72,7 @@ entities:
             type: string
         valueObjects:
           - name: geo
-            cardinality: one
+            multiplicity: one
             nullable: true
             attributes:
               - name: country
@@ -84,7 +82,7 @@ entities:
                 nullable: true
             valueObjects:
               - name: point
-                cardinality: one
+                multiplicity: one
                 nullable: true
                 attributes:
                   - name: lat
@@ -94,8 +92,7 @@ entities:
                     type: float64
                     nullable: true
           - name: phones
-            cardinality: many
-            nullable: true
+            multiplicity: many
             attributes:
               - name: type
                 type: string
@@ -105,14 +102,13 @@ entities:
                 nullable: true
     relationships:
       - name: locations
-        relatedEntity: Location
         cardinality: one-to-many
-        join: this.id = Location.customerId
-        reverseName: customer
+        join:
+          source: id
+          target: { entity: Location, attribute: customerId }
         dependent: true
-        foreignKey: customer_id
         orderBy:
-          - { attr: id, direction: asc }
+          - { attribute: id, direction: asc }
       # depots: a SECOND VO-bearing child, reached via a distinct one-to-many. Its
       # `Depot.address` value object reuses the SAME column name `address` but a
       # DIFFERENT declared STRUCTURE (a FLAT { line, postcode }) than Customer's /
@@ -123,14 +119,13 @@ entities:
       # slot 4; m-case-format "Read result form"), unlike Location whose composite is
       # Customer's verbatim.
       - name: depots
-        relatedEntity: Depot
         cardinality: one-to-many
-        join: this.id = Depot.customerId
-        reverseName: customer
+        join:
+          source: id
+          target: { entity: Depot, attribute: customerId }
         dependent: true
-        foreignKey: customer_id
         orderBy:
-          - { attr: id, direction: asc }
+          - { attribute: id, direction: asc }
     indices:
       - name: customer_pk
         attributes: [id]
@@ -146,14 +141,13 @@ entities:
   - name: Location
     namespace: parallax.compatibility
     table: location
-    mutability: transactional
-    temporal: non-temporal
+    persistence: read-write
     attributes:
       - name: id
         type: int64
         column: id
         primaryKey: true
-        pkGenerator: none
+        pkGeneration: application-assigned
       - name: customerId
         type: int64
         column: customer_id
@@ -164,8 +158,7 @@ entities:
     valueObjects:
       - name: address
         column: address
-        mapping: json
-        cardinality: one
+        multiplicity: one
         nullable: true
         attributes:
           - name: street
@@ -174,7 +167,7 @@ entities:
             type: string
         valueObjects:
           - name: geo
-            cardinality: one
+            multiplicity: one
             nullable: true
             attributes:
               - name: country
@@ -184,7 +177,7 @@ entities:
                 nullable: true
             valueObjects:
               - name: point
-                cardinality: one
+                multiplicity: one
                 nullable: true
                 attributes:
                   - name: lat
@@ -194,8 +187,7 @@ entities:
                     type: float64
                     nullable: true
           - name: phones
-            cardinality: many
-            nullable: true
+            multiplicity: many
             attributes:
               - name: type
                 type: string
@@ -205,11 +197,7 @@ entities:
                 nullable: true
     relationships:
       - name: customer
-        relatedEntity: Customer
-        cardinality: many-to-one
-        join: this.customerId = Customer.id
-        reverseName: locations
-        foreignKey: customer_id
+        reverseOf: Customer.locations
     indices:
       - name: location_pk
         attributes: [id]
@@ -231,14 +219,13 @@ entities:
   - name: Depot
     namespace: parallax.compatibility
     table: depot
-    mutability: transactional
-    temporal: non-temporal
+    persistence: read-write
     attributes:
       - name: id
         type: int64
         column: id
         primaryKey: true
-        pkGenerator: none
+        pkGeneration: application-assigned
       - name: customerId
         type: int64
         column: customer_id
@@ -249,8 +236,7 @@ entities:
     valueObjects:
       - name: address
         column: address
-        mapping: json
-        cardinality: one
+        multiplicity: one
         nullable: true
         attributes:
           - name: line
@@ -261,11 +247,7 @@ entities:
             nullable: true
     relationships:
       - name: customer
-        relatedEntity: Customer
-        cardinality: many-to-one
-        join: this.customerId = Customer.id
-        reverseName: depots
-        foreignKey: customer_id
+        reverseOf: Customer.depots
     indices:
       - name: depot_pk
         attributes: [id]

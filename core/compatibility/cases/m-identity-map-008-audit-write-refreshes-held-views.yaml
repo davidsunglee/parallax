@@ -42,8 +42,8 @@ when:
             eq:
               attr: Balance.id
               value: 2
-          asOfAttr: Balance.processingDate
-          date: "2024-04-01T00:00:00+00:00"
+          dimension: transactionTime
+          coordinate: "2024-04-01T00:00:00+00:00"
       roundTrips: 1
       note: hold a PAST view pinned at 2024-04-01 (the same milestone right now, 200.00)
       statements:
@@ -84,8 +84,8 @@ when:
             eq:
               attr: Balance.id
               value: 2
-          asOfAttr: Balance.processingDate
-          date: "2024-04-01T00:00:00+00:00"
+          dimension: transactionTime
+          coordinate: "2024-04-01T00:00:00+00:00"
       roundTrips: 1
       sameObjectAs: 1
       identityAttr: bal_id

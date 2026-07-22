@@ -1,10 +1,8 @@
-"""Unit tests for the Phase 8 full-bitemporal / business-temporal machinery (no
-database).
+"""Unit tests for the Phase 8 full-bitemporal machinery (no database).
 
 These pin the DB-free invariants of the Phase 8 temporal slice: the bitemporal
 DDL (a two-axis temporal entity's physical primary key spans BOTH as-of
-fromColumns so the milestone rectangles are admissible), the temporal
-classification of the new models (bitemporal vs unitemporal-business), and the
+start columns so the milestone rectangles are admissible), and the
 write-step-count consistency of the `*Until` rectangle-split write sequences (the
 sum of per-step counts == goldenSql DML count == roundTrips). The full
 apply-DML-and-assert-rectangle-state behavior and the both-axis as-of reads are
@@ -44,46 +42,33 @@ def _position_model():
     return load_model(COMPATIBILITY_ROOT, "models/position.yaml")
 
 
-def _reservation_model():
-    return load_model(COMPATIBILITY_ROOT, "models/reservation.yaml")
-
-
-_PHASE8_MODULES = ("m-temporal-read", "m-bitemp-write", "m-business-only")
+_PHASE8_MODULES = ("m-temporal-read", "m-bitemp-write")
 
 
 def _phase8_cases():
-    """The full-bitemporal + business-temporal single-entity cases (formerly the 08xx
-    range): reads/writes on the bitemporal/business models, excluding the audit-only
+    """The full-bitemporal single-entity cases (formerly the 08xx
+    range): reads/writes on the bitemporal models, excluding the audit-only
     reads and the relationship-propagation deep-fetch cases (which also carry a
     temporal flavor but file under `m-navigate`)."""
     return [
         c
         for c in discover_cases(COMPATIBILITY_ROOT)
         if any(c.path.stem.startswith(f"{module}-") for module in _PHASE8_MODULES)
-        and ("bitemporal" in c.tags or "business_temporal" in c.tags)
+        and "bitemporal" in c.tags
     ]
 
 
 def test_position_is_bitemporal_with_both_axes() -> None:
     entity = _position_model().root_entity
     assert entity.is_temporal
-    assert entity.definition["temporal"] == "bitemporal"
-    axes = {dim["axis"] for dim in entity.as_of_attributes}
-    assert axes == {"business", "processing"}
-
-
-def test_reservation_is_unitemporal_business() -> None:
-    entity = _reservation_model().root_entity
-    assert entity.is_temporal
-    assert entity.definition["temporal"] == "unitemporal-business"
-    (dimension,) = entity.as_of_attributes
-    assert dimension["axis"] == "business"
+    axes = {dim["dimension"] for dim in entity.temporal_runtime_axes}
+    assert axes == {"validTime", "transactionTime"}
 
 
 def test_bitemporal_ddl_primary_key_spans_both_as_of_from_columns() -> None:
     (create,) = ddl_for(_position_model(), "postgres")
     # The business key alone (pos_id) is not unique across rectangles; the
-    # physical primary key MUST include BOTH axes' fromColumns (from_z, in_z) so a
+    # physical primary key MUST include BOTH axes' start columns (from_z, in_z) so a
     # business-bounded rectangle and its inactivated original coexist.
     assert "primary key (pos_id, from_z, in_z)" in create
     for column in ("from_z", "thru_z", "in_z", "out_z"):
@@ -97,24 +82,7 @@ def test_bitemporal_unique_index_matches_physical_primary_key() -> None:
     )
     assert unique_index == {
         "name": "position_pk",
-        "attributes": ["id", "businessFrom", "processingFrom"],
-        "unique": True,
-    }
-
-
-def test_business_only_ddl_primary_key_spans_the_business_from_column() -> None:
-    (create,) = ddl_for(_reservation_model(), "postgres")
-    assert "primary key (res_id, from_z)" in create
-
-
-def test_business_only_unique_index_matches_physical_primary_key() -> None:
-    entity = _reservation_model().root_entity
-    unique_index = next(
-        index for index in entity.definition["indices"] if index["name"] == "reservation_pk"
-    )
-    assert unique_index == {
-        "name": "reservation_pk",
-        "attributes": ["id", "businessFrom"],
+        "attributes": ["id", "valid_start", "tx_start"],
         "unique": True,
     }
 
@@ -125,8 +93,8 @@ def test_bitemporal_history_case_suppresses_both_axes() -> None:
     )
     business_history = history_case.operation["history"]
     processing_history = business_history["operand"]["history"]
-    assert business_history["asOfAttr"] == "Position.businessDate"
-    assert processing_history["asOfAttr"] == "Position.processingDate"
+    assert business_history["dimension"] == "validTime"
+    assert processing_history["dimension"] == "transactionTime"
 
 
 def test_until_trio_write_step_counts_are_consistent() -> None:
@@ -205,8 +173,8 @@ def test_until_write_input_holds_for_authored_cases() -> None:
     }
     for case in cases:
         # Must not raise: the close binds [at, pk, infinity], every chained insert
-        # opens at fresh processing [at, infinity), and the business window bounds
-        # (businessFrom / until) appear among the chained inserts' business-axis binds.
+        # opens at fresh processing [at, infinity), and the Valid-Time window bounds
+        # (validFrom / until) appear among the chained inserts' Valid-Time binds.
         _assert_write_input_columns(case, "postgres")
 
 
@@ -216,7 +184,7 @@ def test_until_write_input_window_corruption_is_rejected() -> None:
     )
     step = next(s for s in case.write_sequence if s.get("until"))
     # Corrupt the business valid-time window end: `until` no longer appears among the
-    # chained inserts' business-axis binds, so the `*Until` ① ↔ ② window gate MUST
+    # chained inserts' Valid-Time binds, so the `*Until` ① ↔ ② window gate MUST
     # fail (the window bounds are DERIVED from `at`/`until`, never read from golden).
     step["until"] = "1999-12-31T00:00:00+00:00"
     with pytest.raises(CaseFailure):
@@ -245,8 +213,8 @@ def test_plain_split_write_input_holds_for_authored_cases() -> None:
     for case in cases:
         # Must not raise: routed through the rectangle-split cross-check (not the
         # audit-only close-and-open), the close binds [at, pk, infinity], the chained
-        # head / new-tail open at fresh processing [at, infinity), and businessFrom
-        # appears among the chained inserts' business-axis binds (until is absent).
+        # head / new-tail open at fresh processing [at, infinity), and validFrom
+        # appears among the chained inserts' Valid-Time binds (until is absent).
         _assert_write_input_columns(case, "postgres")
 
 
@@ -285,7 +253,7 @@ def test_plain_close_with_trailing_binds_but_no_gate_predicate_is_rejected() -> 
     # Sanity: as authored the plain split cross-checks cleanly.
     _assert_write_input_columns(case, "postgres")
     opening = next(s for s in case.write_sequence if s["mutation"] == "insert")
-    observed_from = opening["rows"][0]["businessFrom"]
+    observed_from = opening["validFrom"]
     observed_in = opening["at"]
     # The plain close is the second golden statement — confirm it is the NON-gated shape
     # (no `from_z = ?` / `in_z = ?` gate) before corrupting its binds.
@@ -304,14 +272,14 @@ def _gated_split_case():
 def test_gated_rectangle_split_close_reconstructs_the_observed_open_rectangle() -> None:
     # The optimistic gated split (`m-bitemp-write-008`) inactivates the observed
     # rectangle with `... and from_z = ? and in_z = ?`; the two trailing gate binds are
-    # the observed rectangle's (businessFrom, in_z), DERIVED from the OPENING insert
+    # the observed rectangle's (validFrom, in_z), DERIVED from the OPENING insert
     # step's row + `at` — distinct from the `updateUntil` window boundary (2024-03-01).
     case = _gated_split_case()
     opening = next(s for s in case.write_sequence if s["mutation"] == "insert")
-    open_business_from = opening["rows"][0]["businessFrom"]
+    open_business_from = opening["validFrom"]
     open_at = opening["at"]
     # The golden close is the second statement (after the opening insert): its binds are
-    # [at, pk, infinity, observedFromZ, observedInZ].
+    # [at, pk, infinity, observedFromZ, observedTxStart].
     close_binds = case.statement_binds(1)
     assert len(close_binds) == 5
     assert str(close_binds[3]) == str(open_business_from)  # observed from_z (not the window)
@@ -389,59 +357,17 @@ def test_gated_close_with_extra_placeholder_arity_mismatch_is_rejected() -> None
         _assert_write_input_columns(case, "postgres")
 
 
-def _business_write_cases():
-    """Business-temporal-only milestone-chaining write cases
-    (`m-business-only-001`-`m-business-only-003`)."""
-    return [
-        case
-        for case in discover_cases(COMPATIBILITY_ROOT)
-        if case.is_write_sequence
-        and "postgres" in case.golden_dialects
-        and any(step.get("businessAt") for step in case.write_sequence)
-    ]
-
-
-def test_business_write_input_holds_for_authored_cases() -> None:
-    cases = _business_write_cases()
-    # The business-only insert / update-chaining / terminate trio all carry ①
-    # (rows + businessAt).
-    assert {_case_id(case.path.stem) for case in cases} >= {
-        "m-business-only-001",
-        "m-business-only-002",
-        "m-business-only-003",
-    }
-    for case in cases:
-        # Must not raise: each business-only ① derives from_z = businessAt /
-        # thru_z = infinity and the full-row binds that cross-check the golden binds
-        # (the same close-and-chain shape as the audit-only axis, driven by business
-        # date rather than transaction instant).
-        _assert_write_input_columns(case, "postgres")
-
-
-def test_business_write_input_business_at_corruption_is_rejected() -> None:
-    case = copy.deepcopy(
-        next(c for c in _business_write_cases() if c.path.stem.startswith("m-business-only-003"))
-    )
-    step = next(s for s in case.write_sequence if s.get("businessAt"))
-    # Corrupt the business instant: the DERIVED from_z bind no longer matches the
-    # golden from_z bind, so the business-temporal ① ↔ ② gate MUST fail (from_z is
-    # derived from `businessAt`, never read from the golden).
-    step["businessAt"] = "1999-12-31T00:00:00+00:00"
-    with pytest.raises(CaseFailure):
-        _assert_write_input_columns(case, "postgres")
-
-
 def _bitemporal_conflict_close_cases():
     """Bitemporal conflict-close cases (`m-bitemp-write-004` / `m-bitemp-write-005`):
-    a business + processing axis."""
+    a business + Transaction-Time dimension."""
     return [
         case
         for case in discover_cases(COMPATIBILITY_ROOT)
         if case.is_conflict
         and any(
-            dim.get("axis") == "business"
+            dim.get("dimension") == "validTime"
             for entity in case.model.entities
-            for dim in entity.as_of_attributes
+            for dim in entity.temporal_runtime_axes
         )
     ]
 
@@ -453,9 +379,9 @@ def test_bitemporal_conflict_close_input_holds_for_authored_cases() -> None:
         "m-bitemp-write-005",
     }
     for case in cases:
-        # Must not raise: the close ① derives [at, pk, infinity, businessFrom,
-        # observedInZ] — the metamodel names the from_z discriminator column, ①
-        # supplies its VALUE (businessFrom), which the metamodel cannot know.
+        # Must not raise: the close ① derives [at, pk, infinity, validFrom,
+        # observedTxStart] — the metamodel names the from_z discriminator column, ①
+        # supplies its VALUE (validFrom), which the metamodel cannot know.
         _assert_conflict_input(case, "postgres")
 
 
@@ -469,7 +395,7 @@ def test_bitemporal_conflict_close_business_from_corruption_is_rejected() -> Non
     )
     # Corrupt the business discriminator VALUE: the DERIVED from_z gate bind no longer
     # matches the golden bind, so the bitemporal close ① ↔ ② gate MUST fail.
-    case.when["write"]["businessFrom"] = "1999-12-31T00:00:00+00:00"
+    case.when["write"]["validFrom"] = "1999-12-31T00:00:00+00:00"
     with pytest.raises(CaseFailure):
         _assert_conflict_input(case, "postgres")
 
@@ -508,7 +434,10 @@ def test_temporal_axes_are_inherited_by_concrete_subtypes() -> None:
     model = load_model(COMPATIBILITY_ROOT, "models/instrument.yaml")
     bond = model.entity("Bond")
     assert bond.is_temporal
-    assert {dim["axis"] for dim in bond.as_of_attributes} == {"business", "processing"}
+    assert {dim["dimension"] for dim in bond.temporal_runtime_axes} == {
+        "validTime",
+        "transactionTime",
+    }
     (create,) = ddl_for(model, "postgres")  # one shared `instrument` table
     assert "primary key (id, from_z, in_z)" in create
     assert "kind" in create  # the framework-owned tag column, synthesized for the DDL
@@ -591,7 +520,7 @@ def test_tpcs_temporal_union_read_per_branch_asof_binds() -> None:
     # binds — business-first [b, b, infinity], repeated in alphabetical branch order. The
     # oracle recomputes them from the read's pin, independent of the authored golden.
     case = _inheritance_case("m-inheritance-093")
-    assert _read_asof_pins(case) == {"business": "2024-06-01T00:00:00+00:00"}
+    assert _read_asof_pins(case) == {"validTime": "2024-06-01T00:00:00+00:00"}
     _assert_temporal_union_binds(case, "postgres")  # must not raise
     _assert_temporal_union_binds(case, "mariadb")  # the shared binds hold per dialect
 

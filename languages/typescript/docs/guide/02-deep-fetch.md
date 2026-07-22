@@ -100,25 +100,25 @@ const { rows, roundTrips } = await px.entity(entity).findGraph(base, options);
 ```ts
 buildFindOperation(all(), {
 includes: [path("Policy.coverages")],
-temporal: { asOf: { processing: "now", business: "now" }
+temporal: { asOf: { transactionTime: "latest", validTime: "latest" }
 const { rows, roundTrips } = await px.entity(entity).findGraph(base, options);
 ```
 
-## m-navigate-013-deepfetch-temporal-business-past
+## m-navigate-013-deepfetch-temporal-valid-time-past
 
 ```ts
 buildFindOperation(all(), {
 includes: [path("Policy.coverages")],
-temporal: { asOf: { processing: "now", business: at("2024-03-01T00:00:00+00:00") }
+temporal: { asOf: { transactionTime: "latest", validTime: at("2024-03-01T00:00:00+00:00") }
 const { rows, roundTrips } = await px.entity(entity).findGraph(base, options);
 ```
 
-## m-navigate-014-deepfetch-temporal-processing-past
+## m-navigate-014-deepfetch-temporal-transaction-time-past
 
 ```ts
 buildFindOperation(all(), {
 includes: [path("Policy.coverages")],
-temporal: { asOf: { processing: at("2024-02-01T00:00:00+00:00"), business: "now" }
+temporal: { asOf: { transactionTime: at("2024-02-01T00:00:00+00:00"), validTime: "latest" }
 const { rows, roundTrips } = await px.entity(entity).findGraph(base, options);
 ```
 
@@ -129,8 +129,8 @@ buildFindOperation(all(), {
 includes: [path("Policy.coverages")],
 temporal: {
   asOf: {
-    processing: at("2024-02-01T00:00:00+00:00"),
-    business: at("2024-03-01T00:00:00+00:00")
+    transactionTime: at("2024-02-01T00:00:00+00:00"),
+    validTime: at("2024-03-01T00:00:00+00:00")
 const { rows, roundTrips } = await px.entity(entity).findGraph(base, options);
 ```
 
@@ -139,7 +139,7 @@ const { rows, roundTrips } = await px.entity(entity).findGraph(base, options);
 ```ts
 buildFindOperation(all(), {
 includes: [path("Policy.coverages", "Coverage.claims")],
-temporal: { asOf: { processing: "now", business: "now" }
+temporal: { asOf: { transactionTime: "latest", validTime: "latest" }
 const { rows, roundTrips } = await px.entity(entity).findGraph(base, options);
 ```
 
@@ -148,25 +148,25 @@ const { rows, roundTrips } = await px.entity(entity).findGraph(base, options);
 ```ts
 buildFindOperation(all(), {
 includes: [path("Coverage.policy")],
-temporal: { asOf: { processing: "now", business: "now" }
+temporal: { asOf: { transactionTime: "latest", validTime: "latest" }
 const { rows, roundTrips } = await px.entity(entity).findGraph(base, options);
 ```
 
-## m-navigate-019-deepfetch-processing-only-latest
+## m-navigate-019-deepfetch-transaction-time-only-latest
 
 ```ts
 buildFindOperation(all(), {
 includes: [path("Invoice.lines")],
-temporal: { asOf: { processing: "now" }
+temporal: { asOf: { transactionTime: "latest" }
 const { rows, roundTrips } = await px.entity(entity).findGraph(base, options);
 ```
 
-## m-navigate-020-deepfetch-processing-only-instant
+## m-navigate-020-deepfetch-transaction-time-only-instant
 
 ```ts
 buildFindOperation(all(), {
 includes: [path("Invoice.lines")],
-temporal: { asOf: { processing: at("2024-02-01T00:00:00+00:00") }
+temporal: { asOf: { transactionTime: at("2024-02-01T00:00:00+00:00") }
 const { rows, roundTrips } = await px.entity(entity).findGraph(base, options);
 ```
 
@@ -182,7 +182,7 @@ const { rows, roundTrips } = await px.entity(entity).findGraph(base, options);
 ```ts
 buildFindOperation(all(), {
 includes: [path("Lease.notes")],
-temporal: { asOf: { processing: "now" }
+temporal: { asOf: { transactionTime: "latest" }
 const { rows, roundTrips } = await px.entity(entity).findGraph(base, options);
 ```
 
@@ -193,6 +193,6 @@ buildFindOperation(all(), {
 includes: [path("Policy.coverages")],
 orderBy: [new AttributeExpression("Policy.id").asc()],
 limit: 1,
-temporal: { asOf: { processing: "now", business: at("2024-03-01T00:00:00+00:00") }
+temporal: { asOf: { transactionTime: "latest", validTime: at("2024-03-01T00:00:00+00:00") }
 const { rows, roundTrips } = await px.entity(entity).findGraph(base, options);
 ```

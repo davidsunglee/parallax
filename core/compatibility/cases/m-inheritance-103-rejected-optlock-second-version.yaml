@@ -24,7 +24,7 @@ when:
           role: root
         attributes:
           - { name: id, type: int64, column: id, primaryKey: true }
-          - { name: amount, type: decimal(18,2), column: amount }
+          - { name: amount, type: "decimal(18,2)", column: amount }
           - { name: version, type: int32, column: version, optimisticLocking: true }
       - name: DepositRate
         table: deposit_rate

@@ -1,6 +1,6 @@
-# Explicit as-of a PAST instant: pin processingDate to 2024-04-01. Because the
+# Explicit as-of a PAST instant: pin transactionTime to 2024-04-01. Because the
 # pin is < infinity, the [from, to) containment predicate is injected
-# (toIsInclusive = false ⇒ `in_z <= ? and out_z > ?`), NOT the current-row form.
+# (`in_z <= ? and out_z > ?`, because axes are half-open), NOT the current-row form.
 # The pin instant appears as TWO binds (one per interval bound).
 #
 # As-of 2024-04-01 each account's then-known milestone is returned:
@@ -17,8 +17,8 @@ when:
     asOf:
       operand:
         all: {}
-      asOfAttr: Balance.processingDate
-      date: "2024-04-01T00:00:00+00:00"
+      dimension: transactionTime
+      coordinate: "2024-04-01T00:00:00+00:00"
 then:
   statements:
     - sql:

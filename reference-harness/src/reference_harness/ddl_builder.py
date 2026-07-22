@@ -263,11 +263,11 @@ def _create_table(entity: Entity, dialect: str) -> str:
 
     # A temporal entity stores many milestone rows per business key, so the
     # declared primaryKey attribute(s) are NOT unique on their own — the unique
-    # physical key is the business key PLUS each as-of dimension's `fromColumn`
+    # physical key is the business key PLUS each as-of dimension's `start_column`
     # (the milestone start). Extend the physical primary key accordingly so the
     # DDL admits the milestone chain (m-temporal-read).
-    for as_of in entity.as_of_attributes:
-        from_column = as_of["fromColumn"]
+    for as_of in entity.temporal_runtime_axes:
+        from_column = as_of["start_column"]
         if from_column not in pk_columns:
             pk_columns.append(from_column)
 
@@ -276,10 +276,10 @@ def _create_table(entity: Entity, dialect: str) -> str:
     # (...)` below). This lets a model witness a unique-INDEX violation distinct
     # from a PK collision (m-db-error error classification). Existing models declare
     # only PK-backed unique indices, so this is a no-op for them. The guard
-    # compares against the PHYSICAL primary key (declared PK + temporal fromColumns
+    # compares against the PHYSICAL primary key (declared PK + temporal start columns
     # appended above), so a temporal entity's full-milestone-key unique index is
     # recognized as PK-backed and not re-emitted.
-    for index in entity.definition.get("indices", []):
+    for index in entity.runtime_facts.get("indices", []):
         if not index.get("unique", False):
             continue
         index_columns = [_column_of_attr(entity, attr_name) for attr_name in index["attributes"]]
@@ -309,11 +309,11 @@ def _merge_by_column(items: Sequence[dict], key: str = "column") -> list[dict]:
     return merged
 
 
-def _merge_by_name(items: Sequence[dict]) -> list[dict]:
+def _merge_by_name(items: Sequence[dict], key: str = "name") -> list[dict]:
     merged: list[dict] = []
     seen: set[str] = set()
     for item in items:
-        name = item["name"]
+        name = item[key]
         if name in seen:
             continue
         seen.add(name)
@@ -331,7 +331,7 @@ def _physical_table_entity(entities: Sequence[Entity]) -> Entity:
     if len(entities) == 1:
         return entities[0]
 
-    definition = copy.deepcopy(entities[0].definition)
+    definition = copy.deepcopy(entities[0].runtime_facts)
     definition["attributes"] = _merge_by_column(
         [attribute for entity in entities for attribute in entity.attributes]
     )
@@ -343,13 +343,14 @@ def _physical_table_entity(entities: Sequence[Entity]) -> Entity:
     else:
         definition.pop("valueObjects", None)
 
-    as_of_attributes = _merge_by_name(
-        [as_of for entity in entities for as_of in entity.as_of_attributes]
+    as_of_axes = _merge_by_name(
+        [as_of for entity in entities for as_of in entity.runtime_facts.get("asOfAxes", [])],
+        key="dimension",
     )
-    if as_of_attributes:
-        definition["asOfAttributes"] = as_of_attributes
+    if as_of_axes:
+        definition["asOfAxes"] = as_of_axes
     else:
-        definition.pop("asOfAttributes", None)
+        definition.pop("asOfAxes", None)
 
     return Entity(definition=definition)
 

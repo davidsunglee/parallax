@@ -4,7 +4,7 @@ Everything a write verb needs BEFORE an instruction reaches the unit of work,
 plus the observation machinery a read leaves behind for it:
 
 * build-time window validation every keyed AND ``_where`` temporal verb shares
-  (:func:`validate_business_from`, :func:`validate_until`) and the sparse keyed
+  (:func:`validate_valid_from`, :func:`validate_until`) and the sparse keyed
   ``update`` row (:func:`prepare_sparse_row`);
 * instance -> record resolution (:func:`entity_record_of_instance`) and the
   verb-time license key (:func:`observation_key`);
@@ -35,7 +35,7 @@ from typing import cast
 from parallax.core import inheritance
 from parallax.core.base import normalize_instant
 from parallax.core.db_port import Row
-from parallax.core.descriptor import AsOfAttribute, Attribute, Entity, Metamodel
+from parallax.core.descriptor import AsOfAxisMetadata, Attribute, Entity, Metamodel
 from parallax.core.entity import Entity as EntityBase
 
 # `entity_record_of` is the core registry lookup this module's own
@@ -56,9 +56,10 @@ from parallax.core.unit_work import (
     instant_literal,
 )
 from parallax.snapshot.handle._family import (
-    business_axis,
+    axis_columns,
     members,
-    processing_axis,
+    transaction_time_axis,
+    valid_time_axis,
     version_attribute,
 )
 from parallax.snapshot.handle._read import FindResult
@@ -69,8 +70,8 @@ __all__ = [
     "observation_key",
     "prepare_sparse_row",
     "record_observations",
-    "validate_business_from",
     "validate_until",
+    "validate_valid_from",
 ]
 
 
@@ -96,7 +97,7 @@ def record_observations(uow: UnitOfWork, meta: Metamodel, result: FindResult, pi
     family-normalized to the root), matching `KeyedWrite.entity`'s own
     convention (a developer's later ``tx.update(copy)`` names its instance's
     OWN class). A node whose (family-effective) primary key, version column,
-    or processing-axis interval is absent from its own materialized fields is
+    or Transaction-Time interval is absent from its own materialized fields is
     defensively skipped — never reachable for a well-formed corpus model, but
     this seam takes no data on faith. A versioned entity is never also
     temporal (`m-opt-lock`/`m-descriptor`: the two are mutually exclusive), so
@@ -105,13 +106,13 @@ def record_observations(uow: UnitOfWork, meta: Metamodel, result: FindResult, pi
     ``pin`` is the STATEMENT's OWN lowered as-of coordinates
     (``Transaction.find``'s own ``deep_fetch_statement_pin`` call): the whole-graph pin
     propagates per hop, matched by axis, to every temporal entity in the
-    include tree (spec §3), so this SAME root-level processing-axis pin
+    include tree (spec §3), so this SAME root-level Transaction-Time pin
     licenses every attached temporal node's own recorded observation — an
     omitted axis or an explicit `LATEST` pin is latest-pinned; an explicit
     as-of instant is not (`~parallax.core.opt_lock.check_locking_license`'s
     own historical-observation rule).
     """
-    latest_pinned = pin.processing is None or pin.processing is LATEST
+    latest_pinned = pin.transaction_time is None or pin.transaction_time is LATEST
     for entity_name, node in result.all_nodes:
         entity = meta.entity(entity_name)
         declaring = inheritance.declaring_entity(meta, entity)
@@ -131,28 +132,31 @@ def record_observations(uow: UnitOfWork, meta: Metamodel, result: FindResult, pi
             continue
         if not declaring.is_temporal:
             continue
-        proc = processing_axis(declaring)
-        if proc.from_column not in node.fields:  # pragma: no cover - malformed model/projection
+        tx_axis = transaction_time_axis(declaring)
+        tx_start_column, _tx_end_column = axis_columns(declaring, tx_axis)
+        if tx_start_column not in node.fields:  # pragma: no cover - malformed model/projection
             continue
-        uow.observe(key, _temporal_observation(meta, declaring, node.fields, proc, latest_pinned))
+        uow.observe(
+            key,
+            _temporal_observation(meta, declaring, node.fields, tx_axis, latest_pinned),
+        )
 
 
 def _temporal_observation(
     meta: Metamodel,
     declaring: Entity,
     fields: Mapping[str, object],
-    proc: AsOfAttribute,
+    tx_axis: AsOfAxisMetadata,
     latest_pinned: bool,
 ) -> Observation:
     """The :class:`Observation` a materialized TEMPORAL row licenses: the
-    observed processing-from (``in_z``) plus pin provenance always, PLUS the
+    observed Transaction-Time start (``in_z``) plus pin provenance always, PLUS the
     observed payload (D-30, COR-3 Phase 8 increment 7 completion round — every
     real ``Transaction.find`` of a temporal row now carries one, audit-only
     included) — the same fields temporal lowering (`~parallax.core.
     audit_write.plan` / `~parallax.core.bitemp_write.plan`) already consumes,
     so a transaction-scoped find -> temporal write sequence works end-to-end,
-    not just the licensing check. The observed business bounds are bitemporal-
-    only (an audit-only entity has no business axis to bound).
+    not just the licensing check. The observed Valid-Time bounds are Bitemporal-only.
 
     ``fields`` is a plain column-keyed mapping — a materialized
     :class:`~parallax.snapshot.materialize.Node`'s own ``.fields`` (a real
@@ -185,26 +189,34 @@ def _temporal_observation(
     (`m-bitemp-write` "head/tail old values"; `m-value-object` "the document
     rides every chained/split row whole").
     """
-    in_z = cast("str", fields[proc.from_column])
+    tx_start_column, tx_end_column = axis_columns(declaring, tx_axis)
+    tx_start = cast("str", fields[tx_start_column])
     if declaring.temporal != "bitemporal":
         # Audit-only (D-30): the observed payload every other member besides
-        # the sole processing axis — `audit_write.plan`'s own update-branch
+        # the sole Transaction-Time axis — `audit_write.plan`'s own update-branch
         # merge (`_merged_row`) overlays a public `tx.update(copy)`'s SPARSE
         # row onto it, so an unauthored field carries forward from THIS
         # observation rather than being silently dropped.
         payload = _row_payload(
-            meta, declaring, fields, {proc.from_column, proc.to_column}, include_value_objects=True
+            meta,
+            declaring,
+            fields,
+            {tx_start_column, tx_end_column},
+            include_value_objects=True,
         )
-        return Observation(in_z=in_z, payload=payload, latest_pinned=latest_pinned)
-    biz = business_axis(declaring)
-    if biz.from_column not in fields or biz.to_column not in fields:  # pragma: no cover
-        return Observation(in_z=in_z, latest_pinned=latest_pinned)  # malformed model/projection
-    excluded = {proc.from_column, proc.to_column, biz.from_column, biz.to_column}
+        return Observation(tx_start=tx_start, payload=payload, latest_pinned=latest_pinned)
+    valid_axis = valid_time_axis(declaring)
+    valid_start_column, valid_end_column = axis_columns(declaring, valid_axis)
+    if valid_start_column not in fields or valid_end_column not in fields:  # pragma: no cover
+        return Observation(
+            tx_start=tx_start, latest_pinned=latest_pinned
+        )  # malformed model/projection
+    excluded = {tx_start_column, tx_end_column, valid_start_column, valid_end_column}
     payload = _row_payload(meta, declaring, fields, excluded, include_value_objects=True)
     return Observation(
-        in_z=in_z,
-        business_from=cast("str", fields[biz.from_column]),
-        business_to=cast("str", fields[biz.to_column]),
+        tx_start=tx_start,
+        valid_start=cast("str", fields[valid_start_column]),
+        valid_end=cast("str", fields[valid_end_column]),
         payload=payload,
         latest_pinned=latest_pinned,
     )
@@ -249,32 +261,31 @@ def _row_payload(
 # Predicate-write materialization (COR-3 Phase 8 increment 5; m-opt-lock      #
 # "Predicate-selected writes materialize when observations are needed";       #
 # ADR 0014) — plus the build-time window/no-op validators every keyed AND     #
-# `_where` temporal verb shares (`validate_business_from` / `validate_until`#
+# `_where` temporal verb shares (`validate_valid_from` / `validate_until`#
 # / `prepare_sparse_row`, S4/N2 COR-3 Phase 8 increment 7 remediation).       #
 # `materialize_row`/`_apply_assignments` below are pure functions the SOLE   #
 # caller (`_predicate_writes._materialize_predicate_write`) drives against    #
 # its OWN resolved rows — never an implicit read of their own.                #
 # --------------------------------------------------------------------------- #
-def validate_business_from(
-    declaring: Entity, mutation: KeyedMutation, business_from: dt.datetime | None
+def validate_valid_from(
+    declaring: Entity, mutation: KeyedMutation, valid_from: dt.datetime | None
 ) -> str | None:
-    """Validate + render a ``_where`` verb's ``business_from`` (`python.md` §5):
-    a BITEMPORAL target REQUIRES it (the mutation's own business instant
+    """Validate and render a write verb's ``valid_from`` (`python.md` §5):
+    a Bitemporal target requires it (the mutation's own Valid-Time instant
     ``B``, `m-bitemp-write` "Plain (unbounded) bitemporal writes"); a
-    non-temporal or audit-only (single processing axis) target takes NONE —
-    neither has a business axis to bound."""
+    non-temporal or Transaction-Time-Only target takes none."""
     if declaring.temporal == "bitemporal":
-        if business_from is None:
+        if valid_from is None:
             raise ValueError(
-                f"{declaring.name}: a bitemporal {mutation!r} requires business_from "
-                "(the mutation's own business instant)"
+                f"{declaring.name}: a bitemporal {mutation!r} requires valid_from "
+                "(the mutation's own Valid-Time instant)"
             )
-        return instant_literal(business_from)
-    if business_from is not None:
-        axis = "an audit-only" if declaring.is_temporal else "a non-temporal"
+        return instant_literal(valid_from)
+    if valid_from is not None:
+        shape = "a Transaction-Time-Only" if declaring.is_temporal else "a non-temporal"
         raise ValueError(
-            f"{declaring.name}: {axis} {mutation!r} takes no business_from "
-            f"({declaring.name!r} declares no business axis to bound)"
+            f"{declaring.name}: {shape} {mutation!r} takes no valid_from "
+            f"({declaring.name!r} declares no Valid-Time dimension to bound)"
         )
     return None
 
@@ -298,13 +309,13 @@ def prepare_sparse_row(copy: EntityBase) -> dict[str, object] | None:
 
 
 def validate_until(
-    declaring: Entity, mutation: KeyedMutation, business_from: dt.datetime, until: dt.datetime
+    declaring: Entity, mutation: KeyedMutation, valid_from: dt.datetime, until: dt.datetime
 ) -> str:
     """Validate + render a ``*Until`` verb's window bound (`python.md` §5:
     "both aware-UTC-microsecond datetimes, all validated at build" ... "the
-    `*_until` trio additionally requires `until`, with `business_from <
+    `*_until` trio additionally requires `until`, with `valid_from <
     until` ... all validated at build"): reject an equal or reversed window
-    — ``until`` must be STRICTLY later than ``business_from`` — at the verb
+    — ``until`` must be strictly later than ``valid_from`` — at the verb
     call, before any buffering (never at flush time). Shared by every keyed
     AND ``_where`` ``*Until`` verb (``update_until`` / ``terminate_until`` /
     ``update_until_where`` / ``terminate_until_where``, S4 COR-3 Phase 8
@@ -313,19 +324,19 @@ def validate_until(
 
     NORMALIZES both bounds BEFORE comparing them (R2, COR-3 Phase 7 increment
     7 round-2): comparing raw, un-normalized datetimes let a naive ``until``
-    (compared against an already-aware ``business_from``, since
-    ``validate_business_from`` — this verb's own sibling, called first —
-    already normalizes/rejects a naive ``business_from``) leak a bare
+    (compared against an already-aware ``valid_from``, since
+    ``validate_valid_from`` — this verb's own sibling, called first —
+    already normalizes/rejects a naive ``valid_from``) leak a bare
     ``TypeError`` from the ``<=`` comparison itself, rather than the proper
     ``ValueError`` :func:`~parallax.core.base.normalize_instant` raises for
-    any naive datetime (mirroring ``validate_business_from``'s own
+    any naive datetime (mirroring ``validate_valid_from``'s own
     ``instant_literal``-based handling exactly)."""
-    business_from_normalized = normalize_instant(business_from)
+    valid_from_normalized = normalize_instant(valid_from)
     until_normalized = normalize_instant(until)
-    if until_normalized <= business_from_normalized:
+    if until_normalized <= valid_from_normalized:
         raise ValueError(
-            f"{declaring.name}: {mutation!r} requires business_from < until "
-            f"(python.md §5) — got business_from={business_from!r}, until={until!r}"
+            f"{declaring.name}: {mutation!r} requires valid_from < until "
+            f"(python.md §5) — got valid_from={valid_from!r}, until={until!r}"
         )
     return until_normalized.isoformat()
 
@@ -342,7 +353,7 @@ def materialize_row(
     """One resolved row's materialized keyed write: its
     :class:`~parallax.core.unit_work.ObjectKey`, its recorded
     :class:`Observation` (every branch records one — a versioned row's version,
-    a temporal row's observed processing-from, `m-opt-lock` "observations are
+    a temporal row's observed Transaction-Time start, `m-opt-lock` "observations are
     mode-independent; only the gate is mode-dependent"), and the new row a
     keyed write of ``mutation`` carries — ``None`` for the new row when every
     assignment already equals the row's own value (`m-opt-lock` "For
@@ -363,13 +374,14 @@ def materialize_row(
         new_row, changed = _apply_assignments(meta, entity, pk_row, row, assignments)
         return key, observation, (new_row if changed else None)
 
-    proc = processing_axis(declaring)
-    in_z = cast("str", row[proc.from_column])
+    tx_axis = transaction_time_axis(declaring)
+    tx_start_column, tx_end_column = axis_columns(declaring, tx_axis)
+    tx_start = cast("str", row[tx_start_column])
     if declaring.temporal == "bitemporal":
         # A SPARSE new row: `bitemp_write.plan` merges it onto the observed
         # payload itself (`_merged_payload`), the bitemporal analogue of an
         # edited copy's effective change set.
-        observation = _temporal_observation(meta, declaring, row, proc, latest_pinned=True)
+        observation = _temporal_observation(meta, declaring, row, tx_axis, latest_pinned=True)
         if not assignment_bearing:
             return key, observation, dict(pk_row)
         new_row, changed = _apply_assignments(meta, declaring, pk_row, row, assignments)
@@ -380,7 +392,7 @@ def materialize_row(
     # merge happens HERE — the resolved row's own scalar payload (VO
     # documents omitted; row-form never projects one) with the assignments
     # overlaid.
-    observation = Observation(in_z=in_z, latest_pinned=True)
+    observation = Observation(tx_start=tx_start, latest_pinned=True)
     if not assignment_bearing:
         # A plain (chain-free) audit-only `terminate` records its resolved
         # row's observed `in_z` exactly like every other materializing verb
@@ -390,7 +402,7 @@ def materialize_row(
         # `in_z` is the temporal analogue of a versioned optimistic gate
         # (`m-audit-write` "Affected-row conflict contract for closes"), so
         # an OPTIMISTIC-mode close binds it (`and in_z = ?`, `m-opt-lock.md`
-        # "Temporal entities derive the version from the processing axis"),
+        # "Temporal entities derive the version from the Transaction-Time dimension"),
         # gate-last, exactly as a keyed temporal terminate already does
         # (`m-audit-write-006`) — `audit_write.plan` composes the gate
         # candidate straight from this SAME observation, no separate branch.
@@ -408,7 +420,11 @@ def materialize_row(
     full_row: dict[str, object] = {
         **pk_row,
         **_row_payload(
-            meta, declaring, row, {proc.from_column, proc.to_column}, include_value_objects=True
+            meta,
+            declaring,
+            row,
+            {tx_start_column, tx_end_column},
+            include_value_objects=True,
         ),
     }
     new_row, changed = _apply_assignments(meta, declaring, full_row, row, assignments)

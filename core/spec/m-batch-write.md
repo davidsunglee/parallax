@@ -52,9 +52,9 @@ rows it leaves behind, not merely asserted.
 
 A **versioned** entity has no readless predicate-write template — a per-row
 observed version cannot ride one statement — so predicate update and delete
-materialize to keyed writes (`m-opt-lock`). Processing-temporal predicate writes
-likewise materialize so each observed milestone can close/chain (`m-audit-write` /
-`m-bitemp-write`). Those are not buffered-batch collapse rules.
+materialize to keyed writes (`m-opt-lock`). Transaction-Time temporal predicate
+writes likewise materialize so each observed milestone can close/chain
+(`m-audit-write` / `m-bitemp-write`). Those are not buffered-batch collapse rules.
 
 ## Predicate-selected readless forms
 

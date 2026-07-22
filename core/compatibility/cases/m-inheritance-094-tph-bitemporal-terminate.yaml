@@ -2,8 +2,8 @@
 # (m-inheritance x m-bitemp-write x m-sql — Phase 8 temporal composition).
 #
 # A plain (unbounded) bitemporal terminate ends a value from a business instant B onward,
-# leaving it intact before B: it inactivates the original current rectangle on the
-# PROCESSING axis (out_z = txInstant) and chains only a HEAD (business [from_z, B)) — no
+# leaving it intact before B: it inactivates the original Latest rectangle on the
+# Transaction-Time dimension (out_z = txInstant) and chains only a HEAD (business [from_z, B)) — no
 # tail, no middle — so [B, infinity) is left covered by no current-on-processing row
 # (m-bitemp-write). Under table-per-hierarchy the family shares the `instrument` table, so
 # the inactivation carries the tag GUARD `and kind = ?` among the identity predicates,
@@ -15,7 +15,7 @@
 # adds nothing to the terminate semantics.
 #
 # The sequence (self-contained, from an empty table):
-#   step 1 insert    : open the current rectangle, price 100, business [2024-01-01, inf),
+#   step 1 insert    : open the Latest rectangle, price 100, business [2024-01-01, inf),
 #                      processing [2024-01-01, inf), kind=bond, coupon 5.00      (1 statement)
 #   step 2 terminate : end from business B = 2024-06-01 at txInstant 2024-07-01 —
 #                      inactivate the original (tag-guarded) and chain head only (2 statements)
@@ -27,16 +27,18 @@ when:
     - mutation: insert
       entity: Bond
       statements: 1
-      note: open the original current rectangle; kind=bond derived from tagValue
+      note: open the original Latest rectangle; kind=bond derived from tagValue
       rows:
-        - { id: 1, price: 100.00, coupon: 5.00, businessFrom: "2024-01-01T00:00:00+00:00", businessTo: infinity }
+        - { id: 1, price: 100.00, coupon: 5.00 }
+      validFrom: "2024-01-01T00:00:00+00:00"
       at: "2024-01-01T00:00:00+00:00"
     - mutation: terminate
       entity: Bond
       statements: 2
-      note: inactivate the original on the processing axis (tag-guarded on kind='bond'), then chain head only
+      note: inactivate the original on the Transaction-Time dimension (tag-guarded on kind='bond'), then chain head only
       rows:
-        - { id: 1, businessFrom: "2024-06-01T00:00:00+00:00" }
+        - { id: 1 }
+      validFrom: "2024-06-01T00:00:00+00:00"
       at: "2024-07-01T00:00:00+00:00"
 then:
   statements:

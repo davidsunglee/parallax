@@ -2,7 +2,7 @@
 
 The transaction scope: the unit of work that **buffers, orders, and flushes**
 writes, the write-instruction IR it buffers, the Clock Strategy that supplies the
-processing instant at flush, and the **pure planner** that turns a buffer into a
+Transaction-Time instant at flush, and the **pure planner** that turns a buffer into a
 neutral, execution-ordered intermediate flush plan (coalesce -> FK-order -> elide).
 
 The module DAG pins ``m-unit-work -> m-op-algebra`` and ``m-unit-work -> m-db-port``

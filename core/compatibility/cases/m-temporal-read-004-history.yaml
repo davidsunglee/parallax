@@ -1,4 +1,4 @@
-# history(processingDate): the FULL milestone set, no as-of predicate injected.
+# history(transactionTime): the FULL milestone set, no as-of predicate injected.
 #
 # Scoped to account id 1 with an inner `eq`, history returns BOTH milestones —
 # the superseded [2024-01-01, 2024-06-01) 100.00 row AND the current
@@ -17,7 +17,7 @@ when:
         eq:
           attr: Balance.id
           value: 1
-      asOfAttr: Balance.processingDate
+      dimension: transactionTime
 then:
   statements:
     - sql:

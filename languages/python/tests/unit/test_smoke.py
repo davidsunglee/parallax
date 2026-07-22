@@ -31,7 +31,8 @@ def test_top_package_public_surfaces() -> None:
     # the concrete Postgres adapter surface. Phase 7 increment 6a publishes the
     # snapshot developer surface (`Snapshot[T]` / `Execution`, §8) alongside
     # `connect()`.
-    assert {"Entity", "Field", "Relationship", "Attr", "Rel", "meta"} <= set(parallax.core.__all__)
+    assert {"Entity", "Field", "Relationship", "Attr", "Rel"} <= set(parallax.core.__all__)
+    assert "meta" not in parallax.core.__all__
     assert set(parallax.snapshot.__all__) == {
         "connect",
         "Snapshot",

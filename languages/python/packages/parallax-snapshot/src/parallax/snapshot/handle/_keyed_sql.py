@@ -54,6 +54,13 @@ __all__ = [
 _MARKER_KEYS: Final[frozenset[str]] = frozenset({"computed", "increment"})
 
 
+def _table(meta: Metamodel, entity: Entity) -> str:
+    table = inheritance.effective_table(meta, entity)
+    if table is None:
+        raise WriteLoweringError(f"{entity.name!r}: write target has no effective table")
+    return table
+
+
 def _marker_kind(value: object) -> str | None:
     """A scalar cell's DB-computed marker kind (``computed`` / ``increment``),
     or ``None`` for an ordinary literal — classified by SHAPE (a one-key
@@ -116,7 +123,9 @@ def lower_insert(
             _refuse_unrecognized_marker(entity, column, value, "insert")
             binds.append(value)
         holes = ", ".join("?" for _ in cells)
-        return Statement(f"insert into {entity.table}({columns}) values ({holes})", tuple(binds))
+        return Statement(
+            f"insert into {_table(meta, entity)}({columns}) values ({holes})", tuple(binds)
+        )
     select_parts: list[str] = []
     binds = []
     for column, value in cells:
@@ -130,7 +139,8 @@ def lower_insert(
             binds.append(value)
     select_list = ", ".join(select_parts)
     return Statement(
-        f"insert into {entity.table}({columns}) select {select_list} from {entity.table} t0",
+        f"insert into {_table(meta, entity)}({columns}) select {select_list} "
+        f"from {_table(meta, entity)} t0",
         tuple(binds),
     )
 
@@ -233,7 +243,8 @@ def lower_update(
         key_binds = (*key_binds, observed_version)
     assignments = ", ".join(assignment_parts)
     return Statement(
-        f"update {entity.table} set {assignments} where {where_sql}", (*binds, *key_binds)
+        f"update {_table(meta, entity)} set {assignments} where {where_sql}",
+        (*binds, *key_binds),
     )
 
 
@@ -272,7 +283,7 @@ def lower_delete(
         observed_version = opt_lock.require_observed(entity.name, observation)
         where_sql = f"{where_sql} and {dialect.quote(version_attr.column)} = ?"
         key_binds = (*key_binds, observed_version)
-    return Statement(f"delete from {entity.table} where {where_sql}", key_binds)
+    return Statement(f"delete from {_table(meta, entity)} where {where_sql}", key_binds)
 
 
 # --------------------------------------------------------------------------- #
@@ -330,7 +341,7 @@ def lower_multi_insert(
             binds.append(value)
         value_groups.append(f"({', '.join(holes)})")
     return Statement(
-        f"insert into {entity.table}({quoted_columns}) values {', '.join(value_groups)}",
+        f"insert into {_table(meta, entity)}({quoted_columns}) values {', '.join(value_groups)}",
         tuple(binds),
     )
 
@@ -372,7 +383,7 @@ def lower_batched_update(
     tag_sql, tag_binds = _tag_guard(entity, declaring, dialect)
     assignments_sql = ", ".join(assignment_parts)
     return Statement(
-        f"update {entity.table} set {assignments_sql} where {in_sql}{tag_sql}",
+        f"update {_table(meta, entity)} set {assignments_sql} where {in_sql}{tag_sql}",
         (*binds, *in_binds, *tag_binds),
     )
 
@@ -398,7 +409,10 @@ def lower_multi_delete(
     pk_attrs = inheritance.family_primary_key(meta, entity)
     in_sql, in_binds = _keys_in_list(pk_attrs, instruction.rows, dialect)
     tag_sql, tag_binds = _tag_guard(entity, declaring, dialect)
-    return Statement(f"delete from {entity.table} where {in_sql}{tag_sql}", (*in_binds, *tag_binds))
+    return Statement(
+        f"delete from {_table(meta, entity)} where {in_sql}{tag_sql}",
+        (*in_binds, *tag_binds),
+    )
 
 
 def _keys_in_list(
@@ -492,7 +506,7 @@ def lower_predicate_write(
     )
     where_sql, predicate_binds = predicate.sql, predicate.binds
     if instruction.mutation == "delete":
-        return Statement(f"delete from {entity.table} where {where_sql}", predicate_binds)
+        return Statement(f"delete from {_table(meta, entity)} where {where_sql}", predicate_binds)
     assignment_row = {
         assignment_member(assignment.attr): assignment.value
         for assignment in instruction.assignments
@@ -505,7 +519,8 @@ def lower_predicate_write(
         binds.append(value)
     assignments_sql = ", ".join(assignment_parts)
     return Statement(
-        f"update {entity.table} set {assignments_sql} where {where_sql}", (*binds, *predicate_binds)
+        f"update {_table(meta, entity)} set {assignments_sql} where {where_sql}",
+        (*binds, *predicate_binds),
     )
 
 
@@ -570,7 +585,7 @@ def _family_column_order(meta: Metamodel, entity: Entity) -> list[str]:
     root = inheritance.family_root(meta, entity)
     assert root.inheritance is not None  # a resolved family root always carries one
     tag_columns = [root.inheritance.tag_column] if root.inheritance.tag_column is not None else []
-    document_columns = [vo.column for member in chain for vo in member.value_objects]
+    document_columns = [vo.storage_column for member in chain for vo in member.value_objects]
     return [*pk_columns, *tag_columns, *rest_columns, *document_columns]
 
 

@@ -20,7 +20,7 @@ when:
         eq:
           attr: InvoiceLine.id
           value: 1000
-      asOfAttr: InvoiceLine.processingDate
+      dimension: transactionTime
 then:
   statements:
     - sql:
@@ -28,11 +28,11 @@ then:
       binds: [1000]
   referenceSql: select id, invoice_id, amount, in_z, out_z from invoice_line where id = 1000
   graphs:
-    - pin: { processingDate: "2024-01-01T00:00:00+00:00" }
+    - pin: { transactionTime: "2024-01-01T00:00:00+00:00" }
       graph:
         InvoiceLine:
           - { id: 1000, invoice_id: 100, amount: 50.00, in_z: "2024-01-01T00:00:00+00:00", out_z: "2024-04-01T00:00:00+00:00" }
-    - pin: { processingDate: "2024-04-01T00:00:00+00:00" }
+    - pin: { transactionTime: "2024-04-01T00:00:00+00:00" }
       graph:
         InvoiceLine:
           - { id: 1000, invoice_id: 100, amount: 75.00, in_z: "2024-04-01T00:00:00+00:00", out_z: infinity }

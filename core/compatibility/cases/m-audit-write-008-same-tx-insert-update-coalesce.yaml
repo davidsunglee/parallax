@@ -13,7 +13,7 @@
 #                  value to 150 — COALESCED into ONE current-milestone INSERT
 #                  [in_z = 2024-06-01, out_z = infinity] carrying the FINAL value 150.
 #                  No close UPDATE, no superseded 100 row for account 9.  (1 round trip)
-#   step 1 find  : as-of now over account 9 observes ONE current row at value 150 — the
+#   step 1 find  : Latest over account 9 observes ONE current row at value 150 — the
 #                  audit trail has a single milestone, not two.
 # The single INSERT (value 150, no close) IS the observable proof of coalescing.
 # roundTrips = 2 (the one coalesced insert + the find).
@@ -51,7 +51,7 @@ when:
           attr: Balance.id
           value: 9
       roundTrips: 1
-      note: as-of now over account 9 observes ONE current milestone at the coalesced value 150 (a single row, not a superseded 100 + current 150)
+      note: Latest over account 9 observes ONE current milestone at the coalesced value 150 (a single row, not a superseded 100 + current 150)
       statements:
         - sql:
             postgres: select t0.bal_id, t0.acct_num, t0.val, t0.in_z, t0.out_z from balance t0 where t0.bal_id = ? and t0.out_z = ?

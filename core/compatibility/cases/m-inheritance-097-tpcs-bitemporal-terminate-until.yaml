@@ -1,8 +1,8 @@
 # Table-per-concrete-subtype BITEMPORAL terminateUntil: the inactivation targets the
 # subtype's OWN table with NO tag guard (m-inheritance x m-bitemp-write x m-sql — Phase 8).
 #
-# A terminateUntil over a bounded business window inactivates the original on the
-# processing axis and chains HEAD + TAIL (no middle), so the value is absent inside the
+# A terminateUntil over a bounded Valid-Time window inactivates the original on the
+# Transaction-Time dimension and chains HEAD + TAIL (no middle), so the value is absent inside the
 # window (m-bitemp-write). In a table-per-concrete-subtype family the subtype is selected by
 # WHICH table the DML targets, so terminating a LoanRate inactivates and chains in the
 # concrete `loan_rate` table: the inactivation is `update loan_rate set out_z = ? where
@@ -15,9 +15,9 @@
 # differing ONLY in table/tag routing.
 #
 # The sequence (self-contained, from an empty table):
-#   step 1 insert         : open the current rectangle, amount 6.75, business [2024-01-01, inf),
+#   step 1 insert         : open the Latest rectangle, amount 6.75, business [2024-01-01, inf),
 #                           processing [2024-01-01, inf), spread 1.25         (1 statement)
-#   step 2 terminateUntil : terminate for business window [2024-03-01, 2024-09-01) at
+#   step 2 terminateUntil : terminate for Valid-Time window [2024-03-01, 2024-09-01) at
 #                           txInstant 2024-02-15 — inactivate + head + tail   (3 statements)
 model: models/rate.yaml
 tags: [m-inheritance, m-bitemp-write, m-sql, table-per-concrete-subtype, temporal, bitemporal, write-sequence, terminate-until, rectangle-split, slice-snapshot-1, slice-managed-1]
@@ -27,16 +27,18 @@ when:
     - mutation: insert
       entity: LoanRate
       statements: 1
-      note: open the original current rectangle in the concrete loan_rate table
+      note: open the original Latest rectangle in the concrete loan_rate table
       rows:
-        - { id: 2, amount: 6.75, spread: 1.25, businessFrom: "2024-01-01T00:00:00+00:00", businessTo: infinity }
+        - { id: 2, amount: 6.75, spread: 1.25 }
+      validFrom: "2024-01-01T00:00:00+00:00"
       at: "2024-01-01T00:00:00+00:00"
     - mutation: terminateUntil
       entity: LoanRate
       statements: 3
       note: inactivate the original in the concrete table (no tag guard), then chain head + tail (no middle)
       rows:
-        - { id: 2, businessFrom: "2024-03-01T00:00:00+00:00" }
+        - { id: 2 }
+      validFrom: "2024-03-01T00:00:00+00:00"
       at: "2024-02-15T00:00:00+00:00"
       until: "2024-09-01T00:00:00+00:00"
 then:

@@ -1,25 +1,28 @@
 # m-navigate — Relationship Navigation
 
 `m-navigate` specifies how **relationship navigation** turns into joins, and it
-owns **cross-entity as-of propagation**. Per the dependency graph, `m-navigate`
-depends on `m-op-algebra` (the `navigate` / `exists` / `notExists` nodes it
-lowers **are** algebra vocabulary), `m-unit-work` (navigation resolves through
-the unit of work), and `m-temporal-read` (a pinned as-of value propagates per
-hop). The **SQL emission** for these nodes is `m-sql`; this module ties the
-algebra to observable behavior. Deep fetch — eagerly populating an object graph
-while eliminating N+1 — builds on navigation and is `m-deep-fetch`.
+owns **cross-entity as-of propagation**. It consumes the symmetric Relationship
+Facet from `m-relationship`; it never reparses descriptor declarations or pairs
+reverse directions. Per the dependency graph, `m-navigate` also depends on
+`m-op-algebra` (the `navigate` / `exists` / `notExists` nodes it lowers **are**
+algebra vocabulary), `m-unit-work` (navigation resolves through the unit of
+work), and `m-temporal-read` (a pinned as-of value propagates per hop). The
+**SQL emission** for these nodes is `m-sql`; this module ties the algebra to
+observable behavior. Deep fetch — eagerly populating an object graph while
+eliminating N+1 — builds on navigation and is `m-deep-fetch`.
 
 ## Navigation → join semantics
 
-A relationship (`m-descriptor`) is a named association whose `join` predicate has
-the canonical form `this.<attr> = <Entity>.<attr>`. From that single declaration
-two things are derived, and an implementation **MUST** derive them mechanically
-(the user never writes a join):
+A relationship (`m-relationship`) is a named association whose resolved
+Relationship Metadata carries a structured Attribute-to-Attribute join and
+cardinality. From that accepted facet value two things are derived, and an
+implementation **MUST** derive them mechanically (the user never writes an
+execution-time join):
 
 - the **correlation columns** — the owning-entity key column and the related
   entity's foreign-key column;
 - the **cardinality** — `one-to-one` / `many-to-one` (to-one) versus
-  `one-to-many` / `many-to-many` (to-many).
+  `one-to-many` (to-many).
 
 A **navigation filter** (`navigate` / `exists` / `notExists`) lowers to a
 **correlated `EXISTS` semi-join** (`m-sql`). The semi-join form is deliberate: it
@@ -59,8 +62,8 @@ each entity reconstructs the milestone whose interval *contains* the propagated
 date, a deep fetch as of an instant yields a **point-in-time-consistent object
 graph** — every entity as it stood at that instant, including now-superseded
 milestones. The propagated as-of term is appended **after** the navigation/IN-list
-predicate (the bind order is the correlation keys, then the per-axis as-of binds,
-business axis first).
+predicate (the bind order is the correlation keys, then the per-dimension as-of
+binds, Valid Time first and Transaction Time second).
 
 The rule extends from the query algebra to **object graphs**: every relationship
 dereference from an already-materialized object — a deferred relationship load
@@ -75,7 +78,8 @@ milestone's from-instant, `m-temporal-read`) dereferences at its own edge.
 
 ## Polymorphic navigation
 
-A relationship target (`relatedEntity`) may be a **polymorphic position** in an
+A relationship target (`RelationshipMetadata.join.target.entity`) may be a
+**polymorphic position** in an
 inheritance family (`m-inheritance`): an **abstract root** (reaching any concrete
 subtype in the family), an **abstract subtype** (reaching only its concrete
 descendants), or a **concrete subtype** (monomorphic). The navigation semi-join
@@ -117,10 +121,10 @@ correlation predicate (and, for `table-per-concrete-subtype`, per `EXISTS` branc
 
 ## Dependent and reverse relationships
 
-- A **reverse** relationship (`reverseName`) is the same association navigated
-  from the related entity back to the owner. It resolves to the mirror
-  correlation columns; navigation and deep fetch work identically in either
-  direction.
+- A **reverse** Relationship Metadata value is the same association navigated
+  from the target Entity back to the defining source. `m-relationship` has
+  already swapped its join and inverted its cardinality; navigation and deep
+  fetch therefore consume either direction identically.
 - A **dependent** relationship (`dependent: true`) marks the target as **owned**
   by the source. Ownership matters for **cascade** write operations (insert /
   delete / terminate following dependents), which are `m-cascade-delete`.

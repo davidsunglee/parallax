@@ -19,15 +19,15 @@
  *    way an unobserved row read-before-writes and a no-op `set` issues no DML
  *    (`m-opt-lock-001`). On a NON-versioned entity it is a plain keyed `UPDATE`, one per
  *    selected key (`m-batch-write-001` / `m-batch-write-002` on the non-versioned `Wallet`);
- *  - **audit-only (`unitemporal-processing`) writes** chain milestones through the
- *    m-temporal-read `auditWriteStatements` generator: `create` opens `[processingInstant,
+ *  - **Transaction-Time-Only writes** chain milestones through the
+ *    m-temporal-read `auditWriteStatements` generator: `create` opens `[transactionInstant,
  *    infinity)`, `update` closes the current row and chains a new one carrying the
- *    prior business columns with the assignments applied, `terminate` closes only
+ *    prior domain columns with the assignments applied, `terminate` closes only
  *    (`m-audit-write-001` / `m-audit-write-002` / `m-audit-write-003`).
  *
  * Named inputs map to canonical `columnOrder` binds via the entity metamodel, and
  * scalar values normalize through the injected dialect with the target m-core type
- * available. Processing instants come ONLY from the transaction clock (spec §4.1)
+ * available. Transaction-Time instants come only from the transaction clock (spec §4.1)
  * — never a per-operation option — so production code cannot rewrite audit history.
  *
  * The `@parallax/db` port exposes `executeWrite(sql, binds)`, so set-based writes
@@ -82,26 +82,6 @@ export class ParallaxTemporalCloseError extends Error {
     );
     this.name = "ParallaxTemporalCloseError";
     Object.setPrototypeOf(this, ParallaxTemporalCloseError.prototype);
-  }
-}
-
-/**
- * Thrown when a BUSINESS-temporal-only entity is written under `concurrency:
- * "optimistic"` (m-descriptor/m-temporal-read/m-opt-lock). Optimistic participation derives its key from the
- * PROCESSING axis (`in_z` is the version analogue); a business-only entity has no
- * processing axis, so it cannot participate in optimistic mode. The invalid
- * combination surfaces at the unit-of-work write boundary (mode is not a static
- * model property, so it cannot be a metamodel-validation error).
- */
-export class ParallaxTemporalOptimisticError extends Error {
-  constructor(entity: string) {
-    super(
-      `'${entity}' is a business-temporal-only entity and cannot participate in ` +
-        `optimistic mode: an optimistic key is derived from the processing axis, ` +
-        `which it does not have`,
-    );
-    this.name = "ParallaxTemporalOptimisticError";
-    Object.setPrototypeOf(this, ParallaxTemporalOptimisticError.prototype);
   }
 }
 
@@ -178,8 +158,8 @@ export type Concurrency = "locking" | "optimistic";
  * The per-unit-of-work observed-state map: `entity#pk → observed version | in_z`,
  * populated when a transaction-scoped find hydrates a row whose optimistic key the
  * unit of work tracks. For a VERSIONED entity the value is the observed `version`
- * NUMBER; for a processing-axis TEMPORAL (audit-only) entity — which carries no
- * version column — it is the observed processing-from (`in_z`) wire STRING, the
+ * NUMBER; for a Transaction-Time entity — which carries no
+ * version column — it is the observed Transaction-Time start (`in_z`) wire string, the
  * version analogue an optimistic close gates on (m-temporal-read/m-opt-lock). A gated write reads the
  * observed value from it (the gate bind in optimistic mode; the base for the
  * framework-computed advance, for versioned entities). Keyed dialect-free so a
@@ -218,9 +198,9 @@ interface VersionedUpdateShape {
   readonly domainBinds: readonly unknown[];
 }
 
-/** True when an entity chains audit milestones (declares a processing as-of axis). */
-export function isAuditOnly(entity: EntityMetadata): boolean {
-  return entity.asOfAttributes().some((axis) => axis.axis === "processing");
+/** True when an entity chains milestones in Transaction Time. */
+export function hasTransactionTime(entity: EntityMetadata): boolean {
+  return entity.asOfAxes().some((axis) => axis.dimension === "transactionTime");
 }
 
 /** A buffered non-temporal insert awaiting the unit-of-work flush. */
@@ -243,7 +223,7 @@ export class TransactionWriter {
   constructor(
     private readonly database: ParallaxDatabase,
     private readonly dialect: Dialect,
-    private readonly processingInstant: string,
+    private readonly transactionInstant: string,
     /** The unit-of-work concurrency strategy (default `locking`, m-unit-work). */
     private readonly concurrency: Concurrency = "locking",
     /**
@@ -267,13 +247,12 @@ export class TransactionWriter {
    * txInstant, out_z = infinity)`).
    */
   async create(entity: EntityMetadata, input: Record<string, unknown>): Promise<void> {
-    this.assertOptimisticParticipation(entity);
     // Refuse a structurally-invalid value-object document PRE-SQL (m-value-object
     // write validation) — before any bind is generated — so an invalid document
     // never reaches the unconstrained jsonb column (the rejected-write contract).
     assertValueObjectWrite(entity, input);
     const binds = this.insertBinds(entity, input);
-    if (isAuditOnly(entity)) {
+    if (hasTransactionTime(entity)) {
       const [sql] = auditWriteStatements("insert", this.writeTargetFor(entity));
       await this.exec(sql as string, binds);
       return;
@@ -298,8 +277,7 @@ export class TransactionWriter {
     options: UpdateOptions,
   ): Promise<WriteResult> {
     await this.flushInserts();
-    this.assertOptimisticParticipation(entity);
-    if (isAuditOnly(entity)) {
+    if (hasTransactionTime(entity)) {
       return this.auditUpdate(entity, predicate, options);
     }
     const version = entity.versionAttribute();
@@ -464,8 +442,7 @@ export class TransactionWriter {
   /** `terminate` (audit-only): close the current milestone, insert nothing. */
   async terminate(entity: EntityMetadata, predicate: Predicate): Promise<WriteResult> {
     await this.flushInserts();
-    this.assertOptimisticParticipation(entity);
-    if (!isAuditOnly(entity)) {
+    if (!hasTransactionTime(entity)) {
       throw new Error(`'terminate' is a temporal removal; '${entity.name}' is non-temporal`);
     }
     const gated = this.concurrency === "optimistic";
@@ -482,8 +459,7 @@ export class TransactionWriter {
   /** `delete` (physical, non-temporal entities only). */
   async delete(entity: EntityMetadata, predicate: Predicate): Promise<WriteResult> {
     await this.flushInserts();
-    this.assertOptimisticParticipation(entity);
-    if (isAuditOnly(entity)) {
+    if (hasTransactionTime(entity)) {
       throw new Error(
         `'delete' is physical; use 'terminate' for the audit entity '${entity.name}'`,
       );
@@ -508,9 +484,10 @@ export class TransactionWriter {
     const order: EntityMetadata[] = [];
     const rowsByEntity = new Map<string, unknown[][]>();
     for (const { entity, binds } of buffered) {
-      const bucket = rowsByEntity.get(entity.name);
+      const identity = entityIdentity(entity);
+      const bucket = rowsByEntity.get(identity);
       if (bucket === undefined) {
-        rowsByEntity.set(entity.name, [[...binds]]);
+        rowsByEntity.set(identity, [[...binds]]);
         order.push(entity);
       } else {
         bucket.push([...binds]);
@@ -530,7 +507,7 @@ export class TransactionWriter {
         pkColumn: this.quote(pkColumn(entity)),
       },
       statements: 1,
-      binds: [(rowsByEntity.get(entity.name) ?? []).flat()],
+      binds: [(rowsByEntity.get(entityIdentity(entity)) ?? []).flat()],
     }));
     for (const planned of combineWrites(steps)) {
       await this.exec(planned.sql, planned.binds);
@@ -539,7 +516,7 @@ export class TransactionWriter {
 
   /**
    * An audit-only `update`: close the current row, then chain a new current row. In
-   * OPTIMISTIC mode the close gates on the observed processing-from (`in_z`), so a
+   * OPTIMISTIC mode the close gates on the observed Transaction-Time start (`in_z`), so a
    * concurrent supersession is caught (m-opt-lock); a zero-row close raises BEFORE the
    * chained insert in any mode (never silent).
    */
@@ -553,7 +530,7 @@ export class TransactionWriter {
       gated,
     });
     const pkLiteral = this.pkLiteralOf(entity, predicate);
-    // Read the row being superseded so unchanged business columns carry forward.
+    // Read the row being superseded so unchanged domain columns carry forward.
     const current = await this.currentRow(entity, predicate);
     const affectedRows = await this.closeMilestone(entity, closeSql as string, pkLiteral, gated);
     await this.exec(insertSql as string, this.chainedBinds(entity, current, options));
@@ -564,7 +541,7 @@ export class TransactionWriter {
    * Execute an audit milestone CLOSE and return its affected-row count, enforcing
    * the m-temporal-read/m-opt-lock conflict contract:
    *
-   *  - OPTIMISTIC mode (`gated`) binds the observed processing-from (`in_z`) as the
+   *  - OPTIMISTIC mode (`gated`) binds the observed Transaction-Time start (`in_z`) as the
    *    optimistic gate — a temporal entity carries no version column, so the observed
    *    `in_z` is the version analogue. An unobserved row is a read-before-write error
    *    (m-opt-lock); a zero-row close (a concurrent writer superseded the milestone, leaving
@@ -580,18 +557,18 @@ export class TransactionWriter {
     pkLiteral: unknown,
     gated: boolean,
   ): Promise<number> {
-    const processingFrom = requireProcessingFrom(entity);
-    const processingTo = requireProcessingTo(entity);
+    const txStart = requireTxStart(entity);
+    const txEnd = requireTxEnd(entity);
     const pk = this.bindPkLiteral(entity, pkLiteral);
-    const closeAt = this.bindAttribute(processingTo, this.processingInstant);
-    const openUpper = this.bindAttribute(processingTo, INFINITY);
+    const closeAt = this.bindAttribute(txEnd, this.transactionInstant);
+    const openUpper = this.bindAttribute(txEnd, INFINITY);
     let binds: readonly unknown[];
     if (gated) {
-      const observedInZ = this.observed.get(observedKey(entity.name, pkLiteral));
-      if (observedInZ === undefined) {
+      const observedTxStart = this.observed.get(observedKey(entity.name, pkLiteral));
+      if (observedTxStart === undefined) {
         throw new ParallaxReadBeforeWriteError(entity.name);
       }
-      binds = [closeAt, pk, openUpper, this.bindAttribute(processingFrom, observedInZ)];
+      binds = [closeAt, pk, openUpper, this.bindAttribute(txStart, observedTxStart)];
     } else {
       binds = [closeAt, pk, openUpper];
     }
@@ -604,27 +581,13 @@ export class TransactionWriter {
     return affectedRows;
   }
 
-  /**
-   * Reject a write to a BUSINESS-temporal-only entity under `optimistic` mode
-   * (m-descriptor/m-temporal-read/m-opt-lock): its optimistic key would derive from a processing axis it does not
-   * have (`isAuditOnly` keys on the processing axis, so it does not cover business
-   * only). The invalid combination surfaces at the write boundary — mode is a
-   * per-unit-of-work property, not a static model one, so it cannot be a
-   * metamodel-validation error.
-   */
-  private assertOptimisticParticipation(entity: EntityMetadata): void {
-    if (this.concurrency === "optimistic" && entity.temporal === "unitemporal-business") {
-      throw new ParallaxTemporalOptimisticError(entity.name);
-    }
-  }
-
   /** The current (open, `out_z = infinity`) row of an audit entity, by pk. */
   private async currentRow(
     entity: EntityMetadata,
     predicate: Predicate,
   ): Promise<Record<string, unknown>> {
-    const processing = entity.asOfAttributes().find((axis) => axis.axis === "processing");
-    const toCol = processing?.toColumn;
+    const transactionTime = entity.asOfAxes().find((axis) => axis.dimension === "transactionTime");
+    const endColumn = transactionTime?.endColumn;
     const cols = entity
       .attributes()
       .map((a) => this.quote(a.column))
@@ -632,9 +595,9 @@ export class TransactionWriter {
     const sql =
       `select ${cols} from ${this.quote(entity.table)} ` +
       `where ${this.quote(pkColumn(entity))} = ?` +
-      (toCol ? ` and ${this.quote(toCol)} = ?` : "");
-    const binds = toCol
-      ? [this.pkValue(entity, predicate), this.bindAttribute(requireProcessingTo(entity), INFINITY)]
+      (endColumn ? ` and ${this.quote(endColumn)} = ?` : "");
+    const binds = endColumn
+      ? [this.pkValue(entity, predicate), this.bindAttribute(requireTxEnd(entity), INFINITY)]
       : [this.pkValue(entity, predicate)];
     const rows = await this.database.execute(sql, binds);
     this.roundTripCount += 1; // the carry-forward read is a real round trip
@@ -642,8 +605,8 @@ export class TransactionWriter {
   }
 
   /**
-   * The chained-insert binds for an audit update: the superseded row's business
-   * columns, with the assignments applied, `in_z = processingInstant`, `out_z =
+   * The chained-insert binds for a Transaction-Time update: the superseded row's
+   * domain columns, with the assignments applied, `in_z = transactionInstant`, `out_z =
    * infinity` (never a partial milestone).
    */
   private chainedBinds(
@@ -651,16 +614,16 @@ export class TransactionWriter {
     current: Record<string, unknown>,
     options: UpdateOptions,
   ): readonly unknown[] {
-    const processing = entity.asOfAttributes().find((axis) => axis.axis === "processing");
+    const transactionTime = entity.asOfAxes().find((axis) => axis.dimension === "transactionTime");
     const assignments = new Map(options.set.map((a) => [a.attr, a.value]));
     return entity.attributes().map((attr) => {
       if (assignments.has(attr.name)) {
         return this.bindAttribute(attr, assignments.get(attr.name));
       }
-      if (processing !== undefined && attr.column === processing.fromColumn) {
-        return this.bindAttribute(attr, this.processingInstant);
+      if (transactionTime !== undefined && attr.column === transactionTime.startColumn) {
+        return this.bindAttribute(attr, this.transactionInstant);
       }
-      if (processing !== undefined && attr.column === processing.toColumn) {
+      if (transactionTime !== undefined && attr.column === transactionTime.endColumn) {
         return this.bindAttribute(attr, INFINITY);
       }
       // Carry the superseded row's value forward (already managed by the port).
@@ -728,18 +691,18 @@ export class TransactionWriter {
   /**
    * The ordered positional insert binds for a named input, in descriptor attribute
    * order. A missing attribute binds `null`; an audit entity's interval columns
-   * default to `[processingInstant, infinity)` when the caller does not supply them.
+   * default to `[transactionInstant, infinity)` when the caller does not supply them.
    */
   private insertBinds(entity: EntityMetadata, input: Record<string, unknown>): readonly unknown[] {
-    const processing = entity.asOfAttributes().find((axis) => axis.axis === "processing");
+    const transactionTime = entity.asOfAxes().find((axis) => axis.dimension === "transactionTime");
     const attributeBinds = entity.attributes().map((attr) => {
       if (attr.name in input) {
         return this.bindAttribute(attr, input[attr.name]);
       }
-      if (processing !== undefined && attr.column === processing.fromColumn) {
-        return this.bindAttribute(attr, this.processingInstant);
+      if (transactionTime !== undefined && attr.column === transactionTime.startColumn) {
+        return this.bindAttribute(attr, this.transactionInstant);
       }
-      if (processing !== undefined && attr.column === processing.toColumn) {
+      if (transactionTime !== undefined && attr.column === transactionTime.endColumn) {
         return this.bindAttribute(attr, INFINITY);
       }
       return this.bindAttribute(attr, null);
@@ -787,7 +750,7 @@ export class TransactionWriter {
 /**
  * Order the grouped insert entities FK-safe: a referenced parent precedes a
  * dependent child (`m-unit-work-003`). A `many-to-one` relationship is the FK-holding side,
- * so an entity that declares one depends on that `relatedEntity` — but only when
+ * so an entity that declares one depends on its join target — but only when
  * that parent is ALSO in this insert set (an out-of-set reference is already
  * present, so it imposes no ordering here). The sort is STABLE: among entities
  * with no in-set dependency it preserves first-appearance order (the tiebreak),
@@ -795,17 +758,17 @@ export class TransactionWriter {
  * self-consistent model has none of) falls back to first-appearance order.
  */
 function fkSortInsertOrder(order: readonly EntityMetadata[]): readonly EntityMetadata[] {
-  const inSet = new Set(order.map((entity) => entity.name));
-  // Each entity's in-set parents (the `relatedEntity` of its `many-to-one` rels).
+  const inSet = new Set(order.map(entityIdentity));
+  // Each entity's in-set parents (the join target of its `many-to-one` relations).
   const parentsOf = new Map<string, Set<string>>();
   for (const entity of order) {
     const parents = new Set<string>();
     for (const rel of entity.relationships()) {
-      if (rel.cardinality === "many-to-one" && inSet.has(rel.relatedEntity)) {
-        parents.add(rel.relatedEntity);
+      if (rel.cardinality === "many-to-one" && inSet.has(rel.join.target.entity)) {
+        parents.add(rel.join.target.entity);
       }
     }
-    parentsOf.set(entity.name, parents);
+    parentsOf.set(entityIdentity(entity), parents);
   }
   const emitted = new Set<string>();
   const result: EntityMetadata[] = [];
@@ -814,23 +777,29 @@ function fkSortInsertOrder(order: readonly EntityMetadata[]): readonly EntityMet
   while (result.length < order.length) {
     const next = order.find(
       (entity) =>
-        !emitted.has(entity.name) &&
-        [...(parentsOf.get(entity.name) ?? [])].every((parent) => emitted.has(parent)),
+        !emitted.has(entityIdentity(entity)) &&
+        [...(parentsOf.get(entityIdentity(entity)) ?? [])].every((parent) => emitted.has(parent)),
     );
     if (next === undefined) {
       // A dependency cycle: fall back to first-appearance order for the rest.
       for (const entity of order) {
-        if (!emitted.has(entity.name)) {
-          emitted.add(entity.name);
+        const identity = entityIdentity(entity);
+        if (!emitted.has(identity)) {
+          emitted.add(identity);
           result.push(entity);
         }
       }
       break;
     }
-    emitted.add(next.name);
+    emitted.add(entityIdentity(next));
     result.push(next);
   }
   return result;
+}
+
+/** The canonical entity identity used by relationship metadata and model-wide maps. */
+function entityIdentity(entity: EntityMetadata): string {
+  return entity.namespace === undefined ? entity.name : `${entity.namespace}.${entity.name}`;
 }
 
 /**
@@ -859,40 +828,40 @@ function pkColumn(entity: EntityMetadata): string {
   return pk.column;
 }
 
-/** The processing-from attribute (`in_z`) required by audit-only writes. */
-function requireProcessingFrom(entity: EntityMetadata): NormalizedAttribute {
-  const attr = entity.processingFromAttribute();
+/** The Transaction-Time start attribute (`in_z`) required by temporal writes. */
+function requireTxStart(entity: EntityMetadata): NormalizedAttribute {
+  const attr = entity.txStartAttribute();
   if (attr === undefined) {
-    throw new Error(`entity '${entity.name}' has no processing-from attribute for an audit write`);
+    throw new Error(`entity '${entity.name}' has no Transaction-Time start attribute`);
   }
   return attr;
 }
 
-/** The processing-to attribute (`out_z`) required by audit-only writes. */
-function requireProcessingTo(entity: EntityMetadata): NormalizedAttribute {
-  const attr = entity.processingToAttribute();
+/** The Transaction-Time end attribute (`out_z`) required by temporal writes. */
+function requireTxEnd(entity: EntityMetadata): NormalizedAttribute {
+  const attr = entity.txEndAttribute();
   if (attr === undefined) {
-    throw new Error(`entity '${entity.name}' has no processing-to attribute for an audit write`);
+    throw new Error(`entity '${entity.name}' has no Transaction-Time end attribute`);
   }
   return attr;
 }
 
 /**
  * Resolve an entity's audit {@link WriteTarget} (table, columns, pk, out_z, in_z).
- * `fromColumn` (`in_z`) is the optimistic gate an OPTIMISTIC-mode close binds the
- * observed value on (m-opt-lock); `toColumn` (`out_z`) is set + keyed by every close.
+ * `txStartColumn` (`in_z`) is the optimistic gate; `txEndColumn` (`out_z`) is set
+ * and keyed by every close.
  */
 function writeTargetFor(entity: EntityMetadata, dialect: Dialect): WriteTarget {
-  const processing = entity.asOfAttributes().find((axis) => axis.axis === "processing");
+  const transactionTime = entity.asOfAxes().find((axis) => axis.dimension === "transactionTime");
   return {
     table: dialect.quoteIdentifier(entity.table),
     columns: quotedColumnOrder(entity, dialect),
     pkColumn: dialect.quoteIdentifier(pkColumn(entity)),
-    ...(processing === undefined
+    ...(transactionTime === undefined
       ? {}
       : {
-          toColumn: dialect.quoteIdentifier(processing.toColumn),
-          fromColumn: dialect.quoteIdentifier(processing.fromColumn),
+          txEndColumn: dialect.quoteIdentifier(transactionTime.endColumn),
+          txStartColumn: dialect.quoteIdentifier(transactionTime.startColumn),
         }),
   };
 }

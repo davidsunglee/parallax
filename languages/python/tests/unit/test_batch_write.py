@@ -59,7 +59,7 @@ def test_update_never_collapses_for_a_temporal_entity() -> None:
 
 
 def test_update_does_not_collapse_when_a_row_carries_an_observation_key() -> None:
-    # An explicit observedVersion/observedInZ control key is a per-row-
+    # An explicit observedVersion/observedTxStart control key is a per-row-
     # observation signal REGARDLESS of the target's own versioned-ness.
     rows = [
         {"id": 1, "balance": 500.00, "observedVersion": 1},

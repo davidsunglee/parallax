@@ -1,14 +1,14 @@
 /**
- * API Conformance Suite — **temporal reads** family (Phase 10c): processing-axis reads
+ * API Conformance Suite — **temporal reads** family (Phase 10c): Transaction-Time reads
  * (`find(..., { asOf })`, ranged, full history) and bitemporal reads, plus the two
  * exists-temporal-hop reads, written as a developer would and run against
  * `postgres:17` through the SHIPPED `@parallax/db-postgres` adapter.
  *
- * The temporal read options serialize (business axis OUTSIDE processing) to the
+ * The temporal read options serialize (Valid-Time dimension outside Transaction Time) to the
  * corpus's canonical `operation` — the no-drift guard (`assertSameOperation`) — and
  * the returned MANAGED rows equal the corpus `expectedRows` (Phase-4 rules) with the
  * managed shapes (10b). An OMITTED axis is left unwrapped (m-temporal-read default-injection at
- * the compiler); an explicit `now` still emits an `asOf … now` wrapper (`m-temporal-read-002`).
+ * the compiler); explicit Latest emits an `asOf … latest` wrapper (`m-temporal-read-002`).
  */
 
 import { Temporal } from "@parallax/core";
@@ -16,7 +16,6 @@ import type { Operation } from "@parallax/operation";
 import { afterAll, beforeAll, expect, describe as group, it } from "vitest";
 import {
   AttributeExpression,
-  type AxisRefs,
   buildFindOperation,
   Predicate,
   ToManyRelationshipExpression,
@@ -40,17 +39,6 @@ const Balance = { acctNum: attr("Balance.acctNum") };
 const Coverage = { amount: attr("Coverage.amount") };
 const Policy = { coverages: rel("Policy.coverages") };
 
-const BALANCE_AXES: AxisRefs = { processing: "Balance.processingDate" };
-const LEDGER_AXES: AxisRefs = { processing: "Ledger.processingDate" };
-const POSITION_AXES: AxisRefs = {
-  processing: "Position.processingDate",
-  business: "Position.businessDate",
-};
-const POLICY_AXES: AxisRefs = {
-  processing: "Policy.processingDate",
-  business: "Policy.businessDate",
-};
-
 /** One temporal suite row: the DSL `find` operation and its root entity. */
 interface Row {
   readonly stem: string;
@@ -65,8 +53,7 @@ const CASES: readonly Row[] = [
     entity: "Policy",
     build: () =>
       buildFindOperation(Policy.coverages.exists(Coverage.amount.gte(600.0)), {
-        temporal: { asOf: { processing: "now", business: "now" } },
-        axisRefs: POLICY_AXES,
+        temporal: { asOf: { transactionTime: "latest", validTime: "latest" } },
       }),
   },
   {
@@ -74,19 +61,18 @@ const CASES: readonly Row[] = [
     entity: "Policy",
     build: () => Policy.coverages.exists(Coverage.amount.gte(600.0)).toOperation(),
   },
-  // processing-axis reads (05xx)
+  // Transaction-Time reads (05xx)
   {
-    stem: "m-temporal-read-001-as-of-now-defaulted",
+    stem: "m-temporal-read-001-as-of-latest-defaulted",
     entity: "Balance",
     build: () => buildFindOperation(all()),
   },
   {
-    stem: "m-temporal-read-002-as-of-now-explicit",
+    stem: "m-temporal-read-002-as-of-latest-explicit",
     entity: "Balance",
     build: () =>
       buildFindOperation(all(), {
-        temporal: { asOf: { processing: "now" } },
-        axisRefs: BALANCE_AXES,
+        temporal: { asOf: { transactionTime: "latest" } },
       }),
   },
   {
@@ -94,8 +80,7 @@ const CASES: readonly Row[] = [
     entity: "Balance",
     build: () =>
       buildFindOperation(all(), {
-        temporal: { asOf: { processing: at("2024-04-01T00:00:00+00:00") } },
-        axisRefs: BALANCE_AXES,
+        temporal: { asOf: { transactionTime: at("2024-04-01T00:00:00+00:00") } },
       }),
   },
   {
@@ -103,17 +88,15 @@ const CASES: readonly Row[] = [
     entity: "Balance",
     build: () =>
       buildFindOperation(new Predicate({ eq: { attr: "Balance.id", value: 1 } }), {
-        temporal: { history: ["processing"] },
-        axisRefs: BALANCE_AXES,
+        temporal: { history: ["transactionTime"] },
       }),
   },
   {
-    stem: "m-temporal-read-005-as-of-now-with-predicate",
+    stem: "m-temporal-read-005-as-of-latest-with-predicate",
     entity: "Balance",
     build: () =>
       buildFindOperation(Balance.acctNum.eq("A"), {
-        temporal: { asOf: { processing: "now" } },
-        axisRefs: BALANCE_AXES,
+        temporal: { asOf: { transactionTime: "latest" } },
       }),
   },
   {
@@ -123,13 +106,12 @@ const CASES: readonly Row[] = [
       buildFindOperation(all(), {
         temporal: {
           range: {
-            processing: {
+            transactionTime: {
               start: at("2024-06-15T00:00:00+00:00"),
               end: at("2024-07-01T00:00:00+00:00"),
             },
           },
         },
-        axisRefs: BALANCE_AXES,
       }),
   },
   {
@@ -137,8 +119,7 @@ const CASES: readonly Row[] = [
     entity: "Balance",
     build: () =>
       buildFindOperation(all(), {
-        temporal: { asOf: { processing: at("2024-06-01T00:00:00+00:00") } },
-        axisRefs: BALANCE_AXES,
+        temporal: { asOf: { transactionTime: at("2024-06-01T00:00:00+00:00") } },
       }),
   },
   {
@@ -146,29 +127,26 @@ const CASES: readonly Row[] = [
     entity: "Ledger",
     build: () =>
       buildFindOperation(all(), {
-        temporal: { asOf: { processing: at("2024-06-01T00:00:00+00:00") } },
-        axisRefs: LEDGER_AXES,
+        temporal: { asOf: { transactionTime: at("2024-06-01T00:00:00+00:00") } },
       }),
   },
-  // bitemporal reads (08xx) — business axis outside processing
+  // bitemporal reads (08xx) — Valid-Time dimension outside processing
   {
-    stem: "m-temporal-read-013-bitemporal-as-of-now-both-axes",
+    stem: "m-temporal-read-013-bitemporal-as-of-latest-both-dimensions",
     entity: "Position",
     build: () =>
       buildFindOperation(all(), {
-        temporal: { asOf: { processing: "now", business: "now" } },
-        axisRefs: POSITION_AXES,
+        temporal: { asOf: { transactionTime: "latest", validTime: "latest" } },
       }),
   },
   {
-    stem: "m-temporal-read-014-bitemporal-business-past-processing-now",
+    stem: "m-temporal-read-014-bitemporal-valid-time-past-transaction-time-latest",
     entity: "Position",
     build: () =>
       buildFindOperation(all(), {
         temporal: {
-          asOf: { processing: "now", business: at("2024-03-01T00:00:00+00:00") },
+          asOf: { transactionTime: "latest", validTime: at("2024-03-01T00:00:00+00:00") },
         },
-        axisRefs: POSITION_AXES,
       }),
   },
   {
@@ -178,11 +156,10 @@ const CASES: readonly Row[] = [
       buildFindOperation(all(), {
         temporal: {
           asOf: {
-            processing: at("2024-02-01T00:00:00+00:00"),
-            business: at("2024-03-01T00:00:00+00:00"),
+            transactionTime: at("2024-02-01T00:00:00+00:00"),
+            validTime: at("2024-03-01T00:00:00+00:00"),
           },
         },
-        axisRefs: POSITION_AXES,
       }),
   },
   {
@@ -190,17 +167,15 @@ const CASES: readonly Row[] = [
     entity: "Position",
     build: () =>
       buildFindOperation(new Predicate({ eq: { attr: "Position.id", value: 1 } }), {
-        temporal: { history: ["processing", "business"] },
-        axisRefs: POSITION_AXES,
+        temporal: { history: ["transactionTime", "validTime"] },
       }),
   },
   {
-    stem: "m-temporal-read-017-bitemporal-omitted-processing-default",
+    stem: "m-temporal-read-017-bitemporal-omitted-transaction-time-default",
     entity: "Position",
     build: () =>
       buildFindOperation(all(), {
-        temporal: { asOf: { business: at("2024-03-01T00:00:00+00:00") } },
-        axisRefs: POSITION_AXES,
+        temporal: { asOf: { validTime: at("2024-03-01T00:00:00+00:00") } },
       }),
   },
 ];

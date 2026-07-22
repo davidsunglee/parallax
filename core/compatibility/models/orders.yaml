@@ -27,14 +27,13 @@ entities:
   - name: Order
     namespace: parallax.compatibility
     table: orders
-    mutability: transactional
-    temporal: non-temporal
+    persistence: read-write
     attributes:
       - name: id
         type: int64
         column: id
         primaryKey: true
-        pkGenerator: none
+        pkGeneration: application-assigned
       - name: name
         type: string
         column: name
@@ -63,37 +62,34 @@ entities:
         column: ordered_on
     relationships:
       - name: items
-        relatedEntity: OrderItem
         cardinality: one-to-many
-        join: this.id = OrderItem.orderId
-        reverseName: order
+        join:
+          source: id
+          target: { entity: OrderItem, attribute: orderId }
         dependent: true
-        foreignKey: order_id
         orderBy:
-          - { attr: id, direction: desc }
+          - { attribute: id, direction: desc }
       - name: statuses
-        relatedEntity: OrderStatus
         cardinality: one-to-many
-        join: this.id = OrderStatus.orderId
-        reverseName: order
+        join:
+          source: id
+          target: { entity: OrderStatus, attribute: orderId }
         dependent: true
-        foreignKey: order_id
       - name: tags
-        relatedEntity: OrderTag
         cardinality: one-to-many
-        join: this.id = OrderTag.orderId
-        reverseName: order
-        foreignKey: order_id
+        join:
+          source: id
+          target: { entity: OrderTag, attribute: orderId }
         orderBy:
-          - { attr: priority, direction: desc }
-          - { attr: label, direction: asc }
+          - { attribute: priority, direction: desc }
+          - { attribute: label, direction: asc }
       - name: itemsByShipDate
-        relatedEntity: OrderItem
         cardinality: one-to-many
-        join: this.id = OrderItem.orderId
-        foreignKey: order_id
+        join:
+          source: id
+          target: { entity: OrderItem, attribute: orderId }
         orderBy:
-          - { attr: shippedOn, direction: asc }
+          - { attribute: shippedOn, direction: asc }
     indices:
       - name: orders_pk
         attributes: [id]
@@ -104,14 +100,13 @@ entities:
   - name: OrderItem
     namespace: parallax.compatibility
     table: order_item
-    mutability: transactional
-    temporal: non-temporal
+    persistence: read-write
     attributes:
       - name: id
         type: int64
         column: id
         primaryKey: true
-        pkGenerator: none
+        pkGeneration: application-assigned
       - name: orderId
         type: int64
         column: order_id
@@ -128,20 +123,15 @@ entities:
         nullable: true
     relationships:
       - name: order
-        relatedEntity: Order
-        cardinality: many-to-one
-        join: this.orderId = Order.id
-        reverseName: items
-        foreignKey: order_id
+        reverseOf: Order.items
       - name: statuses
-        relatedEntity: OrderStatus
         cardinality: one-to-many
-        join: this.id = OrderStatus.orderItemId
-        reverseName: orderItem
+        join:
+          source: id
+          target: { entity: OrderStatus, attribute: orderItemId }
         dependent: true
-        foreignKey: order_item_id
         orderBy:
-          - { attr: code, direction: asc }
+          - { attribute: code, direction: asc }
     indices:
       - name: order_item_pk
         attributes: [id]
@@ -152,14 +142,13 @@ entities:
   - name: OrderStatus
     namespace: parallax.compatibility
     table: order_status
-    mutability: transactional
-    temporal: non-temporal
+    persistence: read-write
     attributes:
       - name: id
         type: int64
         column: id
         primaryKey: true
-        pkGenerator: none
+        pkGeneration: application-assigned
       - name: orderId
         type: int64
         column: order_id
@@ -173,17 +162,9 @@ entities:
         maxLength: 16
     relationships:
       - name: order
-        relatedEntity: Order
-        cardinality: many-to-one
-        join: this.orderId = Order.id
-        reverseName: statuses
-        foreignKey: order_id
+        reverseOf: Order.statuses
       - name: orderItem
-        relatedEntity: OrderItem
-        cardinality: many-to-one
-        join: this.orderItemId = OrderItem.id
-        reverseName: statuses
-        foreignKey: order_item_id
+        reverseOf: OrderItem.statuses
     indices:
       - name: order_status_pk
         attributes: [id]
@@ -194,14 +175,13 @@ entities:
   - name: OrderTag
     namespace: parallax.compatibility
     table: order_tag
-    mutability: transactional
-    temporal: non-temporal
+    persistence: read-write
     attributes:
       - name: id
         type: int64
         column: id
         primaryKey: true
-        pkGenerator: none
+        pkGeneration: application-assigned
       - name: orderId
         type: int64
         column: order_id
@@ -214,11 +194,7 @@ entities:
         column: priority
     relationships:
       - name: order
-        relatedEntity: Order
-        cardinality: many-to-one
-        join: this.orderId = Order.id
-        reverseName: tags
-        foreignKey: order_id
+        reverseOf: Order.tags
     indices:
       - name: order_tag_pk
         attributes: [id]

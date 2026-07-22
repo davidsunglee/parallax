@@ -24,7 +24,6 @@ import type { Dialect } from "@parallax/dialect";
 import type { EntityMetadata, Metamodel, NormalizedValueObjectMember } from "@parallax/metamodel";
 import type {
   AsOfFragment,
-  Axis,
   AxisPins as CompilerAxisPins,
   ProjectionColumn,
   ResolvedColumn,
@@ -40,20 +39,6 @@ function splitRef(ref: string): [string, string] {
     throw new Error(`malformed reference '${ref}' (expected 'Class.member')`);
   }
   return [ref.slice(0, dot), ref.slice(dot + 1)];
-}
-
-/**
- * Parse a canonical relationship `join` (`this.<thisAttr> = <Related>.<attr>`)
- * into its two attribute names. The form is fixed by the metamodel schema.
- */
-function parseJoin(join: string): { thisAttr: string; relatedAttr: string } {
-  const match = /^\s*this\.(\w+)\s*=\s*\w+\.(\w+)\s*$/.exec(join);
-  if (!match) {
-    throw new Error(
-      `unsupported relationship join '${join}' (expected 'this.<attr> = <Related>.<attr>')`,
-    );
-  }
-  return { thisAttr: match[1] as string, relatedAttr: match[2] as string };
 }
 
 /**
@@ -85,12 +70,15 @@ export class RuntimeSchema implements SchemaResolver {
     const [className, relName] = splitRef(ref);
     const source = this.metamodel.entity(className);
     const relationship = source.relationshipByName(relName);
-    const { thisAttr, relatedAttr } = parseJoin(relationship.join);
-    const related = this.metamodel.entity(relationship.relatedEntity);
+    const related = this.metamodel.entity(relationship.join.target.entity);
     return {
       childTable: related.table,
-      childColumn: this.dialect.quoteIdentifier(related.attributeByName(relatedAttr).column),
-      parentColumn: this.dialect.quoteIdentifier(source.attributeByName(thisAttr).column),
+      childColumn: this.dialect.quoteIdentifier(
+        related.attributeByName(relationship.join.target.name).column,
+      ),
+      parentColumn: this.dialect.quoteIdentifier(
+        source.attributeByName(relationship.join.source.name).column,
+      ),
     };
   }
 
@@ -113,20 +101,20 @@ export class RuntimeSchema implements SchemaResolver {
       );
     }
     let member: NormalizedValueObjectMember = top;
-    let manyIndex = top.cardinality === "many" ? 0 : -1;
+    let manyIndex = top.multiplicity === "many" ? 0 : -1;
     let leafIsAttribute = false;
     let leafType: string | undefined;
-    let leafIsMany = rest.length === 0 && top.cardinality === "many";
+    let leafIsMany = rest.length === 0 && top.multiplicity === "many";
     rest.forEach((segment, index) => {
       const nested = member.valueObjects.find((vo) => vo.name === segment);
       if (nested !== undefined) {
-        if (nested.cardinality === "many" && manyIndex === -1) {
+        if (nested.multiplicity === "many" && manyIndex === -1) {
           manyIndex = index + 1;
         }
         member = nested;
         if (index === rest.length - 1) {
           leafIsAttribute = false;
-          leafIsMany = nested.cardinality === "many";
+          leafIsMany = nested.multiplicity === "many";
         }
         return;
       }
@@ -186,15 +174,10 @@ export class RuntimeSchema implements SchemaResolver {
     return this.rootEntity.name;
   }
 
-  resolveAsOfAxis(ref: string): Axis {
-    const [className, attrName] = splitRef(ref);
-    return this.metamodel.entity(className).asOfAttributeByName(attrName).axis as Axis;
-  }
-
-  relatedEntityName(ref: string): string {
+  targetEntityName(ref: string): string {
     const [className, relName] = splitRef(ref);
     const relationship = this.metamodel.entity(className).relationshipByName(relName);
-    return relationship.relatedEntity;
+    return relationship.join.target.entity;
   }
 
   asOfPredicate(entity: string, alias: string, pins: CompilerAxisPins): AsOfFragment {
@@ -206,11 +189,11 @@ export class RuntimeSchema implements SchemaResolver {
   private resolveAxes(entity: string, alias: string): readonly ResolvedAxis[] {
     return this.metamodel
       .entity(entity)
-      .asOfAttributes()
+      .asOfAxes()
       .map((axis) => ({
-        axis: axis.axis as TemporalAxis,
-        fromExpr: `${alias}.${this.dialect.quoteIdentifier(axis.fromColumn)}`,
-        toExpr: `${alias}.${this.dialect.quoteIdentifier(axis.toColumn)}`,
+        dimension: axis.dimension as TemporalAxis,
+        startExpr: `${alias}.${this.dialect.quoteIdentifier(axis.startColumn)}`,
+        endExpr: `${alias}.${this.dialect.quoteIdentifier(axis.endColumn)}`,
         toIsInclusive: axis.toIsInclusive,
         infinity: axis.infinity,
       }));

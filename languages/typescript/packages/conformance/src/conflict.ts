@@ -111,14 +111,14 @@ export function buildConflictPlan(loaded: LoadedCase, dialect: Dialect): Conflic
  *    version advances `observedVersion + 1`, and the gate is intrinsic (`and
  *    version = ?`, a conflict is always optimistic — R4). Binds:
  *    `[…set values…, newVersion, pk, observedVersion]`;
- *  - a processing-axis TEMPORAL (audit-only) entity, which carries no version column
+ *  - a Transaction-Time entity, which carries no version column
  *    → the m-audit-write milestone CLOSE (`@parallax/bitemporal` `auditWriteStatements`,
- *    `"terminate"` yields the single close), GATED on the observed processing-from
+ *    `"terminate"` yields the single close), gated on the observed Transaction-Time start
  *    (`in_z`) in optimistic mode and ungated in locking mode (the mode the case's
  *    `uow` block declares). The close text is metamodel-derived (DQ-B Family B), and
  *    its binds are DERIVED from the neutral write input (①): `out_z = at` (the close
  *    instant), the still-open bound `infinity`, and — in optimistic mode — the
- *    `and in_z = ?` gate bound to `observedInZ` (the observed processing-from). The
+ *    `and in_z = ?` gate bound to `observedTxStart`. The
  *    single SET column (`out_z`) stays metamodel-fixed, so ① never names it.
  *
  * Each is cross-checked against the authored golden + binds by `buildConflictPlan`,
@@ -136,23 +136,23 @@ function conflictSqlDeriver(
   const target = writeTargetFor(entity, dialect);
   const gated = loaded.uow?.concurrency === "optimistic";
   const [close] = auditWriteStatements("terminate", target, { gated });
-  const processing = entity.asOfAttributes().find((axis) => axis.axis === "processing");
-  if (processing === undefined) {
-    throw new Error(`temporal conflict close on '${entity.name}' has no processing axis`);
+  const transactionTime = entity.asOfAxes().find((axis) => axis.dimension === "transactionTime");
+  if (transactionTime === undefined) {
+    throw new Error(`temporal conflict close on '${entity.name}' has no Transaction Time`);
   }
   return (attempt) =>
-    temporalCloseStatement(entity, close as string, processing.infinity, gated, attempt);
+    temporalCloseStatement(entity, close as string, transactionTime.infinity, gated, attempt);
 }
 
 /**
  * Derive a TEMPORAL / bitemporal conflict close's binds from its neutral write
  * input (①). A close writes no domain columns — it sets `out_z = at` keyed on the
  * still-open current row (`pk and out_z = infinity`), gated in optimistic mode on
- * the observed processing-from (`and in_z = observedInZ`). The primary-key
- * attribute is the `where` key; a bitemporal entity's business discriminator (e.g.
- * `businessFrom` → `from_z`, classified into `set`) is the extra `where` coordinate
+ * the observed Transaction-Time start (`and in_z = observedTxStart`). The primary-key
+ * attribute is the `where` key; a Bitemporal entity's Valid-Time discriminator
+ * (`valid_start` → `from_z`, classified into `set`) is the extra `where` coordinate
  * the metamodel cannot value — its value slots between `out_z` and `in_z` in model
- * column order. Binds: `[at, pk, infinity, …businessCoords, (observedInZ if gated)]`.
+ * column order. Binds: `[at, pk, infinity, …validCoords, (observedTxStart if gated)]`.
  */
 function temporalCloseStatement(
   entity: EntityMetadata,
@@ -167,23 +167,23 @@ function temporalCloseStatement(
       `temporal conflict close at ${attempt.casePointer} carries no neutral write input (①)`,
     );
   }
-  const { at, observedInZ } = attempt;
+  const { at, observedTxStart } = attempt;
   if (at === undefined) {
     throw new Error(
       `temporal conflict close at ${attempt.casePointer} requires an 'at' (the close instant → out_z) in its neutral write input (①)`,
     );
   }
-  if (gated && observedInZ === undefined) {
+  if (gated && observedTxStart === undefined) {
     throw new Error(
-      `optimistic temporal conflict close at ${attempt.casePointer} requires an observedInZ (the observed in_z gate token) in its neutral write input (①)`,
+      `optimistic temporal conflict close at ${attempt.casePointer} requires an observedTxStart (the observed in_z gate token) in its neutral write input (①)`,
     );
   }
   const { pk, set } = classifyRow(entity, write);
-  const businessCoords = orderedColumns(entity)
+  const validCoords = orderedColumns(entity)
     .filter((column) => set.has(column))
     .map((column) => set.get(column));
-  const gateBinds = gated ? [observedInZ] : [];
-  const binds = [at, pk, infinity, ...businessCoords, ...gateBinds];
+  const gateBinds = gated ? [observedTxStart] : [];
+  const binds = [at, pk, infinity, ...validCoords, ...gateBinds];
   return { sql, binds };
 }
 
@@ -233,8 +233,8 @@ interface NormalizedAttempt {
   readonly write?: Record<string, unknown>;
   /** A temporal-close attempt's close instant (→ new `out_z`). */
   readonly at?: string;
-  /** A temporal-close attempt's observed processing-from (`in_z`) optimistic gate. */
-  readonly observedInZ?: string;
+  /** A temporal-close attempt's observed Transaction-Time start (`in_z`) optimistic gate. */
+  readonly observedTxStart?: string;
 }
 
 /** Normalize the case's attempt(s) into a common shape (single or retry form). */
@@ -251,7 +251,9 @@ function normalizedAttempts(loaded: LoadedCase, dialect: Dialect): readonly Norm
         affectedRows: attempt.affectedRows,
         write: attempt.write as Record<string, unknown>,
         ...(attempt.at === undefined ? {} : { at: attempt.at }),
-        ...(attempt.observedInZ === undefined ? {} : { observedInZ: attempt.observedInZ }),
+        ...(attempt.observedTxStart === undefined
+          ? {}
+          : { observedTxStart: attempt.observedTxStart }),
       };
     });
   }
@@ -273,7 +275,7 @@ function normalizedAttempts(loaded: LoadedCase, dialect: Dialect): readonly Norm
       affectedRows,
       ...(when?.write === undefined ? {} : { write: when.write as Record<string, unknown> }),
       ...(when?.at === undefined ? {} : { at: when.at }),
-      ...(when?.observedInZ === undefined ? {} : { observedInZ: when.observedInZ }),
+      ...(when?.observedTxStart === undefined ? {} : { observedTxStart: when.observedTxStart }),
     },
   ];
 }
@@ -292,7 +294,7 @@ function applyStatements(loaded: LoadedCase): readonly ApplyStatement[] {
 
 /**
  * The single entity a conflict case targets: a VERSIONED entity (the m-opt-lock optimistic
- * gate on a version column) if one is declared, else a processing-axis TEMPORAL
+ * gate on a version column) if one is declared, else a Transaction-Time temporal
  * (audit-only) entity (the m-audit-write milestone close gated on the observed `in_z`,
  * `m-temporal-read-009`-`m-temporal-read-012`), else the first entity.
  */
@@ -303,7 +305,7 @@ function conflictEntity(metamodel: Metamodel): EntityMetadata {
     }
   }
   for (const entity of metamodel.entities()) {
-    if (entity.asOfAttributes().some((axis) => axis.axis === "processing")) {
+    if (entity.asOfAxes().some((axis) => axis.dimension === "transactionTime")) {
       return entity;
     }
   }

@@ -15,9 +15,9 @@ export {
   ValueObjectExpression,
 } from "./expression.js";
 export {
-  type AxisRefs,
   buildFindOperation,
   type FindOptions,
+  LATEST,
   type TemporalAxis,
   type TemporalPoint,
   type TemporalRange,

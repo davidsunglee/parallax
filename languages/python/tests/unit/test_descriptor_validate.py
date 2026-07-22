@@ -9,14 +9,17 @@ import pytest
 from parallax.conformance import case_format
 from parallax.conformance import models as corpus_models
 from parallax.core.descriptor import (
-    AsOfAttribute,
+    AsOfAxisMetadata,
     Attribute,
+    DefiningRelationship,
     DescriptorError,
     Entity,
     Inheritance,
     Metamodel,
     PkGenerator,
-    Relationship,
+    RelationshipJoin,
+    RelationshipTarget,
+    ReverseRelationship,
     validate_entity,
     validate_metamodel,
 )
@@ -49,17 +52,26 @@ def test_valid_entity_passes() -> None:
             Attribute(name="version", type="int32", column="version", optimistic_locking=True),
         ),
         relationships=(
-            Relationship(
+            DefiningRelationship(
                 name="passport",
-                related_entity="Passport",
                 cardinality="one-to-one",
-                join="this.id = Passport.personId",
-                reverse_name="holder",
+                join=RelationshipJoin(
+                    source="id",
+                    target=RelationshipTarget(entity="Passport", attribute="personId"),
+                ),
             ),
         ),
     )
     validate_entity(entity)  # no raise
-    validate_metamodel(Metamodel(entities=(entity,)))  # no raise
+    passport = Entity(
+        name="Passport",
+        table="passport",
+        attributes=(
+            _attr(),
+            Attribute(name="personId", type="int64", column="person_id"),
+        ),
+    )
+    validate_metamodel(Metamodel(entities=(entity, passport)))  # no raise
 
 
 def test_empty_entity_name_is_rejected() -> None:
@@ -80,12 +92,12 @@ def test_no_attributes_is_rejected() -> None:
 def _root_and_subtype() -> Metamodel:
     root = Entity(
         name="Reading",
+        table="reading",
         inheritance=Inheritance(role="root", strategy="table-per-hierarchy", tag_column="kind"),
         attributes=(_attr(),),
     )
     subtype = Entity(
         name="MeterReading",
-        table="reading",
         inheritance=Inheritance(role="concrete-subtype", parent="Reading", tag_value="meter"),
     )
     return Metamodel(entities=(root, subtype))
@@ -127,14 +139,35 @@ def test_temporal_entity_with_optimistic_locking_attr_is_rejected() -> None:
         attributes=(
             _attr(),
             Attribute(name="version", type="int64", column="version", optimistic_locking=True),
+            Attribute(name="tx_start", type="timestamp", column="in_z"),
+            Attribute(name="tx_end", type="timestamp", column="out_z"),
         ),
-        as_of_attributes=(
-            AsOfAttribute(
-                name="processing", from_column="in_z", to_column="out_z", axis="processing"
+        as_of_axes=(
+            AsOfAxisMetadata(
+                dimension="transactionTime", start_attribute="tx_start", end_attribute="tx_end"
             ),
         ),
     )
     with pytest.raises(DescriptorError, match="must not also declare an optimisticLocking"):
+        validate_entity(entity)
+
+
+def test_valid_time_only_entity_is_rejected() -> None:
+    entity = _entity(
+        attributes=(
+            _attr(),
+            Attribute(name="valid_start", type="timestamp", column="from_z"),
+            Attribute(name="valid_end", type="timestamp", column="thru_z"),
+        ),
+        as_of_axes=(
+            AsOfAxisMetadata(
+                dimension="validTime",
+                start_attribute="valid_start",
+                end_attribute="valid_end",
+            ),
+        ),
+    )
+    with pytest.raises(DescriptorError, match="Valid-Time-Only is deferred"):
         validate_entity(entity)
 
 
@@ -276,32 +309,74 @@ def test_pk_generator_increment_size_below_one_is_rejected() -> None:
 
 
 def test_non_identifier_relationship_name_is_rejected() -> None:
-    rel = Relationship(name="Bad", related_entity="Passport", cardinality="one-to-one", join="x")
+    rel = DefiningRelationship(
+        name="Bad",
+        cardinality="one-to-one",
+        join=RelationshipJoin(
+            source="id", target=RelationshipTarget(entity="Passport", attribute="personId")
+        ),
+    )
     with pytest.raises(DescriptorError, match="not a canonical camelCase identifier"):
         validate_entity(_entity(relationships=(rel,)))
 
 
-def test_empty_related_entity_is_rejected() -> None:
-    rel = Relationship(name="passport", related_entity="", cardinality="one-to-one", join="x")
-    with pytest.raises(DescriptorError, match="relatedEntity must be non-empty"):
-        validate_entity(_entity(relationships=(rel,)))
-
-
-def test_empty_join_is_rejected() -> None:
-    rel = Relationship(
-        name="passport", related_entity="Passport", cardinality="one-to-one", join=""
-    )
-    with pytest.raises(DescriptorError, match="join must be non-empty"):
-        validate_entity(_entity(relationships=(rel,)))
-
-
-def test_non_identifier_reverse_name_is_rejected() -> None:
-    rel = Relationship(
+def test_empty_join_target_reference_is_rejected() -> None:
+    rel = DefiningRelationship(
         name="passport",
-        related_entity="Passport",
         cardinality="one-to-one",
-        join="x",
-        reverse_name="Holder",
+        join=RelationshipJoin(source="id", target=RelationshipTarget(entity="", attribute="id")),
     )
-    with pytest.raises(DescriptorError, match=r"reverseName .* is not an identifier"):
+    with pytest.raises(DescriptorError, match="join target entity must be non-empty"):
         validate_entity(_entity(relationships=(rel,)))
+
+
+def test_empty_join_source_is_rejected() -> None:
+    rel = DefiningRelationship(
+        name="passport",
+        cardinality="one-to-one",
+        join=RelationshipJoin(
+            source="", target=RelationshipTarget(entity="Passport", attribute="id")
+        ),
+    )
+    with pytest.raises(DescriptorError, match="join source must be non-empty"):
+        validate_entity(_entity(relationships=(rel,)))
+
+
+def test_empty_join_target_attribute_is_rejected() -> None:
+    rel = DefiningRelationship(
+        name="passport",
+        cardinality="one-to-one",
+        join=RelationshipJoin(
+            source="id", target=RelationshipTarget(entity="Passport", attribute="")
+        ),
+    )
+    with pytest.raises(DescriptorError, match="join target attribute must be non-empty"):
+        validate_entity(_entity(relationships=(rel,)))
+
+
+def test_malformed_reverse_reference_is_rejected() -> None:
+    rel = ReverseRelationship(name="passport", reverse_of="missing")
+    with pytest.raises(DescriptorError, match=r"reverseOf must name Entity\.relationship"):
+        validate_entity(_entity(relationships=(rel,)))
+
+
+def test_relationship_facet_rejects_a_malformed_reverse_reference() -> None:
+    entity = _entity(relationships=(ReverseRelationship(name="passport", reverse_of="missing"),))
+    with pytest.raises(DescriptorError, match=r"reverseOf must name Entity\.relationship"):
+        Metamodel(entities=(entity,)).relationships_for(entity)
+
+
+def test_metamodel_validation_rejects_an_unknown_relationship_target() -> None:
+    entity = _entity(
+        relationships=(
+            DefiningRelationship(
+                name="passport",
+                cardinality="one-to-one",
+                join=RelationshipJoin(
+                    source="id", target=RelationshipTarget(entity="Passport", attribute="id")
+                ),
+            ),
+        )
+    )
+    with pytest.raises(DescriptorError, match="join targets unknown entity 'Passport'"):
+        validate_metamodel(Metamodel(entities=(entity,)))

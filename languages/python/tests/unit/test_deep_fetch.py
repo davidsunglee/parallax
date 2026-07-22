@@ -156,19 +156,19 @@ def test_narrow_and_broad_both_count_toward_l() -> None:
 def test_child_operation_is_a_plain_in_membership() -> None:
     plan = _plan(ORDERS, "Order", ((_seg("Order.statuses"),),))
     target, op = plan.levels[0].child_operation([1, 2, 3])
-    assert target == "OrderStatus"
+    assert target == "parallax.compatibility.OrderStatus"
     assert isinstance(op, Membership)
     assert op.op == "in"
-    assert op.attr == "OrderStatus.orderId"
+    assert op.attr == "parallax.compatibility.OrderStatus.orderId"
     assert op.values == (1, 2, 3)
 
 
 def test_child_operation_wraps_declared_relationship_order_by() -> None:
     plan = _plan(ORDERS, "Order", ((_seg("Order.items"),),))
     target, op = plan.levels[0].child_operation([1])
-    assert target == "OrderItem"
+    assert target == "parallax.compatibility.OrderItem"
     assert isinstance(op, OrderBy)
-    assert op.keys[0].attr == "OrderItem.id"
+    assert op.keys[0].attr == "parallax.compatibility.OrderItem.id"
     assert op.keys[0].direction == "desc"
     assert isinstance(op.operand, Membership)
 
@@ -178,8 +178,8 @@ def test_child_operation_multi_key_order_by_preserves_declared_sequence() -> Non
     _target, op = plan.levels[0].child_operation([1])
     assert isinstance(op, OrderBy)
     assert [(key.attr, key.direction) for key in op.keys] == [
-        ("OrderTag.priority", "desc"),
-        ("OrderTag.label", "asc"),
+        ("parallax.compatibility.OrderTag.priority", "desc"),
+        ("parallax.compatibility.OrderTag.label", "asc"),
     ]
 
 
@@ -227,23 +227,23 @@ def test_single_concrete_narrow_targets_the_concrete_directly_no_narrow_node() -
 def test_multi_concrete_narrow_wraps_a_narrow_node() -> None:
     plan = _plan(ANIMAL, "Person", ((_seg("Person.pets", ("Cat", "Dog")),),))
     level = plan.levels[0]
-    assert level.child_target == "Pet"
+    assert level.child_target == "parallax.compatibility.Pet"
     assert level.narrow_to == ("Cat", "Dog")
     _target, op = level.child_operation([1])
     assert isinstance(op, Narrow)
-    assert op.entity == "Pet"
+    assert op.entity == "parallax.compatibility.Pet"
 
 
 def test_broad_polymorphic_hop_targets_the_relationship_position_no_narrow() -> None:
     plan = _plan(ANIMAL, "Person", ((_seg("Person.animals"),),))
     level = plan.levels[0]
-    assert level.child_target == "Animal"
+    assert level.child_target == "parallax.compatibility.Animal"
     assert level.narrow_to is None
 
 
 def test_non_polymorphic_child_target_is_the_related_entity_itself() -> None:
     plan = _plan(ORDERS, "Order", ((_seg("Order.items"),),))
-    assert plan.levels[0].child_target == "OrderItem"
+    assert plan.levels[0].child_target == "parallax.compatibility.OrderItem"
 
 
 # --------------------------------------------------------------------------- #
@@ -302,35 +302,31 @@ def test_plan_accepts_a_non_deep_fetch_operation_with_zero_levels() -> None:
 # Root as-of injection over a CONCRETE inheritance target whose family's axes  #
 # are declared on the ROOT alone (COR-3 Phase 7 review remediation, P3/P4):   #
 # `plan()` must inject the default-latest / pinned as-of predicate even       #
-# though `DepositRate`'s own record carries no `as_of_attributes` locally.    #
+# though `DepositRate`'s own record carries no `as_of_axes` locally.          #
 # --------------------------------------------------------------------------- #
 def test_concrete_target_root_operation_defaults_every_axis_to_latest() -> None:
     plan = deep_fetch.plan("DepositRate", All(), RATE)
-    # Business-axis-first (m-temporal-read), both defaulted to the current
+    # Valid-Time-first (m-temporal-read), both defaulted to the current
     # milestone since neither axis is pinned: `thru_z = infinity`, `out_z = infinity`.
     assert plan.root_operation == And(
         operands=(
-            Comparison(op="eq", attr="Rate.businessTo", value="infinity"),
-            Comparison(op="eq", attr="Rate.processingTo", value="infinity"),
+            Comparison(op="eq", attr="Rate.valid_end", value="infinity"),
+            Comparison(op="eq", attr="Rate.tx_end", value="infinity"),
         )
     )
 
 
 def test_concrete_target_root_operation_injects_a_pinned_axis() -> None:
-    op = AsOf(
-        operand=All(), as_of_attr="DepositRate.processingDate", date="2024-01-15T00:00:00+00:00"
-    )
+    op = AsOf(operand=All(), dimension="transactionTime", coordinate="2024-01-15T00:00:00+00:00")
     plan = deep_fetch.plan("DepositRate", op, RATE)
     assert plan.root_operation == And(
         operands=(
-            # business defaults to latest (never pinned by this operation)
-            Comparison(op="eq", attr="Rate.businessTo", value="infinity"),
-            # processing is pinned to the past instant (containment)
+            # Valid Time defaults to latest (never pinned by this operation)
+            Comparison(op="eq", attr="Rate.valid_end", value="infinity"),
+            # Transaction Time is pinned to the past instant (containment)
             Comparison(
-                op="lessThanEquals", attr="Rate.processingFrom", value="2024-01-15T00:00:00+00:00"
+                op="lessThanEquals", attr="Rate.tx_start", value="2024-01-15T00:00:00+00:00"
             ),
-            Comparison(
-                op="greaterThan", attr="Rate.processingTo", value="2024-01-15T00:00:00+00:00"
-            ),
+            Comparison(op="greaterThan", attr="Rate.tx_end", value="2024-01-15T00:00:00+00:00"),
         )
     )

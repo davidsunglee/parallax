@@ -35,8 +35,8 @@
 entities:
   - name: Animal
     namespace: parallax.compatibility
-    mutability: transactional
-    temporal: non-temporal
+    table: animal
+    persistence: read-write
     inheritance:
       role: root
       strategy: table-per-hierarchy
@@ -47,7 +47,7 @@ entities:
         type: int64
         column: id
         primaryKey: true
-        pkGenerator: none
+        pkGeneration: application-assigned
       - name: name
         type: string
         column: name
@@ -73,9 +73,6 @@ entities:
         nullable: true
   - name: Dog
     namespace: parallax.compatibility
-    table: animal
-    mutability: transactional
-    temporal: non-temporal
     inheritance:
       role: concrete-subtype
       parent: Pet
@@ -87,9 +84,6 @@ entities:
         nullable: true
   - name: Cat
     namespace: parallax.compatibility
-    table: animal
-    mutability: transactional
-    temporal: non-temporal
     inheritance:
       role: concrete-subtype
       parent: Pet
@@ -101,9 +95,6 @@ entities:
         nullable: true
   - name: WildBoar
     namespace: parallax.compatibility
-    table: animal
-    mutability: transactional
-    temporal: non-temporal
     inheritance:
       role: concrete-subtype
       parent: Animal
@@ -119,14 +110,13 @@ entities:
   - name: Person
     namespace: parallax.compatibility
     table: person
-    mutability: transactional
-    temporal: non-temporal
+    persistence: read-write
     attributes:
       - name: id
         type: int64
         column: id
         primaryKey: true
-        pkGenerator: none
+        pkGeneration: application-assigned
       - name: name
         type: string
         column: name
@@ -134,20 +124,18 @@ entities:
     relationships:
       # Targets the abstract ROOT: reaches any concrete subtype in the family.
       - name: animals
-        relatedEntity: Animal
         cardinality: one-to-many
-        join: this.id = Animal.ownerId
-        reverseName: owner
-        foreignKey: owner_id
+        join:
+          source: id
+          target: { entity: Animal, attribute: ownerId }
       # Targets the abstract SUBTYPE Pet: reaches only {Dog, Cat}, never the sibling
       # WildBoar — so the shared-table EXISTS / deep-fetch hop carries a tag `in`
       # predicate over Pet's concretes.
       - name: pets
-        relatedEntity: Pet
         cardinality: one-to-many
-        join: this.id = Pet.ownerId
-        reverseName: owner
-        foreignKey: owner_id
+        join:
+          source: id
+          target: { entity: Pet, attribute: ownerId }
     indices:
       - name: person_pk
         attributes: [id]

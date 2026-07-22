@@ -14,20 +14,20 @@ Ledger:
   - id: 1
     acctNum: A
     value: 100.00
-    processingFrom: "2024-01-01T00:00:00+00:00"
-    processingTo: "2024-06-01T00:00:00+00:00"
+    tx_start: "2024-01-01T00:00:00+00:00"
+    tx_end: "2024-06-01T00:00:00+00:00"
   - id: 1
     acctNum: A
     value: 150.00
-    processingFrom: "2024-06-01T00:00:00+00:00"
-    processingTo: infinity
+    tx_start: "2024-06-01T00:00:00+00:00"
+    tx_end: infinity
   - id: 2
     acctNum: B
     value: 200.00
-    processingFrom: "2024-02-01T00:00:00+00:00"
-    processingTo: infinity
+    tx_start: "2024-02-01T00:00:00+00:00"
+    tx_end: infinity
   - id: 3
     acctNum: C
     value: 50.00
-    processingFrom: "2024-03-01T00:00:00+00:00"
-    processingTo: "2024-08-01T00:00:00+00:00"
+    tx_start: "2024-03-01T00:00:00+00:00"
+    tx_end: "2024-08-01T00:00:00+00:00"

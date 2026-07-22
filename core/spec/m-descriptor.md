@@ -1,17 +1,18 @@
 # m-descriptor — Domain Model & Metamodel
 
-The metamodel is the **portable description of a domain**: the language-neutral
-replacement for Reladomo's `mithraobject.xsd`. It is both an introspectable
-runtime protocol and a serializable document — and that serialized document **is**
-the compatibility suite's model-fixture format. `m-descriptor` depends only on
-`m-core`.
+The descriptor is the **portable serialized description of a domain**: the
+language-neutral replacement for Reladomo's `mithraobject.xsd` and the
+compatibility suite's model-fixture format. It is not the runtime metamodel
+protocol. Descriptor adapters normalize schema-valid documents to the
+`m-metamodel` Unresolved Metamodel seam and export accepted Metamodels back to
+this canonical form.
 
 The canonical schema is
 [`core/schemas/metamodel.schema.json`](../schemas/metamodel.schema.json); a model
 descriptor (e.g. `core/compatibility/models/orders.yaml`) is an instance of it.
 
-The metamodel also declares the elements owned by the finer metamodel modules:
-`pkGenerator` (`m-pk-gen`), `inheritance` (`m-inheritance`), and `valueObject`
+The descriptor also declares the elements owned by finer model modules:
+`pkGeneration` (`m-pk-gen`), `inheritance` (`m-inheritance`), and `valueObject`
 (`m-value-object`). Their metamodel surface is summarized here; their behavior is
 specified in those modules.
 
@@ -25,8 +26,8 @@ specified in those modules.
 - Booleans are `true` / `false`.
 
 The base elements for a single non-temporal entity are `entity`, `attribute`,
-and `pkGenerator`. A descriptor may declare **multiple entities** so relationships
-can name sibling entities, plus **`asOfAttribute`** (a temporal dimension), and
+and `pkGeneration`. A descriptor may declare **multiple entities** so relationships
+can name sibling entities, plus **`asOfAxes`** (temporal dimensions), and
 the two metamodel extensions **`inheritance`** (a closed class tree —
 table-per-hierarchy with a `tag`/`tagValue` discriminator, or
 table-per-concrete-subtype; **never** table-per-leaf or table-per-class) and
@@ -48,9 +49,14 @@ implementation **MUST** accept both.
 | `name` | entity (domain class) name (REQUIRED) |
 | `namespace` | logical namespace (language-neutral; replaces Java-style "package") |
 | `table` | physical table name (**conditionally** required — see below) |
-| `mutability` | `read-only` (default) \| `transactional` |
-| `temporal` | derived classification: `non-temporal` (default) \| `unitemporal-processing` \| `unitemporal-business` \| `bitemporal` |
-| children | `attributes` (**conditionally** required, non-empty); `relationships`, `indices`, `asOfAttributes`, `valueObjects`, `inheritance` (optional) |
+| `persistence` | `read-write` (default for standalone/root) \| `read-only`; descendants omit and inherit |
+| children | `attributes` (**conditionally** required, non-empty); `relationships`, `indices`, `asOfAxes`, `valueObjects`, `inheritance` (optional) |
+
+`persistence` describes whether Parallax accepts persistence writes. It does
+not describe object mutability, security access, transaction demarcation, or a
+temporal dimension. The spellings `mutability`, `transactional`, and a default
+of `read-only` are invalid. Persistence is family-wide and root-owned: a
+descendant MUST omit it even when repeating the root's value.
 
 ### Conditional `table` / `attributes` requirements (inheritance)
 
@@ -60,8 +66,10 @@ implementation **MUST** accept both.
 | Entity kind | `table` | `attributes` |
 |---|---|---|
 | no `inheritance` | REQUIRED | REQUIRED (non-empty) |
-| `role: concrete-subtype` | REQUIRED (owns the family's physical table) | optional — a subtype declaring only inherited attributes has none of its own |
-| `role: root` / `abstract-subtype` | FORBIDDEN — abstract nodes are tableless and rowless | optional — the root/abstract node's own attributes, inherited by descendants |
+| TPH `role: root` | REQUIRED (owns the family's shared table mapping) | optional — its attributes are inherited by descendants |
+| TPH descendant | FORBIDDEN | optional — a subtype declaring only inherited attributes has none of its own |
+| TPCS `role: concrete-subtype` | REQUIRED (owns its physical table) | optional — a subtype declaring only inherited attributes has none of its own |
+| TPCS `role: root` / `abstract-subtype` | FORBIDDEN — abstract nodes are tableless and rowless | optional — its attributes are inherited by descendants |
 
 The full inherited attribute/column set of a concrete subtype is **derived from
 its ancestry chain** (root → … → self), so a concrete subtype never repeats
@@ -72,28 +80,19 @@ rows.
 Every entity **MUST** have exactly one **primary key** — for a concrete subtype it
 may be inherited from an abstract ancestor rather than declared locally.
 
-The `temporal` classification is **derived** from the `asOfAttribute` children an
-entity declares and **MUST** be consistent with them:
+Temporal classification is derived from `asOfAxes` and is not repeated as an
+Entity property. The supported shapes are no axes, Transaction-Time-Only, and
+Bitemporal. An authored `temporal` classification is invalid.
 
-| `asOfAttributes` | `temporal` |
-|---|---|
-| none | `non-temporal` |
-| one, `axis: processing` | `unitemporal-processing` |
-| one, `axis: business` | `unitemporal-business` |
-| two (one per axis) | `bitemporal` |
-
-It is recorded explicitly for clarity and validated for consistency. The temporal
-MVP exercises `non-temporal` and `unitemporal-processing` (audit-only).
-
-**For an inheritance participant, "the `asOfAttribute` children an entity
+**For an inheritance participant, "the `asOfAxes` children an entity
 declares" means the family's — not necessarily this entity's own local —
 children.** Temporal axes are family-wide metadata declared only on the root
 (`m-inheritance` "Inherited members"); an abstract-subtype or concrete-subtype
 declares none of its own, so its **derived temporal classification** is the
 root's, inherited unchanged, never re-derived from an empty local
-`asOfAttributes`. A model-aware reader that does not flatten inheritance (a
+`asOfAxes`. A model-aware reader that does not flatten inheritance (a
 per-entity introspection view) MAY still surface a non-root participant's own,
-locally-empty `asOfAttributes` for structural inspection; every OTHER
+locally-empty `asOfAxes` for structural inspection; every OTHER
 consumer — reads, writes, provisioning, identity, propagation — MUST use the
 entity's **effective inherited classification** within its family.
 
@@ -107,14 +106,30 @@ ancestor through its ancestry chain (`m-inheritance`).
 |---|---|
 | `name` | attribute name (REQUIRED) |
 | `type` | neutral type from the `m-core` table (REQUIRED); `decimal(p,s)` carries precision/scale |
-| `column` | DB column name (REQUIRED) |
+| `column` | optional DB column override; omission means the Attribute `name` |
 | `primaryKey` | bool, default `false` |
 | `nullable` | bool, default `false` |
 | `maxLength` | for `string` (⇒ `varchar(n)`) |
 | `readOnly` | bool, default `false` — immutable after insert |
 | `optimisticLocking` | bool, default `false` — marks the version attribute (`m-opt-lock`) |
-| `pkGenerator` | `none` (default) \| `max` \| `sequence` (`m-pk-gen`) |
+| `pkGeneration` | optional `application-assigned` \| `max` \| Sequence object; legal only when `primaryKey: true`, omission on a primary key means application-assigned |
 | `default` | optional default value |
+
+The Sequence object is exactly:
+
+```yaml
+pkGeneration:
+  strategy: sequence
+  name: order_ids
+  batchSize: 20
+  initialValue: 1
+  incrementSize: 1
+```
+
+`name` is required. `batchSize`, `initialValue`, and `incrementSize` may be
+omitted only when the schema supplies their canonical semantic defaults; the
+adapter always exposes a fully populated Sequence value. The retired
+`pkGenerator`, `none`, and `sequenceName` spellings are invalid.
 
 > The `type` value is the neutral type name. `decimal` is written with its
 > precision and scale, e.g. `decimal(18,2)`. Reladomo's per-attribute
@@ -134,19 +149,14 @@ is purely metamodel here; its conflict-detection semantics are `m-opt-lock`, and
 the object-lifecycle states that decide *when* an attribute is written (in-memory
 vs. persisted vs. detached) are `m-detach`.
 
-**Composition with `asOfAttribute` (temporal entities).** A processing-axis
-temporal entity **derives** its optimistic key from the processing-from column —
-the observed processing-from (`in_z`) is the version analogue — and therefore
-declares **no** version attribute. Combining an explicit `optimisticLocking`
-attribute with `asOfAttributes` on one entity is **invalid** and an implementation
-**MUST** reject such a descriptor (a schema-level metamodel error). A
-**business-temporal-only** entity has no processing axis to derive the key from, so
-it **cannot** participate in optimistic mode; because mode is the unit of work's
-per-transaction choice (not a static model property), that combination surfaces as
-a validation error **at the unit-of-work write boundary**, not at metamodel-load
-time. The composition contract is `m-opt-lock` (which owns the derived key and the
-conflict contract) over the temporal write shapes (`m-audit-write` /
-`m-bitemp-write`).
+**Composition with `asOfAxes` (temporal entities).** A Transaction-Time Entity
+**derives** its optimistic key from the Transaction-Time start Attribute (by
+convention `tx_start`, physically `in_z`) and therefore declares **no** version
+Attribute. Combining an explicit `optimisticLocking` Attribute with a
+Transaction-Time axis is invalid. Transaction-Time-Only and Bitemporal are the
+supported temporal shapes, so every writable temporal Entity has that derived
+key. The composition contract is `m-opt-lock` over the temporal write shapes
+(`m-audit-write` / `m-bitemp-write`).
 
 **Composition with inheritance (declaration site).** For an inheritance
 participant (`m-inheritance`), `optimisticLocking: true` is family-level
@@ -162,30 +172,72 @@ attribute across the whole family, declared only at the root.
 
 ## `relationship` — a navigable association
 
-A `relationship` is a **named, navigable association** from its owning entity to
-a related entity. The join columns are **auto-derived from the navigation
-predicate** — a query never writes ON-conditions by hand (`m-op-algebra`
-`navigate` and `m-deep-fetch` traverse the relationship by name).
+A relationship is exactly one branch of a closed defining/reverse union. One
+defining declaration owns the association facts; an optional reverse
+declaration names it without repeating those facts.
+
+The defining form is:
 
 | Property | Values / meaning |
 |---|---|
-| `name` | relationship name (REQUIRED) |
-| `relatedEntity` | target entity name (REQUIRED) |
-| `cardinality` | `one-to-one` \| `many-to-one` \| `one-to-many` \| `many-to-many` (REQUIRED) |
-| `join` | navigation predicate (REQUIRED), e.g. `this.id = OrderItem.orderId` |
-| `reverseName` | optional reverse-relationship name on the related entity |
-| `dependent` | bool, default `false` — target is **owned** ⇒ participates in cascade (`m-cascade-delete`) |
-| `foreignKey` | optional FK hint (the column on the many side) |
-| `orderBy` | optional ordering for a to-many relationship (list of `{ attr, direction? }`) |
+| `name` | local relationship name (REQUIRED) |
+| `cardinality` | `one-to-one` \| `many-to-one` \| `one-to-many` (REQUIRED) |
+| `join` | `{ source: <local attribute>, target: { entity: <entity reference>, attribute: <target-local attribute> } }` (REQUIRED) |
+| `dependent` | bool, default `false` — target is owned and participates in cascade (`m-cascade-delete`) |
+| `orderBy` | optional target-attribute ordering for a to-many direction; each item is `{ attribute, direction? }` |
 
-The `join` predicate has the canonical form `this.<attr> = <Entity>.<attr>`:
-`this.<attr>` names an attribute of the **owning** entity and `<Entity>.<attr>`
-names the matching attribute of the **related** entity. From it, both the SQL
-join (`m-sql`) and the deep-fetch key columns (`m-deep-fetch`) are derived. A
-**reverse** relationship (`reverseName`) is the same association navigated from
-the other side; a **dependent** relationship marks the target as owned (cascade,
-`m-cascade-delete`). The full navigation and deep-fetch semantics are `m-navigate`
-and `m-deep-fetch`.
+The reverse form is:
+
+| Property | Values / meaning |
+|---|---|
+| `name` | local relationship name (REQUIRED) |
+| `reverseOf` | `<entity-reference>.<relationship-name>` (REQUIRED) |
+| `orderBy` | optional target-attribute ordering for this direction |
+
+The forms are exclusive. A reverse declaration MUST NOT repeat `cardinality`,
+`join`, `dependent`, or a separate target. A defining declaration MUST NOT
+carry `reverseOf`. The retired `relatedEntity`, `reverseName`, and `foreignKey`
+properties are invalid. Direct many-to-many is invalid; use an explicit
+association Entity.
+
+An Entity Reference in `join.target.entity` or `reverseOf` follows
+`m-metamodel`: a bare Entity name is relative to the declaring Entity's
+namespace, while a dot-qualified Entity name is exact. `reverseOf` splits at
+its final dot, so the final segment is the relationship name. Canonical export
+always emits a namespace-qualified Entity spelling when the target is
+namespaced.
+
+`join.source` is local to the declaring Entity. `join.target.attribute` and
+each `orderBy.attribute` are local to the target Entity. Omitted ordering
+direction normalizes to `asc`; ordering is valid only for a direction whose
+target multiplicity is Many. Both SQL correlation and deep-fetch keys derive
+from the resolved structured join. Behavioral consumers never parse descriptor
+strings or infer a foreign key.
+
+## `valueObject` — an embedded composite
+
+A top-level Value Object occurrence has this exact authoring shape:
+
+| Property | Values / meaning |
+|---|---|
+| `name` | local occurrence name (REQUIRED) |
+| `column` | optional structured-document column override; omission means `name` |
+| `multiplicity` | `one` (default) \| `many` |
+| `nullable` | bool, default `false`; valid only with `one` |
+| `attributes` | ordered typed scalar members |
+| `valueObjects` | ordered nested Value Object occurrences |
+
+A nested occurrence has the same shape except that it MUST NOT carry `column`.
+Only the top-level occurrence owns storage; all descendants live inside the same
+structured-document column. There is no `mapping` discriminator: structured
+column storage is the only current representation.
+
+Every occurrence is nonempty across `attributes` and `valueObjects`. A `many`
+occurrence is a non-null ordered collection that may be empty. A `one`
+occurrence is one composite and may be nullable. Inner scalar attributes carry
+only `name`, `type`, and optional `nullable`; they have no column, generation,
+locking, or Entity identity facts. Full recursive semantics belong to
+`m-value-object`.
 
 ## `index` — a (possibly unique) index
 
@@ -199,42 +251,41 @@ Indices are metadata: they declare the storage indices an implementation
 **SHOULD** create and the **unique** keys the identity cache can exploit. A
 unique index over the primary-key attributes is the canonical fast-path key.
 
-## `asOfAttribute` — a temporal dimension
+## `asOfAxes` — temporal dimensions
 
-An `asOfAttribute` declares a temporal axis: a query-time virtual attribute
-backed by a **pair of timestamp columns** forming a `[from, to)` interval. Its
-full semantics (as-of read predicates, milestone-chaining writes) are the temporal
-modules (`m-temporal-read` / `m-audit-write` / `m-bitemp-write`); this is its
-metamodel surface.
+`asOfAxes` declares zero, one, or two temporal dimensions. Each entry references
+two ordinary Timestamp Attributes forming one fixed half-open interval
+`[start, end)`. The dimension identifies the axis; there is no authored axis
+name, kind, default, inclusivity flag, infinity field, or repeated physical
+column.
 
 | Property | Values / meaning |
 |---|---|
-| `name` | dimension name (REQUIRED), e.g. `processingDate`, `businessDate` |
-| `fromColumn` | the interval's inclusive lower-bound column (REQUIRED) |
-| `toColumn` | the interval's upper-bound column (REQUIRED); `= infinity` ⇒ current row |
-| `axis` | `processing` \| `business` (REQUIRED) |
-| `toIsInclusive` | bool, default `false` ⇒ `[from, to)`; `true` ⇒ `[from, to]` |
-| `infinity` | the open-bound sentinel; always `infinity` (`m-dialect` owns the concrete representation, `m-core`) |
-| `default` | default-if-unspecified for a query; `now` (the current milestone). Only `now` is defined for the temporal MVP |
+| `dimension` | `validTime` \| `transactionTime` (REQUIRED) |
+| `startAttribute` | local Timestamp Attribute name for the inclusive lower bound (REQUIRED) |
+| `endAttribute` | distinct local Timestamp Attribute name for the exclusive upper bound (REQUIRED) |
 
-An entity declares **one** `asOfAttribute` (unitemporal) or **two**, one per
-axis (bitemporal). The `entity.temporal` classification is derived from them (see
-above). A temporal entity's **physical primary key** is the business key plus
-each dimension's `fromColumn` (many milestone rows share one business key); the
-DDL an implementation derives **MUST** reflect this so the milestone chain is
-admissible.
+Transaction-Time-Only declares one `transactionTime` entry. Bitemporal
+declares `validTime` followed by `transactionTime`. Valid-Time-Only is not a
+supported model shape. Query defaulting belongs to `m-temporal-read`, not model
+metadata.
 
-**Declaration order (authoring guidance).** An entity **SHOULD** declare its
-`asOfAttribute` interval attributes **after** its business (non-temporal) attributes,
-and — for a bitemporal entity — the **business** axis before the **processing** axis.
-The derived `columnOrder` then places the interval columns at the tail of the entity's
-own attributes in `from_z, thru_z, in_z, out_z` order, which is exactly the order the
-base read projection emits them (`m-sql`, *Read projection*, slot 1); following this
-convention keeps every temporal read's projection stable by construction.
+The conventional Attribute and physical-column mappings are normative:
+
+| Dimension | Start Attribute / column | End Attribute / column |
+|---|---|---|
+| `validTime` | `valid_start` / `from_z` | `valid_end` / `thru_z` |
+| `transactionTime` | `tx_start` / `in_z` | `tx_end` / `out_z` |
+
+Physical column overrides remain ordinary Attribute `column` overrides. The
+axis never repeats them. A temporal Entity's physical primary key is its model
+primary key plus each dimension's start Attribute. Temporal Attributes appear
+after domain Attributes, with Valid Time before Transaction Time, preserving
+`from_z, thru_z, in_z, out_z` projection order for Bitemporal Entities.
 
 ## Metamodel serde (protocol seam)
 
-The metamodel is **serializable and deserializable** through the same
+The descriptor is **serializable and deserializable** through the same
 format-agnostic canonical serde seam as the operation algebra (`m-op-algebra`),
 with concrete writers for **JSON and YAML**. The descriptor **is** the serialized
 metamodel: `serialize(deserialize(descriptor)) == descriptor` **MUST** hold, in
@@ -242,3 +293,11 @@ both formats. The reference harness asserts this round-trip for every model
 referenced by a compatibility case. *How* a language populates its in-memory model
 (descriptor files, annotations, decorators, builders) is a per-language choice;
 the serializable canonical form is the portable backbone.
+
+## Contract activation
+
+This descriptor revision is a breaking canonical-form change. The schema,
+compatibility models/cases, generated artifacts, reference tooling, and active
+language descriptor consumers MUST switch to these spellings together and be
+green before runtime consumers migrate to `m-metamodel`. No dual-read input,
+compatibility alias, or temporary semantic translation is part of the contract.

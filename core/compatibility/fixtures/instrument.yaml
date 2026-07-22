@@ -6,26 +6,26 @@
 # abstract root Instrument is rowless). Each row's `kind` tag is DERIVED from the
 # subtype's tagValue (m-inheritance), never authored here. Interval columns are
 # authored as ISO-8601 UTC strings; the open upper bound is the literal `infinity`.
-# The loader resolves attribute names to columns (businessFrom/businessTo ->
-# from_z/thru_z, processingFrom/processingTo -> in_z/out_z).
+# The loader resolves attribute names to columns (valid_start/valid_end ->
+# from_z/thru_z, tx_start/tx_end -> in_z/out_z).
 #
-# Each instrument is a single fully-current rectangle (business [2024-01-01, infinity),
+# Each instrument is a single fully-Latest rectangle (business [2024-01-01, infinity),
 # processing [2024-01-01, infinity)), so a read pinned business-past 2024-06-01 /
-# processing-now returns both, each carrying its familyVariant (bond -> Bond,
+# Transaction-Time Latest returns both, each carrying its familyVariant (bond -> Bond,
 # stock -> Stock). Inner subtype columns not applicable to a row load as null.
 Bond:
   - id: 1
     price: 100.00
     coupon: 5.00
-    businessFrom: "2024-01-01T00:00:00+00:00"
-    businessTo: infinity
-    processingFrom: "2024-01-01T00:00:00+00:00"
-    processingTo: infinity
+    valid_start: "2024-01-01T00:00:00+00:00"
+    valid_end: infinity
+    tx_start: "2024-01-01T00:00:00+00:00"
+    tx_end: infinity
 Stock:
   - id: 2
     price: 200.00
     ticker: ACME
-    businessFrom: "2024-01-01T00:00:00+00:00"
-    businessTo: infinity
-    processingFrom: "2024-01-01T00:00:00+00:00"
-    processingTo: infinity
+    valid_start: "2024-01-01T00:00:00+00:00"
+    valid_end: infinity
+    tx_start: "2024-01-01T00:00:00+00:00"
+    tx_end: infinity

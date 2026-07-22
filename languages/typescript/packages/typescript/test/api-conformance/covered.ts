@@ -12,7 +12,7 @@
  *    navigate / exists reads (03xx flat);
  *  - **deep-fetch** — deep-fetch graph assembly (03xx graph, incl. the temporal
  *    deep-fetch subset);
- *  - **temporal** — temporal reads: exists-temporal-hop flat reads, processing-axis
+ *  - **temporal** — temporal reads: exists-temporal-hop flat reads, Transaction-Time
  *    reads (05xx-read) and bitemporal reads (08xx);
  *  - **transactions** — audit-only writes (05xx-write) + batched / FK-ordered / per-key
  *    writes + read-your-own-writes (06xx);
@@ -90,13 +90,13 @@ export const DEEP_FETCH: readonly string[] = [
   "m-deep-fetch-011-ordered-tags-multikey",
   "m-deep-fetch-012-ordered-nullable-nulls-last",
   "m-navigate-012-deepfetch-temporal-both-latest",
-  "m-navigate-013-deepfetch-temporal-business-past",
-  "m-navigate-014-deepfetch-temporal-processing-past",
+  "m-navigate-013-deepfetch-temporal-valid-time-past",
+  "m-navigate-014-deepfetch-temporal-transaction-time-past",
   "m-navigate-015-deepfetch-temporal-both-past",
   "m-navigate-016-deepfetch-temporal-multihop",
   "m-navigate-017-deepfetch-temporal-to-one",
-  "m-navigate-019-deepfetch-processing-only-latest",
-  "m-navigate-020-deepfetch-processing-only-instant",
+  "m-navigate-019-deepfetch-transaction-time-only-latest",
+  "m-navigate-020-deepfetch-transaction-time-only-instant",
   "m-navigate-021-deepfetch-nontemporal-to-temporal",
   "m-navigate-022-deepfetch-temporal-to-nontemporal",
   "m-navigate-024-deepfetch-temporal-ordered-root",
@@ -106,19 +106,19 @@ export const DEEP_FETCH: readonly string[] = [
 export const TEMPORAL: readonly string[] = [
   "m-navigate-018-exists-temporal-hop",
   "m-navigate-023-exists-temporal-hop-defaulted",
-  "m-temporal-read-001-as-of-now-defaulted",
-  "m-temporal-read-002-as-of-now-explicit",
+  "m-temporal-read-001-as-of-latest-defaulted",
+  "m-temporal-read-002-as-of-latest-explicit",
   "m-temporal-read-003-as-of-past-instant",
   "m-temporal-read-004-history",
-  "m-temporal-read-005-as-of-now-with-predicate",
+  "m-temporal-read-005-as-of-latest-with-predicate",
   "m-temporal-read-006-as-of-range",
   "m-temporal-read-007-as-of-boundary-exclusive",
   "m-temporal-read-008-as-of-boundary-inclusive",
-  "m-temporal-read-013-bitemporal-as-of-now-both-axes",
-  "m-temporal-read-014-bitemporal-business-past-processing-now",
+  "m-temporal-read-013-bitemporal-as-of-latest-both-dimensions",
+  "m-temporal-read-014-bitemporal-valid-time-past-transaction-time-latest",
   "m-temporal-read-015-bitemporal-both-axes-past",
   "m-temporal-read-016-bitemporal-history",
-  "m-temporal-read-017-bitemporal-omitted-processing-default",
+  "m-temporal-read-017-bitemporal-omitted-transaction-time-default",
 ];
 
 /** Transactions: timestamp-shape inserts (00xx write) + audit writes (05xx-write) + batched (06xx). */
@@ -141,7 +141,7 @@ export const TRANSACTIONS: readonly string[] = [
  * matrix (`m-read-lock-002`-`m-read-lock-005`, `api-conformance` lane — object find locks, projection
  * omits, deep fetch locks every level, optimistic omits), optimistic-mode
  * version-column locking (07xx), and the optimistic × temporal close cases
- * (`m-temporal-read-009`-`m-temporal-read-012` — the observed processing-from `in_z` is the version analogue:
+ * (`m-temporal-read-009`-`m-temporal-read-012` — the observed Transaction-Time start `in_z` is the version analogue:
  * a gated close on a fresh `in_z` succeeds, a stale `in_z` conflicts, a retry
  * re-reads and succeeds, and a locking-mode zero-row close raises).
  */

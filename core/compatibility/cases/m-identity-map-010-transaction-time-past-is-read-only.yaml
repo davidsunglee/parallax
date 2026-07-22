@@ -1,6 +1,6 @@
 # A finite processing-axis pinned view is READ-ONLY (m-identity-map): mutating a
 # view pinned at a finite processing-axis instant raises the neutral
-# `processing-pin-read-only` error and emits NO DML — the processing past records
+# `transaction-time-pin-read-only` error and emits NO DML — the processing past records
 # what the system knew and is never rewritten.
 #
 # This is an api-conformance-lane case: its defining observable is a raised
@@ -9,8 +9,8 @@
 # returns and verifies the error observation. Step 0 pins Balance id 1 at the finite
 # processing instant 2024-03-01 — the superseded milestone value 100.00, a
 # read-only processing-past view. Step 1 attempts to mutate it (`set` value 999.00);
-# because the pin is on the finite processing axis, the mutation is rejected with
-# `expectError: processing-pin-read-only` and buffers zero DML (roundTrips 0). The
+# because the pin is on the finite Transaction-Time dimension, the mutation is rejected with
+# `expectError: transaction-time-pin-read-only` and buffers zero DML (roundTrips 0). The
 # error is distinct from the m-db-error database taxonomy. (Contrast a finite
 # BUSINESS-axis pin, which is writable — m-identity-map-011.)
 model: models/balance.yaml
@@ -28,8 +28,8 @@ when:
             eq:
               attr: Balance.id
               value: 1
-          asOfAttr: Balance.processingDate
-          date: "2024-03-01T00:00:00+00:00"
+          dimension: transactionTime
+          coordinate: "2024-03-01T00:00:00+00:00"
       roundTrips: 1
       note: pin id 1 at the finite processing instant 2024-03-01 — a READ-ONLY processing-past view (100.00)
       statements:
@@ -43,7 +43,7 @@ when:
       set:
         value: 999.00
       roundTrips: 0
-      expectError: processing-pin-read-only
-      note: mutating a finite processing-axis view raises processing-pin-read-only and emits NO DML
+      expectError: transaction-time-pin-read-only
+      note: mutating a finite processing-axis view raises transaction-time-pin-read-only and emits NO DML
 then:
   roundTrips: 1

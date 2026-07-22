@@ -15,7 +15,7 @@ The implementation selects `slice-managed-1` and the managed-object lifecycle.
     "version": "1.0.0"
   },
   "capabilities": {
-    "modules": ["m-api-conformance", "m-audit-write", "m-auto-retry", "m-batch-write", "m-bitemp-write", "m-case-format", "m-conformance-adapter", "m-core", "m-db-error", "m-deep-fetch", "m-descriptor", "m-detach", "m-dialect", "m-identity-map", "m-inheritance", "m-navigate", "m-op-algebra", "m-op-list", "m-opt-lock", "m-pk-gen", "m-read-lock", "m-sql", "m-temporal-read", "m-unit-work", "m-value-object"],
+    "modules": ["m-api-conformance", "m-audit-write", "m-auto-retry", "m-batch-write", "m-bitemp-write", "m-case-format", "m-conformance-adapter", "m-core", "m-db-error", "m-deep-fetch", "m-descriptor", "m-detach", "m-dialect", "m-identity-map", "m-inheritance", "m-metamodel", "m-model-formation", "m-navigate", "m-op-algebra", "m-op-list", "m-opt-lock", "m-pk-gen", "m-read-lock", "m-relationship", "m-sql", "m-temporal-read", "m-unit-work", "m-value-object"],
     "dialects": ["postgres"],
     "caseShapes": ["read", "writeSequence", "scenario", "conflict", "boundary", "error", "concurrencySuccess", "rejected"],
     "caseTags": { "include": ["slice-managed-1"] },
@@ -58,21 +58,24 @@ map while preserving empty, null, unloaded, ordered, and shared states.
 | `m-db-error` | src/db-error | db-error | `m-db-port`, `m-dialect` | depcheck.toml |
 | `m-db-port` | src/db-port | db-port | `m-core` | depcheck.toml |
 | `m-deep-fetch` | src/deep-fetch | deep-fetch | `m-navigate`, `m-op-list` | depcheck.toml |
-| `m-descriptor` | src/descriptor | descriptor | `m-core` | depcheck.toml |
+| `m-descriptor` | src/descriptor | descriptor | `m-core`, `m-metamodel` | depcheck.toml |
 | `m-detach` | src/detach | detach | `m-unit-work`, `m-identity-map` | depcheck.toml |
 | `m-dialect` | src/dialect | dialect | `m-core` | depcheck.toml |
 | `m-identity-map` | src/identity-map | identity-map | `m-unit-work`, `m-temporal-read` | depcheck.toml |
-| `m-inheritance` | src/inheritance | inheritance | `m-descriptor` | depcheck.toml |
-| `m-navigate` | src/navigate | navigate | `m-op-list`, `m-unit-work`, `m-temporal-read`, `m-inheritance` | depcheck.toml |
+| `m-inheritance` | src/inheritance | inheritance | `m-descriptor`, `m-metamodel`, `m-model-formation` | depcheck.toml |
+| `m-metamodel` | src/metamodel | metamodel | `m-core` | depcheck.toml |
+| `m-model-formation` | src/model-formation | model-formation | `m-metamodel` | depcheck.toml |
+| `m-navigate` | src/navigate | navigate | `m-op-algebra`, `m-unit-work`, `m-temporal-read`, `m-inheritance`, `m-relationship` | depcheck.toml |
 | `m-op-algebra` | src/operation | operation | `m-descriptor`, `m-inheritance` | depcheck.toml |
 | `m-op-list` | src/lists | lists | `m-op-algebra`, `m-unit-work` | depcheck.toml |
-| `m-opt-lock` | src/opt-lock | opt-lock | `m-unit-work`, `m-temporal-read` | depcheck.toml |
-| `m-pk-gen` | src/pk-gen | pk-gen | `m-descriptor` | depcheck.toml |
+| `m-opt-lock` | src/opt-lock | opt-lock | `m-unit-work`, `m-temporal-read`, `m-metamodel`, `m-model-formation`, `m-inheritance` | depcheck.toml |
+| `m-pk-gen` | src/pk-gen | pk-gen | `m-descriptor`, `m-metamodel` | depcheck.toml |
 | `m-read-lock` | src/read-lock | read-lock | `m-unit-work`, `m-dialect` | depcheck.toml |
 | `m-sql` | src/sql | sql | `m-op-algebra`, `m-dialect` | depcheck.toml |
-| `m-temporal-read` | src/temporal-read | temporal-read | `m-op-algebra` | depcheck.toml |
+| `m-relationship` | src/relationship | relationship | `m-metamodel`, `m-model-formation` | depcheck.toml |
+| `m-temporal-read` | src/temporal-read | temporal-read | `m-op-algebra`, `m-metamodel`, `m-model-formation`, `m-inheritance` | depcheck.toml |
 | `m-unit-work` | src/unit-work | unit-work | `m-op-algebra`, `m-db-port` | depcheck.toml |
-| `m-value-object` | src/value-object | value-object | `m-descriptor` | depcheck.toml |
+| `m-value-object` | src/value-object | value-object | `m-descriptor`, `m-metamodel`, `m-model-formation` | depcheck.toml |
 | adapter composition | tests/composition | composition | postgres adapter | depcheck.toml |
 
 ## 8. Deployable artifact topology

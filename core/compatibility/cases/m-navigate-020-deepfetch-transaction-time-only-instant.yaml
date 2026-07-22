@@ -17,8 +17,8 @@ when:
       operand:
         asOf:
           operand: { all: {} }
-          asOfAttr: Invoice.processingDate
-          date: "2024-02-01T00:00:00+00:00"
+          dimension: transactionTime
+          coordinate: "2024-02-01T00:00:00+00:00"
       paths:
         - [{ rel: Invoice.lines }]
 then:

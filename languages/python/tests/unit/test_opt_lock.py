@@ -47,7 +47,7 @@ class TestRequireObserved:
         # A temporal-only observation (in_z, no version) never licenses a
         # versioned advance either.
         with pytest.raises(opt_lock.UnobservedVersionError, match="Account"):
-            opt_lock.require_observed("Account", Observation(in_z="2024-01-01T00:00:00+00:00"))
+            opt_lock.require_observed("Account", Observation(tx_start="2024-01-01T00:00:00+00:00"))
 
 
 class TestCheckLockingLicense:

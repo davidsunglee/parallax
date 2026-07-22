@@ -30,7 +30,6 @@ const DESCRIPTOR = {
       {
         name: "address",
         column: "address",
-        mapping: "json",
         nullable: true,
         attributes: [
           { name: "street", type: "string" },
@@ -39,12 +38,12 @@ const DESCRIPTOR = {
         valueObjects: [
           {
             name: "geo",
-            cardinality: "one",
+            multiplicity: "one",
             attributes: [{ name: "country", type: "string" }],
             valueObjects: [
               {
                 name: "point",
-                cardinality: "one",
+                multiplicity: "one",
                 attributes: [
                   { name: "lat", type: "float64" },
                   { name: "lon", type: "float64" },
@@ -54,8 +53,7 @@ const DESCRIPTOR = {
           },
           {
             name: "phones",
-            cardinality: "many",
-            nullable: true,
+            multiplicity: "many",
             attributes: [
               { name: "type", type: "string", nullable: true },
               { name: "number", type: "string", nullable: true },
@@ -202,6 +200,7 @@ describe("write validation", () => {
           street: "1 Park Ave",
           city: "Oslo",
           geo: { country: "NO", point: { lat: 59.9, lon: 10.7 } },
+          phones: [],
         },
       }),
     ).not.toThrow();

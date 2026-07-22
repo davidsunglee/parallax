@@ -31,9 +31,9 @@ interface DdlAttribute {
   readonly maxLength?: number;
 }
 
-/** A temporal dimension contributes its `fromColumn` to the physical key. */
-interface DdlAsOfAttribute {
-  readonly fromColumn: string;
+/** A temporal dimension contributes its start column to the physical key. */
+interface DdlAsOfAxis {
+  readonly startColumn: string;
 }
 
 /** A declared index (its attribute-name references + whether it is unique). */
@@ -57,7 +57,7 @@ interface DdlValueObject {
 interface DdlEntity {
   readonly table: string;
   readonly attributes: readonly DdlAttribute[];
-  readonly asOfAttributes?: readonly DdlAsOfAttribute[];
+  readonly asOfAxes?: readonly DdlAsOfAxis[];
   readonly indices?: readonly DdlIndex[];
   readonly valueObjects?: readonly DdlValueObject[];
 }
@@ -102,11 +102,11 @@ function createTable(entity: DdlEntity, dialect: Dialect): string {
 
   // A temporal entity keeps many milestone rows per business key, so the
   // declared PK is not unique on its own — the physical key is the business key
-  // PLUS each as-of dimension's `fromColumn` (the milestone start), so the DDL
+  // PLUS each temporal dimension's start column, so the DDL
   // admits the milestone chain (m-temporal-read). No-op for non-temporal entities.
-  for (const asOf of entity.asOfAttributes ?? []) {
-    if (!pkColumns.includes(asOf.fromColumn)) {
-      pkColumns.push(asOf.fromColumn);
+  for (const asOf of entity.asOfAxes ?? []) {
+    if (!pkColumns.includes(asOf.startColumn)) {
+      pkColumns.push(asOf.startColumn);
     }
   }
 
@@ -116,7 +116,7 @@ function createTable(entity: DdlEntity, dialect: Dialect): string {
   // a PK collision (m-db-error error classification — `tag_name_uq`); existing slice models
   // declare only PK-backed unique indices, so this is a no-op for them. The
   // comparison is against the PHYSICAL primary key (declared PK + temporal
-  // fromColumns appended above), so a temporal full-milestone-key unique index is
+  // start columns appended above), so a temporal full-milestone-key unique index is
   // recognized as PK-backed and not re-emitted.
   const columnByAttr = new Map(
     entity.attributes.map((attr) => [attr.name ?? attr.column, attr.column]),

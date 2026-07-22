@@ -18,78 +18,80 @@ import {
   type WriteTarget,
 } from "../src/index.js";
 
-/** The processing axis of the audit-only Balance model, qualified `t0`. */
-const BALANCE_PROCESSING: ResolvedAxis = {
-  axis: "processing",
-  fromExpr: "t0.in_z",
-  toExpr: "t0.out_z",
+/** The Transaction-Time axis of Balance, qualified `t0`. */
+const BALANCE_TRANSACTION_TIME: ResolvedAxis = {
+  dimension: "transactionTime",
+  startExpr: "t0.in_z",
+  endExpr: "t0.out_z",
   toIsInclusive: false,
   infinity: "infinity",
 };
 
-/** The processing axis of the INCLUSIVE-bound Ledger model, qualified `t0`. */
-const LEDGER_PROCESSING: ResolvedAxis = {
-  axis: "processing",
-  fromExpr: "t0.in_z",
-  toExpr: "t0.out_z",
+/** The Transaction-Time axis of the inclusive-bound Ledger model, qualified `t0`. */
+const LEDGER_TRANSACTION_TIME: ResolvedAxis = {
+  dimension: "transactionTime",
+  startExpr: "t0.in_z",
+  endExpr: "t0.out_z",
   toIsInclusive: true,
   infinity: "infinity",
 };
 
-/** The business + processing axes of the bitemporal Position model, qualified `t0`. */
-const POSITION_BUSINESS: ResolvedAxis = {
-  axis: "business",
-  fromExpr: "t0.from_z",
-  toExpr: "t0.thru_z",
+/** The Valid-Time and Transaction-Time axes of Position, qualified `t0`. */
+const POSITION_VALID_TIME: ResolvedAxis = {
+  dimension: "validTime",
+  startExpr: "t0.from_z",
+  endExpr: "t0.thru_z",
   toIsInclusive: false,
   infinity: "infinity",
 };
-const POSITION_PROCESSING: ResolvedAxis = {
-  axis: "processing",
-  fromExpr: "t0.in_z",
-  toExpr: "t0.out_z",
+const POSITION_TRANSACTION_TIME: ResolvedAxis = {
+  dimension: "transactionTime",
+  startExpr: "t0.in_z",
+  endExpr: "t0.out_z",
   toIsInclusive: false,
   infinity: "infinity",
 };
-const POSITION_AXES = [POSITION_BUSINESS, POSITION_PROCESSING] as const;
+const POSITION_AXES = [POSITION_VALID_TIME, POSITION_TRANSACTION_TIME] as const;
 
 const D1 = "2024-03-01T00:00:00+00:00";
 const D2 = "2024-02-01T00:00:00+00:00";
 
 describe("asOfPredicate — single-axis (audit-only)", () => {
-  it("m-temporal-read-001 defaulted-now injects the current-row equality `out_z = ?` [infinity]", () => {
-    const p = asOfPredicate([BALANCE_PROCESSING], {});
+  it("m-temporal-read-001 defaulted-Latest injects `out_z = ?` [infinity]", () => {
+    const p = asOfPredicate([BALANCE_TRANSACTION_TIME], {});
     expect(p.sql).toBe("t0.out_z = ?");
     expect(p.binds).toEqual(["infinity"]);
   });
 
-  it("m-temporal-read-002 explicit now lowers to the identical current-row equality", () => {
-    const p = asOfPredicate([BALANCE_PROCESSING], { processing: { kind: "now" } });
+  it("m-temporal-read-002 explicit Latest lowers to the identical open-row equality", () => {
+    const p = asOfPredicate([BALANCE_TRANSACTION_TIME], {
+      transactionTime: { kind: "latest" },
+    });
     expect(p.sql).toBe("t0.out_z = ?");
     expect(p.binds).toEqual(["infinity"]);
   });
 
   it("m-temporal-read-003 past instant injects the half-open containment `in_z <= ? and out_z > ?` [d,d]", () => {
-    const p = asOfPredicate([BALANCE_PROCESSING], {
-      processing: { kind: "instant", date: "2024-04-01T00:00:00+00:00" },
+    const p = asOfPredicate([BALANCE_TRANSACTION_TIME], {
+      transactionTime: { kind: "instant", coordinate: "2024-04-01T00:00:00+00:00" },
     });
     expect(p.sql).toBe("t0.in_z <= ? and t0.out_z > ?");
     expect(p.binds).toEqual(["2024-04-01T00:00:00+00:00", "2024-04-01T00:00:00+00:00"]);
   });
 
   it("m-temporal-read-008 inclusive upper bound injects `out_z >= ?` (not `>`)", () => {
-    const p = asOfPredicate([LEDGER_PROCESSING], {
-      processing: { kind: "instant", date: "2024-06-01T00:00:00+00:00" },
+    const p = asOfPredicate([LEDGER_TRANSACTION_TIME], {
+      transactionTime: { kind: "instant", coordinate: "2024-06-01T00:00:00+00:00" },
     });
     expect(p.sql).toBe("t0.in_z <= ? and t0.out_z >= ?");
   });
 
   it("m-temporal-read-006 asOfRange injects the overlap `in_z < ? and out_z > ?` [to, from]", () => {
-    const p = asOfPredicate([BALANCE_PROCESSING], {
-      processing: {
+    const p = asOfPredicate([BALANCE_TRANSACTION_TIME], {
+      transactionTime: {
         kind: "range",
-        from: "2024-06-15T00:00:00+00:00",
-        to: "2024-07-01T00:00:00+00:00",
+        start: "2024-06-15T00:00:00+00:00",
+        end: "2024-07-01T00:00:00+00:00",
       },
     });
     expect(p.sql).toBe("t0.in_z < ? and t0.out_z > ?");
@@ -97,50 +99,54 @@ describe("asOfPredicate — single-axis (audit-only)", () => {
   });
 
   it("m-temporal-read-004 history injects no predicate for the axis", () => {
-    const p = asOfPredicate([BALANCE_PROCESSING], { processing: { kind: "history" } });
+    const p = asOfPredicate([BALANCE_TRANSACTION_TIME], {
+      transactionTime: { kind: "history" },
+    });
     expect(p.sql).toBe("");
     expect(p.binds).toEqual([]);
   });
 });
 
-describe("asOfPredicate — bitemporal (both axes, business-first composition)", () => {
-  it("m-temporal-read-013 both-axes-now composes `thru_z = ? and out_z = ?` [infinity, infinity]", () => {
+describe("asOfPredicate — Bitemporal (Valid-Time-first composition)", () => {
+  it("m-temporal-read-013 both dimensions Latest", () => {
     const p = asOfPredicate(POSITION_AXES, {
-      business: { kind: "now" },
-      processing: { kind: "now" },
+      validTime: { kind: "latest" },
+      transactionTime: { kind: "latest" },
     });
     expect(p.sql).toBe("t0.thru_z = ? and t0.out_z = ?");
     expect(p.binds).toEqual(["infinity", "infinity"]);
   });
 
-  it("m-temporal-read-014 business-past / processing-now — business range first, then processing eq", () => {
+  it("m-temporal-read-014 Valid-Time past / Transaction-Time Latest", () => {
     const p = asOfPredicate(POSITION_AXES, {
-      business: { kind: "instant", date: D1 },
-      processing: { kind: "now" },
+      validTime: { kind: "instant", coordinate: D1 },
+      transactionTime: { kind: "latest" },
     });
     expect(p.sql).toBe("t0.from_z <= ? and t0.thru_z > ? and t0.out_z = ?");
     expect(p.binds).toEqual([D1, D1, "infinity"]);
   });
 
-  it("m-temporal-read-015 both-axes-past — business binds first, then processing (each [d,d])", () => {
+  it("m-temporal-read-015 finite pins bind Valid Time before Transaction Time", () => {
     const p = asOfPredicate(POSITION_AXES, {
-      business: { kind: "instant", date: D1 },
-      processing: { kind: "instant", date: D2 },
+      validTime: { kind: "instant", coordinate: D1 },
+      transactionTime: { kind: "instant", coordinate: D2 },
     });
     expect(p.sql).toBe("t0.from_z <= ? and t0.thru_z > ? and t0.in_z <= ? and t0.out_z > ?");
     expect(p.binds).toEqual([D1, D1, D2, D2]);
   });
 
-  it("m-temporal-read-017 business-past / processing OMITTED defaults processing to now", () => {
-    const p = asOfPredicate(POSITION_AXES, { business: { kind: "instant", date: D1 } });
+  it("m-temporal-read-017 omitted Transaction Time defaults to Latest", () => {
+    const p = asOfPredicate(POSITION_AXES, {
+      validTime: { kind: "instant", coordinate: D1 },
+    });
     expect(p.sql).toBe("t0.from_z <= ? and t0.thru_z > ? and t0.out_z = ?");
     expect(p.binds).toEqual([D1, D1, "infinity"]);
   });
 
   it("m-temporal-read-016 double-history injects nothing on either axis", () => {
     const p = asOfPredicate(POSITION_AXES, {
-      business: { kind: "history" },
-      processing: { kind: "history" },
+      validTime: { kind: "history" },
+      transactionTime: { kind: "history" },
     });
     expect(p.sql).toBe("");
     expect(p.binds).toEqual([]);
@@ -153,42 +159,41 @@ describe("asOfPredicate — bitemporal (both axes, business-first composition)",
   });
 });
 
-describe("propagatedPredicate — deep-fetch as-of suffix (business-first, ordered)", () => {
+describe("propagatedPredicate — deep-fetch suffix (Valid-Time-first)", () => {
   it("m-navigate-012 both-latest → child `thru_z = ? and out_z = ?` [infinity, infinity]", () => {
     const p = propagatedPredicate(POSITION_AXES, {
-      business: { kind: "now" },
-      processing: { kind: "now" },
+      validTime: { kind: "latest" },
+      transactionTime: { kind: "latest" },
     });
     expect(p.sql).toBe("t0.thru_z = ? and t0.out_z = ?");
     expect(p.binds).toEqual(["infinity", "infinity"]);
   });
 
-  it("m-navigate-014 business-latest / processing-past → `thru_z = ? and in_z <= ? and out_z > ?`", () => {
+  it("m-navigate-014 Valid-Time Latest / Transaction-Time finite", () => {
     const p = propagatedPredicate(POSITION_AXES, {
-      business: { kind: "now" },
-      processing: { kind: "instant", date: D2 },
+      validTime: { kind: "latest" },
+      transactionTime: { kind: "instant", coordinate: D2 },
     });
     expect(p.sql).toBe("t0.thru_z = ? and t0.in_z <= ? and t0.out_z > ?");
     expect(p.binds).toEqual(["infinity", D2, D2]);
   });
 
-  it("m-navigate-021 non-temporal root (no pins) → temporal child defaults every axis to now", () => {
-    const p = propagatedPredicate([BALANCE_PROCESSING], {});
+  it("m-navigate-021 non-temporal root defaults temporal child to Latest", () => {
+    const p = propagatedPredicate([BALANCE_TRANSACTION_TIME], {});
     expect(p.sql).toBe("t0.out_z = ?");
     expect(p.binds).toEqual(["infinity"]);
   });
 
   it("m-navigate-022 non-temporal child → NO as-of term (empty)", () => {
-    const p = propagatedPredicate([], { processing: { kind: "now" } });
+    const p = propagatedPredicate([], { transactionTime: { kind: "latest" } });
     expect(p.sql).toBe("");
     expect(p.binds).toEqual([]);
   });
 
-  it("the suffix is NEVER reordered (business stays before processing)", () => {
-    // Pass axes in processing-first order; the derivation still emits business first.
-    const p = propagatedPredicate([POSITION_PROCESSING, POSITION_BUSINESS], {
-      business: { kind: "now" },
-      processing: { kind: "now" },
+  it("the suffix is never reordered (Valid Time stays first)", () => {
+    const p = propagatedPredicate([POSITION_TRANSACTION_TIME, POSITION_VALID_TIME], {
+      validTime: { kind: "latest" },
+      transactionTime: { kind: "latest" },
     });
     expect(p.sql).toBe("t0.thru_z = ? and t0.out_z = ?");
   });
@@ -199,7 +204,7 @@ describe("auditWriteStatements — milestone-chaining DML (audit-only)", () => {
     table: "balance",
     columns: ["bal_id", "acct_num", "val", "in_z", "out_z"],
     pkColumn: "bal_id",
-    toColumn: "out_z",
+    txEndColumn: "out_z",
   };
   const EVENT: WriteTarget = {
     table: "event",
@@ -238,22 +243,20 @@ describe("auditWriteStatements — milestone-chaining DML (audit-only)", () => {
 });
 
 describe("auditWriteStatements — full-bitemporal rectangle-split DML (m-bitemp-write)", () => {
-  // The full-bitemporal Position write target: BOTH axes (business from_z/thru_z,
-  // processing in_z/out_z), so `businessFromColumn` is present (the gated close's
-  // business discriminator).
+  // The Bitemporal Position target carries both temporal dimensions.
   const POSITION: WriteTarget = {
     table: "position",
     columns: ["pos_id", "acct_num", "val", "from_z", "thru_z", "in_z", "out_z"],
     pkColumn: "pos_id",
-    toColumn: "out_z",
-    fromColumn: "in_z",
-    businessFromColumn: "from_z",
+    txEndColumn: "out_z",
+    txStartColumn: "in_z",
+    validStartColumn: "from_z",
   };
   const INSERT =
     "insert into position(pos_id, acct_num, val, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?, ?)";
   const PLAIN_CLOSE = "update position set out_z = ? where pos_id = ? and out_z = ?";
 
-  it("m-bitemp-write-003 insertUntil opens one business-bounded milestone (1 statement)", () => {
+  it("m-bitemp-write-003 insertUntil opens one Valid-Time-bounded milestone", () => {
     expect(auditWriteStatements("insertUntil", POSITION)).toEqual([INSERT]);
   });
 
@@ -270,8 +273,8 @@ describe("auditWriteStatements — full-bitemporal rectangle-split DML (m-bitemp
     expect(auditWriteStatements("terminateUntil", POSITION)).toEqual([PLAIN_CLOSE, INSERT, INSERT]);
   });
 
-  it("m-bitemp-write-008 gated close adds the business discriminator between out_z and in_z", () => {
-    // The optimistic gated close targets EXACTLY the observed rectangle: the business
+  it("m-bitemp-write-008 gated close adds the Valid-Time discriminator", () => {
+    // The optimistic gated close targets exactly the observed rectangle: the Valid-Time
     // discriminator `from_z` slots between the `out_z` and `in_z` gates.
     const [gatedClose] = auditWriteStatements("terminate", POSITION, { gated: true });
     expect(gatedClose).toBe(
@@ -279,14 +282,13 @@ describe("auditWriteStatements — full-bitemporal rectangle-split DML (m-bitemp
     );
   });
 
-  it("an AUDIT-ONLY gated close omits the business discriminator (no business axis)", () => {
-    // Balance has no business axis, so its gated close is `… and out_z = ? and in_z = ?`.
+  it("a Transaction-Time-Only gated close omits the Valid-Time discriminator", () => {
     const AUDIT_GATED: WriteTarget = {
       table: "balance",
       columns: ["bal_id", "acct_num", "val", "in_z", "out_z"],
       pkColumn: "bal_id",
-      toColumn: "out_z",
-      fromColumn: "in_z",
+      txEndColumn: "out_z",
+      txStartColumn: "in_z",
     };
     const [gatedClose] = auditWriteStatements("terminate", AUDIT_GATED, { gated: true });
     expect(gatedClose).toBe(

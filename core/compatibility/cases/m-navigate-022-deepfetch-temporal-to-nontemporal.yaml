@@ -17,8 +17,8 @@ when:
       operand:
         asOf:
           operand: { all: {} }
-          asOfAttr: Lease.processingDate
-          date: now
+          dimension: transactionTime
+          coordinate: latest
       paths:
         - [{ rel: Lease.notes }]
 then:

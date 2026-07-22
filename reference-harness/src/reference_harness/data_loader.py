@@ -43,7 +43,7 @@ def _load_entity(entity: Entity, db: DatabaseProvider) -> None:
     # A table-per-hierarchy concrete subtype's rows carry the framework-owned tag
     # column, DERIVED from its `tagValue` (m-inheritance) — never authored in the
     # fixture, which is keyed to the concrete subtype and knows its variant.
-    tag = tag_of(entity.definition)
+    tag = tag_of(entity.runtime_facts)
     tag_column, tag_value = tag if tag is not None else (None, None)
 
     tuples: list[list[Any]] = []

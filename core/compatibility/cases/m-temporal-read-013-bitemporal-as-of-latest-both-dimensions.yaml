@@ -1,13 +1,13 @@
-# Bitemporal as-of NOW on BOTH axes: the fully-current milestone.
+# Bitemporal as-of NOW on BOTH axes: the fully-Latest milestone.
 #
-# Pinning businessDate = now AND processingDate = now restricts Position to the
+# Pinning validTime = Latest AND transactionTime = Latest restricts Position to the
 # row that is true in the world NOW and known to the system NOW — the rectangle
 # current on both axes (thru_z = infinity AND out_z = infinity). Each axis injects
 # its current-row equality (m-temporal-read), so the golden SQL carries TWO infinity binds.
 #
 # Over the id-1 history that is R3 (value 200): R1 is superseded on the processing
 # axis (out_z finite); R2 is the head, current on processing but its business
-# thru_z is finite (2024-06-01), so business=now excludes it. Only R3 is current
+# thru_z is finite (2024-06-01), so validTime=Latest excludes it. Only R3 is current
 # on both axes.
 model: models/position.yaml
 tags: [m-temporal-read, m-sql, bitemporal, temporal, as-of, both-axes, defaulted, slice-mvp-1, slice-snapshot-1, slice-managed-1]
@@ -20,10 +20,10 @@ when:
         asOf:
           operand:
             all: {}
-          asOfAttr: Position.processingDate
-          date: now
-      asOfAttr: Position.businessDate
-      date: now
+          dimension: transactionTime
+          coordinate: latest
+      dimension: validTime
+      coordinate: latest
 then:
   statements:
     - sql:

@@ -55,7 +55,7 @@ def _view_key(path: str | RelationshipPath) -> str:
     if isinstance(path, str):
         return path
     last = path.segments[-1]
-    _, _, rel_local = last.rel.partition(".")
+    _, _, rel_local = last.rel.rpartition(".")
     if not last.narrow:
         return rel_local
     registry = path.__parallax_registry__

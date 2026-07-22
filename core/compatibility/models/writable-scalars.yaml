@@ -1,7 +1,7 @@
 # WritableScalar: a TRANSACTIONAL scalar-fidelity model — the write-boundary
 # complement of the read-only `scalars.yaml` (m-core, m-dialect).
 #
-# `scalars.yaml` (mutability: read-only) proves float32/float64/bytes/time/uuid on
+# `scalars.yaml` (persistence: read-only) proves float32/float64/bytes/time/uuid on
 # the READ side only; those types have no asserted WRITE round-trip anywhere in the
 # corpus. This model is deliberately `transactional` so a writeSequence can insert
 # each of those types and read the row back, asserting the value survives the
@@ -18,14 +18,13 @@ entity:
   name: WritableScalar
   namespace: parallax.compatibility
   table: writable_scalars
-  mutability: transactional
-  temporal: non-temporal
+  persistence: read-write
   attributes:
     - name: id
       type: int64
       column: id
       primaryKey: true
-      pkGenerator: none
+      pkGeneration: application-assigned
     - name: f32
       type: float32
       column: f32

@@ -4,14 +4,13 @@ entity:
   name: ScalarThing
   namespace: parallax.compatibility
   table: scalar_thing
-  mutability: read-only
-  temporal: non-temporal
+  persistence: read-only
   attributes:
     - name: id
       type: int64
       column: id
       primaryKey: true
-      pkGenerator: none
+      pkGeneration: application-assigned
     - name: f32
       type: float32
       column: f32

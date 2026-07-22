@@ -12,15 +12,30 @@ metaclass reads the live ``Attr[T]`` / ``Rel[T]`` objects directly.
 import datetime as dt
 from decimal import Decimal
 
-from parallax.core import AsOfAttribute, Attr, Entity, EntityConfig, Field, Rel, Relationship
+from parallax.core import (
+    AsOfAxisMetadata,
+    Attr,
+    Entity,
+    EntityConfig,
+    Field,
+    Rel,
+    Relationship,
+    RelationshipJoin,
+    RelationshipTarget,
+    ReverseRelationship,
+)
 
 _NS = "parallax.compatibility"
 
 __all__ = ["Claim", "Coverage", "Policy"]
 
 _AS_OF = (
-    AsOfAttribute(name="businessDate", from_column="from_z", to_column="thru_z", axis="business"),
-    AsOfAttribute(name="processingDate", from_column="in_z", to_column="out_z", axis="processing"),
+    AsOfAxisMetadata(
+        dimension="validTime", start_attribute="valid_start", end_attribute="valid_end"
+    ),
+    AsOfAxisMetadata(
+        dimension="transactionTime", start_attribute="tx_start", end_attribute="tx_end"
+    ),
 )
 
 
@@ -34,17 +49,16 @@ class Policy(Entity, frozen=True):
 
     id: Attr[int] = Field(primary_key=True, pk_generator="none", type="int64")
     name: Attr[str] = Field(max_length=64)
-    business_from: Attr[dt.datetime] = Field(column="from_z")
-    business_to: Attr[dt.datetime] = Field(column="thru_z")
-    processing_from: Attr[dt.datetime] = Field(column="in_z")
-    processing_to: Attr[dt.datetime] = Field(column="out_z")
+    valid_start: Attr[dt.datetime] = Field(name="valid_start", column="from_z")
+    valid_end: Attr[dt.datetime] = Field(name="valid_end", column="thru_z")
+    tx_start: Attr[dt.datetime] = Field(name="tx_start", column="in_z")
+    tx_end: Attr[dt.datetime] = Field(name="tx_end", column="out_z")
     coverages: Rel[tuple["Coverage", ...]] = Relationship(
         cardinality="one-to-many",
-        join="this.id = Coverage.policyId",
-        related_entity="Coverage",
-        reverse_name="policy",
+        join=RelationshipJoin(
+            source="id", target=RelationshipTarget(entity="Coverage", attribute="policyId")
+        ),
         dependent=True,
-        foreign_key="policy_id",
     )
 
 
@@ -59,25 +73,18 @@ class Coverage(Entity, frozen=True):
     id: Attr[int] = Field(primary_key=True, pk_generator="none", type="int64")
     policy_id: Attr[int] = Field(column="policy_id", type="int64")
     amount: Attr[Decimal] = Field(type="decimal(18,2)")
-    business_from: Attr[dt.datetime] = Field(column="from_z")
-    business_to: Attr[dt.datetime] = Field(column="thru_z")
-    processing_from: Attr[dt.datetime] = Field(column="in_z")
-    processing_to: Attr[dt.datetime] = Field(column="out_z")
+    valid_start: Attr[dt.datetime] = Field(name="valid_start", column="from_z")
+    valid_end: Attr[dt.datetime] = Field(name="valid_end", column="thru_z")
+    tx_start: Attr[dt.datetime] = Field(name="tx_start", column="in_z")
+    tx_end: Attr[dt.datetime] = Field(name="tx_end", column="out_z")
     claims: Rel[tuple["Claim", ...]] = Relationship(
         cardinality="one-to-many",
-        join="this.id = Claim.coverageId",
-        related_entity="Claim",
-        reverse_name="coverage",
+        join=RelationshipJoin(
+            source="id", target=RelationshipTarget(entity="Claim", attribute="coverageId")
+        ),
         dependent=True,
-        foreign_key="coverage_id",
     )
-    policy: Rel["Policy"] = Relationship(
-        cardinality="many-to-one",
-        join="this.policyId = Policy.id",
-        related_entity="Policy",
-        reverse_name="coverages",
-        foreign_key="policy_id",
-    )
+    policy: Rel["Policy"] = ReverseRelationship(reverse_of="Policy.coverages")
 
 
 class Claim(Entity, frozen=True):
@@ -91,7 +98,7 @@ class Claim(Entity, frozen=True):
     id: Attr[int] = Field(primary_key=True, pk_generator="none", type="int64")
     coverage_id: Attr[int] = Field(column="coverage_id", type="int64")
     reserve: Attr[Decimal] = Field(type="decimal(18,2)")
-    business_from: Attr[dt.datetime] = Field(column="from_z")
-    business_to: Attr[dt.datetime] = Field(column="thru_z")
-    processing_from: Attr[dt.datetime] = Field(column="in_z")
-    processing_to: Attr[dt.datetime] = Field(column="out_z")
+    valid_start: Attr[dt.datetime] = Field(name="valid_start", column="from_z")
+    valid_end: Attr[dt.datetime] = Field(name="valid_end", column="thru_z")
+    tx_start: Attr[dt.datetime] = Field(name="tx_start", column="in_z")
+    tx_end: Attr[dt.datetime] = Field(name="tx_end", column="out_z")

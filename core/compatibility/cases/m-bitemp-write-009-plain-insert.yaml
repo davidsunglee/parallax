@@ -1,8 +1,8 @@
 # Write sequence: plain (UNBOUNDED) bitemporal insert — open a brand-new value that
 # holds from a business instant B ONWARD, with no upper business bound (the
-# businessTo = infinity degenerate of insertUntil, m-bitemp-write-003).
+# until = infinity degenerate of insertUntil, m-bitemp-write-003).
 #
-# A plain `insert` on a bitemporal entity is a SINGLE INSERT of a fully-current
+# A plain `insert` on a bitemporal entity is a SINGLE INSERT of a fully-Latest
 # rectangle: business [B, infinity) at processing [txInstant, infinity), current on
 # BOTH axes (thru_z = out_z = infinity). There is NO prior row to close, so — unlike
 # the plain update / terminate splits (m-bitemp-write-006 / -007) — there is no
@@ -10,10 +10,10 @@
 # insertUntil, sharing that mutation's canonical INSERT shape.
 #
 # The sequence (self-contained, from an empty table):
-#   step 1 insert : open the current rectangle, value 100, business
+#   step 1 insert : open the Latest rectangle, value 100, business
 #                   [2024-01-01, infinity), processing [2024-01-01, infinity)  (1 statement)
 #
-# Resulting state (1 row): the fully-current rectangle (thru_z = out_z = infinity) —
+# Resulting state (1 row): the fully-Latest rectangle (thru_z = out_z = infinity) —
 # no inactivated original, no head/middle/tail chaining.
 #
 # Postgres-only golden by design. The MariaDB spelling of this EXACT INSERT (the
@@ -30,9 +30,10 @@ when:
     - mutation: insert
       entity: Position
       statements: 1
-      note: open a fully-current rectangle [business inf, processing inf), no prior row to close
+      note: open a fully-Latest rectangle [business inf, processing inf), no prior row to close
       rows:
-        - { id: 1, acctNum: A, value: 100.00, businessFrom: "2024-01-01T00:00:00+00:00", businessTo: infinity }
+        - { id: 1, acctNum: A, value: 100.00 }
+      validFrom: "2024-01-01T00:00:00+00:00"
       at: "2024-01-01T00:00:00+00:00"
 then:
   statements:

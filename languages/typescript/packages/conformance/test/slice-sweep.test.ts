@@ -165,12 +165,6 @@ const OUT_OF_CLAIM: readonly {
     dialect: "postgres",
     code: "unsupported-shape",
   },
-  {
-    label: "an untagged in-claim-module read",
-    casePath: "core/compatibility/cases/m-temporal-read-018-business-as-of-now-defaulted.yaml",
-    dialect: "postgres",
-    code: "missing-include-tag",
-  },
 ];
 
 group("honesty — out-of-claim ⇒ unsupported with the first-failed-filter code", () => {

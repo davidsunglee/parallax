@@ -33,7 +33,7 @@ m-opt-lock.md`; `python.md` §5 L584-641; ADR 0013):
    conformance engine's case-local shadow tracker only ever tracks the
    CURRENT milestone), so this stays a no-op there — but a REAL
    `Transaction.find` observation of a temporal entity threads the read's own
-   processing-axis pin through :attr:`~parallax.core.unit_work.Observation.
+   Transaction-Time pin through :attr:`~parallax.core.unit_work.Observation.
    latest_pinned` (Phase-8 mid-phase review remediation), so a locking-mode
    write whose only transaction-scoped observation is historical or
    edge-pinned genuinely raises here. This landed ahead of the developer-facing
@@ -140,7 +140,7 @@ class UnobservedMilestoneError(RuntimeError):
 
 class HistoricalObservationError(RuntimeError):
     """A locking-mode write's only transaction-scoped observation is historical
-    or edge-pinned (not latest-pinned on the written processing axis).
+    or edge-pinned (not latest-pinned on the written Transaction-Time dimension).
 
     Locking-mode closes are ungated, so the shared read lock is the only
     protection; a shared lock on a historical or edge-pinned milestone locks
@@ -249,10 +249,10 @@ def require_observed_milestone(entity: str, observation: Observation | None) -> 
     (`parallax.snapshot.handle.Transaction`'s keyed temporal writes), never at
     the shared lowering: the neutral conformance engine legitimately lowers
     case-authored unobserved instructions (a writeSequence row's own
-    ``observedInZ`` control key, or none), and its choreography is graded
+    ``observedTxStart`` control key, or none), and its choreography is graded
     against its own goldens.
     """
-    if observation is None or observation.in_z is None:
+    if observation is None or observation.tx_start is None:
         raise UnobservedMilestoneError(
             f"{entity}: a keyed temporal update/terminate requires a milestone this "
             "unit of work already observed (a prior transaction-scoped find) — the "
@@ -327,9 +327,9 @@ def check_locking_license(concurrency: Concurrency, *, latest_pinned: bool) -> N
     if concurrency == "locking" and not latest_pinned:
         raise HistoricalObservationError(
             "a locking-mode write's only transaction-scoped observation is historical or "
-            "edge-pinned (not latest-pinned on the written processing axis) — the shared "
-            "read lock would protect the wrong row; re-fetch the current milestone inside "
-            "the transaction, or run this write under optimistic concurrency"
+            "edge-pinned (not latest-pinned on the written Transaction-Time dimension) — "
+            "the shared read lock would protect the wrong row; re-fetch the current "
+            "milestone inside the transaction, or run this write under optimistic concurrency"
         )
 
 

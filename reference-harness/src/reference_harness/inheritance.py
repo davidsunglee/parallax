@@ -18,7 +18,7 @@ follow, raising the shared
 ``then.rejectedRule``.
 
 Temporality is a FAMILY-WIDE property, not an ordinary inherited member: only
-the root may declare ``asOfAttributes``, and every descendant inherits the
+the root may declare ``asOfAxes``, and every descendant inherits the
 root's complete axis set unchanged (never redeclaring, adding, removing,
 overriding, or shadowing one), regardless of whether the root itself is
 temporal.
@@ -28,8 +28,9 @@ does not repeat inherited attributes, so the harness derives the full inherited
 attribute chain (root -> ... -> self) plus, for ``table-per-hierarchy``, the
 synthesized framework-owned tag column, presenting each concrete subtype as a
 flattened entity the DDL / write-derivation / fixture-load paths consume unchanged.
-Abstract nodes are tableless and rowless, so they are excluded from physical
-provisioning.
+Abstract nodes are rowless. Under table-per-hierarchy the root nevertheless owns
+the shared table mapping; concrete definitions resolve to that table for physical
+DDL and write derivation.
 """
 
 from __future__ import annotations
@@ -53,6 +54,11 @@ ABSTRACT_ROLES = frozenset({ROLE_ROOT, ROLE_ABSTRACT})
 STRATEGY_TPH = "table-per-hierarchy"
 STRATEGY_TPCS = "table-per-concrete-subtype"
 
+
+def _short_entity_name(reference: str) -> str:
+    return reference.rsplit(".", 1)[-1]
+
+
 # The synthesized tag column carries short discriminator literals; a bounded
 # string keeps the shared-table DDL a plain ``varchar`` (m-inheritance / m-sql).
 _TAG_COLUMN_MAX_LENGTH = 32
@@ -64,15 +70,17 @@ INHERITANCE_CYCLE = "inheritance-cycle"
 INHERITANCE_MISSING_ROOT = "inheritance-missing-root"
 INHERITANCE_MULTIPLE_ROOTS = "inheritance-multiple-roots"
 INHERITANCE_CONCRETE_WITHOUT_ABSTRACT_ROOT = "inheritance-concrete-without-abstract-root"
-INHERITANCE_ABSTRACT_NODE_WITH_TABLE = "inheritance-abstract-node-with-table"
+INHERITANCE_TPH_ROOT_TABLE_REQUIRED = "inheritance-tph-root-table-required"
+INHERITANCE_TPH_DESCENDANT_TABLE_FORBIDDEN = "inheritance-tph-descendant-table-forbidden"
+INHERITANCE_TPCS_ABSTRACT_TABLE_FORBIDDEN = "inheritance-tpcs-abstract-table-forbidden"
+INHERITANCE_TPCS_CONCRETE_TABLE_REQUIRED = "inheritance-tpcs-concrete-table-required"
 INHERITANCE_ABSTRACT_NODE_FIXTURE_ROWS = "inheritance-abstract-node-fixture-rows"
 INHERITANCE_STRATEGY_REDECLARED = "inheritance-strategy-redeclared"
 INHERITANCE_MISSING_TAG_VALUE = "inheritance-missing-tag-value"
 INHERITANCE_DUPLICATE_TAG_VALUE = "inheritance-duplicate-tag-value"
-INHERITANCE_INCONSISTENT_HIERARCHY_TABLE = "inheritance-inconsistent-hierarchy-table"
 INHERITANCE_TAG_ON_CONCRETE_SUBTYPE_STRATEGY = "inheritance-tag-on-concrete-subtype-strategy"
 # Temporality is a family-wide property (the binding root-ownership decision,
-# COR-3 Phase 7 review remediation): only the root may declare `asOfAttributes`;
+# COR-3 Phase 7 review remediation): only the root may declare `asOfAxes`;
 # an `abstract-subtype` or `concrete-subtype` that declares its own — whether
 # the root is itself non-temporal or temporal — is rejected.
 INHERITANCE_TEMPORAL_AXES_NOT_ROOT_OWNED = "inheritance-temporal-axes-not-root-owned"
@@ -81,6 +89,7 @@ INHERITANCE_TEMPORAL_AXES_NOT_ROOT_OWNED = "inheritance-temporal-axes-not-root-o
 # or `concrete-subtype` that declares its own — whether the root is itself
 # versioned or not — is rejected. A family is versioned together or not at all.
 INHERITANCE_OPTIMISTIC_LOCKING_NOT_ROOT_OWNED = "inheritance-optimistic-locking-not-root-owned"
+INHERITANCE_PERSISTENCE_NOT_ROOT_OWNED = "inheritance-persistence-not-root-owned"
 
 MODEL_REJECTED_RULES: frozenset[str] = frozenset(
     {
@@ -89,15 +98,18 @@ MODEL_REJECTED_RULES: frozenset[str] = frozenset(
         INHERITANCE_MISSING_ROOT,
         INHERITANCE_MULTIPLE_ROOTS,
         INHERITANCE_CONCRETE_WITHOUT_ABSTRACT_ROOT,
-        INHERITANCE_ABSTRACT_NODE_WITH_TABLE,
+        INHERITANCE_TPH_ROOT_TABLE_REQUIRED,
+        INHERITANCE_TPH_DESCENDANT_TABLE_FORBIDDEN,
+        INHERITANCE_TPCS_ABSTRACT_TABLE_FORBIDDEN,
+        INHERITANCE_TPCS_CONCRETE_TABLE_REQUIRED,
         INHERITANCE_ABSTRACT_NODE_FIXTURE_ROWS,
         INHERITANCE_STRATEGY_REDECLARED,
         INHERITANCE_MISSING_TAG_VALUE,
         INHERITANCE_DUPLICATE_TAG_VALUE,
-        INHERITANCE_INCONSISTENT_HIERARCHY_TABLE,
         INHERITANCE_TAG_ON_CONCRETE_SUBTYPE_STRATEGY,
         INHERITANCE_TEMPORAL_AXES_NOT_ROOT_OWNED,
         INHERITANCE_OPTIMISTIC_LOCKING_NOT_ROOT_OWNED,
+        INHERITANCE_PERSISTENCE_NOT_ROOT_OWNED,
     }
 )
 
@@ -316,7 +328,7 @@ class Family:
         return result
 
     def relationship_target(self, rel_ref: str) -> str | None:
-        """The ``relatedEntity`` a ``Class.relationship`` ref points at, else ``None``.
+        """The target a canonical ``Class.relationship`` declaration reaches.
 
         Used to resolve the polymorphic position a navigation filter (or deep-fetch
         hop) reaches: ``Person.pets`` -> ``Pet``. Returns ``None`` when the class or
@@ -329,8 +341,17 @@ class Family:
         if definition is None:
             return None
         for relationship in definition.get("relationships", []) or []:
-            if relationship.get("name") == rel_name:
-                return relationship.get("relatedEntity")
+            if relationship.get("name") != rel_name:
+                continue
+            join = relationship.get("join")
+            if isinstance(join, dict):
+                target = join.get("target")
+                if isinstance(target, dict) and isinstance(target.get("entity"), str):
+                    return _short_entity_name(target["entity"])
+            reverse_of = relationship.get("reverseOf")
+            if isinstance(reverse_of, str) and "." in reverse_of:
+                owner, _relationship_name = reverse_of.rsplit(".", 1)
+                return _short_entity_name(owner)
         return None
 
     def canonical_concrete_order(self, concretes: list[str]) -> list[str]:
@@ -426,7 +447,7 @@ def resolve_effective_definition(entity_defs: list[dict[str, Any]], name: str) -
     resolved = copy.deepcopy(definition)
     resolved["attributes"] = merged
 
-    # Inherit the temporal AXES (asOfAttributes) + classification (temporal) from
+    # Inherit As-Of Axes from
     # the family ROOT ALONE (the binding root-ownership decision: temporality is
     # family-wide, not an ordinary inherited member — `validate_family_defs`
     # check 4a rejects any OTHER participant that declares its own axes, so a
@@ -437,17 +458,19 @@ def resolve_effective_definition(entity_defs: list[dict[str, Any]], name: str) -
     # milestone-owning row it is. A per-entity metamodel reader (which does not
     # flatten inheritance) still classifies the concrete non-temporal from its
     # own empty axes — this is the inheritance-aware view.
-    if "asOfAttributes" not in resolved:
+    if "asOfAxes" not in resolved:
         root_name = family.root_of(name)
         root_def = family.defs.get(root_name, {}) if root_name is not None else {}
-        if "asOfAttributes" in root_def:
-            resolved["asOfAttributes"] = copy.deepcopy(root_def["asOfAttributes"])
-            if "temporal" in root_def and "temporal" not in resolved:
-                resolved["temporal"] = root_def["temporal"]
+        if "asOfAxes" in root_def:
+            resolved["asOfAxes"] = copy.deepcopy(root_def["asOfAxes"])
 
     role = role_of(definition)
     strategy = family.strategy_of(name)
     if role == ROLE_CONCRETE and strategy == STRATEGY_TPH:
+        root_name = family.root_of(name)
+        root_def = family.defs.get(root_name, {}) if root_name is not None else {}
+        if "table" in root_def:
+            resolved["table"] = root_def["table"]
         tag_column = family.tag_column_of(name)
         if tag_column is not None and all(a.get("column") != tag_column for a in merged):
             last_pk = -1
@@ -550,10 +573,10 @@ def validate_family_defs(entity_defs: list[dict[str, Any]]) -> None:
 
     # 4a. A non-root participant MUST NOT declare its own temporal axes (the
     #     binding root-ownership decision): temporality is family-wide, so only
-    #     the root may declare `asOfAttributes`, regardless of whether the root
+    #     the root may declare `asOfAxes`, regardless of whether the root
     #     itself is temporal.
     for definition in participants:
-        if role_of(definition) != ROLE_ROOT and "asOfAttributes" in definition:
+        if role_of(definition) != ROLE_ROOT and "asOfAxes" in definition:
             raise RejectionError(
                 INHERITANCE_TEMPORAL_AXES_NOT_ROOT_OWNED,
                 f"non-root {definition['name']!r} declares its own as-of axes; temporal axes "
@@ -582,13 +605,13 @@ def validate_family_defs(entity_defs: list[dict[str, Any]]) -> None:
                 f"only on the root",
             )
 
-    # 5. An abstract node (root / abstract-subtype) is tableless.
+    # 4c. Persistence is family-wide and root-owned.
     for definition in participants:
-        if is_abstract(definition) and "table" in definition:
+        if role_of(definition) != ROLE_ROOT and "persistence" in definition:
             raise RejectionError(
-                INHERITANCE_ABSTRACT_NODE_WITH_TABLE,
-                f"abstract node {definition['name']!r} declares a physical table; abstract "
-                f"roots and subtypes are tableless",
+                INHERITANCE_PERSISTENCE_NOT_ROOT_OWNED,
+                f"non-root {definition['name']!r} declares persistence; persistence is "
+                f"family-wide and MUST be declared only on the root",
             )
 
     family = Family(entity_defs)
@@ -625,6 +648,19 @@ def validate_family_defs(entity_defs: list[dict[str, Any]]) -> None:
     strategy = root_block.get("strategy") if root_block else None
 
     if strategy == STRATEGY_TPCS:
+        # 8. Abstract positions are tableless; every concrete owns one table.
+        for definition in participants:
+            if role_of(definition) in ABSTRACT_ROLES and "table" in definition:
+                raise RejectionError(
+                    INHERITANCE_TPCS_ABSTRACT_TABLE_FORBIDDEN,
+                    f"table-per-concrete-subtype abstract position "
+                    f"{definition['name']!r} declares a table",
+                )
+            if role_of(definition) == ROLE_CONCRETE and "table" not in definition:
+                raise RejectionError(
+                    INHERITANCE_TPCS_CONCRETE_TABLE_REQUIRED,
+                    f"table-per-concrete-subtype concrete {definition['name']!r} declares no table",
+                )
         # 8. A table-per-concrete-subtype family declares no tag / tagValue anywhere.
         for definition in participants:
             block = inheritance_of(definition)
@@ -637,6 +673,19 @@ def validate_family_defs(entity_defs: list[dict[str, Any]]) -> None:
 
     if strategy == STRATEGY_TPH:
         concretes = [d for d in participants if role_of(d) == ROLE_CONCRETE]
+        root_definition = by_name[roots[0]]
+        if "table" not in root_definition:
+            raise RejectionError(
+                INHERITANCE_TPH_ROOT_TABLE_REQUIRED,
+                f"table-per-hierarchy root {root_definition['name']!r} declares no shared table",
+            )
+        for definition in participants:
+            if role_of(definition) != ROLE_ROOT and "table" in definition:
+                raise RejectionError(
+                    INHERITANCE_TPH_DESCENDANT_TABLE_FORBIDDEN,
+                    f"table-per-hierarchy descendant {definition['name']!r} repeats "
+                    f"the root-owned shared table",
+                )
         # 9. Every concrete subtype declares a tagValue: table-per-hierarchy rows share
         #    one table and are told apart ONLY by the tag column, so a concrete subtype
         #    with no tagValue would be indistinguishable in the shared table. The
@@ -663,14 +712,6 @@ def validate_family_defs(entity_defs: list[dict[str, Any]]) -> None:
                     f"share tagValue {value!r}",
                 )
             seen_values[value] = name
-        # 11. All concrete subtypes map to one shared physical table.
-        tables = {d.get("table") for d in concretes if d.get("table") is not None}
-        if len(tables) > 1:
-            raise RejectionError(
-                INHERITANCE_INCONSISTENT_HIERARCHY_TABLE,
-                f"table-per-hierarchy concrete subtypes map to different tables "
-                f"{sorted(t for t in tables if t is not None)}; they share one table",
-            )
 
 
 # --- operation-level narrow / subtype-scope validation (raises RejectionError) --

@@ -118,19 +118,19 @@ export interface ResolvedRelationship {
   readonly parentColumn: string;
 }
 
-/** A temporal axis identity — `business` (from_z/thru_z) or `processing` (in_z/out_z). */
-export type Axis = "business" | "processing";
+/** A temporal dimension identity. */
+export type Axis = "validTime" | "transactionTime";
 
 /**
  * A per-axis as-of pin collected off the operation's `asOf` / `asOfRange` /
- * `history` wrappers (an axis absent from the map defaults to `now` — the
+ * `history` wrappers (a dimension absent from the map defaults to Latest — the
  * default-injection rule). `history` marks an axis as read as edge points (no
  * predicate injected for it).
  */
 export type AxisPin =
-  | { readonly kind: "now" }
-  | { readonly kind: "instant"; readonly date: string }
-  | { readonly kind: "range"; readonly from: string; readonly to: string }
+  | { readonly kind: "latest" }
+  | { readonly kind: "instant"; readonly coordinate: string }
+  | { readonly kind: "range"; readonly start: string; readonly end: string }
   | { readonly kind: "history" };
 
 /** The as-of pins gathered for one entity read, keyed by axis. */
@@ -178,12 +178,6 @@ export interface SchemaResolver {
    * verbatim (m-core scalar-serde projection).
    */
   rootProjection(): readonly ProjectionColumn[];
-  /**
-   * Resolve a `Class.asOfAttribute` reference (`Balance.processingDate`) to the
-   * axis it pins. Used to key the collected as-of pins by axis. Present only when
-   * the resolver supports temporal reads (m-temporal-read); the compiler probes for it.
-   */
-  resolveAsOfAxis?(ref: string): Axis;
   /** The root entity's domain class name (for the root as-of injection). */
   rootEntityName?(): string;
   /**
@@ -201,7 +195,7 @@ export interface SchemaResolver {
    * pins into the semi-join subquery. Present only when temporal reads are
    * supported.
    */
-  relatedEntityName?(ref: string): string;
+  targetEntityName?(ref: string): string;
 }
 
 /** A bind value carried alongside a `?` placeholder, in placeholder order. */
@@ -472,10 +466,8 @@ function combineWhere(user: string | undefined, asOf: string | undefined): strin
 
 /**
  * Peel every `asOf` / `asOfRange` / `history` wrapper off the outside of a
- * predicate, recording each into `ctx.asOfPins` keyed by the axis its
- * `asOfAttr` names. Returns the innermost base predicate (the user filter). A
- * resolver without temporal support (`resolveAsOfAxis` absent) leaves the wrappers
- * in place, so the base compile path throws the clear "not supported" error.
+ * predicate, recording each into `ctx.asOfPins` under its closed dimension.
+ * Returns the innermost base predicate.
  */
 function peelTemporal(op: Operation, ctx: CompileCtx): Operation {
   let current = op;
@@ -484,10 +476,10 @@ function peelTemporal(op: Operation, ctx: CompileCtx): Operation {
     if (tag === "asOf") {
       const body = (
         current as {
-          asOf: { operand: Operation; asOfAttr: string; date: string };
+          asOf: { operand: Operation; dimension: Axis; coordinate: string };
         }
       ).asOf;
-      recordPin(ctx, body.asOfAttr, temporalPinForDate(body.date));
+      recordPin(ctx, body.dimension, temporalPinForCoordinate(body.coordinate));
       current = body.operand;
       continue;
     }
@@ -496,23 +488,23 @@ function peelTemporal(op: Operation, ctx: CompileCtx): Operation {
         current as {
           asOfRange: {
             operand: Operation;
-            asOfAttr: string;
-            from: string;
-            to: string;
+            dimension: Axis;
+            start: string;
+            end: string;
           };
         }
       ).asOfRange;
-      recordPin(ctx, body.asOfAttr, {
+      recordPin(ctx, body.dimension, {
         kind: "range",
-        from: body.from,
-        to: body.to,
+        start: body.start,
+        end: body.end,
       });
       current = body.operand;
       continue;
     }
     if (tag === "history") {
-      const body = (current as { history: { operand: Operation; asOfAttr: string } }).history;
-      recordPin(ctx, body.asOfAttr, { kind: "history" });
+      const body = (current as { history: { operand: Operation; dimension: Axis } }).history;
+      recordPin(ctx, body.dimension, { kind: "history" });
       current = body.operand;
       continue;
     }
@@ -521,18 +513,14 @@ function peelTemporal(op: Operation, ctx: CompileCtx): Operation {
   return current;
 }
 
-/** A single-instant pin lowers to `now` (current row) or a past `instant`. */
-function temporalPinForDate(date: string): AxisPin {
-  return date === "now" ? { kind: "now" } : { kind: "instant", date };
+/** A single-point pin is Latest or a finite instant (including a finite Now). */
+function temporalPinForCoordinate(coordinate: string): AxisPin {
+  return coordinate === "latest" ? { kind: "latest" } : { kind: "instant", coordinate };
 }
 
-/** Record an as-of pin under the axis its `Class.asOfAttribute` reference names. */
-function recordPin(ctx: CompileCtx, asOfAttrRef: string, pin: AxisPin): void {
-  if (ctx.schema.resolveAsOfAxis === undefined) {
-    throw new Error("compile: temporal reads require a temporal-capable SchemaResolver");
-  }
-  const axis = ctx.schema.resolveAsOfAxis(asOfAttrRef);
-  ctx.asOfPins[axis] = pin;
+/** Record an as-of pin under its canonical dimension. */
+function recordPin(ctx: CompileCtx, dimension: Axis, pin: AxisPin): void {
+  ctx.asOfPins[dimension] = pin;
 }
 
 /**
@@ -935,9 +923,9 @@ function existsSemiJoin(
   }
   // As-of propagation (m-navigate): a temporal semi-join child carries its OWN as-of
   // predicate. The root's pins propagate into it matched by axis, and any axis the
-  // root left unpinned defaults to `now` (the per-entity default-injection rule), so
+  // root left unpinned defaults to Latest (the per-entity default-injection rule), so
   // the EXISTS subquery reads the child as of the same instant(s) even when the root
-  // omitted its as-of entirely (the default-now case `m-navigate-023`). The child's as-of binds
+  // omitted its as-of entirely (the default-Latest case `m-navigate-023`). The child's as-of binds
   // land after its inner user bind and before the outer root as-of (left-to-right
   // placeholder order). A non-temporal child yields an empty fragment.
   const childAsOf = propagateChildAsOf(ctx, body.rel, childAlias);
@@ -956,26 +944,26 @@ function existsSemiJoin(
 /**
  * The propagated child as-of fragment for a semi-join hop: the read's collected
  * pins applied to the CHILD entity's declared axes (matched by axis, each unpinned
- * axis defaulting to `now`), qualified with the child alias.
+ * dimension defaulting to Latest), qualified with the child alias.
  *
  * The child is asked for its predicate **regardless of whether the root collected
  * any pins** — m-temporal-read's default-injection rule is entity-local (each temporal read
  * derives its own as-of predicate), so a temporal child in the semi-join carries
- * its current-row predicate even when the root omitted its as-of (the default-now
+ * its current-row predicate even when the root omitted its as-of (the default-Latest
  * case `m-navigate-023`) or the root is non-temporal (a temporal child of a non-temporal root
- * defaults every axis to `now`, per m-navigate). A non-temporal child resolves to no axes
+ * defaults every dimension to Latest, per m-navigate). A non-temporal child resolves to no axes
  * and so yields an empty fragment, which the caller drops. `undefined` only when the
- * resolver is non-temporal (no `asOfPredicate` / `relatedEntityName`).
+ * resolver is non-temporal (no `asOfPredicate` / `targetEntityName`).
  */
 function propagateChildAsOf(
   ctx: CompileCtx,
   relRef: string,
   childAlias: string,
 ): AsOfFragment | undefined {
-  if (ctx.schema.asOfPredicate === undefined || ctx.schema.relatedEntityName === undefined) {
+  if (ctx.schema.asOfPredicate === undefined || ctx.schema.targetEntityName === undefined) {
     return undefined;
   }
-  const childEntity = ctx.schema.relatedEntityName(relRef);
+  const childEntity = ctx.schema.targetEntityName(relRef);
   return ctx.schema.asOfPredicate(childEntity, childAlias, ctx.asOfPins);
 }
 

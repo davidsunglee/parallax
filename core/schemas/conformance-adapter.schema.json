@@ -206,7 +206,7 @@
         },
         "errorClass": {
           "type": "string",
-          "enum": ["detached-relationship-load", "processing-pin-read-only"]
+          "enum": ["detached-relationship-load", "transaction-time-pin-read-only"]
         },
         "native": {}
       }

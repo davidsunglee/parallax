@@ -66,11 +66,14 @@ group("metamodel descriptor round-trip", () => {
     const metamodel = Metamodel.fromDescriptor(descriptor);
     expect(metamodel.entityNames().length).toBeGreaterThan(0);
     for (const entity of metamodel.entities()) {
-      const role = entity.inheritance?.role;
-      const abstractNode = role === "root" || role === "abstract-subtype";
-      // An abstract inheritance node (root / abstract-subtype) is tableless
-      // (m-inheritance); every other entity maps to a physical table.
-      if (!abstractNode) {
+      const inheritance = entity.inheritance;
+      // Standalone entities and TPH roots own a table. TPH descendants and
+      // abstract TPCS nodes are tableless; concrete TPCS subtypes own a table.
+      if (
+        inheritance === undefined ||
+        (inheritance.role === "root" && inheritance.strategy === "table-per-hierarchy") ||
+        (inheritance.role === "concrete-subtype" && entity.table.length > 0)
+      ) {
         expect(entity.table.length).toBeGreaterThan(0);
       }
       // A non-inheritance entity declares at least one attribute and a primary key
@@ -82,6 +85,27 @@ group("metamodel descriptor round-trip", () => {
         expect(entity.primaryKey().length).toBeGreaterThan(0);
       }
     }
+  });
+
+  it("rejects every retired descriptor spelling instead of dual-reading it", () => {
+    const retired = {
+      entity: {
+        name: "Legacy",
+        table: "legacy",
+        mutability: "transactional",
+        attributes: [
+          {
+            name: "id",
+            type: "int64",
+            column: "id",
+            primaryKey: true,
+            pkGenerator: "none",
+          },
+        ],
+      },
+    };
+    expect(validateDescriptor(retired).valid).toBe(false);
+    expect(() => Metamodel.fromDescriptor(retired)).toThrow();
   });
 });
 
@@ -101,28 +125,128 @@ group("default surfacing", () => {
     expect(order.attributeByName("id").primaryKey).toBe(true);
   });
 
-  it("derives temporal from asOfAttributes and surfaces it", () => {
+  it("derives the operational temporal view from canonical asOfAxes", () => {
     const orders = Metamodel.fromDescriptor(loadDescriptor("orders.yaml"));
     expect(orders.entity("Order").temporal).toBe("non-temporal");
 
     const balance = Metamodel.fromDescriptor(loadDescriptor("balance.yaml"));
-    expect(balance.entity("Balance").temporal).toBe("unitemporal-processing");
+    expect(balance.entity("Balance").temporal).toBe("transaction-time-only");
 
     const position = Metamodel.fromDescriptor(loadDescriptor("position.yaml"));
     expect(position.entity("Position").temporal).toBe("bitemporal");
-    expect(position.entity("Position").asOfAttributes().length).toBe(2);
+    expect(position.entity("Position").asOfAxes().length).toBe(2);
   });
 
   it("defaults relationship orderBy direction to asc", () => {
     const metamodel = Metamodel.fromDescriptor(loadDescriptor("orders.yaml"));
     const order = metamodel.entity("Order");
-    // `items` declares `{ attr: id, direction: desc }` — kept verbatim.
-    expect(order.relationshipByName("items").orderBy).toEqual([{ attr: "id", direction: "desc" }]);
+    // `items` declares `{ attribute: id, direction: desc }` — normalized once.
+    expect(order.relationshipByName("items").orderBy).toEqual([
+      {
+        attribute: { entity: "parallax.compatibility.OrderItem", name: "id" },
+        direction: "desc",
+      },
+    ]);
     // `statuses` declares no orderBy at all.
     expect(order.relationshipByName("statuses").orderBy).toEqual([]);
     // `dependent` defaults to false where unspecified (`tags`).
     expect(order.relationshipByName("tags").dependent).toBe(false);
     expect(order.relationshipByName("items").dependent).toBe(true);
+
+    // The reverse declaration repeats no association facts; the Relationship
+    // Facet derives its directional cardinality and structured join.
+    const itemOrder = metamodel.entity("OrderItem").relationshipByName("order");
+    expect(itemOrder.cardinality).toBe("many-to-one");
+    expect(itemOrder.join).toEqual({
+      source: { entity: "parallax.compatibility.OrderItem", name: "orderId" },
+      target: { entity: "parallax.compatibility.Order", name: "id" },
+    });
+    expect(itemOrder).not.toHaveProperty("target");
+    expect(itemOrder).not.toHaveProperty("relatedEntity");
+    expect(itemOrder).not.toHaveProperty("reverseName");
+    expect(itemOrder).not.toHaveProperty("foreignKey");
+  });
+
+  it("preserves exact relationship identity across namespaces", () => {
+    const model = Metamodel.fromDescriptor({
+      entities: [
+        {
+          name: "Source",
+          namespace: "alpha",
+          table: "source",
+          attributes: [{ name: "id", type: "int64", primaryKey: true }],
+          relationships: [
+            {
+              name: "targets",
+              cardinality: "one-to-many",
+              join: {
+                source: "id",
+                target: { entity: "beta.Target", attribute: "sourceId" },
+              },
+            },
+          ],
+        },
+        {
+          name: "Target",
+          namespace: "alpha",
+          table: "alpha_target",
+          attributes: [{ name: "id", type: "int64", primaryKey: true }],
+        },
+        {
+          name: "Target",
+          namespace: "beta",
+          table: "beta_target",
+          attributes: [
+            { name: "id", type: "int64", primaryKey: true },
+            { name: "sourceId", type: "int64" },
+          ],
+          relationships: [{ name: "source", reverseOf: "alpha.Source.targets" }],
+        },
+      ],
+    });
+
+    expect(model.entity("alpha.Source").relationshipByName("targets").join.target.entity).toBe(
+      "beta.Target",
+    );
+    expect(model.entity("beta.Target").relationshipByName("source").join.target.entity).toBe(
+      "alpha.Source",
+    );
+    expect(model.findEntity("Target")).toBeUndefined();
+  });
+
+  it("defaults persistence to read-write and inherits a read-only family root", () => {
+    const ordinary = Metamodel.fromDescriptor({
+      entity: {
+        name: "Widget",
+        table: "widget",
+        attributes: [{ name: "id", type: "int64", primaryKey: true }],
+      },
+    }).entity("Widget");
+    expect(ordinary.mutability).toBe("transactional");
+    expect(ordinary.attributeByName("id").column).toBe("id");
+    expect(ordinary.attributeByName("id").pkGenerator).toBe("none");
+
+    const family = Metamodel.fromDescriptor({
+      entities: [
+        {
+          name: "Asset",
+          table: "asset",
+          persistence: "read-only",
+          attributes: [{ name: "id", type: "int64", primaryKey: true }],
+          inheritance: {
+            role: "root",
+            strategy: "table-per-hierarchy",
+            tag: { column: "kind" },
+          },
+        },
+        {
+          name: "Bond",
+          inheritance: { role: "concrete-subtype", parent: "Asset", tagValue: "BOND" },
+        },
+      ],
+    });
+    expect(family.entity("Asset").mutability).toBe("read-only");
+    expect(family.entity("Bond").mutability).toBe("read-only");
   });
 
   it("surfaces the optimisticLocking version attribute (m-opt-lock metamodel surface)", () => {
@@ -133,34 +257,34 @@ group("default surfacing", () => {
     expect(version?.optimisticLocking).toBe(true);
   });
 
-  it("derives the temporal optimistic key from the processing-from column (in_z), m-temporal-read/m-opt-lock", () => {
+  it("derives the temporal optimistic key from the Transaction-Time start column", () => {
     const balance = Metamodel.fromDescriptor(loadDescriptor("balance.yaml")).entity("Balance");
-    // A processing-axis temporal entity carries no version column; its optimistic key
-    // is derived from the processing-from column (in_z) — the version analogue.
-    const inZ = balance.processingFromAttribute();
-    expect(inZ?.name).toBe("processingFrom");
+    // A Transaction-Time temporal entity carries no version column; its optimistic key
+    // is derived from the Transaction-Time start column (in_z) — the version analogue.
+    const inZ = balance.txStartAttribute();
+    expect(inZ?.name).toBe("tx_start");
     expect(inZ?.column).toBe("in_z");
     expect(balance.versionAttribute()).toBeUndefined();
-    // A non-temporal entity has no processing axis, so no derived key.
+    // A non-temporal entity has no Transaction-Time dimension, so no derived key.
     const order = Metamodel.fromDescriptor(loadDescriptor("orders.yaml")).entity("Order");
-    expect(order.processingFromAttribute()).toBeUndefined();
+    expect(order.txStartAttribute()).toBeUndefined();
   });
 
-  it("resolves the processing-to column (out_z), the current-milestone marker, m-temporal-read/m-opt-lock", () => {
+  it("resolves the Transaction-Time end column, the Latest-milestone marker", () => {
     const balance = Metamodel.fromDescriptor(loadDescriptor("balance.yaml")).entity("Balance");
-    // The current milestone is the row whose processing-to (out_z) is infinity; observed
+    // The current milestone is the row whose Transaction-Time end (out_z) is infinity; observed
     // recording filters on it so a closed milestone cannot overwrite the current in_z.
-    const outZ = balance.processingToAttribute();
-    expect(outZ?.name).toBe("processingTo");
+    const outZ = balance.txEndAttribute();
+    expect(outZ?.name).toBe("tx_end");
     expect(outZ?.column).toBe("out_z");
-    // A non-temporal entity has no processing axis, so no to-attribute.
+    // A non-temporal entity has no Transaction-Time dimension, so no to-attribute.
     const order = Metamodel.fromDescriptor(loadDescriptor("orders.yaml")).entity("Order");
-    expect(order.processingToAttribute()).toBeUndefined();
+    expect(order.txEndAttribute()).toBeUndefined();
   });
 
-  it("rejects optimisticLocking + asOfAttributes on one entity (invalid composition, m-descriptor/m-temporal-read/m-opt-lock)", () => {
-    // A temporal entity DERIVES its optimistic key from the processing-from column, so
-    // combining an explicit `optimisticLocking` attribute with `asOfAttributes` is invalid.
+  it("rejects optimisticLocking + asOfAxes on one entity (invalid composition, m-descriptor/m-temporal-read/m-opt-lock)", () => {
+    // A temporal entity DERIVES its optimistic key from the Transaction-Time start column, so
+    // combining an explicit `optimisticLocking` attribute with `asOfAxes` is invalid.
     const bad = JSON.parse(JSON.stringify(loadDescriptor("balance.yaml"))) as {
       entity: { attributes: { name: string; optimisticLocking?: boolean }[] };
     };
@@ -182,33 +306,41 @@ group("default surfacing", () => {
         attributes: [
           { name: "id", type: "int64", column: "id", primaryKey: true },
           { name: "v", type: "int64", column: "v", optimisticLocking: true },
+          { name: "txStart", type: "timestamp", column: "in_z" },
+          { name: "txEnd", type: "timestamp", column: "out_z" },
         ],
-        asOfAttributes: [{ name: "p", fromColumn: "in_z", toColumn: "out_z", axis: "processing" }],
+        asOfAxes: [
+          {
+            dimension: "transactionTime",
+            startAttribute: "txStart",
+            endAttribute: "txEnd",
+          },
+        ],
       }),
-    ).toThrow(/optimisticLocking|asOfAttributes/);
+    ).toThrow(/optimisticLocking|asOfAxes/);
   });
 
-  it("surfaces asOfAttribute defaults (toIsInclusive/infinity/default)", () => {
+  it("derives the operation-axis view from canonical interval metadata", () => {
     const metamodel = Metamodel.fromDescriptor(loadDescriptor("balance.yaml"));
-    const axis = metamodel.entity("Balance").asOfAttributeByName("processingDate");
+    const axis = metamodel.entity("Balance").asOfAxis("transactionTime");
     expect(axis.toIsInclusive).toBe(false);
     expect(axis.infinity).toBe("infinity");
-    expect(axis.default).toBe("now");
-    expect(axis.axis).toBe("processing");
+    expect(axis.default).toBe("latest");
+    expect(axis.dimension).toBe("transactionTime");
   });
 
-  it("defaults value-object mapping to json and surfaces nullability", () => {
+  it("surfaces value-object nullability without a mapping discriminator", () => {
     const metamodel = Metamodel.fromDescriptor(loadDescriptor("customer.yaml"));
     const address = metamodel.entity("Customer").findValueObject("address");
-    expect(address?.mapping).toBe("json");
     expect(address?.nullable).toBe(true);
+    expect(address).not.toHaveProperty("mapping");
   });
 
-  it("normalizes the recursive value-object structure (attributes, nested VOs, cardinality)", () => {
+  it("normalizes the recursive value-object structure (attributes, nested VOs, multiplicity)", () => {
     const customer = Metamodel.fromDescriptor(loadDescriptor("customer.yaml")).entity("Customer");
     const address = customer.valueObjectByName("address");
     // Top-level `address`: a single document with typed attributes and nested VOs.
-    expect(address.cardinality).toBe("one");
+    expect(address.multiplicity).toBe("one");
     expect(address.attributes.map((a) => a.name)).toEqual(["street", "city"]);
     expect(address.attributes.every((a) => a.type === "string")).toBe(true);
     expect(address.valueObjects.map((vo) => vo.name)).toEqual(["geo", "phones"]);
@@ -217,7 +349,7 @@ group("default surfacing", () => {
     const geo = findNestedValueObject(address, "geo");
     expect(geo).toBeDefined();
     if (geo) {
-      expect(geo.cardinality).toBe("one");
+      expect(geo.multiplicity).toBe("one");
       expect(findValueObjectAttribute(geo, "country")?.nullable).toBe(false);
       expect(findValueObjectAttribute(geo, "elevation")).toEqual({
         name: "elevation",
@@ -229,12 +361,12 @@ group("default surfacing", () => {
     // Three-level path resolves through the reader accessor.
     const point = customer.resolveValueObjectPath(["address", "geo", "point"]);
     expect(point?.name).toBe("point");
-    expect(point?.cardinality).toBe("one");
+    expect(point?.multiplicity).toBe("one");
     expect(point?.attributes.map((a) => a.name)).toEqual(["lat", "lon"]);
 
-    // The to-many `phones` member surfaces `many` cardinality.
+    // The to-many `phones` member surfaces `many` multiplicity.
     const phones = findNestedValueObject(address, "phones");
-    expect(phones?.cardinality).toBe("many");
+    expect(phones?.multiplicity).toBe("many");
     expect(phones?.attributes.map((a) => a.name)).toEqual(["type", "number"]);
 
     // Unresolved segments / names are reported rather than silently coerced.
@@ -242,9 +374,9 @@ group("default surfacing", () => {
     expect(() => customer.valueObjectByName("nope")).toThrow();
   });
 
-  it("defaults value-object cardinality to one, mapping to json, nullability to false", () => {
-    // A value object that omits cardinality / mapping / nullable takes the schema
-    // defaults (one / json / non-null); its attributes default non-null too, at
+  it("defaults value-object multiplicity to one and nullability to false", () => {
+    // A value object that omits multiplicity / column / nullable takes the schema
+    // defaults (one / non-null); its attributes default non-null too, at
     // every depth.
     const widget = Metamodel.fromDescriptor({
       entity: {
@@ -254,7 +386,6 @@ group("default surfacing", () => {
         valueObjects: [
           {
             name: "spec",
-            column: "spec",
             attributes: [{ name: "code", type: "string" }],
             valueObjects: [{ name: "dims", attributes: [{ name: "w", type: "int32" }] }],
           },
@@ -263,8 +394,8 @@ group("default surfacing", () => {
     }).entity("Widget");
 
     const spec = widget.valueObjectByName("spec");
-    expect(spec.cardinality).toBe("one");
-    expect(spec.mapping).toBe("json");
+    expect(spec.multiplicity).toBe("one");
+    expect(spec).not.toHaveProperty("mapping");
     expect(spec.nullable).toBe(false);
     expect(findValueObjectAttribute(spec, "code")).toEqual({
       name: "code",
@@ -275,25 +406,53 @@ group("default surfacing", () => {
     const dims = widget.resolveValueObjectPath(["spec", "dims"]);
     expect(dims).toBeDefined();
     if (dims) {
-      expect(dims.cardinality).toBe("one");
+      expect(dims.multiplicity).toBe("one");
       expect(dims.nullable).toBe(false);
       expect(findValueObjectAttribute(dims, "w")?.nullable).toBe(false);
     }
   });
 
-  it("deriveTemporal classifies each cardinality of asOf set", () => {
+  it("deriveTemporal accepts only the active temporal formations", () => {
     expect(deriveTemporal([])).toBe("non-temporal");
     expect(
-      deriveTemporal([{ name: "p", fromColumn: "in_z", toColumn: "out_z", axis: "processing" }]),
-    ).toBe("unitemporal-processing");
-    expect(
-      deriveTemporal([{ name: "b", fromColumn: "from_z", toColumn: "thru_z", axis: "business" }]),
-    ).toBe("unitemporal-business");
+      deriveTemporal([
+        { dimension: "transactionTime", startAttribute: "txStart", endAttribute: "txEnd" },
+      ]),
+    ).toBe("transaction-time-only");
+    expect(() =>
+      deriveTemporal([
+        { dimension: "validTime", startAttribute: "validStart", endAttribute: "validEnd" },
+      ]),
+    ).toThrow(/unsupported asOfAxes shape/);
     expect(
       deriveTemporal([
-        { name: "b", fromColumn: "from_z", toColumn: "thru_z", axis: "business" },
-        { name: "p", fromColumn: "in_z", toColumn: "out_z", axis: "processing" },
+        { dimension: "validTime", startAttribute: "validStart", endAttribute: "validEnd" },
+        { dimension: "transactionTime", startAttribute: "txStart", endAttribute: "txEnd" },
       ]),
     ).toBe("bitemporal");
+  });
+
+  it("rejects a Valid-Time-Only descriptor at the schema boundary", () => {
+    const descriptor = {
+      entity: {
+        name: "Reservation",
+        table: "reservation",
+        attributes: [
+          { name: "id", type: "int64", primaryKey: true },
+          { name: "valid_start", type: "timestamp" },
+          { name: "valid_end", type: "timestamp" },
+        ],
+        asOfAxes: [
+          {
+            dimension: "validTime",
+            startAttribute: "valid_start",
+            endAttribute: "valid_end",
+          },
+        ],
+      },
+    };
+
+    expect(validateDescriptor(descriptor).valid).toBe(false);
+    expect(() => Metamodel.fromDescriptor(descriptor)).toThrow();
   });
 });

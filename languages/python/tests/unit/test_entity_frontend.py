@@ -1,4 +1,4 @@
-"""Entity frontend (definition half): descriptor export, introspection, rejections."""
+"""Entity frontend (definition half): descriptor export and rejections."""
 
 from __future__ import annotations
 
@@ -12,33 +12,23 @@ import mirrored_models as mm
 from parallax.conformance import case_format
 from parallax.core import (
     Attr,
-    Concrete,
     Entity,
     EntityConfig,
     EntityDefinitionError,
-    EntityRegistry,
-    FamilyRoot,
     Field,
     NameCollisionError,
     Rel,
     Relationship,
+    RelationshipJoin,
+    RelationshipTarget,
     ReservedNameError,
-    meta,
 )
 from parallax.core.descriptor import (
-    AsOfAttribute as AsOfAttributeRecord,
+    AsOfAxisMetadata as AsOfAxisRecord,
 )
 from parallax.core.descriptor import (
-    Attribute as AttributeRecord,
-)
-from parallax.core.descriptor import (
-    Entity as EntityRecord,
-)
-from parallax.core.descriptor import (
-    Inheritance,
-    Metamodel,
+    DefiningRelationship,
     canonicalize,
-    deserialize,
 )
 from parallax.core.entity import (
     AttributeRef,
@@ -46,7 +36,7 @@ from parallax.core.entity import (
     ScopedMetamodel,
     camel_to_snake,
     descriptor_document,
-    meta_of,
+    entity_record_of,
     metamodel,
     snake_to_camel,
 )
@@ -85,38 +75,6 @@ def test_camel_to_snake_default_table(entity_name: str, table: str) -> None:
     assert camel_to_snake(entity_name) == table
 
 
-def test_meta_view_exposes_the_canonical_metamodel() -> None:
-    view = meta(mm.Account)
-    assert view.name == "Account"
-    assert view.table == "account"
-    assert view.namespace == "parallax.compatibility"
-    assert view.temporal == "non-temporal"
-    assert tuple(a.name for a in view.attributes) == ("id", "owner", "balance", "version")
-    assert tuple(a.name for a in view.primary_key) == ("id",)
-    assert view.relationships == ()
-    assert view.value_objects == ()
-    assert view.as_of == ()
-    assert view.family is None
-    assert view.descriptor() == descriptor_document([mm.Account])
-
-
-def test_meta_by_name_and_relationship_view() -> None:
-    view = meta("Person")
-    assert view.name == "Person"
-    assert tuple(r.name for r in view.relationships) == ("passport",)
-    passport = view.relationships[0]
-    assert passport.related_entity == "Passport"
-    assert passport.dependent is True
-    assert passport.reverse_name == "holder"
-
-
-def test_meta_rejects_unknown_name_and_non_entity() -> None:
-    with pytest.raises(KeyError):
-        meta("NoSuchEntity")
-    with pytest.raises(TypeError):
-        meta(int)
-
-
 def test_metamodel_assembles_related_classes() -> None:
     assembled = metamodel([mm.Person, mm.Passport])
     assert tuple(e.name for e in assembled.entities) == ("Person", "Passport")
@@ -135,11 +93,6 @@ def test_metamodel_of_no_classes_stays_unscoped() -> None:
 
 
 def test_metamodel_rejects_a_non_entity_class() -> None:
-    # R3 (COR-3 Phase 7 increment 7 round-2): `metamodel(classes)`'s own
-    # entity-lookup (relocated into `entity/base.py` alongside the
-    # now-private registry machinery it needs) raises the SAME shape
-    # `meta(int)` raises for a non-entity class, whether or not a caller
-    # ever validates the class through `meta()` first.
     with pytest.raises(TypeError, match="is not a Parallax entity class"):
         metamodel([int])
 
@@ -186,12 +139,20 @@ class WithStringRel(Entity, frozen=True):
     __parallax__ = EntityConfig(table="with_string_rel", mutability="transactional")
 
     id: Attr[int] = Field(primary_key=True, type="int64")
-    peer: Rel[object] = Relationship(cardinality="many-to-one", join="x", related_entity="Peer")
+    peer: Rel[object] = Relationship(
+        cardinality="many-to-one",
+        join=RelationshipJoin(
+            source="id", target=RelationshipTarget(entity="Peer", attribute="id")
+        ),
+    )
 
 
 def test_string_annotation_relationship_is_unwrapped() -> None:
-    view = meta(WithStringRel)
-    assert view.relationships[0].related_entity == "Peer"
+    record = entity_record_of(WithStringRel)
+    assert record is not None
+    relationship = record.relationships[0]
+    assert isinstance(relationship, DefiningRelationship)
+    assert relationship.join.target.entity == "Peer"
 
 
 class FutureInferred(Entity, frozen=True):
@@ -210,7 +171,9 @@ class FutureInferred(Entity, frozen=True):
 
 
 def test_future_annotations_infer_neutral_types_without_explicit_type() -> None:
-    by_name = {attr.name: attr for attr in meta(FutureInferred).attributes}
+    record = entity_record_of(FutureInferred)
+    assert record is not None
+    by_name = {attr.name: attr for attr in record.attributes}
     assert by_name["id"].type == "int64"
     assert by_name["name"].type == "string"
     assert by_name["active"].type == "boolean"
@@ -231,7 +194,9 @@ def test_future_annotation_explicit_type_survives_unresolvable_inner() -> None:
         id: Attr[int] = Field(primary_key=True, type="int64")
         payload: Attr[LocalOnly] = Field(type="int64")
 
-    assert {attr.name for attr in meta(WidgetWithUnresolvedInner).attributes} == {"id", "payload"}
+    record = entity_record_of(WidgetWithUnresolvedInner)
+    assert record is not None
+    assert {attr.name for attr in record.attributes} == {"id", "payload"}
 
 
 def _define_invalid_neutral_type() -> type:
@@ -278,7 +243,7 @@ def _define_wrong_typed_pk_generator() -> type:
 
 def test_wrong_typed_pk_generator_mapping_is_rejected_at_definition() -> None:
     # The malformed batchSize used to be coerced to None and the class defined
-    # successfully, exporting a bare `pkGenerator: sequence`; now it is rejected.
+    # successfully, exporting a bare `pkGeneration: sequence`; now it is rejected.
     with pytest.raises(EntityDefinitionError, match="pk generator: `batchSize`"):
         _define_wrong_typed_pk_generator()
 
@@ -322,9 +287,9 @@ def test_omitted_optional_pk_generator_field_defines_and_exports() -> None:
     # bare sequence strategy, confirming the present-None rejection does not leak
     # into the legitimately-partial object form.
     seq = _define_omitted_optional_pk_generator()
-    exported = cast("dict[str, object]", meta(seq).descriptor()["entity"])
+    exported = cast("dict[str, object]", descriptor_document([seq])["entity"])
     attributes = cast("list[dict[str, object]]", exported["attributes"])
-    assert attributes[0]["pkGenerator"] == "sequence"
+    assert attributes[0]["pkGeneration"] == "sequence"
 
 
 def test_object_form_pk_generator_defines_and_exports() -> None:
@@ -343,187 +308,15 @@ def test_object_form_pk_generator_defines_and_exports() -> None:
             },
         )
 
-    exported = cast("dict[str, object]", meta(SeqObjectForm).descriptor()["entity"])
+    exported = cast("dict[str, object]", descriptor_document([SeqObjectForm])["entity"])
     attributes = cast("list[dict[str, object]]", exported["attributes"])
-    assert attributes[0]["pkGenerator"] == {
+    assert attributes[0]["pkGeneration"] == {
         "strategy": "sequence",
-        "sequenceName": "seq_ids",
+        "name": "seq_ids",
         "batchSize": 5,
         "initialValue": 100,
         "incrementSize": 10,
     }
-
-
-def test_meta_of_ingested_descriptor_matches_class_derived_view() -> None:
-    ingested = deserialize(_raw_model("account"))
-    yaml_view = meta_of(ingested, "Account")
-    class_view = meta(mm.Account)
-    assert yaml_view.name == class_view.name
-    assert yaml_view.table == class_view.table
-    assert yaml_view.namespace == class_view.namespace
-    assert yaml_view.temporal == class_view.temporal
-    assert tuple((a.name, a.type) for a in yaml_view.attributes) == tuple(
-        (a.name, a.type) for a in class_view.attributes
-    )
-    assert tuple(a.name for a in yaml_view.primary_key) == tuple(
-        a.name for a in class_view.primary_key
-    )
-    assert yaml_view.family == class_view.family  # both None (non-inheritance)
-    # Same canonical descriptor (physical indices aside — the frontend does not
-    # express them), proving the ingested view is the same shape as the class one.
-    assert mm.drop_indices(yaml_view.descriptor()) == class_view.descriptor()
-
-
-def test_meta_of_ingested_descriptor_rejects_unknown_name() -> None:
-    with pytest.raises(KeyError):
-        meta_of(deserialize(_raw_model("account")), "NoSuchEntity")
-
-
-def _animal_family() -> Metamodel:
-    pk = AttributeRecord(name="id", type="int64", column="id", primary_key=True)
-    return Metamodel(
-        entities=(
-            EntityRecord(
-                name="Animal",
-                inheritance=Inheritance(
-                    role="root", strategy="table-per-hierarchy", tag_column="animal_type"
-                ),
-            ),
-            EntityRecord(
-                name="Dog",
-                table="animal",
-                attributes=(pk,),
-                inheritance=Inheritance(role="concrete-subtype", parent="Animal", tag_value="dog"),
-            ),
-            EntityRecord(
-                name="Cat",
-                table="animal",
-                attributes=(pk,),
-                inheritance=Inheritance(role="concrete-subtype", parent="Animal", tag_value="cat"),
-            ),
-        )
-    )
-
-
-def test_family_view_resolves_root_strategy_and_subtypes_from_ingested_descriptor() -> None:
-    family = _animal_family()
-    cat = meta_of(family, "Cat").family
-    assert cat is not None
-    assert cat.role == "concrete-subtype"
-    assert cat.root == "Animal"
-    assert cat.strategy == "table-per-hierarchy"
-    assert cat.tag_column == "animal_type"  # resolved from the root, not the local block
-    assert cat.tag_value == "cat"
-    assert cat.subtypes == ("Cat",)  # a concrete subtype resolves to itself
-
-    root = meta_of(family, "Animal").family
-    assert root is not None
-    assert root.root == "Animal"
-    assert root.strategy == "table-per-hierarchy"
-    # The abstract position resolves to its effective concrete-subtype set.
-    assert root.subtypes == ("Cat", "Dog")
-
-
-def test_family_view_tolerates_unresolved_root() -> None:
-    # A malformed ingested family (a parent that names a non-participant, or one
-    # absent from the descriptor) resolves to no root rather than raising.
-    pk = AttributeRecord(name="id", type="int64", column="id", primary_key=True)
-    plain = EntityRecord(name="Plain", table="plain", attributes=(pk,))
-    broken = EntityRecord(
-        name="Broken",
-        table="broken",
-        attributes=(pk,),
-        inheritance=Inheritance(role="concrete-subtype", parent="Plain", tag_value="b"),
-    )
-    orphan = EntityRecord(
-        name="Orphan",
-        table="orphan",
-        attributes=(pk,),
-        inheritance=Inheritance(role="concrete-subtype", parent="Ghost", tag_value="o"),
-    )
-    descriptor = Metamodel(entities=(plain, broken, orphan))
-
-    broken_family = meta_of(descriptor, "Broken").family  # parent is a non-participant
-    assert broken_family is not None
-    assert broken_family.root is None
-    assert broken_family.strategy is None
-    assert broken_family.tag_column is None
-
-    orphan_family = meta_of(descriptor, "Orphan").family  # parent absent from the descriptor
-    assert orphan_family is not None
-    assert orphan_family.root is None
-
-
-def test_meta_of_a_scoped_class_resolves_family_siblings_from_its_own_registry() -> None:
-    # S2 (COR-3 Phase 7 increment 7 round-2): `meta(Class)` must derive its
-    # sibling/resolution context from THAT class's own registry, never the
-    # process default -- pre-fix, `meta`'s context came from `entity_records()`
-    # (the process default registry's own records), which never contains a
-    # class declared in a SCOPED (non-default) registry at all, so a scoped
-    # family's own root resolved to NO concrete subtypes whatsoever.
-    registry = EntityRegistry()
-
-    class ScopedFamilyRoot(Entity, frozen=True, registry=registry):
-        __parallax__ = EntityConfig(
-            table="scoped_family_root",
-            mutability="transactional",
-            inheritance=FamilyRoot(strategy="table-per-hierarchy", tag="kind"),
-        )
-
-        id: Attr[int] = Field(primary_key=True, pk_generator="none")
-
-    class ScopedFamilyLeaf(ScopedFamilyRoot, frozen=True):
-        __parallax__ = EntityConfig(
-            mutability="transactional", inheritance=Concrete(tag_value="leaf")
-        )
-
-    family = meta(ScopedFamilyRoot).family
-    assert family is not None
-    assert family.subtypes == (ScopedFamilyLeaf.__name__,)
-
-
-def test_meta_temporal_is_the_family_effective_classification() -> None:
-    # ADR 0026 / review remediation (Spec 1, consequence (a)): a temporal-family
-    # CONCRETE descendant declares NO `asOfAttributes` of its own (only the
-    # root does) — `meta(DepositRate).temporal` must still report the family's
-    # EFFECTIVE classification ("bitemporal"), never the entity's own local,
-    # non-flattening "non-temporal" (the entity/meta.py bug this proves fixed).
-    pk = AttributeRecord(name="id", type="int64", column="id", primary_key=True)
-    root = EntityRecord(
-        name="Rate",
-        inheritance=Inheritance(role="root", strategy="table-per-concrete-subtype"),
-        attributes=(pk,),
-        as_of_attributes=(
-            AsOfAttributeRecord(
-                name="businessDate", from_column="from_z", to_column="thru_z", axis="business"
-            ),
-            AsOfAttributeRecord(
-                name="processingDate", from_column="in_z", to_column="out_z", axis="processing"
-            ),
-        ),
-    )
-    concrete = EntityRecord(
-        name="DepositRate",
-        table="deposit_rate",
-        attributes=(pk,),
-        inheritance=Inheritance(role="concrete-subtype", parent="Rate"),
-    )
-    family = Metamodel(entities=(root, concrete))
-
-    assert meta_of(family, "DepositRate").temporal == "bitemporal"
-    assert meta_of(family, "Rate").temporal == "bitemporal"
-    # The LOCAL structural view (`.as_of`) stays empty for the descendant —
-    # deliberately NOT flattened (`m-descriptor`'s own documented exception).
-    assert meta_of(family, "DepositRate").as_of == ()
-    # The EXPORTED descriptor document stays LOCAL too (never the family-
-    # effective `.temporal`): it is the structural, round-trippable form
-    # (`serialize(deserialize(d)) == d` MUST hold, m-descriptor "Metamodel
-    # serde"). Propagating the effective classification into the export would
-    # produce an internally-inconsistent document — a `temporal: bitemporal`
-    # label with no `asOfAttributes` children — that `deserialize` itself
-    # would then reject as disagreeing with the (empty) local axes.
-    exported = meta_of(family, "DepositRate").descriptor()["entity"]
-    assert "temporal" not in cast("dict[str, object]", exported)
 
 
 def _define_string_plain_field() -> type:
@@ -607,8 +400,34 @@ def test_entity_config_declares_as_of_dimensions() -> None:
     from parallax.core.entity import entity_records
 
     record = entity_records()["Balance"]
-    assert record.temporal == "unitemporal-processing"
-    (axis,) = record.as_of_attributes
-    assert (axis.name, axis.from_column, axis.to_column) == ("processingDate", "in_z", "out_z")
-    pinned = Balance.where().as_of(processing=dt.datetime(2024, 4, 1, tzinfo=dt.UTC))
+    assert record.temporal == "transaction-time-only"
+    (axis,) = record.as_of_axes
+    assert (axis.dimension, axis.start_attribute, axis.end_attribute) == (
+        "transactionTime",
+        "tx_start",
+        "tx_end",
+    )
+    pinned = Balance.where().as_of(transaction_time=dt.datetime(2024, 4, 1, tzinfo=dt.UTC))
     assert "asOf" in pinned.serialize()
+
+
+def _define_valid_time_only() -> type:
+    class_body = AsOfAxisRecord(
+        dimension="validTime",
+        start_attribute="valid_start",
+        end_attribute="valid_end",
+    )
+
+    class ValidTimeOnly(Entity, frozen=True):
+        __parallax__ = EntityConfig(table="valid_time_only", as_of=(class_body,))
+
+        id: Attr[int] = Field(primary_key=True, type="int64")
+        valid_start: Attr[object] = Field(type="timestamp", column="from_z")
+        valid_end: Attr[object] = Field(type="timestamp", column="thru_z")
+
+    return ValidTimeOnly
+
+
+def test_entity_config_rejects_valid_time_without_transaction_time() -> None:
+    with pytest.raises(EntityDefinitionError, match="Valid-Time-Only is deferred"):
+        _define_valid_time_only()

@@ -15,16 +15,24 @@
 // Named re-exports (not a star) so this does not collide with the local
 // `ValidationResult` from `./schema.js`.
 export {
+  type AttributeIdentity,
+  type DefiningRelationshipDeclaration,
   EntityMetadata,
   Metamodel,
-  type NormalizedAsOfAttribute,
+  type NormalizedAsOfAxis,
   type NormalizedAttribute,
   type NormalizedEntity,
   type NormalizedNestedValueObject,
-  type NormalizedRelationship,
   type NormalizedValueObject,
   type NormalizedValueObjectAttribute,
   type NormalizedValueObjectMember,
+  type RelationshipDeclaration,
+  RelationshipFacet,
+  type RelationshipIdentity,
+  type RelationshipJoin,
+  type RelationshipMetadata,
+  type RelationshipOrder,
+  type ReverseRelationshipDeclaration,
 } from "@parallax/metamodel";
 // Re-export the canonical serde seam so m-op-algebra-consumers (the conformance harness)
 // can parse case / model YAML through the *same* seam the algebra

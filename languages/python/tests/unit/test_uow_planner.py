@@ -13,7 +13,14 @@ import pytest
 
 from parallax.conformance import models
 from parallax.core import batch_write, op_algebra
-from parallax.core.descriptor import Attribute, Entity, Metamodel, Relationship
+from parallax.core.descriptor import (
+    Attribute,
+    DefiningRelationship,
+    Entity,
+    Metamodel,
+    RelationshipJoin,
+    RelationshipTarget,
+)
 from parallax.core.unit_work import (
     AtomicUnit,
     FlushPlan,
@@ -72,14 +79,14 @@ def test_audit_insert_then_update_coalesces_in_place() -> None:
 
 def test_bitemporal_insert_then_update_keeps_the_business_bound() -> None:
     insert = KeyedWrite(
-        "insert", "Position", ({"id": 9, "acctNum": "D", "value": 100.00},), business_from=_B1
+        "insert", "Position", ({"id": 9, "acctNum": "D", "value": 100.00},), valid_from=_B1
     )
     update = KeyedWrite("update", "Position", ({"id": 9, "value": 150.00},))
     plan = plan_flush([insert, update], {}, None, _POSITION)
     only = plan.writes[0].instruction
     assert isinstance(only, KeyedWrite)
     assert dict(only.rows[0]) == {"id": 9, "acctNum": "D", "value": 150.00}
-    assert only.business_from == _B1  # one fully-current rectangle, no head/tail split
+    assert only.valid_from == _B1  # one fully-current rectangle, no head/tail split
 
 
 def test_insert_then_delete_cancels_to_no_dml() -> None:
@@ -180,13 +187,17 @@ def test_one_to_one_relationships_contribute_no_fk_edge() -> None:
     assert _entities(plan) == ["Person", "Passport"]
 
 
-def test_relationship_reaching_outside_the_model_has_no_local_order() -> None:
+def test_relationship_reaching_outside_the_model_contributes_no_local_fk_order() -> None:
     widget = Entity(
         name="Widget",
         attributes=(Attribute(name="id", type="int64", column="id", primary_key=True),),
         relationships=(
-            Relationship(
-                name="gadget", related_entity="Gadget", cardinality="many-to-one", join="x = y"
+            DefiningRelationship(
+                name="gadget",
+                cardinality="many-to-one",
+                join=RelationshipJoin(
+                    source="id", target=RelationshipTarget(entity="Gadget", attribute="id")
+                ),
             ),
         ),
     )

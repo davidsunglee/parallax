@@ -35,6 +35,7 @@ from parallax.core.dialect import Dialect, LockMode
 from parallax.core.sql_gen import CompiledRead, Statement, compile_read
 from parallax.core.temporal_read import AXIS_ORDER, Edge, Pin, milestone_edge, statement_pin
 from parallax.snapshot import materialize
+from parallax.snapshot.handle._family import axis_columns
 from parallax.snapshot.handle._wrap import wrap_graph
 
 __all__ = [
@@ -289,7 +290,7 @@ def find_history(
     full matching milestone SET in one statement, partitioned here by each
     row's own edge (`~parallax.core.temporal_read.milestone_edge`) into one
     root-only graph per milestone — no levels (a v1 milestone-set graph carries
-    no includes). Rows are grouped in chronological edge order (business axis
+    no includes). Rows are grouped in chronological edge order (Valid Time
     first, matching the corpus's own authored `then.graphs` order) rather than
     relying on the database's unspecified natural row order.
     """
@@ -297,12 +298,12 @@ def find_history(
     if plan_.levels:
         # m-case-format: a v1 milestone-set read carries no includes.
         raise ValueError("a milestone-set (history / asOfRange) read carries no deep-fetch levels")
-    # `inheritance.declaring_entity` resolves the entity whose `as_of_attributes`
+    # `inheritance.declaring_entity` resolves the entity whose `as_of_axes`
     # are this target's FAMILY's actual temporal declaration (the root, for a
     # participant — temporality is family-wide, `m-inheritance`); every
     # `~parallax.core.temporal_read` per-entity primitive below (`milestone_edge`,
     # `_edge_pin`, `_edge_sort_key`) MUST resolve through it rather than the
-    # queried target's own (possibly locally-empty) `as_of_attributes`.
+    # queried target's own (possibly locally-empty) `as_of_axes`.
     entity = inheritance.declaring_entity(meta, meta.entity(target))
     compiled = compile_read(plan_.root_operation, meta, dialect, target, result_form="instance")
     statements: list[ExecutedStatement] = []
@@ -388,19 +389,20 @@ def _distinct_keys(rows: Sequence[Row], column: str) -> list[op_algebra.Scalar]:
 
 
 def _edge_sort_key(entity: Entity, row: Row) -> tuple[object, ...]:
-    """Business axis first, then processing (m-sql's own bind-order convention),
-    each axis's own from-column value — used only to chronologically order a
+    """Valid Time first, then Transaction Time (m-sql's bind-order convention),
+    each dimension's start-column value — used only to chronologically order a
     milestone-set read's grouped graphs, never to select or filter rows."""
-    ordered = sorted(entity.as_of_attributes, key=lambda aoa: AXIS_ORDER[aoa.axis])
-    return tuple(row[aoa.from_column] for aoa in ordered)
+    ordered = sorted(entity.as_of_axes, key=lambda axis: AXIS_ORDER[axis.dimension])
+    return tuple(row[axis_columns(entity, axis)[0]] for axis in ordered)
 
 
 def _edge_pin(entity: Entity, edge: Edge) -> dict[str, object]:
-    """The milestone-set `then.graphs` `pin` entry: each declared as-of attribute
-    name mapped to its edge (from-instant) coordinate on that axis."""
+    """The milestone-set `then.graphs` `pin` entry keyed by dimension."""
     return {
-        aoa.name: (edge.business if aoa.axis == "business" else edge.processing)
-        for aoa in entity.as_of_attributes
+        axis.dimension: (
+            edge.valid_time if axis.dimension == "validTime" else edge.transaction_time
+        )
+        for axis in entity.as_of_axes
     }
 
 
@@ -435,12 +437,12 @@ def _pin_from_milestone(entity: Entity, milestone_pin: Mapping[str, object]) -> 
     """One milestone's own edge, rendered as a :class:`Pin` (spec §3: each
     milestone-set root is edge-pinned at its own milestone's from-instant)."""
     coords: dict[str, object] = {}
-    for aoa in entity.as_of_attributes:
-        if aoa.name in milestone_pin:
-            coords[aoa.axis] = milestone_pin[aoa.name]
+    for axis in entity.as_of_axes:
+        if axis.dimension in milestone_pin:
+            coords[axis.dimension] = milestone_pin[axis.dimension]
     return Pin(
-        processing=cast("Any", coords.get("processing")),
-        business=cast("Any", coords.get("business")),
+        transaction_time=cast("Any", coords.get("transactionTime")),
+        valid_time=cast("Any", coords.get("validTime")),
     )
 
 

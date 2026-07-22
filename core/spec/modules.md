@@ -94,10 +94,13 @@ is both `active` and `cases`-covered has at least one tagged fixture.
 | Module | Summary | Status | Coverage |
 |---|---|---|---|
 | `m-core` | Neutral types, UTC / timezone, temporal infinity | active | cases |
+| `m-metamodel` | Representation-independent declarations, identity, lookup, and compiled metadata | active | cases |
+| `m-model-formation` | Explicit deterministic composition of model rules and facet compilers | active | cases |
 | `m-descriptor` | Domain-model & metamodel descriptor (+ serde seam) | active | cases |
 | `m-pk-gen` | Primary-key generation (`max`, `sequence`) | active | cases |
 | `m-inheritance` | Closed-tree inheritance (table-per-hierarchy / -concrete-subtype) | active | cases |
 | `m-value-object` | Embedded value objects (structured-document column) | active | cases |
+| `m-relationship` | Relationship formation and symmetric relationship facet | active | cases |
 | `m-op-algebra` | Query / operation algebra | active | cases |
 | `m-agg` | Aggregation algebra (group-by / having / functions) | deferred | cases |
 | `m-sql` | SQL generation & equivalence contract | active | cases |
@@ -117,9 +120,9 @@ is both `active` and `cases`-covered has at least one tagged fixture.
 | `m-identity-map` | Transaction-scoped identity map (managed-object interning) | active | cases |
 | `m-process-cache` | Process-wide identity & query cache | deferred | cases |
 | `m-temporal-read` | As-of temporal reads (all flavors) | active | cases |
-| `m-audit-write` | Processing-axis (audit-only) temporal writes | active | cases |
+| `m-audit-write` | Transaction-Time-Only temporal writes | active | cases |
 | `m-bitemp-write` | Bitemporal rectangle-split writes | active | cases |
-| `m-business-only` | Business-only temporal flavor | deferred | cases |
+| `m-business-only` | Valid-Time-Only temporal formation (deferred; legacy module ID) | deferred | cases |
 | `m-detach` | Object lifecycle & detach / merge-back | active | cases |
 | `m-opt-lock` | Optimistic locking | active | cases |
 | `m-case-format` | Compatibility case format | active | cases |
@@ -145,11 +148,21 @@ their declared source enforcement scopes, including scopes co-located in one
 deployable artifact.
 
 ```dependency-graph
+m-metamodel --> m-core
+m-model-formation --> m-metamodel
 m-descriptor --> m-core
+m-descriptor --> m-metamodel
 m-pk-gen --> m-descriptor
+m-pk-gen --> m-metamodel
 m-inheritance --> m-descriptor
+m-inheritance --> m-metamodel
+m-inheritance --> m-model-formation
 m-value-object --> m-descriptor
-m-op-algebra --> m-descriptor
+m-value-object --> m-metamodel
+m-value-object --> m-model-formation
+m-relationship --> m-metamodel
+m-relationship --> m-model-formation
+m-op-algebra --> m-metamodel
 m-op-algebra --> m-inheritance
 m-agg --> m-op-algebra
 m-sql --> m-op-algebra
@@ -178,10 +191,14 @@ m-navigate --> m-op-algebra
 m-navigate --> m-unit-work
 m-navigate --> m-temporal-read
 m-navigate --> m-inheritance
+m-navigate --> m-relationship
 m-deep-fetch --> m-navigate
 m-op-list --> m-deep-fetch
 m-snapshot-read --> m-deep-fetch
 m-temporal-read --> m-op-algebra
+m-temporal-read --> m-metamodel
+m-temporal-read --> m-model-formation
+m-temporal-read --> m-inheritance
 m-audit-write --> m-temporal-read
 m-audit-write --> m-unit-work
 m-bitemp-write --> m-audit-write
@@ -191,6 +208,9 @@ m-detach --> m-unit-work
 m-detach --> m-identity-map
 m-opt-lock --> m-unit-work
 m-opt-lock --> m-temporal-read
+m-opt-lock --> m-metamodel
+m-opt-lock --> m-model-formation
+m-opt-lock --> m-inheritance
 m-case-format --> m-core
 m-conformance-adapter --> m-case-format
 m-api-conformance --> m-case-format
@@ -209,6 +229,10 @@ construction it may reference any behavioral module it harnesses.
 
 ### Notable directions (and why they may surprise)
 
+- **`m-op-algebra --> m-metamodel`.** Resolved operation nodes carry canonical
+  model Identities, not descriptor records or authoring strings. Relationship
+  execution remains owned by `m-navigate`, which consumes the compiled
+  `m-relationship` facet; the operation algebra does not rebuild that facet.
 - **`m-op-algebra --> m-inheritance`.** The `narrow` node constrains a
   polymorphic entity position to a subset of its subtypes, and its validity rule
   (the resolved `to` list must be a non-empty subset of the position's **effective
@@ -254,8 +278,8 @@ construction it may reference any behavioral module it harnesses.
   deep fetch; navigation, as-of propagation, and lists are reached transitively.
   Snapshot reads and managed reads (`m-identity-map`) are alternative
   materializations over the same query stack — neither depends on the other.
-- **`m-opt-lock --> m-temporal-read`.** For a processing-axis temporal entity the
-  optimistic-lock version analogue is DERIVED from the processing-from column, so
+- **`m-opt-lock --> m-temporal-read`.** For a Transaction-Time Entity the
+  optimistic-lock version analogue is derived from `tx_start` / physical `in_z`, so
   an optimistic close references the milestoning read model.
 - **Aggregation is deferred through two modules.** `m-agg` (algebra) and
   `m-sql-agg` (lowering) are both deferred; core SQL generation (`m-sql`) never

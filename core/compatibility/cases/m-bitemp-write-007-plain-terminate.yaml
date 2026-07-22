@@ -3,15 +3,15 @@
 # with a HEAD only, no tail).
 #
 # A plain `terminate` on a bitemporal entity inactivates the original current row
-# on the PROCESSING axis (out_z = txInstant) and chains only ONE new row at fresh
+# on the Transaction-Time dimension (out_z = txInstant) and chains only ONE new row at fresh
 # processing time [txInstant, infinity):
 #   head : business [from_z, B)  — the value before the termination
 # There is NO tail and NO middle — the window [B, infinity) is left covered by no
 # current-on-processing row, so the value is ABSENT (terminated) from B onward.
-# The original survives as a row closed on the processing axis — the audit trail.
+# The original survives as a row closed on the Transaction-Time dimension — the audit trail.
 #
 # The sequence (self-contained, from an empty table):
-#   step 1 insert    : open the current rectangle, value 100,
+#   step 1 insert    : open the Latest rectangle, value 100,
 #                      business [2024-01-01, infinity), processing [2024-01-01, infinity)  (1 statement)
 #   step 2 terminate : end the value from business B = 2024-06-01 at txInstant
 #                      2024-07-01 — inactivate the original (out_z = 2024-07-01)
@@ -28,16 +28,18 @@ when:
     - mutation: insert
       entity: Position
       statements: 1
-      note: open the original current rectangle [business inf, processing inf)
+      note: open the original Latest rectangle [business inf, processing inf)
       rows:
-        - { id: 1, acctNum: A, value: 100.00, businessFrom: "2024-01-01T00:00:00+00:00", businessTo: infinity }
+        - { id: 1, acctNum: A, value: 100.00 }
+      validFrom: "2024-01-01T00:00:00+00:00"
       at: "2024-01-01T00:00:00+00:00"
     - mutation: terminate
       entity: Position
       statements: 2
-      note: inactivate the original on the processing axis, then chain head only (no tail)
+      note: inactivate the original on the Transaction-Time dimension, then chain head only (no tail)
       rows:
-        - { id: 1, businessFrom: "2024-06-01T00:00:00+00:00" }
+        - { id: 1 }
+      validFrom: "2024-06-01T00:00:00+00:00"
       at: "2024-07-01T00:00:00+00:00"
 then:
   statements:

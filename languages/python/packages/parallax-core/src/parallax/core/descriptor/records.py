@@ -14,17 +14,19 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Final, Literal
 
+from parallax.core.descriptor.errors import DescriptorError
+
 __all__ = [
     "UNSET",
-    "AsOfAttribute",
+    "AsOfAxisMetadata",
     "Attribute",
-    "Axis",
-    "Cardinality",
+    "DefiningRelationship",
     "Entity",
     "Index",
     "Inheritance",
     "InheritanceRole",
     "Metamodel",
+    "Multiplicity",
     "Mutability",
     "NestedValueObject",
     "OrderByTerm",
@@ -32,27 +34,31 @@ __all__ = [
     "PkStrategy",
     "Relationship",
     "RelationshipCardinality",
+    "RelationshipDeclaration",
+    "RelationshipJoin",
+    "RelationshipTarget",
+    "ReverseRelationship",
     "Temporal",
+    "TemporalDimension",
     "Unset",
     "ValueObject",
     "ValueObjectAttribute",
     "column_order",
     "declaring_entity",
-    "effective_as_of_attributes",
+    "effective_as_of_axes",
     "effective_temporal",
 ]
 
 Mutability = Literal["read-only", "transactional"]
 Temporal = Literal[
     "non-temporal",
-    "unitemporal-processing",
-    "unitemporal-business",
+    "transaction-time-only",
     "bitemporal",
 ]
 PkStrategy = Literal["none", "max", "sequence"]
-RelationshipCardinality = Literal["one-to-one", "many-to-one", "one-to-many", "many-to-many"]
-Cardinality = Literal["one", "many"]
-Axis = Literal["processing", "business"]
+RelationshipCardinality = Literal["one-to-one", "many-to-one", "one-to-many"]
+Multiplicity = Literal["one", "many"]
+TemporalDimension = Literal["validTime", "transactionTime"]
 InheritanceRole = Literal["root", "abstract-subtype", "concrete-subtype"]
 
 
@@ -113,16 +119,58 @@ class OrderByTerm:
 
 
 @dataclass(frozen=True, slots=True)
-class Relationship:
-    """A navigable association whose join is derived from the predicate."""
+class RelationshipTarget:
+    """The sole target of a defining relationship join."""
+
+    entity: str
+    attribute: str
+
+
+@dataclass(frozen=True, slots=True)
+class RelationshipJoin:
+    """One structured source-to-target attribute equality."""
+
+    source: str
+    target: RelationshipTarget
+
+
+@dataclass(frozen=True, slots=True)
+class DefiningRelationship:
+    """The declaration that owns one association's mapping facts."""
 
     name: str
-    related_entity: str
     cardinality: RelationshipCardinality
-    join: str
-    reverse_name: str | None = None
+    join: RelationshipJoin
     dependent: bool = False
-    foreign_key: str | None = None
+    order_by: tuple[OrderByTerm, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class ReverseRelationship:
+    """A declaration that names, but does not repeat, a defining relationship."""
+
+    name: str
+    reverse_of: str
+    order_by: tuple[OrderByTerm, ...] = ()
+
+
+type RelationshipDeclaration = DefiningRelationship | ReverseRelationship
+
+
+@dataclass(frozen=True, slots=True)
+class Relationship:
+    """One directional value from the compiled symmetric relationship facet.
+
+    The target is ``join.target.entity``. ``reverse`` is the peer's local
+    relationship name when the association is bidirectional. No descriptor-only
+    target, foreign-key hint, reverse-pair map, or string join is retained.
+    """
+
+    name: str
+    cardinality: RelationshipCardinality
+    join: RelationshipJoin
+    reverse: str | None = None
+    dependent: bool = False
     order_by: tuple[OrderByTerm, ...] = ()
 
 
@@ -136,16 +184,12 @@ class Index:
 
 
 @dataclass(frozen=True, slots=True)
-class AsOfAttribute:
-    """A temporal dimension backed by a ``[from, to)`` interval (m-temporal-read)."""
+class AsOfAxisMetadata:
+    """One canonical temporal dimension over two declared Attributes."""
 
-    name: str
-    from_column: str
-    to_column: str
-    axis: Axis
-    to_is_inclusive: bool = False
-    infinity: str = "infinity"
-    default: Literal["now"] = "now"
+    dimension: TemporalDimension
+    start_attribute: str
+    end_attribute: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -174,7 +218,7 @@ class NestedValueObject:
 
     name: str
     nullable: bool = False
-    cardinality: Cardinality = "one"
+    multiplicity: Multiplicity = "one"
     attributes: tuple[ValueObjectAttribute, ...] = ()
     value_objects: tuple[NestedValueObject, ...] = ()
 
@@ -184,12 +228,16 @@ class ValueObject:
     """A top-level embedded composite stored in one ``json`` document column."""
 
     name: str
-    column: str
-    mapping: Literal["json"] = "json"
+    column: str | None = None
     nullable: bool = False
-    cardinality: Cardinality = "one"
+    multiplicity: Multiplicity = "one"
     attributes: tuple[ValueObjectAttribute, ...] = ()
     value_objects: tuple[NestedValueObject, ...] = ()
+
+    @property
+    def storage_column(self) -> str:
+        """The explicit column override or conventional occurrence name."""
+        return self.name if self.column is None else self.column
 
 
 @dataclass(frozen=True, slots=True)
@@ -199,10 +247,10 @@ class Entity:
     name: str
     namespace: str | None = None
     table: str | None = None
-    mutability: Mutability = "read-only"
+    mutability: Mutability = "transactional"
     attributes: tuple[Attribute, ...] = ()
-    as_of_attributes: tuple[AsOfAttribute, ...] = ()
-    relationships: tuple[Relationship, ...] = ()
+    as_of_axes: tuple[AsOfAxisMetadata, ...] = ()
+    relationships: tuple[RelationshipDeclaration, ...] = ()
     indices: tuple[Index, ...] = ()
     value_objects: tuple[ValueObject, ...] = ()
     inheritance: Inheritance | None = None
@@ -215,38 +263,46 @@ class Entity:
     @property
     def temporal(self) -> Temporal:
         """This entity's OWN LOCAL temporal classification, derived from its own
-        ``as_of_attributes`` only.
+        ``as_of_axes`` only.
 
         For an inheritance participant this is a **structural, non-flattening**
         view, not necessarily the family's effective one: an abstract-subtype or
         concrete-subtype legitimately declares no axes of its own even when its
-        family is temporal (only the root may declare ``asOfAttributes`` —
+        family is temporal (only the root may declare ``asOfAxes`` —
         `m-inheritance` "Inherited members"). Every consumer that needs the
         entity's EFFECTIVE classification within its family (introspection,
         validation, write classification, …) **MUST** use
-        :func:`effective_temporal` instead (`m-descriptor` "the `asOfAttribute`
+        :func:`effective_temporal` instead (`m-descriptor` "the `asOfAxes`
         children an entity declares" — ADR 0026); this property alone is not
         family-aware because a bare :class:`Entity` carries no sibling context to
         resolve one.
         """
-        axes = {axis.axis for axis in self.as_of_attributes}
+        axes = {axis.dimension for axis in self.as_of_axes}
         if not axes:
             return "non-temporal"
-        if axes == {"processing", "business"}:
+        if axes == {"validTime", "transactionTime"}:
             return "bitemporal"
-        if axes == {"processing"}:
-            return "unitemporal-processing"
-        return "unitemporal-business"
+        if axes == {"transactionTime"}:
+            return "transaction-time-only"
+        raise DescriptorError(
+            f"entity {self.canonical_name!r}: Valid-Time-Only is deferred; "
+            "a validTime dimension requires transactionTime"
+        )
 
     @property
     def is_temporal(self) -> bool:
-        """Whether the entity's OWN LOCAL ``as_of_attributes`` is non-empty.
+        """Whether the entity's OWN LOCAL ``as_of_axes`` is non-empty.
 
         Same local/structural caveat as :attr:`temporal`: use
-        :func:`effective_as_of_attributes` (or ``bool(...)`` of it) for an
+        :func:`effective_as_of_axes` (or ``bool(...)`` of it) for an
         inheritance participant's family-effective temporality.
         """
-        return bool(self.as_of_attributes)
+        return bool(self.as_of_axes)
+
+    @property
+    def canonical_name(self) -> str:
+        """The exact Entity spelling used for model-wide identity and lookup."""
+        return self.name if self.namespace is None else f"{self.namespace}.{self.name}"
 
 
 def declaring_entity(metamodel: Metamodel, entity: Entity) -> Entity:
@@ -285,12 +341,12 @@ def declaring_entity(metamodel: Metamodel, entity: Entity) -> Entity:
         current = by_name[parent]
 
 
-def effective_as_of_attributes(metamodel: Metamodel, entity: Entity) -> tuple[AsOfAttribute, ...]:
+def effective_as_of_axes(metamodel: Metamodel, entity: Entity) -> tuple[AsOfAxisMetadata, ...]:
     """``entity``'s FAMILY-EFFECTIVE as-of axes: the declaring entity's own — the
     family root's, for an inheritance participant — never re-derived from a
-    possibly-empty LOCAL ``as_of_attributes`` (`m-descriptor` "For an
+    possibly-empty LOCAL ``as_of_axes`` (`m-descriptor` "For an
     inheritance participant…"; ADR 0026)."""
-    return declaring_entity(metamodel, entity).as_of_attributes
+    return declaring_entity(metamodel, entity).as_of_axes
 
 
 def effective_temporal(metamodel: Metamodel, entity: Entity) -> Temporal:
@@ -308,12 +364,33 @@ class Metamodel:
 
     @property
     def by_name(self) -> dict[str, Entity]:
-        """Entities keyed by name (declaration order preserved by ``dict``)."""
-        return {entity.name: entity for entity in self.entities}
+        """Entities keyed by exact identity plus only unambiguous local aliases."""
+        result = {entity.canonical_name: entity for entity in self.entities}
+        local_counts: dict[str, int] = {}
+        for entity in self.entities:
+            local_counts[entity.name] = local_counts.get(entity.name, 0) + 1
+        for entity in self.entities:
+            if local_counts[entity.name] == 1:
+                result[entity.name] = entity
+        return result
 
     def entity(self, name: str) -> Entity:
         """The entity named ``name`` (raises ``KeyError`` when absent)."""
         return self.by_name[name]
+
+    def relationships_for(self, entity: str | Entity) -> tuple[Relationship, ...]:
+        """The compiled directional relationship values for one Entity."""
+        from parallax.core.descriptor.relationship import relationships_for
+
+        return relationships_for(self, entity)
+
+    def relationship(self, entity: str | Entity, name: str) -> Relationship:
+        """Resolve one compiled directional relationship value by local name."""
+        for relationship in self.relationships_for(entity):
+            if relationship.name == name:
+                return relationship
+        owner = self.entity(entity) if isinstance(entity, str) else entity
+        raise KeyError(f"{owner.canonical_name}.{name}")
 
 
 def column_order(entity: Entity) -> tuple[str, ...]:
@@ -332,5 +409,5 @@ def column_order(entity: Entity) -> tuple[str, ...]:
     if entity.inheritance is not None and entity.inheritance.tag_column is not None:
         tag.append(entity.inheritance.tag_column)
     rest = [attr.column for attr in entity.attributes if not attr.primary_key]
-    documents = [vo.column for vo in entity.value_objects]
+    documents = [vo.storage_column for vo in entity.value_objects]
     return (*pk, *tag, *rest, *documents)

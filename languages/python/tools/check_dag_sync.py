@@ -58,10 +58,15 @@ _END = "# <<< check_dag_sync.py: END GENERATED IMPORT-LINTER CONTRACTS <<<"
 # enforced by the pytest collection boundary, not import-linter, so it is absent.
 MODULE_SCOPE: Mapping[str, str] = {
     "m-core": "parallax.core.base",
+    # COR-45 transition: the three new normative modules are enforced through
+    # the existing descriptor scope until COR-46 separates their runtime homes.
+    "m-metamodel": "parallax.core.descriptor",
+    "m-model-formation": "parallax.core.descriptor",
     "m-descriptor": "parallax.core.descriptor",
     "m-pk-gen": "parallax.core.pk_gen",
     "m-inheritance": "parallax.core.inheritance",
     "m-value-object": "parallax.core.value_object",
+    "m-relationship": "parallax.core.descriptor",
     "m-op-algebra": "parallax.core.op_algebra",
     "m-sql": "parallax.core.sql_gen",
     "m-dialect": "parallax.core.dialect",

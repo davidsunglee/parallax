@@ -24,9 +24,9 @@ POSITION = models.load_models()["position"]
 
 def test_resolve_raises_when_more_than_one_current_milestone_is_tracked_for_a_pk() -> None:
     # m-bitemp-write-004/005's own shape: two rectangles for the SAME pk share
-    # an in_z (both current on processing, different business windows) — the
+    # an in_z (both current on Transaction Time, different Valid Time windows) — the
     # tracker refuses to guess which one a later un-discriminated write means;
-    # disambiguation by business-from is a conflict-shape-only mechanism this
+    # disambiguation by Valid Time-from is a conflict-shape-only mechanism this
     # increment reaches through the case's own explicit fields, never this
     # tracker (`TemporalShadow.resolve`'s own docstring).
     shadow = TemporalShadow()
@@ -38,19 +38,19 @@ def test_resolve_raises_when_more_than_one_current_milestone_is_tracked_for_a_pk
                 "id": 1,
                 "acctNum": "A",
                 "value": 100.00,
-                "businessFrom": "2024-01-01T00:00:00+00:00",
-                "businessTo": "2024-06-01T00:00:00+00:00",
-                "processingFrom": "2024-01-01T00:00:00+00:00",
-                "processingTo": "infinity",
+                "valid_start": "2024-01-01T00:00:00+00:00",
+                "valid_end": "2024-06-01T00:00:00+00:00",
+                "tx_start": "2024-01-01T00:00:00+00:00",
+                "tx_end": "infinity",
             },
             {
                 "id": 1,
                 "acctNum": "A",
                 "value": 200.00,
-                "businessFrom": "2024-06-01T00:00:00+00:00",
-                "businessTo": "infinity",
-                "processingFrom": "2024-01-01T00:00:00+00:00",
-                "processingTo": "infinity",
+                "valid_start": "2024-06-01T00:00:00+00:00",
+                "valid_end": "infinity",
+                "tx_start": "2024-01-01T00:00:00+00:00",
+                "tx_end": "infinity",
             },
         ],
     )
@@ -65,7 +65,7 @@ def test_resolve_returns_none_for_a_pk_the_tracker_has_never_seen_open() -> None
     assert shadow.resolve(POSITION, "Position", {"id": 99}) is None
 
 
-def test_seed_fixtures_skips_a_row_not_current_on_processing() -> None:
+def test_seed_fixtures_skips_a_row_not_current_on_transaction_time() -> None:
     # A historical (superseded) row — out_z finite — is never a later write's
     # observed row.
     shadow = TemporalShadow()
@@ -77,10 +77,10 @@ def test_seed_fixtures_skips_a_row_not_current_on_processing() -> None:
                 "id": 1,
                 "acctNum": "A",
                 "value": 100.00,
-                "businessFrom": "2024-01-01T00:00:00+00:00",
-                "businessTo": "infinity",
-                "processingFrom": "2024-01-01T00:00:00+00:00",
-                "processingTo": "2024-06-01T00:00:00+00:00",
+                "valid_start": "2024-01-01T00:00:00+00:00",
+                "valid_end": "infinity",
+                "tx_start": "2024-01-01T00:00:00+00:00",
+                "tx_end": "2024-06-01T00:00:00+00:00",
             }
         ],
     )
@@ -95,12 +95,12 @@ def test_advance_replaces_tracked_state_with_the_newly_opened_rows() -> None:
         "insert",
         "Position",
         ({"id": 1, "acctNum": "A", "value": 100.00},),
-        business_from="2024-01-01T00:00:00+00:00",
+        valid_from="2024-01-01T00:00:00+00:00",
     )
     shadow.advance(POSITION, "Position", insert, "2024-01-01T00:00:00+00:00", None)
     observation = shadow.resolve(POSITION, "Position", {"id": 1})
     assert observation is not None
-    assert observation.in_z == "2024-01-01T00:00:00+00:00"
-    assert observation.business_from == "2024-01-01T00:00:00+00:00"
-    assert observation.business_to == "infinity"
+    assert observation.tx_start == "2024-01-01T00:00:00+00:00"
+    assert observation.valid_start == "2024-01-01T00:00:00+00:00"
+    assert observation.valid_end == "infinity"
     assert observation.payload == {"id": 1, "acctNum": "A", "value": 100.00}

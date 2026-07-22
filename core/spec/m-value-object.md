@@ -1,7 +1,23 @@
 # m-value-object — Embedded Value Objects
 
-`m-value-object` is the **embedded composite element** a metamodel entity may
-declare. It depends on `m-descriptor` (the entity it annotates).
+`m-value-object` is the **embedded composite element** a normalized Entity may
+declare. Its Model Formation Rule Set consumes `m-metamodel` through
+`m-model-formation`; `m-descriptor` is only an authoring/serde adapter.
+
+## Formation contribution
+
+The Rule Set owns exactly these stable codes:
+
+- `value-object-empty` — an occurrence shape has neither scalar nor nested
+  members;
+- `value-object-containment-cycle` — the reusable shape graph contains a direct
+  or indirect cycle; and
+- `value-object-many-nullable` — a Many occurrence is nullable, making null and
+  empty ambiguous.
+
+After validation, the mandatory Metadata Compiler expands reusable shapes into
+distinct path-identified occurrence Metadata. `m-value-object` contributes no
+facet and never patches accepted Metadata.
 
 A `valueObject` is an embedded composite sub-value of an entity (an address, a
 money amount, a geo point) that has no identity of its own. Unlike Reladomo, which
@@ -16,7 +32,7 @@ and lets the inner fields be filtered directly.
 
 A value object is a **recursive, typed composite**, not an opaque blob. It
 declares typed `attributes`, further `valueObjects` nested inside it to arbitrary
-depth, and its own `cardinality`. A **top-level** value object — one declared
+depth, and its own `multiplicity`. A **top-level** value object — one declared
 directly on an entity — additionally carries the single storage `column`; a
 **nested** value object carries no storage properties at all (it lives in its
 ancestor's column; see below).
@@ -24,12 +40,14 @@ ancestor's column; see below).
 | Property | Values / meaning |
 |---|---|
 | `name` | value-object element name (REQUIRED) |
-| `column` | the single structured-document column the whole object is stored in (REQUIRED, **top-level only**) |
-| `mapping` | neutral storage mapping; `json` (the only mapping in core); **top-level only** |
-| `cardinality` | `one` — a single embedded document (the default) — or `many` — a JSON array of documents in the same column |
-| `nullable` | bool, default `false` |
+| `column` | optional structured-document column override; omission means `name` (**top-level only**) |
+| `multiplicity` | `one` — a single embedded document (the default) — or `many` — an ordered JSON array of documents in the same column |
+| `nullable` | bool, default `false`; valid only with `one` |
 | `attributes` | this value object's typed inner fields (each a `valueObjectAttribute`); no per-field column |
 | `valueObjects` | value objects nested inside this one, to arbitrary depth (each a `nestedValueObject`) |
+
+There is no `mapping` discriminator. Structured-column storage is the only
+current representation, and each dialect selects its concrete JSON-like type.
 
 A `valueObjectAttribute` is a typed inner field. It carries **no per-field
 `column`** — the whole value object lives in one structured-document column, so an
@@ -42,30 +60,31 @@ inner field has no column of its own.
 | `nullable` | bool, default `false` |
 
 A `nestedValueObject` has the same shape as a top-level value object **minus**
-`column`/`mapping`: `name`, `cardinality`, `nullable`, its own typed `attributes`,
+`column`: `name`, `multiplicity`, `nullable`, its own typed `attributes`,
 and its own further-nested `valueObjects`. The schema forbids a nested member from
-carrying `column` or `mapping`. An entity MAY declare zero or more top-level
+carrying `column`. An entity MAY declare zero or more top-level
 `valueObjects`.
 
 ## One column — never extra columns, rows, or joins
 
 The recursive shape does **not** change storage: there is **exactly one
-structured-document column per top-level value object**. That top-level value
-object declares the `column`; every nested value object and every inner
+structured-document column per top-level value object**. Its name selects the
+column by convention unless it declares a `column` override; every nested value object and every inner
 attribute, at any depth, lives **inside that same column**. Nested definitions
-MUST NOT carry a `column` or a `mapping`, and MUST NOT introduce extra columns,
+MUST NOT carry a `column`, and MUST NOT introduce extra columns,
 extra rows, joins, or identity-bearing objects. A `one` member is a single
-embedded document and a `many` member is a JSON array of documents — both within
-the one column. The harness derives the concrete column type through `m-dialect`
+embedded document and a `many` member is an ordered JSON array of documents —
+both within the one column. A `many` member MUST NOT be nullable; its empty array
+is the sole zero-element representation. The harness derives the concrete column type through `m-dialect`
 exactly as it does for a scalar attribute, and it MUST NOT emit a column for any
 nested value object or inner attribute. The column is part of the entity's column
 order, positioned after the scalar attributes.
 
 ## Inherited temporality
 
-A value object has **no independent temporality**. It declares no
-`asOfAttributes` — the schema does not admit them on a value object — and it owns
-no timeline. Its backing column is part of the owning entity's column order, so it
+A value object has **no independent temporality**. It declares no As-Of Axes —
+the schema does not admit `asOfAxes` on a value object — and it owns no timeline.
+Its backing column is part of the owning entity's column order, so it
 rides the owner's (possibly milestoned) row and inherits whatever temporal
 classification the entity declares (`m-temporal-read`). On a temporal owner the
 document is carried across milestone chaining exactly like any scalar column;
@@ -73,15 +92,15 @@ there is **no value-object-specific temporal machinery** — the as-of read pred
 and the milestone-chaining write are the *owner's*, and the document is simply the
 value in one more column.
 
-This is proven end to end on a **unitemporal** (audit-only, processing) owner and a
-**bitemporal** owner, each declaring the same nested-plus-to-many value object. As-of
-`read` cases show the document is visible **per milestone** — reading the *same* owner
-at different processing / business instants returns a *different* document:
+This is proven end to end on a Transaction-Time-Only owner and a Bitemporal owner,
+each declaring the same nested-plus-to-many value object. As-of `read` cases show
+the document is visible **per milestone** — reading the same owner at different
+Transaction-Time / Valid-Time instants returns a different document:
 `m-value-object-028` returns each supplier's current-milestone document while
-`m-value-object-029` returns a superseded processing milestone's; `m-value-object-030`
+`m-value-object-029` returns a superseded Transaction-Time milestone's; `m-value-object-030`
 returns the fully-current (both-axes) document while `m-value-object-031` reconstructs
 the originally-believed document of a past audit read. `writeSequence` cases show the
-document is **carried across the chain** exactly like a scalar column: an audit-only
+document is **carried across the chain** exactly like a scalar column: a Transaction-Time-Only
 update closes the current row and chains a new milestone whose golden DML binds the
 whole document in `columnOrder` position (`m-value-object-032`, `m-audit-write`), and a
 bitemporal `updateUntil` rectangle split carries the document verbatim onto the
@@ -136,7 +155,7 @@ matches the single-column storage model (`m-value-object` [one
 column](#one-column--never-extra-columns-rows-or-joins)): the document is the unit
 of write exactly as it is the unit of storage. On a temporal owner the same
 atomic document rides milestone chaining like any scalar column (see [Inherited
-temporality](#inherited-temporality)): an audit-only update chains it onto the new
+temporality](#inherited-temporality)): a Transaction-Time-Only update chains it onto the new
 current milestone (`m-value-object-032`) and a bitemporal `updateUntil` carries it
 across the rectangle split (`m-value-object-033`); there is no
 value-object-specific write machinery.
@@ -161,13 +180,10 @@ rather than left true by omission:
    `valueObject`, at every depth — reachable from the owning entity (owner →
    top-level value object → nested value object → … → leaf attribute). A `one`
    member's getter yields a single value (or null); a `many` member's getter
-   yields the collection of element values. **Element order within a `many`
-   member is unspecified** — an implementation MAY preserve the
-   document/storage order, but that order is NOT guaranteed and consumers MUST
-   NOT rely on it. Accordingly the compatibility `then.graph` comparison for
-   value-object arrays is **order-insensitive**: a multiset comparison in which
-   element multiplicity still matters (duplicate elements are distinguished),
-   only order does not.
+   yields the ordered collection of element values. **Element order within a
+   `many` member is semantic** and MUST preserve authored/wire document order.
+   Accordingly compatibility `then.graph` comparison for value-object arrays is
+   order-sensitive; duplicate values remain distinct.
 2. **They materialize with the owner in one round trip.** A value object
    materializes **with its owning entity in the same read**: the owner's single
    statement projects the whole structured-document column, and every nested

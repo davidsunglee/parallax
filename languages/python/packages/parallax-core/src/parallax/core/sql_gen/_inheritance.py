@@ -338,7 +338,7 @@ def _single_table_projection(
         binds.extend(extra)
     if tag_column is not None:
         exprs.append(dialect.qualified(alias, tag_column))
-    exprs.extend(dialect.qualified(alias, vo.column) for vo in value_objects)
+    exprs.extend(dialect.qualified(alias, vo.storage_column) for vo in value_objects)
     return ", ".join(exprs), tuple(binds)
 
 
@@ -526,9 +526,9 @@ def _plan_tph_read(
         # carries no tag predicate at all.
         guarded = not (entity.inheritance is not None and entity.inheritance.role == "root")
 
-    table = meta.entity(position[0]).table
-    if table is None:  # pragma: no cover - a validated TPH concrete always declares one
-        raise SqlGenError(f"{position[0]}: table-per-hierarchy concrete subtype declares no table")
+    table = inheritance.effective_table(meta, root)
+    if table is None:  # pragma: no cover - validated TPH roots always declare one
+        raise SqlGenError(f"{root.name}: table-per-hierarchy root declares no table")
 
     # `familyVariant` rides the SAME condition as the slot-2 tag projection: the
     # transform reads the column this read projects, or there is no column to read

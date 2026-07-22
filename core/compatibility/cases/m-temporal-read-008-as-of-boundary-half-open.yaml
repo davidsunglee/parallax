@@ -1,0 +1,27 @@
+# Transaction-Time as-of exactly on a half-open milestone boundary.
+#
+# Every axis is `[start, end)`, so the injected predicate is
+# `in_z <= ? and out_z > ?`. A pin exactly on 2024-06-01 excludes the row ending
+# at that instant and includes the row beginning there; id 1 appears once.
+model: models/ledger.yaml
+tags: [m-temporal-read, m-sql, m-descriptor, as-of, audit-only, boundary, half-open, slice-mvp-1, slice-snapshot-1, slice-managed-1]
+shape: read
+when:
+  targetEntity: Ledger
+  operation:
+    asOf:
+      operand:
+        all: {}
+      dimension: transactionTime
+      coordinate: "2024-06-01T00:00:00+00:00"
+then:
+  statements:
+    - sql:
+        postgres: select t0.led_id, t0.acct_num, t0.val, t0.in_z, t0.out_z from ledger t0 where t0.in_z <= ? and t0.out_z > ?
+      binds: ["2024-06-01T00:00:00+00:00", "2024-06-01T00:00:00+00:00"]
+  referenceSql: select led_id, acct_num, val, in_z, out_z from ledger where in_z <= '2024-06-01T00:00:00+00:00'::timestamptz and out_z > '2024-06-01T00:00:00+00:00'::timestamptz
+  rows:
+    - { led_id: 1, acct_num: A, val: 150.00, in_z: "2024-06-01T00:00:00+00:00", out_z: infinity }
+    - { led_id: 2, acct_num: B, val: 200.00, in_z: "2024-02-01T00:00:00+00:00", out_z: infinity }
+    - { led_id: 3, acct_num: C, val: 50.00, in_z: "2024-03-01T00:00:00+00:00", out_z: "2024-08-01T00:00:00+00:00" }
+  roundTrips: 1

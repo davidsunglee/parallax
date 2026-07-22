@@ -26,6 +26,7 @@ from reference_harness.dep_graph_check import (
     catalog_graph_consistency_errors,
     check,
     coverage_errors,
+    formation_manifest_errors,
     gated_modules,
     parse_catalog,
     parse_edges,
@@ -142,6 +143,126 @@ def test_catalog_graph_consistency_flags_a_catalogued_but_unedged_module() -> No
 def test_real_catalog_and_graph_are_consistent() -> None:
     markdown = (_SPEC_DIR / "modules.md").read_text(encoding="utf-8")
     assert catalog_graph_consistency_errors(markdown) == []
+
+
+def test_real_formation_manifest_matches_catalog_and_direct_edges() -> None:
+    modules = (_SPEC_DIR / "modules.md").read_text(encoding="utf-8")
+    manifest = (_SPEC_DIR / "m-model-formation.md").read_text(encoding="utf-8")
+    assert formation_manifest_errors(modules, manifest) == []
+
+
+def test_formation_manifest_requires_catalog_owner_and_direct_module_edges() -> None:
+    modules = _catalog_md(
+        [("m-metamodel", "active", "cases"), ("m-model-formation", "active", "cases")],
+        edges=["m-model-formation --> m-metamodel"],
+    )
+    manifest = (
+        "## Authoritative formation manifest\n\n"
+        "| Owner | Rule set | Complete owned Issue Codes | Compiler / facet |"
+        " Required modules | Required facets |\n"
+        "|---|---|---|---|---|---|\n"
+        "| `m-relationship` | required | `relationship-invalid` | `RelationshipFacet` under "
+        "`FacetKey(m-relationship)` | `m-metamodel`, `m-model-formation` | none |\n"
+    )
+    errors = formation_manifest_errors(modules, manifest)
+    assert "formation manifest owner m-relationship is absent from the module catalog" in errors
+    assert (
+        "formation manifest requires missing direct edge m-relationship --> m-metamodel" in errors
+    )
+
+
+def test_formation_manifest_requires_the_complete_authoritative_header() -> None:
+    modules = (_SPEC_DIR / "modules.md").read_text(encoding="utf-8")
+    manifest = (
+        (_SPEC_DIR / "m-model-formation.md")
+        .read_text(encoding="utf-8")
+        .replace(
+            "| Owner | Rule set | Complete owned Issue Codes | Compiler / facet |"
+            " Required modules | Required facets |",
+            "| Owner | Rule set | Compiler / facet | Required modules | Required facets |",
+        )
+    )
+
+    assert formation_manifest_errors(modules, manifest) == [
+        "formation manifest columns must be exactly: owner, rule set, complete owned issue "
+        "codes, compiler / facet, required modules, required facets"
+    ]
+
+
+def test_formation_manifest_checks_rule_set_and_complete_issue_code_ownership() -> None:
+    modules = (_SPEC_DIR / "modules.md").read_text(encoding="utf-8")
+    manifest = (_SPEC_DIR / "m-model-formation.md").read_text(encoding="utf-8")
+    manifest = manifest.replace(
+        "fixed resolver, not a supplied Rule Set",
+        "optional",
+        1,
+    ).replace(
+        "`metamodel-invalid-entity-identity`, `metamodel-duplicate-entity-identity`",
+        "`relationship-invalid-entity-identity`, `metamodel-duplicate-entity-identity`, "
+        "`metamodel-duplicate-entity-identity`",
+        1,
+    )
+
+    errors = formation_manifest_errors(modules, manifest)
+    assert (
+        "formation manifest owner m-metamodel has invalid Rule Set declaration 'optional'" in errors
+    )
+    assert (
+        "formation manifest Issue Code relationship-invalid-entity-identity is not owned by "
+        "m-metamodel" in errors
+    )
+    assert (
+        "formation manifest owner m-metamodel declares Issue Code "
+        "metamodel-duplicate-entity-identity more than once" in errors
+    )
+
+
+def test_formation_manifest_checks_compiler_facet_declarations_and_required_facet_owners() -> None:
+    modules = (_SPEC_DIR / "modules.md").read_text(encoding="utf-8")
+    manifest = (
+        (_SPEC_DIR / "m-model-formation.md")
+        .read_text(encoding="utf-8")
+        .replace(
+            "`TemporalFacet` under `FacetKey(m-temporal-read)`",
+            "`TemporalFacet` under `FacetKey(m-inheritance)`",
+            1,
+        )
+    )
+
+    errors = formation_manifest_errors(modules, manifest)
+    assert (
+        "formation manifest owner m-temporal-read declares facet key owned by m-inheritance"
+        in errors
+    )
+    assert (
+        "formation manifest facet m-inheritance is declared by both m-inheritance and "
+        "m-temporal-read" in errors
+    )
+    assert "formation manifest owner m-opt-lock requires undeclared facet m-temporal-read" in errors
+
+
+def test_formation_manifest_rejects_malformed_required_module_and_facet_cells() -> None:
+    modules = (_SPEC_DIR / "modules.md").read_text(encoding="utf-8")
+    manifest = (_SPEC_DIR / "m-model-formation.md").read_text(encoding="utf-8")
+    manifest = manifest.replace(
+        "`m-metamodel`, `m-model-formation`, `m-inheritance`",
+        "m-metamodel, `m-model-formation`, `m-inheritance`",
+        1,
+    ).replace(
+        "`FacetKey(m-inheritance)`, `FacetKey(m-temporal-read)`",
+        "FacetKey(m-inheritance), `FacetKey(m-temporal-read)`",
+        1,
+    )
+
+    errors = formation_manifest_errors(modules, manifest)
+    assert (
+        "formation manifest owner m-temporal-read has invalid required module declaration "
+        "'m-metamodel'" in errors
+    )
+    assert (
+        "formation manifest owner m-opt-lock has invalid required facet declaration "
+        "'FacetKey(m-inheritance)'" in errors
+    )
 
 
 # --- the coverage gate over the real spec ------------------------------------
@@ -589,8 +710,8 @@ def test_real_corpus_declares_the_two_lifecycle_slices() -> None:
         # COR-30 Phase 1 retags the nine PostgreSQL-capable m-db-error cases
         # (m-db-error-001..009) with slice-snapshot-1 + slice-managed-1 (never
         # slice-mvp-1); both slices already claim m-db-error. The excluded cases stay
-        # untagged (m-temporal-read-018..021 business-only / MariaDB-fallback,
-        # m-read-lock-009 MariaDB-specific). Both counts rise by 9 (272 / 292) and
+        # untagged (m-temporal-read-021 MariaDB-fallback and m-read-lock-009
+        # MariaDB-specific). Both counts rise by 9 (272 / 292) and
         # slice-mvp-1 is unchanged.
         #
         # COR-30 Phase 2 adds the 8 managed-only deferred-load / operation-backed-list
@@ -732,14 +853,14 @@ def test_real_corpus_declares_the_two_lifecycle_slices() -> None:
         # unchanged. Counts at that stage: 197 / 299 / 321.
         #
         # COR-3 Phase 7 review remediation (the binding root-ownership decision:
-        # temporality is family-wide, only the family root may declare `asOfAttributes`)
+        # temporality is family-wide, only the family root may declare `asOfAxes`)
         # authors FOUR new inheritance cases: two `when.model` rejected witnesses
         # (m-inheritance-098, a non-temporal TPH root whose abstract-subtype declares its
         # own axes; m-inheritance-099, a temporal TPCS root whose concrete subtype adds a
         # second axis) and two concrete-target temporal read witnesses (m-inheritance-100,
-        # a TPCS DepositRate read pinning its ROOT-inherited `processingDate`, resolving the
+        # a TPCS DepositRate read pinning its ROOT-inherited `transactionTime`, resolving the
         # strengthened multi-milestone Rate fixture's closed historical row;
-        # m-inheritance-101, a TPH Bond read pinning its ROOT-inherited `businessDate`,
+        # m-inheritance-101, a TPH Bond read pinning its ROOT-inherited `validTime`,
         # composing with the tag predicate). All four are tagged slice-snapshot-1 +
         # slice-managed-1 ONLY (never slice-mvp-1), so both counts rise by 4:
         # 299 -> 303, 321 -> 325; slice-mvp-1 is unchanged. Counts at that stage:

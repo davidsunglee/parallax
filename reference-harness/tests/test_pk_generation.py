@@ -1,7 +1,7 @@
 """Unit tests for the PK-generation oracle (case_runner._assert_pk_allocation).
 
 The oracle re-derives the allocated primary keys and the advanced sequence
-counter from the DECLARED pkGenerator config and asserts them against the real
+counter from the DECLARED pkGeneration config and asserts them against the real
 DB state. These tests pin the pure derivation math and the failure path.
 """
 
@@ -235,7 +235,7 @@ def test_pkgen_sequence_increment_amount_corruption_is_rejected() -> None:
 
 
 def test_pkgen_temporal_composition_targets_the_temporal_entity() -> None:
-    """The sequence oracle resolves the AUDIT-ONLY temporal entity as its target.
+    """The sequence oracle resolves the Transaction-Time-Only entity as its target.
 
     `m-pk-gen-014` composes a `sequence`-strategy PK with an audit-only temporal
     entity: the registry advance (AuditSeq, a Family-A `increment`) and the
@@ -250,8 +250,8 @@ def test_pkgen_temporal_composition_targets_the_temporal_entity() -> None:
     entity, gen, pk_attr = target
     assert entity.name == "AuditEntry"
     # The target is audit-only temporal: it carries a processing as-of axis.
-    assert any(axis["axis"] == "processing" for axis in entity.as_of_attributes)
-    assert gen["sequenceName"] == "entry_seq"
+    assert any(axis["dimension"] == "transactionTime" for axis in entity.temporal_runtime_axes)
+    assert gen["name"] == "entry_seq"
     assert pk_attr["column"] == "id"
 
 

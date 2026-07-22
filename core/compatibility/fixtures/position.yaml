@@ -4,44 +4,44 @@
 # Keyed by class name; each row is a map of attribute-name -> value. Instant
 # columns are authored as ISO-8601 UTC strings; the open upper bound is the
 # literal `infinity`. The loader resolves attribute names to columns via the
-# descriptor (businessFrom/businessTo -> from_z/thru_z, processingFrom/
-# processingTo -> in_z/out_z).
+# descriptor (valid_start/valid_end -> from_z/thru_z, tx_start/
+# tx_end -> in_z/out_z).
 #
 # The history of position id 1 (acct A) records ONE business value that was first
 # BELIEVED to be 90, then CORRECTED (known as of processing 2024-04-01) via a
 # rectangle split into 100 before business 2024-06-01 and 200 from 2024-06-01 on:
 #
 #   R1  value 90   business [2024-01-01, infinity)     processing [2024-01-01, 2024-04-01)
-#       — the original belief, SUPERSEDED on the processing axis (out_z finite).
+#       — the original belief, SUPERSEDED on the Transaction-Time dimension (out_z finite).
 #   R2  value 100  business [2024-01-01, 2024-06-01)   processing [2024-04-01, infinity)
-#       — the rectangle-split HEAD: still 100 before the business window, CURRENT.
+#       — the rectangle-split HEAD: still 100 before the Valid-Time window, CURRENT.
 #   R3  value 200  business [2024-06-01, infinity)     processing [2024-04-01, infinity)
 #       — the corrected value from business 2024-06-01 onward, CURRENT.
 #
 # Both-axis reads discriminate, each returning a DISTINCT value:
-#   business=now  & processing=now  -> R3 (200): true now AND known now.
-#   business=2024-03-01 & proc=now  -> R2 (100): the head, still current.
+#   validTime=Latest  & transactionTime=Latest  -> R3 (200): true now AND known now.
+#   business=2024-03-01 & transactionTime=Latest  -> R2 (100): the head, still current.
 #   business=2024-03-01 & proc=2024-02-01 -> R1 (90): what the system BELIEVED
 #       on 2024-02-01 about business 2024-03-01 — the audit (processing) axis.
 Position:
   - id: 1
     acctNum: A
     value: 90.00
-    businessFrom: "2024-01-01T00:00:00+00:00"
-    businessTo: infinity
-    processingFrom: "2024-01-01T00:00:00+00:00"
-    processingTo: "2024-04-01T00:00:00+00:00"
+    valid_start: "2024-01-01T00:00:00+00:00"
+    valid_end: infinity
+    tx_start: "2024-01-01T00:00:00+00:00"
+    tx_end: "2024-04-01T00:00:00+00:00"
   - id: 1
     acctNum: A
     value: 100.00
-    businessFrom: "2024-01-01T00:00:00+00:00"
-    businessTo: "2024-06-01T00:00:00+00:00"
-    processingFrom: "2024-04-01T00:00:00+00:00"
-    processingTo: infinity
+    valid_start: "2024-01-01T00:00:00+00:00"
+    valid_end: "2024-06-01T00:00:00+00:00"
+    tx_start: "2024-04-01T00:00:00+00:00"
+    tx_end: infinity
   - id: 1
     acctNum: A
     value: 200.00
-    businessFrom: "2024-06-01T00:00:00+00:00"
-    businessTo: infinity
-    processingFrom: "2024-04-01T00:00:00+00:00"
-    processingTo: infinity
+    valid_start: "2024-06-01T00:00:00+00:00"
+    valid_end: infinity
+    tx_start: "2024-04-01T00:00:00+00:00"
+    tx_end: infinity

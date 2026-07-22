@@ -62,7 +62,7 @@ def test_graph_comparison_keeps_bool_out_of_numeric_space() -> None:
     assert not _graphs_equal(actual, expected)
 
 
-def test_graph_comparison_is_order_insensitive_for_nested_to_many_lists() -> None:
+def test_graph_comparison_is_order_insensitive_for_to_many_relationships() -> None:
     actual = {
         "Order": [
             {
@@ -144,14 +144,14 @@ def _items_step(order_by):
 
 
 def test_child_ordering_accepts_rows_in_declared_desc_order():
-    step = _items_step([{"attr": "id", "direction": "desc"}])
+    step = _items_step([{"attribute": "id", "direction": "desc"}])
     buckets = {("Order.items", None): {1: [{"id": 12}, {"id": 11}]}}
     _assert_child_ordering("unit", [step], buckets)  # no raise
 
 
 def test_child_ordering_rejects_rows_out_of_declared_order():
     # Ascending rows are exactly what the DB returns if ORDER BY is dropped.
-    step = _items_step([{"attr": "id", "direction": "desc"}])
+    step = _items_step([{"attribute": "id", "direction": "desc"}])
     buckets = {("Order.items", None): {1: [{"id": 11}, {"id": 12}]}}
     with pytest.raises(CaseFailure):
         _assert_child_ordering("unit", [step], buckets)
@@ -165,7 +165,10 @@ def test_child_ordering_ignores_relationships_without_orderby():
 
 def test_child_ordering_multikey_mixed_direction_with_tiebreak():
     step = _items_step(
-        [{"attr": "quantity", "direction": "desc"}, {"attr": "id", "direction": "asc"}]
+        [
+            {"attribute": "quantity", "direction": "desc"},
+            {"attribute": "id", "direction": "asc"},
+        ]
     )
     # quantity desc, then id asc within the quantity=5 tie.
     buckets = {
@@ -194,7 +197,7 @@ def test_child_ordering_multikey_mixed_direction_with_tiebreak():
 
 
 def test_child_ordering_accepts_empty_bucket():
-    step = _items_step([{"attr": "id", "direction": "desc"}])
+    step = _items_step([{"attribute": "id", "direction": "desc"}])
     _assert_child_ordering("unit", [step], {("Order.items", None): {}})  # no raise
 
 
@@ -236,7 +239,7 @@ def test_child_ordering_skips_to_one_relationship():
         parent_attr="orderId",
         child_attr="id",
         cardinality="many-to-one",
-        order_by=[{"attr": "id", "direction": "desc"}],
+        order_by=[{"attribute": "id", "direction": "desc"}],
         **_broad_hop_kwargs("OrderItem.order"),
     )
     _assert_child_ordering(
@@ -245,20 +248,20 @@ def test_child_ordering_skips_to_one_relationship():
 
 
 def test_child_ordering_places_nulls_last_ascending():
-    step = _items_step([{"attr": "id", "direction": "asc"}])
+    step = _items_step([{"attribute": "id", "direction": "asc"}])
     buckets = {("Order.items", None): {1: [{"id": 10}, {"id": 20}, {"id": None}]}}
     _assert_child_ordering("unit", [step], buckets)  # no raise
 
 
 def test_child_ordering_places_nulls_last_descending():
-    step = _items_step([{"attr": "id", "direction": "desc"}])
+    step = _items_step([{"attribute": "id", "direction": "desc"}])
     # NULLs sort last even for desc: non-null descending, then NULL.
     buckets = {("Order.items", None): {1: [{"id": 20}, {"id": 10}, {"id": None}]}}
     _assert_child_ordering("unit", [step], buckets)  # no raise
 
 
 def test_child_ordering_rejects_nulls_first():
-    step = _items_step([{"attr": "id", "direction": "asc"}])
+    step = _items_step([{"attribute": "id", "direction": "asc"}])
     buckets = {("Order.items", None): {1: [{"id": None}, {"id": 10}, {"id": 20}]}}
     with pytest.raises(CaseFailure):
         _assert_child_ordering("unit", [step], buckets)
@@ -266,7 +269,10 @@ def test_child_ordering_rejects_nulls_first():
 
 def test_child_ordering_null_vs_null_tiebreak_by_next_key():
     step = _items_step(
-        [{"attr": "quantity", "direction": "asc"}, {"attr": "id", "direction": "asc"}]
+        [
+            {"attribute": "quantity", "direction": "asc"},
+            {"attribute": "id", "direction": "asc"},
+        ]
     )
     # Both NULL on key 1 → equal there → tiebroken by id asc.
     ok = {("Order.items", None): {1: [{"id": 11, "quantity": None}, {"id": 13, "quantity": None}]}}
@@ -278,7 +284,7 @@ def test_child_ordering_null_vs_null_tiebreak_by_next_key():
 
 def test_child_ordering_rejects_unprojected_orderby_key():
     # orderBy key 'sku' is not present in the returned rows → cannot verify.
-    step = _items_step([{"attr": "sku", "direction": "asc"}])
+    step = _items_step([{"attribute": "sku", "direction": "asc"}])
     buckets = {("Order.items", None): {1: [{"id": 11}, {"id": 12}]}}
     with pytest.raises(CaseFailure):
         _assert_child_ordering("unit", [step], buckets)
@@ -288,10 +294,18 @@ def test_policy_model_is_temporal_and_relational():
     model = load_model(COMPATIBILITY_ROOT, "models/policy.yaml")
     coverage = model.entity("Coverage")
     assert coverage.is_temporal
-    assert {a["axis"] for a in coverage.as_of_attributes} == {"business", "processing"}
-    assert coverage.relationship_by_name("policy")["cardinality"] == "many-to-one"
-    assert model.entity("Policy").relationship_by_name("coverages")["relatedEntity"] == "Coverage"
-    assert coverage.relationship_by_name("claims")["cardinality"] == "one-to-many"
+    assert {a["dimension"] for a in coverage.temporal_runtime_axes} == {
+        "validTime",
+        "transactionTime",
+    }
+    assert coverage.relationship_metadata_by_name("policy")["cardinality"] == "many-to-one"
+    assert (
+        model.entity("Policy").relationship_metadata_by_name("coverages")["join"]["target"][
+            "entity"
+        ]
+        == "parallax.compatibility.Coverage"
+    )
+    assert coverage.relationship_metadata_by_name("claims")["cardinality"] == "one-to-many"
 
 
 def _policy_model():
@@ -306,7 +320,7 @@ def test_expected_suffix_both_latest():
 
 def test_expected_suffix_business_past_processing_latest():
     coverage = _policy_model().entity("Coverage")
-    pins = {"business": "2024-03-01T00:00:00+00:00"}  # processing defaults to latest
+    pins = {"validTime": "2024-03-01T00:00:00+00:00"}  # processing defaults to latest
     assert _expected_asof_suffix(coverage, pins) == [
         "2024-03-01T00:00:00+00:00",
         "2024-03-01T00:00:00+00:00",
@@ -316,7 +330,7 @@ def test_expected_suffix_business_past_processing_latest():
 
 def test_expected_suffix_business_latest_processing_past():
     coverage = _policy_model().entity("Coverage")
-    pins = {"processing": "2024-02-01T00:00:00+00:00"}  # business defaults to latest
+    pins = {"transactionTime": "2024-02-01T00:00:00+00:00"}  # business defaults to latest
     assert _expected_asof_suffix(coverage, pins) == [
         "infinity",
         "2024-02-01T00:00:00+00:00",
@@ -326,7 +340,10 @@ def test_expected_suffix_business_latest_processing_past():
 
 def test_expected_suffix_both_past_is_business_first():
     coverage = _policy_model().entity("Coverage")
-    pins = {"business": "2024-03-01T00:00:00+00:00", "processing": "2024-02-01T00:00:00+00:00"}
+    pins = {
+        "validTime": "2024-03-01T00:00:00+00:00",
+        "transactionTime": "2024-02-01T00:00:00+00:00",
+    }
     assert _expected_asof_suffix(coverage, pins) == [
         "2024-03-01T00:00:00+00:00",
         "2024-03-01T00:00:00+00:00",
@@ -342,7 +359,7 @@ def test_expected_suffix_processing_only_latest():
 
 def test_expected_suffix_non_temporal_child_is_empty():
     note = load_model(COMPATIBILITY_ROOT, "models/lease.yaml").entity("LeaseNote")
-    assert _expected_asof_suffix(note, {"processing": "2024-02-01T00:00:00+00:00"}) == []
+    assert _expected_asof_suffix(note, {"transactionTime": "2024-02-01T00:00:00+00:00"}) == []
 
 
 def test_root_pins_reads_nested_asof_by_axis():
@@ -351,8 +368,8 @@ def test_root_pins_reads_nested_asof_by_axis():
         COMPATIBILITY_ROOT / "cases" / "m-navigate-015-deepfetch-temporal-both-past.yaml",
     )
     assert _root_asof_pins(case) == {
-        "business": "2024-03-01T00:00:00+00:00",
-        "processing": "2024-02-01T00:00:00+00:00",
+        "validTime": "2024-03-01T00:00:00+00:00",
+        "transactionTime": "2024-02-01T00:00:00+00:00",
     }
 
 
@@ -360,14 +377,14 @@ def test_root_pins_peels_result_directives_before_asof():
     # m-navigate-024 wraps the temporal root in `limit(orderBy(asOf(asOf(all))))`. The pin
     # collector MUST descend past the result directives first (exactly as the root
     # compile peels distinct/orderBy/limit before the temporal wrappers); otherwise a
-    # directive-wrapped root seeds NO pins and the child wrongly defaults to now.
+    # directive-wrapped root seeds NO pins and the child wrongly defaults to Latest.
     case = load_case(
         COMPATIBILITY_ROOT,
         COMPATIBILITY_ROOT / "cases" / "m-navigate-024-deepfetch-temporal-ordered-root.yaml",
     )
     assert _root_asof_pins(case) == {
-        "business": "2024-03-01T00:00:00+00:00",
-        "processing": "now",
+        "validTime": "2024-03-01T00:00:00+00:00",
+        "transactionTime": "latest",
     }
 
 
@@ -529,7 +546,7 @@ def test_existing_non_temporal_deep_fetch_still_passes():
 _EARLY_PIN = "2024-01-01T00:00:00+00:00"
 _LATE_PIN = "2024-04-01T00:00:00+00:00"
 _EARLY_GRAPH = {
-    "pin": {"processingDate": _EARLY_PIN},
+    "pin": {"transactionTime": _EARLY_PIN},
     "graph": {
         "InvoiceLine": [
             {"id": 1000, "invoice_id": 100, "amount": 50.00, "in_z": _EARLY_PIN, "out_z": _LATE_PIN}
@@ -537,7 +554,7 @@ _EARLY_GRAPH = {
     },
 }
 _LATE_GRAPH = {
-    "pin": {"processingDate": _LATE_PIN},
+    "pin": {"transactionTime": _LATE_PIN},
     "graph": {
         "InvoiceLine": [
             {"id": 1000, "invoice_id": 100, "amount": 75.00, "in_z": _LATE_PIN, "out_z": "infinity"}
@@ -584,7 +601,7 @@ def _invoice_graphs_case(graphs: list[dict[str, Any]]) -> Case:
             "operation": {
                 "history": {
                     "operand": {"eq": {"attr": "InvoiceLine.id", "value": 1000}},
-                    "asOfAttr": "InvoiceLine.processingDate",
+                    "dimension": "transactionTime",
                 }
             },
         },

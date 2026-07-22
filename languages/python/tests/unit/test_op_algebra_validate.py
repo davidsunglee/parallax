@@ -216,7 +216,14 @@ def test_narrow_entity_outside_relationship_target_rejects() -> None:
 
 
 def test_narrow_within_relationship_target_accepts() -> None:
-    op = Exists(rel="Person.pets", op=Narrow(entity="Pet", to=("Dog",), operand=All()))
+    op = Exists(
+        rel="Person.pets",
+        op=Narrow(
+            entity="parallax.compatibility.Pet",
+            to=("parallax.compatibility.Dog",),
+            operand=All(),
+        ),
+    )
     validate_operation("Person", op, _ANIMAL)  # no raise
 
 
@@ -585,18 +592,20 @@ def test_negation_and_grouping_and_result_shaping_wrappers_propagate() -> None:
     assert exc.rule == "find-root-value-object"
 
     validate_operation(
-        "Customer", AsOf(operand=good, as_of_attr="Customer.asOf", date="now"), _CUSTOMER
+        "Customer", AsOf(operand=good, dimension="validTime", coordinate="latest"), _CUSTOMER
     )
-    exc = _rejects(AsOf(operand=bad, as_of_attr="Customer.asOf", date="now"), _CUSTOMER, "Customer")
+    exc = _rejects(
+        AsOf(operand=bad, dimension="validTime", coordinate="latest"), _CUSTOMER, "Customer"
+    )
     assert exc.rule == "find-root-value-object"
 
-    validate_operation("Customer", History(operand=good, as_of_attr="Customer.asOf"), _CUSTOMER)
-    exc = _rejects(History(operand=bad, as_of_attr="Customer.asOf"), _CUSTOMER, "Customer")
+    validate_operation("Customer", History(operand=good, dimension="validTime"), _CUSTOMER)
+    exc = _rejects(History(operand=bad, dimension="validTime"), _CUSTOMER, "Customer")
     assert exc.rule == "find-root-value-object"
 
-    range_op = AsOfRange(operand=good, as_of_attr="Customer.asOf", from_="now", to="now")
+    range_op = AsOfRange(operand=good, dimension="validTime", start="2024-01-01", end="2024-02-01")
     validate_operation("Customer", range_op, _CUSTOMER)
-    bad_range = AsOfRange(operand=bad, as_of_attr="Customer.asOf", from_="now", to="now")
+    bad_range = AsOfRange(operand=bad, dimension="validTime", start="2024-01-01", end="2024-02-01")
     exc = _rejects(bad_range, _CUSTOMER, "Customer")
     assert exc.rule == "find-root-value-object"
 

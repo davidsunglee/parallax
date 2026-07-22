@@ -11,21 +11,20 @@
 # exactly once — the domain SET column (address) lists ahead of the derived
 # `version = observed + 1`, gated on the observed version (m-opt-lock ADR 0014).
 #
-# optimisticLocking MUST NOT coexist with asOfAttributes on one entity (metamodel
+# optimisticLocking MUST NOT coexist with asOfAxes on one entity (metamodel
 # invariant), so Subscriber is non-temporal. Row data lives in
 # fixtures/subscriber.yaml (the conflict case loads the version-1 row it updates).
 entity:
   name: Subscriber
   namespace: parallax.compatibility
   table: subscriber
-  mutability: transactional
-  temporal: non-temporal
+  persistence: read-write
   attributes:
     - name: id
       type: int64
       column: id
       primaryKey: true
-      pkGenerator: none
+      pkGeneration: application-assigned
     - name: version
       type: int32
       column: version
@@ -33,8 +32,7 @@ entity:
   valueObjects:
     - name: address
       column: address
-      mapping: json
-      cardinality: one
+      multiplicity: one
       nullable: true
       attributes:
         - name: street
@@ -43,7 +41,7 @@ entity:
           type: string
       valueObjects:
         - name: geo
-          cardinality: one
+          multiplicity: one
           nullable: true
           attributes:
             - name: country

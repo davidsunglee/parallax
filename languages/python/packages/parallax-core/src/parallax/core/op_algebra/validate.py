@@ -37,13 +37,14 @@ Rule provenance:
   and is never a navigation, deep-fetch, or `find()` root — it is reached only
   by value, through its owner.
 
-DAG note: `m-op-algebra` depends only on `m-descriptor` and `m-inheritance`
+DAG note: `m-op-algebra` depends only on `m-metamodel` and `m-inheritance`
 (`modules.md`); it may **not** import `m-value-object` (the same constraint
-`m-sql`'s `sql_gen/_predicate.py` already documents), so the value-object
-structural checks below resolve paths through
-`parallax.core.descriptor.vo_path`'s shared, error-neutral walk — the same one
+`m-sql`'s `sql_gen/_predicate.py` already documents). During the COR-45
+transition `m-metamodel` is temporarily co-located under
+`parallax.core.descriptor`, so the value-object structural checks below resolve
+paths through that package's shared, error-neutral walk — the same one
 `sql_gen/_predicate.py` uses — rather than `parallax.core.value_object`'s
-helpers.
+helpers. COR-46 replaces this transition projection with the accepted interface.
 """
 
 from __future__ import annotations
@@ -191,8 +192,10 @@ def _walk(op: Operation, meta: Metamodel, scope: _PositionScope) -> None:
                 rel, meta, wrong_kind_rule="navigate-value-object-target"
             )
             hop_scope = _PositionScope(
-                effective=frozenset(effective_concrete_subtypes(meta, relationship.related_entity)),
-                relationship_target=relationship.related_entity,
+                effective=frozenset(
+                    effective_concrete_subtypes(meta, relationship.join.target.entity)
+                ),
+                relationship_target=relationship.join.target.entity,
             )
             if inner is not None:
                 _walk(inner, meta, hop_scope)
@@ -223,7 +226,7 @@ def _validate_narrow(
     if scope.relationship_target is not None:
         # Relationship scope does NOT clamp: `entity` MUST name the relationship
         # target exactly, never a broader or other position.
-        if entity != scope.relationship_target:
+        if meta.entity(entity).canonical_name != scope.relationship_target:
             raise OperationRejectedError(
                 "narrow-outside-relationship-target",
                 f"a relationship-scope narrow's `entity` ({entity!r}) must name the "
@@ -265,7 +268,7 @@ def _validate_narrow(
 
 
 def _check_attr_ref(attr_ref: str, meta: Metamodel, scope: _PositionScope) -> None:
-    class_name, _, _attr_name = attr_ref.partition(".")
+    class_name, _, _attr_name = attr_ref.rpartition(".")
     entity = meta.by_name.get(class_name)
     if entity is None:
         if _is_value_object_name_anywhere(meta, class_name):
@@ -295,11 +298,12 @@ def _check_subtype_attribute_scope(meta: Metamodel, entity: Entity, scope: _Posi
 # Navigation / deep-fetch relationship targets (m-value-object contract 4).    #
 # --------------------------------------------------------------------------- #
 def _resolve_relationship(rel_ref: str, meta: Metamodel, *, wrong_kind_rule: str) -> Relationship:
-    class_name, _, member_name = rel_ref.partition(".")
+    class_name, _, member_name = rel_ref.rpartition(".")
     entity = meta.entity(class_name)
-    for relationship in entity.relationships:
-        if relationship.name == member_name:
-            return relationship
+    try:
+        return meta.relationship(entity, member_name)
+    except KeyError:
+        pass
     if find_value_object(entity, member_name) is not None:
         raise OperationRejectedError(
             wrong_kind_rule,
@@ -320,7 +324,7 @@ def _check_deep_fetch_path(path: tuple[PathSegment, ...], meta: Metamodel) -> No
             # implicitly (m-op-algebra `deepFetch` directive) — so only the subset
             # check applies here; there is no separate `entity` to mismatch.
             target_effective = frozenset(
-                effective_concrete_subtypes(meta, relationship.related_entity)
+                effective_concrete_subtypes(meta, relationship.join.target.entity)
             )
             resolved = _resolve_to_set(segment.narrow, meta)
             if not resolved or not resolved <= target_effective:
@@ -328,7 +332,7 @@ def _check_deep_fetch_path(path: tuple[PathSegment, ...], meta: Metamodel) -> No
                     "narrow-outside-relationship-target",
                     f"deep-fetch path narrow {list(segment.narrow)} resolves to "
                     f"{sorted(resolved)}, which is not a non-empty subset of "
-                    f"{relationship.related_entity}'s effective concrete set "
+                    f"{relationship.join.target.entity}'s effective concrete set "
                     f"{sorted(target_effective)}",
                 )
 
@@ -336,10 +340,10 @@ def _check_deep_fetch_path(path: tuple[PathSegment, ...], meta: Metamodel) -> No
 # --------------------------------------------------------------------------- #
 # Nested value-object predicates (m-op-algebra "Nested value-object            #
 # predicates"; resolved against the shared, error-neutral                     #
-# `parallax.core.descriptor.vo_path` walk — the DAG forbids m-op-algebra from  #
-# importing m-value-object, but both it and m-sql already depend on           #
-# m-descriptor, so the walk `sql_gen/_predicate.py` needs too lives there     #
-# rather than staying duplicated (S3 remediation)).                           #
+# transition `parallax.core.descriptor.vo_path` walk — the DAG forbids        #
+# m-op-algebra from importing m-value-object, while COR-45 temporarily        #
+# co-locates m-metamodel with descriptor; the walk `sql_gen/_predicate.py`    #
+# needs too lives there rather than staying duplicated (S3 remediation).      #
 # --------------------------------------------------------------------------- #
 def _is_value_object_name_anywhere(meta: Metamodel, name: str) -> bool:
     return any(find_value_object(entity, name) is not None for entity in meta.entities)

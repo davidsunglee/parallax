@@ -23,7 +23,7 @@ from parallax.core import (
     Predicate,
     Statement,
 )
-from parallax.core.descriptor import AsOfAttribute
+from parallax.core.descriptor import AsOfAxisMetadata
 from parallax.core.op_algebra import All
 
 pytestmark = pytest.mark.unit
@@ -202,54 +202,56 @@ def test_statement_is_a_frozen_value() -> None:
 # class cannot yet DECLARE as-of dimensions (deferred, ledger D-7), so the     #
 # statement's temporal builders are exercised over a Statement carrying the    #
 # corpus-ingested dimensions directly — proving the wrapper-node construction  #
-# (business-outer/processing-inner nesting, LATEST -> now, single-shot).       #
+# (Valid-Time outer/Transaction-Time inner, LATEST -> latest, single-shot).    #
 # --------------------------------------------------------------------------- #
-_PROCESSING = AsOfAttribute(
-    name="processingDate", from_column="in_z", to_column="out_z", axis="processing"
+_TRANSACTION_TIME = AsOfAxisMetadata(
+    dimension="transactionTime", start_attribute="tx_start", end_attribute="tx_end"
 )
-_BUSINESS = AsOfAttribute(
-    name="businessDate", from_column="from_z", to_column="thru_z", axis="business"
+_VALID_TIME = AsOfAxisMetadata(
+    dimension="validTime", start_attribute="valid_start", end_attribute="valid_end"
 )
 
 
 def _balance_stmt() -> Statement:
-    return Statement(target="Balance", predicate=All(), as_of_attributes=(_PROCESSING,))
+    return Statement(target="Balance", predicate=All(), as_of_axes=(_TRANSACTION_TIME,))
 
 
 def _position_stmt() -> Statement:
-    return Statement(target="Position", predicate=All(), as_of_attributes=(_BUSINESS, _PROCESSING))
+    return Statement(
+        target="Position", predicate=All(), as_of_axes=(_VALID_TIME, _TRANSACTION_TIME)
+    )
 
 
 def test_as_of_latest_serializes_the_current_pin_wrapper() -> None:
-    assert _balance_stmt().as_of(processing=LATEST).serialize() == {
-        "asOf": {"operand": {"all": {}}, "asOfAttr": "Balance.processingDate", "date": "now"}
+    assert _balance_stmt().as_of(transaction_time=LATEST).serialize() == {
+        "asOf": {"operand": {"all": {}}, "dimension": "transactionTime", "coordinate": "latest"}
     }
 
 
 def test_as_of_past_instant_normalizes_to_utc_iso() -> None:
     d = dt.datetime(2024, 4, 1, tzinfo=dt.UTC)
-    assert _balance_stmt().as_of(processing=d).serialize() == {
+    assert _balance_stmt().as_of(transaction_time=d).serialize() == {
         "asOf": {
             "operand": {"all": {}},
-            "asOfAttr": "Balance.processingDate",
-            "date": "2024-04-01T00:00:00+00:00",
+            "dimension": "transactionTime",
+            "coordinate": "2024-04-01T00:00:00+00:00",
         }
     }
 
 
-def test_bitemporal_as_of_nests_business_outside_processing() -> None:
-    stmt = _position_stmt().as_of(business=LATEST, processing=LATEST)
+def test_bitemporal_as_of_nests_valid_time_outside_transaction_time() -> None:
+    stmt = _position_stmt().as_of(valid_time=LATEST, transaction_time=LATEST)
     assert stmt.serialize() == {
         "asOf": {
             "operand": {
                 "asOf": {
                     "operand": {"all": {}},
-                    "asOfAttr": "Position.processingDate",
-                    "date": "now",
+                    "dimension": "transactionTime",
+                    "coordinate": "latest",
                 }
             },
-            "asOfAttr": "Position.businessDate",
-            "date": "now",
+            "dimension": "validTime",
+            "coordinate": "latest",
         }
     }
 
@@ -257,50 +259,50 @@ def test_bitemporal_as_of_nests_business_outside_processing() -> None:
 def test_as_of_range_scans_the_window() -> None:
     frm = dt.datetime(2024, 6, 15, tzinfo=dt.UTC)
     to = dt.datetime(2024, 7, 1, tzinfo=dt.UTC)
-    assert _balance_stmt().as_of_range(processing=(frm, to)).serialize() == {
+    assert _balance_stmt().as_of_range(transaction_time=(frm, to)).serialize() == {
         "asOfRange": {
             "operand": {"all": {}},
-            "asOfAttr": "Balance.processingDate",
-            "from": "2024-06-15T00:00:00+00:00",
-            "to": "2024-07-01T00:00:00+00:00",
+            "dimension": "transactionTime",
+            "start": "2024-06-15T00:00:00+00:00",
+            "end": "2024-07-01T00:00:00+00:00",
         }
     }
 
 
-def test_as_of_range_on_the_business_axis() -> None:
+def test_as_of_range_on_valid_time() -> None:
     frm = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
     to = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
-    assert _position_stmt().as_of_range(business=(frm, to)).serialize() == {
+    assert _position_stmt().as_of_range(valid_time=(frm, to)).serialize() == {
         "asOfRange": {
             "operand": {"all": {}},
-            "asOfAttr": "Position.businessDate",
-            "from": "2024-01-01T00:00:00+00:00",
-            "to": "2024-06-01T00:00:00+00:00",
+            "dimension": "validTime",
+            "start": "2024-01-01T00:00:00+00:00",
+            "end": "2024-06-01T00:00:00+00:00",
         }
     }
 
 
 def test_history_wraps_the_predicate() -> None:
-    assert _balance_stmt().history("processing").serialize() == {
-        "history": {"operand": {"all": {}}, "asOfAttr": "Balance.processingDate"}
+    assert _balance_stmt().history("transaction_time").serialize() == {
+        "history": {"operand": {"all": {}}, "dimension": "transactionTime"}
     }
 
 
 def test_temporal_clause_is_single_shot() -> None:
     with pytest.raises(ValueError, match="single-shot"):
-        _balance_stmt().as_of(processing=LATEST).as_of(processing=LATEST)
+        _balance_stmt().as_of(transaction_time=LATEST).as_of(transaction_time=LATEST)
 
 
 def test_temporal_clause_requires_an_axis() -> None:
-    with pytest.raises(ValueError, match="at least one axis"):
+    with pytest.raises(ValueError, match="at least one dimension"):
         _balance_stmt().as_of()
 
 
 def test_undeclared_axis_is_rejected_at_build() -> None:
-    with pytest.raises(ValueError, match="no business axis"):
-        _balance_stmt().as_of(business=LATEST)
+    with pytest.raises(ValueError, match="no valid_time dimension"):
+        _balance_stmt().as_of(valid_time=LATEST)
 
 
 def test_naive_datetime_is_rejected_at_build() -> None:
     with pytest.raises(ValueError, match="naive"):
-        _balance_stmt().as_of(processing=dt.datetime(2024, 4, 1))
+        _balance_stmt().as_of(transaction_time=dt.datetime(2024, 4, 1))

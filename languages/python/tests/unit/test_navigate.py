@@ -19,7 +19,7 @@ from parallax.conformance import models
 from parallax.core import op_algebra as oa
 from parallax.core.descriptor import deserialize
 from parallax.core.dialect import POSTGRES
-from parallax.core.navigate import canonicalize
+from parallax.core.navigate import canonicalize, resolve_relationship
 from parallax.core.sql_gen import compile_read
 
 pytestmark = pytest.mark.unit
@@ -57,6 +57,11 @@ def test_canonicalize_is_identity_for_a_deep_fetch_root_with_no_navigation() -> 
     assert canonicalize(op, ORDERS) is op
 
 
+def test_relationship_resolution_rejects_an_unknown_member() -> None:
+    with pytest.raises(ValueError, match="names no declared relationship"):
+        resolve_relationship("Order.missing", ORDERS)
+
+
 def test_walk_recurses_through_every_wrapping_node_kind() -> None:
     """Robustness/coverage: `_walk` must recurse into every node kind that could
     nest a navigation hop, however unusual the composition — a directive or a
@@ -73,14 +78,14 @@ def test_walk_recurses_through_every_wrapping_node_kind() -> None:
         oa.OrderBy(operand=hop, keys=(oa.OrderKey(attr="Order.id"),)),
         oa.Limit(operand=hop, count=5),
         oa.Distinct(operand=hop),
-        oa.AsOf(operand=hop, as_of_attr="Order.mystery", date="now"),
+        oa.AsOf(operand=hop, dimension="transactionTime", coordinate="latest"),
         oa.AsOfRange(
             operand=hop,
-            as_of_attr="Order.mystery",
-            from_="2024-01-01T00:00:00+00:00",
-            to="2024-02-01T00:00:00+00:00",
+            dimension="transactionTime",
+            start="2024-01-01T00:00:00+00:00",
+            end="2024-02-01T00:00:00+00:00",
         ),
-        oa.History(operand=hop, as_of_attr="Order.mystery"),
+        oa.History(operand=hop, dimension="transactionTime"),
         oa.DeepFetch(operand=hop, paths=()),
     ]
     for op in wrapped_ops:
@@ -157,9 +162,9 @@ def test_bare_hop_with_no_inner_op_gets_only_the_as_of_term() -> None:
 # --------------------------------------------------------------------------- #
 # Temporal target: an explicit root pin propagates verbatim, matched by axis. #
 # --------------------------------------------------------------------------- #
-def test_root_pinned_instant_propagates_to_the_hop_business_axis_first() -> None:
+def test_root_pinned_instant_propagates_to_the_hop_valid_time_first() -> None:
     op = oa.Exists(rel="Policy.coverages")
-    canonical = canonicalize(op, POLICY, root_pins={"business": _B, "processing": _P})
+    canonical = canonicalize(op, POLICY, root_pins={"validTime": _B, "transactionTime": _P})
     where, binds = _where(canonical, POLICY, "Policy")
     assert where == (
         "exists (select 1 from coverage t1 where t1.policy_id = t0.id and "
@@ -170,7 +175,7 @@ def test_root_pinned_instant_propagates_to_the_hop_business_axis_first() -> None
 
 def test_root_pin_on_one_axis_only_still_defaults_the_other_to_latest() -> None:
     op = oa.Exists(rel="Policy.coverages")
-    canonical = canonicalize(op, POLICY, root_pins={"business": _B})
+    canonical = canonicalize(op, POLICY, root_pins={"validTime": _B})
     where, binds = _where(canonical, POLICY, "Policy")
     assert where == (
         "exists (select 1 from coverage t1 where t1.policy_id = t0.id and "
@@ -184,7 +189,7 @@ def test_root_pin_on_one_axis_only_still_defaults_the_other_to_latest() -> None:
 # --------------------------------------------------------------------------- #
 def test_multi_hop_propagates_the_same_root_pin_to_every_hop() -> None:
     op = oa.Exists(rel="Policy.coverages", op=oa.Exists(rel="Coverage.claims"))
-    canonical = canonicalize(op, POLICY, root_pins={"business": _B, "processing": _P})
+    canonical = canonicalize(op, POLICY, root_pins={"validTime": _B, "transactionTime": _P})
     where, binds = _where(canonical, POLICY, "Policy")
     assert where == (
         "exists (select 1 from coverage t1 where t1.policy_id = t0.id and "
@@ -209,31 +214,29 @@ _ZOO_MODEL = {
         {
             "name": "Zoo",
             "table": "zoo",
-            "mutability": "transactional",
-            "temporal": "non-temporal",
             "attributes": [
                 {
                     "name": "id",
                     "type": "int64",
                     "column": "id",
                     "primaryKey": True,
-                    "pkGenerator": "none",
+                    "pkGeneration": "application-assigned",
                 }
             ],
             "relationships": [
                 {
                     "name": "creatures",
-                    "relatedEntity": "Creature",
                     "cardinality": "one-to-many",
-                    "join": "this.id = Creature.zooId",
-                    "foreignKey": "zoo_id",
+                    "join": {
+                        "source": "id",
+                        "target": {"entity": "Creature", "attribute": "zooId"},
+                    },
                 }
             ],
         },
         {
             "name": "Creature",
-            "mutability": "transactional",
-            "temporal": "bitemporal",
+            "table": "lion",
             "inheritance": {
                 "role": "root",
                 "strategy": "table-per-hierarchy",
@@ -245,39 +248,29 @@ _ZOO_MODEL = {
                     "type": "int64",
                     "column": "id",
                     "primaryKey": True,
-                    "pkGenerator": "none",
+                    "pkGeneration": "application-assigned",
                 },
                 {"name": "zooId", "type": "int64", "column": "zoo_id", "nullable": True},
-                {"name": "businessFrom", "type": "timestamp", "column": "from_z"},
-                {"name": "businessTo", "type": "timestamp", "column": "thru_z"},
-                {"name": "processingFrom", "type": "timestamp", "column": "in_z"},
-                {"name": "processingTo", "type": "timestamp", "column": "out_z"},
+                {"name": "valid_start", "type": "timestamp", "column": "from_z"},
+                {"name": "valid_end", "type": "timestamp", "column": "thru_z"},
+                {"name": "tx_start", "type": "timestamp", "column": "in_z"},
+                {"name": "tx_end", "type": "timestamp", "column": "out_z"},
             ],
-            "asOfAttributes": [
+            "asOfAxes": [
                 {
-                    "name": "businessDate",
-                    "fromColumn": "from_z",
-                    "toColumn": "thru_z",
-                    "axis": "business",
-                    "toIsInclusive": False,
-                    "infinity": "infinity",
-                    "default": "now",
+                    "dimension": "validTime",
+                    "startAttribute": "valid_start",
+                    "endAttribute": "valid_end",
                 },
                 {
-                    "name": "processingDate",
-                    "fromColumn": "in_z",
-                    "toColumn": "out_z",
-                    "axis": "processing",
-                    "toIsInclusive": False,
-                    "infinity": "infinity",
-                    "default": "now",
+                    "dimension": "transactionTime",
+                    "startAttribute": "tx_start",
+                    "endAttribute": "tx_end",
                 },
             ],
         },
         {
             "name": "Lion",
-            "table": "lion",
-            "mutability": "transactional",
             "inheritance": {"role": "concrete-subtype", "parent": "Creature", "tagValue": "lion"},
             "attributes": [{"name": "roar", "type": "boolean", "column": "roar", "nullable": True}],
         },

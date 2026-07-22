@@ -32,15 +32,18 @@ export type CaseShape =
 
 /**
  * A canonical module tag from the closed catalog (`core/spec/modules.md`). The
- * catalog is closed, so this is the exact union of the 32 module slugs — adding a
+ * catalog is closed, so this is the exact union of the 37 module slugs — adding a
  * module is one union member.
  */
 export type ModuleTag =
   | "m-core"
+  | "m-metamodel"
+  | "m-model-formation"
   | "m-descriptor"
   | "m-pk-gen"
   | "m-inheritance"
   | "m-value-object"
+  | "m-relationship"
   | "m-op-algebra"
   | "m-agg"
   | "m-sql"
@@ -50,12 +53,14 @@ export type ModuleTag =
   | "m-db-error"
   | "m-navigate"
   | "m-deep-fetch"
+  | "m-snapshot-read"
   | "m-op-list"
   | "m-batch-write"
   | "m-cascade-delete"
   | "m-unit-work"
   | "m-read-lock"
   | "m-auto-retry"
+  | "m-identity-map"
   | "m-process-cache"
   | "m-temporal-read"
   | "m-audit-write"

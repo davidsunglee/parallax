@@ -1,11 +1,11 @@
 # Predicate-selected PLAIN bitemporal UPDATE materializes per resolved row to a
-# processing close + a business-timeline split (m-bitemp-write + m-opt-lock, ADR 0014).
+# Transaction-Time close + a Valid-Time timeline split (m-bitemp-write + m-opt-lock, ADR 0014).
 #
 # Position is bitemporal: a business interval [from_z, thru_z) nested under a processing
 # interval [in_z, out_z). A predicate write cannot collapse — each row's rectangle split
 # depends on its own observed coordinates — so it materializes. For the one resolved row
 # (pos 1, value 200, currently open on both axes) a PLAIN update (no `until`) sets
-# value = 300 from businessFrom = 2024-07-01 to business infinity, processed at
+# value = 300 from validFrom = 2024-07-01 to business infinity, processed at
 # at = 2024-10-01, in three statements:
 #   1. close the current processing row (set out_z = at), gated on key + open out_z +
 #      the observed from_z/in_z — the optimistic coordinate gate (concurrency: optimistic);
@@ -53,7 +53,7 @@ when:
         assignments:
           - { attr: Position.value, value: 300.00 }
         at: "2024-10-01T00:00:00+00:00"
-        businessFrom: "2024-07-01T00:00:00+00:00"
+        validFrom: "2024-07-01T00:00:00+00:00"
       roundTrips: 3
       statements:
         - sql:

@@ -98,7 +98,7 @@ unavailable, the max-sentinel preserves the ordering and current-row predicate
 (it sorts above every finite milestone) at the cost of reintroducing the Y9999
 cliff — an acceptable trade for a dialect that offers no alternative.
 
-**As-of business date is a UTC `timestamp`.** Both temporal axes — processing and
-business — use the `timestamp` (instant) type, UTC-normalized like every other
-instant, so interval math is uniform across axes. A date-granular business date
-is a `timestamp` at UTC midnight by convention.
+**Temporal coordinates are UTC `timestamp` values.** Valid Time and Transaction
+Time both use the `timestamp` instant type, UTC-normalized like every other
+instant, so interval math is uniform across dimensions. A date-granular Valid
+Time coordinate is a `timestamp` at UTC midnight by convention.

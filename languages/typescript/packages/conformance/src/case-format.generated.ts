@@ -8,7 +8,7 @@
  * `git diff --exit-code` gate (`ts:generate-case-types:check`).
  */
 /**
- * The case envelope, grouped as given / when / then. Identity and routing (`model`, `tags`, `lane`) plus the explicit `shape` discriminator and the optional `compileEligibility` declaration (present only to mark a case RUN-ONLY for the compile sweep) stay top-level; everything else is bucketed into `given` (ambient world-state before the action: `fixtures`, `apply`, `fault`), `when` (the action under test and how the client performs it: `operation` | `writeSequence` | `scenario` | `coherence` | `concurrency` | `boundary` | `attempts` | `write`, plus context `uow` / `at` / `observedInZ` / `equivalentEncodings`), and `then` (everything the case asserts: `statements`, `referenceSql`, `rows`, `graph`, `tableState`, `affectedRows`, `errorClass`, `nativeCode`, `outcome`, `rejectedRule`, `roundTrips`, `tolerance`). Every SQL statement — golden or naive — is a `{sql, binds}` statement entry (`$defs/statementEntry`): its `sql` is a dialect-keyed map (`postgres` / `mariadb`) at golden locations (`then.statements`, per-step `statements`) and a plain string at naive locations (`given.apply`); `binds` is authored once per statement and defaults to `[]`. A case is one of nine shapes, named by the required top-level `shape`: a `read` case (a queryable `when.operation`, asserting `then.rows` / `then.graph`); a `writeSequence` case (ordered DML under `when.writeSequence`, asserting `then.tableState`); a `scenario` case (m-unit-work — ordered operation steps under `when.scenario`, golden SQL per step); a `conflict` case (m-opt-lock — a single-attempt optimistic-lock UPDATE asserted by `then.affectedRows`, or an ordered `when.attempts` retry sequence); a `coherence` case (cross-process cache coherence — a two-node sequence under `when.coherence`); an `error` case (m-db-error — `then.errorClass` + `then.nativeCode`, triggered by top-level `then.statements` or a `when.concurrency` choreography); a `concurrencySuccess` case (m-read-lock behavioral read lock — a `when.concurrency` choreography with NO `then.errorClass`); a `boundary` case (m-auto-retry/m-opt-lock bounded automatic retry — `when.boundary` ordered actions + `then.outcome`, on the `api-conformance` lane, carrying no golden SQL); or a `rejected` case (m-value-object / m-op-algebra negative validation — a schema-valid `when.operation` OR a `when.write` a model-aware validator MUST refuse PRE-SQL, naming the violated normative rule in `then.rejectedRule`, carrying no golden SQL). Every case carries an optional `lane` (`harness` default | `api-conformance`): a `harness`-lane case executes as today, while an `api-conformance`-lane case (every boundary case, plus the read-lock matrix reads) is schema-validated by the harness but satisfied by each language's API Conformance Suite.
+ * The case envelope, grouped as given / when / then. Identity and routing (`model`, `tags`, `lane`) plus the explicit `shape` discriminator and the optional `compileEligibility` declaration (present only to mark a case RUN-ONLY for the compile sweep) stay top-level; everything else is bucketed into `given` (ambient world-state before the action: `fixtures`, `apply`, `fault`), `when` (the action under test and how the client performs it: `operation` | `writeSequence` | `scenario` | `coherence` | `concurrency` | `boundary` | `attempts` | `write`, plus context `uow` / `at` / `observedTxStart` / `equivalentEncodings`), and `then` (everything the case asserts: `statements`, `referenceSql`, `rows`, `graph`, `tableState`, `affectedRows`, `errorClass`, `nativeCode`, `outcome`, `rejectedRule`, `roundTrips`, `tolerance`). Every SQL statement — golden or naive — is a `{sql, binds}` statement entry (`$defs/statementEntry`): its `sql` is a dialect-keyed map (`postgres` / `mariadb`) at golden locations (`then.statements`, per-step `statements`) and a plain string at naive locations (`given.apply`); `binds` is authored once per statement and defaults to `[]`. A case is one of nine shapes, named by the required top-level `shape`: a `read` case (a queryable `when.operation`, asserting `then.rows` / `then.graph`); a `writeSequence` case (ordered DML under `when.writeSequence`, asserting `then.tableState`); a `scenario` case (m-unit-work — ordered operation steps under `when.scenario`, golden SQL per step); a `conflict` case (m-opt-lock — a single-attempt optimistic-lock UPDATE asserted by `then.affectedRows`, or an ordered `when.attempts` retry sequence); a `coherence` case (cross-process cache coherence — a two-node sequence under `when.coherence`); an `error` case (m-db-error — `then.errorClass` + `then.nativeCode`, triggered by top-level `then.statements` or a `when.concurrency` choreography); a `concurrencySuccess` case (m-read-lock behavioral read lock — a `when.concurrency` choreography with NO `then.errorClass`); a `boundary` case (m-auto-retry/m-opt-lock bounded automatic retry — `when.boundary` ordered actions + `then.outcome`, on the `api-conformance` lane, carrying no golden SQL); or a `rejected` case (m-value-object / m-op-algebra negative validation — a schema-valid `when.operation` OR a `when.write` a model-aware validator MUST refuse PRE-SQL, naming the violated normative rule in `then.rejectedRule`, carrying no golden SQL). Every case carries an optional `lane` (`harness` default | `api-conformance`): a `harness`-lane case executes as today, while an `api-conformance`-lane case (every boundary case, plus the read-lock matrix reads) is schema-validated by the harness but satisfied by each language's API Conformance Suite.
  */
 export type ParallaxCompatibilityCaseMCaseFormat = {
   [k: string]: unknown;
@@ -72,7 +72,7 @@ export type ParallaxCompatibilityCaseMCaseFormat = {
     fault?: "serialization-failure" | "deadlock" | "lock-wait-timeout" | "optimistic-lock-conflict";
   };
   /**
-   * The action under test and how the client performs it. Exactly one action member is present per shape (`operation` | `writeSequence` | `scenario` | `coherence` | `concurrency` | `boundary` | `attempts`, plus the single-attempt conflict's `write`); the context members (`uow`, `at`, `observedInZ`, `equivalentEncodings`) describe the unit-of-work mode, transaction instant, observed version, and alternate surface encodings.
+   * The action under test and how the client performs it. Exactly one action member is present per shape (`operation` | `writeSequence` | `scenario` | `coherence` | `concurrency` | `boundary` | `attempts`, plus the single-attempt conflict's `write`); the context members (`uow`, `at`, `observedTxStart`, `equivalentEncodings`) describe the unit-of-work mode, transaction instant, observed version, and alternate surface encodings.
    */
   when?: {
     /**
@@ -273,9 +273,9 @@ export type ParallaxCompatibilityCaseMCaseFormat = {
          */
         at?: string;
         /**
-         * conflict RETRY cases (m-opt-lock), temporal-close form. THIS attempt's observed processing-from (`in_z`) — the optimistic gate the attempt binds (`and in_z = ?`). Absent in locking mode.
+         * This temporal-close attempt's observed Transaction-Time start (`in_z`), bound by the optimistic gate. Absent in locking mode.
          */
-        observedInZ?: string;
+        observedTxStart?: string;
         /**
          * The rows this attempt's UPDATE must affect: 0 for the stale-version attempt (conflict), 1 for the fresh-version retry (success). Named to match the single-attempt `then.affectedRows` — no legacy `expected*` vocabulary survives in a migrated case body.
          */
@@ -293,9 +293,9 @@ export type ParallaxCompatibilityCaseMCaseFormat = {
          */
         at?: string;
         /**
-         * conflict RETRY cases (m-opt-lock), temporal-close form. THIS attempt's observed processing-from (`in_z`) — the optimistic gate the attempt binds (`and in_z = ?`). Absent in locking mode.
+         * This temporal-close attempt's observed Transaction-Time start (`in_z`), bound by the optimistic gate. Absent in locking mode.
          */
-        observedInZ?: string;
+        observedTxStart?: string;
         /**
          * The rows this attempt's UPDATE must affect: 0 for the stale-version attempt (conflict), 1 for the fresh-version retry (success). Named to match the single-attempt `then.affectedRows` — no legacy `expected*` vocabulary survives in a migrated case body.
          */
@@ -312,9 +312,9 @@ export type ParallaxCompatibilityCaseMCaseFormat = {
      */
     at?: string;
     /**
-     * conflict cases (m-opt-lock), temporal-close form. The processing-from (`in_z`) the unit of work observed — the optimistic-lock version analogue a TEMPORAL / bitemporal entity gates on. In optimistic mode the close gains the `and in_z = ?` gate bound to this value; ABSENT in locking mode. It is the temporal analogue of a versioned write's `observedVersion`.
+     * The observed Transaction-Time start (`in_z`) used as a temporal optimistic-lock token. Absent in locking mode.
      */
-    observedInZ?: string;
+    observedTxStart?: string;
   };
   /**
    * Everything the case asserts after the action runs: the golden SQL an implementation is expected to emit (`statements`), the naive oracle (`referenceSql`), the observed data (`rows` / `graph` / `tableState`), the counts and codes (`affectedRows` / `errorClass` / `nativeCode` / `roundTrips`), the portable boundary `outcome`, and the numeric-comparison `tolerance`.
@@ -340,7 +340,7 @@ export type ParallaxCompatibilityCaseMCaseFormat = {
     graphs?: [
       {
         /**
-         * The milestone edge coordinate this graph is pinned at, keyed by the as-of ATTRIBUTE name (`processingDate` / `businessDate`) whose value is the milestone's own from-instant (ISO-8601 UTC). Each graph in the array carries its OWN pin — edge-pinning, so a milestone-set read yields independently-pinned graphs, one per milestone, never a shared root pin.
+         * The milestone edge coordinate keyed by `validTime` and/or `transactionTime`; each value is that milestone's own finite start instant.
          */
         pin: {
           [k: string]: string;
@@ -354,7 +354,7 @@ export type ParallaxCompatibilityCaseMCaseFormat = {
       },
       ...{
         /**
-         * The milestone edge coordinate this graph is pinned at, keyed by the as-of ATTRIBUTE name (`processingDate` / `businessDate`) whose value is the milestone's own from-instant (ISO-8601 UTC). Each graph in the array carries its OWN pin — edge-pinning, so a milestone-set read yields independently-pinned graphs, one per milestone, never a shared root pin.
+         * The milestone edge coordinate keyed by `validTime` and/or `transactionTime`; each value is that milestone's own finite start instant.
          */
         pin: {
           [k: string]: string;
@@ -415,7 +415,7 @@ export type ParallaxCompatibilityCaseMCaseFormat = {
       | "serialization-failure"
       | "lock-wait-timeout";
     /**
-     * rejected cases (m-value-object / m-op-algebra / m-inheritance negative validation, resolved Q7 + Q3/Q4). The normative rule the input violates, from a small closed vocabulary a model-aware PRE-SQL validator (and every language implementation) MUST enforce, asserted BEFORE any SQL is emitted. OPERATION rules: `nested-path-first-segment-not-value-object` (a nested path's first segment names no declared value object on the queried entity — m-op-algebra nested-predicate resolver MUST); `nested-path-unknown-member` (an intermediate segment names no declared nested value object, or a leaf names no declared attribute); `nested-literal-type-mismatch` (a nested comparison/membership literal's type differs from the leaf attribute's declared neutral type — m-op-algebra typed-literal MUST); `deep-fetch-value-object-segment` (a `deepFetch` path segment names a value object — m-value-object materialization/navigation contract 4, m-deep-fetch); `navigate-value-object-target` (a `navigate`/`exists`/`notExists` targets a value object — m-value-object contract 4, m-navigate); `find-root-value-object` (a find() is rooted at a value object — m-value-object contract 5). WRITE rules: `write-required-attribute-missing` (a required `nullable:false` attribute is absent at some depth — m-value-object write validation); `write-required-value-object-missing` (a required `nullable:false` nested value object is absent, or a required `many` array is absent — emptiness is fine); `write-value-type-mismatch` (a document field value's type differs from the declared attribute's neutral type). SUBTYPE-WRITE rules (m-inheritance x concrete-subtype writes — a schema-valid neutral write input a model-aware validator MUST refuse pre-SQL because it violates the concrete-subtype write protocol): `subtype-write-set-based-unsupported` (a keyless / predicate-driven write to an inheritance family — a per-object concrete-subtype write is KEYED, so a payload carrying no primary-key attribute denotes an unsupported set-based inheritance write, out of scope for this slice); `subtype-write-metadata-field` (a payload carries a FRAMEWORK-OWNED metadata field — the tag column, `tag`, `tagValue`, or `familyVariant` — which a concrete-subtype write DERIVES from the subtype's tagValue and never accepts as input); `subtype-write-sibling-attribute` (a payload carries an attribute declared on a SIBLING / unrelated concrete branch, so no single concrete subtype in the target's effective set accepts every authored field — the accepted fields are exactly the target's ancestry chain: root + abstract ancestors + own); `abstract-write-target` (a create / update / delete / terminate handle aimed at an ABSTRACT root or abstract subtype — writes are concrete-subtype only). MODEL rules (m-inheritance closed-tree family invariants, one per invariant per resolved Q4): `inheritance-unknown-parent` (a `parent` names no entity in the descriptor); `inheritance-cycle` (parent links form a cycle); `inheritance-missing-root` (the descriptor declares inheritance participants but NO root — a zero-root/abstract-orphan family; distinct from `inheritance-multiple-roots`, which is strictly more than one); `inheritance-multiple-roots` (a family reaches strictly MORE THAN ONE root, or the descriptor declares two roots for one tree; a family has exactly one root, so both zero and more-than-one are rejected, by `inheritance-missing-root` and this rule respectively); `inheritance-concrete-without-abstract-root` (a concrete subtype whose ancestry has no abstract root); `inheritance-abstract-node-with-table` (a `root` / `abstract-subtype` declares a physical table — also caught by the entity `table` conditional); `inheritance-abstract-node-fixture-rows` (fixture rows are keyed to an abstract root / abstract subtype — enforced at fixture load); `inheritance-strategy-redeclared` (a non-root participant redeclares `strategy`); `inheritance-missing-tag-value` (a table-per-hierarchy concrete subtype declares no `tagValue` — the shared table cannot discriminate its rows without one; the per-entity schema leaves `tagValue` optional and delegates its presence-under-table-per-hierarchy to this semantic rule); `inheritance-duplicate-tag-value` (two concrete subtypes in one table-per-hierarchy family share a `tagValue`); `inheritance-inconsistent-hierarchy-table` (table-per-hierarchy concrete subtypes map to different physical tables); `inheritance-tag-on-concrete-subtype-strategy` (a table-per-concrete-subtype family declares a `tag` or `tagValue`); `inheritance-temporal-axes-not-root-owned` (an `abstract-subtype` or `concrete-subtype` declares its own `asOfAttributes` — temporal axes are family-wide metadata that only the root may declare; every descendant inherits the root's complete axis set unchanged, whether the root itself is non-temporal or temporal, so this fires for both a non-temporal root with an axis-declaring descendant and a temporal root whose descendant redeclares, adds, removes, overrides, or shadows an axis); `inheritance-optimistic-locking-not-root-owned` (an `abstract-subtype` or `concrete-subtype` declares its own `optimisticLocking` attribute — the version attribute is family-wide metadata that only the root may declare; every descendant inherits the root's version column unchanged, whether the root itself is versioned or not, so this fires for both a non-versioned root with a version-declaring descendant and a versioned root whose descendant redeclares or adds a second version attribute). NARROW / SUBTYPE-SCOPE operation rules (m-op-algebra × m-inheritance — a schema-valid operation a model-aware validator MUST refuse pre-SQL): `narrow-outside-position` (a `narrow` node's resolved effective concrete-subtype set is not a SUBSET of the ACTIVE polymorphic position — the position threaded into the node, the read's `targetEntity` or the enclosing narrow's resolved set, CLAMPED to (intersected with) the position the node's `entity` names — so narrowing broadens beyond the position in scope, e.g. narrowing to a concrete outside the active set, or a nested narrow broadening back out of the set the enclosing narrow established); `narrow-empty-effective-set` (a `narrow`'s authored `to` list resolves to the EMPTY concrete-subtype set); `subtype-attribute-outside-narrow-scope` (a predicate references a concrete-subtype-declared attribute at a polymorphic position that is not narrowed to that subtype, so the attribute is not available to every concrete in the effective set); `narrow-outside-relationship-target` (a `narrow` in a navigation filter's `op`, or a deep-fetch path segment's `narrow`, either names an `entity` that is not the RELATIONSHIP TARGET exactly — a relationship-scope narrow MUST set `entity` to the target and reach subtypes via `to`, never by naming a broader or other position — or resolves its `to` set to a concrete-subtype set that is NOT a SUBSET of the RELATIONSHIP TARGET's effective concrete set; narrowing a polymorphic relationship to a concrete outside its reachable set, even one sharing the broader family root, is rejected; m-navigate / m-deep-fetch, resolved Q10).
+     * The stable pre-SQL validation rule violated by a rejected case. The closed enum below is authoritative. Model-formation codes distinguish TPH root-owned storage, forbidden TPH descendant tables, TPCS abstract/concrete storage, root-owned temporal axes, root-owned persistence, and root-owned optimistic locking; operation and write codes retain declaration-owned member identity while validating effective applicability.
      */
     rejectedRule?:
       | "nested-path-first-segment-not-value-object"
@@ -436,15 +436,18 @@ export type ParallaxCompatibilityCaseMCaseFormat = {
       | "inheritance-missing-root"
       | "inheritance-multiple-roots"
       | "inheritance-concrete-without-abstract-root"
-      | "inheritance-abstract-node-with-table"
+      | "inheritance-tph-root-table-required"
+      | "inheritance-tph-descendant-table-forbidden"
+      | "inheritance-tpcs-abstract-table-forbidden"
+      | "inheritance-tpcs-concrete-table-required"
       | "inheritance-abstract-node-fixture-rows"
       | "inheritance-strategy-redeclared"
       | "inheritance-missing-tag-value"
       | "inheritance-duplicate-tag-value"
-      | "inheritance-inconsistent-hierarchy-table"
       | "inheritance-tag-on-concrete-subtype-strategy"
       | "inheritance-temporal-axes-not-root-owned"
       | "inheritance-optimistic-locking-not-root-owned"
+      | "inheritance-persistence-not-root-owned"
       | "narrow-outside-position"
       | "narrow-empty-effective-set"
       | "subtype-attribute-outside-narrow-scope"

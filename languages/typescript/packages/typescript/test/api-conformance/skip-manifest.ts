@@ -121,7 +121,7 @@ export const SKIP_MANIFEST: readonly SkippedCase[] = [
   {
     id: "m-value-object-028",
     reason:
-      "temporal-as-of-now-document: a value-object materialization under an `asOf` processing pin. It composes " +
+      "temporal-as-of-Latest-document: a value-object materialization under an `asOf` processing pin. It composes " +
       "two surfaces already exercised — the temporal-read developer surface (temporal.api-conformance.test.ts, " +
       "m-temporal-read-*) and value-object materialization (m-value-object-023/024) — and the composed observable is " +
       "proven end-to-end by the harness run lane (slice-run).",
@@ -135,7 +135,7 @@ export const SKIP_MANIFEST: readonly SkippedCase[] = [
   {
     id: "m-value-object-030",
     reason:
-      "bitemporal-as-of-now-document: a bitemporal (both-axes) value-object materialization; same composition as " +
+      "bitemporal-as-of-Latest-document: a bitemporal (both-axes) value-object materialization; same composition as " +
       "m-value-object-028, proven end-to-end by the harness run lane.",
   },
   {
@@ -169,7 +169,7 @@ export const SKIP_MANIFEST: readonly SkippedCase[] = [
       "bitemporal milestone-chaining write (rectangle split / plain insert-update-terminate / optimistic-gated " +
       "close): the windowed `*Until` and plain `insert`/`update`/`terminate` writes and the optimistic-gated " +
       "inactivation close never mutate in place — they open a fully-current rectangle or close the original on " +
-      "the processing axis and chain milestone rows. " +
+      "the Transaction-Time dimension and chain milestone rows. " +
       "Their DML is proven end-to-end by the reference harness AND the TypeScript conformance runner's run lane " +
       "(slice-run drives @parallax/conformance's write-sequence / conflict plan, grading the resulting tableState " +
       "/ affectedRows), not the developer-surface object API — a developer never authors the milestone-chaining " +

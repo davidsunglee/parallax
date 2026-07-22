@@ -13,77 +13,68 @@ entities:
   - name: Policy
     namespace: parallax.compatibility
     table: policy
-    mutability: transactional
-    temporal: bitemporal
+    persistence: read-write
     attributes:
-      - { name: id, type: int64, column: id, primaryKey: true, pkGenerator: none }
+      - { name: id, type: int64, column: id, primaryKey: true, pkGeneration: application-assigned }
       - { name: name, type: string, column: name, maxLength: 64 }
-      - { name: businessFrom, type: timestamp, column: from_z }
-      - { name: businessTo, type: timestamp, column: thru_z }
-      - { name: processingFrom, type: timestamp, column: in_z }
-      - { name: processingTo, type: timestamp, column: out_z }
-    asOfAttributes:
-      - { name: businessDate, fromColumn: from_z, toColumn: thru_z, axis: business, toIsInclusive: false, infinity: infinity, default: now }
-      - { name: processingDate, fromColumn: in_z, toColumn: out_z, axis: processing, toIsInclusive: false, infinity: infinity, default: now }
+      - { name: valid_start, type: timestamp, column: from_z }
+      - { name: valid_end, type: timestamp, column: thru_z }
+      - { name: tx_start, type: timestamp, column: in_z }
+      - { name: tx_end, type: timestamp, column: out_z }
+    asOfAxes:
+      - { dimension: validTime, startAttribute: valid_start, endAttribute: valid_end }
+      - { dimension: transactionTime, startAttribute: tx_start, endAttribute: tx_end }
     relationships:
       - name: coverages
-        relatedEntity: Coverage
         cardinality: one-to-many
-        join: this.id = Coverage.policyId
-        reverseName: policy
+        join:
+          source: id
+          target: { entity: Coverage, attribute: policyId }
         dependent: true
-        foreignKey: policy_id
     indices:
-      - { name: policy_pk, attributes: [id, businessFrom, processingFrom], unique: true }
+      - { name: policy_pk, attributes: [id, valid_start, tx_start], unique: true }
   - name: Coverage
     namespace: parallax.compatibility
     table: coverage
-    mutability: transactional
-    temporal: bitemporal
+    persistence: read-write
     attributes:
-      - { name: id, type: int64, column: id, primaryKey: true, pkGenerator: none }
+      - { name: id, type: int64, column: id, primaryKey: true, pkGeneration: application-assigned }
       - { name: policyId, type: int64, column: policy_id }
       - { name: amount, type: "decimal(18,2)", column: amount }
-      - { name: businessFrom, type: timestamp, column: from_z }
-      - { name: businessTo, type: timestamp, column: thru_z }
-      - { name: processingFrom, type: timestamp, column: in_z }
-      - { name: processingTo, type: timestamp, column: out_z }
-    asOfAttributes:
-      - { name: businessDate, fromColumn: from_z, toColumn: thru_z, axis: business, toIsInclusive: false, infinity: infinity, default: now }
-      - { name: processingDate, fromColumn: in_z, toColumn: out_z, axis: processing, toIsInclusive: false, infinity: infinity, default: now }
+      - { name: valid_start, type: timestamp, column: from_z }
+      - { name: valid_end, type: timestamp, column: thru_z }
+      - { name: tx_start, type: timestamp, column: in_z }
+      - { name: tx_end, type: timestamp, column: out_z }
+    asOfAxes:
+      - { dimension: validTime, startAttribute: valid_start, endAttribute: valid_end }
+      - { dimension: transactionTime, startAttribute: tx_start, endAttribute: tx_end }
     relationships:
       - name: claims
-        relatedEntity: Claim
         cardinality: one-to-many
-        join: this.id = Claim.coverageId
-        reverseName: coverage
+        join:
+          source: id
+          target: { entity: Claim, attribute: coverageId }
         dependent: true
-        foreignKey: coverage_id
       - name: policy
-        relatedEntity: Policy
-        cardinality: many-to-one
-        join: this.policyId = Policy.id
-        reverseName: coverages
-        foreignKey: policy_id
+        reverseOf: Policy.coverages
     indices:
-      - { name: coverage_pk, attributes: [id, businessFrom, processingFrom], unique: true }
+      - { name: coverage_pk, attributes: [id, valid_start, tx_start], unique: true }
       - { name: coverage_policy, attributes: [policyId], unique: false }
   - name: Claim
     namespace: parallax.compatibility
     table: claim
-    mutability: transactional
-    temporal: bitemporal
+    persistence: read-write
     attributes:
-      - { name: id, type: int64, column: id, primaryKey: true, pkGenerator: none }
+      - { name: id, type: int64, column: id, primaryKey: true, pkGeneration: application-assigned }
       - { name: coverageId, type: int64, column: coverage_id }
       - { name: reserve, type: "decimal(18,2)", column: reserve }
-      - { name: businessFrom, type: timestamp, column: from_z }
-      - { name: businessTo, type: timestamp, column: thru_z }
-      - { name: processingFrom, type: timestamp, column: in_z }
-      - { name: processingTo, type: timestamp, column: out_z }
-    asOfAttributes:
-      - { name: businessDate, fromColumn: from_z, toColumn: thru_z, axis: business, toIsInclusive: false, infinity: infinity, default: now }
-      - { name: processingDate, fromColumn: in_z, toColumn: out_z, axis: processing, toIsInclusive: false, infinity: infinity, default: now }
+      - { name: valid_start, type: timestamp, column: from_z }
+      - { name: valid_end, type: timestamp, column: thru_z }
+      - { name: tx_start, type: timestamp, column: in_z }
+      - { name: tx_end, type: timestamp, column: out_z }
+    asOfAxes:
+      - { dimension: validTime, startAttribute: valid_start, endAttribute: valid_end }
+      - { dimension: transactionTime, startAttribute: tx_start, endAttribute: tx_end }
     indices:
-      - { name: claim_pk, attributes: [id, businessFrom, processingFrom], unique: true }
+      - { name: claim_pk, attributes: [id, valid_start, tx_start], unique: true }
       - { name: claim_coverage, attributes: [coverageId], unique: false }

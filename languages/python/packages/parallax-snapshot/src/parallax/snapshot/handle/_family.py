@@ -1,7 +1,7 @@
 """``parallax.snapshot.handle._family`` — the shared family-descriptor leaf.
 
 Every question of the form "what shape does this entity's FAMILY declare?"
-answers here: the temporal axes (:func:`processing_axis` / :func:`business_axis`),
+answers here: the temporal axes (:func:`transaction_time_axis` / :func:`valid_time_axis`),
 the optimistic-lock version attribute (:func:`version_attribute`), and the
 writable member-to-column map (:func:`members`), plus the small
 ``Class.member`` reference split (:func:`assignment_member`) that resolves an
@@ -26,23 +26,29 @@ Mirrors :mod:`parallax.core.entity._annotations`.
 from __future__ import annotations
 
 from parallax.core import inheritance
-from parallax.core.descriptor import AsOfAttribute, Attribute, Entity, Metamodel
+from parallax.core.descriptor import AsOfAxisMetadata, Attribute, Entity, Metamodel
 
 __all__ = [
     "assignment_member",
-    "business_axis",
+    "axis_columns",
     "members",
-    "processing_axis",
+    "transaction_time_axis",
+    "valid_time_axis",
     "version_attribute",
 ]
 
 
-def processing_axis(declaring: Entity) -> AsOfAttribute:
-    return next(aoa for aoa in declaring.as_of_attributes if aoa.axis == "processing")
+def transaction_time_axis(declaring: Entity) -> AsOfAxisMetadata:
+    return next(axis for axis in declaring.as_of_axes if axis.dimension == "transactionTime")
 
 
-def business_axis(declaring: Entity) -> AsOfAttribute:
-    return next(aoa for aoa in declaring.as_of_attributes if aoa.axis == "business")
+def valid_time_axis(declaring: Entity) -> AsOfAxisMetadata:
+    return next(axis for axis in declaring.as_of_axes if axis.dimension == "validTime")
+
+
+def axis_columns(declaring: Entity, axis: AsOfAxisMetadata) -> tuple[str, str]:
+    by_name = {attribute.name: attribute.column for attribute in declaring.attributes}
+    return by_name[axis.start_attribute], by_name[axis.end_attribute]
 
 
 def version_attribute(declaring: Entity) -> Attribute | None:
@@ -59,7 +65,7 @@ def version_attribute(declaring: Entity) -> Attribute | None:
 
 def assignment_member(attr: str) -> str:
     """The declared member name of an assignment's ``Class.member`` reference."""
-    _, _, member = attr.partition(".")
+    _, _, member = attr.rpartition(".")
     return member
 
 
@@ -71,5 +77,5 @@ def members(meta: Metamodel, entity: Entity) -> dict[str, tuple[str, bool]]:
         attr.name: (attr.column, False) for attr in inheritance.family_attributes(meta, entity)
     }
     for value_object in inheritance.superset_value_objects(meta, (entity.name,)):
-        resolved[value_object.name] = (value_object.column, True)
+        resolved[value_object.name] = (value_object.storage_column, True)
     return resolved

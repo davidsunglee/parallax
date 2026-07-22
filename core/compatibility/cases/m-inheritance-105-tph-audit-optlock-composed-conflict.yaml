@@ -33,7 +33,7 @@ when:
     concurrency: optimistic
   write: { id: 1 }
   at: "2024-09-01T00:00:00+00:00"
-  observedInZ: "2024-01-01T00:00:00+00:00"
+  observedTxStart: "2024-01-01T00:00:00+00:00"
 then:
   statements:
     - sql:

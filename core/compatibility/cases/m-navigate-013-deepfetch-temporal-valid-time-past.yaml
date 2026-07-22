@@ -1,5 +1,5 @@
 # Deep fetch Policy.coverages, business PAST 2024-03-01 / processing LATEST. The
-# business axis propagates as a range, the processing axis as the equality form:
+# Valid-Time dimension propagates as a range, the Transaction-Time dimension as the equality form:
 # child `from_z <= ? and thru_z > ? and out_z = ?` (binds B, B, infinity). At
 # business 2024-03-01 with the current belief, coverage 10 is the HEAD -> 600
 # (C-R2); coverage 20 -> 300.
@@ -19,10 +19,10 @@ when:
           operand:
             asOf:
               operand: { all: {} }
-              asOfAttr: Policy.processingDate
-              date: now
-          asOfAttr: Policy.businessDate
-          date: "2024-03-01T00:00:00+00:00"
+              dimension: transactionTime
+              coordinate: latest
+          dimension: validTime
+          coordinate: "2024-03-01T00:00:00+00:00"
       paths:
         - [{ rel: Policy.coverages }]
 then:

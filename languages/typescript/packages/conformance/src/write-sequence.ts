@@ -82,7 +82,7 @@ interface RawWriteStep {
    */
   readonly rows?: readonly Record<string, unknown>[];
   /**
-   * The transaction / processing instant a TEMPORAL (audit-only) write records —
+   * The Transaction-Time instant a temporal write records —
    * the milestone's `in_z`. The bookkeeping is DERIVED from it (a new milestone
    * opens `in_z = at`, `out_z = infinity`; a close binds `out_z = at`), never
    * authored in `rows`, so the m-audit-write milestone discipline stays under test. Absent on
@@ -90,9 +90,13 @@ interface RawWriteStep {
    */
   readonly at?: string;
   /**
-   * The BUSINESS valid-time end bound a full-bitemporal `*Until` write closes the
+   * The Valid-Time start at which a Bitemporal mutation takes effect.
+   */
+  readonly validFrom?: string;
+  /**
+   * The Valid-Time end bound a Bitemporal `*Until` write closes the
    * window at — the milestone's `thru_z` on the chained rows (m-bitemp-write). A
-   * `updateUntil` / `terminateUntil` bounds the change to `[businessFrom, until)`; a
+   * `updateUntil` / `terminateUntil` bounds the change to `[validFrom, until)`; a
    * plain (unbounded) `update` / `terminate` omits it (the residual window runs to
    * the currently-open row's `thru_z`). Absent on an audit-only step.
    */
@@ -213,10 +217,10 @@ export function buildWriteSequencePlan(loaded: LoadedCase, dialect: Dialect): Wr
   // carries no `when.uow`, so the optimistic intent rides the `m-opt-lock` module tag —
   // the same signal the case declares to claim the gate is under test.
   const gated = loaded.tags.includes("m-opt-lock");
-  // The currently-open (current-on-processing) rows per pk, reconstructed by in-memory
+  // The Transaction-Time-open rows per pk, reconstructed by in-memory
   // replay: a rectangle split's head/tail inserts carry the UNCHANGED columns of the
   // open row (acct_num, the old value) — not present in the mutating step's own ①. A pk
-  // holds a LIST because a split leaves several open business rectangles (head / (middle /)
+  // holds a LIST because a split leaves several open Valid-Time rectangles (head / (middle /)
   // tail), each a candidate for a later same-pk split.
   const openRows = new Map<unknown, ReadonlyMap<string, unknown>[]>();
 
@@ -237,25 +241,25 @@ export function buildWriteSequencePlan(loaded: LoadedCase, dialect: Dialect): Wr
   return { statements };
 }
 
-/** True when the entity carries a processing axis (audit-only milestone chaining). */
+/** True when the entity carries Transaction Time (milestone chaining). */
 function isTemporalEntity(entity: EntityMetadata): boolean {
-  return entity.asOfAttributes().some((axis) => axis.axis === "processing");
+  return entity.asOfAxes().some((axis) => axis.dimension === "transactionTime");
 }
 
 /** True when the entity carries BOTH as-of axes — the full-bitemporal rectangle profile. */
 function isBitemporalEntity(entity: EntityMetadata): boolean {
-  const axes = new Set(entity.asOfAttributes().map((axis) => axis.axis));
-  return axes.has("business") && axes.has("processing");
+  const dimensions = new Set(entity.asOfAxes().map((axis) => axis.dimension));
+  return dimensions.has("validTime") && dimensions.has("transactionTime");
 }
 
 /**
  * The generated rectangle-split statements for one FULL-bitemporal step, each paired
  * with binds DERIVED from the classified ① row, the step instants (`at` / `until`),
  * and the currently-open row reconstructed by replay (`openRows`). A bitemporal write
- * never mutates in place — it closes the original on the PROCESSING axis and chains
- * milestones partitioned on the BUSINESS axis (m-bitemp-write):
+ * never mutates in place — it closes the original in Transaction Time and chains
+ * milestones partitioned in Valid Time (m-bitemp-write):
  *
- *  - `insert` / `insertUntil` open one milestone `[businessFrom, businessTo|until) ×
+ *  - `insert` / `insertUntil` open one milestone `[validFrom, until|infinity) ×
  *    [at, infinity)` and record it as the pk's currently-open row;
  *  - `update` (plain, unbounded) → close + head (old `[from_z, B)`) + new tail (new
  *    `[B, thru_z)`); `updateUntil` (windowed) → close + head + middle (new `[B, until)`)
@@ -275,16 +279,18 @@ function bitemporalStatementsForStep(
   openRows: Map<unknown, ReadonlyMap<string, unknown>[]>,
   gated: boolean,
 ): readonly { sql: string; binds: readonly unknown[] }[] {
-  const business = entity.asOfAttributes().find((axis) => axis.axis === "business");
-  const processing = entity.asOfAttributes().find((axis) => axis.axis === "processing");
-  if (business === undefined || processing === undefined) {
-    throw new Error(`bitemporal write on '${entity.name}' is missing a business/processing axis`);
+  const validTime = entity.asOfAxes().find((axis) => axis.dimension === "validTime");
+  const transactionTime = entity.asOfAxes().find((axis) => axis.dimension === "transactionTime");
+  if (validTime === undefined || transactionTime === undefined) {
+    throw new Error(
+      `bitemporal write on '${entity.name}' is missing a Valid-Time or Transaction-Time dimension`,
+    );
   }
-  const fromZ = business.fromColumn;
-  const thruZ = business.toColumn;
-  const inZ = processing.fromColumn;
-  const outZ = processing.toColumn;
-  const infinity = processing.infinity;
+  const fromZ = validTime.startColumn;
+  const thruZ = validTime.endColumn;
+  const inZ = transactionTime.startColumn;
+  const outZ = transactionTime.endColumn;
+  const infinity = transactionTime.infinity;
   const cols = orderedColumns(entity);
   const target = writeTargetFor(entity, dialect);
   const [rawRow] = step.rows ?? [];
@@ -292,25 +298,32 @@ function bitemporalStatementsForStep(
     throw new Error(`bitemporal write on '${entity.name}' requires a row in its ① input`);
   }
   const row = classifyRow(entity, rawRow);
-  const { at, until } = step;
+  const { at, validFrom, until } = step;
   if (at === undefined) {
     throw new Error(
       `bitemporal write on '${entity.name}' requires an 'at' (the txn instant → in_z)`,
     );
   }
+  if (validFrom === undefined) {
+    throw new Error(`bitemporal write on '${entity.name}' requires a 'validFrom' instant`);
+  }
 
   // A milestone OPEN (insert / insertUntil): the full physical row with `in_z = at`,
-  // `out_z = infinity`, and — for insertUntil — `thru_z = until` (a bounded business
+  // `out_z = infinity`, `from_z = validFrom`, and `thru_z = until` for a bounded Valid-Time
   // window). Record it as the pk's currently-open row for a later rectangle split.
   if (step.mutation === "insert" || step.mutation === "insertUntil") {
     const openBinds = cols.map((column) =>
-      column === inZ
-        ? at
-        : column === outZ
-          ? infinity
-          : column === thruZ && step.mutation === "insertUntil"
-            ? until
-            : row.columns.get(column),
+      column === fromZ
+        ? validFrom
+        : column === inZ
+          ? at
+          : column === outZ
+            ? infinity
+            : column === thruZ
+              ? step.mutation === "insertUntil"
+                ? until
+                : infinity
+              : row.columns.get(column),
     );
     const openRow = new Map(cols.map((column, index) => [column, openBinds[index]]));
     const opened = openRows.get(row.pk);
@@ -324,30 +337,24 @@ function bitemporalStatementsForStep(
   }
 
   // A rectangle SPLIT (update / terminate / updateUntil / terminateUntil): reconstruct the
-  // currently-open row COVERING the mutation's business instant, chain the milestones
+  // currently-open row covering the mutation's Valid-Time instant, chain the milestones
   // around it, then ADVANCE the open-row set (below) so a later same-pk split reconstructs
   // from the new current state — not a stale original.
-  const businessFrom = row.columns.get(fromZ);
-  if (businessFrom === undefined) {
-    throw new Error(
-      `bitemporal ${step.mutation} on '${entity.name}' requires a businessFrom (→ from_z)`,
-    );
-  }
   const openList = openRows.get(row.pk);
   if (openList === undefined || openList.length === 0) {
     throw new Error(
       `bitemporal ${step.mutation} on '${entity.name}' has no prior insert opening pk ${String(row.pk)}`,
     );
   }
-  // The open milestone whose BUSINESS window `[from_z, thru_z)` contains `businessFrom` —
+  // The open milestone whose Valid-Time window `[from_z, thru_z)` contains `validFrom` —
   // the rectangle this split partitions. With one open row (the everyday single-split
   // cases) it is that row; after a prior split there are several, so the covering one is
-  // selected on the business axis (`infinity` the open upper bound).
-  const open = coveringOpenRow(openList, businessFrom, fromZ, thruZ, infinity);
+  // selected in Valid Time (`infinity` is the open upper bound).
+  const open = coveringOpenRow(openList, validFrom, fromZ, thruZ, infinity);
   if (open === undefined) {
     throw new Error(
       `bitemporal ${step.mutation} on '${entity.name}' has no currently-open row covering ` +
-        `businessFrom ${String(businessFrom)} for pk ${String(row.pk)}`,
+        `validFrom ${String(validFrom)} for pk ${String(row.pk)}`,
     );
   }
   const bounded = step.mutation === "updateUntil" || step.mutation === "terminateUntil";
@@ -355,7 +362,7 @@ function bitemporalStatementsForStep(
     throw new Error(`bitemporal ${step.mutation} on '${entity.name}' requires an 'until' bound`);
   }
   // The residual window's upper bound: the explicit `until` for a windowed write, else
-  // the covering row's own `thru_z` (unbounded — runs to that row's business end).
+  // the covering row's own `thru_z` (unbounded — runs to that row's Valid-Time end).
   const windowEnd = bounded ? until : open.get(thruZ);
   // The step's NEW domain values (the value(s) it corrects), i.e. its `set` columns
   // excluding the as-of axis columns — applied only to the new-value milestones.
@@ -367,7 +374,7 @@ function bitemporalStatementsForStep(
     }
   }
   // Build one chained-milestone bind row: the open row's columns (base) with the
-  // business interval [from, thru), fresh processing [at, infinity), and — for a
+  // Valid-Time interval [from, thru), fresh Transaction Time [at, infinity), and — for a
   // new-value milestone — the step's domain overrides.
   const rectangle = (fromValue: unknown, thruValue: unknown, useNew: boolean): readonly unknown[] =>
     cols.map((column) => {
@@ -379,16 +386,16 @@ function bitemporalStatementsForStep(
       return open.get(column);
     });
 
-  const head = rectangle(open.get(fromZ), businessFrom, false); // old value, [from_z, B)
+  const head = rectangle(open.get(fromZ), validFrom, false); // old value, [from_z, B)
   const inserts: (readonly unknown[])[] = [];
   switch (step.mutation) {
     case "update": // plain unbounded: head (old) + new tail (new), no middle/old-tail
-      inserts.push(head, rectangle(businessFrom, windowEnd, true));
+      inserts.push(head, rectangle(validFrom, windowEnd, true));
       break;
     case "updateUntil": // windowed: head (old) + middle (new) + tail (old)
       inserts.push(
         head,
-        rectangle(businessFrom, windowEnd, true),
+        rectangle(validFrom, windowEnd, true),
         rectangle(windowEnd, open.get(thruZ), false),
       );
       break;
@@ -400,7 +407,7 @@ function bitemporalStatementsForStep(
       break;
   }
 
-  // Advance the open-row set: the split row is now closed on the processing axis, and each
+  // Advance the open-row set: the split row is closed in Transaction Time, and each
   // chained milestone (head / (middle /) tail) opens fresh — record them as the pk's
   // currently-open rows so a subsequent same-pk split reconstructs from here.
   const remaining = openList.filter((candidate) => candidate !== open);
@@ -411,7 +418,7 @@ function bitemporalStatementsForStep(
 
   const [closeSql] = auditWriteStatements("terminate", target, { gated });
   const [insertSql] = auditWriteStatements("insert", target);
-  // The inactivating close sets `out_z = at` keyed on the current-on-processing row; a
+  // The inactivating close sets `out_z = at` keyed on the Transaction-Time-open row; a
   // gated close adds the observed rectangle's `(from_z, in_z)` from the open row.
   const closeBinds: readonly unknown[] = gated
     ? [at, row.pk, infinity, open.get(fromZ), open.get(inZ)]
@@ -423,15 +430,15 @@ function bitemporalStatementsForStep(
 }
 
 /**
- * The currently-open milestone whose BUSINESS window `[from_z, thru_z)` contains the
- * mutation instant `businessFrom` — the rectangle a split partitions. The processing
- * axis's `infinity` sentinel is the open upper bound (greater than every finite instant);
+ * The open milestone whose Valid-Time window `[from_z, thru_z)` contains the
+ * mutation instant `validFrom` — the rectangle a split partitions. The
+ * `infinity` sentinel is the open upper bound (greater than every finite instant);
  * finite instants share an ISO-8601 shape, so their lexical order is chronological.
  * Returns `undefined` when no open row covers the instant (a malformed sequence).
  */
 function coveringOpenRow(
   openList: readonly ReadonlyMap<string, unknown>[],
-  businessFrom: unknown,
+  validFrom: unknown,
   fromZ: string,
   thruZ: string,
   infinity: unknown,
@@ -442,9 +449,9 @@ function coveringOpenRow(
     if (right === infinity) return true;
     return String(left) < String(right);
   };
-  // Half-open coverage: `from_z <= businessFrom < thru_z`.
+  // Half-open coverage: `from_z <= validFrom < thru_z`.
   return openList.find(
-    (open) => !before(businessFrom, open.get(fromZ)) && before(businessFrom, open.get(thruZ)),
+    (open) => !before(validFrom, open.get(fromZ)) && before(validFrom, open.get(thruZ)),
   );
 }
 
@@ -476,9 +483,9 @@ function auditStatementsForStep(
     step.mutation as MutationKind,
     writeTargetFor(entity, dialect),
   );
-  const processing = entity.asOfAttributes().find((axis) => axis.axis === "processing");
-  if (processing === undefined) {
-    throw new Error(`temporal write on '${entity.name}' has no processing axis to derive in_z`);
+  const transactionTime = entity.asOfAxes().find((axis) => axis.dimension === "transactionTime");
+  if (transactionTime === undefined) {
+    throw new Error(`temporal write on '${entity.name}' has no Transaction-Time dimension`);
   }
   const { at } = step;
   if (at === undefined) {
@@ -496,15 +503,15 @@ function auditStatementsForStep(
   // bound `out_z = infinity` (both DERIVED, never authored); every other column's
   // value is pulled from the classified row by physical column, in columnOrder.
   const openBinds: readonly unknown[] = orderedColumns(entity).map((column) =>
-    column === processing.fromColumn
+    column === transactionTime.startColumn
       ? at
-      : column === processing.toColumn
-        ? processing.infinity
+      : column === transactionTime.endColumn
+        ? transactionTime.infinity
         : row.columns.get(column),
   );
   // The close sets `out_z = at`, keyed on the still-open current row
   // (`pk and out_z = infinity`).
-  const closeBinds: readonly unknown[] = [at, row.pk, processing.infinity];
+  const closeBinds: readonly unknown[] = [at, row.pk, transactionTime.infinity];
   const binds =
     step.mutation === "insert"
       ? [openBinds]
@@ -891,7 +898,7 @@ function batchTargetFor(entity: EntityMetadata, dialect: Dialect): BatchTarget {
  * Resolve an entity's physical {@link WriteTarget} (table, columns, pk, out_z,
  * in_z). Shared by the write-sequence chaining generator and the conflict-plan
  * temporal gated-close re-derivation (`conflict.ts`), so both derive the close text
- * from ONE resolver (no drift). `fromColumn` (`in_z`) is the derived optimistic gate
+ * from one resolver. `txStartColumn` (`in_z`) is the derived optimistic gate
  * an OPTIMISTIC-mode close binds the observed value on (m-opt-lock).
  */
 export function writeTargetFor(entity: EntityMetadata, dialect: Dialect): WriteTarget {
@@ -902,25 +909,20 @@ export function writeTargetFor(entity: EntityMetadata, dialect: Dialect): WriteT
   if (pk === undefined) {
     throw new Error(`entity '${entity.name}' has no primary key for a write sequence`);
   }
-  // The processing axis's `toColumn` (`out_z`) the close UPDATE sets + keys on, and
-  // its `fromColumn` (`in_z`) the optimistic gate. Absent for a non-temporal entity
-  // (only `insert` is legal there). The BUSINESS axis's `fromColumn` (`from_z`) is the
-  // bitemporal discriminator a gated close on a full-bitemporal entity adds
-  // (m-bitemp-write); absent for an audit-only entity, whose gated close omits it.
-  const processing = entity.asOfAttributes().find((axis) => axis.axis === "processing");
-  const business = entity.asOfAttributes().find((axis) => axis.axis === "business");
+  const transactionTime = entity.asOfAxes().find((axis) => axis.dimension === "transactionTime");
+  const validTime = entity.asOfAxes().find((axis) => axis.dimension === "validTime");
   return {
     table: dialect.quoteIdentifier(entity.table),
     columns,
     pkColumn: dialect.quoteIdentifier(pk.column),
-    ...(processing === undefined
+    ...(transactionTime === undefined
       ? {}
       : {
-          toColumn: dialect.quoteIdentifier(processing.toColumn),
-          fromColumn: dialect.quoteIdentifier(processing.fromColumn),
+          txEndColumn: dialect.quoteIdentifier(transactionTime.endColumn),
+          txStartColumn: dialect.quoteIdentifier(transactionTime.startColumn),
         }),
-    ...(business === undefined
+    ...(validTime === undefined
       ? {}
-      : { businessFromColumn: dialect.quoteIdentifier(business.fromColumn) }),
+      : { validStartColumn: dialect.quoteIdentifier(validTime.startColumn) }),
   };
 }

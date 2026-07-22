@@ -259,7 +259,7 @@ def test_processing_instant_is_captured_once_per_transaction() -> None:
         tx.buffer(KeyedWrite("insert", "Balance", ({"id": 10, "acctNum": "E", "value": 2.00},)))
 
     _run(body, clock=clock, executor=recorder, meta=_BALANCE)
-    assert clock.calls == 1  # one processing instant per transaction (Reladomo's timestamp)
+    assert clock.calls == 1  # one Transaction-Time instant per transaction (Reladomo's timestamp)
     assert [p.tx_instant for p in recorder.plans] == ["2024-06-01T00:00:00+00:00"] * 2
 
 

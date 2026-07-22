@@ -32,6 +32,8 @@ from parallax.core import (
     Field,
     Rel,
     Relationship,
+    RelationshipJoin,
+    RelationshipTarget,
     is_loaded,
     narrowed,
 )
@@ -397,7 +399,6 @@ def test_narrowed_view_key_derives_from_the_paths_own_registry_not_types_own() -
 
         class Pet(Entity, frozen=True, registry=registry_path):
             __parallax__ = EntityConfig(
-                table="pet_path",
                 mutability="transactional",
                 inheritance=FamilyRoot(strategy="table-per-concrete-subtype"),
             )
@@ -426,10 +427,9 @@ def test_narrowed_view_key_derives_from_the_paths_own_registry_not_types_own() -
             id: Attr[int] = Field(primary_key=True, pk_generator="none")
             pets: Rel[tuple[Pet, ...]] = Relationship(
                 cardinality="one-to-many",
-                join="this.id = Pet.ownerId",
-                related_entity="Pet",
-                reverse_name="owner",
-                foreign_key="owner_id",
+                join=RelationshipJoin(
+                    source="id", target=RelationshipTarget(entity="Pet", attribute="ownerId")
+                ),
             )
 
         class Kennel(Entity, frozen=True, registry=registry_path):
@@ -438,10 +438,10 @@ def test_narrowed_view_key_derives_from_the_paths_own_registry_not_types_own() -
             id: Attr[int] = Field(primary_key=True, pk_generator="none")
             owners: Rel[tuple[Owner, ...]] = Relationship(
                 cardinality="one-to-many",
-                join="this.id = Owner.kennelId",
-                related_entity="Owner",
-                reverse_name="kennel",
-                foreign_key="kennel_id",
+                join=RelationshipJoin(
+                    source="id",
+                    target=RelationshipTarget(entity="Owner", attribute="kennelId"),
+                ),
             )
 
         # A genuine multi-hop path: `.pets` (a DYNAMIC second hop, `__getattr__`)
@@ -460,7 +460,6 @@ def test_narrowed_view_key_derives_from_the_paths_own_registry_not_types_own() -
 
         class Pet(Entity, frozen=True, registry=registry_actual):
             __parallax__ = EntityConfig(
-                table="pet_actual",
                 mutability="transactional",
                 inheritance=FamilyRoot(strategy="table-per-concrete-subtype"),
             )
@@ -478,10 +477,9 @@ def test_narrowed_view_key_derives_from_the_paths_own_registry_not_types_own() -
             id: Attr[int] = Field(primary_key=True, pk_generator="none")
             pets: Rel[tuple[Pet, ...]] = Relationship(
                 cardinality="one-to-many",
-                join="this.id = Pet.ownerId",
-                related_entity="Pet",
-                reverse_name="owner",
-                foreign_key="owner_id",
+                join=RelationshipJoin(
+                    source="id", target=RelationshipTarget(entity="Pet", attribute="ownerId")
+                ),
             )
 
         return Dog, Owner
@@ -526,7 +524,6 @@ _COPY_SURVIVAL_REGISTRY = EntityRegistry(parent=None)
 
 class _CopySurvivalPet(Entity, frozen=True, registry=_COPY_SURVIVAL_REGISTRY):
     __parallax__ = EntityConfig(
-        table="copy_survival_pet",
         mutability="transactional",
         inheritance=FamilyRoot(strategy="table-per-concrete-subtype"),
     )
@@ -546,10 +543,10 @@ class _CopySurvivalOwner(Entity, frozen=True, registry=_COPY_SURVIVAL_REGISTRY):
     id: Attr[int] = Field(primary_key=True, pk_generator="none")
     pets: Rel[tuple[_CopySurvivalPet, ...]] = Relationship(
         cardinality="one-to-many",
-        join="this.id = Pet.ownerId",
-        related_entity="Pet",
-        reverse_name="owner",
-        foreign_key="owner_id",
+        join=RelationshipJoin(
+            source="id",
+            target=RelationshipTarget(entity="_CopySurvivalPet", attribute="ownerId"),
+        ),
     )
 
 

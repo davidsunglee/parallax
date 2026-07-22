@@ -4,7 +4,7 @@
  *
  * The as-of predicate is **never written by the user**: it is derived from the
  * entity's as-of model and injected on read. This module owns that derivation as
- * a pure, dialect-agnostic function over resolved axis metadata (the from/to
+ * a pure, dialect-agnostic function over resolved axis metadata (the start/end
  * column expressions, `toIsInclusive`, and the `infinity` sentinel) — it emits no
  * table/alias itself, taking the already-qualified column expressions from its
  * caller, so both the m-sql single-entity read lowering (through the injected
@@ -16,20 +16,21 @@
  *
  *  | pin                         | predicate                         | binds        |
  *  |-----------------------------|-----------------------------------|--------------|
- *  | now / omitted (default)     | `to = ?`                          | `[infinity]` |
- *  | past instant, exclusive     | `from <= ? and to > ?`            | `[d, d]`     |
- *  | past instant, inclusive     | `from <= ? and to >= ?`           | `[d, d]`     |
- *  | range (`asOfRange`)         | `from < ? and to > ?`             | `[to, from]` |
+ *  | Latest / omitted (default)  | `end = ?`                         | `[infinity]` |
+ *  | finite instant, exclusive   | `start <= ? and end > ?`          | `[d, d]`     |
+ *  | finite instant, inclusive   | `start <= ? and end >= ?`         | `[d, d]`     |
+ *  | range (`asOfRange`)         | `start < ? and end > ?`           | `[end,start]`|
  *  | history                     | (no predicate — axis omitted)     | `[]`         |
  *
- * When an entity declares two axes, the injected terms are composed **business
- * axis first, then processing** (the canonical axis order) and `and`-joined; the
+ * When an entity declares two dimensions, the injected terms are composed
+ * **Valid Time first, then Transaction Time** (the canonical dimension order)
+ * and `and`-joined; the
  * whole temporal term is appended **after** any user predicate (so binds read
  * left-to-right: user binds, then the as-of binds).
  */
 
-/** The two temporal axes, in the canonical composition order (business first). */
-export const CANONICAL_AXIS_ORDER = ["business", "processing"] as const;
+/** The two temporal dimensions, in canonical composition order. */
+export const CANONICAL_AXIS_ORDER = ["validTime", "transactionTime"] as const;
 
 /** A temporal axis identity. */
 export type Axis = (typeof CANONICAL_AXIS_ORDER)[number];
@@ -47,12 +48,12 @@ export type AsOfBind = string;
  * these from the metamodel; this module never touches an alias or a metamodel.
  */
 export interface ResolvedAxis {
-  /** Which axis this dimension is (`business` or `processing`). */
-  readonly axis: Axis;
-  /** The alias-qualified `from` column expression (e.g. `t0.from_z`). */
-  readonly fromExpr: string;
-  /** The alias-qualified `to` column expression (e.g. `t0.out_z`). */
-  readonly toExpr: string;
+  /** Which temporal dimension this axis represents. */
+  readonly dimension: Axis;
+  /** The alias-qualified start column expression (e.g. `t0.from_z`). */
+  readonly startExpr: string;
+  /** The alias-qualified end column expression (e.g. `t0.out_z`). */
+  readonly endExpr: string;
   /** `true` when the upper bound is inclusive (`[from, to]`); default `false`. */
   readonly toIsInclusive: boolean;
   /** The axis's open-bound sentinel (`"infinity"`). */
@@ -61,20 +62,20 @@ export interface ResolvedAxis {
 
 /**
  * A pin selecting which milestone(s) a single axis reads:
- *  - `now` — the current row (`to = infinity`);
- *  - `instant` — a past pin (the half-open/closed containment predicate);
+ *  - `latest` — the open-ended row (`end = infinity`);
+ *  - `instant` — a finite pin, including an instant obtained from the current clock;
  *  - `range` — an `asOfRange` overlap scan (`from < to AND to > from`);
  *  - `history` — the full milestone set (no predicate injected for this axis).
  *
- * An axis with no explicit pin **defaults to `now`** (the default-injection rule).
+ * An axis with no explicit pin **defaults to Latest** (the default-injection rule).
  */
 export type AxisPin =
-  | { readonly kind: "now" }
-  | { readonly kind: "instant"; readonly date: AsOfBind }
-  | { readonly kind: "range"; readonly from: AsOfBind; readonly to: AsOfBind }
+  | { readonly kind: "latest" }
+  | { readonly kind: "instant"; readonly coordinate: AsOfBind }
+  | { readonly kind: "range"; readonly start: AsOfBind; readonly end: AsOfBind }
   | { readonly kind: "history" };
 
-/** A per-axis pin map (keyed by axis identity); an absent axis defaults to `now`. */
+/** A per-dimension pin map; an absent declared dimension defaults to Latest. */
 export type AxisPins = Partial<Record<Axis, AxisPin>>;
 
 /** A rendered temporal predicate: the SQL fragment and its ordered binds. */
@@ -87,7 +88,7 @@ export interface AsOfPredicate {
 
 /**
  * Build the injected as-of predicate for an entity's declared axes under a set of
- * pins. Axes are composed in canonical order (business, then processing); each
+ * pins. Axes are composed in canonical order (Valid Time, then Transaction Time); each
  * pinned/defaulted axis contributes its term and binds, a `history` axis
  * contributes nothing. Returns an empty predicate when no axis contributes (every
  * axis is `history`, or the entity is non-temporal).
@@ -97,7 +98,7 @@ export function asOfPredicate(axes: readonly ResolvedAxis[], pins: AxisPins): As
   const terms: string[] = [];
   const binds: AsOfBind[] = [];
   for (const axis of ordered) {
-    const pin = pins[axis.axis] ?? { kind: "now" };
+    const pin = pins[axis.dimension] ?? { kind: "latest" };
     const term = axisTerm(axis, pin);
     if (term === undefined) {
       continue;
@@ -108,9 +109,9 @@ export function asOfPredicate(axes: readonly ResolvedAxis[], pins: AxisPins): As
   return { sql: terms.join(" and "), binds };
 }
 
-/** Order the resolved axes into canonical (business, processing) order. */
+/** Order the resolved axes into canonical dimension order. */
 function orderAxes(axes: readonly ResolvedAxis[]): readonly ResolvedAxis[] {
-  const byAxis = new Map(axes.map((a) => [a.axis, a]));
+  const byAxis = new Map(axes.map((a) => [a.dimension, a]));
   const ordered: ResolvedAxis[] = [];
   for (const axis of CANONICAL_AXIS_ORDER) {
     const found = byAxis.get(axis);
@@ -126,17 +127,16 @@ function axisTerm(axis: ResolvedAxis, pin: AxisPin): AsOfPredicate | undefined {
   switch (pin.kind) {
     case "history":
       return undefined;
-    case "now":
-      // The current-row equality: a single equality against infinity (one bind),
-      // not a two-sided range — the cheapest as-of-now read.
-      return { sql: `${axis.toExpr} = ?`, binds: [axis.infinity] };
+    case "latest":
+      // Latest is the open-ended-row equality, not a finite clock instant.
+      return { sql: `${axis.endExpr} = ?`, binds: [axis.infinity] };
     case "instant": {
       // A past pin: the containment predicate. The upper comparison is `>=` for an
       // inclusive axis (`[from, to]`), `>` for the default half-open (`[from, to)`).
       const upper = axis.toIsInclusive ? ">=" : ">";
       return {
-        sql: `${axis.fromExpr} <= ? and ${axis.toExpr} ${upper} ?`,
-        binds: [pin.date, pin.date],
+        sql: `${axis.startExpr} <= ? and ${axis.endExpr} ${upper} ?`,
+        binds: [pin.coordinate, pin.coordinate],
       };
     }
     case "range":
@@ -144,8 +144,8 @@ function axisTerm(axis: ResolvedAxis, pin: AxisPin): AsOfPredicate | undefined {
       // `milestone.from < window.to AND milestone.to > window.from`. The binds read
       // window end then window start (`from < ?` then `to > ?`).
       return {
-        sql: `${axis.fromExpr} < ? and ${axis.toExpr} > ?`,
-        binds: [pin.to, pin.from],
+        sql: `${axis.startExpr} < ? and ${axis.endExpr} > ?`,
+        binds: [pin.end, pin.start],
       };
   }
 }
@@ -154,7 +154,7 @@ function axisTerm(axis: ResolvedAxis, pin: AxisPin): AsOfPredicate | undefined {
  * The as-of **suffix** binds a temporal child level carries after its `IN`-list
  * (the deep-fetch propagation oracle). Per declared child axis, in canonical
  * order, the propagated value is the root pin for that axis or the child's own
- * default (`now`); `now` lowers to the single `infinity` bind, a past instant to
+ * default (Latest); Latest lowers to the single `infinity` bind, a finite instant to
  * `[d, d]`. A non-temporal child yields `[]`. This mirrors the reference oracle's
  * `_expected_asof_suffix` exactly — the suffix is an **ordered** list (never
  * sorted / reordered).
@@ -170,7 +170,7 @@ export function propagatedSuffixBinds(
 /**
  * The child-level as-of predicate (SQL + binds) for a temporal deep-fetch hop:
  * every declared child axis pinned from the root (matched by axis) or defaulted to
- * `now`. Non-temporal child ⇒ empty predicate.
+ * Latest. Non-temporal child ⇒ empty predicate.
  */
 export function propagatedPredicate(
   childAxes: readonly ResolvedAxis[],
@@ -182,17 +182,19 @@ export function propagatedPredicate(
 /**
  * Map the root pins onto the child's declared axes: an axis the root pinned
  * propagates that pin; an axis the child declares but the root did not pin
- * defaults to `now` (the per-axis default-injection rule). `history`/`range` root
+ * defaults to Latest (the per-axis default-injection rule). `history`/`range` root
  * pins are not part of the propagation oracle (deep fetch propagates only `asOf`
- * pins), so only `now` / `instant` pins carry across; any other child axis
- * defaults to `now`.
+ * pins), so only Latest / finite-instant pins carry across; any other child axis
+ * defaults to Latest.
  */
 function propagate(childAxes: readonly ResolvedAxis[], rootPins: AxisPins): AxisPins {
   const pins: AxisPins = {};
   for (const axis of childAxes) {
-    const rootPin = rootPins[axis.axis];
-    pins[axis.axis] =
-      rootPin && (rootPin.kind === "now" || rootPin.kind === "instant") ? rootPin : { kind: "now" };
+    const rootPin = rootPins[axis.dimension];
+    pins[axis.dimension] =
+      rootPin && (rootPin.kind === "latest" || rootPin.kind === "instant")
+        ? rootPin
+        : { kind: "latest" };
   }
   return pins;
 }

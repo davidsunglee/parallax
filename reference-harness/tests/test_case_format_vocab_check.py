@@ -39,12 +39,12 @@ def test_real_prose_and_schema_vocabularies_match() -> None:
     assert check(_real_markdown(), _real_schema()) == []
 
 
-def test_real_prose_vocabulary_is_the_full_thirty_one_rule_set() -> None:
+def test_real_prose_vocabulary_is_the_full_thirty_four_rule_set() -> None:
     # A sanity floor: the parser found every bulleted group PLUS the
     # comma-separated Model-rules paragraph, not an accidentally-truncated
     # subset (a parsing-anchor regression would silently shrink this).
     prose = prose_rejected_rules(_real_markdown())
-    assert len(prose) == 31
+    assert len(prose) == 34
     assert "inheritance-temporal-axes-not-root-owned" in prose  # the residual-round rule
     assert "inheritance-optimistic-locking-not-root-owned" in prose  # the D-25 rule
     assert "nested-path-first-segment-not-value-object" in prose  # an Operation-rule bullet
@@ -52,8 +52,8 @@ def test_real_prose_vocabulary_is_the_full_thirty_one_rule_set() -> None:
     assert "inheritance-missing-root" in prose  # a Model-rules paragraph entry
 
 
-def test_real_schema_enum_is_the_full_thirty_one_rule_set() -> None:
-    assert len(schema_rejected_rules(_real_schema())) == 31
+def test_real_schema_enum_is_the_full_thirty_four_rule_set() -> None:
+    assert len(schema_rejected_rules(_real_schema())) == 34
 
 
 def test_missing_schema_entry_is_reported() -> None:

@@ -26,6 +26,7 @@ when:
             city: Alesund
             geo:
               country: "NO"
+            phones: []
     - mutation: update
       entity: Customer
       statements: 1
@@ -45,6 +46,7 @@ then:
           city: Alesund
           geo:
             country: "NO"
+          phones: []
     - sql:
         postgres: update customer set address = ? where id = ?
         mariadb: update customer set address = ? where id = ?

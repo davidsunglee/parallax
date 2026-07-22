@@ -1,9 +1,28 @@
-# Metamodel introspection API has a generic reader and a typed layer
+# Accepted metamodel introspection has generic and typed layers
 
-The TypeScript metamodel introspection API (the `m-descriptor` `RelatedFinder` / `ReladomoClassMetaData` analogue) is exposed as two layers over the same descriptor: a generic runtime reader that operates on any parsed metamodel descriptor, and typed accessors generated onto each entity symbol that delegate to it.
+The durable TypeScript decision is to expose two introspection layers over one
+accepted `m-metamodel` graph: a generic reader for arbitrary formed models and
+typed accessors generated onto each Entity symbol. Both layers delegate to the
+same immutable Metadata and facet values; neither treats the serialized
+`m-descriptor` document as the runtime protocol or retains a mirrored descriptor
+graph.
 
-The generic layer is reached through the `Parallax` handle as `px.metamodel`. Given any descriptor that validates against `core/schemas/metamodel.schema.json`, it yields an `EntityMetadata` reader (`px.metamodel.entity("Order")`) with no generated code required. The generator, the canonical serde round-trip, and the `parallax-conformance` adapter all consume arbitrary corpus descriptors that have no generated symbols, so a generic reader is unavoidable; this layer is the shape the Python harness already realizes with its `Entity` / `Model` accessor dataclasses.
+The generic layer is reached through the `Parallax` handle as `px.metamodel`.
+The generator, canonical serde boundary, and conformance adapter require a
+representation-independent reader because they operate without generated
+symbols. The typed layer provides the application-facing convenience surface
+and delegates to that same reader rather than duplicating Metadata.
 
-The typed layer hangs the same reads off the generated entity symbol — `Order.attributes`, `Order.primaryKeyAttributes`, `Order.asOfAttributes`, `Order.relationships`, `Order.attributeByName("status")`, `Order.relationshipByName("lineItems")`, and per-attribute metadata such as `Order.status.column`. It is the application-facing `RelatedFinder` analogue and comes essentially for free because it reuses the query-DSL symbols already generated for the finder surface; it delegates to the generic reader rather than duplicating the descriptor.
+The exact fields, identities, ordering, absence rules, and local-versus-derived
+division come from `core/spec/m-metamodel.md` and its compiled facets, not from
+the descriptor schema. A typed-only design remains unsuitable for tooling; a
+generic-only design remains needlessly awkward for application code.
 
-A typed-only design was rejected because the generator and conformance adapter must read descriptors with no generated symbols. A generic-only design was rejected because it discards the ergonomic typed surface the existing DSL symbols already make available. The introspection metadata each shape exposes is enumerated in the spec directly from the metamodel schema's eight element types (`entity`, `attribute`, `relationship`, `index`, `asOfAttribute`, `valueObject`, `inheritance`, `pkGenerator`), so every field is reachable through the API.
+The currently shipped `Metamodel` / `EntityMetadata` reader still predates the
+complete formation contract, but COR-45 removes its retired Relationship and
+Value Object projection. It preserves the canonical defining/reverse declaration
+union, compiles directional relationship behavior into one Relationship Facet,
+keeps the target solely in the structured join, and exposes Value Object
+`multiplicity` directly. A later TypeScript formation slice must make the
+compiler-produced Metamodel graph the owner of these declarations and facets;
+the reader must delegate to that graph rather than reconstruct it.

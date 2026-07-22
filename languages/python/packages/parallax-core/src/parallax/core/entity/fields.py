@@ -10,12 +10,26 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Any, Literal, cast
+from typing import Any, cast
 
-from parallax.core.descriptor import UNSET, OrderByTerm, PkGenerator, PkStrategy
+from parallax.core.descriptor import (
+    UNSET,
+    OrderByTerm,
+    PkGenerator,
+    PkStrategy,
+    RelationshipCardinality,
+    RelationshipJoin,
+)
 from parallax.core.entity.errors import EntityDefinitionError
 
-__all__ = ["Field", "FieldSpec", "Relationship", "RelationshipSpec"]
+__all__ = [
+    "Field",
+    "FieldSpec",
+    "Relationship",
+    "RelationshipSpec",
+    "ReverseRelationship",
+    "ReverseRelationshipSpec",
+]
 
 # The `pkGenerator` shape (metamodel.schema.json `$defs/pkGenerator`): a bare
 # strategy keyword, or a CLOSED object carrying a `strategy` plus these typed
@@ -133,41 +147,51 @@ def Field(
 
 @dataclass(frozen=True, slots=True)
 class RelationshipSpec:
-    """The declared metadata of one entity relationship."""
+    """The defining branch of a class-authored relationship declaration."""
 
-    cardinality: Literal["one-to-one", "many-to-one", "one-to-many", "many-to-many"]
-    join: str
-    related_entity: str
+    cardinality: RelationshipCardinality
+    join: RelationshipJoin
     name: str | None = None
-    reverse_name: str | None = None
     dependent: bool = False
-    foreign_key: str | None = None
+    order_by: tuple[OrderByTerm, ...] = field(default_factory=tuple)
+
+
+@dataclass(frozen=True, slots=True)
+class ReverseRelationshipSpec:
+    """The reverse branch of a class-authored relationship declaration."""
+
+    reverse_of: str
+    name: str | None = None
     order_by: tuple[OrderByTerm, ...] = field(default_factory=tuple)
 
 
 def Relationship(
     *,
-    cardinality: Literal["one-to-one", "many-to-one", "one-to-many", "many-to-many"],
-    join: str,
-    related_entity: str,
+    cardinality: RelationshipCardinality,
+    join: RelationshipJoin,
     name: str | None = None,
-    reverse_name: str | None = None,
     dependent: bool = False,
-    foreign_key: str | None = None,
     order_by: Sequence[OrderByTerm] | None = None,
 ) -> Any:
-    """Declare an entity relationship's descriptor metadata.
-
-    ``related_entity`` names the target entity explicitly; the ``Rel[T]`` type
-    argument carries only the typed instance surface, not the metamodel identity.
-    """
+    """Declare the defining branch of an entity relationship."""
     return RelationshipSpec(
         cardinality=cardinality,
         join=join,
-        related_entity=related_entity,
         name=name,
-        reverse_name=reverse_name,
         dependent=dependent,
-        foreign_key=foreign_key,
+        order_by=tuple(order_by) if order_by is not None else (),
+    )
+
+
+def ReverseRelationship(
+    *,
+    reverse_of: str,
+    name: str | None = None,
+    order_by: Sequence[OrderByTerm] | None = None,
+) -> Any:
+    """Declare a reverse direction without repeating association facts."""
+    return ReverseRelationshipSpec(
+        reverse_of=reverse_of,
+        name=name,
         order_by=tuple(order_by) if order_by is not None else (),
     )

@@ -2,8 +2,8 @@
 
 A ``ValueObject`` subclass is a frozen, metaclass-light Pydantic model whose
 ``Attr[T]`` fields declare either a scalar neutral-typed member or a nested
-``ValueObject`` subclass (``cardinality: one``) / ``tuple[VOClass, ...]``
-(``cardinality: many``). Its class-level attribute access yields an
+``ValueObject`` subclass (``multiplicity: one``) / ``tuple[VOClass, ...]``
+(``multiplicity: many``). Its class-level attribute access yields an
 :class:`~parallax.core.entity.expressions.ElementAttributeExpr` — an
 ELEMENT-SCOPED expression (no leading entity prefix), valid inside a
 relationship or value-object quantifier's ``where=``/interior predicates
@@ -81,7 +81,7 @@ def VoField(
 class ValueObjectStructure:
     """One ``ValueObject`` class's compiled structure (attributes + nested VOs) —
     the shape a containing entity or value object wraps with its OWN
-    ``name``/``nullable``/``cardinality``/``column`` (a VO class carries no
+    ``name``/``nullable``/``multiplicity``/``column`` (a VO class carries no
     identity of its own; the containing field decides all of that)."""
 
     attributes: tuple[ValueObjectAttribute, ...]
@@ -93,7 +93,7 @@ class VoWireNames:
     """Per-``ValueObject``-class canonical-name <-> python-field-name maps, the
     snapshot node wrapper and the write-row document builder both need.
     ``nested_classes`` maps a NESTED-value-object field's own python name to
-    its declared class (``cardinality: many`` fields keep their ELEMENT
+    its declared class (``multiplicity: many`` fields keep their ELEMENT
     class, not the ``tuple[...]`` wrapper)."""
 
     name_to_py: dict[str, str]
@@ -153,7 +153,7 @@ def _strip_optional(annotation: object) -> object:
     return annotation
 
 
-def vo_instance_validator(py_name: str, vo_class: type, cardinality: str) -> Any:
+def vo_instance_validator(py_name: str, vo_class: type, multiplicity: str) -> Any:
     """A Pydantic ``mode="before"`` field validator enforcing python.md §2's
     value-object input policy: "the VO class instance; never a raw dict".
     Pydantic's own nested-``BaseModel`` field validation happily COERCES a
@@ -175,10 +175,10 @@ def vo_instance_validator(py_name: str, vo_class: type, cardinality: str) -> Any
         # below, even though this validator never reads `cls`.
         if value is None:
             return value
-        if cardinality == "many":
+        if multiplicity == "many":
             if not isinstance(value, tuple):
                 raise TypeError(
-                    f"{py_name}: a cardinality-many value-object member requires a "
+                    f"{py_name}: a multiplicity-many value-object member requires a "
                     f"tuple of {vo_class.__name__!r} instances, not {type(value).__name__!r} "
                     "(never a raw dict/list)"
                 )
@@ -202,8 +202,8 @@ def vo_instance_validator(py_name: str, vo_class: type, cardinality: str) -> Any
 
 
 def vo_field_info(inner: object) -> tuple[type, Literal["one", "many"]] | None:
-    """Whether ``inner`` is a nested ``ValueObject`` subclass (cardinality
-    ``one``) or ``tuple[VOClass, ...]`` (cardinality ``many``) — either bare or
+    """Whether ``inner`` is a nested ``ValueObject`` subclass (multiplicity
+    ``one``) or ``tuple[VOClass, ...]`` (multiplicity ``many``) — either bare or
     wrapped in ``| None`` (a nullable member)."""
     candidate = _strip_optional(inner)
     if isinstance(candidate, type) and issubclass(candidate, ValueObject):
@@ -270,17 +270,17 @@ class ValueObjectMeta(ModelMetaclass):
 
             vo_info = vo_field_info(inner)
             if vo_info is not None:
-                vo_class, cardinality = vo_info
+                vo_class, multiplicity = vo_info
                 nested_classes[py_name] = vo_class
                 namespace[f"_validate_vo_{py_name}"] = vo_instance_validator(
-                    py_name, vo_class, cardinality
+                    py_name, vo_class, multiplicity
                 )
                 sub = structure_of(vo_class)
                 nested.append(
                     NestedValueObject(
                         name=canonical,
                         nullable=spec.nullable,
-                        cardinality=cardinality,
+                        multiplicity=multiplicity,
                         attributes=sub.attributes,
                         value_objects=sub.value_objects,
                     )
@@ -354,9 +354,12 @@ def to_document(value: ValueObject | None) -> dict[str, object] | None:
     the corpus's own narrower document never authors; a member the caller
     explicitly set — even to a value equal to its own default — still renders
     (the same explicit-vs-defaulted distinction ``full_row`` draws). This
-    filtering is UNCONDITIONAL on the member's own descriptor-declared
-    nullability: a DESCRIPTOR-required member the caller never set is OMITTED
-    exactly like an optional one, never coerced into rendering (e.g.
+    A multiplicity-many member is the one exception: ``many`` is never nullable,
+    and its empty tuple default serializes as ``[]`` because an empty array is the
+    sole zero-element representation. For every other member, filtering is
+    unconditional on the descriptor-declared nullability: a DESCRIPTOR-required
+    member the caller never set is OMITTED exactly like an optional one, never
+    coerced into rendering (e.g.
     ``to_document(ContactGeo())`` — every member absent — is ``{}``, not a
     document padded with placeholder nulls). This is deliberate, not an
     oversight: ``parallax.conformance.vo_models`` (e.g. ``ContactPoint``,
@@ -376,10 +379,15 @@ def to_document(value: ValueObject | None) -> dict[str, object] | None:
     if value is None:
         return None
     names = wire_names_of(type(value))
+    many = {
+        nested.name
+        for nested in structure_of(type(value)).value_objects
+        if nested.multiplicity == "many"
+    }
     fields_set = value.model_fields_set
     document: dict[str, object] = {}
     for py_name, canonical in names.py_to_name.items():
-        if py_name not in fields_set:
+        if py_name not in fields_set and canonical not in many:
             continue
         raw = getattr(value, py_name)
         if isinstance(raw, ValueObject):

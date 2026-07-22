@@ -52,8 +52,8 @@ TypeScript implementation migrates its conformance claim to `slice-managed-1`.
   access resolves through operation-backed lists (`m-op-list`).
 
 Neither slice claims the deferred process caches (`m-process-cache`,
-`m-coherence`), aggregation (`m-agg`, `m-sql-agg`), the business-only temporal
-flavor (`m-business-only`), cascade delete (`m-cascade-delete`), MariaDB, or
+`m-coherence`), aggregation (`m-agg`, `m-sql-agg`), the deferred Valid-Time-Only
+formation (legacy module ID `m-business-only`), cascade delete (`m-cascade-delete`), MariaDB, or
 benchmarks (`m-perf-bench`). The `snapshot-history-includes` feature
 (`m-snapshot-read`) is feature-tagged and claimed by neither.
 
@@ -66,7 +66,7 @@ The canonical `describe` claim for `slice-snapshot-1`:
   "schemaVersion": "1", "command": "describe", "status": "ok",
   "adapter": { "language": "reference", "name": "parallax-core", "version": "0.1.0" },
   "capabilities": {
-    "modules": ["m-api-conformance", "m-audit-write", "m-auto-retry", "m-batch-write", "m-bitemp-write", "m-case-format", "m-conformance-adapter", "m-core", "m-db-error", "m-deep-fetch", "m-descriptor", "m-dialect", "m-inheritance", "m-navigate", "m-op-algebra", "m-opt-lock", "m-pk-gen", "m-read-lock", "m-snapshot-read", "m-sql", "m-temporal-read", "m-unit-work", "m-value-object"],
+    "modules": ["m-api-conformance", "m-audit-write", "m-auto-retry", "m-batch-write", "m-bitemp-write", "m-case-format", "m-conformance-adapter", "m-core", "m-db-error", "m-deep-fetch", "m-descriptor", "m-dialect", "m-inheritance", "m-metamodel", "m-model-formation", "m-navigate", "m-op-algebra", "m-opt-lock", "m-pk-gen", "m-read-lock", "m-relationship", "m-snapshot-read", "m-sql", "m-temporal-read", "m-unit-work", "m-value-object"],
     "dialects": ["postgres"],
     "caseShapes": ["read", "writeSequence", "scenario", "conflict", "boundary", "error", "concurrencySuccess", "rejected"],
     "caseTags": { "include": ["slice-snapshot-1"] },
@@ -85,7 +85,7 @@ The canonical `describe` claim for `slice-managed-1`:
   "schemaVersion": "1", "command": "describe", "status": "ok",
   "adapter": { "language": "reference", "name": "parallax-core", "version": "0.1.0" },
   "capabilities": {
-    "modules": ["m-api-conformance", "m-audit-write", "m-auto-retry", "m-batch-write", "m-bitemp-write", "m-case-format", "m-conformance-adapter", "m-core", "m-db-error", "m-deep-fetch", "m-descriptor", "m-detach", "m-dialect", "m-identity-map", "m-inheritance", "m-navigate", "m-op-algebra", "m-op-list", "m-opt-lock", "m-pk-gen", "m-read-lock", "m-sql", "m-temporal-read", "m-unit-work", "m-value-object"],
+    "modules": ["m-api-conformance", "m-audit-write", "m-auto-retry", "m-batch-write", "m-bitemp-write", "m-case-format", "m-conformance-adapter", "m-core", "m-db-error", "m-deep-fetch", "m-descriptor", "m-detach", "m-dialect", "m-identity-map", "m-inheritance", "m-metamodel", "m-model-formation", "m-navigate", "m-op-algebra", "m-op-list", "m-opt-lock", "m-pk-gen", "m-read-lock", "m-relationship", "m-sql", "m-temporal-read", "m-unit-work", "m-value-object"],
     "dialects": ["postgres"],
     "caseShapes": ["read", "writeSequence", "scenario", "conflict", "boundary", "error", "concurrencySuccess", "rejected"],
     "caseTags": { "include": ["slice-managed-1"] },
@@ -113,7 +113,7 @@ the `m-op-list`-tagged cases) and `slice-managed-1`. Delete this claim and the
   "schemaVersion": "1", "command": "describe", "status": "ok",
   "adapter": { "language": "reference", "name": "parallax-core", "version": "0.1.0" },
   "capabilities": {
-    "modules": ["m-api-conformance", "m-audit-write", "m-auto-retry", "m-batch-write", "m-bitemp-write", "m-case-format", "m-conformance-adapter", "m-core", "m-db-error", "m-deep-fetch", "m-descriptor", "m-dialect", "m-navigate", "m-op-algebra", "m-op-list", "m-opt-lock", "m-pk-gen", "m-read-lock", "m-sql", "m-temporal-read", "m-unit-work", "m-value-object"],
+    "modules": ["m-api-conformance", "m-audit-write", "m-auto-retry", "m-batch-write", "m-bitemp-write", "m-case-format", "m-conformance-adapter", "m-core", "m-db-error", "m-deep-fetch", "m-descriptor", "m-dialect", "m-metamodel", "m-model-formation", "m-navigate", "m-op-algebra", "m-op-list", "m-opt-lock", "m-pk-gen", "m-read-lock", "m-relationship", "m-sql", "m-temporal-read", "m-unit-work", "m-value-object"],
     "dialects": ["postgres"],
     "caseShapes": ["read", "writeSequence", "scenario", "conflict", "boundary", "error", "concurrencySuccess", "rejected"],
     "caseTags": { "include": ["slice-mvp-1"] },

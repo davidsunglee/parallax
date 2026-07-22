@@ -49,11 +49,11 @@ export function decodeDocument(raw: unknown): unknown {
  * Project a decoded document slot to its declared value-object shape. A `one`
  * member is a nested object when the slot is a JSON object, else `null`; a `many`
  * member is the collection of its element projections when the slot is a JSON
- * array, else `[]`. Element order within a `many` member is unspecified — the
- * graph comparison grades to-many arrays as an order-insensitive multiset.
+ * array, else `[]`. Element order within a `many` member is semantic and is
+ * preserved exactly from the authored/wire document.
  */
 export function projectValueObject(vo: NormalizedValueObjectMember, decoded: unknown): unknown {
-  if (vo.cardinality === "many") {
+  if (vo.multiplicity === "many") {
     return Array.isArray(decoded) ? decoded.map((element) => projectMembers(vo, element)) : [];
   }
   return isPlainObject(decoded) ? projectMembers(vo, decoded) : null;

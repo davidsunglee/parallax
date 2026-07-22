@@ -67,8 +67,8 @@ function temporalDeepFetchCases(): readonly { id: string; path: string }[] {
  * multi-attribute update `-004` and the update-from-existing-history `-005`; the
  * conflict-shaped gated close `-006` files under the txn compile lane), and the
  * bitemporal reads `m-temporal-read-013`–`-017`. The out-of-V1 `*Until` writes
- * (`m-bitemp-write-*`) and the business-only slice (`m-business-only-*`) are NOT
- * tagged `slice-mvp-1`, so they never discover here. Asserting the exact set fails
+ * (`m-bitemp-write-*`) are NOT tagged `slice-mvp-1`, so they never discover here.
+ * Asserting the exact set fails
  * loudly on a discovery regression.
  */
 const EXPECTED_READ_WRITE_IDS: readonly string[] = [

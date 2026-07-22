@@ -12,7 +12,7 @@
  * string (incl. case-insensitive), membership + empty-normalization, boolean
  * (left-associative + `group` precedence), directives (order-by / limit /
  * distinct), navigation (`exists` / `notExists`, multi-hop), deep fetch, and the
- * temporal axes (`asOf` explicit-now / past instant, `range`, `history`, and
+ * temporal axes (`asOf` explicit-Latest / past instant, `range`, `history`, and
  * both-axis bitemporal ordering).
  */
 import { loadCase } from "@parallax/conformance";
@@ -21,7 +21,6 @@ import { canonicallyEqual } from "@parallax/operation";
 import { describe, expect, it } from "vitest";
 import {
   AttributeExpression,
-  type AxisRefs,
   buildFindOperation,
   NavigationPath,
   Predicate,
@@ -64,17 +63,6 @@ const OrderStatus = { code: attr("OrderStatus.code") };
 const Balance = { id: attr("Balance.id"), all };
 const Position = { id: attr("Position.id"), all };
 const Policy = { coverages: new NavigationPath(["Policy.coverages"]), all };
-
-/** Axis refs for the temporal models (what the typed `find` resolves). */
-const BALANCE_AXES: AxisRefs = { processing: "Balance.processingDate" };
-const POSITION_AXES: AxisRefs = {
-  processing: "Position.processingDate",
-  business: "Position.businessDate",
-};
-const POLICY_AXES: AxisRefs = {
-  processing: "Policy.processingDate",
-  business: "Policy.businessDate",
-};
 
 /** An instant literal from an ISO string (the corpus authors `+00:00` offsets). */
 function at(iso: string): Temporal.Instant {
@@ -173,31 +161,28 @@ const CASES: readonly Row[] = [
   },
   // --- temporal reads ---
   {
-    case: "m-temporal-read-001-as-of-now-defaulted",
+    case: "m-temporal-read-001-as-of-latest-defaulted",
     operation: () => buildFindOperation(Balance.all()),
   },
   {
-    case: "m-temporal-read-002-as-of-now-explicit",
+    case: "m-temporal-read-002-as-of-latest-explicit",
     operation: () =>
       buildFindOperation(Balance.all(), {
-        temporal: { asOf: { processing: "now" } },
-        axisRefs: BALANCE_AXES,
+        temporal: { asOf: { transactionTime: "latest" } },
       }),
   },
   {
     case: "m-temporal-read-003-as-of-past-instant",
     operation: () =>
       buildFindOperation(Balance.all(), {
-        temporal: { asOf: { processing: at("2024-04-01T00:00:00+00:00") } },
-        axisRefs: BALANCE_AXES,
+        temporal: { asOf: { transactionTime: at("2024-04-01T00:00:00+00:00") } },
       }),
   },
   {
     case: "m-temporal-read-004-history",
     operation: () =>
       buildFindOperation(Balance.id.eq(1), {
-        temporal: { history: ["processing"] },
-        axisRefs: BALANCE_AXES,
+        temporal: { history: ["transactionTime"] },
       }),
   },
   {
@@ -206,22 +191,20 @@ const CASES: readonly Row[] = [
       buildFindOperation(Balance.all(), {
         temporal: {
           range: {
-            processing: {
+            transactionTime: {
               start: at("2024-06-15T00:00:00+00:00"),
               end: at("2024-07-01T00:00:00+00:00"),
             },
           },
         },
-        axisRefs: BALANCE_AXES,
       }),
   },
   // --- bitemporal (both-axis ordering: business outside processing) ---
   {
-    case: "m-temporal-read-013-bitemporal-as-of-now-both-axes",
+    case: "m-temporal-read-013-bitemporal-as-of-latest-both-dimensions",
     operation: () =>
       buildFindOperation(Position.all(), {
-        temporal: { asOf: { processing: "now", business: "now" } },
-        axisRefs: POSITION_AXES,
+        temporal: { asOf: { transactionTime: "latest", validTime: "latest" } },
       }),
   },
   {
@@ -230,27 +213,24 @@ const CASES: readonly Row[] = [
       buildFindOperation(Position.all(), {
         temporal: {
           asOf: {
-            processing: at("2024-02-01T00:00:00+00:00"),
-            business: at("2024-03-01T00:00:00+00:00"),
+            transactionTime: at("2024-02-01T00:00:00+00:00"),
+            validTime: at("2024-03-01T00:00:00+00:00"),
           },
         },
-        axisRefs: POSITION_AXES,
       }),
   },
   {
     case: "m-temporal-read-016-bitemporal-history",
     operation: () =>
       buildFindOperation(Position.id.eq(1), {
-        temporal: { history: ["processing", "business"] },
-        axisRefs: POSITION_AXES,
+        temporal: { history: ["transactionTime", "validTime"] },
       }),
   },
   {
-    case: "m-temporal-read-017-bitemporal-omitted-processing-default",
+    case: "m-temporal-read-017-bitemporal-omitted-transaction-time-default",
     operation: () =>
       buildFindOperation(Position.all(), {
-        temporal: { asOf: { business: at("2024-03-01T00:00:00+00:00") } },
-        axisRefs: POSITION_AXES,
+        temporal: { asOf: { validTime: at("2024-03-01T00:00:00+00:00") } },
       }),
   },
   // --- temporal deep fetch (both axes latest, propagated per hop) ---
@@ -258,8 +238,7 @@ const CASES: readonly Row[] = [
     case: "m-navigate-012-deepfetch-temporal-both-latest",
     operation: () =>
       buildFindOperation(Policy.all(), {
-        temporal: { asOf: { processing: "now", business: "now" } },
-        axisRefs: POLICY_AXES,
+        temporal: { asOf: { transactionTime: "latest", validTime: "latest" } },
         includes: [Policy.coverages],
       }),
   },

@@ -239,7 +239,15 @@ def test_tpcs_union_restarts_aliases_per_branch_and_concatenates_binds() -> None
     # this synthetic family is the general witness. (The corpus case above proves
     # only the `t0` base-alias restart, which cannot distinguish a per-branch
     # context from a per-branch alias reset.)
-    from parallax.core.descriptor import Attribute, Entity, Inheritance, Metamodel, Relationship
+    from parallax.core.descriptor import (
+        Attribute,
+        DefiningRelationship,
+        Entity,
+        Inheritance,
+        Metamodel,
+        RelationshipJoin,
+        RelationshipTarget,
+    )
 
     root = Entity(
         name="Doc",
@@ -250,11 +258,12 @@ def test_tpcs_union_restarts_aliases_per_branch_and_concatenates_binds() -> None
             Attribute(name="ownerId", type="int64", column="owner_id", nullable=True),
         ),
         relationships=(
-            Relationship(
+            DefiningRelationship(
                 name="owner",
-                related_entity="Owner",
                 cardinality="many-to-one",
-                join="this.ownerId = Owner.id",
+                join=RelationshipJoin(
+                    source="ownerId", target=RelationshipTarget(entity="Owner", attribute="id")
+                ),
             ),
         ),
     )
@@ -363,13 +372,13 @@ def test_tph_abstract_instance_form_projects_the_value_object_document_last() ->
 
     root = Entity(
         name="Root",
+        table="root_tbl",
         inheritance=Inheritance(role="root", strategy="table-per-hierarchy", tag_column="kind"),
         attributes=(Attribute(name="id", type="int64", column="id", primary_key=True),),
         value_objects=(ValueObject(name="meta", column="meta"),),
     )
     leaf = Entity(
         name="Leaf",
-        table="root_tbl",
         inheritance=Inheritance(role="concrete-subtype", parent="Root", tag_value="leaf"),
         attributes=(Attribute(name="x", type="int32", column="x"),),
     )

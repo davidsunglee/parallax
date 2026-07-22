@@ -1,5 +1,5 @@
 # Attendee: a plain non-temporal entity whose primary key is allocated by the
-# `max` pkGenerator strategy (max(col)+1). The strategy is realized entirely in
+# `max` pkGeneration strategy (max(col)+1). The strategy is realized entirely in
 # the golden SQL of the writeSequence cases (the harness applies the DML and
 # asserts the resulting table state); the metamodel declaration documents intent.
 # Cases self-seed any baseline via an initial literal `insert` step, so this model
@@ -8,14 +8,13 @@ entity:
   name: Attendee
   namespace: parallax.compatibility
   table: attendee
-  mutability: transactional
-  temporal: non-temporal
+  persistence: read-write
   attributes:
     - name: id
       type: int64
       column: id
       primaryKey: true
-      pkGenerator: max
+      pkGeneration: max
     - name: name
       type: string
       column: name

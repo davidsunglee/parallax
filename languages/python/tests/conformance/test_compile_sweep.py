@@ -95,8 +95,8 @@ _INHERITANCE_TEMPORAL_READS: Final[frozenset[str]] = frozenset(
 )
 # Concrete-target temporal reads over a family whose as-of axes are declared ONLY on
 # the root (COR-3 Phase 7 review remediation — the binding root-ownership decision:
-# temporality is family-wide; `m-inheritance-100` pins `DepositRate.processingDate`
-# through the TPCS concrete position, `m-inheritance-101` pins `Bond.businessDate`
+# temporality is family-wide; `m-inheritance-100` pins `DepositRate` Transaction Time
+# through the TPCS concrete position, `m-inheritance-101` pins `Bond` Valid Time
 # through the TPH concrete position, tag predicate included). Both resolve the
 # inherited axis through `inheritance.declaring_entity` (the family root) exactly as
 # `_INHERITANCE_TEMPORAL_READS`'s abstract-root reads do — a strategy/position

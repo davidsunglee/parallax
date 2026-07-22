@@ -1,20 +1,20 @@
-# m-audit-write — Processing-Axis (Audit-Only) Temporal Writes
+# m-audit-write — Transaction-Time-Only Temporal Writes
 
-`m-audit-write` specifies **milestone-chaining writes** on the **processing axis**:
+`m-audit-write` specifies milestone-chaining writes on Transaction Time:
 a write chains milestone rows rather than mutating a value in place, producing the
 audit trail. Per the dependency graph, `m-audit-write` depends on `m-temporal-read`
 (it shares the interval/as-of model) and `m-unit-work` (writes happen inside a
 unit of work). The SQL emission is `m-sql`; the conflict/retry contract is
 `m-opt-lock`.
 
-## Milestone-chaining writes (audit-only)
+## Transaction-Time-Only milestone-chaining writes
 
-In **audit-only** mode the processing axis has no business-date residual, so the
+In Transaction-Time-Only mode there is no Valid-Time dimension, so the
 chaining is the simple close-and-open form (the bitemporal *rectangle split* is
 `m-bitemp-write`). The **MVP mutation surface** is `insert` / `update` /
-`terminate` (DQ11); the `*Until` trio lands with full bitemporal.
+`terminate` (DQ11); the `*Until` trio belongs to Bitemporal writes.
 
-Let `txInstant` be the transaction's processing instant.
+Let `txInstant` be the transaction's finite Transaction-Time instant.
 
 | Mutation | Observable SQL sequence |
 |---|---|
@@ -33,12 +33,12 @@ Key invariants the suite pins down:
 - After a **terminate**, **no** row has `out_z = infinity`.
 
 This matches `AuditOnlyTemporalDirector` / `GenericBiTemporalDirector`'s
-close-old-insert-new discipline (research §6), restricted to the processing axis.
+close-old-insert-new discipline (research §6), restricted to Transaction Time.
 
 ### Composition with inheritance
 
 A milestone-chaining write on an inheritance participant (a concrete subtype of a
-family whose processing axis is declared on the abstract root, `m-inheritance`) is
+family whose Transaction-Time axis is declared on the abstract root, `m-inheritance`) is
 the **same** close-and-open sequence — `insert` / `update` / `terminate` are
 unchanged. Routing and tag guards are physical, owned by `m-inheritance` / `m-sql`,
 not restated here. The corpus proves audit terminate composed with both strategies
@@ -53,7 +53,7 @@ current-row predicate — and the observed-`in_z` gate still binds **last**:
 
 ```text
 update reading set out_z = ? where id = ? and kind = ? and out_z = ? and in_z = ?
-binds: [<txInstant>, <pk>, <tagValue>, <infinity>, <observedInZ>]
+binds: [<txInstant>, <pk>, <tagValue>, <infinity>, <observedTxStart>]
 ```
 
 There is no inheritance exception to *the gate binds last* for a temporal close
@@ -69,11 +69,11 @@ orphaned current row). The current-row predicate (`pk and out_z = infinity`) alo
 is **not** a sufficient gate against a concurrent writer: a fully-committed
 concurrent chain leaves a *new* current row that a stale close would silently
 re-close — a lost update — so under optimistic mode the close carries an additional
-`and <in_z> = ?` gate on the processing-from the unit of work **observed**:
+`and <in_z> = ?` gate on the `tx_start` the unit of work **observed**:
 
 ```text
 update balance set out_z = ? where bal_id = ? and out_z = ? and in_z = ?
-binds: [<txInstant>, <pk>, <infinity>, <observedInZ>]
+binds: [<txInstant>, <pk>, <infinity>, <observedTxStart>]
 ```
 
 The observed `in_z` is the optimistic-lock **version analogue** for a temporal

@@ -20,7 +20,7 @@
 # read (m-inheritance-093) carries the per-branch as-of binds (business-axis-first,
 # repeated in alphabetical branch order); a concrete-target read (m-inheritance-100)
 # refers to the inherited axis through the concrete position (`DepositRate.
-# processingDate`) — proving the axes are usable there too, not just at the abstract
+# transactionTime`) — proving the axes are usable there too, not just at the abstract
 # root; the bitemporal terminate / terminateUntil writes (m-inheritance-095 / -097)
 # route to the concrete subtype's OWN table — the standalone m-bitemp-write shapes, no
 # tag guard.
@@ -33,8 +33,7 @@
 entities:
   - name: Rate
     namespace: parallax.compatibility
-    mutability: transactional
-    temporal: bitemporal
+    persistence: read-write
     inheritance:
       role: root
       strategy: table-per-concrete-subtype
@@ -43,45 +42,36 @@ entities:
         type: int64
         column: id
         primaryKey: true
-        pkGenerator: none
+        pkGeneration: application-assigned
       - name: amount
         type: decimal(18,2)
         column: amount
-      - name: businessFrom
+      - name: valid_start
         type: timestamp
         column: from_z
-      - name: businessTo
+      - name: valid_end
         type: timestamp
         column: thru_z
-      - name: processingFrom
+      - name: tx_start
         type: timestamp
         column: in_z
-      - name: processingTo
+      - name: tx_end
         type: timestamp
         column: out_z
-    asOfAttributes:
-      - name: businessDate
-        fromColumn: from_z
-        toColumn: thru_z
-        axis: business
-        toIsInclusive: false
-        infinity: infinity
-        default: now
-      - name: processingDate
-        fromColumn: in_z
-        toColumn: out_z
-        axis: processing
-        toIsInclusive: false
-        infinity: infinity
-        default: now
+    asOfAxes:
+      - dimension: validTime
+        startAttribute: valid_start
+        endAttribute: valid_end
+      - dimension: transactionTime
+        startAttribute: tx_start
+        endAttribute: tx_end
     indices:
       - name: rate_pk
-        attributes: [id, businessFrom, processingFrom]
+        attributes: [id, valid_start, tx_start]
         unique: true
   - name: DepositRate
     namespace: parallax.compatibility
     table: deposit_rate
-    mutability: transactional
     inheritance:
       role: concrete-subtype
       parent: Rate
@@ -94,7 +84,6 @@ entities:
   - name: LoanRate
     namespace: parallax.compatibility
     table: loan_rate
-    mutability: transactional
     inheritance:
       role: concrete-subtype
       parent: Rate

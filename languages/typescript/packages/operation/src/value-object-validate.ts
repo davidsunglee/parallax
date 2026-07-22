@@ -448,7 +448,7 @@ function validateMember(valueObject: NormalizedValueObjectMember, value: unknown
     }
     return;
   }
-  if (valueObject.cardinality === "many") {
+  if (valueObject.multiplicity === "many") {
     // `nullable:false` requires the ARRAY be present (satisfied — value is not null
     // here); an empty array is fine. Validate each element as a document.
     if (Array.isArray(value)) {

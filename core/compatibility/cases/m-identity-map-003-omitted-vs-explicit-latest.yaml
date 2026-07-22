@@ -1,13 +1,13 @@
-# Omitted coordinate vs explicit `now` (m-identity-map): an OMITTED temporal
-# coordinate and an EXPLICIT `asOf(now)` lower to the SAME coordinate, so both
+# Omitted coordinate vs explicit `latest` (m-identity-map): an OMITTED temporal
+# coordinate and an EXPLICIT `asOf(latest)` lower to the SAME coordinate, so both
 # resolve to the same managed object.
 #
 # The identity key's coordinate component is the LOWERED as-of coordinate: an
-# omitted axis and an explicit `asOf(..., now)` both lower to the infinity
+# omitted axis and an explicit `asOf(..., latest)` both lower to the infinity
 # sentinel — one canonical coordinate, not a wall-clock instant (m-identity-map).
 # Step 0 finds Balance id 1 with the coordinate OMITTED (the default-injected
 # current-row predicate, `out_z = ?` bind infinity -> the current 150.00). Step 1
-# finds the same primary key with an EXPLICIT `asOf(processingDate, now)`; it
+# finds the same primary key with an EXPLICIT `asOf(transactionTime, latest)`; it
 # lowers to the identical `out_z = ?` predicate, so it is the SAME lowered
 # coordinate and therefore the SAME managed view (`sameObjectAs`) — still costing a
 # round trip (no query-cache claim). The object-reference identity is asserted
@@ -39,12 +39,12 @@ when:
             eq:
               attr: Balance.id
               value: 1
-          asOfAttr: Balance.processingDate
-          date: now
+          dimension: transactionTime
+          coordinate: latest
       roundTrips: 1
       sameObjectAs: 0
       identityAttr: bal_id
-      note: EXPLICIT asOf(now) — lowers to the SAME out_z = infinity coordinate, the SAME managed view as step 0
+      note: EXPLICIT asOf(latest) — lowers to the SAME out_z = infinity coordinate, the SAME managed view as step 0
       statements:
         - sql:
             postgres: select t0.bal_id, t0.acct_num, t0.val, t0.in_z, t0.out_z from balance t0 where t0.bal_id = ? and t0.out_z = ?

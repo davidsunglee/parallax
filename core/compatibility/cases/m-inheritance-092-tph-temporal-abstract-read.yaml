@@ -3,9 +3,9 @@
 #
 # Targeting the abstract root Instrument (bitemporal) resolves to the whole family in the
 # shared `instrument` table, so the read injects NO tag predicate — just the as-of
-# predicate. Pinning businessDate = 2024-06-01 (a past instant, so `from_z <= ? and
-# thru_z > ?`) with processingDate defaulted to NOW (`out_z = ?`) selects each concrete's
-# current rectangle. The projection is the full concrete superset — the inherited chain
+# predicate. Pinning validTime = 2024-06-01 (a past instant, so `from_z <= ? and
+# thru_z > ?`) with transactionTime defaulted to Latest (`out_z = ?`) selects each concrete's
+# Latest rectangle. The projection is the full concrete superset — the inherited chain
 # (id, price + the four interval columns) then each subtype's own column (Bond's coupon,
 # Stock's ticker, alphabetical) — PLUS the raw tag column `kind`, from which familyVariant
 # is materialized (bond -> Bond, stock -> Stock). Bitemporal composes with the abstract
@@ -24,8 +24,8 @@ when:
     asOf:
       operand:
         all: {}
-      asOfAttr: Instrument.businessDate
-      date: "2024-06-01T00:00:00+00:00"
+      dimension: validTime
+      coordinate: "2024-06-01T00:00:00+00:00"
 then:
   statements:
     - sql:

@@ -193,7 +193,7 @@ class EntityScope:
         return self.own_column(self.entity_attribute(attr_ref).column)
 
     def entity_attribute(self, attr_ref: str) -> Attribute:
-        _, _, name = attr_ref.partition(".")
+        _, _, name = attr_ref.rpartition(".")
         for attribute in self._searchable_attributes():
             if attribute.name == name:
                 return attribute
@@ -470,7 +470,7 @@ def _lower_nested(
 ) -> str:
     """Lower a flat `nested*` predicate (m-op-algebra "Nested value-object
     predicates"): a scalar extraction against the scope's own alias when the path
-    stays within `one`-cardinality members, or — when it crosses a `cardinality:
+    stays within `one`-multiplicity members, or — when it crosses a `multiplicity:
     many` member — the any-element array-traversal form (m-sql "To-many — exists /
     notExists and any-element predicates"; `m-value-object-017/-018/-021`)."""
     vo, segments = _flat_vo_path(op.path, scope.entity)
@@ -480,7 +480,9 @@ def _lower_nested(
     leaf = _resolve_leaf(vo, segments)
     # The document column is the TARGET's own, so it renders through `own_column`
     # and goes bare in a write's unaliased predicate (m-sql rule 1).
-    extraction, path_binds = scope.dialect.nested_extract(scope.own_column(vo.column), segments)
+    extraction, path_binds = scope.dialect.nested_extract(
+        scope.own_column(vo.storage_column), segments
+    )
     scope.ctx.binds.extend(path_binds)
     return _lower_comparator(op, extraction, leaf.type, scope)
 
@@ -546,7 +548,7 @@ def _lower_comparator(
 def _split_at_many(
     vo: ValueObject, segments: Sequence[str]
 ) -> tuple[ValueObject | NestedValueObject, tuple[str, ...], tuple[str, ...]] | None:
-    """Split a flat predicate's path at the first `cardinality: many` hop
+    """Split a flat predicate's path at the first `multiplicity: many` hop
     crossed while walking from `vo` (m-op-algebra "Flat predicates through a
     `many` segment mean any element matches"). Returns ``(the many container,
     the segments reaching it from vo's own document column, the remaining
@@ -554,14 +556,14 @@ def _split_at_many(
     walk never crosses a `many` member (the plain scalar-extraction case
     :func:`_lower_nested` handles directly).
     """
-    if vo.cardinality == "many":
+    if vo.multiplicity == "many":
         return vo, (), tuple(segments)
     container: ValueObject | NestedValueObject = vo
     for index, segment in enumerate(segments):
         member = find_vo_member(container, segment)
         if not isinstance(member, NestedValueObject):
             return None  # reached a scalar leaf (or an unresolved segment) uncrossed
-        if member.cardinality == "many":
+        if member.multiplicity == "many":
             return member, tuple(segments[: index + 1]), tuple(segments[index + 1 :])
         container = member
     return None
@@ -593,7 +595,7 @@ def _lower_any_element(
     # The owning document column is the target's own (bare under `unaliased`); the
     # unnested ELEMENT is not, and stays alias-qualified either way — this very
     # subquery declares `array_alias`, so there is no alias here to leak.
-    guard_sql, guard_binds = scope.dialect.array_guard(scope.own_column(vo.column), pre)
+    guard_sql, guard_binds = scope.dialect.array_guard(scope.own_column(vo.storage_column), pre)
     scope.ctx.binds.extend(guard_binds)
     element = ElementScope(ctx=scope.ctx, container=container, alias=scope.next_alias())
     extraction, path_binds = scope.dialect.nested_extract(element.element_reference(), post)
@@ -623,12 +625,12 @@ def _lower_nested_exists(op: NestedExists | NestedNotExists, scope: EntityScope)
     :class:`ElementScope`; there is no second dispatcher for it.
     """
     vo, pre, container = _resolve_vo_terminus(op.path, scope.entity)
-    if container.cardinality != "many":
+    if container.multiplicity != "many":
         raise SqlGenError(
-            f"nestedExists/nestedNotExists over a `one`-cardinality value object "
+            f"nestedExists/nestedNotExists over a `one`-multiplicity value object "
             f"({op.path!r}) has no goldened lowering yet"
         )
-    guard_sql, guard_binds = scope.dialect.array_guard(scope.own_column(vo.column), pre)
+    guard_sql, guard_binds = scope.dialect.array_guard(scope.own_column(vo.storage_column), pre)
     scope.ctx.binds.extend(guard_binds)
     element = ElementScope(ctx=scope.ctx, container=container, alias=scope.next_alias())
     inner = f"select 1 from jsonb_array_elements({guard_sql}) {element.alias}"

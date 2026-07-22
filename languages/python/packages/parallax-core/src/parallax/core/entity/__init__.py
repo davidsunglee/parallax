@@ -2,7 +2,7 @@
 
 The developer-facing class frontend: the frozen entity base and its metaclass,
 the ``Attr[T]`` / ``Rel[T]`` typed-access carriers, the ``Field`` /
-``Relationship`` declaration helpers, ``meta`` introspection, the statement
+``Relationship`` declaration helpers, canonical descriptor export, the statement
 surface (predicate / temporal-read / deep-fetch-include / subtype-narrowing
 building), the ``ValueObject`` class frontend (D-7), and the closed-world
 relationship load-state vocabulary (``is_loaded`` / ``narrowed``,
@@ -29,11 +29,13 @@ from parallax.core.entity.base import (
     canonical_row,
     changed_fields,
     default_registry,
+    descriptor_document,
     effective_change_set,
     entity_record_of,
     entity_records,
     entity_registry,
     full_row,
+    metamodel,
     primary_key_row,
     registry_of,
     resolve_entity_class,
@@ -58,16 +60,15 @@ from parallax.core.entity.expressions import (
     RelationshipRef,
     UnloadedRelationshipError,
 )
-from parallax.core.entity.fields import Field, FieldSpec, Relationship, RelationshipSpec
-from parallax.core.entity.graph_state import is_loaded, narrowed
-from parallax.core.entity.meta import (
-    EntityMetaView,
-    FamilyView,
-    descriptor_document,
-    meta,
-    meta_of,
-    metamodel,
+from parallax.core.entity.fields import (
+    Field,
+    FieldSpec,
+    Relationship,
+    RelationshipSpec,
+    ReverseRelationship,
+    ReverseRelationshipSpec,
 )
+from parallax.core.entity.graph_state import is_loaded, narrowed
 from parallax.core.entity.statement import Statement, UnsupportedFeatureError
 from parallax.core.entity.value_object import ValueObject, VoField, VoFieldSpec
 
@@ -82,10 +83,8 @@ __all__ = [
     "EntityConfig",
     "EntityDefinitionError",
     "EntityMeta",
-    "EntityMetaView",
     "EntityRegistry",
     "FamilyRoot",
-    "FamilyView",
     "Field",
     "FieldSpec",
     "ModelCopyError",
@@ -100,6 +99,8 @@ __all__ = [
     "RelationshipRef",
     "RelationshipSpec",
     "ReservedNameError",
+    "ReverseRelationship",
+    "ReverseRelationshipSpec",
     "ScopedMetamodel",
     "Statement",
     "UnloadedRelationshipError",
@@ -119,8 +120,6 @@ __all__ = [
     "entity_registry",
     "full_row",
     "is_loaded",
-    "meta",
-    "meta_of",
     "metamodel",
     "narrowed",
     "primary_key_row",

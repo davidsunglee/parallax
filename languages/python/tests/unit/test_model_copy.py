@@ -182,36 +182,36 @@ def test_wire_names_of_rejects_a_non_compiled_entity_class() -> None:
 # --------------------------------------------------------------------------- #
 def test_an_audit_only_instance_constructs_cleanly_without_axis_values() -> None:
     balance = mm.Balance(id=1, acct_num="A", value=Decimal("100.00"))
-    assert balance.processing_from is None
-    assert balance.processing_to is None
+    assert balance.tx_start is None
+    assert balance.tx_end is None
     assert full_row(balance) == {"id": 1, "acctNum": "A", "value": Decimal("100.00")}
 
 
 def test_a_bitemporal_instance_constructs_cleanly_without_axis_values() -> None:
     branch = mm.Branch(id=1, name="Central", address=None)
-    assert branch.business_from is None
-    assert branch.business_to is None
-    assert branch.processing_from is None
-    assert branch.processing_to is None
+    assert branch.valid_start is None
+    assert branch.valid_end is None
+    assert branch.tx_start is None
+    assert branch.tx_end is None
     assert full_row(branch) == {"id": 1, "name": "Central", "address": None}
 
 
-def test_supplying_a_processing_axis_value_at_construction_raises_on_full_row() -> None:
+def test_supplying_a_transaction_time_value_at_construction_raises_on_full_row() -> None:
     balance = mm.Balance(
         id=1,
         acct_num="A",
         value=Decimal("100.00"),
-        processing_from=dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+        tx_start=dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
     )
-    with pytest.raises(FrameworkOwnedAxisError, match="processing_from"):
+    with pytest.raises(FrameworkOwnedAxisError, match="tx_start"):
         full_row(balance)
 
 
-def test_supplying_a_business_axis_value_at_construction_raises_on_full_row() -> None:
+def test_supplying_a_valid_time_value_at_construction_raises_on_full_row() -> None:
     branch = mm.Branch(
-        id=1, name="Central", address=None, business_from=dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
+        id=1, name="Central", address=None, valid_start=dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
     )
-    with pytest.raises(FrameworkOwnedAxisError, match="business_from"):
+    with pytest.raises(FrameworkOwnedAxisError, match="valid_start"):
         full_row(branch)
 
 
@@ -226,8 +226,8 @@ def test_the_exported_descriptor_carries_no_default_for_an_axis_attribute() -> N
     # half of it).
     record = entity_record_of(mm.Balance)
     assert record is not None
-    processing_from = next(a for a in record.attributes if a.name == "processingFrom")
-    assert processing_from.default is UNSET
+    tx_start = next(a for a in record.attributes if a.name == "tx_start")
+    assert tx_start.default is UNSET
 
 
 # --------------------------------------------------------------------------- #
@@ -246,12 +246,12 @@ def test_model_copy_carries_forward_an_untouched_axis_fields_infinity_sentinel()
         id=1,
         acct_num="A",
         value=Decimal("100.00"),
-        processing_from=dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
-        processing_to=INFINITY,
+        tx_start=dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+        tx_end=INFINITY,
     )
     copy = balance.model_copy(update={"value": Decimal("150.00")})
     assert copy.value == Decimal("150.00")
-    assert copy.processing_to is INFINITY  # carried forward, never re-validated
+    assert copy.tx_end is INFINITY  # carried forward, never re-validated
 
 
 def test_model_copy_still_validates_an_explicitly_touched_axis_field() -> None:
@@ -259,8 +259,8 @@ def test_model_copy_still_validates_an_explicitly_touched_axis_field() -> None:
         id=1,
         acct_num="A",
         value=Decimal("100.00"),
-        processing_from=dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
-        processing_to=INFINITY,
+        tx_start=dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+        tx_end=INFINITY,
     )
-    with pytest.raises(ValueError, match="processing_to"):
-        balance.model_copy(update={"processing_to": "not-a-datetime"})
+    with pytest.raises(ValueError, match="tx_end"):
+        balance.model_copy(update={"tx_end": "not-a-datetime"})

@@ -250,7 +250,7 @@ def test_materialization_validator_accepts_temporal_milestone_observations() -> 
             "predicate": {"eq": {"attr": "Position.id", "value": 1}},
         },
         "at": "2024-10-01T00:00:00+00:00",
-        "businessFrom": "2024-07-01T00:00:00+00:00",
+        "validFrom": "2024-07-01T00:00:00+00:00",
     }
     predicate = instruction["target"]["predicate"]
     assert isinstance(predicate, dict)
@@ -287,7 +287,7 @@ def test_materialization_validator_rejects_missing_temporal_carried_payload() ->
             "predicate": {"eq": {"attr": "Position.id", "value": 1}},
         },
         "at": "2024-10-01T00:00:00+00:00",
-        "businessFrom": "2024-07-01T00:00:00+00:00",
+        "validFrom": "2024-07-01T00:00:00+00:00",
     }
     predicate = instruction["target"]["predicate"]
     assert isinstance(predicate, dict)
@@ -378,7 +378,12 @@ def test_materialization_validator_requires_a_whole_value_object_for_noop_planni
     instruction = {
         "mutation": "update",
         "target": {"entity": "Customer", "predicate": {"all": {}}},
-        "assignments": [{"attr": "Customer.address", "value": {"street": "Main", "city": "Oslo"}}],
+        "assignments": [
+            {
+                "attr": "Customer.address",
+                "value": {"street": "Main", "city": "Oslo", "phones": []},
+            }
+        ],
     }
     predicate = instruction["target"]["predicate"]
     assert isinstance(predicate, dict)
@@ -417,7 +422,7 @@ def test_materialization_validator_rejects_temporal_write_without_a_find() -> No
             "predicate": {"eq": {"attr": "Position.id", "value": 1}},
         },
         "at": "2024-10-01T00:00:00+00:00",
-        "businessFrom": "2024-07-01T00:00:00+00:00",
+        "validFrom": "2024-07-01T00:00:00+00:00",
     }
 
     with pytest.raises(PredicateWriteValidationError, match="preceding materializing find"):
@@ -553,7 +558,12 @@ def test_model_validator_accepts_atomic_top_level_value_object_assignment() -> N
     instruction = {
         "mutation": "update",
         "target": {"entity": "Customer", "predicate": {"all": {}}},
-        "assignments": [{"attr": "Customer.address", "value": {"street": "Main", "city": "Oslo"}}],
+        "assignments": [
+            {
+                "attr": "Customer.address",
+                "value": {"street": "Main", "city": "Oslo", "phones": []},
+            }
+        ],
     }
 
     validate_predicate_write(entity, instruction)
@@ -562,7 +572,7 @@ def test_model_validator_accepts_atomic_top_level_value_object_assignment() -> N
 def test_model_validator_accepts_array_for_many_value_object_assignment() -> None:
     entity = _customer_entity()
     definition = deepcopy(entity.definition)
-    definition["valueObjects"][0]["cardinality"] = "many"
+    definition["valueObjects"][0]["multiplicity"] = "many"
     many_entity = Entity(definition=definition)
     instruction = {
         "mutation": "update",
@@ -570,7 +580,7 @@ def test_model_validator_accepts_array_for_many_value_object_assignment() -> Non
         "assignments": [
             {
                 "attr": "Customer.address",
-                "value": [{"street": "Main", "city": "Oslo"}],
+                "value": [{"street": "Main", "city": "Oslo", "phones": []}],
             }
         ],
     }

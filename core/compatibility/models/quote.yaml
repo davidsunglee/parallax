@@ -1,15 +1,15 @@
-# Quote: a TABLE-PER-CONCRETE-SUBTYPE inheritance family whose AUDIT-ONLY (processing)
+# Quote: a TABLE-PER-CONCRETE-SUBTYPE inheritance family whose Transaction-Time-Only
 # axis is declared on the abstract root and inherited by the concrete subtype
 # (m-inheritance x m-audit-write — Phase 8 temporal composition).
 #
 # This descriptor is an instance of core/schemas/metamodel.schema.json. It is the TPCS
 # counterpart of the table-per-hierarchy `reading` family: a NEW, small
-# unitemporal-processing family whose concrete subtype maps to its OWN table (no shared
-# table, no tag). The single processing axis lives on the ROOT and threads into the
+# Transaction-Time-Only family whose concrete subtype maps to its OWN table (no shared
+# table, no tag). The single Transaction-Time dimension lives on the ROOT and threads into the
 # concrete table via the ancestry chain, so the concrete table carries [in_z, out_z)
 # and admits the milestone chain.
 #
-#   Quote (root, ABSTRACT)     — strategy + the processing axis; owns id + price + the
+#   Quote (root, ABSTRACT)     — strategy + the Transaction-Time dimension; owns id + price + the
 #                                interval columns; tableless, rowless
 #     SpotQuote (concrete)     — its own `spot_quote` table; adds symbol
 #
@@ -21,8 +21,7 @@
 entities:
   - name: Quote
     namespace: parallax.compatibility
-    mutability: transactional
-    temporal: unitemporal-processing
+    persistence: read-write
     inheritance:
       role: root
       strategy: table-per-concrete-subtype
@@ -31,32 +30,27 @@ entities:
         type: int64
         column: id
         primaryKey: true
-        pkGenerator: none
+        pkGeneration: application-assigned
       - name: price
         type: decimal(18,2)
         column: price
-      - name: processingFrom
+      - name: tx_start
         type: timestamp
         column: in_z
-      - name: processingTo
+      - name: tx_end
         type: timestamp
         column: out_z
-    asOfAttributes:
-      - name: processingDate
-        fromColumn: in_z
-        toColumn: out_z
-        axis: processing
-        toIsInclusive: false
-        infinity: infinity
-        default: now
+    asOfAxes:
+      - dimension: transactionTime
+        startAttribute: tx_start
+        endAttribute: tx_end
     indices:
       - name: quote_pk
-        attributes: [id, processingFrom]
+        attributes: [id, tx_start]
         unique: true
   - name: SpotQuote
     namespace: parallax.compatibility
     table: spot_quote
-    mutability: transactional
     inheritance:
       role: concrete-subtype
       parent: Quote

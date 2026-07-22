@@ -112,7 +112,7 @@ def test_top_level_many_value_object_any_element_needs_no_path_descent() -> None
             ValueObject(
                 name="tags",
                 column="tags",
-                cardinality="many",
+                multiplicity="many",
                 attributes=(ValueObjectAttribute(name="label", type="string"),),
             ),
         ),
@@ -259,7 +259,7 @@ def test_nested_exists_scoped_where_composes_or_not_and_group() -> None:
         pytest.param(oa.NotExists(rel="Customer.orders"), id="notExists"),
         pytest.param(oa.DeepFetch(operand=oa.All()), id="deepFetch"),
         pytest.param(
-            oa.AsOf(operand=oa.All(), as_of_attr="Customer.asOf", date="2024-01-01"), id="asOf"
+            oa.AsOf(operand=oa.All(), dimension="validTime", coordinate="2024-01-01"), id="asOf"
         ),
         pytest.param(oa.Limit(operand=oa.All(), count=1), id="limit"),
         pytest.param(oa.Distinct(operand=oa.All()), id="distinct"),
@@ -366,12 +366,12 @@ def test_flat_any_element_scalar_collapse_uses_the_same_guard_fragment() -> None
     assert guard in bare.statement.sql
 
 
-def test_nested_exists_over_a_one_cardinality_value_object_has_no_lowering_yet() -> None:
+def test_nested_exists_over_a_one_multiplicity_value_object_has_no_lowering_yet() -> None:
     # `geo` is `cardinality: one` — nestedExists over it is schema-legal
     # (m-op-algebra: "the value object at `path` is present (`one`)…") but has no
     # goldened Postgres lowering in this corpus, so it refuses loudly rather than
     # guess a shape.
-    with pytest.raises(SqlGenError, match=r"one.*cardinality.*has no goldened lowering yet"):
+    with pytest.raises(SqlGenError, match=r"one.*multiplicity.*has no goldened lowering yet"):
         compile_read(oa.NestedExists(path="Customer.address.geo"), CUSTOMER, POSTGRES, "Customer")
 
 
@@ -433,7 +433,7 @@ def test_many_member_nested_two_levels_deep_binds_every_path_segment_twice() -> 
                         value_objects=(
                             NestedValueObject(
                                 name="rates",
-                                cardinality="many",
+                                multiplicity="many",
                                 attributes=(ValueObjectAttribute(name="zone", type="string"),),
                             ),
                         ),

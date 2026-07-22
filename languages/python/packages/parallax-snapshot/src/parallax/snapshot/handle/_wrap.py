@@ -137,15 +137,15 @@ def _family_relationships(meta: Metamodel, entity: Entity) -> tuple[Relationship
     the non-participant OWNER side, but this stays family-complete for any
     future participant-declared relationship)."""
     if entity.inheritance is None:
-        return entity.relationships
+        return meta.relationships_for(entity)
     root = inheritance.family_root(meta, entity)
-    collected: list[Relationship] = list(entity.relationships)
+    collected: list[Relationship] = list(meta.relationships_for(entity))
     for candidate in meta.entities:
         if candidate.name == entity.name or candidate.inheritance is None:
             continue
         try:
             if inheritance.family_root(meta, candidate).name == root.name:
-                collected.extend(candidate.relationships)
+                collected.extend(meta.relationships_for(candidate))
         except ValueError:  # pragma: no cover - guards a malformed family
             continue
     return tuple(collected)
@@ -207,12 +207,14 @@ def _discover(
         rel_name = relationship.name
         if rel_name in node.fields:
             _discover_related(
-                node.fields[rel_name], relationship.related_entity, meta, visited, groups
+                node.fields[rel_name], relationship.join.target.entity, meta, visited, groups
             )
         prefix = f"{rel_name}["
         for field_key, field_value in node.fields.items():
             if field_key.startswith(prefix):
-                _discover_related(field_value, relationship.related_entity, meta, visited, groups)
+                _discover_related(
+                    field_value, relationship.join.target.entity, meta, visited, groups
+                )
 
 
 def _merged_fields(
@@ -286,7 +288,12 @@ def _wrap(
         if py_name is not None:  # pragma: no branch
             if rel_name in fields:
                 loaded = _wrap_related(
-                    fields[rel_name], relationship.related_entity, meta, pin, cache, merged
+                    fields[rel_name],
+                    relationship.join.target.entity,
+                    meta,
+                    pin,
+                    cache,
+                    merged,
                 )
                 object.__setattr__(instance, py_name, loaded)
             else:
@@ -295,7 +302,12 @@ def _wrap(
         for field_key, field_value in fields.items():
             if field_key.startswith(prefix):
                 narrowed_views[field_key] = _wrap_related(
-                    field_value, relationship.related_entity, meta, pin, cache, merged
+                    field_value,
+                    relationship.join.target.entity,
+                    meta,
+                    pin,
+                    cache,
+                    merged,
                 )
 
     if narrowed_views:
@@ -309,7 +321,7 @@ def _wrap(
     # `m-navigate`'s per-hop propagation and `m-snapshot-read`'s own
     # identity/pk resolution already share.
     declaring = inheritance.declaring_entity(meta, entity_record)
-    if declaring.as_of_attributes:
+    if declaring.as_of_axes:
         object.__setattr__(instance, _PIN_ATTR, pin)
         object.__setattr__(instance, _EDGE_ATTR, milestone_edge(declaring, fields))
 
@@ -338,13 +350,13 @@ def _wrap_related(
 def _wrap_member(value: object, entity: Entity, column: str, meta: Metamodel) -> object:
     """A scalar member passes through; a value-object member's decoded nested
     dict wraps into its declared ``ValueObject`` subclass (or a tuple of them,
-    ``cardinality: many``) — the SAME instances-only contract the write side
+    ``multiplicity: many``) — the SAME instances-only contract the write side
     enforces (spec §2)."""
-    vo = next((v for v in _family_value_objects(meta, entity) if v.column == column), None)
+    vo = next((v for v in _family_value_objects(meta, entity) if v.storage_column == column), None)
     if vo is None:
         return value
     vo_class = _vo_class_for(entity, vo.name, meta)
-    if vo.cardinality == "many":
+    if vo.multiplicity == "many":
         items = cast("list[Mapping[str, object] | None]", value) if isinstance(value, list) else []
         return tuple(_wrap_vo(item, vo_class) for item in items if item is not None)
     return _wrap_vo(cast("Mapping[str, object] | None", value), vo_class)

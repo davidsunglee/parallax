@@ -47,29 +47,29 @@ def test_keyed_plain_temporal_carries_business_from_only() -> None:
             "mutation": "update",
             "entity": "Balance",
             "rows": [{"id": 1, "value": 150.0}],
-            "businessFrom": "2024-06-01T00:00:00+00:00",
+            "validFrom": "2024-06-01T00:00:00+00:00",
         }
     )
 
 
 def test_keyed_until_requires_both_business_bounds() -> None:
-    # Every bounded `*Until` operation is over `[businessFrom, businessTo)`
+    # Every bounded `*Until` operation is over `[validFrom, until)`
     # (m-bitemp-write), so BOTH bounds are required — dropping either rejects it.
     doc = {
         "mutation": "updateUntil",
         "entity": "Position",
         "rows": [{"id": 1, "value": 9}],
-        "businessFrom": "2024-01-01T00:00:00+00:00",
-        "businessTo": "2024-06-01T00:00:00+00:00",
+        "validFrom": "2024-01-01T00:00:00+00:00",
+        "until": "2024-06-01T00:00:00+00:00",
     }
     assert _valid(doc)
-    assert not _valid({key: value for key, value in doc.items() if key != "businessTo"})
-    assert not _valid({key: value for key, value in doc.items() if key != "businessFrom"})
+    assert not _valid({key: value for key, value in doc.items() if key != "until"})
+    assert not _valid({key: value for key, value in doc.items() if key != "validFrom"})
 
 
 def test_keyed_plain_mutation_rejects_business_to() -> None:
     assert not _valid(
-        {"mutation": "insert", "entity": "Balance", "rows": [{"id": 1}], "businessTo": "x"}
+        {"mutation": "insert", "entity": "Balance", "rows": [{"id": 1}], "until": "x"}
     )
 
 
@@ -95,14 +95,14 @@ def test_keyed_instruction_row_rejects_observed_version() -> None:
     )
 
 
-def test_keyed_instruction_row_rejects_observed_in_z() -> None:
-    # The observed processing-from (`in_z`) is the temporal analogue of the version;
+def test_keyed_instruction_row_rejects_observed_tx_start() -> None:
+    # The observed Transaction-Time start (`in_z`) is the temporal analogue of the version;
     # like it, the observation is flush context, never an instruction field.
     assert not _valid(
         {
             "mutation": "terminate",
             "entity": "Balance",
-            "rows": [{"id": 1, "observedInZ": "2024-01-01T00:00:00+00:00"}],
+            "rows": [{"id": 1, "observedTxStart": "2024-01-01T00:00:00+00:00"}],
         }
     )
 
@@ -131,7 +131,7 @@ def test_observation_cannot_round_trip_as_instruction_state() -> None:
     smuggled_in_z = {
         "mutation": "terminate",
         "entity": "Balance",
-        "rows": [{"id": 1, "observedInZ": "2024-01-01T00:00:00+00:00"}],
+        "rows": [{"id": 1, "observedTxStart": "2024-01-01T00:00:00+00:00"}],
     }
     for smuggled in (smuggled_version, smuggled_in_z):
         assert not _valid(smuggled)
@@ -180,17 +180,17 @@ def test_predicate_delete_rejects_assignments() -> None:
 
 
 def test_predicate_until_requires_both_business_bounds() -> None:
-    # A bounded `*Until` predicate write is over `[businessFrom, businessTo)`
+    # A bounded `*Until` predicate write is over `[validFrom, until)`
     # (m-bitemp-write); both bounds are required.
     doc = {
         "mutation": "terminateUntil",
         "target": {"entity": "Position", "predicate": {"eq": {"attr": "Position.id", "value": 1}}},
-        "businessFrom": "2024-01-01T00:00:00+00:00",
-        "businessTo": "2024-06-01T00:00:00+00:00",
+        "validFrom": "2024-01-01T00:00:00+00:00",
+        "until": "2024-06-01T00:00:00+00:00",
     }
     assert _valid(doc)
-    assert not _valid({key: value for key, value in doc.items() if key != "businessTo"})
-    assert not _valid({key: value for key, value in doc.items() if key != "businessFrom"})
+    assert not _valid({key: value for key, value in doc.items() if key != "until"})
+    assert not _valid({key: value for key, value in doc.items() if key != "validFrom"})
 
 
 def test_instruction_rejects_unknown_top_level_key() -> None:

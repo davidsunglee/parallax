@@ -96,7 +96,7 @@ function decodeDocument(raw: unknown): unknown {
 
 /** Project a decoded slot to its declared value-object shape (`one` → obj|null, `many` → []). */
 function projectValueObject(vo: NormalizedValueObjectMember, decoded: unknown): unknown {
-  if (vo.cardinality === "many") {
+  if (vo.multiplicity === "many") {
     return Array.isArray(decoded) ? decoded.map((element) => projectMembers(vo, element)) : [];
   }
   return isPlainObject(decoded) ? projectMembers(vo, decoded) : null;

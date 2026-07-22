@@ -58,23 +58,23 @@ class TemporalShadow:
         lifecycle load). A non-temporal entity's rows are a no-op."""
         entity = meta.entity(entity_name)
         declaring = declaring_entity(meta, entity)
-        if not declaring.as_of_attributes:
+        if not declaring.as_of_axes:
             return
-        proc_from, proc_to = audit_write.axis_attr_names(declaring, "processing")
+        tx_start, tx_end = audit_write.axis_attr_names(declaring, "transactionTime")
         is_bitemporal = declaring.temporal == "bitemporal"
-        biz_from, biz_to = (
-            audit_write.axis_attr_names(declaring, "business") if is_bitemporal else (None, None)
+        valid_start, valid_end = (
+            audit_write.axis_attr_names(declaring, "validTime") if is_bitemporal else (None, None)
         )
         pk_names = [attr.name for attr in family_primary_key(meta, entity)]
         for row in rows:
-            if row.get(proc_to) != "infinity":
-                continue  # not current on processing — never a later write's observed row
+            if row.get(tx_end) != "infinity":
+                continue  # not current on Transaction Time
             key = self._key(entity_name, pk_names, row)
             observation = Observation(
-                in_z=_as_str(row[proc_from]),
-                business_from=_as_str(row[biz_from]) if biz_from is not None else None,
-                business_to=_as_str(row[biz_to]) if biz_to is not None else None,
-                payload=_payload(row, {proc_from, proc_to, biz_from, biz_to}),
+                tx_start=_as_str(row[tx_start]),
+                valid_start=_as_str(row[valid_start]) if valid_start is not None else None,
+                valid_end=_as_str(row[valid_end]) if valid_end is not None else None,
+                payload=_payload(row, {tx_start, tx_end, valid_start, valid_end}),
             )
             self._current.setdefault(key, []).append(observation)
 
@@ -89,9 +89,9 @@ class TemporalShadow:
 
         Raises :class:`AmbiguousObservationError` when more than one current
         candidate is tracked for this pk — disambiguation by a write's own
-        business-from discriminator is a conflict-shape-only mechanism this
-        increment reaches via the case's explicit ``observedInZ`` /
-        ``write.businessFrom`` fields, never this tracker (see the module
+        Valid-Time-start discriminator is a conflict-shape-only mechanism this
+        increment reaches via the case's explicit ``observedTxStart`` /
+        ``write.validFrom`` fields, never this tracker (see the module
         docstring).
         """
         entity = meta.entity(entity_name)
@@ -135,16 +135,16 @@ class TemporalShadow:
             self._current.pop(key, None)  # a terminate/terminateUntil closes with no chain
             return
         is_bitemporal = declaring.temporal == "bitemporal"
-        biz_from, biz_to = (
-            audit_write.axis_attr_names(declaring, "business") if is_bitemporal else (None, None)
+        valid_start, valid_end = (
+            audit_write.axis_attr_names(declaring, "validTime") if is_bitemporal else (None, None)
         )
-        proc_from, proc_to = audit_write.axis_attr_names(declaring, "processing")
+        tx_start, tx_end = audit_write.axis_attr_names(declaring, "transactionTime")
         self._current[key] = [
             Observation(
-                in_z=_as_str(step.row[proc_from]),
-                business_from=_as_str(step.row[biz_from]) if biz_from is not None else None,
-                business_to=_as_str(step.row[biz_to]) if biz_to is not None else None,
-                payload=_payload(step.row, {proc_from, proc_to, biz_from, biz_to}),
+                tx_start=_as_str(step.row[tx_start]),
+                valid_start=(_as_str(step.row[valid_start]) if valid_start is not None else None),
+                valid_end=_as_str(step.row[valid_end]) if valid_end is not None else None,
+                payload=_payload(step.row, {tx_start, tx_end, valid_start, valid_end}),
             )
             for step in opened
         ]

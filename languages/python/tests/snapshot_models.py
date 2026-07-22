@@ -41,7 +41,17 @@ import datetime as dt
 from decimal import Decimal
 
 from parallax.conformance.read_models import Animal, Cat, Dog, Pet, WildBoar
-from parallax.core import Attr, Entity, EntityConfig, Field, Rel, Relationship
+from parallax.core import (
+    Attr,
+    Entity,
+    EntityConfig,
+    Field,
+    Rel,
+    Relationship,
+    RelationshipJoin,
+    RelationshipTarget,
+    ReverseRelationship,
+)
 from parallax.core.entity.value_object import ValueObject, VoField
 
 __all__ = [
@@ -68,7 +78,7 @@ class Detail(ValueObject, frozen=True):
 class Tag(ValueObject, frozen=True):
     label: Attr[str] = VoField(type="string")
     detail: Attr[Detail | None] = VoField(nullable=True, default=None)
-    details: Attr[tuple[Detail, ...]] = VoField(nullable=True, default=())
+    details: Attr[tuple[Detail, ...]] = VoField(default=())
 
 
 class SnapOrder(Entity, frozen=True):
@@ -83,19 +93,19 @@ class SnapOrder(Entity, frozen=True):
     ordered_on: Attr[dt.date] = Field(column="ordered_on")
     items: Rel[tuple["SnapOrderItem", ...]] = Relationship(
         cardinality="one-to-many",
-        join="this.id = SnapOrderItem.orderId",
-        related_entity="SnapOrderItem",
-        reverse_name="order",
+        join=RelationshipJoin(
+            source="id",
+            target=RelationshipTarget(entity="SnapOrderItem", attribute="orderId"),
+        ),
         dependent=True,
-        foreign_key="order_id",
     )
     statuses: Rel[tuple["SnapOrderStatus", ...]] = Relationship(
         cardinality="one-to-many",
-        join="this.id = SnapOrderStatus.orderId",
-        related_entity="SnapOrderStatus",
-        reverse_name="order",
+        join=RelationshipJoin(
+            source="id",
+            target=RelationshipTarget(entity="SnapOrderStatus", attribute="orderId"),
+        ),
         dependent=True,
-        foreign_key="order_id",
     )
 
 
@@ -109,20 +119,14 @@ class SnapOrderItem(Entity, frozen=True):
     shipped_on: Attr[dt.date | None] = Field(
         type="date", column="shipped_on", nullable=True, default=None
     )
-    order: Rel["SnapOrder"] = Relationship(
-        cardinality="many-to-one",
-        join="this.orderId = SnapOrder.id",
-        related_entity="SnapOrder",
-        reverse_name="items",
-        foreign_key="order_id",
-    )
+    order: Rel["SnapOrder"] = ReverseRelationship(reverse_of="SnapOrder.items")
     statuses: Rel[tuple["SnapOrderStatus", ...]] = Relationship(
         cardinality="one-to-many",
-        join="this.id = SnapOrderStatus.orderItemId",
-        related_entity="SnapOrderStatus",
-        reverse_name="orderItem",
+        join=RelationshipJoin(
+            source="id",
+            target=RelationshipTarget(entity="SnapOrderStatus", attribute="orderItemId"),
+        ),
         dependent=True,
-        foreign_key="order_item_id",
     )
 
 
@@ -154,15 +158,13 @@ class AnimalOwner(Entity, frozen=True):
     name: Attr[str] = Field(max_length=32)
     animals: Rel[tuple["Animal", ...]] = Relationship(
         cardinality="one-to-many",
-        join="this.id = Animal.ownerId",
-        related_entity="Animal",
-        reverse_name="owner",
-        foreign_key="owner_id",
+        join=RelationshipJoin(
+            source="id", target=RelationshipTarget(entity="Animal", attribute="ownerId")
+        ),
     )
     pets: Rel[tuple["Pet", ...]] = Relationship(
         cardinality="one-to-many",
-        join="this.id = Pet.ownerId",
-        related_entity="Pet",
-        reverse_name="owner",
-        foreign_key="owner_id",
+        join=RelationshipJoin(
+            source="id", target=RelationshipTarget(entity="Pet", attribute="ownerId")
+        ),
     )

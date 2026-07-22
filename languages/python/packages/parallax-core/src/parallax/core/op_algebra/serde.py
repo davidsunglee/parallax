@@ -74,8 +74,8 @@ _NESTED_CMP: frozenset[str] = frozenset(
 )
 _NESTED_NULL: frozenset[str] = frozenset({"nestedIsNull", "nestedIsNotNull"})
 
-# Reference-string patterns (operation.schema.json $defs). An attribute,
-# relationship, and as-of-attribute reference share the `Class.member` grammar; an
+# Reference-string patterns (operation.schema.json $defs). An attribute and
+# relationship reference share the `Class.member` grammar; an
 # entity name is a bare `Class`; a nested reference descends >=1 dotted member into
 # a value object (`Class.valueObject.field`); a value-object reference terminates
 # AT a value object (>=1 member, `Class.valueObject`); an element-relative
@@ -140,9 +140,9 @@ _SHAPES: dict[str, _Shape] = {
     "exists": _shape(("rel",), ("op",)),
     "notExists": _shape(("rel",), ("op",)),
     "deepFetch": _shape(("operand", "paths")),
-    "asOf": _shape(("operand", "asOfAttr", "date")),
-    "asOfRange": _shape(("operand", "asOfAttr", "from", "to")),
-    "history": _shape(("operand", "asOfAttr")),
+    "asOf": _shape(("operand", "dimension", "coordinate")),
+    "asOfRange": _shape(("operand", "dimension", "start", "end")),
+    "history": _shape(("operand", "dimension")),
 }
 _SHAPES.update({tag: _shape(("attr", "value")) for tag in _COMPARISONS})
 _SHAPES.update({tag: _shape(("attr",)) for tag in _NULLS})
@@ -203,17 +203,28 @@ def _ref(
     return value
 
 
-def _temporal(body: Mapping[str, object], key: str, tag: str) -> str:
-    """Read a temporal pin string and enforce the schema ``temporalDate`` constraint.
+def _temporal(body: Mapping[str, object], key: str, tag: str, *, finite: bool = False) -> str:
+    """Read a temporal coordinate and enforce the schema's non-empty constraint.
 
-    operation.schema.json ``$defs.temporalDate`` is a ``string`` with
-    ``minLength: 1`` (no ``pattern`` / ``format``), so an empty string is
-    rejected loudly before the node is built -- consistent with the closed-shape
-    and reference-pattern validation applied to the other node families.
+    ``latest`` is canonical only for an ``asOf`` coordinate. Range bounds must
+    be finite, and ``now`` is never a serialized coordinate: callers obtain a
+    finite current-clock instant before construction.
     """
     value = _str(body, key, tag)
     if not value:
         raise OperationError(f"{tag}: `{key}` must be a non-empty temporal value")
+    if value == "now" or (finite and value == "latest"):
+        qualifier = "finite " if finite else ""
+        raise OperationError(f"{tag}: `{key}` must be a {qualifier}canonical coordinate")
+    return value
+
+
+def _dimension(body: Mapping[str, object], tag: str) -> Literal["validTime", "transactionTime"]:
+    value = _str(body, "dimension", tag)
+    if value not in ("validTime", "transactionTime"):
+        raise OperationError(
+            f"{tag}: `dimension` must be 'validTime' or 'transactionTime', got {value!r}"
+        )
     return value
 
 
@@ -458,20 +469,20 @@ def _deserialize(doc: object, *, element_scope: bool) -> Operation:
     if tag == "asOf":
         return AsOf(
             operand=_operand(body, element_scope=element_scope),
-            as_of_attr=_ref(body, "asOfAttr", tag, _MEMBER_REF, "as-of-attribute reference"),
-            date=_temporal(body, "date", tag),
+            dimension=_dimension(body, tag),
+            coordinate=_temporal(body, "coordinate", tag),
         )
     if tag == "asOfRange":
         return AsOfRange(
             operand=_operand(body, element_scope=element_scope),
-            as_of_attr=_ref(body, "asOfAttr", tag, _MEMBER_REF, "as-of-attribute reference"),
-            from_=_temporal(body, "from", tag),
-            to=_temporal(body, "to", tag),
+            dimension=_dimension(body, tag),
+            start=_temporal(body, "start", tag, finite=True),
+            end=_temporal(body, "end", tag, finite=True),
         )
     if tag == "history":
         return History(
             operand=_operand(body, element_scope=element_scope),
-            as_of_attr=_ref(body, "asOfAttr", tag, _MEMBER_REF, "as-of-attribute reference"),
+            dimension=_dimension(body, tag),
         )
     raise OperationError(f"unknown operation node {tag!r}")
 
@@ -558,19 +569,25 @@ def serialize(op: Operation) -> dict[str, object]:
             return {
                 "deepFetch": {"operand": serialize(operand), "paths": [_path(p) for p in paths]}
             }
-        case AsOf(operand=operand, as_of_attr=axis, date=date):
-            return {"asOf": {"operand": serialize(operand), "asOfAttr": axis, "date": date}}
-        case AsOfRange(operand=operand, as_of_attr=axis, from_=frm, to=to):
+        case AsOf(operand=operand, dimension=dimension, coordinate=coordinate):
+            return {
+                "asOf": {
+                    "operand": serialize(operand),
+                    "dimension": dimension,
+                    "coordinate": coordinate,
+                }
+            }
+        case AsOfRange(operand=operand, dimension=dimension, start=start, end=end):
             return {
                 "asOfRange": {
                     "operand": serialize(operand),
-                    "asOfAttr": axis,
-                    "from": frm,
-                    "to": to,
+                    "dimension": dimension,
+                    "start": start,
+                    "end": end,
                 }
             }
-        case History(operand=operand, as_of_attr=axis):
-            return {"history": {"operand": serialize(operand), "asOfAttr": axis}}
+        case History(operand=operand, dimension=dimension):
+            return {"history": {"operand": serialize(operand), "dimension": dimension}}
 
 
 def _order_key(key: OrderKey) -> dict[str, object]:

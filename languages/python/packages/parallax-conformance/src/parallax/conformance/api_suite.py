@@ -274,7 +274,7 @@ EXAMPLES: Final[list[Example]] = [
 # CLOSED (D-29, COR-3 Phase 8 increment 7 completion round):
 # `WriteStory.clock` is now a zero-argument Clock factory
 # (`parallax.conformance.scripted_clock.ScriptedClock`), so a temporal
-# writeSequence story can drive successive distinct processing instants
+# writeSequence story can drive successive distinct Transaction-Time instants
 # through the public verbs. Every module bucket below that used to cite the
 # now-closed clock-control gap instead names its OWN remaining, genuine
 # blocker for the cases still unexercised (a two-session conflict shape with

@@ -125,7 +125,7 @@ def empty_intermediate_level_short_circuits(db: Database) -> Snapshot[Any]:
 def pinned_graph_at_a_past_business_instant(db: Database) -> Snapshot[Any]:
     return db.find(
         Policy.where()
-        .as_of(business=dt.datetime(2024, 3, 1, tzinfo=dt.UTC), processing=LATEST)
+        .as_of(valid_time=dt.datetime(2024, 3, 1, tzinfo=dt.UTC), transaction_time=LATEST)
         .include(Policy.coverages)
     )
 
@@ -147,9 +147,9 @@ def history_of_a_concrete_temporal_node_distinguishes_milestones(db: Database) -
     `DepositRate`'s own inherited axis spelling, and the strengthened
     ``fixtures/rate.yaml`` milestone history surfaces the closed historical
     correction and the current row as two distinct, edge-pinned nodes sharing
-    one business key.
+        one domain key.
     """
-    return db.find(DepositRate.where().history(axis="processing"))
+    return db.find(DepositRate.where().history("transaction_time"))
 
 
 def one_to_one_peer_attaches_as_a_single_object(db: Database) -> Snapshot[Any]:
@@ -202,35 +202,35 @@ def distinct_narrowed_views_populate_independently(db: Database) -> Snapshot[Any
     )
 
 
-def unitemporal_vo_owner_as_of_now(db: Database) -> Snapshot[Any]:
-    """A value object rides its unitemporal-processing owner's milestone
-    (`m-value-object-028`): an as-of-now read returns each supplier's CURRENT
+def transaction_time_only_vo_owner_as_of_latest(db: Database) -> Snapshot[Any]:
+    """A value object rides its Transaction-Time-only owner's milestone
+    (`m-value-object-028`): an Latest read returns each supplier's CURRENT
     address document — no value-object-specific temporal machinery."""
-    return db.find(Supplier.where().as_of(processing=LATEST))
+    return db.find(Supplier.where().as_of(transaction_time=LATEST))
 
 
-def unitemporal_vo_owner_as_of_a_past_instant(db: Database) -> Snapshot[Any]:
-    """The SAME owner read at a past processing instant returns the
+def transaction_time_only_vo_owner_as_of_a_past_instant(db: Database) -> Snapshot[Any]:
+    """The SAME owner read at a past Transaction-Time instant returns the
     SUPERSEDED address document (`m-value-object-029`) — the document rides
     the milestone exactly like a scalar column."""
-    return db.find(Supplier.where().as_of(processing=dt.datetime(2024, 4, 1, tzinfo=dt.UTC)))
+    return db.find(Supplier.where().as_of(transaction_time=dt.datetime(2024, 4, 1, tzinfo=dt.UTC)))
 
 
-def bitemporal_vo_owner_as_of_now_both_axes(db: Database) -> Snapshot[Any]:
+def bitemporal_vo_owner_as_of_latest(db: Database) -> Snapshot[Any]:
     """A value object rides a FULL bitemporal owner's rectangle
-    (`m-value-object-030`): pinning both axes to now returns the
+    (`m-value-object-030`): pinning both dimensions to Latest returns the
     fully-current document."""
-    return db.find(Branch.where().as_of(business=LATEST, processing=LATEST))
+    return db.find(Branch.where().as_of(valid_time=LATEST, transaction_time=LATEST))
 
 
 def bitemporal_vo_owner_as_of_a_past_audit_point(db: Database) -> Snapshot[Any]:
     """An audit read (both axes in the past, `m-value-object-031`)
     reconstructs the ORIGINALLY-believed document, distinct from what the
-    system knows now (`bitemporal_vo_owner_as_of_now_both_axes`)."""
+    system knows now (`bitemporal_vo_owner_as_of_latest`)."""
     return db.find(
         Branch.where().as_of(
-            business=dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
-            processing=dt.datetime(2024, 2, 1, tzinfo=dt.UTC),
+            valid_time=dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
+            transaction_time=dt.datetime(2024, 2, 1, tzinfo=dt.UTC),
         )
     )
 
@@ -392,7 +392,7 @@ GRAPH_STORIES: tuple[GraphStory, ...] = (
     ),
     GraphStory(
         "m-navigate-013",
-        "A deep fetch pinned to a past business instant materializes the superseded milestone",
+        "A deep fetch pinned to a past Valid-Time instant materializes the superseded milestone",
         "policy",
         pinned_graph_at_a_past_business_instant,
     ),
@@ -434,21 +434,21 @@ GRAPH_STORIES: tuple[GraphStory, ...] = (
     ),
     GraphStory(
         "m-value-object-028",
-        "A value object rides its unitemporal-processing owner's current milestone",
+        "A value object rides its Transaction-Time-only owner's current milestone",
         "supplier",
-        unitemporal_vo_owner_as_of_now,
+        transaction_time_only_vo_owner_as_of_latest,
     ),
     GraphStory(
         "m-value-object-029",
-        "A value object rides its unitemporal-processing owner's superseded milestone",
+        "A value object rides its Transaction-Time-only owner's superseded milestone",
         "supplier",
-        unitemporal_vo_owner_as_of_a_past_instant,
+        transaction_time_only_vo_owner_as_of_a_past_instant,
     ),
     GraphStory(
         "m-value-object-030",
         "A value object rides a full bitemporal owner's fully-current rectangle",
         "branch",
-        bitemporal_vo_owner_as_of_now_both_axes,
+        bitemporal_vo_owner_as_of_latest,
     ),
     GraphStory(
         "m-value-object-031",

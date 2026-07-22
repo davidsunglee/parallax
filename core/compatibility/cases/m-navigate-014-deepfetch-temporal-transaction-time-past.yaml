@@ -20,10 +20,10 @@ when:
           operand:
             asOf:
               operand: { all: {} }
-              asOfAttr: Policy.processingDate
-              date: "2024-02-01T00:00:00+00:00"
-          asOfAttr: Policy.businessDate
-          date: now
+              dimension: transactionTime
+              coordinate: "2024-02-01T00:00:00+00:00"
+          dimension: validTime
+          coordinate: latest
       paths:
         - [{ rel: Policy.coverages }]
 then:

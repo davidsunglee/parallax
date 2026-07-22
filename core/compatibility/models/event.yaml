@@ -14,14 +14,13 @@ entity:
   name: Event
   namespace: parallax.compatibility
   table: event
-  mutability: transactional
-  temporal: non-temporal
+  persistence: read-write
   attributes:
     - name: id
       type: int64
       column: id
       primaryKey: true
-      pkGenerator: none
+      pkGeneration: application-assigned
     - name: occurredAt
       type: timestamp
       column: occurred_at

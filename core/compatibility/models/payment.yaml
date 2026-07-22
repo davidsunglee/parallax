@@ -4,12 +4,12 @@
 # Payment family maps to ONE shared table (`payment`); rows are discriminated by
 # the root's `tag` column (`kind`). The closed tree is:
 #
-#   Payment      (root, ABSTRACT)     — declares the strategy + tag column;
-#                                        tableless, rowless; owns id + amount
+#   Payment      (root, ABSTRACT)     — declares the strategy, shared table, and
+#                                        tag column; rowless; owns id + amount
 #   CardPayment  (concrete-subtype)   — tagValue 'card'; adds card_network
 #   CashPayment  (concrete-subtype)   — tagValue 'cash'; adds tendered
 #
-# The abstract root owns no table and no rows; only concrete subtypes are
+# The abstract root owns the shared table but no rows; only concrete subtypes are
 # instantiable. Concrete subtypes do NOT repeat the inherited id/amount — the full
 # inherited attribute chain is derived from the ancestry. Because every concrete
 # subtype shares the table, its subtype-declared columns are nullable (a card row
@@ -25,8 +25,8 @@
 entities:
   - name: Payment
     namespace: parallax.compatibility
-    mutability: transactional
-    temporal: non-temporal
+    table: payment
+    persistence: read-write
     inheritance:
       role: root
       strategy: table-per-hierarchy
@@ -37,15 +37,12 @@ entities:
         type: int64
         column: id
         primaryKey: true
-        pkGenerator: none
+        pkGeneration: application-assigned
       - name: amount
         type: decimal(18,2)
         column: amount
   - name: CardPayment
     namespace: parallax.compatibility
-    table: payment
-    mutability: transactional
-    temporal: non-temporal
     inheritance:
       role: concrete-subtype
       parent: Payment
@@ -58,9 +55,6 @@ entities:
         nullable: true
   - name: CashPayment
     namespace: parallax.compatibility
-    table: payment
-    mutability: transactional
-    temporal: non-temporal
     inheritance:
       role: concrete-subtype
       parent: Payment

@@ -13,6 +13,15 @@ entity's derived key rides on). The version a reader observed is held by the
 identity cache (`m-process-cache`). The version-check SQL is fixed by `m-sql`;
 `m-opt-lock` mandates the **observable** conflict-detection rule.
 
+Its model-formation contribution consumes `m-metamodel`, the Inheritance Facet,
+and the Temporal Facet through `m-model-formation`. The Rule Set owns exactly
+`opt-lock-multiple-attributes` (more than one effective explicit version
+Attribute) and `opt-lock-temporal-explicit-attribute` (a Transaction-Time Entity
+also declares an explicit version Attribute). Its Model Compiler produces the
+immutable `OptimisticLockFacet` under `FacetKey(m-opt-lock)`, identifying each
+Entity's effective explicit or Transaction-Time-derived optimistic key without
+copying Attribute Metadata.
+
 Optimistic locking is a **per-unit-of-work participation mode** the caller
 selects (`m-unit-work` strategy selection — `concurrency: optimistic`), not a
 static entity property. In optimistic mode a read takes **no** lock (so readers
@@ -98,8 +107,8 @@ not necessarily the number resolved. A per-object gate or temporal close that
 matches zero rows is the `updatedRows != 1` conflict signal and **MUST** abort the
 whole unit of work; a later row is never silently continued after that conflict.
 
-This materialization rule also applies to processing-temporal entities. Their
-observed processing-from (`in_z`) is the per-row optimistic version analogue; the
+This materialization rule also applies to Transaction-Time Entities. Their
+observed `tx_start` (`in_z`) is the per-row optimistic version analogue; the
 temporal modules own close/chain and rectangle-split SQL, while this module owns
 the conflict and abort rule. Reladomo is the prior art: transaction mode either
 reads under a lock or gates on the observed optimistic version and treats
@@ -114,12 +123,12 @@ update has no equality-elimination pass. Its `set` columns follow descriptor
 declared column order, never authored assignment order; binds are assignment values
 in that emitted order followed by predicate binds. `m-batch-write` owns this
 readless vocabulary and witness; this module owns every observed-version or
-processing-temporal materialization rule.
+Transaction-Time materialization rule.
 
-### Temporal entities derive the version from the processing axis
+### Temporal entities derive the version from Transaction Time
 
-A processing-axis temporal entity (`m-temporal-read`) carries **no** version
-column, so its optimistic key is **derived**: the observed processing-from (`in_z`)
+A Transaction-Time Entity (`m-temporal-read`) carries **no** version column, so
+its optimistic key is **derived**: the observed `tx_start` (`in_z`)
 value **is** the version analogue (Reladomo's `IN_Z` rule). In optimistic mode the
 milestone close/inactivate `UPDATE` the write already issues gains an
 `and <in_z> = ?` gate bound to the `in_z` the unit of work observed for the current
@@ -134,9 +143,9 @@ conflict in optimistic mode, a distinct non-retriable stale/consistency error in
 locking mode. The write shapes and the current-row-predicate-is-not-a-gate
 rationale are `m-audit-write` / `m-bitemp-write`; the conflict/retry contract is
 this module (the `m-opt-lock --> m-temporal-read` composition edge). Combining an
-explicit `optimisticLocking` attribute with `asOfAttributes` is invalid
-(`m-descriptor`), and a business-temporal-only entity cannot participate in
-optimistic mode (no processing axis to derive the key from).
+explicit `optimisticLocking` attribute with `asOfAxes` is invalid
+(`m-descriptor`). Every supported temporal formation contains Transaction Time;
+Valid-Time-Only is unsupported, so no temporal formation lacks this derived key.
 
 ## Conflict detection
 
@@ -238,7 +247,7 @@ their own naive `referenceSql` oracle.
 | `m-opt-lock-003`, `-004` | `Account` update, optimistic / locking | materialize then per-object update; optimistic reads/gates are lock-free, locking reads carry `for share of t0` and writes omit the gate |
 | `m-opt-lock-014` | `Account` update, locking | mixed equal/changed rows gives `1 + 1`, proving per-row no-op elimination and no spurious version bump |
 | `m-opt-lock-015` | `Account` delete, optimistic | every matched row is deleted through a version-gated per-row write; the final find proves only the unmatched account remains |
-| `m-audit-write-007` | processing-temporal `Balance` terminate, locking | every current matched milestone is closed; no equality-elimination applies |
+| `m-audit-write-007` | Transaction-Time `Balance` terminate, locking | every current matched milestone is closed; no equality-elimination applies |
 | `m-bitemp-write-010`–`-013` | `Position` plain / bounded correction or termination | the materialized observed rectangle is closed and the required head/middle/tail chain is emitted |
 
 Each scenario's write step lists its ordered per-object golden statements

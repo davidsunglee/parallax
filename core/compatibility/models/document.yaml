@@ -42,8 +42,7 @@
 entities:
   - name: Document
     namespace: parallax.compatibility
-    mutability: transactional
-    temporal: non-temporal
+    persistence: read-write
     inheritance:
       role: root
       strategy: table-per-concrete-subtype
@@ -52,7 +51,7 @@ entities:
         type: int64
         column: id
         primaryKey: true
-        pkGenerator: none
+        pkGeneration: application-assigned
       - name: title
         type: string
         column: title
@@ -90,8 +89,6 @@ entities:
   - name: Invoice
     namespace: parallax.compatibility
     table: invoice
-    mutability: transactional
-    temporal: non-temporal
     inheritance:
       role: concrete-subtype
       parent: FinancialDocument
@@ -102,8 +99,6 @@ entities:
   - name: Receipt
     namespace: parallax.compatibility
     table: receipt
-    mutability: transactional
-    temporal: non-temporal
     inheritance:
       role: concrete-subtype
       parent: FinancialDocument
@@ -114,8 +109,6 @@ entities:
   - name: Memo
     namespace: parallax.compatibility
     table: memo
-    mutability: transactional
-    temporal: non-temporal
     inheritance:
       role: concrete-subtype
       parent: Document
@@ -130,14 +123,13 @@ entities:
   - name: Folder
     namespace: parallax.compatibility
     table: folder
-    mutability: transactional
-    temporal: non-temporal
+    persistence: read-write
     attributes:
       - name: id
         type: int64
         column: id
         primaryKey: true
-        pkGenerator: none
+        pkGeneration: application-assigned
       - name: name
         type: string
         column: name
@@ -146,11 +138,10 @@ entities:
       # Targets the abstract ROOT Document: reaches any concrete {Invoice, Memo,
       # Receipt}. A narrow in a navigation filter's `op` may restrict it to a subset.
       - name: documents
-        relatedEntity: Document
         cardinality: one-to-many
-        join: this.id = Document.folderId
-        reverseName: folder
-        foreignKey: folder_id
+        join:
+          source: id
+          target: { entity: Document, attribute: folderId }
     indices:
       - name: folder_pk
         attributes: [id]

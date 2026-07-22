@@ -312,7 +312,10 @@ def test_a_result_shaping_directive_reaching_a_write_predicate_is_refused(
 @pytest.mark.parametrize(
     "op, message",
     [
-        (oa.AsOf(operand=oa.All(), as_of_attr="Order.p", date="now"), "temporal wrapper reached"),
+        (
+            oa.AsOf(operand=oa.All(), dimension="transactionTime", coordinate="latest"),
+            "temporal wrapper reached",
+        ),
         (
             oa.DeepFetch(operand=oa.All(), paths=((oa.PathSegment(rel="Order.items"),),)),
             "deep fetch .* increment 5",

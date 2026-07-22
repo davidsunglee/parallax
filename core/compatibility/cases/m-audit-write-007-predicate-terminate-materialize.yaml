@@ -1,7 +1,7 @@
 # Predicate-selected TERMINATE over an audit-only (processing-temporal) entity
 # materializes per resolved row (m-audit-write + m-opt-lock, ADR 0014).
 #
-# Balance carries a SINGLE processing axis [in_z, out_z); a terminate merely CLOSES the
+# Balance carries a SINGLE Transaction-Time dimension [in_z, out_z); a terminate merely CLOSES the
 # current row's processing interval — there is no business-date split and no re-inserted
 # successor (contrast the bitemporal terminates, m-bitemp-write-011/013). Because the
 # write gates each row on its own open interval, the set predicate cannot collapse to

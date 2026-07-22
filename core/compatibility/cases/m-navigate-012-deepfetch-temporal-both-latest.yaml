@@ -1,7 +1,7 @@
 # Deep fetch Policy.coverages, business LATEST / processing LATEST. The root pin
 # propagates to the temporal child: both axes default to the equality form, so
 # the child carries `thru_z = ? and out_z = ?` (binds infinity, infinity) after
-# the IN list. Each coverage resolves to its fully-current milestone:
+# the IN list. Each coverage resolves to its fully-Latest milestone:
 # coverage 10 -> 700 (C-R3), coverage 20 -> 300.
 model: models/policy.yaml
 tags: [m-navigate, m-temporal-read, temporal, relationship, propagation, bitemporal, slice-mvp-1, slice-snapshot-1, slice-managed-1]
@@ -19,10 +19,10 @@ when:
           operand:
             asOf:
               operand: { all: {} }
-              asOfAttr: Policy.processingDate
-              date: now
-          asOfAttr: Policy.businessDate
-          date: now
+              dimension: transactionTime
+              coordinate: latest
+          dimension: validTime
+          coordinate: latest
       paths:
         - [{ rel: Policy.coverages }]
 then:

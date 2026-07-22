@@ -4,13 +4,15 @@ from __future__ import annotations
 
 import pytest
 
-from parallax.core.descriptor import OrderByTerm
+from parallax.core.descriptor import OrderByTerm, RelationshipJoin, RelationshipTarget
 from parallax.core.entity import (
     EntityDefinitionError,
     Field,
     FieldSpec,
     Relationship,
     RelationshipSpec,
+    ReverseRelationship,
+    ReverseRelationshipSpec,
 )
 
 pytestmark = pytest.mark.unit
@@ -127,18 +129,27 @@ def test_field_without_a_pk_generator_leaves_it_unset() -> None:
 def test_relationship_records_declared_metadata() -> None:
     spec = Relationship(
         cardinality="one-to-many",
-        join="this.id = Item.orderId",
-        related_entity="Item",
-        reverse_name="order",
+        join=RelationshipJoin(
+            source="id", target=RelationshipTarget(entity="Item", attribute="orderId")
+        ),
         dependent=True,
-        foreign_key="order_id",
         order_by=[OrderByTerm(attr="id", direction="desc")],
     )
     assert isinstance(spec, RelationshipSpec)
-    assert spec.related_entity == "Item"
+    assert spec.join.target.entity == "Item"
     assert spec.order_by == (OrderByTerm(attr="id", direction="desc"),)
 
 
 def test_relationship_order_by_defaults_to_empty() -> None:
-    spec = Relationship(cardinality="many-to-one", join="x", related_entity="Y")
+    spec = Relationship(
+        cardinality="many-to-one",
+        join=RelationshipJoin(source="x", target=RelationshipTarget(entity="Y", attribute="y")),
+    )
+    assert spec.order_by == ()
+
+
+def test_reverse_relationship_records_only_its_reference_and_ordering() -> None:
+    spec = ReverseRelationship(reverse_of="Order.items")
+    assert isinstance(spec, ReverseRelationshipSpec)
+    assert spec.reverse_of == "Order.items"
     assert spec.order_by == ()

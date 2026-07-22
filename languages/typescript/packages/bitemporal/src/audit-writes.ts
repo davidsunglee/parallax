@@ -6,7 +6,7 @@
  *
  * A write to an audit-only temporal entity **chains milestone rows** rather than
  * mutating in place — that is what produces the audit trail. In audit-only mode
- * the processing axis has no business-date residual, so the chaining is the simple
+ * Transaction-Time-Only has no Valid-Time residual, so chaining is the simple
  * close-and-open form (m-audit-write.md §"Milestone-chaining writes"):
  *
  *  | mutation  | statements                                                        |
@@ -38,26 +38,26 @@ export interface WriteTarget {
   /** The primary-key column the close `UPDATE` keys on (quoted). */
   readonly pkColumn: string;
   /**
-   * The processing axis's `toColumn` (`out_z`) the close `UPDATE` sets + keys on
+   * The Transaction-Time end column (`out_z`) the close `UPDATE` sets + keys on
    * (quoted). Absent for a non-temporal entity (only `insert` is legal there).
    */
-  readonly toColumn?: string;
+  readonly txEndColumn?: string;
   /**
-   * The processing axis's `fromColumn` (`in_z`) — the DERIVED optimistic key (m-opt-lock):
+   * The Transaction-Time start column (`in_z`) — the derived optimistic key (m-opt-lock):
    * an OPTIMISTIC-mode close gates on the `in_z` the unit of work observed, since a
-   * temporal entity carries no version column and the observed processing-from is
+   * temporal entity carries no version column and the observed Transaction-Time start is
    * the version analogue. Present only for a gated (optimistic) close.
    */
-  readonly fromColumn?: string;
+  readonly txStartColumn?: string;
   /**
-   * The BUSINESS axis's `fromColumn` (`from_z`) — the bitemporal business
-   * discriminator (m-bitemp-write). A gated (optimistic) close on a FULL-bitemporal
+   * The Valid-Time start column (`from_z`) — the bitemporal rectangle
+   * discriminator (m-bitemp-write). A gated (optimistic) close on a Bitemporal
    * entity targets EXACTLY the observed rectangle, so it adds `and <from_z> = ?`
    * between the `out_z` and `in_z` gates (`m-bitemp-write-004` / `-005` / `-008`).
    * Present only for a bitemporal entity; absent for an audit-only one, whose gated
-   * close is `… and out_z = ? and in_z = ?` (no business axis).
+   * close is `… and out_z = ? and in_z = ?` (no Valid-Time dimension).
    */
-  readonly businessFromColumn?: string;
+  readonly validStartColumn?: string;
 }
 
 /** A generated DML statement: canonical `?`-placeholder SQL text. */
@@ -66,7 +66,7 @@ export type WriteStatement = string;
 /**
  * The milestone-chaining mutation kinds: the audit-only `insert` / `update` /
  * `terminate` surface plus the full-bitemporal `*Until` rectangle-split trio, which
- * bound a mutation to a business valid-time window (m-bitemp-write).
+ * bound a mutation to a Valid-Time window (m-bitemp-write).
  */
 export type MutationKind =
   | "insert"
@@ -80,9 +80,9 @@ export type MutationKind =
 export interface AuditWriteOptions {
   /**
    * Emit the OPTIMISTIC-mode gated close (`… and <in_z> = ?`) rather than the plain
-   * close (m-opt-lock). A gated close binds the observed processing-from as the version
+   * close (m-opt-lock). A gated close binds the observed Transaction-Time start as the version
    * analogue, so a concurrent writer that superseded the milestone matches 0 rows
-   * (the conflict signal). Requires {@link WriteTarget.fromColumn}. Default `false`
+   * (the conflict signal). Requires {@link WriteTarget.txStartColumn}. Default `false`
    * (the plain close, used in locking mode — no drift with {@link closeStatement}).
    */
   readonly gated?: boolean;
@@ -94,7 +94,7 @@ export interface AuditWriteOptions {
  * update 2, terminate 1); the caller pairs each with the authored bind row.
  *
  * In OPTIMISTIC mode (`options.gated`) the close/terminate `UPDATE` gains the
- * `… and <in_z> = ?` optimistic gate on the observed processing-from (m-opt-lock); the
+ * `… and <in_z> = ?` optimistic gate on the observed Transaction-Time start (m-opt-lock); the
  * plain close stays for locking mode (no drift).
  */
 export function auditWriteStatements(
@@ -103,7 +103,7 @@ export function auditWriteStatements(
   options: AuditWriteOptions = {},
 ): WriteStatement[] {
   // Resolve the close LAZILY — only `update`/`terminate`/`*Until` close a milestone,
-  // so a non-temporal `insert` (`m-core-002`/`m-core-003`, no processing axis) never
+  // so a non-temporal `insert` (`m-core-002`/`m-core-003`, no Transaction Time) never
   // demands one.
   const close = (): WriteStatement =>
     options.gated ? gatedCloseStatement(target) : closeStatement(target);
@@ -111,7 +111,7 @@ export function auditWriteStatements(
   switch (kind) {
     case "insert":
     case "insertUntil":
-      // Open one milestone: an audit-only insert, or a business-bounded insertUntil
+      // Open one milestone: a Transaction-Time-Only insert, or a Valid-Time-bounded insertUntil
       // (`m-bitemp-write-003`, a single INSERT with no prior row to close).
       return [insert()];
     case "update":
@@ -120,7 +120,7 @@ export function auditWriteStatements(
       // orchestrated by the write-sequence rectangle-split planner (m-bitemp-write-006).
       return [close(), insert()];
     case "updateUntil":
-      // Bitemporal rectangle split (4): inactivate the original on the processing axis,
+      // Bitemporal rectangle split (4): inactivate the original in Transaction Time,
       // then chain head / middle / tail (`m-bitemp-write-001` / `-008`).
       return [close(), insert(), insert(), insert()];
     case "terminate":
@@ -165,45 +165,45 @@ function insertStatement(target: WriteTarget): WriteStatement {
  * open milestone is closed (never a blind in-place set).
  */
 function closeStatement(target: WriteTarget): WriteStatement {
-  if (target.toColumn === undefined) {
+  if (target.txEndColumn === undefined) {
     throw new Error(
-      "audit close/terminate requires a processing toColumn; the entity is non-temporal",
+      "audit close/terminate requires a Transaction-Time end column; the entity is non-temporal",
     );
   }
-  return `update ${target.table} set ${target.toColumn} = ? where ${target.pkColumn} = ? and ${target.toColumn} = ?`;
+  return `update ${target.table} set ${target.txEndColumn} = ? where ${target.pkColumn} = ? and ${target.txEndColumn} = ?`;
 }
 
 /**
  * The OPTIMISTIC-mode gated close (m-opt-lock). Like {@link closeStatement} but with
- * the `… and <in_z> = ?` gate on the observed processing-from (the version analogue
+ * the `… and <in_z> = ?` gate on the observed Transaction-Time start (the version analogue
  * for a temporal entity, which carries no version column). The gate shape mirrors
  * `@parallax/locking`'s `versionedUpdate` `… and <version> = ?`: a concurrent writer
  * that superseded the milestone leaves a fresh `in_z`, so the stale gate matches
  * ZERO rows — the `updatedRows != 1` conflict signal.
  *
- * On a FULL-bitemporal entity ({@link WriteTarget.businessFromColumn} present) the
- * gate additionally carries the business discriminator so the close targets EXACTLY
+ * On a Bitemporal entity ({@link WriteTarget.validStartColumn} present) the
+ * gate additionally carries the Valid-Time discriminator so the close targets exactly
  * the observed rectangle (m-bitemp-write): `… where <pk> = ? and out_z = ? and
- * <from_z> = ? and <in_z> = ?`. An audit-only entity has no business axis, so it
+ * <from_z> = ? and <in_z> = ?`. A Transaction-Time-Only entity has no Valid Time, so it
  * omits the `and <from_z> = ?` term: `… where <pk> = ? and out_z = ? and <in_z> = ?`.
  */
 function gatedCloseStatement(target: WriteTarget): WriteStatement {
-  if (target.toColumn === undefined) {
+  if (target.txEndColumn === undefined) {
     throw new Error(
-      "audit close/terminate requires a processing toColumn; the entity is non-temporal",
+      "audit close/terminate requires a Transaction-Time end column; the entity is non-temporal",
     );
   }
-  if (target.fromColumn === undefined) {
+  if (target.txStartColumn === undefined) {
     throw new Error(
-      "a gated (optimistic) audit close requires a processing fromColumn (the in_z gate)",
+      "a gated (optimistic) audit close requires a Transaction-Time start column (the in_z gate)",
     );
   }
-  // A bitemporal close's business discriminator slots BETWEEN the out_z and in_z gates
+  // A Bitemporal close's Valid-Time discriminator slots between the out_z and in_z gates
   // (model column order: from_z precedes in_z), so the observed rectangle is targeted.
-  const businessGate =
-    target.businessFromColumn === undefined ? "" : ` and ${target.businessFromColumn} = ?`;
+  const validTimeGate =
+    target.validStartColumn === undefined ? "" : ` and ${target.validStartColumn} = ?`;
   return (
-    `update ${target.table} set ${target.toColumn} = ? ` +
-    `where ${target.pkColumn} = ? and ${target.toColumn} = ?${businessGate} and ${target.fromColumn} = ?`
+    `update ${target.table} set ${target.txEndColumn} = ? ` +
+    `where ${target.pkColumn} = ? and ${target.txEndColumn} = ?${validTimeGate} and ${target.txStartColumn} = ?`
   );
 }

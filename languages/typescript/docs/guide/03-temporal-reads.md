@@ -2,7 +2,7 @@
 
 # Temporal reads
 
-Temporal reads pin one or both axes with `{ asOf }`, a `range`, or full `history`. An omitted axis defaults to *now* (the current row); the business axis is applied outside the processing axis. You never write the interval predicates — the engine injects them. Each `find` below is a real, tested case.
+Temporal reads pin one or both axes with `{ asOf }`, a `range`, or full `history`. An omitted dimension defaults to *Latest* (the current row); Valid Time is applied outside Transaction Time. You never write the interval predicates — the engine injects them. Each `find` below is a real, tested case.
 
 Every snippet below is extracted from a test that runs it against a real Postgres through `@parallax/db-postgres` and asserts the shown result (`packages/typescript/test/api-conformance/temporal.api-conformance.test.ts`).
 
@@ -10,7 +10,7 @@ Every snippet below is extracted from a test that runs it against a real Postgre
 
 ```ts
 buildFindOperation(Policy.coverages.exists(Coverage.amount.gte(600.0)), {
-temporal: { asOf: { processing: "now", business: "now" }
+temporal: { asOf: { transactionTime: "latest", validTime: "latest" }
 const rows = await px.entity(entity).find(base, options).toArray();
 ```
 
@@ -21,18 +21,18 @@ Policy.coverages.exists(Coverage.amount.gte(600.0))
 const rows = await px.entity(entity).find(base, options).toArray();
 ```
 
-## m-temporal-read-001-as-of-now-defaulted
+## m-temporal-read-001-as-of-latest-defaulted
 
 ```ts
 buildFindOperation(all())
 const rows = await px.entity(entity).find(base, options).toArray();
 ```
 
-## m-temporal-read-002-as-of-now-explicit
+## m-temporal-read-002-as-of-latest-explicit
 
 ```ts
 buildFindOperation(all(), {
-temporal: { asOf: { processing: "now" }
+temporal: { asOf: { transactionTime: "latest" }
 const rows = await px.entity(entity).find(base, options).toArray();
 ```
 
@@ -40,7 +40,7 @@ const rows = await px.entity(entity).find(base, options).toArray();
 
 ```ts
 buildFindOperation(all(), {
-temporal: { asOf: { processing: at("2024-04-01T00:00:00+00:00") }
+temporal: { asOf: { transactionTime: at("2024-04-01T00:00:00+00:00") }
 const rows = await px.entity(entity).find(base, options).toArray();
 ```
 
@@ -48,15 +48,15 @@ const rows = await px.entity(entity).find(base, options).toArray();
 
 ```ts
 buildFindOperation(new Predicate({ eq: { attr: "Balance.id", value: 1 } }), {
-temporal: { history: ["processing"]
+temporal: { history: ["transactionTime"]
 const rows = await px.entity(entity).find(base, options).toArray();
 ```
 
-## m-temporal-read-005-as-of-now-with-predicate
+## m-temporal-read-005-as-of-latest-with-predicate
 
 ```ts
 buildFindOperation(Balance.acctNum.eq("A"), {
-temporal: { asOf: { processing: "now" }
+temporal: { asOf: { transactionTime: "latest" }
 const rows = await px.entity(entity).find(base, options).toArray();
 ```
 
@@ -66,7 +66,7 @@ const rows = await px.entity(entity).find(base, options).toArray();
 buildFindOperation(all(), {
 temporal: {
   range: {
-    processing: {
+    transactionTime: {
       start: at("2024-06-15T00:00:00+00:00"),
       end: at("2024-07-01T00:00:00+00:00")
 const rows = await px.entity(entity).find(base, options).toArray();
@@ -76,7 +76,7 @@ const rows = await px.entity(entity).find(base, options).toArray();
 
 ```ts
 buildFindOperation(all(), {
-temporal: { asOf: { processing: at("2024-06-01T00:00:00+00:00") }
+temporal: { asOf: { transactionTime: at("2024-06-01T00:00:00+00:00") }
 const rows = await px.entity(entity).find(base, options).toArray();
 ```
 
@@ -84,24 +84,24 @@ const rows = await px.entity(entity).find(base, options).toArray();
 
 ```ts
 buildFindOperation(all(), {
-temporal: { asOf: { processing: at("2024-06-01T00:00:00+00:00") }
+temporal: { asOf: { transactionTime: at("2024-06-01T00:00:00+00:00") }
 const rows = await px.entity(entity).find(base, options).toArray();
 ```
 
-## m-temporal-read-013-bitemporal-as-of-now-both-axes
+## m-temporal-read-013-bitemporal-as-of-latest-both-dimensions
 
 ```ts
 buildFindOperation(all(), {
-temporal: { asOf: { processing: "now", business: "now" }
+temporal: { asOf: { transactionTime: "latest", validTime: "latest" }
 const rows = await px.entity(entity).find(base, options).toArray();
 ```
 
-## m-temporal-read-014-bitemporal-business-past-processing-now
+## m-temporal-read-014-bitemporal-valid-time-past-transaction-time-latest
 
 ```ts
 buildFindOperation(all(), {
 temporal: {
-  asOf: { processing: "now", business: at("2024-03-01T00:00:00+00:00")
+  asOf: { transactionTime: "latest", validTime: at("2024-03-01T00:00:00+00:00")
 const rows = await px.entity(entity).find(base, options).toArray();
 ```
 
@@ -111,8 +111,8 @@ const rows = await px.entity(entity).find(base, options).toArray();
 buildFindOperation(all(), {
 temporal: {
   asOf: {
-    processing: at("2024-02-01T00:00:00+00:00"),
-    business: at("2024-03-01T00:00:00+00:00")
+    transactionTime: at("2024-02-01T00:00:00+00:00"),
+    validTime: at("2024-03-01T00:00:00+00:00")
 const rows = await px.entity(entity).find(base, options).toArray();
 ```
 
@@ -120,14 +120,14 @@ const rows = await px.entity(entity).find(base, options).toArray();
 
 ```ts
 buildFindOperation(new Predicate({ eq: { attr: "Position.id", value: 1 } }), {
-temporal: { history: ["processing", "business"]
+temporal: { history: ["transactionTime", "validTime"]
 const rows = await px.entity(entity).find(base, options).toArray();
 ```
 
-## m-temporal-read-017-bitemporal-omitted-processing-default
+## m-temporal-read-017-bitemporal-omitted-transaction-time-default
 
 ```ts
 buildFindOperation(all(), {
-temporal: { asOf: { business: at("2024-03-01T00:00:00+00:00") }
+temporal: { asOf: { validTime: at("2024-03-01T00:00:00+00:00") }
 const rows = await px.entity(entity).find(base, options).toArray();
 ```

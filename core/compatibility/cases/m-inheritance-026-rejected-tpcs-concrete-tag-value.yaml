@@ -25,6 +25,6 @@ when:
           parent: Document
           tagValue: inv
         attributes:
-          - { name: amountDue, type: decimal(18,2), column: amount_due }
+          - { name: amountDue, type: "decimal(18,2)", column: amount_due }
 then:
   rejectedRule: inheritance-tag-on-concrete-subtype-strategy

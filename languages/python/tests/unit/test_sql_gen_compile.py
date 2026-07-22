@@ -73,7 +73,10 @@ def test_unbound_attribute_is_refused() -> None:
 @pytest.mark.parametrize(
     "op, message",
     [
-        (oa.AsOf(operand=oa.All(), as_of_attr="Order.p", date="now"), "temporal wrapper reached"),
+        (
+            oa.AsOf(operand=oa.All(), dimension="transactionTime", coordinate="latest"),
+            "temporal wrapper reached",
+        ),
         (
             oa.DeepFetch(operand=oa.All(), paths=((oa.PathSegment(rel="Order.items"),),)),
             "deep fetch .* increment 5",

@@ -17,7 +17,7 @@ import pytest
 from parallax.conformance import models
 from parallax.core import op_algebra as oa
 from parallax.core.dialect import POSTGRES
-from parallax.core.sql_gen import compile_read
+from parallax.core.sql_gen import SqlGenError, compile_read
 
 pytestmark = pytest.mark.unit
 
@@ -26,6 +26,11 @@ ORDERS = _MODELS["orders"]
 ANIMAL = _MODELS["animal"]
 DOCUMENT = _MODELS["document"]
 PERSON = _MODELS["person"]
+
+
+def test_unvalidated_unknown_relationship_is_rejected() -> None:
+    with pytest.raises(SqlGenError, match="names no declared relationship"):
+        compile_read(oa.Exists(rel="Order.missing"), ORDERS, POSTGRES, "Order")
 
 
 def test_navigate_to_many_lowers_to_correlated_exists() -> None:
@@ -232,7 +237,15 @@ def test_tpcs_branches_take_their_aliases_as_each_branch_opens() -> None:
     # whose concretes are themselves navigable, and `document`'s are not — so this
     # synthetic family is the witness, in the idiom of the TPCS branch-context pin
     # in `test_sql_gen_inheritance.py`.
-    from parallax.core.descriptor import Attribute, Entity, Inheritance, Metamodel, Relationship
+    from parallax.core.descriptor import (
+        Attribute,
+        DefiningRelationship,
+        Entity,
+        Inheritance,
+        Metamodel,
+        RelationshipJoin,
+        RelationshipTarget,
+    )
 
     doc = Entity(
         name="Doc",
@@ -243,11 +256,12 @@ def test_tpcs_branches_take_their_aliases_as_each_branch_opens() -> None:
             Attribute(name="folderId", type="int64", column="folder_id", nullable=True),
         ),
         relationships=(
-            Relationship(
+            DefiningRelationship(
                 name="owner",
-                related_entity="Owner",
                 cardinality="many-to-one",
-                join="this.ownerId = Owner.id",
+                join=RelationshipJoin(
+                    source="ownerId", target=RelationshipTarget(entity="Owner", attribute="id")
+                ),
             ),
         ),
     )
@@ -276,11 +290,12 @@ def test_tpcs_branches_take_their_aliases_as_each_branch_opens() -> None:
         table="folder",
         attributes=(Attribute(name="id", type="int64", column="id", primary_key=True),),
         relationships=(
-            Relationship(
+            DefiningRelationship(
                 name="docs",
-                related_entity="Doc",
                 cardinality="one-to-many",
-                join="this.id = Doc.folderId",
+                join=RelationshipJoin(
+                    source="id", target=RelationshipTarget(entity="Doc", attribute="folderId")
+                ),
             ),
         ),
     )

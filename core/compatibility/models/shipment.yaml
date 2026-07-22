@@ -17,14 +17,13 @@ entity:
   name: Shipment
   namespace: parallax.compatibility
   table: shipment
-  mutability: transactional
-  temporal: non-temporal
+  persistence: read-write
   attributes:
     - name: id
       type: int64
       column: id
       primaryKey: true
-      pkGenerator: none
+      pkGeneration: application-assigned
     - name: name
       type: string
       column: name
@@ -32,8 +31,7 @@ entity:
   valueObjects:
     - name: destination
       column: destination
-      mapping: json
-      cardinality: one
+      multiplicity: one
       nullable: false
       attributes:
         - name: street

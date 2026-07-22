@@ -31,7 +31,6 @@ import {
   ParallaxReadBeforeWriteError,
   type ParallaxRow,
   ParallaxTemporalCloseError,
-  ParallaxTemporalOptimisticError,
   ParallaxWriteValidationError,
   Predicate,
 } from "../src/index.js";
@@ -117,20 +116,15 @@ const ACCOUNT = loadCase(
 /** A physical Account row the stub returns for an in-transaction find (version 1). */
 const ACCOUNT_ROW: ParallaxRow = { id: 2, owner: "Linus", balance: "250.00", version: 1 };
 
-/** The audit-only (processing-temporal) `Balance` descriptor — no version column. */
+/** The audit-only (Transaction-Time) `Balance` descriptor — no version column. */
 const BALANCE = loadCase(
   "core/compatibility/cases/m-temporal-read-009-close-optimistic-success.yaml",
 ).descriptor;
 
-/** The business-temporal-only `Reservation` descriptor (a business axis, no processing). */
-const RESERVATION = loadCase(
-  "core/compatibility/cases/m-temporal-read-018-business-as-of-now-defaulted.yaml",
-).descriptor;
-
 /**
  * A PHYSICAL Balance current-milestone row the stub returns (keyed by physical
- * column; the materializer renames `in_z` -> the `processingFrom` DSL name). Its
- * `in_z` is the observed processing-from an optimistic close gates on (m-temporal-read/m-opt-lock).
+ * column; the materializer renames `in_z` -> the `tx_start` DSL name). Its
+ * `in_z` is the observed Transaction-Time start an optimistic close gates on (m-temporal-read/m-opt-lock).
  */
 const BALANCE_ROW: ParallaxRow = {
   bal_id: 2,
@@ -156,10 +150,15 @@ const VAULT_DESCRIPTOR = {
       name: "Vault",
       namespace: "parallax.test",
       table: "vault",
-      mutability: "transactional",
-      temporal: "non-temporal",
+      persistence: "read-write",
       attributes: [
-        { name: "id", type: "int64", column: "id", primaryKey: true, pkGenerator: "none" },
+        {
+          name: "id",
+          type: "int64",
+          column: "id",
+          primaryKey: true,
+          pkGeneration: "application-assigned",
+        },
         { name: "owner", type: "string", column: "owner", maxLength: 64 },
         { name: "balance", type: "decimal(18,2)", column: "balance" },
         { name: "version", type: "int32", column: "version", optimisticLocking: true },
@@ -167,12 +166,9 @@ const VAULT_DESCRIPTOR = {
       relationships: [
         {
           name: "entries",
-          relatedEntity: "VaultEntry",
           cardinality: "one-to-many",
-          join: "this.id = VaultEntry.vaultId",
-          reverseName: "vault",
+          join: { source: "id", target: { entity: "VaultEntry", attribute: "vaultId" } },
           dependent: true,
-          foreignKey: "vault_id",
         },
       ],
       indices: [{ name: "vault_pk", attributes: ["id"], unique: true }],
@@ -181,10 +177,15 @@ const VAULT_DESCRIPTOR = {
       name: "VaultEntry",
       namespace: "parallax.test",
       table: "vault_entry",
-      mutability: "transactional",
-      temporal: "non-temporal",
+      persistence: "read-write",
       attributes: [
-        { name: "id", type: "int64", column: "id", primaryKey: true, pkGenerator: "none" },
+        {
+          name: "id",
+          type: "int64",
+          column: "id",
+          primaryKey: true,
+          pkGeneration: "application-assigned",
+        },
         { name: "vaultId", type: "int64", column: "vault_id" },
         { name: "memo", type: "string", column: "memo", maxLength: 64 },
         { name: "version", type: "int32", column: "version", optimisticLocking: true },
@@ -192,11 +193,7 @@ const VAULT_DESCRIPTOR = {
       relationships: [
         {
           name: "vault",
-          relatedEntity: "Vault",
-          cardinality: "many-to-one",
-          join: "this.vaultId = Vault.id",
-          reverseName: "entries",
-          foreignKey: "vault_id",
+          reverseOf: "Vault.entries",
         },
       ],
       indices: [{ name: "vault_entry_pk", attributes: ["id"], unique: true }],
@@ -734,7 +731,7 @@ describe("TransactionWriter optimistic x temporal close (m-temporal-read + m-opt
     expect(close?.sql).toContain(
       "update balance set out_z = ? where bal_id = ? and out_z = ? and in_z = ?",
     );
-    // Binds: [txInstant, pk, infinity, observedInZ] — the 4th is the observed in_z.
+    // Binds: [txInstant, pk, infinity, observedTxStart] — the 4th is the observed in_z.
     expect(close?.binds).toHaveLength(4);
     expect(close?.binds[1]).toBe(2);
     expect(String(close?.binds[3])).toContain("2024-02-01");
@@ -840,30 +837,6 @@ describe("TransactionWriter optimistic x temporal close (m-temporal-read + m-opt
     expect(close?.sql).not.toContain("and in_z = ?");
     expect(close?.binds).toHaveLength(3);
   });
-
-  it("business-temporal-only x optimistic is rejected at the write boundary", async () => {
-    const db = new StubDatabase([]);
-    const px = createParallax({ descriptor: RESERVATION, database: db, dialect: postgresDialect });
-
-    // A business-only entity has no processing axis to derive an optimistic key from,
-    // so writing it under `optimistic` mode is invalid (m-descriptor/m-temporal-read/m-opt-lock).
-    await expect(
-      px.transaction(
-        (tx) =>
-          tx.entity("Reservation").create({ id: 99, room: "101", guest: "Ada" }) as Promise<void>,
-        { concurrency: "optimistic" },
-      ),
-    ).rejects.toBeInstanceOf(ParallaxTemporalOptimisticError);
-    // In the default locking mode the same entity is NOT rejected on the mode check
-    // (the guard is optimistic-only) — proving the rejection is mode-scoped.
-    expect(() =>
-      createParallax({
-        descriptor: RESERVATION,
-        database: new StubDatabase([]),
-        dialect: postgresDialect,
-      }),
-    ).not.toThrow();
-  });
 });
 
 /** The `Contact` descriptor — value objects with REQUIRED nested members at depths 1/2/3. */
@@ -935,6 +908,7 @@ describe("TransactionWriter refuses an invalid value-object document PRE-SQL (m-
           street: "12 Aurora Ave",
           city: "Oslo",
           geo: { country: "NO", point: { lat: 59.9, lon: 10.7 } },
+          phones: [],
         },
       }),
     );

@@ -7,14 +7,14 @@
 # correct latest-as-of excludes it, but a child query with no Coverage as-of
 # would incorrectly admit Policy 2.
 Policy:
-  - { id: 1, name: Auto, businessFrom: "2024-01-01T00:00:00+00:00", businessTo: infinity, processingFrom: "2024-01-01T00:00:00+00:00", processingTo: infinity }
-  - { id: 2, name: Home, businessFrom: "2024-01-01T00:00:00+00:00", businessTo: infinity, processingFrom: "2024-01-01T00:00:00+00:00", processingTo: infinity }
+  - { id: 1, name: Auto, valid_start: "2024-01-01T00:00:00+00:00", valid_end: infinity, tx_start: "2024-01-01T00:00:00+00:00", tx_end: infinity }
+  - { id: 2, name: Home, valid_start: "2024-01-01T00:00:00+00:00", valid_end: infinity, tx_start: "2024-01-01T00:00:00+00:00", tx_end: infinity }
 Coverage:
-  - { id: 10, policyId: 1, amount: 500.00, businessFrom: "2024-01-01T00:00:00+00:00", businessTo: infinity, processingFrom: "2024-01-01T00:00:00+00:00", processingTo: "2024-04-01T00:00:00+00:00" }
-  - { id: 10, policyId: 1, amount: 600.00, businessFrom: "2024-01-01T00:00:00+00:00", businessTo: "2024-06-01T00:00:00+00:00", processingFrom: "2024-04-01T00:00:00+00:00", processingTo: infinity }
-  - { id: 10, policyId: 1, amount: 700.00, businessFrom: "2024-06-01T00:00:00+00:00", businessTo: infinity, processingFrom: "2024-04-01T00:00:00+00:00", processingTo: infinity }
-  - { id: 20, policyId: 2, amount: 300.00, businessFrom: "2024-01-01T00:00:00+00:00", businessTo: infinity, processingFrom: "2024-01-01T00:00:00+00:00", processingTo: infinity }
-  - { id: 21, policyId: 2, amount: 900.00, businessFrom: "2024-01-01T00:00:00+00:00", businessTo: infinity, processingFrom: "2023-12-01T00:00:00+00:00", processingTo: "2024-01-01T00:00:00+00:00" }
+  - { id: 10, policyId: 1, amount: 500.00, valid_start: "2024-01-01T00:00:00+00:00", valid_end: infinity, tx_start: "2024-01-01T00:00:00+00:00", tx_end: "2024-04-01T00:00:00+00:00" }
+  - { id: 10, policyId: 1, amount: 600.00, valid_start: "2024-01-01T00:00:00+00:00", valid_end: "2024-06-01T00:00:00+00:00", tx_start: "2024-04-01T00:00:00+00:00", tx_end: infinity }
+  - { id: 10, policyId: 1, amount: 700.00, valid_start: "2024-06-01T00:00:00+00:00", valid_end: infinity, tx_start: "2024-04-01T00:00:00+00:00", tx_end: infinity }
+  - { id: 20, policyId: 2, amount: 300.00, valid_start: "2024-01-01T00:00:00+00:00", valid_end: infinity, tx_start: "2024-01-01T00:00:00+00:00", tx_end: infinity }
+  - { id: 21, policyId: 2, amount: 900.00, valid_start: "2024-01-01T00:00:00+00:00", valid_end: infinity, tx_start: "2023-12-01T00:00:00+00:00", tx_end: "2024-01-01T00:00:00+00:00" }
 Claim:
-  - { id: 1000, coverageId: 10, reserve: 9000.00, businessFrom: "2024-01-01T00:00:00+00:00", businessTo: infinity, processingFrom: "2024-01-01T00:00:00+00:00", processingTo: infinity }
-  - { id: 2000, coverageId: 20, reserve: 4000.00, businessFrom: "2024-01-01T00:00:00+00:00", businessTo: infinity, processingFrom: "2024-01-01T00:00:00+00:00", processingTo: infinity }
+  - { id: 1000, coverageId: 10, reserve: 9000.00, valid_start: "2024-01-01T00:00:00+00:00", valid_end: infinity, tx_start: "2024-01-01T00:00:00+00:00", tx_end: infinity }
+  - { id: 2000, coverageId: 20, reserve: 4000.00, valid_start: "2024-01-01T00:00:00+00:00", valid_end: infinity, tx_start: "2024-01-01T00:00:00+00:00", tx_end: infinity }

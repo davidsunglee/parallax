@@ -25,6 +25,172 @@ from typing import Any, NoReturn
 import yaml
 
 
+def _entity_identity(definition: dict[str, Any]) -> str:
+    """Return one definition's canonical Entity spelling."""
+    namespace = definition.get("namespace")
+    return definition["name"] if namespace is None else f"{namespace}.{definition['name']}"
+
+
+def _definition_index(entity_defs: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """Index exact Entity identities and only unambiguous local aliases."""
+    result = {_entity_identity(definition): definition for definition in entity_defs}
+    local_counts: dict[str, int] = {}
+    for definition in entity_defs:
+        name = definition["name"]
+        local_counts[name] = local_counts.get(name, 0) + 1
+    for definition in entity_defs:
+        if local_counts[definition["name"]] == 1:
+            result[definition["name"]] = definition
+    return result
+
+
+def _resolve_definition(
+    entity_defs: list[dict[str, Any]], owner: dict[str, Any], reference: str
+) -> dict[str, Any]:
+    """Resolve an exact or owner-relative Entity reference without global fallback."""
+    if "." in reference:
+        identity = reference
+    else:
+        namespace = owner.get("namespace")
+        identity = reference if namespace is None else f"{namespace}.{reference}"
+    try:
+        return _definition_index(entity_defs)[identity]
+    except KeyError as exc:
+        raise KeyError(
+            f"{_entity_identity(owner)} references unknown entity {reference!r}"
+        ) from exc
+
+
+def _attribute_column(definition: dict[str, Any], attribute_name: str) -> str:
+    for attribute in definition.get("attributes", []):
+        if attribute.get("name") == attribute_name:
+            return str(attribute.get("column", attribute_name))
+    return attribute_name
+
+
+def _compile_attribute(attribute: dict[str, Any]) -> dict[str, Any]:
+    """Compile one authored Attribute while preserving canonical metadata facts."""
+    compiled = copy.deepcopy(attribute)
+    compiled.setdefault("column", compiled["name"])
+    return compiled
+
+
+def _compile_value_object(value_object: dict[str, Any], *, top_level: bool) -> dict[str, Any]:
+    """Compile conventional storage defaults without changing the Value Object algebra."""
+    compiled = copy.deepcopy(value_object)
+    if top_level:
+        compiled.setdefault("column", compiled["name"])
+    compiled.setdefault("multiplicity", "one")
+    compiled["attributes"] = [copy.deepcopy(item) for item in compiled.get("attributes", [])]
+    compiled["valueObjects"] = [
+        _compile_value_object(item, top_level=False) for item in compiled.get("valueObjects", [])
+    ]
+    return compiled
+
+
+def _defining_relationships(
+    entity_defs: list[dict[str, Any]],
+) -> dict[tuple[str, str], tuple[dict[str, Any], dict[str, Any]]]:
+    defining: dict[tuple[str, str], tuple[dict[str, Any], dict[str, Any]]] = {}
+    for owner in entity_defs:
+        for relationship in owner.get("relationships", []):
+            if "join" in relationship:
+                defining[(_entity_identity(owner), relationship["name"])] = (owner, relationship)
+    return defining
+
+
+def _compile_relationships(
+    entity_defs: list[dict[str, Any]], owner: dict[str, Any]
+) -> list[dict[str, Any]]:
+    """Compile canonical declarations into directional Relationship Facet values."""
+    owner_identity = _entity_identity(owner)
+    defining = _defining_relationships(entity_defs)
+
+    reverse_names: dict[tuple[str, str], str] = {}
+    for reverse_owner in entity_defs:
+        for relationship in reverse_owner.get("relationships", []):
+            reverse_of = relationship.get("reverseOf")
+            if isinstance(reverse_of, str):
+                target_ref, target_relationship = reverse_of.rsplit(".", 1)
+                defining_owner = _resolve_definition(entity_defs, reverse_owner, target_ref)
+                reverse_names[(_entity_identity(defining_owner), target_relationship)] = (
+                    relationship["name"]
+                )
+
+    adapted: list[dict[str, Any]] = []
+    inverse = {
+        "one-to-one": "one-to-one",
+        "many-to-one": "one-to-many",
+        "one-to-many": "many-to-one",
+    }
+    for relationship in owner.get("relationships", []):
+        order_by = copy.deepcopy(relationship.get("orderBy", []))
+        if "join" in relationship:
+            join = relationship["join"]
+            target = join["target"]
+            target_definition = _resolve_definition(entity_defs, owner, target["entity"])
+            target_identity = _entity_identity(target_definition)
+            adapted.append(
+                {
+                    "name": relationship["name"],
+                    "cardinality": relationship["cardinality"],
+                    "join": {
+                        "source": {"entity": owner_identity, "attribute": join["source"]},
+                        "target": {
+                            "entity": target_identity,
+                            "attribute": target["attribute"],
+                        },
+                    },
+                    "reverse": reverse_names.get((owner_identity, relationship["name"])),
+                    "dependent": relationship.get("dependent", False),
+                    "orderBy": order_by,
+                }
+            )
+            continue
+
+        reverse_of = relationship["reverseOf"]
+        target_ref, target_relationship = reverse_of.rsplit(".", 1)
+        defining_owner = _resolve_definition(entity_defs, owner, target_ref)
+        defining_owner_identity = _entity_identity(defining_owner)
+        _defining_owner, defining_relationship = defining[
+            (defining_owner_identity, target_relationship)
+        ]
+        defining_join = defining_relationship["join"]
+        adapted.append(
+            {
+                "name": relationship["name"],
+                "cardinality": inverse[defining_relationship["cardinality"]],
+                "join": {
+                    "source": {
+                        "entity": owner_identity,
+                        "attribute": defining_join["target"]["attribute"],
+                    },
+                    "target": {
+                        "entity": defining_owner_identity,
+                        "attribute": defining_join["source"],
+                    },
+                },
+                "reverse": target_relationship,
+                "dependent": False,
+                "orderBy": order_by,
+            }
+        )
+    return adapted
+
+
+def _compile_definition(definition: dict[str, Any]) -> dict[str, Any]:
+    """Compile one Entity into the harness's sole accepted metadata graph."""
+    compiled = copy.deepcopy(definition)
+    compiled["attributes"] = [
+        _compile_attribute(attribute) for attribute in definition.get("attributes", [])
+    ]
+    compiled["valueObjects"] = [
+        _compile_value_object(value_object, top_level=True)
+        for value_object in definition.get("valueObjects", [])
+    ]
+    return compiled
+
+
 def _frozen(self: Any, *_args: Any, **_kwargs: Any) -> NoReturn:  # noqa: ARG001
     """Reject every in-place mutation of a parsed-corpus container.
 
@@ -134,11 +300,22 @@ class Entity:
     """A single entity within a model descriptor, plus its fixture rows."""
 
     definition: dict[str, Any]
+    effective_definition: dict[str, Any] | None = field(default=None, repr=False)
+    relationship_facet: tuple[dict[str, Any], ...] = field(default=(), repr=False)
     rows: list[dict[str, Any]] = field(default_factory=list)
+
+    @property
+    def runtime_facts(self) -> dict[str, Any]:
+        """Effective facts used only by physical/runtime harness behavior."""
+        return self.definition if self.effective_definition is None else self.effective_definition
 
     @property
     def name(self) -> str:
         return self.definition["name"]
+
+    @property
+    def canonical_name(self) -> str:
+        return _entity_identity(self.definition)
 
     @property
     def table(self) -> str:
@@ -149,7 +326,7 @@ class Entity:
         string rather than raising — callers that provision or read physical rows
         filter abstract entities out (:attr:`is_abstract`).
         """
-        return self.definition.get("table", "")
+        return self.runtime_facts.get("table", "")
 
     @property
     def inheritance(self) -> dict[str, Any] | None:
@@ -170,24 +347,44 @@ class Entity:
 
     @property
     def attributes(self) -> list[dict[str, Any]]:
-        return self.definition["attributes"]
+        return [_compile_attribute(attribute) for attribute in self.runtime_facts["attributes"]]
 
     @property
     def relationships(self) -> list[dict[str, Any]]:
+        """Canonical accepted local defining/reverse Relationship Declarations."""
         return self.definition.get("relationships", [])
+
+    @property
+    def relationship_metadata(self) -> list[dict[str, Any]]:
+        """Directional values supplied by the compiled Relationship Facet."""
+        return list(self.relationship_facet)
 
     @property
     def value_objects(self) -> list[dict[str, Any]]:
         """Embedded composites mapped to dialect-native document columns."""
-        return self.definition.get("valueObjects", [])
+        return [
+            _compile_value_object(value_object, top_level=True)
+            for value_object in self.runtime_facts.get("valueObjects", [])
+        ]
 
     @property
-    def as_of_attributes(self) -> list[dict[str, Any]]:
-        return self.definition.get("asOfAttributes", [])
+    def temporal_runtime_axes(self) -> list[dict[str, Any]]:
+        """Physical runtime projection derived from canonical As-Of Axis declarations."""
+        axes: list[dict[str, Any]] = []
+        for axis in self.runtime_facts.get("asOfAxes", []):
+            axes.append(
+                {
+                    "dimension": axis["dimension"],
+                    "start_column": _attribute_column(self.runtime_facts, axis["startAttribute"]),
+                    "end_column": _attribute_column(self.runtime_facts, axis["endAttribute"]),
+                    "infinity": "infinity",
+                }
+            )
+        return axes
 
     @property
     def is_temporal(self) -> bool:
-        return bool(self.as_of_attributes)
+        return bool(self.temporal_runtime_axes)
 
     def attribute_by_name(self, name: str) -> dict[str, Any]:
         for attribute in self.attributes:
@@ -196,10 +393,18 @@ class Entity:
         raise KeyError(f"{self.name} has no attribute {name!r}")
 
     def relationship_by_name(self, name: str) -> dict[str, Any]:
+        """Return one canonical accepted local Relationship Declaration."""
         for relationship in self.relationships:
             if relationship["name"] == name:
                 return relationship
         raise KeyError(f"{self.name} has no relationship {name!r}")
+
+    def relationship_metadata_by_name(self, name: str) -> dict[str, Any]:
+        """Return one directional value from the compiled Relationship Facet."""
+        for relationship in self.relationship_metadata:
+            if relationship["name"] == name:
+                return relationship
+        raise KeyError(f"{self.name} has no relationship metadata {name!r}")
 
     def value_object_by_name(self, name: str) -> dict[str, Any]:
         """The top-level value object named *name* (m-value-object), else KeyError.
@@ -244,18 +449,33 @@ class Model:
         from .inheritance import resolve_effective_definition
 
         defs = self.entity_defs
-        return [
-            Entity(
-                definition=resolve_effective_definition(defs, definition["name"]),
-                rows=self.fixtures.get(definition["name"], []),
+        entities: list[Entity] = []
+        for definition in defs:
+            effective = (
+                resolve_effective_definition(defs, definition["name"])
+                if isinstance(definition.get("inheritance"), dict)
+                else definition
             )
-            for definition in defs
-        ]
+            entities.append(
+                Entity(
+                    definition=_compile_definition(definition),
+                    effective_definition=_compile_definition(effective),
+                    relationship_facet=tuple(_compile_relationships(defs, effective)),
+                    rows=self.fixtures.get(
+                        _entity_identity(definition), self.fixtures.get(definition["name"], [])
+                    ),
+                )
+            )
+        return entities
 
     def entity(self, name: str) -> Entity:
-        for entity in self.entities:
-            if entity.name == name:
+        entities = self.entities
+        for entity in entities:
+            if entity.canonical_name == name:
                 return entity
+        local = [entity for entity in entities if entity.name == name]
+        if len(local) == 1:
+            return local[0]
         raise KeyError(f"model {self.path.name} has no entity {name!r}")
 
     @property
@@ -314,7 +534,7 @@ class Case:
 
         Holds exactly one action member per shape (``operation`` | ``writeSequence``
         | ``scenario`` | ``coherence`` | ``concurrency`` | ``boundary`` | ``attempts``
-        | ``write``) plus the context members ``uow`` / ``at`` / ``observedInZ`` /
+        | ``write``) plus the context members ``uow`` / ``at`` / ``observedTxStart`` /
         ``equivalentEncodings``.
         """
         return self.raw.get("when", {})
@@ -453,9 +673,9 @@ class Case:
         return self.when.get("at")
 
     @property
-    def observed_in_z(self) -> Any:
-        """A single-form temporal conflict close's observed in_z (``when.observedInZ``)."""
-        return self.when.get("observedInZ")
+    def observed_tx_start(self) -> Any:
+        """A temporal conflict close's observed Transaction-Time start."""
+        return self.when.get("observedTxStart")
 
     @property
     def expected_affected_rows(self) -> int | None:
@@ -701,7 +921,7 @@ class Case:
         """The ordered per-milestone edge-pinned graphs of a `history` / `asOfRange`
         snapshot read (``then.graphs``), or ``None`` (m-snapshot-read, Q5a).
 
-        Each entry is ``{"pin": {asOfAttr: from-instant}, "graph": {Class: [node, …]}}``:
+        Each entry is ``{"pin": {dimension: start-instant}, "graph": {Class: [node, …]}}``:
         the milestone's own edge coordinate paired with the graph materialized at it.
         Coexists with :attr:`expected_graph` exactly as ``then.rows`` does.
         """

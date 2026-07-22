@@ -1,7 +1,8 @@
 # m-inheritance — Inheritance Mapping
 
-`m-inheritance` is the **class-hierarchy mapping** strategy a metamodel entity may
-declare. It depends on `m-descriptor` (the entity it annotates).
+`m-inheritance` is the **class-hierarchy mapping** strategy a normalized Entity
+may declare. Its formation contribution consumes `m-metamodel` through
+`m-model-formation`; `m-descriptor` is only an authoring/serde adapter.
 
 Inheritance is a **closed tree** of entities: one abstract **root**, zero or more
 abstract intermediate nodes, and the concrete, instantiable leaves (or any
@@ -15,15 +16,14 @@ strategy uses no discriminator column. An entity that participates declares an
 
 | Role | Meaning | Table / rows |
 |---|---|---|
-| `root` | the abstract hierarchy root; declares the family strategy and (for table-per-hierarchy) the `tag` column | **tableless, rowless** — a polymorphic position naming the whole family |
+| `root` | the abstract hierarchy root; declares the family strategy and (for table-per-hierarchy) the shared table plus `tag` column | **rowless and non-instantiable** — a polymorphic position naming the whole family |
 | `abstract-subtype` | an abstract interior node between the root and its concrete descendants | **tableless, rowless** — a polymorphic position naming its concrete descendants |
-| `concrete-subtype` | an instantiable participant, the only one that owns rows | owns the physical table the family strategy requires |
+| `concrete-subtype` | an instantiable participant, the only one that owns rows | uses the root table under TPH; owns its table under TPCS |
 
-The `root` and every `abstract-subtype` are **abstract**: tableless, rowless, and
-addressable only as **polymorphic entity positions** (`targetEntity`, a `narrow`
-target, or a relationship target). Only a `concrete-subtype` is instantiable and
-row-owning. An `abstract-subtype` MAY have abstract or concrete descendants; a
-`concrete-subtype` is the leaf of instantiation.
+The `root` and every `abstract-subtype` are **abstract**, rowless, and
+addressable only as polymorphic Entity positions. A TPH root nevertheless owns
+the family's one shared table mapping; owning a mapping does not make it
+instantiable or row-owning. Only a `concrete-subtype` owns rows.
 
 ## Strategies
 
@@ -61,9 +61,10 @@ keys fail validation.
 
 ### Canonical descriptor blocks
 
-Table-per-hierarchy root (abstract, tableless):
+Table-per-hierarchy root (abstract and rowless, but mapping owner):
 
 ```yaml
+table: animal
 inheritance:
   role: root
   strategy: table-per-hierarchy
@@ -82,7 +83,6 @@ inheritance:
 Table-per-hierarchy concrete subtype:
 
 ```yaml
-table: animal
 inheritance:
   role: concrete-subtype
   parent: Pet
@@ -100,7 +100,7 @@ inheritance:
 
 ## Inherited members
 
-Attributes, value objects, relationships, and mutability declared on an abstract
+Attributes, Value Objects, relationships, and persistence declared on an abstract
 ancestor are **inherited by every descendant**. A concrete subtype descriptor
 **does not repeat** inherited attributes merely to satisfy
 `table-per-concrete-subtype`; validation and lowering **derive the full inherited
@@ -111,7 +111,7 @@ conditional requirement in `m-descriptor`).
 **Temporal axes are different: they are family-level metadata, not an ordinary
 inherited member.** Temporality is a property of the **whole inheritance
 family**, not of any one entity in it. Only the family **root** may declare
-`asOfAttributes`; every abstract and concrete descendant **inherits the root's
+`asOfAxes`; every abstract and concrete descendant **inherits the root's
 complete axis set unchanged**. A descendant **MUST NOT** redeclare, add, remove,
 override, or shadow a temporal axis — not even to repeat the root's own
 declaration verbatim. A family is therefore either **entirely non-temporal**
@@ -150,11 +150,10 @@ the one shared table every concrete subtype's rows occupy, and table-per-concret
 subtype's ancestry-derived column chain (*Physical mapping*, below) already
 replicates the root's version column onto every concrete subtype's own table — the
 same mechanism that already threads the primary key and every ordinary inherited
-attribute. Combining an explicit `optimisticLocking` attribute with
-`asOfAttributes` on one entity remains invalid regardless (`m-descriptor`); a
-temporal family's root therefore derives its optimistic key from the processing
-axis (`m-opt-lock` "Temporal entities derive the version from the processing
-axis") rather than declaring a version attribute of its own, so a temporal family
+attribute. Combining an explicit `optimisticLocking` Attribute with
+`asOfAxes` on one Entity remains invalid (`m-descriptor`); a temporal family's
+root therefore derives its optimistic key from the Transaction-Time start
+Attribute (`m-opt-lock`) rather than declaring a version Attribute, so a temporal family
 is never also an explicitly-versioned one. Unlike the temporal-axis narrowing
 above, this is not a simplification relative to a Reladomo feature Parallax
 declines to support as broadly: Reladomo has no considered design for optimistic
@@ -162,8 +161,9 @@ locking composed with inheritance at all (ADR 0027).
 
 ## Physical mapping
 
-**Table-per-hierarchy.** The whole family maps to **one shared table** owned by
-its concrete subtypes; the root's `tag` column distinguishes them. The shared
+**Table-per-hierarchy.** The whole family maps to **one shared table** declared
+by the root; descendants never repeat it. The root's `tag` column distinguishes
+rows. The shared
 table physically carries the union of every concrete subtype's columns, so a
 subtype-declared column is **nullable** in the shared table (a `card` row leaves
 the `cash` column null and vice-versa). The `tag` column is **framework-owned
@@ -284,14 +284,14 @@ specified elsewhere:
 
 ## Family invariants
 
-The following cross-entity invariants hold for every family. They are **semantic**
-(not expressible per-entity in the schema) and a model-aware validator **MUST**
-reject a descriptor that violates one, before any SQL; the compatibility corpus
-pins each as a portable `rejected` / `when.model` case with a
-`then.rejectedRule`:
+The following cross-Entity invariants are the complete `m-inheritance` Model
+Formation Rule Set. They are semantic (not expressible per Entity in the
+schema) and are reported before any SQL. The authoritative formation manifest
+owns the complete code-set declaration; this module owns each code's meaning.
 
-- **Parent resolution** — every `parent` resolves to another entity in the
-  descriptor (`inheritance-unknown-parent`).
+- **Parent resolution** is foundational `m-metamodel` reference resolution;
+  an unknown parent is `metamodel-unresolved-entity-reference`, not a duplicate
+  inheritance-owned code.
 - **Acyclicity** — parent links form no cycle (`inheritance-cycle`).
 - **Single root** — a family has **exactly one** root. A descriptor with
   inheritance participants but **no** root (a zero-root / abstract-orphan family) is
@@ -300,9 +300,19 @@ pins each as a portable `rejected` / `when.model` case with a
   tops out at a root is the distinct concrete-without-abstract-root case below.)
 - **Concrete under an abstract root** — every concrete subtype has an abstract
   root ancestor (`inheritance-concrete-without-abstract-root`).
-- **Tableless abstract nodes** — a `root` / `abstract-subtype` declares no table
-  (`inheritance-abstract-node-with-table`) and owns no fixture rows
-  (`inheritance-abstract-node-fixture-rows`).
+- **TPH table ownership** — the root declares exactly one table
+  (`inheritance-tph-root-table-required`) and every descendant omits it
+  (`inheritance-tph-descendant-table-forbidden`). The root remains abstract,
+  rowless, and non-instantiable despite owning the shared mapping.
+- **TPCS table ownership** — the root and abstract subtypes omit tables
+  (`inheritance-tpcs-abstract-table-forbidden`) and every concrete subtype
+  declares one (`inheritance-tpcs-concrete-table-required`). Fixture rows under
+  abstract nodes remain a case-format/fixture error rather than a Metamodel
+  Issue because fixtures are not Candidate Metamodel input.
+- **One family primary key** — the applicable ancestry chain contains exactly
+  one primary-key Attribute (`inheritance-primary-key-missing` /
+  `inheritance-primary-key-multiple`). Declaration identity stays with the
+  ancestor that introduced it.
 - **Root-only strategy** — a non-root does not redeclare the strategy
   (`inheritance-strategy-redeclared`).
 - **Tag presence** — under table-per-hierarchy, **every** concrete subtype
@@ -313,16 +323,14 @@ pins each as a portable `rejected` / `when.model` case with a
 - **Family-wide tag uniqueness** — under table-per-hierarchy, `tagValue` values
   are unique across the **whole family**, not just siblings
   (`inheritance-duplicate-tag-value`).
-- **Shared-table consistency** — under table-per-hierarchy, all concrete subtypes
-  map to one physical table (`inheritance-inconsistent-hierarchy-table`).
 - **Tag placement** — a table-per-concrete-subtype family declares no `tag` /
   `tagValue` anywhere (`inheritance-tag-on-concrete-subtype-strategy`).
 - **Temporal axes are root-owned** — an `abstract-subtype` or `concrete-subtype`
-  declares no `asOfAttributes` of its own, regardless of whether the root itself
+  declares no `asOfAxes` of its own, regardless of whether the root itself
   is temporal (`inheritance-temporal-axes-not-root-owned`). This holds for BOTH
   malformed shapes: a non-temporal root with a descendant that declares axes, and
   a temporal root whose descendant redeclares, adds, removes, overrides, or
-  shadows an axis. Only the root may ever carry `asOfAttributes` (*Inherited
+  shadows an axis. Only the root may ever carry `asOfAxes` (*Inherited
   members*, above).
 - **Optimistic locking is root-owned** — an `abstract-subtype` or
   `concrete-subtype` declares no `optimisticLocking` attribute of its own,
@@ -332,6 +340,19 @@ pins each as a portable `rejected` / `when.model` case with a
   version attribute, and a versioned root whose descendant redeclares or adds a
   second version attribute. Only the root may ever carry an `optimisticLocking`
   attribute (*Inherited members*, above).
+- **Persistence is root-owned** — a descendant declares no `persistence`, even
+  when repeating the root value (`inheritance-persistence-not-root-owned`).
+  Absence means inherit.
+- **Members do not shadow across ancestry** — a descendant cannot redeclare an
+  ancestor Attribute, Relationship, or top-level Value Object name, including
+  cross-category shadowing (`inheritance-member-shadowing`). Disjoint sibling
+  branches may reuse a name.
+
+After validation, the `m-inheritance` Model Compiler produces the immutable
+`InheritanceFacet` under `FacetKey(m-inheritance)`. It owns ancestry, family
+identity, effective member applicability, strategy, table selection, and
+effective root-owned persistence/temporal/optimistic facts. It retains
+declaration ownership and never copies inherited members into local Metadata.
 
 ## Prior art (Reladomo)
 

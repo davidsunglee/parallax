@@ -1,5 +1,5 @@
-# Invoice / InvoiceLine: the CLEAN audit-only (unitemporal-processing) crossing —
-# one as-of axis, no business dimension to distract. A deliberately minimal
+# Invoice / InvoiceLine: the CLEAN audit-only (Transaction-Time-Only) crossing —
+# one as-of dimension, with no Valid-Time dimension. A deliberately minimal
 # example of as-of propagation across a relationship for readers who only care
 # about the common processing-temporal case. Mirrors balance.yaml's single-axis
 # shape; InvoiceLine 1000 carries a correction so as-of-past vs as-of-latest
@@ -8,38 +8,35 @@ entities:
   - name: Invoice
     namespace: parallax.compatibility
     table: invoice
-    mutability: transactional
-    temporal: unitemporal-processing
+    persistence: read-write
     attributes:
-      - { name: id, type: int64, column: id, primaryKey: true, pkGenerator: none }
+      - { name: id, type: int64, column: id, primaryKey: true, pkGeneration: application-assigned }
       - { name: name, type: string, column: name, maxLength: 64 }
-      - { name: processingFrom, type: timestamp, column: in_z }
-      - { name: processingTo, type: timestamp, column: out_z }
-    asOfAttributes:
-      - { name: processingDate, fromColumn: in_z, toColumn: out_z, axis: processing, toIsInclusive: false, infinity: infinity, default: now }
+      - { name: tx_start, type: timestamp, column: in_z }
+      - { name: tx_end, type: timestamp, column: out_z }
+    asOfAxes:
+      - { dimension: transactionTime, startAttribute: tx_start, endAttribute: tx_end }
     relationships:
       - name: lines
-        relatedEntity: InvoiceLine
         cardinality: one-to-many
-        join: this.id = InvoiceLine.invoiceId
-        reverseName: invoice
+        join:
+          source: id
+          target: { entity: InvoiceLine, attribute: invoiceId }
         dependent: true
-        foreignKey: invoice_id
     indices:
-      - { name: invoice_pk, attributes: [id, processingFrom], unique: true }
+      - { name: invoice_pk, attributes: [id, tx_start], unique: true }
   - name: InvoiceLine
     namespace: parallax.compatibility
     table: invoice_line
-    mutability: transactional
-    temporal: unitemporal-processing
+    persistence: read-write
     attributes:
-      - { name: id, type: int64, column: id, primaryKey: true, pkGenerator: none }
+      - { name: id, type: int64, column: id, primaryKey: true, pkGeneration: application-assigned }
       - { name: invoiceId, type: int64, column: invoice_id }
       - { name: amount, type: "decimal(18,2)", column: amount }
-      - { name: processingFrom, type: timestamp, column: in_z }
-      - { name: processingTo, type: timestamp, column: out_z }
-    asOfAttributes:
-      - { name: processingDate, fromColumn: in_z, toColumn: out_z, axis: processing, toIsInclusive: false, infinity: infinity, default: now }
+      - { name: tx_start, type: timestamp, column: in_z }
+      - { name: tx_end, type: timestamp, column: out_z }
+    asOfAxes:
+      - { dimension: transactionTime, startAttribute: tx_start, endAttribute: tx_end }
     indices:
-      - { name: invoice_line_pk, attributes: [id, processingFrom], unique: true }
+      - { name: invoice_line_pk, attributes: [id, tx_start], unique: true }
       - { name: invoice_line_invoice, attributes: [invoiceId], unique: false }

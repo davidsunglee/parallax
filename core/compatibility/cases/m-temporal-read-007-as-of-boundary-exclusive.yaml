@@ -10,8 +10,8 @@ when:
     asOf:
       operand:
         all: {}
-      asOfAttr: Balance.processingDate
-      date: "2024-06-01T00:00:00+00:00"
+      dimension: transactionTime
+      coordinate: "2024-06-01T00:00:00+00:00"
 then:
   statements:
     - sql:

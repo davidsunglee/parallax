@@ -1,10 +1,12 @@
 # m-pk-gen — Primary-Key Generation
 
-`m-pk-gen` is the **primary-key allocation strategy** a metamodel attribute may
-declare. It depends on `m-descriptor` (the attribute it annotates).
+`m-pk-gen` is the **primary-key allocation strategy** a normalized Attribute
+may declare. Its behavior consumes `m-metamodel`; the canonical descriptor is
+only an authoring/serde adapter.
 
-A primary-key attribute MAY declare how its value is allocated. `none` (the
-default) is application-assigned; `max` allocates `max(col)+1`; `sequence` is a
+A primary-key Attribute MAY declare how its value is allocated.
+`application-assigned` (the default) means the application supplies it; `max`
+allocates `max(col)+1`; `sequence` is a
 *simulated sequence* (Reladomo-style): a registry table whose counter is advanced
 by `batchSize × incrementSize` per allocation, reserving a block of ids the
 application hands out (a partially-consumed block leaves a gap). The simulated
@@ -13,9 +15,21 @@ dialect seam.
 
 | Strategy | Meaning |
 |---|---|
-| `none` | application-assigned (default) |
+| `application-assigned` | application-assigned (default) |
 | `max` | `max(col)+1`-style allocation |
-| `sequence` | simulated sequence (`sequenceName`, `batchSize`, `initialValue`, `incrementSize`) |
+| `sequence` | simulated sequence (`name`, `batchSize`, `initialValue`, `incrementSize`) |
+
+Accepted metadata uses
+`NotPrimaryKey | PrimaryKey(ApplicationAssigned | Max | Sequence(...))`.
+Descriptor `primaryKey: true` with omitted `pkGeneration` normalizes to
+Application Assigned; `pkGeneration` on `primaryKey: false` is invalid. This
+sum prevents a non-primary-key Attribute from carrying a generation strategy.
+
+Invalid generator states are unconstructible in normalized Metadata: the
+descriptor schema or language declaration frontend rejects them before the
+Unresolved Metamodel seam. Sequence defaults are resolved there as well.
+`m-pk-gen` therefore contributes no Model Formation Rule Set, Issue Code, or
+facet.
 
 ## What the suite pins down
 

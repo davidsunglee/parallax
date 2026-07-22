@@ -17,14 +17,14 @@ so a malformed predicate is rejected, exactly as the schema defers predicate
 validation to ``operation.schema.json``. Two structural rules keep the instruction
 framework-honest and are enforced here:
 
-- **The instant surface is axis-explicit.** Business bounds are named uniformly
-  ``businessFrom`` / ``businessTo``; a bounded ``*Until`` mutation carries BOTH.
-  The **processing instant** is NOT an instruction field — it is Clock-supplied
+- **The instant surface is dimension-explicit.** Valid-Time bounds are named
+  ``validFrom`` / ``until``; a bounded ``*Until`` mutation carries BOTH.
+  The **Transaction-Time instant** is NOT an instruction field — it is Clock-supplied
   flush context (ADR 0010), so the corpus's ``at`` authoring alias is an
   UNEXPECTED key here and :func:`deserialize` rejects it (the caller-facing shape
   cannot smuggle one in).
 - **The transaction observation is not an instruction field.** The reserved
-  control keys ``observedVersion`` / ``observedInZ`` are FORBIDDEN on a durable
+  control keys ``observedVersion`` / ``observedTxStart`` are FORBIDDEN on a durable
   write row (ADR 0013); the observation is attached per materialized row at flush
   (:mod:`parallax.core.unit_work.planner`), never carried on the instruction.
 
@@ -74,8 +74,8 @@ _KEYED_MUTATIONS: Final[frozenset[str]] = frozenset(
 _PREDICATE_MUTATIONS: Final[frozenset[str]] = frozenset(
     {"update", "delete", "terminate", "updateUntil", "terminateUntil"}
 )
-# The bounded `*Until` forms carry BOTH business bounds; every other form carries
-# no `businessTo` (its window runs `[businessFrom, infinity)` or is non-temporal).
+# The bounded `*Until` forms carry BOTH Valid-Time bounds; every other form carries
+# no `until` (its window runs `[validFrom, infinity)` or is non-temporal).
 _BOUNDED_MUTATIONS: Final[frozenset[str]] = frozenset(
     {"insertUntil", "updateUntil", "terminateUntil"}
 )
@@ -84,7 +84,7 @@ _ASSIGNMENT_MUTATIONS: Final[frozenset[str]] = frozenset({"update", "updateUntil
 
 # The framework-owned transaction observation is NOT durable instruction state
 # (ADR 0013): these control keys are forbidden on a write row.
-_FORBIDDEN_ROW_KEYS: Final[frozenset[str]] = frozenset({"observedVersion", "observedInZ"})
+_FORBIDDEN_ROW_KEYS: Final[frozenset[str]] = frozenset({"observedVersion", "observedTxStart"})
 
 
 class WriteInstructionError(ValueError):
@@ -96,17 +96,17 @@ class KeyedWrite:
     """A keyed write: a ``mutation`` on one ``entity`` carrying the flat
     attribute-named neutral write input (``rows``).
 
-    ``business_from`` / ``business_to`` are the axis-explicit business bounds; a
+    ``valid_from`` / ``until`` are the Valid-Time bounds; a
     bounded ``*Until`` mutation carries both, a plain temporal mutation carries only
-    ``business_from`` (window ``[business_from, infinity)``), and a non-temporal
-    mutation carries neither. The processing instant is never a field here.
+    ``valid_from`` (window ``[valid_from, infinity)``), and a non-temporal
+    mutation carries neither. The Transaction-Time instant is never a field here.
     """
 
     mutation: KeyedMutation
     entity: str
     rows: tuple[Mapping[str, object], ...]
-    business_from: str | None = None
-    business_to: str | None = None
+    valid_from: str | None = None
+    until: str | None = None
 
     def __post_init__(self) -> None:
         # Freeze each row into a read-only view so the buffered instruction stays
@@ -142,8 +142,8 @@ class PredicateWrite:
     mutation: PredicateMutation
     target: WriteTarget
     assignments: tuple[WriteAssignment, ...] = ()
-    business_from: str | None = None
-    business_to: str | None = None
+    valid_from: str | None = None
+    until: str | None = None
 
 
 WriteInstruction = KeyedWrite | PredicateWrite
@@ -151,7 +151,7 @@ WriteInstruction = KeyedWrite | PredicateWrite
 # The reference pattern a predicate-write assignment `attr` must match
 # (write-instruction.schema.json `$defs/writeAssignment`): a qualified
 # `Class.member` descriptor reference.
-_ASSIGNMENT_REF = re.compile(r"^[A-Za-z][A-Za-z0-9]*\.[a-z][A-Za-z0-9]*$")
+_ASSIGNMENT_REF = re.compile(r"^[A-Za-z][A-Za-z0-9]*\.[a-z][A-Za-z0-9_]*$")
 
 
 # --------------------------------------------------------------------------- #
@@ -162,9 +162,9 @@ def deserialize(doc: object) -> WriteInstruction:
 
     Discriminates the two shapes by their required carrier (``rows`` -> keyed,
     ``target`` -> predicate), validates the closed shape, the mutation enum, the
-    business-bound pairing rules (a bounded ``*Until`` carries both bounds, every
-    other form carries no ``businessTo``), and — for a keyed write — that no row
-    carries a forbidden observation control key or a smuggled processing instant.
+    Valid-Time-bound pairing rules (a bounded ``*Until`` carries both bounds, every
+    other form carries no ``until``), and — for a keyed write — that no row
+    carries a forbidden observation control key or a smuggled Transaction-Time instant.
     """
     if not isinstance(doc, Mapping):
         raise WriteInstructionError(
@@ -191,7 +191,7 @@ def _reject_extra(node: Mapping[str, object], allowed: frozenset[str], shape: st
     extra = sorted(set(node) - allowed)
     if extra:
         # `at` is the corpus's Clock-context alias, an UNEXPECTED key here — the
-        # canonical instruction never carries a processing instant (ADR 0010).
+        # canonical instruction never carries a Transaction-Time instant (ADR 0010).
         raise WriteInstructionError(f"{shape}: unexpected key(s) {extra}")
 
 
@@ -224,20 +224,18 @@ def _bound(node: Mapping[str, object], key: str, shape: str) -> str | None:
     return value
 
 
-def _check_business_bounds(
-    mutation: str, business_from: str | None, business_to: str | None, shape: str
+def _check_valid_time_bounds(
+    mutation: str, valid_from: str | None, until: str | None, shape: str
 ) -> None:
-    """Enforce the schema's business-bound pairing: a bounded ``*Until`` carries
-    BOTH bounds; every other form carries no ``businessTo``."""
+    """Enforce the schema's Valid-Time-bound pairing."""
     if mutation in _BOUNDED_MUTATIONS:
-        if business_from is None or business_to is None:
+        if valid_from is None or until is None:
             raise WriteInstructionError(
-                f"{shape}: `{mutation}` is bounded and MUST carry both "
-                "`businessFrom` and `businessTo`"
+                f"{shape}: `{mutation}` is bounded and MUST carry both `validFrom` and `until`"
             )
-    elif business_to is not None:
+    elif until is not None:
         raise WriteInstructionError(
-            f"{shape}: `{mutation}` is unbounded and MUST NOT carry `businessTo`"
+            f"{shape}: `{mutation}` is unbounded and MUST NOT carry `until`"
         )
 
 
@@ -265,21 +263,21 @@ def _rows(node: Mapping[str, object]) -> tuple[Mapping[str, object], ...]:
 
 def _keyed(node: Mapping[str, object]) -> KeyedWrite:
     _reject_extra(
-        node, frozenset({"mutation", "entity", "rows", "businessFrom", "businessTo"}), "keyed write"
+        node, frozenset({"mutation", "entity", "rows", "validFrom", "until"}), "keyed write"
     )
     _require(node, ("mutation", "entity", "rows"), "keyed write")
     mutation = _mutation(node, _KEYED_MUTATIONS, "keyed write")
     entity = _entity_name(node, "entity", "keyed write")
     rows = _rows(node)
-    business_from = _bound(node, "businessFrom", "keyed write")
-    business_to = _bound(node, "businessTo", "keyed write")
-    _check_business_bounds(mutation, business_from, business_to, "keyed write")
+    valid_from = _bound(node, "validFrom", "keyed write")
+    until = _bound(node, "until", "keyed write")
+    _check_valid_time_bounds(mutation, valid_from, until, "keyed write")
     return KeyedWrite(
         mutation=cast("KeyedMutation", mutation),
         entity=entity,
         rows=rows,
-        business_from=business_from,
-        business_to=business_to,
+        valid_from=valid_from,
+        until=until,
     )
 
 
@@ -324,7 +322,7 @@ def _assignments(node: Mapping[str, object]) -> tuple[WriteAssignment, ...]:
 def _predicate(node: Mapping[str, object]) -> PredicateWrite:
     _reject_extra(
         node,
-        frozenset({"mutation", "target", "assignments", "businessFrom", "businessTo"}),
+        frozenset({"mutation", "target", "assignments", "validFrom", "until"}),
         "predicate write",
     )
     _require(node, ("mutation", "target"), "predicate write")
@@ -342,15 +340,15 @@ def _predicate(node: Mapping[str, object]) -> PredicateWrite:
                 "and MUST NOT carry `assignments`"
             )
         assignments = ()
-    business_from = _bound(node, "businessFrom", "predicate write")
-    business_to = _bound(node, "businessTo", "predicate write")
-    _check_business_bounds(mutation, business_from, business_to, "predicate write")
+    valid_from = _bound(node, "validFrom", "predicate write")
+    until = _bound(node, "until", "predicate write")
+    _check_valid_time_bounds(mutation, valid_from, until, "predicate write")
     return PredicateWrite(
         mutation=cast("PredicateMutation", mutation),
         target=target,
         assignments=assignments,
-        business_from=business_from,
-        business_to=business_to,
+        valid_from=valid_from,
+        until=until,
     )
 
 
@@ -365,7 +363,7 @@ def serialize(instruction: WriteInstruction) -> dict[str, object]:
             "entity": instruction.entity,
             "rows": [dict(row) for row in instruction.rows],
         }
-        _emit_bounds(keyed_body, instruction.business_from, instruction.business_to)
+        _emit_bounds(keyed_body, instruction.valid_from, instruction.until)
         return keyed_body
     predicate_body: dict[str, object] = {
         "mutation": instruction.mutation,
@@ -378,19 +376,17 @@ def serialize(instruction: WriteInstruction) -> dict[str, object]:
         predicate_body["assignments"] = [
             {"attr": a.attr, "value": a.value} for a in instruction.assignments
         ]
-    _emit_bounds(predicate_body, instruction.business_from, instruction.business_to)
+    _emit_bounds(predicate_body, instruction.valid_from, instruction.until)
     return predicate_body
 
 
-def _emit_bounds(
-    body: dict[str, object], business_from: str | None, business_to: str | None
-) -> None:
+def _emit_bounds(body: dict[str, object], valid_from: str | None, until: str | None) -> None:
     # An omitted bound stays omitted (the canonical minimal form), so a non-temporal
     # or plain-temporal instruction round-trips without gaining a null bound.
-    if business_from is not None:
-        body["businessFrom"] = business_from
-    if business_to is not None:
-        body["businessTo"] = business_to
+    if valid_from is not None:
+        body["validFrom"] = valid_from
+    if until is not None:
+        body["until"] = until
 
 
 # --------------------------------------------------------------------------- #
@@ -440,7 +436,7 @@ def validate_instruction(instruction: WriteInstruction, meta: Metamodel) -> None
         members = _declared_members(entity, meta)
         seen: set[str] = set()
         for assignment in instruction.assignments:
-            owner, _, member = assignment.attr.partition(".")
+            owner, _, member = assignment.attr.rpartition(".")
             if owner != entity.name or member not in members:
                 raise WriteInstructionError(
                     f"{entity.name}: assignment {assignment.attr!r} does not name a declared member"

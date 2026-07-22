@@ -53,13 +53,13 @@ The retired `_as_rows`/`canonical_row` rendering carried a LATENT camelCase
 drift risk invisible on the 10 `m-unit-work` stories (Account's canonical and
 physical column names happen to coincide) that would have surfaced the moment
 a story used an entity whose names diverge (`Balance.acctNum`/`acct_num`,
-`Position.businessFrom`/`business_from`, …) — exactly the temporal stories
+`Position.valid_start`, …) — exactly the temporal stories
 below.
 
 **Temporal stories** (D-29/D-30/D-31, COR-3 Phase 8 increment 7 completion
 round) construct axis-governed attributes CLEANLY (never a placeholder
 milestone value, D-31's construction optionality) and drive successive
-distinct processing instants via a scripted clock (`clock=`,
+distinct Transaction-Time instants via a scripted clock (`clock=`,
 :class:`~parallax.conformance.scripted_clock.ScriptedClock`) — one corpus
 writeSequence entry, one flushing `db.transact` call, one scripted instant,
 in entry order (the engine's own demarcation, DQ4). A "chain-update via a
@@ -402,7 +402,7 @@ def bitemporal_insert_until_opens_one_bounded_rectangle(db: Database) -> None:
     def fn(tx: Transaction) -> None:
         tx.insert_until(
             Position(id=1, acct_num="A", value=Decimal("100.00")),
-            business_from=dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
+            valid_from=dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
             until=dt.datetime(2024, 9, 1, tzinfo=dt.UTC),
         )
 
@@ -418,14 +418,14 @@ def bitemporal_plain_update_splits_head_and_new_tail(db: Database) -> None:
     def insert(tx: Transaction) -> None:
         tx.insert(
             Position(id=1, acct_num="A", value=Decimal("100.00")),
-            business_from=dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+            valid_from=dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
         )
 
     def correct(tx: Transaction) -> None:
         current = tx.find(Position.where(Position.id == 1)).result()  # observe the rectangle
         tx.update(
             current.model_copy(update={"value": Decimal("200.00")}),
-            business_from=dt.datetime(2024, 6, 1, tzinfo=dt.UTC),
+            valid_from=dt.datetime(2024, 6, 1, tzinfo=dt.UTC),
         )
 
     db.transact(insert)
@@ -440,7 +440,7 @@ def bitemporal_plain_insert_opens_a_fully_current_rectangle(db: Database) -> Non
     def fn(tx: Transaction) -> None:
         tx.insert(
             Position(id=1, acct_num="A", value=Decimal("100.00")),
-            business_from=dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+            valid_from=dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
         )
 
     db.transact(fn)
@@ -450,14 +450,14 @@ def bitemporal_update_until_splits_head_middle_tail(db: Database) -> None:
     def insert(tx: Transaction) -> None:
         tx.insert(
             Position(id=1, acct_num="A", value=Decimal("100.00")),
-            business_from=dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+            valid_from=dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
         )
 
     def split(tx: Transaction) -> None:
         current = tx.find(Position.where(Position.id == 1)).result()  # observe the rectangle
         tx.update_until(
             current.model_copy(update={"value": Decimal("200.00")}),
-            business_from=dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
+            valid_from=dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
             until=dt.datetime(2024, 9, 1, tzinfo=dt.UTC),
         )
 
@@ -522,7 +522,7 @@ def branch_bitemporal_rectangle_split_carries_the_document(db: Database) -> None
                     phones=(Phone(type="main", number="555-1000"),),
                 ),
             ),
-            business_from=dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+            valid_from=dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
         )
 
     def split(tx: Transaction) -> None:
@@ -541,7 +541,7 @@ def branch_bitemporal_rectangle_split_carries_the_document(db: Database) -> None
                     )
                 }
             ),
-            business_from=dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
+            valid_from=dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
             until=dt.datetime(2024, 9, 1, tzinfo=dt.UTC),
         )
 

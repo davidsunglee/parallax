@@ -53,7 +53,7 @@ and routing (`model`, `tags`, `lane`) plus the explicit `shape` discriminator st
 - **`when`** — the action under test and how the client performs it. Exactly one
   **action** member per shape (`operation` | `writeSequence` | `scenario` |
   `coherence` | `concurrency` | `boundary` | `attempts`, plus the single-attempt
-  conflict's `write`); the **context** members (`uow`, `at`, `observedInZ`,
+  conflict's `write`); the **context** members (`uow`, `at`, `observedTxStart`,
   `equivalentEncodings`) describe the unit-of-work mode, transaction instant,
   observed version, and alternate surface encodings.
 - **`then`** — everything the case asserts: the golden `statements`, the naive
@@ -73,7 +73,7 @@ A case is one of **nine shapes**, named by the required top-level `shape`:
   asserting `then.rows` or a deep-fetch `then.graph`.
 - **`writeSequence`** — ordered DML under `when.writeSequence`, asserting the
   resulting `then.tableState` (the temporal writes `m-audit-write` /
-  `m-bitemp-write` / `m-business-only`, the set-based `m-batch-write`,
+  `m-bitemp-write`, the set-based `m-batch-write`,
   `m-cascade-delete`, and `m-detach` merge-backs).
 - **`scenario`** — a `when.scenario` of ordered read, committed-write, *and*
   lifecycle-**action** steps, golden SQL per step (`m-unit-work` and the
@@ -203,7 +203,7 @@ the open-bound `infinity` as the literal string `infinity`.
 | `given.fault` | `given` | boundary | an injected portable fault kind (`serialization-failure` / `deadlock` / `lock-wait-timeout` / `optimistic-lock-conflict`) driving the retry loop |
 | `when.operation` | `when` | read | a canonical `m-op-algebra` node, validated against the operation schema (read cases) |
 | `when.targetEntity` | `when` | read | the entity the read TARGETS — the queried position `when.operation` starts from (see *Read targeting*, below); REQUIRED on every read case and every scenario / coherence read step |
-| `when.writeSequence` | `when` | writeSequence | an ordered list of mutations a write case realizes: `insert` / `update` / `terminate` (audit-only, business-only, **and full-bitemporal** — the plain, unbounded bitemporal writes are all first-class degenerate rectangle splits with no `until`: plain `insert` is a single fully-current `INSERT`, plain `update` is inactivate + `head` + new `tail`, plain `terminate` is inactivate + `head` only), `delete` (non-temporal delete / detached-delete merge-back), `cascadeDelete` (the minimal dependent-delete witness), plus the `insertUntil` / `updateUntil` / `terminateUntil` `*Until` trio for the bounded full-bitemporal rectangle split |
+| `when.writeSequence` | `when` | writeSequence | an ordered list of mutations a write case realizes: `insert` / `update` / `terminate` (Transaction-Time-Only and Bitemporal; the plain Bitemporal writes are unbounded Valid-Time rectangle splits), `delete`, `cascadeDelete`, plus `insertUntil` / `updateUntil` / `terminateUntil` for bounded Bitemporal rectangle splits |
 | `when.scenario` | `when` | scenario | an ordered list of read / committed-write / lifecycle-**action** steps (`action` + `on`, plus `set` / `path` and the per-step lifecycle observables `expectState` / `expectError` / `differentObjectFrom`), each carrying its own per-step golden `statements` |
 | `when.coherence` | `when` | coherence | a two-node (A / B) operation sequence, each step carrying its node, kind, and per-step golden `statements` |
 | `when.concurrency` | `when` | error / concurrencySuccess | a two-connection, barrier-separated `rounds` choreography; each node step carries per-step golden `statements` |
@@ -212,7 +212,7 @@ the open-bound `infinity` as the literal string `infinity`.
 | `when.write` | `when` | conflict / rejected | the single-attempt neutral write input (①): the flat attribute-named row the versioned `UPDATE` (or temporal close) operates on; on a `rejected` case, a value-object write the validator MUST refuse pre-SQL |
 | `when.model` | `when` | rejected | an inline model descriptor (`m-inheritance`) whose *family* is invalid — the cross-entity closed-tree invariant a model-aware validator MUST reject pre-SQL; kept inline so the shared `models/` registry stays loadable (see *Rejected cases*) |
 | `when.uow` | `when` | no | unit-of-work configuration (`concurrency: locking \| optimistic`, `retries`, `retryOptimisticConflicts`) the action runs under; descriptive |
-| `when.at` / `when.observedInZ` | `when` | conflict | a temporal-close conflict's close instant (→ new `out_z`) and observed processing-from (`in_z`) the optimistic gate binds |
+| `when.at` / `when.observedTxStart` | `when` | conflict | the harness-supplied Transaction-Time close instant (→ new `out_z`) and observed `tx_start` / physical `in_z` the optimistic gate binds |
 | `when.equivalentEncodings` | `when` | no | alternate surface encodings of `when.operation`; each MUST canonicalize to it |
 | `then.statements` | `then` | yes* | the golden SQL an impl must emit — an ordered list of `{sql, binds}` statement entries (dialect-keyed map form), one per deep-fetch level or write-sequence DML step. *Absent for scenario / attempts cases, whose golden SQL lives per step; disallowed on a boundary case |
 | `then.referenceSql` | `then` | conditional | an independent naive oracle (see below) — a plain string, OR a dialect-keyed map where the naive spelling is dialect-specific; for a deep fetch it is the naive single-statement oracle for the **root** row set |
@@ -321,6 +321,12 @@ key **different** views. A polymorphic narrowed view's child objects carry
 view carries none). A `narrow` escaping the relationship target's effective set is a
 `rejected` case (`narrow-outside-relationship-target`).
 
+Graph comparison distinguishes collection kinds. Root result sets and
+relationship collections compare as multisets (relationship `orderBy` is graded
+separately), while a Value Object occurrence with `multiplicity: many` compares
+positionally because its document order is semantic. Duplicate Value Object
+elements remain distinct.
+
 #### Read result form (row-form vs instance-form)
 
 **Every** read a case asserts carries a **result form** — the **object lane**
@@ -402,8 +408,8 @@ read case satisfies its `then` requirement with any one of `rows` / `graph` /
 `graphs`.
 
 Each entry's **`pin`** is the milestone's OWN edge coordinate — its from-instant
-per as-of axis, keyed by the as-of attribute name (`processingDate` /
-`businessDate`) — and its **`graph`** is the plain-value graph materialized at that
+per declared dimension, keyed by `validTime` or `transactionTime` — and its
+**`graph`** is the plain-value graph materialized at that
 pin, the same root-class-keyed shape as `then.graph`. The pins are **edge pins,
 not a shared root pin**: `history` returns each milestone edge-pinned to its own
 from-instant, and `asOfRange` returns every overlapping milestone independently
@@ -542,7 +548,7 @@ For each deep-fetch level whose child entity is temporal, the harness derives th
 oracle): it reads the root pin from the operation's nested `asOf` nodes, matches
 each axis to the child entity's as-of dimension, and computes the expected child
 as-of binds (the `infinity` equality for latest, the `[D, D]` range for an
-instant, business axis first). It then splits the authored child binds into the
+instant, Valid Time first and Transaction Time second). It then splits the authored child binds into the
 IN-list slice and the as-of suffix, asserting the slice equals the gathered
 parent keys and the suffix equals the computed expectation — so a dropped or
 wrong propagated as-of fails the case automatically. A non-temporal child has an
@@ -551,7 +557,7 @@ empty suffix.
 For a writeSequence case inserting into a `sequence`-strategy entity, the
 harness derives the **PK-generation oracle** (`case_runner._assert_pk_allocation`):
 it independently re-derives the allocated primary keys and the registry counter
-from the declared `pkGenerator` config (`initialValue`/`incrementSize`/
+from the declared `pkGeneration` config (`initialValue`/`incrementSize`/
 `batchSize`) and asserts both against the post-write DB state — proving the
 golden's hand-authored ids actually follow the declared strategy (block
 reservation, gap-on-unused, stride). `max` is pinned by its self-describing
@@ -669,15 +675,15 @@ form below. This object is the language-neutral requested operation consumed by
 `compile`, `run`, and API no-drift checks; golden SQL remains the independent
 expected lowering, never the source from which an adapter deduces the write.
 
-The canonical write-instruction vocabulary — this predicate-selected shape and the
-keyed `writeSequence` shape — is **hosted in
+The canonical write-instruction vocabulary — this predicate-selected shape and
+the keyed `writeSequence` shape — is **hosted in
 [`write-instruction.schema.json`](../schemas/write-instruction.schema.json)**
 (`m-unit-work`, the write-side analogue of `operation.schema.json`); this document
-references that canonical shape rather than redefining it. The case format carries
-the same shapes with `at` / `businessAt` / `until` kept as **authoring aliases** of
-the axis-explicit canonical spellings (`businessFrom` / `businessTo`; the processing
-instant is harness / Clock-supplied context, never an instruction field). The
-corpus-wide re-authoring to the canonical spellings is deferred.
+references that canonical shape rather than redefining it. `validFrom` is the
+Valid-Time lower bound and `until` the bounded operation's exclusive Valid-Time
+upper bound. `at` is harness/Clock-supplied Transaction-Time context, never an
+instruction field or alias. The schema and corpus must adopt these final spellings
+before COR-40 runtime work begins; no translation alias is conforming.
 
 ```yaml
 - write:
@@ -699,9 +705,9 @@ are deliberately small and structural:
 | `mutation` | yes | one of `update`, `delete`, `terminate`, `updateUntil`, `terminateUntil` |
 | `target.entity` | yes | exact concrete descriptor entity where the operation starts |
 | `target.predicate` | yes | one schema-valid `m-op-algebra` operation; it is a bare write predicate, never a result modifier |
-| `assignments` | only `update` / `updateUntil` | ordered `{attr, value}` data; nonempty and unique; `attr` names an assignable qualified top-level attribute or value object. An attribute takes a neutral scalar/null literal; a value object takes its complete object/array document or null according to its declared cardinality/nullability. |
-| `at` | processing-temporal target | transaction instant for temporal close/chain behavior |
-| `businessFrom` | business-temporal target | lower bound for the plain or bounded temporal operation |
+| `assignments` | only `update` / `updateUntil` | ordered `{attr, value}` data; nonempty and unique; `attr` names an assignable qualified top-level attribute or value object. An attribute takes a neutral scalar/null literal; a value object takes its complete object/array document or null according to its declared multiplicity/nullability. |
+| `at` | temporal target | harness-supplied Transaction-Time instant for close/chain behavior; context, not an instruction member |
+| `validFrom` | Bitemporal target | Valid-Time lower bound for the plain or bounded temporal operation |
 | `until` | `updateUntil` / `terminateUntil` | bounded operation's exclusive upper bound |
 
 Delete and terminate mutations carry **no** assignments. Assignment list order is
@@ -729,11 +735,11 @@ than inferred from golden SQL. It MUST include identity, an explicit observed
 optimistic version when present, and every current temporal axis boundary. An
 assignment-bearing update also includes the current scalar or whole value-object
 document of every assigned field, so per-row equality/no-op elimination is
-possible. A temporal mutation that chains a successor or preserves a business
+possible. A temporal mutation that chains a successor or preserves a Valid-Time
 head/tail includes every current non-milestone scalar payload column and every
 top-level value-object document column that those rows carry forward. It does not
 project output generated by the framework — for example a bumped version, fresh
-processing instant/open bound, or inheritance discriminator. A non-trivial
+Transaction-Time instant/open bound, or inheritance discriminator. A non-trivial
 scenario read MAY carry `referenceSql`, with the same string-or-dialect-map shape
 as `then.referenceSql`; it is self-contained (rather than reusing golden binds)
 and must agree with its golden rows as the third oracle.
@@ -747,15 +753,15 @@ instructions a single unit of work accumulates and **flushes together**
 instruction (`mutation` + `entity` + `rows`, the case-format analogue of
 `write-instruction.schema.json`'s `keyedWriteInstruction`), **referencing** the
 canonical write-instruction `$defs` rather than redefining them and layering only
-the `at` / `businessFrom` / `until` authoring surface. A **predicate**-selected
+the `at` / `validFrom` / `until` authoring surface. A **predicate**-selected
 instruction is **not** admitted — the buffer is **keyed-only**, and
 predicate-in-buffer stays **deferred** to the string-label→structured write
 migration. The step's golden SQL (`statements`) is the **independent expected
 lowering of that flush**, never the source an adapter deduces the writes from, so
 the step encodes **every** requested mutation explicitly and an adapter exercises
-the flush from the instructions themselves. Business bounds are the axis-explicit
-canonical `businessFrom` / `businessTo`; the processing instant rides as the
-Clock-context `at`, never an instruction field.
+the flush from the instructions themselves. Valid-Time bounds are `validFrom` and
+`until`; the Transaction-Time instant rides as Clock-context `at`, never an
+instruction field.
 
 The buffer is **general**: it spans a **single** keyed write (a buffer of one), a
 **mixed multi-object flush** — an `insert`, `update`, and `delete` of **different**
@@ -778,7 +784,7 @@ golden SQL executed verbatim, plus `tableState` / `expectRows`.
     - mutation: insert
       entity: Balance
       rows: [{ id: 9, acctNum: D, value: 100.00 }]
-      at: "2024-06-01T00:00:00+00:00"       # processing (Clock) instant, not an instruction field
+      at: "2024-06-01T00:00:00+00:00"       # Transaction-Time Clock context, not an instruction field
     - mutation: update
       entity: Balance
       rows: [{ id: 9, value: 150.00 }]
@@ -865,8 +871,8 @@ verifies them (`m-conformance-adapter`, `m-api-conformance`):
   `errorClass` with a `nativeCode` an application error has no analogue for):
   - `detached-relationship-load` — a deferred relationship load on a **detached**
     object, which has no live unit of work to resolve through (`m-detach`).
-  - `processing-pin-read-only` — a mutation through a **finite processing-axis**
-    pinned view, which records what the system knew and is never rewritten
+  - `transaction-time-pin-read-only` — a mutation through a finite
+    Transaction-Time pinned view, which records what the system knew and is never rewritten
     (`m-identity-map`).
 
 ### Coherence cases (`m-coherence`)
@@ -1031,13 +1037,18 @@ invariants per-entity schema validation cannot express, carried inline under
 `when.model`): `inheritance-unknown-parent`, `inheritance-cycle`,
 `inheritance-missing-root`, `inheritance-multiple-roots`,
 `inheritance-concrete-without-abstract-root`,
-`inheritance-abstract-node-with-table`, `inheritance-abstract-node-fixture-rows`,
+`inheritance-tph-root-table-required`,
+`inheritance-tph-descendant-table-forbidden`,
+`inheritance-tpcs-abstract-table-forbidden`,
+`inheritance-tpcs-concrete-table-required`,
+`inheritance-abstract-node-fixture-rows`,
 `inheritance-strategy-redeclared`, `inheritance-missing-tag-value`,
-`inheritance-duplicate-tag-value`, `inheritance-inconsistent-hierarchy-table`,
+`inheritance-duplicate-tag-value`,
 `inheritance-tag-on-concrete-subtype-strategy`,
 `inheritance-temporal-axes-not-root-owned`, and
-`inheritance-optimistic-locking-not-root-owned` (see `m-inheritance` for each
-invariant). A `when.model` case carries an **inline** model descriptor — an
+`inheritance-optimistic-locking-not-root-owned`, and
+`inheritance-persistence-not-root-owned` (see `m-inheritance` for each invariant).
+A `when.model` case carries an **inline** model descriptor — an
 instance of `metamodel.schema.json` whose *family* is invalid — kept inside the
 case rather than in the shared `models/` registry, so an invalid family cannot
 break the sibling cases that load real models. The inline descriptor is
@@ -1052,9 +1063,11 @@ bad-cased segment — are the operation schema's job (the `nestedRef` grammar) a
 stay **schema-validation unit tests**, never `rejected` cases: a syntactically
 malformed operation is refused at layer 1 (schema conformance) before a model-aware
 resolver ever runs. Likewise, purely **per-entity** inheritance negatives (a
-rejected `strategy` enum value, the retired `discriminator` vocabulary, an abstract
-role declaring a `table`) are refused at layer 1 and stay schema-validation unit
-tests; `when.model` cases pin the **cross-entity** family invariants only.
+rejected `strategy` enum value or the retired `discriminator` vocabulary) are
+refused at layer 1 and stay schema-validation unit tests; `when.model` cases pin
+the **cross-entity** family invariants only. Table legality is strategy-relative
+and therefore belongs to whole-model formation: a TPH root owns the shared table,
+whereas a TPCS concrete subtype owns its table.
 
 ## Case-header house style
 

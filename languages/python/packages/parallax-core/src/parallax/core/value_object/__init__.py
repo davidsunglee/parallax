@@ -4,7 +4,7 @@ The recursive embedded-composite model: a top-level value object and all its
 nested value objects (to arbitrary depth) map to one ``json`` document column.
 This scope resolves a dotted access path against the declared structure, reports
 the leaf's neutral type for literal typing, and answers whether a path crosses a
-``cardinality: many`` member — the fact that decides core's flat **any-element**
+``multiplicity: many`` member — the fact that decides core's flat **any-element**
 vs terminated **same-element** semantics. ``m-value-object`` depends only on
 ``m-descriptor``.
 """
@@ -35,7 +35,7 @@ class ValueObjectError(ValueError):
 
 def document_column(vo: ValueObject) -> str:
     """The single structured-document column the whole composite is stored in."""
-    return vo.column
+    return vo.storage_column
 
 
 def member(container: Container, name: str) -> ValueObjectAttribute | NestedValueObject | None:
@@ -84,19 +84,19 @@ def leaf_type(vo: ValueObject, path: Sequence[str]) -> str:
 
 
 def crosses_many(vo: ValueObject, path: Sequence[str]) -> bool:
-    """Whether ``path`` traverses any ``cardinality: many`` member.
+    """Whether ``path`` traverses any ``multiplicity: many`` member.
 
     A flat predicate over such a path keeps core's **any-element** semantics
     (each predicate may be satisfied by a different element); a path confined to
-    ``cardinality: one`` members addresses a single embedded document.
+    ``multiplicity: one`` members addresses a single embedded document.
     """
-    if vo.cardinality == "many":
+    if vo.multiplicity == "many":
         return True
     container: Container = vo
     for segment in path:
         found = member(container, segment)
         if isinstance(found, NestedValueObject):
-            if found.cardinality == "many":
+            if found.multiplicity == "many":
                 return True
             container = found
         else:

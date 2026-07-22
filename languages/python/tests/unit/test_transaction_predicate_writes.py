@@ -32,7 +32,7 @@ from _transact_support import (
 import inheritance_models as im
 import mirrored_models as mm
 from parallax.conformance.story_models import Order
-from parallax.core import AsOfAttribute, Attr, Entity, EntityConfig, Field, inheritance
+from parallax.core import AsOfAxisMetadata, Attr, Entity, EntityConfig, Field, inheritance
 from parallax.core.db_port import JsonDocument, Row
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity import metamodel
@@ -61,8 +61,8 @@ class WhereLedger(Entity, frozen=True):
         namespace="parallax.compatibility",
         mutability="transactional",
         as_of=(
-            AsOfAttribute(
-                name="processingDate", from_column="in_z", to_column="out_z", axis="processing"
+            AsOfAxisMetadata(
+                dimension="transactionTime", start_attribute="tx_start", end_attribute="tx_end"
             ),
         ),
     )
@@ -70,8 +70,8 @@ class WhereLedger(Entity, frozen=True):
     id: Attr[int] = Field(primary_key=True, pk_generator="none", type="int64")
     name: Attr[str] = Field(max_length=64)
     address: Attr[WhereLedgerAddress | None] = Field(nullable=True, default=None)
-    processing_from: Attr[dt.datetime] = Field(column="in_z")
-    processing_to: Attr[dt.datetime] = Field(column="out_z")
+    tx_start: Attr[dt.datetime] = Field(name="tx_start", column="in_z")
+    tx_end: Attr[dt.datetime] = Field(name="tx_end", column="out_z")
 
 
 _WHERE_LEDGER_META = metamodel([WhereLedger])
@@ -91,11 +91,11 @@ class WhereRectangle(Entity, frozen=True):
         namespace="parallax.compatibility",
         mutability="transactional",
         as_of=(
-            AsOfAttribute(
-                name="businessDate", from_column="from_z", to_column="thru_z", axis="business"
+            AsOfAxisMetadata(
+                dimension="validTime", start_attribute="valid_start", end_attribute="valid_end"
             ),
-            AsOfAttribute(
-                name="processingDate", from_column="in_z", to_column="out_z", axis="processing"
+            AsOfAxisMetadata(
+                dimension="transactionTime", start_attribute="tx_start", end_attribute="tx_end"
             ),
         ),
     )
@@ -104,10 +104,10 @@ class WhereRectangle(Entity, frozen=True):
     acct_num: Attr[str] = Field(max_length=32)
     value: Attr[Decimal] = Field(type="decimal(18,2)")
     address: Attr[WhereRectangleAddress | None] = Field(nullable=True, default=None)
-    business_from: Attr[dt.datetime] = Field(column="from_z")
-    business_to: Attr[dt.datetime] = Field(column="thru_z")
-    processing_from: Attr[dt.datetime] = Field(column="in_z")
-    processing_to: Attr[dt.datetime] = Field(column="out_z")
+    valid_start: Attr[dt.datetime] = Field(name="valid_start", column="from_z")
+    valid_end: Attr[dt.datetime] = Field(name="valid_end", column="thru_z")
+    tx_start: Attr[dt.datetime] = Field(name="tx_start", column="in_z")
+    tx_end: Attr[dt.datetime] = Field(name="tx_end", column="out_z")
 
 
 _WHERE_RECTANGLE_META = metamodel([WhereRectangle])
@@ -240,7 +240,7 @@ def test_where_verb_rejects_an_inheritance_family_target() -> None:
     assert not any(op[0] in ("read", "write") for op in port.ops)
 
 
-def test_bitemporal_where_verb_requires_business_from() -> None:
+def test_bitemporal_where_verb_requires_valid_from() -> None:
     port = RecordingPort()
 
     def fn(tx: Transaction) -> None:
@@ -248,29 +248,29 @@ def test_bitemporal_where_verb_requires_business_from() -> None:
             WherePosition.where(WherePosition.id == 1), WherePosition.value.set(Decimal("1.00"))
         )
 
-    with pytest.raises(ValueError, match="requires business_from"):
+    with pytest.raises(ValueError, match="requires valid_from"):
         Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(fn)
 
 
-def test_audit_only_where_verb_forbids_business_from() -> None:
+def test_audit_only_where_verb_forbids_valid_from() -> None:
     port = RecordingPort()
 
     def fn(tx: Transaction) -> None:
-        tx.terminate_where(mm.Balance.where(mm.Balance.id == 1), business_from=FIXED)
+        tx.terminate_where(mm.Balance.where(mm.Balance.id == 1), valid_from=FIXED)
 
-    with pytest.raises(ValueError, match="takes no business_from"):
+    with pytest.raises(ValueError, match="takes no valid_from"):
         Database.connect(port, BALANCE, clock=FixedClock(FIXED)).transact(fn)
 
 
-def test_non_temporal_where_verb_forbids_business_from() -> None:
+def test_non_temporal_where_verb_forbids_valid_from() -> None:
     port = RecordingPort()
 
     def fn(tx: Transaction) -> None:
         tx.update_where(
-            mm.Person.where(mm.Person.id == 1), mm.Person.name.set("Ada"), business_from=FIXED
+            mm.Person.where(mm.Person.id == 1), mm.Person.name.set("Ada"), valid_from=FIXED
         )
 
-    with pytest.raises(ValueError, match="takes no business_from"):
+    with pytest.raises(ValueError, match="takes no valid_from"):
         Database.connect(port, PERSON, clock=FixedClock(FIXED)).transact(fn)
 
 
@@ -492,13 +492,13 @@ def _position_row() -> Row:
 
 def test_materializing_plain_update_where_over_a_bitemporal_target() -> None:
     port = RecordingPort(rows=[_position_row()])
-    business_from = dt.datetime(2024, 7, 1, tzinfo=dt.UTC)
+    valid_from = dt.datetime(2024, 7, 1, tzinfo=dt.UTC)
 
     def fn(tx: Transaction) -> None:
         tx.update_where(
             WherePosition.where(WherePosition.id == 1),
             WherePosition.value.set(Decimal("300.00")),
-            business_from=business_from,
+            valid_from=valid_from,
         )
 
     Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(
@@ -510,10 +510,10 @@ def test_materializing_plain_update_where_over_a_bitemporal_target() -> None:
 
 def test_materializing_plain_terminate_where_over_a_bitemporal_target() -> None:
     port = RecordingPort(rows=[_position_row()])
-    business_from = dt.datetime(2024, 7, 1, tzinfo=dt.UTC)
+    valid_from = dt.datetime(2024, 7, 1, tzinfo=dt.UTC)
 
     def fn(tx: Transaction) -> None:
-        tx.terminate_where(WherePosition.where(WherePosition.id == 1), business_from=business_from)
+        tx.terminate_where(WherePosition.where(WherePosition.id == 1), valid_from=valid_from)
 
     Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(
         fn, concurrency="optimistic"
@@ -524,14 +524,14 @@ def test_materializing_plain_terminate_where_over_a_bitemporal_target() -> None:
 
 def test_materializing_update_until_where_over_a_bitemporal_target() -> None:
     port = RecordingPort(rows=[_position_row()])
-    business_from = dt.datetime(2024, 7, 1, tzinfo=dt.UTC)
+    valid_from = dt.datetime(2024, 7, 1, tzinfo=dt.UTC)
     until = dt.datetime(2024, 9, 1, tzinfo=dt.UTC)
 
     def fn(tx: Transaction) -> None:
         tx.update_until_where(
             WherePosition.where(WherePosition.id == 1),
             WherePosition.value.set(Decimal("300.00")),
-            business_from=business_from,
+            valid_from=valid_from,
             until=until,
         )
 
@@ -544,12 +544,12 @@ def test_materializing_update_until_where_over_a_bitemporal_target() -> None:
 
 def test_materializing_terminate_until_where_over_a_bitemporal_target() -> None:
     port = RecordingPort(rows=[_position_row()])
-    business_from = dt.datetime(2024, 7, 1, tzinfo=dt.UTC)
+    valid_from = dt.datetime(2024, 7, 1, tzinfo=dt.UTC)
     until = dt.datetime(2024, 9, 1, tzinfo=dt.UTC)
 
     def fn(tx: Transaction) -> None:
         tx.terminate_until_where(
-            WherePosition.where(WherePosition.id == 1), business_from=business_from, until=until
+            WherePosition.where(WherePosition.id == 1), valid_from=valid_from, until=until
         )
 
     Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(
@@ -567,13 +567,13 @@ def test_materializing_terminate_until_where_writes_per_resolved_row() -> None:
     # elision (`m-opt-lock.md` "Predicate-selected writes materialize when
     # observations are needed").
     port = RecordingPort(rows=[_position_row(), {**_position_row(), "id": 2}])
-    business_from = dt.datetime(2024, 7, 1, tzinfo=dt.UTC)
+    valid_from = dt.datetime(2024, 7, 1, tzinfo=dt.UTC)
     until = dt.datetime(2024, 9, 1, tzinfo=dt.UTC)
 
     def fn(tx: Transaction) -> None:
         tx.terminate_until_where(
             WherePosition.where(WherePosition.value < 999),
-            business_from=business_from,
+            valid_from=valid_from,
             until=until,
         )
 
@@ -608,13 +608,13 @@ def test_materializing_bitemporal_update_where_carries_the_unassigned_value_obje
     # chained/split row whole" — never decomposed).
     address: dict[str, object] = {"city": "Helsinki"}
     port = RecordingPort(rows=[_rectangle_row(address=address)])
-    business_from = dt.datetime(2024, 7, 1, tzinfo=dt.UTC)
+    valid_from = dt.datetime(2024, 7, 1, tzinfo=dt.UTC)
 
     def fn(tx: Transaction) -> None:
         tx.update_where(
             WhereRectangle.where(WhereRectangle.id == 1),
             WhereRectangle.value.set(Decimal("300.00")),
-            business_from=business_from,
+            valid_from=valid_from,
         )
 
     Database.connect(port, _WHERE_RECTANGLE_META, clock=FixedClock(FIXED)).transact(
@@ -640,14 +640,14 @@ def test_materializing_update_until_where_bitemporal_carries_the_value_object_on
     # only `value` — the document is never decomposed at any chain slot.
     address: dict[str, object] = {"city": "Tampere"}
     port = RecordingPort(rows=[_rectangle_row(address=address)])
-    business_from = dt.datetime(2024, 7, 1, tzinfo=dt.UTC)
+    valid_from = dt.datetime(2024, 7, 1, tzinfo=dt.UTC)
     until = dt.datetime(2024, 9, 1, tzinfo=dt.UTC)
 
     def fn(tx: Transaction) -> None:
         tx.update_until_where(
             WhereRectangle.where(WhereRectangle.id == 1),
             WhereRectangle.value.set(Decimal("300.00")),
-            business_from=business_from,
+            valid_from=valid_from,
             until=until,
         )
 
@@ -679,12 +679,10 @@ def test_materializing_plain_terminate_where_bitemporal_carries_the_document() -
     # chained/split row whole".
     address: dict[str, object] = {"city": "Oslo"}
     port = RecordingPort(rows=[_rectangle_row(address=address)])
-    business_from = dt.datetime(2024, 7, 1, tzinfo=dt.UTC)
+    valid_from = dt.datetime(2024, 7, 1, tzinfo=dt.UTC)
 
     def fn(tx: Transaction) -> None:
-        tx.terminate_where(
-            WhereRectangle.where(WhereRectangle.id == 1), business_from=business_from
-        )
+        tx.terminate_where(WhereRectangle.where(WhereRectangle.id == 1), valid_from=valid_from)
 
     Database.connect(port, _WHERE_RECTANGLE_META, clock=FixedClock(FIXED)).transact(
         fn, concurrency="optimistic"
@@ -701,17 +699,17 @@ def test_materializing_terminate_until_where_bitemporal_carries_the_document_on_
     None
 ):
     # `terminateUntil` opens head AND tail (no middle — the window becomes a
-    # hole in business time, `terminate_until_where`'s own docstring), and
+    # hole in Valid Time, `terminate_until_where`'s own docstring), and
     # BOTH chain the resolved row's OLD payload forward
     # (`bitemp_write.plan`), so the document rides both, whole.
     address: dict[str, object] = {"city": "Tampere"}
     port = RecordingPort(rows=[_rectangle_row(address=address)])
-    business_from = dt.datetime(2024, 7, 1, tzinfo=dt.UTC)
+    valid_from = dt.datetime(2024, 7, 1, tzinfo=dt.UTC)
     until = dt.datetime(2024, 9, 1, tzinfo=dt.UTC)
 
     def fn(tx: Transaction) -> None:
         tx.terminate_until_where(
-            WhereRectangle.where(WhereRectangle.id == 1), business_from=business_from, until=until
+            WhereRectangle.where(WhereRectangle.id == 1), valid_from=valid_from, until=until
         )
 
     Database.connect(port, _WHERE_RECTANGLE_META, clock=FixedClock(FIXED)).transact(
@@ -830,17 +828,17 @@ def test_materializing_update_until_where_rejects_an_equal_window_bound() -> Non
     # No resolving read ever fires — the window rejects at build, before any
     # buffering (`buffer_predicate`, before `_materialize_predicate_write`).
     port = RecordingPort()
-    business_from = dt.datetime(2024, 7, 1, tzinfo=dt.UTC)
+    valid_from = dt.datetime(2024, 7, 1, tzinfo=dt.UTC)
 
     def fn(tx: Transaction) -> None:
         tx.update_until_where(
             WherePosition.where(WherePosition.id == 1),
             WherePosition.value.set(Decimal("300.00")),
-            business_from=business_from,
-            until=business_from,
+            valid_from=valid_from,
+            until=valid_from,
         )
 
-    with pytest.raises(ValueError, match="requires business_from < until"):
+    with pytest.raises(ValueError, match="requires valid_from < until"):
         Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(
             fn, concurrency="optimistic"
         )
@@ -849,15 +847,15 @@ def test_materializing_update_until_where_rejects_an_equal_window_bound() -> Non
 
 def test_materializing_terminate_until_where_rejects_a_reversed_window_bound() -> None:
     port = RecordingPort()
-    business_from = dt.datetime(2024, 7, 1, tzinfo=dt.UTC)
-    until = dt.datetime(2024, 4, 1, tzinfo=dt.UTC)  # BEFORE business_from — reversed
+    valid_from = dt.datetime(2024, 7, 1, tzinfo=dt.UTC)
+    until = dt.datetime(2024, 4, 1, tzinfo=dt.UTC)  # BEFORE valid_from — reversed
 
     def fn(tx: Transaction) -> None:
         tx.terminate_until_where(
-            WherePosition.where(WherePosition.id == 1), business_from=business_from, until=until
+            WherePosition.where(WherePosition.id == 1), valid_from=valid_from, until=until
         )
 
-    with pytest.raises(ValueError, match="requires business_from < until"):
+    with pytest.raises(ValueError, match="requires valid_from < until"):
         Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(
             fn, concurrency="optimistic"
         )

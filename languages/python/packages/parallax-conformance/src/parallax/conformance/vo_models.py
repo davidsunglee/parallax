@@ -1,5 +1,5 @@
 """Value-object-bearing entity classes, installed for real (ledger D-21, COR-3
-Phase 8 increment 7): ``models/supplier.yaml`` (unitemporal-processing, the
+Phase 8 increment 7): ``models/supplier.yaml`` (Transaction-Time-only, the
 first production-reachable temporal x value-object combination),
 ``models/branch.yaml`` (bitemporal, the SAME recursive ``address`` composite
 over both axes), ``models/contact.yaml`` (non-temporal, REQUIRED nested
@@ -51,7 +51,7 @@ mirroring ``animal_owner.ANIMAL_OWNER_REGISTRY``'s own precedent exactly.
 import datetime as dt
 
 from parallax.core import (
-    AsOfAttribute,
+    AsOfAxisMetadata,
     Attr,
     Entity,
     EntityConfig,
@@ -59,6 +59,9 @@ from parallax.core import (
     OrderByTerm,
     Rel,
     Relationship,
+    RelationshipJoin,
+    RelationshipTarget,
+    ReverseRelationship,
 )
 from parallax.core.entity.base import EntityRegistry
 from parallax.core.entity.value_object import ValueObject, VoField
@@ -107,27 +110,27 @@ class Address(ValueObject, frozen=True):
     street: Attr[str | None] = VoField(type="string", nullable=True, default=None)
     city: Attr[str | None] = VoField(type="string", nullable=True, default=None)
     geo: Attr[Geo | None] = VoField(nullable=True, default=None)
-    phones: Attr[tuple[Phone, ...]] = VoField(nullable=True, default=())
+    phones: Attr[tuple[Phone, ...]] = VoField(default=())
 
 
 class Supplier(Entity, frozen=True):
-    """Mirror of ``models/supplier.yaml`` (unitemporal-processing, audit-only)."""
+    """Mirror of ``models/supplier.yaml`` (Transaction-Time-only)."""
 
     __parallax__ = EntityConfig(
         table="supplier",
         namespace=_NS,
         mutability="transactional",
         as_of=(
-            AsOfAttribute(
-                name="processingDate", from_column="in_z", to_column="out_z", axis="processing"
+            AsOfAxisMetadata(
+                dimension="transactionTime", start_attribute="tx_start", end_attribute="tx_end"
             ),
         ),
     )
 
     id: Attr[int] = Field(primary_key=True, pk_generator="none", column="sup_id", type="int64")
     name: Attr[str] = Field(max_length=64)
-    processing_from: Attr[dt.datetime] = Field(column="in_z")
-    processing_to: Attr[dt.datetime] = Field(column="out_z")
+    tx_start: Attr[dt.datetime] = Field(name="tx_start", column="in_z")
+    tx_end: Attr[dt.datetime] = Field(name="tx_end", column="out_z")
     address: Attr[Address | None] = Field(nullable=True, default=None)
 
 
@@ -140,21 +143,21 @@ class Branch(Entity, frozen=True):
         namespace=_NS,
         mutability="transactional",
         as_of=(
-            AsOfAttribute(
-                name="businessDate", from_column="from_z", to_column="thru_z", axis="business"
+            AsOfAxisMetadata(
+                dimension="validTime", start_attribute="valid_start", end_attribute="valid_end"
             ),
-            AsOfAttribute(
-                name="processingDate", from_column="in_z", to_column="out_z", axis="processing"
+            AsOfAxisMetadata(
+                dimension="transactionTime", start_attribute="tx_start", end_attribute="tx_end"
             ),
         ),
     )
 
     id: Attr[int] = Field(primary_key=True, pk_generator="none", column="br_id", type="int64")
     name: Attr[str] = Field(max_length=64)
-    business_from: Attr[dt.datetime] = Field(column="from_z")
-    business_to: Attr[dt.datetime] = Field(column="thru_z")
-    processing_from: Attr[dt.datetime] = Field(column="in_z")
-    processing_to: Attr[dt.datetime] = Field(column="out_z")
+    valid_start: Attr[dt.datetime] = Field(name="valid_start", column="from_z")
+    valid_end: Attr[dt.datetime] = Field(name="valid_end", column="thru_z")
+    tx_start: Attr[dt.datetime] = Field(name="tx_start", column="in_z")
+    tx_end: Attr[dt.datetime] = Field(name="tx_end", column="out_z")
     address: Attr[Address | None] = Field(nullable=True, default=None)
 
 
@@ -188,7 +191,7 @@ class ContactAddress(ValueObject, frozen=True):
     street: Attr[str | None] = VoField(type="string", default=None)
     city: Attr[str | None] = VoField(type="string", default=None)
     geo: Attr[ContactGeo | None] = VoField(default=None)
-    phones: Attr[tuple[ContactPhone, ...]] = VoField(nullable=True, default=())
+    phones: Attr[tuple[ContactPhone, ...]] = VoField(default=())
 
 
 class Contact(Entity, frozen=True):
@@ -278,7 +281,7 @@ class CustomerAddress(ValueObject, frozen=True):
     # explicit JSON-null leaf (id 7) materializes as a null projected field.
     city: Attr[str | None] = VoField(type="string", default=None)
     geo: Attr[CustomerGeo | None] = VoField(nullable=True, default=None)
-    phones: Attr[tuple[CustomerPhone, ...]] = VoField(nullable=True, default=())
+    phones: Attr[tuple[CustomerPhone, ...]] = VoField(default=())
 
 
 class DepotAddress(ValueObject, frozen=True):
@@ -307,20 +310,18 @@ class Customer(Entity, frozen=True, registry=CUSTOMER_REGISTRY):
     address: Attr[CustomerAddress | None] = Field(nullable=True, default=None)
     locations: Rel[tuple["Location", ...]] = Relationship(
         cardinality="one-to-many",
-        join="this.id = Location.customerId",
-        related_entity="Location",
-        reverse_name="customer",
+        join=RelationshipJoin(
+            source="id", target=RelationshipTarget(entity="Location", attribute="customerId")
+        ),
         dependent=True,
-        foreign_key="customer_id",
         order_by=[OrderByTerm(attr="id", direction="asc")],
     )
     depots: Rel[tuple["Depot", ...]] = Relationship(
         cardinality="one-to-many",
-        join="this.id = Depot.customerId",
-        related_entity="Depot",
-        reverse_name="customer",
+        join=RelationshipJoin(
+            source="id", target=RelationshipTarget(entity="Depot", attribute="customerId")
+        ),
         dependent=True,
-        foreign_key="customer_id",
         order_by=[OrderByTerm(attr="id", direction="asc")],
     )
 
@@ -336,13 +337,7 @@ class Location(Entity, frozen=True, registry=CUSTOMER_REGISTRY):
     customer_id: Attr[int] = Field(column="customer_id", type="int64")
     label: Attr[str] = Field(max_length=64)
     address: Attr[CustomerAddress | None] = Field(nullable=True, default=None)
-    customer: Rel["Customer"] = Relationship(
-        cardinality="many-to-one",
-        join="this.customerId = Customer.id",
-        related_entity="Customer",
-        reverse_name="locations",
-        foreign_key="customer_id",
-    )
+    customer: Rel["Customer"] = ReverseRelationship(reverse_of="Customer.locations")
 
 
 class Depot(Entity, frozen=True, registry=CUSTOMER_REGISTRY):
@@ -358,10 +353,4 @@ class Depot(Entity, frozen=True, registry=CUSTOMER_REGISTRY):
     customer_id: Attr[int] = Field(column="customer_id", type="int64")
     label: Attr[str] = Field(max_length=64)
     address: Attr[DepotAddress | None] = Field(nullable=True, default=None)
-    customer: Rel["Customer"] = Relationship(
-        cardinality="many-to-one",
-        join="this.customerId = Customer.id",
-        related_entity="Customer",
-        reverse_name="depots",
-        foreign_key="customer_id",
-    )
+    customer: Rel["Customer"] = ReverseRelationship(reverse_of="Customer.depots")

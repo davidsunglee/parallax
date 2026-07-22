@@ -115,6 +115,7 @@ def test_inheritance_model_negatives_are_covered() -> None:
 def _tph_root(**overrides: Any) -> dict[str, Any]:
     definition = {
         "name": "Animal",
+        "table": "animal",
         "inheritance": {
             "role": "root",
             "strategy": "table-per-hierarchy",
@@ -135,7 +136,6 @@ def test_tph_concrete_subtype_missing_tag_value_is_rejected() -> None:
             _tph_root(),
             {
                 "name": "Dog",
-                "table": "animal",
                 "inheritance": {"role": "concrete-subtype", "parent": "Animal"},
                 "attributes": [
                     {
@@ -223,18 +223,20 @@ def test_descendant_temporal_axes_under_a_non_temporal_root_is_rejected() -> Non
             {
                 "name": "Pet",
                 "inheritance": {"role": "abstract-subtype", "parent": "Animal"},
-                "asOfAttributes": [
+                "attributes": [
+                    {"name": "txStart", "type": "timestamp", "column": "in_z"},
+                    {"name": "txEnd", "type": "timestamp", "column": "out_z"},
+                ],
+                "asOfAxes": [
                     {
-                        "name": "processingDate",
-                        "fromColumn": "in_z",
-                        "toColumn": "out_z",
-                        "axis": "processing",
+                        "dimension": "transactionTime",
+                        "startAttribute": "txStart",
+                        "endAttribute": "txEnd",
                     }
                 ],
             },
             {
                 "name": "Dog",
-                "table": "animal",
                 "inheritance": {"role": "concrete-subtype", "parent": "Pet", "tagValue": "dog"},
                 "attributes": [
                     {
@@ -264,15 +266,14 @@ def test_descendant_temporal_axes_under_a_temporal_root_is_rejected() -> None:
                 "attributes": [
                     {"name": "id", "type": "int64", "column": "id", "primaryKey": True},
                     {"name": "amount", "type": "decimal(18,2)", "column": "amount"},
-                    {"name": "processingFrom", "type": "timestamp", "column": "in_z"},
-                    {"name": "processingTo", "type": "timestamp", "column": "out_z"},
+                    {"name": "tx_start", "type": "timestamp", "column": "in_z"},
+                    {"name": "tx_end", "type": "timestamp", "column": "out_z"},
                 ],
-                "asOfAttributes": [
+                "asOfAxes": [
                     {
-                        "name": "processingDate",
-                        "fromColumn": "in_z",
-                        "toColumn": "out_z",
-                        "axis": "processing",
+                        "dimension": "transactionTime",
+                        "startAttribute": "tx_start",
+                        "endAttribute": "tx_end",
                     }
                 ],
             },
@@ -282,15 +283,14 @@ def test_descendant_temporal_axes_under_a_temporal_root_is_rejected() -> None:
                 "inheritance": {"role": "concrete-subtype", "parent": "Rate"},
                 "attributes": [
                     {"name": "grade", "type": "string", "column": "grade", "nullable": True},
-                    {"name": "businessFrom", "type": "timestamp", "column": "from_z"},
-                    {"name": "businessTo", "type": "timestamp", "column": "thru_z"},
+                    {"name": "valid_start", "type": "timestamp", "column": "from_z"},
+                    {"name": "valid_end", "type": "timestamp", "column": "thru_z"},
                 ],
-                "asOfAttributes": [
+                "asOfAxes": [
                     {
-                        "name": "businessDate",
-                        "fromColumn": "from_z",
-                        "toColumn": "thru_z",
-                        "axis": "business",
+                        "dimension": "validTime",
+                        "startAttribute": "valid_start",
+                        "endAttribute": "valid_end",
                     }
                 ],
             },
@@ -302,25 +302,23 @@ def test_descendant_temporal_axes_under_a_temporal_root_is_rejected() -> None:
 
 
 def test_resolve_effective_definition_inherits_temporal_axes_from_the_root_only() -> None:
-    # `DepositRate` declares NO `asOfAttributes` of its own; the flattened
+    # `DepositRate` declares no `asOfAxes` of its own; the flattened
     # definition surfaces the ROOT's axes (never a nearer, non-root ancestor —
     # a valid descriptor never HAS one, per the invariant above).
     entity_defs = [
         {
             "name": "Rate",
             "inheritance": {"role": "root", "strategy": "table-per-concrete-subtype"},
-            "temporal": "unitemporal-processing",
             "attributes": [
                 {"name": "id", "type": "int64", "column": "id", "primaryKey": True},
-                {"name": "processingFrom", "type": "timestamp", "column": "in_z"},
-                {"name": "processingTo", "type": "timestamp", "column": "out_z"},
+                {"name": "tx_start", "type": "timestamp", "column": "in_z"},
+                {"name": "tx_end", "type": "timestamp", "column": "out_z"},
             ],
-            "asOfAttributes": [
+            "asOfAxes": [
                 {
-                    "name": "processingDate",
-                    "fromColumn": "in_z",
-                    "toColumn": "out_z",
-                    "axis": "processing",
+                    "dimension": "transactionTime",
+                    "startAttribute": "tx_start",
+                    "endAttribute": "tx_end",
                 }
             ],
         },
@@ -332,8 +330,7 @@ def test_resolve_effective_definition_inherits_temporal_axes_from_the_root_only(
         },
     ]
     resolved = resolve_effective_definition(entity_defs, "DepositRate")
-    assert resolved["asOfAttributes"] == entity_defs[0]["asOfAttributes"]
-    assert resolved["temporal"] == "unitemporal-processing"
+    assert resolved["asOfAxes"] == entity_defs[0]["asOfAxes"]
 
 
 def test_the_authored_corpus_covers_both_operation_and_write_negatives() -> None:

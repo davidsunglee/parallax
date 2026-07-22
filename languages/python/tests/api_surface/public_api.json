@@ -1,6 +1,6 @@
 {
   "parallax.core": [
-    "AsOfAttribute",
+    "AsOfAxisMetadata",
     "Attr",
     "AttributeExpr",
     "Concrete",
@@ -21,9 +21,13 @@
     "ProvenanceError",
     "Rel",
     "Relationship",
+    "RelationshipJoin",
     "RelationshipPath",
+    "RelationshipTarget",
     "ReservedNameError",
+    "ReverseRelationship",
     "Statement",
+    "TemporalDimension",
     "TemporalReadError",
     "UndeclaredAxisError",
     "UnloadedRelationshipError",
@@ -32,7 +36,6 @@
     "VoField",
     "edge_of",
     "is_loaded",
-    "meta",
     "narrowed",
     "pin_of"
   ],

@@ -22,7 +22,6 @@ import type { Operation } from "@parallax/operation";
 import { afterAll, beforeAll, expect, describe as group, it } from "vitest";
 import {
   AttributeExpression,
-  type AxisRefs,
   buildFindOperation,
   NavigationPath,
   Predicate,
@@ -44,17 +43,6 @@ const inList = (ref: string, values: readonly (string | number)[]): Predicate =>
   new Predicate({ in: { attr: ref, values } });
 const path = (...refs: string[]): NavigationPath => new NavigationPath(refs);
 const at = (iso: string): Temporal.Instant => Temporal.Instant.from(iso);
-
-const POLICY_AXES: AxisRefs = {
-  processing: "Policy.processingDate",
-  business: "Policy.businessDate",
-};
-const COVERAGE_AXES: AxisRefs = {
-  processing: "Coverage.processingDate",
-  business: "Coverage.businessDate",
-};
-const INVOICE_AXES: AxisRefs = { processing: "Invoice.processingDate" };
-const LEASE_AXES: AxisRefs = { processing: "Lease.processingDate" };
 
 /** One deep-fetch suite row: the DSL that builds the corpus operation + its root. */
 interface Row {
@@ -148,28 +136,29 @@ const CASES: readonly Row[] = [
     build: () =>
       buildFindOperation(all(), {
         includes: [path("Policy.coverages")],
-        temporal: { asOf: { processing: "now", business: "now" } },
-        axisRefs: POLICY_AXES,
+        temporal: { asOf: { transactionTime: "latest", validTime: "latest" } },
       }),
   },
   {
-    stem: "m-navigate-013-deepfetch-temporal-business-past",
+    stem: "m-navigate-013-deepfetch-temporal-valid-time-past",
     entity: "Policy",
     build: () =>
       buildFindOperation(all(), {
         includes: [path("Policy.coverages")],
-        temporal: { asOf: { processing: "now", business: at("2024-03-01T00:00:00+00:00") } },
-        axisRefs: POLICY_AXES,
+        temporal: {
+          asOf: { transactionTime: "latest", validTime: at("2024-03-01T00:00:00+00:00") },
+        },
       }),
   },
   {
-    stem: "m-navigate-014-deepfetch-temporal-processing-past",
+    stem: "m-navigate-014-deepfetch-temporal-transaction-time-past",
     entity: "Policy",
     build: () =>
       buildFindOperation(all(), {
         includes: [path("Policy.coverages")],
-        temporal: { asOf: { processing: at("2024-02-01T00:00:00+00:00"), business: "now" } },
-        axisRefs: POLICY_AXES,
+        temporal: {
+          asOf: { transactionTime: at("2024-02-01T00:00:00+00:00"), validTime: "latest" },
+        },
       }),
   },
   {
@@ -180,11 +169,10 @@ const CASES: readonly Row[] = [
         includes: [path("Policy.coverages")],
         temporal: {
           asOf: {
-            processing: at("2024-02-01T00:00:00+00:00"),
-            business: at("2024-03-01T00:00:00+00:00"),
+            transactionTime: at("2024-02-01T00:00:00+00:00"),
+            validTime: at("2024-03-01T00:00:00+00:00"),
           },
         },
-        axisRefs: POLICY_AXES,
       }),
   },
   {
@@ -193,8 +181,7 @@ const CASES: readonly Row[] = [
     build: () =>
       buildFindOperation(all(), {
         includes: [path("Policy.coverages", "Coverage.claims")],
-        temporal: { asOf: { processing: "now", business: "now" } },
-        axisRefs: POLICY_AXES,
+        temporal: { asOf: { transactionTime: "latest", validTime: "latest" } },
       }),
   },
   {
@@ -203,28 +190,25 @@ const CASES: readonly Row[] = [
     build: () =>
       buildFindOperation(all(), {
         includes: [path("Coverage.policy")],
-        temporal: { asOf: { processing: "now", business: "now" } },
-        axisRefs: COVERAGE_AXES,
+        temporal: { asOf: { transactionTime: "latest", validTime: "latest" } },
       }),
   },
   {
-    stem: "m-navigate-019-deepfetch-processing-only-latest",
+    stem: "m-navigate-019-deepfetch-transaction-time-only-latest",
     entity: "Invoice",
     build: () =>
       buildFindOperation(all(), {
         includes: [path("Invoice.lines")],
-        temporal: { asOf: { processing: "now" } },
-        axisRefs: INVOICE_AXES,
+        temporal: { asOf: { transactionTime: "latest" } },
       }),
   },
   {
-    stem: "m-navigate-020-deepfetch-processing-only-instant",
+    stem: "m-navigate-020-deepfetch-transaction-time-only-instant",
     entity: "Invoice",
     build: () =>
       buildFindOperation(all(), {
         includes: [path("Invoice.lines")],
-        temporal: { asOf: { processing: at("2024-02-01T00:00:00+00:00") } },
-        axisRefs: INVOICE_AXES,
+        temporal: { asOf: { transactionTime: at("2024-02-01T00:00:00+00:00") } },
       }),
   },
   {
@@ -238,8 +222,7 @@ const CASES: readonly Row[] = [
     build: () =>
       buildFindOperation(all(), {
         includes: [path("Lease.notes")],
-        temporal: { asOf: { processing: "now" } },
-        axisRefs: LEASE_AXES,
+        temporal: { asOf: { transactionTime: "latest" } },
       }),
   },
   {
@@ -250,8 +233,9 @@ const CASES: readonly Row[] = [
         includes: [path("Policy.coverages")],
         orderBy: [new AttributeExpression("Policy.id").asc()],
         limit: 1,
-        temporal: { asOf: { processing: "now", business: at("2024-03-01T00:00:00+00:00") } },
-        axisRefs: POLICY_AXES,
+        temporal: {
+          asOf: { transactionTime: "latest", validTime: at("2024-03-01T00:00:00+00:00") },
+        },
       }),
   },
 ];

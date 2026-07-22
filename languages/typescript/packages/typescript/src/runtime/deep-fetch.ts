@@ -105,7 +105,7 @@ export async function executeDeepFetch(
   // SQL — and child locking falls out structurally rather than being re-plumbed.
   const locking = readContext.concurrency === "locking";
   const { sql, binds } = compile(body.operand, rootSchema, dialect, { locking });
-  const rootPins = collectRootPins(rootSchema, body.operand);
+  const rootPins = collectRootPins(body.operand);
 
   const rootRows = [...(await executeRead(database, sql, binds as readonly unknown[]))] as Row[];
   const tree = buildTree(metamodel, body.paths, rootPins, dialect, locking);
@@ -161,19 +161,25 @@ function materializeNode(
   const scalar = rowMaterializer(entity, dialect)(scalarColumns(row, entity));
   recordObservedRow(observed, entity, scalar);
   for (const rel of entity.relationships()) {
-    if (!(rel.name in row)) {
+    if (!(rel.identity.name in row)) {
       continue;
     }
-    const child = metamodel.entity(rel.relatedEntity);
-    const value = row[rel.name];
+    const child = metamodel.entity(rel.join.target.entity);
+    const value = row[rel.identity.name];
     if (Array.isArray(value)) {
-      scalar[rel.name] = value.map((c) =>
+      scalar[rel.identity.name] = value.map((c) =>
         materializeNode(c as Row, child, metamodel, observed, dialect),
       );
     } else if (value && typeof value === "object") {
-      scalar[rel.name] = materializeNode(value as Row, child, metamodel, observed, dialect);
+      scalar[rel.identity.name] = materializeNode(
+        value as Row,
+        child,
+        metamodel,
+        observed,
+        dialect,
+      );
     } else {
-      scalar[rel.name] = value ?? null;
+      scalar[rel.identity.name] = value ?? null;
     }
   }
   return scalar;
@@ -227,14 +233,20 @@ function deepFetchRootEntity(
   return first;
 }
 
-/** Collect the root's `asOf` pins (business/processing) for per-hop propagation. */
-function collectRootPins(schema: RuntimeSchema, operand: Operation): AxisPins {
+/** Collect the root's `asOf` pins by canonical dimension for per-hop propagation. */
+function collectRootPins(operand: Operation): AxisPins {
   const pins: AxisPins = {};
   let node: unknown = peelDirectives(operand);
   while (node !== null && typeof node === "object" && "asOf" in (node as object)) {
-    const asOf = (node as { asOf: { operand: unknown; asOfAttr: string; date: string } }).asOf;
-    const axis = schema.resolveAsOfAxis(asOf.asOfAttr);
-    pins[axis] = asOf.date === "now" ? { kind: "now" } : { kind: "instant", date: asOf.date };
+    const asOf = (
+      node as {
+        asOf: { operand: unknown; dimension: "validTime" | "transactionTime"; coordinate: string };
+      }
+    ).asOf;
+    pins[asOf.dimension] =
+      asOf.coordinate === "latest"
+        ? { kind: "latest" }
+        : { kind: "instant", coordinate: asOf.coordinate };
     node = asOf.operand;
   }
   return pins;
@@ -307,16 +319,20 @@ function materialize(
   const [className, relName] = splitRef(builder.relRef);
   const sourceEntity = metamodel.entity(className);
   const relationship = sourceEntity.relationshipByName(relName);
-  const relatedEntity = metamodel.entity(relationship.relatedEntity);
-  const { thisAttr, relatedAttr } = parseJoin(relationship.join);
-  const parentColumn = sourceEntity.attributeByName(thisAttr).column;
-  const childColumn = relatedEntity.attributeByName(relatedAttr).column;
+  const targetEntity = metamodel.entity(relationship.join.target.entity);
+  const parentColumn = sourceEntity.attributeByName(relationship.join.source.name).column;
+  const childColumn = targetEntity.attributeByName(relationship.join.target.name).column;
   const toOne =
     relationship.cardinality === "many-to-one" || relationship.cardinality === "one-to-one";
 
   const compileLevel = (keys: readonly Key[]): LevelQuery => {
-    const childSchema = new RuntimeSchema(metamodel, relatedEntity, dialect);
-    const levelOp = childLevelOperation(relatedEntity, relatedAttr, keys, relationship);
+    const childSchema = new RuntimeSchema(metamodel, targetEntity, dialect);
+    const levelOp = childLevelOperation(
+      targetEntity,
+      relationship.join.target.name,
+      keys,
+      relationship,
+    );
     const compiled = compile(levelOp, childSchema, dialect, { locking, seedPins: rootPins });
     return { sql: compiled.sql, binds: compiled.binds as readonly unknown[] };
   };
@@ -343,7 +359,10 @@ function childLevelOperation(
   relatedAttr: string,
   keys: readonly Key[],
   relationship: {
-    readonly orderBy: readonly { readonly attr: string; readonly direction?: "asc" | "desc" }[];
+    readonly orderBy: readonly {
+      readonly attribute: { readonly name: string };
+      readonly direction: "asc" | "desc";
+    }[];
   },
 ): Operation {
   const membership: Operation = {
@@ -356,8 +375,8 @@ function childLevelOperation(
     orderBy: {
       operand: membership,
       keys: relationship.orderBy.map((key) => ({
-        attr: `${childEntity.name}.${key.attr}`,
-        direction: key.direction ?? "asc",
+        attr: `${childEntity.name}.${key.attribute.name}`,
+        direction: key.direction,
       })),
     },
   } as Operation;
@@ -392,13 +411,4 @@ function splitRef(ref: string): [string, string] {
     throw new Error(`malformed reference '${ref}' (expected 'Class.member')`);
   }
   return [ref.slice(0, dot), ref.slice(dot + 1)];
-}
-
-/** Parse a canonical relationship `join` into its two attribute names. */
-function parseJoin(join: string): { thisAttr: string; relatedAttr: string } {
-  const match = /^\s*this\.(\w+)\s*=\s*\w+\.(\w+)\s*$/.exec(join);
-  if (!match) {
-    throw new Error(`unsupported relationship join '${join}'`);
-  }
-  return { thisAttr: match[1] as string, relatedAttr: match[2] as string };
 }

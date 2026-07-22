@@ -62,7 +62,7 @@ the slice is **include-driven** (`caseTags.include: ["slice-mvp-1"]`),
 so V1 claims every case selected by the canonical claim and returns
 `unsupported` for everything else. A V1 adapter that implements the specified
 transaction, relationship, list, temporal (bitemporal **reads and writes** +
-audit-only processing-temporal), optimistic-locking, and value-object (typed nested
+Transaction-Time-Only), optimistic-locking, and value-object (typed nested
 predicates, atomic document writes, inherited-temporality reads, materialization
 graph, and the pre-SQL `rejected` negatives) surfaces but defers aggregation,
 identity-cache scenarios, query-cache scenarios, m-detach detached merge-back, PK
@@ -94,12 +94,15 @@ capabilities in this shape:
       "m-deep-fetch",
       "m-descriptor",
       "m-dialect",
+      "m-metamodel",
+      "m-model-formation",
       "m-navigate",
       "m-op-algebra",
       "m-op-list",
       "m-opt-lock",
       "m-pk-gen",
       "m-read-lock",
+      "m-relationship",
       "m-sql",
       "m-temporal-read",
       "m-unit-work",
@@ -194,7 +197,7 @@ value used in expressions and the managed object `type Order` (aliasable as
 No generated enum types are part of TypeScript V1 (the canonical descriptor has
 no enum element). Value objects, by contrast, **are** structured in V1: a
 `valueObject` declares typed inner `attributes`, self-nested `valueObjects` to
-arbitrary depth, and `cardinality: one | many` (m-value-object), all stored in
+arbitrary depth, and `multiplicity: one | many` (m-value-object), all stored in
 its one structured-document column. Codegen therefore emits a typed value-object
 class per declared member and parent-to-nested **getters to arbitrary depth**
 (no reverse getters, no lock/cache/statement machinery — [§7](#7-codegen-or-not-dq5)),
@@ -300,27 +303,29 @@ callbacks and of sort keys as `Array.sort` comparators is likewise deferred.
 
 ### 2.9 Temporal reads (`m-temporal-read`)
 
-TypeScript timestamps use `Temporal.Instant` and are constrained to the core m-core
-microsecond boundary: values with non-zero sub-microsecond precision are rejected
-at the Parallax API boundary rather than truncated. The explicit current-row
-token is the string literal `"now"`; in an `asOf` option it serializes to the
-core `now` temporal pin and is equivalent to omitting that axis.
+TypeScript timestamps use `Temporal.Instant` and are constrained to the core
+m-core microsecond boundary: values with non-zero sub-microsecond precision are
+rejected at the Parallax API boundary rather than truncated. `LATEST` is the
+open-ended-row coordinate and serializes as `"latest"`. It is distinct from an
+explicit Now, which is obtained from a clock as a finite `Temporal.Instant` and
+serializes as that timestamp.
 
 ```ts
-type TemporalAxis = "processing" | "business";
-type TemporalPoint = Temporal.Instant | "now";
+const LATEST = "latest" as const;
+type TemporalAxis = "validTime" | "transactionTime";
+type TemporalPoint = Temporal.Instant | typeof LATEST;
 type TemporalRange = {
   start: Temporal.Instant;
   end: Temporal.Instant;
 };
 type TemporalReadOptions = {
   asOf?: {
-    processing?: TemporalPoint;
-    business?: TemporalPoint;
+    validTime?: TemporalPoint;
+    transactionTime?: TemporalPoint;
   };
   range?: {
-    processing?: TemporalRange;
-    business?: TemporalRange;
+    validTime?: TemporalRange;
+    transactionTime?: TemporalRange;
   };
   history?: readonly TemporalAxis[];
 };
@@ -335,13 +340,13 @@ const currentBalances = px.balances.find(Balance.acctNum.eq("A"));
 
 const historicalBalances = px.balances.find(Balance.acctNum.eq("A"), {
   asOf: {
-    processing: Temporal.Instant.from("2024-04-01T00:00:00Z"),
+    transactionTime: Temporal.Instant.from("2024-04-01T00:00:00Z"),
   },
 });
 
 const rangedBalances = px.balances.find(Balance.all(), {
   range: {
-    processing: {
+    transactionTime: {
       start: Temporal.Instant.from("2024-06-15T00:00:00Z"),
       end: Temporal.Instant.from("2024-07-01T00:00:00Z"),
     },
@@ -349,32 +354,32 @@ const rangedBalances = px.balances.find(Balance.all(), {
 });
 
 const fullPositionHistory = px.positions.find(Position.id.eq(1), {
-  history: ["business", "processing"],
+  history: ["validTime", "transactionTime"],
 });
 ```
 
-Axis names are the core temporal axis names, not column names. For a given
-entity, `processing` maps to the entity's `asOfAttribute` with
-`axis: "processing"` and `business` maps to the one with `axis: "business"`.
-Supplying an axis the entity does not declare is a validation error.
+Dimension names are identical across the TypeScript API, operation wire form,
+and `asOfAxes` metadata. Supplying a dimension the entity does not declare is a
+validation error.
 
 `asOf`, `range`, and `history` are mutually exclusive **per axis**. For example,
-`{ asOf: { business: t }, history: ["processing"] }` is valid for a bitemporal
-entity, but `{ asOf: { business: t }, history: ["business"] }` is rejected.
+`{ asOf: { validTime: t }, history: ["transactionTime"] }` is valid for a
+Bitemporal entity, but `{ asOf: { validTime: t }, history: ["validTime"] }` is
+rejected.
 Range `start` is inclusive and `end` is exclusive; `start` must be strictly
 before `end`.
 
 The TypeScript adapter serializes explicit temporal reads to the core m-op-algebra nodes:
 
-- `asOf.processing` / `asOf.business` → `asOf`
-- `range.processing` / `range.business` → `asOfRange`
-- `history: ["processing" | "business"]` → `history`
+- `asOf.validTime` / `asOf.transactionTime` → `asOf { dimension, coordinate }`
+- `range.validTime` / `range.transactionTime` → `asOfRange { dimension, start, end }`
+- `history: ["validTime" | "transactionTime"]` → `history { dimension }`
 
-When both axes are present, serialization is deterministic: the business-axis
-wrapper is outside the processing-axis wrapper, matching the core bind order
-(business binds before processing binds). Omitted temporal axes are not
-serialized; the m-temporal-read default-injection rule still applies and reads them as
-current (`now`).
+When both dimensions are present, serialization is deterministic: the Valid-Time
+wrapper is outside the Transaction-Time wrapper, matching the core bind order.
+Omitted declared dimensions are not serialized; the m-temporal-read
+default-injection rule reads them at Latest. `"now"` is not accepted as a public
+or wire alias.
 
 ### 2.10 Inheritance and subtype narrowing (illustrative — deferred from V1)
 
@@ -480,10 +485,16 @@ existing `m-inheritance-*` cases with no TypeScript-specific conformance channel
 **ANSWERED — see [TS-0008](../docs/adr/0008-metamodel-introspection-api-has-generic-and-typed-layers.md),
 [TS-0009](../docs/adr/0009-one-canonical-serde-shared-by-metamodel-and-operations.md),
 [TS-0010](../docs/adr/0010-serde-states-roundtrip-contract-and-names-libraries-nonbindingly.md).**
-The metamodel (`m-descriptor`) is one artifact wearing two hats — an introspectable runtime
-protocol and a serializable document — and this section specifies both hats so an
-implementer can build the metamodel layer without inferring its shape from
-`m-descriptor.md`.
+The descriptor (`m-descriptor`) is the portable serialized input. It is not the
+runtime metamodel protocol. This COR-45 consumer update validates the canonical
+descriptor, preserves its canonical resolved declarations, and compiles
+relationship directionality into one immutable Relationship Facet used by the
+reader, generator, and behavioral packages. Relationship target identity exists
+only in the structured join, and Value Object multiplicity remains
+`multiplicity`; the reader creates no `relatedEntity`, `reverseName`,
+`foreignKey`, `mapping`, or Value Object `cardinality` projection. A later
+TypeScript formation slice must route this through the sole compiled Metamodel
+graph before claiming the complete accepted interface.
 
 ### 3.1 Primary authoring format
 
@@ -498,9 +509,34 @@ relationships can name siblings). The typed entity symbols and the generic reade
 below are both derived from that one descriptor; decorators/builders may be added
 later as authoring conveniences but the serialized descriptor stays the backbone.
 
+The accepted wire vocabulary is closed. In particular, `persistence`,
+`pkGeneration`, `asOfAxes`, the defining/reverse relationship union,
+`multiplicity`, and an optional conventional `column` are the only accepted
+spellings. The retired serialized fields `mutability`, `temporal`, `pkGenerator`,
+`asOfAttribute`/`asOfAttributes`, `relatedEntity`, `reverseName`, `foreignKey`,
+`mapping`, and value-object `cardinality` are invalid. There is no dual-read or
+compatibility-alias period.
+
+The canonical descriptor elements are:
+
+| Element | Canonical serialized fields and defaults |
+|---|---|
+| `entity` | `name`, `namespace?`, `table?`, `persistence?` (`read-write` default; descendants omit and inherit), `attributes?`, `relationships?`, `valueObjects?`, `asOfAxes?`, `inheritance?`, `indices?` |
+| `attribute` | `name`, `type`, `column?` (defaults to `name`), `primaryKey?`, `nullable?`, `maxLength?`, `readOnly?`, `optimisticLocking?`, `pkGeneration?`, `default?` |
+| `pkGeneration` | `application-assigned` (also the primary-key omission default), `max`, or `{ strategy: "sequence", name, batchSize?, initialValue?, incrementSize? }` |
+| defining `relationship` | `name`, `cardinality` (`one-to-one`/`many-to-one`/`one-to-many`), `join: { source, target: { entity, attribute } }`, `dependent?`, `orderBy?: { attribute, direction? }[]` |
+| reverse `relationship` | `name`, `reverseOf`, `orderBy?: { attribute, direction? }[]`; it repeats no target, join, cardinality, or dependency facts |
+| `asOfAxis` | `dimension` (`validTime`/`transactionTime`), `startAttribute`, `endAttribute`; interval bounds, infinity, and query defaults are not authored here |
+| top-level `valueObject` | `name`, `column?` (defaults to `name`), `multiplicity?` (`one` default), `nullable?`, `attributes?`, `valueObjects?` |
+| nested `valueObject` | The top-level shape without `column`; every nested occurrence shares its top-level document column |
+| value-object `attribute` | `name`, `type`, `nullable?`; it carries no column or Entity-level facts |
+| `index` | `name`, ordered `attributes`, `unique?` |
+| `inheritance` | `role`, plus the role/strategy-appropriate `strategy?`, `parent?`, `tag?`, and `tagValue?` fields |
+
 ### 3.2 Introspection API (the `RelatedFinder` / `ReladomoClassMetaData` analogue)
 
-Introspection is exposed in **two layers over the same descriptor** (TS-0008): a
+Introspection is exposed in **two layers over the same normalized declarations
+and compiled facets** (TS-0008): a
 **generic reader** over any parsed descriptor (no codegen required), and **typed
 accessors** generated onto each entity symbol that delegate to it. The generic
 layer is what the generator, the serde round-trip, and the `parallax-conformance`
@@ -513,11 +549,11 @@ query-DSL symbols.
 Order.table;                            // string — the mapped table name
 Order.namespace;                        // string | undefined
 Order.mutability;                       // "read-only" | "transactional"
-Order.temporal;                         // "non-temporal" | "unitemporal-processing"
-                                        //   | "unitemporal-business" | "bitemporal"
+Order.temporal;                         // "non-temporal" | "transaction-time-only"
+                                        //   | "bitemporal"
 Order.attributes;                       // readonly AttributeMeta[]
 Order.primaryKeyAttributes;             // readonly AttributeMeta[] (primaryKey === true)
-Order.asOfAttributes;                   // readonly AsOfAttributeMeta[] (0–2)
+Order.asOfAxes;                         // readonly AsOfAxisMeta[] (0–2)
 Order.relationships;                    // readonly RelationshipMeta[]
 Order.indices;                          // readonly IndexMeta[]
 Order.valueObjects;                     // readonly ValueObjectMeta[]
@@ -532,28 +568,23 @@ px.metamodel.entity("Order").attributes;
 px.metamodel.entities;                  // readonly EntityMetadata[] (normalizes single-vs-array)
 ```
 
-Both layers expose the **same metadata shapes**, one per metamodel element type. The
-field set below is drawn one-to-one from `metamodel.schema.json`'s **eight element
-types**, so every property in a descriptor is reachable from §3 alone:
+Both layers expose the same canonical relationship declarations and Relationship
+Facet. The facet pairs a reverse declaration with its defining declaration and
+derives the opposite directional cardinality and structured join without
+copying or replacing local declarations. It stores no repeated target outside
+`join.target`. Value Objects expose `multiplicity` directly and carry no mapping
+discriminator. `persistence` and `asOfAxes` still derive the existing read/write
+and operation-axis views until the complete TypeScript formation slice lands;
+those bounded execution views are not serialized aliases or a second accepted
+Metamodel graph.
 
-| Element type | Reader shape | Fields (← schema) |
-|---|---|---|
-| `entity` | `EntityMetadata` | `name`, `table`, `namespace?`, `mutability`, `temporal`, `attributes`, `asOfAttributes`, `relationships`, `indices`, `valueObjects`, `inheritance?`; plus derived `primaryKeyAttributes`, `attributeByName(name)`, `relationshipByName(name)`, `isTemporal` |
-| `attribute` | `AttributeMeta` | `name`, `type` (m-core neutral type, incl. `decimal(p,s)`), `column`, `primaryKey`, `nullable`, `maxLength?`, `readOnly`, `optimisticLocking`, `pkGenerator?`, `default?` |
-| `relationship` | `RelationshipMeta` | `name`, `relatedEntity`, `cardinality` (`one-to-one`/`many-to-one`/`one-to-many`/`many-to-many`), `join`, `reverseName?`, `dependent`, `foreignKey?`, `orderBy?` (`{ attr, direction }[]`) |
-| `index` | `IndexMeta` | `name`, `attributes` (ordered attribute names), `unique` |
-| `asOfAttribute` | `AsOfAttributeMeta` | `name`, `fromColumn`, `toColumn`, `axis` (`processing`/`business`), `toIsInclusive`, `infinity` (`"infinity"`), `default` (`"now"`) |
-| `valueObject` | `ValueObjectMeta` | `name`, `type` (logical struct name), `column` (single structured-document column), `mapping` (`"json"`), `nullable` |
-| `inheritance` | `InheritanceMeta` | `strategy` (`table-per-hierarchy`/`table-per-concrete-subtype`; declared on the `root` only), `role` (`root`/`abstract-subtype`/`concrete-subtype`), `parent?` (non-root), `tag?` (`{ column }`; `table-per-hierarchy` root only), `tagValue?` (`table-per-hierarchy` concrete subtype only) |
-| `pkGenerator` | `PkGeneratorMeta` | `strategy` (`none`/`max`/`sequence`); for `sequence`: `sequenceName?`, `batchSize?`, `initialValue?`, `incrementSize?` (the bare-enum form normalizes to `{ strategy }`) |
-
-Defaulting follows the schema: readers surface the schema defaults
-(`mutability: "read-only"`, `temporal: "non-temporal"`, `primaryKey: false`,
-`nullable: false`, `readOnly: false`, `optimisticLocking: false`,
-`dependent: false`, `unique: false`, `toIsInclusive: false`, `mapping: "json"`,
-`nullable: false`) when a field is omitted, so the typed and generic layers agree
-on every value. This mirrors the Python harness's `Entity` / `Model` accessors,
-which are the concrete generic reader over the raw parsed descriptor.
+Defaulting follows the canonical schema: `persistence` defaults to `read-write`,
+an omitted Attribute or top-level Value Object `column` defaults to its `name`,
+an omitted primary-key `pkGeneration` means `application-assigned`, an omitted
+ordering direction is ascending, `multiplicity` defaults to One, and the existing
+boolean defaults remain false. A sequence is normalized with all numeric defaults
+populated. Typed and generic readers observe the same values and preserve every
+authored member sequence.
 
 ### 3.2.1 m-core scalar runtime mapping
 
@@ -717,17 +748,10 @@ transaction; reads may use `px`, writes are available only through `tx`.
 ### 4.1 Temporal writes (`m-temporal-read`)
 
 All temporal writes run through `ParallaxTransaction`; the root `px` handle has
-no write methods. Processing instants are never accepted as per-operation
+no write methods. Transaction-Time instants are never accepted as per-operation
 options. They come from the clock strategy supplied to `parallax({ clock })`, so
-production code cannot rewrite audit history while tests can inject a fixed
+production code cannot rewrite Transaction Time while tests can inject a fixed
 clock.
-
-The canonical TypeScript V1 `slice-mvp-1` claim requires only the
-audit-only processing-temporal write surface below, plus the temporal read
-surface in §2.3. Business-temporal-only writes and bounded bitemporal
-rectangle-split writes are specified here as the post-claim m-bitemp-write
-surface, but they remain outside V1 until the implementation adopts a later
-canonical claim that includes them.
 
 ```ts
 type WriteResult = {
@@ -751,85 +775,57 @@ await tx.balances.terminate(Balance.id.eq(1));
 `update` and `terminate` return `Promise<WriteResult>`. Each method validates
 the entity's temporal mode before issuing SQL.
 
-`create` on an audit-only processing-temporal entity opens the current milestone
-at the transaction processing instant. `update` closes the current row and chains
-a new current row; `terminate` closes the current row and inserts no replacement.
+`create` on a Transaction-Time-Only entity opens the Latest milestone at the
+transaction's clock instant. `update` closes the Latest row and chains a new
+Latest row; `terminate` closes the Latest row and inserts no replacement.
 `terminate` is temporal removal; `delete` remains the physical-delete operation
 for non-temporal entities.
 
-#### Deferred business-axis temporal writes
+#### Bitemporal writes
 
-The following types and methods belong to a later canonical claim that includes
-business-axis writes:
+Valid-Time coordinates use the same vocabulary as the core write contract:
 
 ```ts
-type BusinessStart = {
-  business: {
-    start: Temporal.Instant;
-  };
-};
-
-type BusinessWindow = {
-  business: {
-    start: Temporal.Instant;
-    end: Temporal.Instant;
-  };
+type ValidWindow = {
+  validFrom: Temporal.Instant;
+  until: Temporal.Instant;
 };
 ```
 
 ```ts
-await tx.reservations.create(input, {
-  business: {
-    start: Temporal.Instant.from("2024-01-01T00:00:00Z"),
-  },
-});
-
 await tx.positions.createUntil(input, {
-  business: {
-    start: Temporal.Instant.from("2024-03-01T00:00:00Z"),
-    end: Temporal.Instant.from("2024-09-01T00:00:00Z"),
-  },
+  validFrom: Temporal.Instant.from("2024-03-01T00:00:00Z"),
+  until: Temporal.Instant.from("2024-09-01T00:00:00Z"),
 });
 
 await tx.positions.updateUntil(Position.id.eq(1), {
   set: [Position.value.set(200)],
 }, {
-  business: {
-    start: Temporal.Instant.from("2024-03-01T00:00:00Z"),
-    end: Temporal.Instant.from("2024-09-01T00:00:00Z"),
-  },
+  validFrom: Temporal.Instant.from("2024-03-01T00:00:00Z"),
+  until: Temporal.Instant.from("2024-09-01T00:00:00Z"),
 });
 
 await tx.positions.terminateUntil(Position.id.eq(1), {
-  business: {
-    start: Temporal.Instant.from("2024-03-01T00:00:00Z"),
-    end: Temporal.Instant.from("2024-09-01T00:00:00Z"),
-  },
+  validFrom: Temporal.Instant.from("2024-03-01T00:00:00Z"),
+  until: Temporal.Instant.from("2024-09-01T00:00:00Z"),
 });
 ```
 
-`create(input, { business: { start } })` and `createUntil` return `Promise<T>`
-for the generated managed-object type `T`. `update`, `terminate`, `updateUntil`,
-and `terminateUntil` return `Promise<WriteResult>`. Each method validates its
-temporal option before issuing SQL.
+`createUntil` returns `Promise<T>` for the generated managed-object type `T`.
+`updateUntil` and `terminateUntil` return `Promise<WriteResult>`. Each method
+validates its temporal option before issuing SQL.
 
-For a business-temporal-only entity, `create(input, { business: { start } })`
-opens a row effective from `start` to infinity. `update` and `terminate` accept
-the same `BusinessStart` option and close/chain on the business axis from that
-instant.
-
-For a bitemporal entity, bounded business-window writes use explicit `*Until`
-verbs and a required `BusinessWindow`. The TypeScript public insert spelling is
+For a Bitemporal entity, bounded Valid-Time writes use explicit `*Until` verbs
+and a required `ValidWindow`. The TypeScript public insert spelling is
 `createUntil` because the non-temporal insert API is `create`; the conformance
 adapter maps it to the core `insertUntil` write-sequence mutation. `updateUntil`
 maps to the core `updateUntil` rectangle split, and `terminateUntil` maps to the
 core `terminateUntil` rectangle split without a middle row.
 
-All `BusinessStart` and `BusinessWindow` instants are `Temporal.Instant` values
-subject to the same microsecond boundary as timestamp attributes. `BusinessWindow`
-uses half-open `[start, end)` semantics and requires `start < end`. Passing a
-processing axis, a processing instant, or a sub-microsecond instant is a
-validation error.
+All `ValidWindow` instants are `Temporal.Instant` values subject to the same
+microsecond boundary as timestamp attributes. `ValidWindow` uses
+half-open `[validFrom, until)` semantics and requires `validFrom < until`.
+Transaction Time still comes exclusively from the transaction clock.
 
 ## 5. Test-double integration (m-case-format, DQ15)
 
@@ -1122,7 +1118,7 @@ language-local realization of the contract's guide drift-check requirement.
   the typed nested-predicate builder, and operation accessors are all generated
   from it. Codegen MUST emit only artifacts derivable from
   `metamodel.schema.json`: value objects generate typed structure because the
-  descriptor declares their `attributes` / nested `valueObjects` / `cardinality`
+  descriptor declares their `attributes` / nested `valueObjects` / `multiplicity`
   (m-value-object), while enum types are not generated in V1 because the
   descriptor has no enum element. Codegen is
   chosen over runtime reflection/proxies so the typed finder/object surface is
@@ -1255,14 +1251,20 @@ module.exports = {
     { from: { path: "^languages/typescript/packages/sql/" },            to: { path: "^languages/typescript/packages/dialect/" } },
     { from: { path: "^languages/typescript/packages/transactions/" },   to: { path: "^languages/typescript/packages/operation/" } },
     { from: { path: "^languages/typescript/packages/transactions/" },   to: { path: "^languages/typescript/packages/dialect/" } },
+    { from: { path: "^languages/typescript/packages/transactions/" },   to: { path: "^languages/typescript/packages/db/" } },
     { from: { path: "^languages/typescript/packages/lists/" },          to: { path: "^languages/typescript/packages/operation/" } },
     { from: { path: "^languages/typescript/packages/lists/" },          to: { path: "^languages/typescript/packages/transactions/" } },
     { from: { path: "^languages/typescript/packages/relationships/" },  to: { path: "^languages/typescript/packages/lists/" } },
     { from: { path: "^languages/typescript/packages/relationships/" },  to: { path: "^languages/typescript/packages/transactions/" } },
     { from: { path: "^languages/typescript/packages/relationships/" },  to: { path: "^languages/typescript/packages/bitemporal/" } },
+    { from: { path: "^languages/typescript/packages/relationships/" },  to: { path: "^languages/typescript/packages/metamodel/" } },
     { from: { path: "^languages/typescript/packages/bitemporal/" },     to: { path: "^languages/typescript/packages/transactions/" } },
+    { from: { path: "^languages/typescript/packages/bitemporal/" },     to: { path: "^languages/typescript/packages/operation/" } },
+    { from: { path: "^languages/typescript/packages/bitemporal/" },     to: { path: "^languages/typescript/packages/metamodel/" } },
     { from: { path: "^languages/typescript/packages/lifecycle/" },      to: { path: "^languages/typescript/packages/transactions/" } },
     { from: { path: "^languages/typescript/packages/locking/" },        to: { path: "^languages/typescript/packages/transactions/" } },
+    { from: { path: "^languages/typescript/packages/locking/" },        to: { path: "^languages/typescript/packages/bitemporal/" } },
+    { from: { path: "^languages/typescript/packages/locking/" },        to: { path: "^languages/typescript/packages/metamodel/" } },
     { from: { path: "^languages/typescript/packages/coherence/" },      to: { path: "^languages/typescript/packages/transactions/" } },
     { from: { path: "^languages/typescript/packages/conformance/" },    to: { path: "^languages/typescript/packages/operation/" } },
     { from: { path: "^languages/typescript/packages/conformance/" },    to: { path: "^languages/typescript/packages/sql/" } },
@@ -1293,12 +1295,12 @@ while `languages/typescript/packages/*` contains implementation source.
 | TS package | Modules implemented | Responsibility |
 |---|---|---|
 | `@parallax/core` | `m-core` | Core conventions (types · infinity · tz) |
-| `@parallax/metamodel` | `m-descriptor`, `m-pk-gen`, `m-inheritance`, `m-value-object` | Domain model & metamodel |
+| `@parallax/metamodel` | `m-metamodel`, `m-model-formation`, `m-descriptor`, `m-pk-gen`, `m-inheritance`, `m-value-object`, `m-relationship` | Formation, normalized metadata, and descriptor input |
 | `@parallax/operation` | `m-op-algebra` (`m-agg` deferred) | Query / operation algebra |
 | `@parallax/sql` | `m-sql` (`m-sql-agg` deferred) | SQL generation contract |
 | `@parallax/relationships` | `m-navigate`, `m-deep-fetch` | Relationships & deep fetch |
 | `@parallax/lists` | `m-op-list`, `m-batch-write`, `m-cascade-delete` | Lists & bulk/set operations |
-| `@parallax/bitemporal` | `m-temporal-read`, `m-audit-write`, `m-bitemp-write` (`m-business-only` deferred) | Temporal reads & milestoning writes |
+| `@parallax/bitemporal` | `m-temporal-read`, `m-audit-write`, `m-bitemp-write` | Temporal reads & milestoning writes |
 | `@parallax/transactions` | `m-unit-work`, `m-read-lock`, `m-auto-retry` (`m-process-cache` deferred) | Transactions, unit of work, read lock & retry |
 | `@parallax/lifecycle` | `m-detach` | Object lifecycle & detach |
 | `@parallax/locking` | `m-opt-lock` | Optimistic locking |
@@ -1392,32 +1394,74 @@ the only layer permitted to depend on a concrete adapter. No implementation pack
 depends on a concrete adapter, and no above-seam module reaches a driver.
 
 ```dependency-graph
+m-metamodel --> m-core
+m-model-formation --> m-metamodel
 m-descriptor --> m-core
-m-dialect --> m-core
-m-op-algebra --> m-descriptor
+m-descriptor --> m-metamodel
+m-pk-gen --> m-descriptor
+m-pk-gen --> m-metamodel
+m-inheritance --> m-descriptor
+m-inheritance --> m-metamodel
+m-inheritance --> m-model-formation
+m-value-object --> m-descriptor
+m-value-object --> m-metamodel
+m-value-object --> m-model-formation
+m-relationship --> m-metamodel
+m-relationship --> m-model-formation
+m-op-algebra --> m-metamodel
+m-op-algebra --> m-inheritance
+m-agg --> m-op-algebra
 m-sql --> m-op-algebra
 m-sql --> m-dialect
+m-sql-agg --> m-agg
+m-sql-agg --> m-sql
+m-dialect --> m-core
+m-db-port --> m-core
+m-db-error --> m-db-port
+m-db-error --> m-dialect
 m-unit-work --> m-op-algebra
-m-unit-work --> m-dialect
+m-unit-work --> m-db-port
+m-read-lock --> m-unit-work
+m-read-lock --> m-dialect
+m-auto-retry --> m-unit-work
+m-auto-retry --> m-db-error
+m-identity-map --> m-unit-work
+m-identity-map --> m-temporal-read
+m-process-cache --> m-unit-work
 m-op-list --> m-op-algebra
 m-op-list --> m-unit-work
+m-batch-write --> m-unit-work
+m-cascade-delete --> m-op-list
+m-cascade-delete --> m-unit-work
 m-navigate --> m-op-algebra
 m-navigate --> m-unit-work
 m-navigate --> m-temporal-read
+m-navigate --> m-inheritance
+m-navigate --> m-relationship
+m-deep-fetch --> m-navigate
 m-op-list --> m-deep-fetch
-m-temporal-read --> m-unit-work
+m-snapshot-read --> m-deep-fetch
+m-temporal-read --> m-op-algebra
+m-temporal-read --> m-metamodel
+m-temporal-read --> m-model-formation
+m-temporal-read --> m-inheritance
+m-audit-write --> m-temporal-read
+m-audit-write --> m-unit-work
+m-bitemp-write --> m-audit-write
+m-business-only --> m-temporal-read
+m-business-only --> m-unit-work
 m-detach --> m-unit-work
+m-detach --> m-identity-map
 m-opt-lock --> m-unit-work
-m-case-format --> m-op-algebra
-m-case-format --> m-sql
-m-case-format --> m-navigate
-m-case-format --> m-temporal-read
-m-case-format --> m-unit-work
-m-case-format --> m-detach
-m-case-format --> m-opt-lock
-m-case-format --> m-dialect
-m-perf-bench --> m-case-format
-m-coherence --> m-unit-work
+m-opt-lock --> m-temporal-read
+m-opt-lock --> m-metamodel
+m-opt-lock --> m-model-formation
+m-opt-lock --> m-inheritance
+m-case-format --> m-core
+m-conformance-adapter --> m-case-format
+m-api-conformance --> m-case-format
+m-perf-bench --> m-conformance-adapter
+m-coherence --> m-process-cache
 ```
 
 The non-obvious directions carry over verbatim from the core graph: `m-unit-work` depends
@@ -1435,20 +1479,15 @@ surfaces sit as peers *above* the shared fetch algorithm, and neither depends on
 `m-temporal-read` (a pinned as-of value
 propagates per relationship hop, so the relationship layer references the as-of
 model — the edge the claimed temporal deep-fetch 03xx cases require); and `m-sql`
-depends on `m-dialect` (SQL generation routes through the portability seam). `m-case-format`
-additionally depends on `m-unit-work` directly — the harness realizes m-unit-work unit-of-work
-behavior itself (batched write-sequence flushes, read-your-own-writes scenarios),
-a direct edge that coexists with the transitive `m-case-format → m-opt-lock → m-unit-work` path, mirroring
-how `m-navigate → m-unit-work` coexists with the transitive `m-navigate → m-temporal-read →
-m-unit-work` path — and on `m-dialect` directly, since the
-harness applies the dialect's DDL / quoting / read-lock-application rules to
-assemble SQL (`applyReadLock`). m-coherence's
-single legal direction `m-coherence → m-unit-work` is
-transcribed in the block above, keeping the TypeScript edge set one-to-one with
-the core graph; the `@parallax/coherence` package is a **fast-follow** capability
-that TypeScript V1 MAY defer implementing, but its boundary is documented here so
-the dependency-cruiser allowlist stays complete and mechanically diff-able against
-the core graph.
+depends on `m-dialect` (SQL generation routes through the portability seam).
+The conformance family keeps only its structural core edges: `m-case-format →
+m-core`, then `m-conformance-adapter → m-case-format` and
+`m-api-conformance → m-case-format`. The `@parallax/conformance` package's
+imports of the behavioral packages it grades are explicit language enforcement
+allowances under the catalog's conformance-family rule, not extra module-DAG
+edges. The block remains the complete core DAG, including deferred
+`m-coherence → m-process-cache`; the dependency-cruiser allowlist omits an edge
+only when its source package is not scaffolded for this slice.
 
 ## 10. Optional optimized data structures (m-perf-bench, DQ10)
 
@@ -1626,7 +1665,7 @@ includes only create-accepted data (writable scalar attributes, writable value
 objects, app-assigned primary keys when configured, foreign-key attributes
 exposed as writable, and nested dependent relationships only when explicitly
 allowed) and excludes database-generated IDs, read-only attributes,
-optimistic-lock/version fields, processing timestamps, and server-owned fields.
+optimistic-lock/version fields, Transaction-Time timestamps, and server-owned fields.
 Create consumes nested relationship data only when listed in `relationships`;
 data listed in `ignoreRelationships` is accepted but ignored; any remaining
 nested relationship data is rejected. These helpers validate plain payloads —

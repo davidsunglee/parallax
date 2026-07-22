@@ -28,14 +28,13 @@ from dataclasses import dataclass
 from typing import Final
 
 from parallax.core.base import INFINITY_LITERAL, normalize_instant
-from parallax.core.descriptor import AsOfAttribute, Axis, Entity
+from parallax.core.descriptor import AsOfAxisMetadata, Entity, TemporalDimension
 from parallax.core.op_algebra import (
     All,
     And,
     AsOf,
     AsOfRange,
     Comparison,
-    ComparisonOp,
     Distinct,
     Group,
     History,
@@ -63,12 +62,12 @@ __all__ = [
     "statement_pin",
 ]
 
-# Business axis is the OUTER pin (the corpus's bitemporal nesting order) and its
-# injected fragment reads first; the processing axis is inner. The injected terms
-# therefore compose business-first (m-sql: "business-axis-first then processing").
-# Exported (m-navigate reuses the same business-first ordering when propagating a
+# Valid Time is the OUTER pin (the corpus's bitemporal nesting order) and its
+# injected fragment reads first; Transaction Time is inner. The injected terms
+# therefore compose Valid-Time-first. Exported (m-navigate reuses the same ordering
+# when propagating a
 # root's as-of coordinates per hop).
-AXIS_ORDER: Final[dict[Axis, int]] = {"business": 0, "processing": 1}
+AXIS_ORDER: Final[dict[TemporalDimension, int]] = {"validTime": 0, "transactionTime": 1}
 _AXIS_ORDER = AXIS_ORDER
 
 
@@ -82,11 +81,11 @@ class UndeclaredAxisError(TemporalReadError):
 
 
 class Latest:
-    """The explicit as-of-now pin sentinel — spells the default-latest injection.
+    """The explicit Latest pin sentinel — spells the default injection.
 
     ``LATEST`` on an axis lowers to the **identical** current-row predicate the
     default-injection rule produces for an omitted axis (``to = infinity``), but is
-    an *explicit* pin: it serializes its wrapper (``date: now``) rather than being
+    an *explicit* pin: it serializes its wrapper (``coordinate: latest``) rather than being
     absent. It is deliberately not a coordinate — it re-resolves to whatever
     milestone is current at read time, so it is never replayable (python.md, the
     stale-web-edit recipe).
@@ -107,17 +106,17 @@ class Pin:
 
     A scanned axis (``history`` / ``as_of_range``) is **absent** (``None``), per the
     core rule that a scan is not a pin. A pinned axis carries either the finite pin
-    instant or the :data:`LATEST` sentinel (an explicit as-of-now). ``Pin`` is what
+    instant or the :data:`LATEST` sentinel. ``Pin`` is what
     ``snapshot.pin`` reports and what :func:`pin_of` returns for one node.
     """
 
-    processing: _dt.datetime | Latest | None = None
-    business: _dt.datetime | Latest | None = None
+    transaction_time: _dt.datetime | Latest | None = None
+    valid_time: _dt.datetime | Latest | None = None
 
     @property
     def is_empty(self) -> bool:
         """Whether no axis is pinned (both axes scanned, or a non-temporal read)."""
-        return self.processing is None and self.business is None
+        return self.transaction_time is None and self.valid_time is None
 
 
 class Edge:
@@ -133,20 +132,23 @@ class Edge:
     pattern applied to axis access, keeping replay code narrowing-free.
     """
 
-    __slots__ = ("_business", "_processing")
+    __slots__ = ("_transaction_time", "_valid_time")
 
-    _processing: _dt.datetime | None
-    _business: _dt.datetime | None
+    _transaction_time: _dt.datetime | None
+    _valid_time: _dt.datetime | None
 
     def __init__(
-        self, *, processing: _dt.datetime | None = None, business: _dt.datetime | None = None
+        self,
+        *,
+        transaction_time: _dt.datetime | None = None,
+        valid_time: _dt.datetime | None = None,
     ) -> None:
         # Frozen by hand (the raise-on-undeclared accessor properties preclude a
         # frozen dataclass): construction writes through `object.__setattr__`,
         # and the overrides below refuse every later mutation — a hashable Edge
         # can never change under a dictionary or set.
-        object.__setattr__(self, "_processing", processing)
-        object.__setattr__(self, "_business", business)
+        object.__setattr__(self, "_transaction_time", transaction_time)
+        object.__setattr__(self, "_valid_time", valid_time)
 
     def __setattr__(self, name: str, value: object) -> None:
         raise AttributeError(f"Edge is frozen; cannot assign {name!r}")
@@ -155,39 +157,42 @@ class Edge:
         raise AttributeError(f"Edge is frozen; cannot delete {name!r}")
 
     @property
-    def processing(self) -> _dt.datetime:
-        """The processing-axis from-instant; raises when the axis is undeclared."""
-        if self._processing is None:
-            raise UndeclaredAxisError("entity declares no `processing` axis")
-        return self._processing
+    def transaction_time(self) -> _dt.datetime:
+        """The Transaction-Time start instant; raises when undeclared."""
+        if self._transaction_time is None:
+            raise UndeclaredAxisError("entity declares no `transaction_time` dimension")
+        return self._transaction_time
 
     @property
-    def processing_or_none(self) -> _dt.datetime | None:
-        """The processing-axis from-instant, or ``None`` when the axis is undeclared."""
-        return self._processing
+    def transaction_time_or_none(self) -> _dt.datetime | None:
+        """The Transaction-Time start instant, or ``None`` when undeclared."""
+        return self._transaction_time
 
     @property
-    def business(self) -> _dt.datetime:
-        """The business-axis from-instant; raises when the axis is undeclared."""
-        if self._business is None:
-            raise UndeclaredAxisError("entity declares no `business` axis")
-        return self._business
+    def valid_time(self) -> _dt.datetime:
+        """The Valid-Time start instant; raises when undeclared."""
+        if self._valid_time is None:
+            raise UndeclaredAxisError("entity declares no `valid_time` dimension")
+        return self._valid_time
 
     @property
-    def business_or_none(self) -> _dt.datetime | None:
-        """The business-axis from-instant, or ``None`` when the axis is undeclared."""
-        return self._business
+    def valid_time_or_none(self) -> _dt.datetime | None:
+        """The Valid-Time start instant, or ``None`` when undeclared."""
+        return self._valid_time
 
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, Edge):
             return NotImplemented
-        return self._processing == other._processing and self._business == other._business
+        return (
+            self._transaction_time == other._transaction_time
+            and self._valid_time == other._valid_time
+        )
 
     def __hash__(self) -> int:
-        return hash((self._processing, self._business))
+        return hash((self._transaction_time, self._valid_time))
 
     def __repr__(self) -> str:  # pragma: no cover - debug aid only
-        return f"Edge(processing={self._processing!r}, business={self._business!r})"
+        return f"Edge(transaction_time={self._transaction_time!r}, valid_time={self._valid_time!r})"
 
 
 # The private attributes a materialized snapshot node carries (attached by the
@@ -227,32 +232,37 @@ def milestone_edge(entity: Entity, row: Mapping[str, object]) -> Edge:
     """Compute a milestone's :class:`Edge` from one row's interval columns (the edge-pin rule).
 
     Each declared axis's edge is its milestone's own **from-instant** — the value of
-    the axis's ``fromColumn`` in ``row`` — the one instant guaranteed to re-select
+    the axis's start Attribute column in ``row`` — the one instant guaranteed to re-select
     exactly that milestone on a half-open ``[from, to)`` interval. This is the
     reusable core the snapshot materializer (COR-3 Phase 7) uses to edge-pin each
     ``history`` / ``as_of_range`` result; here it is unit-verifiable against corpus
     row values without a materialized graph.
     """
-    if not entity.as_of_attributes:
+    if not entity.as_of_axes:
         raise TemporalReadError(f"{entity.name} is not a temporal entity")
-    coords: dict[Axis, _dt.datetime] = {}
-    for aoa in entity.as_of_attributes:
-        value = row.get(aoa.from_column)
+    coords: dict[TemporalDimension, _dt.datetime] = {}
+    for axis in entity.as_of_axes:
+        start_column = _column_for_attribute(entity, axis.start_attribute)
+        value = row.get(start_column)
         if not isinstance(value, _dt.datetime):
             raise TemporalReadError(
-                f"{entity.name}.{aoa.name}: milestone from-column {aoa.from_column!r} "
+                f"{entity.name}.{axis.start_attribute}: milestone start column "
+                f"{start_column!r} "
                 "is not a timestamp instant"
             )
-        coords[aoa.axis] = normalize_instant(value)
-    return Edge(processing=coords.get("processing"), business=coords.get("business"))
+        coords[axis.dimension] = normalize_instant(value)
+    return Edge(
+        transaction_time=coords.get("transactionTime"),
+        valid_time=coords.get("validTime"),
+    )
 
 
 # --------------------------------------------------------------------------- #
 # As-of injection (temporal wrappers -> plain m-op-algebra predicate).         #
 # --------------------------------------------------------------------------- #
 @dataclass(frozen=True, slots=True)
-class _Current:
-    """Pin an axis to the current milestone (``to = infinity``)."""
+class _Latest:
+    """Pin a dimension to its latest milestone (``end = infinity``)."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -275,7 +285,7 @@ class _Scan:
     """Scan an axis as edge points (``history``) — no as-of term injected."""
 
 
-_AxisMode = _Current | _Containment | _Range | _Scan
+_AxisMode = _Latest | _Containment | _Range | _Scan
 
 
 def inject_as_of(op: Operation, entity: Entity) -> Operation:
@@ -290,7 +300,7 @@ def inject_as_of(op: Operation, entity: Entity) -> Operation:
     - peels the temporal wrappers (``asOf`` / ``asOfRange`` / ``history``), reading
       each axis's pin and rejecting a double-pinned or undeclared axis;
     - **defaults every omitted axis to the current milestone** (the default-latest
-      rule), in **business-axis-first** order;
+      rule), in **Valid-Time-first** order;
     - composes the user predicate ``and`` the per-axis interval terms into one flat
       conjunction (user binds first, then the as-of binds).
 
@@ -303,22 +313,22 @@ def inject_as_of(op: Operation, entity: Entity) -> Operation:
 
 
 def _inject_core(core: Operation, entity: Entity) -> Operation:
-    modes: dict[Axis, _AxisMode] = {}
+    modes: dict[TemporalDimension, _AxisMode] = {}
     current: Operation = core
     while isinstance(current, (AsOf, AsOfRange, History)):
-        aoa = _resolve_axis(current.as_of_attr, entity)
-        if aoa.axis in modes:
+        axis = _resolve_axis(current.dimension, entity)
+        if axis.dimension in modes:
             raise TemporalReadError(
-                f"{entity.name}.{aoa.name}: the {aoa.axis} axis is pinned or scanned twice"
+                f"{entity.name}: the {axis.dimension} dimension is pinned or scanned twice"
             )
-        modes[aoa.axis] = _mode_of(current)
+        modes[axis.dimension] = _mode_of(current)
         current = current.operand
     user_predicate = current
 
     axis_terms: list[Operation] = []
-    for aoa in sorted(entity.as_of_attributes, key=lambda a: _AXIS_ORDER[a.axis]):
-        mode = modes.get(aoa.axis, _Current())  # default-latest on an omitted axis
-        axis_terms.extend(_terms(mode, aoa, entity))
+    for axis in sorted(entity.as_of_axes, key=lambda item: _AXIS_ORDER[item.dimension]):
+        mode = modes.get(axis.dimension, _Latest())
+        axis_terms.extend(_terms(mode, axis, entity))
 
     if not axis_terms:
         # Non-temporal read, or a read whose every declared axis is scanned
@@ -328,44 +338,44 @@ def _inject_core(core: Operation, entity: Entity) -> Operation:
     return terms[0] if len(terms) == 1 else And(operands=terms)
 
 
-def _resolve_axis(as_of_attr: str, entity: Entity) -> AsOfAttribute:
-    name = as_of_attr.rpartition(".")[2]
-    for aoa in entity.as_of_attributes:
-        if aoa.name == name:
-            return aoa
-    reason = "non-temporal entity" if not entity.as_of_attributes else "undeclared axis"
-    raise TemporalReadError(f"{entity.name} declares no as-of dimension {name!r} ({reason})")
+def _resolve_axis(dimension: TemporalDimension, entity: Entity) -> AsOfAxisMetadata:
+    for axis in entity.as_of_axes:
+        if axis.dimension == dimension:
+            return axis
+    reason = "non-temporal entity" if not entity.as_of_axes else "undeclared dimension"
+    raise TemporalReadError(
+        f"{entity.name} declares no temporal dimension {dimension!r} ({reason})"
+    )
 
 
 def _mode_of(wrapper: AsOf | AsOfRange | History) -> _AxisMode:
     if isinstance(wrapper, History):
         return _Scan()
     if isinstance(wrapper, AsOfRange):
-        return _Range(from_=wrapper.from_, to=wrapper.to)
-    if wrapper.date == "now":
-        return _Current()
-    return _Containment(instant=wrapper.date)
+        return _Range(from_=wrapper.start, to=wrapper.end)
+    if wrapper.coordinate == "latest":
+        return _Latest()
+    return _Containment(instant=wrapper.coordinate)
 
 
-def _terms(mode: _AxisMode, aoa: AsOfAttribute, entity: Entity) -> list[Operation]:
-    from_ref = attr_ref_for_column(entity, aoa.from_column)
-    to_ref = attr_ref_for_column(entity, aoa.to_column)
+def _terms(mode: _AxisMode, axis: AsOfAxisMetadata, entity: Entity) -> list[Operation]:
+    start_ref = f"{entity.name}.{axis.start_attribute}"
+    end_ref = f"{entity.name}.{axis.end_attribute}"
     if isinstance(mode, _Scan):
         return []
-    if isinstance(mode, _Current):
-        return [Comparison(op="eq", attr=to_ref, value=INFINITY_LITERAL)]
+    if isinstance(mode, _Latest):
+        return [Comparison(op="eq", attr=end_ref, value=INFINITY_LITERAL)]
     if isinstance(mode, _Containment):
-        upper_op: ComparisonOp = "greaterThanEquals" if aoa.to_is_inclusive else "greaterThan"
         return [
-            Comparison(op="lessThanEquals", attr=from_ref, value=mode.instant),
-            Comparison(op=upper_op, attr=to_ref, value=mode.instant),
+            Comparison(op="lessThanEquals", attr=start_ref, value=mode.instant),
+            Comparison(op="greaterThan", attr=end_ref, value=mode.instant),
         ]
     # _Range — overlap of the milestone with the window [from, to): the milestone's
     # start compares to the window END and its end to the window START, so the binds
     # read window-end-first (m-sql: `from < ? and to > ?` binds `[to, from]`).
     return [
-        Comparison(op="lessThan", attr=from_ref, value=mode.to),
-        Comparison(op="greaterThan", attr=to_ref, value=mode.from_),
+        Comparison(op="lessThan", attr=start_ref, value=mode.to),
+        Comparison(op="greaterThan", attr=end_ref, value=mode.from_),
     ]
 
 
@@ -373,8 +383,8 @@ def attr_ref_for_column(entity: Entity, column: str) -> str:
     """The ``Entity.attribute`` reference of the interval column ``column``.
 
     A temporal entity's interval columns are ordinary declared attributes
-    (``m-descriptor``: the ``fromColumn`` / ``toColumn`` are declared after the
-    business attributes), so the injected comparison references them by name exactly
+    (``m-descriptor``: ``startAttribute`` / ``endAttribute`` reference ordinary
+    Attributes), so the injected comparison references them by name exactly
     as a user predicate would, and ``m-sql`` resolves the column with no temporal
     special-casing. Exported so ``m-navigate`` can build the identically-shaped
     per-hop as-of predicate over a temporal entity reached by navigation (the same
@@ -388,6 +398,15 @@ def attr_ref_for_column(entity: Entity, column: str) -> str:
     # rule guarantee it), so this is unreachable for a validated metamodel.
     raise TemporalReadError(  # pragma: no cover - guards a malformed descriptor
         f"{entity.name}: interval column {column!r} is not a declared attribute"
+    )
+
+
+def _column_for_attribute(entity: Entity, attribute_name: str) -> str:
+    for attribute in entity.attributes:
+        if attribute.name == attribute_name:
+            return attribute.column
+    raise TemporalReadError(  # pragma: no cover - guards a malformed descriptor
+        f"{entity.name}: temporal Attribute {attribute_name!r} is not declared"
     )
 
 
@@ -409,7 +428,7 @@ def conjunction_terms(op: Operation) -> tuple[Operation, ...]:
     return (op,)
 
 
-def resolve_pinned_instants(op: Operation, entity: Entity) -> dict[Axis, str]:
+def resolve_pinned_instants(op: Operation, entity: Entity) -> dict[TemporalDimension, str]:
     """The per-axis literal instant this read pins ``entity`` to a specific PAST
     moment (an ``asOf(..., date=<instant>)`` wrapper) — the coordinate ``m-navigate``
     re-applies, matched by axis, to a temporal entity reached by navigation.
@@ -427,13 +446,13 @@ def resolve_pinned_instants(op: Operation, entity: Entity) -> dict[Axis, str]:
     this from already-lowered predicate nodes).
     """
     core, _directives = _peel_directives(op)
-    pins: dict[Axis, str] = {}
+    pins: dict[TemporalDimension, str] = {}
     current = core
     while isinstance(current, (AsOf, AsOfRange, History)):
-        aoa = _resolve_axis(current.as_of_attr, entity)
+        axis = _resolve_axis(current.dimension, entity)
         mode = _mode_of(current)
         if isinstance(mode, _Containment):
-            pins[aoa.axis] = mode.instant
+            pins[axis.dimension] = mode.instant
         current = current.operand
     return pins
 
@@ -444,7 +463,7 @@ def statement_pin(op: Operation, entity: Entity) -> Pin:
     latest default is injected only at lowering) or a SCANNED axis (``history``
     / ``as_of_range`` — "a scan is not a pin") is absent; a PINNED axis carries
     its coordinate, including the explicit :data:`LATEST` sentinel
-    (``date: now``). The whole-graph pin ``Database.find`` / ``Transaction.find``
+    (``coordinate: latest``). The whole-graph pin ``Database.find`` / ``Transaction.find``
     (``parallax.snapshot.handle``) attach to the returned ``Snapshot``.
 
     Called on the SAME raw (pre-:func:`inject_as_of`) operation
@@ -452,21 +471,23 @@ def statement_pin(op: Operation, entity: Entity) -> Pin:
     read of the statement's own temporal wrapper, never a database round trip.
     """
     core, _directives = _peel_directives(op)
-    processing: _dt.datetime | Latest | None = None
-    business: _dt.datetime | Latest | None = None
+    transaction_time: _dt.datetime | Latest | None = None
+    valid_time: _dt.datetime | Latest | None = None
     current = core
     while isinstance(current, (AsOf, AsOfRange, History)):
-        aoa = _resolve_axis(current.as_of_attr, entity)
+        axis = _resolve_axis(current.dimension, entity)
         if isinstance(current, AsOf):
             value: _dt.datetime | Latest = (
-                LATEST if current.date == "now" else _dt.datetime.fromisoformat(current.date)
+                LATEST
+                if current.coordinate == "latest"
+                else _dt.datetime.fromisoformat(current.coordinate)
             )
-            if aoa.axis == "processing":
-                processing = value
+            if axis.dimension == "transactionTime":
+                transaction_time = value
             else:
-                business = value
+                valid_time = value
         current = current.operand
-    return Pin(processing=processing, business=business)
+    return Pin(transaction_time=transaction_time, valid_time=valid_time)
 
 
 def _peel_directives(op: Operation) -> tuple[Operation, list[Limit | OrderBy | Distinct]]:

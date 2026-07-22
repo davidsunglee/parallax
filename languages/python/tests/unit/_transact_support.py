@@ -20,7 +20,7 @@ from typing import Final, cast
 
 import mirrored_models as mm
 from parallax.conformance import models
-from parallax.core import AsOfAttribute, Attr, Entity, EntityConfig, Field
+from parallax.core import AsOfAxisMetadata, Attr, Entity, EntityConfig, Field
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import Bind, DbPort, Row
 from parallax.core.descriptor import Metamodel
@@ -84,11 +84,11 @@ class WherePosition(Entity, frozen=True):
         namespace="parallax.compatibility",
         mutability="transactional",
         as_of=(
-            AsOfAttribute(
-                name="businessDate", from_column="from_z", to_column="thru_z", axis="business"
+            AsOfAxisMetadata(
+                dimension="validTime", start_attribute="valid_start", end_attribute="valid_end"
             ),
-            AsOfAttribute(
-                name="processingDate", from_column="in_z", to_column="out_z", axis="processing"
+            AsOfAxisMetadata(
+                dimension="transactionTime", start_attribute="tx_start", end_attribute="tx_end"
             ),
         ),
     )
@@ -96,10 +96,10 @@ class WherePosition(Entity, frozen=True):
     id: Attr[int] = Field(primary_key=True, pk_generator="none", type="int64")
     acct_num: Attr[str] = Field(max_length=32)
     value: Attr[Decimal] = Field(type="decimal(18,2)")
-    business_from: Attr[dt.datetime] = Field(column="from_z")
-    business_to: Attr[dt.datetime] = Field(column="thru_z")
-    processing_from: Attr[dt.datetime] = Field(column="in_z")
-    processing_to: Attr[dt.datetime] = Field(column="out_z")
+    valid_start: Attr[dt.datetime] = Field(name="valid_start", column="from_z")
+    valid_end: Attr[dt.datetime] = Field(name="valid_end", column="thru_z")
+    tx_start: Attr[dt.datetime] = Field(name="tx_start", column="in_z")
+    tx_end: Attr[dt.datetime] = Field(name="tx_end", column="out_z")
 
 
 WHERE_POSITION_META = metamodel([WherePosition])

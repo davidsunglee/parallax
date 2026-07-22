@@ -1,6 +1,6 @@
 # Defaulted as-of read (the m-temporal-read default-injection rule, made observable).
 #
-# The operation is a plain `all` over Balance — the caller OMITS the processingDate
+# The operation is a plain `all` over Balance — the caller OMITS the transactionTime
 # dimension. The temporal MVP rule is "an omitted as-of dimension defaults to as-of
 # now", so the implementation must auto-inject the current-row predicate
 # `out_z = infinity`; the golden SQL carries that injected `t0.out_z = ?` even though

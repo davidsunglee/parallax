@@ -42,7 +42,18 @@ metaclass reads the live ``Attr[T]`` / ``Rel[T]`` objects directly.
 import datetime as dt
 from decimal import Decimal
 
-from parallax.core import AsOfAttribute, Attr, Entity, EntityConfig, Field, Rel, Relationship
+from parallax.core import (
+    AsOfAxisMetadata,
+    Attr,
+    Entity,
+    EntityConfig,
+    Field,
+    Rel,
+    Relationship,
+    RelationshipJoin,
+    RelationshipTarget,
+    ReverseRelationship,
+)
 from parallax.core.entity.base import Concrete, FamilyRoot
 
 _NS = "parallax.compatibility"
@@ -71,7 +82,7 @@ __all__ = [
 
 
 # --------------------------------------------------------------------------- #
-# Balance: audit-only (single processing axis), mirrors models/balance.yaml.   #
+# Balance: audit-only (single Transaction-Time dimension), mirrors models/balance.yaml.   #
 # --------------------------------------------------------------------------- #
 class Balance(Entity, frozen=True):
     __parallax__ = EntityConfig(
@@ -79,8 +90,8 @@ class Balance(Entity, frozen=True):
         namespace=_NS,
         mutability="transactional",
         as_of=(
-            AsOfAttribute(
-                name="processingDate", from_column="in_z", to_column="out_z", axis="processing"
+            AsOfAxisMetadata(
+                dimension="transactionTime", start_attribute="tx_start", end_attribute="tx_end"
             ),
         ),
     )
@@ -88,8 +99,8 @@ class Balance(Entity, frozen=True):
     id: Attr[int] = Field(primary_key=True, pk_generator="none", column="bal_id")
     acct_num: Attr[str] = Field(max_length=32)
     value: Attr[Decimal] = Field(type="decimal(18,2)", column="val")
-    processing_from: Attr[dt.datetime] = Field(column="in_z")
-    processing_to: Attr[dt.datetime] = Field(column="out_z")
+    tx_start: Attr[dt.datetime] = Field(name="tx_start", column="in_z")
+    tx_end: Attr[dt.datetime] = Field(name="tx_end", column="out_z")
 
 
 # --------------------------------------------------------------------------- #
@@ -171,10 +182,9 @@ class Folder(Entity, frozen=True):
     name: Attr[str] = Field(max_length=32)
     documents: Rel[tuple["Document", ...]] = Relationship(
         cardinality="one-to-many",
-        join="this.id = Document.folderId",
-        related_entity="Document",
-        reverse_name="folder",
-        foreign_key="folder_id",
+        join=RelationshipJoin(
+            source="id", target=RelationshipTarget(entity="Document", attribute="folderId")
+        ),
     )
 
 
@@ -245,21 +255,21 @@ class Rate(Entity, frozen=True):
         mutability="transactional",
         inheritance=FamilyRoot(strategy="table-per-concrete-subtype"),
         as_of=(
-            AsOfAttribute(
-                name="businessDate", from_column="from_z", to_column="thru_z", axis="business"
+            AsOfAxisMetadata(
+                dimension="validTime", start_attribute="valid_start", end_attribute="valid_end"
             ),
-            AsOfAttribute(
-                name="processingDate", from_column="in_z", to_column="out_z", axis="processing"
+            AsOfAxisMetadata(
+                dimension="transactionTime", start_attribute="tx_start", end_attribute="tx_end"
             ),
         ),
     )
 
     id: Attr[int] = Field(primary_key=True, pk_generator="none", type="int64")
     amount: Attr[Decimal] = Field(type="decimal(18,2)")
-    business_from: Attr[dt.datetime] = Field(column="from_z")
-    business_to: Attr[dt.datetime] = Field(column="thru_z")
-    processing_from: Attr[dt.datetime] = Field(column="in_z")
-    processing_to: Attr[dt.datetime] = Field(column="out_z")
+    valid_start: Attr[dt.datetime] = Field(name="valid_start", column="from_z")
+    valid_end: Attr[dt.datetime] = Field(name="valid_end", column="thru_z")
+    tx_start: Attr[dt.datetime] = Field(name="tx_start", column="in_z")
+    tx_end: Attr[dt.datetime] = Field(name="tx_end", column="out_z")
 
 
 class DepositRate(Rate, frozen=True):
@@ -288,11 +298,10 @@ class Person(Entity, frozen=True):
     name: Attr[str] = Field(max_length=64)
     passport: Rel["Passport"] = Relationship(
         cardinality="one-to-one",
-        join="this.id = Passport.personId",
-        related_entity="Passport",
-        reverse_name="holder",
+        join=RelationshipJoin(
+            source="id", target=RelationshipTarget(entity="Passport", attribute="personId")
+        ),
         dependent=True,
-        foreign_key="person_id",
     )
 
 
@@ -302,10 +311,4 @@ class Passport(Entity, frozen=True):
     id: Attr[int] = Field(primary_key=True, pk_generator="none")
     person_id: Attr[int]
     number: Attr[str] = Field(max_length=32)
-    holder: Rel["Person"] = Relationship(
-        cardinality="one-to-one",
-        join="this.personId = Person.id",
-        related_entity="Person",
-        reverse_name="passport",
-        foreign_key="person_id",
-    )
+    holder: Rel["Person"] = ReverseRelationship(reverse_of="Person.passport")

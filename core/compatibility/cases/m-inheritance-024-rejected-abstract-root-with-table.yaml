@@ -1,10 +1,7 @@
-# Negative (m-inheritance, resolved Q3/Q4): an abstract root declares a physical table.
+# Negative (m-inheritance): a table-per-concrete-subtype root declares a table.
 #
-# `Animal` is an abstract `role: root` but also declares `table: animal`. Abstract
-# roots (and abstract subtypes) are tableless and rowless — their rows live in a
-# concrete descendant's table — so a model-aware validator MUST reject a table on an
-# abstract node. (The metamodel schema's entity `table` conditional also rejects this;
-# the semantic validator enforces the same rule portably.)
+# A TPCS root is an abstract model position and owns no storage container; each
+# concrete subtype owns its own table. The root-owned table is valid only for TPH.
 model: models/payment.yaml
 tags: [m-inheritance, m-descriptor, rejected, negative, slice-snapshot-1, slice-managed-1]
 shape: rejected
@@ -14,18 +11,16 @@ when:
       - name: Animal
         table: animal
         inheritance:
-          strategy: table-per-hierarchy
+          strategy: table-per-concrete-subtype
           role: root
-          tag: { column: kind }
         attributes:
           - { name: id, type: int64, column: id, primaryKey: true }
       - name: Dog
-        table: animal
+        table: dog
         inheritance:
           role: concrete-subtype
           parent: Animal
-          tagValue: dog
         attributes:
           - { name: barkVolume, type: int32, column: bark_volume, nullable: true }
 then:
-  rejectedRule: inheritance-abstract-node-with-table
+  rejectedRule: inheritance-tpcs-abstract-table-forbidden

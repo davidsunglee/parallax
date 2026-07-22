@@ -260,13 +260,13 @@ def test_find_history_groups_rows_into_chronologically_ordered_edge_pinned_graph
         {
             "history": {
                 "operand": {"eq": {"attr": "InvoiceLine.id", "value": 1000}},
-                "asOfAttr": "InvoiceLine.processingDate",
+                "dimension": "transactionTime",
             }
         }
     )
     result = handle.find_history(op, INVOICE, POSTGRES, "InvoiceLine", port)
     assert result.execution.round_trips == 1
-    assert [g.pin["processingDate"] for g in result.graphs] == [
+    assert [g.pin["transactionTime"] for g in result.graphs] == [
         dt.datetime(2024, 1, 1, tzinfo=_UTC),
         dt.datetime(2024, 4, 1, tzinfo=_UTC),
     ]
@@ -305,7 +305,7 @@ def test_find_history_groups_two_distinct_rows_sharing_one_edge_into_one_graph()
         {
             "history": {
                 "operand": {"eq": {"attr": "InvoiceLine.invoiceId", "value": 100}},
-                "asOfAttr": "InvoiceLine.processingDate",
+                "dimension": "transactionTime",
             }
         }
     )
@@ -315,7 +315,7 @@ def test_find_history_groups_two_distinct_rows_sharing_one_edge_into_one_graph()
 
 
 def test_find_history_over_a_concrete_inheritance_target_resolves_the_roots_axes() -> None:
-    # `DepositRate` declares NO `as_of_attributes` of its own (`Rate`, the
+    # `DepositRate` declares NO `as_of_axes` of its own (`Rate`, the
     # family root, does) — before the COR-3 Phase 7 review remediation,
     # `milestone_edge`/`_edge_pin`/`_edge_sort_key` consulted `DepositRate`'s
     # own (empty) record directly and raised "not a temporal entity"; they
@@ -348,12 +348,12 @@ def test_find_history_over_a_concrete_inheritance_target_resolves_the_roots_axes
         {
             "history": {
                 "operand": {"eq": {"attr": "DepositRate.id", "value": 1}},
-                "asOfAttr": "DepositRate.processingDate",
+                "dimension": "transactionTime",
             }
         }
     )
     result = handle.find_history(op, RATE, POSTGRES, "DepositRate", port)
-    assert [g.pin["processingDate"] for g in result.graphs] == [
+    assert [g.pin["transactionTime"] for g in result.graphs] == [
         dt.datetime(2024, 1, 1, tzinfo=_UTC),
         dt.datetime(2024, 2, 1, tzinfo=_UTC),
     ]
@@ -361,8 +361,8 @@ def test_find_history_over_a_concrete_inheritance_target_resolves_the_roots_axes
         Decimal("2.25"),
         Decimal("2.50"),
     ]
-    # The business axis rides along too (bitemporal): both milestones share it.
-    assert all(g.pin["businessDate"] == dt.datetime(2024, 1, 1, tzinfo=_UTC) for g in result.graphs)
+    # The Valid-Time dimension rides along too (bitemporal): both milestones share it.
+    assert all(g.pin["validTime"] == dt.datetime(2024, 1, 1, tzinfo=_UTC) for g in result.graphs)
 
 
 def test_find_history_refuses_a_plan_carrying_deep_fetch_levels() -> None:
@@ -371,9 +371,7 @@ def test_find_history_refuses_a_plan_carrying_deep_fetch_levels() -> None:
     op = deserialize(
         {
             "deepFetch": {
-                "operand": {
-                    "history": {"operand": {"all": {}}, "asOfAttr": "Policy.processingDate"}
-                },
+                "operand": {"history": {"operand": {"all": {}}, "dimension": "transactionTime"}},
                 "paths": [[{"rel": "Policy.coverages"}]],
             }
         }

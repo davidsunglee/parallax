@@ -2,14 +2,14 @@
 # close + a single head re-insert (m-bitemp-write + m-opt-lock, ADR 0014 / 0021).
 #
 # The terminate complement of the plain update (m-bitemp-write-010). Ending business
-# validity at businessFrom = 2024-07-01 keeps the pre-businessFrom history but adds NO
+# validity at validFrom = 2024-07-01 keeps the pre-validFrom history but adds NO
 # successor value, so the resolved row (pos 1, value 200) materializes to only two
 # statements:
 #   1. close the current processing row (set out_z = at = 2024-10-01), gated on key +
 #      open out_z + observed from_z/in_z (optimistic coordinate gate);
 #   2. re-insert the OLD payload (value 200) for the surviving business slice
 #      [2024-06-01, 2024-07-01) with in_z = at.
-# There is no [businessFrom, infinity) insert — that absence is exactly what makes this a
+# There is no [validFrom, infinity) insert — that absence is exactly what makes this a
 # terminate rather than an update.
 #
 # The trailing find queries the open current-to-infinity set (value = 200,
@@ -51,7 +51,7 @@ when:
                 - { eq: { attr: Position.id, value: 1 } }
                 - { eq: { attr: Position.value, value: 200.00 } }
         at: "2024-10-01T00:00:00+00:00"
-        businessFrom: "2024-07-01T00:00:00+00:00"
+        validFrom: "2024-07-01T00:00:00+00:00"
       roundTrips: 2
       statements:
         - sql:

@@ -19,16 +19,18 @@ from collections.abc import Mapping
 from parallax.core.descriptor.errors import DescriptorError
 from parallax.core.descriptor.records import (
     Attribute,
+    DefiningRelationship,
     Entity,
     Metamodel,
     PkGenerator,
-    Relationship,
+    RelationshipDeclaration,
+    ReverseRelationship,
 )
 
 __all__ = ["validate_entity", "validate_metamodel", "validate_optimistic_locking_root_owned"]
 
 # The metamodel.schema.json `identifier` and `neutralType` patterns, verbatim.
-_IDENTIFIER = re.compile(r"^[a-z][a-zA-Z0-9]*$")
+_IDENTIFIER = re.compile(r"^[a-z][a-zA-Z0-9_]*$")
 _NEUTRAL_TYPE = re.compile(
     r"^(boolean|int32|int64|float32|float64|string|bytes|date|time|timestamp|uuid|json"
     r"|decimal\([0-9]+,[0-9]+\))$"
@@ -55,6 +57,8 @@ def validate_metamodel(metamodel: Metamodel) -> None:
             )
     for entity in metamodel.entities:
         validate_optimistic_locking_root_owned(entity)
+        _validate_relationship_targets(metamodel, entity)
+        metamodel.relationships_for(entity)
 
 
 def validate_entity(entity: Entity) -> None:
@@ -62,8 +66,8 @@ def validate_entity(entity: Entity) -> None:
 
     A single-entity view: this function's own ``optimisticLocking`` checks are
     the two purely LOCAL, single-entity rules — at most one version attribute
-    per entity, and never combined with ``asOfAttributes`` on the same entity
-    (a temporal entity derives its optimistic key from its processing axis
+    per entity, and never combined with ``asOfAxes`` on the same entity
+    (a temporal entity derives its optimistic key from its Transaction-Time axis
     instead) — both exact for any entity regardless of family membership.
     The family root-ownership rule (:func:`validate_optimistic_locking_root_owned`,
     ADR 0027) is ALSO single-entity (a non-root's own ``attributes`` fully
@@ -85,6 +89,12 @@ def validate_entity(entity: Entity) -> None:
     # which alone has the sibling records to derive the inherited chain.
     if entity.inheritance is None and not entity.attributes:
         raise DescriptorError(f"entity {entity.name!r}: declares no attributes")
+    dimensions = {axis.dimension for axis in entity.as_of_axes}
+    if dimensions == {"validTime"}:
+        raise DescriptorError(
+            f"entity {entity.canonical_name!r}: Valid-Time-Only is deferred; "
+            "a validTime dimension requires transactionTime"
+        )
     _own_optimistic_locking = [attr for attr in entity.attributes if attr.optimistic_locking]
     if len(_own_optimistic_locking) > 1:
         raise DescriptorError(
@@ -93,10 +103,10 @@ def validate_entity(entity: Entity) -> None:
             f"{len(_own_optimistic_locking)}: "
             f"{[attr.name for attr in _own_optimistic_locking]}"
         )
-    if entity.as_of_attributes and _own_optimistic_locking:
+    if entity.as_of_axes and _own_optimistic_locking:
         raise DescriptorError(
             f"entity {entity.name!r}: a temporal entity derives its optimistic key from its "
-            "processing axis and must not also declare an optimisticLocking attribute"
+            "Transaction-Time axis and must not also declare an optimisticLocking attribute"
         )
     for attribute in entity.attributes:
         _validate_attribute(entity.name, attribute)
@@ -122,13 +132,13 @@ def validate_optimistic_locking_root_owned(entity: Entity) -> None:
     other family-wide rule (`no attributes, directly or inherited`), which
     genuinely needs the ancestry chain. A no-op for a non-participant or the
     family root (:func:`validate_entity`'s own local checks — at most one per
-    entity, never combined with ``asOfAttributes`` — are exact there; LOCAL ==
+    entity, never combined with ``asOfAxes`` — are exact there; LOCAL ==
     EFFECTIVE for a root, so a root cannot combine an explicit version with a
     temporal axis either).
 
     This SUBSUMES the narrower rule this function used to check (a temporal
     descendant's own ``optimisticLocking`` attribute, resolved via the
-    family-EFFECTIVE ``asOfAttributes`` — ADR 0026): a non-root can never
+    family-EFFECTIVE ``asOfAxes`` — ADR 0026): a non-root can never
     declare its own version attribute at all now, temporal or not, so the
     temporal-family shape collapses into this general rule plus
     :func:`validate_entity`'s own composition check already applied AT the
@@ -194,13 +204,37 @@ def _effective_attributes(entity: Entity, by_name: Mapping[str, Entity]) -> tupl
     return tuple(collected)
 
 
-def _validate_relationship(entity_name: str, rel: Relationship) -> None:
+def _validate_relationship(entity_name: str, rel: RelationshipDeclaration) -> None:
     where = f"entity {entity_name!r} relationship {rel.name!r}"
     if _IDENTIFIER.match(rel.name) is None:
         raise DescriptorError(f"{where}: not a canonical camelCase identifier")
-    if not rel.related_entity:
-        raise DescriptorError(f"{where}: relatedEntity must be non-empty")
-    if not rel.join:
-        raise DescriptorError(f"{where}: join must be non-empty")
-    if rel.reverse_name is not None and _IDENTIFIER.match(rel.reverse_name) is None:
-        raise DescriptorError(f"{where}: reverseName {rel.reverse_name!r} is not an identifier")
+    if isinstance(rel, DefiningRelationship):
+        if not rel.join.source:
+            raise DescriptorError(f"{where}: join source must be non-empty")
+        if not rel.join.target.entity:
+            raise DescriptorError(f"{where}: join target entity must be non-empty")
+        if not rel.join.target.attribute:
+            raise DescriptorError(f"{where}: join target attribute must be non-empty")
+        return
+    assert isinstance(rel, ReverseRelationship)
+    target, separator, relationship_name = rel.reverse_of.rpartition(".")
+    if not separator or not target or not relationship_name:
+        raise DescriptorError(f"{where}: reverseOf must name Entity.relationship")
+
+
+def _validate_relationship_targets(metamodel: Metamodel, entity: Entity) -> None:
+    identities = {candidate.canonical_name for candidate in metamodel.entities}
+    for relationship in entity.relationships:
+        if not isinstance(relationship, DefiningRelationship):
+            continue
+        reference = relationship.join.target.entity
+        target = (
+            reference
+            if "." in reference or entity.namespace is None
+            else f"{entity.namespace}.{reference}"
+        )
+        if target not in identities:
+            raise DescriptorError(
+                f"entity {entity.canonical_name!r} relationship {relationship.name!r}: "
+                f"join targets unknown entity {target!r}"
+            )

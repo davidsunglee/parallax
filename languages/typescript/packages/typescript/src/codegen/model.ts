@@ -63,14 +63,12 @@ export interface AttributeModel {
 export interface ToManyRelationshipModel {
   readonly name: string;
   readonly ref: string;
-  readonly relatedEntity: string;
 }
 
 /** A generated to-one relationship — a navigable path prefix. */
 export interface ToOneRelationshipModel {
   readonly name: string;
   readonly ref: string;
-  readonly relatedEntity: string;
 }
 
 /** A generated typed leaf field of a value object (`address.city`). */
@@ -97,7 +95,7 @@ export interface ValueObjectModel {
   /** The member name (`address`, `geo`, `phones`). */
   readonly name: string;
   /** `one` (a nested object) or `many` (an array). */
-  readonly cardinality: "one" | "many";
+  readonly multiplicity: "one" | "many";
   /** Whether the member is nullable (`one` → `| null`). */
   readonly nullable: boolean;
   /** The generated managed interface name (`CustomerAddressGeo`). */
@@ -199,7 +197,7 @@ function valueObjectModel(
   const nested = vo.valueObjects.map((child) => valueObjectModel(child, ref, typeName));
   return {
     name: vo.name,
-    cardinality: vo.cardinality,
+    multiplicity: vo.multiplicity,
     nullable: vo.nullable,
     typeName,
     ref,
@@ -233,11 +231,12 @@ function entityModel(entity: EntityMetadata): EntityModel {
   const toMany: ToManyRelationshipModel[] = [];
   const toOne: ToOneRelationshipModel[] = [];
   for (const rel of entity.relationships()) {
-    const ref = `${entity.name}.${rel.name}`;
-    if (rel.cardinality === "one-to-many" || rel.cardinality === "many-to-many") {
-      toMany.push({ name: rel.name, ref, relatedEntity: rel.relatedEntity });
+    const name = rel.identity.name;
+    const ref = `${entity.name}.${name}`;
+    if (rel.cardinality === "one-to-many") {
+      toMany.push({ name, ref });
     } else {
-      toOne.push({ name: rel.name, ref, relatedEntity: rel.relatedEntity });
+      toOne.push({ name, ref });
     }
   }
   const valueObjects = entity

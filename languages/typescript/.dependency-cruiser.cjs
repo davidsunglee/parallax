@@ -12,9 +12,9 @@ const { join } = require("node:path");
  * Trimmed (design Q4): only the 13 packages the `slice-mvp-1`
  * slice actually implements are scaffolded, so `lifecycle` (`m-detach`),
  * `benchmark` (`m-perf-bench`), and `coherence` (`m-coherence`) — and every edge
- * that touches them — are intentionally absent. They are added when their slice
- * lands; an allowlist edge exists only when there is an implementation behind
- * it.
+ * that touches them — are intentionally absent. Edges among scaffolded packages
+ * cover every direct dependency declared by the active modules those packages
+ * implement, whether or not the current source tree already exercises the edge.
  *
  * Corrected (design Q5): the `relationships -> bitemporal`
  * (`m-navigate -> m-temporal-read`) edge that core declares (as-of binds
@@ -116,28 +116,25 @@ module.exports = {
     // --- Module edges from core/spec/modules.md ---
     edge("metamodel", "core"), //      m-descriptor -> m-core
     edge("dialect", "core"), //        m-dialect -> m-core
-    edge("operation", "metamodel"), // m-op-algebra -> m-descriptor
+    edge("operation", "metamodel"), // m-op-algebra -> m-metamodel
     edge("sql", "operation"), //       m-sql -> m-op-algebra
     edge("sql", "dialect"), //         m-sql -> m-dialect (compile() consults the Dialect contract — ORDER BY / NULL placement, row-limit, read-lock)
     edge("transactions", "operation"), // m-unit-work -> m-op-algebra
-    // Note: m-read-lock -> m-dialect (transactions -> dialect) is spec-legal but
-    // omitted here — the in-transaction read-lock application moved into
-    // `@parallax/dialect` (delta 09 D3) and `@parallax/transactions` now imports
-    // nothing from it, so per the same policy the package edge is absent; the
-    // composition root applies the read lock via the dialect. The core DAG keeps
-    // m-read-lock -> m-dialect.
+    edge("transactions", "db"), //        m-unit-work -> m-db-port / m-auto-retry -> m-db-error
+    edge("transactions", "dialect"), //   m-read-lock -> m-dialect
     edge("lists", "operation"), //     m-op-list -> m-op-algebra
     edge("lists", "transactions"), //  m-op-list -> m-unit-work
     edge("lists", "relationships"), // m-op-list -> m-deep-fetch (ADR 0025 re-pin)
     edge("relationships", "operation"), // m-navigate -> m-op-algebra (ADR 0025 re-pin)
     edge("relationships", "transactions"), // m-navigate -> m-unit-work
     edge("relationships", "bitemporal"), //   m-navigate -> m-temporal-read  (design Q5 correction)
+    edge("relationships", "metamodel"), //    m-navigate -> m-inheritance / m-relationship
     edge("bitemporal", "transactions"), //    m-audit-write -> m-unit-work
-    // Note: m-opt-lock -> m-unit-work (locking -> transactions) is spec-legal but
-    // omitted here — the `@parallax/locking` package renders versioned-UPDATE text
-    // only and does not import the unit of work, so per the "an edge exists only
-    // when there is an implementation behind it" policy above it is absent until
-    // locking's code uses transactions. The core DAG keeps m-opt-lock -> m-unit-work.
+    edge("bitemporal", "operation"), //       m-temporal-read -> m-op-algebra
+    edge("bitemporal", "metamodel"), //       m-temporal-read -> m-metamodel / m-model-formation / m-inheritance
+    edge("locking", "transactions"), //         m-opt-lock -> m-unit-work
+    edge("locking", "bitemporal"), //          m-opt-lock -> m-temporal-read
+    edge("locking", "metamodel"), //           m-opt-lock -> m-metamodel / m-model-formation / m-inheritance
     edge("conformance", "operation"), //      m-case-format -> m-op-algebra
     edge("conformance", "sql"), //            m-case-format -> m-sql
     edge("conformance", "dialect"), //        m-case-format -> m-dialect (harness applies dialect DDL / quoting / read-lock rules)

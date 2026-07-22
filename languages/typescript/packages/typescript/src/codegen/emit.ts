@@ -109,7 +109,7 @@ function managedProperty(attr: AttributeModel): string {
 
 /** The managed-object property type for a value-object member (typed, arbitrary depth). */
 function valueObjectPropertyType(vo: ValueObjectModel): string {
-  if (vo.cardinality === "many") {
+  if (vo.multiplicity === "many") {
     return `readonly ${vo.typeName}[]`;
   }
   return vo.nullable ? `${vo.typeName} | null` : vo.typeName;

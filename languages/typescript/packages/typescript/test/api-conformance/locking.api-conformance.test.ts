@@ -43,8 +43,8 @@ const accountPk = (id: number): Predicate =>
   new Predicate({ eq: { attr: "Account.id", value: id } });
 const all = (): Predicate => new Predicate({ all: {} });
 
-// Balance — the audit-only (processing-temporal) model the optimistic × temporal
-// close cases (`m-temporal-read-009`-`m-temporal-read-012`) drive: the observed processing-from (`in_z`) is the
+// Balance — the audit-only (Transaction-Time) model the optimistic × temporal
+// close cases (`m-temporal-read-009`-`m-temporal-read-012`) drive: the observed Transaction-Time start (`in_z`) is the
 // optimistic-lock version analogue (m-temporal-read/m-opt-lock).
 const Balance = { id: attr("Balance.id"), value: attr("Balance.value") };
 const balancePk = (id: number): Predicate =>
@@ -304,8 +304,8 @@ group.skipIf(!HAS_DOCKER).each(selectedProviders())("locking suite ($label)", (d
   );
 
   // --- optimistic x temporal close (m-temporal-read-009–m-temporal-read-012) ------------------------------
-  // A processing-axis (audit-only) temporal entity carries NO version column, so the
-  // observed processing-from (in_z) is the optimistic-lock version analogue (m-temporal-read/m-opt-lock).
+  // A Transaction-Time (audit-only) temporal entity carries NO version column, so the
+  // observed Transaction-Time start (in_z) is the optimistic-lock version analogue (m-temporal-read/m-opt-lock).
   // The developer reads the current milestone (which records its in_z), then closes
   // it; in optimistic mode the close gates on that observed in_z. Table state is NOT
   // asserted here — the runtime close's out_z is the transaction CLOCK instant, not

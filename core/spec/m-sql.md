@@ -100,7 +100,7 @@ entries and the harness runs them against **both** databases, proving the result
 invariant while each dialect emits its own optimized SQL:
 
 - **Identical SQL, different physical binds — the infinity fallback.** For most
-  operations (`eq`, `in`, the `exists` semi-join, the as-of-now read, the
+  operations (`eq`, `in`, the `exists` semi-join, the as-of-Latest read, the
   milestone insert) Postgres and MariaDB emit the **same** golden SQL text. The
   temporal cases additionally exercise the **max-sentinel infinity convention**
   (`m-core` / `m-dialect`): the open upper bound `out_z = ?` is carried as the
@@ -134,11 +134,11 @@ sources in this fixed order:
 1. **Effective scalar columns.** Every declared attribute's column of the read's
    **effective position**, in `columnOrder` (declaration order). This **includes** the
    `optimisticLocking` **version** attribute and **each as-of axis's
-   `fromColumn` / `toColumn` interval columns** (`m-descriptor`) — all of them are
+   start / end Attribute columns** (`m-descriptor`) — all of them are
    ordinary declared attributes, so excluding either would need a carve-out this rule
-   does not make. For a **bitemporal** entity the axes read **business first, then
-   processing** — `from_z, thru_z, in_z, out_z` — matching every bitemporal model's
-   declaration order and the business-axis-first bind order the temporal predicates
+   does not make. For a Bitemporal Entity the dimensions read **Valid Time first,
+   then Transaction Time** — `from_z, thru_z, in_z, out_z` — matching every
+   Bitemporal model's declaration order and Valid-Time-first bind order the temporal predicates
    and write sequences use (below). The effective position is inheritance-aware: a
    **concrete** target contributes its flattened ancestry-chain-plus-own
    `columnOrder`; an **abstract** target contributes the concrete-subtype superset of
@@ -377,13 +377,13 @@ preserving `1 + L`.
 ### As-of read predicates
 
 An `asOf` / defaulted as-of pin lowers to an **auto-injected** interval predicate
-(the user never writes it). For a single dimension pinned to instant `d`, with
-the exclusive `[from, to)` closure:
+(the user never writes it). For the Transaction-Time dimension pinned to
+coordinate `d`, with the exclusive `[in_z, out_z)` closure:
 
 | Pin | Canonical predicate fragment | Binds |
 |---|---|---|
-| `now` (current row) | `t0.out_z = ?` | `[infinity]` |
-| a past instant `d` | `t0.in_z <= ? and t0.out_z > ?` | `[d, d]` |
+| Latest | `t0.out_z = ?` | `[infinity]` |
+| finite instant `d` | `t0.in_z <= ? and t0.out_z > ?` | `[d, d]` |
 
 The open bound is the dialect's native infinity (`m-dialect`) — for Postgres the
 literal `infinity`, carried as a `?` bind exactly like every other literal
@@ -392,19 +392,19 @@ literal `infinity`, carried as a `?` bind exactly like every other literal
 and is appended **after** it (binds read user-first, then the as-of bind):
 
 ```yaml
-# asOf(eq(Balance.acctNum,'A'), Balance.processingDate, now) lowers to the entry:
+# asOf(eq(Balance.acctNum,'A'), transactionTime, latest) lowers to the entry:
 - sql:
     postgres: select t0.bal_id, t0.val from balance t0 where t0.acct_num = ? and t0.out_z = ?
   binds: ['A', infinity]
 ```
 
-`history(operand, asOfAttr)` injects **no** as-of predicate — it returns every
+`history(operand, dimension)` injects **no** as-of predicate — it returns every
 milestone — so its golden SQL is just the operand's predicate; its projection
 **includes** the interval columns automatically — they are declared attributes in
 slot 1 of the base *Read projection* — so the caller sees each milestone's bounds
 (the current row's `out_z` reads back as `infinity`).
 
-`asOfRange(operand, asOfAttr, from, to)` reads the dimension as **edge points**
+`asOfRange(operand, dimension, start, end)` reads the dimension as **edge points**
 rather than a single pin: it returns every milestone whose `[in_z, out_z)`
 interval **overlaps** the half-open window `[from, to)`. The canonical overlap
 predicate compares the milestone's start to the window **end** and the
@@ -426,8 +426,9 @@ formulation the harness asserts returns the same rows (`m-case-format`).
 
 ### Milestone-chaining write sequences
 
-A temporal write (audit-only) is an **ordered DML sequence**, not a single
-statement. Let `txInstant` be the processing instant. The canonical Postgres DML:
+A Transaction-Time-Only write is an **ordered DML sequence**, not a single
+statement. Let `txInstant` be the finite Transaction-Time instant supplied by the
+handle clock. The canonical Postgres DML:
 
 | Mutation | Golden DML |
 |---|---|
@@ -450,13 +451,13 @@ chaining contract is proven against real data, not merely asserted. The full
 milestone-write semantics are `m-audit-write`.
 
 **Optimistic-mode close (`m-opt-lock` × `m-audit-write`).** In optimistic mode the
-close `update` gains an `and in_z = ?` gate on the observed processing-from — the
+close `update` gains an `and in_z = ?` gate on the observed `tx_start` — the
 version analogue for a temporal entity (`m-opt-lock`, `m-opt-lock -->
 m-temporal-read`):
 
 | Mutation | Golden DML | Binds |
 |---|---|---|
-| **close** (optimistic) | `update balance set out_z = ? where bal_id = ? and out_z = ? and in_z = ?` | `[txInstant, pk, infinity, observedInZ]` |
+| **close** (optimistic) | `update balance set out_z = ? where bal_id = ? and out_z = ? and in_z = ?` | `[txInstant, pk, infinity, observedTxStart]` |
 
 The locking-mode close keeps the ungated form above (`… where bal_id = ? and
 out_z = ?`). A close **MUST** affect exactly one row; a zero-row close is a
@@ -465,81 +466,80 @@ conflict (optimistic) or a stale/consistency error (locking), never silent
 
 ### Bitemporal as-of reads (both axes)
 
-A **bitemporal** entity is pinned on both axes by nesting two `asOf` nodes; each
-axis lowers to its own injected fragment (current-row equality or `[from, to)`
-containment), composed with `and`. The fragments read **business-axis-first** (the
-outer pin) then **processing**, so binds follow the same order:
+A Bitemporal Entity is pinned on both dimensions by nesting two `asOf` nodes;
+each dimension lowers to its own injected fragment (Latest equality or finite
+containment), composed with `and`. Valid Time is the outer pin and Transaction
+Time the inner pin, so binds follow the same order:
 
 | Both-axis read | Golden predicate | Binds |
 |---|---|---|
-| business now, processing now | `t0.thru_z = ? and t0.out_z = ?` | `[infinity, infinity]` |
-| business past `b`, processing now | `t0.from_z <= ? and t0.thru_z > ? and t0.out_z = ?` | `[b, b, infinity]` |
-| business past `b`, processing past `p` | `t0.from_z <= ? and t0.thru_z > ? and t0.in_z <= ? and t0.out_z > ?` | `[b, b, p, p]` |
+| Valid-Time Latest, Transaction-Time Latest | `t0.thru_z = ? and t0.out_z = ?` | `[infinity, infinity]` |
+| Valid-Time finite `v`, Transaction-Time Latest | `t0.from_z <= ? and t0.thru_z > ? and t0.out_z = ?` | `[v, v, infinity]` |
+| Valid-Time finite `v`, Transaction-Time finite `t` | `t0.from_z <= ? and t0.thru_z > ? and t0.in_z <= ? and t0.out_z > ?` | `[v, v, t, t]` |
 
-A **business-temporal-only** read injects the single-axis fragment over
-`from_z`/`thru_z` (the audit-only forms with `out_z` swapped for `thru_z`); its
-default is still `now` ⇒ `t0.thru_z = ?` with `binds: [infinity]`
-(`m-business-only`).
+Valid-Time-Only belongs to the separate `m-business-only` contract and adds no
+SQL shape to `m-temporal-read`.
 
 ### Bitemporal write sequences — the rectangle split
 
-A full-bitemporal write that bounds a change to a business window is an ordered
-DML sequence over **both** axes. Let `txInstant` be the processing instant and
-`[bf, bt)` the business window. The canonical Postgres DML:
+A Bitemporal write that bounds a change to a Valid-Time window is an ordered DML
+sequence over both dimensions. Let `txInstant` be the handle-supplied
+Transaction-Time instant and `[vf, until)` the Valid-Time window. The canonical
+Postgres DML:
 
 | Mutation | Golden DML |
 |---|---|
-| **insertUntil** | one `insert into position(cols…) values (?, …, ?)` with business `[bf, bt)`, processing `[txInstant, infinity)` |
-| **updateUntil** (inactivate) | `update position set out_z = ? where pos_id = ? and out_z = ?` — binds `[txInstant, pk, infinity]` (closes the processing axis of the current rectangle) |
-| **updateUntil** (head / middle / tail) | three `insert`s at processing `[txInstant, infinity)` — `head` business `[from_z, bf)` old value, `middle` business `[bf, bt)` new value, `tail` business `[bt, infinity)` old value |
+| **insertUntil** | one `insert into position(cols…) values (?, …, ?)` with Valid Time `[vf, until)` and Transaction Time `[txInstant, infinity)` |
+| **updateUntil** (inactivate) | `update position set out_z = ? where pos_id = ? and out_z = ?` — binds `[txInstant, pk, infinity]` (closes Transaction Time of the current rectangle) |
+| **updateUntil** (head / middle / tail) | three `insert`s at Transaction Time `[txInstant, infinity)` — `head` Valid Time `[from_z, vf)` old value, `middle` Valid Time `[vf, until)` new value, `tail` Valid Time `[until, infinity)` old value |
 | **terminateUntil** | the inactivate `update` + `head` + `tail` inserts only (**no** `middle`) |
 
-The inactivate `update` is keyed by the **current-on-processing** predicate
+The inactivate `update` is keyed by the **current-on-Transaction-Time** predicate
 (`pk and out_z = ?` / `infinity`), so only the open rectangle is closed; the new
 rows are inserted **after** it. The harness **applies** this DML in order to an
 empty table and asserts the resulting `then.tableState` — the inactivated
 original (`out_z` finite) plus the `head` / `middle` / `tail` rectangles current
-on processing (`out_z = infinity`) — so the rectangle split is proven against real
-data, not merely asserted. The same multi-row physical primary key (business key
-plus each axis's `fromColumn`, `m-descriptor`) makes the chained rectangles
+on Transaction Time (`out_z = infinity`) — so the rectangle split is proven against real
+data, not merely asserted. The same multi-row physical primary key (domain key
+plus each dimension's start column, `m-descriptor`) makes the chained rectangles
 admissible. The full rectangle-split semantics are `m-bitemp-write`.
 
 **Plain (unbounded) writes.** Alongside the bounded `*Until` templates, the plain
 (unbounded) `insert` / `update` / `terminate` govern a value from an effective
-business date `B` **through infinity** — the degenerate rectangle splits with no
+Valid-Time instant `V` **through infinity** — the degenerate rectangle splits with no
 `until` (`m-bitemp-write`). Plain `insert` is a **single** fully-current `INSERT`;
 plain `update` is the inactivate `update` plus a `head` **and** a new `tail`; plain
 `terminate` is the inactivate `update` plus a **single `head`** (no tail):
 
 | Mutation | Golden DML | Binds |
 |---|---|---|
-| **insert** (plain) | `insert into position(cols…) values (?, …, ?)` — fully-current row, business `[B, infinity)`, processing `[txInstant, infinity)` | `[…row…, B, infinity, txInstant, infinity]` |
+| **insert** (plain) | `insert into position(cols…) values (?, …, ?)` — fully-current row, Valid Time `[V, infinity)`, Transaction Time `[txInstant, infinity)` | `[…row…, V, infinity, txInstant, infinity]` |
 | **update** (inactivate) | `update position set out_z = ? where pos_id = ? and out_z = ?` | `[txInstant, pk, infinity]` |
-| **update** (head) | `insert into position(cols…) values (?, …, ?)` — old value, business `[from_z, B)`, processing `[txInstant, infinity)` | `[…row…, from_z, B, txInstant, infinity]` |
-| **update** (new tail) | `insert into position(cols…) values (?, …, ?)` — new value, business `[B, infinity)`, processing `[txInstant, infinity)` | `[…row…, B, infinity, txInstant, infinity]` |
+| **update** (head) | `insert into position(cols…) values (?, …, ?)` — old value, Valid Time `[from_z, V)`, Transaction Time `[txInstant, infinity)` | `[…row…, from_z, V, txInstant, infinity]` |
+| **update** (new tail) | `insert into position(cols…) values (?, …, ?)` — new value, Valid Time `[V, infinity)`, Transaction Time `[txInstant, infinity)` | `[…row…, V, infinity, txInstant, infinity]` |
 | **terminate** (inactivate) | `update position set out_z = ? where pos_id = ? and out_z = ?` | `[txInstant, pk, infinity]` |
-| **terminate** (head) | `insert into position(cols…) values (?, …, ?)` — old value, business `[from_z, B)`, processing `[txInstant, infinity)` | `[…row…, from_z, B, txInstant, infinity]` |
+| **terminate** (head) | `insert into position(cols…) values (?, …, ?)` — old value, Valid Time `[from_z, V)`, Transaction Time `[txInstant, infinity)` | `[…row…, from_z, V, txInstant, infinity]` |
 
 Plain `insert` opens a fully-current rectangle (`thru_z = out_z = infinity`) with
-**no** inactivation and no prior row to close — the `businessTo = infinity`
+**no** inactivation and no prior row to close — the `until = infinity`
 degenerate of `insertUntil`, sharing that template's `INSERT` shape (so the optimistic
 inactivation gate below does not apply to it). Plain `update` is **three** statements
 (inactivate + `head` + new `tail`) and plain `terminate` is **two** (inactivate +
 `head`); neither chains a `middle` or an old-`tail`, so a plain `update` runs the new
-value unbounded to infinity and a plain `terminate` leaves `[B, infinity)` covered by
-no current-on-processing row. The inactivate `update` for both is the **same**
-current-on-processing statement as the `*Until` inactivate above, so the optimistic
+value unbounded to infinity and a plain `terminate` leaves `[V, infinity)` covered by
+no current-on-Transaction-Time row. The inactivate `update` for both is the same
+current-on-Transaction-Time statement as the `*Until` inactivate above, so the optimistic
 gate below applies to it verbatim.
 
 **Optimistic-mode inactivation (`m-opt-lock` × `m-bitemp-write`).** In optimistic
-mode the inactivate `update` gains the observed-processing-from gate; when the
-key's current rows share an `in_z` (distinct business windows current at the same
-processing time) the gate also carries the **business** discriminator `from_z = ?`
+mode the inactivate `update` gains the observed-`tx_start` gate; when the key's
+current rows share an `in_z` (distinct Valid-Time windows current at the same
+Transaction Time) the gate also carries the Valid-Time discriminator `from_z = ?`
 to inactivate exactly the observed rectangle:
 
 | Mutation | Golden DML | Binds |
 |---|---|---|
-| **inactivate** (optimistic) | `update position set out_z = ? where pos_id = ? and out_z = ? and from_z = ? and in_z = ?` | `[txInstant, pk, infinity, observedFromZ, observedInZ]` |
+| **inactivate** (optimistic) | `update position set out_z = ? where pos_id = ? and out_z = ? and from_z = ? and in_z = ?` | `[txInstant, pk, infinity, observedValidStart, observedTxStart]` |
 
 The chained `head` / `middle` / `tail` rows stay ungated `INSERT`s at the fresh
 `in_z`. A zero-row inactivation is a conflict (optimistic) or a stale error
@@ -938,26 +938,26 @@ are declared on the family's abstract root and inherited by every concrete subty
 #### Table-per-hierarchy temporal writes — tag-guarded closes, tag-set chains
 
 Under `table-per-hierarchy` the whole family shares one milestone table. Every
-temporal statement that targets **existing** rows — the audit-only **close**
+temporal statement that targets **existing** rows — the Transaction-Time-Only **close**
 (`m-audit-write`) and the bitemporal **inactivation** (`m-bitemp-write`) — carries
 the **tag guard** among the identity predicates, immediately **after** the
-primary-key equality and **before** the current-on-processing predicate; every
+primary-key equality and **before** the current-on-Transaction-Time predicate; every
 chained **insert** (the audit chain, or the bitemporal `head` / `middle` / `tail`)
 sets the tag column from the subtype's `tagValue` in its `columnOrder` position,
 exactly as a non-temporal concrete-subtype insert does (above). There is no temporal
 exception to the resolved-Q9 bind order: the tag guard rides with the identity
 predicates; any gate the temporal write already carries (the optimistic
-processing-from `in_z` gate, `m-audit-write` / `m-bitemp-write`) still binds
+`tx_start` / physical `in_z` gate, `m-audit-write` / `m-bitemp-write`) still binds
 **last**.
 
 | Statement | Canonical Postgres DML | Binds |
 |---|---|---|
-| **audit-only insert** | `insert into reading(id, kind, celsius, in_z, out_z) values (?, ?, ?, ?, ?)` | `[<pk>, <tagValue>, …row…, <txInstant>, infinity]` |
-| **audit-only close** (`terminate` / `update` step 1) | `update reading set out_z = ? where id = ? and kind = ? and out_z = ?` | `[<txInstant>, <pk>, <tagValue>, infinity]` |
+| **Transaction-Time-Only insert** | `insert into reading(id, kind, celsius, in_z, out_z) values (?, ?, ?, ?, ?)` | `[<pk>, <tagValue>, …row…, <txInstant>, infinity]` |
+| **Transaction-Time-Only close** (`terminate` / `update` step 1) | `update reading set out_z = ? where id = ? and kind = ? and out_z = ?` | `[<txInstant>, <pk>, <tagValue>, infinity]` |
 | **bitemporal inactivation** (`terminate` / `terminateUntil` / `update` / `*Until` step 1) | `update instrument set out_z = ? where id = ? and kind = ? and out_z = ?` | `[<txInstant>, <pk>, <tagValue>, infinity]` |
 | **bitemporal head / middle / tail insert** | `insert into instrument(id, kind, price, from_z, thru_z, in_z, out_z, coupon) values (?, …, ?)` | `[<pk>, <tagValue>, …row…, <from_z>, <thru_z>, <txInstant>, infinity, …own…]` |
 
-The close / inactivation is keyed by the **current-on-processing** predicate
+The close / inactivation is keyed by the **current-on-Transaction-Time** predicate
 (`out_z = ?` / `infinity`) exactly as its standalone form (the audit / bitemporal
 write sequences above); the tag guard is inserted **between** the primary key and
 that predicate — `… where id = ? and kind = ? and out_z = ?` — so it touches only
@@ -986,18 +986,18 @@ raw tag column is still projected so `familyVariant` materializes (`m-inheritanc
 Under `table-per-concrete-subtype` it is the `union all` of the abstract-read
 lowering, and the injected as-of predicate is applied **per branch**: every branch
 carries its own as-of `where` fragment over its own alias, in the same
-**business-axis-first** bind order as a single-entity as-of read (`m-temporal-read` /
+Valid-Time-first bind order as a single-entity as-of read (`m-temporal-read` /
 `m-navigate` as-of propagation). Because every concrete branch inherits the same axes
 from the root, each branch's as-of fragment is identical, so the union's binds are
 the per-branch as-of binds repeated in **alphabetical branch order**:
 
 ```yaml
-# targetEntity: Rate (bitemporal abstract root over DepositRate / LoanRate), business
-# past b, processing now — each branch injects `from_z <= ? and thru_z > ? and out_z = ?`
-# (business-first) and the binds repeat per branch in alphabetical branch order:
+# targetEntity: Rate (Bitemporal abstract root over DepositRate / LoanRate), Valid Time
+# finite v, Transaction Time Latest — each branch injects `from_z <= ? and thru_z > ? and out_z = ?`
+# (Valid-Time-first) and the binds repeat per branch in alphabetical branch order:
 - sql:
     postgres: select t0.id, t0.amount, t0.from_z, t0.thru_z, t0.in_z, t0.out_z, t0.grade, cast(null as decimal(18, 2)) spread, 'DepositRate' family_variant from deposit_rate t0 where t0.from_z <= ? and t0.thru_z > ? and t0.out_z = ? union all select t0.id, t0.amount, t0.from_z, t0.thru_z, t0.in_z, t0.out_z, cast(null as varchar(8)) grade, t0.spread, 'LoanRate' family_variant from loan_rate t0 where t0.from_z <= ? and t0.thru_z > ? and t0.out_z = ?
-  binds: [b, b, infinity, b, b, infinity]
+  binds: [v, v, infinity, v, v, infinity]
 ```
 
 The witness is `m-inheritance-093`. As with any abstract read, the projection is the
@@ -1114,7 +1114,7 @@ MariaDB (`m-value-object-013` asserts all four at `geo.country`).
 
 #### To-many — exists / notExists and any-element predicates
 
-A `cardinality: many` value object is a JSON **array** in the same column
+A `multiplicity: many` value object is an ordered JSON **array** in the same column
 (`m-value-object`). Filtering it lowers through the `m-dialect` **array-traversal**
 seam, which the two dialects spell with **different function families** (Postgres a
 correlated `jsonb_array_elements` unnest, MariaDB the `json_contains` / `json_length`

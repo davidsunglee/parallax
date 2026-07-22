@@ -61,8 +61,8 @@ const FAMILIES = [
     exec: "const rows = await px.entity(entity).find(base, options).toArray();",
     intro:
       "Temporal reads pin one or both axes with `{ asOf }`, a `range`, or full `history`. An " +
-      "omitted axis defaults to *now* (the current row); the business axis is applied outside " +
-      "the processing axis. You never write the interval predicates — the engine injects them. " +
+      "omitted dimension defaults to *Latest* (the current row); Valid Time is applied outside " +
+      "Transaction Time. You never write the interval predicates — the engine injects them. " +
       "Each `find` below is a real, tested case.",
   },
   {
@@ -72,8 +72,8 @@ const FAMILIES = [
     tableDriven: false,
     intro:
       "All writes run inside `px.transaction(async tx => …)`. `create` / `update` / `delete` " +
-      "buffer and flush set-based at commit (FK-safe). Audit-only entities chain milestones: " +
-      "`create` opens `[now, ∞)`, `update` closes the current row and chains a new one, " +
+      "buffer and flush set-based at commit (FK-safe). Transaction-Time entities chain milestones: " +
+      "`create` opens at the finite current-clock instant with an infinite upper bound, `update` closes the current row and chains a new one, " +
       "`terminate` closes only — the prior values survive as the audit trail.",
   },
   {

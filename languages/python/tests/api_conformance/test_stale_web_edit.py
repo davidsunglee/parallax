@@ -5,7 +5,7 @@
 Neither variant maps to a single active corpus case one-to-one (every
 `m-opt-lock`/`m-bitemp-write` `conflict`-shape case that touches this same
 optimistic-gate machinery is a SYNTHETIC, single-connection injection —
-`given.apply` / `when.observedInZ` — already graded end-to-end by the
+`given.apply` / `when.observedTxStart` — already graded end-to-end by the
 compile/run conformance lanes; none of them expresses the genuine two-read
 render-then-submit developer choreography this recipe is), so these stay
 standalone Docker-backed proofs (`parallax.conformance.stale_web_edit`) rather
@@ -69,13 +69,13 @@ def _seed_branch(db: Database, *, id: int = 1) -> None:
                 name="Central Branch",
                 address=Address(street="1 Main St", city="Helsinki", geo=Geo(country="FI")),
             ),
-            business_from=_I1,
+            valid_from=_I1,
         )
     )
 
 
 # --------------------------------------------------------------------------- #
-# The AUDIT-ONLY variant (Balance — a single processing axis).                #
+# The AUDIT-ONLY variant (Balance — a single Transaction-Time dimension).                #
 # --------------------------------------------------------------------------- #
 def test_audit_only_stale_web_edit_updates_the_displayed_milestone(provisioner: Any) -> None:
     provisioner.reset(_BALANCE, {})
@@ -105,7 +105,9 @@ def test_audit_only_stale_web_edit_raises_historical_observation_in_locking_mode
     _node, edge = render_balance_milestone(db, id=1)
 
     def fn(tx: Transaction) -> None:
-        current = tx.find(Balance.where(Balance.id == 1).as_of(processing=edge.processing)).result()
+        current = tx.find(
+            Balance.where(Balance.id == 1).as_of(transaction_time=edge.transaction_time)
+        ).result()
         tx.update(current.model_copy(update={"value": Decimal("150.00")}))
 
     with pytest.raises(opt_lock.HistoricalObservationError, match="latest-pinned"):
@@ -126,9 +128,9 @@ def test_bitemporal_stale_web_edit_updates_the_displayed_rectangle(provisioner: 
     assert node.name == "Central Branch"
 
     # SUBMIT time — the correction takes effect from I2 onward, distinct from
-    # the displayed rectangle's own business start (I1): a `business_from`
+    # the displayed rectangle's own business start (I1): a `valid_from`
     # equal to the rectangle's own `from_z` degenerates the head interval.
-    submit_branch_edit(db, id=1, edge=edge, fields={"name": "Renamed Branch"}, business_from=_I2)
+    submit_branch_edit(db, id=1, edge=edge, fields={"name": "Renamed Branch"}, valid_from=_I2)
 
     current = db.find(Branch.where(Branch.id == 1)).result()
     assert current.name == "Renamed Branch"
@@ -152,15 +154,15 @@ def test_bitemporal_stale_web_edit_optimistic_conflict_surfaces(provisioner: Any
 
     def concurrent_write(tx: Transaction) -> None:
         current = tx.find(Branch.where(Branch.id == 1)).result()
-        tx.update(current.model_copy(update={"name": "Renamed By Someone Else"}), business_from=_I2)
+        tx.update(current.model_copy(update={"name": "Renamed By Someone Else"}), valid_from=_I2)
 
     peer_db.transact(concurrent_write)
 
     with pytest.raises(opt_lock.OptimisticLockConflictError):
         # SUBMIT time — the correction was never applied (the close never
-        # affects any row), so its own `business_from` value is immaterial to
+        # affects any row), so its own `valid_from` value is immaterial to
         # the conflict; any instant distinct from the rectangle's own start.
-        submit_branch_edit(db, id=1, edge=edge, fields={"name": "My Stale Edit"}, business_from=_I3)
+        submit_branch_edit(db, id=1, edge=edge, fields={"name": "My Stale Edit"}, valid_from=_I3)
 
     current = db.find(Branch.where(Branch.id == 1)).result()
     assert current.name == "Renamed By Someone Else"  # the stale edit never landed

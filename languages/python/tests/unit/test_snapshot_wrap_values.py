@@ -14,7 +14,7 @@ import pytest
 
 import snapshot_models as sm
 from parallax.conformance import models
-from parallax.core import AsOfAttribute, Attr, Entity, EntityConfig, Field, descriptor
+from parallax.core import AsOfAxisMetadata, Attr, Entity, EntityConfig, Field, descriptor
 from parallax.core.entity import metamodel
 from parallax.core.entity.base import Concrete, FamilyRoot
 from parallax.core.temporal_read import Pin, edge_of, pin_of
@@ -151,10 +151,10 @@ def test_temporal_node_carries_the_whole_graph_pin_and_its_own_edge() -> None:
         },
         pk_columns=("bal_id",),
     )
-    pin = Pin(processing=dt.datetime(2024, 2, 1, tzinfo=dt.UTC))
+    pin = Pin(transaction_time=dt.datetime(2024, 2, 1, tzinfo=dt.UTC))
     (root,) = wrap_graph((row,), "Balance", _BALANCE, pin)
     assert pin_of(root) is pin
-    assert edge_of(root).processing == dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
+    assert edge_of(root).transaction_time == dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
 
 
 # --------------------------------------------------------------------------- #
@@ -163,7 +163,7 @@ def test_temporal_node_carries_the_whole_graph_pin_and_its_own_edge() -> None:
 # by every concrete descendant (m-inheritance "Inherited members") — the       #
 # corpus's own Rate/DepositRate shape (`models/rate.yaml`), where the concrete #
 # declares NO `asOfAttributes` locally. `_wrap._wrap` previously checked only  #
-# the concrete descriptor's own (empty) `as_of_attributes`, so a temporal      #
+# the concrete descriptor's own (empty) `as_of_axes`, so a temporal            #
 # inheritance node never got `pin_of`/`edge_of` attached at all.               #
 # --------------------------------------------------------------------------- #
 class _WrapTemporalRoot(Entity, frozen=True):
@@ -171,11 +171,11 @@ class _WrapTemporalRoot(Entity, frozen=True):
         namespace="parallax.compatibility",
         mutability="transactional",
         as_of=(
-            AsOfAttribute(
-                name="businessDate", from_column="from_z", to_column="thru_z", axis="business"
+            AsOfAxisMetadata(
+                dimension="validTime", start_attribute="valid_start", end_attribute="valid_end"
             ),
-            AsOfAttribute(
-                name="processingDate", from_column="in_z", to_column="out_z", axis="processing"
+            AsOfAxisMetadata(
+                dimension="transactionTime", start_attribute="tx_start", end_attribute="tx_end"
             ),
         ),
         inheritance=FamilyRoot(strategy="table-per-concrete-subtype"),
@@ -183,10 +183,10 @@ class _WrapTemporalRoot(Entity, frozen=True):
 
     id: Attr[int] = Field(primary_key=True, pk_generator="none", type="int64")
     amount: Attr[Decimal] = Field(type="decimal(18,2)")
-    business_from: Attr[dt.datetime] = Field(column="from_z")
-    business_to: Attr[dt.datetime] = Field(column="thru_z")
-    processing_from: Attr[dt.datetime] = Field(column="in_z")
-    processing_to: Attr[dt.datetime] = Field(column="out_z")
+    valid_start: Attr[dt.datetime] = Field(name="valid_start", column="from_z")
+    valid_end: Attr[dt.datetime] = Field(name="valid_end", column="thru_z")
+    tx_start: Attr[dt.datetime] = Field(name="tx_start", column="in_z")
+    tx_end: Attr[dt.datetime] = Field(name="tx_end", column="out_z")
 
 
 class _WrapTemporalLeaf(_WrapTemporalRoot, frozen=True):
@@ -217,14 +217,14 @@ def test_temporal_tpcs_concrete_node_carries_pin_and_edge() -> None:
         pk_columns=("id",),
     )
     pin = Pin(
-        business=dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
-        processing=dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
+        valid_time=dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
+        transaction_time=dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
     )
     (root,) = wrap_graph((row,), "_WrapTemporalLeaf", _TEMPORAL_TPCS, pin)
     assert isinstance(root, _WrapTemporalLeaf)
     assert pin_of(root) is pin
-    assert edge_of(root).business == dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
-    assert edge_of(root).processing == dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
+    assert edge_of(root).valid_time == dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
+    assert edge_of(root).transaction_time == dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
 
 
 # --------------------------------------------------------------------------- #
@@ -265,7 +265,7 @@ def test_snapshot_has_no_iteration_len_or_indexing() -> None:
 
 
 def test_snapshot_pin_and_execution_and_repr() -> None:
-    pin = Pin(processing=dt.datetime(2024, 1, 1, tzinfo=dt.UTC))
+    pin = Pin(transaction_time=dt.datetime(2024, 1, 1, tzinfo=dt.UTC))
     snapshot = Snapshot((1,), pin, Execution(()))
     assert snapshot.pin is pin
     assert snapshot.execution.round_trips == 0

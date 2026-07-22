@@ -53,7 +53,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 
 from parallax.core import inheritance, navigate
-from parallax.core.descriptor import Axis, Entity, Metamodel, Relationship
+from parallax.core.descriptor import Entity, Metamodel, Relationship, TemporalDimension
 from parallax.core.inheritance._position import resolve_narrow_position
 from parallax.core.op_algebra import (
     And,
@@ -237,7 +237,7 @@ def _new_ancestor_families() -> dict[int, frozenset[str]]:
 @dataclass(slots=True)
 class _PlanBuilder:
     meta: Metamodel
-    root_pins: Mapping[Axis, str]
+    root_pins: Mapping[TemporalDimension, str]
     levels: list[FetchLevel] = field(default_factory=_new_levels)
     _children: dict[tuple[int, str, tuple[str, ...]], int] = field(default_factory=_new_children)
     _ancestor_families: dict[int, frozenset[str]] = field(default_factory=_new_ancestor_families)
@@ -258,7 +258,7 @@ class _PlanBuilder:
                 "rows are already fully known; no corpus case needs a level beneath one)"
             )
         relationship = navigate.resolve_relationship(segment.rel, self.meta)
-        related_entity = self.meta.entity(relationship.related_entity)
+        related_entity = self.meta.entity(relationship.join.target.entity)
         position = _resolve_position(self.meta, relationship, segment)
         key = (parent_id, segment.rel, position)
         existing = self._children.get(key)
@@ -269,9 +269,9 @@ class _PlanBuilder:
         parent_ancestors = self._ancestor_families[parent_id]
         is_back_reference = family in parent_ancestors
 
-        _, _, rel_local = segment.rel.partition(".")
+        _, _, rel_local = segment.rel.rpartition(".")
         attach_key = _view_key(rel_local, bool(segment.narrow), position)
-        to_many = relationship.cardinality in ("one-to-many", "many-to-many")
+        to_many = relationship.cardinality == "one-to-many"
         parent_column = _owner_column(self.meta, segment.rel, relationship)
         parent_ref: ParentRef = RootRef() if parent_id == _ROOT_ID else LevelRef(parent_id)
 
@@ -286,7 +286,7 @@ class _PlanBuilder:
             )
         else:
             child_target, narrow_to = _child_target(relationship, position, segment)
-            _owner_attr, related_attr_name = _parse_join(relationship.join)
+            related_attr_name = relationship.join.target.attribute
             level = FetchLevel(
                 attach_key=attach_key,
                 to_many=to_many,
@@ -310,17 +310,6 @@ class _PlanBuilder:
 # --------------------------------------------------------------------------- #
 # Pure resolution helpers (mirror m-navigate / m-sql's own mechanical rules).  #
 # --------------------------------------------------------------------------- #
-def _parse_join(join: str) -> tuple[str, str]:
-    """Split a relationship's ``this.<attr> = <Entity>.<attr>`` join into
-    ``(owner attribute name, related attribute name)`` — the SAME mechanical
-    derivation ``m-sql`` uses, duplicated here (deep_fetch may not import
-    ``m-sql``; the derivation is a pure string split with no drift risk)."""
-    lhs, _, rhs = join.partition(" = ")
-    _, _, owner_attr = lhs.partition(".")
-    _, _, related_attr = rhs.partition(".")
-    return owner_attr, related_attr
-
-
 def _family_name(meta: Metamodel, entity: Entity) -> str:
     """The family-normalized identity name (m-snapshot-read): the inheritance
     family's root name for a participant, else the entity's own name."""
@@ -347,10 +336,9 @@ def _owner_column(meta: Metamodel, rel_ref: str, relationship: Relationship) -> 
     """The PHYSICAL column, on the hop's OWNER entity, whose distinct values this
     level gathers from its parent rows (the join's LHS attribute, resolved to its
     column — family-wide when the owner is an inheritance participant)."""
-    class_name, _, _ = rel_ref.partition(".")
+    class_name, _, _ = rel_ref.rpartition(".")
     owner_entity = meta.entity(class_name)
-    owner_attr, _related_attr = _parse_join(relationship.join)
-    return _resolve_attr_column(meta, owner_entity, owner_attr)
+    return _resolve_attr_column(meta, owner_entity, relationship.join.source)
 
 
 def _resolve_position(
@@ -364,12 +352,12 @@ def _resolve_position(
     the entity frontend's narrowed-view key derivation
     (``parallax.core.entity.graph_state``) calls the identical function, so
     the two can never drift."""
-    related = meta.entity(relationship.related_entity)
+    related = meta.entity(relationship.join.target.entity)
     if related.inheritance is None:
-        return (relationship.related_entity,)
+        return (relationship.join.target.entity,)
     if segment.narrow:
         return resolve_narrow_position(meta, segment.narrow)
-    return tuple(inheritance.effective_concrete_subtypes(meta, relationship.related_entity))
+    return tuple(inheritance.effective_concrete_subtypes(meta, related.name))
 
 
 def _view_key(rel_local: str, narrowed: bool, position: tuple[str, ...]) -> str:
@@ -398,7 +386,7 @@ def _child_target(
     wrapped only when the segment itself authored one (a broad hop reaching 2+
     concretes naturally needs no wrapper — `m-sql`'s own effective-set
     resolution already returns the same set from the bare target)."""
-    related = relationship.related_entity
+    related = relationship.join.target.entity
     if len(position) == 1:
         return position[0], None
     if segment.narrow:

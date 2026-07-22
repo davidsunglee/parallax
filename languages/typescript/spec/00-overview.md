@@ -462,7 +462,7 @@ attributes when exposed as writable attributes, and nested dependent
 relationships only when explicitly allowed.
 
 It excludes database-generated IDs, read-only attributes, optimistic lock/version
-fields, processing timestamps, and server-owned fields.
+fields, Transaction-Time timestamps, and server-owned fields.
 
 Create consumes nested relationship data only when listed in `relationships`.
 Payload relationship data listed in `ignoreRelationships` is accepted but
@@ -504,48 +504,50 @@ TypeScript timestamps use `Temporal.Instant`, constrained to the Parallax core
 microsecond boundary. Values with non-zero sub-microsecond precision are
 rejected.
 
-Temporal reads use core axis names:
+Temporal reads use the same dimension names as core metadata and operations:
 
 ```ts
 px.positions.find(predicate, {
   asOf: {
-    processing: processingInstant,
-    business: businessInstant,
+    transactionTime: transactionInstant,
+    validTime: validInstant,
   },
 });
 
 px.positions.find(predicate, {
   range: {
-    business: { start, end },
+    validTime: { start, end },
   },
 });
 
 px.positions.find(predicate, {
-  history: ["business"],
+  history: ["validTime"],
 });
 ```
 
-`asOf`, `range`, and `history` are mutually exclusive per axis. Ranges use
-inclusive `start` and exclusive `end`.
+`asOf`, `range`, and `history` are mutually exclusive per dimension. Ranges use
+inclusive `start` and exclusive `end`. An omitted dimension defaults to Latest;
+an explicit Now is a finite `Temporal.Instant` obtained from a clock, not a wire
+keyword.
 
-Processing instants come from a `Clock Strategy` configured when `Parallax` is
-created. Application code does not pass processing instants to individual
+Transaction-Time instants come from a `Clock Strategy` configured when `Parallax` is
+created. Application code does not pass them to individual
 transactions or operations.
 
 Temporal writes use explicit verbs. The current TypeScript Conformance Slice
-claims only non-temporal writes and audit-only processing-temporal writes:
+claims only non-temporal writes and Transaction-Time-Only writes:
 
 - ordinary `update` performs entity-normal semantics: in-place for non-temporal,
   close-and-chain for temporal
 - `terminate` closes the current temporal row
 
-The business-axis and full-bitemporal write surface is post-claim:
+The Valid-Time and Bitemporal write vocabulary is stable across support profiles:
 
-- `createUntil`, `updateUntil`, and `terminateUntil` are bounded business-window
+- `createUntil`, `updateUntil`, and `terminateUntil` are bounded Valid-Time
   operations; `createUntil` maps to the core `insertUntil` mutation
-- bounded temporal write options use `business: { start, end }`
+- bounded temporal write options use `validFrom` and `until`
 
-Users never supply processing timestamps for writes.
+Users never supply Transaction-Time timestamps for writes.
 
 ## 12. Errors And Validation
 
@@ -654,7 +656,7 @@ slice:
 - inheritance compatibility cases
 - detached object lifecycle
 - m-db-error database error-code classification cases
-- bounded business-window and bitemporal rectangle-split writes
+- bounded Valid-Time and Bitemporal rectangle-split writes
 - MariaDB provider and dialect conformance
 - m-perf-bench benchmark command and numeric performance targets
 - m-coherence cross-process cache coherence

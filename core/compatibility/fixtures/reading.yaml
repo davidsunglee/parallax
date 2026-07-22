@@ -12,5 +12,5 @@
 MeterReading:
   - id: 1
     celsius: 20.00
-    processingFrom: "2024-01-01T00:00:00+00:00"
-    processingTo: infinity
+    tx_start: "2024-01-01T00:00:00+00:00"
+    tx_end: infinity

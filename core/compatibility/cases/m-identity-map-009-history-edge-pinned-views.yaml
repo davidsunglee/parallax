@@ -10,8 +10,8 @@
 # infinity)). Step 0's `history` returns all three, each row carrying its own
 # from/thru/in/out edge columns — the milestone edge pins. Steps 1 and 2 re-read
 # id 1 pinned at two of those EDGE coordinates: R1's edge (business 2024-01-01,
-# processing 2024-01-01, exercising the processing axis) and R3's edge (business
-# 2024-06-01, processing 2024-04-01, exercising the business axis). Each resolves
+# processing 2024-01-01, exercising the Transaction-Time dimension) and R3's edge (business
+# 2024-06-01, processing 2024-04-01, exercising the Valid-Time dimension). Each resolves
 # exactly its milestone (90, then 200), and the two are DISTINCT pinned views
 # (`differentObjectFrom`) — proven at the wire by the differing coordinates and
 # rows, graded as reference inequality by the API Conformance Suite.
@@ -31,8 +31,8 @@ when:
                 eq:
                   attr: Position.id
                   value: 1
-              asOfAttr: Position.processingDate
-          asOfAttr: Position.businessDate
+              dimension: transactionTime
+          dimension: validTime
       roundTrips: 1
       note: history returns all three milestones, each carrying its own edge pins (from/thru/in/out)
       statements:
@@ -52,10 +52,10 @@ when:
                 eq:
                   attr: Position.id
                   value: 1
-              asOfAttr: Position.processingDate
-              date: "2024-01-01T00:00:00+00:00"
-          asOfAttr: Position.businessDate
-          date: "2024-01-01T00:00:00+00:00"
+              dimension: transactionTime
+              coordinate: "2024-01-01T00:00:00+00:00"
+          dimension: validTime
+          coordinate: "2024-01-01T00:00:00+00:00"
       roundTrips: 1
       note: re-read at R1's edge pin (business + processing from-instant 2024-01-01) -> exactly R1 (90)
       statements:
@@ -73,10 +73,10 @@ when:
                 eq:
                   attr: Position.id
                   value: 1
-              asOfAttr: Position.processingDate
-              date: "2024-04-01T00:00:00+00:00"
-          asOfAttr: Position.businessDate
-          date: "2024-06-01T00:00:00+00:00"
+              dimension: transactionTime
+              coordinate: "2024-04-01T00:00:00+00:00"
+          dimension: validTime
+          coordinate: "2024-06-01T00:00:00+00:00"
       roundTrips: 1
       differentObjectFrom: 1
       identityAttr: pos_id

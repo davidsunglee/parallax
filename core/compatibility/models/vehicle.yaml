@@ -24,8 +24,8 @@
 entities:
   - name: Vehicle
     namespace: parallax.compatibility
-    mutability: transactional
-    temporal: non-temporal
+    table: vehicle
+    persistence: read-write
     inheritance:
       role: root
       strategy: table-per-hierarchy
@@ -36,7 +36,7 @@ entities:
         type: int64
         column: id
         primaryKey: true
-        pkGenerator: none
+        pkGeneration: application-assigned
       - name: name
         type: string
         column: name
@@ -47,9 +47,6 @@ entities:
         optimisticLocking: true
   - name: Car
     namespace: parallax.compatibility
-    table: vehicle
-    mutability: transactional
-    temporal: non-temporal
     inheritance:
       role: concrete-subtype
       parent: Vehicle
@@ -61,9 +58,6 @@ entities:
         nullable: true
   - name: Truck
     namespace: parallax.compatibility
-    table: vehicle
-    mutability: transactional
-    temporal: non-temporal
     inheritance:
       role: concrete-subtype
       parent: Vehicle

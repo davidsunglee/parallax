@@ -3,7 +3,7 @@
 #
 # Scoped to position id 1 with an inner `eq`, history returns ALL THREE rectangles
 # — the superseded original belief R1 (processing out_z finite), the head R2, and
-# the corrected R3 — because neither the business nor the processing axis is pinned
+# the corrected R3 — because neither the business nor the Transaction-Time dimension is pinned
 # to an instant. The projection includes all four interval columns so the result
 # carries each rectangle's bounds, exercising native-infinity reads on BOTH axes
 # (the current rows read back thru_z = infinity and/or out_z = infinity).
@@ -20,8 +20,8 @@ when:
             eq:
               attr: Position.id
               value: 1
-          asOfAttr: Position.processingDate
-      asOfAttr: Position.businessDate
+          dimension: transactionTime
+      dimension: validTime
 then:
   statements:
     - sql:

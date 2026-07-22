@@ -1,7 +1,7 @@
 # Deep fetch Coverage.policy — a to-ONE temporal hop (many-to-one back-reference),
 # business LATEST / processing LATEST. The single-object attach path: each
 # coverage's `policy` is the propagated-as-of Policy milestone. Root Coverage
-# resolves to the fully-current coverages (10 -> 700, 20 -> 300); the propagated
+# resolves to the fully-Latest coverages (10 -> 700, 20 -> 300); the propagated
 # pin fetches policies 1 and 2 (`id in (?, ?) and thru_z = ? and out_z = ?`),
 # attached as single objects.
 model: models/policy.yaml
@@ -20,10 +20,10 @@ when:
           operand:
             asOf:
               operand: { all: {} }
-              asOfAttr: Coverage.processingDate
-              date: now
-          asOfAttr: Coverage.businessDate
-          date: now
+              dimension: transactionTime
+              coordinate: latest
+          dimension: validTime
+          coordinate: latest
       paths:
         - [{ rel: Coverage.policy }]
 then:

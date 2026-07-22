@@ -858,20 +858,20 @@ function decodeGraphRows(
   return rows.map((row) => {
     const node = materializeOwnerNode(entity, row) as Record<string, unknown>;
     for (const relationship of entity.relationships()) {
-      if (!(relationship.name in node)) {
+      if (!(relationship.identity.name in node)) {
         continue;
       }
-      const related = node[relationship.name];
+      const related = node[relationship.identity.name];
       if (Array.isArray(related)) {
-        node[relationship.name] = decodeGraphRows(
+        node[relationship.identity.name] = decodeGraphRows(
           related as readonly Row[],
-          relationship.relatedEntity,
+          relationship.join.target.entity,
           metamodel,
         );
       } else if (related !== null && typeof related === "object") {
-        node[relationship.name] = decodeGraphRows(
+        node[relationship.identity.name] = decodeGraphRows(
           [related as Row],
-          relationship.relatedEntity,
+          relationship.join.target.entity,
           metamodel,
         )[0];
       }

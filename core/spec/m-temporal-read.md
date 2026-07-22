@@ -1,131 +1,144 @@
 # m-temporal-read — As-Of Temporal Reads
 
-`m-temporal-read` is the **as-of read model**: temporal entities whose rows are
-**milestones** over `[from, to)` intervals, with as-of predicates
-**auto-injected** on read. It covers **all flavors** — single-axis (audit-only /
-business-only) and full bitemporal reads. Per the dependency graph,
-`m-temporal-read` depends on `m-op-algebra`: as-of *reads* are algebra-level. The
-temporal **algebra** (`asOf` / `asOfRange` / `history`) is `m-op-algebra`; the
-**SQL emission** is `m-sql`; the **infinity representation** is `m-core` /
-`m-dialect`. Milestone-chaining **writes** are `m-audit-write`, `m-bitemp-write`,
-and `m-business-only`.
+`m-temporal-read` owns temporal coordinates and automatically injected as-of
+predicates over half-open intervals. The operation nodes belong to
+`m-op-algebra`, SQL emission belongs to `m-sql`, infinity representation belongs
+to `m-core`/`m-dialect`, and temporal writes belong to `m-audit-write` and
+`m-bitemp-write`.
 
-## The as-of interval model
+The supported temporal Entity shapes are **Transaction-Time-Only** and
+**Bitemporal**. Valid-Time-Only is not supported. The module's Model Compiler
+consumes the Inheritance Facet and produces `TemporalFacet` under
+`FacetKey(m-temporal-read)`; it contributes no Rule Set or Issue Codes. The
+facet derives each Entity's applicable root-owned As-Of Axes without copying
+axis or Attribute Metadata.
 
-A temporal entity declares one or two `asOfAttribute` dimensions (`m-descriptor`).
-Each dimension is a query-time virtual attribute backed by a **pair of timestamp
-columns** — a `fromColumn` and a `toColumn` — forming a half-open interval
-`[from, to)` (when `toIsInclusive` is `false`, the default). A row is **current**
-on that axis when its `to` equals the **infinity** sentinel; the open bound is
-the **database-native infinity** (`m-core`: Postgres `'infinity'::timestamptz`),
-owned by the `m-dialect` seam.
+## Canonical terminology
 
-Two axes are defined:
+The following mapping is exhaustive and normative across core metadata,
+descriptor serde, operations, relationship propagation, language bindings,
+writes, and physical storage:
 
-- **`processing`** (audit-only) — when the *system knew* a fact (`in_z`/`out_z`).
-  This is the most-used mode and the one exercised end-to-end in the MVP.
-- **`business`** — when a fact is *true in the world* (`from_z`/`thru_z`).
-
-An entity with one `asOfAttribute` is **unitemporal** (`unitemporal-processing`
-or `unitemporal-business`); with two it is **bitemporal**. The `entity.temporal`
-classification (`m-descriptor`) is derived from the dimensions declared.
-
-## As-of read predicates (auto-injected)
-
-The as-of predicate is **never written by the user** — it is derived from the
-as-of model and injected into the query. For a single dimension pinned to an
-instant `d`:
-
-| Condition | Injected predicate | Binds |
+| Surface | Valid Time | Transaction Time |
 |---|---|---|
-| `d = infinity` (the current row) | `to = ?` | `[infinity]` |
-| `d < infinity`, exclusive (`[from, to)`) | `from <= ? and to > ?` | `[d, d]` |
-| `d < infinity`, inclusive (`[from, to]`) | `from <= ? and to >= ?` | `[d, d]` |
+| Meaning | When a fact is true in the modeled world | When a fact is present in the database |
+| Core dimension | `ValidTime` | `TransactionTime` |
+| Descriptor `dimension` | `validTime` | `transactionTime` |
+| Operation `dimension` | `validTime` | `transactionTime` |
+| Conventional start Attribute | `valid_start` | `tx_start` |
+| Conventional end Attribute | `valid_end` | `tx_end` |
+| Physical start column | `from_z` | `in_z` |
+| Physical end column | `thru_z` | `out_z` |
+| Python query keyword | `valid_time` | `transaction_time` |
+| Python Pin/Edge accessor | `valid_time` | `transaction_time` |
+| Compatibility Pin key | `validTime` | `transactionTime` |
+| Relationship propagation coordinate | source Valid-Time coordinate | source Transaction-Time coordinate |
+| Neutral / Python write lower-bound argument | `validFrom` / `valid_from` | transaction clock supplied by the handle |
+| Bitemporal bounded-write upper bound | `until` (a Valid-Time bound) | not caller-authored |
+| Optimistic temporal observation | not an optimistic key | observed `tx_start` / physical `in_z` |
+| Finite-pin mutation error | writable retroactive correction | `transaction-time-pin-read-only` |
 
-This mirrors Reladomo's `AsOfEqOperation` (research §6). The "current row" case
-is a **single** equality against infinity (one bind), not a two-sided range — so
-the common as-of-now read is the cheapest possible predicate.
+The retired business/processing vocabulary is not an alias. Physical column
+names remain stable but never identify a dimension. A public `AsOfAxis`
+authoring abstraction does not exist; the core metadata value is
+`AsOfAxisMetadata(dimension, start_attribute, end_attribute)`.
 
-### Default-injection rule
+## Interval and metadata model
 
-> **An omitted as-of dimension defaults to "as of now."**
+Every axis is `[start, end)`. An axis is current when `end = infinity`. Axis
+Metadata contains no query default, inclusivity option, name, kind, or physical
+column. Both referenced Attributes are distinct local Timestamp Attributes of
+the containing Entity.
 
-If a query does not pin a dimension, the implementation **MUST** inject the
-**current-row** predicate (`to = infinity`) for it. Leaving out `processingDate`
-therefore yields exactly the as-of-now result — the most common read. A query
-that pins the dimension explicitly (`asOf(…, now)`) lowers to the **identical**
-injected predicate; the compatibility suite proves the defaulted and explicit
-forms produce the same golden SQL and rows.
+Transaction-Time-Only declares Transaction Time. Bitemporal declares Valid
+Time followed by Transaction Time. Under inheritance, only the root declares
+axes and every descendant receives the same effective set through the
+Inheritance and Temporal facets.
 
-### Operations
+## Latest and Now
 
-| Operation | Meaning |
-|---|---|
-| `asOf(operand, asOfAttr, date)` | pin a dimension to a single instant; `date = now` ⇒ the current milestone (`to = infinity`); a past instant ⇒ the `[from, to)` containment predicate |
-| `asOfRange(operand, asOfAttr, from, to)` | scan every milestone whose interval overlaps `[from, to)` (edge-point read, not a single pin) |
-| `history(operand, asOfAttr)` | return the **full** milestone set on that axis — no as-of predicate is injected, so superseded and current rows are all returned (Reladomo's `equalsEdgePoint`, renamed) |
+**Latest** is the default coordinate for an omitted declared dimension. It is
+the infinity sentinel and lowers to the single current-row predicate
+`end = infinity`.
 
-The injected as-of term composes with any non-temporal predicate via `and`; the
-temporal term is appended **after** the user predicate (so binds read
-left-to-right: user binds, then the as-of bind(s)).
+**Now** is a finite instant obtained from the current clock. It lowers to
+interval containment, `start <= now and end > now`. Latest and Now are not
+synonyms, and canonical descriptor/operation serde never uses `now` as the
+spelling of Latest.
 
-These rules are entity-local: each injected predicate is derived only from the
-entity being read, its declared `asOfAttribute` dimensions, and the explicit pin
-or default selected for those dimensions.
+For a dimension pinned to coordinate `d`:
 
-### Edge-pinned history results
+| Coordinate | Injected predicate | Binds |
+|---|---|---|
+| Latest | `end = ?` | `[infinity]` |
+| finite `d` | `start <= ? and end > ?` | `[d, d]` |
 
-A `history` / `asOfRange` read returns **one result per milestone**, and each
-materialized result is **edge-pinned**: its as-of coordinate on the scanned axis
-is its milestone's own **from-instant** — for a half-open `[from, to)` interval,
-the one instant guaranteed to select exactly that milestone. (This follows
-Reladomo's `equalsEdgePoint`, whose edge column is the from column when the
-interval is exclusive.) The edge pin is what gives an unpinned scan's results a
-well-defined coordinate — for identity (`m-identity-map`) and for relationship
-dereferencing at the source's own pin (`m-navigate`) — without pretending the
-scan itself was pinned.
+The injected temporal terms follow the user predicate in canonical bind order.
+For Bitemporal reads, Valid-Time terms precede Transaction-Time terms.
 
-## Bitemporal reads (both axes)
+## Operations
 
-A **bitemporal** entity declares **two** `asOfAttribute` dimensions — one
-`business` axis (`from_z`/`thru_z`) and one `processing` axis (`in_z`/`out_z`). A
-row is **current** on an axis when its `to` on that axis equals **infinity**; the
-**fully-current** row is current on *both* (`thru_z = out_z = infinity`).
+```text
+asOf(operand, dimension, Latest | finite instant)
+asOfRange(operand, dimension, start, end)
+history(operand, dimension)
+```
 
-Each axis injects its own as-of predicate independently, exactly as the
-single-axis rule above (`= infinity` for the current row; the `[from, to)`
-containment for a past instant). A read pins **both** axes by composing the two
-`asOf` nodes — one per dimension — so the injected terms `and` together:
+- `asOf` pins one dimension. An omitted declared dimension receives Latest.
+- `asOfRange` scans every milestone whose interval overlaps `[start, end)`.
+- `history` removes the injected predicate for its selected dimension and
+  returns the full milestone chain.
 
-| Read | Injected predicate |
-|---|---|
-| business now, processing now | `thru_z = ? and out_z = ?` (binds `[infinity, infinity]`) |
-| business past `b`, processing now | `from_z <= ? and thru_z > ? and out_z = ?` (binds `[b, b, infinity]`) |
-| business now, processing past `p` | `thru_z = ? and in_z <= ? and out_z > ?` (binds `[infinity, p, p]`) |
-| business past `b`, processing past `p` | `from_z <= ? and thru_z > ? and in_z <= ? and out_z > ?` (binds `[b, b, p, p]`) |
+For a Bitemporal Entity, a query may pin either or both dimensions; every
+unmentioned dimension is independently Latest. The canonical nested operation
+order is Valid Time outside Transaction Time, which produces Valid-Time binds
+first.
 
-The last form is the signature bitemporal read: *as the system believed at
-processing instant `p`, what was true in the world at business instant `b`?* — it
-reconstructs a historical belief, returning a milestone that may since have been
-superseded on the processing axis. An omitted dimension still defaults to **now**
-on that axis (the default-injection rule applies per-axis), so a query that pins
-only the business date is implicitly "as the system knows it now."
+| Valid-Time coordinate | Transaction-Time coordinate | Physical predicate |
+|---|---|---|
+| Latest | Latest | `thru_z = ? and out_z = ?` |
+| finite `v` | Latest | `from_z <= ? and thru_z > ? and out_z = ?` |
+| Latest | finite `t` | `thru_z = ? and in_z <= ? and out_z > ?` |
+| finite `v` | finite `t` | `from_z <= ? and thru_z > ? and in_z <= ? and out_z > ?` |
 
-A **business-temporal-only** read injects the single-axis fragment over
-`from_z`/`thru_z` (the default is still **now** ⇒ `thru_z = infinity`);
-`m-business-only` owns that flavor's writes.
+The final row means: at Transaction Time `t`, which fact was valid at Valid
+Time `v`?
 
-## How the harness verifies as-of reads (`m-case-format`)
+## Pinning, edges, and relationships
 
-As-of read cases carry a `when.operation` (defaulted `all`, explicit `asOf`, or
-`history`) and assert `then.rows`. The defaulted-as-of case asserts the
-**injected** `out_z = ?` golden SQL + the expected current rows, so the
-default-injection rule is proven automatically. Native infinity actually executes
-(the current-row predicate binds `infinity` and the `history` projection reads
-back the open bound). A boundary as-of case pins a timestamp exactly equal to one
-row's upper bound and the next row's lower bound, proving the default half-open
-`[from, to)` rule (`from <= d and to > d`). A **bitemporal** read nests two `asOf`
-nodes and asserts the both-axis golden SQL and rows (each axis's predicate injected
-independently); a business-pinned-only bitemporal read proves the omitted
-processing axis defaults to now. A **business-only** read exercises the same rule
-over `from_z`/`thru_z`.
+A Pin contains only dimensions explicitly or implicitly pinned for a read; its
+coordinates may be Latest or finite. An Edge contains one finite start instant
+for every declared dimension of a materialized milestone. History and range
+results use the milestone's own start as their Edge coordinate.
+
+Relationship traversal propagates coordinates by dimension, never by physical
+column or positional axis. A target that declares the same dimension receives
+the source coordinate; a target without it receives no coordinate. An omitted
+coordinate at the root is first normalized to Latest and that normalized value
+propagates through the graph.
+
+## Writes
+
+The handle supplies the finite Transaction-Time clock instant used to close and
+open Transaction-Time intervals. Callers do not author it as Latest or Now.
+Transaction-Time-Only writes use that clock and no Valid-Time argument.
+
+Bitemporal writes receive `valid_from`; bounded `insertUntil`, `updateUntil`,
+and `terminateUntil` additionally receive `until`, with
+`valid_from < until`. These are Valid-Time coordinates. Transaction-Time
+coordinates still come exclusively from the handle clock. The physical DML
+continues to use `from_z`/`thru_z` and `in_z`/`out_z`.
+
+## Verification
+
+Compatibility cases distinguish omitted/explicit Latest from finite Now,
+prove boundary behavior at `start` and `end`, exercise all four Bitemporal
+coordinate combinations, propagate pins across relationships, expose finite
+milestone Edges, and verify Transaction-Time-Only and Bitemporal writes without
+changing physical columns or canonical SQL shape.
+
+The temporal specification, descriptor/operation schemas, compatibility cases,
+generated artifacts, glossaries, and language specs switch to this vocabulary
+and pass their contract gates before runtime temporal behavior is changed.
+There is no temporary translation that a later dependency-inversion step must
+reinterpret.

@@ -7,31 +7,28 @@
 entities:
   - name: Order
     table: orders
-    mutability: transactional
+    persistence: read-write
     attributes:
-      - { name: id, type: int64, column: id, primaryKey: true }
-      - { name: name, type: string, column: name, maxLength: 255 }
-      - { name: sku, type: string, column: sku, maxLength: 32, nullable: true }
-      - { name: qty, type: int32, column: qty }
-      - { name: price, type: "decimal(18,2)", column: price }
-      - { name: active, type: boolean, column: active }
+      - { name: id, type: int64, primaryKey: true, pkGeneration: application-assigned }
+      - { name: name, type: string, maxLength: 255 }
+      - { name: sku, type: string, maxLength: 32, nullable: true }
+      - { name: qty, type: int32 }
+      - { name: price, type: "decimal(18,2)" }
+      - { name: active, type: boolean }
     relationships:
       - name: items
-        relatedEntity: OrderItem
         cardinality: one-to-many
-        join: this.id = OrderItem.orderId
-        foreignKey: order_id
+        join:
+          source: id
+          target: { entity: OrderItem, attribute: orderId }
   - name: OrderItem
     table: order_item
-    mutability: transactional
+    persistence: read-write
     attributes:
-      - { name: id, type: int64, column: id, primaryKey: true }
+      - { name: id, type: int64, primaryKey: true, pkGeneration: application-assigned }
       - { name: orderId, type: int64, column: order_id }
-      - { name: sku, type: string, column: sku, maxLength: 32 }
-      - { name: quantity, type: int32, column: quantity }
+      - { name: sku, type: string, maxLength: 32 }
+      - { name: quantity, type: int32 }
     relationships:
       - name: order
-        relatedEntity: Order
-        cardinality: many-to-one
-        join: this.orderId = Order.id
-        foreignKey: order_id
+        reverseOf: Order.items

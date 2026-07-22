@@ -98,13 +98,13 @@ def test_table_per_hierarchy_model_validates() -> None:
     model = load_model(COMPATIBILITY_ROOT, "models/payment.yaml")
     assert _is_valid(model.descriptor)
     root = model.entity("Payment")
-    # The abstract root declares the family strategy + tag column; it is tableless.
+    # The abstract root declares the family strategy, tag column, and shared table.
     assert root.definition["inheritance"]["strategy"] == "table-per-hierarchy"
     assert root.definition["inheritance"]["role"] == "root"
     assert root.definition["inheritance"]["tag"]["column"] == "kind"
     assert root.is_abstract
-    assert root.table == ""
-    # Every CONCRETE subtype maps to the SAME shared table; abstract nodes are tableless.
+    assert root.table == "payment"
+    # Every concrete subtype resolves to the root-owned shared table.
     assert {e.table for e in model.entities if not e.is_abstract} == {"payment"}
 
 
@@ -127,6 +127,78 @@ def test_table_per_concrete_subtype_model_validates() -> None:
     for name in ("Invoice", "Receipt", "Memo"):
         assert "tag" not in model.entity(name).definition["inheritance"]
         assert "tagValue" not in model.entity(name).definition["inheritance"]
+
+
+def test_valid_time_only_descriptor_is_outside_the_active_contract() -> None:
+    descriptor = {
+        "entity": {
+            "name": "Reservation",
+            "table": "reservation",
+            "attributes": [
+                {"name": "id", "type": "int64", "primaryKey": True},
+                {"name": "valid_start", "type": "timestamp"},
+                {"name": "valid_end", "type": "timestamp"},
+            ],
+            "asOfAxes": [
+                {
+                    "dimension": "validTime",
+                    "startAttribute": "valid_start",
+                    "endAttribute": "valid_end",
+                }
+            ],
+        }
+    }
+
+    assert not _is_valid(descriptor)
+
+
+def test_relationship_transition_preserves_exact_namespace_identity() -> None:
+    descriptor = {
+        "entities": [
+            {
+                "name": "Source",
+                "namespace": "alpha",
+                "table": "source",
+                "attributes": [{"name": "id", "type": "int64", "primaryKey": True}],
+                "relationships": [
+                    {
+                        "name": "targets",
+                        "cardinality": "one-to-many",
+                        "join": {
+                            "source": "id",
+                            "target": {"entity": "beta.Target", "attribute": "sourceId"},
+                        },
+                    }
+                ],
+            },
+            {
+                "name": "Target",
+                "namespace": "beta",
+                "table": "target",
+                "attributes": [
+                    {"name": "id", "type": "int64", "primaryKey": True},
+                    {"name": "sourceId", "type": "int64"},
+                ],
+                "relationships": [{"name": "source", "reverseOf": "alpha.Source.targets"}],
+            },
+            {
+                "name": "Target",
+                "namespace": "alpha",
+                "table": "other_target",
+                "attributes": [{"name": "id", "type": "int64", "primaryKey": True}],
+            },
+        ]
+    }
+    model = Model(Path("namespace-collision.yaml"), descriptor)
+
+    source = model.entity("alpha.Source")
+    declaration = source.relationship_by_name("targets")
+    assert declaration["join"]["source"] == "id"
+    relationship = source.relationship_metadata_by_name("targets")
+    assert relationship["join"]["target"]["entity"] == "beta.Target"
+    assert model.entity(relationship["join"]["target"]["entity"]).canonical_name == "beta.Target"
+    with pytest.raises(KeyError):
+        model.entity("Target")
 
 
 def test_concrete_subtype_derives_the_full_inherited_attribute_chain() -> None:
@@ -183,8 +255,8 @@ def test_value_object_model_validates_and_maps_to_dialect_json() -> None:
     model = load_model(COMPATIBILITY_ROOT, "models/customer.yaml")
     assert _is_valid(model.descriptor)
     (value_object,) = model.root_entity.value_objects
-    assert value_object["mapping"] == "json"
-    assert value_object["cardinality"] == "one"
+    assert "mapping" not in value_object
+    assert value_object["multiplicity"] == "one"
     # The recursive shape does not change column order: scalar attributes first,
     # then the ONE structured-document column per top-level value object.
     assert list(column_order(model.root_entity)) == ["id", "name", "address"]
@@ -206,8 +278,8 @@ def test_value_object_declares_recursive_typed_structure() -> None:
     nested = {vo["name"]: vo for vo in address["valueObjects"]}
     assert set(nested) == {"geo", "phones"}
     # geo is to-one (defaulted), phones is to-many.
-    assert nested["geo"].get("cardinality", "one") == "one"
-    assert nested["phones"]["cardinality"] == "many"
+    assert nested["geo"].get("multiplicity", "one") == "one"
+    assert nested["phones"]["multiplicity"] == "many"
 
     # Third-level nesting: geo -> point, with numeric lat/lon attributes.
     (point,) = nested["geo"]["valueObjects"]
@@ -315,18 +387,12 @@ def test_schema_rejects_table_per_concrete_subtype_root_tag() -> None:
 
 
 def test_schema_conditionally_requires_table_and_attributes() -> None:
-    """resolved Q5: an abstract node MUST NOT declare a table; a concrete subtype MUST;
-    an inheritance participant MAY omit its own ``attributes`` (all inherited)."""
+    """Structural table ownership and inherited-only attribute omission are enforced."""
     model = load_model(COMPATIBILITY_ROOT, "models/payment.yaml")
 
-    # An abstract root MUST NOT declare a table.
+    # A table-per-hierarchy root MUST own the shared table.
     descriptor = copy.deepcopy(model.descriptor)
-    descriptor["entities"][0]["table"] = "payment"
-    assert not _is_valid(descriptor)
-
-    # A concrete subtype MUST declare its table.
-    descriptor = copy.deepcopy(model.descriptor)
-    del descriptor["entities"][1]["table"]
+    del descriptor["entities"][0]["table"]
     assert not _is_valid(descriptor)
 
     # A concrete subtype declaring ONLY inherited attributes MAY omit `attributes`.
@@ -356,21 +422,21 @@ def test_schema_rejects_optimistic_locking_on_temporal_entity() -> None:
     """A temporal (as-of) entity that ALSO declares an ``optimisticLocking``
     attribute MUST fail metamodel validation (m-descriptor/m-temporal-read/m-opt-lock, COR-14).
 
-    A processing-axis temporal entity DERIVES its optimistic key from the
-    processing-from column (`in_z` is the version analogue), so it carries no
-    version column; combining `asOfAttributes` with an explicit `optimisticLocking`
+    A Transaction-Time temporal entity DERIVES its optimistic key from the
+    Transaction-Time start column (`in_z` is the version analogue), so it carries no
+    version column; combining `asOfAxes` with an explicit `optimisticLocking`
     attribute on one entity is invalid. Proven with an inline descriptor (a
     deep-copied real Balance model with the combination injected) rather than a
     fixture file, mirroring the other metamodel-negative tests.
     """
     model = load_model(COMPATIBILITY_ROOT, "models/balance.yaml")
     descriptor = copy.deepcopy(model.descriptor)
-    # Balance is a single-`entity` descriptor with `asOfAttributes` (processing).
+    # Balance is a single-`entity` descriptor with `asOfAxes` (processing).
     # Inject `optimisticLocking` on its `value` attribute -> the forbidden combo.
     value_attr = next(a for a in descriptor["entity"]["attributes"] if a["name"] == "value")
     value_attr["optimisticLocking"] = True
     assert not _is_valid(descriptor), (
-        "an entity combining optimisticLocking with asOfAttributes must be rejected"
+        "an entity combining optimisticLocking with asOfAxes must be rejected"
     )
 
 
@@ -393,7 +459,7 @@ def test_schema_rejects_two_optimistic_locking_attributes_on_one_entity() -> Non
     # each declaring `optimisticLocking: true`, so the ONLY violated rule is
     # "at most one" — not the int32/int64 type restriction (m-opt-lock/DQ8b,
     # already satisfied) or the temporal-composition rule (Wallet declares no
-    # `asOfAttributes`, covered separately above).
+    # `asOfAxes`, covered separately above).
     descriptor["entity"]["attributes"].append(
         {"name": "version", "type": "int64", "column": "version", "optimisticLocking": True}
     )
@@ -509,7 +575,7 @@ def test_unique_index_emitted_for_mariadb_too() -> None:
 
 def test_temporal_full_key_unique_index_is_not_re_emitted() -> None:
     # A temporal entity whose unique index lists the FULL physical key (declared
-    # PK + the as-of fromColumns) is the primary key, not a secondary unique
+    # PK + the as-of start columns) is the primary key, not a secondary unique
     # index -- it must NOT produce a redundant `unique (...)` alongside the PK.
     entity = Entity(
         definition={
@@ -517,25 +583,21 @@ def test_temporal_full_key_unique_index_is_not_re_emitted() -> None:
             "table": "milestone",
             "attributes": [
                 {"name": "id", "type": "int64", "column": "id", "primaryKey": True},
-                {"name": "businessFrom", "type": "timestamp", "column": "from_z"},
-                {"name": "businessTo", "type": "timestamp", "column": "thru_z"},
+                {"name": "tx_start", "type": "timestamp", "column": "in_z"},
+                {"name": "tx_end", "type": "timestamp", "column": "out_z"},
             ],
-            "asOfAttributes": [
+            "asOfAxes": [
                 {
-                    "name": "businessDate",
-                    "fromColumn": "from_z",
-                    "toColumn": "thru_z",
-                    "axis": "business",
-                    "toIsInclusive": False,
-                    "infinity": "infinity",
-                    "default": "now",
+                    "dimension": "transactionTime",
+                    "startAttribute": "tx_start",
+                    "endAttribute": "tx_end",
                 },
             ],
             "indices": [
-                {"name": "milestone_pk", "attributes": ["id", "businessFrom"], "unique": True},
+                {"name": "milestone_pk", "attributes": ["id", "tx_start"], "unique": True},
             ],
         }
     )
     ddl = _create_table(entity, "postgres")
-    assert "primary key (id, from_z)" in ddl
+    assert "primary key (id, in_z)" in ddl
     assert "unique (" not in ddl  # the PK-backed unique index is not re-emitted

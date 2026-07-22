@@ -1518,7 +1518,7 @@ def test_run_write_sequence_case_records_the_temporal_observation_on_the_unit_of
 
 def test_run_write_sequence_case_buffers_a_bounded_bitemporal_business_window() -> None:
     # m-bitemp-write-001 (COR-3 Phase 8 increment 4): the updateUntil entry's
-    # canonical instruction carries BOTH a `businessFrom` and a `businessTo`
+    # canonical instruction carries BOTH `validFrom` and `until`
     # (its bounded rectangle-split window) — `_execute_write_unit` threads both
     # onto the neutral `Transaction._buffer` route unchanged.
     port = FakeWritePort()
@@ -1621,7 +1621,7 @@ def test_versioned_delete_decomposes_per_row_and_gates_each_key() -> None:
 
 
 def test_rows_carrying_observation_keys_decompose_per_row_even_when_unversioned() -> None:
-    # A per-row `observedVersion`/`observedInZ` control key is an explicit
+    # A per-row `observedVersion`/`observedTxStart` control key is an explicit
     # per-row-observation signal REGARDLESS of the target's own versioned-ness
     # — pinning the discriminator's own independent criterion. Uses UNIFORM
     # values (which would otherwise collapse per the update-uniformity rule)
@@ -1836,12 +1836,9 @@ def test_predicate_shaped_write_sequence_entry_refuses_loudly() -> None:
         engine.compile_write_sequence_case(case, "postgres")
 
 
-def test_canonical_predicate_doc_maps_until_to_business_to_and_drops_at() -> None:
-    # `m-case-format`'s own predicate-write authoring aliases: `at` (the
-    # Clock-context processing-instant authoring alias) is dropped — never an
-    # instruction field, ADR 0010; `until` (the businessTo authoring alias)
-    # canonicalizes to the instruction-level `businessTo` field.
-    # `businessFrom` is already axis-explicit and needs no translation.
+def test_canonical_predicate_doc_preserves_valid_time_bounds_and_drops_at() -> None:
+    # `at` is Clock context, never an instruction field. Valid-Time bounds
+    # already use their canonical instruction spelling.
     doc = engine._canonical_predicate_doc(  # pyright: ignore[reportPrivateUsage]
         {
             "mutation": "terminateUntil",
@@ -1850,13 +1847,13 @@ def test_canonical_predicate_doc_maps_until_to_business_to_and_drops_at() -> Non
                 "predicate": {"eq": {"attr": "Position.id", "value": 1}},
             },
             "at": "2024-10-01T00:00:00+00:00",
-            "businessFrom": "2024-07-01T00:00:00+00:00",
+            "validFrom": "2024-07-01T00:00:00+00:00",
             "until": "2024-09-01T00:00:00+00:00",
         }
     )
     assert "at" not in doc
-    assert doc["businessFrom"] == "2024-07-01T00:00:00+00:00"
-    assert doc["businessTo"] == "2024-09-01T00:00:00+00:00"
+    assert doc["validFrom"] == "2024-07-01T00:00:00+00:00"
+    assert doc["until"] == "2024-09-01T00:00:00+00:00"
 
 
 def test_run_scenario_case_executes_a_readless_predicate_write() -> None:
@@ -2188,7 +2185,7 @@ def test_run_conflict_case_wraps_a_lowering_failure_as_engine_error() -> None:
 
 def test_run_conflict_case_temporal_close_form_composes_lower_temporal_close() -> None:
     # m-audit-write-006 (COR-3 Phase 8 increment 4): a temporal optimistic-lock
-    # CLOSE conflict (`when.at` / `when.observedInZ`, no `observedVersion`) is
+    # CLOSE conflict (`when.at` / `when.observedTxStart`, no `observedVersion`) is
     # now driven through `handle.lower_temporal_close`, not the non-temporal
     # versioned-UPDATE path.
     (case,) = [c for c in case_format.load_cases() if c.case_id == "m-audit-write-006"]
@@ -2396,9 +2393,8 @@ def test_run_rejected_case_raises_when_when_carries_model_and_write() -> None:
 
 
 def test_read_table_state_reads_each_physical_table_once() -> None:
-    # The payment model is the degenerate layout: an abstract TABLELESS root
-    # (Payment, table None — nothing to read) and two concrete subtypes SHARING
-    # one table, which is read back exactly once.
+    # Payment's abstract root owns the shared table; descendants carry no local
+    # table. The physical table is still read back exactly once.
     from parallax.conformance import models
     from parallax.core.dialect import POSTGRES
 
@@ -2407,6 +2403,16 @@ def test_read_table_state_reads_each_physical_table_once() -> None:
     state = engine.read_table_state(port, meta, POSTGRES)
     assert set(state) == {"payment"}
     assert len(port.reads) == 1
+
+
+def test_read_table_state_reads_each_tpcs_concrete_table() -> None:
+    from parallax.conformance import models
+    from parallax.core.dialect import POSTGRES
+
+    port = FakeWritePort()
+    meta = models.load_models()["document"]
+    state = engine.read_table_state(port, meta, POSTGRES)
+    assert set(state) == {"invoice", "receipt", "memo", "folder"}
 
 
 def test_read_table_state_projects_value_object_document_columns() -> None:
@@ -2632,21 +2638,21 @@ def test_compile_read_case_wraps_a_sql_gen_error() -> None:
 def test_run_graph_case_wraps_a_temporal_read_error_from_the_find_executor() -> None:
     case = _synthetic(
         {
-            "model": "models/policy.yaml",
+            "model": "models/balance.yaml",
             "when": {
-                "targetEntity": "Policy",
+                "targetEntity": "Balance",
                 "operation": {
                     "asOf": {
                         "operand": {"all": {}},
-                        "asOfAttr": "Policy.notAnAxis",
-                        "date": "now",
+                        "dimension": "validTime",
+                        "coordinate": "latest",
                     }
                 },
             },
             "then": {"graph": {}},
         }
     )
-    with pytest.raises(engine.EngineError, match="undeclared axis"):
+    with pytest.raises(engine.EngineError, match="undeclared dimension"):
         engine.run_graph_case(case, "postgres", QueueDbPort([]))
 
 
@@ -2678,7 +2684,7 @@ def test_run_graphs_case_renders_ordered_milestone_pin_graphs() -> None:
     )
     assert round_trips == 1
     assert len(emissions) == 1
-    assert [_entry(g, "pin")["processingDate"] for g in graphs] == [
+    assert [_entry(g, "pin")["transactionTime"] for g in graphs] == [
         "2024-01-01T00:00:00+00:00",
         "2024-04-01T00:00:00+00:00",
     ]
@@ -2694,14 +2700,12 @@ def test_run_graphs_case_wraps_an_error_from_the_find_executor() -> None:
             "model": "models/invoice.yaml",
             "when": {
                 "targetEntity": "InvoiceLine",
-                "operation": {
-                    "history": {"operand": {"all": {}}, "asOfAttr": "InvoiceLine.notAnAxis"}
-                },
+                "operation": {"history": {"operand": {"all": {}}, "dimension": "validTime"}},
             },
             "then": {"graphs": []},
         }
     )
-    with pytest.raises(engine.EngineError, match="undeclared axis"):
+    with pytest.raises(engine.EngineError, match="undeclared dimension"):
         engine.run_graphs_case(case, "postgres", QueueDbPort([]))
 
 
@@ -2743,7 +2747,7 @@ def test_check_action_step_rejects_a_non_mutate_verb() -> None:
         )
 
 
-def test_compile_scenario_case_snapshot_lane_requires_target_entity_and_find() -> None:
+def test_compile_scenario_case_snapshot_lane_requires_target_and_find() -> None:
     when = {
         "scenario": [
             {"action": "mutate", "on": 0, "set": {"x": 1}},
@@ -2767,7 +2771,7 @@ def test_compile_scenario_case_snapshot_lane_wraps_a_sql_gen_error() -> None:
         engine.compile_scenario_case(case, "postgres")
 
 
-def test_run_scenario_case_snapshot_lane_requires_target_entity_and_find() -> None:
+def test_run_scenario_case_snapshot_lane_requires_target_and_find() -> None:
     when = {
         "scenario": [
             {"targetEntity": "Order"},

@@ -492,18 +492,11 @@ def _assert_round_trip_count(case: Case, dialect: str) -> None:
 
 # --- relationship / deep-fetch resolution -----------------------------------
 
-_JOIN_RE = re.compile(
-    r"^\s*this\.(?P<this>[A-Za-z][A-Za-z0-9]*)\s*=\s*"
-    r"(?P<entity>[A-Za-z][A-Za-z0-9]*)\.(?P<other>[A-Za-z][A-Za-z0-9]*)\s*$"
-)
-
 
 def _join_endpoints(relationship: dict[str, Any]) -> tuple[str, str]:
-    """Return ``(this_attr, related_attr)`` from a ``this.X = Entity.Y`` join."""
-    match = _JOIN_RE.match(relationship["join"])
-    if not match:
-        raise CaseFailure(f"unparseable relationship join: {relationship['join']!r}")
-    return match.group("this"), match.group("other")
+    """Return ``(source_attr, target_attr)`` from a compiled structured join."""
+    join = relationship["join"]
+    return join["source"]["attribute"], join["target"]["attribute"]
 
 
 def _column_of(entity: Entity, attr_name: str) -> str:
@@ -514,7 +507,7 @@ def _resolve_rel_ref(model: Model, rel_ref: str) -> tuple[Entity, dict[str, Any]
     """Resolve ``Class.relationship`` to its owning entity + relationship def."""
     class_name, rel_name = rel_ref.split(".", 1)
     entity = model.entity(class_name)
-    return entity, entity.relationship_by_name(rel_name)
+    return entity, entity.relationship_metadata_by_name(rel_name)
 
 
 def _deepfetch_paths(case: Case) -> list[list[str]]:
@@ -558,10 +551,10 @@ def _deepfetch_root_entity(case: Case) -> Entity:
     return case.model.entity(root_class)
 
 
-# Canonical as-of axis order: business terms precede processing terms in both the
+# Canonical as-of dimension order: Valid Time precedes Transaction Time in both the
 # golden SQL clause order and the bind order (m-bitemp-write bitemporal table;
 # case m-temporal-read-015).
-_CANONICAL_AXIS_ORDER: tuple[str, ...] = ("business", "processing")
+_CANONICAL_AXIS_ORDER: tuple[str, ...] = ("validTime", "transactionTime")
 
 
 def _peel_directive_wrappers(node: Any) -> Any:
@@ -569,7 +562,7 @@ def _peel_directive_wrappers(node: Any) -> Any:
     ``limit``) that the root compile peels *before* the temporal wrappers, returning
     the innermost node. Without this, a directive-wrapped temporal root (e.g.
     ``limit(orderBy(asOf(...)))``, case m-navigate-024) would seed no child propagation pins
-    and the child would wrongly default to now (mismatching the authored instant).
+    and the child would wrongly default to Latest (mismatching the authored instant).
     """
     while isinstance(node, dict):
         for directive in ("distinct", "orderBy", "limit"):
@@ -582,9 +575,9 @@ def _peel_directive_wrappers(node: Any) -> Any:
 
 
 def _root_asof_pins(case: Case) -> dict[str, str]:
-    """Map ``{axis: pinned date}`` from the nested ``asOf`` nodes wrapping the
-    deep-fetch root operand. An axis absent here defaults to the child's own
-    default ("now" = latest) at propagation time. Empty when the root is unpinned.
+    """Map ``{dimension: coordinate}`` from nested ``asOf`` nodes wrapping the
+    deep-fetch root operand. A dimension absent here defaults to the child's own
+    ``latest`` value at propagation time. Empty when the root is unpinned.
 
     Result directives (``distinct`` / ``orderBy`` / ``limit``) are peeled first,
     mirroring the root compile, so a directive-wrapped temporal root still pins.
@@ -593,10 +586,7 @@ def _root_asof_pins(case: Case) -> dict[str, str]:
     node: Any = _peel_directive_wrappers(_deepfetch_root_operand(case))
     while isinstance(node, dict) and "asOf" in node:
         asof = node["asOf"]
-        entity_name, attr_name = asof["asOfAttr"].split(".", 1)
-        entity = case.model.entity(entity_name)
-        axis = next(a["axis"] for a in entity.as_of_attributes if a["name"] == attr_name)
-        pins[axis] = asof["date"]
+        pins[asof["dimension"]] = asof["coordinate"]
         node = asof["operand"]
     return pins
 
@@ -604,20 +594,20 @@ def _root_asof_pins(case: Case) -> dict[str, str]:
 def _expected_asof_suffix(child_entity: Entity, pins: dict[str, str]) -> list[Any]:
     """The as-of binds a temporal child level MUST carry, after its IN-list.
 
-    Per-axis, in canonical order (business, then processing): the propagated value
-    is the root pin for that axis, or the child's own ``default`` ("now") when the
-    root did not pin it. ``now``/latest lowers to the single equality bind
+    Per dimension, in canonical order (Valid Time, then Transaction Time): the propagated value
+    is the root pin for that dimension, or the child's own ``default`` (``latest``) when the
+    root did not pin it. ``latest`` lowers to the single equality bind
     (the axis's ``infinity``); a finite instant lowers to the half-open range's
     two binds ``[D, D]``. A non-temporal child yields ``[]``.
     """
-    by_axis = {a["axis"]: a for a in child_entity.as_of_attributes}
+    by_axis = {a["dimension"]: a for a in child_entity.temporal_runtime_axes}
     suffix: list[Any] = []
     for axis in _CANONICAL_AXIS_ORDER:
         attr = by_axis.get(axis)
         if attr is None:
             continue
-        date = pins.get(axis, attr.get("default", "now"))
-        if date == "now":
+        date = pins.get(axis, attr.get("default", "latest"))
+        if date == "latest":
             suffix.append(attr["infinity"])
         else:
             suffix.extend([date, date])
@@ -649,7 +639,7 @@ def _expected_sequence_counter(initial: int, increment: int, batch: int, count: 
 def _pk_sequence_target(case: Case) -> tuple[Entity, dict[str, Any], dict[str, Any]] | None:
     """The ``sequence``-strategy entity this writeSequence case inserts into.
 
-    Returns ``(entity, pkGenerator, pk_attribute)`` or ``None`` when the case does
+    Returns ``(entity, pkGeneration, pk_attribute)`` or ``None`` when the case does
     not insert into a sequence entity (e.g. ``max`` cases, non-pk-gen cases).
     """
     inserted = {step["entity"] for step in case.write_sequence if step.get("mutation") == "insert"}
@@ -659,7 +649,7 @@ def _pk_sequence_target(case: Case) -> tuple[Entity, dict[str, Any], dict[str, A
         pk_attr = next((a for a in entity.attributes if a.get("primaryKey")), None)
         if pk_attr is None:
             continue
-        gen = pk_attr.get("pkGenerator")
+        gen = pk_attr.get("pkGeneration")
         if isinstance(gen, dict) and gen.get("strategy") == "sequence":
             return entity, gen, pk_attr
     return None
@@ -674,7 +664,7 @@ def _pk_sequence_registry(model: Model, exclude: Entity) -> Entity:
         if pk_attr is not None and pk_attr.get("type") == "string":
             return entity
     raise CaseFailure(
-        f"model {model.class_name!r} declares a sequence pkGenerator but has no "
+        f"model {model.class_name!r} declares a sequence pkGeneration but has no "
         f"string-PK registry entity"
     )
 
@@ -698,7 +688,7 @@ def _pk_sequence_counter_column(registry: Entity) -> str:
 def _assert_pk_allocation(case: Case, db: DatabaseProvider) -> None:
     """PK-generation oracle (sequence strategy).
 
-    Independently re-derives, from the DECLARED pkGenerator config, the ids a
+    Independently re-derives, from the DECLARED pkGeneration config, the ids a
     simulated sequence should have allocated and the value its registry counter
     should hold, and asserts both against the real post-write DB state. ``max`` and
     non-pk-gen writeSequence cases are a no-op (``max`` is pinned by its
@@ -711,7 +701,7 @@ def _assert_pk_allocation(case: Case, db: DatabaseProvider) -> None:
     initial = gen.get("initialValue", 1)
     increment = gen.get("incrementSize", 1)
     batch = gen.get("batchSize", 1)
-    seq_name = gen["sequenceName"]
+    seq_name = gen["name"]
     pk_column = pk_attr["column"]
 
     actual_rows = _read_table(db, entity)
@@ -792,7 +782,7 @@ class _FetchStep:
 
     @property
     def to_many(self) -> bool:
-        return self.cardinality in ("one-to-many", "many-to-many")
+        return self.cardinality == "one-to-many"
 
 
 def _hop_key_of(
@@ -823,7 +813,7 @@ def _fetch_steps(case: Case) -> list[_FetchStep]:
             narrow_to = segment["narrow"]["to"] if isinstance(segment.get("narrow"), dict) else None
 
             parent_entity, relationship = _resolve_rel_ref(model, rel_ref)
-            child_entity = model.entity(relationship["relatedEntity"])
+            child_entity = model.entity(relationship["join"]["target"]["entity"])
             this_attr, other_attr = _join_endpoints(relationship)
 
             target = family.relationship_target(rel_ref)
@@ -993,13 +983,13 @@ def _read_effective_set(case: Case, family: Family, target_name: str) -> list[st
 
 
 def _read_asof_pins(case: Case) -> dict[str, str]:
-    """Map ``{axis: pinned date}`` from the ``asOf`` nodes wrapping a READ operation.
+    """Map ``{dimension: coordinate}`` from ``asOf`` nodes wrapping a READ operation.
 
     The read counterpart of :func:`_root_asof_pins` (which walks a deep-fetch root
     operand): peel the result-directive / narrow wrappers, then descend the nested
-    ``asOf`` pins. An axis absent here defaults to the child's own default ("now") at
+    ``asOf`` pins. An axis absent here defaults to the child's own default ("latest") at
     :func:`_expected_asof_suffix` time. Empty when the read is unpinned (an omitted
-    axis then defaults to now per the default-injection rule).
+    dimension then defaults to Latest per the default-injection rule).
     """
     pins: dict[str, str] = {}
     node: Any = case.operation
@@ -1009,10 +999,7 @@ def _read_asof_pins(case: Case) -> dict[str, str]:
             node = node[tag].get("operand")
         elif tag == "asOf":
             asof = node["asOf"]
-            entity_name, attr_name = asof["asOfAttr"].split(".", 1)
-            entity = case.model.entity(entity_name)
-            axis = next(a["axis"] for a in entity.as_of_attributes if a["name"] == attr_name)
-            pins[axis] = asof["date"]
+            pins[asof["dimension"]] = asof["coordinate"]
             node = asof.get("operand")
         else:
             break
@@ -1026,9 +1013,9 @@ def _assert_temporal_union_binds(case: Case, dialect: str) -> None:
     table-per-concrete-subtype abstract-target read over a TEMPORAL family lowers to
     ``union all``, and the injected as-of predicate is applied PER BRANCH. Every
     concrete branch inherits the same axes from the abstract root, so each branch
-    carries the same as-of suffix (business-axis-first bind order); the union's binds
+    carries the same as-of suffix (Valid-Time-first bind order); the union's binds
     are those per-branch suffixes repeated in the family's canonical ALPHABETICAL branch
-    order. Recomputed from the read's pin (defaulting an omitted axis to now,
+    order. Recomputed from the read's pin (defaulting an omitted dimension to Latest,
     :func:`_expected_asof_suffix`), independent of the authored golden. A no-op unless
     the target is an abstract table-per-concrete-subtype TEMPORAL position.
     """
@@ -1058,7 +1045,7 @@ def _assert_temporal_union_binds(case: Case, dialect: str) -> None:
         raise CaseFailure(
             f"{case.path.name}: temporal table-per-concrete-subtype abstract read binds "
             f"{actual!r} != the per-branch as-of binds {expected!r} — each branch injects "
-            f"its as-of predicate over its own alias (business-axis-first), repeated in "
+            f"its as-of predicate over its own alias (Valid-Time-first), repeated in "
             f"alphabetical branch order {ordered} (m-sql / m-temporal-read)."
         )
 
@@ -1502,7 +1489,7 @@ def _assert_child_ordering(
             continue
         sort_spec = [
             (
-                _column_of(step.child_entity, key["attr"]),
+                _column_of(step.child_entity, key["attribute"]),
                 key.get("direction", "asc") == "desc",
             )
             for key in step.order_by
@@ -1652,7 +1639,7 @@ def _assert_deep_fetch(case: Case, db: DatabaseProvider) -> None:
     assembled = _assemble_graph(case, steps, rows_by_entity, children_by_step)
 
     expected = case.expected_graph or {}
-    if not _graphs_equal(assembled, expected):
+    if not _graphs_equal(assembled, expected, case.model):
         raise CaseFailure(
             f"{case.path.name}: assembled graph != then.graph.\n"
             f"  assembled: {assembled!r}\n"
@@ -1726,9 +1713,9 @@ def _assert_graphs(case: Case, db: DatabaseProvider) -> None:
             )
 
     # An as-of attribute's from-column is the edge coordinate a pin keys on (per axis,
-    # keyed by the ATTRIBUTE name the pin uses — `processingDate` / `businessDate`).
+    # keyed by the ATTRIBUTE name the pin uses — `transactionTime` / `validTime`).
     from_column_by_attr = {
-        attr["name"]: attr["fromColumn"] for attr in root_entity.as_of_attributes
+        axis["dimension"]: axis["start_column"] for axis in root_entity.temporal_runtime_axes
     }
 
     # The declared graphs PARTITION the milestone set: every root row belongs to
@@ -1782,7 +1769,7 @@ def _assert_graphs(case: Case, db: DatabaseProvider) -> None:
         for index in group:
             owner[index] = gi
         assembled = {root_entity.name: [_normalize_row(root_rows[i]) for i in group]}
-        if not _graphs_equal(assembled, expected):
+        if not _graphs_equal(assembled, expected, case.model):
             raise CaseFailure(
                 f"{case.path.name}: then.graphs[{gi}] (pin {pin!r}) assembled graph "
                 f"!= expected.\n"
@@ -1915,8 +1902,16 @@ def _assemble_graph(
 def _graphs_equal(
     left: dict[str, list[dict[str, Any]]],
     right: dict[str, list[dict[str, Any]]],
+    model: Model | None = None,
 ) -> bool:
-    """Order-insensitive structural equality for assembled deep-fetch graphs."""
+    """Compare assembled graphs while preserving semantic collection order.
+
+    Entity result sets and relationship collections are multisets.  A Value
+    Object occurrence with ``multiplicity: many`` is different: its authored
+    document order is semantic, so its elements compare positionally.  Passing
+    the model enables that distinction; the model-free form remains useful for
+    generic graph-comparison tests that contain relationships only.
+    """
 
     def equal_value(a: Any, b: Any) -> bool:
         if isinstance(a, dict) or isinstance(b, dict):
@@ -1943,7 +1938,98 @@ def _graphs_equal(
 
         return _scalars_equal(a, b, None)
 
-    return equal_value(left, right)
+    if model is None:
+        return equal_value(left, right)
+
+    def equal_value_object_member(a: Any, b: Any, declaration: dict[str, Any]) -> bool:
+        if not isinstance(a, dict) or not isinstance(b, dict) or a.keys() != b.keys():
+            return False
+        nested_by_name = {nested["name"]: nested for nested in declaration.get("valueObjects", [])}
+        return all(
+            equal_value_object(a[key], b[key], nested_by_name[key])
+            if key in nested_by_name
+            else _scalars_equal(a[key], b[key], None)
+            for key in a
+        )
+
+    def equal_value_object(a: Any, b: Any, declaration: dict[str, Any]) -> bool:
+        if declaration.get("multiplicity", "one") == "many":
+            if not isinstance(a, list) or not isinstance(b, list) or len(a) != len(b):
+                return False
+            return all(
+                equal_value_object_member(left_item, right_item, declaration)
+                for left_item, right_item in zip(a, b, strict=True)
+            )
+        if a is None or b is None:
+            return a is None and b is None
+        return equal_value_object_member(a, b, declaration)
+
+    def equal_entity_node(a: Any, b: Any, entity: Entity) -> bool:
+        if not isinstance(a, dict) or not isinstance(b, dict) or a.keys() != b.keys():
+            return False
+        value_objects = {
+            value_object["name"]: value_object for value_object in entity.value_objects
+        }
+        relationships = {
+            relationship["name"]: relationship for relationship in entity.relationship_metadata
+        }
+        for key in a:
+            if key in value_objects:
+                if not equal_value_object(a[key], b[key], value_objects[key]):
+                    return False
+                continue
+
+            relationship_name = key.split("[", 1)[0]
+            relationship = relationships.get(relationship_name)
+            if relationship is None:
+                if not _scalars_equal(a[key], b[key], None):
+                    return False
+                continue
+
+            target = model.entity(relationship["join"]["target"]["entity"])
+            if relationship["cardinality"] == "one-to-many":
+                if not isinstance(a[key], list) or not isinstance(b[key], list):
+                    return False
+                if len(a[key]) != len(b[key]):
+                    return False
+                remaining = list(b[key])
+                for child in a[key]:
+                    for index, candidate in enumerate(remaining):
+                        if equal_entity_node(child, candidate, target):
+                            del remaining[index]
+                            break
+                    else:
+                        return False
+                if remaining:
+                    return False
+                continue
+
+            if a[key] is None or b[key] is None:
+                if a[key] is not None or b[key] is not None:
+                    return False
+            elif not equal_entity_node(a[key], b[key], target):
+                return False
+        return True
+
+    if left.keys() != right.keys():
+        return False
+    for entity_name in left:
+        left_nodes = left[entity_name]
+        right_nodes = right[entity_name]
+        if len(left_nodes) != len(right_nodes):
+            return False
+        entity = model.entity(entity_name)
+        remaining = list(right_nodes)
+        for node in left_nodes:
+            for index, candidate in enumerate(remaining):
+                if equal_entity_node(node, candidate, entity):
+                    del remaining[index]
+                    break
+            else:
+                return False
+        if remaining:
+            return False
+    return True
 
 
 # --- value-object + inheritance single-statement graph read (m-value-object, m-inheritance) ---
@@ -1984,15 +2070,11 @@ def _project_value_object(vo: dict[str, Any], decoded: Any) -> Any:
       slot is a JSON array, else ``[]`` (a null / missing / non-array ``many``
       value collapses to zero elements).
 
-    Element order within a ``many`` member is UNSPECIFIED (m-value-object): this
-    projection walks the JSON array in document order for readability, but that
-    order is not part of the contract. ``then.graph`` comparison of value-object
-    arrays reuses :func:`_graphs_equal`'s order-insensitive list comparison (a
-    multiset compare — element multiplicity still matters, only order does not),
-    so a reordered array still matches. That reuse is INTENTIONAL here, not an
-    oversight.
+    Element order within a ``many`` member is semantic (m-value-object), so this
+    projection preserves JSON document order and metadata-aware graph comparison
+    checks those elements positionally.
     """
-    if vo.get("cardinality", "one") == "many":
+    if vo.get("multiplicity", "one") == "many":
         if isinstance(decoded, list):
             return [_project_members(vo, element) for element in decoded]
         return []
@@ -2061,11 +2143,9 @@ def _assert_single_statement_graph(case: Case, db: DatabaseProvider) -> None:
       non-inheritance / concrete-target read.
 
     Either way the assembled ``{Class: [node, …]}`` graph is compared against
-    ``then.graph`` via :func:`_graphs_equal`, whose list comparison is
-    order-insensitive (a multiset compare). For value-object ``many`` members that
-    reuse is INTENTIONAL, not an oversight: element order within a ``many`` member
-    is unspecified (m-value-object), so a reordered ``phones`` array still matches
-    while element multiplicity is still enforced.
+    ``then.graph`` via :func:`_graphs_equal`. Root result sets remain
+    order-insensitive, while metadata identifies Value Object ``many`` members
+    whose document order is semantic.
 
     When a ``referenceSql`` oracle is present it independently pins the matched
     row SET (identity columns only, the value-object columns stripped), so the
@@ -2090,7 +2170,7 @@ def _assert_single_statement_graph(case: Case, db: DatabaseProvider) -> None:
     assembled = {entity.name: [_materialize_owner_node(entity, row) for row in narrowed_rows]}
 
     expected = case.expected_graph or {}
-    if not _graphs_equal(assembled, expected):
+    if not _graphs_equal(assembled, expected, case.model):
         raise CaseFailure(
             f"{case.path.name}: materialized graph != then.graph.\n"
             f"  assembled: {assembled!r}\n"
@@ -2203,13 +2283,13 @@ _SET_CLAUSE_RE = re.compile(r"\bset\s+(.+?)\s+where\b", re.IGNORECASE)
 _DML_TARGET_RE = re.compile(r"^(?:insert\s+into|delete\s+from|update)\s+([^\s(]+)", re.IGNORECASE)
 
 # The full-bitemporal `*Until` rectangle-split mutations (DQ11): a business-bounded
-# write whose ① carries the valid-time window (`at`/`until`/`businessFrom`).
+# write whose ① carries the valid-time window (`at`/`until`/`validFrom`).
 _UNTIL_MUTATIONS = ("insertUntil", "updateUntil", "terminateUntil")
 
 # The plain (UNBOUNDED) bitemporal rectangle-split mutations: an everyday business
 # correction/termination from an instant onward with no upper business bound
 # (`m-bitemp-write-006` / `m-bitemp-write-007`). Like the `*Until` trio they close
-# the original on the processing axis and chain head / (new-)tail milestones, but
+# the original on the Transaction-Time dimension and chain head / (new-)tail milestones, but
 # the residual window runs to the open bound (thru_z), so ① carries no `until`.
 _PLAIN_SPLIT_MUTATIONS = ("update", "terminate")
 
@@ -2218,8 +2298,8 @@ def _is_bitemporal(entity: Entity) -> bool:
     """Whether an entity carries BOTH as-of axes (business + processing) — the
     full-bitemporal rectangle profile, where a plain `update` / `terminate` is a
     milestone rectangle split (close + chain), not the audit-only close-and-open."""
-    axes = {dim.get("axis") for dim in entity.as_of_attributes}
-    return {"business", "processing"} <= axes
+    axes = {dim.get("dimension") for dim in entity.temporal_runtime_axes}
+    return {"validTime", "transactionTime"} <= axes
 
 
 def _is_computed_marker(value: Any) -> bool:
@@ -2375,7 +2455,7 @@ def _tag(entity: Entity) -> tuple[str, Any] | None:
     flattened definition (:func:`inheritance.resolve_effective_definition`) carries
     both the resolved root ``tag`` column and the subtype's own ``tagValue``.
     """
-    return tag_of(entity.definition)
+    return tag_of(entity.runtime_facts)
 
 
 def _primary_key_columns(entity: Entity) -> list[str]:
@@ -2562,12 +2642,11 @@ def _assert_write_input_columns(case: Case, dialect: str) -> None:
 
     A TEMPORAL step is Family B: it ALWAYS writes the entity's full physical row, so
     the column list stays metamodel-sourced (``column_order``) and ① carries only the
-    domain values (``rows``) plus the milestone instant — the transaction instant
-    ``at`` (→ ``in_z``) for an audit-only entity, or ``businessAt`` (→ ``from_z``) for
-    a business-only one — with the ``fromColumn = instant`` / ``toColumn = infinity``
+    domain values (``rows``) plus the handle-supplied transaction instant ``at``
+    (→ ``in_z``), with the ``start_column = instant`` / ``end_column = infinity``
     bookkeeping DERIVED, never authored (:func:`_assert_temporal_input`). A
     full-bitemporal ``*Until`` step is the rectangle-split analogue: its ① carries the
-    valid-time window (``at`` / ``until`` / ``businessFrom``), cross-checked by
+    valid-time window (``at`` / ``until`` / ``validFrom``), cross-checked by
     :func:`_assert_until_input`. pk-gen ``rows`` carry DB-computed markers
     (``computed`` / ``increment``) whose bind is derived by the strategy, not authored.
 
@@ -2594,7 +2673,7 @@ def _assert_write_input_columns(case: Case, dialect: str) -> None:
         # A full-bitemporal step is a RECTANGLE SPLIT: the windowed `*Until` trio, or
         # a plain (unbounded) `update` / `terminate` on a two-axis entity (the everyday
         # business correction / termination, `m-bitemp-write-006` / `-007`). Both close
-        # the original on the processing axis and chain head / (new-)tail milestones, so
+        # the original on the Transaction-Time dimension and chain head / (new-)tail milestones, so
         # both route through the rectangle-split cross-check — never the audit-only
         # close-and-open, which would mis-count the chained inserts.
         if mutation in _UNTIL_MUTATIONS or (
@@ -2875,32 +2954,33 @@ def _assert_temporal_input(
     step_statements: list[str],
     step_binds: list[list[Any]],
 ) -> None:
-    """Cross-check a TEMPORAL (audit-only / business-only) write step's ① vs golden.
+    """Cross-check a Transaction-Time-Only write step's ① against its golden DML.
 
     A milestone-chaining write ALWAYS writes the entity's full physical row (DQ-B
     Family B), so the emitted column list is metamodel-sourced (``column_order``) —
-    ① carries only the domain values (``rows``) plus the milestone instant. For an
-    AUDIT-ONLY (processing) entity that instant is ``at`` (→ ``in_z``); for a
-    BUSINESS-ONLY (unitemporal-business) entity it is ``businessAt`` (→ ``from_z``) —
-    the same close-and-chain shape driven by business date rather than transaction
-    instant. The bookkeeping ``fromColumn = instant`` and the open bound
-    ``toColumn = infinity`` are DERIVED, never authored in ① (the m-temporal-read milestone
+    ① carries only the domain values (``rows``) plus the handle-supplied
+    Transaction-Time instant ``at`` (→ ``in_z``). The bookkeeping
+    ``start_column = instant`` and the open bound
+    ``end_column = infinity`` are DERIVED, never authored in ① (the m-temporal-read milestone
     discipline stays under test). The gate cross-checks, per statement: an ``insert``
-    (open a milestone) writes the full physical row with ``fromColumn = instant`` and
-    ``toColumn = infinity``; a close (``update`` step 1 / ``terminate``) binds
-    ``[instant, pk, infinity]`` — sets ``toColumn = instant`` keyed on the still-open
-    current row (``pk and toColumn = infinity``); an ``update`` chains a second
+    (open a milestone) writes the full physical row with ``start_column = instant`` and
+    ``end_column = infinity``; a close (``update`` step 1 / ``terminate``) binds
+    ``[instant, pk, infinity]`` — sets ``end_column = instant`` keyed on the still-open
+    current row (``pk and end_column = infinity``); an ``update`` chains a second
     full-row insert carrying the row's columns.
     """
-    processing = next((a for a in entity.as_of_attributes if a["axis"] == "processing"), None)
-    if processing is not None:
-        axis, at, instant_key = processing, step.get("at"), "at"
-    else:
-        # A business-only (unitemporal-business) entity closes/chains on the BUSINESS
-        # axis, driven by `businessAt` (→ from_z/thru_z) — the analogue of `at`.
-        axis = next(a for a in entity.as_of_attributes if a["axis"] == "business")
-        at, instant_key = step.get("businessAt"), "businessAt"
-    in_z, out_z, infinity = axis["fromColumn"], axis["toColumn"], axis.get("infinity", "infinity")
+    transaction_time = next(
+        (a for a in entity.temporal_runtime_axes if a["dimension"] == "transactionTime"), None
+    )
+    if transaction_time is None:
+        raise CaseFailure(
+            f"{case.path.name}: active temporal writes require a Transaction-Time dimension."
+        )
+    valid_time = next(
+        (a for a in entity.temporal_runtime_axes if a["dimension"] == "validTime"), None
+    )
+    axis, at, instant_key = transaction_time, step.get("at"), "at"
+    in_z, infinity = axis["start_column"], axis.get("infinity", "infinity")
     full_columns = list(column_order(entity))
     if at is None:
         raise CaseFailure(
@@ -2908,6 +2988,17 @@ def _assert_temporal_input(
             f"`{instant_key}` (the milestone instant → {in_z}), which is DERIVED into the "
             f"milestone bookkeeping, never read from the golden."
         )
+    valid_from = step.get("validFrom")
+    if valid_time is not None and valid_from is None:
+        raise CaseFailure(
+            f"{case.path.name}: a Valid-Time write step's neutral write input (①) MUST "
+            "carry `validFrom`, which is DERIVED into the start column."
+        )
+    derived_starts = {
+        transaction_time["start_column"]: step.get("at"),
+        **({valid_time["start_column"]: valid_from} if valid_time is not None else {}),
+    }
+    derived_ends = {temporal_axis["end_column"] for temporal_axis in entity.temporal_runtime_axes}
     columns, pk, _set_cols, _observed = classified[0] if classified else ({}, None, {}, None)
     # A TABLE-PER-HIERARCHY concrete subtype's milestone rows carry the framework-owned
     # tag column, DERIVED from its `tagValue` (m-inheritance) — the chained INSERT sets
@@ -2925,10 +3016,10 @@ def _assert_temporal_input(
                 f"whole row (metamodel-sourced, not derived from ①)."
             )
         expected = [
-            at
-            if column == in_z
+            derived_starts[column]
+            if column in derived_starts
             else infinity
-            if column == out_z
+            if column in derived_ends
             else tag[1]
             if (tag is not None and column == tag[0])
             else columns.get(column)
@@ -2977,11 +3068,11 @@ def _assert_until_input(
     processing time ``[at, infinity)``, partitioned on the BUSINESS axis around the
     mutation instant. Two forms share this cross-check:
 
-      * a WINDOWED ``*Until`` write bounds the change to ``[businessFrom, until)``
+      * a WINDOWED ``*Until`` write bounds the change to ``[validFrom, until)``
         (`m-bitemp-write-001` / `-002` / `-003` / `-008`); ① carries both ``at`` and
         ``until``;
       * a PLAIN (unbounded) ``update`` / ``terminate`` corrects/ends the value from
-        ``businessFrom`` ONWARD (`m-bitemp-write-006` / `-007`); ① carries ``at`` but
+        ``validFrom`` ONWARD (`m-bitemp-write-006` / `-007`); ① carries ``at`` but
         no ``until`` — the residual window runs to the open bound (``thru_z``).
 
     Like the audit-only close it is Family B (full physical row, metamodel-sourced
@@ -2995,21 +3086,23 @@ def _assert_until_input(
         in_z = ?`` binds — drawn from the currently-open row (reconstructed by
         replaying prior insert steps, :func:`_open_rectangle_binds`), NOT the closing
         step's own ①, and DISTINCT from the window boundary; the gate rides the golden
-        directly (no ``observedInZ`` token on the writeSequence step);
+        directly (no ``observedTxStart`` token on the writeSequence step);
       * every chained INSERT opens a fresh processing milestone, so its ``in_z`` bind
         equals ``at`` and its ``out_z`` bind equals ``infinity``;
-      * the business window bounds — ``businessFrom`` (the window start, an ① row
+      * the Valid-Time window bounds — ``validFrom`` (the window start, an ① row
         attribute) and, for a windowed write, ``until`` (the window end, step-level) —
-        appear among the chained inserts' business-axis (``from_z`` / ``thru_z``) binds.
+        appear among the chained inserts' Valid-Time (``from_z`` / ``thru_z``) binds.
 
     The domain values (carried, not derived) and the head/tail residual windows are
     graded observably by ``then.tableState`` in the run, not restated in ①.
     """
-    business = next(a for a in entity.as_of_attributes if a["axis"] == "business")
-    processing = next(a for a in entity.as_of_attributes if a["axis"] == "processing")
-    from_z, thru_z = business["fromColumn"], business["toColumn"]
-    in_z, out_z = processing["fromColumn"], processing["toColumn"]
-    infinity = processing.get("infinity", "infinity")
+    valid_time = next(a for a in entity.temporal_runtime_axes if a["dimension"] == "validTime")
+    transaction_time = next(
+        a for a in entity.temporal_runtime_axes if a["dimension"] == "transactionTime"
+    )
+    from_z, thru_z = valid_time["start_column"], valid_time["end_column"]
+    in_z, out_z = transaction_time["start_column"], transaction_time["end_column"]
+    infinity = transaction_time.get("infinity", "infinity")
     full_columns = list(column_order(entity))
     in_z_pos, out_z_pos = full_columns.index(in_z), full_columns.index(out_z)
     from_z_pos, thru_z_pos = full_columns.index(from_z), full_columns.index(thru_z)
@@ -3026,15 +3119,15 @@ def _assert_until_input(
     if windowed and until is None:
         raise CaseFailure(
             f"{case.path.name}: a `*Until` step's neutral write input (①) MUST carry "
-            f"`until` (the business window end → thru_z), which is DERIVED, never read "
+            f"`until` (the Valid-Time window end → thru_z), which is DERIVED, never read "
             f"from the golden."
         )
     columns, pk, _set_cols, _observed = classified[0] if classified else ({}, None, {}, None)
-    business_from = columns.get(from_z)
-    if business_from is None:
+    valid_from = step.get("validFrom")
+    if valid_from is None:
         raise CaseFailure(
             f"{case.path.name}: a bitemporal rectangle-split step's ① row MUST carry the "
-            f"business window start (`businessFrom` → {from_z}), which discriminates the "
+            f"Valid-Time window start (`validFrom` → {from_z}), which discriminates the "
             f"chained rows."
         )
     # A TABLE-PER-HIERARCHY concrete subtype guards its inactivation on the framework-
@@ -3084,14 +3177,14 @@ def _assert_until_input(
                 )
             _assert_write_values(case, expected, binds, statement)
 
-    bounds = [(business_from, "businessFrom")]
+    bounds = [(valid_from, "validFrom")]
     if until is not None:
         bounds.append((until, "until"))
     for bound, label in bounds:
         if not any(_write_value_equal(bound, value) for value in business_binds):
             raise CaseFailure(
-                f"{case.path.name}: the rectangle-split business window bound "
-                f"{label}={bound!r} appears in none of the chained inserts' business-axis "
+                f"{case.path.name}: the rectangle-split Valid-Time window bound "
+                f"{label}={bound!r} appears in none of the chained inserts' Valid-Time "
                 f"binds {business_binds!r}."
             )
 
@@ -3102,10 +3195,10 @@ def _open_rectangle_binds(
     """Reconstruct the currently-open rectangle's ``(from_z, in_z)`` for a gated close.
 
     A gated bitemporal close (`m-bitemp-write-008`) gates on the observed rectangle's
-    business-from and processing-from — neither present in the closing step's own ①
+    business-from and Transaction-Time start — neither present in the closing step's own ①
     row (the row carries the NEW value + window start, distinct from the observed
     ``from_z``). Replay the prior insert / insertUntil steps in the same write sequence
-    and return the last-opened rectangle's ``(businessFrom → from_z, at → in_z)`` for
+    and return the last-opened rectangle's ``(validFrom → from_z, at → in_z)`` for
     ``pk``, so the trailing gate binds cross-check against the row they inactivate
     rather than being tolerated blind. Returns ``None`` when no prior step opens ``pk``.
     """
@@ -3118,7 +3211,7 @@ def _open_rectangle_binds(
         for row in prior.get("rows", []):
             _, prior_pk, prior_set, _ = _classify_write_row(case, entity, row)
             if _write_value_equal(prior_pk, pk):
-                reconstructed = (prior_set.get(from_z), prior.get("at"))
+                reconstructed = (prior.get("validFrom"), prior.get("at"))
     return reconstructed
 
 
@@ -3153,11 +3246,11 @@ def _conflict_versioned_entity(case: Case) -> Entity | None:
 
 
 def _conflict_temporal_entity(case: Case) -> Entity | None:
-    """The processing-axis TEMPORAL entity a conflict-close case targets, or None.
+    """The Transaction-Time TEMPORAL entity a conflict-close case targets, or None.
 
     A temporal / bitemporal conflict close (``m-temporal-read-009`` through
     ``m-temporal-read-012`` / ``m-bitemp-write-004`` / ``m-bitemp-write-005``) carries no
-    version column; it locks via the observed processing-from (``in_z``),
+    version column; it locks via the observed Transaction-Time start (``in_z``),
     so the target is the first CONCRETE (row-owning) entity with a processing
     as-of axis. An inheritance family's abstract root (m-inheritance) resolves
     the SAME family-wide axis (`resolve_effective_definition` flattens it onto
@@ -3170,7 +3263,7 @@ def _conflict_temporal_entity(case: Case) -> Entity | None:
     for entity in case.model.entities:
         if entity.is_abstract:
             continue
-        if any(a["axis"] == "processing" for a in entity.as_of_attributes):
+        if any(a["dimension"] == "transactionTime" for a in entity.temporal_runtime_axes):
             return entity
     return None
 
@@ -3259,15 +3352,15 @@ def _assert_versioned_conflict_write(
 def _assert_temporal_conflict_input(case: Case, dialect: str) -> None:
     """Cross-check a TEMPORAL / bitemporal conflict CLOSE's ① against its golden (②).
 
-    A processing-axis temporal entity carries no version column, so the close gates
-    on the observed processing-from (``in_z``) — the version analogue (DQ-C). The
+    A Transaction-Time temporal entity carries no version column, so the close gates
+    on the observed Transaction-Time start (``in_z``) — the version analogue (DQ-C). The
     close is Family B: it always writes the single metamodel-fixed SET column
     (``out_z``), so the cross-check is BINDS-only (OQ3 → Option A). ① carries the
     milestone pk (→ the ``where`` key), the close instant ``at`` (→ the new
-    ``out_z``), and — in optimistic mode — ``observedInZ`` (the ``and in_z = ?``
+    ``out_z``), and — in optimistic mode — ``observedTxStart`` (the ``and in_z = ?``
     gate); a BITEMPORAL close additionally carries the business discriminator (e.g.
-    ``businessFrom`` → the ``from_z = ?`` gate whose VALUE the metamodel cannot know).
-    The single form reads root ``write`` / ``at`` / ``observedInZ``; the retry form
+    ``validFrom`` → the ``from_z = ?`` gate whose VALUE the metamodel cannot know).
+    The single form reads root ``write`` / ``at`` / ``observedTxStart``; the retry form
     reads them per attempt.
     """
     entity = _conflict_temporal_entity(case)
@@ -3281,7 +3374,7 @@ def _assert_temporal_conflict_input(case: Case, dialect: str) -> None:
                 entity,
                 attempt.get("write"),
                 attempt.get("at"),
-                attempt.get("observedInZ"),
+                attempt.get("observedTxStart"),
                 gated,
                 _attempt_statements(attempt, dialect),
                 _entry_binds(attempt.get("statements"), 0),
@@ -3293,7 +3386,7 @@ def _assert_temporal_conflict_input(case: Case, dialect: str) -> None:
         entity,
         case.write,
         case.at,
-        case.observed_in_z,
+        case.observed_tx_start,
         gated,
         case.golden_statements(dialect),
         case.statement_binds(0),
@@ -3306,7 +3399,7 @@ def _assert_temporal_conflict_close(
     entity: Entity,
     write: dict[str, Any] | None,
     at: Any,
-    observed_in_z: Any,
+    observed_tx_start: Any,
     gated: bool,
     statements: list[str],
     binds: list[Any],
@@ -3316,7 +3409,7 @@ def _assert_temporal_conflict_close(
 
     A close sets ``out_z = at`` keyed on the still-open current row
     (``pk and out_z = infinity``); an optimistic close adds the ``and in_z = ?`` gate
-    bound to ``observedInZ``. A TABLE-PER-HIERARCHY concrete subtype's close ALSO
+    bound to ``observedTxStart``. A TABLE-PER-HIERARCHY concrete subtype's close ALSO
     carries the tag GUARD among the identity predicates, immediately after the
     primary key and before the current-row predicate — the SAME composition a
     keyed update follows (m-inheritance x m-opt-lock "Optimistic locking composes
@@ -3325,7 +3418,7 @@ def _assert_temporal_conflict_close(
     observed-in_z gate still binds LAST. A bitemporal close inserts the business
     discriminator's VALUE (the classified ``set`` coordinate, e.g. ``from_z``)
     between ``out_z`` and ``in_z`` in model column order, so the derived binds are
-    ``[at, pk, (tagValue), infinity, …businessCoords, (observedInZ if gated)]`` —
+    ``[at, pk, (tagValue), infinity, …businessCoords, (observedTxStart if gated)]`` —
     the tag slots right after the pk (a no-op, ``None`` skipped, for a
     non-inheritance or table-per-concrete-subtype entity).
     """
@@ -3345,23 +3438,23 @@ def _assert_temporal_conflict_close(
             f"({pointer}) MUST carry `at` (the close instant → out_z), which is DERIVED "
             f"into the close binds, never read from the golden."
         )
-    axis = next(a for a in entity.as_of_attributes if a["axis"] == "processing")
+    axis = next(a for a in entity.temporal_runtime_axes if a["dimension"] == "transactionTime")
     infinity = axis.get("infinity", "infinity")
     _, pk, set_cols, _ = _classify_write_row(case, entity, write)
     # A bitemporal close's business discriminator (e.g. from_z) slots between out_z
-    # and in_z in model column order; a processing-only close has none.
+    # and in_z in model column order; a Transaction-Time-Only close has none.
     business_coords = [set_cols[column] for column in column_order(entity) if column in set_cols]
     tag = _tag(entity)
     tag_binds = [tag[1]] if tag is not None else []
     expected = [at, pk, *tag_binds, infinity, *business_coords]
     if gated:
-        if observed_in_z is None:
+        if observed_tx_start is None:
             raise CaseFailure(
                 f"{case.path.name}: an optimistic temporal conflict close's neutral write "
-                f"input ({pointer}) MUST carry observedInZ — the `and in_z = ?` gate is "
+                f"input ({pointer}) MUST carry observedTxStart — the `and in_z = ?` gate is "
                 f"derived from it."
             )
-        expected.append(observed_in_z)  # the optimistic in_z gate bind
+        expected.append(observed_tx_start)  # the optimistic in_z gate bind
     _assert_write_values(case, expected, binds, statements[0])
     _assert_inheritance_write_routing(case, entity, statements, [binds])
 
@@ -3559,11 +3652,12 @@ def _relationship_path_target(case: Case, start: Entity, path: str) -> Entity:
     A ``load`` / ``access`` navigates one hop (``items``) or a dotted multi-hop path
     (``items.statuses``) from the source object, so its rows are of the entity the
     LAST hop targets — the entity whose value-object schema decodes them. Each hop
-    resolves through its owning entity's relationship definition (``relatedEntity``).
+    resolves through its owning entity's compiled structured relationship join.
     """
     entity = start
     for rel_name in path.split("."):
-        entity = case.model.entity(entity.relationship_by_name(rel_name)["relatedEntity"])
+        relationship = entity.relationship_metadata_by_name(rel_name)
+        entity = case.model.entity(relationship["join"]["target"]["entity"])
     return entity
 
 

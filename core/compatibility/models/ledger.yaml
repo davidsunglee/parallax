@@ -1,14 +1,9 @@
-# Ledger: an audit-only (processing-temporal) model with an INCLUSIVE upper
-# bound — the toIsInclusive=true counterpart to Balance (models/balance.yaml).
+# Ledger: a Transaction-Time-Only model used for milestone-boundary reads.
 #
 # This descriptor is an instance of core/schemas/metamodel.schema.json. It is a
-# copy of the Balance shape EXCEPT its processing as-of attribute declares
-# `toIsInclusive: true`, so the as-of interval is the CLOSED form [from, to]
-# rather than Balance's half-open [from, to). The injected as-of predicate
-# therefore reads `out_z >= ?` instead of `out_z > ?`, and a pin exactly on a
-# milestone boundary includes BOTH the row ending at the boundary and the row
-# beginning there. This is the opposite normative branch from m-temporal-read-007 (which proves
-# the exclusive boundary on Balance).
+# second witness of the normalized half-open `[start, end)` axis contract. A pin
+# exactly on a milestone boundary excludes the row ending there and includes the
+# row beginning there; there is no per-axis inclusivity switch.
 #
 # Row data lives in the sibling fixtures/ledger.yaml (same milestone history as
 # Balance, so the boundary read discriminates cleanly).
@@ -16,14 +11,13 @@ entity:
   name: Ledger
   namespace: parallax.compatibility
   table: ledger
-  mutability: transactional
-  temporal: unitemporal-processing
+  persistence: read-write
   attributes:
     - name: id
       type: int64
       column: led_id
       primaryKey: true
-      pkGenerator: none
+      pkGeneration: application-assigned
     - name: acctNum
       type: string
       column: acct_num
@@ -31,23 +25,19 @@ entity:
     - name: value
       type: decimal(18,2)
       column: val
-    - name: processingFrom
+    - name: tx_start
       type: timestamp
       column: in_z
-    - name: processingTo
+    - name: tx_end
       type: timestamp
       column: out_z
-  asOfAttributes:
-    - name: processingDate
-      fromColumn: in_z
-      toColumn: out_z
-      axis: processing
-      toIsInclusive: true
-      infinity: infinity
-      default: now
+  asOfAxes:
+    - dimension: transactionTime
+      startAttribute: tx_start
+      endAttribute: tx_end
   indices:
     - name: ledger_pk
-      attributes: [id, processingFrom]
+      attributes: [id, tx_start]
       unique: true
     - name: ledger_acct
       attributes: [acctNum]

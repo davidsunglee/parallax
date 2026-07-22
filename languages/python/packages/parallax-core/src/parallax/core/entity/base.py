@@ -13,7 +13,7 @@ from __future__ import annotations
 import re
 import sys
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, ClassVar, Literal, Self, cast, get_args, get_origin
 
 from pydantic import BaseModel, ConfigDict
@@ -26,8 +26,12 @@ from pydantic._internal._model_construction import ModelMetaclass
 from parallax.core import inheritance as _inheritance
 from parallax.core.descriptor import (
     UNSET,
-    AsOfAttribute,
+    AsOfAxisMetadata,
+    DefiningRelationship,
     DescriptorError,
+    RelationshipDeclaration,
+    ReverseRelationship,
+    serialize,
     validate_entity,
     validate_optimistic_locking_root_owned,
 )
@@ -35,7 +39,6 @@ from parallax.core.descriptor import Attribute as AttributeRecord
 from parallax.core.descriptor import Entity as EntityRecord
 from parallax.core.descriptor import Inheritance as InheritanceRecord
 from parallax.core.descriptor import Metamodel as MetamodelRecord
-from parallax.core.descriptor import Relationship as RelationshipRecord
 from parallax.core.descriptor import ValueObject as ValueObjectRecord
 from parallax.core.descriptor.neutral_type import infer_neutral_type as _infer_neutral_type_lookup
 from parallax.core.descriptor.neutral_type import snake_to_camel
@@ -55,7 +58,7 @@ from parallax.core.entity.expressions import (
     Rel,
     RelationshipRef,
 )
-from parallax.core.entity.fields import FieldSpec, RelationshipSpec
+from parallax.core.entity.fields import FieldSpec, RelationshipSpec, ReverseRelationshipSpec
 from parallax.core.entity.statement import Statement, build_statement
 from parallax.core.entity.value_object import (
     ValueObject,
@@ -82,6 +85,7 @@ __all__ = [
     "canonical_row",
     "changed_fields",
     "default_registry",
+    "descriptor_document",
     "effective_change_set",
     "entity_record_of",
     "entity_records",
@@ -262,11 +266,9 @@ class ScopedMetamodel(MetamodelRecord):
     docstring previously, incorrectly, still described a bare
     ``metamodel(classes)`` call as untagged, the pre-round-1 behavior). The
     genuinely UNSCOPED (untagged, plain) cases are narrower: a YAML-ingested
-    `~parallax.core.descriptor.deserialize` result, :func:`metamodel`'s own
+    `~parallax.core.descriptor.deserialize` result and :func:`metamodel`'s own
     EMPTY-list call (``metamodel([])`` -- no class/registry context to derive
-    a scope from at all), and the introspection surface's bare-name lookup
-    (`~parallax.core.entity.meta.meta("Name")`, which likewise has no class in
-    hand). All three fall back to :func:`default_registry` unchanged:
+    a scope from at all). Both fall back to :func:`default_registry` unchanged:
     zero-ceremony apps, and the long-standing ingested-descriptor +
     installed-mirror pairing (``Database.connect(port, ingested_meta)``
     wrapping via a same-named class the DEFAULT registry independently
@@ -291,7 +293,11 @@ def resolve_entity_class(meta: MetamodelRecord, name: str) -> type[BaseModel] | 
     (:func:`registry_of`) -- the sole seam `parallax.snapshot.handle` uses to
     turn a decoded row's canonical entity name into a class, never the
     process-global registry directly."""
-    return registry_of(meta).resolve(name)
+    try:
+        local_name = meta.entity(name).name
+    except KeyError:
+        local_name = name
+    return registry_of(meta).resolve(local_name)
 
 
 class ModelCopyError(EntityDefinitionError):
@@ -309,7 +315,7 @@ class FrameworkOwnedAxisError(ValueError):
     COR-3 Phase 8 increment 7 completion round): ``in_z``/``out_z`` (and,
     bitemporal, ``from_z``/``thru_z``) are stamped by the temporal write path
     itself — the milestone director derives every bound from the Clock
-    Strategy and the verb's own window arguments (``business_from``/``until``
+    Strategy and the verb's own window arguments (``valid_from``/``until``
     on `insert_until`/`update_until`/`terminate_until`), never from
     caller-authored instance data. ``tx.insert``/``tx.insert_until`` raise
     this the moment the offending field is actually SET on the instance
@@ -407,7 +413,8 @@ def wire_names_of(cls: type) -> WireNames:
 
 # A declared attribute captured during the annotation pass.
 _AttrDecl = tuple[str, object, FieldSpec]
-_RelDecl = tuple[str, object, RelationshipSpec]
+_RelSpec = RelationshipSpec | ReverseRelationshipSpec
+_RelDecl = tuple[str, object, _RelSpec]
 _VoDecl = tuple[str, type, Literal["one", "many"], FieldSpec]
 
 
@@ -417,10 +424,8 @@ class FamilyRoot:
     class spelling, DQ2): ``strategy`` names the mapping strategy exactly as the
     descriptor spells it; ``tag`` is the shared discriminator COLUMN name
     (table-per-hierarchy only — ``None`` for table-per-concrete-subtype). A root
-    class's own ``EntityConfig.table`` (if any) is the TPH family's SHARED table
-    default for a concrete-subtype descendant that declares no table of its
-    own — the compiled root record itself always stays tableless (the
-    tableless-and-rowless role rule)."""
+    class's own ``EntityConfig.table`` is the TPH family's root-owned shared
+    table. A TPCS root is tableless; each concrete subtype owns its table."""
 
     strategy: Literal["table-per-hierarchy", "table-per-concrete-subtype"]
     tag: str | None = None
@@ -440,11 +445,11 @@ class EntityConfig:
     """Storage configuration declared in an entity class body via ``__parallax__``.
 
     ``as_of`` declares the entity's temporal dimensions in the descriptor's own
-    vocabulary (:class:`~parallax.core.descriptor.AsOfAttribute` — ledger D-7's
-    temporal class spelling): each axis names its interval columns, and the
+    vocabulary (:class:`~parallax.core.descriptor.AsOfAxisMetadata`): each axis
+    names its interval Attributes, and the
     effective ``temporal`` classification is derived from the declared axes
     exactly as for an ingested descriptor. The interval-bound scalar attributes
-    (e.g. ``processing_from`` on ``in_z``) are declared as ordinary ``Attr``
+    (e.g. ``tx_start`` on ``in_z``) are declared as ordinary ``Attr``
     fields beside it, so the class carries no information absent from the
     descriptor schema. Temporal axes are family-wide, not an ordinary
     per-entity member (m-inheritance "Inherited members"): on a family
@@ -464,8 +469,8 @@ class EntityConfig:
 
     table: str | None = None
     namespace: str | None = None
-    mutability: str = "read-only"
-    as_of: tuple[AsOfAttribute, ...] = ()
+    mutability: str = "transactional"
+    as_of: tuple[AsOfAxisMetadata, ...] = ()
     inheritance: FamilyRoot | Concrete | None = None
 
 
@@ -579,14 +584,42 @@ def _registry_of_classes(classes: Sequence[type]) -> EntityRegistry | None:
 
 def _entity_record_for(cls: type) -> EntityRecord:
     """``cls``'s compiled metamodel record, or a loud ``TypeError`` naming
-    ``cls`` -- the class-branch validation :func:`~parallax.core.entity.meta.
-    meta`'s ``_entity_of`` also applies to a class argument, both calling the
-    shared, package-internal :func:`~parallax.core.entity._validation.
-    require_entity_record` seam (never one importing the check from the
-    other, which would cycle: ``meta.py`` already imports from THIS module at
-    module level) since :func:`metamodel` needs it and lives here (R1/R3,
-    COR-3 Phase 7 increment 7 round-2; P3, round-3)."""
+    ``cls`` through the package-internal
+    :func:`~parallax.core.entity._validation.require_entity_record` seam."""
     return require_entity_record(cls, entity_record_of(cls))
+
+
+def _frontend_entities(
+    entities: tuple[EntityRecord, ...],
+) -> tuple[EntityRecord, ...]:
+    """Apply the existing family-root persistence rule to class declarations.
+
+    Relationship and Value Object declarations are already canonical when the
+    metaclass creates them; no declaration-shape adapter or paired metadata copy
+    exists here.
+    """
+    by_name = {entity.name: entity for entity in entities}
+    normalized: list[EntityRecord] = []
+    for owner in entities:
+        family_root = owner
+        seen: set[str] = set()
+        while (
+            family_root.inheritance is not None
+            and family_root.inheritance.parent is not None
+            and family_root.name not in seen
+        ):
+            seen.add(family_root.name)
+            parent = by_name.get(family_root.inheritance.parent)
+            if parent is None:
+                break
+            family_root = parent
+        normalized.append(
+            replace(
+                owner,
+                mutability=family_root.mutability,
+            )
+        )
+    return tuple(normalized)
 
 
 def metamodel(classes: Sequence[type]) -> MetamodelRecord:
@@ -624,14 +657,8 @@ def metamodel(classes: Sequence[type]) -> MetamodelRecord:
     caller composing its own class list from several sources, some of which
     may legitimately overlap, never has to de-duplicate it by hand first).
 
-    Physically relocated here from ``parallax.core.entity.meta`` (R3, COR-3
-    Phase 7 increment 7 round-2): its own auto-scoping needs
-    :func:`_registry_of_classes`, now module-private -- a cross-module
-    consumer touching it would need a public re-export of purely internal
-    registry machinery, exactly what R3 removes. ``meta.py`` re-exports this
-    SAME function unchanged (``from parallax.core.entity.base import
-    metamodel``); the public import path (``parallax.core.entity.metamodel``)
-    and signature are unaffected.
+    This function lives alongside :func:`_registry_of_classes` so automatic
+    scoping does not require exporting package-internal registry machinery.
     """
     classes = tuple(classes)
     seen: dict[str, type] = {}
@@ -645,34 +672,39 @@ def metamodel(classes: Sequence[type]) -> MetamodelRecord:
             continue  # the identical class object repeated -- harmless, dedupe (P1)
         seen[name] = cls
         deduped.append(cls)
-    entities = tuple(_entity_record_for(cls) for cls in deduped)
+    entities = _frontend_entities(tuple(_entity_record_for(cls) for cls in deduped))
     scope = _registry_of_classes(deduped)
     if scope is None:
         return MetamodelRecord(entities=entities)
     return ScopedMetamodel(entities=entities, registry=scope)
 
 
-def _temporal_as_of_attributes(record: EntityRecord, cls: type) -> tuple[AsOfAttribute, ...]:
+def descriptor_document(classes: Sequence[type]) -> dict[str, object]:
+    """Return the canonical descriptor document for related entity classes."""
+    return serialize(metamodel(classes))
+
+
+def _temporal_as_of_axes(record: EntityRecord, cls: type) -> tuple[AsOfAxisMetadata, ...]:
     """``record``'s EFFECTIVE as-of axes for the statement frontend's
     ``.as_of()`` / ``.as_of_range()`` / ``.history()`` axis resolution: the
     family root's declared axes for an inheritance participant (temporality is
     a family-wide property, declared only on the root — m-inheritance), else
     ``record``'s own. A concrete-subtype class's own compiled record carries no
-    ``as_of_attributes`` of its own when its family's axes live on the root, so
+    ``as_of_axes`` of its own when its family's axes live on the root, so
     reading it directly here would wrongly refuse ``ConcreteType.where().as_of(...)``
     as "declares no temporal dimension" for an inherited axis. Resolved within
     ``cls``'s own D-20 registry scope (never every class ever compiled).
     """
     if record.inheritance is None:
-        return record.as_of_attributes
+        return record.as_of_axes
     meta = _registry_of_class(cls).metamodel()
-    return _inheritance.declaring_entity(meta, record).as_of_attributes
+    return _inheritance.declaring_entity(meta, record).as_of_axes
 
 
 def _serialize_member(value: object) -> object:
     """A scalar/value-object member's write-row value: a ``ValueObject``
     instance serializes to its canonical document, a tuple of them to a list
-    of documents (``cardinality: many``), everything else passes through."""
+    of documents (``multiplicity: many``), everything else passes through."""
     if isinstance(value, ValueObject):
         return to_document(value)
     if isinstance(value, tuple):
@@ -871,22 +903,6 @@ def _resolve_registry(
     return registry if registry is not None else default_registry()
 
 
-# The TPH family's shared table default, keyed by the ROOT entity's own CLASS
-# OBJECT (S1, COR-3 Phase 7 increment 7 round-2 — never the bare canonical
-# NAME: two DIFFERENT registries' same-named TPH roots would otherwise
-# overwrite each other's entry here, letting registry A's concrete-subtype
-# descendant silently inherit registry B's table, the collision `_ENTITY_BY_
-# CLASS` / `_REGISTRY_OF_CLASS` already avoid by keying on the class object —
-# this map now follows the same collision-proof shape). Populated when the
-# root compiles (its EntityConfig.table, possibly ``None``, written AFTER
-# `cls` exists — the root's OWN `EntityMeta.__new__` call, never
-# `_derive_inheritance`, which runs before `cls` is built), consumed by a
-# concrete-subtype descendant that declares no table of its own (resolved to
-# the root's CLASS via THIS family's own D-20 registry — never a foreign
-# one, `EntityRegistry.resolve`'s own scoping guarantee).
-_FAMILY_SHARED_TABLE: dict[type, str | None] = {}
-
-
 def _derive_inheritance(
     cls_name: str, config: EntityConfig, family_parent: type | None, registry: EntityRegistry
 ) -> tuple[InheritanceRecord | None, str | None]:
@@ -897,9 +913,15 @@ def _derive_inheritance(
     """
     if family_parent is None:
         if isinstance(config.inheritance, FamilyRoot):
-            # `_FAMILY_SHARED_TABLE` is populated by the CALLER (`EntityMeta.
-            # __new__`, once the root's own `cls` exists to key it by) — never
-            # here, which runs before `cls` is built.
+            if config.inheritance.strategy == "table-per-hierarchy":
+                table = config.table if config.table is not None else camel_to_snake(cls_name)
+            else:
+                if config.table is not None:
+                    raise EntityDefinitionError(
+                        f"{cls_name}: a table-per-concrete-subtype family root is "
+                        "tableless; declare tables only on concrete subtypes"
+                    )
+                table = None
             record = InheritanceRecord(
                 role="root",
                 strategy=config.inheritance.strategy,
@@ -907,7 +929,7 @@ def _derive_inheritance(
                 tag_column=config.inheritance.tag,
                 tag_value=None,
             )
-            return record, None  # the root is always tableless (rowless too)
+            return record, table
         if isinstance(config.inheritance, Concrete):
             raise EntityDefinitionError(
                 f"{cls_name}: EntityConfig(inheritance=Concrete(...)) requires subclassing "
@@ -951,21 +973,15 @@ def _derive_inheritance(
             "them (inheritance-temporal-axes-not-root-owned)"
         )
     if isinstance(config.inheritance, Concrete):
-        if config.table is not None:
-            table = config.table
-        elif root_record.inheritance.strategy == "table-per-hierarchy":
-            # Resolved through THIS family's own D-20 registry scope (never
-            # `_ENTITY_BY_CLASS`/a bare name lookup directly): the root is
-            # ALWAYS already registered here by the time any of its
-            # descendants compile (a Python subclass statement cannot name a
-            # base class that has not finished executing), so this can never
-            # cross into a foreign registry's same-named root (S1).
-            root_cls = registry.resolve(root_record.name)
-            assert root_cls is not None  # the root always registers into this scope
-            shared = _FAMILY_SHARED_TABLE.get(root_cls)
-            table = shared if shared is not None else camel_to_snake(root_record.name)
+        if root_record.inheritance.strategy == "table-per-hierarchy":
+            if config.table is not None:
+                raise EntityDefinitionError(
+                    f"{cls_name}: a table-per-hierarchy concrete subtype is tableless; "
+                    "the family root owns the shared table"
+                )
+            table = None
         else:  # table-per-concrete-subtype: every concrete owns its own table
-            table = camel_to_snake(cls_name)
+            table = config.table if config.table is not None else camel_to_snake(cls_name)
         record = InheritanceRecord(
             role="concrete-subtype",
             strategy=None,
@@ -990,14 +1006,14 @@ def _derive_inheritance(
 
 
 def _value_object_of(decl: _VoDecl) -> ValueObjectRecord:
-    py_name, vo_class, cardinality, spec = decl
+    py_name, vo_class, multiplicity, spec = decl
     canonical = spec.name if spec.name is not None else snake_to_camel(py_name)
     sub = structure_of(vo_class)
     return ValueObjectRecord(
         name=canonical,
-        column=spec.column if spec.column is not None else py_name,
+        column=None if spec.column in (None, canonical) else spec.column,
         nullable=spec.nullable,
-        cardinality=cardinality,
+        multiplicity=multiplicity,
         attributes=sub.attributes,
         value_objects=sub.value_objects,
     )
@@ -1021,17 +1037,20 @@ def _attribute_of(decl: _AttrDecl) -> AttributeRecord:
     )
 
 
-def _relationship_of(decl: _RelDecl) -> RelationshipRecord:
+def _relationship_of(decl: _RelDecl) -> RelationshipDeclaration:
     py_name, _inner, spec = decl
     canonical = spec.name if spec.name is not None else snake_to_camel(py_name)
-    return RelationshipRecord(
+    if isinstance(spec, RelationshipSpec):
+        return DefiningRelationship(
+            name=canonical,
+            cardinality=spec.cardinality,
+            join=spec.join,
+            dependent=spec.dependent,
+            order_by=spec.order_by,
+        )
+    return ReverseRelationship(
         name=canonical,
-        related_entity=spec.related_entity,
-        cardinality=spec.cardinality,
-        join=spec.join,
-        reverse_name=spec.reverse_name,
-        dependent=spec.dependent,
-        foreign_key=spec.foreign_key,
+        reverse_of=spec.reverse_of,
         order_by=spec.order_by,
     )
 
@@ -1043,7 +1062,7 @@ def _reject_reserved(py_name: str) -> None:
 
 def _reject_collisions(
     attributes: tuple[AttributeRecord, ...],
-    relationships: tuple[RelationshipRecord, ...],
+    relationships: tuple[RelationshipDeclaration, ...],
     value_objects: tuple[ValueObjectRecord, ...] = (),
 ) -> None:
     seen: set[str] = set()
@@ -1091,8 +1110,10 @@ class EntityMeta(ModelMetaclass):
         # m-inheritance "Inherited members") — every axis-interval scalar
         # attribute below (`in_z`/`out_z`, bitemporal `from_z`/`thru_z`)
         # becomes optional at construction, never caller-required.
-        axis_columns: frozenset[str] = frozenset(
-            column for aoa in config.as_of for column in (aoa.from_column, aoa.to_column)
+        axis_attributes: frozenset[str] = frozenset(
+            attribute
+            for axis in config.as_of
+            for attribute in (axis.start_attribute, axis.end_attribute)
         )
 
         annotations: dict[str, Any] = class_body_annotations(namespace)
@@ -1111,9 +1132,10 @@ class EntityMeta(ModelMetaclass):
                 spec = value if isinstance(value, FieldSpec) else FieldSpec()
                 annotations[py_name] = inner  # Attr[T] -> T for Pydantic
                 column = spec.column if spec.column is not None else py_name
+                canonical = spec.name if spec.name is not None else snake_to_camel(py_name)
                 if spec.default is not UNSET:
                     namespace[py_name] = spec.default
-                elif column in axis_columns:
+                elif canonical in axis_attributes:
                     # D-31: axis-governed attributes are optional at
                     # construction — a Pydantic default of `None`, never
                     # validated (`model_config` sets no `validate_default`),
@@ -1130,12 +1152,12 @@ class EntityMeta(ModelMetaclass):
                     namespace.pop(py_name, None)
                 vo_info = vo_field_info(inner)
                 if vo_info is not None:
-                    vo_class, cardinality = vo_info
-                    vo_decls.append((py_name, vo_class, cardinality, spec))
+                    vo_class, multiplicity = vo_info
+                    vo_decls.append((py_name, vo_class, multiplicity, spec))
                 else:
                     attr_decls.append((py_name, inner, spec))
             elif kind == "rel":
-                if not isinstance(value, RelationshipSpec):
+                if not isinstance(value, (RelationshipSpec, ReverseRelationshipSpec)):
                     raise EntityDefinitionError(
                         f"relationship {py_name!r} needs `= Relationship(...)`"
                     )
@@ -1148,9 +1170,9 @@ class EntityMeta(ModelMetaclass):
                 )
 
         namespace["__annotations__"] = annotations
-        for vo_py_name, vo_cls, vo_cardinality, _vo_spec in vo_decls:
+        for vo_py_name, vo_cls, vo_multiplicity, _vo_spec in vo_decls:
             namespace[f"_validate_vo_{vo_py_name}"] = vo_instance_validator(
-                vo_py_name, vo_cls, vo_cardinality
+                vo_py_name, vo_cls, vo_multiplicity
             )
 
         # Compile the metamodel record BEFORE Pydantic builds the model, so a
@@ -1171,7 +1193,7 @@ class EntityMeta(ModelMetaclass):
             table=resolved_table,
             mutability=cast("Any", _check_mutability(config.mutability)),
             attributes=attributes,
-            as_of_attributes=config.as_of,
+            as_of_axes=config.as_of,
             relationships=relationships,
             value_objects=value_objects,
             inheritance=inheritance_record,
@@ -1196,11 +1218,6 @@ class EntityMeta(ModelMetaclass):
             raise EntityDefinitionError(str(exc)) from exc
 
         cls = super().__new__(mcs, cls_name, bases, namespace, **kwargs)
-        if entity.inheritance is not None and entity.inheritance.role == "root":
-            # S1: keyed by `cls` itself (never the bare `cls_name`) — only
-            # possible here, once `cls` exists; `_derive_inheritance` runs
-            # before it does.
-            _FAMILY_SHARED_TABLE[cls] = config.table
         column_to_py: dict[str, str] = {}
         name_to_py: dict[str, str] = {}
         py_to_name: dict[str, str] = {}
@@ -1220,12 +1237,13 @@ class EntityMeta(ModelMetaclass):
                 pk_py.add(py_name)
             if spec.optimistic_locking:
                 framework_owned_py.add(py_name)
-            if column in axis_columns:
+            if canonical in axis_attributes:
                 axis_governed_py.add(py_name)
         vo_classes: dict[str, type] = {}
         for py_name, vo_class, _card, spec in vo_decls:
             canonical = spec.name if spec.name is not None else snake_to_camel(py_name)
-            column = spec.column if spec.column is not None else py_name
+            value_object = _value_object_of((py_name, vo_class, _card, spec))
+            column = value_object.storage_column
             setattr(
                 cls, py_name, Attr(AttributeRef(cls_name, canonical), py_name, resolved_registry)
             )
@@ -1236,10 +1254,15 @@ class EntityMeta(ModelMetaclass):
         relationship_py: dict[str, str] = {}
         for py_name, _inner, rel_spec in rel_decls:
             canonical = rel_spec.name if rel_spec.name is not None else snake_to_camel(py_name)
+            target = (
+                rel_spec.join.target.entity
+                if isinstance(rel_spec, RelationshipSpec)
+                else rel_spec.reverse_of.rpartition(".")[0]
+            )
             rel_descriptor: Rel[Any] = Rel(
                 RelationshipRef(cls_name, canonical),
                 py_name,
-                rel_spec.related_entity,
+                target,
                 resolved_registry,
             )
             setattr(cls, py_name, rel_descriptor)
@@ -1302,17 +1325,15 @@ class Entity(BaseModel, metaclass=EntityMeta):
         statement-level ``.narrow(...)`` clause grants no retroactive scope to
         an already-built ``where`` argument. An inheritance participant's
         temporal axes resolve through the family root
-        (`_temporal_as_of_attributes`), so a concrete-subtype class's
+        (`_temporal_as_of_axes`), so a concrete-subtype class's
         ``.as_of()`` / ``.as_of_range()`` / ``.history()`` accepts its
         inherited ``ConcreteType.axis`` spelling even though the class's own
         record declares no axis locally.
         """
         record = entity_record_of(cls)
         registry = _registry_of_class(cls)
-        as_of = _temporal_as_of_attributes(record, cls) if record is not None else ()
-        statement = build_statement(
-            cls.__name__, predicates, as_of_attributes=as_of, registry=registry
-        )
+        as_of = _temporal_as_of_axes(record, cls) if record is not None else ()
+        statement = build_statement(cls.__name__, predicates, as_of_axes=as_of, registry=registry)
         validate_operation(cls.__name__, statement.predicate, registry.metamodel())
         return statement
 

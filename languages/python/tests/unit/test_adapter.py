@@ -631,7 +631,7 @@ def test_run_case_graphs_observation_reports_ordered_milestone_pin_graphs() -> N
     assert envelope["status"] == "ok"
     assert envelope["observations"]["roundTrips"] == 1
     graphs = envelope["observations"]["graphs"]
-    assert [g["pin"]["processingDate"] for g in graphs] == [
+    assert [g["pin"]["transactionTime"] for g in graphs] == [
         "2024-01-01T00:00:00+00:00",
         "2024-04-01T00:00:00+00:00",
     ]

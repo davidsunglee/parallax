@@ -74,7 +74,7 @@ def test_relationship_path_dynamic_hop_on_an_undeclared_relationship_raises() ->
         _ = sm.SnapOrder.items.bogus_relationship  # type: ignore[attr-defined]
 
 
-def test_relationship_path_dynamic_hop_on_an_unregistered_target_entity_raises() -> None:
+def test_relationship_path_dynamic_hop_on_an_unregistered_target_raises() -> None:
     from parallax.core.entity.expressions import RelationshipPath
 
     bogus = RelationshipPath(segments=(PathSegment(rel="X.y"),), target="NotRegisteredXyz")
@@ -215,9 +215,9 @@ def test_narrow_clause_after_an_out_of_scope_where_predicate_never_legalizes_it(
 # --------------------------------------------------------------------------- #
 def test_history_then_include_is_deferred() -> None:
     with pytest.raises(UnsupportedFeatureError, match="snapshot-history-includes"):
-        mm.Balance.where().history("processing").include(sm.SnapOrder.items)
+        mm.Balance.where().history("transaction_time").include(sm.SnapOrder.items)
 
 
 def test_include_then_history_is_deferred() -> None:
     with pytest.raises(UnsupportedFeatureError, match="snapshot-history-includes"):
-        mm.Balance.where().include(sm.SnapOrder.items).history("processing")
+        mm.Balance.where().include(sm.SnapOrder.items).history("transaction_time")

@@ -11,6 +11,7 @@ when:
   model:
     entities:
       - name: Animal
+        table: animal
         inheritance:
           strategy: table-per-hierarchy
           role: root

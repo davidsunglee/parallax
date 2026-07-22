@@ -92,12 +92,12 @@ def vo_document_violation(container: _VoContainer, value: object) -> VoDocumentV
     is each caller's OWN required-ness concern, since "required" varies by
     context: a keyed write row's mutation-aware sparseness for a TOP-level
     member, versus an assignment's own value always being present by
-    construction); a container's OWN cardinality (``many`` -> a list of
+    construction); a container's OWN multiplicity (``many`` -> a list of
     documents, ``one`` -> a single document) and every nested value object's
     absence/presence INSIDE an already-present document ARE this function's
     concern (`m-value-object` "one atomic document bind").
     """
-    if container.cardinality == "many":
+    if container.multiplicity == "many":
         if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
             return VoDocumentViolation("", "not-a-list", value)
         elements = cast("Sequence[object]", value)

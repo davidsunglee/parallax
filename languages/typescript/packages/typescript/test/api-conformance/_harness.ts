@@ -108,7 +108,7 @@ export interface CaseFixture {
  * build a `px` handle bound to the shipped adapter on that same container. The DDL
  * and the `px` handle both use the provider's injected dialect, so the case runs
  * against Postgres or MariaDB identically. The clock is fixed so audit-write
- * processing instants are deterministic across a run.
+ * Transaction-Time instants are deterministic across a run.
  */
 export async function provisionCase(
   provider: ApiConformanceProvider,
@@ -561,19 +561,19 @@ function translateGraphNode(
 ): Record<string, unknown> {
   const entity = metamodel.entity(entityName);
   const nameByColumn = new Map(entity.attributes().map((attr) => [attr.column, attr.name]));
-  const relByName = new Map(entity.relationships().map((rel) => [rel.name, rel]));
+  const relByName = new Map(entity.relationships().map((rel) => [rel.identity.name, rel]));
   const out: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(node)) {
     const rel = relByName.get(key);
     if (rel !== undefined) {
       if (Array.isArray(value)) {
         out[key] = value.map((child) =>
-          translateGraphNode(child as Record<string, unknown>, rel.relatedEntity, metamodel),
+          translateGraphNode(child as Record<string, unknown>, rel.join.target.entity, metamodel),
         );
       } else if (value !== null && typeof value === "object") {
         out[key] = translateGraphNode(
           value as Record<string, unknown>,
-          rel.relatedEntity,
+          rel.join.target.entity,
           metamodel,
         );
       } else {

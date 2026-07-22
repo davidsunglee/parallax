@@ -16,7 +16,7 @@ pytestmark = pytest.mark.unit
 
 # A leading-underscore identifier (never a legitimate public-API token): the
 # Usage Guide's rendered read/graph story snippets must never expose one (the
-# m-inheritance-100 story once leaked `_temporal_as_of_attributes`, a
+# m-inheritance-100 story once leaked `_temporal_as_of_axes`, a
 # framework-internal, in a comment). Scoped to the read/graph snippets this
 # remediation touches — the write stories' own local `_as_rows` helper is a
 # separate, ledgered cleanup (D-23).

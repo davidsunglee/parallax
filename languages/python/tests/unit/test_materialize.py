@@ -144,7 +144,7 @@ def test_decode_row_decodes_a_top_level_many_cardinality_value_object() -> None:
             ValueObject(
                 name="stops",
                 column="stops",
-                cardinality="many",
+                multiplicity="many",
                 attributes=(ValueObjectAttribute(name="label", type="string"),),
             ),
         ),

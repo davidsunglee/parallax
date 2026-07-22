@@ -13,6 +13,7 @@ when:
   model:
     entities:
       - name: Animal
+        table: animal
         inheritance:
           strategy: table-per-hierarchy
           role: root
@@ -20,7 +21,6 @@ when:
         attributes:
           - { name: id, type: int64, column: id, primaryKey: true }
       - name: Dog
-        table: animal
         inheritance:
           strategy: table-per-hierarchy
           role: concrete-subtype

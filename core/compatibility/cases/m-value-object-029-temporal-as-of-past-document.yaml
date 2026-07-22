@@ -2,11 +2,11 @@
 # as-of a PAST instant — the discriminating half of the milestone proof
 # (m-value-object "Inherited temporality", m-temporal-read), on Postgres AND MariaDB.
 #
-# Pinning processingDate to a past instant (2024-04-01) injects the [from, to)
-# containment predicate (toIsInclusive = false => `in_z <= ? and out_z > ?`, the pin as
+# Pinning transactionTime to a past instant (2024-04-01) injects the [from, to)
+# containment predicate (`in_z <= ? and out_z > ?`, because axes are half-open), the pin as
 # TWO binds), NOT the current-row form. Over supplier id 1's history that returns the
 # THEN-KNOWN milestone D1a (Oslo, home phone) — the document superseded on 2024-06-01
-# — distinct from the current D1b (Bergen) case 028 returns as-of now. id 2's single
+# — distinct from the current D1b (Bergen) case 028 returns at Latest. id 2's single
 # milestone [2024-02-01, infinity) contains 2024-04-01, so it returns its D2 unchanged.
 # Reading the SAME owner at different processing instants returns a DIFFERENT address
 # document: the document rides the milestone exactly like a scalar column.
@@ -26,8 +26,8 @@ when:
     asOf:
       operand:
         all: {}
-      asOfAttr: Supplier.processingDate
-      date: "2024-04-01T00:00:00+00:00"
+      dimension: transactionTime
+      coordinate: "2024-04-01T00:00:00+00:00"
 then:
   statements:
     - sql:

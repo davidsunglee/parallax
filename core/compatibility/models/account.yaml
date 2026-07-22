@@ -21,14 +21,13 @@ entity:
   name: Account
   namespace: parallax.compatibility
   table: account
-  mutability: transactional
-  temporal: non-temporal
+  persistence: read-write
   attributes:
     - name: id
       type: int64
       column: id
       primaryKey: true
-      pkGenerator: none
+      pkGeneration: application-assigned
     - name: owner
       type: string
       column: owner

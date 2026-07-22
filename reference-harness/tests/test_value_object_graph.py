@@ -9,10 +9,8 @@ fixtures the way each driver would), so they also pin that the authored
 `then.graph` of cases 023 / 024 equals the materializer's projection of the real
 fixtures.
 
-The graph comparison of a to-many value-object member (`phones`) is
-order-insensitive (a multiset compare): element order in a `many` member is
-unspecified (m-value-object), so the authored arrays match regardless of order
-while element multiplicity is still enforced.
+The graph comparison of a to-many value-object member (`phones`) preserves
+document order: element order in a `many` member is semantic (m-value-object).
 """
 
 from __future__ import annotations
@@ -28,6 +26,7 @@ from reference_harness.case_runner import (
     CaseFailure,
     _assert_single_statement_graph,
     _decode_document,
+    _graphs_equal,
     _project_value_object,
 )
 
@@ -167,3 +166,34 @@ def test_decode_document_is_dialect_agnostic() -> None:
     assert _decode_document(b'{"a": 1}') == {"a": 1}  # MariaDB JSON bytes
     assert _decode_document({"a": 1}) == {"a": 1}  # Postgres parsed jsonb
     assert _decode_document(None) is None  # SQL NULL column
+
+
+def test_many_value_object_document_order_is_semantic() -> None:
+    model = _customer_model()
+    actual = {
+        "Customer": [
+            {
+                "id": 1,
+                "address": {
+                    "phones": [
+                        {"type": "home", "number": "1"},
+                        {"type": "work", "number": "2"},
+                    ]
+                },
+            }
+        ]
+    }
+    expected = {
+        "Customer": [
+            {
+                "id": 1,
+                "address": {
+                    "phones": [
+                        {"type": "work", "number": "2"},
+                        {"type": "home", "number": "1"},
+                    ]
+                },
+            }
+        ]
+    }
+    assert not _graphs_equal(actual, expected, model)

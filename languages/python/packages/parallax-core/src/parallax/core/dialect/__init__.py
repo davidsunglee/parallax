@@ -119,7 +119,7 @@ class Dialect:
         return f"cast({extraction} as {target})"
 
     def array_guard(self, document: str, segments: tuple[str, ...]) -> tuple[str, list[object]]:
-        """The array-type guard fragment for a `cardinality: many` value-object
+        """The array-type guard fragment for a `multiplicity: many` value-object
         member (m-sql "To-many — exists / notExists and any-element predicates",
         abbreviated `<arr>`): the strict `jsonb_array_elements` ERRORS on a
         non-array argument, so the array is reached through a `case` that yields

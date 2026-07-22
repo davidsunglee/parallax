@@ -17,6 +17,7 @@ when:
   model:
     entities:
       - name: Animal
+        table: animal
         inheritance:
           strategy: table-per-hierarchy
           role: root
@@ -31,7 +32,6 @@ when:
           - { name: licenseId, type: string, column: license_id, nullable: true }
           - { name: revision, type: int32, column: revision, optimisticLocking: true }
       - name: Dog
-        table: animal
         inheritance:
           role: concrete-subtype
           parent: Pet

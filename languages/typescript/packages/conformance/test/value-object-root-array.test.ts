@@ -5,7 +5,7 @@
  *
  * This drives the REAL metamodel-backed resolver (`MetamodelSchema.resolveNested`)
  * over a synthetic, schema-valid descriptor whose top-level `tags` value object is
- * `cardinality: many`, proving:
+ * `multiplicity: many`, proving:
  *  - `resolveNested` honors the TOP-LEVEL cardinality — a top-level `many` sets
  *    `manyIndex = 0` (the document column itself is the array, an empty `arrayPath`)
  *    and, for an exists path with empty `rest`, `leafIsMany = true`;
@@ -27,24 +27,21 @@ const ROOT_ARRAY_DESCRIPTOR = {
     name: "Tagged",
     namespace: "parallax.test",
     table: "tagged",
-    mutability: "transactional",
-    temporal: "non-temporal",
+    persistence: "read-write",
     attributes: [
       {
         name: "id",
         type: "int64",
         column: "id",
         primaryKey: true,
-        pkGenerator: "none",
+        pkGeneration: "application-assigned",
       },
     ],
     valueObjects: [
       {
         name: "tags",
         column: "tags",
-        mapping: "json",
-        cardinality: "many",
-        nullable: true,
+        multiplicity: "many",
         attributes: [
           { name: "label", type: "string", nullable: true },
           { name: "weight", type: "int64", nullable: true },

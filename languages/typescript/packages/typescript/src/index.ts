@@ -27,9 +27,9 @@ export {
 // --- fluent query DSL (spec §2) ---------------------------------------------
 export {
   AttributeExpression,
-  type AxisRefs,
   buildFindOperation,
   type FindOptions,
+  LATEST,
   NavigationPath,
   NestedFieldExpression,
   OrderKeyExpression,
@@ -59,7 +59,6 @@ export {
   ParallaxReadBeforeWriteError,
   type ParallaxRow,
   ParallaxTemporalCloseError,
-  ParallaxTemporalOptimisticError,
   ParallaxTransaction,
   ParallaxWriteValidationError,
   RuntimeSchema,

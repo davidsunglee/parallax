@@ -34,14 +34,13 @@ import {
   type EntityMetadata,
   Metamodel,
   type NormalizedAttribute,
-  type NormalizedRelationship,
   type NormalizedValueObjectMember,
   type Operation,
   type PathSegment,
+  type RelationshipMetadata,
 } from "@parallax/operation";
 import type {
   AsOfFragment,
-  Axis,
   AxisPins as CompilerAxisPins,
   ProjectionColumn,
   ResolvedColumn,
@@ -62,9 +61,9 @@ import type { LoadedCase } from "./discover.js";
  * `order_id` — the join already names both key columns and which entity owns each.
  */
 export interface RelationshipCorrelation {
-  readonly relationship: NormalizedRelationship;
+  readonly relationship: RelationshipMetadata;
   readonly sourceEntity: EntityMetadata;
-  readonly relatedEntity: EntityMetadata;
+  readonly targetEntity: EntityMetadata;
   readonly childTable: string;
   readonly childColumn: string;
   readonly parentColumn: string;
@@ -134,22 +133,22 @@ export class MetamodelSchema implements SchemaResolver {
     // 0. A top-level `many` value object makes the ROOT the first `many` crossing
     // (`manyIndex === 0`, an empty `arrayPath` — the document column itself is the
     // array); a nested `many` at `rest[k]` is `k + 1`; a to-one-only path is `-1`.
-    let manyIndex = top.cardinality === "many" ? 0 : -1;
+    let manyIndex = top.multiplicity === "many" ? 0 : -1;
     let leafIsAttribute = false;
     let leafType: string | undefined;
     // An exists path with empty `rest` terminates AT the top-level value object, so a
     // top-level `many` is itself the to-many leaf (`nestedExists(Class.vo)`).
-    let leafIsMany = rest.length === 0 && top.cardinality === "many";
+    let leafIsMany = rest.length === 0 && top.multiplicity === "many";
     rest.forEach((segment, index) => {
       const nested = member.valueObjects.find((vo) => vo.name === segment);
       if (nested !== undefined) {
-        if (nested.cardinality === "many" && manyIndex === -1) {
+        if (nested.multiplicity === "many" && manyIndex === -1) {
           manyIndex = index + 1;
         }
         member = nested;
         if (index === rest.length - 1) {
           leafIsAttribute = false;
-          leafIsMany = nested.cardinality === "many";
+          leafIsMany = nested.multiplicity === "many";
         }
         return;
       }
@@ -181,15 +180,14 @@ export class MetamodelSchema implements SchemaResolver {
     const [className, relName] = splitRef(ref);
     const sourceEntity = this.metamodel.entity(className);
     const relationship = sourceEntity.relationshipByName(relName);
-    const { thisAttr, relatedAttr } = parseJoin(relationship.join);
-    const relatedEntity = this.metamodel.entity(relationship.relatedEntity);
-    const parent = sourceEntity.attributeByName(thisAttr);
-    const child = relatedEntity.attributeByName(relatedAttr);
+    const targetEntity = this.metamodel.entity(relationship.join.target.entity);
+    const parent = sourceEntity.attributeByName(relationship.join.source.name);
+    const child = targetEntity.attributeByName(relationship.join.target.name);
     return {
       relationship,
       sourceEntity,
-      relatedEntity,
-      childTable: relatedEntity.table,
+      targetEntity,
+      childTable: targetEntity.table,
       childColumn: child.column,
       parentColumn: parent.column,
     };
@@ -208,24 +206,17 @@ export class MetamodelSchema implements SchemaResolver {
     return this.rootEntity.name;
   }
 
-  /** Resolve a `Class.asOfAttribute` reference to the axis it pins (m-temporal-read). */
-  resolveAsOfAxis(ref: string): Axis {
-    const [className, attrName] = splitRef(ref);
-    const entity = this.metamodel.entity(className);
-    return entity.asOfAttributeByName(attrName).axis as Axis;
-  }
-
   /**
    * The class name of the related (child) entity a `Class.relationship` reference
    * navigates to — the EXISTS child, for as-of propagation into the semi-join.
    */
-  relatedEntityName(ref: string): string {
-    return this.correlation(ref).relatedEntity.name;
+  targetEntityName(ref: string): string {
+    return this.correlation(ref).targetEntity.name;
   }
 
   /**
    * The injected as-of predicate for an entity's declared axes under a set of
-   * pins, qualified with `alias`. Delegates the per-axis rule + business/processing
+   * pins, qualified with `alias`. Delegates the per-dimension rule and canonical
    * composition + default-injection to `@parallax/bitemporal` (the m-temporal-read owner),
    * reached through the composition path (`@parallax/sql` imports no m-temporal-read). A
    * non-temporal entity yields an empty fragment.
@@ -239,10 +230,10 @@ export class MetamodelSchema implements SchemaResolver {
   /** Resolve an entity's declared as-of axes into alias-qualified {@link ResolvedAxis}. */
   private resolveAxes(entity: string, alias: string): readonly ResolvedAxis[] {
     const metadata = this.metamodel.entity(entity);
-    return metadata.asOfAttributes().map((axis) => ({
-      axis: axis.axis as TemporalAxis,
-      fromExpr: `${alias}.${this.dialect.quoteIdentifier(axis.fromColumn)}`,
-      toExpr: `${alias}.${this.dialect.quoteIdentifier(axis.toColumn)}`,
+    return metadata.asOfAxes().map((axis) => ({
+      dimension: axis.dimension as TemporalAxis,
+      startExpr: `${alias}.${this.dialect.quoteIdentifier(axis.startColumn)}`,
+      endExpr: `${alias}.${this.dialect.quoteIdentifier(axis.endColumn)}`,
       toIsInclusive: axis.toIsInclusive,
       infinity: axis.infinity,
     }));
@@ -253,7 +244,7 @@ export class MetamodelSchema implements SchemaResolver {
  * The base **read projection** (m-sql "Read projection") for an entity: slot 1 —
  * every declared attribute's column in `columnOrder` (declaration order), which
  * already INCLUDES the `optimisticLocking` version column and each as-of axis's
- * `fromColumn` / `toColumn` interval columns (all ordinary declared attributes,
+ * `startColumn` / `endColumn` interval columns (all ordinary declared attributes,
  * `m-descriptor`) — followed on an **instance-form** read by slot 4: every declared
  * top-level value object's backing column, LAST. Slots 2/3 (the table-per-hierarchy
  * tag column, the table-per-concrete-subtype `familyVariant` literal) apply only to
@@ -461,19 +452,4 @@ function splitRef(ref: string): [string, string] {
     throw new Error(`malformed reference '${ref}' (expected 'Class.member')`);
   }
   return [ref.slice(0, dot), ref.slice(dot + 1)];
-}
-
-/**
- * Parse a canonical relationship `join` predicate `this.<thisAttr> =
- * <Related>.<relatedAttr>` into its two attribute names. The form is fixed by the
- * metamodel schema, so a malformed join is a descriptor error, not a guess.
- */
-function parseJoin(join: string): { thisAttr: string; relatedAttr: string } {
-  const match = /^\s*this\.(\w+)\s*=\s*\w+\.(\w+)\s*$/.exec(join);
-  if (!match) {
-    throw new Error(
-      `unsupported relationship join '${join}' (expected 'this.<attr> = <Related>.<attr>')`,
-    );
-  }
-  return { thisAttr: match[1] as string, relatedAttr: match[2] as string };
 }

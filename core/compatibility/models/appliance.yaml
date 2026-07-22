@@ -25,8 +25,7 @@
 entities:
   - name: Appliance
     namespace: parallax.compatibility
-    mutability: transactional
-    temporal: non-temporal
+    persistence: read-write
     inheritance:
       role: root
       strategy: table-per-concrete-subtype
@@ -35,7 +34,7 @@ entities:
         type: int64
         column: id
         primaryKey: true
-        pkGenerator: none
+        pkGeneration: application-assigned
       - name: name
         type: string
         column: name
@@ -47,8 +46,6 @@ entities:
   - name: Fridge
     namespace: parallax.compatibility
     table: fridge
-    mutability: transactional
-    temporal: non-temporal
     inheritance:
       role: concrete-subtype
       parent: Appliance
@@ -60,8 +57,6 @@ entities:
   - name: Oven
     namespace: parallax.compatibility
     table: oven
-    mutability: transactional
-    temporal: non-temporal
     inheritance:
       role: concrete-subtype
       parent: Appliance

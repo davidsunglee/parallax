@@ -18,7 +18,7 @@ import pytest
 import mirrored_models as mm
 import snapshot_models as sm
 import value_object_models as vom
-from parallax.core import AsOfAttribute, Attr, Entity, EntityConfig, Field
+from parallax.core import AsOfAxisMetadata, Attr, Entity, EntityConfig, Field
 from parallax.core.entity import ModelCopyError
 from parallax.core.entity.expressions import AttributeAssignment
 from parallax.core.entity.value_object import ValueObject, VoField
@@ -40,16 +40,16 @@ class _WhereTemporalLedger(Entity, frozen=True):
         namespace="parallax.compatibility",
         mutability="transactional",
         as_of=(
-            AsOfAttribute(
-                name="processingDate", from_column="in_z", to_column="out_z", axis="processing"
+            AsOfAxisMetadata(
+                dimension="transactionTime", start_attribute="tx_start", end_attribute="tx_end"
             ),
         ),
     )
 
     id: Attr[int] = Field(primary_key=True, pk_generator="none", type="int64")
     amount: Attr[Decimal] = Field(type="decimal(18,2)")
-    processing_from: Attr[dt.datetime] = Field(column="in_z")
-    processing_to: Attr[dt.datetime] = Field(column="out_z")
+    tx_start: Attr[dt.datetime] = Field(name="tx_start", column="in_z")
+    tx_end: Attr[dt.datetime] = Field(name="tx_end", column="out_z")
 
 
 # A small LOCAL non-temporal entity mirroring `models/shipment.yaml`'s own
@@ -99,19 +99,21 @@ def test_set_on_a_nested_value_object_path_raises() -> None:
 
 
 def test_set_on_a_top_level_value_object_serializes_to_its_document() -> None:
-    # D-33: `geo`/`phones` stay unset (relying on their own declared
-    # defaults), so `to_document` omits them entirely rather than binding an
-    # explicit `null`/`[]`.
+    # `geo` stays unset and omitted; multiplicity-many `phones` uses its empty
+    # tuple default, serialized as the sole zero-element representation `[]`.
     address = vom.Address(street="1 Aurora Ave", city="Oslo")
     assignment = vom.Customer.address.set(address)
-    assert assignment.value == {"street": "1 Aurora Ave", "city": "Oslo"}
+    assert assignment.value == {"street": "1 Aurora Ave", "city": "Oslo", "phones": []}
 
 
 def test_set_on_a_many_value_object_member_serializes_to_a_document_list() -> None:
-    # D-33: neither `Tag` sets its own optional `detail`/`details`.
+    # The optional one `detail` stays omitted; required-many `details` defaults empty.
     tags = (sm.Tag(label="a"), sm.Tag(label="b"))
     assignment = sm.SnapOrderStatus.tags.set(tags)
-    assert assignment.value == [{"label": "a"}, {"label": "b"}]
+    assert assignment.value == [
+        {"label": "a", "details": []},
+        {"label": "b", "details": []},
+    ]
 
 
 def test_set_on_a_scalar_passes_a_plain_literal_through_unchanged() -> None:
@@ -238,12 +240,14 @@ def test_is_bare_false_with_distinct() -> None:
 
 
 def test_is_bare_false_with_as_of() -> None:
-    statement = _WhereTemporalLedger.where(_WhereTemporalLedger.id == 1).as_of(processing=LATEST)
+    statement = _WhereTemporalLedger.where(_WhereTemporalLedger.id == 1).as_of(
+        transaction_time=LATEST
+    )
     assert statement.is_bare() is False
 
 
 def test_is_bare_false_with_history() -> None:
-    statement = _WhereTemporalLedger.where(_WhereTemporalLedger.id == 1).history("processing")
+    statement = _WhereTemporalLedger.where(_WhereTemporalLedger.id == 1).history("transaction_time")
     assert statement.is_bare() is False
 
 

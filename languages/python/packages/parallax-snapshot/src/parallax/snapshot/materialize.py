@@ -231,7 +231,7 @@ def _decode_element(
         nested_raw = document.get(nested.name)
         result[nested.name] = (
             _decode_many(nested_raw, nested)
-            if nested.cardinality == "many"
+            if nested.multiplicity == "many"
             else _decode_element(nested_raw, nested)
         )
     return result
@@ -240,7 +240,7 @@ def _decode_element(
 def _decode_many(
     raw: object, container: ValueObject | NestedValueObject
 ) -> list[dict[str, object] | None]:
-    """Decode a ``many``-cardinality member: a non-list (SQL NULL, JSON null, a
+    """Decode a ``many``-multiplicity member: a non-list (SQL NULL, JSON null, a
     non-array scalar or object) collapses to an EMPTY list — never a
     nullability violation, per m-value-object's own array-absence rule."""
     if not isinstance(raw, list):
@@ -250,7 +250,7 @@ def _decode_many(
 
 
 def _decode_value_object(raw: object, vo: ValueObject) -> object:
-    if vo.cardinality == "many":
+    if vo.multiplicity == "many":
         return _decode_many(raw, vo)
     return _decode_element(raw, vo)
 
@@ -284,10 +284,10 @@ def decode_row(
     """
     position = _resolved_position(meta, entity_name, narrow_to)
     value_objects = _superset_value_objects(meta, position)
-    vo_columns = {vo.column for vo in value_objects}
+    vo_columns = {vo.storage_column for vo in value_objects}
     fields: dict[str, object] = {key: value for key, value in row.items() if key not in vo_columns}
     for vo in value_objects:
-        fields[vo.column] = _decode_value_object(row.get(vo.column), vo)
+        fields[vo.storage_column] = _decode_value_object(row.get(vo.storage_column), vo)
     return fields
 
 

@@ -13,8 +13,8 @@ when:
         eq:
           attr: Balance.acctNum
           value: A
-      asOfAttr: Balance.processingDate
-      date: now
+      dimension: transactionTime
+      coordinate: latest
 then:
   statements:
     - sql:

@@ -83,7 +83,8 @@ separately from the DAG in [`modules.md`](modules.md).
   developer declares an eager-fetch navigation set.
 - **(decide and record — All slices)** Temporal-read spelling for `asOf`,
   `asOfRange`, and `history`: public axis names, timestamp type and precision,
-  `now`/omitted axes, and rejection of invalid combinations.
+  Valid-Time / Transaction-Time dimension names, Latest defaults, finite Now,
+  timestamp type and precision, and rejection of invalid combinations.
 - **(decide and record — When claimed: `m-agg`)** Aggregation result and operation
   spelling for `groupBy`, aggregate functions, and `having`. Also record SQL
   lowering only when `m-sql-agg` is claimed.
@@ -215,10 +216,10 @@ Retain the branch matching the lifecycle profile; do not answer both.
   participation mode.
 - **(decide and record — All slices)** Buffered/batched write surfacing, flush
   controls, foreign-key ordering, and read-your-own-writes behavior.
-- **(decide and record — All slices)** Developer-facing audit-only `insert`,
-  `update`, and `terminate`, and bitemporal `insertUntil`, `updateUntil`, and
-  `terminateUntil` names. Record processing-instant sourcing, business windows,
-  and precision validation.
+- **(decide and record — All slices)** Developer-facing Transaction-Time-Only
+  `insert`, `update`, and `terminate`, and Bitemporal `insertUntil`, `updateUntil`,
+  and `terminateUntil` names. Record Transaction-Time clock sourcing, Valid-Time
+  windows, and precision validation.
 - **(decide and record — All slices)** How this surface rests on the object model
   in [§3](#3-object-lifecycle-profile)/[§4](#4-result-collections-and-materialization).
   This section reads as self-contained, but parts of it are not: the participating

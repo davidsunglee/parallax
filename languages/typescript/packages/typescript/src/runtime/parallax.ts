@@ -31,7 +31,7 @@ import { RuntimeSchema } from "./schema.js";
 import {
   type Assignment,
   type Concurrency,
-  isAuditOnly,
+  hasTransactionTime,
   isPkEqualityPredicate,
   type ObservedVersions,
   observedKey,
@@ -48,9 +48,9 @@ import {
 // `#parallax` barrel and applications reach the port types through one package.
 export type { ParallaxDatabase, ParallaxRow } from "@parallax/db";
 
-/** The clock strategy (spec §3.1) — supplies the transaction processing instant. */
+/** The clock strategy (spec §3.1) — supplies the Transaction-Time instant. */
 export interface ParallaxClock {
-  /** The current processing instant, as an ISO-8601 UTC microsecond string. */
+  /** The current Transaction-Time instant, as an ISO-8601 UTC microsecond string. */
   now(): string;
 }
 
@@ -237,8 +237,10 @@ export class EntityFinder<T extends ParallaxRow = ParallaxRow> {
   private identityKeyNames(): readonly string[] {
     const pkNames = this.entity.primaryKey().map((attr) => attr.name);
     const fromNames = this.entity
-      .asOfAttributes()
-      .map((axis) => this.entity.attributes().find((attr) => attr.column === axis.fromColumn)?.name)
+      .asOfAxes()
+      .map(
+        (axis) => this.entity.attributes().find((attr) => attr.column === axis.startColumn)?.name,
+      )
       .filter((name): name is string => name !== undefined);
     return [...pkNames, ...fromNames];
   }
@@ -435,7 +437,7 @@ export class TransactionEntity<T extends ParallaxRow = ParallaxRow> {
   /**
    * `create` a new managed object from named input (spec §3.1). A non-temporal
    * entity buffers the insert (flushed set-based + FK-safe at commit); an
-   * audit-only entity opens a milestone at the transaction processing instant.
+   * Transaction-Time entity opens a milestone at the transaction instant.
    */
   async create(input: Record<string, unknown>): Promise<void> {
     await this.writer.create(this.entity, input);
@@ -498,15 +500,15 @@ export class ParallaxTransaction {
     private readonly database: ParallaxDatabase,
     /** The injected m-dialect dialect, threaded to the in-transaction finders' reads. */
     private readonly dialect: Dialect,
-    /** The processing instant captured when the transaction opened (spec §3.1). */
-    readonly processingInstant: string,
+    /** The Transaction-Time instant captured when the transaction opened (spec §3.1). */
+    readonly transactionInstant: string,
     /** The m-unit-work correctness strategy for this unit of work (default `locking`). */
     readonly concurrency: Concurrency = "locking",
   ) {
     this.writer = new TransactionWriter(
       database,
       this.dialect,
-      processingInstant,
+      transactionInstant,
       concurrency,
       this.observed,
     );
@@ -551,13 +553,13 @@ export class ParallaxTransaction {
    * (optimistic mode) or advances from it (versioned entities, both modes):
    *
    *  - a VERSIONED entity records the observed `version` NUMBER;
-   *  - a processing-axis TEMPORAL (audit-only) entity — which carries no version
-   *    column — records the observed processing-from (`in_z`) as its wire STRING, the
+   *  - a Transaction-Time entity — which carries no version column — records the
+   *    observed Transaction-Time start (`in_z`) as its wire string, the
    *    version analogue an optimistic close gates on (m-temporal-read/m-opt-lock). Recording FILTERS to the
    *    CURRENT (`out_z = infinity`) milestone: a multi-milestone as-of/history read
    *    returns both the current row AND closed rows for one pk, so recording every row
    *    (last-row-wins) could overwrite the current `in_z` with a stale closed one — the
-   *    gate must key on the CURRENT milestone's processing-from.
+   *    gate must key on the Latest milestone's Transaction-Time start.
    *
    * A non-versioned, non-temporal entity records nothing.
    */
@@ -577,32 +579,32 @@ export class ParallaxTransaction {
       }
       return;
     }
-    const processingFrom = entity.processingFromAttribute();
-    if (processingFrom === undefined) {
+    const txStart = entity.txStartAttribute();
+    if (txStart === undefined) {
       return;
     }
     // Only the CURRENT milestone (`out_z = infinity`) carries the observed `in_z` an
     // optimistic close gates on; skip closed milestones so a history/as-of read that
     // returns them too cannot overwrite the current observation (last-row-wins). If a
-    // temporal entity somehow declares no processing-to attribute we cannot identify
-    // the current milestone, so we record NOTHING rather than risk latching a stale
+    // temporal entity somehow declares no Transaction-Time end attribute we cannot identify
+    // the Latest milestone, so we record nothing rather than risk latching a stale
     // `in_z` — a subsequent gated close then read-before-writes, which is safe.
-    const processingTo = entity.processingToAttribute();
-    if (processingTo === undefined) {
+    const txEnd = entity.txEndAttribute();
+    if (txEnd === undefined) {
       return;
     }
     for (const row of rows) {
       const pkValue = row[pk.name];
-      const inZValue = row[processingFrom.name];
-      if (pkValue != null && inZValue != null && isInfinity(toWire(row[processingTo.name]))) {
+      const inZValue = row[txStart.name];
+      if (pkValue != null && inZValue != null && isInfinity(toWire(row[txEnd.name]))) {
         this.observed.set(observedKey(entity.name, pkValue), toWire(inZValue) as string);
       }
     }
   }
 
-  /** True when the entity chains audit milestones (declares a processing axis). */
-  isAuditOnly(name: string): boolean {
-    return isAuditOnly(this.metamodel.entity(name));
+  /** True when the entity chains milestones in Transaction Time. */
+  hasTransactionTime(name: string): boolean {
+    return hasTransactionTime(this.metamodel.entity(name));
   }
 
   /** Flush buffered writes at the unit-of-work boundary (called at commit). */

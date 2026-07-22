@@ -1,21 +1,21 @@
 # Write sequence: updateUntil — the BITEMPORAL RECTANGLE SPLIT (the signature
-# full-bitemporal write). A value is corrected for a BOUNDED business window only,
-# while preserving the audit trail on the processing axis (research §6).
+# full-bitemporal write). A value is corrected for a BOUNDED Valid-Time window only,
+# while preserving the audit trail on the Transaction-Time dimension (research §6).
 #
-# An updateUntil over a business window [businessFrom, businessTo) never mutates a
+# An updateUntil over a Valid-Time window [validFrom, until) never mutates a
 # value in place. It (1) INACTIVATES the original current row by closing its
-# PROCESSING axis at the transaction instant (out_z = txInstant), then chains
+# Transaction-Time dimension at the transaction instant (out_z = txInstant), then chains
 # THREE new rows at fresh processing time [txInstant, infinity):
-#   head   : business [from_z, businessFrom)  — the OLD value before the window
-#   middle : business [businessFrom, businessTo) — the NEW value, for the window
-#   tail   : business [businessTo, infinity)  — the OLD value after the window
+#   head   : business [from_z, validFrom)  — the OLD value before the window
+#   middle : business [validFrom, until) — the NEW value, for the window
+#   tail   : business [until, infinity)  — the OLD value after the window
 # so the value changes ONLY inside the window. The original survives as a row
-# closed on the processing axis — the bitemporal audit trail.
+# closed on the Transaction-Time dimension — the bitemporal audit trail.
 #
 # The sequence (self-contained, from an empty table):
-#   step 1 insert      : open the current rectangle, value 100,
+#   step 1 insert      : open the Latest rectangle, value 100,
 #                        business [2024-01-01, infinity), processing [2024-01-01, infinity)  (1 statement)
-#   step 2 updateUntil : set value 200 for business window [2024-03-01, 2024-09-01)
+#   step 2 updateUntil : set value 200 for Valid-Time window [2024-03-01, 2024-09-01)
 #                        at txInstant 2024-02-15 — inactivate the original
 #                        (out_z = 2024-02-15) and chain head / middle / tail
 #                        at processing [2024-02-15, infinity)                   (4 statements)
@@ -24,10 +24,10 @@
 # middle (200) + tail (100), the three new rows current on processing. The close
 # UPDATE is keyed by the current-on-processing predicate (pos_id AND
 # out_z = infinity), never a blind in-place set.
-# the inactivated original — closed on the processing axis (out_z finite)
-# head: old value 100 before the business window, current on processing
-# middle: NEW value 200 for the business window, current on processing
-# tail: old value 100 after the business window, current on processing
+# the inactivated original — closed on the Transaction-Time dimension (out_z finite)
+# head: old value 100 before the Valid-Time window, current on processing
+# middle: NEW value 200 for the Valid-Time window, current on processing
+# tail: old value 100 after the Valid-Time window, current on processing
 model: models/position.yaml
 tags: [m-bitemp-write, m-sql, bitemporal, temporal, write-sequence, update-until, rectangle-split, slice-mvp-1, slice-snapshot-1, slice-managed-1]
 shape: writeSequence
@@ -36,16 +36,18 @@ when:
     - mutation: insert
       entity: Position
       statements: 1
-      note: open the original current rectangle [business inf, processing inf)
+      note: open the original Latest rectangle [business inf, processing inf)
       rows:
-        - { id: 1, acctNum: A, value: 100.00, businessFrom: "2024-01-01T00:00:00+00:00", businessTo: infinity }
+        - { id: 1, acctNum: A, value: 100.00 }
+      validFrom: "2024-01-01T00:00:00+00:00"
       at: "2024-01-01T00:00:00+00:00"
     - mutation: updateUntil
       entity: Position
       statements: 4
-      note: inactivate the original on the processing axis, then chain head / middle / tail
+      note: inactivate the original on the Transaction-Time dimension, then chain head / middle / tail
       rows:
-        - { id: 1, value: 200.00, businessFrom: "2024-03-01T00:00:00+00:00" }
+        - { id: 1, value: 200.00 }
+      validFrom: "2024-03-01T00:00:00+00:00"
       at: "2024-02-15T00:00:00+00:00"
       until: "2024-09-01T00:00:00+00:00"
 then:

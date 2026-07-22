@@ -15,8 +15,8 @@ when:
       operand:
         asOf:
           operand: { all: {} }
-          asOfAttr: Invoice.processingDate
-          date: now
+          dimension: transactionTime
+          coordinate: latest
       paths:
         - [{ rel: Invoice.lines }]
 then:

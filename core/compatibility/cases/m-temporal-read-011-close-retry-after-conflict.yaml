@@ -29,7 +29,7 @@ when:
     - note: stale close — gates on the observed in_z 2024-02-01, which no longer matches ⇒ 0 rows
       write: { id: 2 }
       at: "2024-10-01T00:00:00+00:00"
-      observedInZ: "2024-02-01T00:00:00+00:00"
+      observedTxStart: "2024-02-01T00:00:00+00:00"
       statements:
         - sql:
             postgres: update balance set out_z = ? where bal_id = ? and out_z = ? and in_z = ?
@@ -38,7 +38,7 @@ when:
     - note: retry — re-read the fresh current in_z (2024-09-01) and re-apply ⇒ 1 row closed
       write: { id: 2 }
       at: "2024-10-01T00:00:00+00:00"
-      observedInZ: "2024-09-01T00:00:00+00:00"
+      observedTxStart: "2024-09-01T00:00:00+00:00"
       statements:
         - sql:
             postgres: update balance set out_z = ? where bal_id = ? and out_z = ? and in_z = ?

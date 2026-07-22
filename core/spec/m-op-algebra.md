@@ -4,9 +4,11 @@
 language — and its **canonical serialization**. The algebra *is* the protocol: the
 compatibility suite's queries are instances of it, and every implementation
 provides operation serde behavior that round-trips them. `m-op-algebra` depends
-on `m-descriptor` (operations are bound to metamodel attributes) and on
-`m-inheritance` (the `narrow` node constrains a polymorphic entity position
-against the family's effective concrete-subtype set).
+on `m-metamodel` (resolved operations are bound to canonical Entity, Attribute,
+Relationship, and Value Object Identities) and on `m-inheritance` (the `narrow`
+node constrains a polymorphic entity position against the family's effective
+concrete-subtype set). Relationship behavior is not reconstructed here:
+`m-navigate` consumes the compiled `m-relationship` facet.
 
 The canonical schema is
 [`core/schemas/operation.schema.json`](../schemas/operation.schema.json).
@@ -67,9 +69,10 @@ Aggregation (`groupBy` / aggregate functions / `having`) is a **deferred**
 extension of the same algebra — see `m-agg`. Each node below carries a single
 canonical serialization; a conforming operation serde implementation **MUST**
 validate and round-trip every node in `operation.schema.json` unchanged. Executing
-a node may depend on other core modules: `m-descriptor` supplies attributes,
-relationships, as-of attributes, and value objects; `m-sql` owns SQL lowering;
-`m-temporal-read` owns temporal interval behavior.
+a node may depend on other core modules: `m-metamodel` supplies canonical local
+attributes, relationship declarations, As-Of Axes, and Value Objects;
+`m-navigate` owns behavior over the compiled `m-relationship` facet; `m-sql`
+owns SQL lowering; `m-temporal-read` owns temporal interval behavior.
 
 ### Identities
 
@@ -206,7 +209,7 @@ to the algebra.
 
 #### To-many members — any-element and same-element semantics
 
-A value object declared `cardinality: many` is a **JSON array** of documents in the
+A value object declared `multiplicity: many` is an ordered **JSON array** of documents in the
 same column (`m-value-object`). Two things become expressible over it, and the
 distinction between them is load-bearing.
 
@@ -321,26 +324,32 @@ serde must round-trip the temporal query tree exactly.
 
 | Operation | Encoding | Meaning |
 |---|---|---|
-| `asOf` | `{ "asOf": { "operand", "asOfAttr", "date" } }` | pin one temporal dimension to a single instant |
-| `asOfRange` | `{ "asOfRange": { "operand", "asOfAttr", "from", "to" } }` | return milestones whose interval overlaps the half-open range `[from, to)` |
-| `history` | `{ "history": { "operand", "asOfAttr" } }` | return the full milestone set on that dimension; no as-of predicate is injected for that axis |
+| `asOf` | `{ "asOf": { "operand", "dimension", "coordinate" } }` | pin one temporal dimension to Latest or a finite instant |
+| `asOfRange` | `{ "asOfRange": { "operand", "dimension", "start", "end" } }` | return milestones whose interval overlaps the half-open range `[start, end)` |
+| `history` | `{ "history": { "operand", "dimension" } }` | return the full milestone set on that dimension; no as-of predicate is injected for that axis |
 
-`asOfAttr` is a metamodel as-of-attribute reference of the form
-`Class.asOfAttribute`. `date`, `from`, and `to` are temporal pin strings: either
-`now` or an ISO-8601 UTC instant. `now` means the current milestone on that axis,
-whose upper bound is the `m-core` / `m-dialect` `infinity` sentinel.
+`dimension` is `validTime` or `transactionTime`, resolved against the target
+Entity's effective As-Of Axes. `coordinate` is either the literal `latest` or an
+ISO-8601 UTC instant. Latest lowers to the dimension's physical end column equal
+to the `m-core` / `m-dialect` `infinity` sentinel. A finite current-clock instant
+is Now and lowers to interval containment; `now` is not a serde alias for Latest.
+`start` and `end` are finite ISO-8601 UTC instants with `start < end`.
 
-Each temporal node wraps an `operand`. A single-axis temporal entity uses one
-wrapper. A bitemporal entity pins or unpins both axes by nesting one temporal
-wrapper per `asOfAttribute`; omitted axes follow the `m-temporal-read`
-default-injection rule and are read as `now`. The injected temporal term composes
-with the operand via `and`, after user predicates, so user binds precede temporal
-binds.
+Each temporal node wraps an `operand`. A Transaction-Time-Only Entity uses one
+wrapper. A Bitemporal Entity pins or unpins both dimensions by nesting one
+temporal wrapper per dimension; omitted dimensions follow the `m-temporal-read`
+default-injection rule and are read as Latest. The canonical nesting and bind
+order is Valid Time followed by Transaction Time. The injected temporal term
+composes with the operand via `and`, after user predicates, so user binds precede
+temporal binds.
 
 ## Relationship algebra
 
-Relationships (`m-descriptor`) are traversed **by name** — never as a user-written
-join. A navigation node references a relationship as `Class.relationship` and (for
+Relationships are traversed **by canonical Relationship Identity** — never as a
+user-written join. The canonical wire form spells that identity as
+`Class.relationship`; resolution binds it to `m-metamodel`, while `m-navigate`
+uses the compiled `m-relationship` facet for target and join behavior. A
+navigation node references a relationship and (for
 the filter forms) carries an optional inner operation constraining the related
 entity. These nodes lower to **correlated semi-joins** so a to-many traversal
 never multiplies the queried entity's rows (`m-sql`, `m-navigate`).

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable
+from dataclasses import fields
 from pathlib import Path
 from typing import Any, cast
 
@@ -14,12 +15,16 @@ import yaml
 from parallax.conformance import case_format
 from parallax.core.descriptor import (
     UNSET,
+    AsOfAxisMetadata,
     Attribute,
+    DefiningRelationship,
     DescriptorError,
     Entity,
     Metamodel,
     NestedValueObject,
     Relationship,
+    RelationshipJoin,
+    RelationshipTarget,
     ValueObject,
     ValueObjectAttribute,
     canonicalize,
@@ -66,7 +71,7 @@ def test_canonical_form_validates_against_metamodel_schema(path: Path) -> None:
     _validate(canonicalize(_raw(path)), _SCHEMA)
 
 
-def test_pk_generator_string_spelling_is_preserved() -> None:
+def test_pk_generation_application_assigned_is_canonicalized() -> None:
     document = {
         "entity": {
             "name": "A",
@@ -75,9 +80,8 @@ def test_pk_generator_string_spelling_is_preserved() -> None:
                 {
                     "name": "id",
                     "type": "int64",
-                    "column": "id",
                     "primaryKey": True,
-                    "pkGenerator": "none",
+                    "pkGeneration": "application-assigned",
                 }
             ],
         }
@@ -85,7 +89,7 @@ def test_pk_generator_string_spelling_is_preserved() -> None:
     assert canonicalize(document) == document
 
 
-def test_pk_generator_object_spelling_is_preserved() -> None:
+def test_pk_generation_sequence_object_is_preserved() -> None:
     document = {
         "entity": {
             "name": "B",
@@ -94,14 +98,32 @@ def test_pk_generator_object_spelling_is_preserved() -> None:
                 {
                     "name": "id",
                     "type": "int64",
-                    "column": "id",
                     "primaryKey": True,
-                    "pkGenerator": {"strategy": "sequence", "sequenceName": "s", "batchSize": 2},
+                    "pkGeneration": {"strategy": "sequence", "name": "s", "batchSize": 2},
                 }
             ],
         }
     }
     assert canonicalize(document) == document
+
+
+def test_pk_generation_object_requires_sequence_strategy() -> None:
+    document = {
+        "entity": {
+            "name": "Bad",
+            "table": "bad",
+            "attributes": [
+                {
+                    "name": "id",
+                    "type": "int64",
+                    "primaryKey": True,
+                    "pkGeneration": {"strategy": "max"},
+                }
+            ],
+        }
+    }
+    with pytest.raises(DescriptorError, match="requires `strategy: sequence`"):
+        deserialize(document)
 
 
 def test_read_only_and_default_survive_round_trip() -> None:
@@ -120,20 +142,17 @@ def test_read_only_and_default_survive_round_trip() -> None:
         "entity": {
             "name": "Flag",
             "table": "flag",
-            "mutability": "transactional",
             "attributes": [
-                {"name": "id", "type": "int64", "column": "id", "primaryKey": True},
+                {"name": "id", "type": "int64", "primaryKey": True},
                 {
                     "name": "on",
                     "type": "boolean",
-                    "column": "on",
                     "readOnly": True,
                     "default": True,
                 },
                 {
                     "name": "note",
                     "type": "string",
-                    "column": "note",
                     "nullable": True,
                     "default": None,
                 },
@@ -189,7 +208,7 @@ def test_missing_or_conflicting_entity_form_is_rejected(document: dict[str, Any]
         deserialize(document)
 
 
-def test_temporal_disagreeing_with_axes_is_rejected() -> None:
+def test_retired_temporal_spelling_is_rejected() -> None:
     document = {
         "entity": {
             "name": "Bad",
@@ -198,17 +217,64 @@ def test_temporal_disagreeing_with_axes_is_rejected() -> None:
             "attributes": [{"name": "id", "type": "int64", "column": "id", "primaryKey": True}],
         }
     }
-    with pytest.raises(DescriptorError, match="temporal"):
+    with pytest.raises(DescriptorError, match="unknown properties: `temporal`"):
+        deserialize(document)
+
+
+def test_non_string_persistence_is_rejected() -> None:
+    document = {
+        "entity": {
+            "name": "Bad",
+            "table": "bad",
+            "persistence": True,
+            "attributes": [{"name": "id", "type": "int64", "primaryKey": True}],
+        }
+    }
+    with pytest.raises(DescriptorError, match="`persistence` must be a string"):
+        deserialize(document)
+
+
+@pytest.mark.parametrize(
+    "relationship",
+    [
+        {"name": "peer", "reverseOf": "B.other", "cardinality": "one-to-one"},
+        {"name": "peer", "reverseOf": "other"},
+    ],
+)
+def test_malformed_reverse_relationship_is_rejected(relationship: dict[str, object]) -> None:
+    document = {
+        "entity": {
+            "name": "A",
+            "table": "a",
+            "attributes": [{"name": "id", "type": "int64", "primaryKey": True}],
+            "relationships": [relationship],
+        }
+    }
+    with pytest.raises(DescriptorError):
+        deserialize(document)
+
+
+def test_non_string_value_object_multiplicity_is_rejected() -> None:
+    document = {
+        "entity": {
+            "name": "A",
+            "table": "a",
+            "attributes": [{"name": "id", "type": "int64", "primaryKey": True}],
+            "valueObjects": [{"name": "tags", "multiplicity": 2}],
+        }
+    }
+    with pytest.raises(DescriptorError, match="`multiplicity` must be a string"):
         deserialize(document)
 
 
 @pytest.mark.parametrize(
     "attribute",
     [
-        {"name": "id", "type": "int64"},  # missing column
-        {"name": "id", "type": "int64", "column": "id", "nullable": "yes"},  # non-bool
-        {"name": "id", "type": "int64", "column": "id", "maxLength": "x"},  # non-int
-        {"name": "id", "type": "int64", "column": "id", "pkGenerator": "wild"},  # bad strategy
+        {"name": "id", "type": "int64", "column": 7},  # non-string override
+        {"name": "id", "type": "int64", "nullable": "yes"},  # non-bool
+        {"name": "id", "type": "int64", "maxLength": "x"},  # non-int
+        {"name": "id", "type": "int64", "pkGeneration": "wild"},  # bad strategy
+        {"name": "id", "type": "int64", "pkGenerator": "none"},  # retired key
     ],
 )
 def test_malformed_attributes_are_rejected(attribute: dict[str, Any]) -> None:
@@ -216,51 +282,114 @@ def test_malformed_attributes_are_rejected(attribute: dict[str, Any]) -> None:
         deserialize({"entity": {"name": "A", "table": "a", "attributes": [attribute]}})
 
 
-def test_bad_axis_default_infinity_and_direction_are_rejected() -> None:
-    base = {"name": "id", "type": "int64", "column": "id", "primaryKey": True}
-    with pytest.raises(DescriptorError, match="axis"):
+def test_pk_generation_requires_a_primary_key() -> None:
+    with pytest.raises(DescriptorError, match="requires `primaryKey: true`"):
         deserialize(
             {
                 "entity": {
                     "name": "A",
-                    "attributes": [base],
-                    "asOfAttributes": [
-                        {"name": "d", "fromColumn": "a", "toColumn": "b", "axis": "wall-clock"}
-                    ],
+                    "table": "a",
+                    "attributes": [{"name": "value", "type": "int64", "pkGeneration": "max"}],
                 }
             }
         )
-    with pytest.raises(DescriptorError, match="now"):
+
+
+def test_cross_namespace_relationship_identity_round_trips_exactly() -> None:
+    document = {
+        "entities": [
+            {
+                "name": "Source",
+                "namespace": "alpha",
+                "table": "source",
+                "attributes": [{"name": "id", "type": "int64", "primaryKey": True}],
+                "relationships": [
+                    {
+                        "name": "targets",
+                        "cardinality": "one-to-many",
+                        "join": {
+                            "source": "id",
+                            "target": {"entity": "beta.Target", "attribute": "sourceId"},
+                        },
+                    }
+                ],
+            },
+            {
+                "name": "Target",
+                "namespace": "beta",
+                "table": "target",
+                "attributes": [
+                    {"name": "id", "type": "int64", "primaryKey": True},
+                    {"name": "sourceId", "type": "int64"},
+                ],
+                "relationships": [{"name": "source", "reverseOf": "alpha.Source.targets"}],
+            },
+            {
+                "name": "Target",
+                "namespace": "alpha",
+                "table": "other_target",
+                "attributes": [{"name": "id", "type": "int64", "primaryKey": True}],
+            },
+        ]
+    }
+
+    metamodel = deserialize(document)
+    declaration = metamodel.entity("alpha.Source").relationships[0]
+    assert isinstance(declaration, DefiningRelationship)
+    assert declaration.join.target.entity == "beta.Target"
+    assert metamodel.entity(declaration.join.target.entity).namespace == "beta"
+    relationship = metamodel.relationship("alpha.Source", "targets")
+    assert relationship.join.target.entity == "beta.Target"
+    assert {field.name for field in fields(Relationship)} == {
+        "name",
+        "cardinality",
+        "join",
+        "reverse",
+        "dependent",
+        "order_by",
+    }
+    with pytest.raises(KeyError):
+        metamodel.entity("Target")
+
+    serialized = serialize(metamodel)
+    source, target, _collision = cast("list[dict[str, Any]]", serialized["entities"])
+    source_relationships = cast("list[dict[str, Any]]", source["relationships"])
+    source_join = cast("dict[str, Any]", source_relationships[0]["join"])
+    source_target = cast("dict[str, Any]", source_join["target"])
+    target_relationships = cast("list[dict[str, Any]]", target["relationships"])
+    assert source_target["entity"] == "beta.Target"
+    assert target_relationships[0]["reverseOf"] == "alpha.Source.targets"
+
+
+def test_bad_axis_reference_and_direction_are_rejected() -> None:
+    base = {"name": "id", "type": "int64", "primaryKey": True}
+    with pytest.raises(DescriptorError, match="dimension"):
         deserialize(
             {
                 "entity": {
                     "name": "A",
                     "attributes": [base],
-                    "asOfAttributes": [
+                    "asOfAxes": [
                         {
-                            "name": "d",
-                            "fromColumn": "a",
-                            "toColumn": "b",
-                            "axis": "processing",
-                            "default": "later",
+                            "dimension": "wallClock",
+                            "startAttribute": "id",
+                            "endAttribute": "id",
                         }
                     ],
                 }
             }
         )
-    with pytest.raises(DescriptorError, match="infinity"):
+    with pytest.raises(DescriptorError, match="applicable attribute"):
         deserialize(
             {
                 "entity": {
                     "name": "A",
                     "attributes": [base],
-                    "asOfAttributes": [
+                    "asOfAxes": [
                         {
-                            "name": "d",
-                            "fromColumn": "a",
-                            "toColumn": "b",
-                            "axis": "processing",
-                            "infinity": "max",
+                            "dimension": "transactionTime",
+                            "startAttribute": "missing",
+                            "endAttribute": "id",
                         }
                     ],
                 }
@@ -269,19 +398,30 @@ def test_bad_axis_default_infinity_and_direction_are_rejected() -> None:
     with pytest.raises(DescriptorError, match="direction"):
         deserialize(
             {
-                "entity": {
-                    "name": "A",
-                    "attributes": [base],
-                    "relationships": [
-                        {
-                            "name": "r",
-                            "relatedEntity": "B",
-                            "cardinality": "one-to-many",
-                            "join": "x",
-                            "orderBy": [{"attr": "id", "direction": "sideways"}],
-                        }
-                    ],
-                }
+                "entities": [
+                    {
+                        "name": "A",
+                        "attributes": [base],
+                        "relationships": [
+                            {
+                                "name": "rs",
+                                "cardinality": "one-to-many",
+                                "join": {
+                                    "source": "id",
+                                    "target": {"entity": "B", "attribute": "aId"},
+                                },
+                                "orderBy": [{"attribute": "id", "direction": "sideways"}],
+                            }
+                        ],
+                    },
+                    {
+                        "name": "B",
+                        "attributes": [
+                            {"name": "id", "type": "int64"},
+                            {"name": "aId", "type": "int64"},
+                        ],
+                    },
+                ]
             }
         )
 
@@ -324,18 +464,19 @@ def test_serialize_covers_optional_relationship_and_value_object_shapes() -> Non
         mutability="transactional",
         attributes=(Attribute(name="id", type="int64", column="id", primary_key=True),),
         relationships=(
-            Relationship(
+            DefiningRelationship(
                 name="peer",
-                related_entity="Other",
                 cardinality="many-to-one",
-                join="this.otherId = Other.id",
-            ),  # no reverseName / foreignKey / orderBy
+                join=RelationshipJoin(
+                    source="id", target=RelationshipTarget(entity="Other", attribute="id")
+                ),
+            ),  # no reverse / orderBy
         ),
         value_objects=(
-            ValueObject(name="tags", column="tags", cardinality="many"),  # many, no attributes
+            ValueObject(name="tags", multiplicity="many"),  # many, no attributes
             ValueObject(
                 name="addr",
-                column="addr",
+                column="legacy_addr",
                 attributes=(ValueObjectAttribute(name="city", type="string"),),
                 value_objects=(
                     NestedValueObject(
@@ -348,14 +489,65 @@ def test_serialize_covers_optional_relationship_and_value_object_shapes() -> Non
             ),
         ),
     )
-    document = serialize(Metamodel(entities=(entity,)))
+    other = Entity(
+        name="Other",
+        table="other",
+        attributes=(Attribute(name="id", type="int64", column="id", primary_key=True),),
+    )
+    metamodel = Metamodel(entities=(entity, other))
+    document = serialize(metamodel)
     # Round-tripping proves both the optional-shape serialize branches and the
     # matching deserialize branches (no foreign key, many VO, empty nested VO).
-    assert deserialize(document) == Metamodel(entities=(entity,))
+    assert deserialize(document) == metamodel
 
 
-def test_value_object_mapping_must_be_json() -> None:
-    with pytest.raises(DescriptorError, match="json"):
+def test_serialize_rejects_unresolved_transition_records() -> None:
+    attribute = Attribute(name="id", type="int64", column="id", primary_key=True)
+    with pytest.raises(DescriptorError, match="has an invalid structured join"):
+        serialize(
+            Metamodel(
+                entities=(
+                    Entity(
+                        name="A",
+                        table="a",
+                        attributes=(attribute,),
+                        relationships=(
+                            DefiningRelationship(
+                                name="peer",
+                                cardinality="one-to-one",
+                                join=RelationshipJoin(
+                                    source="",
+                                    target=RelationshipTarget(entity="B", attribute="id"),
+                                ),
+                            ),
+                        ),
+                    ),
+                )
+            )
+        )
+    with pytest.raises(DescriptorError, match="has no Attribute references"):
+        serialize(
+            Metamodel(
+                entities=(
+                    Entity(
+                        name="A",
+                        table="a",
+                        attributes=(attribute,),
+                        as_of_axes=(
+                            AsOfAxisMetadata(
+                                dimension="transactionTime",
+                                start_attribute="tx_start",
+                                end_attribute="tx_end",
+                            ),
+                        ),
+                    ),
+                )
+            )
+        )
+
+
+def test_retired_value_object_mapping_is_rejected() -> None:
+    with pytest.raises(DescriptorError, match="unknown properties: `mapping`"):
         deserialize(
             {
                 "entity": {

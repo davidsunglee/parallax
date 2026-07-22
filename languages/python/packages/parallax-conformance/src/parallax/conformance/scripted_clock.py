@@ -1,7 +1,7 @@
 """``parallax.conformance.scripted_clock`` — a harness-owned, ordered-instant Clock.
 
 D-29 (COR-3 Phase 8 increment 7 completion round): every temporal writeSequence
-story needs SUCCESSIVE DISTINCT processing instants across its own choreography
+story needs SUCCESSIVE DISTINCT Transaction-Time instants across its own choreography
 (one corpus writeSequence entry, one flushing ``db.transact`` call, one Clock
 read each — the case-driven engine's own precedent,
 :func:`~parallax.conformance.engine.run_write_sequence_case`) — a single

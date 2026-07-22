@@ -34,7 +34,12 @@ from parallax.core.unit_work import (
     PlannedWrite,
     PredicateWrite,
 )
-from parallax.snapshot.handle._family import business_axis, processing_axis, version_attribute
+from parallax.snapshot.handle._family import (
+    axis_columns,
+    transaction_time_axis,
+    valid_time_axis,
+    version_attribute,
+)
 from parallax.snapshot.handle._keyed_sql import (
     key_predicate,
     lower_batched_update,
@@ -69,8 +74,8 @@ def lower_write(
     FK-ordered, elided) write instruction plus its bound transaction observation and
     affected-rows expectation. ``concurrency`` is the owning unit of work's
     participation mode (m-opt-lock: whether a versioned UPDATE's version gate, or a
-    temporal close's observed-in_z/business-discriminator gate, is emitted).
-    ``tx_instant`` is the flush's Clock-supplied processing instant
+    temporal close's observed Transaction-Time/Valid-Time gate, is emitted).
+    ``tx_instant`` is the flush's Clock-supplied Transaction-Time instant
     (``FlushPlan.tx_instant``) — REQUIRED for a temporal write (bound as the close's
     new ``out_z`` and every chained row's fresh ``in_z``), unused by the non-temporal
     forms.
@@ -136,7 +141,7 @@ def lower_write(
     if instruction.mutation not in _NON_TEMPORAL_VERBS:
         raise WriteLoweringError(
             f"{instruction.mutation!r} is a temporal milestone verb, and {entity.name!r} "
-            "declares no processing/business axis — a milestone verb never applies to a "
+            "declares no temporal dimension — a milestone verb never applies to a "
             "non-temporal entity (m-audit-write / m-bitemp-write)"
         )
     version_attr = version_attribute(declaring)
@@ -220,7 +225,7 @@ def _lower_temporal_write(
         # requires that the observation be of the current milestone"): every
         # engine-supplied temporal observation is latest-pinned by
         # construction (a no-op here), but a real `Transaction.find` observes
-        # `observation.latest_pinned` from the read's own processing-axis pin
+        # `observation.latest_pinned` from the read's own Transaction-Time pin
         # — a locking-mode write whose only observation is historical or
         # edge-pinned raises `HistoricalObservationError` here.
         opt_lock.check_locking_license(concurrency, latest_pinned=observation.latest_pinned)
@@ -252,31 +257,36 @@ def _render_close(
     gated: bool,
 ) -> LoweredStatement:
     """`update <table> set <out_col> = ? where <pk> [and <tag.column> = ?] and
-    <out_col> = infinity [and <business.from_col> = ? and <in_col> = ?]`.
+    <out_col> = infinity [and <valid.start_col> = ? and <tx.start_col> = ?]`.
 
     The current-row predicate (``<out_col> = infinity``) and, when gated, the
-    business discriminator then the observed-``in_z`` gate — LAST, no exception,
+    Valid-Time discriminator then the observed-``tx_start`` gate — LAST, no exception,
     the direct extension of `m-opt-lock`'s "the gate binds last" to a milestone
     close (`m-audit-write` "Composed predicate order under optimistic mode"). The
     identity predicate (pk, inheritance tag guard) reuses `key_predicate`
-    unchanged. Ungated (locking mode) renders neither the business discriminator
-    nor the ``in_z`` gate, regardless of whether ``step`` carries candidates for
+    unchanged. Ungated (locking mode) renders neither the Valid-Time discriminator
+    nor the Transaction-Time gate, regardless of whether ``step`` carries candidates for
     them — gating is concurrency-driven, never data-driven (`m-bitemp-write`
     "Locking-mode closes are UNGATED").
     """
-    proc = processing_axis(declaring)
+    tx_axis = transaction_time_axis(declaring)
+    tx_start_column, tx_end_column = axis_columns(declaring, tx_axis)
     where_sql, key_binds = key_predicate(meta, entity, step.identity, dialect, declaring)
-    where_sql = f"{where_sql} and {dialect.quote(proc.to_column)} = ?"
+    where_sql = f"{where_sql} and {dialect.quote(tx_end_column)} = ?"
     key_binds = (*key_binds, INFINITY_LITERAL)
-    if gated and step.gate_from_z is not None:
-        biz = business_axis(declaring)
-        where_sql = f"{where_sql} and {dialect.quote(biz.from_column)} = ?"
-        key_binds = (*key_binds, step.gate_from_z)
-    if gated and step.gate_in_z is not None:
-        where_sql = f"{where_sql} and {dialect.quote(proc.from_column)} = ?"
-        key_binds = (*key_binds, step.gate_in_z)
+    if gated and step.gate_valid_start is not None:
+        valid_axis = valid_time_axis(declaring)
+        valid_start_column, _valid_end_column = axis_columns(declaring, valid_axis)
+        where_sql = f"{where_sql} and {dialect.quote(valid_start_column)} = ?"
+        key_binds = (*key_binds, step.gate_valid_start)
+    if gated and step.gate_tx_start is not None:
+        where_sql = f"{where_sql} and {dialect.quote(tx_start_column)} = ?"
+        key_binds = (*key_binds, step.gate_tx_start)
+    table = inheritance.effective_table(meta, entity)
+    if table is None:
+        raise WriteLoweringError(f"{entity.name!r}: temporal write target has no effective table")
     statement = Statement(
-        f"update {entity.table} set {dialect.quote(proc.to_column)} = ? where {where_sql}",
+        f"update {table} set {dialect.quote(tx_end_column)} = ? where {where_sql}",
         (tx_instant, *key_binds),
     )
     return LoweredStatement(statement, expected_affected=1, stale_error=not gated)
@@ -289,8 +299,8 @@ def lower_temporal_close(
     dialect: Dialect,
     concurrency: Concurrency,
     tx_instant: str,
-    observed_in_z: str | None,
-    observed_business_from: str | None = None,
+    observed_tx_start: str | None,
+    observed_valid_start: str | None = None,
 ) -> LoweredStatement:
     """Lower a STANDALONE temporal milestone close — the `m-opt-lock` CONFLICT
     lane's own shape (`m-audit-write` / `m-bitemp-write`: "a conflict case runs
@@ -303,17 +313,19 @@ def lower_temporal_close(
     plan dispatch.
 
     ``identity`` is the (at minimum, primary-key) row the close's identity
-    predicate keys on; ``observed_in_z`` / ``observed_business_from`` are the
-    gate candidates a conflict case authors EXPLICITLY (``when.observedInZ`` /
-    the write row's own ``businessFrom``) — never a shadow-tracker lookup, a
+    predicate keys on; ``observed_tx_start`` / ``observed_valid_start`` are the
+    gate candidates a conflict case authors explicitly (``when.observedTxStart`` /
+    the write row's own ``valid_start``) — never a shadow-tracker lookup, a
     conflict case tests a KNOWN stale-or-fresh value.
     """
     entity = meta.entity(entity_name)
     declaring = inheritance.declaring_entity(meta, entity)
-    if observed_in_z is not None or observed_business_from is not None:
+    if observed_tx_start is not None or observed_valid_start is not None:
         opt_lock.check_locking_license(concurrency, latest_pinned=True)
     step = audit_write.MilestoneClose(
-        identity=identity, gate_in_z=observed_in_z, gate_from_z=observed_business_from
+        identity=identity,
+        gate_tx_start=observed_tx_start,
+        gate_valid_start=observed_valid_start,
     )
     gated = opt_lock.gates(concurrency)
     return _render_close(step, entity, declaring, dialect, meta, tx_instant, gated)

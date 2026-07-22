@@ -1,6 +1,6 @@
 # Same-transaction coalescing on a BITEMPORAL entity (m-bitemp-write + m-unit-work): a
 # plain insert followed by an update of the SAME new object in ONE unit of work
-# coalesces IN PLACE to a single fully-current-rectangle INSERT carrying the final
+# coalesces IN PLACE to a single fully-Latest-rectangle INSERT carrying the final
 # value — NO inactivation and NO head/tail rectangle split is fabricated for a state
 # that was never durably observable (Reladomo GenericBiTemporalDirector same-transaction
 # handling). Contrast m-bitemp-write-006 (plain update), whose update spans a prior
@@ -13,11 +13,11 @@
 #   step 0 write : buffer a plain INSERT of Position 9 (value 100, business
 #                  [2024-01-01, infinity), processing [2024-01-01, infinity)), then
 #                  buffer an UPDATE of its value to 150 — COALESCED into ONE
-#                  fully-current rectangle INSERT (thru_z = out_z = infinity) carrying
+#                  fully-Latest rectangle INSERT (thru_z = out_z = infinity) carrying
 #                  the FINAL value 150. No inactivation UPDATE, no head/tail split.
 #                  (1 round trip)
-#   step 1 find  : bitemporal as-of now on BOTH axes over position 9 observes ONE
-#                  fully-current rectangle at value 150.
+#   step 1 find  : bitemporal Latest on BOTH dimensions over position 9 observes ONE
+#                  fully-Latest rectangle at value 150.
 # roundTrips = 2 (the one coalesced insert + the find).
 model: models/position.yaml
 tags: [m-bitemp-write, m-unit-work, m-temporal-read, bitemporal, same-transaction-coalescing, scenario, slice-snapshot-1]
@@ -29,14 +29,14 @@ when:
     - write:
         # Buffer the plain keyed INSERT of the new position 9 (value 100, business
         # [2024-01-01, infinity)), then buffer the keyed UPDATE to value 150.
-        # `businessFrom` is the canonical business-axis lower bound (from_z); a plain
-        # insert omits `businessTo`, so the window runs to infinity. `at` is the
+        # `validFrom` is the canonical business-axis lower bound (from_z); a plain
+        # insert omits `until`, so the window runs to infinity. `at` is the
         # Clock-supplied processing instant (in_z), never an instruction field.
         - mutation: insert
           entity: Position
           rows:
             - { id: 9, acctNum: D, value: 100.00 }
-          businessFrom: "2024-01-01T00:00:00+00:00"
+          validFrom: "2024-01-01T00:00:00+00:00"
           at: "2024-01-01T00:00:00+00:00"
         - mutation: update
           entity: Position
@@ -44,7 +44,7 @@ when:
             - { id: 9, value: 150.00 }
           at: "2024-01-01T00:00:00+00:00"
       roundTrips: 1
-      note: the buffered plain INSERT (value 100) then the buffered UPDATE (value 150) of the SAME new position 9 coalesce IN PLACE to ONE fully-current rectangle INSERT carrying the final value 150 — no inactivation, no head/tail split
+      note: the buffered plain INSERT (value 100) then the buffered UPDATE (value 150) of the SAME new position 9 coalesce IN PLACE to ONE fully-Latest rectangle INSERT carrying the final value 150 — no inactivation, no head/tail split
       statements:
         - sql:
             postgres: insert into position(pos_id, acct_num, val, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?, ?)
@@ -58,12 +58,12 @@ when:
                 eq:
                   attr: Position.id
                   value: 9
-              asOfAttr: Position.processingDate
-              date: now
-          asOfAttr: Position.businessDate
-          date: now
+              dimension: transactionTime
+              coordinate: latest
+          dimension: validTime
+          coordinate: latest
       roundTrips: 1
-      note: bitemporal as-of now on both axes over position 9 observes ONE fully-current rectangle at the coalesced value 150
+      note: bitemporal Latest on both dimensions over position 9 observes ONE fully-Latest rectangle at the coalesced value 150
       statements:
         - sql:
             postgres: select t0.pos_id, t0.acct_num, t0.val, t0.from_z, t0.thru_z, t0.in_z, t0.out_z from position t0 where t0.pos_id = ? and t0.thru_z = ? and t0.out_z = ?

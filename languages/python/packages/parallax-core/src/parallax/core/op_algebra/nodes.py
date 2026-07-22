@@ -55,6 +55,7 @@ __all__ = [
 
 # A scalar literal usable as a bind (json/yaml primitive).
 Scalar = str | int | float | bool | None
+TemporalDimension = Literal["validTime", "transactionTime"]
 
 ComparisonOp = Literal[
     "eq", "notEq", "greaterThan", "greaterThanEquals", "lessThan", "lessThanEquals"
@@ -291,8 +292,8 @@ class AsOf:
     """Pin one temporal dimension to a single instant."""
 
     operand: Operation
-    as_of_attr: str
-    date: str
+    dimension: TemporalDimension
+    coordinate: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -300,9 +301,9 @@ class AsOfRange:
     """Scan a temporal dimension across a half-open ``[from, to)`` window."""
 
     operand: Operation
-    as_of_attr: str
-    from_: str
-    to: str
+    dimension: TemporalDimension
+    start: str
+    end: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -310,7 +311,7 @@ class History:
     """Return the full milestone set on one axis (no as-of predicate)."""
 
     operand: Operation
-    as_of_attr: str
+    dimension: TemporalDimension
 
 
 # The exhaustive read-path operation union (m-op-algebra); m-sql lowers over it.

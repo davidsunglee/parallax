@@ -76,10 +76,10 @@ def test_temporal_tpcs_class_export_has_no_drift_from_rate_yaml() -> None:
     assert mine == corpus
 
 
-def test_root_is_tableless_and_the_shared_table_defaults_from_it() -> None:
+def test_tph_root_owns_the_shared_table() -> None:
     root = entity_record_of(im.Payment)
     assert root is not None
-    assert root.table is None
+    assert root.table == "payment"
     assert root.inheritance is not None
     assert root.inheritance.role == "root"
     assert root.inheritance.strategy == "table-per-hierarchy"
@@ -87,17 +87,26 @@ def test_root_is_tableless_and_the_shared_table_defaults_from_it() -> None:
 
     card = entity_record_of(im.CardPayment)
     assert card is not None
-    assert card.table == "payment"  # shared table, derived from the root
+    assert card.table is None
     assert card.inheritance is not None
     assert card.inheritance.role == "concrete-subtype"
     assert card.inheritance.parent == "Payment"
     assert card.inheritance.tag_value == "card"
 
 
-def test_a_concrete_subtype_may_override_its_derived_table() -> None:
-    wire = entity_record_of(im.WirePayment)
-    assert wire is not None
-    assert wire.table == "wire_payment"  # explicit override, not the shared "payment" table
+def test_tph_concrete_subtype_cannot_override_the_root_table() -> None:
+    from parallax.core import Attr, EntityConfig, Field
+    from parallax.core.entity.base import Concrete
+
+    with pytest.raises(Exception, match="family root owns the shared table"):
+
+        class WirePayment(im.Payment, frozen=True):  # pyright: ignore[reportUnusedClass]
+            __parallax__ = EntityConfig(
+                table="wire_payment",
+                inheritance=Concrete(tag_value="wire"),
+            )
+
+            reference: Attr[str | None] = Field(type="string", max_length=32, nullable=True)
 
 
 def test_tpcs_abstract_subtype_is_tableless_and_concretes_own_their_table() -> None:
@@ -115,6 +124,21 @@ def test_tpcs_abstract_subtype_is_tableless_and_concretes_own_their_table() -> N
     assert invoice.inheritance.role == "concrete-subtype"
     assert invoice.inheritance.parent == "FinancialDocument"
     assert invoice.inheritance.tag_value is None  # TPCS carries no tag at all
+
+
+def test_tpcs_root_cannot_declare_a_table() -> None:
+    from parallax.core import Attr, Entity, EntityConfig, Field
+    from parallax.core.entity.base import FamilyRoot
+
+    with pytest.raises(Exception, match="family root is tableless"):
+
+        class BadRoot(Entity, frozen=True):  # pyright: ignore[reportUnusedClass]
+            __parallax__ = EntityConfig(
+                table="bad_root",
+                inheritance=FamilyRoot(strategy="table-per-concrete-subtype"),
+            )
+
+            id: Attr[int] = Field(primary_key=True, type="int64")
 
 
 def test_abstract_subtype_declaring_a_table_is_rejected() -> None:
@@ -150,7 +174,7 @@ def test_subclassing_a_non_family_entity_is_rejected() -> None:
 # --------------------------------------------------------------------------- #
 def test_concrete_subtype_declaring_its_own_as_of_is_rejected() -> None:
     from parallax.core import Attr, EntityConfig, Field
-    from parallax.core.descriptor import AsOfAttribute
+    from parallax.core.descriptor import AsOfAxisMetadata
     from parallax.core.entity.base import Concrete
 
     with pytest.raises(Exception, match="family SUBCLASS cannot declare EntityConfig\\(as_of"):
@@ -159,11 +183,10 @@ def test_concrete_subtype_declaring_its_own_as_of_is_rejected() -> None:
             __parallax__ = EntityConfig(
                 inheritance=Concrete(),
                 as_of=(
-                    AsOfAttribute(
-                        name="businessDate",
-                        from_column="from_z",
-                        to_column="thru_z",
-                        axis="business",
+                    AsOfAxisMetadata(
+                        dimension="validTime",
+                        start_attribute="valid_start",
+                        end_attribute="valid_end",
                     ),
                 ),
             )
@@ -173,18 +196,17 @@ def test_concrete_subtype_declaring_its_own_as_of_is_rejected() -> None:
 
 def test_abstract_subtype_declaring_its_own_as_of_is_rejected() -> None:
     from parallax.core import Attr, EntityConfig, Field
-    from parallax.core.descriptor import AsOfAttribute
+    from parallax.core.descriptor import AsOfAxisMetadata
 
     with pytest.raises(Exception, match="family SUBCLASS cannot declare EntityConfig\\(as_of"):
 
         class BadAbstract(im.Rate, frozen=True):  # pyright: ignore[reportUnusedClass]
             __parallax__ = EntityConfig(
                 as_of=(
-                    AsOfAttribute(
-                        name="businessDate",
-                        from_column="from_z",
-                        to_column="thru_z",
-                        axis="business",
+                    AsOfAxisMetadata(
+                        dimension="validTime",
+                        start_attribute="valid_start",
+                        end_attribute="valid_end",
                     ),
                 )
             )

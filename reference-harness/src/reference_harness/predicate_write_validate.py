@@ -224,8 +224,8 @@ def _materialization_columns(entity: Entity, instruction: dict[str, Any]) -> set
 def _temporal_columns(entity: Entity) -> set[str]:
     return {
         column
-        for axis in entity.as_of_attributes
-        for column in (axis.get("fromColumn"), axis.get("toColumn"))
+        for axis in entity.temporal_runtime_axes
+        for column in (axis.get("start_column"), axis.get("end_column"))
         if isinstance(column, str)
     }
 
@@ -256,15 +256,15 @@ def _assigned_columns(entity: Entity, assignments: Any) -> set[str]:
 def _temporal_write_carries_payload(entity: Entity, mutation: Any) -> bool:
     """Whether this temporal verb chains a row containing the old payload.
 
-    An update always opens a successor, and a business-axis terminate preserves
-    the head and/or tail around the removed interval.  A processing-only terminate
+    An update always opens a successor, and a Valid-Time terminate preserves
+    the head and/or tail around the removed interval.  A Transaction-Time-Only terminate
     merely closes its row, so its payload is not an input to planning that close.
     """
     if not entity.is_temporal:
         return False
     if mutation in ("update", "updateUntil"):
         return True
-    return any(axis.get("axis") == "business" for axis in entity.as_of_attributes)
+    return any(axis.get("dimension") == "validTime" for axis in entity.temporal_runtime_axes)
 
 
 def _temporal_payload_columns(entity: Entity, temporal_columns: set[str]) -> set[str]:
@@ -369,7 +369,7 @@ def _assert_value_object_assignment(ref: str, value_object: dict[str, Any], valu
 
     A value object names one structured-document column, so predicate writes may
     replace that whole document but may not address its nested members.  Its
-    declared cardinality determines whether the neutral literal is an object or
+    declared multiplicity determines whether the neutral literal is an object or
     an array; recursive required-member and scalar-type checks keep the literal
     assignable to the declared value object.
     """
@@ -379,11 +379,11 @@ def _assert_value_object_assignment(ref: str, value_object: dict[str, Any], valu
                 f"value object assignment {ref!r} is null for a non-nullable value object"
             )
         return
-    cardinality = value_object.get("cardinality", "one")
-    if cardinality == "many":
+    multiplicity = value_object.get("multiplicity", "one")
+    if multiplicity == "many":
         if not isinstance(value, list):
             raise PredicateWriteValidationError(
-                f"value object assignment {ref!r} must use an array for cardinality many"
+                f"value object assignment {ref!r} must use an array for multiplicity many"
             )
         for index, document in enumerate(value):
             _assert_value_object_document(f"{ref}[{index}]", value_object, document)
@@ -395,7 +395,7 @@ def _assert_value_object_document(ref: str, value_object: dict[str, Any], docume
     """Validate one complete document against a declared value-object member."""
     if not isinstance(document, dict):
         raise PredicateWriteValidationError(
-            f"value object assignment {ref!r} must use an object for cardinality one"
+            f"value object assignment {ref!r} must use an object for multiplicity one"
         )
     for attribute in value_object.get("attributes", []):
         name = attribute["name"]
@@ -418,10 +418,10 @@ def _assert_value_object_document(ref: str, value_object: dict[str, Any], docume
 
 
 def _assert_temporal_shape(entity: Entity, mutation: Any, instruction: dict[str, Any]) -> None:
-    axes = {axis.get("axis") for axis in entity.as_of_attributes}
-    has_processing = "processing" in axes
-    has_business = "business" in axes
-    temporal_values = {name: instruction.get(name) for name in ("at", "businessFrom", "until")}
+    axes = {axis.get("dimension") for axis in entity.temporal_runtime_axes}
+    has_transaction_time = "transactionTime" in axes
+    has_valid_time = "validTime" in axes
+    temporal_values = {name: instruction.get(name) for name in ("at", "validFrom", "until")}
     if not axes:
         if any(value is not None for value in temporal_values.values()):
             raise PredicateWriteValidationError(
@@ -434,17 +434,19 @@ def _assert_temporal_shape(entity: Entity, mutation: Any, instruction: dict[str,
         return
     if mutation == "delete":
         raise PredicateWriteValidationError("temporal predicate writes use terminate, not delete")
-    if has_processing and instruction.get("at") is None:
-        raise PredicateWriteValidationError("processing-temporal predicate write requires at")
-    if not has_processing and instruction.get("at") is not None:
-        raise PredicateWriteValidationError("target has no processing axis, so at is invalid")
-    if has_business and instruction.get("businessFrom") is None:
+    if has_transaction_time and instruction.get("at") is None:
         raise PredicateWriteValidationError(
-            "business-temporal predicate write requires businessFrom"
+            "Transaction-Time predicate write requires flush-time at"
         )
-    if not has_business and instruction.get("businessFrom") is not None:
+    if not has_transaction_time and instruction.get("at") is not None:
         raise PredicateWriteValidationError(
-            "target has no business axis, so businessFrom is invalid"
+            "target has no Transaction-Time dimension, so at is invalid"
         )
-    if mutation in ("updateUntil", "terminateUntil") and not has_business:
-        raise PredicateWriteValidationError(f"{mutation} requires a business-temporal target")
+    if has_valid_time and instruction.get("validFrom") is None:
+        raise PredicateWriteValidationError("Valid-Time predicate write requires validFrom")
+    if not has_valid_time and instruction.get("validFrom") is not None:
+        raise PredicateWriteValidationError(
+            "target has no Valid-Time dimension, so validFrom is invalid"
+        )
+    if mutation in ("updateUntil", "terminateUntil") and not has_valid_time:
+        raise PredicateWriteValidationError(f"{mutation} requires a Valid-Time target")

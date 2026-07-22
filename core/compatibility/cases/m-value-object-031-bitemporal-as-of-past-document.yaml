@@ -2,7 +2,7 @@
 # read (both axes in the past) (m-value-object "Inherited temporality",
 # m-temporal-read), on Postgres AND MariaDB.
 #
-# Pin businessDate = 2024-03-01 AND processingDate = 2024-02-01: as the system BELIEVED
+# Pin validTime = 2024-03-01 AND transactionTime = 2024-02-01: as the system BELIEVED
 # on 2024-02-01, what address was true in the world on 2024-03-01? Both pins are past
 # instants, so each axis injects its [from, to) containment predicate (four binds,
 # business-axis-first then processing). Over branch id 1's history that returns R1 — the
@@ -28,10 +28,10 @@ when:
         asOf:
           operand:
             all: {}
-          asOfAttr: Branch.processingDate
-          date: "2024-02-01T00:00:00+00:00"
-      asOfAttr: Branch.businessDate
-      date: "2024-03-01T00:00:00+00:00"
+          dimension: transactionTime
+          coordinate: "2024-02-01T00:00:00+00:00"
+      dimension: validTime
+      coordinate: "2024-03-01T00:00:00+00:00"
 then:
   statements:
     - sql:

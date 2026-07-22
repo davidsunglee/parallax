@@ -21,7 +21,19 @@ from typing import Any
 import pytest
 
 from parallax.conformance import animal_owner, read_models
-from parallax.core import Attr, Concrete, Entity, EntityConfig, FamilyRoot, Field, Rel, Relationship
+from parallax.core import (
+    Attr,
+    Concrete,
+    Entity,
+    EntityConfig,
+    FamilyRoot,
+    Field,
+    Rel,
+    Relationship,
+    RelationshipJoin,
+    RelationshipTarget,
+    inheritance,
+)
 from parallax.core.db_port import DbPort, Row
 from parallax.core.entity import metamodel
 from parallax.core.entity.base import (
@@ -32,6 +44,7 @@ from parallax.core.entity.base import (
     entity_record_of,
     entity_records,
     entity_registry,
+    resolve_entity_class,
 )
 from parallax.core.entity.errors import EntityDefinitionError, RegistryCollisionError
 from parallax.snapshot.handle import Database
@@ -141,9 +154,9 @@ def _build_hub_family(registry: EntityRegistry) -> tuple[Any, Any, Any]:
         detail_id: Attr[int] = Field(type="int64")
         extra: Rel[Detail] = Relationship(
             cardinality="one-to-one",
-            join="this.detailId = Detail.id",
-            related_entity="Detail",
-            foreign_key="detail_id",
+            join=RelationshipJoin(
+                source="detailId", target=RelationshipTarget(entity="Detail", attribute="id")
+            ),
         )
 
     class Hub(Entity, frozen=True, registry=registry):
@@ -152,9 +165,9 @@ def _build_hub_family(registry: EntityRegistry) -> tuple[Any, Any, Any]:
         id: Attr[int] = Field(primary_key=True, pk_generator="none")
         spokes: Rel[tuple[Spoke, ...]] = Relationship(
             cardinality="one-to-many",
-            join="this.id = Spoke.hubId",
-            related_entity="Spoke",
-            foreign_key="hub_id",
+            join=RelationshipJoin(
+                source="id", target=RelationshipTarget(entity="Spoke", attribute="hubId")
+            ),
         )
 
     return Hub, Spoke, Detail
@@ -339,14 +352,12 @@ def _declare_tph_animal_root(table: str, registry: EntityRegistry):
     return Animal
 
 
-def test_family_shared_table_does_not_leak_across_registries() -> None:
-    """Reproduces the reviewer's defect verbatim: a bare-canonical-name-keyed
-    shared-table cache let a SECOND registry's same-named TPH root overwrite
-    the FIRST's entry, so a concrete-subtype descendant compiled afterward
-    silently inherited the WRONG registry's table. Re-keyed by the root's own
-    CLASS object (never the bare name) -- collision-proof like
-    `_ENTITY_BY_CLASS` -- so this can never happen regardless of compile
-    order."""
+def test_tph_root_table_does_not_leak_across_registries() -> None:
+    """The shared table is a fact on each registry's own family root.
+
+    A same-named root in another registry cannot affect either the declaring
+    root or the effective table derived for its descendants.
+    """
     registry_a = EntityRegistry()
     registry_b = EntityRegistry()
     animal_a = _declare_tph_animal_root("animals_a", registry_a)
@@ -363,7 +374,8 @@ def test_family_shared_table_does_not_leak_across_registries() -> None:
 
     record = entity_record_of(Dog)
     assert record is not None
-    assert record.table == "animals_a"  # registry A's own root table, never B's
+    assert record.table is None
+    assert inheritance.effective_table(registry_a.metamodel(), record) == "animals_a"
 
 
 # --------------------------------------------------------------------------- #
@@ -407,7 +419,7 @@ def test_child_registry_entry_shadows_a_same_named_parent_entry() -> None:
 # imported in the same process.                                              #
 # --------------------------------------------------------------------------- #
 def test_bare_metamodel_auto_scopes_from_a_single_registrys_classes() -> None:
-    meta = metamodel([animal_owner.Person])
+    meta = metamodel([animal_owner.Person, read_models.Animal, read_models.Pet])
     assert isinstance(meta, ScopedMetamodel)
     assert meta.registry is animal_owner.ANIMAL_OWNER_REGISTRY
 
@@ -449,7 +461,7 @@ def test_db_find_over_a_bare_metamodel_resolves_the_assembled_classs_own_registr
     # unrelated `read_models.Person` (`models/person.yaml`) instead of the
     # assembled `animal_owner.Person` (`models/animal.yaml`'s real polymorphic
     # owner), the moment both happened to be imported in the same process.
-    meta = metamodel([animal_owner.Person])
+    meta = metamodel([animal_owner.Person, read_models.Animal, read_models.Pet])
     port = _CannedPort([{"id": 1, "name": "Alice"}])
     db = Database.connect(port, meta)
     snapshot = db.find(animal_owner.Person.where(animal_owner.Person.id == 1))
@@ -458,6 +470,12 @@ def test_db_find_over_a_bare_metamodel_resolves_the_assembled_classs_own_registr
     assert type(result) is animal_owner.Person
     assert type(result) is not read_models.Person
     assert result.name == "Alice"
+
+
+def test_resolve_entity_class_returns_none_for_an_absent_name() -> None:
+    meta = metamodel([animal_owner.Person])
+
+    assert resolve_entity_class(meta, "MissingEntity") is None
 
 
 # --------------------------------------------------------------------------- #
@@ -528,10 +546,17 @@ def test_bare_metamodel_over_an_identical_class_repeated_round_trips_normally() 
     # The assembled (deduped) Metamodel is still a well-formed, correctly
     # SCOPED `ScopedMetamodel` -- `db.find` resolves `animal_owner.Person`
     # exactly as it would from a single, non-repeated supply.
-    meta = metamodel([animal_owner.Person, animal_owner.Person])
+    meta = metamodel(
+        [
+            animal_owner.Person,
+            animal_owner.Person,
+            read_models.Animal,
+            read_models.Pet,
+        ]
+    )
     assert isinstance(meta, ScopedMetamodel)
     assert meta.registry is animal_owner.ANIMAL_OWNER_REGISTRY
-    assert len(meta.entities) == 1
+    assert [entity.name for entity in meta.entities] == ["Person", "Animal", "Pet"]
 
     port = _CannedPort([{"id": 1, "name": "Alice"}])
     db = Database.connect(port, meta)

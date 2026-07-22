@@ -4,7 +4,7 @@
 # Keyed by class name; each row is a map of attribute-name -> value. Instant
 # columns are authored as ISO-8601 UTC strings; the open upper bound is the
 # literal `infinity`. The data loader resolves attribute names to columns via the
-# descriptor, so `processingFrom`/`processingTo` load into in_z/out_z.
+# descriptor, so `tx_start`/`tx_end` load into in_z/out_z.
 #
 # The history is shaped so as-of reads discriminate:
 #   id 1 (acct A): value 100.00 known [2024-01-01, 2024-06-01) — SUPERSEDED,
@@ -14,27 +14,27 @@
 #                  (no current row: every milestone is closed).
 #
 # Reads:
-#   as-of now (default)  -> current rows only: (1, 150.00), (2, 200.00).
+#   Latest (default)     -> current rows only: (1, 150.00), (2, 200.00).
 #   as-of 2024-04-01     -> (1, 100.00), (2, 200.00), (3, 50.00).
-#   history(processingDate) of id 1 -> both id-1 milestones.
+#   history(transactionTime) of id 1 -> both id-1 milestones.
 Balance:
   - id: 1
     acctNum: A
     value: 100.00
-    processingFrom: "2024-01-01T00:00:00+00:00"
-    processingTo: "2024-06-01T00:00:00+00:00"
+    tx_start: "2024-01-01T00:00:00+00:00"
+    tx_end: "2024-06-01T00:00:00+00:00"
   - id: 1
     acctNum: A
     value: 150.00
-    processingFrom: "2024-06-01T00:00:00+00:00"
-    processingTo: infinity
+    tx_start: "2024-06-01T00:00:00+00:00"
+    tx_end: infinity
   - id: 2
     acctNum: B
     value: 200.00
-    processingFrom: "2024-02-01T00:00:00+00:00"
-    processingTo: infinity
+    tx_start: "2024-02-01T00:00:00+00:00"
+    tx_end: infinity
   - id: 3
     acctNum: C
     value: 50.00
-    processingFrom: "2024-03-01T00:00:00+00:00"
-    processingTo: "2024-08-01T00:00:00+00:00"
+    tx_start: "2024-03-01T00:00:00+00:00"
+    tx_end: "2024-08-01T00:00:00+00:00"

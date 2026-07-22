@@ -163,12 +163,12 @@ def test_versioned_update_conflict_aborts_the_whole_unit_of_work() -> None:
 # D-31 (COR-3 Phase 8 increment 7 completion round): axis-attribute           #
 # construction optionality + `tx.insert_until`, through the PUBLIC verbs.     #
 # --------------------------------------------------------------------------- #
-def test_bitemporal_insert_constructs_cleanly_and_stamps_the_business_from() -> None:
+def test_bitemporal_insert_constructs_cleanly_and_stamps_the_valid_from() -> None:
     branch = mm.Branch(id=1, name="Central", address=None)  # no placeholder axis values
     port = RecordingPort()
     db = db_for(models.load_models()["branch"], port)
 
-    db.transact(lambda tx: tx.insert(branch, business_from=dt.datetime(2024, 1, 1, tzinfo=dt.UTC)))
+    db.transact(lambda tx: tx.insert(branch, valid_from=dt.datetime(2024, 1, 1, tzinfo=dt.UTC)))
     write_ops = [op for op in port.ops if op[0] == "write"]
     assert len(write_ops) == 1
     sql = write_ops[0][1]
@@ -193,7 +193,7 @@ def test_bitemporal_insert_until_opens_a_single_bounded_rectangle() -> None:
     db.transact(
         lambda tx: tx.insert_until(
             branch,
-            business_from=dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
+            valid_from=dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
             until=dt.datetime(2024, 9, 1, tzinfo=dt.UTC),
         )
     )
@@ -213,10 +213,8 @@ def test_insert_until_rejects_an_equal_or_reversed_window() -> None:
     port = RecordingPort()
     db = db_for(models.load_models()["branch"], port)
     same_instant = dt.datetime(2024, 3, 1, tzinfo=dt.UTC)
-    with pytest.raises(ValueError, match="business_from < until"):
-        db.transact(
-            lambda tx: tx.insert_until(branch, business_from=same_instant, until=same_instant)
-        )
+    with pytest.raises(ValueError, match="valid_from < until"):
+        db.transact(lambda tx: tx.insert_until(branch, valid_from=same_instant, until=same_instant))
     assert not any(op[0] == "write" for op in port.ops)
 
 
@@ -431,10 +429,10 @@ def _position_row_dt() -> Row:
 
 # --------------------------------------------------------------------------- #
 # Typed KEYED temporal-window verbs (COR-3 Phase 8 increment 7): `update`'s    #
-# own optional bitemporal `business_from`, `terminate`, `update_until`, and    #
+# own optional bitemporal `valid_from`, `terminate`, `update_until`, and    #
 # `terminate_until` — the KEYED siblings of `update_where` / `terminate_where` #
 # / `update_until_where` / `terminate_until_where`, sharing the SAME           #
-# `_buffer` seam and the SAME `validate_business_from` gate, so a keyed and a  #
+# `_buffer` seam and the SAME `validate_valid_from` gate, so a keyed and a  #
 # predicate-selected write over the identical bitemporal correction lower to  #
 # the identical rectangle split (`m-bitemp-write-001/002/006/007`'s own       #
 # witnessed shape, replayed here through the KEYED verb instead of `_where`). #
@@ -443,13 +441,11 @@ def test_keyed_update_lowers_a_plain_bitemporal_correction() -> None:
     # m-bitemp-write-006 "plain-update-split", replayed through the KEYED verb:
     # close + head (old) + new tail.
     port = RecordingPort(rows=[_position_row_dt()])
-    business_from = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
+    valid_from = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
 
     def fn(tx: Transaction) -> None:
         fetched = tx.find(WherePosition.where(WherePosition.id == 1)).result()
-        tx.update(
-            fetched.model_copy(update={"value": Decimal("200.00")}), business_from=business_from
-        )
+        tx.update(fetched.model_copy(update={"value": Decimal("200.00")}), valid_from=valid_from)
 
     Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(
         fn, concurrency="optimistic"
@@ -462,11 +458,11 @@ def test_keyed_terminate_lowers_a_plain_bitemporal_termination() -> None:
     # m-bitemp-write-007 "plain-terminate", replayed through the KEYED verb:
     # close + head only (no tail).
     port = RecordingPort(rows=[_position_row_dt()])
-    business_from = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
+    valid_from = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
 
     def fn(tx: Transaction) -> None:
         fetched = tx.find(WherePosition.where(WherePosition.id == 1)).result()
-        tx.terminate(fetched, business_from=business_from)
+        tx.terminate(fetched, valid_from=valid_from)
 
     Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(
         fn, concurrency="optimistic"
@@ -479,14 +475,14 @@ def test_keyed_update_until_lowers_the_rectangle_split() -> None:
     # m-bitemp-write-001 "update-until-rectangle-split", replayed through the
     # KEYED verb: close + head + middle + tail.
     port = RecordingPort(rows=[_position_row_dt()])
-    business_from = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
+    valid_from = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
     until = dt.datetime(2024, 9, 1, tzinfo=dt.UTC)
 
     def fn(tx: Transaction) -> None:
         fetched = tx.find(WherePosition.where(WherePosition.id == 1)).result()
         tx.update_until(
             fetched.model_copy(update={"value": Decimal("200.00")}),
-            business_from=business_from,
+            valid_from=valid_from,
             until=until,
         )
 
@@ -500,7 +496,7 @@ def test_keyed_update_until_lowers_the_rectangle_split() -> None:
 def test_keyed_update_until_with_an_empty_effective_change_set_issues_no_dml() -> None:
     # The SAME sparse-update no-op rule `update` applies (spec §3/§5): a
     # `model_copy()` whose Change Record nets to zero issues no DML at all --
-    # but only AFTER its (here, valid) business window is validated (R2,
+    # but only AFTER its (here, valid) Valid-Time window is validated (R2,
     # COR-3 Phase 7 increment 7 round-2: window validation runs BEFORE the
     # no-op return, for every window verb, never the reverse -- see the
     # sibling equal-bounds pin immediately below for the corrected
@@ -510,17 +506,17 @@ def test_keyed_update_until_with_an_empty_effective_change_set_issues_no_dml() -
         id=1,
         acct_num="A",
         value=Decimal("100.00"),
-        business_from=dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
-        business_to=INFINITY_INSTANT,
-        processing_from=dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
-        processing_to=INFINITY_INSTANT,
+        valid_start=dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+        valid_end=INFINITY_INSTANT,
+        tx_start=dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+        tx_end=INFINITY_INSTANT,
     )
     edited = fetched.model_copy(update={"value": Decimal("100.00")})  # net-zero touch
-    business_from = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
+    valid_from = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
     until = dt.datetime(2024, 9, 1, tzinfo=dt.UTC)
 
     def fn(tx: Transaction) -> None:
-        tx.update_until(edited, business_from=business_from, until=until)
+        tx.update_until(edited, valid_from=valid_from, until=until)
 
     Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(
         fn, concurrency="optimistic"
@@ -541,18 +537,18 @@ def test_keyed_update_until_with_an_empty_change_set_still_rejects_equal_bounds(
         id=1,
         acct_num="A",
         value=Decimal("100.00"),
-        business_from=dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
-        business_to=INFINITY_INSTANT,
-        processing_from=dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
-        processing_to=INFINITY_INSTANT,
+        valid_start=dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+        valid_end=INFINITY_INSTANT,
+        tx_start=dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+        tx_end=INFINITY_INSTANT,
     )
     edited = fetched.model_copy(update={"value": Decimal("100.00")})  # net-zero touch
-    business_from = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
+    valid_from = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
 
     def fn(tx: Transaction) -> None:
-        tx.update_until(edited, business_from=business_from, until=business_from)  # EQUAL bounds
+        tx.update_until(edited, valid_from=valid_from, until=valid_from)  # EQUAL bounds
 
-    with pytest.raises(ValueError, match="requires business_from < until"):
+    with pytest.raises(ValueError, match="requires valid_from < until"):
         Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(
             fn, concurrency="optimistic"
         )
@@ -561,19 +557,19 @@ def test_keyed_update_until_with_an_empty_change_set_still_rejects_equal_bounds(
 
 def test_keyed_update_until_with_a_naive_until_raises_the_proper_value_error() -> None:
     # R2: a naive `until` (no tzinfo) must raise the SAME `ValueError` shape
-    # `validate_business_from`'s own `instant_literal` normalization raises
-    # for a naive `business_from` (never a bare `TypeError` leaked by
-    # comparing a naive `until` against an already-aware `business_from`,
+    # `validate_valid_from`'s own `instant_literal` normalization raises
+    # for a naive `valid_from` (never a bare `TypeError` leaked by
+    # comparing a naive `until` against an already-aware `valid_from`,
     # the pre-fix defect: comparison ran before normalization).
     port = RecordingPort(rows=[_position_row_dt()])
-    business_from = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
+    valid_from = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
     naive_until = dt.datetime(2024, 9, 1)  # NAIVE -- no tzinfo
 
     def fn(tx: Transaction) -> None:
         fetched = tx.find(WherePosition.where(WherePosition.id == 1)).result()
         tx.update_until(
             fetched.model_copy(update={"value": Decimal("200.00")}),
-            business_from=business_from,
+            valid_from=valid_from,
             until=naive_until,
         )
 
@@ -590,12 +586,12 @@ def test_keyed_terminate_until_lowers_head_and_tail_only() -> None:
     # m-bitemp-write-002 "terminate-until", replayed through the KEYED verb:
     # close + head + tail (no middle).
     port = RecordingPort(rows=[_position_row_dt()])
-    business_from = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
+    valid_from = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
     until = dt.datetime(2024, 9, 1, tzinfo=dt.UTC)
 
     def fn(tx: Transaction) -> None:
         fetched = tx.find(WherePosition.where(WherePosition.id == 1)).result()
-        tx.terminate_until(fetched, business_from=business_from, until=until)
+        tx.terminate_until(fetched, valid_from=valid_from, until=until)
 
     Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(
         fn, concurrency="optimistic"
@@ -604,34 +600,34 @@ def test_keyed_terminate_until_lowers_head_and_tail_only() -> None:
     assert len(writes) == 3  # close + head + tail
 
 
-def test_keyed_update_on_a_bitemporal_target_without_business_from_raises() -> None:
+def test_keyed_update_on_a_bitemporal_target_without_valid_from_raises() -> None:
     port = RecordingPort(rows=[_position_row_dt()])
 
     def fn(tx: Transaction) -> None:
         fetched = tx.find(WherePosition.where(WherePosition.id == 1)).result()
         tx.update(fetched.model_copy(update={"value": Decimal("200.00")}))
 
-    with pytest.raises(ValueError, match="requires business_from"):
+    with pytest.raises(ValueError, match="requires valid_from"):
         Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(
             fn, concurrency="optimistic"
         )
 
 
-def test_keyed_terminate_on_a_non_temporal_target_forbids_business_from() -> None:
+def test_keyed_terminate_on_a_non_temporal_target_forbids_valid_from() -> None:
     port = RecordingPort(rows=[{"id": 3, "owner": "Grace", "balance": 10.00, "version": 1}])
 
     def fn(tx: Transaction) -> None:
         fetched = tx.find(mm.Account.where(mm.Account.id == 3)).result()
-        tx.terminate(fetched, business_from=FIXED)
+        tx.terminate(fetched, valid_from=FIXED)
 
-    with pytest.raises(ValueError, match="takes no business_from"):
+    with pytest.raises(ValueError, match="takes no valid_from"):
         account_db(port).transact(fn)
 
 
 # --------------------------------------------------------------------------- #
 # Window-order validation (S4, COR-3 Phase 8 increment 7 remediation):        #
 # `python.md` §5 "the `*_until` trio additionally requires `until`, with      #
-# `business_from < until` ... all validated at build" — an EQUAL and a        #
+# `valid_from < until` ... all validated at build" — an EQUAL and a        #
 # REVERSED window both reject, at the verb call, before any buffering, for    #
 # BOTH the KEYED (`update_until`/`terminate_until`) and `_where`              #
 # (`update_until_where`/`terminate_until_where`) verb families — the ONE      #
@@ -640,17 +636,17 @@ def test_keyed_terminate_on_a_non_temporal_target_forbids_business_from() -> Non
 # --------------------------------------------------------------------------- #
 def test_keyed_update_until_rejects_an_equal_window_bound() -> None:
     port = RecordingPort(rows=[_position_row_dt()])
-    business_from = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
+    valid_from = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
 
     def fn(tx: Transaction) -> None:
         fetched = tx.find(WherePosition.where(WherePosition.id == 1)).result()
         tx.update_until(
             fetched.model_copy(update={"value": Decimal("200.00")}),
-            business_from=business_from,
-            until=business_from,
+            valid_from=valid_from,
+            until=valid_from,
         )
 
-    with pytest.raises(ValueError, match="requires business_from < until"):
+    with pytest.raises(ValueError, match="requires valid_from < until"):
         Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(
             fn, concurrency="optimistic"
         )
@@ -658,14 +654,14 @@ def test_keyed_update_until_rejects_an_equal_window_bound() -> None:
 
 def test_keyed_terminate_until_rejects_a_reversed_window_bound() -> None:
     port = RecordingPort(rows=[_position_row_dt()])
-    business_from = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
-    until = dt.datetime(2024, 3, 1, tzinfo=dt.UTC)  # BEFORE business_from — reversed
+    valid_from = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
+    until = dt.datetime(2024, 3, 1, tzinfo=dt.UTC)  # BEFORE valid_from — reversed
 
     def fn(tx: Transaction) -> None:
         fetched = tx.find(WherePosition.where(WherePosition.id == 1)).result()
-        tx.terminate_until(fetched, business_from=business_from, until=until)
+        tx.terminate_until(fetched, valid_from=valid_from, until=until)
 
-    with pytest.raises(ValueError, match="requires business_from < until"):
+    with pytest.raises(ValueError, match="requires valid_from < until"):
         Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(
             fn, concurrency="optimistic"
         )

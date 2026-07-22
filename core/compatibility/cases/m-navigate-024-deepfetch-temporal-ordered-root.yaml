@@ -8,7 +8,7 @@
 #
 # This catches a propagation-pin collector that only walks the OUTERMOST `asOf`
 # nodes: with the directives wrapping them it would see no pins and the child
-# Coverage level would wrongly default to `now`, returning coverage 10's CURRENT
+# Coverage level would wrongly default to Latest, returning coverage 10's CURRENT
 # value 700 (C-R3) instead of the business-2024-03-01 HEAD 600 (C-R2). The propagated
 # child suffix is the ordered `[business, business, processing]` binds `[B, B,
 # infinity]`, appended after the IN list. Mirrors m-navigate-013 (business-past deep fetch) but
@@ -33,10 +33,10 @@ when:
                   operand:
                     asOf:
                       operand: { all: {} }
-                      asOfAttr: Policy.processingDate
-                      date: now
-                  asOfAttr: Policy.businessDate
-                  date: "2024-03-01T00:00:00+00:00"
+                      dimension: transactionTime
+                      coordinate: latest
+                  dimension: validTime
+                  coordinate: "2024-03-01T00:00:00+00:00"
               keys:
                 - { attr: Policy.id, direction: asc }
           count: 1

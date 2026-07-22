@@ -14,10 +14,10 @@ from __future__ import annotations
 
 import datetime as dt
 from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from parallax.core.base import normalize_instant
-from parallax.core.descriptor import AsOfAttribute, Axis, Metamodel
+from parallax.core.descriptor import AsOfAxisMetadata, Metamodel, TemporalDimension
 from parallax.core.entity.expressions import Predicate, RelationshipPath, and_terms
 from parallax.core.op_algebra import (
     All,
@@ -58,9 +58,10 @@ class _Unset:
 _UNSET = _Unset()
 
 # One axis pin: a finite instant (a tz-aware ``datetime``) or the explicit
-# as-of-now sentinel; a range pin is a ``(from, to)`` instant pair.
+# Latest sentinel; a range pin is a ``(start, end)`` instant pair.
 _Pin = dt.datetime | Latest
 _Window = tuple[dt.datetime, dt.datetime]
+_DimensionName = Literal["valid_time", "transaction_time"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,9 +74,9 @@ class Statement:
     limit_count: int | None = None
     is_distinct: bool = False
     # The target's declared temporal dimensions, captured at ``Entity.where`` so the
-    # axis-keyed temporal clauses resolve ``processing`` / ``business`` to the entity's
-    # as-of-attribute name; empty for a non-temporal entity (a temporal clause raises).
-    as_of_attributes: tuple[AsOfAttribute, ...] = ()
+    # dimension-keyed temporal clauses validate against the Entity's declared axes;
+    # empty for a non-temporal entity (a temporal clause raises).
+    as_of_axes: tuple[AsOfAxisMetadata, ...] = ()
     # The temporal-wrapped predicate (``asOf`` / ``asOfRange`` / ``history`` around the
     # conjoined predicate), or ``None`` when the read pins no axis. Single-shot.
     temporal: Operation | None = None
@@ -87,8 +88,8 @@ class Statement:
     # predicate (single-shot, like ``as_of``).
     is_narrowed: bool = False
     # The target class's own D-20 registration scope, captured at ``Entity.where``
-    # (never a public field -- an implementation-private resolution seam,
-    # mirroring ``EntityMetaView._context``): ``.include`` / ``.narrow`` validate
+    # (never a public field -- an implementation-private resolution seam):
+    # ``.include`` / ``.narrow`` validate
     # within THIS registry, never the process-global default, so a same-named
     # class registered in an unrelated registry can never leak into scope here.
     # ``None`` only for a ``Statement`` built outside ``Entity.where`` (test-only
@@ -112,27 +113,40 @@ class Statement:
         return replace(self, is_distinct=True)
 
     def as_of(
-        self, *, processing: _Pin | _Unset = _UNSET, business: _Pin | _Unset = _UNSET
+        self,
+        *,
+        valid_time: _Pin | _Unset = _UNSET,
+        transaction_time: _Pin | _Unset = _UNSET,
     ) -> Statement:
         """Pin one or both temporal axes to an instant (or the ``LATEST`` sentinel).
 
         Axis-keyed and single-shot (``m-temporal-read``): an omitted axis serializes
-        **no** wrapper (its latest default is injected at lowering), while an explicit
-        :data:`LATEST` pin serializes its wrapper with ``date: now``. When both axes
-        are passed the **business** wrapper encloses the **processing** wrapper (the
+        **no** wrapper (its Latest default is injected at lowering), while an explicit
+        :data:`LATEST` pin serializes its wrapper with ``coordinate: latest``. When both
+        dimensions are passed the **Valid-Time** wrapper encloses the
+        **Transaction-Time** wrapper (the
         corpus's bitemporal nesting order). A naive ``datetime`` is rejected here.
         """
         op = self.predicate
-        if not isinstance(processing, _Unset):
+        if not isinstance(transaction_time, _Unset):
             op = AsOf(
-                operand=op, as_of_attr=self._axis_ref("processing"), date=_instant(processing)
+                operand=op,
+                dimension=self._dimension("transaction_time"),
+                coordinate=_instant(transaction_time),
             )
-        if not isinstance(business, _Unset):
-            op = AsOf(operand=op, as_of_attr=self._axis_ref("business"), date=_instant(business))
+        if not isinstance(valid_time, _Unset):
+            op = AsOf(
+                operand=op,
+                dimension=self._dimension("valid_time"),
+                coordinate=_instant(valid_time),
+            )
         return self._with_temporal(op)
 
     def as_of_range(
-        self, *, processing: _Window | _Unset = _UNSET, business: _Window | _Unset = _UNSET
+        self,
+        *,
+        valid_time: _Window | _Unset = _UNSET,
+        transaction_time: _Window | _Unset = _UNSET,
     ) -> Statement:
         """Scan one or both axes across a half-open ``[from, to)`` window (edge points)."""
         if self.include_paths:
@@ -141,32 +155,34 @@ class Statement:
                 "(snapshot-history-includes, spec §3)"
             )
         op = self.predicate
-        if not isinstance(processing, _Unset):
-            frm, to = processing
+        if not isinstance(transaction_time, _Unset):
+            start, end = transaction_time
             op = AsOfRange(
                 operand=op,
-                as_of_attr=self._axis_ref("processing"),
-                from_=_instant(frm),
-                to=_instant(to),
+                dimension=self._dimension("transaction_time"),
+                start=_instant(start),
+                end=_instant(end),
             )
-        if not isinstance(business, _Unset):
-            frm, to = business
+        if not isinstance(valid_time, _Unset):
+            start, end = valid_time
             op = AsOfRange(
                 operand=op,
-                as_of_attr=self._axis_ref("business"),
-                from_=_instant(frm),
-                to=_instant(to),
+                dimension=self._dimension("valid_time"),
+                start=_instant(start),
+                end=_instant(end),
             )
         return self._with_temporal(op)
 
-    def history(self, axis: Axis) -> Statement:
-        """Return the full milestone set on ``axis`` (no as-of predicate injected)."""
+    def history(self, dimension: _DimensionName) -> Statement:
+        """Return the full milestone set on ``dimension`` (no predicate injected)."""
         if self.include_paths:
             raise UnsupportedFeatureError(
                 "`.history()` combined with `.include(...)` is deferred "
                 "(snapshot-history-includes, spec §3)"
             )
-        return self._with_temporal(History(operand=self.predicate, as_of_attr=self._axis_ref(axis)))
+        return self._with_temporal(
+            History(operand=self.predicate, dimension=self._dimension(dimension))
+        )
 
     def include(self, *paths: RelationshipPath) -> Statement:
         """Deep-fetch one or more relationship paths (python.md §2):
@@ -239,7 +255,7 @@ class Statement:
         checked (the spec's own enumeration), and ``.distinct()`` is caught the
         SAME way (an explicit non-default field), even though the prose
         enumeration omits it — resolving that gap by construction rather than
-        special-casing one flag. ``target`` / ``predicate`` / ``as_of_attributes``
+        special-casing one flag. ``target`` / ``predicate`` / ``as_of_axes``
         are excluded: the first two are exactly what a bare statement legitimately
         carries, and the third is metadata ``Entity.where`` always captures
         (the entity's own declared temporal dimensions), never an authored
@@ -262,18 +278,20 @@ class Statement:
             )
         if op is self.predicate:
             raise ValueError(
-                "a temporal clause requires at least one axis (processing= / business=)"
+                "a temporal clause requires at least one dimension "
+                "(valid_time= / transaction_time=)"
             )
         return replace(self, temporal=op)
 
-    def _axis_ref(self, axis: Axis) -> str:
-        for aoa in self.as_of_attributes:
-            if aoa.axis == axis:
-                return f"{self.target}.{aoa.name}"
+    def _dimension(self, name: _DimensionName) -> TemporalDimension:
+        dimension: TemporalDimension = "validTime" if name == "valid_time" else "transactionTime"
+        for axis in self.as_of_axes:
+            if axis.dimension == dimension:
+                return dimension
         detail = (
             "declares no temporal dimension"
-            if not self.as_of_attributes
-            else f"declares no {axis} axis"
+            if not self.as_of_axes
+            else f"declares no {name} dimension"
         )
         raise ValueError(f"{self.target} {detail}")
 
@@ -300,9 +318,9 @@ def _subtype_name(cls: type) -> str:
 
 
 def _instant(value: _Pin) -> str:
-    """A temporal pin string: ``now`` for :data:`LATEST`, else the UTC-normalized ISO instant."""
+    """A canonical coordinate: ``latest`` or a UTC-normalized finite instant."""
     if isinstance(value, Latest):
-        return "now"
+        return "latest"
     return normalize_instant(value).isoformat()
 
 
@@ -310,21 +328,19 @@ def build_statement(
     target: str,
     predicates: tuple[Predicate, ...],
     *,
-    as_of_attributes: tuple[AsOfAttribute, ...] = (),
+    as_of_axes: tuple[AsOfAxisMetadata, ...] = (),
     registry: EntityRegistry | None = None,
 ) -> Statement:
     """Build a :class:`Statement` conjoining ``predicates`` (empty is find-all).
     ``registry`` (ledger D-20) is the target class's own registration scope,
     captured here so ``.include`` / ``.narrow`` validate within it later."""
     if not predicates:
-        return Statement(
-            target=target, predicate=All(), as_of_attributes=as_of_attributes, _registry=registry
-        )
+        return Statement(target=target, predicate=All(), as_of_axes=as_of_axes, _registry=registry)
     if len(predicates) == 1:
         return Statement(
             target=target,
             predicate=predicates[0].op,
-            as_of_attributes=as_of_attributes,
+            as_of_axes=as_of_axes,
             _registry=registry,
         )
     operands: list[Operation] = []
@@ -333,6 +349,6 @@ def build_statement(
     return Statement(
         target=target,
         predicate=And(operands=tuple(operands)),
-        as_of_attributes=as_of_attributes,
+        as_of_axes=as_of_axes,
         _registry=registry,
     )

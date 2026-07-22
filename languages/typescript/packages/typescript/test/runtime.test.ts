@@ -137,10 +137,15 @@ const EVERY_SCALAR = {
   entity: {
     name: "EveryScalar",
     table: "every_scalar",
-    mutability: "read-only",
-    temporal: "non-temporal",
+    persistence: "read-only",
     attributes: [
-      { name: "id", type: "int64", column: "id", primaryKey: true, pkGenerator: "none" },
+      {
+        name: "id",
+        type: "int64",
+        column: "id",
+        primaryKey: true,
+        pkGeneration: "application-assigned",
+      },
       { name: "smallCount", type: "int32", column: "small_count" },
       { name: "ratioF32", type: "float32", column: "ratio_f32" },
       { name: "ratioF64", type: "float64", column: "ratio_f64" },

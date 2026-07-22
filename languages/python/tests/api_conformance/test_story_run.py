@@ -229,11 +229,11 @@ def test_pinned_graph_at_a_past_business_instant(provisioner: Any) -> None:
     coverage = policy.coverages[0]
     assert coverage.amount == Decimal("600.00")  # the HEAD as of 2024-03-01, not the current 700
     edge = edge_of(coverage)
-    assert edge.business == dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
-    assert edge.processing == dt.datetime(2024, 4, 1, tzinfo=dt.UTC)
+    assert edge.valid_time == dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
+    assert edge.transaction_time == dt.datetime(2024, 4, 1, tzinfo=dt.UTC)
     pin = snapshot.pin
-    assert pin.business == dt.datetime(2024, 3, 1, tzinfo=dt.UTC)
-    assert pin.processing is LATEST
+    assert pin.valid_time == dt.datetime(2024, 3, 1, tzinfo=dt.UTC)
+    assert pin.transaction_time is LATEST
 
 
 def test_mutation_has_no_writeback(provisioner: Any) -> None:
@@ -268,10 +268,10 @@ def test_history_of_a_concrete_temporal_node_distinguishes_milestones(provisione
     assert current.grade == "A"
     historical_edge = edge_of(historical)
     current_edge = edge_of(current)
-    assert historical_edge.business == dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
-    assert historical_edge.processing == dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
-    assert current_edge.business == dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
-    assert current_edge.processing == dt.datetime(2024, 2, 1, tzinfo=dt.UTC)
+    assert historical_edge.valid_time == dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
+    assert historical_edge.transaction_time == dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
+    assert current_edge.valid_time == dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
+    assert current_edge.transaction_time == dt.datetime(2024, 2, 1, tzinfo=dt.UTC)
     # Both `pin_of` calls succeed (the root-owned axes attach a pin to a
     # concrete node exactly as they would at the abstract root or an
     # abstract-subtype position).
@@ -371,7 +371,7 @@ def _assert_vo_owner_graph(case_id: str, snapshot: Any, entity_name: str, pk_col
         compare_graph(_vo_owner_row(instance), expected_by_pk[instance.id])
 
 
-def test_unitemporal_vo_owner_as_of_now(provisioner: Any) -> None:
+def test_transaction_time_only_vo_owner_as_of_latest(provisioner: Any) -> None:
     story = _GRAPH_STORIES_BY_ID["m-value-object-028"]
     meta = _reset_for(story.case_id, provisioner)
     db = connect(provisioner.port, meta)
@@ -380,7 +380,7 @@ def test_unitemporal_vo_owner_as_of_now(provisioner: Any) -> None:
     assert snapshot.execution.round_trips == 1
 
 
-def test_unitemporal_vo_owner_as_of_a_past_instant(provisioner: Any) -> None:
+def test_transaction_time_only_vo_owner_as_of_a_past_instant(provisioner: Any) -> None:
     story = _GRAPH_STORIES_BY_ID["m-value-object-029"]
     meta = _reset_for(story.case_id, provisioner)
     db = connect(provisioner.port, meta)
@@ -389,7 +389,7 @@ def test_unitemporal_vo_owner_as_of_a_past_instant(provisioner: Any) -> None:
     assert snapshot.execution.round_trips == 1
 
 
-def test_bitemporal_vo_owner_as_of_now_both_axes(provisioner: Any) -> None:
+def test_bitemporal_vo_owner_as_of_latest(provisioner: Any) -> None:
     story = _GRAPH_STORIES_BY_ID["m-value-object-030"]
     meta = _reset_for(story.case_id, provisioner)
     db = connect(provisioner.port, meta)

@@ -14,7 +14,7 @@ import pytest
 from parallax.conformance import models, provision
 from parallax.core.db_port import JsonDocument
 from parallax.core.descriptor import (
-    AsOfAttribute,
+    AsOfAxisMetadata,
     Attribute,
     Entity,
     Index,
@@ -258,7 +258,7 @@ def test_schema_statements_enforce_unique_secondary_indices() -> None:
 
 def test_schema_statements_skip_the_milestone_index_the_temporal_pk_enforces() -> None:
     # A temporal model's declared composite unique index names the as-of attribute
-    # (`processingFrom` -> in_z); the physical PK already enforces exactly that
+    # (`tx_start` -> in_z); the physical PK already enforces exactly that
     # column set, so no duplicate `unique (...)` constraint is emitted.
     (audit,) = provision.schema_statements(_MODELS["balance"])
     assert "unique" not in audit
@@ -284,13 +284,13 @@ def test_schema_statements_reject_an_unresolvable_unique_index() -> None:
 def _tph_family_with_a_value_object() -> Metamodel:
     root = Entity(
         name="Root",
+        table="root_tbl",
         inheritance=Inheritance(role="root", strategy="table-per-hierarchy", tag_column="kind"),
         attributes=(Attribute(name="id", type="int64", column="id", primary_key=True),),
         value_objects=(ValueObject(name="meta", column="meta"),),
     )
     leaf = Entity(
         name="Leaf",
-        table="root_tbl",
         inheritance=Inheritance(role="concrete-subtype", parent="Root", tag_value="leaf"),
         attributes=(Attribute(name="x", type="int32", column="x"),),
     )
@@ -330,12 +330,12 @@ def test_schema_statements_tph_maps_a_value_object_to_jsonb() -> None:
 def _tph_family_with_a_descendant_declared_value_object_and_index() -> Metamodel:
     root = Entity(
         name="Root",
+        table="root_tbl",
         inheritance=Inheritance(role="root", strategy="table-per-hierarchy", tag_column="kind"),
         attributes=(Attribute(name="id", type="int64", column="id", primary_key=True),),
     )
     leaf = Entity(
         name="Leaf",
-        table="root_tbl",
         inheritance=Inheritance(role="concrete-subtype", parent="Root", tag_value="leaf"),
         attributes=(
             Attribute(name="x", type="int32", column="x"),
@@ -410,13 +410,17 @@ def _tpcs_family_with_a_temporal_root_and_matching_index() -> Metamodel:
     root = Entity(
         name="Root",
         inheritance=Inheritance(role="root", strategy="table-per-concrete-subtype"),
-        attributes=(Attribute(name="id", type="int64", column="id", primary_key=True),),
-        as_of_attributes=(
-            AsOfAttribute(
-                name="processingDate", from_column="in_z", to_column="out_z", axis="processing"
+        attributes=(
+            Attribute(name="id", type="int64", column="id", primary_key=True),
+            Attribute(name="tx_start", type="timestamp", column="in_z"),
+            Attribute(name="tx_end", type="timestamp", column="out_z"),
+        ),
+        as_of_axes=(
+            AsOfAxisMetadata(
+                dimension="transactionTime", start_attribute="tx_start", end_attribute="tx_end"
             ),
         ),
-        indices=(Index(name="root_pk", attributes=("id", "processingDate"), unique=True),),
+        indices=(Index(name="root_pk", attributes=("id", "tx_start"), unique=True),),
     )
     leaf = Entity(
         name="Leaf",
@@ -462,3 +466,21 @@ def _tpcs_family_with_a_redundantly_declared_index() -> Metamodel:
 def test_schema_statements_tpcs_deduplicates_a_redundant_index_across_the_chain() -> None:
     (ddl,) = provision.schema_statements(_tpcs_family_with_a_redundantly_declared_index())
     assert ddl.count("unique (code)") == 1
+
+
+def test_schema_statements_rejects_an_axis_with_an_unknown_start_attribute() -> None:
+    malformed = Entity(
+        name="MalformedTemporal",
+        table="malformed_temporal",
+        attributes=(Attribute(name="id", type="int64", column="id", primary_key=True),),
+        as_of_axes=(
+            AsOfAxisMetadata(
+                dimension="transactionTime",
+                start_attribute="missing_tx_start",
+                end_attribute="missing_tx_end",
+            ),
+        ),
+    )
+
+    with pytest.raises(ValueError, match="no attribute 'missing_tx_start'"):
+        provision.schema_statements(Metamodel(entities=(malformed,)))

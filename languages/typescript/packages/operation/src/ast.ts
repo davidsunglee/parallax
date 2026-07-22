@@ -17,8 +17,8 @@ import { assertValidOperation } from "./schema.js";
 export type AttributeRef = string;
 /** `Class.relationship` — a metamodel relationship reference. */
 export type RelationshipRef = string;
-/** `Class.asOfAttribute` — a metamodel as-of-attribute reference. */
-export type AsOfAttributeRef = string;
+/** The closed m-temporal-read dimension vocabulary. */
+export type TemporalDimension = "validTime" | "transactionTime";
 /** `Class.valueObject.field[.field…]` — a nested value-object field reference (attribute leaf). */
 export type NestedRef = string;
 /** `Class.valueObject[.valueObject…]` — a path terminating at a value-object member. */
@@ -29,8 +29,8 @@ export type ElementRef = string;
 export type EntityName = string;
 /** A scalar literal usable as a bind. */
 export type Literal = string | number | boolean | null;
-/** An ISO-8601 UTC instant, or the keyword `now`. */
-export type TemporalDate = string;
+/** The literal `latest` or a finite ISO-8601 UTC instant. */
+export type TemporalCoordinate = string;
 /**
  * The subtype narrowing of one deep-fetch hop: constrain the relationship's
  * polymorphic target to a non-empty subset of its subtypes (m-inheritance). A path
@@ -362,22 +362,22 @@ export interface GroupByOp {
 export interface AsOfOp {
   readonly asOf: {
     readonly operand: Operation;
-    readonly asOfAttr: AsOfAttributeRef;
-    readonly date: TemporalDate;
+    readonly dimension: TemporalDimension;
+    readonly coordinate: TemporalCoordinate;
   };
 }
 export interface AsOfRangeOp {
   readonly asOfRange: {
     readonly operand: Operation;
-    readonly asOfAttr: AsOfAttributeRef;
-    readonly from: TemporalDate;
-    readonly to: TemporalDate;
+    readonly dimension: TemporalDimension;
+    readonly start: TemporalCoordinate;
+    readonly end: TemporalCoordinate;
   };
 }
 export interface HistoryOp {
   readonly history: {
     readonly operand: Operation;
-    readonly asOfAttr: AsOfAttributeRef;
+    readonly dimension: TemporalDimension;
   };
 }
 

@@ -30,7 +30,16 @@ reads the live ``Attr[T]`` / ``Rel[T]`` objects directly.
 """
 
 from parallax.conformance.read_models import Animal, Pet
-from parallax.core import Attr, Entity, EntityConfig, Field, Rel, Relationship
+from parallax.core import (
+    Attr,
+    Entity,
+    EntityConfig,
+    Field,
+    Rel,
+    Relationship,
+    RelationshipJoin,
+    RelationshipTarget,
+)
 from parallax.core.entity.base import EntityRegistry
 
 _NS = "parallax.compatibility"
@@ -56,15 +65,13 @@ class Person(Entity, frozen=True, registry=ANIMAL_OWNER_REGISTRY):
     name: Attr[str] = Field(max_length=32)
     animals: Rel[tuple[Animal, ...]] = Relationship(
         cardinality="one-to-many",
-        join="this.id = Animal.ownerId",
-        related_entity="Animal",
-        reverse_name="owner",
-        foreign_key="owner_id",
+        join=RelationshipJoin(
+            source="id", target=RelationshipTarget(entity="Animal", attribute="ownerId")
+        ),
     )
     pets: Rel[tuple[Pet, ...]] = Relationship(
         cardinality="one-to-many",
-        join="this.id = Pet.ownerId",
-        related_entity="Pet",
-        reverse_name="owner",
-        foreign_key="owner_id",
+        join=RelationshipJoin(
+            source="id", target=RelationshipTarget(entity="Pet", attribute="ownerId")
+        ),
     )

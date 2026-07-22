@@ -69,8 +69,8 @@ from parallax.snapshot.handle._write_inputs import (
     observation_key,
     prepare_sparse_row,
     record_observations,
-    validate_business_from,
     validate_until,
+    validate_valid_from,
 )
 
 
@@ -116,7 +116,7 @@ class Transaction:
         # provenance a subsequent keyed temporal close builds on.
         self._inserted_keys: set[ObjectKey] = set()
 
-    def insert(self, instance: EntityBase, *, business_from: dt.datetime | None = None) -> None:
+    def insert(self, instance: EntityBase, *, valid_from: dt.datetime | None = None) -> None:
         """Buffer a keyed ``insert`` of a full instance (the Create Payload,
         spec §5): every member the instance actually SET. Raises
         :class:`~parallax.core.entity.base.FrameworkOwnedAxisError` (D-31,
@@ -126,50 +126,49 @@ class Transaction:
         (the Clock Strategy), never caller-authored (:func:`full_row`'s own
         construction-time rejection replaces the pre-D-31 silent discard).
 
-        ``business_from`` is the PLAIN (unbounded) bitemporal insert's own
-        business instant — the open rectangle's lower bound
-        ``[business_from, infinity)`` (`m-bitemp-write` "insert /
+        ``valid_from`` is the plain Bitemporal insert's Valid-Time instant — the
+        open rectangle's lower bound ``[valid_from, infinity)`` (`m-bitemp-write` "insert /
         insertUntil — a single open rectangle, no close"); mirrors ``update``'s
-        own bitemporal-only-required :func:`validate_business_from`: an
-        audit-only or non-temporal target takes none (no business axis to
+        own Bitemporal-only-required :func:`validate_valid_from`: a
+        Transaction-Time-Only or non-temporal target takes none (no Valid-Time dimension to
         bound)."""
-        record, declaring, business_from_literal = self._prepare_keyed_write(
-            instance, "insert", business_from
+        record, declaring, valid_from_literal = self._prepare_keyed_write(
+            instance, "insert", valid_from
         )
-        self._buffer("insert", record.name, full_row(instance), business_from=business_from_literal)
+        self._buffer("insert", record.name, full_row(instance), valid_from=valid_from_literal)
         self._inserted_keys.add(observation_key(record, declaring, instance))
 
     def insert_until(
-        self, instance: EntityBase, *, business_from: dt.datetime, until: dt.datetime
+        self, instance: EntityBase, *, valid_from: dt.datetime, until: dt.datetime
     ) -> None:
-        """Buffer a keyed, business-window-BOUNDED ``insertUntil`` (D-31, COR-3
+        """Buffer a keyed, Valid-Time-bounded ``insertUntil`` (D-31, COR-3
         Phase 8 increment 7 completion round; ``m-bitemp-write-003`` — the
         *Until trio's third member): open a single bitemporal rectangle
-        bounded to ``[business_from, until)`` at the fresh processing
+        bounded to ``[valid_from, until)`` at the fresh Transaction-Time
         milestone, with no prior row to close — the bitemporal analogue of an
         audit-only ``insert``, business-bounded — bitemporal-only (mirrors
-        ``update_until``'s own required, non-optional ``business_from`` /
-        ``until``). A window that does not satisfy ``business_from < until``
+        ``update_until``'s own required ``valid_from`` / ``until``). A window
+        that does not satisfy ``valid_from < until``
         (equal or reversed bounds) raises at THIS call, before any buffering
         (:func:`validate_until`, `python.md` §5 "all validated at build").
         Raises :class:`~parallax.core.entity.base.FrameworkOwnedAxisError`
         when ``instance`` itself SET an axis-governed attribute — the window
         bounds come from THESE verb arguments, never from instance fields
         (the Reladomo verb-argument precedent, decision 2)."""
-        record, declaring, business_from_literal = self._prepare_keyed_write(
-            instance, "insertUntil", business_from
+        record, declaring, valid_from_literal = self._prepare_keyed_write(
+            instance, "insertUntil", valid_from
         )
-        until_literal = validate_until(declaring, "insertUntil", business_from, until)
+        until_literal = validate_until(declaring, "insertUntil", valid_from, until)
         self._buffer(
             "insertUntil",
             record.name,
             full_row(instance),
-            business_from=business_from_literal,
-            business_to=until_literal,
+            valid_from=valid_from_literal,
+            until=until_literal,
         )
         self._inserted_keys.add(observation_key(record, declaring, instance))
 
-    def update(self, copy: EntityBase, *, business_from: dt.datetime | None = None) -> None:
+    def update(self, copy: EntityBase, *, valid_from: dt.datetime | None = None) -> None:
         """Buffer a sparse keyed ``update``: primary key + the effective change
         set of an edited copy (touched fields whose current value differs from
         the recorded original, spec §3/§5). An EMPTY effective change set
@@ -183,22 +182,22 @@ class Transaction:
         unit of work's own recorded observation at lowering
         (`parallax.snapshot.handle.lower_write`), never from the edited copy.
 
-        ``business_from`` is the PLAIN (unbounded) bitemporal correction's own
-        business instant (`m-bitemp-write-006` "plain-update-split" —
-        inactivates the original on the processing axis, then chains head
+        ``valid_from`` is the plain Bitemporal correction's Valid-Time instant
+        (`m-bitemp-write-006` "plain-update-split" — inactivates the original on
+        Transaction Time, then chains head
         (the old value) + a new tail (the new value) running to infinity, the
         two-way degenerate of ``update_until``'s three-way rectangle split).
         Mirrors ``update_where``'s own bitemporal-only-required
-        :func:`validate_business_from`: an audit-only or non-temporal target
-        takes none (no business axis to bound)."""
-        record, declaring, business_from_literal = self._prepare_keyed_write(
-            copy, "update", business_from
+        :func:`validate_valid_from`: a Transaction-Time-Only or non-temporal target
+        takes none (no Valid-Time dimension to bound)."""
+        record, declaring, valid_from_literal = self._prepare_keyed_write(
+            copy, "update", valid_from
         )
         row = prepare_sparse_row(copy)
         if row is None:
             return
         self._require_observed_milestone(record, declaring, copy)
-        self._buffer("update", record.name, row, business_from=business_from_literal)
+        self._buffer("update", record.name, row, valid_from=valid_from_literal)
 
     def delete(self, node_or_instance: EntityBase) -> None:
         """Buffer a keyed ``delete``, keyed off ``node_or_instance``'s primary
@@ -217,35 +216,35 @@ class Transaction:
     # already share, so a hand-written program and the engine's corpus      #
     # replay can never diverge in behavior.                                 #
     def terminate(
-        self, node_or_instance: EntityBase, *, business_from: dt.datetime | None = None
+        self, node_or_instance: EntityBase, *, valid_from: dt.datetime | None = None
     ) -> None:
         """Buffer a keyed ``terminate``: close ``node_or_instance``'s current
         milestone (the temporal delete-equivalent, `python.md` §5) — keyed off
         its primary key alone, no chained row (close-only, `m-audit-write` /
-        `m-bitemp-write`). Audit-only takes no ``business_from`` (no business
-        axis to bound); bitemporal REQUIRES it (the mutation's own business
+        `m-bitemp-write`). Transaction-Time-Only takes no ``valid_from``;
+        Bitemporal requires it (the mutation's own Valid-Time
         instant, mirrors ``terminate_where``'s own
-        :func:`validate_business_from`)."""
-        record, declaring, business_from_literal = self._prepare_keyed_write(
-            node_or_instance, "terminate", business_from
+        :func:`validate_valid_from`)."""
+        record, declaring, valid_from_literal = self._prepare_keyed_write(
+            node_or_instance, "terminate", valid_from
         )
         self._require_observed_milestone(record, declaring, node_or_instance)
         self._buffer(
             "terminate",
             record.name,
             primary_key_row(node_or_instance),
-            business_from=business_from_literal,
+            valid_from=valid_from_literal,
         )
 
     def update_until(
-        self, copy: EntityBase, *, business_from: dt.datetime, until: dt.datetime
+        self, copy: EntityBase, *, valid_from: dt.datetime, until: dt.datetime
     ) -> None:
-        """Buffer a sparse keyed, business-window-BOUNDED ``updateUntil``:
+        """Buffer a sparse keyed, Valid-Time-bounded ``updateUntil``:
         primary key + the effective change set of an edited copy (mirrors
-        keyed ``update``), bounded to ``[business_from, until)``
+        keyed ``update``), bounded to ``[valid_from, until)``
         (`m-bitemp-write` "The rectangle split") — bitemporal-only (mirrors
-        ``update_until_where``'s own required, non-optional ``business_from``
-        / ``until``). A window that does not satisfy ``business_from < until``
+        ``update_until_where``'s own required ``valid_from`` / ``until``). A
+        window that does not satisfy ``valid_from < until``
         (equal or reversed bounds) raises at THIS call, before any buffering
         (:func:`validate_until`, `python.md` §5 "all validated at build") —
         checked BEFORE the empty-effective-change-set no-op return below (R2,
@@ -254,10 +253,10 @@ class Transaction:
         edited copy's own Change Record nets to zero). An EMPTY effective
         change set (once the window is confirmed valid) issues no DML at all,
         exactly like keyed ``update``."""
-        record, declaring, business_from_literal = self._prepare_keyed_write(
-            copy, "updateUntil", business_from
+        record, declaring, valid_from_literal = self._prepare_keyed_write(
+            copy, "updateUntil", valid_from
         )
-        until_literal = validate_until(declaring, "updateUntil", business_from, until)
+        until_literal = validate_until(declaring, "updateUntil", valid_from, until)
         row = prepare_sparse_row(copy)
         if row is None:
             return
@@ -266,58 +265,58 @@ class Transaction:
             "updateUntil",
             record.name,
             row,
-            business_from=business_from_literal,
-            business_to=until_literal,
+            valid_from=valid_from_literal,
+            until=until_literal,
         )
 
     def terminate_until(
-        self, node_or_instance: EntityBase, *, business_from: dt.datetime, until: dt.datetime
+        self, node_or_instance: EntityBase, *, valid_from: dt.datetime, until: dt.datetime
     ) -> None:
-        """Buffer a keyed, business-window-BOUNDED ``terminateUntil``: close a
-        single business window ``[business_from, until)`` on
+        """Buffer a keyed, Valid-Time-bounded ``terminateUntil``: close a
+        single Valid-Time window ``[valid_from, until)`` on
         ``node_or_instance``'s current milestone, keyed off its primary key
         alone (`m-bitemp-write`) — bitemporal-only (mirrors
         ``terminate_until_where``). A window that does not satisfy
-        ``business_from < until`` (equal or reversed bounds) raises at THIS
+        ``valid_from < until`` (equal or reversed bounds) raises at THIS
         call, before any buffering (:func:`validate_until`, `python.md`
         §5)."""
-        record, declaring, business_from_literal = self._prepare_keyed_write(
-            node_or_instance, "terminateUntil", business_from
+        record, declaring, valid_from_literal = self._prepare_keyed_write(
+            node_or_instance, "terminateUntil", valid_from
         )
-        until_literal = validate_until(declaring, "terminateUntil", business_from, until)
+        until_literal = validate_until(declaring, "terminateUntil", valid_from, until)
         self._require_observed_milestone(record, declaring, node_or_instance)
         self._buffer(
             "terminateUntil",
             record.name,
             primary_key_row(node_or_instance),
-            business_from=business_from_literal,
-            business_to=until_literal,
+            valid_from=valid_from_literal,
+            until=until_literal,
         )
 
     def _prepare_keyed_write(
         self,
         node_or_instance: EntityBase,
         mutation: KeyedMutation,
-        business_from: dt.datetime | None,
+        valid_from: dt.datetime | None,
     ) -> tuple[Entity, Entity, str | None]:
         """The keyed-verb prep every verb above (``delete`` excepted — it takes
-        no business-window bound) opens with (N2, COR-3 Phase 8 increment 7
+        no Valid-Time bound) opens with (N2, COR-3 Phase 8 increment 7
         remediation; ``insert``/``insert_until`` joined at D-31, increment 7
         completion round): resolve the written
         instance's own :class:`~parallax.core.descriptor.Entity` record and
         its family's DECLARING entity
         (:func:`~parallax.core.inheritance.declaring_entity` — the entity
         that actually carries the temporal/versioned shape), then validate +
-        render ``business_from`` against that declaring entity's own
-        temporality (:func:`validate_business_from`, spec §5). Returns the
+        render ``valid_from`` against that declaring entity's own
+        temporality (:func:`validate_valid_from`, spec §5). Returns the
         record (``_buffer``'s own entity-name argument), the declaring entity
         (a ``*Until`` verb's own :func:`validate_until` needs it too, for
         its error message), and the rendered instant literal (``None`` for a
         non-temporal/audit-only target)."""
         record = entity_record_of_instance(node_or_instance)
         declaring = inheritance.declaring_entity(self._meta, record)
-        business_from_literal = validate_business_from(declaring, mutation, business_from)
-        return record, declaring, business_from_literal
+        valid_from_literal = validate_valid_from(declaring, mutation, valid_from)
+        return record, declaring, valid_from_literal
 
     def _require_observed_milestone(
         self, record: Entity, declaring: Entity, instance: EntityBase
@@ -362,9 +361,9 @@ class Transaction:
         update/delete of that SAME object derives its version advance (and,
         under optimistic concurrency, its gate) from THIS observation, never
         from an implicit resolving read at write time. Every materialized node
-        of a TEMPORAL entity likewise records its observed processing-from
+        of a TEMPORAL entity likewise records its observed Transaction-Time start
         (`in_z`) plus PIN PROVENANCE (`Observation.latest_pinned`, derived from
-        this statement's own processing-axis pin below): a later temporal
+        this statement's own Transaction-Time pin below): a later temporal
         write's close/chain, or a locking-mode write's historical-observation
         license (`~parallax.core.opt_lock.check_locking_license`), derives from
         THIS observation, never a shadow lookup or an implicit resolving read
@@ -393,8 +392,8 @@ class Transaction:
         entity: str,
         row: Mapping[str, object],
         *,
-        business_from: str | None = None,
-        business_to: str | None = None,
+        valid_from: str | None = None,
+        until: str | None = None,
     ) -> None:
         # The document route buys the IR's structural validation (no `at` alias,
         # no observation keys) first (`deserialize`), then the model-aware
@@ -409,22 +408,22 @@ class Transaction:
         # any OTHERWISE-unknown member a validate_write pass left unexamined
         # (it walks only DECLARED members, never flags a stray key itself).
         #
-        # `business_from` / `business_to` extend this neutral seam for a TEMPORAL
-        # keyed write (COR-3 Phase 8 increment 4): a non-temporal or audit-only
+        # `valid_from` / `until` extend this neutral seam for a TEMPORAL keyed
+        # write: a non-temporal or Transaction-Time-Only
         # target's caller never passes them (every pre-increment-7 call site is
         # unaffected). The typed temporal developer verbs (COR-3 Phase 8
-        # increment 7 — ``update``'s own optional bitemporal ``business_from``,
+        # increment 7 — ``update``'s own optional Bitemporal ``valid_from``,
         # ``terminate``, ``update_until``, ``terminate_until``; ``insert``'s own
-        # optional bitemporal ``business_from`` and ``insert_until`` joined at
+        # optional Bitemporal ``valid_from`` and ``insert_until`` joined at
         # D-31, increment 7 completion round) and the conformance engine's own
         # temporal write translation both pass them the SAME way (`m-audit-write`
-        # / `m-bitemp-write` — the axis-explicit `businessFrom` / `businessTo`
+        # / `m-bitemp-write` — the dimension-explicit `validFrom` / `until`
         # instruction fields, never smuggled onto `row`, ADR 0010/0013).
         doc: dict[str, object] = {"mutation": mutation, "entity": entity, "rows": [dict(row)]}
-        if business_from is not None:
-            doc["businessFrom"] = business_from
-        if business_to is not None:
-            doc["businessTo"] = business_to
+        if valid_from is not None:
+            doc["validFrom"] = valid_from
+        if until is not None:
+            doc["until"] = until
         instruction = instructions.deserialize(doc)
         validate_write(self._meta.entity(entity), row, self._meta, mutation=mutation)
         instructions.validate_instruction(instruction, self._meta)
@@ -435,7 +434,7 @@ class Transaction:
         self,
         statement: EntityStatement,
         *assignments: AttributeAssignment,
-        business_from: dt.datetime | None = None,
+        valid_from: dt.datetime | None = None,
     ) -> None:
         """A predicate-selected ``update`` (`python.md` §5): ``statement`` MUST
         be a bare statement (nothing but a predicate); ``assignments`` are
@@ -452,7 +451,7 @@ class Transaction:
             "update",
             statement,
             assignments,
-            business_from=business_from,
+            valid_from=valid_from,
         )
 
     def delete_where(self, statement: EntityStatement) -> None:
@@ -469,16 +468,15 @@ class Transaction:
             "delete",
             statement,
             (),
-            business_from=None,
+            valid_from=None,
         )
 
     def terminate_where(
-        self, statement: EntityStatement, *, business_from: dt.datetime | None = None
+        self, statement: EntityStatement, *, valid_from: dt.datetime | None = None
     ) -> None:
         """A predicate-selected ``terminate`` over a TEMPORAL target
-        (`python.md` §5): audit-only takes no ``business_from`` (no business
-        axis to bound); bitemporal REQUIRES it (the plain terminate's own
-        business instant ``B``). Always materializes — a temporal predicate
+        (`python.md` §5): Transaction-Time-Only takes no ``valid_from``;
+        Bitemporal requires it. Always materializes — a temporal predicate
         write has no readless template."""
         buffer_predicate(
             self._uow,
@@ -488,18 +486,18 @@ class Transaction:
             "terminate",
             statement,
             (),
-            business_from=business_from,
+            valid_from=valid_from,
         )
 
     def update_until_where(
         self,
         statement: EntityStatement,
         *assignments: AttributeAssignment,
-        business_from: dt.datetime,
+        valid_from: dt.datetime,
         until: dt.datetime,
     ) -> None:
-        """A predicate-selected, business-window-BOUNDED ``updateUntil`` over a
-        bitemporal target (`python.md` §5; `m-bitemp-write` "The rectangle
+        """A predicate-selected, Valid-Time-bounded ``updateUntil`` over a
+        Bitemporal target (`python.md` §5; `m-bitemp-write` "The rectangle
         split"): always materializes to a close plus head/middle/tail."""
         buffer_predicate(
             self._uow,
@@ -509,16 +507,16 @@ class Transaction:
             "updateUntil",
             statement,
             assignments,
-            business_from=business_from,
+            valid_from=valid_from,
             until=until,
         )
 
     def terminate_until_where(
-        self, statement: EntityStatement, *, business_from: dt.datetime, until: dt.datetime
+        self, statement: EntityStatement, *, valid_from: dt.datetime, until: dt.datetime
     ) -> None:
-        """A predicate-selected, business-window-BOUNDED ``terminateUntil`` over
-        a bitemporal target (`python.md` §5): always materializes to a close
-        plus head/tail (no middle — the window becomes a hole in business
+        """A predicate-selected, Valid-Time-bounded ``terminateUntil`` over
+        a Bitemporal target (`python.md` §5): always materializes to a close
+        plus head/tail (no middle — the window becomes a hole in Valid
         time)."""
         buffer_predicate(
             self._uow,
@@ -528,7 +526,7 @@ class Transaction:
             "terminateUntil",
             statement,
             (),
-            business_from=business_from,
+            valid_from=valid_from,
             until=until,
         )
 

@@ -7,9 +7,9 @@
 # MUST NOT redeclare, add, remove, override, or shadow an axis, even when the
 # root itself is already temporal (a root-result's identity would otherwise
 # mix `(family, PK)` and `(family, PK, coordinates)` depending on which
-# branch a row resolved through). `Rate` (root) declares `processingDate`
+# branch a row resolved through). `Rate` (root) declares `transactionTime`
 # only; `DepositRate` (concrete) additionally declares its own
-# `businessDate` — a model-aware validator MUST reject the family before any
+# `validTime` — a model-aware validator MUST reject the family before any
 # SQL. Different physical strategy than the sibling witness
 # (`m-inheritance-098`, table-per-hierarchy): this one is
 # table-per-concrete-subtype, so both strategies exercise the same
@@ -26,14 +26,13 @@ when:
           role: root
         attributes:
           - { name: id, type: int64, column: id, primaryKey: true }
-          - { name: amount, type: decimal(18,2), column: amount }
-          - { name: processingFrom, type: timestamp, column: in_z }
-          - { name: processingTo, type: timestamp, column: out_z }
-        asOfAttributes:
-          - name: processingDate
-            fromColumn: in_z
-            toColumn: out_z
-            axis: processing
+          - { name: amount, type: "decimal(18,2)", column: amount }
+          - { name: tx_start, type: timestamp, column: in_z }
+          - { name: tx_end, type: timestamp, column: out_z }
+        asOfAxes:
+          - dimension: transactionTime
+            startAttribute: tx_start
+            endAttribute: tx_end
       - name: DepositRate
         table: deposit_rate
         inheritance:
@@ -41,12 +40,11 @@ when:
           parent: Rate
         attributes:
           - { name: grade, type: string, column: grade, nullable: true }
-          - { name: businessFrom, type: timestamp, column: from_z }
-          - { name: businessTo, type: timestamp, column: thru_z }
-        asOfAttributes:
-          - name: businessDate
-            fromColumn: from_z
-            toColumn: thru_z
-            axis: business
+          - { name: valid_start, type: timestamp, column: from_z }
+          - { name: valid_end, type: timestamp, column: thru_z }
+        asOfAxes:
+          - dimension: validTime
+            startAttribute: valid_start
+            endAttribute: valid_end
 then:
   rejectedRule: inheritance-temporal-axes-not-root-owned

@@ -33,6 +33,7 @@ __all__ = [
     "ancestor_chain",
     "declaring_entity",
     "effective_concrete_subtypes",
+    "effective_table",
     "family_attributes",
     "family_of",
     "family_primary_key",
@@ -128,8 +129,23 @@ def effective_concrete_subtypes(metamodel: Metamodel, position: str) -> tuple[st
     if entity.inheritance is None:
         return (position,)
     if entity.inheritance.role == "concrete-subtype":
-        return (position,)
-    return tuple(sorted(family_of(metamodel).concrete_descendants(position)))
+        return (entity.name,)
+    return tuple(sorted(family_of(metamodel).concrete_descendants(entity.name)))
+
+
+def effective_table(metamodel: Metamodel, entity: Entity) -> str | None:
+    """The physical table used by ``entity`` under its family's strategy.
+
+    A TPH participant resolves to the root-owned shared table without copying that
+    declaration into descendant Metadata. A TPCS participant and a standalone
+    Entity use their own declared table.
+    """
+    if entity.inheritance is None:
+        return entity.table
+    root = family_root(metamodel, entity)
+    if root.inheritance is not None and root.inheritance.strategy == "table-per-hierarchy":
+        return root.table
+    return entity.table
 
 
 def _root_name(meta: Metamodel, entity: Entity) -> str | None:
@@ -280,11 +296,10 @@ def superset_value_objects(meta: Metamodel, position: Sequence[str]) -> list[Val
 def validate(metamodel: Metamodel) -> None:
     """Validate every inheritance family invariant, raising :class:`InheritanceError`.
 
-    The check order pins each corpus ``rejectedRule``: parent resolution, then
-    acyclicity, tableless-abstract nodes, strategy locality, temporal-axis root
-    ownership, optimistic-locking root ownership, strategy-vs-tag coherence,
-    ancestry-reaches-a-root, root cardinality, and the table-per-hierarchy tag
-    rules.
+    The check order pins each corpus ``rejectedRule``: parent resolution,
+    acyclicity, multiple-root detection, strategy and family-owned-fact locality,
+    ancestry-reaches-a-root, missing-root detection, then the selected strategy's
+    table/tag formation rules.
     """
     participants = _participants(metamodel)
     if not participants:
@@ -294,13 +309,13 @@ def validate(metamodel: Metamodel) -> None:
 
     _reject_unknown_parent(participants, by_name)
     _reject_cycles(participants)
-    _reject_abstract_with_table(participants)
+    _reject_multiple_roots(roots)
     _reject_strategy_redeclared(participants)
     _reject_descendant_temporal_axes(participants)
     _reject_descendant_optimistic_locking(participants)
-    _reject_tag_under_tpcs(roots, participants)
     _reject_concrete_without_root(participants, by_name)
-    _reject_root_cardinality(roots)
+    _reject_missing_root(roots)
+    _reject_strategy_storage(roots[0], participants)
     _reject_tph_tag_values(roots, participants)
 
 
@@ -331,15 +346,12 @@ def _reject_cycles(participants: tuple[Entity, ...]) -> None:
             current = _inh(by_name[current]).parent
 
 
-def _reject_abstract_with_table(participants: tuple[Entity, ...]) -> None:
-    for entity in participants:
-        role = _inh(entity).role
-        if role in ("root", "abstract-subtype") and entity.table is not None:
-            raise InheritanceError(
-                "inheritance-abstract-node-with-table",
-                f"abstract {role} {entity.name} is tableless and rowless but declares a table",
-                entity=entity.name,
-            )
+def _reject_multiple_roots(roots: list[Entity]) -> None:
+    if len(roots) > 1:
+        raise InheritanceError(
+            "inheritance-multiple-roots",
+            f"more than one inheritance root: {sorted(root.name for root in roots)}",
+        )
 
 
 def _reject_strategy_redeclared(participants: tuple[Entity, ...]) -> None:
@@ -368,7 +380,7 @@ def _reject_descendant_temporal_axes(participants: tuple[Entity, ...]) -> None:
     rejected here, uniformly, before any SQL.
     """
     for entity in participants:
-        if _inh(entity).role != "root" and entity.as_of_attributes:
+        if _inh(entity).role != "root" and entity.as_of_axes:
             raise InheritanceError(
                 "inheritance-temporal-axes-not-root-owned",
                 f"non-root {entity.name} declares its own as-of axes; temporal axes are a "
@@ -402,27 +414,6 @@ def _reject_descendant_optimistic_locking(participants: tuple[Entity, ...]) -> N
             )
 
 
-def _reject_tag_under_tpcs(roots: list[Entity], participants: tuple[Entity, ...]) -> None:
-    if len(roots) != 1:
-        return
-    root = roots[0]
-    if _inh(root).strategy != "table-per-concrete-subtype":
-        return
-    if _inh(root).tag_column is not None:
-        raise InheritanceError(
-            "inheritance-tag-on-concrete-subtype-strategy",
-            f"table-per-concrete-subtype root {root.name} declares a tag column",
-            entity=root.name,
-        )
-    for entity in participants:
-        if _inh(entity).tag_value is not None:
-            raise InheritanceError(
-                "inheritance-tag-on-concrete-subtype-strategy",
-                f"table-per-concrete-subtype subtype {entity.name} declares a tagValue",
-                entity=entity.name,
-            )
-
-
 def _reject_concrete_without_root(
     participants: tuple[Entity, ...], by_name: dict[str, Entity]
 ) -> None:
@@ -447,17 +438,62 @@ def _reject_concrete_without_root(
             )
 
 
-def _reject_root_cardinality(roots: list[Entity]) -> None:
+def _reject_missing_root(roots: list[Entity]) -> None:
     if len(roots) == 0:
         raise InheritanceError(
             "inheritance-missing-root",
             "inheritance participants declare no root",
         )
-    if len(roots) > 1:
+
+
+def _reject_strategy_storage(root: Entity, participants: tuple[Entity, ...]) -> None:
+    strategy = _inh(root).strategy
+    if strategy == "table-per-hierarchy":
+        if root.table is None:
+            raise InheritanceError(
+                "inheritance-tph-root-table-required",
+                f"table-per-hierarchy root {root.name} declares no shared table",
+                entity=root.name,
+            )
+        for entity in participants:
+            if entity is not root and entity.table is not None:
+                raise InheritanceError(
+                    "inheritance-tph-descendant-table-forbidden",
+                    f"table-per-hierarchy descendant {entity.name} repeats the root-owned "
+                    "shared table",
+                    entity=entity.name,
+                )
+        return
+
+    if strategy != "table-per-concrete-subtype":
+        return
+    for entity in participants:
+        role = _inh(entity).role
+        if role in ("root", "abstract-subtype") and entity.table is not None:
+            raise InheritanceError(
+                "inheritance-tpcs-abstract-table-forbidden",
+                f"table-per-concrete-subtype abstract position {entity.name} declares a table",
+                entity=entity.name,
+            )
+        if role == "concrete-subtype" and entity.table is None:
+            raise InheritanceError(
+                "inheritance-tpcs-concrete-table-required",
+                f"table-per-concrete-subtype concrete {entity.name} declares no table",
+                entity=entity.name,
+            )
+    if _inh(root).tag_column is not None:
         raise InheritanceError(
-            "inheritance-multiple-roots",
-            f"more than one inheritance root: {sorted(root.name for root in roots)}",
+            "inheritance-tag-on-concrete-subtype-strategy",
+            f"table-per-concrete-subtype root {root.name} declares a tag column",
+            entity=root.name,
         )
+    for entity in participants:
+        if _inh(entity).tag_value is not None:
+            raise InheritanceError(
+                "inheritance-tag-on-concrete-subtype-strategy",
+                f"table-per-concrete-subtype subtype {entity.name} declares a tagValue",
+                entity=entity.name,
+            )
 
 
 def _reject_tph_tag_values(roots: list[Entity], participants: tuple[Entity, ...]) -> None:
@@ -466,7 +502,6 @@ def _reject_tph_tag_values(roots: list[Entity], participants: tuple[Entity, ...]
         return
     concretes = [entity for entity in participants if _inh(entity).role == "concrete-subtype"]
     seen_values: dict[str, str] = {}
-    seen_tables: dict[str, str] = {}
     for entity in concretes:
         tag_value = _inh(entity).tag_value
         if tag_value is None:
@@ -482,13 +517,6 @@ def _reject_tph_tag_values(roots: list[Entity], participants: tuple[Entity, ...]
                 entity=entity.name,
             )
         seen_values[tag_value] = entity.name
-        if entity.table is not None:
-            seen_tables[entity.table] = entity.name
-    if len(seen_tables) > 1:
-        raise InheritanceError(
-            "inheritance-inconsistent-hierarchy-table",
-            f"table-per-hierarchy concrete subtypes map to different tables: {sorted(seen_tables)}",
-        )
 
 
 # --------------------------------------------------------------------------- #

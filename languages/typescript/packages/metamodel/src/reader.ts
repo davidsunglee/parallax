@@ -6,29 +6,32 @@
  * corpus descriptors and the generated typed layer (Phase 9) delegates to it.
  * `Metamodel.entity(name)` yields an `EntityMetadata` over the *fully defaulted*
  * normalized view (`normalize.ts`), exposing `attributes`, `attributeByName`,
- * `asOfAttributes`, `relationships`, and `table` — schema defaults surfaced.
+ * `asOfAxes`, `relationships`, and `table` — schema defaults surfaced.
  *
  * Descriptors are ajv-validated against `metamodel.schema.json` on read, so a
  * malformed descriptor fails fast rather than producing a half-formed reader.
  */
 import {
-  type NormalizedAsOfAttribute,
+  type DefiningRelationshipDeclaration,
+  type NormalizedAsOfAxis,
   type NormalizedAttribute,
   type NormalizedEntity,
   type NormalizedIndex,
   type NormalizedNestedValueObject,
-  type NormalizedRelationship,
   type NormalizedValueObject,
   type NormalizedValueObjectAttribute,
-  normalizeEntity,
+  normalizeEntities,
   type RawDescriptor,
-  rawEntities,
+  type RelationshipDeclaration,
+  type RelationshipIdentity,
+  type RelationshipMetadata,
+  type ReverseRelationshipDeclaration,
 } from "./normalize.js";
 import { assertValidDescriptor } from "./schema.js";
 
 /**
  * The recursive members a value object (top-level or nested) exposes: its own
- * `cardinality`, typed `attributes`, and further-nested `valueObjects`. Both a
+ * `multiplicity`, typed `attributes`, and further-nested `valueObjects`. Both a
  * top-level `NormalizedValueObject` and a `NormalizedNestedValueObject` satisfy
  * it, so the free accessors below traverse either without caring which is the
  * storage-carrying root.
@@ -51,12 +54,109 @@ export function findValueObjectAttribute(
   return member.attributes.find((attr) => attr.name === name);
 }
 
+function relationshipKey(identity: RelationshipIdentity): string {
+  return `${identity.entity}#${identity.name}`;
+}
+
+function invertCardinality(
+  cardinality: DefiningRelationshipDeclaration["cardinality"],
+): DefiningRelationshipDeclaration["cardinality"] {
+  if (cardinality === "one-to-many") {
+    return "many-to-one";
+  }
+  if (cardinality === "many-to-one") {
+    return "one-to-many";
+  }
+  return "one-to-one";
+}
+
+/** Immutable directional relationship semantics compiled from local declarations. */
+export class RelationshipFacet {
+  private readonly byIdentity: ReadonlyMap<string, RelationshipMetadata>;
+  private readonly byEntity: ReadonlyMap<string, readonly RelationshipMetadata[]>;
+
+  constructor(entities: readonly NormalizedEntity[]) {
+    const declarations = entities.flatMap((entity) => [...entity.relationships]);
+    const declarationsByIdentity = new Map(
+      declarations.map((declaration) => [relationshipKey(declaration.identity), declaration]),
+    );
+    const metadata = declarations.map((declaration) =>
+      this.compile(declaration, declarations, declarationsByIdentity),
+    );
+    this.byIdentity = new Map(
+      metadata.map((relationship) => [relationshipKey(relationship.identity), relationship]),
+    );
+    const byEntity = new Map<string, RelationshipMetadata[]>();
+    for (const relationship of metadata) {
+      const current = byEntity.get(relationship.identity.entity) ?? [];
+      current.push(relationship);
+      byEntity.set(relationship.identity.entity, current);
+    }
+    this.byEntity = byEntity;
+  }
+
+  relationship(identity: RelationshipIdentity): RelationshipMetadata | undefined {
+    return this.byIdentity.get(relationshipKey(identity));
+  }
+
+  relationships(entity: string): readonly RelationshipMetadata[] {
+    return this.byEntity.get(entity) ?? [];
+  }
+
+  private compile(
+    declaration: RelationshipDeclaration,
+    declarations: readonly RelationshipDeclaration[],
+    declarationsByIdentity: ReadonlyMap<string, RelationshipDeclaration>,
+  ): RelationshipMetadata {
+    if (declaration.kind === "defining") {
+      const reverse = declarations.find(
+        (candidate): candidate is ReverseRelationshipDeclaration =>
+          candidate.kind === "reverse" &&
+          relationshipKey(candidate.reverseOf) === relationshipKey(declaration.identity),
+      );
+      return {
+        identity: declaration.identity,
+        cardinality: declaration.cardinality,
+        join: declaration.join,
+        ...(reverse === undefined ? {} : { reverse: reverse.identity.name }),
+        dependent: declaration.dependent,
+        orderBy: declaration.orderBy,
+      };
+    }
+
+    const defining = declarationsByIdentity.get(relationshipKey(declaration.reverseOf));
+    if (defining === undefined || defining.kind !== "defining") {
+      throw new Error(
+        `relationship '${declaration.identity.entity}.${declaration.identity.name}' reverses ` +
+          `missing defining relationship '${declaration.reverseOf.entity}.${declaration.reverseOf.name}'`,
+      );
+    }
+    if (defining.join.target.entity !== declaration.identity.entity) {
+      throw new Error(
+        `reverse relationship '${declaration.identity.entity}.${declaration.identity.name}' ` +
+          `is not the target of '${defining.identity.entity}.${defining.identity.name}'`,
+      );
+    }
+    return {
+      identity: declaration.identity,
+      cardinality: invertCardinality(defining.cardinality),
+      join: { source: defining.join.target, target: defining.join.source },
+      reverse: defining.identity.name,
+      dependent: false,
+      orderBy: declaration.orderBy,
+    };
+  }
+}
+
 /**
  * Introspection facade over one entity's fully-defaulted metadata. The typed
  * `Order.*` symbols generated in Phase 9 delegate to this same layer.
  */
 export class EntityMetadata {
-  constructor(private readonly entity: NormalizedEntity) {}
+  constructor(
+    private readonly entity: NormalizedEntity,
+    private readonly relationshipFacet: RelationshipFacet,
+  ) {}
 
   /** The domain class name (e.g. `"Order"`). */
   get name(): string {
@@ -118,63 +218,78 @@ export class EntityMetadata {
   }
 
   /**
-   * The processing-axis `from` attribute (`in_z`), if this entity has a processing
-   * axis. This is the DERIVED optimistic key for a processing-axis temporal entity
+   * The Transaction-Time start attribute (`in_z`), if this entity has that
+   * dimension. This is the derived optimistic key for a Transaction-Time entity
    * (m-temporal-read/m-opt-lock): a temporal entity carries no version column, so the observed
-   * processing-from value is the optimistic-lock version analogue an optimistic
-   * close gates on. `undefined` for a non-temporal or business-only entity.
+   * Transaction-Time start value is the optimistic-lock version analogue an optimistic
+   * close gates on. `undefined` for a non-temporal entity.
    */
-  processingFromAttribute(): NormalizedAttribute | undefined {
-    const processing = this.entity.asOfAttributes.find((axis) => axis.axis === "processing");
-    if (processing === undefined) {
+  txStartAttribute(): NormalizedAttribute | undefined {
+    const transactionTime = this.entity.asOfAxes.find(
+      (axis) => axis.dimension === "transactionTime",
+    );
+    if (transactionTime === undefined) {
       return undefined;
     }
-    return this.entity.attributes.find((attr) => attr.column === processing.fromColumn);
+    return this.entity.attributes.find((attr) => attr.column === transactionTime.startColumn);
   }
 
   /**
-   * The processing-axis `to` attribute (`out_z`), if this entity has a processing
-   * axis. This is the CURRENT-MILESTONE marker for a processing-axis temporal entity
-   * (m-temporal-read/m-opt-lock): the current row is the one whose processing-to value is `infinity` (the
-   * open upper bound). Recording the observed processing-from FILTERS on this so a
+   * The Transaction-Time end attribute (`out_z`), if this entity has that
+   * dimension. This is the Latest-milestone marker for a Transaction-Time entity
+   * (m-temporal-read/m-opt-lock): the Latest row is the one whose end is `infinity` (the
+   * open upper bound). Recording the observed start filters on this so a
    * multi-milestone as-of/history read does not overwrite the current observation
-   * with a closed milestone's `in_z`. `undefined` for a non-temporal or business-only
+   * with a closed milestone's `in_z`. `undefined` for a non-temporal
    * entity.
    */
-  processingToAttribute(): NormalizedAttribute | undefined {
-    const processing = this.entity.asOfAttributes.find((axis) => axis.axis === "processing");
-    if (processing === undefined) {
+  txEndAttribute(): NormalizedAttribute | undefined {
+    const transactionTime = this.entity.asOfAxes.find(
+      (axis) => axis.dimension === "transactionTime",
+    );
+    if (transactionTime === undefined) {
       return undefined;
     }
-    return this.entity.attributes.find((attr) => attr.column === processing.toColumn);
+    return this.entity.attributes.find((attr) => attr.column === transactionTime.endColumn);
   }
 
   /** The temporal dimensions (one for unitemporal, two for bitemporal). */
-  asOfAttributes(): readonly NormalizedAsOfAttribute[] {
-    return this.entity.asOfAttributes;
+  asOfAxes(): readonly NormalizedAsOfAxis[] {
+    return this.entity.asOfAxes;
   }
 
-  /** Look up a temporal dimension by name; throws if absent. */
-  asOfAttributeByName(name: string): NormalizedAsOfAttribute {
-    const found = this.entity.asOfAttributes.find((axis) => axis.name === name);
+  /** Look up a temporal dimension; throws if absent. */
+  asOfAxis(dimension: NormalizedAsOfAxis["dimension"]): NormalizedAsOfAxis {
+    const found = this.entity.asOfAxes.find((axis) => axis.dimension === dimension);
     if (!found) {
-      throw new Error(`entity '${this.entity.name}' has no asOfAttribute '${name}'`);
+      throw new Error(`entity '${this.entity.name}' has no temporal dimension '${dimension}'`);
     }
     return found;
   }
 
-  /** All relationships, in declaration order. */
-  relationships(): readonly NormalizedRelationship[] {
+  /** Local defining/reverse declarations, in authoring order. */
+  relationshipDeclarations(): readonly RelationshipDeclaration[] {
     return this.entity.relationships;
   }
 
+  /** Directional relationship semantics compiled by the Relationship Facet. */
+  relationships(): readonly RelationshipMetadata[] {
+    return this.relationshipFacet.relationships(this.canonicalName);
+  }
+
   /** Look up a relationship by name; throws if absent. */
-  relationshipByName(name: string): NormalizedRelationship {
-    const found = this.entity.relationships.find((rel) => rel.name === name);
+  relationshipByName(name: string): RelationshipMetadata {
+    const found = this.relationshipFacet.relationship({ entity: this.canonicalName, name });
     if (!found) {
       throw new Error(`entity '${this.entity.name}' has no relationship '${name}'`);
     }
     return found;
+  }
+
+  private get canonicalName(): string {
+    return this.entity.namespace === undefined
+      ? this.entity.name
+      : `${this.entity.namespace}.${this.entity.name}`;
   }
 
   /** All declared indices. */
@@ -205,7 +320,7 @@ export class EntityMetadata {
    * Resolve a value-object member path relative to this entity: the first
    * segment names a top-level value object, each further segment a nested value
    * object declared on the preceding member (to arbitrary depth). Returns the
-   * resolved member (whose `cardinality` / `attributes` / nested `valueObjects`
+   * resolved member (whose `multiplicity` / `attributes` / nested `valueObjects`
    * are then readable) or `undefined` if any segment is unresolved. An empty
    * path resolves to `undefined`.
    */
@@ -236,9 +351,26 @@ export class EntityMetadata {
  */
 export class Metamodel {
   private readonly byName: Map<string, EntityMetadata>;
+  private readonly ordered: readonly EntityMetadata[];
 
   private constructor(entities: readonly NormalizedEntity[]) {
-    this.byName = new Map(entities.map((e) => [e.name, new EntityMetadata(e)]));
+    const relationshipFacet = new RelationshipFacet(entities);
+    this.ordered = entities.map((entity) => new EntityMetadata(entity, relationshipFacet));
+    this.byName = new Map(
+      this.ordered.map((entity) => [
+        entity.namespace === undefined ? entity.name : `${entity.namespace}.${entity.name}`,
+        entity,
+      ]),
+    );
+    const localCounts = new Map<string, number>();
+    for (const entity of this.ordered) {
+      localCounts.set(entity.name, (localCounts.get(entity.name) ?? 0) + 1);
+    }
+    for (const entity of this.ordered) {
+      if (localCounts.get(entity.name) === 1) {
+        this.byName.set(entity.name, entity);
+      }
+    }
   }
 
   /**
@@ -248,7 +380,7 @@ export class Metamodel {
    */
   static fromDescriptor(descriptor: unknown): Metamodel {
     assertValidDescriptor(descriptor);
-    const entities = rawEntities(descriptor as RawDescriptor).map(normalizeEntity);
+    const entities = normalizeEntities(descriptor as RawDescriptor);
     return new Metamodel(entities);
   }
 
@@ -268,11 +400,13 @@ export class Metamodel {
 
   /** All entity names declared in the descriptor. */
   entityNames(): readonly string[] {
-    return [...this.byName.keys()];
+    return this.ordered.map((entity) =>
+      entity.namespace === undefined ? entity.name : `${entity.namespace}.${entity.name}`,
+    );
   }
 
   /** All entities, in declaration order. */
   entities(): readonly EntityMetadata[] {
-    return [...this.byName.values()];
+    return this.ordered;
   }
 }

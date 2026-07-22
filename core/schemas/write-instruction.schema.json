@@ -2,14 +2,14 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://parallax.dev/schemas/write-instruction.schema.json",
   "title": "Parallax Write Instruction (m-unit-work)",
-  "description": "The canonical, language-neutral write-instruction vocabulary a unit of work buffers and flushes (m-unit-work) — the write-side analogue of `operation.schema.json`. A write from any frontend lowers into exactly one instruction of one of two shapes: a `keyed` instruction (`mutation` + `entity` + `rows`, the flat attribute-named write input) or a `predicate` instruction (`mutation` + `target` {entity, predicate} + `assignments`, the set-based write). Embedded predicates are canonical `m-op-algebra` nodes, legal here because `m-unit-work` already depends on `m-op-algebra`; this schema treats a predicate as an opaque object and defers its validation to `operation.schema.json`, exactly as `compatibility-case.schema.json` does for a `writeTarget.predicate`. The instant surface is AXIS-EXPLICIT: business bounds are named uniformly `businessFrom` / `businessTo` (never the corpus's overloaded `at` or the split `businessAt` / `until` authoring aliases). Every bounded (`*Until`) operation carries BOTH business bounds — its window is `[businessFrom, businessTo)` (m-bitemp-write). The PROCESSING instant is deliberately NOT an instruction field — it is harness / Clock-Strategy supplied context bound at flush (ADR 0010), so no caller-facing instruction shape can smuggle one in. The framework-owned transaction OBSERVATION (optimistic version / observed `in_z`) is likewise NOT an instruction field: it is attached per materialized row at flush (ADR 0013), so the reserved control keys `observedVersion` and `observedInZ` are explicitly FORBIDDEN on a durable write row — an observation cannot round-trip as instruction state. `compatibility-case.schema.json` keeps the corpus's `at` / `businessAt` / `until` spellings as authoring aliases of these canonical names (the corpus-wide re-authoring to the canonical spellings is deferred), and references these `$defs` rather than redefining them. SERDE ROUND-TRIP CONTRACT: a conforming implementation MUST round-trip every instruction through this canonical form losslessly — `serialize(deserialize(x)) == x` (JSON and YAML) — the write-side of the `m-op-algebra` serde contract.",
+  "description": "The canonical, language-neutral write-instruction vocabulary a unit of work buffers and flushes (m-unit-work) — the write-side analogue of `operation.schema.json`. A write from any frontend lowers into exactly one keyed or predicate instruction. Valid-Time input is spelled `validFrom`; a bounded `*Until` operation additionally carries `until`, so its window is `[validFrom, until)`. The finite Transaction-Time instant is Clock context supplied at flush and is not an instruction member. The framework-owned optimistic observation is likewise flush-time context: `observedVersion` and `observedTxStart` are forbidden on durable rows. There are no business/processing aliases. SERDE ROUND-TRIP CONTRACT: a conforming implementation MUST round-trip every instruction through this canonical form losslessly — `serialize(deserialize(x)) == x` (JSON and YAML).",
   "oneOf": [
     { "$ref": "#/$defs/keyedWriteInstruction" },
     { "$ref": "#/$defs/predicateWriteInstruction" }
   ],
   "$defs": {
     "keyedWriteInstruction": {
-      "description": "A keyed write: a mutation on one entity carrying the flat attribute-named neutral write input (`rows`). The MVP non-temporal / audit-only surface is `insert` / `update` / `delete` / `terminate`; the bounded full-bitemporal rectangle split adds `insertUntil` / `updateUntil` / `terminateUntil`. A bounded `*Until` mutation carries BOTH explicit business bounds `businessFrom` and `businessTo` (its window is `[businessFrom, businessTo)`); a plain (unbounded) temporal mutation carries only `businessFrom` (its window runs `[businessFrom, infinity)`). Deferred extension verbs (`cascadeDelete`, business-only, the MAY-tier recovery / increment mutations) are added to `keyedMutation` when their slices claim them, without reshaping the instruction.",
+      "description": "A keyed write: a mutation on one entity carrying flat attribute-named rows. A Valid-Time mutation carries `validFrom`; the bounded `*Until` forms additionally carry `until`.",
       "type": "object",
       "additionalProperties": false,
       "required": ["mutation", "entity", "rows"],
@@ -22,24 +22,24 @@
           "minItems": 1,
           "items": { "$ref": "#/$defs/writeRow" }
         },
-        "businessFrom": {
-          "description": "The BUSINESS-axis lower bound of the mutation's valid-time window (`from_z`). Present on a temporal (audit-only / business / bitemporal) mutation, and REQUIRED on every bounded `*Until` mutation (whose window is `[businessFrom, businessTo)`). The corpus authoring alias for the business lower bound on a business-only step is `businessAt`.",
+        "validFrom": {
+          "description": "The Valid-Time lower bound of the mutation (`from_z`). Required on every bounded `*Until` mutation.",
           "$ref": "#/$defs/instant"
         },
-        "businessTo": {
-          "description": "The BUSINESS-axis exclusive upper bound of a bounded (`*Until`) mutation's valid-time window (`thru_z`). Present ONLY on `insertUntil` / `updateUntil` / `terminateUntil`, and always PAIRED with `businessFrom` (the window is `[businessFrom, businessTo)`); the corpus authoring alias is `until`. A plain (unbounded) temporal mutation omits it — its window runs `[businessFrom, infinity)`.",
+        "until": {
+          "description": "The exclusive Valid-Time upper bound of a bounded `*Until` mutation (`thru_z`), always paired with `validFrom`.",
           "$ref": "#/$defs/instant"
         }
       },
       "allOf": [
         {
-          "description": "A bounded `*Until` mutation is over `[businessFrom, businessTo)` (m-bitemp-write), so it MUST carry BOTH business bounds; a plain (unbounded) mutation MUST NOT carry `businessTo`.",
+          "description": "A bounded `*Until` mutation is over `[validFrom, until)`, so it must carry both Valid-Time bounds; a plain mutation must omit `until`.",
           "if": {
             "properties": { "mutation": { "enum": ["insertUntil", "updateUntil", "terminateUntil"] } },
             "required": ["mutation"]
           },
-          "then": { "required": ["businessFrom", "businessTo"] },
-          "else": { "not": { "required": ["businessTo"] } }
+          "then": { "required": ["validFrom", "until"] },
+          "else": { "not": { "required": ["until"] } }
         }
       ]
     },
@@ -56,12 +56,12 @@
           "minItems": 1,
           "items": { "$ref": "#/$defs/writeAssignment" }
         },
-        "businessFrom": {
-          "description": "The BUSINESS-axis lower bound for a plain or bounded temporal predicate write (`from_z`). REQUIRED on every bounded `*Until` predicate write (whose window is `[businessFrom, businessTo)`). The corpus authoring alias is `businessFrom` already (predicate writes were authored axis-explicit from the start, COR-35).",
+        "validFrom": {
+          "description": "The Valid-Time lower bound for a plain or bounded temporal predicate write (`from_z`). Required on every bounded `*Until` write.",
           "$ref": "#/$defs/instant"
         },
-        "businessTo": {
-          "description": "The BUSINESS-axis exclusive upper bound of a bounded (`*Until`) predicate write's window (`thru_z`). Present ONLY on `updateUntil` / `terminateUntil`, and always PAIRED with `businessFrom` (the window is `[businessFrom, businessTo)`); the corpus authoring alias is `until`.",
+        "until": {
+          "description": "The exclusive Valid-Time upper bound of a bounded predicate write (`thru_z`), always paired with `validFrom`.",
           "$ref": "#/$defs/instant"
         }
       },
@@ -76,13 +76,13 @@
           "else": { "not": { "required": ["assignments"] } }
         },
         {
-          "description": "A bounded `*Until` predicate write is over `[businessFrom, businessTo)` (m-bitemp-write), so it MUST carry BOTH business bounds; the unbounded forms MUST NOT carry `businessTo`.",
+          "description": "A bounded predicate write is over `[validFrom, until)`, so it must carry both Valid-Time bounds; unbounded forms must omit `until`.",
           "if": {
             "properties": { "mutation": { "enum": ["updateUntil", "terminateUntil"] } },
             "required": ["mutation"]
           },
-          "then": { "required": ["businessFrom", "businessTo"] },
-          "else": { "not": { "required": ["businessTo"] } }
+          "then": { "required": ["validFrom", "until"] },
+          "else": { "not": { "required": ["until"] } }
         }
       ]
     },
@@ -104,19 +104,19 @@
       "properties": {
         "attr": {
           "type": "string",
-          "pattern": "^[A-Za-z][A-Za-z0-9]*\\.[a-z][A-Za-z0-9]*$"
+          "pattern": "^[A-Za-z][A-Za-z0-9]*\\.[a-z][A-Za-z0-9_]*$"
         },
         "value": { "type": ["string", "number", "boolean", "null", "object", "array"] }
       }
     },
     "writeRow": {
-      "description": "A flat attribute-named DURABLE write row — the neutral write input, same vocabulary as a fixture row. Every key is an entity ATTRIBUTE name or a top-level VALUE-OBJECT name (a business/developer name like `id` / `orderedOn` / `address`, never a physical column). The framework-owned transaction OBSERVATION is NOT durable instruction state: the reserved control keys `observedVersion` (the optimistic-lock version) and `observedInZ` (the observed processing-from) are attached per materialized row at flush (m-opt-lock, ADR 0013), so they are explicitly FORBIDDEN here — the advance (`observedVersion + 1`) and the `and version = ?` / `and in_z = ?` gates are derived at flush, never authored onto the instruction. A scalar attribute's value is a scalar literal, an explicit `null`, or a one-key DB-computed marker (`{ computed: \"maxPlusOne\" }` or `{ increment: <n> }`); a value-object field's value is the WHOLE embedded composite document (a JSON object, or a JSON array of objects for a `many` value object), or `null`. A generating implementation classifies each field by its metamodel role and derives the emitted column list and ORDER from `columnOrder(entity)`, binding a value object atomically as one document in its columnOrder position; a marker-shaped value is a DB-computed marker vs a value-object document by MODEL ROLE, not by the value's shape — so the row cannot be `additionalProperties: false`.",
+      "description": "A flat attribute-named durable write row. Every key is an Entity Attribute or top-level Value Object name, never a physical column. The framework-owned optimistic observations `observedVersion` and `observedTxStart` are attached only at flush and are forbidden here. Scalar fields carry neutral literals or DB-computed markers; Value Object fields carry their complete ordered document value.",
       "type": "object",
       "not": {
-        "description": "The framework-owned transaction observation is not an instruction field: neither the optimistic version (`observedVersion`) nor the observed processing-from (`observedInZ`) may ride on the durable write row (m-unit-work, ADR 0013). They are flush-time context on `compatibility-case.schema.json`'s materialization row, never here.",
+        "description": "The framework-owned optimistic observation is not durable instruction state: neither `observedVersion` nor the observed Transaction-Time start (`observedTxStart`) may ride on a durable row.",
         "anyOf": [
           { "required": ["observedVersion"] },
-          { "required": ["observedInZ"] }
+          { "required": ["observedTxStart"] }
         ]
       },
       "additionalProperties": { "$ref": "#/$defs/writeRowValue" }
@@ -150,7 +150,7 @@
       }
     },
     "instant": {
-      "description": "A business-axis instant: an ISO-8601 UTC timestamp string, or the open-bound sentinel `infinity`.",
+      "description": "A Valid-Time instant: an ISO-8601 UTC timestamp string, or the open-bound sentinel `infinity`.",
       "type": "string",
       "minLength": 1
     },

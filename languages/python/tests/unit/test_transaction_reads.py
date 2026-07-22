@@ -99,7 +99,7 @@ def test_optimistic_mode_suppresses_the_read_lock_suffix() -> None:
 
 def test_db_find_pins_an_explicit_as_of_statement() -> None:
     # `statement_pin` reads the statement's OWN temporal wrapper: an explicit
-    # `.as_of(processing=LATEST)` pin comes back on the returned `Snapshot`.
+    # `.as_of(transaction_time=LATEST)` pin comes back on the returned `Snapshot`.
     from parallax.core import LATEST
 
     port = RecordingPort(
@@ -114,9 +114,9 @@ def test_db_find_pins_an_explicit_as_of_statement() -> None:
         ]
     )
     db = Database.connect(port, BALANCE, clock=FixedClock(FIXED))
-    statement = mm.Balance.where(mm.Balance.id == 1).as_of(processing=LATEST)
+    statement = mm.Balance.where(mm.Balance.id == 1).as_of(transaction_time=LATEST)
     snapshot = db.find(statement)
-    assert snapshot.pin.processing is LATEST
+    assert snapshot.pin.transaction_time is LATEST
 
 
 def test_db_find_resolves_a_concrete_inheritance_targets_inherited_pin_and_edge() -> None:
@@ -141,13 +141,13 @@ def test_db_find_resolves_a_concrete_inheritance_targets_inherited_pin_and_edge(
     )
     rate = models.load_models()["rate"]
     db = Database.connect(port, rate, clock=FixedClock(FIXED))
-    statement = im.DepositRate.where().as_of(processing=LATEST)
+    statement = im.DepositRate.where().as_of(transaction_time=LATEST)
     snapshot = db.find(statement)
-    assert snapshot.pin.processing is LATEST
-    assert snapshot.pin.business is None
+    assert snapshot.pin.transaction_time is LATEST
+    assert snapshot.pin.valid_time is None
     edge = edge_of(snapshot.result())
-    assert edge.processing == dt.datetime(2024, 2, 1, tzinfo=dt.UTC)
-    assert edge.business == dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
+    assert edge.transaction_time == dt.datetime(2024, 2, 1, tzinfo=dt.UTC)
+    assert edge.valid_time == dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
 
 
 def test_locking_mode_temporal_write_after_an_as_of_find_raises_historical_observation() -> None:
@@ -163,7 +163,7 @@ def test_locking_mode_temporal_write_after_an_as_of_find_raises_historical_obser
     def fn(tx: Transaction) -> None:
         fetched = tx.find(
             mm.Balance.where(mm.Balance.id == 1).as_of(
-                processing=dt.datetime(2024, 2, 1, tzinfo=dt.UTC)
+                transaction_time=dt.datetime(2024, 2, 1, tzinfo=dt.UTC)
             )
         ).result()
         tx.terminate(fetched)
@@ -182,7 +182,7 @@ def test_optimistic_mode_temporal_write_after_an_as_of_find_gates_on_observed_in
     def fn(tx: Transaction) -> None:
         fetched = tx.find(
             mm.Balance.where(mm.Balance.id == 1).as_of(
-                processing=dt.datetime(2024, 2, 1, tzinfo=dt.UTC)
+                transaction_time=dt.datetime(2024, 2, 1, tzinfo=dt.UTC)
             )
         ).result()
         tx.terminate(fetched)
@@ -268,7 +268,7 @@ def test_bitemporal_update_after_a_find_carries_the_observed_business_bounds() -
     # COR-42 Phase 4: the observable replacement for the former private
     # observation-recording drive. What that test asserted by reading
     # `uow._observations` directly — that a BITEMPORAL node's observation
-    # records business_from/business_to and the full payload — is exactly what
+    # records valid_from/valid_end and the full payload — is exactly what
     # `bitemp_write.plan` consumes to split the rectangle, so a real
     # `tx.find` -> `tx.update` makes it observable in the emitted DML: the
     # chained rows can only carry `from_z`/`thru_z` and the untouched `name`
@@ -280,7 +280,7 @@ def test_bitemporal_update_after_a_find_carries_the_observed_business_bounds() -
         fetched = tx.find(mm.Branch.where(mm.Branch.id == 1)).result()
         tx.update(
             fetched.model_copy(update={"name": "Renamed Branch"}),
-            business_from=dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
+            valid_from=dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
         )
 
     db.transact(fn)
@@ -288,7 +288,7 @@ def test_bitemporal_update_after_a_find_carries_the_observed_business_bounds() -
     assert len(write_ops) == 3  # close the rectangle, then chain head + tail
     head_binds = cast("tuple[object, ...]", write_ops[1][2])
     tail_binds = cast("tuple[object, ...]", write_ops[2][2])
-    # The HEAD rectangle runs from the OBSERVED business_from up to the
+    # The HEAD rectangle runs from the OBSERVED valid_from up to the
     # mutation instant, and carries the OBSERVED name. Neither value appears
     # anywhere in the sparse edited copy, so both can only have come from the
     # recorded observation.
@@ -296,9 +296,9 @@ def test_bitemporal_update_after_a_find_carries_the_observed_business_bounds() -
     assert head_binds[2] == dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
     assert head_binds[3] == "2024-03-01T00:00:00+00:00"
     # The TAIL rectangle opens at the mutation instant with the new payload and
-    # closes at the OBSERVED business_to. That upper bound is the third value
+    # closes at the OBSERVED valid_end. That upper bound is the third value
     # only the observation carries: the edited copy never names it, and without
-    # this assertion a corrupted `observation.business_to` goes undetected —
+    # this assertion a corrupted `observation.valid_end` goes undetected —
     # the gap the Phases 3-4 review caught by mutating it to 2099.
     assert tail_binds[1] == "Renamed Branch"
     assert tail_binds[2] == "2024-03-01T00:00:00+00:00"
@@ -325,7 +325,7 @@ def test_bitemporal_update_after_a_find_keeps_the_observed_value_object_document
         fetched = tx.find(mm.Branch.where(mm.Branch.id == 1)).result()
         tx.update(
             fetched.model_copy(update={"name": "Renamed Branch"}),
-            business_from=dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
+            valid_from=dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
         )
 
     db.transact(fn)
@@ -345,12 +345,12 @@ def test_a_materialized_temporal_node_still_populates_real_axis_values() -> None
     port = RecordingPort(rows=[balance_row(in_z=dt.datetime(2024, 1, 1, tzinfo=dt.UTC))])
     db = db_for(BALANCE, port)
     fetched = db.transact(lambda tx: tx.find(mm.Balance.where(mm.Balance.id == 1)).result())
-    assert fetched.processing_from == dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
-    assert fetched.processing_to is not None
+    assert fetched.tx_start == dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
+    assert fetched.tx_end is not None
 
 
 def _balance_history_rows() -> list[Row]:
-    # Two milestones on the SAME processing axis, closed then current.
+    # Two milestones on the SAME Transaction-Time dimension, closed then current.
     return [
         {
             "bal_id": 1,
@@ -376,7 +376,7 @@ def test_db_find_returns_one_snapshot_root_per_milestone_for_a_history_statement
     db = Database.connect(port, BALANCE, clock=FixedClock(FIXED))
     # `.distinct()` after `.history()` also exercises `is_milestone_set_op`'s
     # own directive-peeling loop (a result-shaping wrapper around the scan).
-    statement = mm.Balance.where(mm.Balance.id == 1).history("processing").distinct()
+    statement = mm.Balance.where(mm.Balance.id == 1).history("transaction_time").distinct()
     snapshot = db.find(statement)
     assert len(snapshot.results()) == 2
     assert snapshot.pin == Pin()  # the whole-graph pin is per-milestone, not here
@@ -385,7 +385,7 @@ def test_db_find_returns_one_snapshot_root_per_milestone_for_a_history_statement
 def test_tx_find_returns_one_snapshot_root_per_milestone_for_a_history_statement() -> None:
     port = RecordingPort(rows=_balance_history_rows())
     db = Database.connect(port, BALANCE, clock=FixedClock(FIXED))
-    statement = mm.Balance.where(mm.Balance.id == 1).history("processing")
+    statement = mm.Balance.where(mm.Balance.id == 1).history("transaction_time")
     snapshot = db.transact(lambda tx: tx.find(statement))
     assert len(snapshot.results()) == 2
 
@@ -402,8 +402,8 @@ def test_stale_web_edit_balance_render_then_submit_gates_on_the_transported_edge
 
     node, edge = stale_web_edit.render_balance_milestone(db, id=1)
     assert node.value == Decimal("5.00")
-    assert edge.processing == in_z
-    assert edge.business_or_none is None  # audit-only: no business axis declared
+    assert edge.transaction_time == in_z
+    assert edge.valid_time_or_none is None  # audit-only: no Valid-Time dimension declared
 
     stale_web_edit.submit_balance_edit(db, id=1, edge=edge, fields={"value": Decimal("9.00")})
     write_ops = [op for op in port.ops if op[0] == "write"]
@@ -449,15 +449,15 @@ def test_stale_web_edit_branch_render_then_submit_pins_both_axes() -> None:
 
     node, edge = stale_web_edit.render_branch_milestone(db, id=1)
     assert node.name == "Old Name"
-    assert edge.business == from_z
-    assert edge.processing == in_z
+    assert edge.valid_time == from_z
+    assert edge.transaction_time == in_z
 
     stale_web_edit.submit_branch_edit(
         db,
         id=1,
         edge=edge,
         fields={"name": "New Name"},
-        business_from=dt.datetime(2024, 2, 1, tzinfo=dt.UTC),
+        valid_from=dt.datetime(2024, 2, 1, tzinfo=dt.UTC),
     )
     write_ops = [op for op in port.ops if op[0] == "write"]
     close_sql = cast("str", write_ops[0][1])
@@ -474,6 +474,6 @@ def test_pin_from_milestone_skips_an_axis_absent_from_the_milestone_pin() -> Non
     # bitemporal entity's OWN as-of-attribute loop must skip an axis absent
     # from a given milestone's pin, not KeyError.
     position = models.load_models()["position"].entity("Position")
-    pin = _pin_from_milestone(position, {"processingDate": _MILESTONE_INSTANT})
-    assert pin.processing == _MILESTONE_INSTANT
-    assert pin.business is None
+    pin = _pin_from_milestone(position, {"transactionTime": _MILESTONE_INSTANT})
+    assert pin.transaction_time == _MILESTONE_INSTANT
+    assert pin.valid_time is None

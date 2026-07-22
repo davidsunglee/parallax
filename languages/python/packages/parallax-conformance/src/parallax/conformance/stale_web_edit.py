@@ -30,7 +30,7 @@ values) is everything a real form need transport, and the public verb
 surface (``db.find`` / ``edge_of`` / ``model_copy`` / ``tx.update``) is
 everything it needs to replay.
 
-Two variants, one shape each — audit-only (a single processing axis,
+Two variants, one shape each — audit-only (a single Transaction-Time dimension,
 :class:`~parallax.conformance.read_models.Balance`) and bitemporal (both
 axes, :class:`~parallax.conformance.vo_models.Branch`) — split into a
 RENDER half (a plain, non-transactional ``db.find`` capturing the edge) and
@@ -61,7 +61,7 @@ __all__ = [
 
 def render_balance_milestone(db: Database, *, id: int) -> tuple[Balance, Edge]:
     """RENDER time (audit-only): a plain, non-transactional find — the
-    displayed milestone plus its edge (the processing axis's own from-instant,
+    displayed milestone plus its edge (the Transaction-Time dimension's own from-instant,
     ``in_z``), the whole of what the form needs to transport."""
     node = db.find(Balance.where(Balance.id == id)).result()
     return node, edge_of(node)
@@ -79,7 +79,7 @@ def submit_balance_edit(db: Database, *, id: int, edge: Edge, fields: Mapping[st
 
     def fn(tx: Transaction) -> None:
         current = tx.find(
-            Balance.where(Balance.id == id).as_of(processing=edge.processing)
+            Balance.where(Balance.id == id).as_of(transaction_time=edge.transaction_time)
         ).result()
         tx.update(current.model_copy(update=dict(fields)))
 
@@ -95,17 +95,17 @@ def render_branch_milestone(db: Database, *, id: int) -> tuple[Branch, Edge]:
 
 
 def submit_branch_edit(
-    db: Database, *, id: int, edge: Edge, fields: Mapping[str, Any], business_from: dt.datetime
+    db: Database, *, id: int, edge: Edge, fields: Mapping[str, Any], valid_from: dt.datetime
 ) -> None:
     """SUBMIT time (bitemporal): re-fetch with EVERY declared axis pinned at
-    the transported edge (`as_of(processing=..., business=...)` — the DISPLAY
+    the transported edge (`as_of(transaction_time=..., valid_time=...)` — the DISPLAY
     coordinate, licensing the optimistic re-fetch) inside an OPTIMISTIC
     transaction, apply ``fields`` via ``model_copy``, and issue a PLAIN
-    (unbounded) bitemporal correction effective from ``business_from`` (the
-    mutation's OWN business instant `B` — the everyday "this correction takes
+    (unbounded) bitemporal correction effective from ``valid_from`` (the
+    mutation's OWN Valid-Time instant `B` — the everyday "this correction takes
     effect from B onward" idiom, `m-bitemp-write-006`; independent of the
-    displayed edge's own business coordinate, which only licenses the
-    re-fetch: ``business_from`` equal to the displayed rectangle's own
+    displayed edge's own Valid-Time coordinate, which only licenses the
+    re-fetch: ``valid_from`` equal to the displayed rectangle's own
     `from_z` degenerates the head interval to empty and is a build-time
     caller error, out of this recipe's scope). A concurrent split since the
     render leaves the observed row's ``in_z`` stale (and, when the key's
@@ -115,8 +115,10 @@ def submit_branch_edit(
 
     def fn(tx: Transaction) -> None:
         current = tx.find(
-            Branch.where(Branch.id == id).as_of(processing=edge.processing, business=edge.business)
+            Branch.where(Branch.id == id).as_of(
+                transaction_time=edge.transaction_time, valid_time=edge.valid_time
+            )
         ).result()
-        tx.update(current.model_copy(update=dict(fields)), business_from=business_from)
+        tx.update(current.model_copy(update=dict(fields)), valid_from=valid_from)
 
     db.transact(fn, concurrency="optimistic")

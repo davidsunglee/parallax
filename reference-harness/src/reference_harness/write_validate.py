@@ -75,7 +75,7 @@ def validate_write(entity: Entity, row: dict[str, Any]) -> None:
 def _validate_member(value_object: dict[str, Any], value: Any) -> None:
     """Validate a value at a value-object member position against its declaration."""
     nullable = value_object.get("nullable", False)
-    cardinality = value_object.get("cardinality", "one")
+    multiplicity = value_object.get("multiplicity", "one")
     if value is None:
         if not nullable:
             raise RejectionError(
@@ -84,7 +84,7 @@ def _validate_member(value_object: dict[str, Any], value: Any) -> None:
                 f"absent or null",
             )
         return
-    if cardinality == "many":
+    if multiplicity == "many":
         # `nullable: false` requires the ARRAY be present (satisfied — value is not
         # None here); an empty array is fine. Validate each element as a document.
         if isinstance(value, list):

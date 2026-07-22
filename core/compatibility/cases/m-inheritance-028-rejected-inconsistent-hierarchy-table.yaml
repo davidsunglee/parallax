@@ -1,10 +1,7 @@
-# Negative (m-inheritance, resolved Q3/Q4): table-per-hierarchy concrete subtypes map
-# to different physical tables.
+# Negative (m-inheritance): a TPH descendant repeats a physical table.
 #
-# `Dog` maps to `animal` and `Cat` to `feline`. Under table-per-hierarchy all concrete
-# subtypes in the family share ONE physical table (the shared table the tag
-# discriminates); mapping siblings to different tables contradicts the strategy, so a
-# model-aware validator MUST reject it.
+# The root alone owns `animal`. `Cat` incorrectly declares `feline`; a descendant
+# may neither repeat the root table nor declare a different one.
 model: models/payment.yaml
 tags: [m-inheritance, m-descriptor, rejected, negative, slice-snapshot-1, slice-managed-1]
 shape: rejected
@@ -12,6 +9,7 @@ when:
   model:
     entities:
       - name: Animal
+        table: animal
         inheritance:
           strategy: table-per-hierarchy
           role: root
@@ -19,7 +17,6 @@ when:
         attributes:
           - { name: id, type: int64, column: id, primaryKey: true }
       - name: Dog
-        table: animal
         inheritance:
           role: concrete-subtype
           parent: Animal
@@ -35,4 +32,4 @@ when:
         attributes:
           - { name: indoor, type: boolean, column: indoor, nullable: true }
 then:
-  rejectedRule: inheritance-inconsistent-hierarchy-table
+  rejectedRule: inheritance-tph-descendant-table-forbidden

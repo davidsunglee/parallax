@@ -1136,9 +1136,9 @@ def customer_update_nulls_the_address_document_out(db: Database) -> None:
 Corpus case: `m-value-object-028`
 
 ```python
-def unitemporal_vo_owner_as_of_now(db: Database) -> Snapshot[Any]:
+def transaction_time_only_vo_owner_as_of_latest(db: Database) -> Snapshot[Any]:
     """A value object rides its unitemporal-processing owner's milestone
-    (`m-value-object-028`): an as-of-now read returns each supplier's CURRENT
+    (`m-value-object-028`): an Latest read returns each supplier's CURRENT
     address document — no value-object-specific temporal machinery."""
     return db.find(Supplier.where().as_of(processing=LATEST))
 ```
@@ -1160,9 +1160,9 @@ def unitemporal_vo_owner_as_of_a_past_instant(db: Database) -> Snapshot[Any]:
 Corpus case: `m-value-object-030`
 
 ```python
-def bitemporal_vo_owner_as_of_now_both_axes(db: Database) -> Snapshot[Any]:
+def bitemporal_vo_owner_as_of_latest(db: Database) -> Snapshot[Any]:
     """A value object rides a FULL bitemporal owner's rectangle
-    (`m-value-object-030`): pinning both axes to now returns the
+    (`m-value-object-030`): pinning both dimensions to Latest returns the
     fully-current document."""
     return db.find(Branch.where().as_of(business=LATEST, processing=LATEST))
 ```
@@ -1175,7 +1175,7 @@ Corpus case: `m-value-object-031`
 def bitemporal_vo_owner_as_of_a_past_audit_point(db: Database) -> Snapshot[Any]:
     """An audit read (both axes in the past, `m-value-object-031`)
     reconstructs the ORIGINALLY-believed document, distinct from what the
-    system knows now (`bitemporal_vo_owner_as_of_now_both_axes`)."""
+    system knows now (`bitemporal_vo_owner_as_of_latest`)."""
     return db.find(
         Branch.where().as_of(
             business=dt.datetime(2024, 3, 1, tzinfo=dt.UTC),

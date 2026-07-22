@@ -26,6 +26,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, cast, overload
 
+from parallax.core.descriptor.relationship import relationship_target
 from parallax.core.op_algebra import (
     And,
     Between,
@@ -411,7 +412,7 @@ def _as_scalar(value: object) -> Scalar:
 def _serialize_assignment_value(value: object) -> object:
     """A ``.set(...)`` assignment's write-serialized value: a ``ValueObject``
     instance becomes its canonical document, a tuple of them a list of
-    documents (``cardinality: many``), everything else passes through
+    documents (``multiplicity: many``), everything else passes through
     unchanged — the SAME translation ``parallax.core.entity.base._serialize_member``
     applies to every other write input (a deferred import: ``entity.value_object``
     has no reverse edge onto this module, so this stays a plain sibling import)."""
@@ -602,7 +603,7 @@ class RelationshipPath:
     @property
     def ref(self) -> RelationshipRef:
         """The FIRST hop's relationship reference (mirrors ``AttributeExpr.ref``)."""
-        owner, _, relationship = self.segments[0].rel.partition(".")
+        owner, _, relationship = self.segments[0].rel.rpartition(".")
         return RelationshipRef(owner, relationship)
 
     def __getattr__(self, name: str) -> RelationshipPath:
@@ -626,7 +627,7 @@ class RelationshipPath:
             if relationship.name == canonical:
                 return RelationshipPath(
                     segments=(*self.segments, PathSegment(rel=f"{self.target}.{canonical}")),
-                    target=relationship.related_entity,
+                    target=relationship_target(record, relationship),
                     __parallax_registry__=registry,
                 )
         raise AttributeError(f"{self.target!r} declares no relationship {canonical!r}")

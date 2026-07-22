@@ -41,7 +41,7 @@ _B1 = "2024-01-01T00:00:00+00:00"
 _B2 = "2024-06-01T00:00:00+00:00"
 
 # Every canonical instruction shape, authored in the axis-explicit spelling with no
-# processing instant (Clock context) — the coalescing witnesses' target buffered
+# Transaction-Time instant (Clock context) — the coalescing witnesses' target buffered
 # form and the full keyed/predicate mutation surface.
 _INSTRUCTIONS: list[tuple[str, dict[str, Any]]] = [
     (
@@ -90,7 +90,7 @@ _INSTRUCTIONS: list[tuple[str, dict[str, Any]]] = [
             "mutation": "insert",
             "entity": "Position",
             "rows": [{"id": 9, "acctNum": "D", "value": 100.00}],
-            "businessFrom": _B1,
+            "validFrom": _B1,
         },
     ),
     (
@@ -99,8 +99,8 @@ _INSTRUCTIONS: list[tuple[str, dict[str, Any]]] = [
             "mutation": "insertUntil",
             "entity": "Position",
             "rows": [{"id": 9, "acctNum": "D", "value": 100.00}],
-            "businessFrom": _B1,
-            "businessTo": _B2,
+            "validFrom": _B1,
+            "until": _B2,
         },
     ),
     (
@@ -109,8 +109,8 @@ _INSTRUCTIONS: list[tuple[str, dict[str, Any]]] = [
             "mutation": "updateUntil",
             "entity": "Position",
             "rows": [{"id": 9, "value": 150.00}],
-            "businessFrom": _B1,
-            "businessTo": _B2,
+            "validFrom": _B1,
+            "until": _B2,
         },
     ),
     (
@@ -119,8 +119,8 @@ _INSTRUCTIONS: list[tuple[str, dict[str, Any]]] = [
             "mutation": "terminateUntil",
             "entity": "Position",
             "rows": [{"id": 9}],
-            "businessFrom": _B1,
-            "businessTo": _B2,
+            "validFrom": _B1,
+            "until": _B2,
         },
     ),
     (
@@ -170,7 +170,7 @@ _INSTRUCTIONS: list[tuple[str, dict[str, Any]]] = [
             "mutation": "update",
             "target": {"entity": "Position", "predicate": {"all": {}}},
             "assignments": [{"attr": "Position.value", "value": 150.00}],
-            "businessFrom": _B1,
+            "validFrom": _B1,
         },
     ),
     (
@@ -179,8 +179,8 @@ _INSTRUCTIONS: list[tuple[str, dict[str, Any]]] = [
             "mutation": "updateUntil",
             "target": {"entity": "Position", "predicate": {"all": {}}},
             "assignments": [{"attr": "Position.value", "value": 150.00}],
-            "businessFrom": _B1,
-            "businessTo": _B2,
+            "validFrom": _B1,
+            "until": _B2,
         },
     ),
     (
@@ -188,8 +188,8 @@ _INSTRUCTIONS: list[tuple[str, dict[str, Any]]] = [
         {
             "mutation": "terminateUntil",
             "target": {"entity": "Position", "predicate": {"all": {}}},
-            "businessFrom": _B1,
-            "businessTo": _B2,
+            "validFrom": _B1,
+            "until": _B2,
         },
     ),
 ]
@@ -212,8 +212,8 @@ def test_python_construction_round_trips() -> None:
         mutation="insertUntil",
         entity="Position",
         rows=({"id": 9, "value": 150.00},),
-        business_from=_B1,
-        business_to=_B2,
+        valid_from=_B1,
+        until=_B2,
     )
     assert wi.deserialize(wi.serialize(instruction)) == instruction
 
@@ -237,7 +237,7 @@ def test_predicate_carries_a_canonical_operation_node() -> None:
 # --------------------------------------------------------------------------- #
 def test_processing_instant_alias_is_rejected() -> None:
     # `at` is the corpus's Clock-context alias; it is NOT a canonical instruction
-    # field, so no caller-facing shape can smuggle a processing instant in (ADR 0010).
+    # field, so no caller-facing shape can smuggle a Transaction-Time instant in (ADR 0010).
     with pytest.raises(wi.WriteInstructionError, match="unexpected key"):
         wi.deserialize(
             {
@@ -249,7 +249,7 @@ def test_processing_instant_alias_is_rejected() -> None:
         )
 
 
-@pytest.mark.parametrize("forbidden", ["observedVersion", "observedInZ"])
+@pytest.mark.parametrize("forbidden", ["observedVersion", "observedTxStart"])
 def test_forbidden_observation_control_key_is_rejected(forbidden: str) -> None:
     # The transaction observation is attached per row at flush, never authored on
     # the durable instruction (ADR 0013).
@@ -295,20 +295,20 @@ def test_ambiguous_and_shapeless_instructions_are_rejected() -> None:
         ({"mutation": "insert", "entity": "Account", "rows": []}, "non-empty list"),
         ({"mutation": "insert", "entity": "Account", "rows": [1]}, "each row must be a mapping"),
         (
-            {"mutation": "insert", "entity": "Account", "rows": [{"id": 1}], "businessTo": _B2},
-            "MUST NOT carry `businessTo`",
+            {"mutation": "insert", "entity": "Account", "rows": [{"id": 1}], "until": _B2},
+            "MUST NOT carry `until`",
         ),
         (
             {
                 "mutation": "insertUntil",
                 "entity": "Position",
                 "rows": [{"id": 1}],
-                "businessFrom": _B1,
+                "validFrom": _B1,
             },
             "MUST carry both",
         ),
         (
-            {"mutation": "insert", "entity": "Account", "rows": [{"id": 1}], "businessFrom": ""},
+            {"mutation": "insert", "entity": "Account", "rows": [{"id": 1}], "validFrom": ""},
             "non-empty instant string",
         ),
     ],
@@ -346,8 +346,8 @@ def test_keyed_structural_rejections(doc: dict[str, Any], match: str) -> None:
                 "mutation": "terminateUntil",
                 "target": {"entity": "Position", "predicate": {"all": {}}},
                 "assignments": [{"attr": "Position.value", "value": 0}],
-                "businessFrom": _B1,
-                "businessTo": _B2,
+                "validFrom": _B1,
+                "until": _B2,
             },
             "MUST NOT carry `assignments`",
         ),
@@ -382,7 +382,7 @@ def test_keyed_structural_rejections(doc: dict[str, Any], match: str) -> None:
                 "mutation": "updateUntil",
                 "target": {"entity": "Position", "predicate": {"all": {}}},
                 "assignments": [{"attr": "Position.value", "value": 0}],
-                "businessFrom": _B1,
+                "validFrom": _B1,
             },
             "MUST carry both",
         ),

@@ -17,9 +17,9 @@ never something an application developer hand-writes.
 |---|---|
 | Conformance Slice | `slice-snapshot-1` — tag `slice-snapshot-1`, plain-value **snapshot** lifecycle profile, defined in [`core/spec/slices.md`](../../../core/spec/slices.md). |
 | Exact `describe` claim | The complete canonical `describeOk` envelope below; structurally equal to the canonical claim after JSON parsing, except for the `adapter` identity. |
-| Claimed capability coverage | Copied verbatim from the canonical claim: the 23 `modules` below, `dialects: ["postgres"]`, the eight `caseShapes`, `caseTags.include: ["slice-snapshot-1"]`, `commands: ["describe", "compile", "run"]`, `provisioning: "self-managed"`. `modules` is the tagged-case union of the slice, **not** a dependency closure and not a packaging plan. |
+| Claimed capability coverage | Copied verbatim from the canonical claim: the 26 `modules` below, `dialects: ["postgres"]`, the eight `caseShapes`, `caseTags.include: ["slice-snapshot-1"]`, `commands: ["describe", "compile", "run"]`, `provisioning: "self-managed"`. `modules` is the tagged-case union of the slice, **not** a dependency closure and not a packaging plan. |
 | Unclaimed implementation prerequisites | `m-db-port` — reached via `m-unit-work` and `m-db-error`; abstract port supplied by the `parallax.core.db_port` scope, concrete adapter by `parallax-postgres`; contract-covered, never case-advertised. |
-| Deferred capabilities | MariaDB (dialect); `benchmark` command and `m-perf-bench`; `m-agg` / `m-sql-agg`; `m-business-only`; `m-process-cache` / `m-coherence`; `m-cascade-delete`; the `snapshot-history-includes` feature; the managed-object lifecycle (`m-identity-map`, `m-detach`, public operation-backed lists); an async developer surface; MAY-tier mutations (`insertWithIncrement`, `incrementUntil`, `purge`, `inactivateForArchiving`); template-database reset optimization; isolation-level configuration; handle-level default concurrency override; statement `where`-refinement chaining and `as_of` re-pinning. Deferral is roadmap intent; **unsupported classification** is the adapter's wire behavior for out-of-claim requests — the two are recorded separately and never conflated. |
+| Deferred capabilities | MariaDB (dialect); `benchmark` command and `m-perf-bench`; `m-agg` / `m-sql-agg`; Valid-Time-Only models; `m-process-cache` / `m-coherence`; `m-cascade-delete`; the `snapshot-history-includes` feature; the managed-object lifecycle (`m-identity-map`, `m-detach`, public operation-backed lists); an async developer surface; MAY-tier mutations (`insertWithIncrement`, `incrementUntil`, `purge`, `inactivateForArchiving`); template-database reset optimization; isolation-level configuration; handle-level default concurrency override; statement `where`-refinement chaining and `as_of` re-pinning. Deferral is roadmap intent; **unsupported classification** is the adapter's wire behavior for out-of-claim requests — the two are recorded separately and never conflated. |
 | Supported dialects and commands | Postgres only; `describe`, `compile`, `run`. Exercised locally and in CI by `uv run pytest -m compile_sweep` (Docker-free compile of every compile-eligible claimed case) and `uv run pytest -m conformance` (the `pg-full` run profile, every claimed case), aggregated by `just python-static` and `just python-verify`. |
 
 ```json
@@ -27,7 +27,7 @@ never something an application developer hand-writes.
   "schemaVersion": "1", "command": "describe", "status": "ok",
   "adapter": { "language": "python", "name": "parallax-core", "version": "0.1.0" },
   "capabilities": {
-    "modules": ["m-api-conformance", "m-audit-write", "m-auto-retry", "m-batch-write", "m-bitemp-write", "m-case-format", "m-conformance-adapter", "m-core", "m-db-error", "m-deep-fetch", "m-descriptor", "m-dialect", "m-inheritance", "m-navigate", "m-op-algebra", "m-opt-lock", "m-pk-gen", "m-read-lock", "m-snapshot-read", "m-sql", "m-temporal-read", "m-unit-work", "m-value-object"],
+    "modules": ["m-api-conformance", "m-audit-write", "m-auto-retry", "m-batch-write", "m-bitemp-write", "m-case-format", "m-conformance-adapter", "m-core", "m-db-error", "m-deep-fetch", "m-descriptor", "m-dialect", "m-inheritance", "m-metamodel", "m-model-formation", "m-navigate", "m-op-algebra", "m-opt-lock", "m-pk-gen", "m-read-lock", "m-relationship", "m-snapshot-read", "m-sql", "m-temporal-read", "m-unit-work", "m-value-object"],
     "dialects": ["postgres"],
     "caseShapes": ["read", "writeSequence", "scenario", "conflict", "boundary", "error", "concurrencySuccess", "rejected"],
     "caseTags": { "include": ["slice-snapshot-1"] },
@@ -53,6 +53,39 @@ never something an application developer hand-writes.
   target.
 
 ## 2. Shared developer API and model surface
+
+### Temporal vocabulary and configuration
+
+Python exposes no public `AsOfAxis` declaration type. Authors select exactly
+one framework Entity base:
+
+- `TransactionTimeOnly`, which supplies read-only `tx_start`/`tx_end`
+  Attributes mapped to `in_z`/`out_z`; or
+- `Bitemporal`, which additionally supplies read-only
+  `valid_start`/`valid_end` Attributes mapped to `from_z`/`thru_z`.
+
+The normalized Metamodel still exposes `AsOfAxisMetadata` through the core
+interface, keyed by `TemporalDimension`. This leaves a future additive seam for
+advanced column overrides without making ordinary Python authors repeat
+Attributes, Timestamp types, flags, interval semantics, or columns.
+
+| Python surface | Valid Time | Transaction Time |
+|---|---|---|
+| Framework base | supplied by `Bitemporal` | supplied by `TransactionTimeOnly` and `Bitemporal` |
+| Metadata dimension | `TemporalDimension.ValidTime` | `TemporalDimension.TransactionTime` |
+| Query keyword | `valid_time` | `transaction_time` |
+| `history` dimension literal | `"valid_time"` | `"transaction_time"` |
+| `Pin` accessor | `valid_time` | `transaction_time` |
+| `Edge` accessor | `valid_time` | `transaction_time` |
+| Conventional Attributes | `valid_start`, `valid_end` | `tx_start`, `tx_end` |
+| Physical columns | `from_z`, `thru_z` | `in_z`, `out_z` |
+| Bitemporal mutation input | `valid_from`; bounded verbs also use `until` | finite clock instant supplied by the Database handle |
+| Optimistic temporal observation | not used as a gate | observed `tx_start` (`in_z`) |
+
+Relationship traversal propagates Pin and Edge coordinates by Temporal
+Dimension using these same names. The former business/processing vocabulary is
+not accepted as aliases in declarations, metadata, queries, Pin/Edge values,
+mutations, exceptions, or exports.
 
 ### Query and operation API
 
@@ -124,7 +157,7 @@ never something an application developer hand-writes.
   resolve dynamically and are validated at statement build against the
   declared value-object structure — an undeclared segment or a literal
   mismatching the leaf's declared neutral type is rejected at build, never at
-  the database. A flat predicate whose path crosses a `cardinality: many`
+  the database. A flat predicate whose path crosses a `multiplicity: many`
   member keeps the flat node and therefore core's **any-element** semantics:
   each such predicate matches independently, so two ANDed flat predicates may
   be satisfied by *different* elements. **Same-element** composition and
@@ -202,14 +235,14 @@ never something an application developer hand-writes.
   further, and one that broadens back out (a `Cat` narrow inside a `Dog`
   scope) is rejected at build time (`narrow-outside-position`, the corpus's
   threaded-position rule).
-- **Temporal-read spelling.** Statement-level and axis-keyed, with the two core
-  axis kinds as the public vocabulary:
+- **Temporal-read spelling.** Statement-level and dimension-keyed, with Valid
+  Time and Transaction Time as the only public vocabulary:
 
   ```python
-  Balance.where(...).as_of(processing=d)
-  Position.where(...).as_of(business=b, processing=p)
-  Balance.where(...).history("processing")          # Literal-typed axis
-  Balance.where(...).as_of_range(processing=(f, t))
+  Balance.where(...).as_of(transaction_time=t)
+  Position.where(...).as_of(valid_time=v, transaction_time=t)
+  Balance.where(...).history("transaction_time")
+  Balance.where(...).as_of_range(transaction_time=(start, end))
   ```
 
   Timestamps are timezone-aware `datetime` values, normalized to UTC,
@@ -217,12 +250,14 @@ never something an application developer hand-writes.
   omitted axis defaults to **latest** per the core default-injection rule; the
   module-level `LATEST` sentinel spells the same pin explicitly and lowers to
   the identical injected predicate. Canonical serialization is deterministic:
-  each explicitly passed axis serializes exactly one wrapper node, and when
-  both axes are passed the **business** `asOf` is the outer wrapper enclosing
-  the inner **processing** `asOf` (the corpus's bitemporal nesting order); an
+  each explicitly passed dimension serializes exactly one wrapper node, and
+  when both are passed the Valid-Time `asOf` is the outer wrapper enclosing the
+  Transaction-Time `asOf`; an
   omitted axis serializes **no** wrapper — its latest default is injected at
-  lowering — while an explicit `LATEST` pin serializes its wrapper with
-  `date: now`. `as_of` is single-shot: calling it on an
+  lowering — while an explicit `LATEST` pin serializes its wrapper with the
+  canonical Latest value, never `now`. A finite current-clock datetime is Now
+  and lowers to containment rather than Latest's `end = infinity`. `as_of` is
+  single-shot: calling it on an
   already-pinned statement raises (derive from the unpinned base instead;
   re-pinning is a deferred additive extension). Rejected at build: pinning or
   scanning an axis the entity does not declare, temporal clauses on
@@ -249,16 +284,17 @@ never something an application developer hand-writes.
   Reserved class-level names (`where`, other query-root classmethods, the
   `model_*` Pydantic space) may not be field names; collisions are rejected at
   class definition.
-- **Runtime introspection API.** `parallax.core.meta(Order)` (or by name,
-  `meta("Order")`) returns a frozen `EntityMeta` view over the metamodel:
-  `name`, `table`, `temporal`, `attributes` (type, column, nullable,
-  primary_key, pk generator, max length), `primary_key`, `as_of` (axis →
-  from/to columns), `relationships` (cardinality, related entity, join,
-  order-by, dependent), `value_objects`, `family` (inheritance root, strategy,
-  tag/tagValue, subtypes; `None` outside a family), and `descriptor()` for the
-  canonical dict/YAML/JSON export. Keys use canonical camelCase names. The
-  same object is returned whether the metamodel came from classes or ingested
-  YAML.
+- **Runtime introspection API.** `models.meta(Order)` (or by canonical Entity
+  Identity) returns the immutable, local `EntityMetadata` contract from
+  `m-metamodel`: declared storage, persistence, attributes, defining/reverse
+  relationship declarations, Value Objects, As-Of Axes, inheritance
+  declaration, and indices in declaration order. It never flattens inherited
+  members and exposes no effective `table`, `temporal`, relationship-target,
+  family, or similar convenience aliases. Owner-specific derived behavior is
+  obtained from the hub's compiled facets. Canonical descriptor export is a
+  hub operation, not a method on an Entity metadata view. Class-backed and
+  descriptor-backed hubs return the same compiler-owned objects; there is no
+  package-global `meta(...)` registry lookup or parallel `EntityMeta` graph.
 - **Neutral scalar type mapping.** No lossy coercions; validation at build
   time; the database never sees an invalid value.
 
@@ -328,7 +364,7 @@ never something an application developer hand-writes.
   classes** — plain values, shareable and serializable. Pydantic
   `frozen=True` is faux-immutable (it rejects attribute assignment but cannot
   deep-freeze field values), so every collection-valued node field is an
-  immutable type: included to-many relationships and `cardinality: many`
+  immutable type: included to-many relationships and `multiplicity: many`
   value-object members materialize as **tuples** (§4), keeping deep edits
   unrepresentable rather than merely discouraged. Hashability is conditional,
   stated precisely: a node is hashable exactly when hashing terminates over
@@ -358,13 +394,13 @@ never something an application developer hand-writes.
   per the core rule that a scan is not a pin), and `parallax.core.pin_of(node)`
   reports each node's own coordinates. `parallax.core.edge_of(node) -> Edge`
   reports a temporal node's **milestone edge** as a distinct frozen `Edge`
-  value exposing one strict-typed accessor pair per axis — the established
+  value exposing one strict-typed accessor pair per dimension — the established
   arity-accessor house pattern (§2's `result()` / `result_or_none()`) applied
-  to axis access: `edge.processing -> datetime` raises `UndeclaredAxisError`
-  when the entity does not declare the axis,
-  `edge.processing_or_none -> datetime | None` returns `None` instead, and
-  `edge.business` / `edge.business_or_none` behave identically for the
-  business axis. Every value a declared axis yields is the **finite**
+  to dimension access: `edge.transaction_time -> datetime` raises
+  `UndeclaredAxisError` when the Entity does not declare the dimension,
+  `edge.transaction_time_or_none -> datetime | None` returns `None` instead,
+  and `edge.valid_time` / `edge.valid_time_or_none` behave identically for
+  Valid Time. Every value a declared dimension yields is the **finite**
   from-instant of the node's milestone on that axis (core's edge pin) —
   defined for every temporal node regardless of how the read was pinned;
   calling `edge_of` on a non-temporal node raises. `Edge` is deliberately not
@@ -372,7 +408,7 @@ never something an application developer hand-writes.
   carry the `LATEST` sentinel, while an `Edge` answers every declared axis
   and is always finite — never `LATEST`, never absent-because-scanned. The
   strict accessors keep replay code narrowing-free: a caller replaying an
-  entity's declared axes reads `edge.processing` as a plain `datetime` and
+  Entity's declared dimensions reads `edge.transaction_time` as a plain `datetime` and
   passes it straight to `as_of(...)` (the stale-web-edit recipe below). The
   `snapshot-history-includes` feature
   is **deferred, not invalid**: combining `.history()` with `.include()`
@@ -427,30 +463,34 @@ never something an application developer hand-writes.
   alike (§5). Write inputs are the entity classes themselves:
   full instances for `insert` (the Create Payload), edited copies or
   instances for the other verbs (§5). The **stale-web-edit** recipe
-  transports the displayed milestone's **edge on every declared axis**: at
+  transports the displayed milestone's **edge on every declared dimension**: at
   render time the service reads the row and captures `edge_of(node)` — the
-  `Edge` answers each declared axis's from-instant as a plain `datetime`
-  (`edge.processing` is the displayed milestone's own `in_z`) — and sends the
+  `Edge` answers each declared dimension's start instant as a plain `datetime`
+  (`edge.transaction_time` is the displayed milestone's own `tx_start`, mapped
+  to `in_z`) — and sends the
   whole edge with the form. On submit, the service re-fetches with **every
-  declared axis** pinned at the transported edge —
-  `as_of(processing=edge.processing)` for an audit-only entity,
-  `as_of(processing=edge.processing, business=edge.business)` for a
-  bitemporal one; a replay passes exactly its entity's declared axes, so
+  declared dimension** pinned at the transported edge —
+  `as_of(transaction_time=edge.transaction_time)` for a
+  Transaction-Time-Only Entity,
+  `as_of(transaction_time=edge.transaction_time,
+  valid_time=edge.valid_time)` for a Bitemporal one; a replay passes exactly
+  its Entity's declared dimensions, so
   every `as_of` argument is strictly `datetime`-typed with no narrowing —
   inside an optimistic transaction, applies the payload
   fields to a copy, and updates. A milestone's from-instant lies inside its
-  own `[from, to)` interval on each axis by construction, so the re-fetch
-  selects exactly the **displayed** rectangle — never a different business
-  rectangle reached through a defaulted-latest axis — even after a concurrent
+  own `[start, end)` interval on each dimension by construction, so the
+  re-fetch selects exactly the **displayed** rectangle — never a different
+  Valid-Time rectangle reached through a defaulted-Latest dimension — even
+  after a concurrent
   writer has chained a replacement: the transaction observes the displayed
   `in_z`, and the concurrent chain leaves a current row whose fresh `in_z`
   fails the observed-`in_z` gate (a zero-row close — the conflict; for a
-  bitemporal entity the gate also binds the business discriminator when the
+  Bitemporal Entity the gate also binds the Valid-Time discriminator when the
   key's current rows share an `in_z`, per `m-bitemp-write`, so the close
   targets exactly the observed rectangle), while an
   untouched row succeeds. Weaker transports fail: the `LATEST` sentinel is
   not replayable (it re-resolves to whatever milestone is current at submit
-  time), and a wall-clock display instant is racy because processing instants
+  time), and a wall-clock display instant is racy because Transaction-Time instants
   order by **assignment**, not commit — a writer whose transaction began
   before the display fetch can commit a replacement whose `in_z` predates the
   captured instant, which a wall-clock replay then selects, letting the stale
@@ -568,16 +608,16 @@ never something an application developer hand-writes.
   temporal edited copy emits the full close-and-chain replacement row. A
   provenance-less temporal instance carries no change record, so it always
   chains; callers wanting no-op elision pass edited copies. Bitemporal plain
-  verbs require keyword-only
-  `business_from`; the `*_until` trio additionally requires `until`, with
-  `business_from < until`, both aware-UTC-microsecond datetimes, all validated
-  at build. `delete` on a temporal entity and `terminate` on a non-temporal
-  entity are rejected. Processing instants come from the handle-configured
+  verbs require keyword-only `valid_from`; the `*_until` trio additionally
+  requires `until`, with `valid_from < until`, both aware-UTC-microsecond
+  datetimes, all validated at build. `delete` on a temporal Entity and
+  `terminate` on a non-temporal Entity are rejected. Transaction-Time instants
+  come from the handle-configured
   **Clock Strategy** (default system UTC; tests inject a fixed clock) — never
   from callers, with no per-operation overrides. Temporal `update`/`terminate`
   follow the same prior-observation rule as versioned writes (below): the
   values a bitemporal rectangle split carries forward and, under optimistic
-  mode, the observed `in_z` for the gated close (with the business
+  mode, the observed `tx_start` (`in_z`) for the gated close (with the Valid-Time
   discriminator when current rows share an `in_z`, per `m-bitemp-write`) come
   from the milestone this unit of work observed via a transaction-scoped
   read — never from an implicit write-path read.
@@ -602,7 +642,7 @@ never something an application developer hand-writes.
   not. **Locking
   mode additionally requires that the observation be of the current
   milestone**: a temporal observation licenses a locking-mode write only when
-  its read was **latest-pinned on the written (processing) axis** — a
+  its read was **latest-pinned on the written Transaction-Time dimension** — a
   versioned non-temporal row satisfies this trivially, since its single row
   is always the current one. Locking-mode closes are **ungated**, so the
   shared read lock is the only protection, and a shared lock on a historical
@@ -653,11 +693,11 @@ never something an application developer hand-writes.
   ```python
   tx.update_where(op, Account.balance.set(Decimal("0.00")))  # non-temporal
   tx.delete_where(op)                                        # non-temporal
-  tx.terminate_where(op)                                     # audit-only
-  tx.update_where(op, Position.px.set(x), business_from=b)   # bitemporal plain
-  tx.terminate_where(op, business_from=b)
-  tx.update_until_where(op, Position.px.set(x), business_from=b, until=u)
-  tx.terminate_until_where(op, business_from=b, until=u)
+  tx.terminate_where(op)                                     # Transaction-Time-Only
+  tx.update_where(op, Position.px.set(x), valid_from=v)   # Bitemporal plain
+  tx.terminate_where(op, valid_from=v)
+  tx.update_until_where(op, Position.px.set(x), valid_from=v, until=u)
+  tx.terminate_until_where(op, valid_from=v, until=u)
   ```
 
   Assignments belong to the **assignment-bearing** verbs alone —
@@ -840,8 +880,13 @@ never something an application developer hand-writes.
 
 ## 7. Source-enforcement topology
 
-Behavioral modules map one-to-one onto Python submodules (enforcement scopes)
-inside the distributions of §8. import-linter forbids every production
+Behavioral modules map onto Python submodules (enforcement scopes) inside the
+distributions of §8. During the COR-45 contract transition, `m-metamodel`,
+`m-model-formation`, and `m-relationship` are distinct normative module rows but
+are co-located in the existing `parallax.core.descriptor` enforcement scope.
+COR-46 separates those scopes as it moves behavioral consumers to the Metamodel
+Interface; COR-45 does not pre-implement that dependency-graph refactor.
+import-linter forbids every production
 scope-pair import the DAG does not permit — the generated forbidden-edge
 complement below, with the conformance-family scopes exempted as importers
 per `modules.md` — so illegal non-edges are rejected, not merely wrong
@@ -850,11 +895,14 @@ directions; artifact co-location never legalizes a forbidden edge.
 | Behavioral/support module | Source owner/path | Enforcement scope | Allowed direct dependencies | Enforcement rule/config |
 |---|---|---|---|---|
 | `m-core` | `parallax.core.base` | `parallax.core.base` | (none) | generated forbidden contracts, `languages/python/pyproject.toml` |
-| `m-descriptor` | `parallax.core.descriptor` | `parallax.core.descriptor` | `m-core` | generated forbidden contracts |
-| `m-pk-gen` | `parallax.core.pk_gen` | `parallax.core.pk_gen` | `m-descriptor` | generated forbidden contracts |
-| `m-inheritance` | `parallax.core.inheritance` | `parallax.core.inheritance` | `m-descriptor` | generated forbidden contracts |
-| `m-value-object` | `parallax.core.value_object` | `parallax.core.value_object` | `m-descriptor` | generated forbidden contracts |
-| `m-op-algebra` | `parallax.core.op_algebra` | `parallax.core.op_algebra` | `m-descriptor`, `m-inheritance` | generated forbidden contracts |
+| `m-metamodel` | `parallax.core.descriptor` (temporary co-location) | `parallax.core.descriptor` | `m-core` | generated forbidden contracts |
+| `m-model-formation` | `parallax.core.descriptor` (temporary co-location) | `parallax.core.descriptor` | `m-metamodel` | generated forbidden contracts |
+| `m-descriptor` | `parallax.core.descriptor` | `parallax.core.descriptor` | `m-core`, `m-metamodel` | generated forbidden contracts |
+| `m-pk-gen` | `parallax.core.pk_gen` | `parallax.core.pk_gen` | `m-descriptor`, `m-metamodel` | generated forbidden contracts |
+| `m-inheritance` | `parallax.core.inheritance` | `parallax.core.inheritance` | `m-descriptor`, `m-metamodel`, `m-model-formation` | generated forbidden contracts |
+| `m-value-object` | `parallax.core.value_object` | `parallax.core.value_object` | `m-descriptor`, `m-metamodel`, `m-model-formation` | generated forbidden contracts |
+| `m-relationship` | `parallax.core.descriptor` (temporary co-location) | `parallax.core.descriptor` | `m-metamodel`, `m-model-formation` | generated forbidden contracts |
+| `m-op-algebra` | `parallax.core.op_algebra` | `parallax.core.op_algebra` | `m-metamodel`, `m-inheritance` | generated forbidden contracts |
 | `m-sql` | `parallax.core.sql_gen` | `parallax.core.sql_gen` | `m-op-algebra`, `m-dialect` | generated forbidden contracts |
 | `m-dialect` | `parallax.core.dialect` (incl. driver-free `dialect.postgres`) | `parallax.core.dialect` | `m-core` | generated forbidden contracts |
 | `m-db-port` | `parallax.core.db_port` (abstract) | `parallax.core.db_port` | `m-core` | generated forbidden contracts |
@@ -862,12 +910,12 @@ directions; artifact co-location never legalizes a forbidden edge.
 | `m-unit-work` | `parallax.core.unit_work` | `parallax.core.unit_work` | `m-op-algebra`, `m-db-port` | generated forbidden contracts |
 | `m-read-lock` | `parallax.core.read_lock` | `parallax.core.read_lock` | `m-unit-work`, `m-dialect` | generated forbidden contracts |
 | `m-auto-retry` | `parallax.core.auto_retry` | `parallax.core.auto_retry` | `m-unit-work`, `m-db-error` | generated forbidden contracts |
-| `m-opt-lock` | `parallax.core.opt_lock` | `parallax.core.opt_lock` | `m-unit-work`, `m-temporal-read` | generated forbidden contracts |
-| `m-temporal-read` | `parallax.core.temporal_read` | `parallax.core.temporal_read` | `m-op-algebra` | generated forbidden contracts |
+| `m-opt-lock` | `parallax.core.opt_lock` | `parallax.core.opt_lock` | `m-unit-work`, `m-temporal-read`, `m-metamodel`, `m-model-formation`, `m-inheritance` | generated forbidden contracts |
+| `m-temporal-read` | `parallax.core.temporal_read` | `parallax.core.temporal_read` | `m-op-algebra`, `m-metamodel`, `m-model-formation`, `m-inheritance` | generated forbidden contracts |
 | `m-audit-write` | `parallax.core.audit_write` | `parallax.core.audit_write` | `m-temporal-read`, `m-unit-work` | generated forbidden contracts |
 | `m-bitemp-write` | `parallax.core.bitemp_write` | `parallax.core.bitemp_write` | `m-audit-write` | generated forbidden contracts |
 | `m-batch-write` | `parallax.core.batch_write` | `parallax.core.batch_write` | `m-unit-work` | generated forbidden contracts |
-| `m-navigate` | `parallax.core.navigate` | `parallax.core.navigate` | `m-op-algebra`, `m-unit-work`, `m-temporal-read`, `m-inheritance` | generated forbidden contracts |
+| `m-navigate` | `parallax.core.navigate` | `parallax.core.navigate` | `m-op-algebra`, `m-unit-work`, `m-temporal-read`, `m-inheritance`, `m-relationship` | generated forbidden contracts |
 | `m-deep-fetch` | `parallax.core.deep_fetch` | `parallax.core.deep_fetch` | `m-navigate` | generated forbidden contracts |
 | `m-snapshot-read` | `parallax.snapshot.materialize` | `parallax.snapshot.materialize` | `m-deep-fetch` | generated forbidden contracts + cross-package contract |
 | Snapshot handle and composition surface (support) | `parallax.snapshot.handle` | `parallax.snapshot.handle` | `parallax.snapshot.materialize`, `m-unit-work`, `m-auto-retry`, `m-read-lock`, `m-opt-lock`, `m-batch-write`, `m-audit-write`, `m-bitemp-write`, `m-sql`, `m-navigate`, `m-db-port`, `parallax.core.entity` | generated forbidden contracts + cross-package contract |
@@ -1041,7 +1089,7 @@ hatchling.
 
 | Artifact/package | Production or development-only | Included source scopes | External runtime dependencies | Depends on artifacts | Public exports/entry points |
 |---|---|---|---|---|---|
-| `parallax-core` (the common runtime) | production | all `parallax.core.*` scopes of §7 (behavioral modules, entity/statement frontend, driver-free postgres dialect strategy) | `pydantic`, `pyyaml` | (none) | `parallax.core`: entity base, `Field`, `Relationship`, `Attr`, `Rel`, statement API, `LATEST`, `Pin`, `Edge`, `meta`, `pin_of`, `edge_of`, `is_loaded`, `narrowed`, errors |
+| `parallax-core` (the common runtime) | production | all `parallax.core.*` scopes of §7 (behavioral modules, entity/statement frontend, driver-free postgres dialect strategy) | `pydantic`, `pyyaml` | (none) | `parallax.core`: entity base, `Field`, `Relationship`, `Attr`, `Rel`, statement API, `LATEST`, `Pin`, `Edge`, `pin_of`, `edge_of`, `is_loaded`, `narrowed`, errors |
 | `parallax-snapshot` (snapshot lifecycle extension) | production | `parallax.snapshot.*` (`materialize`, `handle`) | (none beyond core) | `parallax-core` | `parallax.snapshot`: `connect()`, `Snapshot[T]`, `Execution` |
 | `parallax-postgres` (Postgres database adapter) | production | `parallax.postgres.*` (concrete port over psycopg) | `psycopg[binary]` (sole declarer) | `parallax-core` | `parallax.postgres`: `PostgresAdapter` |
 | `parallax-conformance` | development-only | `parallax.conformance.*` (CLI, case format, corpus loading, provider harness) | `testcontainers`, `jsonschema` | `parallax-core`, `parallax-snapshot`, `parallax-postgres` | `parallax-conformance` console script (`describe` / `compile` / `run`) |

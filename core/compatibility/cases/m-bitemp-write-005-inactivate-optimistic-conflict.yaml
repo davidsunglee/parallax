@@ -1,11 +1,11 @@
 # Optimistic bitemporal inactivation with a STALE observed in_z affects ZERO rows
-# even though a current row for the same business window exists — the bitemporal
+# even though a current row for the same Valid-Time window exists — the bitemporal
 # lost update the in_z gate catches (m-bitemp-write + m-opt-lock).
 #
 # As in m-bitemp-write-004 the close gates on both the business discriminator
 # `from_z = ?` and the processing `in_z = ?`. Here `given.apply` re-chains R3: a
-# concurrent writer inactivated it (processing axis closed at 2024-05-01) and opened
-# a fresh current milestone for the SAME business window at in_z 2024-05-01. A
+# concurrent writer inactivated it (Transaction-Time dimension closed at 2024-05-01) and opened
+# a fresh current milestone for the SAME Valid-Time window at in_z 2024-05-01. A
 # current row for that window still exists, but it is a different processing
 # milestone than the one we observed, so our close bound to the stale in_z
 # (2024-04-01) matches nothing and affects 0 rows — without the in_z gate it would
@@ -31,9 +31,9 @@ given:
 when:
   uow:
     concurrency: optimistic
-  write: { id: 1, businessFrom: "2024-06-01T00:00:00+00:00" }
+  write: { id: 1, valid_start: "2024-06-01T00:00:00+00:00" }
   at: "2024-10-01T00:00:00+00:00"
-  observedInZ: "2024-04-01T00:00:00+00:00"
+  observedTxStart: "2024-04-01T00:00:00+00:00"
 then:
   statements:
     - sql:

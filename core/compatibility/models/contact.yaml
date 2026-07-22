@@ -23,14 +23,13 @@ entity:
   name: Contact
   namespace: parallax.compatibility
   table: contact
-  mutability: transactional
-  temporal: non-temporal
+  persistence: read-write
   attributes:
     - name: id
       type: int64
       column: id
       primaryKey: true
-      pkGenerator: none
+      pkGeneration: application-assigned
     - name: name
       type: string
       column: name
@@ -38,8 +37,7 @@ entity:
   valueObjects:
     - name: address
       column: address
-      mapping: json
-      cardinality: one
+      multiplicity: one
       nullable: true
       attributes:
         - name: street
@@ -48,21 +46,20 @@ entity:
           type: string
       valueObjects:
         - name: geo
-          cardinality: one
+          multiplicity: one
           attributes:
             - name: country
               type: string
           valueObjects:
             - name: point
-              cardinality: one
+              multiplicity: one
               attributes:
                 - name: lat
                   type: float64
                 - name: lon
                   type: float64
         - name: phones
-          cardinality: many
-          nullable: true
+          multiplicity: many
           attributes:
             - name: type
               type: string

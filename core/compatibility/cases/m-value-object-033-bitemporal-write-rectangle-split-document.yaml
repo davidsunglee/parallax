@@ -3,12 +3,12 @@
 # m-bitemp-write), on Postgres AND MariaDB.
 #
 # The signature bitemporal write is the RECTANGLE SPLIT: an `updateUntil` over a
-# bounded business window inactivates the original current rectangle (closes its
-# PROCESSING axis at the transaction instant) and chains THREE new rows at fresh
+# bounded Valid-Time window inactivates the original Latest rectangle (closes its
+# Transaction-Time dimension at the transaction instant) and chains THREE new rows at fresh
 # processing time [txInstant, infinity):
-#   head   : business [from_z, businessFrom)     — the OLD address D1 before the window
-#   middle : business [businessFrom, businessTo) — the NEW address D2, for the window
-#   tail   : business [businessTo, infinity)     — the OLD address D1 after the window
+#   head   : business [from_z, validFrom)     — the OLD address D1 before the window
+#   middle : business [validFrom, until) — the NEW address D2, for the window
+#   tail   : business [until, infinity)     — the OLD address D1 after the window
 # so the address changes ONLY inside the window. The `address` value object carries NO
 # value-object-specific write machinery: it is one document bind in columnOrder position
 # ([br_id, name, from_z, thru_z, in_z, out_z, address]) in every full-row INSERT, and it
@@ -17,9 +17,9 @@
 # D1) and middle (new D2) — proving the composite rides every chained rectangle.
 #
 # The sequence (self-contained, from an empty table):
-#   step 1 insert      : open the current rectangle, address D1,
+#   step 1 insert      : open the Latest rectangle, address D1,
 #                        business [2024-01-01, infinity), processing [2024-01-01, infinity)  (1 statement)
-#   step 2 updateUntil : set address D2 for business window [2024-03-01, 2024-09-01)
+#   step 2 updateUntil : set address D2 for Valid-Time window [2024-03-01, 2024-09-01)
 #                        at txInstant 2024-02-15 — inactivate the original
 #                        (out_z = 2024-02-15) and chain head / middle / tail
 #                        at processing [2024-02-15, infinity)                    (4 statements)
@@ -39,12 +39,10 @@ when:
     - mutation: insert
       entity: Branch
       statements: 1
-      note: open the original current rectangle carrying the address document D1
+      note: open the original Latest rectangle carrying the address document D1
       rows:
         - id: 1
           name: Central Branch
-          businessFrom: "2024-01-01T00:00:00+00:00"
-          businessTo: infinity
           address:
             street: 10 Old Road
             city: Helsinki
@@ -52,15 +50,15 @@ when:
               country: FI
             phones:
               - { type: main, number: '555-1000' }
+      validFrom: "2024-01-01T00:00:00+00:00"
       at: "2024-01-01T00:00:00+00:00"
     - mutation: updateUntil
       entity: Branch
       statements: 4
-      note: inactivate the original on the processing axis, then chain head / middle / tail carrying D1 / D2 / D1
+      note: inactivate the original on the Transaction-Time dimension, then chain head / middle / tail carrying D1 / D2 / D1
       rows:
         - id: 1
           name: Central Branch
-          businessFrom: "2024-03-01T00:00:00+00:00"
           address:
             street: 30 New Road
             city: Tampere
@@ -69,6 +67,7 @@ when:
             phones:
               - { type: main, number: '555-3000' }
               - { type: fax, number: '555-3001' }
+      validFrom: "2024-03-01T00:00:00+00:00"
       at: "2024-02-15T00:00:00+00:00"
       until: "2024-09-01T00:00:00+00:00"
 then:

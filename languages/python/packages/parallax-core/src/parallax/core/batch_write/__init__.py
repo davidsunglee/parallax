@@ -85,7 +85,7 @@ _UPDATE_MUTATIONS: Final[frozenset[str]] = frozenset({"update", "updateUntil"})
 # run containing one never collapses (mirrors the conformance engine's own
 # pre-existing `_rows_carry_observation_keys` guard, restated here as this
 # module's own single source of truth for the rule).
-_OBSERVATION_CONTROL_KEYS: Final[frozenset[str]] = frozenset({"observedVersion", "observedInZ"})
+_OBSERVATION_CONTROL_KEYS: Final[frozenset[str]] = frozenset({"observedVersion", "observedTxStart"})
 
 
 def _is_versioned(meta: Metamodel, entity_name: str) -> bool:

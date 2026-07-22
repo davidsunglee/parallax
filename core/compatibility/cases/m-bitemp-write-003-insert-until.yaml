@@ -1,14 +1,14 @@
 # Write sequence: insertUntil — the third of the *Until trio (DQ11). Insert a
-# bitemporal value scoped to a BOUNDED business window, with no prior row to close.
+# bitemporal value scoped to a BOUNDED Valid-Time window, with no prior row to close.
 #
 # An insertUntil opens a single new milestone whose BUSINESS interval is the
-# bounded window [businessFrom, businessTo) (rather than [businessFrom, infinity)),
+# bounded window [validFrom, until) (rather than [validFrom, infinity)),
 # at fresh processing time [txInstant, infinity). There is no existing current row
 # to inactivate, so it is a single INSERT — the bitemporal analogue of the
 # audit-only insert, but business-bounded.
 #
 # The sequence (self-contained, from an empty table):
-#   step 1 insertUntil : open value 100 for business window [2024-03-01, 2024-09-01)
+#   step 1 insertUntil : open value 100 for Valid-Time window [2024-03-01, 2024-09-01)
 #                        at txInstant 2024-01-01, processing [2024-01-01, infinity)  (1 statement)
 #
 # Resulting state (1 row): a single rectangle current on processing whose business
@@ -23,7 +23,8 @@ when:
       statements: 1
       note: open a single business-bounded rectangle [2024-03-01, 2024-09-01)
       rows:
-        - { id: 1, acctNum: A, value: 100.00, businessFrom: "2024-03-01T00:00:00+00:00" }
+        - { id: 1, acctNum: A, value: 100.00 }
+      validFrom: "2024-03-01T00:00:00+00:00"
       at: "2024-01-01T00:00:00+00:00"
       until: "2024-09-01T00:00:00+00:00"
 then:

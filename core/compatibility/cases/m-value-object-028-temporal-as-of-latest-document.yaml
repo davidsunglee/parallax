@@ -2,8 +2,8 @@
 # milestone — an as-of-NOW read returns each supplier's CURRENT address document
 # (m-value-object "Inherited temporality", m-temporal-read), on Postgres AND MariaDB.
 #
-# `address` declares NO asOfAttributes of its own — it rides the Supplier's single
-# `processing` dimension. Reading as-of now injects the current-row predicate
+# `address` declares NO asOfAxes of its own — it rides the Supplier's single
+# Transaction-Time dimension. Reading at Latest injects the current-row predicate
 # (out_z = infinity, one bind), and the golden projects the whole structured-document
 # `address` column with the owner; the graph materializer decodes it per row. Only the
 # CURRENT milestone of each supplier is returned, so id 1 materializes D1b (Bergen,
@@ -26,8 +26,8 @@ when:
     asOf:
       operand:
         all: {}
-      asOfAttr: Supplier.processingDate
-      date: now
+      dimension: transactionTime
+      coordinate: latest
 then:
   statements:
     - sql:

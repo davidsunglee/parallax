@@ -592,7 +592,7 @@ def _scenario_needs_lock(steps: Sequence[Mapping[str, object]], meta: Metamodel)
 
 
 def _strip_observation(row: Mapping[str, object]) -> tuple[dict[str, object], Observation | None]:
-    """Strip a case writeRow's reserved ``observedVersion`` / ``observedInZ``
+    """Strip a case writeRow's reserved ``observedVersion`` / ``observedTxStart``
     control keys (`m-opt-lock`; ADR 0013), returning the DURABLE row (never
     carrying them — the write-instruction schema forbids both,
     `instructions.deserialize` enforces it) and the :class:`Observation` they
@@ -601,12 +601,12 @@ def _strip_observation(row: Mapping[str, object]) -> tuple[dict[str, object], Ob
     prior find step, consulted separately via :data:`ScenarioObservations`)."""
     clean = dict(row)
     version = clean.pop("observedVersion", None)
-    in_z = clean.pop("observedInZ", None)
-    if version is None and in_z is None:
+    tx_start = clean.pop("observedTxStart", None)
+    if version is None and tx_start is None:
         return clean, None
     return clean, Observation(
         version=cast("int", version) if version is not None else None,
-        in_z=cast("str", in_z) if in_z is not None else None,
+        tx_start=cast("str", tx_start) if tx_start is not None else None,
     )
 
 
@@ -616,7 +616,7 @@ def _strip_observation(row: Mapping[str, object]) -> tuple[dict[str, object], Ob
 # `_write_sequence_lowered` / `run_write_sequence_case` pass a permanently
 # EMPTY instance (a writeSequence carries no find steps at all): every keyed
 # write's observation there comes solely from its own row's reserved
-# `observedVersion`/`observedInZ` control keys. The scenario RUN lane
+# `observedVersion`/`observedTxStart` control keys. The scenario RUN lane
 # (`_run_uow_group`) builds one FRESH instance per `uow` GROUP — never one
 # spanning the whole scenario or crossing a group boundary (COR-3 Phase 8
 # amendment-review remediation retires the prior scenario-wide map); the
@@ -740,22 +740,10 @@ def _build_temporal_instruction(
     (`m-audit-write` / `m-bitemp-write` "the engine supplies observed rows
     from case state" — never an implicit resolving read).
 
-    Hoists the corpus's OWN axis-bound authoring convention to the canonical
-    instruction-level fields (`write-instruction.schema.json`) — the case
-    format authors business bounds in TWO DIFFERENT places depending on shape
-    (`m-case-format` schema, ``keyedWrite`` vs the writeSequence step): a
-    SCENARIO buffered write's ``businessFrom`` / ``businessTo`` are ENTRY-level
-    (sibling of ``mutation`` / ``entity`` / ``rows`` — the canonical
-    ``keyedWriteInstruction`` shape directly), while a WRITESEQUENCE step's
-    ``businessFrom`` is ROW-embedded and its ``businessTo`` alias is the
-    entry-level ``until`` (there is no entry-level ``businessFrom`` slot in
-    that step schema at all). This checks entry-level first, then row-embedded,
-    so it handles BOTH conventions uniformly without needing to know the
-    caller's shape. A plain (unbounded) writeSequence mutation's seed row MAY
-    additionally carry a literal ``businessTo: infinity`` (its own fully-open
-    upper bound) — dropped, never hoisted (the schema forbids ``businessTo`` on
-    an unbounded mutation; infinity IS its implicit default). Every temporal
-    entry this increment reaches is single-row.
+    The corpus and canonical instruction share the same ``validFrom`` / ``until``
+    spelling. Bounds are instruction-level fields; temporal row payloads never
+    carry authoring aliases. Every temporal entry this increment reaches is
+    single-row.
 
     ``unit_inserted`` is the SAME choreography unit's own running set of
     (entity, pk) pairs a PRIOR entry in this SAME buffer already inserted
@@ -772,25 +760,13 @@ def _build_temporal_instruction(
     entity_name = cast("str", entry["entity"])
     raw_rows = cast("Sequence[Mapping[str, object]]", entry["rows"])
     row = dict(raw_rows[0])
-    business_from = cast("str | None", entry.get("businessFrom"))
-    if business_from is None:
-        business_from = cast("str | None", row.pop("businessFrom", None))
-    else:
-        row.pop("businessFrom", None)  # defensive: never double-carried
-    business_to_row = row.pop("businessTo", None)
-    if business_to_row is not None and business_to_row != INFINITY_LITERAL:
-        raise EngineError(  # pragma: no cover - no witnessed case authors this
-            f"{entity_name}: an unbounded mutation's row carries a finite businessTo "
-            f"{business_to_row!r}; only the literal `infinity` default is recognized"
-        )
-    business_to = cast("str | None", entry.get("businessTo"))
-    if business_to is None:
-        business_to = cast("str | None", entry.get("until"))
+    valid_from = cast("str | None", entry.get("validFrom"))
+    until = cast("str | None", entry.get("until"))
     doc: dict[str, object] = {"mutation": mutation, "entity": entity_name, "rows": [row]}
-    if business_from is not None:
-        doc["businessFrom"] = business_from
-    if business_to is not None:
-        doc["businessTo"] = business_to
+    if valid_from is not None:
+        doc["validFrom"] = valid_from
+    if until is not None:
+        doc["until"] = until
     instruction = instructions.deserialize(doc)
     instructions.validate_instruction(instruction, meta)
     assert isinstance(instruction, KeyedWrite)  # a temporal entry is always keyed
@@ -808,7 +784,7 @@ def _build_temporal_instruction(
     return instruction, key, observation
 
 
-_OBSERVATION_CONTROL_KEYS: Final[frozenset[str]] = frozenset({"observedVersion", "observedInZ"})
+_OBSERVATION_CONTROL_KEYS: Final[frozenset[str]] = frozenset({"observedVersion", "observedTxStart"})
 
 
 def _is_predicate_write_step(raw_write: object) -> bool:
@@ -840,20 +816,15 @@ def _canonical_predicate_doc(raw_write: Mapping[str, object]) -> dict[str, objec
     """A scenario predicate-write step's own ``write`` field, translated to the
     canonical ``write-instruction.schema.json`` predicate shape
     (`m-case-format` "Predicate-selected write instruction"): ``at`` (the
-    Clock-context processing-instant authoring alias) is DROPPED — never an
-    instruction field, ADR 0010 — and ``until`` is the corpus's own
-    ``businessTo`` authoring alias; ``businessFrom`` is already axis-explicit
-    (predicate writes were authored axis-explicit from the start, COR-35) and
-    needs no translation. Every caller that hands a raw case document to
+    Clock-context Transaction-Time instant) is DROPPED — never an instruction
+    field, ADR 0010. ``validFrom`` and ``until`` already use the canonical
+    spelling. Every caller that hands a raw case document to
     :func:`~parallax.core.unit_work.instructions.deserialize` routes through
     this first — the canonical deserializer rejects ``at``/``until`` outright
     as unexpected keys.
     """
     doc = dict(raw_write)
     doc.pop("at", None)
-    until = doc.pop("until", None)
-    if until is not None:
-        doc["businessTo"] = until
     return doc
 
 
@@ -890,7 +861,7 @@ def _decomposes_per_row(
     verifier):
 
     - a single row is always its own instruction (no ambiguity);
-    - any row authoring a reserved ``observedVersion``/``observedInZ`` control
+    - any row authoring a reserved ``observedVersion``/``observedTxStart`` control
       key is an explicit per-row-observation signal (`m-opt-lock`; ADR 0013) —
       an ENGINE-specific pre-check `batch_write.collapses` itself does not
       make (it has no case-authoring concept), covering insert/delete too
@@ -1013,7 +984,7 @@ def _build_instructions(
     """
     if "entity" not in entry:
         target = entry.get("target")
-        target_entity = (
+        target = (
             cast("Mapping[str, object]", target).get("entity")
             if isinstance(target, Mapping)
             else None
@@ -1021,7 +992,7 @@ def _build_instructions(
         raise EngineError(
             f"a writeSequence entry must be a keyed mutation (`entity` + `rows`) — a "
             f"structured predicate-selected instruction ({entry.get('mutation')!r} on "
-            f"{target_entity!r}) is scenario-write-only (m-case-format: the writeSequence "
+            f"{target!r}) is scenario-write-only (m-case-format: the writeSequence "
             "entry vocabulary is keyed-only)"
         )
     entity_name = cast("str", entry["entity"])
@@ -1251,7 +1222,7 @@ def _scenario_lowered(case: case_format.Case, dialect_name: str) -> list[_Lowere
     short-circuits at :func:`eligibility` before this function ever runs
     (`adapter.compile_case`). :data:`ScenarioObservations` stays permanently
     empty here — every keyed write this lane reaches resolves its observation
-    from its OWN row's reserved ``observedVersion``/``observedInZ`` control
+    from its OWN row's reserved ``observedVersion``/``observedTxStart`` control
     keys only (:func:`_strip_observation`), exactly as a writeSequence entry
     does.
     """
@@ -1312,7 +1283,7 @@ def _write_sequence_lowered(
     carries no find steps at all (`m-case-format`), so its own
     :data:`ScenarioObservations` map stays permanently empty — every keyed
     write's observation still comes from its row's own ``observedVersion`` /
-    ``observedInZ`` control keys."""
+    ``observedTxStart`` control keys."""
     meta = load_case_metamodel(case)
     dialect = dialect_for(dialect_name)
     concurrency = _concurrency(case)
@@ -1540,8 +1511,8 @@ def _execute_write_unit(
                     instruction.mutation,
                     instruction.entity,
                     dict(rows[0]),
-                    business_from=instruction.business_from,
-                    business_to=instruction.business_to,
+                    valid_from=instruction.valid_from,
+                    until=instruction.until,
                 )
             else:
                 tx._uow.buffer(instruction)  # pyright: ignore[reportPrivateUsage]
@@ -1898,8 +1869,8 @@ def _run_uow_group(
                         instruction.mutation,
                         instruction.entity,
                         dict(instruction.rows[0]),
-                        business_from=instruction.business_from,
-                        business_to=instruction.business_to,
+                        valid_from=instruction.valid_from,
+                        until=instruction.until,
                     )
                 lowered.append(
                     _LoweredStep(
@@ -2101,8 +2072,8 @@ def _run_interleaved_group(
                         instruction.mutation,
                         instruction.entity,
                         dict(instruction.rows[0]),
-                        business_from=instruction.business_from,
-                        business_to=instruction.business_to,
+                        valid_from=instruction.valid_from,
+                        until=instruction.until,
                     )
                 lowered[index] = _LoweredStep(
                     f"/scenario/{index}/write", statements, True, step.get("rollback") is True
@@ -2901,9 +2872,9 @@ def read_table_state(port: DbPort, meta: Metamodel, dialect: Dialect) -> dict[st
     """
     state: dict[str, list[Row]] = {}
     for entity in meta.entities:
-        if entity.table is None or entity.table in state:
+        table = inheritance.effective_table(meta, entity)
+        if table is None or table in state:
             continue
-        table = entity.table
         columns = ", ".join(
             dialect.quote(column) for column in _table_column_order(meta, entity, table)
         )
@@ -2934,12 +2905,20 @@ def _table_column_order(meta: Metamodel, entity: Entity, table: str) -> list[str
     """
     if entity.inheritance is None:
         return list(column_order(entity))
-    members = sorted(
-        (e for e in meta.entities if e.inheritance is not None and e.table == table),
-        key=lambda e: e.name,
-    )
     root = inheritance.family_root(meta, entity)
     assert root.inheritance is not None  # a resolved family root always carries one
+    if root.inheritance.strategy == "table-per-hierarchy":
+        members = sorted(
+            (
+                candidate
+                for candidate in meta.entities
+                if candidate.inheritance is not None
+                and inheritance.family_root(meta, candidate) is root
+            ),
+            key=lambda candidate: candidate.name,
+        )
+    else:
+        members = [entity]
     pk_columns = [attr.column for attr in root.attributes if attr.primary_key]
     tag_columns = [root.inheritance.tag_column] if root.inheritance.tag_column is not None else []
     chain = (*inheritance.ancestor_chain(meta, tuple(member.name for member in members)), *members)
@@ -2954,10 +2933,10 @@ def _table_column_order(meta: Metamodel, entity: Entity, table: str) -> list[str
             seen_rest.add(attribute.column)
             rest_columns.append(attribute.column)
         for vo in member.value_objects:  # pragma: no cover - no reachable family model
-            if vo.column in seen_docs:  # declares a value object yet (defensive dedup)
+            if vo.storage_column in seen_docs:  # declares a value object yet (defensive dedup)
                 continue
-            seen_docs.add(vo.column)
-            document_columns.append(vo.column)
+            seen_docs.add(vo.storage_column)
+            document_columns.append(vo.storage_column)
     return [*pk_columns, *tag_columns, *rest_columns, *document_columns]
 
 
@@ -3122,7 +3101,7 @@ def _run_conflict_close(
     concurrency: Concurrency,
     write_row: Mapping[str, object],
     at: str,
-    observed_in_z: str | None,
+    observed_tx_start: str | None,
 ) -> tuple[tuple[Statement, ...], int]:
     """Lower and execute one TEMPORAL conflict attempt's close through
     ``db.transact`` (COR-3 Phase 8 increment 4, DQ4 re-route) — ONE
@@ -3131,15 +3110,15 @@ def _run_conflict_close(
     conflict case's own close-only probe, never a REAL chaining mutation) and
     executes it on the transaction's own connection — a standalone close has
     nothing to coalesce or FK-order with, so it bypasses the buffer/flush
-    pipeline entirely. ``observed_in_z`` / the write row's own ``businessFrom``
-    (the bitemporal business discriminator) are the case's EXPLICIT authored
-    fields (`when.observedInZ` / `when.write.businessFrom`) — never a
+    pipeline entirely. ``observed_tx_start`` / the write row's own ``valid_start``
+    (the bitemporal Valid-Time discriminator) are the case's EXPLICIT authored
+    fields (`when.observedTxStart` / `when.write.valid_start`) — never a
     shadow-tracker lookup, a conflict case tests a KNOWN stale-or-fresh value.
     """
     row = dict(write_row)
-    business_from = cast("str | None", row.pop("businessFrom", None))
+    observed_valid_start = cast("str | None", row.pop("valid_start", None))
     lowered = handle.lower_temporal_close(
-        row, target, meta, dialect, concurrency, at, observed_in_z, business_from
+        row, target, meta, dialect, concurrency, at, observed_tx_start, observed_valid_start
     )
     instant = normalize_instant(dt.datetime.fromisoformat(at))
     database = handle.Database(port, meta, dialect=dialect, clock=FixedClock(instant))
@@ -3206,9 +3185,9 @@ def run_conflict_case(
                 write_row = cast("Mapping[str, object]", attempt["write"])
                 if is_temporal:
                     at = cast("str", attempt["at"])
-                    observed_in_z = cast("str | None", attempt.get("observedInZ"))
+                    observed_tx_start = cast("str | None", attempt.get("observedTxStart"))
                     statements, affected = _run_conflict_close(
-                        port, dialect, meta, target, concurrency, write_row, at, observed_in_z
+                        port, dialect, meta, target, concurrency, write_row, at, observed_tx_start
                     )
                 else:
                     statements, affected = _run_conflict_write(
@@ -3221,9 +3200,9 @@ def run_conflict_case(
             write_row = cast("Mapping[str, object]", when["write"])
             if is_temporal:
                 at = cast("str", when["at"])
-                observed_in_z = cast("str | None", when.get("observedInZ"))
+                observed_tx_start = cast("str | None", when.get("observedTxStart"))
                 statements, affected = _run_conflict_close(
-                    port, dialect, meta, target, concurrency, write_row, at, observed_in_z
+                    port, dialect, meta, target, concurrency, write_row, at, observed_tx_start
                 )
             else:
                 statements, affected = _run_conflict_write(

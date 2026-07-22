@@ -209,7 +209,7 @@ class UnitOfWork:
 
     # --- internals -------------------------------------------------------- #
     def _processing_instant_literal(self) -> str:
-        # One processing instant per transaction (Reladomo's per-transaction
+        # One Transaction-Time instant per transaction (Reladomo's per-transaction
         # timestamp): captured once from the Clock, shared by every flush.
         if self._processing_instant is None:
             self._processing_instant = instant_literal(self.clock.now())

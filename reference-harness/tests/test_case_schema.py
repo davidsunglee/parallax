@@ -444,7 +444,7 @@ def _graphs_read_case() -> dict[str, Any]:
             "operation": {
                 "history": {
                     "operand": {"eq": {"attr": "InvoiceLine.id", "value": 1000}},
-                    "asOfAttr": "InvoiceLine.processingDate",
+                    "dimension": "InvoiceLine.transactionTime",
                 }
             },
         },
@@ -459,11 +459,11 @@ def _graphs_read_case() -> dict[str, Any]:
             ],
             "graphs": [
                 {
-                    "pin": {"processingDate": "2024-01-01T00:00:00+00:00"},
+                    "pin": {"transactionTime": "2024-01-01T00:00:00+00:00"},
                     "graph": {"InvoiceLine": [{"id": 1000, "amount": 50.00}]},
                 },
                 {
-                    "pin": {"processingDate": "2024-04-01T00:00:00+00:00"},
+                    "pin": {"transactionTime": "2024-04-01T00:00:00+00:00"},
                     "graph": {"InvoiceLine": [{"id": 1000, "amount": 75.00}]},
                 },
             ],

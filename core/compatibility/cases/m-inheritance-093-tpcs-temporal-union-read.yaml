@@ -5,7 +5,7 @@
 # {DepositRate, LoanRate} (ALPHABETICAL branch order). With no shared table and no tag,
 # the read lowers to `union all` over those concrete tables, and the injected as-of
 # predicate is applied PER BRANCH: each branch carries its own `from_z <= ? and thru_z > ?
-# and out_z = ?` fragment (businessDate pinned past 2024-06-01, processingDate defaulted
+# and out_z = ?` fragment (validTime pinned past 2024-06-01, transactionTime defaulted
 # NOW), in BUSINESS-AXIS-FIRST bind order. Because every concrete branch inherits the same
 # axes from the root, each branch's as-of fragment is identical, so the union's binds are
 # the per-branch suffix [2024-06-01, 2024-06-01, infinity] repeated in alphabetical branch
@@ -21,7 +21,7 @@
 #
 # DepositRate now carries TWO processing milestones sharing business key id=1 (the
 # strengthened fixtures/rate.yaml, m-inheritance-100's own witness); this read's
-# processing-now default (`out_z = ?` bind `infinity`) still resolves to exactly the
+# Transaction-Time Latest default (`out_z = ?` bind `infinity`) still resolves to exactly the
 # CURRENT row (amount 2.50 / grade A) — the same current-result values this case always
 # asserted — only its `in_z` moved to the milestone's own (later) from-instant.
 model: models/rate.yaml
@@ -35,8 +35,8 @@ when:
     asOf:
       operand:
         all: {}
-      asOfAttr: Rate.businessDate
-      date: "2024-06-01T00:00:00+00:00"
+      dimension: validTime
+      coordinate: "2024-06-01T00:00:00+00:00"
 then:
   statements:
     - sql:

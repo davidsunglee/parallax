@@ -116,16 +116,16 @@ because `m-unit-work` already depends on `m-op-algebra` (the dependency-graph ed
 the write instruction is the sole place the write side reaches the algebra. Two
 structural rules keep the instruction framework-honest:
 
-- **The instant surface is axis-explicit.** A temporal write's authored **business
-  bounds** are named uniformly `businessFrom` / `businessTo`. The **processing
-  instant** is *not* an instruction field — it is supplied at flush from the Clock
-  Strategy (ADR 0010), so no caller-facing shape can smuggle one in. (The corpus's
-  `at` / `businessAt` / `until` spellings are authoring aliases of these canonical
-  names; the corpus-wide re-authoring is deferred.)
+- **The instant surface is dimension-explicit.** A Bitemporal write's authored
+  Valid-Time lower bound is `validFrom`; bounded writes use `until` for the
+  exclusive Valid-Time upper bound. The Transaction-Time instant is *not* an
+  instruction field — it is supplied at flush from the Clock Strategy (ADR 0010),
+  so no caller-facing shape can smuggle one in. Compatibility-case `at` is harness
+  clock context, not an alias or an instruction member.
 - **The transaction observation is not an instruction field.** The framework-owned
   optimistic version / observed `in_z` a gated write binds (`m-opt-lock`) is attached
   **per materialized row at flush**, never carried on the durable instruction: the
-  reserved `observedVersion` / `observedInZ` control keys are explicitly **forbidden**
+  reserved `observedVersion` / `observedTxStart` control keys are explicitly **forbidden**
   on a `write-instruction.schema.json` write row, so an observation cannot round-trip
   as instruction state — the structural guarantee that versions stay framework-owned
   (ADR 0013). They are flush-time context on the case format's materialization row.
@@ -148,7 +148,7 @@ pending insert.
   same unit of work flushes as a **single** write carrying the **final** value; no
   intermediate milestone is fabricated. A **non-temporal** insert-then-update emits
   one `INSERT` with the post-update values (never `INSERT` + `UPDATE`); an
-  **audit-only** insert-then-update opens a single current milestone with the final
+  **Transaction-Time-Only** insert-then-update opens a single current milestone with the final
   value — no close-and-chain, in contrast to the cross-transaction chaining of
   `m-audit-write`; a **bitemporal** insert-then-update opens a single fully-current
   rectangle with the final value — no inactivation / head-tail split, in contrast to
@@ -225,7 +225,7 @@ operation steps, each with a declared round-trip count — and plain write cases
 | read-your-own-writes scenario | a buffered write is flushed before a dependent find observes it |
 | rollback scenario | an aborted write is discarded; a post-abort find observes the original rows |
 | fk-ordering / flush cases | buffered writes flush ordered by foreign-key dependency |
-| insert-then-update coalescing (`m-unit-work-008`, `m-audit-write-008`, `m-bitemp-write-014`) | a same-transaction insert-then-update flushes as one write with the final value — no intermediate milestone (non-temporal / audit-only / bitemporal) |
+| insert-then-update coalescing (`m-unit-work-008`, `m-audit-write-008`, `m-bitemp-write-014`) | a same-transaction insert-then-update flushes as one write with the final value — no intermediate milestone (non-temporal / Transaction-Time-Only / Bitemporal) |
 | insert-then-delete cancellation (`m-unit-work-010`) | a same-transaction insert-then-delete cancels — the flush emits no DML for that object |
 
 A scenario's declared round-trip counts **MUST** be internally consistent with

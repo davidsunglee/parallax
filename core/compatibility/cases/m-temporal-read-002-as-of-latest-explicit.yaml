@@ -1,4 +1,4 @@
-# Explicit as-of-now read: the same current-row result as the defaulted case,
+# Explicit as-of-Latest read: the same current-row result as the defaulted case,
 # but the caller WRITES the asOf pin with date `now`. Proves the explicit asOf
 # node lowers to the identical injected current-row predicate (`out_z = infinity`)
 # the default-injection rule produces — pinning the equivalence in a fixture.
@@ -11,8 +11,8 @@ when:
     asOf:
       operand:
         all: {}
-      asOfAttr: Balance.processingDate
-      date: now
+      dimension: transactionTime
+      coordinate: latest
 then:
   statements:
     - sql:

@@ -1,7 +1,7 @@
 """The pure flush planner (m-unit-work).
 
 Given a unit of work's buffered write instructions, the observations it recorded,
-the Clock-supplied processing instant, and the metamodel, :func:`plan_flush`
+the Clock-supplied Transaction-Time instant, and the metamodel, :func:`plan_flush`
 produces a **neutral, execution-ordered intermediate plan** — the coalesced,
 collapsed, FK-ordered, elision-applied sequence of write instructions with each
 keyed instruction's bound observation attached. It is a **pure** function of its
@@ -76,29 +76,29 @@ _DELETE_VERBS: Final[frozenset[str]] = frozenset({"delete", "terminate", "termin
 class Observation:
     """A framework-owned per-object transaction observation (m-opt-lock, ADR 0013).
 
-    The optimistic-lock version and/or observed processing-from a gated write binds,
+    The optimistic-lock version and/or observed Transaction-Time start a gated write binds,
     attached to a planned write at flush and **never** carried on the durable
     instruction. Neutral here: this milestone pairs it onto the plan; lowering the
     version gate / advance into SQL is the composition layer's job (M4 / Phase 8).
 
-    ``business_from`` / ``business_to`` / ``payload`` extend the vocabulary for a
+    ``valid_start`` / ``valid_end`` / ``payload`` extend the vocabulary for a
     TEMPORAL observation (COR-3 Phase 8 increment 4; `m-audit-write` /
-    `m-bitemp-write`): ``business_from`` is the observed rectangle's own business-axis
+    `m-bitemp-write`): ``valid_start`` is the observed rectangle's own Valid-Time
     lower bound — the bitemporal optimistic gate's discriminator candidate AND (via
-    :mod:`parallax.core.bitemp_write`'s planning) the business lower bound the head
-    rectangle's upper bound derives from; ``business_to`` is the observed rectangle's
-    own business-axis upper bound — the tail rectangle's own upper bound; ``payload``
+    :mod:`parallax.core.bitemp_write`'s planning) the Valid-Time lower bound the head
+    rectangle's upper bound derives from; ``valid_end`` is the observed rectangle's
+    own Valid-Time upper bound — the tail rectangle's own upper bound; ``payload``
     is the observed row's OTHER columns (every scalar / value-object member besides
     the milestone interval bounds) — the "prior rectangle" values a bitemporal split's
     head/tail carry forward (`m-bitemp-write` "Head/tail old values come from the
     observed prior rectangle"), and (D-30, COR-3 Phase 8 increment 7 completion round)
     the values an audit-only chaining ``update`` merges a SPARSE authored row onto
     (`~parallax.core.audit_write.plan`'s own ``_merged_row``) so an unauthored field
-    is never silently dropped. ``business_from`` / ``business_to`` stay ``None`` for
-    a non-temporal or audit-only observation (neither declares a business axis to
+    is never silently dropped. ``valid_start`` / ``valid_end`` stay ``None`` for
+    a non-temporal or Transaction-Time-Only observation (neither declares Valid Time to
     bound); all three are ``None`` for a non-temporal observation. This is
     Python-internal vocabulary, NOT the serialized instruction (ADR 0013 stands): the
-    reserved ``observedVersion`` / ``observedInZ`` control keys stay forbidden on a
+    reserved ``observedVersion`` / ``observedTxStart`` control keys stay forbidden on a
     write row; an observation attaches per row at flush, never carried on the
     instruction.
 
@@ -110,16 +110,16 @@ class Observation:
     latest-pinned by construction (the conformance engine's case-local shadow
     tracker only ever tracks the CURRENT milestone) — both default it ``True``
     without ever setting it explicitly. A REAL `Transaction.find` observation
-    of a TEMPORAL entity sets it from the read's own processing-axis pin
+    of a TEMPORAL entity sets it from the read's own Transaction-Time pin
     (`LATEST` or an omitted axis ⇒ ``True``; an explicit as-of instant ⇒
     ``False``) — the one caller that can ever observe something other than the
     current milestone.
     """
 
     version: int | None = None
-    in_z: str | None = None
-    business_from: str | None = None
-    business_to: str | None = None
+    tx_start: str | None = None
+    valid_start: str | None = None
+    valid_end: str | None = None
     payload: Mapping[str, object] | None = None
     latest_pinned: bool = True
 
@@ -315,7 +315,7 @@ def _merge_update_into_insert(
 ) -> KeyedWrite:
     """Overlay ``update``'s non-key row fields onto ``insert``'s row.
 
-    The coalesced write keeps the insert's mutation verb and business bounds (so it
+    The coalesced write keeps the insert's mutation verb and Valid-Time bounds (so it
     still opens a current milestone / fully-current rectangle at lowering per
     temporal flavor) but carries the FINAL values — no ``INSERT`` + ``UPDATE``.
     """
@@ -328,8 +328,8 @@ def _merge_update_into_insert(
         mutation=insert.mutation,
         entity=insert.entity,
         rows=(merged,),
-        business_from=insert.business_from,
-        business_to=insert.business_to,
+        valid_from=insert.valid_from,
+        until=insert.until,
     )
 
 
@@ -355,7 +355,7 @@ def _collapse(
     (opaque, exactly as coalesce treats it). A row whose
     :func:`object_key` is already present in ``observations`` is likewise
     NEVER a merge candidate: a recorded per-row observation (an engine
-    `observedVersion`/`observedInZ` signal, or a real transaction-scoped
+    `observedVersion`/`observedTxStart` signal, or a real transaction-scoped
     ``uow.observe``) is an explicit "keep this row separately identifiable"
     signal a merged multi-row instruction has no way to carry forward — a
     multi-row `KeyedWrite` never attaches a per-row observation at all
@@ -392,8 +392,8 @@ def _collapse(
             and run
             and run[-1].entity == item.entity
             and run[-1].mutation == item.mutation
-            and run[-1].business_from == item.business_from
-            and run[-1].business_to == item.business_to
+            and run[-1].valid_from == item.valid_from
+            and run[-1].until == item.until
         ):
             run.append(item)
             continue
@@ -408,15 +408,15 @@ def _collapse(
 
 def _merge_rows(run: Sequence[KeyedWrite]) -> KeyedWrite:
     """One multi-row :class:`KeyedWrite` carrying every row of ``run``'s single-row
-    instructions, in run (buffer) order — the same entity/mutation/business bounds
+    instructions, in run (buffer) order — the same entity/mutation/Valid-Time bounds
     every member of the run already shares (`_collapse`'s own adjacency test)."""
     first = run[0]
     return KeyedWrite(
         mutation=first.mutation,
         entity=first.entity,
         rows=tuple(row for w in run for row in w.rows),
-        business_from=first.business_from,
-        business_to=first.business_to,
+        valid_from=first.valid_from,
+        until=first.until,
     )
 
 
@@ -440,7 +440,11 @@ def _fk_order(items: Sequence[BufferItem], meta: Metamodel) -> list[WriteInstruc
         return item.writes[0] if isinstance(item, AtomicUnit) else item
 
     def rank(item: BufferItem) -> int:
-        return ranks.get(_instruction_entity(representative(item)), 0)
+        entity_name = _instruction_entity(representative(item))
+        resolved = meta.by_name.get(entity_name)
+        if resolved is not None:
+            entity_name = resolved.canonical_name
+        return ranks.get(entity_name, 0)
 
     def mutation(item: BufferItem) -> str:
         return representative(item).mutation
@@ -463,21 +467,21 @@ def _fk_ranks(meta: Metamodel) -> dict[str, int]:
 
     A ``many-to-one`` relationship means the source holds the foreign key (source
     after related); a ``one-to-many`` means the related entity holds it (related
-    after source). ``one-to-one`` / ``many-to-many`` contribute no FK-order edge
-    (ambiguous / join-table; no reachable write depends on them). Ties break by
+    after source). ``one-to-one`` contributes no FK-order edge because its
+    storage owner is ambiguous. Ties break by
     declaration order; a (defensive) cycle falls back to declaration order.
     """
-    names = [entity.name for entity in meta.entities]
+    names = [entity.canonical_name for entity in meta.entities]
     prereqs: dict[str, set[str]] = {name: set() for name in names}
     for entity in meta.entities:
-        for rel in entity.relationships:
-            related = rel.related_entity
+        for rel in meta.relationships_for(entity):
+            related = rel.join.target.entity
             if related not in prereqs:
                 continue  # a relationship reaching outside this model has no local order
             if rel.cardinality == "many-to-one":
-                prereqs[entity.name].add(related)
+                prereqs[entity.canonical_name].add(related)
             elif rel.cardinality == "one-to-many":
-                prereqs[related].add(entity.name)
+                prereqs[related].add(entity.canonical_name)
     remaining = set(names)
     order: list[str] = []
     while remaining:

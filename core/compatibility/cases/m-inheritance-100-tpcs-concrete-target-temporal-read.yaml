@@ -5,12 +5,12 @@
 #
 # Targeting the CONCRETE subtype DepositRate directly (never the abstract root Rate)
 # is an ordinary single-table read of `deposit_rate` — no union, no tag, no
-# familyVariant (m-inheritance "Physical mapping"). The operation pins `asOfAttr:
-# DepositRate.processingDate` — DepositRate's OWN class-name prefix over an axis it
+# familyVariant (m-inheritance "Physical mapping"). The operation pins `dimension:
+# DepositRate.transactionTime` — DepositRate's OWN class-name prefix over an axis it
 # never locally declares (Rate, the root, does) — proving the inherited spelling
-# resolves. Pinning processingDate to 2024-01-15 (inside the strengthened
+# resolves. Pinning transactionTime to 2024-01-15 (inside the strengthened
 # fixtures/rate.yaml's CLOSED first milestone's window [2024-01-01, 2024-02-01))
-# with businessDate defaulted to NOW (`thru_z = ?`) selects the SUPERSEDED historical
+# with validTime defaulted to Latest (`thru_z = ?`) selects the SUPERSEDED historical
 # row (amount 2.25 / grade B), not the current one (amount 2.50 / grade A,
 # m-inheritance-093) — proving the milestone history is genuinely queryable through
 # the concrete position, not just materialized at it.
@@ -28,8 +28,8 @@ when:
     asOf:
       operand:
         all: {}
-      asOfAttr: DepositRate.processingDate
-      date: "2024-01-15T00:00:00+00:00"
+      dimension: transactionTime
+      coordinate: "2024-01-15T00:00:00+00:00"
 then:
   statements:
     - sql:

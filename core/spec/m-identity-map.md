@@ -49,12 +49,12 @@ The identity key is the triple:
   concrete subtype finder interns to the **same** managed object. Identity is a
   property of the row's family position, never of the query's declared type.
 - **Primary key** — the entity's declared primary key (`m-descriptor`).
-- **Lowered as-of coordinates** — one coordinate per declared `asOfAttribute`
-  axis, in its **lowered** form (`m-temporal-read`): **latest** is the infinity
-  sentinel (an omitted axis, and an explicit `asOf(…, now)`, lower to the same
-  pin — one canonical coordinate, not a wall-clock instant); a finite pin is the
-  instant itself. A **non-temporal** entity has no coordinate component: its key
-  degrades to (family, primary key).
+- **Lowered as-of coordinates** — one coordinate per effective As-Of Axis, in
+  canonical Valid-Time then Transaction-Time order (`m-temporal-read`): Latest is
+  the infinity sentinel (an omitted dimension and explicit `asOf(…, latest)` lower
+  to the same coordinate); a finite pin is the instant itself. Now is a finite
+  current-clock instant, never an alias for Latest. A non-temporal Entity has no
+  coordinate component: its key degrades to (family, primary key).
 
 Two lookups with the **same** lowered coordinates resolve to the same managed
 object. **Distinct** lowered coordinates denote **distinct pinned views** — even
@@ -77,14 +77,14 @@ coordinates*, not a copy of one row:
   `m-bitemp-write`), **every held view reflects the post-write timeline at its
   own pin**: a latest-pinned view shows the newly chained milestone; a view
   pinned at a finite past instant keeps showing the milestone its pin selects.
-- A view pinned at a **finite processing-axis instant** is **read-only** — the
-  processing past records what the system knew and is never rewritten. Mutating
-  such a view raises the neutral **`processing-pin-read-only`** error and emits
-  **no** DML — an application-lifecycle error, distinct from the `m-db-error`
-  taxonomy, asserted by a compatibility case with a step-level `expectError:
-  processing-pin-read-only` (`m-case-format`) and graded by the API Conformance
-  Suite. A finite **business-axis** pin is writable: mutating it is the retroactive
-  correction that lowers to the `m-bitemp-write` rectangle split.
+- A view pinned at a **finite Transaction-Time instant** is **read-only** — the
+  Transaction-Time past records what the system knew and is never rewritten.
+  Mutating such a view raises the neutral **`transaction-time-pin-read-only`**
+  error and emits no DML — an application-lifecycle error, distinct from the
+  `m-db-error` taxonomy, asserted by a compatibility case with a step-level
+  `expectError: transaction-time-pin-read-only` (`m-case-format`) and graded by
+  the API Conformance Suite. A finite Valid-Time pin is writable: mutating it is
+  the retroactive correction that lowers to the `m-bitemp-write` rectangle split.
 - A `history` / `asOfRange` read materializes **one view per milestone**, each
   interned at its **edge pin** — the milestone's own from-instant, the one
   instant guaranteed to select exactly that milestone (`m-temporal-read`,

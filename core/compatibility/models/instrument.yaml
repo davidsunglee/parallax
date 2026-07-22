@@ -9,7 +9,7 @@
 # intersection of a business interval [from_z, thru_z) and a processing interval
 # [in_z, out_z). The axes live on the ROOT, so the concrete subtypes inherit the full
 # temporal profile (the harness derives it from the ancestry; a concrete subtype
-# declares NO asOfAttributes / temporal of its own, so a per-entity metamodel reader
+# declares NO asOfAxes of its own, so a per-entity metamodel reader
 # classifies it non-temporal while the inheritance-aware harness flattens the axes in).
 #
 #   Instrument (root, ABSTRACT)   — strategy + tag column + the two as-of axes; owns
@@ -30,8 +30,8 @@
 entities:
   - name: Instrument
     namespace: parallax.compatibility
-    mutability: transactional
-    temporal: bitemporal
+    table: instrument
+    persistence: read-write
     inheritance:
       role: root
       strategy: table-per-hierarchy
@@ -42,45 +42,35 @@ entities:
         type: int64
         column: id
         primaryKey: true
-        pkGenerator: none
+        pkGeneration: application-assigned
       - name: price
         type: decimal(18,2)
         column: price
-      - name: businessFrom
+      - name: valid_start
         type: timestamp
         column: from_z
-      - name: businessTo
+      - name: valid_end
         type: timestamp
         column: thru_z
-      - name: processingFrom
+      - name: tx_start
         type: timestamp
         column: in_z
-      - name: processingTo
+      - name: tx_end
         type: timestamp
         column: out_z
-    asOfAttributes:
-      - name: businessDate
-        fromColumn: from_z
-        toColumn: thru_z
-        axis: business
-        toIsInclusive: false
-        infinity: infinity
-        default: now
-      - name: processingDate
-        fromColumn: in_z
-        toColumn: out_z
-        axis: processing
-        toIsInclusive: false
-        infinity: infinity
-        default: now
+    asOfAxes:
+      - dimension: validTime
+        startAttribute: valid_start
+        endAttribute: valid_end
+      - dimension: transactionTime
+        startAttribute: tx_start
+        endAttribute: tx_end
     indices:
       - name: instrument_pk
-        attributes: [id, businessFrom, processingFrom]
+        attributes: [id, valid_start, tx_start]
         unique: true
   - name: Bond
     namespace: parallax.compatibility
-    table: instrument
-    mutability: transactional
     inheritance:
       role: concrete-subtype
       parent: Instrument
@@ -92,8 +82,6 @@ entities:
         nullable: true
   - name: Stock
     namespace: parallax.compatibility
-    table: instrument
-    mutability: transactional
     inheritance:
       role: concrete-subtype
       parent: Instrument

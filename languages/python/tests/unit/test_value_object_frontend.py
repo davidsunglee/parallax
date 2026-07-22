@@ -217,7 +217,8 @@ def test_to_document_applies_the_omission_policy_recursively_to_a_nested_value_o
     # The nested `geo` member filters by its OWN `model_fields_set`: `point`
     # is set but only sets `lat` on it, so `point`'s own `lon` is omitted too
     # — recursive, not just one level deep. The outer `Address`'s own unset
-    # `phones` member is omitted entirely (never an empty-tuple `[]`).
+    # required-many `phones` member uses its empty-tuple default, serialized as
+    # the sole zero-element representation `[]`.
     from parallax.core.entity.value_object import to_document
 
     address = vm.Address(
@@ -228,6 +229,7 @@ def test_to_document_applies_the_omission_policy_recursively_to_a_nested_value_o
         "street": "Main St",
         "city": "Berlin",
         "geo": {"country": "DE", "point": {"lat": 1.0}},
+        "phones": [],
     }
 
 

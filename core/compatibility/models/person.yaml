@@ -16,24 +16,23 @@ entities:
   - name: Person
     namespace: parallax.compatibility
     table: person
-    mutability: transactional
-    temporal: non-temporal
+    persistence: read-write
     attributes:
       - name: id
         type: int64
         column: id
         primaryKey: true
-        pkGenerator: none
+        pkGeneration: application-assigned
       - name: name
         type: string
         column: name
         maxLength: 64
     relationships:
       - name: passport
-        relatedEntity: Passport
         cardinality: one-to-one
-        join: this.id = Passport.personId
-        reverseName: holder
+        join:
+          source: id
+          target: { entity: Passport, attribute: personId }
         # The passport is OWNED by its holder (m-cascade-delete): deleting a Person
         # cascade-deletes its Passport. This is the sole one-to-one `dependent`
         # relationship in the corpus (orders' dependents are one-to-many), so it
@@ -41,7 +40,6 @@ entities:
         # concern only; navigation / deep fetch (which drive the person read cases)
         # ignore it, so those cases are unaffected.
         dependent: true
-        foreignKey: person_id
     indices:
       - name: person_pk
         attributes: [id]
@@ -49,14 +47,13 @@ entities:
   - name: Passport
     namespace: parallax.compatibility
     table: passport
-    mutability: transactional
-    temporal: non-temporal
+    persistence: read-write
     attributes:
       - name: id
         type: int64
         column: id
         primaryKey: true
-        pkGenerator: none
+        pkGeneration: application-assigned
       - name: personId
         type: int64
         column: person_id
@@ -66,11 +63,7 @@ entities:
         maxLength: 32
     relationships:
       - name: holder
-        relatedEntity: Person
-        cardinality: one-to-one
-        join: this.personId = Person.id
-        reverseName: passport
-        foreignKey: person_id
+        reverseOf: Person.passport
     indices:
       - name: passport_pk
         attributes: [id]

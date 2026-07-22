@@ -11,15 +11,15 @@
 #
 # A row is the milestone at the intersection of a business interval and a processing
 # interval — a "rectangle" in (business x processing) space. A row is CURRENT on an
-# axis when its `to` on that axis equals infinity; the fully-current row is current
+# axis when its `to` on that axis equals infinity; the fully-Latest row is current
 # on BOTH (thru_z = out_z = infinity). The `address` value object declares NO
-# asOfAttributes of its own (the schema forbids them) — it inherits BOTH of the
+# asOfAxes of its own (the schema forbids them) — it inherits BOTH of the
 # owner's dimensions and its backing column rides the milestoned rectangle exactly
 # like the scalar `name` column.
 #
 # The signature bitemporal write is the RECTANGLE SPLIT (m-bitemp-write): an
-# `updateUntil` over a bounded business window inactivates the original (closes its
-# processing axis at the transaction instant) and chains up to THREE new rows at
+# `updateUntil` over a bounded Valid-Time window inactivates the original (closes its
+# Transaction-Time dimension at the transaction instant) and chains up to THREE new rows at
 # fresh processing time — head (old address before the window), middle (NEW address
 # for the window), tail (old address after the window). The address DOCUMENT is
 # carried across every chained rectangle exactly like a scalar column; there is no
@@ -36,50 +36,40 @@ entity:
   name: Branch
   namespace: parallax.compatibility
   table: branch
-  mutability: transactional
-  temporal: bitemporal
+  persistence: read-write
   attributes:
     - name: id
       type: int64
       column: br_id
       primaryKey: true
-      pkGenerator: none
+      pkGeneration: application-assigned
     - name: name
       type: string
       column: name
       maxLength: 64
-    - name: businessFrom
+    - name: valid_start
       type: timestamp
       column: from_z
-    - name: businessTo
+    - name: valid_end
       type: timestamp
       column: thru_z
-    - name: processingFrom
+    - name: tx_start
       type: timestamp
       column: in_z
-    - name: processingTo
+    - name: tx_end
       type: timestamp
       column: out_z
-  asOfAttributes:
-    - name: businessDate
-      fromColumn: from_z
-      toColumn: thru_z
-      axis: business
-      toIsInclusive: false
-      infinity: infinity
-      default: now
-    - name: processingDate
-      fromColumn: in_z
-      toColumn: out_z
-      axis: processing
-      toIsInclusive: false
-      infinity: infinity
-      default: now
+  asOfAxes:
+    - dimension: validTime
+      startAttribute: valid_start
+      endAttribute: valid_end
+    - dimension: transactionTime
+      startAttribute: tx_start
+      endAttribute: tx_end
   valueObjects:
     - name: address
       column: address
-      mapping: json
-      cardinality: one
+      multiplicity: one
       nullable: true
       attributes:
         - name: street
@@ -90,15 +80,14 @@ entity:
           nullable: true
       valueObjects:
         - name: geo
-          cardinality: one
+          multiplicity: one
           nullable: true
           attributes:
             - name: country
               type: string
               nullable: true
         - name: phones
-          cardinality: many
-          nullable: true
+          multiplicity: many
           attributes:
             - name: type
               type: string
@@ -108,7 +97,7 @@ entity:
               nullable: true
   indices:
     - name: branch_pk
-      attributes: [id, businessFrom, processingFrom]
+      attributes: [id, valid_start, tx_start]
       unique: true
     - name: branch_name
       attributes: [name]

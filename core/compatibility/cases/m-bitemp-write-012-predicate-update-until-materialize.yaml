@@ -1,9 +1,9 @@
 # Predicate-selected UPDATE-UNTIL applies the new value only within a BOUNDED business
-# window, materializing to a processing close + three re-inserts (m-bitemp-write +
+# window, materializing to a Transaction-Time close + three re-inserts (m-bitemp-write +
 # m-opt-lock, ADR 0014).
 #
 # Unlike the plain update (m-bitemp-write-010), which runs the new value to business
-# infinity, `updateUntil` bounds it to [businessFrom, until) = [2024-07-01, 2024-09-01)
+# infinity, `updateUntil` bounds it to [validFrom, until) = [2024-07-01, 2024-09-01)
 # and RESTORES the old value on either side. The resolved row (pos 1, value 200)
 # materializes to four statements:
 #   1. close the current processing row (set out_z = at, gated on the observed
@@ -13,7 +13,7 @@
 #   4. tail: re-insert old value 200 for [2024-09-01, infinity) — the restored future.
 # All three inserts carry in_z = at (2024-10-01).
 #
-# The trailing find reads as-of businessDate 2024-08-01 (INSIDE the window) and expects
+# The trailing find reads as-of validTime 2024-08-01 (INSIDE the window) and expects
 # value = 300 on the [2024-07-01, 2024-09-01) segment, proving the new value is visible
 # only within the window. Total roundTrips 6 = read (1) + four writes (4) +
 # verify read (1).
@@ -54,7 +54,7 @@ when:
         assignments:
           - { attr: Position.value, value: 300.00 }
         at: "2024-10-01T00:00:00+00:00"
-        businessFrom: "2024-07-01T00:00:00+00:00"
+        validFrom: "2024-07-01T00:00:00+00:00"
         until: "2024-09-01T00:00:00+00:00"
       roundTrips: 4
       statements:
@@ -75,8 +75,8 @@ when:
         asOf:
           operand:
             eq: { attr: Position.value, value: 300.00 }
-          asOfAttr: Position.businessDate
-          date: "2024-08-01T00:00:00+00:00"
+          dimension: validTime
+          coordinate: "2024-08-01T00:00:00+00:00"
       roundTrips: 1
       statements:
         - sql:

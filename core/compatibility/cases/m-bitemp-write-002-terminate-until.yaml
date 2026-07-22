@@ -1,27 +1,27 @@
 # Write sequence: terminateUntil — terminate a bitemporal value for a BOUNDED
-# business window, leaving the value intact before and after it (rectangle split
+# Valid-Time window, leaving the value intact before and after it (rectangle split
 # with NO middle).
 #
-# A terminateUntil over [businessFrom, businessTo) inactivates the original on the
-# processing axis (out_z = txInstant) and chains only TWO new rows at fresh
+# A terminateUntil over [validFrom, until) inactivates the original on the
+# Transaction-Time dimension (out_z = txInstant) and chains only TWO new rows at fresh
 # processing time [txInstant, infinity):
-#   head : business [from_z, businessFrom)  — the value before the window
-#   tail : business [businessTo, infinity)  — the value after the window
+#   head : business [from_z, validFrom)  — the value before the window
+#   tail : business [until, infinity)  — the value after the window
 # and NO middle row — so the value is ABSENT (terminated) inside the window. No
-# row covers the window on the business axis while current on processing, which is
+# row covers the window on the Valid-Time dimension while current on processing, which is
 # the observable signature of a windowed termination.
 #
 # The sequence (self-contained, from an empty table):
-#   step 1 insert         : open the current rectangle, value 100,
+#   step 1 insert         : open the Latest rectangle, value 100,
 #                           business [2024-01-01, infinity), processing [2024-01-01, infinity)  (1 statement)
-#   step 2 terminateUntil : terminate the value for business window
+#   step 2 terminateUntil : terminate the value for Valid-Time window
 #                           [2024-03-01, 2024-09-01) at txInstant 2024-02-15 —
 #                           inactivate the original and chain head + tail        (3 statements)
 #
 # Resulting state (3 rows): the inactivated original (out_z finite) + head (100,
 # business [2024-01-01, 2024-03-01)) + tail (100, business [2024-09-01, infinity)),
 # the window left uncovered by any current-on-processing row.
-# the inactivated original — closed on the processing axis
+# the inactivated original — closed on the Transaction-Time dimension
 # head: value before the terminated window, current on processing
 # tail: value after the terminated window, current on processing (NO middle)
 model: models/position.yaml
@@ -32,16 +32,18 @@ when:
     - mutation: insert
       entity: Position
       statements: 1
-      note: open the original current rectangle [business inf, processing inf)
+      note: open the original Latest rectangle [business inf, processing inf)
       rows:
-        - { id: 1, acctNum: A, value: 100.00, businessFrom: "2024-01-01T00:00:00+00:00", businessTo: infinity }
+        - { id: 1, acctNum: A, value: 100.00 }
+      validFrom: "2024-01-01T00:00:00+00:00"
       at: "2024-01-01T00:00:00+00:00"
     - mutation: terminateUntil
       entity: Position
       statements: 3
-      note: inactivate the original on the processing axis, then chain head + tail (no middle)
+      note: inactivate the original on the Transaction-Time dimension, then chain head + tail (no middle)
       rows:
-        - { id: 1, businessFrom: "2024-03-01T00:00:00+00:00" }
+        - { id: 1 }
+      validFrom: "2024-03-01T00:00:00+00:00"
       at: "2024-02-15T00:00:00+00:00"
       until: "2024-09-01T00:00:00+00:00"
 then:

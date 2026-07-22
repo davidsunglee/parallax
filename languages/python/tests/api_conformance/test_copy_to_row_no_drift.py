@@ -10,7 +10,7 @@ UPDATE driven by an edited copy shares regardless of which story exercises
 it: ``model_copy``'s Change Record feeds `parallax.core.entity.
 effective_change_set`, which `Transaction.update` narrows to a sparse
 (non-temporal) or observation-merged (temporal) row — and the row's own
-version/processing-axis columns are ALWAYS framework-owned, never the copy's
+version/Transaction-Time columns are ALWAYS framework-owned, never the copy's
 own carried value (`m-opt-lock`; ADR 0003/0013).
 
 This guard drives that seam directly, Docker-free, at the unit lane, scoped to
@@ -114,17 +114,17 @@ def test_copy_to_row_never_reaches_a_caller_authored_version() -> None:
 
 
 def _edited_balance_row() -> dict[str, object]:
-    # processing_from/processing_to are framework/clock-derived on any temporal
+    # tx_start/tx_end are framework/clock-derived on any temporal
     # write, never caller-authored (`m-unit-work`'s own axis-column exclusion)
     # -- these two are placeholders Pydantic's constructor requires but the
-    # lowering seam never reads for an UPDATE's close (only `observed.in_z`
+    # lowering seam never reads for an UPDATE's close (only `observed.tx_start`
     # drives its gate, below).
     fetched = mm.Balance(
         id=1,
         acct_num="A",
         value=Decimal("100.00"),
-        processing_from=dt.datetime(1970, 1, 1, tzinfo=dt.UTC),
-        processing_to=dt.datetime(1970, 1, 1, tzinfo=dt.UTC),
+        tx_start=dt.datetime(1970, 1, 1, tzinfo=dt.UTC),
+        tx_end=dt.datetime(1970, 1, 1, tzinfo=dt.UTC),
     )
     copy = fetched.model_copy(update={"value": Decimal("150.00")})
     row = primary_key_row(copy)
@@ -132,15 +132,15 @@ def _edited_balance_row() -> dict[str, object]:
     return row
 
 
-def test_copy_to_row_temporal_update_gates_the_close_on_the_observed_in_z() -> None:
+def test_copy_to_row_temporal_update_gates_the_close_on_observed_tx_start() -> None:
     # The close (the milestone plan's FIRST statement, `audit_write.plan`)
-    # binds the OBSERVATION's own `in_z` as its optimistic gate -- never a
+    # binds the OBSERVATION's own Transaction-Time start as its optimistic gate -- never a
     # value the edited copy carries (a temporal keyed write's row never even
-    # HAS a processing-axis column to carry one, `m-unit-work` axis-column
+    # HAS a Transaction-Time column to carry one, `m-unit-work` axis-column
     # exclusion). Optimistic concurrency renders the gate at all
     # (`~parallax.core.opt_lock.gates`); locking mode never does.
     instruction = KeyedWrite("update", "Balance", (_edited_balance_row(),))
-    observed = Observation(in_z="2024-01-01T00:00:00+00:00")
+    observed = Observation(tx_start="2024-01-01T00:00:00+00:00")
     close = lower_write(
         PlannedWrite(instruction=instruction, observation=observed),
         _BALANCE,
@@ -157,12 +157,12 @@ def test_copy_to_row_temporal_update_gates_the_close_on_the_observed_in_z() -> N
     )
 
 
-def test_copy_to_row_temporal_update_tracks_a_different_observed_in_z() -> None:
-    # The companion pin: off the SAME edited copy, a DIFFERENT observed `in_z`
+def test_copy_to_row_temporal_update_tracks_a_different_observed_tx_start() -> None:
+    # The companion pin: off the SAME edited copy, a DIFFERENT observed Transaction-Time start
     # binds a DIFFERENT gate value -- the bound value tracks the observation,
     # never anything the copy or its row carries.
     instruction = KeyedWrite("update", "Balance", (_edited_balance_row(),))
-    observed = Observation(in_z="2024-06-01T00:00:00+00:00")
+    observed = Observation(tx_start="2024-06-01T00:00:00+00:00")
     close = lower_write(
         PlannedWrite(instruction=instruction, observation=observed),
         _BALANCE,

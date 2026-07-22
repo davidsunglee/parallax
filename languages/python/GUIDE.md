@@ -264,8 +264,8 @@ self-contained without a system `libpq`.
   `slice-managed-1` = 197 / 303 / 325 (`just core-dep-graph` profile gate).
 - **Effective-temporality resolver + `m-inheritance-100`/`-101` story review
   remediation.** Closed a residual gap in the round above: four sites still
-  classified from an inheritance participant's LOCAL `as_of_attributes`
-  instead of the family-effective one (`meta().temporal`, the
+  classified from an inheritance participant's LOCAL `as_of_axes`
+  instead of the family-effective one (the legacy flattened metadata view, the
   `optimisticLocking` composition check, `lower_write`'s temporal-write
   refusal, plus the completed `m-descriptor`-scope resolver
   `parallax.core.descriptor.declaring_entity` this round's records.py change

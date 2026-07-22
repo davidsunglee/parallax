@@ -29,7 +29,6 @@ import { type AxisPins, type Bind, compile } from "@parallax/sql";
 import type { LoadedCase } from "./discover.js";
 import {
   childProjection,
-  type MetamodelSchema,
   rootDeepFetchProjection,
   schemaForEntity,
   schemaForRoot,
@@ -87,7 +86,7 @@ export function buildDeepFetchPlan(loaded: LoadedCase, dialect: Dialect): DeepFe
   // operand also PROPAGATE per-hop into every temporal child level (m-navigate as-of
   // propagation), so gather them once here and seed each level's compile.
   const compiled = compile(operand, rootSchema, dialect);
-  const rootPins = collectRootPins(rootSchema, operand);
+  const rootPins = collectRootPins(operand);
   const tree = buildTree(loaded, body.paths, rootPins, dialect);
   return {
     rootEntity: rootSchema.rootEntityName(),
@@ -98,23 +97,29 @@ export function buildDeepFetchPlan(loaded: LoadedCase, dialect: Dialect): DeepFe
 
 /**
  * Collect the deep-fetch root's as-of pins from the nested `asOf` wrappers of its
- * operand, keyed by axis (via the resolver). `asOfRange` / `history` roots are not
+ * operand, keyed by dimension. `asOfRange` / `history` roots are not
  * part of the propagation oracle — deep fetch propagates only `asOf` pins — so
- * only `asOf` nodes are gathered; an unpinned axis defaults to `now` at the child.
+ * only `asOf` nodes are gathered; an unpinned dimension defaults to Latest at the child.
  *
  * The result directives (`distinct` / `orderBy` / `limit`) are peeled FIRST — the
  * root `compile()` peels them before the temporal wrappers, so a directive-wrapped
  * temporal root (`limit(orderBy(asOf(…)))`, case `m-navigate-024`) still seeds the child
  * propagation pins from the authored instant rather than silently defaulting the
- * child to `now`.
+ * child to Latest.
  */
-function collectRootPins(schema: MetamodelSchema, operand: Operation): AxisPins {
+function collectRootPins(operand: Operation): AxisPins {
   const pins: AxisPins = {};
   let node: unknown = peelDirectiveWrappers(operand);
   while (node !== null && typeof node === "object" && "asOf" in (node as object)) {
-    const asOf = (node as { asOf: { operand: unknown; asOfAttr: string; date: string } }).asOf;
-    const axis = schema.resolveAsOfAxis(asOf.asOfAttr);
-    pins[axis] = asOf.date === "now" ? { kind: "now" } : { kind: "instant", date: asOf.date };
+    const asOf = (
+      node as {
+        asOf: { operand: unknown; dimension: "validTime" | "transactionTime"; coordinate: string };
+      }
+    ).asOf;
+    pins[asOf.dimension] =
+      asOf.coordinate === "latest"
+        ? { kind: "latest" }
+        : { kind: "instant", coordinate: asOf.coordinate };
     node = asOf.operand;
   }
   return pins;
@@ -197,7 +202,7 @@ interface NodeBuilder {
  * correlation + cardinality, derive the child projection, and bind a
  * `compileLevel` closure that compiles the child IN-list query for a key set. The
  * child level is compiled with the root pins SEEDED, so a temporal child level
- * carries the propagated as-of predicate (matched by axis, defaulted to `now`)
+ * carries the propagated as-of predicate (matched by dimension, defaulted to Latest)
  * appended after its IN list — the m-navigate as-of-propagation rule.
  */
 function materialize(
@@ -209,9 +214,9 @@ function materialize(
   const [, relName] = splitRelRef(builder.relRef);
   const schema = schemaForRoot(loaded, parseOperation({ all: {} }), [], dialect);
   const correlation = schema.correlation(builder.relRef);
-  const childEntity = correlation.relatedEntity.name;
-  const childAttr = childAttrName(correlation.relatedEntity, correlation.childColumn);
-  const projection = childProjection(correlation.relatedEntity, dialect);
+  const childEntity = correlation.targetEntity.name;
+  const childAttr = childAttrName(correlation.targetEntity, correlation.childColumn);
+  const projection = childProjection(correlation.targetEntity, dialect);
   const toOne =
     correlation.relationship.cardinality === "many-to-one" ||
     correlation.relationship.cardinality === "one-to-one";
@@ -243,7 +248,12 @@ function childLevelOperation(
   childEntity: string,
   childAttr: string,
   keys: readonly Key[],
-  relationship: { readonly orderBy: readonly { attr: string; direction: "asc" | "desc" }[] },
+  relationship: {
+    readonly orderBy: readonly {
+      readonly attribute: { readonly name: string };
+      readonly direction: "asc" | "desc";
+    }[];
+  },
 ): Operation {
   const membership: Operation = {
     in: { attr: `${childEntity}.${childAttr}`, values: keys.map(toLiteral) },
@@ -255,7 +265,7 @@ function childLevelOperation(
     orderBy: {
       operand: membership,
       keys: relationship.orderBy.map((key) => ({
-        attr: `${childEntity}.${key.attr}`,
+        attr: `${childEntity}.${key.attribute.name}`,
         direction: key.direction,
       })),
     },
