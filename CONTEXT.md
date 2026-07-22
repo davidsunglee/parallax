@@ -529,6 +529,10 @@ _Avoid_: per-transaction timestamp override, operation timestamp override
 
 ### Temporal And Milestoning
 
+Prior art: the Valid Time and Transaction Time terms follow Richard
+Snodgrass's standard bitemporal vocabulary; Reladomo's business/processing
+dates are the same dimensions under retired names.
+
 **Temporal Dimension**:
 One of the two orthogonal temporal meanings recognized by Parallax: Valid Time
 or Transaction Time. The dimension itself identifies an entity's As-Of Axis;

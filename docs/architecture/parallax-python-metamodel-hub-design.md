@@ -89,7 +89,7 @@ selection are not part of the target interface.
 
 - Typed class-header keywords declare table, namespace, Persistence Mode, and
   inheritance role. Temporality is selected by the framework Entity base:
-  ordinary `Entity`, `TransactionTimeOnly`, or `Bitemporal`.
+  ordinary `Entity`, `TxTemporal`, or `Bitemporal`.
 - Persistence Mode is omitted for the ordinary Read Write mapping. A root uses
   `persistence=ReadOnly` only for the exceptional mapping on which Parallax
   must reject persistence writes. Persistence Mode is family-wide and
@@ -109,9 +109,9 @@ selection are not part of the target interface.
   Entity Classes are passed to `MetamodelHub`, and the frontend follows their
   explicit annotations. Shape keys, occurrence keys, and shape registration
   are not part of the Python authoring interface.
-- `TransactionTimeOnly` and `Bitemporal` are framework roots derived from
+- `TxTemporal` and `Bitemporal` are framework roots derived from
   `Entity`, exactly as `Entity` itself is. They are neither hub candidates nor
-  domain inheritance positions. `TransactionTimeOnly` supplies the typed,
+  domain inheritance positions. `TxTemporal` supplies the typed,
   read-only `tx_start`/`tx_end` attributes with `in_z`/`out_z` mappings;
   `Bitemporal` supplies typed, read-only `valid_start`/`valid_end` followed by
   `tx_start`/`tx_end`, mapped to `from_z`/`thru_z` and `in_z`/`out_z`.
@@ -220,7 +220,7 @@ only through Entity declarations and is not passed to the hub separately.
 - `MetamodelHub(*classes)` validates its source arguments left-to-right before
   constructing a hub. Every argument must be a domain Entity Class; Entity
   instances, ordinary classes, Value Object classes, and the framework roots
-  `Entity`, `TransactionTimeOnly`, and `Bitemporal` fail with
+  `Entity`, `TxTemporal`, and `Bitemporal` fail with
   `MetamodelDefinitionError(code="metamodel-invalid-entity-class")`. Repeating
   the same class object fails with
   `MetamodelDefinitionError(code="metamodel-duplicate-entity-class")`. Both
@@ -1243,7 +1243,7 @@ only through Entity declarations and is not passed to the hub separately.
 - Temporal declarations use the glossary's **As-Of Axis** term consistently.
   The core metadata protocol exposes `AsOfAxisMetadata` and `as_of_axes`, and
   the canonical descriptor key is `asOfAxes`. Python authors select
-  `TransactionTimeOnly` or `Bitemporal` and do not construct or import a public
+  `TxTemporal` or `Bitemporal` and do not construct or import a public
   `AsOfAxis` authoring value. The inaccurate `AsOfAttribute` /
   `asOfAttributes` vocabulary is retired across specs, schema, corpus,
   implementation, and tests.
@@ -1930,7 +1930,7 @@ to the new interface in the same work. No compatibility wrappers remain.
 Top-level `parallax.core` exposes the ordinary developer surface:
 
 ```text
-Entity, TransactionTimeOnly, Bitemporal, ValueObject
+Entity, TxTemporal, Bitemporal, ValueObject
 Attr, Rel, attr, rel
 ReadOnly, ReadWrite
 AbstractRoot, AbstractSubtype, ConcreteSubtype
@@ -1942,7 +1942,7 @@ EntityDefinitionError, MetamodelDefinitionError, FormationContractError,
 MetamodelValidationError, MetamodelStateError
 MetamodelLookupError, QueryDefinitionError, UnsupportedCapabilityError,
 EditError
-LATEST, Pin, Edge
+LATEST, VALID_TIME, TX_TIME, Pin, Edge
 TemporalReadError, UndeclaredAxisError
 ```
 
@@ -2273,7 +2273,7 @@ The replacement is one closed mapping, not independent renaming work:
 |---|---|---|
 | Meaning | fact true in the modeled world | fact present in the database |
 | Core / descriptor dimension | `ValidTime` / `validTime` | `TransactionTime` / `transactionTime` |
-| Python query keyword and Pin/Edge accessor | `valid_time` | `transaction_time` |
+| Python query keyword and Pin/Edge accessor | `valid_time` | `tx_time` |
 | Metadata interval roles | `start_attribute`, `end_attribute` | `start_attribute`, `end_attribute` |
 | Conventional Attributes | `valid_start`, `valid_end` | `tx_start`, `tx_end` |
 | Physical columns | `from_z`, `thru_z` | `in_z`, `out_z` |
@@ -2282,7 +2282,7 @@ The replacement is one closed mapping, not independent renaming work:
 | Optimistic temporal observation | not used as the gate | observed `tx_start` / `in_z` |
 
 Omitted coordinates are Latest. Now is a finite current-clock instant.
-`TransactionTimeOnly` and `Bitemporal` supply the conventional Attributes and
+`TxTemporal` and `Bitemporal` supply the conventional Attributes and
 columns; Python has no public As-Of Axis authoring surface. The normalized core
 Metadata retains explicit start/end Attribute Identities so future legacy-column
 overrides remain additive.
@@ -2575,7 +2575,7 @@ Acceptance requires:
 
 - Entity and Value Object declarations use the accepted class-header and
   `Attr`/`attr`/`Rel`/`rel` surface, explicit inheritance roles, the
-  `TransactionTimeOnly`/`Bitemporal` framework bases, and implicit frozen
+  `TxTemporal`/`Bitemporal` framework bases, and implicit frozen
   configuration;
 - `_declaration` is the lower-level shared Pydantic metaclass engine with
   immutable declaration payloads and private kind markers; `_entity` and

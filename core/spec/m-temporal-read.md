@@ -22,14 +22,16 @@ writes, and physical storage:
 |---|---|---|
 | Meaning | When a fact is true in the modeled world | When a fact is present in the database |
 | Core dimension | `ValidTime` | `TransactionTime` |
+| Core shape variant | declared by `Bitemporal` | declared by `TransactionTimeOnly` and `Bitemporal` |
 | Descriptor `dimension` | `validTime` | `transactionTime` |
 | Operation `dimension` | `validTime` | `transactionTime` |
 | Conventional start Attribute | `valid_start` | `tx_start` |
 | Conventional end Attribute | `valid_end` | `tx_end` |
 | Physical start column | `from_z` | `in_z` |
 | Physical end column | `thru_z` | `out_z` |
-| Python query keyword | `valid_time` | `transaction_time` |
-| Python Pin/Edge accessor | `valid_time` | `transaction_time` |
+| Python query keyword | `valid_time` | `tx_time` |
+| Python Pin/Edge accessor | `valid_time` | `tx_time` |
+| Python framework base | supplied by `Bitemporal` | supplied by `TxTemporal` and `Bitemporal` |
 | Compatibility Pin key | `validTime` | `transactionTime` |
 | Relationship propagation coordinate | source Valid-Time coordinate | source Transaction-Time coordinate |
 | Neutral / Python write lower-bound argument | `validFrom` / `valid_from` | transaction clock supplied by the handle |
