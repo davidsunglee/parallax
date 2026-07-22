@@ -61,9 +61,12 @@ __all__ = [
 
 @dataclass(frozen=True)
 class Violation:
-    """One ``DescriptorSchemaViolation`` identity: document path plus failing
-    JSON-Schema keyword. The explanatory message is excluded from equality and
-    ordering by the m-descriptor contract, so it is not a member."""
+    """One ingestion-violation identity, independent of the phase that raised it:
+    document path plus the violated rule. For a schema-phase
+    ``DescriptorSchemaViolation`` the rule is the failing JSON-Schema keyword;
+    for a value-phase violation it is the spec-owned rule name (e.g.
+    ``type-spelling-invalid``). The explanatory message is excluded from equality
+    and ordering by the m-descriptor contract, so it is not a member."""
 
     path: tuple[str | int, ...]
     rule: str

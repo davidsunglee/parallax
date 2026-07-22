@@ -51,6 +51,7 @@ from .inheritance import (
     WRITE_REJECTED_RULES,
     Family,
     concrete_superset_columns,
+    effective_column,
     inheritance_of,
     is_abstract,
     narrowed_view_key,
@@ -1267,8 +1268,8 @@ def _column_type_index(
     for name in effective_set:
         resolved = resolve_effective_definition(entity_defs, name)
         for attribute in resolved.get("attributes", []) or []:
-            column = attribute.get("column")
-            if isinstance(column, str) and column not in index:
+            column = effective_column(attribute)
+            if column not in index:
                 index[column] = attribute
     return index
 

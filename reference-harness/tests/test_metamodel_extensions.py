@@ -252,6 +252,58 @@ def test_intermediate_abstract_subtype_inheritance_chain() -> None:
     assert "license_id" not in boar_columns
 
 
+def test_inherited_attributes_with_omitted_conventional_columns_all_survive_flattening() -> None:
+    # A canonical descriptor omits `column` when it equals the attribute name
+    # (m-descriptor), so several inherited attributes may all carry no explicit
+    # column. The ancestry merge must deduplicate on the EFFECTIVE storage
+    # location (explicit column, else the attribute name) — the omitted spellings
+    # are distinct columns, not duplicates of one another.
+    descriptor = {
+        "entities": [
+            {
+                "name": "Item",
+                "table": "item",
+                "inheritance": {
+                    "role": "root",
+                    "strategy": "table-per-hierarchy",
+                    "tag": {"column": "kind"},
+                },
+                "attributes": [
+                    {"name": "id", "type": "int64", "primaryKey": True},
+                    {"name": "title", "type": "string", "maxLength": 64},
+                    {"name": "currency", "type": "string", "maxLength": 3},
+                ],
+            },
+            {
+                "name": "Book",
+                "inheritance": {"role": "abstract-subtype", "parent": "Item"},
+                "attributes": [
+                    {"name": "author", "type": "string", "maxLength": 64, "nullable": True}
+                ],
+            },
+            {
+                "name": "Hardcover",
+                "inheritance": {
+                    "role": "concrete-subtype",
+                    "parent": "Book",
+                    "tagValue": "hardcover",
+                },
+                "attributes": [{"name": "weight", "type": "int32", "nullable": True}],
+            },
+        ]
+    }
+    assert _is_valid(descriptor)
+    model = Model(Path("conventional-columns.yaml"), descriptor)
+    assert list(column_order(model.entity("Hardcover"))) == [
+        "id",
+        "kind",
+        "title",
+        "currency",
+        "author",
+        "weight",
+    ]
+
+
 def test_value_object_model_validates_and_maps_to_dialect_json() -> None:
     model = load_model(COMPATIBILITY_ROOT, "models/customer.yaml")
     assert _is_valid(model.descriptor)

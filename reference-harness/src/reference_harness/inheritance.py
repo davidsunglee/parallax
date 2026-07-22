@@ -59,6 +59,18 @@ def _short_entity_name(reference: str) -> str:
     return reference.rsplit(".", 1)[-1]
 
 
+def effective_column(attribute: dict[str, Any]) -> str:
+    """The storage column a raw declared Attribute binds to.
+
+    A canonical descriptor omits ``column`` when it equals the attribute name
+    (m-descriptor), so the effective location is the explicit ``column`` when
+    present, else the conventional one — the attribute ``name``. Use this for any
+    raw (uncompiled) attribute dict; compiled ``Entity.attributes`` already carry
+    the resolved ``column``.
+    """
+    return attribute.get("column", attribute["name"])
+
+
 # The synthesized tag column carries short discriminator literals; a bounded
 # string keeps the shared-table DDL a plain ``varchar`` (m-inheritance / m-sql).
 _TAG_COLUMN_MAX_LENGTH = 32
@@ -392,12 +404,14 @@ def _entity_defs(descriptor: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def _merge_ancestry_attributes(family: Family, name: str) -> list[dict[str, Any]]:
-    """Attributes of *name*'s ancestry (root -> ... -> self), deduplicated by column."""
+    """Attributes of *name*'s ancestry (root -> ... -> self), deduplicated by their
+    effective storage column — the explicit ``column`` or, when omitted, the
+    conventional location equal to the attribute name (m-descriptor)."""
     merged: list[dict[str, Any]] = []
     seen: set[str] = set()
     for ancestor in family.ancestry(name):
         for attribute in family.defs[ancestor].get("attributes", []) or []:
-            column = attribute.get("column")
+            column = effective_column(attribute)
             if column in seen:
                 continue
             seen.add(column)
@@ -472,7 +486,7 @@ def resolve_effective_definition(entity_defs: list[dict[str, Any]], name: str) -
         if "table" in root_def:
             resolved["table"] = root_def["table"]
         tag_column = family.tag_column_of(name)
-        if tag_column is not None and all(a.get("column") != tag_column for a in merged):
+        if tag_column is not None and all(effective_column(a) != tag_column for a in merged):
             last_pk = -1
             for index, attribute in enumerate(merged):
                 if attribute.get("primaryKey"):
@@ -997,7 +1011,7 @@ def concrete_superset_columns(
     for name in sorted(effective_set):
         resolved = resolve_effective_definition(entity_defs, name)
         for attribute in resolved.get("attributes", []) or []:
-            column = attribute.get("column")
-            if column is not None and column not in columns:
+            column = effective_column(attribute)
+            if column not in columns:
                 columns.append(column)
     return columns
