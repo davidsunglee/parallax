@@ -1,0 +1,10 @@
+# The retired `mapping` / `mapping: json` discriminator is removed: structured
+# column storage is a Value Object occurrence's only representation, and each
+# dialect derives its concrete structured-document column type, so the model
+# never spells a storage mapping. The occurrence's closed key set rejects the
+# retired key as one `additionalProperties` violation at the occurrence.
+phase: schema
+code: descriptor-schema-invalid
+violations:
+  - path: [entity, valueObjects, 0]
+    rule: additionalProperties

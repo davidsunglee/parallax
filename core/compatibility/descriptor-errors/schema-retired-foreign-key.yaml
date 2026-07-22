@@ -1,0 +1,22 @@
+entities:
+  - name: Order
+    table: orders
+    attributes:
+      - name: id
+        type: int64
+        primaryKey: true
+      - name: customerId
+        type: int64
+    relationships:
+      - name: customer
+        cardinality: many-to-one
+        join:
+          source: customerId
+          target: { entity: Customer, attribute: id }
+        foreignKey: customerId
+  - name: Customer
+    table: customer
+    attributes:
+      - name: id
+        type: int64
+        primaryKey: true

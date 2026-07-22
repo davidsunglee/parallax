@@ -1,0 +1,8 @@
+entity:
+  name: Rate
+  table: rate
+  mutability: read-only
+  attributes:
+    - name: id
+      type: int64
+      primaryKey: true

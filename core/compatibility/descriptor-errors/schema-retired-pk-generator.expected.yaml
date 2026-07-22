@@ -1,0 +1,10 @@
+# The retired attribute key `pkGenerator` (with its `none` strategy) is
+# replaced by `pkGeneration`, which is legal only with `primaryKey: true` and
+# whose omission there means application-assigned — no `none` value exists.
+# The attribute's closed key set rejects the retired key as one
+# `additionalProperties` violation at the attribute object.
+phase: schema
+code: descriptor-schema-invalid
+violations:
+  - path: [entity, attributes, 0]
+    rule: additionalProperties

@@ -1,0 +1,11 @@
+# The retired `foreignKey` carried a correlation hint beside the join; SQL
+# correlation and deep-fetch keys derive from the structured join alone, and
+# behavioral consumers never infer a foreign key. Beside an otherwise
+# well-formed defining branch the closed relationship key set rejects the
+# retired key as one `additionalProperties` violation at the relationship
+# object — the defining/reverse union itself is satisfied.
+phase: schema
+code: descriptor-schema-invalid
+violations:
+  - path: [entities, 0, relationships, 0]
+    rule: additionalProperties

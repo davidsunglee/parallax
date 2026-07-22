@@ -1,0 +1,12 @@
+# The retired `reverseName` declared the opposite direction inline on the
+# defining declaration; the canonical form is a separate reverse declaration
+# naming its defining peer through `reverseOf`, so one direction never carries
+# the other's name. Beside an otherwise well-formed defining branch the closed
+# relationship key set rejects the retired key as one `additionalProperties`
+# violation at the relationship object — the defining/reverse union itself is
+# satisfied.
+phase: schema
+code: descriptor-schema-invalid
+violations:
+  - path: [entities, 0, relationships, 0]
+    rule: additionalProperties

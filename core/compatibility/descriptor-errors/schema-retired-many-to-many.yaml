@@ -1,0 +1,19 @@
+entities:
+  - name: Student
+    table: student
+    attributes:
+      - name: id
+        type: int64
+        primaryKey: true
+    relationships:
+      - name: courses
+        cardinality: many-to-many
+        join:
+          source: id
+          target: { entity: Course, attribute: id }
+  - name: Course
+    table: course
+    attributes:
+      - name: id
+        type: int64
+        primaryKey: true

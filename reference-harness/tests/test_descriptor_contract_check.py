@@ -8,7 +8,9 @@ collapse laws (equality/order ``(path, rule)``, branching-keyword collapse,
 duplicate-free sequences) hold, every corpus model export is
 byte-deterministic, and a malformed fixture set or corpus fails loudly rather
 than passing vacuously. The real artifacts pass; injected mutations each fail
-with their named error.
+with their named error. The retired-spelling rejection fixtures are pinned by
+name, so a deleted fixture or a schema refactor that re-admits a retired
+spelling fails a named test.
 """
 
 from __future__ import annotations
@@ -90,6 +92,57 @@ def test_real_corpus_export_is_deterministic() -> None:
 
 def test_main_reports_success_on_the_real_corpus() -> None:
     assert main([str(_COMPATIBILITY_ROOT)]) == 0
+
+
+# --- the retired-spelling rejection inventory -----------------------------------
+#
+# Every retired canonical-descriptor spelling has exactly one named fixture, and
+# the stems are pinned as a drift tripwire: deleting or renaming a fixture fails
+# the inventory, and a schema refactor that re-admits a spelling turns that
+# fixture schema-valid and fails its named rejection test.
+
+_RETIRED_SPELLING_STEMS = (
+    "schema-retired-as-of-attributes",
+    "schema-retired-foreign-key",
+    "schema-retired-from-column",
+    "schema-retired-many-to-many",
+    "schema-retired-mapping",
+    "schema-retired-mutability",
+    "schema-retired-pk-generator",
+    "schema-retired-related-entity",
+    "schema-retired-reverse-name",
+    "schema-retired-sequence-name",
+    "schema-retired-to-column",
+    "schema-retired-transactional",
+)
+
+
+def test_retired_spelling_fixture_inventory_is_pinned() -> None:
+    documents = {
+        path.name.removesuffix(path.suffix)
+        for path in _FIXTURE_DIR.iterdir()
+        if path.name.startswith("schema-retired-") and not path.name.endswith(".expected.yaml")
+    }
+    sidecars = {
+        path.name.removesuffix(".expected.yaml")
+        for path in _FIXTURE_DIR.glob("schema-retired-*.expected.yaml")
+    }
+    assert documents == set(_RETIRED_SPELLING_STEMS), (
+        f"retired-spelling documents drifted from the pinned inventory: "
+        f"{sorted(documents.symmetric_difference(_RETIRED_SPELLING_STEMS))}"
+    )
+    assert sidecars == set(_RETIRED_SPELLING_STEMS), (
+        f"retired-spelling sidecars drifted from the pinned inventory: "
+        f"{sorted(sidecars.symmetric_difference(_RETIRED_SPELLING_STEMS))}"
+    )
+
+
+@pytest.mark.parametrize("stem", _RETIRED_SPELLING_STEMS)
+def test_retired_spelling_fixture_is_still_rejected(stem: str) -> None:
+    document = yaml.safe_load((_FIXTURE_DIR / f"{stem}.yaml").read_text(encoding="utf-8"))
+    assert canonical_violations(document, _schema()) != [], (
+        f"{stem}.yaml is schema-valid: the schema re-admits a retired spelling"
+    )
 
 
 # --- the canonical ordering and collapse laws ----------------------------------
