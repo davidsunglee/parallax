@@ -46,7 +46,7 @@ IMPLEMENTED_MODULES: Final[frozenset[str]] = frozenset(
         "m-deep-fetch",
         "m-snapshot-read",
         "m-opt-lock",
-        "m-audit-write",
+        "m-txtime-write",
         "m-bitemp-write",
         "m-read-lock",
         "m-auto-retry",

@@ -112,10 +112,10 @@ def _write_case_by_id(prefix: str):
 
 
 def test_multi_attribute_audit_update_chains_all_new_values() -> None:
-    # m-audit-write-004: a multi-attribute correction (acct + value). The close touches
+    # m-txtime-write-004: a multi-attribute correction (acct + value). The close touches
     # ONLY out_z; the chained INSERT carries the entity's FULL physical row with EVERY
     # new value (Family B — a milestone always writes the whole row).
-    case = _write_case_by_id("m-audit-write-004")
+    case = _write_case_by_id("m-txtime-write-004")
     close, chain = case.golden_statements("postgres")[1], case.golden_statements("postgres")[2]
     assert close == "update balance set out_z = ? where bal_id = ? and out_z = ?"
     assert chain.startswith("insert into balance(bal_id, acct_num, val, in_z, out_z)")

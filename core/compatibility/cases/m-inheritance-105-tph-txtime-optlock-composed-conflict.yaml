@@ -1,6 +1,6 @@
 # Composed temporal x inheritance x optimistic-lock CONFLICT: the tag guard
 # rides the identity predicates, the observed-in_z gate binds LAST (m-inheritance
-# x m-audit-write x m-opt-lock — COR-3 Phase 8 DQ2 rider 1).
+# x m-txtime-write x m-opt-lock — COR-3 Phase 8 DQ2 rider 1).
 #
 # MeterReading 1 is read open at in_z 2024-01-01. Before our close flushes, a
 # concurrent transaction closes that milestone (out_z 2024-06-01) and chains a
@@ -18,7 +18,7 @@
 # in_z), so the close affects ZERO rows — `updatedRows != 1`, the same conflict
 # signal a non-inheritance temporal close proves (m-temporal-read-010).
 model: models/reading.yaml
-tags: [m-inheritance, m-audit-write, m-opt-lock, m-sql, table-per-hierarchy, tag, temporal, audit-only, conflict, slice-snapshot-1, slice-managed-1]
+tags: [m-inheritance, m-txtime-write, m-opt-lock, m-sql, table-per-hierarchy, tag, temporal, audit-only, conflict, slice-snapshot-1, slice-managed-1]
 shape: conflict
 compileEligibility:
   mode: run-only

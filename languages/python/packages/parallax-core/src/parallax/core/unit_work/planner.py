@@ -82,7 +82,7 @@ class Observation:
     version gate or advance into SQL is the composition layer's job.
 
     ``valid_start`` / ``valid_end`` / ``payload`` extend the vocabulary for a
-    temporal observation (`m-audit-write` / `m-bitemp-write`): ``valid_start``
+    temporal observation (`m-txtime-write` / `m-bitemp-write`): ``valid_start``
     is the observed rectangle's own Valid-Time
     lower bound — the bitemporal optimistic gate's discriminator candidate AND (via
     :mod:`parallax.core.bitemp_write`'s planning) the Valid-Time lower bound the head
@@ -93,7 +93,7 @@ class Observation:
     head/tail carry forward (`m-bitemp-write` "Head/tail old values come from the
     observed prior rectangle"), and the values an audit-only chaining ``update``
     merges a sparse authored row onto
-    (`~parallax.core.audit_write.plan`'s own ``_merged_row``) so an unauthored field
+    (`~parallax.core.txtime_write.plan`'s own ``_merged_row``) so an unauthored field
     is never silently dropped. ``valid_start`` / ``valid_end`` stay ``None`` for
     a non-temporal or Transaction-Time-Only observation (neither declares Valid Time to
     bound); all three are ``None`` for a non-temporal observation. This is

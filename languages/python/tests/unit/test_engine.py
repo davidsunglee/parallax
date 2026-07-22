@@ -1497,14 +1497,14 @@ def test_run_write_sequence_case_executes_each_entry_as_its_own_transaction() ->
 
 
 def test_run_write_sequence_case_records_the_temporal_observation_on_the_unit_of_work() -> None:
-    # m-audit-write-002 (COR-3 Phase 8 increment 4): the update entry's shadow-
+    # m-txtime-write-002 (COR-3 Phase 8 increment 4): the update entry's shadow-
     # resolved observation is recorded on THIS unit's own `UnitOfWork` via the
     # documented neutral seam (`Transaction._buffer` route + `uow.observe`,
     # `_execute_write_unit`) — exactly what a real caller's own prior find
     # would have recorded.
     port = FakeWritePort()
     emissions, table_state, round_trips = engine.run_write_sequence_case(
-        _load_case("m-audit-write-002"), "postgres", port
+        _load_case("m-txtime-write-002"), "postgres", port
     )
     assert round_trips == 3
     assert [e.case_pointer for e in emissions] == [
@@ -2184,11 +2184,11 @@ def test_run_conflict_case_wraps_a_lowering_failure_as_engine_error() -> None:
 
 
 def test_run_conflict_case_temporal_close_form_composes_lower_temporal_close() -> None:
-    # m-audit-write-006 (COR-3 Phase 8 increment 4): a temporal optimistic-lock
+    # m-txtime-write-006 (COR-3 Phase 8 increment 4): a temporal optimistic-lock
     # CLOSE conflict (`when.at` / `when.observedTxStart`, no `observedVersion`) is
     # now driven through `handle.lower_temporal_close`, not the non-temporal
     # versioned-UPDATE path.
-    (case,) = [c for c in case_format.load_cases() if c.case_id == "m-audit-write-006"]
+    (case,) = [c for c in case_format.load_cases() if c.case_id == "m-txtime-write-006"]
     port = FakeWritePort()
     emissions, affected, table_state = engine.run_conflict_case(case, "postgres", port)
     assert [e.case_pointer for e in emissions] == ["/when/write"]

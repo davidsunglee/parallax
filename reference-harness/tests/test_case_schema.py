@@ -57,7 +57,7 @@ def _read_case() -> dict[str, Any]:
 def _write_sequence_case() -> dict[str, Any]:
     return {
         "model": "models/balance.yaml",
-        "tags": ["m-audit-write"],
+        "tags": ["m-txtime-write"],
         "shape": "writeSequence",
         "when": {
             "writeSequence": [

@@ -1,4 +1,4 @@
-"""``parallax.core.audit_write`` enforcement scope (m-audit-write).
+"""``parallax.core.txtime_write`` enforcement scope (m-txtime-write).
 
 The Transaction-Time-Only milestone-chaining PLANNING scope: this module
 never renders SQL and never imports ``opt_lock`` / ``dialect`` / ``sql_gen`` — it
@@ -10,7 +10,7 @@ scope's neutral :class:`MilestonePlan` with the ``opt_lock`` gate/licensing poli
 Transaction-Time dimension") and the descriptor-driven column/tag machinery it already owns
 for non-temporal writes.
 
-Three mutations, one shape each (`m-audit-write.md` "Milestone-chaining writes"):
+Three mutations, one shape each (`m-txtime-write.md` "Milestone-chaining writes"):
 
 - **insert** — a single :class:`MilestoneOpen`: the instruction's own authored row
   plus the fresh Transaction-Time bounds ``[txInstant, infinity)``.
@@ -28,12 +28,12 @@ Three mutations, one shape each (`m-audit-write.md` "Milestone-chaining writes")
   its bitemporal sibling; a caller-authored FULL row (every conformance-engine
   writeSequence witness) merges to itself (an identity, since every member the
   merge could overlay is already present in the caller's own row). Close-
-  before-chain, the pair adjacent (`m-audit-write.md` L96-109).
+  before-chain, the pair adjacent (`m-txtime-write.md` L96-109).
 
 The close's gate CANDIDATES (:attr:`MilestoneClose.gate_tx_start`) come straight from
 the caller-supplied ``observed`` :class:`~parallax.core.unit_work.Observation` —
 this scope never decides WHETHER to gate (that is the ``opt_lock`` policy
-composed at the render seam) or issues an implicit read to find one (`m-audit-write`
+composed at the render seam) or issues an implicit read to find one (`m-txtime-write`
 "Affected-row conflict contract for closes": the observed ``in_z`` is the version
 analogue a temporal entity carries no version column for). A zero-row close is an
 error in ANY mode — this scope names the row it EXPECTS to affect (exactly one,
@@ -84,7 +84,7 @@ class TemporalPlanningError(ValueError):
 
 @dataclass(frozen=True, slots=True)
 class MilestoneClose:
-    """One inactivating/closing ``UPDATE`` the write plans (`m-audit-write` /
+    """One inactivating/closing ``UPDATE`` the write plans (`m-txtime-write` /
     `m-bitemp-write`): close the CURRENT (``out_z = infinity``) row identified by
     ``identity`` (the instruction's own row — at minimum the primary key; the
     render seam's existing key-predicate derivation resolves it, tag guard
@@ -125,7 +125,7 @@ MilestoneStep = MilestoneClose | MilestoneOpen
 class MilestonePlan:
     """The neutral, execution-ordered milestone plan one temporal keyed write
     lowers to: an ordered sequence of :class:`MilestoneClose` / :class:`MilestoneOpen`
-    steps, close-before-chain, the pair adjacent (`m-audit-write.md` L96-109) —
+    steps, close-before-chain, the pair adjacent (`m-txtime-write.md` L96-109) —
     the render seam maps each step to exactly one DML statement, in order."""
 
     steps: tuple[MilestoneStep, ...]
@@ -182,7 +182,7 @@ def plan(
     declaring entity (the root, for an inheritance participant — `m-inheritance`).
     ``observed`` is the caller-supplied observation of the CURRENT milestone this
     write's close (if any) targets — never derived here, never an implicit read
-    (`m-audit-write` "The engine supplies observed rows from case state").
+    (`m-txtime-write` "The engine supplies observed rows from case state").
     """
     mutation = instruction.mutation
     row = instruction.rows[0]

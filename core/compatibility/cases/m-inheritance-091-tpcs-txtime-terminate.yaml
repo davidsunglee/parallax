@@ -1,5 +1,5 @@
 # Table-per-concrete-subtype Transaction-Time-Only concrete-subtype TERMINATE: the milestone close
-# targets the subtype's OWN table with NO tag guard (m-inheritance x m-audit-write x
+# targets the subtype's OWN table with NO tag guard (m-inheritance x m-txtime-write x
 # m-sql — Phase 8 temporal composition).
 #
 # In a table-per-concrete-subtype family the concrete subtype is selected by WHICH table
@@ -15,7 +15,7 @@
 # Resulting state: one CLOSED milestone (out_z finite) in the spot_quote table — no
 # out_z = infinity row remains, the observable signature of termination.
 model: models/quote.yaml
-tags: [m-inheritance, m-audit-write, m-sql, table-per-concrete-subtype, temporal, audit-only, write-sequence, terminate, slice-snapshot-1, slice-managed-1]
+tags: [m-inheritance, m-txtime-write, m-sql, table-per-concrete-subtype, temporal, audit-only, write-sequence, terminate, slice-snapshot-1, slice-managed-1]
 shape: writeSequence
 when:
   writeSequence:

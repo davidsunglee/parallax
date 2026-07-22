@@ -154,7 +154,7 @@ def _temporal_observation(
     observed payload (D-30, COR-3 Phase 8 increment 7 completion round — every
     real ``Transaction.find`` of a temporal row now carries one, audit-only
     included) — the same fields temporal lowering (`~parallax.core.
-    audit_write.plan` / `~parallax.core.bitemp_write.plan`) already consumes,
+    txtime_write.plan` / `~parallax.core.bitemp_write.plan`) already consumes,
     so a transaction-scoped find -> temporal write sequence works end-to-end,
     not just the licensing check. The observed Valid-Time bounds are Bitemporal-only.
 
@@ -193,7 +193,7 @@ def _temporal_observation(
     tx_start = cast("str", fields[tx_start_column])
     if declaring.temporal != "bitemporal":
         # Audit-only (D-30): the observed payload every other member besides
-        # the sole Transaction-Time axis — `audit_write.plan`'s own update-branch
+        # the sole Transaction-Time axis — `txtime_write.plan`'s own update-branch
         # merge (`_merged_row`) overlays a public `tx.update(copy)`'s SPARSE
         # row onto it, so an unauthored field carries forward from THIS
         # observation rather than being silently dropped.
@@ -387,7 +387,7 @@ def materialize_row(
         new_row, changed = _apply_assignments(meta, declaring, pk_row, row, assignments)
         return key, observation, (new_row if changed else None)
 
-    # Audit-only: `audit_write.plan` chains the instruction's OWN authored
+    # Audit-only: `txtime_write.plan` chains the instruction's OWN authored
     # FULL row verbatim (never a separate observed payload), so the full
     # merge happens HERE — the resolved row's own scalar payload (VO
     # documents omitted; row-form never projects one) with the assignments
@@ -398,13 +398,13 @@ def materialize_row(
         # row's observed `in_z` exactly like every other materializing verb
         # (`m-opt-lock` "Predicate-selected writes materialize when
         # observations are needed" — observations are MODE-INDEPENDENT; only
-        # the GATE is mode-dependent, `m-audit-write.md:65`). The observed
+        # the GATE is mode-dependent, `m-txtime-write.md:65`). The observed
         # `in_z` is the temporal analogue of a versioned optimistic gate
-        # (`m-audit-write` "Affected-row conflict contract for closes"), so
+        # (`m-txtime-write` "Affected-row conflict contract for closes"), so
         # an OPTIMISTIC-mode close binds it (`and in_z = ?`, `m-opt-lock.md`
         # "Temporal entities derive the version from the Transaction-Time dimension"),
         # gate-last, exactly as a keyed temporal terminate already does
-        # (`m-audit-write-006`) — `audit_write.plan` composes the gate
+        # (`m-txtime-write-006`) — `txtime_write.plan` composes the gate
         # candidate straight from this SAME observation, no separate branch.
         # A LOCKING-mode close still renders ungated (the render seam only
         # ever BINDS the candidate under optimistic concurrency,

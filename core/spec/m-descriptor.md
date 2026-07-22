@@ -263,7 +263,7 @@ Attribute. Combining an explicit `optimisticLocking` Attribute with a
 Transaction-Time axis is invalid. Transaction-Time-Only and Bitemporal are the
 supported temporal shapes, so every writable temporal Entity has that derived
 key. The composition contract is `m-opt-lock` over the temporal write shapes
-(`m-audit-write` / `m-bitemp-write`).
+(`m-txtime-write` / `m-bitemp-write`).
 
 **Composition with inheritance (declaration site).** For an inheritance
 participant (`m-inheritance`), `optimisticLocking: true` is family-level

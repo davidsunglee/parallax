@@ -12,7 +12,7 @@ A snapshot read is **execute → value**: one explicit execution materializes th
 whole graph, and nothing about the graph is live afterwards. There is no
 managed lifecycle, no identity map, no change tracking, and no write-back —
 changes are persisted through the explicit write modules (`m-batch-write`,
-`m-audit-write`, `m-bitemp-write`, `m-cascade-delete`), never by diffing a
+`m-txtime-write`, `m-bitemp-write`, `m-cascade-delete`), never by diffing a
 graph.
 
 ## Graph-local identity resolution

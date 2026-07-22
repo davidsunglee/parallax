@@ -1,8 +1,8 @@
-# Audit-only detached merge-back (m-detach + m-audit-write): merging a mutated
+# Audit-only detached merge-back (m-detach + m-txtime-write): merging a mutated
 # audit-only copy flushes the milestone close-and-chain, not an in-place UPDATE.
 #
 # When the detached entity is audit-only (processing-temporal), merge-back drives the
-# same close-and-chain machinery as any audit-only update (m-audit-write): it never
+# same close-and-chain machinery as any audit-only update (m-txtime-write): it never
 # mutates a value in place. A detached copy of the CURRENT Balance milestone for id 2
 # (acct B, value 200.00) is edited to 250.00 with no transaction open. At merge-back
 # the close UPDATE sets the current row's out_z to the transaction instant, then a new
@@ -14,7 +14,7 @@
 # current pair) are untouched, proving the close is keyed on (bal_id AND out_z =
 # infinity), not a table-wide set.
 model: models/balance.yaml
-tags: [m-detach, m-audit-write, m-sql, write-sequence, audit-only, slice-managed-1]
+tags: [m-detach, m-txtime-write, m-sql, write-sequence, audit-only, slice-managed-1]
 shape: writeSequence
 given:
   fixtures: true

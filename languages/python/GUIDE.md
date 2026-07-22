@@ -177,7 +177,7 @@ self-contained without a system `libpq`.
     find branch routes through the shared per-step read-entity helper) and the
     closing gates — `just python-verify` green (108 database-backed checks),
     the unit lane at 1069, `just oracle-test` at 1405 dual-dialect. The
-    coalescing witnesses (`m-audit-write-008`, `m-bitemp-write-014`,
+    coalescing witnesses (`m-txtime-write-008`, `m-bitemp-write-014`,
     `m-unit-work-010`) stay reasoned-skipped with forward reasons
     (`m-batch-write`, Phase 8). The Phase-6 backbone external review
     (checkpoint 3, M1–M4 + the two in-flight core deltas) is closed.
@@ -382,7 +382,7 @@ self-contained without a system `libpq`.
   `m-unit-work-005`/`-009`'s own authoring shape) is core corpus debt, not
   fixed here.
 - **Phase 8 increment 4 COMPLETE — temporal writes: audit-only close-and-chain
-  and full-bitemporal rectangle splits.** `parallax.core.audit_write` /
+  and full-bitemporal rectangle splits.** `parallax.core.txtime_write` /
   `.bitemp_write` (pure milestone planning: `MilestoneClose`/`MilestoneOpen`
   steps) composed at the SAME `lower_write` seam with the `m-opt-lock` gate
   policy: `insert`/`update`/`terminate` and the bounded `insertUntil`/
@@ -590,7 +590,7 @@ self-contained without a system `libpq`.
   removed by restructuring (110 → 95). The checkpoint-4 review's findings
   were remediated in-cycle: keyed temporal update/terminate now require a
   transaction-scoped observation (`UnobservedMilestoneError`, with a
-  same-transaction-insert exemption) and the `m-audit-write-003` story
+  same-transaction-insert exemption) and the `m-txtime-write-003` story
   observes before closing; every corpus verification read routes through
   the YAML 1.2 loader; the Customer graph-story runners are parameterized;
   the recipes render in the guide. Measured post-remediation: unit lane

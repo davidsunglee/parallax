@@ -129,7 +129,7 @@ _SEED_ROWS_BY_MODEL: Final[dict[str, list[Row]]] = {
     "branch": _BRANCH_SEED_ROWS,
 }
 
-# `m-audit-write-005` starts from EXISTING history (`given.fixtures: true`),
+# `m-txtime-write-005` starts from EXISTING history (`given.fixtures: true`),
 # never its own fresh insert: id 1's CURRENT milestone is already value 150.00
 # at in_z 2024-06-01 (a superseded 100.00 prior on record too, per the fixture
 # — irrelevant to this port double, which serves only the ONE row the story's
@@ -137,7 +137,7 @@ _SEED_ROWS_BY_MODEL: Final[dict[str, list[Row]]] = {
 # `_BALANCE_SEED_ROWS` above instead represents "immediately after this OTHER
 # story's own fresh insert" (100.00 at 2024-01-01).
 _SEED_ROWS_BY_CASE: Final[dict[str, list[Row]]] = {
-    "m-audit-write-005": [
+    "m-txtime-write-005": [
         {
             "bal_id": 1,
             "acct_num": "A",

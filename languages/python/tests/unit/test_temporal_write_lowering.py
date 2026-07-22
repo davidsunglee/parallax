@@ -1,8 +1,8 @@
 """Temporal keyed-write DML lowering unit tests.
 
 Pins ``parallax.snapshot.handle.lower_write``'s TEMPORAL dispatch — audit-only
-close-and-chain (`m-audit-write`) and the full-bitemporal rectangle split
-(`m-bitemp-write`) — byte-exact against the corpus goldens (``m-audit-write-001
+close-and-chain (`m-txtime-write`) and the full-bitemporal rectangle split
+(`m-bitemp-write`) — byte-exact against the corpus goldens (``m-txtime-write-001
 ..006``, ``m-bitemp-write-001..003/006..009``, ``m-inheritance-090/091/094..097
 /105``, ``m-value-object-032/033``), the observed-``in_z`` / Valid-Time-
 discriminator gate composed with the ``m-opt-lock`` policy (gated only under
@@ -84,10 +84,10 @@ def _lower(
 
 
 # --------------------------------------------------------------------------- #
-# Audit-only (m-audit-write): insert / close-and-chain update / terminate.     #
+# Audit-only (m-txtime-write): insert / close-and-chain update / terminate.     #
 # --------------------------------------------------------------------------- #
 def test_audit_only_insert_opens_a_current_milestone() -> None:
-    # m-audit-write-001.
+    # m-txtime-write-001.
     insert = KeyedWrite("insert", "Balance", ({"id": 1, "acctNum": "A", "value": 100.00},))
     statements = _lower(insert, BALANCE, "2024-01-01T00:00:00+00:00")
     assert statements == [
@@ -99,7 +99,7 @@ def test_audit_only_insert_opens_a_current_milestone() -> None:
 
 
 def test_audit_only_update_closes_then_chains_the_authored_full_row() -> None:
-    # m-audit-write-002: an ungated (locking-mode) close, then a chain carrying
+    # m-txtime-write-002: an ungated (locking-mode) close, then a chain carrying
     # the instruction's OWN authored FULL row. The observation carries no
     # `payload`, so merging is an identity and the chain is exactly the
     # authored row.
@@ -119,7 +119,7 @@ def test_audit_only_update_closes_then_chains_the_authored_full_row() -> None:
 
 
 def test_audit_only_terminate_closes_only() -> None:
-    # m-audit-write-003: terminate = close, chain nothing.
+    # m-txtime-write-003: terminate = close, chain nothing.
     terminate = KeyedWrite("terminate", "Balance", ({"id": 1},))
     statements = _lower(terminate, BALANCE, "2024-08-01T00:00:00+00:00")
     assert statements == [
@@ -131,7 +131,7 @@ def test_audit_only_terminate_closes_only() -> None:
 
 
 def test_audit_only_update_carries_every_new_attribute() -> None:
-    # m-audit-write-004: the chained row carries ALL corrected attributes.
+    # m-txtime-write-004: the chained row carries ALL corrected attributes.
     update = KeyedWrite("update", "Balance", ({"id": 1, "acctNum": "B", "value": 250.00},))
     observation = Observation(tx_start="2024-01-01T00:00:00+00:00")
     statements = _lower(update, BALANCE, "2024-06-01T00:00:00+00:00", observation=observation)
@@ -162,21 +162,21 @@ def test_audit_only_update_merges_a_sparse_row_onto_the_observed_payload() -> No
 
 def test_audit_only_plan_merges_the_sparse_row_at_the_planner_seam() -> None:
     # The same merge is pinned directly at the pure planning seam
-    # (`parallax.core.audit_write.plan`) rather than through the full
+    # (`parallax.core.txtime_write.plan`) rather than through the full
     # `lower_write` composition — `MilestoneOpen.row` carries the merged
     # payload, never the caller's sparse row alone.
-    from parallax.core import audit_write
+    from parallax.core import txtime_write
 
     sparse_update = KeyedWrite("update", "Balance", ({"id": 1, "value": 150.00},))
     observation = Observation(
         tx_start="2024-01-01T00:00:00+00:00", payload={"id": 1, "acctNum": "A", "value": 100.00}
     )
-    plan = audit_write.plan(
+    plan = txtime_write.plan(
         sparse_update, BALANCE.entity("Balance"), "2024-06-01T00:00:00+00:00", observation
     )
     close, opened = plan.steps
-    assert isinstance(close, audit_write.MilestoneClose)
-    assert isinstance(opened, audit_write.MilestoneOpen)
+    assert isinstance(close, txtime_write.MilestoneClose)
+    assert isinstance(opened, txtime_write.MilestoneOpen)
     assert opened.row == {
         "id": 1,
         "acctNum": "A",
@@ -193,19 +193,19 @@ def test_audit_only_plan_carries_a_full_row_unchanged_when_no_payload_is_observe
     # compile-lane emission can ever change (the Part 2 byte-identical guard).
     full_update = KeyedWrite("update", "Balance", ({"id": 1, "acctNum": "A", "value": 150.00},))
     observation = Observation(tx_start="2024-01-01T00:00:00+00:00")  # no payload at all
-    from parallax.core import audit_write
+    from parallax.core import txtime_write
 
-    plan = audit_write.plan(
+    plan = txtime_write.plan(
         full_update, BALANCE.entity("Balance"), "2024-06-01T00:00:00+00:00", observation
     )
     _close, opened = plan.steps
-    assert isinstance(opened, audit_write.MilestoneOpen)
+    assert isinstance(opened, txtime_write.MilestoneOpen)
     assert opened.row["acctNum"] == "A"
     assert opened.row["value"] == 150.00
 
 
 def test_audit_only_close_is_ungated_under_locking_regardless_of_observation() -> None:
-    # m-audit-write-005: a locking-mode close never binds `in_z`, even when one
+    # m-txtime-write-005: a locking-mode close never binds `in_z`, even when one
     # was observed.
     update = KeyedWrite("update", "Balance", ({"id": 1, "acctNum": "A", "value": 175.00},))
     observation = Observation(tx_start="2024-06-01T00:00:00+00:00")
@@ -219,7 +219,7 @@ def test_audit_only_close_is_ungated_under_locking_regardless_of_observation() -
 
 
 def test_audit_only_close_gates_on_observed_in_z_under_optimistic() -> None:
-    # m-audit-write-006: the gated close binds the observed in_z LAST.
+    # m-txtime-write-006: the gated close binds the observed in_z LAST.
     close_only = KeyedWrite("terminate", "Balance", ({"id": 1},))
     observation = Observation(tx_start="2024-06-01T00:00:00+00:00")
     statements = _lower_full(
@@ -546,9 +546,9 @@ def test_temporal_close_requires_an_effective_table() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Inheritance composition (m-inheritance x m-audit-write / m-bitemp-write).    #
+# Inheritance composition (m-inheritance x m-txtime-write / m-bitemp-write).    #
 # --------------------------------------------------------------------------- #
-def test_tph_audit_terminate_carries_the_tag_guard() -> None:
+def test_tph_txtime_terminate_carries_the_tag_guard() -> None:
     # m-inheritance-090: the tag guard rides the identity predicates, before
     # the current-row predicate.
     terminate = KeyedWrite("terminate", "MeterReading", ({"id": 1},))
@@ -561,7 +561,7 @@ def test_tph_audit_terminate_carries_the_tag_guard() -> None:
     ]
 
 
-def test_tpcs_audit_terminate_has_no_tag_guard() -> None:
+def test_tpcs_txtime_terminate_has_no_tag_guard() -> None:
     # m-inheritance-091: table-per-concrete-subtype routes to the concrete's
     # own table, no tag.
     terminate = KeyedWrite("terminate", "SpotQuote", ({"id": 1},))
@@ -659,7 +659,7 @@ def test_tpcs_bitemporal_terminate_until_chains_head_and_tail() -> None:
     )
 
 
-def test_tph_audit_optlock_composed_conflict_orders_tag_then_gate_last() -> None:
+def test_tph_txtime_optlock_composed_conflict_orders_tag_then_gate_last() -> None:
     # m-inheritance-105: tag guard rides identity predicates, in_z gate LAST.
     close_only = KeyedWrite("terminate", "MeterReading", ({"id": 1},))
     observation = Observation(tx_start="2024-01-01T00:00:00+00:00")
@@ -740,11 +740,11 @@ def test_bitemporal_update_until_carries_the_value_object_document_on_every_chai
 
 
 # --------------------------------------------------------------------------- #
-# Zero-row close: the two distinct outcomes (m-opt-lock / m-audit-write).      #
+# Zero-row close: the two distinct outcomes (m-opt-lock / m-txtime-write).      #
 # --------------------------------------------------------------------------- #
 def test_multi_row_temporal_write_is_refused() -> None:
     # A temporal keyed write lowers ONE row at a time: each row opens its own
-    # milestone chain (`m-audit-write` / `m-bitemp-write`), so there is no
+    # milestone chain (`m-txtime-write` / `m-bitemp-write`), so there is no
     # shared statement a collapse could render. `m-batch-write`'s eligibility
     # never collapses a temporal entity, so reaching here with two rows is a
     # caller wiring defect — refused, never lowered as if only the first row
@@ -767,14 +767,14 @@ def test_temporal_write_requires_a_transaction_instant() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# audit_write.axis_attr_names: the declared-axis lookup, direct.              #
+# txtime_write.axis_attr_names: the declared-axis lookup, direct.              #
 # --------------------------------------------------------------------------- #
 def test_axis_attr_names_refuses_an_axis_the_entity_does_not_declare() -> None:
     # Balance is audit-only (Transaction-Time dimension only) — a caller asking this pure
     # lookup for its (undeclared) Valid-Time dimension is a defensive backstop the
     # render seam is responsible for never reaching with a well-formed
-    # instruction (`audit_write._axis`), not a normal-path outcome.
-    from parallax.core import audit_write
+    # instruction (`txtime_write._axis`), not a normal-path outcome.
+    from parallax.core import txtime_write
 
-    with pytest.raises(audit_write.TemporalPlanningError, match="declares no 'validTime'"):
-        audit_write.axis_attr_names(BALANCE.entity("Balance"), "validTime")
+    with pytest.raises(txtime_write.TemporalPlanningError, match="declares no 'validTime'"):
+        txtime_write.axis_attr_names(BALANCE.entity("Balance"), "validTime")

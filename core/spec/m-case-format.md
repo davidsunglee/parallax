@@ -72,7 +72,7 @@ A case is one of **nine shapes**, named by the required top-level `shape`:
 - **`read`** — a queryable `when.operation` naming its `when.targetEntity`,
   asserting `then.rows` or a deep-fetch `then.graph`.
 - **`writeSequence`** — ordered DML under `when.writeSequence`, asserting the
-  resulting `then.tableState` (the temporal writes `m-audit-write` /
+  resulting `then.tableState` (the temporal writes `m-txtime-write` /
   `m-bitemp-write`, the set-based `m-batch-write`,
   `m-cascade-delete`, and `m-detach` merge-backs).
 - **`scenario`** — a `when.scenario` of ordered read, committed-write, *and*

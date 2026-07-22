@@ -5,7 +5,7 @@ transaction path (the ``FlushExecutor`` :meth:`Database.transact` injects) and
 the conformance engine call THIS function, so there is exactly one place a
 neutral :class:`~parallax.core.unit_work.PlannedWrite` becomes DML. It dispatches
 on the entity's FAMILY-EFFECTIVE temporal classification (ADR 0026), composing
-`parallax.core.audit_write` / `.bitemp_write`'s neutral milestone plans with the
+`parallax.core.txtime_write` / `.bitemp_write`'s neutral milestone plans with the
 `m-opt-lock` gate policy this seam owns, and hands the actual SQL rendering to
 :mod:`parallax.snapshot.handle._keyed_sql`. :func:`lower_temporal_close` is the
 `m-opt-lock` CONFLICT lane's standalone close, rendered through the same seam.
@@ -22,7 +22,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Final
 
-from parallax.core import audit_write, bitemp_write, inheritance, opt_lock
+from parallax.core import bitemp_write, inheritance, opt_lock, txtime_write
 from parallax.core.base import INFINITY_LITERAL
 from parallax.core.descriptor import Entity, Metamodel
 from parallax.core.dialect import Dialect
@@ -84,7 +84,7 @@ def lower_write(
     an inheritance participant declares its as-of axes on the root alone, so
     `entity.is_temporal` — a bare, non-flattening LOCAL view — would silently miss a
     temporal-family concrete's own write). A temporal entity's write composes
-    `parallax.core.audit_write` / `parallax.core.bitemp_write`'s neutral milestone
+    `parallax.core.txtime_write` / `parallax.core.bitemp_write`'s neutral milestone
     plan with the `m-opt-lock` gate policy and this seam's existing descriptor-driven
     column/tag machinery (reused unchanged for every chained INSERT — value objects,
     inheritance tag derivation, pk-gen markers all compose exactly as a non-temporal
@@ -120,7 +120,7 @@ def lower_write(
             raise WriteLoweringError(
                 f"multi-row temporal {instruction.mutation!r} on {entity.name!r} "
                 f"({len(instruction.rows)} rows): a temporal keyed write lowers one row at a "
-                "time (m-audit-write / m-bitemp-write) — the set-based batch collapse never "
+                "time (m-txtime-write / m-bitemp-write) — the set-based batch collapse never "
                 "applies to a temporal entity's own milestone chain (m-batch-write)"
             )
         if tx_instant is None:
@@ -142,7 +142,7 @@ def lower_write(
         raise WriteLoweringError(
             f"{instruction.mutation!r} is a temporal milestone verb, and {entity.name!r} "
             "declares no temporal dimension — a milestone verb never applies to a "
-            "non-temporal entity (m-audit-write / m-bitemp-write)"
+            "non-temporal entity (m-txtime-write / m-bitemp-write)"
         )
     version_attr = version_attribute(declaring)
     if instruction.mutation == "insert":
@@ -200,7 +200,7 @@ def lower_write(
 # --------------------------------------------------------------------------- #
 # Temporal (audit-only / bitemporal) keyed writes (COR-3 Phase 8 increment 4). #
 # The MILESTONE PLANNING (which rows close, which chain, split arithmetic) is  #
-# `parallax.core.audit_write` / `.bitemp_write`'s job — pure functions the     #
+# `parallax.core.txtime_write` / `.bitemp_write`'s job — pure functions the     #
 # scopes themselves never render SQL with. This seam composes their neutral    #
 # `MilestonePlan` with the `m-opt-lock` gate policy and RENDERS the SQL,       #
 # reusing the non-temporal helpers below (`key_predicate` for a close's       #
@@ -218,7 +218,7 @@ def _lower_temporal_write(
     observation: Observation | None,
     tx_instant: str,
 ) -> list[LoweredStatement]:
-    plan_fn = bitemp_write.plan if declaring.temporal == "bitemporal" else audit_write.plan
+    plan_fn = bitemp_write.plan if declaring.temporal == "bitemporal" else txtime_write.plan
     milestone_plan = plan_fn(instruction, declaring, tx_instant, observation)
     if observation is not None:
         # The REAL licensing check (`m-opt-lock` "Locking mode additionally
@@ -233,7 +233,7 @@ def _lower_temporal_write(
     version_attr = version_attribute(declaring)  # always None for a temporal entity
     statements: list[LoweredStatement] = []
     for step in milestone_plan.steps:
-        if isinstance(step, audit_write.MilestoneClose):
+        if isinstance(step, txtime_write.MilestoneClose):
             statements.append(
                 _render_close(step, entity, declaring, dialect, meta, tx_instant, gated)
             )
@@ -248,7 +248,7 @@ def _lower_temporal_write(
 
 
 def _render_close(
-    step: audit_write.MilestoneClose,
+    step: txtime_write.MilestoneClose,
     entity: Entity,
     declaring: Entity,
     dialect: Dialect,
@@ -262,7 +262,7 @@ def _render_close(
     The current-row predicate (``<out_col> = infinity``) and, when gated, the
     Valid-Time discriminator then the observed-``tx_start`` gate — LAST, no exception,
     the direct extension of `m-opt-lock`'s "the gate binds last" to a milestone
-    close (`m-audit-write` "Composed predicate order under optimistic mode"). The
+    close (`m-txtime-write` "Composed predicate order under optimistic mode"). The
     identity predicate (pk, inheritance tag guard) reuses `key_predicate`
     unchanged. Ungated (locking mode) renders neither the Valid-Time discriminator
     nor the Transaction-Time gate, regardless of whether ``step`` carries candidates for
@@ -303,13 +303,13 @@ def lower_temporal_close(
     observed_valid_start: str | None = None,
 ) -> LoweredStatement:
     """Lower a STANDALONE temporal milestone close — the `m-opt-lock` CONFLICT
-    lane's own shape (`m-audit-write` / `m-bitemp-write`: "a conflict case runs
+    lane's own shape (`m-txtime-write` / `m-bitemp-write`: "a conflict case runs
     only that single gated close, not the replacement INSERT(s) a full write
-    would go on to emit"). Every REAL temporal mutation (`audit_write.plan` /
+    would go on to emit"). Every REAL temporal mutation (`txtime_write.plan` /
     `bitemp_write.plan`) chains at least one row for a close-bearing verb — the
     conflict lane's own probe is not one of those verbs, so this composes the
     SAME close-rendering seam (:func:`_render_close`) directly from an
-    :class:`~parallax.core.audit_write.MilestoneClose`, never through the
+    :class:`~parallax.core.txtime_write.MilestoneClose`, never through the
     plan dispatch.
 
     ``identity`` is the (at minimum, primary-key) row the close's identity
@@ -322,7 +322,7 @@ def lower_temporal_close(
     declaring = inheritance.declaring_entity(meta, entity)
     if observed_tx_start is not None or observed_valid_start is not None:
         opt_lock.check_locking_license(concurrency, latest_pinned=True)
-    step = audit_write.MilestoneClose(
+    step = txtime_write.MilestoneClose(
         identity=identity,
         gate_tx_start=observed_tx_start,
         gate_valid_start=observed_valid_start,

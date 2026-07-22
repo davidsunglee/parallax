@@ -151,13 +151,13 @@ def test_conflict_input_observed_version_corruption_is_rejected() -> None:
 def test_temporal_conflict_close_input_holds_for_authored_cases() -> None:
     cases = _temporal_conflict_close_cases()
     # The Phase 4 Transaction-Time close family all carry ① (write + at [+ observedTxStart]);
-    # COR-26 adds m-audit-write-006, the SAME gated close tagged under m-audit-write.
+    # COR-26 adds m-txtime-write-006, the SAME gated close tagged under m-txtime-write.
     assert {_case_id(case.path.stem) for case in cases} >= {
         "m-temporal-read-009",
         "m-temporal-read-010",
         "m-temporal-read-011",
         "m-temporal-read-012",
-        "m-audit-write-006",
+        "m-txtime-write-006",
     }
     for case in cases:
         # Must not raise: each close ① derives out_z = at (+ the in_z = observedTxStart gate
@@ -166,13 +166,13 @@ def test_temporal_conflict_close_input_holds_for_authored_cases() -> None:
         _assert_conflict_input(case, "postgres")
 
 
-def test_audit_write_optimistic_gated_close_binds_in_z_gate() -> None:
-    # m-audit-write-006 witnesses the OPTIMISTIC-gated close of an audit-only chaining
+def test_txtime_write_optimistic_gated_close_binds_in_z_gate() -> None:
+    # m-txtime-write-006 witnesses the OPTIMISTIC-gated close of an audit-only chaining
     # update: a single gated close UPDATE keyed on the observed Transaction-Time start (in_z),
     # with no business discriminator (balance has no Valid-Time dimension). It is the audit-only
     # analogue of the bitemporal gate (m-bitemp-write-004), reusing that shape.
-    case = next(c for c in _conflict_cases() if c.path.stem.startswith("m-audit-write-006"))
-    assert "m-audit-write" in case.tags and "m-opt-lock" in case.tags
+    case = next(c for c in _conflict_cases() if c.path.stem.startswith("m-txtime-write-006"))
+    assert "m-txtime-write" in case.tags and "m-opt-lock" in case.tags
     assert case.concurrency_mode == "optimistic"
     assert case.observed_tx_start is not None  # the in_z gate token
     assert case.expected_affected_rows == 1  # the gate MATCHES the observed milestone

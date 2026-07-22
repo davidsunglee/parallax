@@ -337,12 +337,12 @@ SKIP_REASONS: Final[dict[str, str]] = {
         "conflict-opt-in pair (`-010`/`-011`), and the interleaved two-session race "
         "(`-012`, over the `peer` seam) each have their own case-scoped entry below"
     ),
-    "m-audit-write": (
+    "m-txtime-write": (
         "the milestone-chaining write forms (insert / close-and-chain update / "
         "terminate, plus the TPH/TPCS and value-object compositions) are graded "
         "end-to-end by the compile/run conformance lanes. Idiomatic stories now exist "
         "for the insert / terminate / close-and-chain-update family "
-        "(`m-audit-write-001`..`-005`, COR-3 Phase 8 increment 7 completion round: the "
+        "(`m-txtime-write-001`..`-005`, COR-3 Phase 8 increment 7 completion round: the "
         "per-story scripted clock, D-29, plus the D-30 observed-payload merge fix, made "
         "a genuine multi-instant milestone chain over the public verbs possible for the "
         "first time). The optimistic-gated close (`-006`, a `conflict`-shape case "
@@ -811,8 +811,8 @@ _VO_OPT_LOCK_CONFLICT_REASON: Final[str] = (
 _VO_SCENARIO_COMBO_REASON: Final[str] = (
     "a scenario combining a managed (instance-form) find, a MATERIALIZING "
     "predicate-write resolving read (row-form, the VO document omitted — the "
-    "result-form contrast this case pins), and an audit-write terminate under an "
-    "optimistic-lock gate: the materializing predicate-write machinery (m-audit-write / "
+    "result-form contrast this case pins), and a txtime-write terminate under an "
+    "optimistic-lock gate: the materializing predicate-write machinery (m-txtime-write / "
     "m-opt-lock / m-batch-write's readless/materialize split) is run-lane covered "
     "(query-result-dependent, `compileEligibility: run-only`); no idiomatic story was "
     "authored for this multi-capability combination scenario"

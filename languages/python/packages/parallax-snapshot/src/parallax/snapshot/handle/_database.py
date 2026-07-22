@@ -329,7 +329,7 @@ def _flush_executor(
 ) -> FlushExecutor:
     """The unit of work's injected flush sink: lower each planned write, execute
     every lowered statement in order, and enforce each STATEMENT's own
-    affected-rows expectation (`m-opt-lock`; `m-audit-write`; `m-bitemp-write`).
+    affected-rows expectation (`m-opt-lock`; `m-txtime-write`; `m-bitemp-write`).
 
     The single write-lowering seam (:func:`lower_write`) run on the transaction's
     own connection, inside the still-open ``port.transaction`` scope — so an
@@ -338,7 +338,7 @@ def _flush_executor(
     exactly one statement (its own expectation, unchanged from increment 3), while
     a temporal write lowers to a close then zero-to-three chained opens — only the
     close carries an expectation (always ``1``), so a mismatch there raises and
-    ABORTS BEFORE the chained rows ever execute (`m-audit-write` "MUST NOT silently
+    ABORTS BEFORE the chained rows ever execute (`m-txtime-write` "MUST NOT silently
     succeed and proceed to chain"). ``LoweredStatement.stale_error`` picks the raised
     class: the retriable :class:`~parallax.core.opt_lock.OptimisticLockConflictError`
     for a gated mismatch (every non-temporal expectation, and a gated temporal
@@ -363,7 +363,7 @@ def _conflict_error(
 ) -> opt_lock.OptimisticLockConflictError | opt_lock.StaleWriteError:
     """The affected-row-mismatch error for one lowered statement — the retriable
     gated conflict, or (``lowered.stale_error``) the non-retriable ungated
-    temporal-close outcome (`m-audit-write` / `m-bitemp-write`). Resolves this
+    temporal-close outcome (`m-txtime-write` / `m-bitemp-write`). Resolves this
     seam's own identifying context (the instruction's object key) and defers
     the actual classification to :func:`~parallax.core.opt_lock.classify_mismatch`
     — the one place that decision is made, shared with the conformance

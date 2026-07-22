@@ -64,7 +64,6 @@ ADAPTER: Final[Adapter] = Adapter(language="python", name="parallax-core", versi
 SNAPSHOT_CLAIM: Final[Claim] = Claim(
     modules=(
         "m-api-conformance",
-        "m-audit-write",
         "m-auto-retry",
         "m-batch-write",
         "m-bitemp-write",
@@ -87,6 +86,7 @@ SNAPSHOT_CLAIM: Final[Claim] = Claim(
         "m-snapshot-read",
         "m-sql",
         "m-temporal-read",
+        "m-txtime-write",
         "m-unit-work",
         "m-value-object",
     ),

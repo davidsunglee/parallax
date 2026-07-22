@@ -79,7 +79,7 @@ MODULE_SCOPE: Mapping[str, str] = {
     "m-auto-retry": "parallax.core.auto_retry",
     "m-opt-lock": "parallax.core.opt_lock",
     "m-temporal-read": "parallax.core.temporal_read",
-    "m-audit-write": "parallax.core.audit_write",
+    "m-txtime-write": "parallax.core.txtime_write",
     "m-bitemp-write": "parallax.core.bitemp_write",
     "m-batch-write": "parallax.core.batch_write",
     "m-navigate": "parallax.core.navigate",
@@ -107,7 +107,7 @@ _LOWERING_GROUP_DEPS: frozenset[str] = frozenset(
         "parallax.core.sql_gen",
         "parallax.core.unit_work",
         "parallax.core.opt_lock",
-        "parallax.core.audit_write",
+        "parallax.core.txtime_write",
         "parallax.core.bitemp_write",
     }
 )
@@ -133,7 +133,7 @@ SUPPORT_SCOPE_DEPS: Mapping[str, frozenset[str]] = {
             "parallax.core.read_lock",
             "parallax.core.opt_lock",
             "parallax.core.batch_write",
-            "parallax.core.audit_write",
+            "parallax.core.txtime_write",
             "parallax.core.bitemp_write",
             "parallax.core.sql_gen",
             "parallax.core.navigate",

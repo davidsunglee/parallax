@@ -1,17 +1,17 @@
 # PK generation `sequence` composed with a TEMPORAL (audit-only) insert (m-pk-gen +
-# m-audit-write) — net-new: no existing case puts pk generation on a temporal entity.
+# m-txtime-write) — net-new: no existing case puts pk generation on a temporal entity.
 #
 # The insert reserves a block from the registry (entry_seq: next_val 1 -> 2, base 1)
 # then opens an AuditEntry milestone carrying the reserved id 1 at the transaction
 # instant ([in_z = txInstant, out_z = infinity)). The two disciplines compose: the
 # reserved id is a plain domain value on the milestone (its allocation re-derived by
 # the sequence oracle, case_runner._assert_pk_allocation), and the in_z/out_z
-# bookkeeping is the ordinary audit-write milestone open. Postgres-only golden: the
+# bookkeeping is the ordinary txtime-write milestone open. Postgres-only golden: the
 # MariaDB infinity-sentinel round-trip is already witnessed by the bitemporal and
-# audit-write cases, so this case (the pk-gen x temporal composition) proves the
+# txtime-write cases, so this case (the pk-gen x temporal composition) proves the
 # ordering on Postgres and leaves the sentinel witness to those.
 model: models/pk-audit.yaml
-tags: [m-pk-gen, m-audit-write, m-sql, sequence, write-sequence, slice-snapshot-1, slice-managed-1]
+tags: [m-pk-gen, m-txtime-write, m-sql, sequence, write-sequence, slice-snapshot-1, slice-managed-1]
 shape: writeSequence
 compileEligibility:
   mode: run-only

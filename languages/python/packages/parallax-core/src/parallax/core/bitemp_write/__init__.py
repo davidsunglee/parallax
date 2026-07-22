@@ -1,17 +1,17 @@
 """``parallax.core.bitemp_write`` enforcement scope (m-bitemp-write).
 
 The Bitemporal (Valid Time + Transaction Time) RECTANGLE-SPLIT planning scope: it
-reuses :mod:`parallax.core.audit_write`'s close-and-chain machinery (the
+reuses :mod:`parallax.core.txtime_write`'s close-and-chain machinery (the
 ``MilestoneClose`` / ``MilestoneOpen`` shapes and Transaction-Time Attribute
 lookup), extended to Valid Time. Like its sibling, this module
 never renders SQL and never imports ``opt_lock`` / ``dialect`` / ``sql_gen`` — the
 render seam (``parallax.snapshot.handle``) composes its neutral
-:class:`~parallax.core.audit_write.MilestonePlan` with the ``opt_lock`` gate policy
+:class:`~parallax.core.txtime_write.MilestonePlan` with the ``opt_lock`` gate policy
 and the descriptor-driven column/tag machinery.
 
 Six mutations (`m-bitemp-write.md`), all expressed as an ``inactivate`` (a close,
-reusing :class:`~parallax.core.audit_write.MilestoneClose`) plus zero-to-three
-opened rectangles (each an :class:`~parallax.core.audit_write.MilestoneOpen`):
+reusing :class:`~parallax.core.txtime_write.MilestoneClose`) plus zero-to-three
+opened rectangles (each an :class:`~parallax.core.txtime_write.MilestoneOpen`):
 
 - **insert** / **insertUntil** — a single open rectangle, no close: the Valid-Time
   window is ``[validFrom, infinity)`` (plain) or the bounded
@@ -39,7 +39,7 @@ own bitemporal update rows are SPARSE (pk + the touched fields only, `python.md`
 §5): an unauthored field carries FORWARD from the prior rectangle unchanged.
 
 The close's gate candidates additionally carry the Valid-Time discriminator
-(:attr:`~parallax.core.audit_write.MilestoneClose.gate_valid_start`) — the observed
+(:attr:`~parallax.core.txtime_write.MilestoneClose.gate_valid_start`) — the observed
 rectangle's own Valid-Time start — composing with the observed ``tx_start``
 exactly as `m-bitemp-write.md` "The inactivation UPDATE" pins: gated ONLY under
 optimistic concurrency (the render seam's decision), never data-dependent on
@@ -57,9 +57,9 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Final
 
-from parallax.core.audit_write import MilestoneClose, MilestoneOpen, MilestonePlan, axis_attr_names
 from parallax.core.base import INFINITY_LITERAL
 from parallax.core.descriptor import Entity
+from parallax.core.txtime_write import MilestoneClose, MilestoneOpen, MilestonePlan, axis_attr_names
 from parallax.core.unit_work import KeyedWrite, Observation
 
 __all__ = ["MilestoneClose", "MilestoneOpen", "MilestonePlan", "plan"]

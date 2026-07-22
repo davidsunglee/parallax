@@ -1,8 +1,8 @@
-# Same-transaction coalescing on the AUDIT axis (m-audit-write + m-unit-work): a row
+# Same-transaction coalescing on the AUDIT axis (m-txtime-write + m-unit-work): a row
 # inserted and then updated in the SAME unit of work coalesces IN PLACE to a single
 # INSERT carrying the final value — NO closed milestone is fabricated for a state that
 # was never durably observable (Reladomo GenericBiTemporalDirector same-transaction
-# handling). Contrast m-audit-write-002, whose insert-then-update spans TWO
+# handling). Contrast m-txtime-write-002, whose insert-then-update spans TWO
 # transactions and therefore close-and-chains (a superseded 100 milestone + a current
 # 150 milestone). The same-transaction coalescing rule is m-unit-work.
 #
@@ -18,7 +18,7 @@
 # The single INSERT (value 150, no close) IS the observable proof of coalescing.
 # roundTrips = 2 (the one coalesced insert + the find).
 model: models/balance.yaml
-tags: [m-audit-write, m-unit-work, m-temporal-read, same-transaction-coalescing, scenario, slice-snapshot-1]
+tags: [m-txtime-write, m-unit-work, m-temporal-read, same-transaction-coalescing, scenario, slice-snapshot-1]
 shape: scenario
 when:
   uow:

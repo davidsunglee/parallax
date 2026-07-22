@@ -453,7 +453,7 @@ to the cluster rather than to the leaves individually.
 **Deferred — `_read`, `_write_inputs`, `_predicate_writes`, `_transaction`,
 `_database`.** Criterion 2 fails for the transaction lane taken as the group its
 own cross-imports force it to be: the union of those five modules' direct grants
-is 16 scopes whose closure differs from the parent's by exactly `m-audit-write`
+is 16 scopes whose closure differs from the parent's by exactly `m-txtime-write`
 and `m-bitemp-write`, so a group contract would forbid two edges and restate the
 parent row for the rest. Splitting the lane instead fails criterion 1: three of
 the five are one or two phases old (`_predicate_writes` and the rewritten

@@ -1,5 +1,5 @@
 # Audit-only INSERT opens a single current milestone [txInstant, infinity) with no
-# prior row to close — the simplest write contract (m-audit-write).
+# prior row to close — the simplest write contract (m-txtime-write).
 #
 # An insert in audit-only mode writes one milestone row opened at the transaction
 # instant with the open upper bound infinity (in_z = txInstant, out_z = infinity);
@@ -10,7 +10,7 @@
 # `9999-12-31 23:59:59.999999` and reads it back as infinity, so the single authored
 # `then.tableState` (out_z: infinity) holds on each.
 model: models/balance.yaml
-tags: [m-audit-write, m-sql, write-sequence, insert, audit-only, slice-snapshot-1, slice-managed-1]
+tags: [m-txtime-write, m-sql, write-sequence, insert, audit-only, slice-snapshot-1, slice-managed-1]
 shape: writeSequence
 when:
   writeSequence:

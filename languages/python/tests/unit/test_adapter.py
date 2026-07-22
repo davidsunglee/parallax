@@ -25,14 +25,14 @@ _READ_CASE = case_format.default_cases_dir() / "m-op-algebra-002-eq.yaml"
 _VO_READ_CASE = case_format.default_cases_dir() / "m-value-object-001-nested-eq.yaml"
 _SCALAR_READ_CASE = case_format.default_cases_dir() / "m-core-001-scalar-types-roundtrip.yaml"
 _RUN_ONLY_CASE = (
-    case_format.default_cases_dir() / "m-audit-write-006-optimistic-gated-chaining-update.yaml"
+    case_format.default_cases_dir() / "m-txtime-write-006-optimistic-gated-chaining-update.yaml"
 )
 # A materializing predicate-write scenario (COR-3 Phase 8 increment 5 lands
 # support for it against a real port); against `_FakePort` — a wrong-shaped
 # canned row and a write path that always raises — it still surfaces a loud
 # `run-failed` error, exercising this lane's own error-reporting contract.
 _ENGINE_GAP_CASE = (
-    case_format.default_cases_dir() / "m-audit-write-007-predicate-terminate-materialize.yaml"
+    case_format.default_cases_dir() / "m-txtime-write-007-predicate-terminate-materialize.yaml"
 )
 
 
@@ -284,7 +284,7 @@ def test_run_observations_are_wire_rendered_and_json_serializable() -> None:
 
 
 def test_run_case_error_on_an_engine_gap() -> None:
-    # `_ENGINE_GAP_CASE` (m-audit-write-007) is a materializing predicate-write
+    # `_ENGINE_GAP_CASE` (m-txtime-write-007) is a materializing predicate-write
     # scenario (COR-3 Phase 8 increment 5): its `_FakePort` returns a canned
     # row shaped for a DIFFERENT model and raises `NotImplementedError` on any
     # write, so materialization's own internal resolve/write sequence fails —

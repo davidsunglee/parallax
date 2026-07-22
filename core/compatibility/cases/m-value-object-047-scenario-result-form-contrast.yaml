@@ -1,5 +1,5 @@
 # Scenario-step RESULT-FORM contrast over a value-object-bearing entity
-# (m-value-object + m-audit-write + m-sql "Read result form"): a managed find
+# (m-value-object + m-txtime-write + m-sql "Read result form"): a managed find
 # materializes the owner's `address` document (INSTANCE-FORM, slot 4) while the
 # internal materialized-predicate-write resolving read observes only pk + gate
 # columns (ROW-FORM, slot 4 omitted). Postgres AND MariaDB.
@@ -23,7 +23,7 @@
 #      (out_z = at), GATED on the observed in_z step 1's resolving read returned
 #      (2024-06-01) — an OPTIMISTIC audit-only close binds `and in_z = ?` last, the
 #      same gate-last shape a keyed temporal terminate already carries
-#      (m-audit-write-006, m-opt-lock "the gate binds last"). A processing-only close
+#      (m-txtime-write-006, m-opt-lock "the gate binds last"). A processing-only close
 #      copies no payload, so no document rides a read here; a reassigned document
 #      would ride the write instruction, not the read.
 #   3  find (Nordic Foods, asOf transactionTime = 2024-08-01) : verify — INSTANCE-FORM
@@ -49,7 +49,7 @@
 # both dialects; the row-form reads carry no document to decode. Total roundTrips 4 =
 # managed find (1) + resolve read (1) + close (1) + verify read (1).
 model: models/supplier.yaml
-tags: [m-value-object, m-audit-write, m-opt-lock, m-sql, m-unit-work, temporal, audit-only, json, nested, materialize, predicate-write, scenario, slice-snapshot-1]
+tags: [m-value-object, m-txtime-write, m-opt-lock, m-sql, m-unit-work, temporal, audit-only, json, nested, materialize, predicate-write, scenario, slice-snapshot-1]
 shape: scenario
 compileEligibility:
   mode: run-only

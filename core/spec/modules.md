@@ -120,9 +120,9 @@ is both `active` and `cases`-covered has at least one tagged fixture.
 | `m-identity-map` | Transaction-scoped identity map (managed-object interning) | active | cases |
 | `m-process-cache` | Process-wide identity & query cache | deferred | cases |
 | `m-temporal-read` | As-of temporal reads (all flavors) | active | cases |
-| `m-audit-write` | Transaction-Time-Only temporal writes | active | cases |
+| `m-txtime-write` | Transaction-Time-Only temporal writes | active | cases |
 | `m-bitemp-write` | Bitemporal rectangle-split writes | active | cases |
-| `m-business-only` | Valid-Time-Only temporal formation (deferred; legacy module ID) | deferred | cases |
+| `m-validtime-only` | Valid-Time-Only temporal formation (deferred) | deferred | cases |
 | `m-detach` | Object lifecycle & detach / merge-back | active | cases |
 | `m-opt-lock` | Optimistic locking | active | cases |
 | `m-case-format` | Compatibility case format | active | cases |
@@ -199,11 +199,11 @@ m-temporal-read --> m-op-algebra
 m-temporal-read --> m-metamodel
 m-temporal-read --> m-model-formation
 m-temporal-read --> m-inheritance
-m-audit-write --> m-temporal-read
-m-audit-write --> m-unit-work
-m-bitemp-write --> m-audit-write
-m-business-only --> m-temporal-read
-m-business-only --> m-unit-work
+m-txtime-write --> m-temporal-read
+m-txtime-write --> m-unit-work
+m-bitemp-write --> m-txtime-write
+m-validtime-only --> m-temporal-read
+m-validtime-only --> m-unit-work
 m-detach --> m-unit-work
 m-detach --> m-identity-map
 m-opt-lock --> m-unit-work
@@ -219,7 +219,7 @@ m-coherence --> m-process-cache
 ```
 
 **No active module depends on a deferred module.** Deferral is a leaf property:
-`m-agg`, `m-sql-agg`, `m-business-only`, `m-process-cache`, and `m-coherence` are
+`m-agg`, `m-sql-agg`, `m-validtime-only`, `m-process-cache`, and `m-coherence` are
 only ever depended on by other deferred modules. The DAG checker asserts this
 mechanically.
 

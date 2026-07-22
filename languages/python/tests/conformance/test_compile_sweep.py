@@ -290,12 +290,12 @@ _WRITE_SEQUENCES: Final[frozenset[str]] = (
 # existing port-capture grading, proving the mutate step's own zero round trips
 # left the re-read observing the UNCHANGED original row (no write-back).
 _SNAPSHOT_MUTATE_SCENARIOS: Final[frozenset[str]] = frozenset({"m-snapshot-read-010"})
-# Compile-eligible temporal keyed writes (`m-audit-write` / `m-bitemp-write`): audit-only
+# Compile-eligible temporal keyed writes (`m-txtime-write` / `m-bitemp-write`): audit-only
 # insert/close-and-chain-update/terminate (001-005), the full-bitemporal rectangle
 # split and its plain/bounded-insert degenerates (001-003/006-009), the TPH/TPCS
-# audit and bitemporal composition (090/091/094-097), and the value-object
+# txtime and bitemporal composition (090/091/094-097), and the value-object
 # carry-through witnesses (m-value-object-032/033). The materializing predicate
-# forms (m-audit-write-007/009, m-bitemp-write-010-013), the conflict-shape
+# forms (m-txtime-write-007/009, m-bitemp-write-010-013), the conflict-shape
 # close-only witnesses (run-only, graded by `test_run_sweep.py`), and
 # `m-value-object-047` stays skipped here because each such case is
 # `compileEligibility: run-only`
@@ -307,11 +307,11 @@ _SNAPSHOT_MUTATE_SCENARIOS: Final[frozenset[str]] = frozenset({"m-snapshot-read-
 # `_MATERIALIZING_PREDICATE_WRITE_SCENARIOS_EXERCISED`).
 _TEMPORAL_WRITE_SEQUENCES: Final[frozenset[str]] = frozenset(
     {
-        "m-audit-write-001",
-        "m-audit-write-002",
-        "m-audit-write-003",
-        "m-audit-write-004",
-        "m-audit-write-005",
+        "m-txtime-write-001",
+        "m-txtime-write-002",
+        "m-txtime-write-003",
+        "m-txtime-write-004",
+        "m-txtime-write-005",
         "m-bitemp-write-001",
         "m-bitemp-write-002",
         "m-bitemp-write-003",
@@ -334,7 +334,7 @@ _TEMPORAL_WRITE_SEQUENCES: Final[frozenset[str]] = frozenset(
 # single final-value INSERT, no close/chain — proven byte-exact the SAME way
 # `_WRITE_SCENARIOS` proves the non-temporal coalescing case.
 _TEMPORAL_COALESCING_SCENARIOS: Final[frozenset[str]] = frozenset(
-    {"m-audit-write-008", "m-bitemp-write-014"}
+    {"m-txtime-write-008", "m-bitemp-write-014"}
 )
 WRITE_EXERCISED: Final[frozenset[str]] = (
     _WRITE_SCENARIOS
@@ -402,7 +402,7 @@ def _skip_reason(case: case_format.Case, envelope: dict[str, Any]) -> str:
     if envelope.get("status") == "run-only":
         # Declared `compileEligibility: run-only` covers query-result-dependent
         # reads, pk-gen sequence reservations, and materializing predicate writes:
-        # m-audit-write-007/009, m-bitemp-write-010..-013, m-opt-lock-014/015,
+        # m-txtime-write-007/009, m-bitemp-write-010..-013, m-opt-lock-014/015,
         # m-value-object-047): `run` (never `compile`) is the ONLY lane that ever
         # grades these — the m-conformance-adapter envelope already answers
         # `run-only` without attempting any lowering at all, so this is classified
@@ -628,7 +628,7 @@ def test_displayed_skip_text_stays_honest_for_a_representative_set() -> None:
     # A materializing predicate-write scenario (query-result-dependent,
     # run-only) is classified BEFORE the shape fallback — never the stale
     # generic scheduling promise.
-    materializing_text = _skip_text("m-audit-write-007")
+    materializing_text = _skip_text("m-txtime-write-007")
     assert materializing_text.startswith("declared compile-run-only"), materializing_text
     assert "graded by run instead" in materializing_text, materializing_text
     assert "land with a later write increment" not in materializing_text, materializing_text

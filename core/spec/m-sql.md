@@ -448,9 +448,9 @@ out_z = ?` / `infinity`), so only the open milestone is closed. The harness
 **applies** this DML in order to an empty table and asserts the resulting
 `then.tableState` — including the `out_z = infinity` current row — so the
 chaining contract is proven against real data, not merely asserted. The full
-milestone-write semantics are `m-audit-write`.
+milestone-write semantics are `m-txtime-write`.
 
-**Optimistic-mode close (`m-opt-lock` × `m-audit-write`).** In optimistic mode the
+**Optimistic-mode close (`m-opt-lock` × `m-txtime-write`).** In optimistic mode the
 close `update` gains an `and in_z = ?` gate on the observed `tx_start` — the
 version analogue for a temporal entity (`m-opt-lock`, `m-opt-lock -->
 m-temporal-read`):
@@ -462,7 +462,7 @@ m-temporal-read`):
 The locking-mode close keeps the ungated form above (`… where bal_id = ? and
 out_z = ?`). A close **MUST** affect exactly one row; a zero-row close is a
 conflict (optimistic) or a stale/consistency error (locking), never silent
-(`m-audit-write` / `m-opt-lock`).
+(`m-txtime-write` / `m-opt-lock`).
 
 ### Bitemporal as-of reads (both axes)
 
@@ -477,7 +477,7 @@ Time the inner pin, so binds follow the same order:
 | Valid-Time finite `v`, Transaction-Time Latest | `t0.from_z <= ? and t0.thru_z > ? and t0.out_z = ?` | `[v, v, infinity]` |
 | Valid-Time finite `v`, Transaction-Time finite `t` | `t0.from_z <= ? and t0.thru_z > ? and t0.in_z <= ? and t0.out_z > ?` | `[v, v, t, t]` |
 
-Valid-Time-Only belongs to the separate `m-business-only` contract and adds no
+Valid-Time-Only belongs to the separate `m-validtime-only` contract and adds no
 SQL shape to `m-temporal-read`.
 
 ### Bitemporal write sequences — the rectangle split
@@ -870,7 +870,7 @@ tag is **framework-owned metadata**: an **insert** sets it from the subtype's
 `tagValue` (slotted at its `columnOrder` position, right after the primary key, so
 the value list carries the derived tag exactly as the versioned insert carries the
 derived initial version); an existing-row statement (**update** / **delete**, and the
-temporal closes of `m-audit-write` / `m-bitemp-write`) carries a **tag guard** —
+temporal closes of `m-txtime-write` / `m-bitemp-write`) carries a **tag guard** —
 `and <tag.column> = ?` — so it touches only that subtype's rows in the shared table.
 
 | Mutation | Canonical Postgres DML | Binds |
@@ -927,7 +927,7 @@ non-versioned form (`m-opt-lock`); no tag guard applies.
 ### Inheritance — temporal composition
 
 A temporal inheritance participant composes the milestone-chaining **writes**
-(`m-audit-write` / `m-bitemp-write`) and the as-of **reads** (`m-temporal-read`)
+(`m-txtime-write` / `m-bitemp-write`) and the as-of **reads** (`m-temporal-read`)
 with the strategy's routing and tag guard. The temporal semantics are
 **unchanged** — the close/inactivate keying, the head/middle/tail chaining, and the
 injected as-of predicate are exactly the standalone forms above; only the **table**
@@ -939,15 +939,15 @@ are declared on the family's abstract root and inherited by every concrete subty
 
 Under `table-per-hierarchy` the whole family shares one milestone table. Every
 temporal statement that targets **existing** rows — the Transaction-Time-Only **close**
-(`m-audit-write`) and the bitemporal **inactivation** (`m-bitemp-write`) — carries
+(`m-txtime-write`) and the bitemporal **inactivation** (`m-bitemp-write`) — carries
 the **tag guard** among the identity predicates, immediately **after** the
 primary-key equality and **before** the current-on-Transaction-Time predicate; every
-chained **insert** (the audit chain, or the bitemporal `head` / `middle` / `tail`)
+chained **insert** (the Transaction-Time-Only chain, or the bitemporal `head` / `middle` / `tail`)
 sets the tag column from the subtype's `tagValue` in its `columnOrder` position,
 exactly as a non-temporal concrete-subtype insert does (above). There is no temporal
 exception to the resolved-Q9 bind order: the tag guard rides with the identity
 predicates; any gate the temporal write already carries (the optimistic
-`tx_start` / physical `in_z` gate, `m-audit-write` / `m-bitemp-write`) still binds
+`tx_start` / physical `in_z` gate, `m-txtime-write` / `m-bitemp-write`) still binds
 **last**.
 
 | Statement | Canonical Postgres DML | Binds |
@@ -958,19 +958,19 @@ predicates; any gate the temporal write already carries (the optimistic
 | **bitemporal head / middle / tail insert** | `insert into instrument(id, kind, price, from_z, thru_z, in_z, out_z, coupon) values (?, …, ?)` | `[<pk>, <tagValue>, …row…, <from_z>, <thru_z>, <txInstant>, infinity, …own…]` |
 
 The close / inactivation is keyed by the **current-on-Transaction-Time** predicate
-(`out_z = ?` / `infinity`) exactly as its standalone form (the audit / bitemporal
+(`out_z = ?` / `infinity`) exactly as its standalone form (the Transaction-Time-Only / bitemporal
 write sequences above); the tag guard is inserted **between** the primary key and
 that predicate — `… where id = ? and kind = ? and out_z = ?` — so it touches only
 the subtype's own milestones in the shared table. The chained inserts write the full
 physical row (a milestone always writes the whole row) with the tag column slotted
-after the primary key. The corpus witnesses are `m-inheritance-090` (audit terminate),
+after the primary key. The corpus witnesses are `m-inheritance-090` (txtime terminate),
 `-094` (bitemporal terminate), `-096` (bitemporal `terminateUntil`).
 
 #### Table-per-concrete-subtype temporal writes — own-table routing
 
 Under `table-per-concrete-subtype` each concrete subtype owns its milestone table and
 carries no tag, so a temporal write is the ordinary standalone milestone-chaining
-sequence (`m-audit-write` / `m-bitemp-write`) targeting **that subtype's own table** —
+sequence (`m-txtime-write` / `m-bitemp-write`) targeting **that subtype's own table** —
 no tag guard, no shared table. The close / inactivation is `update <concrete> set
 out_z = ? where <pk> = ? and out_z = ?`; every chained insert writes `<concrete>`.
 The witnesses are `m-inheritance-091` / `-095` / `-097`.

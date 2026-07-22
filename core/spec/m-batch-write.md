@@ -9,7 +9,7 @@
 
 It owns only the set-based/readless vocabulary for the second family. Versioning,
 locking, conflict abort, and temporal chaining belong respectively to `m-opt-lock`,
-`m-read-lock`, `m-audit-write`, and `m-bitemp-write`. The canonical golden SQL is
+`m-read-lock`, `m-txtime-write`, and `m-bitemp-write`. The canonical golden SQL is
 fixed by `m-sql`.
 
 ## Set-based flush
@@ -54,7 +54,7 @@ A **versioned** entity has no readless predicate-write template — a per-row
 observed version cannot ride one statement — so predicate update and delete
 materialize to keyed writes (`m-opt-lock`). Transaction-Time temporal predicate
 writes likewise materialize so each observed milestone can close/chain
-(`m-audit-write` / `m-bitemp-write`). Those are not buffered-batch collapse rules.
+(`m-txtime-write` / `m-bitemp-write`). Those are not buffered-batch collapse rules.
 
 ## Predicate-selected readless forms
 
@@ -87,7 +87,7 @@ never an error.** Ordinary SQL set semantics already make `update … where
 predicate-selected write that matches nothing simply wrote nothing, the same way
 a materializing verb's resolving read matching zero rows emits zero keyed writes
 and succeeds (`m-opt-lock`). This is categorically distinct from the zero-row
-**conflict** error a *gated* per-row write raises (`m-opt-lock` / `m-audit-write`):
+**conflict** error a *gated* per-row write raises (`m-opt-lock` / `m-txtime-write`):
 that error fires when a row the caller **did** match and observe was concurrently
 changed underneath it — matching nothing is never that.
 

@@ -350,7 +350,7 @@ def _two_terminate_rows() -> list[Row]:
 def test_materializing_terminate_where_over_an_audit_only_target() -> None:
     # LOCKING mode (the default): every resolved row gets its own close, in
     # the resolving read's own resolved-row order, and every close stays
-    # UNGATED (`m-audit-write` "a LOCKING-mode close stays ungated" —
+    # UNGATED (`m-txtime-write` "a LOCKING-mode close stays ungated" —
     # `~parallax.core.opt_lock.gates` only ever binds the observed-`in_z`
     # candidate under optimistic concurrency).
     port = RecordingPort(rows=_two_terminate_rows())
@@ -372,9 +372,9 @@ def test_materializing_terminate_where_over_an_audit_only_target() -> None:
 
 def test_materializing_terminate_where_audit_only_gates_under_optimistic_concurrency() -> None:
     # OPTIMISTIC mode: an audit-only close GATES on the observed `in_z`,
-    # binding LAST (`m-audit-write.md:65`, `m-opt-lock.md:87-99`) — every
+    # binding LAST (`m-txtime-write.md:65`, `m-opt-lock.md:87-99`) — every
     # resolved row's own close carries THAT row's own observed `in_z`, in
-    # resolved-row order, mirroring the corpus's `m-audit-write-006` gated-
+    # resolved-row order, mirroring the corpus's `m-txtime-write-006` gated-
     # close shape (`m-value-object-047`'s own re-gated step 2).
     port = RecordingPort(rows=_two_terminate_rows())
 
@@ -394,7 +394,7 @@ def test_materializing_terminate_where_audit_only_gates_under_optimistic_concurr
 
 
 def test_materializing_update_where_audit_only_chains_the_new_value() -> None:
-    # `audit_write.plan` chains the instruction's OWN authored FULL row —
+    # `txtime_write.plan` chains the instruction's OWN authored FULL row —
     # never a separate observed payload — so materialization must merge the
     # resolved row's own unassigned scalar payload (acct_num) forward itself.
     port = RecordingPort(
@@ -719,7 +719,7 @@ def test_materializing_terminate_until_where_bitemporal_carries_the_document_on_
 
 
 def test_materializing_terminate_where_audit_only_stays_document_free() -> None:
-    # An AUDIT-ONLY terminate is close-only (`audit_write.plan` — no chained
+    # An AUDIT-ONLY terminate is close-only (`txtime_write.plan` — no chained
     # row, `materialize_row`'s own `assignment_bearing` set excludes it), so
     # the resolving read stays document-free even on a VALUE-OBJECT-bearing
     # target — unlike its BITEMPORAL counterpart, above

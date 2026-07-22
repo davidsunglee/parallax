@@ -47,7 +47,7 @@
           "items": { "$ref": "#/$defs/attribute" }
         },
         "asOfAxes": {
-          "description": "The supported temporal shapes are one transactionTime axis or validTime followed by transactionTime. A lone validTime axis belongs to the separately catalogued m-business-only formation and is not accepted by this active descriptor contract.",
+          "description": "The supported temporal shapes are one transactionTime axis or validTime followed by transactionTime. A lone validTime axis belongs to the separately catalogued m-validtime-only formation and is not accepted by this active descriptor contract.",
           "type": "array",
           "minItems": 1,
           "maxItems": 2,

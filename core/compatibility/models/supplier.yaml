@@ -15,7 +15,7 @@
 # current row (out_z = the transaction instant) and, for an update, chain a new
 # current row carrying the NEW address document. The document is copied/updated
 # across the chain exactly like any scalar column; there is no value-object-specific
-# temporal machinery (m-value-object "Inherited temporality", m-audit-write).
+# temporal machinery (m-value-object "Inherited temporality", m-txtime-write).
 #
 # `address` is the ONE m-core `json` column the whole embedded composite is stored
 # in (never column-flattened); geo/phones and every inner attribute live inside it,
