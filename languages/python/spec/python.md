@@ -274,27 +274,393 @@ mutations, exceptions, or exports.
   scanning an axis the entity does not declare, temporal clauses on
   non-temporal entities, and conflicting double pins.
 
+### Declaration and descriptor-input grammar
+
+A model enters the runtime through exactly two fixed sources: Python Entity
+Classes composed into a `MetamodelHub(*classes)`, or a canonical descriptor
+through the hub's descriptor factories. Sources are never mixed. Entity
+Classes are implicitly frozen Pydantic classes built by the Parallax
+metaclass; `frozen=True`, `EntityConfig`, `__parallax__`, `Field`,
+`Relationship`, `VoField`, and every registry surface are removed, not
+deprecated. The grammar below is exhaustive: an authoring form not listed
+here does not exist. The API Conformance Suite closes the frontend loop by
+authoring idiomatic classes for corpus models and asserting their exported
+descriptors equal the corpus YAML (the no-drift guard).
+
+#### Class headers
+
+| Keyword | Value | Applies to | Meaning |
+|---|---|---|---|
+| `table=` | `str` | standalone entities, TPH roots, TPCS concrete subtypes | the physical `Table(name)` Storage Container; forbidden on TPH descendants and TPCS roots/abstract subtypes (seal-time family rules) |
+| `namespace=` | `str` | any Entity | the Entity Identity namespace; omitted means unnamespaced |
+| `persistence=` | `ReadOnly` | standalone entities and family roots | the exceptional read-only mapping; omission means Read Write; any descendant declaration is a seal-time issue |
+| `inheritance=` | role value (below) | every family participant | the participant's inheritance role |
+| `indices=` | tuple of `index(...)` values | any Entity | the local physical indices |
+
+Temporality is selected by the base class — `Entity`, `TxTemporal`, or
+`Bitemporal` — never by a keyword. `TxTemporal` supplies the reserved
+read-only `tx_start`/`tx_end`
+attributes (physical `in_z`/`out_z`); `Bitemporal` additionally supplies
+`valid_start`/`valid_end` (`from_z`/`thru_z`). A descendant inherits its
+root's temporal base and cannot change shape; a member redeclaring a reserved
+temporal name is the seal-time `metamodel-temporal-member-reserved` issue. An
+unknown header keyword or ill-typed value fails at class creation
+(`EntityDefinitionError`, below).
+
+The `inheritance=` value mirrors the core `Inheritance` algebra with the
+parent supplied by Python subclassing:
+
+| Role value | Family position | Carries |
+|---|---|---|
+| `AbstractRoot(TablePerHierarchy(tag_column="..."))` | TPH family root | the strategy and shared-table tag column; the root declares `table=` |
+| `AbstractRoot(TablePerConcreteSubtype)` | TPCS family root | the strategy; no `table=` |
+| `AbstractSubtype` (bare) | abstract interior node | nothing |
+| `ConcreteSubtype(tag_value="...")` | TPH concrete subtype | its tag value; no `table=` |
+| `ConcreteSubtype` (bare) | TPCS concrete subtype | nothing; declares its own `table=` |
+
+The variant is the role, so strategy on a descendant, a tag value on a root,
+or a tag under TPCS is unspellable. Family-semantic violations that remain
+spellable (a TPH descendant declaring `table=`, a descendant `persistence=`,
+zero or multiple roots, missing or duplicate tag values) are seal-time
+`inheritance-*` issues, identical to the descriptor frontend's.
+
+`index(name, *members, unique=False)` declares one local index: a nonempty
+ordered sequence of this Entity's members by Python member name, with the
+component order preserved. The factory rejects an empty member list at call
+time; an unknown, duplicate, or non-local member name is the seal-time
+`metamodel-index-*` issue family.
+
+#### Attributes — `Attr[T]` and `attr(...)`
+
+`Attr[T]` is the sole scalar and Value Object member annotation; the
+assignment slot optionally holds one `attr(...)` value and nothing else — a
+bare value (`qty: Attr[int] = 5`) fails at class creation. The complete
+`attr(...)` option set:
+
+| Option | Value | Meaning |
+|---|---|---|
+| `primary_key=` | `False` (default), `True`, `Max`, or `Sequence(name=..., batch_size=..., initial_value=..., increment_size=...)` | the `NotPrimaryKey \| PrimaryKey(generation)` sum: `True` means `ApplicationAssigned`; a generation value implies primary key, so a generation without a key is unspellable |
+| `column=` | `str` | physical Storage Location override; omission normalizes to `Column(<canonical name>)` |
+| `name=` | `str` | canonical-name override (below) |
+| `max_length=` | `int` | bounded string length |
+| `type=` | `Int32` or `Float32` | narrows the two-variant annotation families; `Attr[int]` alone is `Int64` and `Attr[float]` alone is `Float64`, and a narrowing value under any other annotation is a context error |
+| `precision=`, `scale=` | `int` | the required `Decimal(precision, scale)` parameters — mandatory together on a `decimal.Decimal` member, forbidden on every other type |
+| `read_only=` | `bool` | framework-computed member |
+| `optimistic_locking=` | `bool` | names the version column |
+| `default=` | any value, including `None` | the Attribute Default (below) |
+
+**Nullability is annotation-only.** `Attr[int | None]` (equivalently
+`Optional[int]`) declares `nullable=True`; `Attr[int]` declares
+`nullable=False`. No `attr(nullable=)` option exists: instance reads type as
+the annotation, so a separate option could only echo or contradict it. The
+Python type inside `Attr[...]` maps to the Neutral Type per the scalar table
+below; a `decimal.Decimal` member requires `attr(precision=..., scale=...)`
+because the core `Decimal` variant has no default parameters, a Value Object
+class reference declares an embedded composite, and `tuple[VO, ...]` declares
+a Many occurrence.
+
+**Defaults distinguish absence from null by presence, exactly like the
+canonical descriptor.** An omitted `default=` parameter is `NoDefault`;
+`attr(default=None)` is `DefaultValue(null)` — legal for every declared type
+and distinct from `NoDefault`; any other value is `DefaultValue(value)` in
+the declared type's value space. The not-passed sentinel is private and never
+exported.
+
+```python
+class Product(Entity, table="product"):
+    id: Attr[int] = attr(primary_key=True)
+    status: Attr[str] = attr(default="draft")      # DefaultValue("draft")
+    discount: Attr[Decimal | None] = attr(         # DefaultValue(null)
+        precision=5, scale=2, default=None,
+    )
+    note: Attr[str | None]                         # NoDefault (omitted)
+```
+
+**Canonical naming.** Python members are snake_case; canonical member names
+are camelCase. The deterministic snake→camel conversion (drop each
+underscore, capitalize the following character) applies at the authoring
+boundary, with a class-creation collision check. `attr(name="...")` and
+`rel(name="...")` override the canonical name for irregular cases — legacy
+vocabularies and acronym spellings the conversion cannot produce:
+
+```python
+class LegacyPart(Entity, table="legacy_part"):
+    id: Attr[int] = attr(primary_key=True)
+    tax_id: Attr[str] = attr(name="taxID")     # canonical name: taxID
+    bin_no: Attr[str] = attr(column="BIN_NO")  # canonical binNo, legacy column
+```
+
+`name=` is who the member is in the model (its Attribute Identity and
+descriptor spelling); `column=` is where it is stored. Ingested descriptors
+keep canonical names; the ambiguous camel→snake direction is never needed
+because classes are not generated. Reserved class-level names (`where`,
+other query-root classmethods, the `model_*` Pydantic space) may not be
+member names; collisions fail at class creation.
+
+#### Relationships — `Rel[T]` and `rel(...)`
+
+`Rel[T]` is the sole relationship annotation and `rel(...)` is required. The
+annotation carries multiplicity and loaded-null optionality; `rel(...)` has
+exactly two mutually exclusive forms:
+
+```text
+rel(cardinality=..., join=(source_member, target_member),
+    dependent=False, order_by=(...), name=...)
+rel(reverse_of=target_relationship_name, order_by=(...), name=...)
+```
+
+- The defining form owns cardinality (`OneToOne | ManyToOne | OneToMany`),
+  the join (source member of the declaring class, target-local member name),
+  dependency, and its direction's ordering. The reverse form names only the
+  target's defining relationship and optional ordering. Mixing the forms
+  fails at the `rel(...)` call itself.
+- `Rel[Target]` names the target: a class object or qualified string
+  (`Rel["crm.Customer"]`) is Exact; a bare string (`Rel["Customer"]`) is
+  Relative to the declaring class's namespace. Resolution is confined to the
+  hub candidate set — never module globals or `eval`.
+- **Multiplicity by annotation.** `Rel[T]` and `Rel[T | None]` are to-one;
+  `Rel[tuple[T, ...]]` is to-many. A to-many is never `| None`: loaded-empty
+  is `()`.
+- **Optional to-one agreement.** `Rel[T | None]` is required exactly where a
+  loaded-null answer is possible — a defining to-one whose join source
+  attribute is nullable, and every reverse to-one — and is forbidden
+  elsewhere. The rule is checked during `seal()`'s Python realization phase
+  from the accepted model; every mismatch is reported together, in canonical
+  order, as `EntityDefinitionError(code=
+  "entity-relationship-annotation-mismatch")`, and the hub is rejected. The
+  annotation never absorbs the *unloaded* state, which always raises
+  (`UnloadedRelationshipError`); `None` means exactly "loaded, and there is
+  none".
+- **Ordering.** `order_by=` is a tuple of target-local member names: a bare
+  string means ascending; `desc("name")` marks descending, with an `asc()`
+  twin for symmetry. Ordering is legal only on a to-many direction; an
+  unknown member is the seal-time `relationship-order-attribute-invalid`
+  issue, and an empty or omitted tuple means no ordering.
+
+```python
+class Customer(Entity, table="customer"):
+    id: Attr[int] = attr(primary_key=True)
+    orders: Rel[tuple["Order", ...]] = rel(
+        reverse_of="customer", order_by=("placed_at", desc("id")),
+    )
+
+
+class Order(Entity, table="orders"):
+    id: Attr[int] = attr(primary_key=True)
+    placed_at: Attr[datetime]
+
+    customer_id: Attr[int]                      # 1..1: non-nullable FK
+    customer: Rel[Customer] = rel(
+        cardinality=ManyToOne, join=("customer_id", "id"),
+    )
+
+    coupon_id: Attr[int | None]                 # 0..1: nullable FK
+    coupon: Rel["Coupon | None"] = rel(
+        cardinality=ManyToOne, join=("coupon_id", "id"),
+    )
+```
+
+At runtime on a Snapshot node the three relationship states stay distinct:
+an included 1..1 read is the instance (never `None`, no narrowing); an
+included 0..1 read is the instance or `None` (loaded-null); an unincluded
+relationship raises `UnloadedRelationshipError` regardless of spelling, and
+`is_loaded(node, "coupon")` is `True` for a loaded-null answer. A reverse
+to-one is always `Rel[T | None]` — nothing in the model guarantees a
+counterpart row:
+
+```python
+class Account(Entity, table="account"):
+    id: Attr[int] = attr(primary_key=True)
+    profile_id: Attr[int]
+    profile: Rel["Profile"] = rel(              # defining 1..1
+        cardinality=OneToOne, join=("profile_id", "id"),
+    )
+
+
+class Profile(Entity, table="profile"):
+    id: Attr[int] = attr(primary_key=True)
+    account: Rel[Account | None] = rel(reverse_of="profile")
+```
+
+#### Value Objects
+
+A Value Object class extends `ValueObject`, is inherently frozen, and uses
+the same `Attr[T]` / `attr(...)` vocabulary. A single-use shape may be
+declared lexically inside its owner; a reusable shape is a standalone class
+referenced by each occurrence's annotation. Neither form is a hub candidate
+or requires registration — occurrences are reached only through Entity
+declarations. `Attr[Address]` is a One occurrence, `Attr[Address | None]` is
+One-nullable, `Attr[tuple[Address, ...]]` is Many (never nullable; a
+`| None` Many surfaces at seal as `value-object-many-nullable`). On Value
+Object scalar members, `attr(...)` admits only `name=`; Entity-only options
+(storage, keys, generation, locking, defaults) fail at class creation. An
+Entity-level occurrence member additionally admits `column=`, the occurrence's
+Structured Column override. Containment cycles and empty composites are the
+seal-time `value-object-*` issues shared with the descriptor frontend.
+
+#### Class creation versus seal
+
+Class creation (and the `attr`/`rel`/`index` factory calls themselves) rejects
+only what prevents a coherent Python class or Unresolved declaration; every
+model-semantic rule — cross-member, cross-class, family, index, ordering, and
+reference resolution — fails at `seal()` through the same `MetamodelIssue`
+codes the descriptor frontend produces, so the two frontends report
+equivalent outcomes. The Python realization phase after formation adds only
+Python-fact checks: the Entity Class claim and the relationship-annotation
+agreement rule. The closed `EntityDefinitionError` code set is:
+
+| Code | Rejected at | Meaning |
+|---|---|---|
+| `entity-header-unknown-option` | class creation | unknown class-header keyword |
+| `entity-header-invalid-value` | class creation | ill-typed or malformed header value, including malformed `inheritance=` and `indices=` values |
+| `entity-annotation-invalid` | class creation | malformed `Attr`/`Rel` annotation: a bare un-aliased annotation, an unsupported inner type, or an optionality/multiplicity shape outside this grammar |
+| `entity-member-value-invalid` | class creation | the assignment slot holds a bare value, an `attr(...)` under `Rel[...]`, or a `rel(...)` under `Attr[...]` |
+| `entity-option-context-invalid` | factory call / class creation | an option illegal in context: mixed defining/reverse `rel(...)` forms, Entity-only options on a Value Object member, an empty `index(...)` member list |
+| `entity-reserved-member-name` | class creation | a reserved query-root, `model_*`, or framework-temporal member name |
+| `entity-canonical-name-collision` | class creation | two members converting to one canonical name |
+| `entity-relationship-annotation-mismatch` | seal (realization) | a `Rel` optionality annotation disagreeing with the accepted model; all mismatches reported together in canonical order |
+
+#### Canonical descriptor input
+
+Descriptor-backed hubs come from three classmethod factories that mirror the
+three export methods; there is no format sniffing (JSON is a YAML subset, so
+sniffing is unsound) and no path I/O — reading files is the caller's:
+
+| Factory | Input | Syntax phase |
+|---|---|---|
+| `MetamodelHub.from_descriptor(document)` | an already-decoded mapping | none — schema validation is its first gate; it never raises `DescriptorSyntaxError` |
+| `MetamodelHub.from_json(text)` | `str \| bytes` (UTF-8) JSON | yes — parse failure is `DescriptorSyntaxError` with `format="json"`, line/column, and cause |
+| `MetamodelHub.from_yaml(text)` | `str \| bytes` (UTF-8) YAML | yes — as above with `format="yaml"` |
+
+All three yield the same `UNSEALED` fixed-source hub on success. The phase
+boundaries are exact: syntax failures raise
+`DescriptorSyntaxError(descriptor-invalid-syntax)` before a hub exists;
+canonical-schema violations raise
+`DescriptorSchemaError(descriptor-schema-invalid)` before a hub exists; every
+semantic model rule fails later, inside `seal()`, as
+`MetamodelValidationError`. A document uses the schema's two top-level forms:
+`entity:` for one Entity or `entities:` for several. The same model flows
+through any door:
+
+```yaml
+entities:
+  - name: Author
+    namespace: bookshop
+    table: author
+    attributes:
+      - name: id
+        type: int64
+        primaryKey: true
+      - name: name
+        type: string
+        maxLength: 200
+    relationships:
+      - name: books
+        reverseOf: Book.author
+  - name: Book
+    namespace: bookshop
+    table: book
+    attributes:
+      - name: id
+        type: int64
+        primaryKey: true
+      - name: title
+        type: string
+      - name: authorId
+        type: int64
+    relationships:
+      - name: author
+        cardinality: many-to-one
+        join:
+          source: authorId
+          target: { entity: Author, attribute: id }
+    indices:
+      - name: book_author_id
+        attributes: [authorId]
+        unique: false
+```
+
+```python
+models = MetamodelHub.from_yaml(yaml_text)        # or from_json(json_text)
+models = MetamodelHub.from_descriptor(document)   # e.g. json.loads(json_text)
+models.seal()
+```
+
+The equivalent class declaration — the two frontends converge on the same
+accepted Metamodel and canonical export:
+
+```python
+class Author(Entity, table="author", namespace="bookshop"):
+    id: Attr[int] = attr(primary_key=True)
+    name: Attr[str] = attr(max_length=200)
+    books: Rel[tuple["Book", ...]] = rel(reverse_of="author")
+
+
+class Book(
+    Entity,
+    table="book",
+    namespace="bookshop",
+    indices=(index("book_author_id", "author_id"),),
+):
+    id: Attr[int] = attr(primary_key=True)
+    title: Attr[str]
+    author_id: Attr[int]
+    author: Rel[Author] = rel(
+        cardinality=ManyToOne, join=("author_id", "id"),
+    )
+```
+
+#### Inheritance families, worked
+
+Table-per-hierarchy — the root owns the shared table and tag column;
+concretes carry only their tag values:
+
+```python
+class Payment(
+    Entity,
+    table="payment",
+    inheritance=AbstractRoot(TablePerHierarchy(tag_column="kind")),
+):
+    id: Attr[int] = attr(primary_key=True)
+    amount: Attr[Decimal] = attr(precision=18, scale=2)
+
+
+class CardPayment(Payment, inheritance=ConcreteSubtype(tag_value="card")):
+    card_last4: Attr[str]
+
+
+class DigitalPayment(Payment, inheritance=AbstractSubtype):
+    provider: Attr[str]
+
+
+class WalletPayment(
+    DigitalPayment, inheritance=ConcreteSubtype(tag_value="wallet"),
+):
+    wallet_ref: Attr[str]
+```
+
+Table-per-concrete-subtype — the root and abstract nodes are tableless;
+every concrete declares its own table and no tag exists:
+
+```python
+class Vehicle(
+    Entity,
+    inheritance=AbstractRoot(TablePerConcreteSubtype),
+):
+    id: Attr[int] = attr(primary_key=True)
+    vin: Attr[str]
+
+
+class Car(Vehicle, table="car", inheritance=ConcreteSubtype):
+    doors: Attr[int]
+
+
+class Truck(Vehicle, table="truck", inheritance=ConcreteSubtype):
+    payload_kg: Attr[int]
+```
+
 ### Metadata and model input
 
-- **Primary model-authoring format.** SQLModel-style decorated Pydantic
-  classes. Developers define frozen entity classes extending the Parallax base
-  with field/relationship metadata; the class frontend builds the in-memory
-  **metamodel**, which is the single hub: it round-trips through canonical
-  JSON and YAML serde, exports canonical descriptors, and is equally
-  constructible by **direct ingestion** of canonical YAML (the conformance
-  adapter's path — corpus cases never require Python classes). The API
-  Conformance Suite closes the loop by authoring idiomatic classes for corpus
-  models and asserting their exported descriptors are structurally equal to
-  the corpus YAML (the no-drift guard).
-  Naming: Python fields are snake_case; canonical identifiers are camelCase.
-  A deterministic snake→camel conversion applies on export (drop underscore,
-  capitalize the following character), with a class-definition-time collision
-  check and an explicit `Field(name="...")` override for irregular cases.
-  Ingested descriptors keep canonical names in the metamodel; the ambiguous
-  camel→snake direction is never needed because classes are not generated.
-  Reserved class-level names (`where`, other query-root classmethods, the
-  `model_*` Pydantic space) may not be field names; collisions are rejected at
-  class definition.
 - **Runtime introspection API.** `models.meta(Order)` (or by canonical Entity
   Identity) returns the immutable, local `EntityMetadata` contract from
   `m-metamodel`: declared storage, persistence, attributes, defining/reverse
@@ -348,10 +714,10 @@ mutations, exceptions, or exports.
   descriptor schema.
 
   ```python
-  class Order(Entity, frozen=True):
-      order_id: Attr[int] = Field(primary_key=True)
+  class Order(Entity, table="orders"):
+      order_id: Attr[int] = attr(primary_key=True)
       qty: Attr[int]
-      items: Rel[tuple["OrderItem", ...]] = Relationship()
+      items: Rel[tuple["OrderItem", ...]] = rel(reverse_of="order")
   ```
 
   Rationale: single source of truth in user code, no generated-file lifecycle,
@@ -1187,7 +1553,7 @@ hatchling.
 
 | Artifact/package | Production or development-only | Included source scopes | External runtime dependencies | Depends on artifacts | Public exports/entry points |
 |---|---|---|---|---|---|
-| `parallax-core` (the common runtime) | production | all `parallax.core.*` scopes of §7 (behavioral modules, entity/statement frontend, driver-free postgres dialect strategy) | `pydantic`, `pyyaml` | (none) | `parallax.core`: entity base, `Field`, `Relationship`, `Attr`, `Rel`, statement API, `LATEST`, `VALID_TIME`, `TX_TIME`, `Pin`, `Edge`, `pin_of`, `edge_of`, `is_loaded`, `narrowed`, errors |
+| `parallax-core` (the common runtime) | production | all `parallax.core.*` scopes of §7 (behavioral modules, entity/statement frontend, driver-free postgres dialect strategy) | `pydantic`, `pyyaml` | (none) | `parallax.core`: the `Entity`/`TxTemporal`/`Bitemporal`/`ValueObject` bases, `Attr`, `Rel`, `attr`, `rel`, `index`, `desc`, `asc`, the inheritance role and strategy values, `MetamodelHub`, statement API, `LATEST`, `VALID_TIME`, `TX_TIME`, `Pin`, `Edge`, `pin_of`, `edge_of`, `is_loaded`, `narrowed`, errors |
 | `parallax-snapshot` (snapshot lifecycle extension) | production | `parallax.snapshot.*` (`materialize`, `handle`) | (none beyond core) | `parallax-core` | `parallax.snapshot`: `connect()`, `Snapshot[T]`, `Execution` |
 | `parallax-postgres` (Postgres database adapter) | production | `parallax.postgres.*` (concrete port over psycopg) | `psycopg[binary]` (sole declarer) | `parallax-core` | `parallax.postgres`: `PostgresAdapter` |
 | `parallax-conformance` | development-only | `parallax.conformance.*` (CLI, case format, corpus loading, provider harness) | `testcontainers`, `jsonschema` | `parallax-core`, `parallax-snapshot`, `parallax-postgres` | `parallax-conformance` console script (`describe` / `compile` / `run`) |

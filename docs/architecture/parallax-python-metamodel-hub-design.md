@@ -227,9 +227,14 @@ only through Entity declarations and is not passed to the hub separately.
   errors expose the zero-based offending argument index. Distinct class
   objects that declare the same Entity Identity are valid constructor inputs
   and become an aggregated whole-model issue during `seal()`.
-- Canonical descriptor input uses `MetamodelHub.from_descriptor(document)` as
-  a separate fixed-source factory. Descriptor ingestion has three explicit
-  phases. Invalid JSON/YAML text raises
+- Canonical descriptor input uses three separate fixed-source classmethod
+  factories mirroring the three export methods:
+  `MetamodelHub.from_descriptor(document)` for an already-decoded mapping
+  (no syntax phase — schema validation is its first gate), and
+  `MetamodelHub.from_json(text)` / `MetamodelHub.from_yaml(text)` for
+  `str | bytes` UTF-8 text. There is no format sniffing — JSON is a YAML
+  subset, so sniffing is unsound — and no path I/O; reading files is the
+  caller's. Descriptor ingestion has three explicit phases. Invalid JSON/YAML text raises
   `DescriptorSyntaxError(code="descriptor-invalid-syntax")` before a hub
   exists, carrying its format, optional one-based line/column, and parser
   cause. A decoded document that violates the canonical schema raises
@@ -710,9 +715,11 @@ only through Entity declarations and is not passed to the hub separately.
   There is no registration, discovery, global side table, or public
   string-keyed facet map.
 - Python-specific realization checks run as a separate atomic claim phase
-  after the language-neutral profile succeeds. Under one binding
-  synchronization point, that phase checks the complete class set before
-  installing any claim. If one or more classes already belong to another
+  after the language-neutral profile succeeds. The relationship-annotation
+  agreement rule (Python spec §2) runs first in that phase and reports every
+  mismatch together; only an agreement-clean class set proceeds to claiming.
+  Under one binding synchronization point, that phase checks the complete
+  class set before installing any claim. If one or more classes already belong to another
   sealed hub, it raises
   `MetamodelStateError(code="metamodel-class-already-bound")` with the
   immutable conflicting Entity Identity sequence in canonical order. The
@@ -741,7 +748,13 @@ only through Entity declarations and is not passed to the hub separately.
 
 ### Public error model
 
-- `EntityDefinitionError(TypeError)` covers invalid Entity Class construction.
+- `EntityDefinitionError(TypeError)` covers invalid Entity Class construction
+  and declaration-grammar violations; its closed stable code set is normative
+  in the Python spec's declaration grammar (§2). One code is seal-phase
+  rather than class-creation: `entity-relationship-annotation-mismatch`, the
+  realization check that a `Rel` optionality annotation agrees with the
+  accepted model, reported with every mismatch in canonical order before any
+  class claim and rejecting the hub like any failed seal.
 - `MetamodelDefinitionError(TypeError)` covers an invalid class-backed hub
   constructor call before any hub exists. Its stable codes are
   `metamodel-empty`, `metamodel-invalid-entity-class`, and
@@ -1931,9 +1944,11 @@ Top-level `parallax.core` exposes the ordinary developer surface:
 
 ```text
 Entity, TxTemporal, Bitemporal, ValueObject
-Attr, Rel, attr, rel
+Attr, Rel, attr, rel, index, desc, asc
 ReadOnly, ReadWrite
 AbstractRoot, AbstractSubtype, ConcreteSubtype
+TablePerHierarchy, TablePerConcreteSubtype
+Int32, Float32, Max, Sequence
 MetamodelHub
 FindQuery, Predicate
 EntityIdentity, EntityMetadata, MetamodelIssue
@@ -2042,12 +2057,14 @@ the compiled facet protocols its behavioral consumers read are normative in
 `m-inheritance` ("The Inheritance Facet"), `m-temporal-read` ("The Temporal
 Facet"), and `m-opt-lock` ("The Optimistic Lock Facet") — inheritance-aware
 member applicability is the Inheritance Facet's `applicable_*` contract.
-Before their respective tickets start, the following remain explicit blockers:
-COR-47 needs the exhaustive declaration and descriptor-input grammar; COR-50
-needs the recursive Value Object input algebra, Node Handle lifetime/factory
-order, and exact-hub Snapshot inspection keys; COR-51 needs the normative
-row-codec and closed edit-error contracts plus its temporary-symbol deletion
-ledger. None is silently assigned to COR-45 or COR-40.
+COR-47's exhaustive declaration and descriptor-input grammar is now normative
+in the Python spec (§2 "Declaration and descriptor-input grammar"). Before
+their respective tickets start, the following remain explicit blockers:
+COR-50 needs the recursive Value Object input algebra, Node Handle
+lifetime/factory order, and exact-hub Snapshot inspection keys; COR-51 needs
+the normative row-codec and closed edit-error contracts plus its
+temporary-symbol deletion ledger. None is silently assigned to COR-45 or
+COR-40.
 
 ### COR-45 — Normalize the core Metamodel Interface and canonical descriptor
 
