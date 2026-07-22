@@ -18,21 +18,15 @@ entity:
   name: Subscriber
   namespace: parallax.compatibility
   table: subscriber
-  persistence: read-write
   attributes:
     - name: id
       type: int64
-      column: id
       primaryKey: true
-      pkGeneration: application-assigned
     - name: version
       type: int32
-      column: version
       optimisticLocking: true
   valueObjects:
     - name: address
-      column: address
-      multiplicity: one
       nullable: true
       attributes:
         - name: street
@@ -41,7 +35,6 @@ entity:
           type: string
       valueObjects:
         - name: geo
-          multiplicity: one
           nullable: true
           attributes:
             - name: country

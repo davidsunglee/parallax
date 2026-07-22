@@ -18,24 +18,18 @@ entity:
   name: WritableScalar
   namespace: parallax.compatibility
   table: writable_scalars
-  persistence: read-write
   attributes:
     - name: id
       type: int64
-      column: id
       primaryKey: true
-      pkGeneration: application-assigned
     - name: f32
       type: float32
-      column: f32
       nullable: true
     - name: f64
       type: float64
-      column: f64
       nullable: true
     - name: payload
       type: bytes
-      column: payload
       nullable: true
     - name: localTime
       type: time
@@ -47,11 +41,9 @@ entity:
       nullable: true
     - name: amount
       type: decimal(18,4)
-      column: amount
       nullable: true
     - name: label
       type: string
-      column: label
       maxLength: 8
       nullable: true
   indices:

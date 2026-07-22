@@ -15,8 +15,8 @@
 #     Memo            (concrete-subtype)         — its own `memo` table; adds body;
 #                                                  SIBLING branch directly under Document
 #                                                  — proves an abstract-subtype read of
-#                                                  FinancialDocument covers ONLY {Invoice,
-#                                                  Receipt}, never Memo, and that narrowing
+#                                                  FinancialDocument covers ONLY { Invoice,
+#                                                  Receipt }, never Memo, and that narrowing
 #                                                  Document to FinancialDocument cannot
 #                                                  broaden back to Memo.
 #
@@ -34,27 +34,23 @@
 # relationship `Folder.documents -> Document` targets the abstract root, so navigating
 # it under table-per-concrete-subtype lowers to a grouped `OR` of one correlated
 # `EXISTS` per concrete table, in alphabetical order (m-navigate / m-sql):
-#   Folder.documents -> Document (abstract ROOT)   — reaches any {Invoice, Memo, Receipt}
+#   Folder.documents -> Document (abstract ROOT)   — reaches any { Invoice, Memo, Receipt }
 # A narrow in the filter's `op` restricts that to a subset (e.g. FinancialDocument ->
-# {Invoice, Receipt}), dropping the Memo `EXISTS` branch.
+# { Invoice, Receipt }), dropping the Memo `EXISTS` branch.
 #
 # Row data lives in the sibling fixtures/document.yaml, keyed per concrete subtype.
 entities:
   - name: Document
     namespace: parallax.compatibility
-    persistence: read-write
     inheritance:
       role: root
       strategy: table-per-concrete-subtype
     attributes:
       - name: id
         type: int64
-        column: id
         primaryKey: true
-        pkGeneration: application-assigned
       - name: title
         type: string
-        column: title
         maxLength: 64
       # The polymorphic owner FK, inherited by every concrete subtype (Phase 6): a
       # nullable back-pointer to Folder. Because it is declared on the abstract ROOT,
@@ -84,7 +80,6 @@ entities:
       # superset, not this column's nullability on the FinancialDocument branch.
       - name: currency
         type: string
-        column: currency
         maxLength: 3
   - name: Invoice
     namespace: parallax.compatibility
@@ -115,7 +110,6 @@ entities:
     attributes:
       - name: body
         type: string
-        column: body
         maxLength: 64
   # The polymorphic OWNER (Phase 6): a plain non-inheritance entity whose relationship
   # targets the abstract root Document, so navigation crosses a table-per-concrete-
@@ -123,20 +117,16 @@ entities:
   - name: Folder
     namespace: parallax.compatibility
     table: folder
-    persistence: read-write
     attributes:
       - name: id
         type: int64
-        column: id
         primaryKey: true
-        pkGeneration: application-assigned
       - name: name
         type: string
-        column: name
         maxLength: 32
     relationships:
-      # Targets the abstract ROOT Document: reaches any concrete {Invoice, Memo,
-      # Receipt}. A narrow in a navigation filter's `op` may restrict it to a subset.
+      # Targets the abstract ROOT Document: reaches any concrete { Invoice, Memo,
+      # Receipt }. A narrow in a navigation filter's `op` may restrict it to a subset.
       - name: documents
         cardinality: one-to-many
         join:

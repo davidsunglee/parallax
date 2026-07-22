@@ -29,16 +29,13 @@ entity:
   name: Supplier
   namespace: parallax.compatibility
   table: supplier
-  persistence: read-write
   attributes:
     - name: id
       type: int64
       column: sup_id
       primaryKey: true
-      pkGeneration: application-assigned
     - name: name
       type: string
-      column: name
       maxLength: 64
     - name: tx_start
       type: timestamp
@@ -52,8 +49,6 @@ entity:
       endAttribute: tx_end
   valueObjects:
     - name: address
-      column: address
-      multiplicity: one
       nullable: true
       attributes:
         - name: street
@@ -64,7 +59,6 @@ entity:
           nullable: true
       valueObjects:
         - name: geo
-          multiplicity: one
           nullable: true
           attributes:
             - name: country
@@ -85,4 +79,3 @@ entity:
       unique: true
     - name: supplier_name
       attributes: [name]
-      unique: false

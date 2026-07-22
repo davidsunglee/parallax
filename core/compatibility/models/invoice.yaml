@@ -8,10 +8,9 @@ entities:
   - name: Invoice
     namespace: parallax.compatibility
     table: invoice
-    persistence: read-write
     attributes:
-      - { name: id, type: int64, column: id, primaryKey: true, pkGeneration: application-assigned }
-      - { name: name, type: string, column: name, maxLength: 64 }
+      - { name: id, type: int64, primaryKey: true }
+      - { name: name, type: string, maxLength: 64 }
       - { name: tx_start, type: timestamp, column: in_z }
       - { name: tx_end, type: timestamp, column: out_z }
     asOfAxes:
@@ -28,15 +27,14 @@ entities:
   - name: InvoiceLine
     namespace: parallax.compatibility
     table: invoice_line
-    persistence: read-write
     attributes:
-      - { name: id, type: int64, column: id, primaryKey: true, pkGeneration: application-assigned }
+      - { name: id, type: int64, primaryKey: true }
       - { name: invoiceId, type: int64, column: invoice_id }
-      - { name: amount, type: "decimal(18,2)", column: amount }
+      - { name: amount, type: "decimal(18,2)" }
       - { name: tx_start, type: timestamp, column: in_z }
       - { name: tx_end, type: timestamp, column: out_z }
     asOfAxes:
       - { dimension: transactionTime, startAttribute: tx_start, endAttribute: tx_end }
     indices:
       - { name: invoice_line_pk, attributes: [id, tx_start], unique: true }
-      - { name: invoice_line_invoice, attributes: [invoiceId], unique: false }
+      - { name: invoice_line_invoice, attributes: [invoiceId] }

@@ -49,21 +49,15 @@ entities:
   - name: Customer
     namespace: parallax.compatibility
     table: customer
-    persistence: read-write
     attributes:
       - name: id
         type: int64
-        column: id
         primaryKey: true
-        pkGeneration: application-assigned
       - name: name
         type: string
-        column: name
         maxLength: 64
     valueObjects:
       - name: address
-        column: address
-        multiplicity: one
         nullable: true
         attributes:
           - name: street
@@ -72,7 +66,6 @@ entities:
             type: string
         valueObjects:
           - name: geo
-            multiplicity: one
             nullable: true
             attributes:
               - name: country
@@ -82,7 +75,6 @@ entities:
                 nullable: true
             valueObjects:
               - name: point
-                multiplicity: one
                 nullable: true
                 attributes:
                   - name: lat
@@ -108,7 +100,7 @@ entities:
           target: { entity: Location, attribute: customerId }
         dependent: true
         orderBy:
-          - { attribute: id, direction: asc }
+          - { attribute: id }
       # depots: a SECOND VO-bearing child, reached via a distinct one-to-many. Its
       # `Depot.address` value object reuses the SAME column name `address` but a
       # DIFFERENT declared STRUCTURE (a FLAT { line, postcode }) than Customer's /
@@ -125,7 +117,7 @@ entities:
           target: { entity: Depot, attribute: customerId }
         dependent: true
         orderBy:
-          - { attribute: id, direction: asc }
+          - { attribute: id }
     indices:
       - name: customer_pk
         attributes: [id]
@@ -141,24 +133,18 @@ entities:
   - name: Location
     namespace: parallax.compatibility
     table: location
-    persistence: read-write
     attributes:
       - name: id
         type: int64
-        column: id
         primaryKey: true
-        pkGeneration: application-assigned
       - name: customerId
         type: int64
         column: customer_id
       - name: label
         type: string
-        column: label
         maxLength: 64
     valueObjects:
       - name: address
-        column: address
-        multiplicity: one
         nullable: true
         attributes:
           - name: street
@@ -167,7 +153,6 @@ entities:
             type: string
         valueObjects:
           - name: geo
-            multiplicity: one
             nullable: true
             attributes:
               - name: country
@@ -177,7 +162,6 @@ entities:
                 nullable: true
             valueObjects:
               - name: point
-                multiplicity: one
                 nullable: true
                 attributes:
                   - name: lat
@@ -204,39 +188,21 @@ entities:
         unique: true
       - name: location_customer_id
         attributes: [customerId]
-        unique: false
-  # Depot: a SECOND VO-bearing CHILD of Customer (the many side of the to-many
-  # `Customer.depots`). Unlike Location — whose `address` is Customer's recursive
-  # composite VERBATIM — Depot declares a DIFFERENT `address` structure: a FLAT
-  # composite `{ line, postcode }` in the SAME `address` column. This descriptor
-  # DIVERGENCE is deliberate: it makes the deferred-load and first-access witnesses
-  # over `depots` regression-sensitive. Decoding a Depot row with Customer's
-  # recursive `address` descriptor drops `line`/`postcode` and injects
-  # `street`/`city`/`geo`/`phones`, so materializing a Depot list with the WRONG
-  # (root Customer) descriptor is OBSERVABLE — the failure Location cannot surface.
-  # Its own instance-form projection is `id, customer_id, label, address` (scalars in
-  # columnOrder, then the single structured-document column last).
   - name: Depot
     namespace: parallax.compatibility
     table: depot
-    persistence: read-write
     attributes:
       - name: id
         type: int64
-        column: id
         primaryKey: true
-        pkGeneration: application-assigned
       - name: customerId
         type: int64
         column: customer_id
       - name: label
         type: string
-        column: label
         maxLength: 64
     valueObjects:
       - name: address
-        column: address
-        multiplicity: one
         nullable: true
         attributes:
           - name: line
@@ -254,4 +220,3 @@ entities:
         unique: true
       - name: depot_customer_id
         attributes: [customerId]
-        unique: false

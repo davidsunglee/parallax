@@ -8,18 +8,13 @@ entity:
   attributes:
     - name: id
       type: int64
-      column: id
       primaryKey: true
-      pkGeneration: application-assigned
     - name: f32
       type: float32
-      column: f32
     - name: f64
       type: float64
-      column: f64
     - name: payload
       type: bytes
-      column: payload
     - name: localTime
       type: time
       column: local_time

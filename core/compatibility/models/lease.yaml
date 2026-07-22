@@ -7,10 +7,9 @@ entities:
   - name: Tenant
     namespace: parallax.compatibility
     table: tenant
-    persistence: read-write
     attributes:
-      - { name: id, type: int64, column: id, primaryKey: true, pkGeneration: application-assigned }
-      - { name: name, type: string, column: name, maxLength: 64 }
+      - { name: id, type: int64, primaryKey: true }
+      - { name: name, type: string, maxLength: 64 }
     relationships:
       - name: leases
         cardinality: one-to-many
@@ -22,11 +21,10 @@ entities:
   - name: Lease
     namespace: parallax.compatibility
     table: lease
-    persistence: read-write
     attributes:
-      - { name: id, type: int64, column: id, primaryKey: true, pkGeneration: application-assigned }
+      - { name: id, type: int64, primaryKey: true }
       - { name: tenantId, type: int64, column: tenant_id }
-      - { name: term, type: string, column: term, maxLength: 16 }
+      - { name: term, type: string, maxLength: 16 }
       - { name: tx_start, type: timestamp, column: in_z }
       - { name: tx_end, type: timestamp, column: out_z }
     asOfAxes:
@@ -40,15 +38,14 @@ entities:
         dependent: true
     indices:
       - { name: lease_pk, attributes: [id, tx_start], unique: true }
-      - { name: lease_tenant, attributes: [tenantId], unique: false }
+      - { name: lease_tenant, attributes: [tenantId] }
   - name: LeaseNote
     namespace: parallax.compatibility
     table: lease_note
-    persistence: read-write
     attributes:
-      - { name: id, type: int64, column: id, primaryKey: true, pkGeneration: application-assigned }
+      - { name: id, type: int64, primaryKey: true }
       - { name: leaseId, type: int64, column: lease_id }
       - { name: text, type: string, column: note_text, maxLength: 64 }
     indices:
       - { name: lease_note_pk, attributes: [id], unique: true }
-      - { name: lease_note_lease, attributes: [leaseId], unique: false }
+      - { name: lease_note_lease, attributes: [leaseId] }

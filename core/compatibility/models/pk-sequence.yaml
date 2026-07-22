@@ -15,61 +15,52 @@ entities:
   - name: PkSequence
     namespace: parallax.compatibility
     table: pk_sequence
-    persistence: read-write
     attributes:
-      - { name: name, type: string, column: name, primaryKey: true, maxLength: 64, pkGeneration: application-assigned }
+      - { name: name, type: string, primaryKey: true, maxLength: 64 }
       - { name: nextVal, type: int64, column: next_val }
     indices:
       - { name: pk_sequence_pk, attributes: [name], unique: true }
   - name: Badge
     namespace: parallax.compatibility
     table: badge
-    persistence: read-write
     attributes:
       - name: id
         type: int64
-        column: id
         primaryKey: true
-        pkGeneration: { strategy: sequence, name: badge_seq, initialValue: 1, incrementSize: 1, batchSize: 1 }
-      - { name: holder, type: string, column: holder, maxLength: 64 }
+        pkGeneration: { strategy: sequence, name: badge_seq }
+      - { name: holder, type: string, maxLength: 64 }
     indices:
       - { name: badge_pk, attributes: [id], unique: true }
   - name: Ticket
     namespace: parallax.compatibility
     table: ticket
-    persistence: read-write
     attributes:
       - name: id
         type: int64
-        column: id
         primaryKey: true
-        pkGeneration: { strategy: sequence, name: ticket_seq, initialValue: 1000, incrementSize: 5, batchSize: 1 }
-      - { name: tier, type: string, column: tier, maxLength: 64 }
+        pkGeneration: { strategy: sequence, name: ticket_seq, initialValue: 1000, incrementSize: 5 }
+      - { name: tier, type: string, maxLength: 64 }
     indices:
       - { name: ticket_pk, attributes: [id], unique: true }
   - name: Pass
     namespace: parallax.compatibility
     table: pass
-    persistence: read-write
     attributes:
       - name: id
         type: int64
-        column: id
         primaryKey: true
-        pkGeneration: { strategy: sequence, name: pass_seq, initialValue: 1, incrementSize: 1, batchSize: 3 }
-      - { name: zone, type: string, column: zone, maxLength: 64 }
+        pkGeneration: { strategy: sequence, name: pass_seq, batchSize: 3 }
+      - { name: zone, type: string, maxLength: 64 }
     indices:
       - { name: pass_pk, attributes: [id], unique: true }
   - name: Voucher
     namespace: parallax.compatibility
     table: voucher
-    persistence: read-write
     attributes:
       - name: id
         type: int64
-        column: id
         primaryKey: true
         pkGeneration: { strategy: sequence, name: voucher_seq, initialValue: 100, incrementSize: 10, batchSize: 2 }
-      - { name: label, type: string, column: label, maxLength: 64 }
+      - { name: label, type: string, maxLength: 64 }
     indices:
       - { name: voucher_pk, attributes: [id], unique: true }

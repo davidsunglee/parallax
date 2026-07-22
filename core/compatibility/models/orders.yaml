@@ -27,36 +27,23 @@ entities:
   - name: Order
     namespace: parallax.compatibility
     table: orders
-    persistence: read-write
     attributes:
       - name: id
         type: int64
-        column: id
         primaryKey: true
-        pkGeneration: application-assigned
       - name: name
         type: string
-        column: name
         maxLength: 255
       - name: sku
         type: string
-        column: sku
         maxLength: 32
         nullable: true
       - name: qty
         type: int32
-        column: qty
       - name: price
         type: decimal(18,2)
-        column: price
       - name: active
         type: boolean
-        column: active
-      # Phase 4 adds a date column so aggregate min/max has a `date`-typed
-      # attribute to range over (alongside numeric `price` and string `name`).
-      # It is appended after the existing columns and every fixture row supplies
-      # a value, so the Phase 1-3 cases (which project only id/name) are
-      # unaffected.
       - name: orderedOn
         type: date
         column: ordered_on
@@ -82,41 +69,35 @@ entities:
           target: { entity: OrderTag, attribute: orderId }
         orderBy:
           - { attribute: priority, direction: desc }
-          - { attribute: label, direction: asc }
+          - { attribute: label }
       - name: itemsByShipDate
         cardinality: one-to-many
         join:
           source: id
           target: { entity: OrderItem, attribute: orderId }
         orderBy:
-          - { attribute: shippedOn, direction: asc }
+          - { attribute: shippedOn }
     indices:
       - name: orders_pk
         attributes: [id]
         unique: true
       - name: orders_sku
         attributes: [sku]
-        unique: false
   - name: OrderItem
     namespace: parallax.compatibility
     table: order_item
-    persistence: read-write
     attributes:
       - name: id
         type: int64
-        column: id
         primaryKey: true
-        pkGeneration: application-assigned
       - name: orderId
         type: int64
         column: order_id
       - name: sku
         type: string
-        column: sku
         maxLength: 32
       - name: quantity
         type: int32
-        column: quantity
       - name: shippedOn
         type: date
         column: shipped_on
@@ -131,24 +112,20 @@ entities:
           target: { entity: OrderStatus, attribute: orderItemId }
         dependent: true
         orderBy:
-          - { attribute: code, direction: asc }
+          - { attribute: code }
     indices:
       - name: order_item_pk
         attributes: [id]
         unique: true
       - name: order_item_order_id
         attributes: [orderId]
-        unique: false
   - name: OrderStatus
     namespace: parallax.compatibility
     table: order_status
-    persistence: read-write
     attributes:
       - name: id
         type: int64
-        column: id
         primaryKey: true
-        pkGeneration: application-assigned
       - name: orderId
         type: int64
         column: order_id
@@ -158,7 +135,6 @@ entities:
         nullable: true
       - name: code
         type: string
-        column: code
         maxLength: 16
     relationships:
       - name: order
@@ -171,27 +147,21 @@ entities:
         unique: true
       - name: order_status_order_id
         attributes: [orderId]
-        unique: false
   - name: OrderTag
     namespace: parallax.compatibility
     table: order_tag
-    persistence: read-write
     attributes:
       - name: id
         type: int64
-        column: id
         primaryKey: true
-        pkGeneration: application-assigned
       - name: orderId
         type: int64
         column: order_id
       - name: label
         type: string
-        column: label
         maxLength: 32
       - name: priority
         type: int32
-        column: priority
     relationships:
       - name: order
         reverseOf: Order.tags
@@ -201,4 +171,3 @@ entities:
         unique: true
       - name: order_tag_order_id
         attributes: [orderId]
-        unique: false

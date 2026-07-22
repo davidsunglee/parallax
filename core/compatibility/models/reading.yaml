@@ -27,7 +27,6 @@ entities:
   - name: Reading
     namespace: parallax.compatibility
     table: reading
-    persistence: read-write
     inheritance:
       role: root
       strategy: table-per-hierarchy
@@ -36,12 +35,9 @@ entities:
     attributes:
       - name: id
         type: int64
-        column: id
         primaryKey: true
-        pkGeneration: application-assigned
       - name: celsius
         type: decimal(18,2)
-        column: celsius
       - name: tx_start
         type: timestamp
         column: in_z

@@ -15,24 +15,18 @@ entity:
   name: Wallet
   namespace: parallax.compatibility
   table: wallet
-  persistence: read-write
   attributes:
     - name: id
       type: int64
-      column: id
       primaryKey: true
-      pkGeneration: application-assigned
     - name: owner
       type: string
-      column: owner
       maxLength: 64
     - name: balance
       type: decimal(18,2)
-      column: balance
   indices:
     - name: wallet_pk
       attributes: [id]
       unique: true
     - name: wallet_owner
       attributes: [owner]
-      unique: false

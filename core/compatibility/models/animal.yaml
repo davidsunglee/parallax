@@ -26,8 +26,8 @@
 # `owner_id` foreign key (declared on the abstract ROOT `Animal`, so every concrete
 # subtype inherits it). Two relationships prove targeting both polymorphic
 # positions:
-#   Person.animals -> Animal (abstract ROOT)     — reaches any concrete {Dog,Cat,WildBoar}
-#   Person.pets    -> Pet    (abstract SUBTYPE)   — reaches only {Dog,Cat}
+#   Person.animals -> Animal (abstract ROOT)     — reaches any concrete { Dog,Cat,WildBoar }
+#   Person.pets    -> Pet    (abstract SUBTYPE)   — reaches only { Dog,Cat }
 # A narrowed include/navigation over either derives a distinct narrowed view keyed
 # `pets[Dog,Cat]` etc. (m-navigate / m-deep-fetch).
 #
@@ -36,7 +36,6 @@ entities:
   - name: Animal
     namespace: parallax.compatibility
     table: animal
-    persistence: read-write
     inheritance:
       role: root
       strategy: table-per-hierarchy
@@ -45,12 +44,9 @@ entities:
     attributes:
       - name: id
         type: int64
-        column: id
         primaryKey: true
-        pkGeneration: application-assigned
       - name: name
         type: string
-        column: name
         maxLength: 32
       # The polymorphic owner FK, inherited by every concrete subtype (Phase 6): a
       # nullable back-pointer to Person on the shared `animal` table. It is part of
@@ -91,7 +87,6 @@ entities:
     attributes:
       - name: indoor
         type: boolean
-        column: indoor
         nullable: true
   - name: WildBoar
     namespace: parallax.compatibility
@@ -110,16 +105,12 @@ entities:
   - name: Person
     namespace: parallax.compatibility
     table: person
-    persistence: read-write
     attributes:
       - name: id
         type: int64
-        column: id
         primaryKey: true
-        pkGeneration: application-assigned
       - name: name
         type: string
-        column: name
         maxLength: 32
     relationships:
       # Targets the abstract ROOT: reaches any concrete subtype in the family.
@@ -128,7 +119,7 @@ entities:
         join:
           source: id
           target: { entity: Animal, attribute: ownerId }
-      # Targets the abstract SUBTYPE Pet: reaches only {Dog, Cat}, never the sibling
+      # Targets the abstract SUBTYPE Pet: reaches only { Dog, Cat }, never the sibling
       # WildBoar — so the shared-table EXISTS / deep-fetch hop carries a tag `in`
       # predicate over Pet's concretes.
       - name: pets

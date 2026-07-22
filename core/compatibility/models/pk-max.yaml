@@ -8,16 +8,13 @@ entity:
   name: Attendee
   namespace: parallax.compatibility
   table: attendee
-  persistence: read-write
   attributes:
     - name: id
       type: int64
-      column: id
       primaryKey: true
       pkGeneration: max
     - name: name
       type: string
-      column: name
       maxLength: 64
   indices:
     - name: attendee_pk

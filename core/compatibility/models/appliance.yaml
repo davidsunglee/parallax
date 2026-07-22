@@ -25,23 +25,18 @@
 entities:
   - name: Appliance
     namespace: parallax.compatibility
-    persistence: read-write
     inheritance:
       role: root
       strategy: table-per-concrete-subtype
     attributes:
       - name: id
         type: int64
-        column: id
         primaryKey: true
-        pkGeneration: application-assigned
       - name: name
         type: string
-        column: name
         maxLength: 32
       - name: version
         type: int32
-        column: version
         optimisticLocking: true
   - name: Fridge
     namespace: parallax.compatibility
@@ -63,5 +58,4 @@ entities:
     attributes:
       - name: wattage
         type: int32
-        column: wattage
         nullable: true

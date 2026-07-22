@@ -25,7 +25,6 @@ entities:
   - name: Vehicle
     namespace: parallax.compatibility
     table: vehicle
-    persistence: read-write
     inheritance:
       role: root
       strategy: table-per-hierarchy
@@ -34,16 +33,12 @@ entities:
     attributes:
       - name: id
         type: int64
-        column: id
         primaryKey: true
-        pkGeneration: application-assigned
       - name: name
         type: string
-        column: name
         maxLength: 32
       - name: version
         type: int32
-        column: version
         optimisticLocking: true
   - name: Car
     namespace: parallax.compatibility
@@ -54,7 +49,6 @@ entities:
     attributes:
       - name: doors
         type: int32
-        column: doors
         nullable: true
   - name: Truck
     namespace: parallax.compatibility
@@ -65,5 +59,4 @@ entities:
     attributes:
       - name: axles
         type: int32
-        column: axles
         nullable: true

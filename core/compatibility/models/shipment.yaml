@@ -17,22 +17,15 @@ entity:
   name: Shipment
   namespace: parallax.compatibility
   table: shipment
-  persistence: read-write
   attributes:
     - name: id
       type: int64
-      column: id
       primaryKey: true
-      pkGeneration: application-assigned
     - name: name
       type: string
-      column: name
       maxLength: 64
   valueObjects:
     - name: destination
-      column: destination
-      multiplicity: one
-      nullable: false
       attributes:
         - name: street
           type: string

@@ -1,6 +1,6 @@
 # Error-cases model (m-db-error error-code classification). Three plain non-temporal
 # entities, each set up so a related case can provoke one error class:
-#   - Widget: id PK with `pkGeneration: application-assigned` — the duplicate-PK INSERT path.
+#   - Widget: an application-assigned id PK — the duplicate-PK INSERT path.
 #   - Tag:    id PK plus a `tag_name_uq` UNIQUE index on `name` — a non-PK unique
 #             collision (exercises DDL UNIQUE-constraint emission).
 #   - Gauge:  id PK and an int `v` — two rows for two connections to contend over
@@ -11,28 +11,25 @@ entities:
   - name: Widget
     namespace: parallax.compatibility
     table: widget
-    persistence: read-write
     attributes:
-      - { name: id, type: int64, column: id, primaryKey: true, pkGeneration: application-assigned }
-      - { name: label, type: string, column: label, maxLength: 64 }
+      - { name: id, type: int64, primaryKey: true }
+      - { name: label, type: string, maxLength: 64 }
     indices:
       - { name: widget_pk, attributes: [id], unique: true }
   - name: Tag
     namespace: parallax.compatibility
     table: tag
-    persistence: read-write
     attributes:
-      - { name: id, type: int64, column: id, primaryKey: true, pkGeneration: application-assigned }
-      - { name: name, type: string, column: name, maxLength: 64 }
+      - { name: id, type: int64, primaryKey: true }
+      - { name: name, type: string, maxLength: 64 }
     indices:
       - { name: tag_pk, attributes: [id], unique: true }
       - { name: tag_name_uq, attributes: [name], unique: true }
   - name: Gauge
     namespace: parallax.compatibility
     table: gauge
-    persistence: read-write
     attributes:
-      - { name: id, type: int64, column: id, primaryKey: true, pkGeneration: application-assigned }
-      - { name: v, type: int32, column: v }
+      - { name: id, type: int64, primaryKey: true }
+      - { name: v, type: int32 }
     indices:
       - { name: gauge_pk, attributes: [id], unique: true }

@@ -11,13 +11,11 @@ entity:
   name: Ledger
   namespace: parallax.compatibility
   table: ledger
-  persistence: read-write
   attributes:
     - name: id
       type: int64
       column: led_id
       primaryKey: true
-      pkGeneration: application-assigned
     - name: acctNum
       type: string
       column: acct_num
@@ -41,4 +39,3 @@ entity:
       unique: true
     - name: ledger_acct
       attributes: [acctNum]
-      unique: false

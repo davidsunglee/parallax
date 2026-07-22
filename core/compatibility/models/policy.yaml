@@ -13,10 +13,9 @@ entities:
   - name: Policy
     namespace: parallax.compatibility
     table: policy
-    persistence: read-write
     attributes:
-      - { name: id, type: int64, column: id, primaryKey: true, pkGeneration: application-assigned }
-      - { name: name, type: string, column: name, maxLength: 64 }
+      - { name: id, type: int64, primaryKey: true }
+      - { name: name, type: string, maxLength: 64 }
       - { name: valid_start, type: timestamp, column: from_z }
       - { name: valid_end, type: timestamp, column: thru_z }
       - { name: tx_start, type: timestamp, column: in_z }
@@ -36,11 +35,10 @@ entities:
   - name: Coverage
     namespace: parallax.compatibility
     table: coverage
-    persistence: read-write
     attributes:
-      - { name: id, type: int64, column: id, primaryKey: true, pkGeneration: application-assigned }
+      - { name: id, type: int64, primaryKey: true }
       - { name: policyId, type: int64, column: policy_id }
-      - { name: amount, type: "decimal(18,2)", column: amount }
+      - { name: amount, type: "decimal(18,2)" }
       - { name: valid_start, type: timestamp, column: from_z }
       - { name: valid_end, type: timestamp, column: thru_z }
       - { name: tx_start, type: timestamp, column: in_z }
@@ -59,15 +57,14 @@ entities:
         reverseOf: Policy.coverages
     indices:
       - { name: coverage_pk, attributes: [id, valid_start, tx_start], unique: true }
-      - { name: coverage_policy, attributes: [policyId], unique: false }
+      - { name: coverage_policy, attributes: [policyId] }
   - name: Claim
     namespace: parallax.compatibility
     table: claim
-    persistence: read-write
     attributes:
-      - { name: id, type: int64, column: id, primaryKey: true, pkGeneration: application-assigned }
+      - { name: id, type: int64, primaryKey: true }
       - { name: coverageId, type: int64, column: coverage_id }
-      - { name: reserve, type: "decimal(18,2)", column: reserve }
+      - { name: reserve, type: "decimal(18,2)" }
       - { name: valid_start, type: timestamp, column: from_z }
       - { name: valid_end, type: timestamp, column: thru_z }
       - { name: tx_start, type: timestamp, column: in_z }
@@ -77,4 +74,4 @@ entities:
       - { dimension: transactionTime, startAttribute: tx_start, endAttribute: tx_end }
     indices:
       - { name: claim_pk, attributes: [id, valid_start, tx_start], unique: true }
-      - { name: claim_coverage, attributes: [coverageId], unique: false }
+      - { name: claim_coverage, attributes: [coverageId] }

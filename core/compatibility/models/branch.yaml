@@ -36,16 +36,13 @@ entity:
   name: Branch
   namespace: parallax.compatibility
   table: branch
-  persistence: read-write
   attributes:
     - name: id
       type: int64
       column: br_id
       primaryKey: true
-      pkGeneration: application-assigned
     - name: name
       type: string
-      column: name
       maxLength: 64
     - name: valid_start
       type: timestamp
@@ -68,8 +65,6 @@ entity:
       endAttribute: tx_end
   valueObjects:
     - name: address
-      column: address
-      multiplicity: one
       nullable: true
       attributes:
         - name: street
@@ -80,7 +75,6 @@ entity:
           nullable: true
       valueObjects:
         - name: geo
-          multiplicity: one
           nullable: true
           attributes:
             - name: country
@@ -101,4 +95,3 @@ entity:
       unique: true
     - name: branch_name
       attributes: [name]
-      unique: false

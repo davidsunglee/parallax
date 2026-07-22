@@ -33,19 +33,15 @@
 entities:
   - name: Rate
     namespace: parallax.compatibility
-    persistence: read-write
     inheritance:
       role: root
       strategy: table-per-concrete-subtype
     attributes:
       - name: id
         type: int64
-        column: id
         primaryKey: true
-        pkGeneration: application-assigned
       - name: amount
         type: decimal(18,2)
-        column: amount
       - name: valid_start
         type: timestamp
         column: from_z
@@ -78,7 +74,6 @@ entities:
     attributes:
       - name: grade
         type: string
-        column: grade
         maxLength: 8
         nullable: true
   - name: LoanRate
@@ -90,5 +85,4 @@ entities:
     attributes:
       - name: spread
         type: decimal(18,2)
-        column: spread
         nullable: true

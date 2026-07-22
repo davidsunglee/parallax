@@ -26,7 +26,6 @@ entities:
   - name: Payment
     namespace: parallax.compatibility
     table: payment
-    persistence: read-write
     inheritance:
       role: root
       strategy: table-per-hierarchy
@@ -35,12 +34,9 @@ entities:
     attributes:
       - name: id
         type: int64
-        column: id
         primaryKey: true
-        pkGeneration: application-assigned
       - name: amount
         type: decimal(18,2)
-        column: amount
   - name: CardPayment
     namespace: parallax.compatibility
     inheritance:
@@ -62,5 +58,4 @@ entities:
     attributes:
       - name: tendered
         type: decimal(18,2)
-        column: tendered
         nullable: true

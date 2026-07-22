@@ -23,21 +23,15 @@ entity:
   name: Contact
   namespace: parallax.compatibility
   table: contact
-  persistence: read-write
   attributes:
     - name: id
       type: int64
-      column: id
       primaryKey: true
-      pkGeneration: application-assigned
     - name: name
       type: string
-      column: name
       maxLength: 64
   valueObjects:
     - name: address
-      column: address
-      multiplicity: one
       nullable: true
       attributes:
         - name: street
@@ -46,13 +40,11 @@ entity:
           type: string
       valueObjects:
         - name: geo
-          multiplicity: one
           attributes:
             - name: country
               type: string
           valueObjects:
             - name: point
-              multiplicity: one
               attributes:
                 - name: lat
                   type: float64

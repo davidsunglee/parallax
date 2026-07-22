@@ -14,19 +14,15 @@ entity:
   name: Grade
   namespace: parallax.compatibility
   table: grade
-  persistence: read-write
   attributes:
     - name: id
       type: int64
-      column: id
       primaryKey: true
-      pkGeneration: application-assigned
     - name: ordinal
       type: int32
       column: order
     - name: label
       type: string
-      column: label
       maxLength: 32
   indices:
     - name: grade_pk

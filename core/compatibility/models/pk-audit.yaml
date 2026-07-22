@@ -19,25 +19,21 @@ entities:
   - name: AuditSeq
     namespace: parallax.compatibility
     table: audit_seq
-    persistence: read-write
     attributes:
-      - { name: name, type: string, column: name, primaryKey: true, maxLength: 64, pkGeneration: application-assigned }
+      - { name: name, type: string, primaryKey: true, maxLength: 64 }
       - { name: nextVal, type: int64, column: next_val }
     indices:
       - { name: audit_seq_pk, attributes: [name], unique: true }
   - name: AuditEntry
     namespace: parallax.compatibility
     table: audit_entry
-    persistence: read-write
     attributes:
       - name: id
         type: int64
-        column: id
         primaryKey: true
-        pkGeneration: { strategy: sequence, name: entry_seq, initialValue: 1, incrementSize: 1, batchSize: 1 }
+        pkGeneration: { strategy: sequence, name: entry_seq }
       - name: note
         type: string
-        column: note
         maxLength: 64
       - name: tx_start
         type: timestamp

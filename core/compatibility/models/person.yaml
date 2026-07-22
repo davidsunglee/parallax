@@ -16,16 +16,12 @@ entities:
   - name: Person
     namespace: parallax.compatibility
     table: person
-    persistence: read-write
     attributes:
       - name: id
         type: int64
-        column: id
         primaryKey: true
-        pkGeneration: application-assigned
       - name: name
         type: string
-        column: name
         maxLength: 64
     relationships:
       - name: passport
@@ -47,19 +43,15 @@ entities:
   - name: Passport
     namespace: parallax.compatibility
     table: passport
-    persistence: read-write
     attributes:
       - name: id
         type: int64
-        column: id
         primaryKey: true
-        pkGeneration: application-assigned
       - name: personId
         type: int64
         column: person_id
       - name: number
         type: string
-        column: number
         maxLength: 32
     relationships:
       - name: holder

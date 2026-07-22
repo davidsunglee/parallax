@@ -31,7 +31,6 @@ entities:
   - name: Instrument
     namespace: parallax.compatibility
     table: instrument
-    persistence: read-write
     inheritance:
       role: root
       strategy: table-per-hierarchy
@@ -40,12 +39,9 @@ entities:
     attributes:
       - name: id
         type: int64
-        column: id
         primaryKey: true
-        pkGeneration: application-assigned
       - name: price
         type: decimal(18,2)
-        column: price
       - name: valid_start
         type: timestamp
         column: from_z
@@ -78,7 +74,6 @@ entities:
     attributes:
       - name: coupon
         type: decimal(18,2)
-        column: coupon
         nullable: true
   - name: Stock
     namespace: parallax.compatibility
@@ -89,6 +84,5 @@ entities:
     attributes:
       - name: ticker
         type: string
-        column: ticker
         maxLength: 8
         nullable: true

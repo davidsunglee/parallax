@@ -21,23 +21,17 @@ entity:
   name: Account
   namespace: parallax.compatibility
   table: account
-  persistence: read-write
   attributes:
     - name: id
       type: int64
-      column: id
       primaryKey: true
-      pkGeneration: application-assigned
     - name: owner
       type: string
-      column: owner
       maxLength: 64
     - name: balance
       type: decimal(18,2)
-      column: balance
     - name: version
       type: int32
-      column: version
       optimisticLocking: true
   indices:
     - name: account_pk
@@ -45,4 +39,3 @@ entity:
       unique: true
     - name: account_owner
       attributes: [owner]
-      unique: false

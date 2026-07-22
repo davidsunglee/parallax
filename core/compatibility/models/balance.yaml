@@ -23,13 +23,11 @@ entity:
   name: Balance
   namespace: parallax.compatibility
   table: balance
-  persistence: read-write
   attributes:
     - name: id
       type: int64
       column: bal_id
       primaryKey: true
-      pkGeneration: application-assigned
     - name: acctNum
       type: string
       column: acct_num
@@ -53,4 +51,3 @@ entity:
       unique: true
     - name: balance_acct
       attributes: [acctNum]
-      unique: false

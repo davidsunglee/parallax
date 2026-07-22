@@ -32,13 +32,11 @@ entity:
   name: Position
   namespace: parallax.compatibility
   table: position
-  persistence: read-write
   attributes:
     - name: id
       type: int64
       column: pos_id
       primaryKey: true
-      pkGeneration: application-assigned
     - name: acctNum
       type: string
       column: acct_num
@@ -71,4 +69,3 @@ entity:
       unique: true
     - name: position_acct
       attributes: [acctNum]
-      unique: false

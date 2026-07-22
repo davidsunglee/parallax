@@ -21,19 +21,15 @@
 entities:
   - name: Quote
     namespace: parallax.compatibility
-    persistence: read-write
     inheritance:
       role: root
       strategy: table-per-concrete-subtype
     attributes:
       - name: id
         type: int64
-        column: id
         primaryKey: true
-        pkGeneration: application-assigned
       - name: price
         type: decimal(18,2)
-        column: price
       - name: tx_start
         type: timestamp
         column: in_z
@@ -57,6 +53,5 @@ entities:
     attributes:
       - name: symbol
         type: string
-        column: symbol
         maxLength: 8
         nullable: true
