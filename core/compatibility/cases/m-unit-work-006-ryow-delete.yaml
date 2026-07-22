@@ -28,7 +28,7 @@
 # proves read-your-own-writes for a deletion against real committed data.
 # roundTrips = 3 (the observing find + the committed delete + the dependent find).
 model: models/account.yaml
-tags: [m-unit-work, read-your-own-writes, flush, scenario, slice-mvp-1, slice-snapshot-1, slice-managed-1]
+tags: [m-unit-work, read-your-own-writes, flush, scenario, slice-snapshot-1, slice-managed-1]
 shape: scenario
 compileEligibility:
   mode: run-only

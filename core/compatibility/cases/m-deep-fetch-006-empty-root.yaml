@@ -2,7 +2,7 @@
 # keys, the child levels are elided: no Order.items or OrderItem.statuses SQL is
 # authored or executed, and roundTrips is 1.
 model: models/orders.yaml
-tags: [m-deep-fetch, m-op-list, empty-root, relationship, slice-mvp-1, slice-managed-1]
+tags: [m-deep-fetch, m-op-list, empty-root, relationship, slice-managed-1]
 shape: read
 when:
   targetEntity: Order

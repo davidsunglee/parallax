@@ -124,4 +124,4 @@ def test_all_slice_check_exercises_every_canonical_claim(
     rc = main(["--check-all", str(_SPEC_DIR), str(_COMPATIBILITY_ROOT)])
 
     assert rc == 0
-    assert capsys.readouterr().out == "slice inspection OK: 3 canonical claim(s)\n"
+    assert capsys.readouterr().out == "slice inspection OK: 2 canonical claim(s)\n"

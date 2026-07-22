@@ -11,7 +11,7 @@
 # INSERT omits that column (a 4-of-5 column insert) rather than binding an explicit
 # NULL.
 model: models/orders.yaml
-tags: [m-unit-work, m-sql, write-sequence, insert, fk-ordering, slice-mvp-1, slice-snapshot-1, slice-managed-1]
+tags: [m-unit-work, m-sql, write-sequence, insert, fk-ordering, slice-snapshot-1, slice-managed-1]
 shape: writeSequence
 when:
   writeSequence:

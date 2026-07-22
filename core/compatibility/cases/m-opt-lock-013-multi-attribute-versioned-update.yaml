@@ -16,7 +16,7 @@
 # other rows untouched. This proves the version advances ONCE (not once per set
 # column) and the multi-column SET binds in columnOrder ahead of the version.
 model: models/account.yaml
-tags: [m-opt-lock, m-sql, success, optimistic-lock-success, slice-mvp-1, slice-snapshot-1, slice-managed-1]
+tags: [m-opt-lock, m-sql, success, optimistic-lock-success, slice-snapshot-1, slice-managed-1]
 shape: conflict
 compileEligibility:
   mode: run-only

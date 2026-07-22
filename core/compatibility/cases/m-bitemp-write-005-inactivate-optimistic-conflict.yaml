@@ -16,7 +16,7 @@
 # literal, and `position` carries a space before `(` so MariaDB reads a table
 # identifier, not a `POSITION(` function call.
 model: models/position.yaml
-tags: [m-bitemp-write, m-opt-lock, m-sql, bitemporal, temporal, conflict, slice-mvp-1, slice-snapshot-1, slice-managed-1]
+tags: [m-bitemp-write, m-opt-lock, m-sql, bitemporal, temporal, conflict, slice-snapshot-1, slice-managed-1]
 shape: conflict
 compileEligibility:
   mode: run-only

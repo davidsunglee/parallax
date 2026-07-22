@@ -1,7 +1,7 @@
 # and — conjunction of two atomic predicates. Operands serialize in order; binds
 # follow left-to-right appearance.
 model: models/orders.yaml
-tags: [m-op-algebra, and, boolean, slice-mvp-1, slice-snapshot-1, slice-managed-1]
+tags: [m-op-algebra, and, boolean, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
   targetEntity: Order

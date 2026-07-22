@@ -7,7 +7,7 @@
 # `then.statements` entry — the pagination-parity witness and the row-limit decision
 # point of the m-dialect seam.
 model: models/orders.yaml
-tags: [m-op-algebra, orderBy, limit, directive, slice-mvp-1, slice-snapshot-1, slice-managed-1]
+tags: [m-op-algebra, orderBy, limit, directive, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
   targetEntity: Order

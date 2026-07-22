@@ -12,7 +12,7 @@
 # Postgres and MariaDB, so this case proves the navigation/join contract across
 # both dialects in the matrix.
 model: models/orders.yaml
-tags: [m-navigate, m-relationship, m-metamodel, m-model-formation, navigate, relationship, slice-mvp-1, slice-snapshot-1, slice-managed-1]
+tags: [m-navigate, m-relationship, m-metamodel, m-model-formation, navigate, relationship, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
   targetEntity: Order

@@ -260,8 +260,8 @@ self-contained without a system `libpq`.
   passed / 10 skipped; rejected sweep (`test_rejected_sweep.py`) 27 passed /
   10 skipped; API-suite partition exact over 303 active cases (47 exercised
   / 256 reasoned-skip); reference-harness `just oracle-test` 1421 passed
-  dual-dialect; slice tag counts `slice-mvp-1`/`slice-snapshot-1`/
-  `slice-managed-1` = 197 / 303 / 325 (`just core-dep-graph` profile gate).
+  dual-dialect; slice tag counts `slice-snapshot-1`/`slice-managed-1` =
+  303 / 325 (`just core-dep-graph` profile gate).
 - **Effective-temporality resolver + `m-inheritance-100`/`-101` story review
   remediation.** Closed a residual gap in the round above: four sites still
   classified from an inheritance participant's LOCAL `as_of_axes`
@@ -315,7 +315,7 @@ self-contained without a system `libpq`.
   264 reasoned-skip); `just python-static` / `just python-verify` exit 0
   (diff-cover 100%, Pyright/coverage clean); `just lint` exit 0; reference-harness
   `just oracle-test` 1447 passed dual-dialect; slice tag counts
-  `slice-mvp-1`/`slice-snapshot-1`/`slice-managed-1` = 197 / 311 / 333
+  `slice-snapshot-1`/`slice-managed-1` = 311 / 333
   (`just core-dep-graph` profile gate). No `validate_write`, version-gate
   lowering, instance-form Python lowering, or boundary runner in this
   increment (increments 2+).
@@ -348,7 +348,7 @@ self-contained without a system `libpq`.
   263 reasoned-skip); `just python-static` exit 0 (diff-cover 100%,
   Pyright/coverage clean); `gen-usage-guide --check` exit 0; `just lint` /
   `just core-dep-graph` unchanged-green (slice tag counts
-  `slice-mvp-1`/`slice-snapshot-1`/`slice-managed-1` = 197 / 311 / 333). No
+  `slice-snapshot-1`/`slice-managed-1` = 311 / 333). No
   version-gate lowering, temporal writes, `_where` verbs, or `lower_write`
   changes in this increment (increments 3+).
 - **Phase 8 increment 3 COMPLETE — the `m-opt-lock` version gate, inheritance

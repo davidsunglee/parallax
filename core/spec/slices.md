@@ -36,9 +36,7 @@ and documentation, because `describeOk` is `additionalProperties: false`.
 Parallax's first-implementation surface is **two slices over one shared base**,
 split by object-lifecycle model (ADR 0019). Both are Postgres-only and both
 include PK generation, inheritance, value objects, and the full temporal write
-family up to the bitemporal rectangle split. They supersede `slice-mvp-1`
-(below, **deprecated**), which is retired — tags, claim, and all — when the
-TypeScript implementation migrates its conformance claim to `slice-managed-1`.
+family up to the bitemporal rectangle split.
 
 - **`slice-snapshot-1`** — the **plain-value** surface: reads materialize
   snapshot graphs (`m-snapshot-read`); writes are explicit only. No managed
@@ -98,27 +96,3 @@ The canonical `describe` claim for `slice-managed-1`:
 An implementation that adopts a slice claims exactly its capabilities and
 returns `unsupported` for every case command outside it — every out-of-slice
 case shape, dialect, module, or tag.
-
-## First-implementation Conformance Slice
-
-**Deprecated.** `slice-mvp-1` was the smallest agent-buildable first build and
-is superseded by the two object-lifecycle slices above; it survives only because
-the TypeScript V1 conformance claim still selects by its tag. It adds no new
-membership — every `slice-mvp-1` case also carries `slice-snapshot-1` (except
-the `m-op-list`-tagged cases) and `slice-managed-1`. Delete this claim and the
-`slice-mvp-1` tags together with the TypeScript migration to `slice-managed-1`.
-
-```json
-{
-  "schemaVersion": "1", "command": "describe", "status": "ok",
-  "adapter": { "language": "reference", "name": "parallax-core", "version": "0.1.0" },
-  "capabilities": {
-    "modules": ["m-api-conformance", "m-audit-write", "m-auto-retry", "m-batch-write", "m-bitemp-write", "m-case-format", "m-conformance-adapter", "m-core", "m-db-error", "m-deep-fetch", "m-descriptor", "m-dialect", "m-metamodel", "m-model-formation", "m-navigate", "m-op-algebra", "m-op-list", "m-opt-lock", "m-pk-gen", "m-read-lock", "m-relationship", "m-sql", "m-temporal-read", "m-unit-work", "m-value-object"],
-    "dialects": ["postgres"],
-    "caseShapes": ["read", "writeSequence", "scenario", "conflict", "boundary", "error", "concurrencySuccess", "rejected"],
-    "caseTags": { "include": ["slice-mvp-1"] },
-    "commands": ["describe", "compile", "run"],
-    "provisioning": "self-managed"
-  }
-}
-```

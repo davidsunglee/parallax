@@ -7,7 +7,7 @@
 # through membership — the first two rows are the active orders with the lowest
 # qty (ids 1 and 2), not any active order.
 model: models/orders.yaml
-tags: [m-op-algebra, orderBy, limit, directive, multi-key, slice-mvp-1, slice-snapshot-1, slice-managed-1]
+tags: [m-op-algebra, orderBy, limit, directive, multi-key, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
   targetEntity: Order

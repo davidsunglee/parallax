@@ -2,7 +2,7 @@
 # dimension defaults to Latest, so the golden SQL includes the current Transaction-Time
 # predicate out_z = infinity.
 model: models/position.yaml
-tags: [m-temporal-read, m-sql, bitemporal, temporal, as-of, default-transaction-time, slice-mvp-1, slice-snapshot-1, slice-managed-1]
+tags: [m-temporal-read, m-sql, bitemporal, temporal, as-of, default-transaction-time, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
   targetEntity: Position

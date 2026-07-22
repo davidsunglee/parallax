@@ -765,8 +765,7 @@ mutations, exceptions, or exports.
   `m-audit-write-007`, and `m-bitemp-write-010`–`-013`) are deliberately
   `slice-snapshot-1` only: they are the snapshot claim's executable oracle,
   not a managed API partition expansion. The upgraded legacy
-  `m-opt-lock-003` / `-004` retain their existing `slice-managed-1` tags while
-  no longer carrying the deprecated `slice-mvp-1` tag. The API still has
+  `m-opt-lock-003` / `-004` retain their existing `slice-managed-1` tags. The API still has
   broader surface area than any finite corpus sample — arbitrary valid bare
   predicates, multiple assignable fields, and every valid temporal bound are
   validated and documented by the implementation/API suite — but no covered

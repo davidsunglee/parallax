@@ -26,7 +26,7 @@
 # element. `then.tableState` decodes the document column so the authored documents
 # compare identically on both dialects.
 model: models/supplier.yaml
-tags: [m-value-object, m-audit-write, m-sql, write-sequence, update, temporal, audit-only, json, nested, to-many, slice-mvp-1, slice-snapshot-1, slice-managed-1]
+tags: [m-value-object, m-audit-write, m-sql, write-sequence, update, temporal, audit-only, json, nested, to-many, slice-snapshot-1, slice-managed-1]
 shape: writeSequence
 when:
   writeSequence:

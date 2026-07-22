@@ -7,7 +7,7 @@
 # and over-match; the independent `left(sku, 2)` oracle catches that. Only
 # `C_50%` starts with a literal `C_`.
 model: models/orders.yaml
-tags: [m-op-algebra, startsWith, string, escape, slice-mvp-1, slice-snapshot-1, slice-managed-1]
+tags: [m-op-algebra, startsWith, string, escape, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
   targetEntity: Order

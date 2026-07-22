@@ -5,7 +5,7 @@
 # it never multiplies the person rows. Only person 1 holds passport number
 # 'P-AAA'.
 model: models/person.yaml
-tags: [m-navigate, navigate, relationship, one-to-one, slice-mvp-1, slice-snapshot-1, slice-managed-1]
+tags: [m-navigate, navigate, relationship, one-to-one, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
   targetEntity: Person

@@ -13,7 +13,7 @@
 # schema-validates it while the language's API Conformance Suite proves the runtime
 # read path emits the lock. The golden documents the expected emitted SQL.
 model: models/account.yaml
-tags: [m-read-lock, m-dialect, m-api-conformance, locking-mode, slice-mvp-1, slice-snapshot-1, slice-managed-1]
+tags: [m-read-lock, m-dialect, m-api-conformance, locking-mode, slice-snapshot-1, slice-managed-1]
 lane: api-conformance
 shape: read
 when:

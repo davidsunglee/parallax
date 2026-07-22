@@ -14,7 +14,7 @@
 # Resulting state (1 row): a single rectangle current on processing whose business
 # interval is bounded — outside [2024-03-01, 2024-09-01) no value exists.
 model: models/position.yaml
-tags: [m-bitemp-write, m-sql, bitemporal, temporal, write-sequence, insert-until, slice-mvp-1, slice-snapshot-1, slice-managed-1]
+tags: [m-bitemp-write, m-sql, bitemporal, temporal, write-sequence, insert-until, slice-snapshot-1, slice-managed-1]
 shape: writeSequence
 when:
   writeSequence:

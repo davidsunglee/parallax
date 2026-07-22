@@ -4,7 +4,7 @@
 # `in_z <= ? and out_z > ?`. A pin exactly on 2024-06-01 excludes the row ending
 # at that instant and includes the row beginning there; id 1 appears once.
 model: models/ledger.yaml
-tags: [m-temporal-read, m-sql, m-descriptor, as-of, audit-only, boundary, half-open, slice-mvp-1, slice-snapshot-1, slice-managed-1]
+tags: [m-temporal-read, m-sql, m-descriptor, as-of, audit-only, boundary, half-open, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
   targetEntity: Ledger

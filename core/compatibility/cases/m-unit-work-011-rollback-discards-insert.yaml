@@ -16,7 +16,7 @@
 # suffix (`for share of t0` — locking zero rows is valid SQL). roundTrips = 2 (the
 # rolled-back insert, whose DML still executes, + the dependent find).
 model: models/account.yaml
-tags: [m-unit-work, rollback, abort, scenario, slice-mvp-1, slice-snapshot-1, slice-managed-1]
+tags: [m-unit-work, rollback, abort, scenario, slice-snapshot-1, slice-managed-1]
 shape: scenario
 when:
   scenario:

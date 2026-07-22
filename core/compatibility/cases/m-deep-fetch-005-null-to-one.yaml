@@ -4,7 +4,7 @@
 # Item-level statuses gather the distinct non-null item ids {11, 12, 421} and
 # fetch those parents in one child statement.
 model: models/orders.yaml
-tags: [m-deep-fetch, m-op-list, to-one, nullable, relationship, slice-mvp-1, slice-managed-1]
+tags: [m-deep-fetch, m-op-list, to-one, nullable, relationship, slice-managed-1]
 shape: read
 when:
   targetEntity: OrderStatus

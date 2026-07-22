@@ -8,7 +8,7 @@
 # dialect divergence), so both dialects share one `then.statements` entry and the
 # harness runs it against both — the simplest matrix row.
 model: models/orders.yaml
-tags: [m-op-algebra, m-conformance-adapter, eq, slice-mvp-1, slice-snapshot-1, slice-managed-1]
+tags: [m-op-algebra, m-conformance-adapter, eq, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
   targetEntity: Order

@@ -12,7 +12,7 @@
 # the chained replacement INSERT, so `then.tableState` is the fixtures with id 2's
 # current row now closed at 2024-10-01.
 model: models/balance.yaml
-tags: [m-temporal-read, m-opt-lock, m-sql, temporal, conflict, slice-mvp-1, slice-snapshot-1, slice-managed-1]
+tags: [m-temporal-read, m-opt-lock, m-sql, temporal, conflict, slice-snapshot-1, slice-managed-1]
 shape: conflict
 compileEligibility:
   mode: run-only

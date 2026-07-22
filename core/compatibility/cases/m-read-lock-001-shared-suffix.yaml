@@ -18,7 +18,7 @@
 # even though sqlglot tokenizes them as values, so the golden SQL passes the
 # layer-3 canonical-form check.
 model: models/account.yaml
-tags: [m-read-lock, m-dialect, slice-mvp-1, slice-snapshot-1, slice-managed-1]
+tags: [m-read-lock, m-dialect, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
   targetEntity: Account

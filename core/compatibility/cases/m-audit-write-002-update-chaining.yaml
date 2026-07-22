@@ -15,7 +15,7 @@
 # (close old OUT_Z=txTime; insert new head). The close UPDATE is keyed by the
 # current-row predicate (bal_id AND out_z = infinity), never a blind in-place set.
 model: models/balance.yaml
-tags: [m-audit-write, m-sql, write-sequence, update, audit-only, slice-mvp-1, slice-snapshot-1, slice-managed-1]
+tags: [m-audit-write, m-sql, write-sequence, update, audit-only, slice-snapshot-1, slice-managed-1]
 shape: writeSequence
 when:
   writeSequence:

@@ -13,7 +13,7 @@
 # in-transaction object find carries the m-read-lock shared-row-lock suffix
 # (`for share of t0`). roundTrips = 2 (the committed insert + the dependent find).
 model: models/account.yaml
-tags: [m-unit-work, read-your-own-writes, flush, scenario, slice-mvp-1, slice-snapshot-1, slice-managed-1]
+tags: [m-unit-work, read-your-own-writes, flush, scenario, slice-snapshot-1, slice-managed-1]
 shape: scenario
 when:
   scenario:

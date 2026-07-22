@@ -2,7 +2,7 @@
 # negation as `not t0.id in (...)` (the normalizer's fixed point); the naive
 # referenceSql uses the familiar `not in` to cross-check.
 model: models/orders.yaml
-tags: [m-op-algebra, notIn, membership, slice-mvp-1, slice-snapshot-1, slice-managed-1]
+tags: [m-op-algebra, notIn, membership, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
   targetEntity: Order

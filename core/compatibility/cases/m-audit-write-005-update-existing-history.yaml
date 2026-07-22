@@ -18,7 +18,7 @@
 # current row now closed at 2024-09-01, and the new current row — three milestones,
 # one key. Ids 2 and 3 are untouched: the close is keyed, not a table-wide set.
 model: models/balance.yaml
-tags: [m-audit-write, m-sql, write-sequence, update, audit-only, slice-mvp-1, slice-snapshot-1, slice-managed-1]
+tags: [m-audit-write, m-sql, write-sequence, update, audit-only, slice-snapshot-1, slice-managed-1]
 shape: writeSequence
 given:
   fixtures: true

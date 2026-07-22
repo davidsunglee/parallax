@@ -23,7 +23,7 @@
 # to make plain insert a first-class MVP bitemporal behavior — the third member of the
 # plain insert / update / terminate family — on the Postgres slice.
 model: models/position.yaml
-tags: [m-bitemp-write, m-sql, bitemporal, temporal, write-sequence, plain-insert, slice-mvp-1, slice-snapshot-1, slice-managed-1]
+tags: [m-bitemp-write, m-sql, bitemporal, temporal, write-sequence, plain-insert, slice-snapshot-1, slice-managed-1]
 shape: writeSequence
 when:
   writeSequence:

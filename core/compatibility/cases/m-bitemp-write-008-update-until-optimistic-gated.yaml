@@ -34,7 +34,7 @@
 # Resulting state (4 rows): identical to m-bitemp-write-001 — the inactivated
 # original (out_z finite) + head (100) + middle (200) + tail (100).
 model: models/position.yaml
-tags: [m-bitemp-write, m-opt-lock, m-sql, bitemporal, temporal, write-sequence, update-until, rectangle-split, slice-mvp-1, slice-snapshot-1, slice-managed-1]
+tags: [m-bitemp-write, m-opt-lock, m-sql, bitemporal, temporal, write-sequence, update-until, rectangle-split, slice-snapshot-1, slice-managed-1]
 shape: writeSequence
 when:
   uow:

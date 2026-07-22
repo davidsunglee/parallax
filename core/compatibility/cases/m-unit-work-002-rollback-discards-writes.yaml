@@ -27,7 +27,7 @@
 # carries the m-read-lock shared-row-lock suffix (`for share of t0`). roundTrips = 3
 # (two finds + the rolled-back write, whose DML still executes).
 model: models/account.yaml
-tags: [m-unit-work, rollback, abort, scenario, slice-mvp-1, slice-snapshot-1, slice-managed-1]
+tags: [m-unit-work, rollback, abort, scenario, slice-snapshot-1, slice-managed-1]
 shape: scenario
 compileEligibility:
   mode: run-only
