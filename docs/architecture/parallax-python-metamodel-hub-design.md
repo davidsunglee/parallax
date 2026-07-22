@@ -2634,9 +2634,11 @@ Acceptance requires:
   `MetamodelDefinitionError(metamodel-empty)` without an argument index, while
   an empty canonical descriptor fails its schema before a hub exists;
 - descriptor ingestion distinguishes syntax failure with format/source
-  coordinates from canonical-schema violations with structured document paths;
-  neither creates a hub or leaks document locations into semantic formation,
-  and schema-valid semantic failures occur only during `seal()`;
+  coordinates, canonical-schema violations with structured document paths, and
+  value-phase rejections of schema-valid but unconstructible spellings
+  (`DescriptorValueError(descriptor-value-invalid)`); none creates a hub or
+  leaks document locations into semantic formation, and semantic model
+  failures occur only during `seal()`;
 - canonical export is total and deterministic for a sealed hub, performs no
   renewed validation or state change, and constructs no descriptor cache at
   seal time; unexpected adapter defects raise

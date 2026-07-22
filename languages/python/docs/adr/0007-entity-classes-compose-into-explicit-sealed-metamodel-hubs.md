@@ -42,7 +42,7 @@ The class-backed constructor validates its arguments left-to-right before a
 hub exists. No arguments raises
 `MetamodelDefinitionError(code="metamodel-empty")` without an argument index.
 An Entity instance, ordinary class, Value Object class, or framework root
-(`Entity`, `TransactionTimeOnly`, or `Bitemporal`) raises
+(`Entity`, `TxTemporal`, or `Bitemporal`) raises
 `MetamodelDefinitionError(code="metamodel-invalid-entity-class")`; repeating
 the same class object raises
 `MetamodelDefinitionError(code="metamodel-duplicate-entity-class")`. Both
@@ -59,8 +59,14 @@ optional one-based source coordinates, and parser cause. A decoded document
 outside the canonical schema raises
 `DescriptorSchemaError(code="descriptor-schema-invalid")` with immutable
 canonically ordered violations containing structured document paths and stable
-schema-rule names. Both share the public `DescriptorError(ValueError)` base and
-occur before a hub exists. Only schema-valid input reaches an `UNSEALED` hub;
+schema-rule names. A schema-valid document whose denoted core value is
+unconstructible — an out-of-bounds or non-canonical decimal type spelling —
+raises `DescriptorValueError(code="descriptor-value-invalid")` with the same
+canonically ordered document-path violation shape over the value-rule
+vocabulary `m-descriptor` owns. All three share the public
+`DescriptorError(ValueError)` base and
+occur before a hub exists. Only input every ingestion phase accepts reaches
+an `UNSEALED` hub;
 all reference and semantic failures then use `MetamodelValidationError` and
 semantic Model Locations during sealing.
 
@@ -160,13 +166,13 @@ separately accepted Metamodel is the sole normalized runtime truth; bindings
 only refer classes back to it, and descriptor-backed hubs have no bindings.
 
 Temporality is selected by one of three framework roots: `Entity` for a
-non-temporal model, `TransactionTimeOnly`, or `Bitemporal`. The temporal roots
+non-temporal model, `TxTemporal`, or `Bitemporal`. The temporal roots
 are not hub candidates or domain inheritance positions. They supply the
 standard statically visible, read-only Timestamp attributes and default column
 mappings, so ordinary declarations repeat no axes, types, flags, or columns:
 
 ```python
-class AuditEvent(TransactionTimeOnly, table="audit_event"):
+class AuditEvent(TxTemporal, table="audit_event"):
     id: Attr[int] = attr(primary_key=True)
 
 
