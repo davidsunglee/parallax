@@ -57,7 +57,6 @@ Before writing runtime code, read these files in this order:
 Copy the language spec template into the language module, for example:
 
 ```text
-languages/typescript/spec/typescript.md
 languages/python/spec/python.md
 languages/java/spec/java.md
 ```
