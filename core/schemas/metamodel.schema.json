@@ -235,6 +235,20 @@
           "then": {
             "properties": { "type": { "enum": ["int32", "int64"] } }
           }
+        },
+        {
+          "$comment": "Generated primary keys are integral (m-pk-gen): `max` allocates max(col)+1 and `sequence` advances an integer registry counter, so both are legal only on an `int32`/`int64` attribute. `application-assigned` stays unrestricted — the application may supply keys of any declared type.",
+          "if": {
+            "required": ["pkGeneration"],
+            "properties": {
+              "pkGeneration": {
+                "anyOf": [{ "const": "max" }, { "type": "object" }]
+              }
+            }
+          },
+          "then": {
+            "properties": { "type": { "enum": ["int32", "int64"] } }
+          }
         }
       ]
     },

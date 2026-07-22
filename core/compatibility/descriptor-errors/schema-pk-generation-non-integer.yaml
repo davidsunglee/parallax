@@ -1,0 +1,12 @@
+# Phase-2 fixture: a generated key must be integral (m-pk-gen) — `max` on a
+# string-typed primary key fails the schema's attribute type conditional,
+# reported as the `enum` keyword at the declared `type`, before any semantic
+# phase. `application-assigned` on the same attribute would be legal.
+entity:
+  name: Ticket
+  table: ticket
+  attributes:
+    - name: id
+      type: string
+      primaryKey: true
+      pkGeneration: max
