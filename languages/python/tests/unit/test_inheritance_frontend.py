@@ -11,8 +11,8 @@ increment 6b / the Phase-7 implementation review remediation) already execute
 inheritance-family reads through the shipped surface against real Postgres.
 This file also proves the temporal composition's class-frontend spelling —
 ``models/rate.yaml`` (table-per-concrete-subtype BITEMPORAL, the root ALONE
-declaring ``EntityConfig(as_of=...)``, COR-3 residual-finding remediation) —
-against the SAME installed ``Rate`` family the ``m-inheritance-100`` `ReadStory`
+extending the ``Bitemporal`` framework base) — against the SAME installed
+``Rate`` family the ``m-inheritance-100`` `ReadStory`
 (`parallax.conformance.read_stories`) queries, so its own definition never
 drifts from the corpus descriptor either.
 """
@@ -66,14 +66,41 @@ def test_table_per_concrete_subtype_class_export_has_no_drift_from_document_yaml
 
 
 def test_temporal_tpcs_class_export_has_no_drift_from_rate_yaml() -> None:
-    # The root ALONE declares `as_of` (the binding root-ownership decision); the
-    # concrete subtypes declare none of their own — proving that spelling
-    # (`EntityConfig(as_of=...)` on `Rate`, absent on `DepositRate`/`LoanRate`)
-    # threads through exactly as the ingested descriptor's root-only
-    # `asOfAttributes` does.
+    # The root ALONE selects the temporal shape (the binding root-ownership
+    # decision); the concrete subtypes declare none of their own — proving
+    # that spelling (the `Bitemporal` base on `Rate`, plain parent extension
+    # on `DepositRate`/`LoanRate`) threads through exactly as the ingested
+    # descriptor's root-only axis declarations do.
     corpus = _corpus("rate")
     mine = descriptor_document([im.Rate, im.DepositRate, im.LoanRate])
     assert mine == corpus
+
+
+def test_temporal_base_on_a_family_root_injects_the_axes_on_the_root_alone() -> None:
+    # The family-root base selection: the root's own compiled record carries
+    # both injected axes (Valid Time first) and the injected standard interval
+    # attributes; a concrete subtype's own record carries NO axes of its own —
+    # its family-effective temporality resolves through the root.
+    root = entity_record_of(im.Rate)
+    assert root is not None
+    assert root.temporal == "bitemporal"
+    assert [
+        (axis.dimension, axis.start_attribute, axis.end_attribute) for axis in root.as_of_axes
+    ] == [
+        ("validTime", "valid_start", "valid_end"),
+        ("transactionTime", "tx_start", "tx_end"),
+    ]
+    assert [attr.name for attr in root.attributes] == [
+        "id",
+        "amount",
+        "valid_start",
+        "valid_end",
+        "tx_start",
+        "tx_end",
+    ]
+    concrete = entity_record_of(im.DepositRate)
+    assert concrete is not None
+    assert concrete.as_of_axes == ()
 
 
 def test_tph_root_owns_the_shared_table() -> None:
@@ -166,50 +193,32 @@ def test_subclassing_a_non_family_entity_is_rejected() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Binding decision (COR-3 residual-finding remediation): temporal axes are     #
-# family-wide; only the family ROOT may declare `EntityConfig(as_of=...)`.    #
-# The class frontend rejects a subclass that declares its own, at class-      #
-# definition time, consistently with `parallax.core.inheritance.validate`'s   #
-# `inheritance-temporal-axes-not-root-owned` descriptor invariant.            #
+# Binding decision: temporal axes are family-wide; only the family ROOT may    #
+# select a temporal shape (by extending `TxTemporal`/`Bitemporal`). The class  #
+# frontend rejects a subclass that lists a temporal base of its own, at        #
+# class-definition time, consistently with                                     #
+# `parallax.core.inheritance.validate`'s                                       #
+# `inheritance-temporal-axes-not-root-owned` descriptor invariant.             #
 # --------------------------------------------------------------------------- #
-def test_concrete_subtype_declaring_its_own_as_of_is_rejected() -> None:
-    from parallax.core import Attr, EntityConfig, Field
-    from parallax.core.descriptor import AsOfAxisMetadata
+def test_concrete_subtype_extending_a_temporal_base_is_rejected() -> None:
+    from parallax.core import Attr, Bitemporal, EntityConfig, Field
     from parallax.core.entity.base import Concrete
 
-    with pytest.raises(Exception, match="family SUBCLASS cannot declare EntityConfig\\(as_of"):
+    with pytest.raises(Exception, match="family SUBCLASS cannot extend the temporal base"):
 
-        class BadConcrete(im.Rate, frozen=True):  # pyright: ignore[reportUnusedClass]
-            __parallax__ = EntityConfig(
-                inheritance=Concrete(),
-                as_of=(
-                    AsOfAxisMetadata(
-                        dimension="validTime",
-                        start_attribute="valid_start",
-                        end_attribute="valid_end",
-                    ),
-                ),
-            )
+        class BadConcrete(im.Rate, Bitemporal, frozen=True):  # pyright: ignore[reportUnusedClass]
+            __parallax__ = EntityConfig(inheritance=Concrete())
 
             extra: Attr[str | None] = Field(type="string", nullable=True, default=None)
 
 
-def test_abstract_subtype_declaring_its_own_as_of_is_rejected() -> None:
-    from parallax.core import Attr, EntityConfig, Field
-    from parallax.core.descriptor import AsOfAxisMetadata
+def test_abstract_subtype_extending_a_temporal_base_is_rejected() -> None:
+    from parallax.core import Attr, Bitemporal, EntityConfig, Field
 
-    with pytest.raises(Exception, match="family SUBCLASS cannot declare EntityConfig\\(as_of"):
+    with pytest.raises(Exception, match="family SUBCLASS cannot extend the temporal base"):
 
-        class BadAbstract(im.Rate, frozen=True):  # pyright: ignore[reportUnusedClass]
-            __parallax__ = EntityConfig(
-                as_of=(
-                    AsOfAxisMetadata(
-                        dimension="validTime",
-                        start_attribute="valid_start",
-                        end_attribute="valid_end",
-                    ),
-                )
-            )
+        class BadAbstract(im.Rate, Bitemporal, frozen=True):  # pyright: ignore[reportUnusedClass]
+            __parallax__ = EntityConfig()
 
             extra: Attr[str | None] = Field(type="string", nullable=True, default=None)
 

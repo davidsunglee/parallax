@@ -5,7 +5,8 @@ instructions, SQL lowering, the pure dialect strategy, the unit of work,
 and the abstract database port. Populated across COR-3 phases 2+.
 
 This surface publishes the model-definition and read surface: the frozen entity
-base, the ``Attr`` / ``Rel`` typed-access carriers, the ``Field`` /
+bases (``Entity`` and the temporal framework bases ``TxTemporal`` /
+``Bitemporal``), the ``Attr`` / ``Rel`` typed-access carriers, the ``Field`` /
 ``Relationship`` declaration helpers, the ``ValueObject`` class frontend (D-7),
 the inheritance-family vocabulary (``FamilyRoot`` / ``Concrete``, D-7 DQ2),
 the ``Statement`` query surface (predicate,
@@ -29,6 +30,7 @@ from parallax.core.descriptor import (
 from parallax.core.entity import (
     Attr,
     AttributeExpr,
+    Bitemporal,
     Concrete,
     Entity,
     EntityConfig,
@@ -47,6 +49,7 @@ from parallax.core.entity import (
     ReservedNameError,
     ReverseRelationship,
     Statement,
+    TxTemporal,
     UnloadedRelationshipError,
     UnsupportedFeatureError,
     ValueObject,
@@ -74,6 +77,7 @@ __all__ = [
     "AsOfAxisMetadata",
     "Attr",
     "AttributeExpr",
+    "Bitemporal",
     "Concrete",
     "Edge",
     "Entity",
@@ -99,6 +103,7 @@ __all__ = [
     "Statement",
     "TemporalDimension",
     "TemporalReadError",
+    "TxTemporal",
     "UndeclaredAxisError",
     "UnloadedRelationshipError",
     "UnsupportedFeatureError",

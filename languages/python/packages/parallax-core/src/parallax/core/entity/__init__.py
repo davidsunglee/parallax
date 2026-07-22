@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from parallax.core.descriptor import OrderByTerm
 from parallax.core.entity.base import (
+    Bitemporal,
     Concrete,
     Entity,
     EntityConfig,
@@ -24,6 +25,7 @@ from parallax.core.entity.base import (
     ModelCopyError,
     ProvenanceError,
     ScopedMetamodel,
+    TxTemporal,
     WireNames,
     camel_to_snake,
     canonical_row,
@@ -77,6 +79,7 @@ __all__ = [
     "Attr",
     "AttributeExpr",
     "AttributeRef",
+    "Bitemporal",
     "Concrete",
     "ElementAttributeExpr",
     "Entity",
@@ -103,6 +106,7 @@ __all__ = [
     "ReverseRelationshipSpec",
     "ScopedMetamodel",
     "Statement",
+    "TxTemporal",
     "UnloadedRelationshipError",
     "UnsupportedFeatureError",
     "ValueObject",

@@ -5,8 +5,8 @@
 an intermediate abstract subtype and a polymorphic owner: ``Document`` /
 ``FinancialDocument`` / ``Invoice`` / ``Receipt`` / ``Memo`` / ``Folder``), and
 ``models/rate.yaml`` (table-per-concrete-subtype BITEMPORAL, the root ALONE
-declaring ``EntityConfig(as_of=...)``: ``Rate`` / ``DepositRate`` /
-``LoanRate``, COR-3 residual-finding remediation). This module deliberately
+extending the ``Bitemporal`` framework base: ``Rate`` / ``DepositRate`` /
+``LoanRate``). This module deliberately
 avoids ``from __future__ import annotations`` so the metaclass reads the live
 ``Attr[T]`` / ``Rel[T]`` objects directly.
 

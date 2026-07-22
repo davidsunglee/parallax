@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import datetime as dt
 from decimal import Decimal
 from typing import cast
 
@@ -12,6 +13,7 @@ import mirrored_models as mm
 from parallax.conformance import case_format
 from parallax.core import (
     Attr,
+    Bitemporal,
     Entity,
     EntityConfig,
     EntityDefinitionError,
@@ -22,6 +24,7 @@ from parallax.core import (
     RelationshipJoin,
     RelationshipTarget,
     ReservedNameError,
+    TxTemporal,
 )
 from parallax.core.descriptor import (
     AsOfAxisMetadata as AsOfAxisRecord,
@@ -389,13 +392,13 @@ def test_unmapped_python_type_is_rejected() -> None:
         frontend_probes.define_unmapped_attribute()
 
 
-def test_entity_config_declares_as_of_dimensions() -> None:
-    # The D-7 temporal class spelling: `EntityConfig.as_of` declares the axes in
-    # the descriptor's own vocabulary; the effective temporal classification is
-    # derived from them exactly as for an ingested descriptor, and the typed
-    # statement surface accepts the declared axis.
-    import datetime as dt
-
+def test_tx_temporal_base_declares_the_transaction_time_axis() -> None:
+    # The temporal class spelling: extending `TxTemporal` injects the standard
+    # `tx_start`/`tx_end` attributes (columns `in_z`/`out_z`) and the
+    # Transaction-Time axis metadata into the shape owner's compiled record;
+    # the effective temporal classification derives from the injected axes
+    # exactly as for an ingested descriptor, and the typed statement surface
+    # accepts the declared axis.
     from mirrored_models import Balance
     from parallax.core.entity import entity_records
 
@@ -407,27 +410,95 @@ def test_entity_config_declares_as_of_dimensions() -> None:
         "tx_start",
         "tx_end",
     )
+    by_name = {attr.name: attr for attr in record.attributes}
+    assert by_name["tx_start"].column == "in_z"
+    assert by_name["tx_end"].column == "out_z"
     pinned = Balance.where().as_of(tx_time=dt.datetime(2024, 4, 1, tzinfo=dt.UTC))
     assert "asOf" in pinned.serialize()
 
 
-def _define_valid_time_only() -> type:
-    class_body = AsOfAxisRecord(
-        dimension="validTime",
-        start_attribute="valid_start",
-        end_attribute="valid_end",
+def test_bitemporal_base_declares_both_axes_valid_time_first() -> None:
+    # The standalone `Bitemporal` selection: both axes injected in canonical
+    # Valid-Time-first order, the standard attributes appended AFTER the
+    # user-declared members over the stable physical columns.
+    class _FrontendBitemporalQuote(Bitemporal, frozen=True):
+        __parallax__ = EntityConfig(table="frontend_bitemporal_quote")
+
+        id: Attr[int] = Field(primary_key=True, pk_generator="none", type="int64")
+        px: Attr[Decimal] = Field(type="decimal(18,2)")
+
+    record = entity_record_of(_FrontendBitemporalQuote)
+    assert record is not None
+    assert record.temporal == "bitemporal"
+    assert [
+        (axis.dimension, axis.start_attribute, axis.end_attribute) for axis in record.as_of_axes
+    ] == [
+        ("validTime", "valid_start", "valid_end"),
+        ("transactionTime", "tx_start", "tx_end"),
+    ]
+    assert [(attr.name, attr.column) for attr in record.attributes] == [
+        ("id", "id"),
+        ("px", "px"),
+        ("valid_start", "from_z"),
+        ("valid_end", "thru_z"),
+        ("tx_start", "in_z"),
+        ("tx_end", "out_z"),
+    ]
+
+
+def test_base_declared_entity_compiles_to_the_hand_authored_record() -> None:
+    # Record equivalence: a base-declared entity and a class body hand-authoring
+    # the identical standard `Attr` declarations compile to the same record —
+    # the injection is invisible downstream (same attributes, columns, neutral
+    # types, and axis metadata; only the class name differs).
+    from dataclasses import replace
+
+    class _FrontendEquivalenceTx(TxTemporal, frozen=True):
+        __parallax__ = EntityConfig(table="frontend_equiv_ledger")
+
+        id: Attr[int] = Field(primary_key=True, pk_generator="none", type="int64")
+        amount: Attr[Decimal] = Field(type="decimal(18,2)")
+
+    class _FrontendEquivalenceHand(Entity, frozen=True):
+        __parallax__ = EntityConfig(table="frontend_equiv_ledger")
+
+        id: Attr[int] = Field(primary_key=True, pk_generator="none", type="int64")
+        amount: Attr[Decimal] = Field(type="decimal(18,2)")
+        tx_start: Attr[dt.datetime] = Field(name="tx_start", column="in_z")
+        tx_end: Attr[dt.datetime] = Field(name="tx_end", column="out_z")
+
+    base_record = entity_record_of(_FrontendEquivalenceTx)
+    hand_record = entity_record_of(_FrontendEquivalenceHand)
+    assert base_record is not None
+    assert hand_record is not None
+    expected = replace(
+        hand_record,
+        name="_FrontendEquivalenceTx",
+        as_of_axes=(
+            AsOfAxisRecord(
+                dimension="transactionTime", start_attribute="tx_start", end_attribute="tx_end"
+            ),
+        ),
     )
-
-    class ValidTimeOnly(Entity, frozen=True):
-        __parallax__ = EntityConfig(table="valid_time_only", as_of=(class_body,))
-
-        id: Attr[int] = Field(primary_key=True, type="int64")
-        valid_start: Attr[object] = Field(type="timestamp", column="from_z")
-        valid_end: Attr[object] = Field(type="timestamp", column="thru_z")
-
-    return ValidTimeOnly
+    assert base_record == expected
 
 
-def test_entity_config_rejects_valid_time_without_transaction_time() -> None:
-    with pytest.raises(EntityDefinitionError, match="Valid-Time-Only is deferred"):
-        _define_valid_time_only()
+def test_redeclaring_a_standard_temporal_attribute_is_rejected() -> None:
+    with pytest.raises(EntityDefinitionError, match="reserved"):
+
+        class _FrontendBadRedeclare(TxTemporal, frozen=True):  # pyright: ignore[reportUnusedClass]
+            __parallax__ = EntityConfig(table="frontend_bad_redeclare")
+
+            id: Attr[int] = Field(primary_key=True, pk_generator="none", type="int64")
+            tx_start: Attr[dt.datetime] = Field(name="tx_start", column="in_z")
+
+
+def test_extending_both_temporal_bases_is_rejected() -> None:
+    with pytest.raises(EntityDefinitionError, match="mutually exclusive"):
+
+        class _FrontendBadDualBase(  # pyright: ignore[reportUnusedClass]
+            TxTemporal, Bitemporal, frozen=True
+        ):
+            __parallax__ = EntityConfig(table="frontend_bad_dual_base")
+
+            id: Attr[int] = Field(primary_key=True, pk_generator="none", type="int64")
