@@ -124,9 +124,9 @@ def test_temporal_write_input_holds_for_authored_cases() -> None:
     cases = _temporal_write_input_cases()
     # The Phase 3 in-slice audit trio all carry ① (rows + at).
     assert {_case_id(case.path.stem) for case in cases} >= {
-        "m-audit-write-001",
-        "m-audit-write-002",
-        "m-audit-write-003",
+        "m-txtime-write-001",
+        "m-txtime-write-002",
+        "m-txtime-write-003",
     }
     for case in cases:
         # Must not raise: each audit-only ① derives in_z = at / out_z = infinity and
@@ -137,7 +137,7 @@ def test_temporal_write_input_holds_for_authored_cases() -> None:
 def test_temporal_write_input_at_corruption_is_rejected() -> None:
     case = copy.deepcopy(
         next(
-            c for c in _temporal_write_input_cases() if c.path.stem.startswith("m-audit-write-001")
+            c for c in _temporal_write_input_cases() if c.path.stem.startswith("m-txtime-write-001")
         )
     )
     step = next(s for s in case.write_sequence if s.get("rows"))
@@ -452,7 +452,7 @@ def test_temporal_axes_are_inherited_by_concrete_subtypes() -> None:
     assert "kind" not in deposit_ddl
 
 
-def test_tph_audit_terminate_close_is_tag_guarded() -> None:
+def test_tph_txtime_terminate_close_is_tag_guarded() -> None:
     # m-inheritance-090: the audit-only close carries the tag guard among the identity
     # predicates — right after the pk, before the current-row out_z predicate.
     case = _inheritance_case("m-inheritance-090")

@@ -1,19 +1,19 @@
 # Predicate-selected UPDATE over an audit-only (processing-temporal) entity
-# materializes per resolved row to the close-and-chain (m-audit-write + m-opt-lock,
+# materializes per resolved row to the close-and-chain (m-txtime-write + m-opt-lock,
 # ADR 0014).
 #
-# The exact sibling of m-audit-write-007 (predicate-terminate-materialize), swapping
+# The exact sibling of m-txtime-write-007 (predicate-terminate-materialize), swapping
 # `terminate` for an `update` with an assignment. Balance carries a SINGLE processing
 # axis [in_z, out_z); an audit-only update never mutates a value in place — it CLOSES
 # the current row (set out_z = the processing instant) and CHAINS a new current row
-# carrying the new value (the signature audit-only write, keyed m-audit-write-002).
+# carrying the new value (the signature audit-only write, keyed m-txtime-write-002).
 # Because the write gates each row on its own open interval, the set predicate cannot
 # collapse to one statement: it MATERIALIZES to a close + chain per resolved row.
 #
 # The unit of work runs in LOCKING mode, so the materializing read takes `for share`
 # row locks (`for share of t0`) over the two matches (bal_id 1 and 2, both value < 250,
 # both currently open) and the closes are ungated (no observed-in_z gate — that is the
-# optimistic composition, m-audit-write-006). The update assigns value = 175.00 to
+# optimistic composition, m-txtime-write-006). The update assigns value = 175.00 to
 # every matched row (still < 250, so the verify re-read sees the two chained heads).
 # The acct_num copied into each chained head comes from the MATERIALIZED row (the
 # query-result-dependent part): A for bal_id 1, B for bal_id 2.
@@ -31,7 +31,7 @@
 # chained heads at value 175.00. Total roundTrips 6 = materialize read (1) + two
 # closes + two chains (4) + verify read (1).
 model: models/balance.yaml
-tags: [m-audit-write, m-opt-lock, m-sql, m-unit-work, temporal, materialize, predicate-write, scenario, slice-snapshot-1]
+tags: [m-txtime-write, m-opt-lock, m-sql, m-unit-work, temporal, materialize, predicate-write, scenario, slice-snapshot-1]
 shape: scenario
 compileEligibility:
   mode: run-only

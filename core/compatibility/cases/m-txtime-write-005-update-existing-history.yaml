@@ -1,7 +1,7 @@
 # Write sequence: audit-only update starting from EXISTING persisted history
-# (milestone chaining, m-audit-write).
+# (milestone chaining, m-txtime-write).
 #
-# m-audit-write-002 chains from an empty table (it opens the original milestone
+# m-txtime-write-002 chains from an empty table (it opens the original milestone
 # itself). This case instead LOADS the model fixtures (given.fixtures: true) — the
 # persisted milestone history the as-of READ cases query — and closes the ONE
 # CURRENT row among the priors, chaining a new current milestone on top. It proves
@@ -18,7 +18,7 @@
 # current row now closed at 2024-09-01, and the new current row — three milestones,
 # one key. Ids 2 and 3 are untouched: the close is keyed, not a table-wide set.
 model: models/balance.yaml
-tags: [m-audit-write, m-sql, write-sequence, update, audit-only, slice-snapshot-1, slice-managed-1]
+tags: [m-txtime-write, m-sql, write-sequence, update, audit-only, slice-snapshot-1, slice-managed-1]
 shape: writeSequence
 given:
   fixtures: true

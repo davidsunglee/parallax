@@ -287,7 +287,7 @@ def aborted_delete_leaves_the_row_standing(db: Database) -> list[Entity]:
 
 
 # --------------------------------------------------------------------------- #
-# m-audit-write: Balance Transaction-Time-Only milestone-chaining stories.    #
+# m-txtime-write: Balance Transaction-Time-Only milestone-chaining stories.    #
 # --------------------------------------------------------------------------- #
 def transaction_time_only_insert_opens_a_current_milestone(db: Database) -> None:
     def fn(tx: Transaction) -> None:
@@ -340,7 +340,7 @@ def transaction_time_only_chain_update_carries_every_new_attribute(db: Database)
 
 
 def transaction_time_only_chain_update_from_existing_history(db: Database) -> None:
-    # m-audit-write-005: the fixtures are loaded (`given.fixtures: true`) —
+    # m-txtime-write-005: the fixtures are loaded (`given.fixtures: true`) —
     # id 1 already carries a superseded [2024-01-01, 2024-06-01) milestone
     # (value 100.00) and a CURRENT [2024-06-01, infinity) milestone (value
     # 150.00). The close predicate (bal_id AND out_z = infinity) selects
@@ -632,23 +632,23 @@ def customer_update_nulls_the_address_document_out(db: Database) -> None:
 # call above, in entry order, matching each mirrored case's own authored     #
 # `at`/`until` instants.                                                     #
 # --------------------------------------------------------------------------- #
-def _audit_write_001_clock() -> Clock:
+def _txtime_write_001_clock() -> Clock:
     return ScriptedClock([dt.datetime(2024, 1, 1, tzinfo=dt.UTC)])
 
 
-def _audit_write_002_clock() -> Clock:
+def _txtime_write_002_clock() -> Clock:
     return ScriptedClock(
         [dt.datetime(2024, 1, 1, tzinfo=dt.UTC), dt.datetime(2024, 6, 1, tzinfo=dt.UTC)]
     )
 
 
-def _audit_write_003_clock() -> Clock:
+def _txtime_write_003_clock() -> Clock:
     return ScriptedClock(
         [dt.datetime(2024, 1, 1, tzinfo=dt.UTC), dt.datetime(2024, 8, 1, tzinfo=dt.UTC)]
     )
 
 
-def _audit_write_005_clock() -> Clock:
+def _txtime_write_005_clock() -> Clock:
     return ScriptedClock([dt.datetime(2024, 9, 1, tzinfo=dt.UTC)])
 
 
@@ -756,44 +756,44 @@ WRITE_STORIES: Final[tuple[WriteStory, ...]] = (
         aborted_delete_leaves_the_row_standing,
     ),
     WriteStory(
-        "m-audit-write-001",
+        "m-txtime-write-001",
         "Transaction-Time-Only insert opens a current milestone",
         "commit",
         "balance",
         transaction_time_only_insert_opens_a_current_milestone,
-        clock=_audit_write_001_clock,
+        clock=_txtime_write_001_clock,
     ),
     WriteStory(
-        "m-audit-write-002",
+        "m-txtime-write-002",
         "Transaction-Time-Only chain update via a sparse edited copy",
         "commit",
         "balance",
         transaction_time_only_chain_update_via_a_sparse_copy,
-        clock=_audit_write_002_clock,
+        clock=_txtime_write_002_clock,
     ),
     WriteStory(
-        "m-audit-write-003",
+        "m-txtime-write-003",
         "Transaction-Time-Only terminate closes the current milestone",
         "commit",
         "balance",
         transaction_time_only_terminate_closes_the_current_milestone,
-        clock=_audit_write_003_clock,
+        clock=_txtime_write_003_clock,
     ),
     WriteStory(
-        "m-audit-write-004",
+        "m-txtime-write-004",
         "Transaction-Time-Only chain update carries every new attribute",
         "commit",
         "balance",
         transaction_time_only_chain_update_carries_every_new_attribute,
-        clock=_audit_write_002_clock,
+        clock=_txtime_write_002_clock,
     ),
     WriteStory(
-        "m-audit-write-005",
+        "m-txtime-write-005",
         "Transaction-Time-Only chain update starting from existing history",
         "commit",
         "balance",
         transaction_time_only_chain_update_from_existing_history,
-        clock=_audit_write_005_clock,
+        clock=_txtime_write_005_clock,
     ),
     WriteStory(
         "m-opt-lock-002",

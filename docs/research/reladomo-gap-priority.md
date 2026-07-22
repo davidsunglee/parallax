@@ -21,7 +21,7 @@ explicitly excluded, partially acknowledged, or still missing.
 | 6 | Bitemporal overlap detection / repair | Missing | Important for temporal data integrity. Current `m-bitemp-write` handles rectangle-split writes, not remediation of bad or overlapping history. |
 | 7 | Broader list bulk operations and list merge API | Partially acknowledged in `m-batch-write`; merge missing | Current scope covers set-based flush, not Reladomo-style `deleteAll`, `insertAll`, `terminateAll`, `purgeAll`, or diff/merge of lists. |
 | 8 | Temp-table / large-`IN` deep fetch | Acknowledged as deferred fast-follow | Important scalability feature for deep fetch and large relationship traversals. |
-| 9 | Business-only temporal writes | Explicitly deferred: `m-business-only` | Needed for temporal parity, but narrower than audit-only and full bitemporal support. |
+| 9 | Valid-Time-Only temporal writes | Explicitly deferred: `m-validtime-only` | Needed for temporal parity, but narrower than audit-only and full bitemporal support. |
 | 10 | Runtime cache administration and declarative cache loader | Missing | Becomes important once `m-process-cache` exists: warm-up, reload, clear/renew, and dependent loaders. |
 | 11 | Nested transaction, ambient transaction, JTA/external transaction-manager semantics | Partially acknowledged in TypeScript ADR; missing core decision | Parallax should decide whether this is core, per-language, or rejected. TypeScript currently joins active transactions. |
 | 12 | Cross-process cache coherence | Explicitly deferred: `m-coherence` | Depends on process cache. Important in multi-node deployments, but downstream of rank 1. |

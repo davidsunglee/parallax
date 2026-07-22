@@ -224,7 +224,7 @@ def _materialize_predicate_write(
     # head (and tail, for the `*Until` forms) always carry the OLD
     # payload forward, not just an assignment-bearing one
     # (`m-bitemp-write` "head/tail old values come from the observed
-    # prior rectangle"). An AUDIT-ONLY target's plan (`audit_write.
+    # prior rectangle"). An AUDIT-ONLY target's plan (`txtime_write.
     # plan`) chains ONLY an ASSIGNMENT-BEARING `update`
     # (`materialize_row`'s own `assignment_bearing` set) — its
     # `terminate` is close-only, no chained row, so it stays

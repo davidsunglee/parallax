@@ -27,7 +27,7 @@ never something an application developer hand-writes.
   "schemaVersion": "1", "command": "describe", "status": "ok",
   "adapter": { "language": "python", "name": "parallax-core", "version": "0.1.0" },
   "capabilities": {
-    "modules": ["m-api-conformance", "m-audit-write", "m-auto-retry", "m-batch-write", "m-bitemp-write", "m-case-format", "m-conformance-adapter", "m-core", "m-db-error", "m-deep-fetch", "m-descriptor", "m-dialect", "m-inheritance", "m-metamodel", "m-model-formation", "m-navigate", "m-op-algebra", "m-opt-lock", "m-pk-gen", "m-read-lock", "m-relationship", "m-snapshot-read", "m-sql", "m-temporal-read", "m-unit-work", "m-value-object"],
+    "modules": ["m-api-conformance", "m-auto-retry", "m-batch-write", "m-bitemp-write", "m-case-format", "m-conformance-adapter", "m-core", "m-db-error", "m-deep-fetch", "m-descriptor", "m-dialect", "m-inheritance", "m-metamodel", "m-model-formation", "m-navigate", "m-op-algebra", "m-opt-lock", "m-pk-gen", "m-read-lock", "m-relationship", "m-snapshot-read", "m-sql", "m-temporal-read", "m-txtime-write", "m-unit-work", "m-value-object"],
     "dialects": ["postgres"],
     "caseShapes": ["read", "writeSequence", "scenario", "conflict", "boundary", "error", "concurrencySuccess", "rejected"],
     "caseTags": { "include": ["slice-snapshot-1"] },
@@ -763,10 +763,10 @@ mutations, exceptions, or exports.
   `delete_where` is predicate-shaped in `m-opt-lock-015`; readless
   non-versioned `delete_where` / `update_where` (including descriptor-column
   order) are `m-batch-write-005` / `-006`; audit-only `terminate_where` is
-  `m-audit-write-007`; and the bitemporal plain update/terminate plus both
+  `m-txtime-write-007`; and the bitemporal plain update/terminate plus both
   bounded forms are `m-bitemp-write-010`–`-013`. The nine newly authored cases
   (`m-opt-lock-014` / `-015`, `m-batch-write-005` / `-006`,
-  `m-audit-write-007`, and `m-bitemp-write-010`–`-013`) are deliberately
+  `m-txtime-write-007`, and `m-bitemp-write-010`–`-013`) are deliberately
   `slice-snapshot-1` only: they are the snapshot claim's executable oracle,
   not a managed API partition expansion. The upgraded legacy
   `m-opt-lock-003` / `-004` retain their existing `slice-managed-1` tags. The API still has
@@ -918,15 +918,15 @@ directions; artifact co-location never legalizes a forbidden edge.
 | `m-auto-retry` | `parallax.core.auto_retry` | `parallax.core.auto_retry` | `m-unit-work`, `m-db-error` | generated forbidden contracts |
 | `m-opt-lock` | `parallax.core.opt_lock` | `parallax.core.opt_lock` | `m-unit-work`, `m-temporal-read`, `m-metamodel`, `m-model-formation`, `m-inheritance` | generated forbidden contracts |
 | `m-temporal-read` | `parallax.core.temporal_read` | `parallax.core.temporal_read` | `m-op-algebra`, `m-metamodel`, `m-model-formation`, `m-inheritance` | generated forbidden contracts |
-| `m-audit-write` | `parallax.core.audit_write` | `parallax.core.audit_write` | `m-temporal-read`, `m-unit-work` | generated forbidden contracts |
-| `m-bitemp-write` | `parallax.core.bitemp_write` | `parallax.core.bitemp_write` | `m-audit-write` | generated forbidden contracts |
+| `m-txtime-write` | `parallax.core.txtime_write` | `parallax.core.txtime_write` | `m-temporal-read`, `m-unit-work` | generated forbidden contracts |
+| `m-bitemp-write` | `parallax.core.bitemp_write` | `parallax.core.bitemp_write` | `m-txtime-write` | generated forbidden contracts |
 | `m-batch-write` | `parallax.core.batch_write` | `parallax.core.batch_write` | `m-unit-work` | generated forbidden contracts |
 | `m-navigate` | `parallax.core.navigate` | `parallax.core.navigate` | `m-op-algebra`, `m-unit-work`, `m-temporal-read`, `m-inheritance`, `m-relationship` | generated forbidden contracts |
 | `m-deep-fetch` | `parallax.core.deep_fetch` | `parallax.core.deep_fetch` | `m-navigate` | generated forbidden contracts |
 | `m-snapshot-read` | `parallax.snapshot.materialize` | `parallax.snapshot.materialize` | `m-deep-fetch` | generated forbidden contracts + cross-package contract |
-| Snapshot handle and composition surface (support) | `parallax.snapshot.handle` | `parallax.snapshot.handle` | `parallax.snapshot.materialize`, `m-unit-work`, `m-auto-retry`, `m-read-lock`, `m-opt-lock`, `m-batch-write`, `m-audit-write`, `m-bitemp-write`, `m-sql`, `m-navigate`, `m-db-port`, `parallax.core.entity` | generated forbidden contracts + cross-package contract |
+| Snapshot handle and composition surface (support) | `parallax.snapshot.handle` | `parallax.snapshot.handle` | `parallax.snapshot.materialize`, `m-unit-work`, `m-auto-retry`, `m-read-lock`, `m-opt-lock`, `m-batch-write`, `m-txtime-write`, `m-bitemp-write`, `m-sql`, `m-navigate`, `m-db-port`, `parallax.core.entity` | generated forbidden contracts + cross-package contract |
 | Snapshot handle wrapping (support, child of `parallax.snapshot.handle`) | `parallax.snapshot.handle._wrap` | `parallax.snapshot.handle._wrap` | `parallax.snapshot.materialize`, `parallax.core.entity`, `m-descriptor`, `m-inheritance`, `m-temporal-read` | generated forbidden contracts |
-| Snapshot handle write lowering (support, child group of `parallax.snapshot.handle`) | `parallax.snapshot.handle._family`, `._write_types`, `._keyed_sql`, `._write_lowering` | those four scopes, sharing one grant row | `m-core`, `m-descriptor`, `m-inheritance`, `m-dialect`, `m-db-port`, `m-sql`, `m-unit-work`, `m-opt-lock`, `m-audit-write`, `m-bitemp-write` | generated forbidden contracts |
+| Snapshot handle write lowering (support, child group of `parallax.snapshot.handle`) | `parallax.snapshot.handle._family`, `._write_types`, `._keyed_sql`, `._write_lowering` | those four scopes, sharing one grant row | `m-core`, `m-descriptor`, `m-inheritance`, `m-dialect`, `m-db-port`, `m-sql`, `m-unit-work`, `m-opt-lock`, `m-txtime-write`, `m-bitemp-write` | generated forbidden contracts |
 | `m-case-format` | `parallax.conformance.case_format` (dev-only) | `parallax.conformance.case_format` | `m-core` | generated forbidden contracts (dev tree) |
 | `m-conformance-adapter` | `parallax.conformance.cli` (dev-only) | `parallax.conformance.cli` | `m-case-format`, plus any claimed behavioral or support scope it harnesses — the core conformance-family exception | generated forbidden contracts (dev tree) |
 | `m-api-conformance` | `languages/python/tests/api_conformance` (dev-only) | `tests.api_conformance` | `m-case-format` (harnesses the public surface) | pytest collection boundary |
@@ -958,7 +958,7 @@ parallax.snapshot.handle --> parallax.core.auto_retry
 parallax.snapshot.handle --> parallax.core.read_lock
 parallax.snapshot.handle --> parallax.core.opt_lock
 parallax.snapshot.handle --> parallax.core.batch_write
-parallax.snapshot.handle --> parallax.core.audit_write
+parallax.snapshot.handle --> parallax.core.txtime_write
 parallax.snapshot.handle --> parallax.core.bitemp_write
 parallax.snapshot.handle --> parallax.core.sql_gen
 parallax.snapshot.handle --> parallax.core.navigate
@@ -977,7 +977,7 @@ parallax.snapshot.handle._family --> parallax.core.db_port
 parallax.snapshot.handle._family --> parallax.core.sql_gen
 parallax.snapshot.handle._family --> parallax.core.unit_work
 parallax.snapshot.handle._family --> parallax.core.opt_lock
-parallax.snapshot.handle._family --> parallax.core.audit_write
+parallax.snapshot.handle._family --> parallax.core.txtime_write
 parallax.snapshot.handle._family --> parallax.core.bitemp_write
 parallax.snapshot.handle._write_types --> parallax.core.base
 parallax.snapshot.handle._write_types --> parallax.core.descriptor
@@ -987,7 +987,7 @@ parallax.snapshot.handle._write_types --> parallax.core.db_port
 parallax.snapshot.handle._write_types --> parallax.core.sql_gen
 parallax.snapshot.handle._write_types --> parallax.core.unit_work
 parallax.snapshot.handle._write_types --> parallax.core.opt_lock
-parallax.snapshot.handle._write_types --> parallax.core.audit_write
+parallax.snapshot.handle._write_types --> parallax.core.txtime_write
 parallax.snapshot.handle._write_types --> parallax.core.bitemp_write
 parallax.snapshot.handle._keyed_sql --> parallax.core.base
 parallax.snapshot.handle._keyed_sql --> parallax.core.descriptor
@@ -997,7 +997,7 @@ parallax.snapshot.handle._keyed_sql --> parallax.core.db_port
 parallax.snapshot.handle._keyed_sql --> parallax.core.sql_gen
 parallax.snapshot.handle._keyed_sql --> parallax.core.unit_work
 parallax.snapshot.handle._keyed_sql --> parallax.core.opt_lock
-parallax.snapshot.handle._keyed_sql --> parallax.core.audit_write
+parallax.snapshot.handle._keyed_sql --> parallax.core.txtime_write
 parallax.snapshot.handle._keyed_sql --> parallax.core.bitemp_write
 parallax.snapshot.handle._write_lowering --> parallax.core.base
 parallax.snapshot.handle._write_lowering --> parallax.core.descriptor
@@ -1007,7 +1007,7 @@ parallax.snapshot.handle._write_lowering --> parallax.core.db_port
 parallax.snapshot.handle._write_lowering --> parallax.core.sql_gen
 parallax.snapshot.handle._write_lowering --> parallax.core.unit_work
 parallax.snapshot.handle._write_lowering --> parallax.core.opt_lock
-parallax.snapshot.handle._write_lowering --> parallax.core.audit_write
+parallax.snapshot.handle._write_lowering --> parallax.core.txtime_write
 parallax.snapshot.handle._write_lowering --> parallax.core.bitemp_write
 parallax.postgres --> parallax.core.db_port
 parallax.postgres --> parallax.core.db_error
@@ -1151,9 +1151,9 @@ by-design legal.
 | Support scope | Allowed direct dependencies after the flip |
 |---|---|
 | `parallax.core.entity` | `m-core`, `m-descriptor`, `m-metamodel`, `m-inheritance`, `m-relationship`, `m-op-algebra`, `m-temporal-read`, `parallax.core._formation_profile` |
-| `parallax.snapshot.handle` | `parallax.snapshot.materialize`, `parallax.core.entity`, `m-core`, `m-metamodel`, `m-op-algebra`, `m-inheritance`, `m-temporal-read`, `m-deep-fetch`, `m-navigate`, `m-dialect`, `m-db-port`, `m-sql`, `m-unit-work`, `m-read-lock`, `m-auto-retry`, `m-opt-lock`, `m-batch-write`, `m-audit-write`, `m-bitemp-write` |
+| `parallax.snapshot.handle` | `parallax.snapshot.materialize`, `parallax.core.entity`, `m-core`, `m-metamodel`, `m-op-algebra`, `m-inheritance`, `m-temporal-read`, `m-deep-fetch`, `m-navigate`, `m-dialect`, `m-db-port`, `m-sql`, `m-unit-work`, `m-read-lock`, `m-auto-retry`, `m-opt-lock`, `m-batch-write`, `m-txtime-write`, `m-bitemp-write` |
 | `parallax.snapshot.handle._wrap` | `parallax.snapshot.materialize`, `parallax.core.entity`, `m-metamodel`, `m-relationship`, `m-inheritance`, `m-temporal-read` |
-| write-lowering group (`._family`, `._write_types`, `._keyed_sql`, `._write_lowering`) | `m-core`, `m-metamodel`, `m-inheritance`, `m-temporal-read`, `m-dialect`, `m-db-port`, `m-sql`, `m-unit-work`, `m-opt-lock`, `m-audit-write`, `m-bitemp-write` |
+| write-lowering group (`._family`, `._write_types`, `._keyed_sql`, `._write_lowering`) | `m-core`, `m-metamodel`, `m-inheritance`, `m-temporal-read`, `m-dialect`, `m-db-port`, `m-sql`, `m-unit-work`, `m-opt-lock`, `m-txtime-write`, `m-bitemp-write` |
 | `parallax.postgres` | `m-core`, `m-db-port`, `m-db-error`, `m-dialect` |
 
 `m-descriptor` appears in exactly one support row after the flip:

@@ -3,7 +3,7 @@
 `m-temporal-read` owns temporal coordinates and automatically injected as-of
 predicates over half-open intervals. The operation nodes belong to
 `m-op-algebra`, SQL emission belongs to `m-sql`, infinity representation belongs
-to `m-core`/`m-dialect`, and temporal writes belong to `m-audit-write` and
+to `m-core`/`m-dialect`, and temporal writes belong to `m-txtime-write` and
 `m-bitemp-write`.
 
 The supported temporal Entity shapes are **Transaction-Time-Only** and

@@ -147,7 +147,7 @@ start a later row merely because a convenient case filename sorts earlier.
 | SQL walking skeleton | `m-op-algebra`; `m-dialect` and abstract `m-db-port`; then `m-sql`; one concrete Postgres adapter wired only at the composition root | A tracer case compiles to canonical Postgres SQL/binds and runs against a reset database through the shipped adapter |
 | Transaction and temporal backbone | `m-unit-work`; `m-temporal-read`; `m-db-error` after its port and dialect dependencies | Transaction commit/rollback, as-of lowering, and database-error classification pass focused unit/provider checks |
 | Selected lifecycle branch | Follow exactly one branch below | The branch's materialization, relationship, identity/lifecycle, and failure checks pass |
-| Shared writes and correctness | `m-batch-write`; `m-read-lock`; `m-auto-retry`; `m-opt-lock`; `m-audit-write`; then `m-bitemp-write` | Active-claim write, conflict, retry, lock, and temporal families pass; bitemporal writes are not attempted before audit writes |
+| Shared writes and correctness | `m-batch-write`; `m-read-lock`; `m-auto-retry`; `m-opt-lock`; `m-txtime-write`; then `m-bitemp-write` | Active-claim write, conflict, retry, lock, and temporal families pass; bitemporal writes are not attempted before Transaction-Time-Only writes |
 | Claim closure | Finish any still-partial claimed behavior; complete `m-api-conformance`; run the exact canonical case/dialect/shape/tag matrix | `describe` equals the canonical claim except for adapter identity, every in-claim case is supported, every out-of-claim request is classified unsupported, and both proof surfaces are green |
 
 The descriptor milestone completes `m-inheritance` before `m-op-algebra`
@@ -175,7 +175,7 @@ lifecycle:
 
 This reaches every module in the canonical `slice-snapshot-1` coverage union;
 `m-op-list` and `m-db-port` remain unclaimed prerequisites. No process cache,
-aggregation, business-only temporal behavior, additional dialect, benchmark, or
+aggregation, Valid-Time-Only temporal behavior, additional dialect, benchmark, or
 managed-lifecycle behavior is required to close the claim.
 
 ### Managed-object branch
@@ -194,7 +194,7 @@ lifecycle:
 
 This reaches every module in the canonical `slice-managed-1` coverage union;
 `m-db-port` remains an unclaimed contract prerequisite. No snapshot
-materialization, process cache, aggregation, business-only temporal behavior,
+materialization, process cache, aggregation, Valid-Time-Only temporal behavior,
 additional dialect, or benchmark is required to close the claim.
 
 ## Tracer Case
@@ -263,7 +263,7 @@ language-spec decisions; none may silently enlarge `describe`.
 | Expansion | Dependency-respecting start |
 | --- | --- |
 | Aggregation | Implement deferred `m-agg` after `m-op-algebra`, then deferred `m-sql-agg` after both `m-agg` and `m-sql` |
-| Business-only temporal behavior | Implement deferred `m-business-only` after `m-temporal-read` and `m-unit-work` |
+| Valid-Time-Only temporal behavior | Implement deferred `m-validtime-only` after `m-temporal-read` and `m-unit-work` |
 | Process caching and coherence | Implement deferred `m-process-cache` after `m-unit-work`, then deferred `m-coherence` after `m-process-cache` |
 | Cascade delete | Implement `m-cascade-delete` after `m-op-list` and `m-unit-work` when a later claim includes it |
 | Snapshot history includes | Extend snapshot materialization only under a claim carrying the feature-tagged cases |
@@ -396,7 +396,7 @@ Before claiming the language target is complete:
 - All mandatory static, database, packaging, and supply-chain commands from the
   language spec ran, or each skipped database-backed check is reported with a
   reason.
-- Optional aggregation, business-only temporal behavior, process caches,
+- Optional aggregation, Valid-Time-Only temporal behavior, process caches,
   coherence, additional dialects, snapshot-history includes, cascade delete,
   and benchmarks remain outside the first claim unless a later canonical claim
   and updated language spec explicitly include them.

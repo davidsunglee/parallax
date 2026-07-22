@@ -40,7 +40,7 @@ m-opt-lock.md`; `python.md` §5 L584-641; ADR 0013):
    through their transaction-scoped observations.
 5. **Conflict classification** (:class:`OptimisticLockConflictError`,
    :class:`StaleWriteError`): the two zero-row-close outcomes `m-opt-lock` /
-   `m-audit-write` / `m-bitemp-write` distinguish. ``OptimisticLockConflictError``
+   `m-txtime-write` / `m-bitemp-write` distinguish. ``OptimisticLockConflictError``
    is the retriable-when-opted-in conflict an ``updatedRows != 1`` GATED write
    raises (a versioned keyed write in either mode, or a temporal close under
    optimistic concurrency). ``StaleWriteError`` is the distinct NON-retriable
@@ -181,7 +181,7 @@ class OptimisticLockConflictError(RuntimeError):
 
 class StaleWriteError(RuntimeError):
     """The ``updatedRows != 1`` outcome on an UNGATED (locking-mode) temporal close
-    (`m-audit-write` "Affected-row conflict contract for closes"; `m-bitemp-write`).
+    (`m-txtime-write` "Affected-row conflict contract for closes"; `m-bitemp-write`).
 
     A zero-row temporal close is an error in ANY mode, never silent. Under optimistic
     concurrency the observed-``in_z`` gate (and, bitemporal, the Valid-Time discriminator)
@@ -210,7 +210,7 @@ class StaleWriteError(RuntimeError):
         super().__init__(
             f"{entity}: locking-mode (ungated) temporal close affected {actual} row(s), "
             f"expected {expected} (key={dict(key)!r}) — a non-retriable stale/consistency "
-            "outcome, distinct from a gated optimistic-lock conflict (m-audit-write / "
+            "outcome, distinct from a gated optimistic-lock conflict (m-txtime-write / "
             "m-bitemp-write affected-row conflict contract)"
         )
 

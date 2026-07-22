@@ -178,7 +178,7 @@ rows are plain ungated `INSERT`s whose fresh `in_z = txInstant` **is** the advan
 A **zero-row** close is an error in **any** mode (never silent) — a retriable
 conflict in optimistic mode, a distinct non-retriable stale/consistency error in
 locking mode. The write shapes and the current-row-predicate-is-not-a-gate
-rationale are `m-audit-write` / `m-bitemp-write`; the conflict/retry contract is
+rationale are `m-txtime-write` / `m-bitemp-write`; the conflict/retry contract is
 this module (the `m-opt-lock --> m-temporal-read` composition edge). Combining an
 explicit `optimisticLocking` attribute with `asOfAxes` is invalid
 (`m-descriptor`). Every supported temporal formation contains Transaction Time;
@@ -284,7 +284,7 @@ their own naive `referenceSql` oracle.
 | `m-opt-lock-003`, `-004` | `Account` update, optimistic / locking | materialize then per-object update; optimistic reads/gates are lock-free, locking reads carry `for share of t0` and writes omit the gate |
 | `m-opt-lock-014` | `Account` update, locking | mixed equal/changed rows gives `1 + 1`, proving per-row no-op elimination and no spurious version bump |
 | `m-opt-lock-015` | `Account` delete, optimistic | every matched row is deleted through a version-gated per-row write; the final find proves only the unmatched account remains |
-| `m-audit-write-007` | Transaction-Time `Balance` terminate, locking | every current matched milestone is closed; no equality-elimination applies |
+| `m-txtime-write-007` | Transaction-Time `Balance` terminate, locking | every current matched milestone is closed; no equality-elimination applies |
 | `m-bitemp-write-010`–`-013` | `Position` plain / bounded correction or termination | the materialized observed rectangle is closed and the required head/middle/tail chain is emitted |
 
 Each scenario's write step lists its ordered per-object golden statements

@@ -1,5 +1,5 @@
 # Held views reflect the post-write timeline at their own pin (m-identity-map):
-# after an in-transaction milestone-chaining write (m-audit-write), a held
+# after an in-transaction milestone-chaining write (m-txtime-write), a held
 # latest-pinned view ADVANCES to the newly chained milestone while a held past-pinned
 # view keeps showing the milestone its own pin selects.
 #
@@ -16,7 +16,7 @@
 # same-object-across-the-write reference identity is asserted by the API Conformance
 # Suite.
 model: models/balance.yaml
-tags: [m-identity-map, m-audit-write, m-temporal-read, identity, as-of, temporal, audit-only, scenario, slice-managed-1]
+tags: [m-identity-map, m-txtime-write, m-temporal-read, identity, as-of, temporal, audit-only, scenario, slice-managed-1]
 shape: scenario
 when:
   uow:

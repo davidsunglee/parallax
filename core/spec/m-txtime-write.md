@@ -1,8 +1,8 @@
-# m-audit-write — Transaction-Time-Only Temporal Writes
+# m-txtime-write — Transaction-Time-Only Temporal Writes
 
-`m-audit-write` specifies milestone-chaining writes on Transaction Time:
+`m-txtime-write` specifies milestone-chaining writes on Transaction Time:
 a write chains milestone rows rather than mutating a value in place, producing the
-audit trail. Per the dependency graph, `m-audit-write` depends on `m-temporal-read`
+audit trail. Per the dependency graph, `m-txtime-write` depends on `m-temporal-read`
 (it shares the interval/as-of model) and `m-unit-work` (writes happen inside a
 unit of work). The SQL emission is `m-sql`; the conflict/retry contract is
 `m-opt-lock`.
@@ -41,7 +41,7 @@ A milestone-chaining write on an inheritance participant (a concrete subtype of 
 family whose Transaction-Time axis is declared on the abstract root, `m-inheritance`) is
 the **same** close-and-open sequence — `insert` / `update` / `terminate` are
 unchanged. Routing and tag guards are physical, owned by `m-inheritance` / `m-sql`,
-not restated here. The corpus proves audit terminate composed with both strategies
+not restated here. The corpus proves Transaction-Time-Only terminate composed with both strategies
 (`m-inheritance-090` / `-091`).
 
 **Composed predicate order under optimistic mode.** A temporal close on a
@@ -95,7 +95,7 @@ conflict/retry contract itself is `m-opt-lock`.
 
 ## Statement order when a set-based write materializes
 
-A set-based (predicate-selected) audit write **materializes** to per-row
+A set-based (predicate-selected) Transaction-Time-Only write **materializes** to per-row
 statements (`m-opt-lock`, ADR 0014; emission order is `m-sql`) — the set predicate
 cannot collapse to one statement because each close is keyed by its own resolved
 current-row (`pk and out_z = infinity`) and each chain carries that row's resolved
@@ -105,7 +105,7 @@ unit** — the row's close `UPDATE` immediately followed by its chain `INSERT` �
 **never regrouped by statement kind** (all closes, then all inserts). This is the
 multi-statement-per-row generalization of `m-sql`'s "one keyed per-object write per
 resolved row": a `terminate` row contributes a lone close, an `update` row a
-close-then-chain pair. `m-audit-write-007` (terminate) and `m-audit-write-009`
+close-then-chain pair. `m-txtime-write-007` (terminate) and `m-txtime-write-009`
 (update) are the corpus witnesses.
 
 ## How the harness verifies (`m-case-format`)

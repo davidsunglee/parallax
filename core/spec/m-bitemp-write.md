@@ -3,7 +3,7 @@
 `m-bitemp-write` specifies the **Bitemporal write**: the *rectangle split* that
 bounds a value change to a Valid-Time window while preserving the audit trail
 on the Transaction-Time axis. Per the dependency graph, `m-bitemp-write` depends on
-`m-audit-write` — it reuses the close-and-chain machinery, extended to two axes.
+`m-txtime-write` — it reuses the close-and-chain machinery, extended to two axes.
 The SQL emission is `m-sql`; the conflict/retry contract is `m-opt-lock`.
 
 A milestone is the intersection of a Valid-Time interval and a Transaction-Time
@@ -39,7 +39,7 @@ trail. Key invariants the suite pins down:
   current-on-Transaction-Time row.
 - The inactivation `UPDATE` **MUST** affect exactly **one** row; a zero-row
   inactivation is an error in any mode (the affected-row conflict contract,
-  `m-audit-write`). In optimistic mode the inactivation gates on the observed
+  `m-txtime-write`). In optimistic mode the inactivation gates on the observed
   `tx_start` — and, when the key's current rows share an `in_z` (distinct
   Valid-Time windows current at the same Transaction Time), on the **Valid-Time**
   discriminator too, to inactivate exactly the observed rectangle:
@@ -48,7 +48,7 @@ trail. Key invariants the suite pins down:
   `head` / `middle` / `tail` rows are ungated `INSERT`s at the fresh `in_z`. On a
   table-per-hierarchy concrete subtype the tag guard joins the identity
   predicates immediately after the primary key, before this composed order,
-  exactly as it does for a Transaction-Time-Only close (`m-audit-write` "Composed predicate
+  exactly as it does for a Transaction-Time-Only close (`m-txtime-write` "Composed predicate
   order under optimistic mode") — the observed-`in_z` gate still binds last.
 
 This mirrors `GenericBiTemporalDirector.updateUntil` / `splitTailEnd`
@@ -94,7 +94,7 @@ and differ only in the tail — `update` chains a new `tail` carrying the new va
   ungated `INSERT`s at the fresh `in_z`.
 - The inactivation `UPDATE` **MUST** affect exactly **one** row; a zero-row
   inactivation is an error in any mode (the affected-row conflict contract,
-  `m-audit-write`).
+  `m-txtime-write`).
 - After a plain `update`, Valid Time `[from_z, V)` is current on Transaction Time
   through the `head` (old value) and `[V, infinity)` through the new `tail` (new
   value). After a plain `terminate`, Valid Time `[from_z, V)` remains current

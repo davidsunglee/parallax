@@ -603,7 +603,7 @@ class Case:
 
     @property
     def is_write_sequence(self) -> bool:
-        """True for a milestone-chaining write case (Phase 5, m-audit-write).
+        """True for a milestone-chaining write case (Phase 5, m-txtime-write).
 
         A write-sequence case carries ``when.writeSequence`` (ordered mutations) and
         a ``then.tableState`` instead of an operation + ``then.rows``.
@@ -622,7 +622,7 @@ class Case:
     def load_fixtures(self) -> bool:
         """Whether the case loads the model's fixtures first (``given.fixtures``).
 
-        Defaults to ``False`` (the m-audit-write milestone-chaining and m-unit-work batched-insert
+        Defaults to ``False`` (the m-txtime-write milestone-chaining and m-unit-work batched-insert
         cases build their own state from an empty schema). The m-detach detached-update
         merge-back case sets it ``True`` so the original persisted row exists
         before the merge-back DML mutates it.

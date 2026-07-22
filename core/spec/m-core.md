@@ -153,7 +153,7 @@ concrete representation**:
   state stay dialect-neutral — the difference is confined to the seam.
 
 The full temporal interval model and milestone-chaining writes are
-`m-temporal-read` / `m-audit-write` / `m-bitemp-write`.
+`m-temporal-read` / `m-txtime-write` / `m-bitemp-write`.
 
 Benefits of native infinity over a `9999` sentinel or `NULL`: correct
 ordering/comparison, no Y9999 cliff, no `NULL`-in-predicate/index complications,

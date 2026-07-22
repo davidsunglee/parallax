@@ -710,7 +710,7 @@ def test_unobserved_temporal_update_from_a_cross_transaction_copy_raises() -> No
 
 def test_same_transaction_insert_then_temporal_update_is_licensed() -> None:
     # Read-your-own-writes exemption: this transaction's OWN buffered insert
-    # IS the provenance (`m-audit-write-008`'s same-transaction coalescing
+    # IS the provenance (`m-txtime-write-008`'s same-transaction coalescing
     # shape) — no observation lookup applies, and the planner folds the pair
     # into the single INSERT carrying the updated value.
     port = RecordingPort()

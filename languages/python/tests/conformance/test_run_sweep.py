@@ -210,8 +210,8 @@ _MATERIALIZING_PREDICATE_WRITE_SCENARIOS_EXERCISED: Final[frozenset[str]] = froz
         "m-opt-lock-004",
         "m-opt-lock-014",
         "m-opt-lock-015",
-        "m-audit-write-007",
-        "m-audit-write-009",
+        "m-txtime-write-007",
+        "m-txtime-write-009",
         "m-bitemp-write-010",
         "m-bitemp-write-011",
         "m-bitemp-write-012",
@@ -459,7 +459,7 @@ def test_error_run_sweep(case: case_format.Case, provisioner: Any) -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Conflict — the optimistic-lock run lane (m-opt-lock / m-audit-write /        #
+# Conflict — the optimistic-lock run lane (m-opt-lock / m-txtime-write /        #
 # m-bitemp-write, COR-3 Phase 8 increments 3-4). Every reachable conflict      #
 # case declares `compileEligibility: run-only` (single-connection concurrency  #
 # intent), so `run` is the ONLY lane that ever grades it — mirroring the       #
@@ -488,7 +488,7 @@ _CONFLICT_CASES_EXERCISED: Final[frozenset[str]] = frozenset(
         "m-temporal-read-010",
         "m-temporal-read-011",
         "m-temporal-read-012",
-        "m-audit-write-006",
+        "m-txtime-write-006",
         "m-bitemp-write-004",
         "m-bitemp-write-005",
         "m-inheritance-105",

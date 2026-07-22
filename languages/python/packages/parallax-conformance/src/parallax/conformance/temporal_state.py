@@ -4,11 +4,11 @@ The conformance engine's write lanes (writeSequence / scenario / conflict) drive
 production ``db.transact`` per choreography unit. A later unit's temporal write
 needs "the observed current milestone" its
 close/chain consumes, but the framework itself never issues an implicit resolving
-read for one (`core/spec/m-audit-write.md` / `m-bitemp-write.md`: "the engine
+read for one (`core/spec/m-txtime-write.md` / `m-bitemp-write.md`: "the engine
 supplies observed rows from case state"). This module is the engine-side tracker
 that makes that observation available WITHOUT a database round trip — fixtures (for
 a case that loads them) seed it, and each temporal write's own neutral milestone
-plan (:mod:`parallax.core.audit_write` / :mod:`parallax.core.bitemp_write`, the SAME
+plan (:mod:`parallax.core.txtime_write` / :mod:`parallax.core.bitemp_write`, the SAME
 pure planning functions the production render seam calls) advances it, so COMPILE
 and RUN consume the identical in-memory state.
 
@@ -23,7 +23,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 
-from parallax.core import audit_write, bitemp_write
+from parallax.core import bitemp_write, txtime_write
 from parallax.core.descriptor import Metamodel
 from parallax.core.inheritance import declaring_entity, family_primary_key
 from parallax.core.unit_work import KeyedWrite, Observation
@@ -60,10 +60,10 @@ class TemporalShadow:
         declaring = declaring_entity(meta, entity)
         if not declaring.as_of_axes:
             return
-        tx_start, tx_end = audit_write.axis_attr_names(declaring, "transactionTime")
+        tx_start, tx_end = txtime_write.axis_attr_names(declaring, "transactionTime")
         is_bitemporal = declaring.temporal == "bitemporal"
         valid_start, valid_end = (
-            audit_write.axis_attr_names(declaring, "validTime") if is_bitemporal else (None, None)
+            txtime_write.axis_attr_names(declaring, "validTime") if is_bitemporal else (None, None)
         )
         pk_names = [attr.name for attr in family_primary_key(meta, entity)]
         for row in rows:
@@ -117,28 +117,28 @@ class TemporalShadow:
         observed: Observation | None,
     ) -> None:
         """Replace this pk's tracked current milestone(s) with the newly OPENED
-        rows the SAME planning function (:mod:`parallax.core.audit_write` /
+        rows the SAME planning function (:mod:`parallax.core.txtime_write` /
         :mod:`parallax.core.bitemp_write`) the render seam calls computes —
         never a separately re-derived arithmetic, so the tracker and the
-        rendered SQL can never disagree (m-audit-write.md / m-bitemp-write.md
+        rendered SQL can never disagree (m-txtime-write.md / m-bitemp-write.md
         "the engine supplies observed rows from case state")."""
         entity = meta.entity(entity_name)
         declaring = declaring_entity(meta, entity)
         pk_names = [attr.name for attr in family_primary_key(meta, entity)]
         key = self._key(entity_name, pk_names, instruction.rows[0])
-        plan_fn = bitemp_write.plan if declaring.temporal == "bitemporal" else audit_write.plan
+        plan_fn = bitemp_write.plan if declaring.temporal == "bitemporal" else txtime_write.plan
         milestone_plan = plan_fn(instruction, declaring, tx_instant, observed)
         opened = [
-            step for step in milestone_plan.steps if isinstance(step, audit_write.MilestoneOpen)
+            step for step in milestone_plan.steps if isinstance(step, txtime_write.MilestoneOpen)
         ]
         if not opened:
             self._current.pop(key, None)  # a terminate/terminateUntil closes with no chain
             return
         is_bitemporal = declaring.temporal == "bitemporal"
         valid_start, valid_end = (
-            audit_write.axis_attr_names(declaring, "validTime") if is_bitemporal else (None, None)
+            txtime_write.axis_attr_names(declaring, "validTime") if is_bitemporal else (None, None)
         )
-        tx_start, tx_end = audit_write.axis_attr_names(declaring, "transactionTime")
+        tx_start, tx_end = txtime_write.axis_attr_names(declaring, "transactionTime")
         self._current[key] = [
             Observation(
                 tx_start=_as_str(step.row[tx_start]),

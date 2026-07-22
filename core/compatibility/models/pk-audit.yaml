@@ -1,5 +1,5 @@
 # PK generation composed with a TEMPORAL (audit-only) entity (m-pk-gen +
-# m-audit-write) — net-new: no existing model puts a pkGeneration on a temporal
+# m-txtime-write) — net-new: no existing model puts a pkGeneration on a temporal
 # entity.
 #
 # `AuditSeq` is the simulated-sequence registry (Reladomo SimulatedSequence): one
@@ -11,7 +11,7 @@
 #
 # The two disciplines compose without conflict: the reserved id is a plain domain
 # value on the milestone (the sequence oracle re-derives it from the config), and
-# the in_z/out_z bookkeeping is the ordinary audit-write milestone open. The
+# the in_z/out_z bookkeeping is the ordinary txtime-write milestone open. The
 # interval columns are `timestamp` (instants are UTC); the open upper bound is the
 # database-native infinity (m-core/m-dialect). Row data (the registry seed) lives
 # in fixtures/pk-audit.yaml; the AuditEntry milestone is built by the case's DML.

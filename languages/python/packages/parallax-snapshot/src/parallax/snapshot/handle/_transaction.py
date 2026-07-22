@@ -208,7 +208,7 @@ class Transaction:
     # --- typed keyed temporal-window verbs (python.md §5). Every mutation   #
     # kind below is already a valid                                          #
     # ``KeyedMutation`` and already fully lowered (``bitemp_write`` /        #
-    # ``audit_write`` / ``planner``) — only the DEVELOPER-facing verb was    #
+    # ``txtime_write`` / ``planner``) — only the DEVELOPER-facing verb was    #
     # missing: a typed ``Transaction`` method that builds the SAME           #
     # instruction through the SAME `_buffer` seam `insert`/`update`/`delete` #
     # already share, so a hand-written program and the engine's corpus      #
@@ -218,7 +218,7 @@ class Transaction:
     ) -> None:
         """Buffer a keyed ``terminate``: close ``node_or_instance``'s current
         milestone (the temporal delete-equivalent, `python.md` §5) — keyed off
-        its primary key alone, no chained row (close-only, `m-audit-write` /
+        its primary key alone, no chained row (close-only, `m-txtime-write` /
         `m-bitemp-write`). Transaction-Time-Only takes no ``valid_from``;
         Bitemporal requires it (the mutation's own Valid-Time
         instant, mirrors ``terminate_where``'s own
@@ -410,7 +410,7 @@ class Transaction:
         # ``terminate``, ``update_until``, ``terminate_until``; ``insert``'s own
         # optional Bitemporal ``valid_from`` and ``insert_until``) and the
         # conformance engine's own
-        # temporal write translation both pass them the SAME way (`m-audit-write`
+        # temporal write translation both pass them the SAME way (`m-txtime-write`
         # / `m-bitemp-write` — the dimension-explicit `validFrom` / `until`
         # instruction fields, never smuggled onto `row`, ADR 0010/0013).
         doc: dict[str, object] = {"mutation": mutation, "entity": entity, "rows": [dict(row)]}

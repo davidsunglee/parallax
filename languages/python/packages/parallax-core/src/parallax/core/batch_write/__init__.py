@@ -37,7 +37,7 @@ Three collapse rules (``m-batch-write.md`` L15-26):
   row's own observed version must gate its own statement).
 
 A **temporal** entity's keyed writes never reach this module's collapse
-decision at all (`m-audit-write` / `m-bitemp-write` own that lowering,
+decision at all (`m-txtime-write` / `m-bitemp-write` own that lowering,
 unchanged since increment 4) — every function here defensively answers "does
 not collapse" for one, so an accidental call never silently mis-batches a
 milestone chain.
@@ -116,7 +116,7 @@ def _rows_carry_observation_keys(rows: Sequence[Mapping[str, object]]) -> bool:
 def insert_collapses(meta: Metamodel, entity_name: str) -> bool:
     """Whether same-entity ``insert`` rows collapse into one multi-row ``INSERT``
     (`m-batch-write.md` L17-19). ``False`` for a temporal entity (its keyed
-    writes are `m-audit-write` / `m-bitemp-write` territory, never this
+    writes are `m-txtime-write` / `m-bitemp-write` territory, never this
     module's decision) or a pk-gen-**managed** entity; ``True`` otherwise,
     versioned or not (the initial version is a derived constant, never an
     observation, `m-opt-lock.INITIAL_VERSION`)."""
@@ -157,7 +157,7 @@ def delete_collapses(meta: Metamodel, entity_name: str) -> bool:
     """Whether same-entity ``delete`` rows collapse into one
     ``DELETE ... WHERE id IN (...)`` statement (`m-batch-write.md` L23-26,
     "the delete analogue of the multi-row INSERT"). ``False`` for a temporal
-    entity (`terminate`/`terminateUntil` are `m-audit-write` / `m-bitemp-write`
+    entity (`terminate`/`terminateUntil` are `m-txtime-write` / `m-bitemp-write`
     territory) or a VERSIONED one — a versioned entity's set-based delete
     NEVER collapses (`m-batch-write.md` L26): each row must be removed under
     its own observed version (`m-batch-write-004`)."""

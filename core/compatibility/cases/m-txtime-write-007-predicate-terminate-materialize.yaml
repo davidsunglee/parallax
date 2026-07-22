@@ -1,5 +1,5 @@
 # Predicate-selected TERMINATE over an audit-only (processing-temporal) entity
-# materializes per resolved row (m-audit-write + m-opt-lock, ADR 0014).
+# materializes per resolved row (m-txtime-write + m-opt-lock, ADR 0014).
 #
 # Balance carries a SINGLE Transaction-Time dimension [in_z, out_z); a terminate merely CLOSES the
 # current row's processing interval — there is no business-date split and no re-inserted
@@ -13,13 +13,13 @@
 # currently open). The terminate then closes both at the processing instant
 # at = 2024-10-01: two keyed UPDATEs, each binding [at, bal_id, infinity]. A
 # processing-only close needs no old payload, so the materialization observes only the
-# id and interval columns (m-audit-write).
+# id and interval columns (m-txtime-write).
 #
 # The trailing find re-reads the still-open set (out_z = infinity) and expects NO rows:
 # both intervals are now closed as of 2024-10-01, proving the terminate landed. Total
 # roundTrips 4 = materialize read (1) + two closes (2) + verify read (1).
 model: models/balance.yaml
-tags: [m-audit-write, m-opt-lock, m-sql, m-unit-work, temporal, materialize, predicate-write, scenario, slice-snapshot-1]
+tags: [m-txtime-write, m-opt-lock, m-sql, m-unit-work, temporal, materialize, predicate-write, scenario, slice-snapshot-1]
 shape: scenario
 compileEligibility:
   mode: run-only

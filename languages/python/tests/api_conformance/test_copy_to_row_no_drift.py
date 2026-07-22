@@ -133,7 +133,7 @@ def _edited_balance_row() -> dict[str, object]:
 
 
 def test_copy_to_row_temporal_update_gates_the_close_on_observed_tx_start() -> None:
-    # The close (the milestone plan's FIRST statement, `audit_write.plan`)
+    # The close (the milestone plan's FIRST statement, `txtime_write.plan`)
     # binds the OBSERVATION's own Transaction-Time start as its optimistic gate -- never a
     # value the edited copy carries (a temporal keyed write's row never even
     # HAS a Transaction-Time column to carry one, `m-unit-work` axis-column

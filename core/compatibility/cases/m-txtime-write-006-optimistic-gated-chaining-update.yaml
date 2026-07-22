@@ -1,4 +1,4 @@
-# Optimistic gate on an audit-only chaining update's close (m-audit-write + m-opt-lock).
+# Optimistic gate on an audit-only chaining update's close (m-txtime-write + m-opt-lock).
 #
 # An audit-only entity carries no version column, so the observed processing-from
 # (in_z) is the optimistic-lock version analogue. Under optimistic concurrency the
@@ -10,7 +10,7 @@
 # This case witnesses the GATED CLOSE of the chaining update reusing the temporal
 # inactivation gate shape (m-bitemp-write-004): a conflict case runs only that single
 # gated close, not the replacement INSERT the chaining update would go on to emit —
-# the chain proper is proven ungated by m-audit-write-002/-004/-005. Here the gate
+# the chain proper is proven ungated by m-txtime-write-002/-004/-005. Here the gate
 # MATCHES (a fresh observed in_z), so the close affects exactly 1 row.
 #
 # Fixtures are loaded. Id 1 (acct A) has a superseded milestone [2024-01-01,
@@ -19,7 +19,7 @@
 # 2024-09-01, gated on `and in_z = 2024-06-01`; it inactivates 1 row. Ids 2 and 3
 # are untouched — conflict granularity is the observed milestone, not the key.
 model: models/balance.yaml
-tags: [m-audit-write, m-opt-lock, m-sql, temporal, conflict, slice-snapshot-1, slice-managed-1]
+tags: [m-txtime-write, m-opt-lock, m-sql, temporal, conflict, slice-snapshot-1, slice-managed-1]
 shape: conflict
 compileEligibility:
   mode: run-only

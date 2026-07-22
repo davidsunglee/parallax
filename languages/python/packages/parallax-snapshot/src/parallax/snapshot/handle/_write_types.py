@@ -35,12 +35,12 @@ class LoweredStatement:
 
     ``expected_affected`` is the count the caller MUST see this ``statement`` affect
     (``None`` means no expectation — an insert, an unversioned/unobserved write, or a
-    chained/opened temporal row: `m-audit-write` "Chained INSERTs carry no
+    chained/opened temporal row: `m-txtime-write` "Chained INSERTs carry no
     expectation"). A non-temporal keyed write lowers to exactly ONE statement, so its
     own expectation (unchanged from increment 3, `~parallax.core.unit_work.PlannedWrite.
     expected_affected`) rides here too. A temporal write lowers to MULTIPLE statements
     (a close, then zero-to-three chained opens) — only the close carries an
-    expectation (always ``1``, `m-audit-write` "The close UPDATE MUST affect exactly
+    expectation (always ``1``, `m-txtime-write` "The close UPDATE MUST affect exactly
     one row" — unconditional on gating), never the whole planned write, since a
     chained INSERT's own affected-row count is meaningless as a conflict signal.
 

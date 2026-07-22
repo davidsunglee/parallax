@@ -1,14 +1,14 @@
 # Table-per-hierarchy Transaction-Time-Only concrete-subtype TERMINATE: the milestone close is
-# tag-GUARDED (m-inheritance x m-audit-write x m-sql — Phase 8 temporal composition).
+# tag-GUARDED (m-inheritance x m-txtime-write x m-sql — Phase 8 temporal composition).
 #
 # A terminate on an audit-only (Transaction-Time-Only) entity closes the current
 # milestone (out_z = the transaction instant) and inserts nothing — the terminated
-# state is the ABSENCE of any current row (m-audit-write). Under table-per-hierarchy the
+# state is the ABSENCE of any current row (m-txtime-write). Under table-per-hierarchy the
 # whole family shares the `reading` table, so the close carries the concrete-subtype tag
 # GUARD `and kind = ?` among the identity predicates, immediately AFTER the pk and
 # BEFORE the current-row predicate: `where id = ? and kind = ? and out_z = ?`, binds
 # [2024-08-01, 1, meter, infinity] (the tag value is framework-derived from MeterReading's
-# tagValue). The close is the standalone m-audit-write shape, routed to the shared table.
+# tagValue). The close is the standalone m-txtime-write shape, routed to the shared table.
 #
 # The sequence (self-contained, from an empty table):
 #   step 1 insert    : open [2024-01-01, infinity) celsius 20.00, kind=meter   (1 statement)
@@ -17,7 +17,7 @@
 # Resulting state: one CLOSED milestone (out_z finite) with no out_z = infinity row —
 # the observable signature of termination — scoped to the meter subtype's rows.
 model: models/reading.yaml
-tags: [m-inheritance, m-audit-write, m-sql, table-per-hierarchy, tag, temporal, audit-only, write-sequence, terminate, slice-snapshot-1, slice-managed-1]
+tags: [m-inheritance, m-txtime-write, m-sql, table-per-hierarchy, tag, temporal, audit-only, write-sequence, terminate, slice-snapshot-1, slice-managed-1]
 shape: writeSequence
 when:
   writeSequence:

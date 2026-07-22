@@ -150,7 +150,7 @@ pending insert.
   one `INSERT` with the post-update values (never `INSERT` + `UPDATE`); an
   **Transaction-Time-Only** insert-then-update opens a single current milestone with the final
   value — no close-and-chain, in contrast to the cross-transaction chaining of
-  `m-audit-write`; a **bitemporal** insert-then-update opens a single fully-current
+  `m-txtime-write`; a **bitemporal** insert-then-update opens a single fully-current
   rectangle with the final value — no inactivation / head-tail split, in contrast to
   the cross-transaction rectangle split of `m-bitemp-write`.
 - **Insert-then-delete cancels.** A row inserted and then deleted in the same unit of
@@ -161,7 +161,7 @@ pending insert.
 Coalescing is a property of **one** unit of work; across two committed transactions
 the milestone modules chain and split as usual. The rule is centralized here because
 it is a buffering decision, not a per-verb one — the milestone modules
-(`m-audit-write`, `m-bitemp-write`) describe the durable cross-transaction shapes and
+(`m-txtime-write`, `m-bitemp-write`) describe the durable cross-transaction shapes and
 defer the same-transaction combination to this scope.
 
 A coalescing witness encodes **both** buffered mutations explicitly by authoring
@@ -225,7 +225,7 @@ operation steps, each with a declared round-trip count — and plain write cases
 | read-your-own-writes scenario | a buffered write is flushed before a dependent find observes it |
 | rollback scenario | an aborted write is discarded; a post-abort find observes the original rows |
 | fk-ordering / flush cases | buffered writes flush ordered by foreign-key dependency |
-| insert-then-update coalescing (`m-unit-work-008`, `m-audit-write-008`, `m-bitemp-write-014`) | a same-transaction insert-then-update flushes as one write with the final value — no intermediate milestone (non-temporal / Transaction-Time-Only / Bitemporal) |
+| insert-then-update coalescing (`m-unit-work-008`, `m-txtime-write-008`, `m-bitemp-write-014`) | a same-transaction insert-then-update flushes as one write with the final value — no intermediate milestone (non-temporal / Transaction-Time-Only / Bitemporal) |
 | insert-then-delete cancellation (`m-unit-work-010`) | a same-transaction insert-then-delete cancels — the flush emits no DML for that object |
 
 A scenario's declared round-trip counts **MUST** be internally consistent with

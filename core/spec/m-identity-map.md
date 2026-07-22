@@ -73,7 +73,7 @@ the key and the resulting object identities are mandated.
 A managed **temporal** object is a *view of its milestone timeline pinned at its
 coordinates*, not a copy of one row:
 
-- After an in-transaction milestone-chaining write (`m-audit-write`,
+- After an in-transaction milestone-chaining write (`m-txtime-write`,
   `m-bitemp-write`), **every held view reflects the post-write timeline at its
   own pin**: a latest-pinned view shows the newly chained milestone; a view
   pinned at a finite past instant keeps showing the milestone its pin selects.

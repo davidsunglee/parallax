@@ -6,94 +6,6 @@ Idiomatic public-API usage, generated from the API Conformance Suite's
 examples. Each example mirrors a compatibility-corpus case, so the guide
 cannot drift from graded behavior.
 
-## Transaction-Time-Only insert opens a current milestone
-
-Corpus case: `m-audit-write-001`
-
-```python
-def transaction_time_only_insert_opens_a_current_milestone(db: Database) -> None:
-    def fn(tx: Transaction) -> None:
-        tx.insert(Balance(id=1, acct_num="A", value=Decimal("100.00")))
-
-    db.transact(fn)
-```
-
-## Transaction-Time-Only chain update via a sparse edited copy
-
-Corpus case: `m-audit-write-002`
-
-```python
-def transaction_time_only_chain_update_via_a_sparse_copy(db: Database) -> None:
-    def insert(tx: Transaction) -> None:
-        tx.insert(Balance(id=1, acct_num="A", value=Decimal("100.00")))
-
-    def update(tx: Transaction) -> None:
-        current = tx.find(Balance.where(Balance.id == 1)).result()  # observe the milestone
-        # The edited copy touches only `value`; observed-payload merging keeps
-        # the chained row's untouched `acct_num` value.
-        tx.update(current.model_copy(update={"value": Decimal("150.00")}))
-
-    db.transact(insert)
-    db.transact(update)
-```
-
-## Transaction-Time-Only terminate closes the current milestone
-
-Corpus case: `m-audit-write-003`
-
-```python
-def transaction_time_only_terminate_closes_the_current_milestone(db: Database) -> None:
-    def insert(tx: Transaction) -> None:
-        tx.insert(Balance(id=1, acct_num="A", value=Decimal("100.00")))
-
-    def close(tx: Transaction) -> None:
-        # Observe the current milestone FIRST (`python.md` §5: temporal
-        # update/terminate follow the same prior-observation rule as versioned
-        # writes — in the default locking mode, the find's shared lock is
-        # exactly what licenses the ungated close), then close it keyed off
-        # the primary key alone (close-only, no chained row).
-        current = tx.find(Balance.where(Balance.id == 1)).result()
-        tx.terminate(current)
-
-    db.transact(insert)
-    db.transact(close)
-```
-
-## Transaction-Time-Only chain update carries every new attribute
-
-Corpus case: `m-audit-write-004`
-
-```python
-def transaction_time_only_chain_update_carries_every_new_attribute(db: Database) -> None:
-    def insert(tx: Transaction) -> None:
-        tx.insert(Balance(id=1, acct_num="A", value=Decimal("100.00")))
-
-    def update(tx: Transaction) -> None:
-        current = tx.find(Balance.where(Balance.id == 1)).result()  # observe the milestone
-        tx.update(current.model_copy(update={"acct_num": "B", "value": Decimal("250.00")}))
-
-    db.transact(insert)
-    db.transact(update)
-```
-
-## Transaction-Time-Only chain update starting from existing history
-
-Corpus case: `m-audit-write-005`
-
-```python
-def transaction_time_only_chain_update_from_existing_history(db: Database) -> None:
-    # m-audit-write-005: the fixtures are loaded (`given.fixtures: true`) —
-    # id 1 already carries a superseded [2024-01-01, 2024-06-01) milestone
-    # (value 100.00) and a CURRENT [2024-06-01, infinity) milestone (value
-    # 150.00). The close predicate (bal_id AND out_z = infinity) selects
-    # exactly the ONE current row even with a superseded prior on record.
-    def update(tx: Transaction) -> None:
-        current = tx.find(Balance.where(Balance.id == 1)).result()  # observe the CURRENT milestone
-        tx.update(current.model_copy(update={"value": Decimal("175.00")}))
-
-    db.transact(update)
-```
-
 ## A predicate-selected delete over an unversioned entity is readless
 
 Corpus case: `m-batch-write-005`
@@ -733,6 +645,94 @@ Corpus case: `m-temporal-read-003`
 
 ```python
 op = Balance.where().as_of(transaction_time=datetime(2024, 4, 1, tzinfo=UTC))
+```
+
+## Transaction-Time-Only insert opens a current milestone
+
+Corpus case: `m-txtime-write-001`
+
+```python
+def transaction_time_only_insert_opens_a_current_milestone(db: Database) -> None:
+    def fn(tx: Transaction) -> None:
+        tx.insert(Balance(id=1, acct_num="A", value=Decimal("100.00")))
+
+    db.transact(fn)
+```
+
+## Transaction-Time-Only chain update via a sparse edited copy
+
+Corpus case: `m-txtime-write-002`
+
+```python
+def transaction_time_only_chain_update_via_a_sparse_copy(db: Database) -> None:
+    def insert(tx: Transaction) -> None:
+        tx.insert(Balance(id=1, acct_num="A", value=Decimal("100.00")))
+
+    def update(tx: Transaction) -> None:
+        current = tx.find(Balance.where(Balance.id == 1)).result()  # observe the milestone
+        # The edited copy touches only `value`; observed-payload merging keeps
+        # the chained row's untouched `acct_num` value.
+        tx.update(current.model_copy(update={"value": Decimal("150.00")}))
+
+    db.transact(insert)
+    db.transact(update)
+```
+
+## Transaction-Time-Only terminate closes the current milestone
+
+Corpus case: `m-txtime-write-003`
+
+```python
+def transaction_time_only_terminate_closes_the_current_milestone(db: Database) -> None:
+    def insert(tx: Transaction) -> None:
+        tx.insert(Balance(id=1, acct_num="A", value=Decimal("100.00")))
+
+    def close(tx: Transaction) -> None:
+        # Observe the current milestone FIRST (`python.md` §5: temporal
+        # update/terminate follow the same prior-observation rule as versioned
+        # writes — in the default locking mode, the find's shared lock is
+        # exactly what licenses the ungated close), then close it keyed off
+        # the primary key alone (close-only, no chained row).
+        current = tx.find(Balance.where(Balance.id == 1)).result()
+        tx.terminate(current)
+
+    db.transact(insert)
+    db.transact(close)
+```
+
+## Transaction-Time-Only chain update carries every new attribute
+
+Corpus case: `m-txtime-write-004`
+
+```python
+def transaction_time_only_chain_update_carries_every_new_attribute(db: Database) -> None:
+    def insert(tx: Transaction) -> None:
+        tx.insert(Balance(id=1, acct_num="A", value=Decimal("100.00")))
+
+    def update(tx: Transaction) -> None:
+        current = tx.find(Balance.where(Balance.id == 1)).result()  # observe the milestone
+        tx.update(current.model_copy(update={"acct_num": "B", "value": Decimal("250.00")}))
+
+    db.transact(insert)
+    db.transact(update)
+```
+
+## Transaction-Time-Only chain update starting from existing history
+
+Corpus case: `m-txtime-write-005`
+
+```python
+def transaction_time_only_chain_update_from_existing_history(db: Database) -> None:
+    # m-txtime-write-005: the fixtures are loaded (`given.fixtures: true`) —
+    # id 1 already carries a superseded [2024-01-01, 2024-06-01) milestone
+    # (value 100.00) and a CURRENT [2024-06-01, infinity) milestone (value
+    # 150.00). The close predicate (bal_id AND out_z = infinity) selects
+    # exactly the ONE current row even with a superseded prior on record.
+    def update(tx: Transaction) -> None:
+        current = tx.find(Balance.where(Balance.id == 1)).result()  # observe the CURRENT milestone
+        tx.update(current.model_copy(update={"value": Decimal("175.00")}))
+
+    db.transact(update)
 ```
 
 ## Insert, then read your own write

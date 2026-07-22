@@ -2250,7 +2250,7 @@ def _assert_rejected(case: Case) -> None:
     )
 
 
-# --- write sequences (Phase 5, m-audit-write) ------------------------------------------
+# --- write sequences (Phase 5, m-txtime-write) ------------------------------------------
 
 
 def _assert_write_step_count(case: Case, dialect: str) -> None:
@@ -2469,7 +2469,7 @@ def _is_existing_row_statement(statement: str) -> bool:
     A table-per-hierarchy existing-row statement carries the tag guard; an INSERT
     derives the tag COLUMN instead. This classifies by the leading verb so it covers
     the milestone TEMPORAL closes / inactivations (an ``update <table> set out_z = ?
-    …``, m-audit-write / m-bitemp-write) alongside the plain non-temporal
+    …``, m-txtime-write / m-bitemp-write) alongside the plain non-temporal
     ``update`` / ``delete`` — both are existing-row writes that MUST carry the guard,
     while the chained milestone INSERTs are not.
     """
@@ -2487,7 +2487,7 @@ def _assert_inheritance_write_routing(
 
     A no-op on a non-inheritance entity. For a TABLE-PER-HIERARCHY concrete subtype
     every EXISTING-ROW statement in the step — a plain ``update`` / ``delete`` OR a
-    milestone TEMPORAL close / inactivation (m-audit-write / m-bitemp-write) — MUST
+    milestone TEMPORAL close / inactivation (m-txtime-write / m-bitemp-write) — MUST
     carry the tag GUARD among the identity predicates, canonically right after the
     primary key (m-inheritance, m-sql); a chained milestone INSERT derives the tag
     COLUMN instead (cross-checked by :func:`_assert_insert_statement` /
@@ -3490,7 +3490,7 @@ def _read_table(db: DatabaseProvider, entity: Entity) -> list[dict[str, Any]]:
 def _assert_write_sequence(case: Case, db: DatabaseProvider) -> None:
     """Apply the ordered DML golden SQL, then assert the resulting table state.
 
-    This is the observable form of the milestone-chaining write contract (m-audit-write):
+    This is the observable form of the milestone-chaining write contract (m-txtime-write):
     rather than introspecting the implementation, we APPLY the documented golden
     DML in order and assert the rows it leaves behind — including the current-row
     state where the open bound ``to`` equals native ``infinity``.

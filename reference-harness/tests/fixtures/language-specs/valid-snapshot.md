@@ -15,7 +15,7 @@ The implementation selects `slice-snapshot-1` and the snapshot lifecycle.
     "version": "1.0.0"
   },
   "capabilities": {
-    "modules": ["m-api-conformance", "m-audit-write", "m-auto-retry", "m-batch-write", "m-bitemp-write", "m-case-format", "m-conformance-adapter", "m-core", "m-db-error", "m-deep-fetch", "m-descriptor", "m-dialect", "m-inheritance", "m-metamodel", "m-model-formation", "m-navigate", "m-op-algebra", "m-opt-lock", "m-pk-gen", "m-read-lock", "m-relationship", "m-snapshot-read", "m-sql", "m-temporal-read", "m-unit-work", "m-value-object"],
+    "modules": ["m-api-conformance", "m-auto-retry", "m-batch-write", "m-bitemp-write", "m-case-format", "m-conformance-adapter", "m-core", "m-db-error", "m-deep-fetch", "m-descriptor", "m-dialect", "m-inheritance", "m-metamodel", "m-model-formation", "m-navigate", "m-op-algebra", "m-opt-lock", "m-pk-gen", "m-read-lock", "m-relationship", "m-snapshot-read", "m-sql", "m-temporal-read", "m-txtime-write", "m-unit-work", "m-value-object"],
     "dialects": ["postgres"],
     "caseShapes": ["read", "writeSequence", "scenario", "conflict", "boundary", "error", "concurrencySuccess", "rejected"],
     "caseTags": { "include": ["slice-snapshot-1"] },
@@ -48,10 +48,10 @@ shared-node states remain distinct without issuing later SQL.
 | Behavioral/support module | Source owner/path | Enforcement scope | Allowed direct dependencies | Enforcement rule/config |
 |---|---|---|---|---|
 | `m-api-conformance` | src/api-proof | api-proof | `m-case-format` | depcheck.toml |
-| `m-audit-write` | src/audit-write | audit-write | `m-temporal-read`, `m-unit-work` | depcheck.toml |
+| `m-txtime-write` | src/txtime-write | txtime-write | `m-temporal-read`, `m-unit-work` | depcheck.toml |
 | `m-auto-retry` | src/auto-retry | auto-retry | `m-unit-work`, `m-db-error` | depcheck.toml |
 | `m-batch-write` | src/batch-write | batch-write | `m-unit-work` | depcheck.toml |
-| `m-bitemp-write` | src/bitemp-write | bitemp-write | `m-audit-write` | depcheck.toml |
+| `m-bitemp-write` | src/bitemp-write | bitemp-write | `m-txtime-write` | depcheck.toml |
 | `m-case-format` | src/case-format | case-format | `m-core` | depcheck.toml |
 | `m-conformance-adapter` | src/conformance | conformance | `m-case-format` | depcheck.toml |
 | `m-core` | src/core | core | none | depcheck.toml |

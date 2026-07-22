@@ -511,7 +511,7 @@ _LOWERING_ERRORS: Final[tuple[type[Exception], ...]] = (
 
 # A non-temporal writeSequence entry (e.g. a pk-gen sequence registry advance)
 # names no `at` — its Clock value is inert (no temporal write consumes it this
-# unit), so a fixed, deterministic instant stands in (`m-audit-write` / ADR 0010:
+# unit), so a fixed, deterministic instant stands in (`m-txtime-write` / ADR 0010:
 # "a non-temporal entry's clock value is inert, pick something deterministic").
 _INERT_CLOCK_INSTANT: Final[str] = "1970-01-01T00:00:00+00:00"
 
@@ -714,7 +714,7 @@ def _observe_group_find(
 
 def _entry_instant(entry: Mapping[str, object]) -> str:
     """The tx_instant an entry's OWN choreography unit (transaction) runs at
-    (m-audit-write / m-bitemp-write ``at``; ADR 0010: the Clock, never a
+    (m-txtime-write / m-bitemp-write ``at``; ADR 0010: the Clock, never a
     per-operation override). A non-temporal entry names none — its Clock
     value is inert, so :data:`_INERT_CLOCK_INSTANT` stands in."""
     at = entry.get("at")
@@ -737,7 +737,7 @@ def _build_temporal_instruction(
 ) -> tuple[WriteInstruction, ObjectKey | None, Observation | None]:
     """One TEMPORAL writeSequence/scenario entry -> its canonical keyed
     instruction plus the shadow-tracked observation its close/chain consumes
-    (`m-audit-write` / `m-bitemp-write` "the engine supplies observed rows
+    (`m-txtime-write` / `m-bitemp-write` "the engine supplies observed rows
     from case state" — never an implicit resolving read).
 
     The corpus and canonical instruction share the same ``validFrom`` / ``until``
@@ -747,7 +747,7 @@ def _build_temporal_instruction(
 
     ``unit_inserted`` is the SAME choreography unit's own running set of
     (entity, pk) pairs a PRIOR entry in this SAME buffer already inserted
-    (`m-unit-work` same-transaction coalescing, `m-audit-write-008` /
+    (`m-unit-work` same-transaction coalescing, `m-txtime-write-008` /
     `m-bitemp-write-014`): a later entry targeting one of them is a
     same-buffer coalescing candidate whose OWN close/chain arithmetic never
     runs (the planner folds it into the pending insert before `lower_write`
@@ -1157,7 +1157,7 @@ def _lower_find(
     t0``) exactly as the production `Transaction.find` derives it from
     ``self._uow.settings.concurrency``: ``locking`` renders it after every clause;
     ``optimistic`` renders none (an optimistic-mode read takes no lock, COR-3
-    Phase 8 increment 4 — the audit-write-008 / bitemp-write-014 coalescing
+    Phase 8 increment 4 — the txtime-write-008 / bitemp-write-014 coalescing
     witnesses are the first reachable OPTIMISTIC scenarios). ``None`` ALSO
     renders none — the caller's own :func:`_scenario_needs_lock` gate (COR-3
     Phase 8 increment 5): a scenario whose write steps are ALL readless
@@ -1790,7 +1790,7 @@ def _scenario_uow_spans(
 
 def _group_tx_instant(steps: Sequence[Mapping[str, object]], start: int, end: int) -> str:
     """The Clock instant a `uow` group's own choreography unit runs at — its
-    first write entry's own instant (m-audit-write/m-bitemp-write `at`; ADR
+    first write entry's own instant (m-txtime-write/m-bitemp-write `at`; ADR
     0010), or the inert default when the group carries no write (or every
     write entry names none, i.e. every group this round targets a
     non-temporal entity)."""
@@ -2961,7 +2961,7 @@ def _execute_reads(port: DbPort, dialect: Dialect, statements: Sequence[Statemen
 # (`when.attempts`) forms both drive ONE `db.transact` call per attempt        #
 # (ledger D-18). A non-temporal attempt (the increment-3 versioned keyed       #
 # UPDATE) buffers through the neutral `Transaction._buffer` route, exactly     #
-# like any other keyed write; a TEMPORAL attempt (`m-audit-write` /            #
+# like any other keyed write; a TEMPORAL attempt (`m-txtime-write` /            #
 # `m-bitemp-write`) composes `handle.lower_temporal_close` directly — a        #
 # conflict case tests ONLY the close, never a chain, a shape no REAL temporal  #
 # mutation verb produces on its own.                                          #
@@ -3152,7 +3152,7 @@ def _run_conflict_close(
 def run_conflict_case(
     case: case_format.Case, dialect_name: str, port: DbPort
 ) -> tuple[list[Emission], int, dict[str, list[Row]] | None]:
-    """Run a `conflict` case (`m-opt-lock` / `m-audit-write` / `m-bitemp-write`):
+    """Run a `conflict` case (`m-opt-lock` / `m-txtime-write` / `m-bitemp-write`):
     the single-attempt form (`when.write`), or the `when.attempts` retry
     sequence — each attempt its OWN `db.transact` unit (COR-3 Phase 8
     increment 4, DQ4 re-route), in order, each with its own statements /

@@ -32,7 +32,7 @@
 # from the bare-Postgres golden (m-dialect: the reserved-word set is per-dialect). The
 # open bound rides as an `infinity` bind, so the MariaDB max-sentinel round-trips on the
 # Transaction-Time close AND the business thru_z here exactly as the audit witness
-# m-audit-write-004 proves it on out_z, and the asserted table state stays dialect-neutral.
+# m-txtime-write-004 proves it on out_z, and the asserted table state stays dialect-neutral.
 model: models/position.yaml
 tags: [m-bitemp-write, m-sql, bitemporal, temporal, write-sequence, plain-update-split, slice-snapshot-1, slice-managed-1]
 shape: writeSequence

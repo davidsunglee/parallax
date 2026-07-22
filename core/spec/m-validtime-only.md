@@ -1,10 +1,10 @@
-# m-business-only — Valid-Time-Only Temporal Writes
+# m-validtime-only — Valid-Time-Only Temporal Writes
 
-The module ID `m-business-only` is a retained legacy identifier; its domain term
-is **Valid-Time-Only**. When composed, this formation has one Valid-Time
-dimension and no Transaction-Time dimension.
+`m-validtime-only` is the deferred **Valid-Time-Only** temporal formation. When
+composed, this formation has one Valid-Time dimension and no Transaction-Time
+dimension.
 
-- **Edges:** `m-business-only --> m-temporal-read`, `m-business-only -->
+- **Edges:** `m-validtime-only --> m-temporal-read`, `m-validtime-only -->
   m-unit-work`.
 - **Behavior.** Reads inject the single-axis as-of predicate over
   `from_z`/`thru_z` (`m-temporal-read`). Writes are driven by the Valid-Time

@@ -102,7 +102,7 @@ returns the fully-current (both-axes) document while `m-value-object-031` recons
 the originally-believed document of a past audit read. `writeSequence` cases show the
 document is **carried across the chain** exactly like a scalar column: a Transaction-Time-Only
 update closes the current row and chains a new milestone whose golden DML binds the
-whole document in `columnOrder` position (`m-value-object-032`, `m-audit-write`), and a
+whole document in `columnOrder` position (`m-value-object-032`, `m-txtime-write`), and a
 bitemporal `updateUntil` rectangle split carries the document verbatim onto the
 head / middle / tail rectangles (`m-value-object-033`, `m-bitemp-write`) — in both, the
 close / inactivating `UPDATE` sets only the interval bound and never touches the
