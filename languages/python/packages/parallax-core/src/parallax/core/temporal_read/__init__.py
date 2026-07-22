@@ -47,9 +47,12 @@ from parallax.core.op_algebra import (
 __all__ = [
     "AXIS_ORDER",
     "LATEST",
+    "TX_TIME",
+    "VALID_TIME",
     "Edge",
     "Latest",
     "Pin",
+    "TemporalDimensionConstant",
     "TemporalReadError",
     "UndeclaredAxisError",
     "attr_ref_for_column",
@@ -100,6 +103,38 @@ class Latest:
 LATEST: Final[Latest] = Latest()
 
 
+class TemporalDimensionConstant:
+    """One exported Temporal Dimension constant — :data:`VALID_TIME` / :data:`TX_TIME`.
+
+    The developer-surface spelling of a Temporal Dimension value wherever the
+    statement surface takes a dimension argument (``.history(TX_TIME)``),
+    following the :data:`LATEST` sentinel pattern: one ``Final`` module-level
+    singleton per dimension of the closed two-member algebra, giving completion
+    and static checking where a string offers neither. A string dimension
+    spelling is rejected at statement build — a dual-accept surface would be an
+    alias.
+    """
+
+    __slots__ = ("_dimension",)
+
+    _dimension: TemporalDimension
+
+    def __init__(self, dimension: TemporalDimension) -> None:
+        self._dimension = dimension
+
+    @property
+    def dimension(self) -> TemporalDimension:
+        """The canonical dimension spelling this constant maps to at the wire boundary."""
+        return self._dimension
+
+    def __repr__(self) -> str:  # pragma: no cover - debug aid only
+        return "VALID_TIME" if self._dimension == "validTime" else "TX_TIME"
+
+
+VALID_TIME: Final[TemporalDimensionConstant] = TemporalDimensionConstant("validTime")
+TX_TIME: Final[TemporalDimensionConstant] = TemporalDimensionConstant("transactionTime")
+
+
 @dataclass(frozen=True, slots=True)
 class Pin:
     """A temporal read's as-of coordinates — one entry per **genuinely pinned** axis.
@@ -110,13 +145,13 @@ class Pin:
     ``snapshot.pin`` reports and what :func:`pin_of` returns for one node.
     """
 
-    transaction_time: _dt.datetime | Latest | None = None
+    tx_time: _dt.datetime | Latest | None = None
     valid_time: _dt.datetime | Latest | None = None
 
     @property
     def is_empty(self) -> bool:
         """Whether no axis is pinned (both axes scanned, or a non-temporal read)."""
-        return self.transaction_time is None and self.valid_time is None
+        return self.tx_time is None and self.valid_time is None
 
 
 class Edge:
@@ -132,22 +167,22 @@ class Edge:
     pattern applied to axis access, keeping replay code narrowing-free.
     """
 
-    __slots__ = ("_transaction_time", "_valid_time")
+    __slots__ = ("_tx_time", "_valid_time")
 
-    _transaction_time: _dt.datetime | None
+    _tx_time: _dt.datetime | None
     _valid_time: _dt.datetime | None
 
     def __init__(
         self,
         *,
-        transaction_time: _dt.datetime | None = None,
+        tx_time: _dt.datetime | None = None,
         valid_time: _dt.datetime | None = None,
     ) -> None:
         # Frozen by hand (the raise-on-undeclared accessor properties preclude a
         # frozen dataclass): construction writes through `object.__setattr__`,
         # and the overrides below refuse every later mutation — a hashable Edge
         # can never change under a dictionary or set.
-        object.__setattr__(self, "_transaction_time", transaction_time)
+        object.__setattr__(self, "_tx_time", tx_time)
         object.__setattr__(self, "_valid_time", valid_time)
 
     def __setattr__(self, name: str, value: object) -> None:
@@ -157,16 +192,16 @@ class Edge:
         raise AttributeError(f"Edge is frozen; cannot delete {name!r}")
 
     @property
-    def transaction_time(self) -> _dt.datetime:
+    def tx_time(self) -> _dt.datetime:
         """The Transaction-Time start instant; raises when undeclared."""
-        if self._transaction_time is None:
-            raise UndeclaredAxisError("entity declares no `transaction_time` dimension")
-        return self._transaction_time
+        if self._tx_time is None:
+            raise UndeclaredAxisError("entity declares no `tx_time` dimension")
+        return self._tx_time
 
     @property
-    def transaction_time_or_none(self) -> _dt.datetime | None:
+    def tx_time_or_none(self) -> _dt.datetime | None:
         """The Transaction-Time start instant, or ``None`` when undeclared."""
-        return self._transaction_time
+        return self._tx_time
 
     @property
     def valid_time(self) -> _dt.datetime:
@@ -183,16 +218,13 @@ class Edge:
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, Edge):
             return NotImplemented
-        return (
-            self._transaction_time == other._transaction_time
-            and self._valid_time == other._valid_time
-        )
+        return self._tx_time == other._tx_time and self._valid_time == other._valid_time
 
     def __hash__(self) -> int:
-        return hash((self._transaction_time, self._valid_time))
+        return hash((self._tx_time, self._valid_time))
 
     def __repr__(self) -> str:  # pragma: no cover - debug aid only
-        return f"Edge(transaction_time={self._transaction_time!r}, valid_time={self._valid_time!r})"
+        return f"Edge(tx_time={self._tx_time!r}, valid_time={self._valid_time!r})"
 
 
 # The private attributes a materialized snapshot node carries (attached by the
@@ -252,7 +284,7 @@ def milestone_edge(entity: Entity, row: Mapping[str, object]) -> Edge:
             )
         coords[axis.dimension] = normalize_instant(value)
     return Edge(
-        transaction_time=coords.get("transactionTime"),
+        tx_time=coords.get("transactionTime"),
         valid_time=coords.get("validTime"),
     )
 
@@ -471,7 +503,7 @@ def statement_pin(op: Operation, entity: Entity) -> Pin:
     read of the statement's own temporal wrapper, never a database round trip.
     """
     core, _directives = _peel_directives(op)
-    transaction_time: _dt.datetime | Latest | None = None
+    tx_time: _dt.datetime | Latest | None = None
     valid_time: _dt.datetime | Latest | None = None
     current = core
     while isinstance(current, (AsOf, AsOfRange, History)):
@@ -483,11 +515,11 @@ def statement_pin(op: Operation, entity: Entity) -> Pin:
                 else _dt.datetime.fromisoformat(current.coordinate)
             )
             if axis.dimension == "transactionTime":
-                transaction_time = value
+                tx_time = value
             else:
                 valid_time = value
         current = current.operand
-    return Pin(transaction_time=transaction_time, valid_time=valid_time)
+    return Pin(tx_time=tx_time, valid_time=valid_time)
 
 
 def _peel_directives(op: Operation) -> tuple[Operation, list[Limit | OrderBy | Distinct]]:

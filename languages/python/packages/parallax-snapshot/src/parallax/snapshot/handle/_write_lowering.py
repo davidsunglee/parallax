@@ -36,7 +36,7 @@ from parallax.core.unit_work import (
 )
 from parallax.snapshot.handle._family import (
     axis_columns,
-    transaction_time_axis,
+    tx_time_axis,
     valid_time_axis,
     version_attribute,
 )
@@ -269,7 +269,7 @@ def _render_close(
     them — gating is concurrency-driven, never data-driven (`m-bitemp-write`
     "Locking-mode closes are UNGATED").
     """
-    tx_axis = transaction_time_axis(declaring)
+    tx_axis = tx_time_axis(declaring)
     tx_start_column, tx_end_column = axis_columns(declaring, tx_axis)
     where_sql, key_binds = key_predicate(meta, entity, step.identity, dialect, declaring)
     where_sql = f"{where_sql} and {dialect.quote(tx_end_column)} = ?"

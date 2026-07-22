@@ -11,7 +11,8 @@ the inheritance-family vocabulary (``FamilyRoot`` / ``Concrete``, D-7 DQ2),
 the ``Statement`` query surface (predicate,
 result-shaping, deep-fetch ``.include``, subtype ``.narrow``, and the
 axis-keyed temporal-read clauses), the temporal as-of coordinate model
-(``LATEST`` / ``Pin`` / ``Edge`` / ``pin_of`` / ``edge_of``), and the
+(``LATEST`` / ``VALID_TIME`` / ``TX_TIME`` / ``Pin`` / ``Edge`` / ``pin_of``
+/ ``edge_of``), and the
 closed-world relationship load-state introspection (``is_loaded`` /
 ``narrowed``) the frozen ``Snapshot[T]`` node surface uses. The transaction and
 snapshot surfaces land with ``parallax.snapshot``.
@@ -56,6 +57,8 @@ from parallax.core.entity import (
 from parallax.core.op_algebra import OperationRejectedError
 from parallax.core.temporal_read import (
     LATEST,
+    TX_TIME,
+    VALID_TIME,
     Edge,
     Pin,
     TemporalReadError,
@@ -66,6 +69,8 @@ from parallax.core.temporal_read import (
 
 __all__ = [
     "LATEST",
+    "TX_TIME",
+    "VALID_TIME",
     "AsOfAxisMetadata",
     "Attr",
     "AttributeExpr",

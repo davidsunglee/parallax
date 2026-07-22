@@ -407,7 +407,7 @@ def test_entity_config_declares_as_of_dimensions() -> None:
         "tx_start",
         "tx_end",
     )
-    pinned = Balance.where().as_of(transaction_time=dt.datetime(2024, 4, 1, tzinfo=dt.UTC))
+    pinned = Balance.where().as_of(tx_time=dt.datetime(2024, 4, 1, tzinfo=dt.UTC))
     assert "asOf" in pinned.serialize()
 
 

@@ -203,8 +203,8 @@ READ_STORIES: Final[tuple[ReadStory, ...]] = (
         "m-temporal-read-003",
         "As-of read at a past instant",
         "balance",
-        lambda: _Balance.where().as_of(transaction_time=dt.datetime(2024, 4, 1, tzinfo=dt.UTC)),
-        "op = Balance.where().as_of(transaction_time=datetime(2024, 4, 1, tzinfo=UTC))",
+        lambda: _Balance.where().as_of(tx_time=dt.datetime(2024, 4, 1, tzinfo=dt.UTC)),
+        "op = Balance.where().as_of(tx_time=datetime(2024, 4, 1, tzinfo=UTC))",
     ),
     # -- m-navigate (relationship existence), models/orders.yaml ------------- #
     ReadStory(
@@ -264,10 +264,10 @@ READ_STORIES: Final[tuple[ReadStory, ...]] = (
         "A semi-join across a temporal hop, explicitly pinned to latest",
         "policy",
         lambda: Policy.where(Policy.coverages.any(Coverage.amount >= 600.00)).as_of(
-            transaction_time=LATEST, valid_time=LATEST
+            tx_time=LATEST, valid_time=LATEST
         ),
         "op = Policy.where(Policy.coverages.any(Coverage.amount >= 600.00)).as_of(\n"
-        "    transaction_time=LATEST, valid_time=LATEST\n"
+        "    tx_time=LATEST, valid_time=LATEST\n"
         ")",
     ),
     ReadStory(
@@ -331,8 +331,8 @@ READ_STORIES: Final[tuple[ReadStory, ...]] = (
         "m-inheritance-100",
         "Table-per-concrete-subtype concrete-target read pinning an inherited root-owned axis",
         "rate",
-        lambda: DepositRate.where().as_of(transaction_time=dt.datetime(2024, 1, 15, tzinfo=dt.UTC)),
-        "op = DepositRate.where().as_of(transaction_time=datetime(2024, 1, 15, tzinfo=UTC))",
+        lambda: DepositRate.where().as_of(tx_time=dt.datetime(2024, 1, 15, tzinfo=dt.UTC)),
+        "op = DepositRate.where().as_of(tx_time=datetime(2024, 1, 15, tzinfo=UTC))",
     ),
     # -- m-read-lock (the runtime lock/omit matrix), models/account.yaml ----- #
     # (COR-3 Phase 8 increment 6): the `api-conformance`-lane runtime half of

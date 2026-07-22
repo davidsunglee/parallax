@@ -77,9 +77,7 @@ def submit_balance_edit(db: Database, *, id: int, edge: Edge, fields: Mapping[st
     and the edit lands."""
 
     def fn(tx: Transaction) -> None:
-        current = tx.find(
-            Balance.where(Balance.id == id).as_of(transaction_time=edge.transaction_time)
-        ).result()
+        current = tx.find(Balance.where(Balance.id == id).as_of(tx_time=edge.tx_time)).result()
         tx.update(current.model_copy(update=dict(fields)))
 
     db.transact(fn, concurrency="optimistic")
@@ -97,7 +95,7 @@ def submit_branch_edit(
     db: Database, *, id: int, edge: Edge, fields: Mapping[str, Any], valid_from: dt.datetime
 ) -> None:
     """SUBMIT time (bitemporal): re-fetch with EVERY declared axis pinned at
-    the transported edge (`as_of(transaction_time=..., valid_time=...)` — the DISPLAY
+    the transported edge (`as_of(tx_time=..., valid_time=...)` — the DISPLAY
     coordinate, licensing the optimistic re-fetch) inside an OPTIMISTIC
     transaction, apply ``fields`` via ``model_copy``, and issue a PLAIN
     (unbounded) bitemporal correction effective from ``valid_from`` (the
@@ -114,9 +112,7 @@ def submit_branch_edit(
 
     def fn(tx: Transaction) -> None:
         current = tx.find(
-            Branch.where(Branch.id == id).as_of(
-                transaction_time=edge.transaction_time, valid_time=edge.valid_time
-            )
+            Branch.where(Branch.id == id).as_of(tx_time=edge.tx_time, valid_time=edge.valid_time)
         ).result()
         tx.update(current.model_copy(update=dict(fields)), valid_from=valid_from)
 

@@ -33,7 +33,7 @@ from _transact_support import (
 import inheritance_models as im
 import mirrored_models as mm
 from parallax.conformance import models, stale_web_edit
-from parallax.core import opt_lock
+from parallax.core import TX_TIME, opt_lock
 from parallax.core.db_port import JsonDocument, Row
 from parallax.core.dialect import POSTGRES
 from parallax.core.unit_work import (
@@ -98,7 +98,7 @@ def test_optimistic_mode_suppresses_the_read_lock_suffix() -> None:
 
 def test_db_find_pins_an_explicit_as_of_statement() -> None:
     # `statement_pin` reads the statement's OWN temporal wrapper: an explicit
-    # `.as_of(transaction_time=LATEST)` pin comes back on the returned `Snapshot`.
+    # `.as_of(tx_time=LATEST)` pin comes back on the returned `Snapshot`.
     from parallax.core import LATEST
 
     port = RecordingPort(
@@ -113,9 +113,9 @@ def test_db_find_pins_an_explicit_as_of_statement() -> None:
         ]
     )
     db = Database.connect(port, BALANCE, clock=FixedClock(FIXED))
-    statement = mm.Balance.where(mm.Balance.id == 1).as_of(transaction_time=LATEST)
+    statement = mm.Balance.where(mm.Balance.id == 1).as_of(tx_time=LATEST)
     snapshot = db.find(statement)
-    assert snapshot.pin.transaction_time is LATEST
+    assert snapshot.pin.tx_time is LATEST
 
 
 def test_db_find_resolves_a_concrete_inheritance_targets_inherited_pin_and_edge() -> None:
@@ -140,12 +140,12 @@ def test_db_find_resolves_a_concrete_inheritance_targets_inherited_pin_and_edge(
     )
     rate = models.load_models()["rate"]
     db = Database.connect(port, rate, clock=FixedClock(FIXED))
-    statement = im.DepositRate.where().as_of(transaction_time=LATEST)
+    statement = im.DepositRate.where().as_of(tx_time=LATEST)
     snapshot = db.find(statement)
-    assert snapshot.pin.transaction_time is LATEST
+    assert snapshot.pin.tx_time is LATEST
     assert snapshot.pin.valid_time is None
     edge = edge_of(snapshot.result())
-    assert edge.transaction_time == dt.datetime(2024, 2, 1, tzinfo=dt.UTC)
+    assert edge.tx_time == dt.datetime(2024, 2, 1, tzinfo=dt.UTC)
     assert edge.valid_time == dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
 
 
@@ -162,7 +162,7 @@ def test_locking_mode_temporal_write_after_an_as_of_find_raises_historical_obser
     def fn(tx: Transaction) -> None:
         fetched = tx.find(
             mm.Balance.where(mm.Balance.id == 1).as_of(
-                transaction_time=dt.datetime(2024, 2, 1, tzinfo=dt.UTC)
+                tx_time=dt.datetime(2024, 2, 1, tzinfo=dt.UTC)
             )
         ).result()
         tx.terminate(fetched)
@@ -181,7 +181,7 @@ def test_optimistic_mode_temporal_write_after_an_as_of_find_gates_on_observed_in
     def fn(tx: Transaction) -> None:
         fetched = tx.find(
             mm.Balance.where(mm.Balance.id == 1).as_of(
-                transaction_time=dt.datetime(2024, 2, 1, tzinfo=dt.UTC)
+                tx_time=dt.datetime(2024, 2, 1, tzinfo=dt.UTC)
             )
         ).result()
         tx.terminate(fetched)
@@ -354,7 +354,7 @@ def test_db_find_returns_one_snapshot_root_per_milestone_for_a_history_statement
     db = Database.connect(port, BALANCE, clock=FixedClock(FIXED))
     # `.distinct()` after `.history()` also exercises `is_milestone_set_op`'s
     # own directive-peeling loop (a result-shaping wrapper around the scan).
-    statement = mm.Balance.where(mm.Balance.id == 1).history("transaction_time").distinct()
+    statement = mm.Balance.where(mm.Balance.id == 1).history(TX_TIME).distinct()
     snapshot = db.find(statement)
     assert len(snapshot.results()) == 2
     assert snapshot.pin == Pin()  # the whole-graph pin is per-milestone, not here
@@ -363,7 +363,7 @@ def test_db_find_returns_one_snapshot_root_per_milestone_for_a_history_statement
 def test_tx_find_returns_one_snapshot_root_per_milestone_for_a_history_statement() -> None:
     port = RecordingPort(rows=_balance_history_rows())
     db = Database.connect(port, BALANCE, clock=FixedClock(FIXED))
-    statement = mm.Balance.where(mm.Balance.id == 1).history("transaction_time")
+    statement = mm.Balance.where(mm.Balance.id == 1).history(TX_TIME)
     snapshot = db.transact(lambda tx: tx.find(statement))
     assert len(snapshot.results()) == 2
 
@@ -380,7 +380,7 @@ def test_stale_web_edit_balance_render_then_submit_gates_on_the_transported_edge
 
     node, edge = stale_web_edit.render_balance_milestone(db, id=1)
     assert node.value == Decimal("5.00")
-    assert edge.transaction_time == in_z
+    assert edge.tx_time == in_z
     assert edge.valid_time_or_none is None  # Transaction-Time-Only declares no Valid Time
 
     stale_web_edit.submit_balance_edit(db, id=1, edge=edge, fields={"value": Decimal("9.00")})
@@ -427,7 +427,7 @@ def test_stale_web_edit_branch_render_then_submit_pins_both_axes() -> None:
     node, edge = stale_web_edit.render_branch_milestone(db, id=1)
     assert node.name == "Old Name"
     assert edge.valid_time == from_z
-    assert edge.transaction_time == in_z
+    assert edge.tx_time == in_z
 
     stale_web_edit.submit_branch_edit(
         db,
@@ -452,5 +452,5 @@ def test_pin_from_milestone_skips_an_axis_absent_from_the_milestone_pin() -> Non
     # from a given milestone's pin, not KeyError.
     position = models.load_models()["position"].entity("Position")
     pin = _pin_from_milestone(position, {"transactionTime": _MILESTONE_INSTANT})
-    assert pin.transaction_time == _MILESTONE_INSTANT
+    assert pin.tx_time == _MILESTONE_INSTANT
     assert pin.valid_time is None

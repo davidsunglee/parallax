@@ -399,9 +399,7 @@ def _edge_sort_key(entity: Entity, row: Row) -> tuple[object, ...]:
 def _edge_pin(entity: Entity, edge: Edge) -> dict[str, object]:
     """The milestone-set `then.graphs` `pin` entry keyed by dimension."""
     return {
-        axis.dimension: (
-            edge.valid_time if axis.dimension == "validTime" else edge.transaction_time
-        )
+        axis.dimension: (edge.valid_time if axis.dimension == "validTime" else edge.tx_time)
         for axis in entity.as_of_axes
     }
 
@@ -441,7 +439,7 @@ def _pin_from_milestone(entity: Entity, milestone_pin: Mapping[str, object]) -> 
         if axis.dimension in milestone_pin:
             coords[axis.dimension] = milestone_pin[axis.dimension]
     return Pin(
-        transaction_time=cast("Any", coords.get("transactionTime")),
+        tx_time=cast("Any", coords.get("transactionTime")),
         valid_time=cast("Any", coords.get("validTime")),
     )
 

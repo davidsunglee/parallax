@@ -1,7 +1,7 @@
 """``parallax.snapshot.handle._family`` — the shared family-descriptor leaf.
 
 Every question of the form "what shape does this entity's FAMILY declare?"
-answers here: the temporal axes (:func:`transaction_time_axis` / :func:`valid_time_axis`),
+answers here: the temporal axes (:func:`tx_time_axis` / :func:`valid_time_axis`),
 the optimistic-lock version attribute (:func:`version_attribute`), and the
 writable member-to-column map (:func:`members`), plus the small
 ``Class.member`` reference split (:func:`assignment_member`) that resolves an
@@ -32,13 +32,13 @@ __all__ = [
     "assignment_member",
     "axis_columns",
     "members",
-    "transaction_time_axis",
+    "tx_time_axis",
     "valid_time_axis",
     "version_attribute",
 ]
 
 
-def transaction_time_axis(declaring: Entity) -> AsOfAxisMetadata:
+def tx_time_axis(declaring: Entity) -> AsOfAxisMetadata:
     return next(axis for axis in declaring.as_of_axes if axis.dimension == "transactionTime")
 
 

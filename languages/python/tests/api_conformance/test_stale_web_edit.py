@@ -103,9 +103,7 @@ def test_audit_only_stale_web_edit_raises_historical_observation_in_locking_mode
     _node, edge = render_balance_milestone(db, id=1)
 
     def fn(tx: Transaction) -> None:
-        current = tx.find(
-            Balance.where(Balance.id == 1).as_of(transaction_time=edge.transaction_time)
-        ).result()
+        current = tx.find(Balance.where(Balance.id == 1).as_of(tx_time=edge.tx_time)).result()
         tx.update(current.model_copy(update={"value": Decimal("150.00")}))
 
     with pytest.raises(opt_lock.HistoricalObservationError, match="latest-pinned"):
