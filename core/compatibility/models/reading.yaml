@@ -14,7 +14,7 @@
 #     MeterReading (concrete)    — tagValue 'meter'; all members inherited
 #
 # The audit-only concrete-subtype TERMINATE (m-inheritance-090) closes the
-# current-on-processing milestone with the tag GUARD among the identity predicates
+# Transaction-Time-current milestone with the tag GUARD among the identity predicates
 # (`… where id = ? and kind = ? and out_z = ?`) — the standalone m-txtime-write close,
 # routed to the shared table. The write-sequence case builds its milestone history
 # from ordered DML.

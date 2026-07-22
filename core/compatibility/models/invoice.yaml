@@ -1,7 +1,7 @@
 # Invoice / InvoiceLine: the CLEAN audit-only (Transaction-Time-Only) crossing —
 # one as-of dimension, with no Valid-Time dimension. A deliberately minimal
 # example of as-of propagation across a relationship for readers who only care
-# about the common processing-temporal case. Mirrors balance.yaml's single-axis
+# about the common transaction-time-only case. Mirrors balance.yaml's single-axis
 # shape; InvoiceLine 1000 carries a correction so as-of-past vs as-of-latest
 # discriminate. Row data lives in fixtures/invoice.yaml.
 entities:

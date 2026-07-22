@@ -1,8 +1,8 @@
-# Deep fetch Policy.coverages, business PAST 2024-03-01 / processing PAST
+# Deep fetch Policy.coverages, Valid Time PAST 2024-03-01 / Transaction Time PAST
 # 2024-02-01 — the signature bitemporal audit read across a relationship. Both
 # axes propagate as ranges: child `from_z <= ? and thru_z > ? and in_z <= ? and
 # out_z > ?` (binds B, B, P, P). Reconstructs what the system believed on
-# 2024-02-01 about business 2024-03-01: coverage 10 -> 500 (C-R1); coverage 20 -> 300.
+# 2024-02-01 about Valid Time 2024-03-01: coverage 10 -> 500 (C-R1); coverage 20 -> 300.
 model: models/policy.yaml
 tags: [m-navigate, m-temporal-read, temporal, relationship, propagation, bitemporal, audit, slice-snapshot-1, slice-managed-1]
 shape: read

@@ -1,4 +1,4 @@
-# valueObject on a UNITEMPORAL (processing) owner: the document is visible per
+# valueObject on a UNITEMPORAL (Transaction-Time) owner: the document is visible per
 # milestone — an as-of-NOW read returns each supplier's CURRENT address document
 # (m-value-object "Inherited temporality", m-temporal-read), on Postgres AND MariaDB.
 #

@@ -17,7 +17,9 @@
 #     value-object document column LAST; a `load` to a VO-bearing child therefore rides
 #     the child's whole `address` document on the child-level statement, decoded with
 #     the CHILD Depot's descriptor (the harness walks the relationship path's terminal
-#     entity), never the scenario root's.
+#     entity), never the scenario root's. Depot 201 carries a SQL-NULL document, so its
+#     address materializes null — the absence collapse pinned AT DEPTH for the
+#     divergent flat composite.
 #
 # Steps:
 #   0  find (Customer id 1, Ada)      : INSTANCE-FORM managed find — the developer find
@@ -89,8 +91,6 @@ when:
           address:
             line: "1 Dock St"
             postcode: "0193"
-        # Depot 201: SQL-NULL document child -> address materializes null (the
-        # absence collapse pinned AT DEPTH for the divergent flat composite).
         - id: 201
           customer_id: 1
           label: Yard

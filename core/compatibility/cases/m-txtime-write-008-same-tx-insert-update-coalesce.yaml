@@ -16,7 +16,9 @@
 #   step 1 find  : Latest over account 9 observes ONE current row at value 150 — the
 #                  audit trail has a single milestone, not two.
 # The single INSERT (value 150, no close) IS the observable proof of coalescing.
-# roundTrips = 2 (the one coalesced insert + the find).
+# roundTrips = 2 (the one coalesced insert + the find). In the neutral write input
+# `at` is the Clock-supplied Transaction-Time instant the flush records (in_z); it
+# is NOT an instruction field in the canonical write-instruction schema.
 model: models/balance.yaml
 tags: [m-txtime-write, m-unit-work, m-temporal-read, same-transaction-coalescing, scenario, slice-snapshot-1]
 shape: scenario
@@ -25,10 +27,6 @@ when:
     concurrency: optimistic
   scenario:
     - write:
-        # Buffer the keyed INSERT of the new account 9 (value 100), then buffer the
-        # keyed UPDATE of that SAME object to value 150. `at` is the Clock-supplied
-        # processing instant the flush records (in_z); it is NOT an instruction field
-        # in the canonical write-instruction schema.
         - mutation: insert
           entity: Balance
           rows:

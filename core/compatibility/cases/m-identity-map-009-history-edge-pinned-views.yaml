@@ -4,14 +4,14 @@
 # the one instant guaranteed to select exactly that milestone).
 #
 # Position id 1 is a full bitemporal history of three rectangles
-# (models/position.yaml): R1 value 90 (the superseded belief, processing
-# [2024-01-01, 2024-04-01)), R2 value 100 (the head, business [2024-01-01,
-# 2024-06-01)), and R3 value 200 (the corrected value, business [2024-06-01,
+# (models/position.yaml): R1 value 90 (the superseded belief, transaction
+# [2024-01-01, 2024-04-01)), R2 value 100 (the head, valid [2024-01-01,
+# 2024-06-01)), and R3 value 200 (the corrected value, valid [2024-06-01,
 # infinity)). Step 0's `history` returns all three, each row carrying its own
 # from/thru/in/out edge columns — the milestone edge pins. Steps 1 and 2 re-read
-# id 1 pinned at two of those EDGE coordinates: R1's edge (business 2024-01-01,
-# processing 2024-01-01, exercising the Transaction-Time dimension) and R3's edge (business
-# 2024-06-01, processing 2024-04-01, exercising the Valid-Time dimension). Each resolves
+# id 1 pinned at two of those EDGE coordinates: R1's edge (Valid Time 2024-01-01,
+# Transaction Time 2024-01-01, exercising the Transaction-Time dimension) and R3's edge (Valid Time
+# 2024-06-01, Transaction Time 2024-04-01, exercising the Valid-Time dimension). Each resolves
 # exactly its milestone (90, then 200), and the two are DISTINCT pinned views
 # (`differentObjectFrom`) — proven at the wire by the differing coordinates and
 # rows, graded as reference inequality by the API Conformance Suite.
@@ -57,7 +57,7 @@ when:
           dimension: validTime
           coordinate: "2024-01-01T00:00:00+00:00"
       roundTrips: 1
-      note: re-read at R1's edge pin (business + processing from-instant 2024-01-01) -> exactly R1 (90)
+      note: re-read at R1's edge pin (Valid-Time + Transaction-Time from-instant 2024-01-01) -> exactly R1 (90)
       statements:
         - sql:
             postgres: select t0.pos_id, t0.acct_num, t0.val, t0.from_z, t0.thru_z, t0.in_z, t0.out_z from position t0 where t0.pos_id = ? and t0.from_z <= ? and t0.thru_z > ? and t0.in_z <= ? and t0.out_z > ?
@@ -80,7 +80,7 @@ when:
       roundTrips: 1
       differentObjectFrom: 1
       identityAttr: pos_id
-      note: re-read at R3's edge pin (business 2024-06-01, processing 2024-04-01) -> exactly R3 (200), a DISTINCT view from R1
+      note: re-read at R3's edge pin (Valid Time 2024-06-01, Transaction Time 2024-04-01) -> exactly R3 (200), a DISTINCT view from R1
       statements:
         - sql:
             postgres: select t0.pos_id, t0.acct_num, t0.val, t0.from_z, t0.thru_z, t0.in_z, t0.out_z from position t0 where t0.pos_id = ? and t0.from_z <= ? and t0.thru_z > ? and t0.in_z <= ? and t0.out_z > ?

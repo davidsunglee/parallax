@@ -1,6 +1,6 @@
-# Processing-only milestone history. InvoiceLine 1000 corrected 50 -> 75
-# (out_z finite on the superseded row). At processing-latest -> 75/25; at
-# processing instant 2024-02-01 -> 50/25.
+# Transaction-Time-only milestone history. InvoiceLine 1000 corrected 50 -> 75
+# (out_z finite on the superseded row). At Transaction-Time latest -> 75/25; at
+# Transaction-Time instant 2024-02-01 -> 50/25.
 Invoice:
   - { id: 100, name: INV-100, tx_start: "2024-01-01T00:00:00+00:00", tx_end: infinity }
 InvoiceLine:

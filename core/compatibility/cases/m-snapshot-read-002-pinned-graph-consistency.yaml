@@ -2,7 +2,7 @@
 # materializes a point-consistent snapshot graph — every temporal node at the
 # propagated pin, including now-superseded milestones.
 #
-# Invoice 100 is fetched as of processing 2024-02-01. The root pin lowers to the
+# Invoice 100 is fetched as of Transaction Time 2024-02-01. The root pin lowers to the
 # containment predicate and propagates per hop (m-navigate) into the child level, so
 # InvoiceLine 1000 materializes as its SUPERSEDED 50.00 milestone (known
 # [2024-01-01, 2024-04-01)) rather than the current 75.00 — the whole graph

@@ -1,5 +1,5 @@
 # Different finite pins in ONE milestone are DISTINCT views (m-identity-map): two
-# distinct finite processing-axis coordinates that resolve to the SAME milestone
+# distinct finite Transaction-Time-axis coordinates that resolve to the SAME milestone
 # row are distinct pinned views even though their row values are IDENTICAL — so
 # value equality cannot distinguish them and the assertion is genuine reference
 # INEQUALITY (`differentObjectFrom`).

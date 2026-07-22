@@ -1,5 +1,5 @@
-# Multi-hop deep fetch [Policy.coverages, Coverage.claims], business LATEST /
-# processing LATEST — the temporal analog of the 1 -> N -> N N+1-elimination
+# Multi-hop deep fetch [Policy.coverages, Coverage.claims], Valid Time LATEST /
+# Transaction Time LATEST — the temporal analog of the 1 -> N -> N N+1-elimination
 # proof. THREE statements (root + coverages + claims), and the root pin
 # propagates to BOTH temporal child levels (each carries `thru_z = ? and
 # out_z = ?`). coverage 10 -> 700 owns claim 1000 (9000); coverage 20 -> 300 owns

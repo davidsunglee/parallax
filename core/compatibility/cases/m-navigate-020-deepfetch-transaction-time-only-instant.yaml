@@ -1,4 +1,4 @@
-# Deep fetch Invoice.lines as of processing INSTANT 2024-02-01. Single-axis range
+# Deep fetch Invoice.lines as of Transaction Time INSTANT 2024-02-01. Single-axis range
 # propagation: the child carries `in_z <= ? and out_z > ?` (binds T, T). At that
 # instant line 1000 is the SUPERSEDED 50 (L-R1), line 1001 -> 25 — distinct from
 # m-navigate-019, proving the propagated instant selects the milestone whose interval

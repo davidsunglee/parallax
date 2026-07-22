@@ -17,7 +17,13 @@
 # absence states collapse exactly as the read predicates do (m-op-algebra Q5) —
 # a null / missing / JSON-null / non-object `one` member materializes as null
 # (address on id 4; geo on ids 6/8/9/10; point on id 5), and a null / missing /
-# non-array `many` member materializes as [] (phones on ids 3/5/6/8/9/10). The
+# non-array `many` member materializes as [] (phones on ids 3/5/6/8/9/10). Per id,
+# the absence state each row exercises: id 4 a SQL-NULL address column (the whole
+# value object null); id 5 missing city + geo inner keys (geo present-but-all-null,
+# point null, phones missing); id 6 a non-object geo scalar; id 7 explicit
+# JSON-null leaves (point present with null lat/lon) beside a real one-element
+# phones array; id 8 phones an explicit JSON null; ids 9/10 phones a non-array
+# scalar / object whose content collides with a real element's — still []. The
 # golden SQL is identical on both dialects (a bare column projection); MariaDB
 # returns the `json` column as text and Postgres the `jsonb` column parsed, but
 # both decode to the same composite.
@@ -74,13 +80,9 @@ then:
             elevation: 5.0
             point: { lat: 42.3, lon: -71.0 }
           phones: []
-      # id 4: SQL-NULL address column -> the whole value object materializes null.
       - id: 4
         name: Mary
         address: null
-      # id 5: address present, but city + every geo inner key MISSING -> city null,
-      # geo present-but-all-null, point (a missing nested one) null, phones (missing
-      # many) [].
       - id: 5
         name: Kavi
         address:
@@ -91,8 +93,6 @@ then:
             elevation: null
             point: null
           phones: []
-      # id 6: geo is a NON-OBJECT scalar -> the nested one collapses to null;
-      # phones missing -> [].
       - id: 6
         name: Rin
         address:
@@ -100,9 +100,6 @@ then:
           city: Berlin
           geo: null
           phones: []
-      # id 7: present objects with explicit JSON-null leaves -> city null, geo
-      # present with null country/elevation, point present with null lat/lon; a
-      # real single-element phones array materializes.
       - id: 7
         name: Nils
         address:
@@ -114,7 +111,6 @@ then:
             point: { lat: null, lon: null }
           phones:
             - { type: work, number: '555-0000' }
-      # id 8: phones an explicit JSON null (non-array many) -> [].
       - id: 8
         name: Iris
         address:
@@ -122,8 +118,6 @@ then:
           city: null
           geo: null
           phones: []
-      # id 9: phones a non-array scalar -> [] (its value collides with a real
-      # element's number, but it is not an array).
       - id: 9
         name: Omar
         address:
@@ -131,8 +125,6 @@ then:
           city: null
           geo: null
           phones: []
-      # id 10: phones a non-array object -> [] (its content matches the
-      # same-element candidate, but it is not an array).
       - id: 10
         name: Priya
         address:

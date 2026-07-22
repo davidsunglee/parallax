@@ -4,26 +4,26 @@
 #
 # A terminateUntil over [validFrom, until) inactivates the original on the
 # Transaction-Time dimension (out_z = txInstant) and chains only TWO new rows at fresh
-# processing time [txInstant, infinity):
-#   head : business [from_z, validFrom)  — the value before the window
-#   tail : business [until, infinity)  — the value after the window
+# Transaction Time [txInstant, infinity):
+#   head : valid [from_z, validFrom)  — the value before the window
+#   tail : valid [until, infinity)  — the value after the window
 # and NO middle row — so the value is ABSENT (terminated) inside the window. No
-# row covers the window on the Valid-Time dimension while current on processing, which is
+# row covers the window on the Valid-Time dimension while current on Transaction Time, which is
 # the observable signature of a windowed termination.
 #
 # The sequence (self-contained, from an empty table):
 #   step 1 insert         : open the Latest rectangle, value 100,
-#                           business [2024-01-01, infinity), processing [2024-01-01, infinity)  (1 statement)
+#                           valid [2024-01-01, infinity), transaction [2024-01-01, infinity)  (1 statement)
 #   step 2 terminateUntil : terminate the value for Valid-Time window
 #                           [2024-03-01, 2024-09-01) at txInstant 2024-02-15 —
 #                           inactivate the original and chain head + tail        (3 statements)
 #
 # Resulting state (3 rows): the inactivated original (out_z finite) + head (100,
-# business [2024-01-01, 2024-03-01)) + tail (100, business [2024-09-01, infinity)),
-# the window left uncovered by any current-on-processing row.
+# valid [2024-01-01, 2024-03-01)) + tail (100, valid [2024-09-01, infinity)),
+# the window left uncovered by any Transaction-Time-current row.
 # the inactivated original — closed on the Transaction-Time dimension
-# head: value before the terminated window, current on processing
-# tail: value after the terminated window, current on processing (NO middle)
+# head: value before the terminated window, current on Transaction Time
+# tail: value after the terminated window, current on Transaction Time (NO middle)
 model: models/position.yaml
 tags: [m-bitemp-write, m-sql, bitemporal, temporal, write-sequence, terminate-until, rectangle-split, slice-snapshot-1, slice-managed-1]
 shape: writeSequence
@@ -32,7 +32,7 @@ when:
     - mutation: insert
       entity: Position
       statements: 1
-      note: open the original Latest rectangle [business inf, processing inf)
+      note: open the original Latest rectangle [valid inf, transaction inf)
       rows:
         - { id: 1, acctNum: A, value: 100.00 }
       validFrom: "2024-01-01T00:00:00+00:00"

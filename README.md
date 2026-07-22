@@ -21,8 +21,8 @@ contract independently of Java or any other host language.
 Parallax focuses on the parts of ORM behavior that are difficult to reproduce
 consistently across languages:
 
-- **Temporal data:** processing-time audit histories, full bitemporal business
-  and processing axes, latest and as-of reads, history and range queries, and
+- **Temporal data:** transaction-time audit histories, full bitemporal valid-
+  and transaction-time axes, latest and as-of reads, history and range queries, and
   bounded corrections implemented as rectangle splits.
 - **Expressive queries and object graphs:** composable predicates, grouping,
   ordering, limits, relationship navigation and existence tests, eager deep

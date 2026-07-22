@@ -2,11 +2,11 @@
 # even though a current row for the same Valid-Time window exists — the bitemporal
 # lost update the in_z gate catches (m-bitemp-write + m-opt-lock).
 #
-# As in m-bitemp-write-004 the close gates on both the business discriminator
-# `from_z = ?` and the processing `in_z = ?`. Here `given.apply` re-chains R3: a
+# As in m-bitemp-write-004 the close gates on both the Valid-Time discriminator
+# `from_z = ?` and the Transaction-Time `in_z = ?`. Here `given.apply` re-chains R3: a
 # concurrent writer inactivated it (Transaction-Time dimension closed at 2024-05-01) and opened
 # a fresh current milestone for the SAME Valid-Time window at in_z 2024-05-01. A
-# current row for that window still exists, but it is a different processing
+# current row for that window still exists, but it is a different Transaction-Time
 # milestone than the one we observed, so our close bound to the stale in_z
 # (2024-04-01) matches nothing and affects 0 rows — without the in_z gate it would
 # silently re-inactivate the concurrent writer's fresh milestone. `then.tableState`

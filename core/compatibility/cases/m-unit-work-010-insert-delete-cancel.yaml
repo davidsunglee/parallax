@@ -14,7 +14,9 @@
 #   step 1 find  : account 9 is looked up and is ABSENT — it was never persisted.
 # The 0-round-trip flush IS the observable proof of cancellation: an implementation that
 # executed the INSERT then the DELETE would cost 2 round trips, not 0.
-# roundTrips = 1 (0 for the cancelled flush + 1 for the find).
+# roundTrips = 1 (0 for the cancelled flush + 1 for the find). Account is
+# non-temporal, so the buffered writes carry no Valid-Time bound or
+# Transaction-Time instant.
 model: models/account.yaml
 tags: [m-unit-work, m-batch-write, same-transaction-coalescing, insert-delete-cancel, scenario, slice-snapshot-1]
 shape: scenario
@@ -23,11 +25,6 @@ given:
 when:
   scenario:
     - write:
-        # Buffer the keyed INSERT of the new account 9, then buffer the keyed DELETE
-        # of that SAME new object. The two annihilate, so the flush emits NO DML —
-        # roundTrips 0, no golden SQL (Reladomo TxOperations.addDelete cancels a
-        # matching same-transaction insert). Account is non-temporal, so the buffered
-        # writes carry no business bound or processing instant.
         - mutation: insert
           entity: Account
           rows:

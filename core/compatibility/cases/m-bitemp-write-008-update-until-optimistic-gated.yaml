@@ -1,14 +1,14 @@
 # Write sequence: updateUntil under an OPTIMISTIC gate, asserted END-TO-END — the
 # full bitemporal RECTANGLE SPLIT (-001) whose inactivating close is GATED on the
-# observed rectangle's processing-from (in_z) AND business-from (from_z), so the
+# observed rectangle's Transaction-Time start (in_z) AND Valid-Time start (from_z), so the
 # whole gated split (close + head/middle/tail) is witnessed, not just the single
 # gated UPDATE that -004/-005 pin (m-bitemp-write + m-opt-lock).
 #
-# A bitemporal entity has no version column, so the observed processing-from (in_z)
-# is the optimistic-lock version analogue; a bitemporal key adds the business
+# A bitemporal entity has no version column, so the observed Transaction-Time start (in_z)
+# is the optimistic-lock version analogue; a bitemporal key adds the Valid-Time
 # discriminator (from_z) so the close targets EXACTLY the observed rectangle. Here
-# the sequence opens a single Latest rectangle at business [2024-01-01, infinity),
-# processing [2024-01-01, infinity), then an `updateUntil` corrects the value to
+# the sequence opens a single Latest rectangle at valid [2024-01-01, infinity),
+# transaction [2024-01-01, infinity), then an `updateUntil` corrects the value to
 # 200 for the bounded Valid-Time window [2024-03-01, 2024-09-01) at txInstant
 # 2024-02-15. The close is gated on the observed rectangle's
 # (from_z, in_z) = (2024-01-01, 2024-01-01) — NOTE the gate's from_z (2024-01-01,
@@ -25,7 +25,7 @@
 #
 # The sequence (self-contained, from an empty table):
 #   step 1 insert      : open the Latest rectangle, value 100,
-#                        business [2024-01-01, infinity), processing [2024-01-01, infinity)  (1 statement)
+#                        valid [2024-01-01, infinity), transaction [2024-01-01, infinity)  (1 statement)
 #   step 2 updateUntil : set value 200 for Valid-Time window [2024-03-01, 2024-09-01)
 #                        at txInstant 2024-02-15 — GATED-inactivate the observed
 #                        rectangle (out_z = 2024-02-15 where from_z = 2024-01-01 and
@@ -43,7 +43,7 @@ when:
     - mutation: insert
       entity: Position
       statements: 1
-      note: open the original Latest rectangle [business inf, processing inf)
+      note: open the original Latest rectangle [valid inf, transaction inf)
       rows:
         - { id: 1, acctNum: A, value: 100.00 }
       validFrom: "2024-01-01T00:00:00+00:00"

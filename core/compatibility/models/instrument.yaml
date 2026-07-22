@@ -6,7 +6,7 @@
 # small temporal family (the existing payment/animal/document/vehicle families stay
 # non-temporal): the whole family maps to ONE shared `instrument` table discriminated
 # by the root's `tag` column (`kind`), and every row is a bitemporal MILESTONE — the
-# intersection of a business interval [from_z, thru_z) and a processing interval
+# intersection of a Valid-Time interval [from_z, thru_z) and a Transaction-Time interval
 # [in_z, out_z). The axes live on the ROOT, so the concrete subtypes inherit the full
 # temporal profile (the harness derives it from the ancestry; a concrete subtype
 # declares NO asOfAxes of its own, so a per-entity metamodel reader
@@ -20,7 +20,7 @@
 # Effective concrete alpha order: Bond, Stock. A temporal abstract-target read
 # (m-inheritance-092) injects the as-of predicate over the shared table and projects
 # the raw tag column so familyVariant materializes; the bitemporal terminate /
-# terminateUntil writes (m-inheritance-094 / -096) inactivate the current-on-processing
+# terminateUntil writes (m-inheritance-094 / -096) inactivate the Transaction-Time-current
 # rectangle with the tag GUARD among the identity predicates and chain head / tail
 # milestones setting the tag from tagValue — the standalone m-bitemp-write shapes,
 # routed to the shared table.

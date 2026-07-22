@@ -1,12 +1,12 @@
-# Predicate-selected UPDATE-UNTIL applies the new value only within a BOUNDED business
+# Predicate-selected UPDATE-UNTIL applies the new value only within a BOUNDED Valid-Time
 # window, materializing to a Transaction-Time close + three re-inserts (m-bitemp-write +
 # m-opt-lock, ADR 0014).
 #
-# Unlike the plain update (m-bitemp-write-010), which runs the new value to business
+# Unlike the plain update (m-bitemp-write-010), which runs the new value to Valid-Time
 # infinity, `updateUntil` bounds it to [validFrom, until) = [2024-07-01, 2024-09-01)
 # and RESTORES the old value on either side. The resolved row (pos 1, value 200)
 # materializes to four statements:
-#   1. close the current processing row (set out_z = at, gated on the observed
+#   1. close the current Transaction-Time row (set out_z = at, gated on the observed
 #      coordinates — optimistic);
 #   2. head: re-insert old value 200 for [2024-06-01, 2024-07-01);
 #   3. middle: insert NEW value 300 for [2024-07-01, 2024-09-01) — the bounded window;

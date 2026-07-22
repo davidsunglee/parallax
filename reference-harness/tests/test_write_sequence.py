@@ -539,7 +539,7 @@ def test_temporal_unique_index_matches_physical_primary_key() -> None:
     }
 
 
-def test_balance_entity_is_unitemporal_processing() -> None:
+def test_balance_entity_is_unitemporal_transaction_time() -> None:
     model = _balance_model()
     entity = model.root_entity
     assert entity.is_temporal

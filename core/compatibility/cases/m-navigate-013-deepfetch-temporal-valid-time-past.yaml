@@ -1,7 +1,7 @@
-# Deep fetch Policy.coverages, business PAST 2024-03-01 / processing LATEST. The
+# Deep fetch Policy.coverages, Valid Time PAST 2024-03-01 / Transaction Time LATEST. The
 # Valid-Time dimension propagates as a range, the Transaction-Time dimension as the equality form:
 # child `from_z <= ? and thru_z > ? and out_z = ?` (binds B, B, infinity). At
-# business 2024-03-01 with the current belief, coverage 10 is the HEAD -> 600
+# Valid Time 2024-03-01 with the current belief, coverage 10 is the HEAD -> 600
 # (C-R2); coverage 20 -> 300.
 model: models/policy.yaml
 tags: [m-navigate, m-temporal-read, temporal, relationship, propagation, bitemporal, slice-snapshot-1, slice-managed-1]

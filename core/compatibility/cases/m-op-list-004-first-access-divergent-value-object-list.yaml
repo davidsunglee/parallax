@@ -20,7 +20,9 @@
 # Location composite (models/customer.yaml). A runner that materializes the list with
 # the scenario ROOT (Customer) descriptor instead of Depot's drops `line`/`postcode`
 # and injects `street`/`city`/`geo`/`phones`, so expectRows fails observably — the
-# wrong-entity failure a verbatim-composite child (Location) cannot surface.
+# wrong-entity failure a verbatim-composite child (Location) cannot surface. Depot 201
+# carries a SQL-NULL document, so its address materializes null — the absence collapse
+# pinned for the divergent flat composite.
 #
 # The all-Depot read returns exactly the two fixture depots (200 present, 201
 # null-document); no other customer owns a depot. Golden SQL is identical on Postgres
@@ -52,8 +54,6 @@ when:
           address:
             line: "1 Dock St"
             postcode: "0193"
-        # Depot 201: SQL-NULL document -> address materializes null (the absence
-        # collapse pinned for the divergent flat composite).
         - id: 201
           customer_id: 1
           label: Yard

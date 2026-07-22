@@ -358,7 +358,7 @@ Classify a failure before editing code:
   copies, deletion state, or merge-back differs. Fix lifecycle transitions in
   `m-detach` and transaction rollback before optimistic locking.
 - **Temporal failure:** check interval closure, infinity representation,
-  defaulted as-of dimensions, processing-instant sourcing, and milestone write
+  defaulted as-of dimensions, Transaction-Time-instant sourcing, and milestone write
   chaining.
 - **Database Error failure:** native codes are lost or errors are assigned the
   wrong Parallax Error class at the port boundary. Fix `m-db-error` without

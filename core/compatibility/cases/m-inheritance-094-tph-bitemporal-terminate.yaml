@@ -1,10 +1,10 @@
 # Table-per-hierarchy BITEMPORAL plain TERMINATE: the inactivation is tag-GUARDED
 # (m-inheritance x m-bitemp-write x m-sql — Phase 8 temporal composition).
 #
-# A plain (unbounded) bitemporal terminate ends a value from a business instant B onward,
+# A plain (unbounded) bitemporal terminate ends a value from a Valid-Time instant B onward,
 # leaving it intact before B: it inactivates the original Latest rectangle on the
-# Transaction-Time dimension (out_z = txInstant) and chains only a HEAD (business [from_z, B)) — no
-# tail, no middle — so [B, infinity) is left covered by no current-on-processing row
+# Transaction-Time dimension (out_z = txInstant) and chains only a HEAD (valid [from_z, B)) — no
+# tail, no middle — so [B, infinity) is left covered by no Transaction-Time-current row
 # (m-bitemp-write). Under table-per-hierarchy the family shares the `instrument` table, so
 # the inactivation carries the tag GUARD `and kind = ?` among the identity predicates,
 # right after the pk: `where id = ? and kind = ? and out_z = ?`, binds [2024-07-01, 1,
@@ -12,12 +12,14 @@
 #
 # The MILESTONE SHAPES are IDENTICAL to the standalone m-bitemp-write-007 (same dates,
 # same value, same 2-row result), differing ONLY in table/tag routing — the composition
-# adds nothing to the terminate semantics.
+# adds nothing to the terminate semantics. The shared `instrument` table physically
+# carries BOTH subtypes' own columns, so a Bond row leaves the sibling `ticker`
+# (Stock's) null.
 #
 # The sequence (self-contained, from an empty table):
-#   step 1 insert    : open the Latest rectangle, price 100, business [2024-01-01, inf),
-#                      processing [2024-01-01, inf), kind=bond, coupon 5.00      (1 statement)
-#   step 2 terminate : end from business B = 2024-06-01 at txInstant 2024-07-01 —
+#   step 1 insert    : open the Latest rectangle, price 100, valid [2024-01-01, inf),
+#                      transaction [2024-01-01, inf), kind=bond, coupon 5.00      (1 statement)
+#   step 2 terminate : end from Valid Time B = 2024-06-01 at txInstant 2024-07-01 —
 #                      inactivate the original (tag-guarded) and chain head only (2 statements)
 model: models/instrument.yaml
 tags: [m-inheritance, m-bitemp-write, m-sql, table-per-hierarchy, tag, temporal, bitemporal, write-sequence, plain-terminate, slice-snapshot-1, slice-managed-1]
@@ -52,8 +54,6 @@ then:
         postgres: insert into instrument(id, kind, price, from_z, thru_z, in_z, out_z, coupon) values (?, ?, ?, ?, ?, ?, ?, ?)
       binds: [1, bond, 100.00, "2024-01-01T00:00:00+00:00", "2024-06-01T00:00:00+00:00", "2024-07-01T00:00:00+00:00", infinity, 5.00]
   tableState:
-    # The shared `instrument` table physically carries BOTH subtypes' own columns, so a
-    # Bond row leaves the sibling `ticker` (Stock's) null.
     instrument:
       - id: 1
         kind: bond

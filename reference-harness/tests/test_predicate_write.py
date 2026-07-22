@@ -306,7 +306,7 @@ def test_materialization_validator_rejects_missing_temporal_carried_payload() ->
         )
 
 
-def test_materialization_validator_requires_processing_temporal_update_payload() -> None:
+def test_materialization_validator_requires_transaction_temporal_update_payload() -> None:
     entity = _balance_entity()
     instruction = {
         "mutation": "update",
@@ -332,7 +332,7 @@ def test_materialization_validator_requires_processing_temporal_update_payload()
         )
 
 
-def test_materialization_validator_does_not_require_processing_terminate_payload() -> None:
+def test_materialization_validator_does_not_require_transaction_terminate_payload() -> None:
     entity = _balance_entity()
     instruction = {
         "mutation": "terminate",

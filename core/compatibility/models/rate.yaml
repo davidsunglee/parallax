@@ -17,7 +17,7 @@
 #     LoanRate    (concrete)       — its own `loan_rate` table;    adds spread
 #
 # Branch alpha order: DepositRate, LoanRate. A temporal abstract-target `union all`
-# read (m-inheritance-093) carries the per-branch as-of binds (business-axis-first,
+# read (m-inheritance-093) carries the per-branch as-of binds (Valid-Time-axis-first,
 # repeated in alphabetical branch order); a concrete-target read (m-inheritance-100)
 # refers to the inherited axis through the concrete position (`DepositRate.
 # transactionTime`) — proving the axes are usable there too, not just at the abstract
@@ -25,7 +25,7 @@
 # route to the concrete subtype's OWN table — the standalone m-bitemp-write shapes, no
 # tag guard.
 #
-# Row data lives in the sibling fixtures/rate.yaml: DepositRate carries TWO processing
+# Row data lives in the sibling fixtures/rate.yaml: DepositRate carries TWO Transaction-Time
 # milestones sharing one business key (a closed historical correction plus the current
 # row) — the milestone history m-inheritance-100's historical/default reads distinguish,
 # and the fixture the TPCS provisioning DDL must key on `(id, from_z, in_z)` to admit at

@@ -15,8 +15,8 @@
 # differing ONLY in table/tag routing.
 #
 # The sequence (self-contained, from an empty table):
-#   step 1 insert         : open the Latest rectangle, amount 6.75, business [2024-01-01, inf),
-#                           processing [2024-01-01, inf), spread 1.25         (1 statement)
+#   step 1 insert         : open the Latest rectangle, amount 6.75, valid [2024-01-01, inf),
+#                           transaction [2024-01-01, inf), spread 1.25         (1 statement)
 #   step 2 terminateUntil : terminate for Valid-Time window [2024-03-01, 2024-09-01) at
 #                           txInstant 2024-02-15 — inactivate + head + tail   (3 statements)
 model: models/rate.yaml

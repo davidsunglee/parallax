@@ -1,4 +1,4 @@
-# The CLEAN audit-only example: deep fetch Invoice.lines as of processing LATEST.
+# The CLEAN audit-only example: deep fetch Invoice.lines as of Transaction Time LATEST.
 # Single-axis propagation: the child carries `out_z = ?` (bind infinity). Line
 # 1000 -> 75 (current), line 1001 -> 25.
 model: models/invoice.yaml

@@ -14,7 +14,7 @@
 #     SpotQuote (concrete)     — its own `spot_quote` table; adds symbol
 #
 # The audit-only concrete-subtype TERMINATE (m-inheritance-091) closes the
-# current-on-processing milestone in the concrete subtype's OWN table with NO tag guard
+# Transaction-Time-current milestone in the concrete subtype's OWN table with NO tag guard
 # (contrast the table-per-hierarchy `reading` close m-inheritance-090). The
 # write-sequence case builds its own milestone history, so this family needs no
 # fixtures.

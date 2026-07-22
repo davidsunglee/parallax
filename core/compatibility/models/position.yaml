@@ -4,11 +4,11 @@
 # the full bitemporal profile (DQ7 fast-follow / definitely-do): TWO as-of
 # dimensions, one per axis.
 #
-#   business   (from_z / thru_z) — WHEN A FACT IS TRUE IN THE WORLD.
-#   processing (in_z   / out_z ) — WHEN THE SYSTEM KNEW that fact (audit-only axis).
+#   validTime       (from_z / thru_z) — WHEN A FACT IS TRUE IN THE WORLD.
+#   transactionTime (in_z   / out_z ) — WHEN THE SYSTEM KNEW that fact (audit axis).
 #
-# A row is the milestone at the intersection of a business interval and a
-# processing interval — a "rectangle" in (business x processing) space. Each
+# A row is the milestone at the intersection of a Valid-Time interval and a
+# Transaction-Time interval — a "rectangle" in (valid x transaction) space. Each
 # interval is half-open `[from, to)`; the open upper bound is the database-native
 # infinity (m-core/m-dialect). A row is CURRENT on an axis when its `to` on that axis equals
 # infinity; the fully-Latest row is current on BOTH (thru_z = out_z = infinity).
@@ -16,12 +16,12 @@
 # Milestone-chaining writes never mutate a value in place. The signature
 # bitemporal write is the RECTANGLE SPLIT (research §6): an `updateUntil` over a
 # bounded Valid-Time window inactivates the original (closes its Transaction-Time dimension at
-# the transaction instant) and chains up to THREE new rows at fresh processing
-# time — head [from_z, valid_start), middle [valid_start, valid_end) carrying
+# the transaction instant) and chains up to THREE new rows at fresh Transaction
+# Time — head [from_z, valid_start), middle [valid_start, valid_end) carrying
 # the new value, tail [valid_end, infinity) — so the value changes ONLY inside
 # the window while the audit trail is preserved on the Transaction-Time dimension.
 #
-# The non-temporal attributes (id, acctNum, value) are the business payload. The
+# The non-temporal attributes (id, acctNum, value) are the domain payload. The
 # four interval columns (from_z/thru_z, in_z/out_z) are typed `timestamp` (m-core:
 # instants are UTC `timestamptz`).
 #

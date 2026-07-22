@@ -2,8 +2,8 @@
 # (m-inheritance x m-bitemp-write x m-sql — Phase 8 temporal composition).
 #
 # A terminateUntil over a BOUNDED Valid-Time window [validFrom, until) inactivates
-# the original on the Transaction-Time dimension and chains only HEAD (business [from_z, validFrom))
-# + TAIL (business [until, infinity)) — NO middle — so the value is absent INSIDE the
+# the original on the Transaction-Time dimension and chains only HEAD (valid [from_z, validFrom))
+# + TAIL (valid [until, infinity)) — NO middle — so the value is absent INSIDE the
 # window while intact before and after (m-bitemp-write, the rectangle split). Under
 # table-per-hierarchy the family shares the `instrument` table, so the inactivation carries
 # the tag GUARD `and kind = ?` right after the pk: `where id = ? and kind = ? and out_z = ?`,
@@ -11,11 +11,13 @@
 # tagValue.
 #
 # The MILESTONE SHAPES are IDENTICAL to the standalone m-bitemp-write-002 (same window,
-# same 3-row result), differing ONLY in table/tag routing.
+# same 3-row result), differing ONLY in table/tag routing. The shared `instrument`
+# table physically carries BOTH subtypes' own columns, so a Stock row leaves the
+# sibling `coupon` (Bond's) null.
 #
 # The sequence (self-contained, from an empty table):
-#   step 1 insert         : open the Latest rectangle, price 100, business [2024-01-01, inf),
-#                           processing [2024-01-01, inf), kind=stock, ticker ACME   (1 statement)
+#   step 1 insert         : open the Latest rectangle, price 100, valid [2024-01-01, inf),
+#                           transaction [2024-01-01, inf), kind=stock, ticker ACME   (1 statement)
 #   step 2 terminateUntil : terminate the value for Valid-Time window [2024-03-01, 2024-09-01)
 #                           at txInstant 2024-02-15 — inactivate (tag-guarded) + head + tail (3 statements)
 model: models/instrument.yaml
@@ -55,8 +57,6 @@ then:
         postgres: insert into instrument(id, kind, price, from_z, thru_z, in_z, out_z, ticker) values (?, ?, ?, ?, ?, ?, ?, ?)
       binds: [2, stock, 100.00, "2024-09-01T00:00:00+00:00", infinity, "2024-02-15T00:00:00+00:00", infinity, ACME]
   tableState:
-    # The shared `instrument` table physically carries BOTH subtypes' own columns, so a
-    # Stock row leaves the sibling `coupon` (Bond's) null.
     instrument:
       - id: 2
         kind: stock

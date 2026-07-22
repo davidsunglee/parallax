@@ -9,23 +9,23 @@
 # (valid_start/valid_end -> from_z/thru_z, tx_start/tx_end -> in_z/out_z)
 # and stores `address` as one document.
 #
-# The history of branch id 1 (Central Branch) records ONE business address that was
-# first BELIEVED to be D1, then CORRECTED (known as of processing 2024-04-01) via a
-# rectangle split into D2 before business 2024-06-01 and D3 from 2024-06-01 on. All
+# The history of branch id 1 (Central Branch) records ONE in-the-world address that was
+# first BELIEVED to be D1, then CORRECTED (known as of Transaction Time 2024-04-01) via a
+# rectangle split into D2 before Valid Time 2024-06-01 and D3 from 2024-06-01 on. All
 # three documents differ (city Helsinki -> Espoo -> Tampere, distinct phones), so the
 # document visibly rides each bitemporal milestone:
 #
-#   R1  address D1  business [2024-01-01, infinity)     processing [2024-01-01, 2024-04-01)
+#   R1  address D1  valid [2024-01-01, infinity)     transaction [2024-01-01, 2024-04-01)
 #       — the original belief, SUPERSEDED on the Transaction-Time dimension (out_z finite).
-#   R2  address D2  business [2024-01-01, 2024-06-01)   processing [2024-04-01, infinity)
+#   R2  address D2  valid [2024-01-01, 2024-06-01)   transaction [2024-04-01, infinity)
 #       — the rectangle-split HEAD: still D2 before the Valid-Time window, CURRENT.
-#   R3  address D3  business [2024-06-01, infinity)     processing [2024-04-01, infinity)
-#       — the corrected address from business 2024-06-01 onward, CURRENT.
+#   R3  address D3  valid [2024-06-01, infinity)     transaction [2024-04-01, infinity)
+#       — the corrected address from Valid Time 2024-06-01 onward, CURRENT.
 #
 # Both-axis reads discriminate, each returning a DISTINCT document:
 #   validTime=Latest  & transactionTime=Latest        -> R3 (D3): true now AND known now.
-#   business=2024-03-01 & proc=2024-02-01 -> R1 (D1): what the system BELIEVED on
-#       2024-02-01 about business 2024-03-01 — the audit (processing) axis.
+#   validTime=2024-03-01 & transactionTime=2024-02-01 -> R1 (D1): what the system BELIEVED on
+#       2024-02-01 about Valid Time 2024-03-01 — the audit (Transaction-Time) axis.
 Branch:
   - id: 1
     name: Central Branch

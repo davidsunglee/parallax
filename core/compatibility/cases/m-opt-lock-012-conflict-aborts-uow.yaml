@@ -131,12 +131,5 @@ when:
           binds: [9]
       expectRows: []
 then:
-  # The conflict is ASSERTED, not merely simulated: the version-gated update of
-  # account 2 (the doomed `ours` group's second write statement) MUST affect 0
-  # rows — the stale-version gate matched no row (`updatedRows != 1`, m-opt-lock).
-  # The harness detects that 0-row conflict and makes the abort its CONSEQUENCE; a
-  # gated write that instead affected 1 row (no real conflict) fails this case.
-  # This composes with the table-unchanged read-back (step 4: account 9 absent —
-  # the buffered insert never flushed).
   affectedRows: 0
   roundTrips: 6

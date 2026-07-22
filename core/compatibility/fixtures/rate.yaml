@@ -8,20 +8,20 @@
 # literal `infinity`. The loader resolves attribute names to columns (valid_start/
 # valid_end -> from_z/thru_z, tx_start/tx_end -> in_z/out_z).
 #
-# DepositRate carries TWO processing milestones sharing the SAME business key (id: 1)
-# and the SAME business interval ([2024-01-01, infinity) — no business-effective change)
-# but DIFFERENT `in_z` values: a CLOSED historical correction (processing [2024-01-01,
-# 2024-02-01), amount 2.25 / grade B) and the CURRENT one (processing [2024-02-01,
+# DepositRate carries TWO Transaction-Time milestones sharing the SAME business key (id: 1)
+# and the SAME Valid-Time interval ([2024-01-01, infinity) — no in-the-world change)
+# but DIFFERENT `in_z` values: a CLOSED historical correction (Transaction Time [2024-01-01,
+# 2024-02-01), amount 2.25 / grade B) and the CURRENT one (Transaction Time [2024-02-01,
 # infinity), amount 2.50 / grade A). This is the fixture the TPCS provisioning DDL must
 # key on `(id, from_z, in_z)` — not `(id)` — to admit at all (a single-column physical PK
-# would reject the second row outright, m-descriptor). A read pinned business-past
+# would reject the second row outright, m-descriptor). A read pinned Valid-Time-past
 # 2024-06-01 / Transaction-Time Latest (m-inheritance-093, m-inheritance-100's default read) still
 # resolves to exactly the CURRENT row (amount 2.50 / grade A), preserving m-inheritance-093's
-# original current-result semantics; a read pinned processing-past into the closed window
+# original current-result semantics; a read pinned Transaction-Time-past into the closed window
 # (m-inheritance-100's historical read) resolves to the OTHER, superseded row instead.
 #
-# LoanRate stays a single fully-Latest rectangle (business [2024-01-01, infinity),
-# processing [2024-01-01, infinity)) — an abstract read pinned business-past 2024-06-01 /
+# LoanRate stays a single fully-Latest rectangle (valid [2024-01-01, infinity),
+# transaction [2024-01-01, infinity)) — an abstract read pinned Valid-Time-past 2024-06-01 /
 # Transaction-Time Latest returns both branches' current rows, each carrying its per-branch
 # familyVariant literal (DepositRate / LoanRate).
 DepositRate:

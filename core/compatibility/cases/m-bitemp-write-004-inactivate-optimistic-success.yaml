@@ -1,12 +1,12 @@
 # Optimistic bitemporal inactivation with a FRESH observed in_z inactivates EXACTLY
 # the one observed current row (m-bitemp-write + m-opt-lock).
 #
-# A bitemporal entity has no version column, so the observed processing-from (in_z)
+# A bitemporal entity has no version column, so the observed Transaction-Time start (in_z)
 # is the optimistic-lock version analogue — but a bitemporal key spans both axes.
 # Fixture rows R2 and R3 share in_z = 2024-04-01 and are both current on the
-# Transaction-Time dimension, differing only by Valid-Time window, so the close adds the business
+# Transaction-Time dimension, differing only by Valid-Time window, so the close adds the Valid-Time
 # discriminator `from_z = ?` alongside the in_z gate to target exactly R3 (value
-# 200, business [2024-06-01, infinity)); it inactivates 1 row. A conflict case runs
+# 200, valid [2024-06-01, infinity)); it inactivates 1 row. A conflict case runs
 # only that single close, not the replacement INSERTs a full rectangle split would
 # chain, so `then.tableState` shows R3 closed at 2024-10-01 with R1/R2 untouched —
 # conflict granularity is the rectangle, not the primary key.

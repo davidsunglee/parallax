@@ -1,4 +1,4 @@
-# Deep fetch Policy.coverages, business LATEST / processing LATEST. The root pin
+# Deep fetch Policy.coverages, Valid Time LATEST / Transaction Time LATEST. The root pin
 # propagates to the temporal child: both axes default to the equality form, so
 # the child carries `thru_z = ? and out_z = ?` (binds infinity, infinity) after
 # the IN list. Each coverage resolves to its fully-Latest milestone:

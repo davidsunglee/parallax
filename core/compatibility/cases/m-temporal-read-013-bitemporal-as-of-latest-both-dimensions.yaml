@@ -5,8 +5,8 @@
 # current on both axes (thru_z = infinity AND out_z = infinity). Each axis injects
 # its current-row equality (m-temporal-read), so the golden SQL carries TWO infinity binds.
 #
-# Over the id-1 history that is R3 (value 200): R1 is superseded on the processing
-# axis (out_z finite); R2 is the head, current on processing but its business
+# Over the id-1 history that is R3 (value 200): R1 is superseded on the Transaction-Time
+# axis (out_z finite); R2 is the head, current on Transaction Time but its Valid-Time
 # thru_z is finite (2024-06-01), so validTime=Latest excludes it. Only R3 is current
 # on both axes.
 model: models/position.yaml
