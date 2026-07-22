@@ -74,12 +74,15 @@ core-language-spec-check language_spec:
 # Docker-free tests and canonical-input smoke check for the language-contract
 # diagnostics, plus the closed-vocabulary drift guards: the m-case-format.md <->
 # compatibility-case.schema.json rejectedRule vocabulary, and the m-core.md <->
-# m-descriptor.md <-> metamodel.schema.json neutral-type vocabulary.
+# m-descriptor.md <-> metamodel.schema.json neutral-type vocabulary; plus the
+# m-descriptor ingestion/export contract gate (the descriptor-errors fixture
+# set and corpus-wide byte-deterministic export).
 core-contract-tools:
-    cd {{harness}} && uv run pytest tests/test_slice_inspect.py tests/test_language_spec_validate.py tests/test_case_format_vocab_check.py tests/test_neutral_type_vocab_check.py
+    cd {{harness}} && uv run pytest tests/test_slice_inspect.py tests/test_language_spec_validate.py tests/test_case_format_vocab_check.py tests/test_neutral_type_vocab_check.py tests/test_descriptor_contract_check.py
     cd {{harness}} && uv run python -m reference_harness.slice_inspect --check-all ../core/spec ../core/compatibility
     cd {{harness}} && uv run python -m reference_harness.case_format_vocab_check ../core/spec
     cd {{harness}} && uv run python -m reference_harness.neutral_type_vocab_check ../core/spec
+    cd {{harness}} && uv run python -m reference_harness.descriptor_contract_check ../core/compatibility
 
 # ===========================================================================
 # Oracle: the Python reference harness — its own code health, and running it as

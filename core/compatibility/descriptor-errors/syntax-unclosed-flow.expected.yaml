@@ -1,0 +1,5 @@
+# Phase-1 minimal pair, YAML side: an unclosed flow sequence is a syntax
+# failure. Source coordinates are optional, so only the phase and stable code
+# are asserted.
+phase: syntax
+code: descriptor-invalid-syntax

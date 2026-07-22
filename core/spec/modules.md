@@ -96,7 +96,7 @@ is both `active` and `cases`-covered has at least one tagged fixture.
 | `m-core` | Neutral types, UTC / timezone, temporal infinity | active | cases |
 | `m-metamodel` | Representation-independent declarations, identity, lookup, and compiled metadata | active | cases |
 | `m-model-formation` | Explicit deterministic composition of model rules and facet compilers | active | cases |
-| `m-descriptor` | Domain-model & metamodel descriptor (+ serde seam) | active | cases |
+| `m-descriptor` | Canonical descriptor interchange & serde | active | cases |
 | `m-pk-gen` | Primary-key generation (`max`, `sequence`) | active | cases |
 | `m-inheritance` | Closed-tree inheritance (table-per-hierarchy / -concrete-subtype) | active | cases |
 | `m-value-object` | Embedded value objects (structured-document column) | active | cases |

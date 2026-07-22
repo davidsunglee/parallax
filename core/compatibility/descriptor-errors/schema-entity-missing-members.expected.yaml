@@ -1,0 +1,9 @@
+# An empty entity is missing `name` (base required) plus `table` and
+# `attributes` (conditionally required for a non-inheritance entity). All
+# three failures share the identity (path=/entity, rule=required), and the
+# violation sequence is duplicate-free, so they are exactly one violation.
+phase: schema
+code: descriptor-schema-invalid
+violations:
+  - path: [entity]
+    rule: required

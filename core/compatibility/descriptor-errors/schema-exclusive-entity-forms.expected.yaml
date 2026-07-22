@@ -1,0 +1,9 @@
+# The single-`entity` and `entities` forms are mutually exclusive. A document
+# carrying both satisfies each root oneOf branch and therefore fails the
+# exactly-one requirement — the other direction of the branching-collapse
+# rule: still one `oneOf` violation at the document root.
+phase: schema
+code: descriptor-schema-invalid
+violations:
+  - path: []
+    rule: oneOf

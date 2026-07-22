@@ -1,0 +1,13 @@
+entities:
+  - name: Shipment
+    table: shipment
+    persistence: writable
+    attributes:
+      - name: id
+        type: int64
+        primaryKey: true
+        nullable: maybe
+      - name: weight
+        type: int99
+      - name: label
+  - name: Carrier

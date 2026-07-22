@@ -1,0 +1,6 @@
+entity:
+  name: Order
+  table: orders
+  attributes:
+    - name: id
+      primaryKey: true

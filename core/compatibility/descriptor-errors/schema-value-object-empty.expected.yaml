@@ -1,0 +1,9 @@
+# Every Value Object occurrence is nonempty across `attributes` and
+# `valueObjects`. An occurrence with neither fails the structural
+# either-member requirement as one `anyOf` violation at the occurrence — the
+# branching-keyword collapse rule.
+phase: schema
+code: descriptor-schema-invalid
+violations:
+  - path: [entity, valueObjects, 0]
+    rule: anyOf

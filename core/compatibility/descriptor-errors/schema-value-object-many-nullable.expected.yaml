@@ -1,0 +1,9 @@
+# A `many` Value Object occurrence is a non-null ordered collection whose
+# sole zero-element form is the empty collection, so `many` + `nullable: true`
+# is rejected. The forbidden combination fails a `not` keyword — a branching
+# keyword, reported as one violation at the occurrence it applies to.
+phase: schema
+code: descriptor-schema-invalid
+violations:
+  - path: [entity, valueObjects, 0]
+    rule: not

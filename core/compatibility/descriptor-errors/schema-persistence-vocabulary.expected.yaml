@@ -1,0 +1,7 @@
+# Persistence admits only the read-write / read-only capability vocabulary; a
+# value outside the closed enum reports `enum` at the offending value.
+phase: schema
+code: descriptor-schema-invalid
+violations:
+  - path: [entity, persistence]
+    rule: enum

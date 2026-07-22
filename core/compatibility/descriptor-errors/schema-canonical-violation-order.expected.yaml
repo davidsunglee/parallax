@@ -1,0 +1,19 @@
+# Pins the canonical violation ordering (path, rule) against a document whose
+# authoring order differs from it: `persistence` is authored before the
+# attribute failures but sorts after them ("attributes" < "persistence" by
+# codepoint), attribute indices order numerically, and the second entity's
+# collapsed `required` violation sorts last. Emission and authoring order
+# never participate.
+phase: schema
+code: descriptor-schema-invalid
+violations:
+  - path: [entities, 0, attributes, 0, nullable]
+    rule: type
+  - path: [entities, 0, attributes, 1, type]
+    rule: pattern
+  - path: [entities, 0, attributes, 2]
+    rule: required
+  - path: [entities, 0, persistence]
+    rule: enum
+  - path: [entities, 1]
+    rule: required
