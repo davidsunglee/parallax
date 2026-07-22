@@ -1,11 +1,10 @@
-"""The Clock Strategy — the injectable processing-instant source (m-unit-work, ADR 0010).
+"""The Clock Strategy — the injectable Transaction-Time source (m-unit-work, ADR 0010).
 
 A temporal write's **Transaction-Time instant** (its ``in_z``) is never authored on a
 write instruction: it is supplied at flush from the unit of work's configured
 clock, so no caller-facing shape can smuggle one in. The default clock reads the
-system UTC time; a :class:`FixedClock` pins a chosen instant — the path the M4
-conformance runner uses to pin a case's authored Transaction-Time instant, and the path
-unit tests use for a deterministic flush.
+system UTC time; a :class:`FixedClock` pins a chosen instant for deterministic
+conformance runs and unit tests.
 
 The clock yields a normalized ``timestamp`` (aware UTC, microsecond) via
 :meth:`Clock.now`; :func:`instant_literal` renders it to the canonical neutral
@@ -27,7 +26,7 @@ __all__ = ["Clock", "FixedClock", "SystemClock", "instant_literal"]
 
 @runtime_checkable
 class Clock(Protocol):
-    """The processing-instant source a unit of work reads at flush."""
+    """The Transaction-Time instant source a unit of work reads at flush."""
 
     def now(self) -> _dt.datetime:
         """The current Transaction-Time instant as an aware UTC ``datetime``."""
@@ -47,8 +46,8 @@ class FixedClock:
     """A clock pinned to one instant — deterministic flush timing.
 
     The instant is normalized (aware UTC, microsecond) on construction, so a naive
-    datetime is rejected here rather than at the database. This is the clock the M4
-    conformance path injects, pinned to a case's authored Transaction-Time instant.
+    datetime is rejected here rather than at the database. Conformance cases inject
+    this clock when they author a specific Transaction-Time instant.
     """
 
     __slots__ = ("_instant",)

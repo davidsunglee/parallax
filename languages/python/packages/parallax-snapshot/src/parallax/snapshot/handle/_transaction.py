@@ -2,7 +2,7 @@
 
 :class:`Transaction` is what a ``db.transact`` closure receives: a facade over
 the active unit of work and the transaction's own connection. It owns the
-graduated D-16 keyed verbs (``insert`` / ``update`` / ``delete`` and the typed
+keyed verbs (``insert`` / ``update`` / ``delete`` and the typed
 temporal-window family), the participating :meth:`Transaction.find`, and the
 neutral ``_buffer`` instruction seam every keyed verb shares.
 
@@ -78,14 +78,14 @@ class Transaction:
     """The developer transaction handed to a ``db.transact`` closure (spec §5).
 
     A facade over the active unit of work and the transaction's own connection.
-    The graduated D-16 verbs take entity instances: :meth:`insert` a full
+    The keyed verbs take entity instances: :meth:`insert` a full
     instance (the Create Payload), :meth:`update` an edited copy (the sparse
     row: primary key + effective change set — an empty effective set is a
     no-op, zero round trips), :meth:`delete` a node or instance (keys off its
     primary key). :meth:`find` runs a participating read and returns
-    ``Snapshot[T]`` (DQ6): force-flush + the transaction's own lock suffix,
+    ``Snapshot[T]``: force-flush + the transaction's own lock suffix,
     otherwise identical to :meth:`Database.find`. The predicate-selected
-    ``_where`` verb family (COR-3 Phase 8 increment 5; `python.md` §5) —
+    ``_where`` verb family (`python.md` §5) —
     :meth:`update_where`, :meth:`delete_where`, :meth:`terminate_where`,
     :meth:`update_until_where`, :meth:`terminate_until_where` — mirrors the
     keyed surface over a bare predicate: readless for an unversioned,
@@ -119,12 +119,12 @@ class Transaction:
     def insert(self, instance: EntityBase, *, valid_from: dt.datetime | None = None) -> None:
         """Buffer a keyed ``insert`` of a full instance (the Create Payload,
         spec §5): every member the instance actually SET. Raises
-        :class:`~parallax.core.entity.base.FrameworkOwnedAxisError` (D-31,
-        COR-3 Phase 8 increment 7 completion round) when ``instance`` itself
-        SET an axis-governed attribute (``in_z``/``out_z``, bitemporal
+        :class:`~parallax.core.entity.base.FrameworkOwnedAxisError` when
+        ``instance`` itself SET an axis-governed attribute
+        (``in_z``/``out_z``, bitemporal
         ``from_z``/``thru_z``) — those columns are framework-stamped at flush
-        (the Clock Strategy), never caller-authored (:func:`full_row`'s own
-        construction-time rejection replaces the pre-D-31 silent discard).
+        (the Clock Strategy), never caller-authored. :func:`full_row` rejects
+        that invalid state during construction.
 
         ``valid_from`` is the plain Bitemporal insert's Valid-Time instant — the
         open rectangle's lower bound ``[valid_from, infinity)`` (`m-bitemp-write` "insert /
@@ -141,12 +141,11 @@ class Transaction:
     def insert_until(
         self, instance: EntityBase, *, valid_from: dt.datetime, until: dt.datetime
     ) -> None:
-        """Buffer a keyed, Valid-Time-bounded ``insertUntil`` (D-31, COR-3
-        Phase 8 increment 7 completion round; ``m-bitemp-write-003`` — the
-        *Until trio's third member): open a single bitemporal rectangle
+        """Buffer a keyed, Valid-Time-bounded ``insertUntil``
+        (``m-bitemp-write-003``): open a single bitemporal rectangle
         bounded to ``[valid_from, until)`` at the fresh Transaction-Time
         milestone, with no prior row to close — the bitemporal analogue of an
-        audit-only ``insert``, business-bounded — bitemporal-only (mirrors
+        audit-only ``insert``, Valid-Time-bounded — bitemporal-only (mirrors
         ``update_until``'s own required ``valid_from`` / ``until``). A window
         that does not satisfy ``valid_from < until``
         (equal or reversed bounds) raises at THIS call, before any buffering
@@ -206,9 +205,8 @@ class Transaction:
         record = entity_record_of_instance(node_or_instance)
         self._buffer("delete", record.name, primary_key_row(node_or_instance))
 
-    # --- typed keyed temporal-window verbs (python.md §5; COR-3 Phase 8      #
-    # increment 7; ``insertUntil`` landed by the increment 7 completion      #
-    # round, D-31). Every mutation kind below is already a valid             #
+    # --- typed keyed temporal-window verbs (python.md §5). Every mutation   #
+    # kind below is already a valid                                          #
     # ``KeyedMutation`` and already fully lowered (``bitemp_write`` /        #
     # ``audit_write`` / ``planner``) — only the DEVELOPER-facing verb was    #
     # missing: a typed ``Transaction`` method that builds the SAME           #
@@ -247,9 +245,9 @@ class Transaction:
         window that does not satisfy ``valid_from < until``
         (equal or reversed bounds) raises at THIS call, before any buffering
         (:func:`validate_until`, `python.md` §5 "all validated at build") —
-        checked BEFORE the empty-effective-change-set no-op return below (R2,
-        COR-3 Phase 7 increment 7 round-2: window validation runs first for
-        every window verb, never after; equal bounds reject even when the
+        checked BEFORE the empty-effective-change-set no-op return below:
+        window validation runs first for every window verb, never after;
+        equal bounds reject even when the
         edited copy's own Change Record nets to zero). An EMPTY effective
         change set (once the window is confirmed valid) issues no DML at all,
         exactly like keyed ``update``."""
@@ -300,9 +298,7 @@ class Transaction:
         valid_from: dt.datetime | None,
     ) -> tuple[Entity, Entity, str | None]:
         """The keyed-verb prep every verb above (``delete`` excepted — it takes
-        no Valid-Time bound) opens with (N2, COR-3 Phase 8 increment 7
-        remediation; ``insert``/``insert_until`` joined at D-31, increment 7
-        completion round): resolve the written
+        no Valid-Time bound) opens with: resolve the written
         instance's own :class:`~parallax.core.descriptor.Entity` record and
         its family's DECLARING entity
         (:func:`~parallax.core.inheritance.declaring_entity` — the entity
@@ -336,7 +332,7 @@ class Transaction:
         `m-unit-work`). Callers invoke this AFTER a sparse update's
         empty-change-set no-op return (the no-op-first ordering `m-opt-lock`
         fixes: a no-op is dropped before any observation concern) and AFTER
-        window validation (R2: the window rejects first)."""
+        window validation (the window rejects first)."""
         if not declaring.is_temporal:
             return
         key = observation_key(record, declaring, instance)
@@ -346,7 +342,7 @@ class Transaction:
 
     def find(self, statement: EntityStatement) -> Snapshot[Any]:
         """Run a participating read for ``statement`` and return ``Snapshot[T]``
-        (DQ6): force-flushes pending writes first (read-your-own-writes), and
+        force-flushes pending writes first (read-your-own-writes), and
         the transaction's participation mode renders the read-lock suffix
         (``locking`` takes the dialect's shared row lock; ``optimistic`` takes
         none). Otherwise identical to :meth:`Database.find` — the SAME shared
@@ -398,8 +394,7 @@ class Transaction:
         # The document route buys the IR's structural validation (no `at` alias,
         # no observation keys) first (`deserialize`), then the model-aware
         # `validate_write` (the SAME validator the conformance engine's
-        # rejected lane calls, COR-3 Phase 8 increment 2 — one validator, two
-        # callers): its inheritance payload-shape checks
+        # rejected lane calls): its inheritance payload-shape checks
         # (`subtype-write-metadata-field` / `-sibling-attribute` /
         # `-set-based-unsupported`, m-inheritance) classify a framework-owned
         # metadata key or a cross-branch field MORE SPECIFICALLY than the
@@ -410,12 +405,11 @@ class Transaction:
         #
         # `valid_from` / `until` extend this neutral seam for a TEMPORAL keyed
         # write: a non-temporal or Transaction-Time-Only
-        # target's caller never passes them (every pre-increment-7 call site is
-        # unaffected). The typed temporal developer verbs (COR-3 Phase 8
-        # increment 7 — ``update``'s own optional Bitemporal ``valid_from``,
+        # target's caller never passes them. The typed temporal developer verbs
+        # (``update``'s own optional Bitemporal ``valid_from``,
         # ``terminate``, ``update_until``, ``terminate_until``; ``insert``'s own
-        # optional Bitemporal ``valid_from`` and ``insert_until`` joined at
-        # D-31, increment 7 completion round) and the conformance engine's own
+        # optional Bitemporal ``valid_from`` and ``insert_until``) and the
+        # conformance engine's own
         # temporal write translation both pass them the SAME way (`m-audit-write`
         # / `m-bitemp-write` — the dimension-explicit `validFrom` / `until`
         # instruction fields, never smuggled onto `row`, ADR 0010/0013).
@@ -429,7 +423,7 @@ class Transaction:
         instructions.validate_instruction(instruction, self._meta)
         self._uow.buffer(instruction)
 
-    # --- set-based write verbs (python.md §5; COR-3 Phase 8 increment 5) -- #
+    # --- set-based write verbs (python.md §5) ----------------------------- #
     def update_where(
         self,
         statement: EntityStatement,
@@ -538,8 +532,8 @@ class Transaction:
         the conformance engine's predicate-write translation calls it directly
         (`parallax.conformance.engine`), so its name and signature are fixed and
         it keeps its leading underscore despite crossing a module boundary
-        (COR-3 Phase 8 increment 5; `m-case-format` "predicate-shaped case
-        entries deserialize to PredicateWrite through the existing serde and
+        (`m-case-format` "predicate-shaped case entries deserialize to
+        PredicateWrite through the existing serde and
         buffer through Transaction's own seam"). The typed ``_where`` verbs
         above and the engine converge on the SAME free function below, so the
         two callers can never diverge in behavior.

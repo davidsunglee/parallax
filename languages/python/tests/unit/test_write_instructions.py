@@ -4,8 +4,8 @@ Proves the canonical write-instruction serde round-trip contract
 (``serialize(deserialize(x)) == x``) over every instruction shape — keyed and
 predicate-selected, non-temporal / audit-only / bitemporal bounded and unbounded
 — cross-checked against ``core/schemas/write-instruction.schema.json`` itself, plus
-the structural rejection branches (the axis-explicit business-bound pairing, the
-forbidden observation control keys, the smuggled processing-instant alias `at`),
+the structural rejection branches (the axis-explicit Valid-Time-bound pairing, the
+forbidden observation control keys, the smuggled Transaction-Time alias `at`),
 and the metamodel-aware member-name honesty validator.
 """
 
@@ -235,7 +235,7 @@ def test_predicate_carries_a_canonical_operation_node() -> None:
 # --------------------------------------------------------------------------- #
 # Structural rejection.                                                        #
 # --------------------------------------------------------------------------- #
-def test_processing_instant_alias_is_rejected() -> None:
+def test_transaction_time_alias_is_rejected() -> None:
     # `at` is the corpus's Clock-context alias; it is NOT a canonical instruction
     # field, so no caller-facing shape can smuggle a Transaction-Time instant in (ADR 0010).
     with pytest.raises(wi.WriteInstructionError, match="unexpected key"):
@@ -442,7 +442,7 @@ def test_member_name_honesty_accepts_a_family_participants_inherited_members() -
     # (`id` / `amount`, Payment's own) alongside its OWN declared member
     # (`cardNetwork`) is well-formed (m-inheritance "Inherited members") — the
     # ancestry-effective member set, not CardPayment's bare local declarations
-    # (`family_attributes`), decides honesty (COR-3 Phase 8 increment 3).
+    # (`family_attributes`), decides validity.
     keyed = wi.deserialize(
         {
             "mutation": "insert",
@@ -478,8 +478,8 @@ def test_member_name_honesty_rejects_foreign_assignment_owner() -> None:
 
 
 def test_member_name_honesty_rejects_a_duplicate_assignment() -> None:
-    # COR-3 Phase 8 increment 5 (python.md §5 "each field may be assigned at
-    # most once"): the SAME member assigned twice raises, even though each
+    # `python.md` §5 requires each field to be assigned at most once. The same
+    # member assigned twice raises even though each
     # individual assignment is otherwise well-formed.
     predicate = wi.deserialize(
         {
@@ -516,7 +516,7 @@ def test_member_name_honesty_covers_value_object_members() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Finding 3 — the engine/serialized-path half of the shared assignment check   #
+# The engine/serialized-path half of the shared assignment check               #
 # (`python.md:667-676`; `m-case-format.md:700`): a CASE-AUTHORED PredicateWrite #
 # assignment naming a primary-key or framework-owned (version) column, or       #
 # carrying an ill-typed scalar value, is rejected with the SAME classification  #
@@ -562,14 +562,10 @@ def test_member_name_honesty_rejects_a_scalar_type_mismatched_assignment() -> No
 
 
 # --------------------------------------------------------------------------- #
-# Confirmation-pass residual P3 -- a VALUE-OBJECT-targeted assignment's VALUE   #
-# is validated against its declared composite too (the prior round's check     #
-# validated only scalar targets, silently accepting `Customer.address.set(42)` #
-# and the equivalent case-authored form): a non-document value is rejected     #
-# with the SAME wording style the scalar branch uses; a well-formed document   #
-# stays structurally accepted (D-26 -- a value-object target is not itself     #
-# rejected). `test_where_verbs.py`'s own `test_set_on_a_...` pins are the      #
-# typed-path half of this SAME shared check.                                   #
+# A value-object assignment validates its value against the declared composite #
+# just as scalar assignments validate their values. A non-document value is    #
+# rejected with the scalar branch's wording, while a well-formed document is   #
+# accepted. `test_where_verbs.py` covers the typed-path half of this check.     #
 # --------------------------------------------------------------------------- #
 def test_member_name_honesty_rejects_a_non_document_value_object_assignment() -> None:
     customer = _MODELS["customer"]
@@ -603,16 +599,13 @@ def test_member_name_honesty_accepts_a_well_formed_value_object_assignment() -> 
 
 
 # --------------------------------------------------------------------------- #
-# Confirmation-pass residual B (round 2, `inheritance/__init__.py:667`): a     #
-# `None` assignment's nullability-aware handling through the SERIALIZED/       #
-# case-authored path -- `test_where_verbs.py`'s own `test_set_on_a_..._with_  #
-# none_...` pins are the typed-path half of this SAME shared check.           #
+# A `None` assignment observes nullability through the serialized, case-authored #
+# path (`inheritance/__init__.py`). `test_where_verbs.py` covers the typed path. #
 # --------------------------------------------------------------------------- #
 def test_member_name_honesty_rejects_a_non_nullable_value_object_assignment_of_none() -> None:
     # `models/shipment.yaml`'s `destination` is `nullable: false` (the corpus's
-    # own "required top-level value object missing" exemplar) -- before the
-    # fix, `if value is not None:` skipped validation entirely for a `None`
-    # assignment, regardless of nullability.
+    # "required top-level value object missing" exemplar), so a `None`
+    # assignment is invalid.
     shipment = _MODELS["shipment"]
     predicate = wi.deserialize(
         {
@@ -640,9 +633,8 @@ def test_member_name_honesty_accepts_a_nullable_value_object_assignment_of_none(
 
 
 def test_member_name_honesty_rejects_a_non_nullable_scalar_assignment_of_none() -> None:
-    # The scalar branch's own extension of residual B: `Shipment.name`
-    # declares no `nullable: true` -- an explicit `None` assignment must be
-    # refused too, the SAME class of bug as the value-object branch.
+    # `Shipment.name` declares no `nullable: true`, so an explicit `None`
+    # assignment is refused just as it is for a required value object.
     shipment = _MODELS["shipment"]
     predicate = wi.deserialize(
         {

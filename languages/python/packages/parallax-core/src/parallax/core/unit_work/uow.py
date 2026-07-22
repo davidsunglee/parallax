@@ -7,7 +7,7 @@ dependent read observes them (read-your-own-writes), and abort — which discard
 buffered effects and **withholds** the callback value (ADR 0006).
 
 This is deliberately **not** ``db.transact``: there is no public sentinel-backed
-option surface and no bounded-retry loop (both are M4). The shell exposes the
+option surface and no bounded-retry loop. The shell exposes the
 primitives ``db.transact`` composes — :func:`run_unit_of_work` decides join vs. a
 new outermost frame, and the outermost frame commits (flushes) or aborts. Because
 lowering a flush plan to DML needs ``m-sql`` (which the DAG forbids ``m-unit-work``
@@ -52,8 +52,8 @@ __all__ = [
     "run_unit_of_work",
 ]
 
-# The composition-layer sink a flush plan is handed to for lowering + execution.
-# Neutral here (m-unit-work takes no m-sql edge); M4 injects the real lowering.
+# The composition-layer sink a flush plan is handed to for lowering and execution.
+# It is neutral because m-unit-work takes no m-sql edge.
 FlushExecutor = Callable[[FlushPlan], None]
 
 # The per-transaction participation mode (m-unit-work strategy selection).
@@ -74,13 +74,13 @@ class RollbackOnlyError(UnitOfWorkError):
     Raised when the outermost boundary would commit a transaction an inner failure
     marked rollback-only, and when a nested scope tries to join one — carrying the
     original failure as its cause (``__cause__``), so its retriability classification
-    survives for the outermost retry loop (M4).
+    survives for the outermost retry loop.
     """
 
 
 @dataclass(frozen=True, slots=True)
 class TransactionSettings:
-    """A unit of work's fixed settings — today just the participation mode."""
+    """A unit of work's fixed participation mode."""
 
     concurrency: Concurrency = "locking"
 
@@ -99,9 +99,9 @@ class UnitOfWork:
         "_collapse_policy",
         "_frame_depth",
         "_observations",
-        "_processing_instant",
         "_rollback_cause",
         "_rollback_only",
+        "_transaction_instant",
         "clock",
         "companion",
         "flush_executor",
@@ -139,7 +139,7 @@ class UnitOfWork:
         self._frame_depth = 0
         self._rollback_only = False
         self._rollback_cause: BaseException | None = None
-        self._processing_instant: str | None = None
+        self._transaction_instant: str | None = None
         self._closed = False
 
     # --- caller surface --------------------------------------------------- #
@@ -184,7 +184,7 @@ class UnitOfWork:
         plan = plan_flush(
             tuple(self._buffer),
             self._observations,
-            self._processing_instant_literal(),
+            self._transaction_instant_literal(),
             self.meta,
             collapse=self._collapse_policy,
         )
@@ -208,12 +208,12 @@ class UnitOfWork:
         return self._frame_depth > 0
 
     # --- internals -------------------------------------------------------- #
-    def _processing_instant_literal(self) -> str:
+    def _transaction_instant_literal(self) -> str:
         # One Transaction-Time instant per transaction (Reladomo's per-transaction
         # timestamp): captured once from the Clock, shared by every flush.
-        if self._processing_instant is None:
-            self._processing_instant = instant_literal(self.clock.now())
-        return self._processing_instant
+        if self._transaction_instant is None:
+            self._transaction_instant = instant_literal(self.clock.now())
+        return self._transaction_instant
 
     def _ensure_open(self) -> None:
         if self._closed:
@@ -311,11 +311,11 @@ def run_unit_of_work[T](
     body receives the same unit of work and its return value is returned
     immediately (commit and abort belong to the outermost frame), and the passed
     ``settings`` / ``clock`` / ``meta`` / ``flush_executor`` / ``collapse_policy``
-    are ignored in favor of the active transaction's (M4's ``db.transact`` performs
+    are ignored in favor of the active transaction's (``db.transact`` performs
     the option-conflict check before calling). Otherwise a new outermost frame is
     opened, and its value is returned only after a durable flush; an abort
-    withholds it. ``collapse_policy`` is the injected ``m-batch-write`` vocabulary
-    (COR-3 Phase 8 increment 5) a new outermost frame's own flushes consult.
+    withholds it. ``collapse_policy`` is the injected ``m-batch-write``
+    vocabulary consulted by a new outermost frame's flushes.
     """
     active = active_unit_of_work()
     if active is not None:

@@ -5,12 +5,10 @@ specific metamodel: a `narrow` that broadens past the polymorphic position in
 scope, a predicate that reaches a concrete-subtype attribute nobody in the
 active position declares, a navigation / deep-fetch path aimed at a value
 object rather than a relationship, or a `find()` rooted at a value object
-rather than a queryable entity. `m-case-format`'s `rejected` case shape proves
-these refusals happen **before any SQL is emitted** (resolved Q7); this module
-is the single validator the corpus-facing conformance engine calls for the
-`when.operation` rejected lane (COR-3 Phase 7 increment 1) and the one a
-future idiomatic statement frontend calls at build time, so the two paths can
-never drift into different refusal behavior.
+rather than a queryable entity. `m-case-format`'s `rejected` case shape requires
+these refusals to happen **before any SQL is emitted**. This module is the
+single validator used by the corpus-facing conformance engine for the
+`when.operation` rejected lane.
 
 Rule provenance:
 
@@ -39,12 +37,10 @@ Rule provenance:
 
 DAG note: `m-op-algebra` depends only on `m-metamodel` and `m-inheritance`
 (`modules.md`); it may **not** import `m-value-object` (the same constraint
-`m-sql`'s `sql_gen/_predicate.py` already documents). During the COR-45
-transition `m-metamodel` is temporarily co-located under
-`parallax.core.descriptor`, so the value-object structural checks below resolve
-paths through that package's shared, error-neutral walk — the same one
-`sql_gen/_predicate.py` uses — rather than `parallax.core.value_object`'s
-helpers. COR-46 replaces this transition projection with the accepted interface.
+`m-sql`'s `sql_gen/_predicate.py` already documents). The value-object
+structural checks therefore use the shared, error-neutral descriptor walk also
+used by `sql_gen/_predicate.py`, avoiding both a forbidden dependency and a
+duplicate path traversal.
 """
 
 from __future__ import annotations
@@ -340,10 +336,8 @@ def _check_deep_fetch_path(path: tuple[PathSegment, ...], meta: Metamodel) -> No
 # --------------------------------------------------------------------------- #
 # Nested value-object predicates (m-op-algebra "Nested value-object            #
 # predicates"; resolved against the shared, error-neutral                     #
-# transition `parallax.core.descriptor.vo_path` walk — the DAG forbids        #
-# m-op-algebra from importing m-value-object, while COR-45 temporarily        #
-# co-locates m-metamodel with descriptor; the walk `sql_gen/_predicate.py`    #
-# needs too lives there rather than staying duplicated (S3 remediation).      #
+# `parallax.core.descriptor.vo_path` walk because the DAG forbids             #
+# m-op-algebra from importing m-value-object.                                 #
 # --------------------------------------------------------------------------- #
 def _is_value_object_name_anywhere(meta: Metamodel, name: str) -> bool:
     return any(find_value_object(entity, name) is not None for entity in meta.entities)

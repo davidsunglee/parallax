@@ -426,11 +426,15 @@ owner identity. The first unexpected callback failure in that order is the
 reported contract error. Implementations may parallelize only when they
 reproduce the same issue order and failure selection.
 
-Every runtime explicitly assembles a complete, ordered Formation Profile and
-drift-checks it against the authoritative formation manifest; activation also
-checks that every manifest owner/dependency is present in the active core
-module catalog. This composition root is the one place allowed to know all
-contributors. Import-time registration,
+Every runtime's composition root explicitly assembles two separate immutable
+values: Formation Manifest data containing only contributor identities, Issue
+Codes, facet keys, and dependencies; and a complete, ordered Formation Profile
+containing the corresponding implementations. The runner receives both and
+drift-checks the profile against the manifest; activation also checks that
+every manifest owner/dependency is present in the active core module catalog.
+The runner may inspect contributor identities from the manifest but imports
+and owns no contributor implementation. The composition root is the one place
+allowed to know all concrete contributors. Import-time registration,
 decorator enrollment, plugin discovery, and ambient formation registries are
 rejected because they would make model validity and effective behavior depend
 on import order and process state.

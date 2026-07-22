@@ -1,8 +1,8 @@
 """Case-local temporal shadow state (engine translation layer only).
 
 The conformance engine's write lanes (writeSequence / scenario / conflict) drive
-production ``db.transact`` per choreography unit (COR-3 Phase 8 increment 4, DQ4
-re-route); a later unit's temporal write needs "the observed current milestone" its
+production ``db.transact`` per choreography unit. A later unit's temporal write
+needs "the observed current milestone" its
 close/chain consumes, but the framework itself never issues an implicit resolving
 read for one (`core/spec/m-audit-write.md` / `m-bitemp-write.md`: "the engine
 supplies observed rows from case state"). This module is the engine-side tracker
@@ -35,9 +35,9 @@ _ObjectKey = tuple[str, tuple[object, ...]]
 
 class AmbiguousObservationError(ValueError):
     """More than one current milestone is tracked for one (entity, pk) — the
-    business-discriminator disambiguation `m-bitemp-write.md` describes for a
-    key whose current rows share an ``in_z`` is not witnessed by any reachable
-    writeSequence/scenario case this increment, so this tracker refuses rather
+    Valid-Time-discriminator disambiguation `m-bitemp-write.md` describes for a
+    key whose current rows share an ``in_z`` is not represented by the
+    write-sequence/scenario input handled here, so this tracker refuses rather
     than silently guessing which candidate a later step means."""
 
 
@@ -89,8 +89,8 @@ class TemporalShadow:
 
         Raises :class:`AmbiguousObservationError` when more than one current
         candidate is tracked for this pk — disambiguation by a write's own
-        Valid-Time-start discriminator is a conflict-shape-only mechanism this
-        increment reaches via the case's explicit ``observedTxStart`` /
+        Valid-Time-start discriminator is a conflict-shape-only mechanism
+        represented by the case's explicit ``observedTxStart`` /
         ``write.validFrom`` fields, never this tracker (see the module
         docstring).
         """

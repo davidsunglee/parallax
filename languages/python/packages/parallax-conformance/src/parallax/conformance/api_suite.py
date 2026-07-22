@@ -5,7 +5,7 @@ The coverage-partition computation and the Usage Guide model shared by the
 partition asserts the union of exercised and reasoned-skipped cases equals the
 active slice, with no stale case IDs and no empty skip reasons.
 
-Reasoned skips are drawn from an **explicit, reviewed** registry
+Reasoned skips are drawn from an explicit registry
 (:data:`SKIP_REASONS`, keyed by module) rather than auto-derived from the active
 set. An active case whose module is absent from the registry is covered by
 neither exercised nor skipped, so the partition fails — forcing a human to
@@ -56,8 +56,7 @@ class Example:
 
 @dataclass(frozen=True, slots=True)
 class Recipe:
-    """A spec-recipe rendering for the Usage Guide (COR-3 Phase 8 increment 7
-    completion round, checkpoint-4 Spec finding 2).
+    """A specification recipe rendered in the Usage Guide.
 
     Unlike an :class:`Example`, a recipe maps to a SPEC section rather than
     one corpus case — its choreography (e.g. the §3 stale-web-edit two-read
@@ -125,15 +124,14 @@ class Partition:
         return not self.errors
 
 
-# The registered idiomatic examples. Each mirrors a corpus case and is proven by
-# the operation no-drift guard (its statement serializes to the case's operation).
-# Later phases append an Example per newly reachable case as its capability lands.
+# Registered idiomatic examples mirror corpus cases and are checked by the
+# operation no-drift guard, which serializes each statement to its case operation.
 EXAMPLES: Final[list[Example]] = [
     # The op-algebra / temporal-read / navigate / single-concrete-inheritance
     # read examples: each is an executable read story
     # (`parallax.conformance.read_stories`) — the snippet is `read_story_
     # snippet(story)` (single-sourced from the story's own `concurrency`
-    # field, review remediation finding 2 — never the bare `snippet` alone,
+    # field rather than the bare `snippet`,
     # which would render a `m-read-lock` transactional story identically to
     # its non-transactional siblings), and the real-Postgres suite executes
     # the SAME `build()` through the shipped `parallax.snapshot.connect` +
@@ -143,11 +141,11 @@ EXAMPLES: Final[list[Example]] = [
     # redundancy for the identical correlated-EXISTS lowering `exists`
     # already expresses — m-op-algebra), the deep-fetch-bearing temporal
     # siblings, the multi-concrete polymorphic PROJECTING inheritance reads,
-    # and the Customer value-object predicate-read SIBLINGS (the family's own
-    # flagship reads are now executed graph stories, see GRAPH_STORIES below)
+    # and the Customer value-object predicate-read siblings (whose flagship
+    # reads are executed graph stories; see GRAPH_STORIES below)
     # are reasoned-skipped; see CASE_SKIP_REASONS.
     *(Example(story.case_id, story.title, read_story_snippet(story)) for story in READ_STORIES),
-    # The developer transaction surface (m-unit-work, M4): each write example IS
+    # The developer transaction surface: each write example is
     # an executable story (`parallax.conformance.stories`) — the snippet is the
     # story's own source, the real-Postgres suite executes it through the shipped
     # `parallax.snapshot.connect` + `parallax-postgres` (test_story_run), and the
@@ -195,8 +193,8 @@ EXAMPLES: Final[list[Example]] = [
         "Person.pets.any(Animal.narrow(Dog))\n"
         '# raises OperationRejectedError(rule="narrow-outside-relationship-target")',
     ),
-    # Rejected-case build/buffer-time proof (m-inheritance, COR-3 Phase 8
-    # increment 2): the write-side counterpart of the read-side proofs above —
+    # Rejected-case build/buffer-time proof: the write-side counterpart of the
+    # read-side proofs above —
     # `tx.insert` refuses the SAME invalid write the corpus's own rejected
     # lane grades, through the SAME model-aware `validate_write`
     # (`Transaction._buffer`), naming the SAME classified rule — proven by
@@ -264,23 +262,11 @@ EXAMPLES: Final[list[Example]] = [
     *(Example(story.case_id, story.title, graph_story_snippet(story)) for story in GRAPH_STORIES),
 ]
 
-# The reviewed skip registry: primary module -> the reason its active cases carry
-# no idiomatic API example yet. Keyed by module (a reason bucket), and NOT derived
-# from the active slice, so a corpus case whose module is absent here fails the
-# partition (see module docstring). Each reason names the COR-3 phase that brings
-# the module's developer surface online; the entry is dropped when that lands.
-#
-# The per-story clock control gap this registry's own reasons used to cite is
-# CLOSED (D-29, COR-3 Phase 8 increment 7 completion round):
-# `WriteStory.clock` is now a zero-argument Clock factory
-# (`parallax.conformance.scripted_clock.ScriptedClock`), so a temporal
-# writeSequence story can drive successive distinct Transaction-Time instants
-# through the public verbs. Every module bucket below that used to cite the
-# now-closed clock-control gap instead names its OWN remaining, genuine
-# blocker for the cases still unexercised (a two-session conflict shape with
-# no single-callback spelling, a materializing predicate-write scenario not
-# yet authored, or a breadth item deprioritized behind this round's flagship
-# witnesses) — never a stale, already-resolved prerequisite.
+# Primary module -> reason its active cases have no idiomatic API example.
+# The registry is intentionally independent of the active slice, so an active
+# case absent from both registries fails the coverage partition. Per-story
+# clocks are factories, allowing temporal stories to use distinct
+# Transaction-Time instants without sharing exhausted clock state.
 SKIP_REASONS: Final[dict[str, str]] = {
     "m-core": (
         "m-core neutral-type behaviour has no standalone developer surface; it is "
@@ -368,7 +354,7 @@ SKIP_REASONS: Final[dict[str, str]] = {
     ),
     "m-bitemp-write": (
         "the rectangle-split write forms (insert / updateUntil / terminateUntil / plain "
-        "update / plain terminate, the optimistic business-discriminator gate, and the "
+        "update / plain terminate, the optimistic Valid-Time-discriminator gate, and the "
         "TPH/TPCS compositions) are graded end-to-end by the compile/run conformance "
         "lanes. Idiomatic stories now exist for the flagship insert / updateUntil "
         "rectangle split (`-001`), `insertUntil` (`-003`), the plain-update two-way "
@@ -395,11 +381,10 @@ SKIP_REASONS: Final[dict[str, str]] = {
     ),
 }
 
-# Case-scoped skips take precedence over the module registry and exist so a
-# module can be MOSTLY exercised without a broad bucket silently absorbing a
-# case that loses its example (the backbone review's partition red-check): with
-# no `m-unit-work` module entry, dropping any exercised m-unit-work example
-# fails the partition ("covered by neither") instead of inheriting a reason.
+# Case-scoped skips take precedence over the module registry. This lets a module
+# be mostly exercised without a broad reason silently absorbing a case that
+# loses its example; without an `m-unit-work` module entry, such a case fails the
+# partition as "covered by neither."
 _COALESCING_WITNESS_REASON: Final[str] = (
     "a same-transaction coalescing witness: it buffers an insert+update / insert+delete "
     "pair whose one-statement / zero-statement collapse is m-batch-write behavior — the "
@@ -409,13 +394,8 @@ _COALESCING_WITNESS_REASON: Final[str] = (
     "own reason above"
 )
 
-# --------------------------------------------------------------------------- #
-# COR-3 Phase 7 increment 6b: the five flipped module buckets (m-navigate,     #
-# m-deep-fetch, m-snapshot-read, m-value-object, m-inheritance) retire their  #
-# blanket "lands with Phase 7" entries above — Phase 7 has landed. Every      #
-# remaining active case under those modules gets its OWN reasoned, honest,   #
-# case-scoped entry below, grouped by identical justification.               #
-# --------------------------------------------------------------------------- #
+# Remaining active cases under graph and inheritance modules use case-scoped
+# reasons grouped by identical justification.
 
 # Rows-form inheritance reads (TPH tag-predicate/abstract-root/narrow, TPCS
 # union-all/narrow) that are a REPRESENTATIVE SIBLING of an already-exercised
@@ -458,8 +438,8 @@ _TEMPORAL_INHERITANCE_ROW_SIBLING_REASON: Final[str] = (
 # OWN ReadStory proves for real (through `db.find`, real Postgres, the SAME generic
 # case-driven runner every other read story uses) — TPH's own tag-predicate
 # composition is independently proven by m-inheritance-001, and its as-of
-# composition by m-temporal-read-003; the residual-finding binding decision's
-# genuinely new mechanism (a concrete-target read resolves its family's
+# composition by m-temporal-read-003; the genuinely new mechanism (a
+# concrete-target read resolves its family's
 # root-declared axes) is proven once, by the TPCS witness, not twice.
 _CONCRETE_TARGET_TEMPORAL_ROOT_AXIS_SIBLING_REASON: Final[str] = (
     "a table-per-hierarchy strategy sibling of the concrete-target root-owned-axis "
@@ -475,12 +455,11 @@ _CONCRETE_TARGET_TEMPORAL_ROOT_AXIS_SIBLING_REASON: Final[str] = (
 # (m-inheritance-003/-013/-015/-052): `db.find` is instance-form, never row-form
 # (python.md §4: the right observation is `type(node)`, not a flattened dict),
 # so a flat `then.rows` comparison can never be reproduced from typed instances
-# for these — a permanent, structural non-fit, not a capability gap. Ledger
-# D-22 closes the INSTANCE-FORM half: each of these four now has an executed
+# for these — a permanent, structural non-fit, not a capability gap. Each of
+# these four has an executed
 # `then.graph` sibling proving the identical
 # capability through the shipped surface (m-inheritance-106/-107/-108/-109,
-# `graph_stories.py`, DQ7b "both lanes of the same behavior are now
-# expressed") — these four ROW-FORM originals stay the values-lane witnesses
+# `graph_stories.py`) — these four row-form originals stay the values-lane witnesses
 # permanently, cross-referencing their own instance-form sibling.
 _INHERITANCE_MULTI_CONCRETE_PROJECTION_UNREACHABLE_REASON: Final[str] = (
     "a multi-concrete polymorphic PROJECTING read (an abstract-root read, or a narrow "
@@ -493,14 +472,10 @@ _INHERITANCE_MULTI_CONCRETE_PROJECTION_UNREACHABLE_REASON: Final[str] = (
     "way (DQ7b: both lanes of the same behavior are now expressed)"
 )
 
-# Temporal inheritance-family writes: COR-3 Phase 8 increment 3 lifted
-# `lower_write`'s (`parallax.snapshot.handle`) blanket inheritance-family
-# refusal for the 11 NON-temporal inheritance writes below
-# (`_INHERITANCE_WRITE_CONFORMANCE_LANE_REASON`); increment 4 lifts the
-# remaining TEMPORAL inheritance-family refusal too (an audit/bitemporal
-# close or chain over a table-per-hierarchy or table-per-concrete-subtype
-# family) — both groups are now graded end-to-end by the compile/run
-# conformance lanes; neither has an idiomatic instance-native story yet.
+# Temporal inheritance-family writes are graded end-to-end by the compile/run
+# conformance lanes. They cover an audit/bitemporal close or chain over a
+# table-per-hierarchy or table-per-concrete-subtype family, but have no
+# idiomatic instance-native story.
 _INHERITANCE_WRITE_PHASE8_REASON: Final[str] = (
     "a TEMPORAL inheritance-family write (an audit/bitemporal milestone close or chain "
     "over a table-per-hierarchy or table-per-concrete-subtype family): graded "
@@ -509,11 +484,9 @@ _INHERITANCE_WRITE_PHASE8_REASON: Final[str] = (
     "temporal write-family build-out (the SAME posture the non-temporal inheritance-"
     "family write forms carry, `_INHERITANCE_WRITE_CONFORMANCE_LANE_REASON`)"
 )
-# The 11 NON-temporal inheritance-family keyed writes COR-3 Phase 8 increment 3
-# landed (TPH/TPCS insert/update/delete, the deep-chain and sibling-branch
-# create witnesses, and the opt-lock composition pair): graded end-to-end by
-# the compile/run conformance lanes now; no idiomatic instance-native story
-# exists for this family yet.
+# Non-temporal TPH/TPCS insert, update, and delete cases are graded end-to-end
+# by the compile/run lanes, including deep-chain, sibling-branch, and
+# optimistic-lock compositions. They have no idiomatic instance-native story.
 _INHERITANCE_WRITE_CONFORMANCE_LANE_REASON: Final[str] = (
     "a non-temporal inheritance-family keyed write (table-per-hierarchy or table-per-"
     "concrete-subtype insert/update/delete, including the opt-lock composition pair): "
@@ -521,10 +494,9 @@ _INHERITANCE_WRITE_CONFORMANCE_LANE_REASON: Final[str] = (
     "authored for an inheritance-family write — a breadth item behind the plain-entity "
     "write-family build-out"
 )
-# The non-temporal `m-opt-lock` keyed write family COR-3 Phase 8 increment 3
-# landed (the conflict-shape gate/success/retry witnesses, the versioned
-# locking-mode advance, and the versioned batched-delete materialize-per-key
-# witness): graded end-to-end by the compile/run conformance lanes now.
+# The non-temporal optimistic-lock family is graded end-to-end by the
+# compile/run lanes: conflict gating, success/retry, locking-mode version
+# advancement, and versioned batched-delete materialization.
 _OPT_LOCK_WRITE_CONFORMANCE_LANE_REASON: Final[str] = (
     "a non-temporal optimistic-lock keyed write (the version gate/advance/conflict, or "
     "a versioned batched delete's per-key materialize): graded end-to-end by the "
@@ -533,9 +505,9 @@ _OPT_LOCK_WRITE_CONFORMANCE_LANE_REASON: Final[str] = (
     "temporal write-family build-out (the locking-mode advance sibling is now "
     "exercised, `m-opt-lock-002`)"
 )
-# The auto-retry optimistic-conflict opt-in's OWN conflict-lane witness (COR-3
-# Phase 8 increment 6, `m-opt-lock` "Retry contract"): `retryOptimisticConflicts:
-# true` over a two-attempt, 0-then-1 `when.attempts` choreography — the SAME
+# The auto-retry optimistic-conflict opt-in's conflict-lane witness uses
+# `retryOptimisticConflicts: true` over a two-attempt, 0-then-1
+# `when.attempts` choreography — the same
 # caller-visible attempts-sequence lane `m-opt-lock-007` already exercises
 # (pinned semantics #7); the runtime auto-retry LOOP itself is `-011`'s own
 # boundary witness, below.
@@ -549,8 +521,8 @@ _OPT_LOCK_CONFLICT_LANE_OPT_IN_REASON: Final[str] = (
     "has no single-callback idiomatic developer spelling distinct from what the run "
     "lane already exercises directly"
 )
-# The auto-retry optimistic-conflict opt-in's OWN boundary pair (COR-3 Phase 8
-# increment 6, D-17): the conflict surfacing after one attempt without the
+# The auto-retry optimistic-conflict opt-in's boundary pair covers a conflict
+# surfacing after one attempt without the
 # opt-in (`-010`) / auto-retried to success with it (`-011`) — graded by the
 # SAME case-driven boundary runner the `m-auto-retry` module bucket names.
 _OPT_LOCK_BOUNDARY_RUNNER_REASON: Final[str] = (
@@ -563,8 +535,8 @@ _OPT_LOCK_BOUNDARY_RUNNER_REASON: Final[str] = (
     "single-callback idiomatic developer spelling distinct from what the boundary "
     "runner already exercises directly"
 )
-# The interleaved two-session optimistic-lock race (COR-3 Phase 8 increment 6,
-# `m-opt-lock-012`, `m-case-format` uow grouping): two concurrently-held
+# The interleaved two-session optimistic-lock race (`m-opt-lock-012`,
+# `m-case-format` unit-of-work grouping) holds two concurrent
 # `db.transact` units of work over the `Provisioner.peer` seam, sequenced in
 # authored order — `parallax.conformance.engine.run_interleaved_scenario_case`.
 _OPT_LOCK_INTERLEAVED_RACE_REASON: Final[str] = (
@@ -577,10 +549,10 @@ _OPT_LOCK_INTERLEAVED_RACE_REASON: Final[str] = (
     "expression) — the reference harness remains its independent behavioral "
     "cross-check"
 )
-# The read-lock module's OWN harness-lane single-connection golden (COR-3
-# Phase 8 increment 6, `m-read-lock-001`): the default (locking-mode) object
-# find carries the shared read lock, graded end-to-end by the compile AND run
-# sweeps now — no `db.transact` participation-mode configuration to
+# The read-lock module's single-connection golden (`m-read-lock-001`) verifies
+# that the default locking-mode object
+# find carries the shared read lock and is graded end-to-end by the compile and
+# run sweeps. No `db.transact` participation-mode configuration is needed to
 # demonstrate beyond the module's own declared default (its api-conformance-
 # lane runtime siblings, `-002`/`-003`/`-005`, are already exercised above).
 _READ_LOCK_HARNESS_GOLDEN_REASON: Final[str] = (
@@ -592,8 +564,8 @@ _READ_LOCK_HARNESS_GOLDEN_REASON: Final[str] = (
     "above) — this witness needs no `db.transact` participation-mode configuration, "
     "only the module's own declared default"
 )
-# The read-lock module's OWN two-session behavioral proofs (COR-3 Phase 8
-# increment 6, `m-read-lock-006`/`-007`/`-008`): a genuine two-connection
+# The read-lock module's two-session behavioral proofs
+# (`m-read-lock-006`/`-007`/`-008`) cover a genuine two-connection
 # concurrency property (a shared lock blocking/admitting a writer or a second
 # reader, or a projection's own omission admitting a writer) no single-session
 # idiomatic example can demonstrate — graded by the case-driven `when.concurrency`
@@ -608,13 +580,9 @@ _READ_LOCK_TWO_SESSION_REASON: Final[str] = (
     "concurrency property no single-session idiomatic example can demonstrate; the "
     "reference harness remains its own independent cross-check"
 )
-# `m-pk-gen-014` (a `sequence`-strategy insert on a temporal entity) was the
-# sole pk-gen case COR-3 Phase 8 increment 3 left deferred — every other
-# pk-gen case's write-side allocation landed there (the module-bucket reason
-# above). Increment 4 lands this composition (a non-temporal `sequence`
-# registry UPDATE plus an audit-only INSERT, one writeSequence, two
-# post-re-route transactions) — graded end-to-end now, still no idiomatic
-# story.
+# `m-pk-gen-014` composes a non-temporal sequence-registry update with an
+# audit-only insert in one write sequence and two transactions. It is graded
+# end-to-end but has no idiomatic story.
 _PK_GEN_TEMPORAL_INSERT_REASON: Final[str] = (
     "a `sequence`-strategy primary-key allocation on a TEMPORAL entity (a non-temporal "
     "registry UPDATE composed with an audit-only INSERT in one writeSequence): this "
@@ -623,8 +591,8 @@ _PK_GEN_TEMPORAL_INSERT_REASON: Final[str] = (
     "construction-optionality blocker the `m-pk-gen` module-bucket reason above names"
 )
 ####################################################################################
-# Subtype-write payload-shape rejects (COR-3 Phase 8 increment 2, `validate_write`  #
-# / `parallax.core.inheritance.validate_subtype_write`): the rejected sweep now     #
+# Subtype-write payload-shape rejects (`validate_write` /                         #
+# / `parallax.core.inheritance.validate_subtype_write`): the rejected sweep         #
 # grades all four (m-inheritance-086..089) through the SAME shared validator        #
 # `Transaction._buffer` calls (`test_transaction_writes.py`'s per-rule unit tests exercise#
 # it directly at the neutral seam) — `m-inheritance-088` (abstract-write-target)    #
@@ -664,11 +632,11 @@ _INHERITANCE_SET_BASED_UNSUPPORTED_UNREACHABLE_REASON: Final[str] = (
 )
 
 # `when.model` descriptor-shape rejects (m-inheritance-020..032, plus the
-# residual-finding root-ownership witnesses 098/099, plus the D-25 optimistic-
+# root-ownership witnesses 098/099, plus the optimistic-
 # locking root-ownership witnesses 102/103): a DIFFERENT validation surface
-# than the operation-level rejected lane increment 1 built.
+# than the operation-level rejected lane.
 # `parallax.core.inheritance.validate` classifies these exact rules, but the
-# class metaclass never calls it (grep-verified) — DQ2's hierarchy-derived
+# class metaclass never calls it because hierarchy-derived
 # `parent`/`role` obsoletes most of what it checks. Most of these malformed
 # shapes have literally no idiomatic spelling (`parent`/`role` are DERIVED from
 # the live Python class hierarchy, never separately authored; Python's own
@@ -680,15 +648,14 @@ _INHERITANCE_SET_BASED_UNSUPPORTED_UNREACHABLE_REASON: Final[str] = (
 # declaring `EntityConfig(as_of=...)` (098/099's own rule,
 # `inheritance-temporal-axes-not-root-owned`) or its own `optimisticLocking`
 # attribute (102/103's own rule,
-# `inheritance-optimistic-locking-not-root-owned`, D-25 / ADR 0027) is ALSO
+# `inheritance-optimistic-locking-not-root-owned`, ADR 0027) is ALSO
 # independently authorable, and likewise rejected by the class frontend's own,
 # DIFFERENT, unclassified error (`test_inheritance_frontend.py`
 # "family SUBCLASS cannot declare EntityConfig(as_of..." /
 # "only the inheritance family root may declare"), joining the table-placement
-# rules in the same posture — so no case in this whole group reproduces
-# `then.rejectedRule` through today's public surface. This gap is PERMANENT
-# (the metaclass-never-calls-`inheritance.validate` posture pre-dates and
-# outlives this phase), not a forward promise.
+# rules in the same posture. No case in this group can reproduce
+# `then.rejectedRule` through the public class surface because the metaclass
+# does not call `inheritance.validate`.
 _INHERITANCE_DESCRIPTOR_REJECT_UNREACHABLE_REASON: Final[str] = (
     "a `when.model` raw-descriptor invariant `parallax.core.inheritance.validate` "
     "classifies (parent/root/cycle/strategy/tag/temporal-axis-ownership/optimistic-"
@@ -740,9 +707,9 @@ _ORDERS_GRAPH_SIBLING_REASON: Final[str] = (
 # `models/person.yaml`'s own Person/Passport pair and `models/animal.yaml`'s
 # own polymorphic owner (ALSO named `Person`) were both unreachable through a
 # single, global, process-wide entity registry sharing one flat namespace
-# (`mirrored_models.Person` claimed the name first). Ledger D-20 resolves
-# this with explicit, scoped `EntityRegistry` instances:
-# `read_models.Person`/`.Passport` are now installed (the DEFAULT
+# (`mirrored_models.Person` claimed the name first). Explicit, scoped
+# `EntityRegistry` instances avoid that collision:
+# `read_models.Person`/`.Passport` are installed in the default
 # registry), and `animal_owner.Person` (the animal family's REAL owner) is
 # installed in its OWN registry (parent-chained to the default, so it also
 # resolves `Animal`/`Pet`/`Dog`/`Cat`/`WildBoar`) — both flip to executable
@@ -761,9 +728,9 @@ _SNAPSHOT_HISTORY_INCLUDES_UNSUPPORTED_REASON: Final[str] = (
 
 # Value-object nested/absence/cast/array-traversal PREDICATE reads: rows-form,
 # representative siblings of the Customer.address predicate graph stories NOW
-# EXECUTED for real (m-value-object-001/002/007/015/016/017/019, D-20 residue,
-# COR-3 Phase 8 increment 7 completion round — `graph_stories.py`, via the
-# installed `vo_models.Customer`/`Location`/`Depot` mirror) — the SAME
+# EXECUTED for real (m-value-object-001/002/007/015/016/017/019 in
+# `graph_stories.py`, via the installed
+# `vo_models.Customer`/`Location`/`Depot` mirror) — the SAME
 # nested-path resolution / absence-collapse / any-element lowering, a
 # different operator, depth, or dialect-cast variant: no distinct developer-
 # facing shape to add, the SAME mechanism already proven against Postgres.
@@ -810,11 +777,10 @@ _VO_FIND_ROOT_REASON: Final[str] = (
 # `tx.insert` — `ContactAddress(street=42, ...)` raises Pydantic's own
 # `ValidationError` (a `str` field never coerces an `int`) before the
 # instance can even be constructed, let alone reach `validate_write`. Its
-# four Contact/Shipment siblings (`-039..042`/`-044`) DO have an idiomatic
-# spelling (ledger D-21's now-installed mirror, `vo_models.py`) and are
-# exercised as build-time proofs above. This single case's own skip is a
-# SANCTIONED exception, ledger D-32 (S5, COR-3 Phase 8 increment 7
-# remediation) — not an unreviewed gap.
+# four Contact/Shipment siblings (`-039..042`/`-044`) do have an idiomatic
+# spelling through `vo_models.py` and are exercised as build-time proofs
+# above. This case is a sanctioned exception because its invalid input is
+# unrepresentable through the typed surface.
 _VO_VALUE_TYPE_MISMATCH_UNREACHABLE_REASON: Final[str] = (
     "`ContactAddress(street=42, ...)` raises Pydantic's own `ValidationError` (a `str` "
     "field never coerces an `int`) before the instance can even be constructed, let alone "
@@ -827,8 +793,8 @@ _VO_VALUE_TYPE_MISMATCH_UNREACHABLE_REASON: Final[str] = (
     "a coverage gap this frontend can idiomatically close"
 )
 
-# The three remaining m-value-object write-family siblings, each a DIFFERENT
-# Phase-8 concern already named by an existing module bucket above.
+# The remaining value-object write-family siblings each use the matching
+# module-level reason above.
 _VO_BATCH_WRITE_REASON: Final[str] = (
     "a multi-row (batched) insert, each row's whole value-object document binding "
     "atomically in columnOrder position — the set-based flush collapse is graded "
@@ -856,12 +822,12 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-unit-work-008": _COALESCING_WITNESS_REASON,
     "m-unit-work-010": _COALESCING_WITNESS_REASON,
     # -- m-opt-lock: non-temporal write family, conformance-lane covered ----- #
-    # (the locking-mode advance is now its own idiomatic story, m-opt-lock-002) #
+    # (the locking-mode advance has an idiomatic story, m-opt-lock-002)        #
     "m-opt-lock-005": _OPT_LOCK_WRITE_CONFORMANCE_LANE_REASON,
     "m-opt-lock-006": _OPT_LOCK_WRITE_CONFORMANCE_LANE_REASON,
     "m-opt-lock-007": _OPT_LOCK_WRITE_CONFORMANCE_LANE_REASON,
     "m-opt-lock-013": _OPT_LOCK_WRITE_CONFORMANCE_LANE_REASON,
-    # -- m-opt-lock / m-read-lock: COR-3 Phase 8 increment 6 landings --------- #
+    # -- m-opt-lock / m-read-lock concurrency cases -------------------------- #
     "m-opt-lock-009": _OPT_LOCK_CONFLICT_LANE_OPT_IN_REASON,
     "m-opt-lock-010": _OPT_LOCK_BOUNDARY_RUNNER_REASON,
     "m-opt-lock-011": _OPT_LOCK_BOUNDARY_RUNNER_REASON,
@@ -870,9 +836,9 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-read-lock-006": _READ_LOCK_TWO_SESSION_REASON,
     "m-read-lock-007": _READ_LOCK_TWO_SESSION_REASON,
     "m-read-lock-008": _READ_LOCK_TWO_SESSION_REASON,
-    # -- m-batch-write: the versioned per-key delete materialize landed ------ #
+    # -- m-batch-write: versioned per-key delete materialization ------------- #
     "m-batch-write-004": _OPT_LOCK_WRITE_CONFORMANCE_LANE_REASON,
-    # -- m-pk-gen: the sole case still deferred (temporal composition) ------- #
+    # -- m-pk-gen: temporal composition -------------------------------------- #
     "m-pk-gen-014": _PK_GEN_TEMPORAL_INSERT_REASON,
     # -- m-inheritance: rows-form representative siblings ------------------- #
     "m-inheritance-002": _TPH_ROW_SIBLING_REASON,
@@ -899,13 +865,13 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-inheritance-093": _TEMPORAL_INHERITANCE_ROW_SIBLING_REASON,
     "m-inheritance-101": _CONCRETE_TARGET_TEMPORAL_ROOT_AXIS_SIBLING_REASON,
     # -- m-inheritance: multi-concrete polymorphic PROJECTING reads, the       #
-    # ROW-FORM originals (their own instance-form sibling is now executed) --- #
+    # ROW-FORM originals (their instance-form siblings are executed) --------- #
     "m-inheritance-003": _INHERITANCE_MULTI_CONCRETE_PROJECTION_UNREACHABLE_REASON,
     "m-inheritance-013": _INHERITANCE_MULTI_CONCRETE_PROJECTION_UNREACHABLE_REASON,
     "m-inheritance-015": _INHERITANCE_MULTI_CONCRETE_PROJECTION_UNREACHABLE_REASON,
     "m-inheritance-052": _INHERITANCE_MULTI_CONCRETE_PROJECTION_UNREACHABLE_REASON,
     # -- m-inheritance: non-temporal write family, conformance-lane covered -- #
-    # (COR-3 Phase 8 increment 3; instance-native examples remain undelivered) #
+    # (instance-native examples are not available)                             #
     "m-inheritance-007": _INHERITANCE_WRITE_CONFORMANCE_LANE_REASON,
     "m-inheritance-008": _INHERITANCE_WRITE_CONFORMANCE_LANE_REASON,
     "m-inheritance-009": _INHERITANCE_WRITE_CONFORMANCE_LANE_REASON,
@@ -917,7 +883,7 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-inheritance-084": _INHERITANCE_WRITE_CONFORMANCE_LANE_REASON,
     "m-inheritance-085": _INHERITANCE_WRITE_CONFORMANCE_LANE_REASON,
     "m-inheritance-104": _INHERITANCE_WRITE_CONFORMANCE_LANE_REASON,
-    # -- m-inheritance: temporal write family (COR-3 Phase 8 increment 4) ---- #
+    # -- m-inheritance: temporal write family -------------------------------- #
     "m-inheritance-090": _INHERITANCE_WRITE_PHASE8_REASON,
     "m-inheritance-091": _INHERITANCE_WRITE_PHASE8_REASON,
     "m-inheritance-094": _INHERITANCE_WRITE_PHASE8_REASON,
@@ -992,7 +958,7 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-value-object-037": _VO_FIND_ROOT_REASON,
     # -- m-value-object: write-input validation rejects ---------------------- #
     "m-value-object-043": _VO_VALUE_TYPE_MISMATCH_UNREACHABLE_REASON,
-    # -- m-value-object: the remaining write-family siblings (COR-3 Phase 8) - #
+    # -- m-value-object: remaining write-family siblings --------------------- #
     "m-value-object-045": _VO_BATCH_WRITE_REASON,
     "m-value-object-046": _VO_OPT_LOCK_CONFLICT_REASON,
     "m-value-object-047": _VO_SCENARIO_COMBO_REASON,
@@ -1149,15 +1115,9 @@ def render_usage_guide(examples: list[Example], recipes: list[Recipe] | None = N
         )
         lines.append("")
     else:
-        # The D-16 staged-realization notice retired here (COR-3 Phase 7
-        # increment 6b): the transaction verbs it warned about graduated to
-        # their final entity-instance signatures in increment 6a
-        # (`tx.insert(instance)` / `tx.update(edited_copy)` / `tx.delete(node)`,
-        # `tx.find` returning `Snapshot[T]`) — every rendered transaction
-        # example already uses that final surface, so a banner distinguishing
-        # "provisional" from "final" has nothing left to warn about. Plain
-        # removal, not a replacement "graduated" note: the ordinary per-example
-        # rendering below already IS the final, non-provisional documentation.
+        # Every rendered transaction example uses the final entity-instance
+        # signatures: `tx.insert(instance)`, `tx.update(edited_copy)`,
+        # `tx.delete(node)`, and `tx.find` returning `Snapshot[T]`.
         for example in sorted(examples, key=lambda item: item.case_id):
             lines.append(f"## {example.title}")
             lines.append("")

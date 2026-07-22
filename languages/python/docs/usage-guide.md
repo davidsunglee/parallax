@@ -29,8 +29,8 @@ def audit_only_chain_update_via_a_sparse_copy(db: Database) -> None:
 
     def update(tx: Transaction) -> None:
         current = tx.find(Balance.where(Balance.id == 1)).result()  # observe the milestone
-        # The edited copy touches ONLY `value` — the D-30 fix merges the
-        # observed payload onto it, so the chained row still carries `A`.
+        # The edited copy touches only `value`; observed-payload merging keeps
+        # the chained row's untouched `acct_num` value.
         tx.update(current.model_copy(update={"value": Decimal("150.00")}))
 
     db.transact(insert)
@@ -124,14 +124,14 @@ def bitemporal_update_until_splits_head_middle_tail(db: Database) -> None:
     def insert(tx: Transaction) -> None:
         tx.insert(
             Position(id=1, acct_num="A", value=Decimal("100.00")),
-            business_from=dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+            valid_from=dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
         )
 
     def split(tx: Transaction) -> None:
         current = tx.find(Position.where(Position.id == 1)).result()  # observe the rectangle
         tx.update_until(
             current.model_copy(update={"value": Decimal("200.00")}),
-            business_from=dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
+            valid_from=dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
             until=dt.datetime(2024, 9, 1, tzinfo=dt.UTC),
         )
 
@@ -148,7 +148,7 @@ def bitemporal_insert_until_opens_one_bounded_rectangle(db: Database) -> None:
     def fn(tx: Transaction) -> None:
         tx.insert_until(
             Position(id=1, acct_num="A", value=Decimal("100.00")),
-            business_from=dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
+            valid_from=dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
             until=dt.datetime(2024, 9, 1, tzinfo=dt.UTC),
         )
 
@@ -163,20 +163,20 @@ Corpus case: `m-bitemp-write-006`
 def bitemporal_plain_update_splits_head_and_new_tail(db: Database) -> None:
     # m-bitemp-write-006: a plain (unbounded) bitemporal `tx.update` is the
     # two-way degenerate of the rectangle split — no middle, no old tail (the
-    # correction runs to infinity): inactivate the original on the processing
-    # axis, then chain head (the OLD value, business [from_z, B)) + a new tail
-    # (the NEW value, business [B, infinity)).
+    # correction runs to infinity): inactivate the original on the Transaction-Time
+    # axis, then chain head (the OLD value, Valid Time [from_z, B)) + a new tail
+    # (the NEW value, Valid Time [B, infinity)).
     def insert(tx: Transaction) -> None:
         tx.insert(
             Position(id=1, acct_num="A", value=Decimal("100.00")),
-            business_from=dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+            valid_from=dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
         )
 
     def correct(tx: Transaction) -> None:
         current = tx.find(Position.where(Position.id == 1)).result()  # observe the rectangle
         tx.update(
             current.model_copy(update={"value": Decimal("200.00")}),
-            business_from=dt.datetime(2024, 6, 1, tzinfo=dt.UTC),
+            valid_from=dt.datetime(2024, 6, 1, tzinfo=dt.UTC),
         )
 
     db.transact(insert)
@@ -190,13 +190,13 @@ Corpus case: `m-bitemp-write-009`
 ```python
 def bitemporal_plain_insert_opens_a_fully_current_rectangle(db: Database) -> None:
     # m-bitemp-write-009: a plain (unbounded) bitemporal insert is a SINGLE
-    # insert of a fully-current rectangle — business [B, infinity) at
-    # processing [txInstant, infinity), current on BOTH axes. No prior row to
+    # insert of a fully-current rectangle — Valid Time [B, infinity) at
+    # Transaction Time [txInstant, infinity), current on BOTH axes. No prior row to
     # close, unlike the plain update/terminate splits.
     def fn(tx: Transaction) -> None:
         tx.insert(
             Position(id=1, acct_num="A", value=Decimal("100.00")),
-            business_from=dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+            valid_from=dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
         )
 
     db.transact(fn)
@@ -363,7 +363,7 @@ db.transact(lambda tx: tx.insert(Payment(id=10, amount=Decimal("200.00"))))
 Corpus case: `m-inheritance-100`
 
 ```python
-op = DepositRate.where().as_of(processing=datetime(2024, 1, 15, tzinfo=UTC))
+op = DepositRate.where().as_of(transaction_time=datetime(2024, 1, 15, tzinfo=UTC))
 ```
 
 ## A table-per-hierarchy abstract-root read materializes typed per-variant instances
@@ -419,10 +419,10 @@ def tpcs_narrow_to_abstract_subtype_materializes_typed_per_variant_instances(
     db: Database,
 ) -> Snapshot[Any]:
     """The object-lane sibling of the row-form TPCS narrow-to-abstract-subtype
-    read (`m-inheritance-109`, `m-inheritance-052` its values-lane witness):
-    the union-all instance-form lowering ledger D-22 lifts (byte-identical to
-    row-form for this VO-free family) — each `Invoice`/`Receipt` instance
-    carries only its own declared members."""
+    read (`m-inheritance-109`, `m-inheritance-052` its values-lane witness).
+    The union-all instance form is byte-identical to the row form for this
+    value-object-free family, and each `Invoice`/`Receipt` instance carries
+    only its own declared members."""
     return db.find(Document.where(Document.narrow(FinancialDocument)))
 ```
 
@@ -484,15 +484,15 @@ Corpus case: `m-navigate-010`
 op = Order.where(Order.items.none(OrderItem.statuses.any()))
 ```
 
-## A deep fetch pinned to a past business instant materializes the superseded milestone
+## A deep fetch pinned to a past Valid-Time instant materializes the superseded milestone
 
 Corpus case: `m-navigate-013`
 
 ```python
-def pinned_graph_at_a_past_business_instant(db: Database) -> Snapshot[Any]:
+def pinned_graph_at_a_past_valid_time_instant(db: Database) -> Snapshot[Any]:
     return db.find(
         Policy.where()
-        .as_of(business=dt.datetime(2024, 3, 1, tzinfo=dt.UTC), processing=LATEST)
+        .as_of(valid_time=dt.datetime(2024, 3, 1, tzinfo=dt.UTC), transaction_time=LATEST)
         .include(Policy.coverages)
     )
 ```
@@ -503,7 +503,7 @@ Corpus case: `m-navigate-018`
 
 ```python
 op = Policy.where(Policy.coverages.any(Coverage.amount >= 600.00)).as_of(
-    processing=LATEST, business=LATEST
+    transaction_time=LATEST, valid_time=LATEST
 )
 ```
 
@@ -715,7 +715,7 @@ Corpus case: `m-snapshot-read-012`
 
 ```python
 def animal_owner_reaches_root_and_narrowed_subtype_view(db: Database) -> Snapshot[Any]:
-    """The animal family's REAL owner (ledger D-20): a root-typed
+    """The animal family's owner exposes both a root-typed
     ``animals`` path (reaching any concrete subtype) and a leaf-typed
     ``pets[Dog]`` narrowed view both reach the SAME row (Alice's Rex) with
     DIFFERENT fetched projections — the family-normalized,
@@ -732,7 +732,7 @@ def animal_owner_reaches_root_and_narrowed_subtype_view(db: Database) -> Snapsho
 Corpus case: `m-temporal-read-003`
 
 ```python
-op = Balance.where().as_of(processing=datetime(2024, 4, 1, tzinfo=UTC))
+op = Balance.where().as_of(transaction_time=datetime(2024, 4, 1, tzinfo=UTC))
 ```
 
 ## Insert, then read your own write
@@ -930,8 +930,8 @@ Corpus case: `m-value-object-001`
 def customer_nested_eq_city_selects_matching_owners(db: Database) -> Snapshot[Any]:
     """A nested equality predicate through a value-object attribute
     (`m-value-object-001`): the id/name SET this filter selects is the
-    behavior under test — see the module docstring's own note on why this
-    lands here, not as a `ReadStory`."""
+    behavior under test; the module docstring explains why this is a graph
+    story rather than a `ReadStory`."""
     return db.find(Customer.where(Customer.address.city == "Oslo"))
 ```
 
@@ -1131,28 +1131,28 @@ def customer_update_nulls_the_address_document_out(db: Database) -> None:
     db.transact(null_out)
 ```
 
-## A value object rides its unitemporal-processing owner's current milestone
+## A value object rides its Transaction-Time-only owner's current milestone
 
 Corpus case: `m-value-object-028`
 
 ```python
 def transaction_time_only_vo_owner_as_of_latest(db: Database) -> Snapshot[Any]:
-    """A value object rides its unitemporal-processing owner's milestone
+    """A value object rides its Transaction-Time-only owner's milestone
     (`m-value-object-028`): an Latest read returns each supplier's CURRENT
     address document — no value-object-specific temporal machinery."""
-    return db.find(Supplier.where().as_of(processing=LATEST))
+    return db.find(Supplier.where().as_of(transaction_time=LATEST))
 ```
 
-## A value object rides its unitemporal-processing owner's superseded milestone
+## A value object rides its Transaction-Time-only owner's superseded milestone
 
 Corpus case: `m-value-object-029`
 
 ```python
-def unitemporal_vo_owner_as_of_a_past_instant(db: Database) -> Snapshot[Any]:
-    """The SAME owner read at a past processing instant returns the
+def transaction_time_only_vo_owner_as_of_a_past_instant(db: Database) -> Snapshot[Any]:
+    """The SAME owner read at a past Transaction-Time instant returns the
     SUPERSEDED address document (`m-value-object-029`) — the document rides
     the milestone exactly like a scalar column."""
-    return db.find(Supplier.where().as_of(processing=dt.datetime(2024, 4, 1, tzinfo=dt.UTC)))
+    return db.find(Supplier.where().as_of(transaction_time=dt.datetime(2024, 4, 1, tzinfo=dt.UTC)))
 ```
 
 ## A value object rides a full bitemporal owner's fully-current rectangle
@@ -1164,7 +1164,7 @@ def bitemporal_vo_owner_as_of_latest(db: Database) -> Snapshot[Any]:
     """A value object rides a FULL bitemporal owner's rectangle
     (`m-value-object-030`): pinning both dimensions to Latest returns the
     fully-current document."""
-    return db.find(Branch.where().as_of(business=LATEST, processing=LATEST))
+    return db.find(Branch.where().as_of(valid_time=LATEST, transaction_time=LATEST))
 ```
 
 ## A bitemporal audit read reconstructs the originally-believed document
@@ -1175,11 +1175,11 @@ Corpus case: `m-value-object-031`
 def bitemporal_vo_owner_as_of_a_past_audit_point(db: Database) -> Snapshot[Any]:
     """An audit read (both axes in the past, `m-value-object-031`)
     reconstructs the ORIGINALLY-believed document, distinct from what the
-    system knows now (`bitemporal_vo_owner_as_of_latest`)."""
+    system knows (`bitemporal_vo_owner_as_of_latest`)."""
     return db.find(
         Branch.where().as_of(
-            business=dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
-            processing=dt.datetime(2024, 2, 1, tzinfo=dt.UTC),
+            valid_time=dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
+            transaction_time=dt.datetime(2024, 2, 1, tzinfo=dt.UTC),
         )
     )
 ```
@@ -1206,8 +1206,8 @@ def supplier_audit_chain_update_carries_the_document(db: Database) -> None:
 
     def update(tx: Transaction) -> None:
         current = tx.find(Supplier.where(Supplier.id == 1)).result()  # observe the milestone
-        # The edited copy touches ONLY `address` — the D-30 fix merges the
-        # observed payload onto it, so the chained row still carries `name`.
+        # The edited copy touches only `address`; observed-payload merging
+        # keeps the chained row's untouched `name` value.
         tx.update(
             current.model_copy(
                 update={
@@ -1246,7 +1246,7 @@ def branch_bitemporal_rectangle_split_carries_the_document(db: Database) -> None
                     phones=(Phone(type="main", number="555-1000"),),
                 ),
             ),
-            business_from=dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+            valid_from=dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
         )
 
     def split(tx: Transaction) -> None:
@@ -1265,7 +1265,7 @@ def branch_bitemporal_rectangle_split_carries_the_document(db: Database) -> None
                     )
                 }
             ),
-            business_from=dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
+            valid_from=dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
             until=dt.datetime(2024, 9, 1, tzinfo=dt.UTC),
         )
 
@@ -1355,7 +1355,7 @@ Spec: `python.md` §3 (the recipe) and §5 (why it runs optimistic). Graded by `
 ```python
 def render_balance_milestone(db: Database, *, id: int) -> tuple[Balance, Edge]:
     """RENDER time (audit-only): a plain, non-transactional find — the
-    displayed milestone plus its edge (the processing axis's own from-instant,
+    displayed milestone plus its edge (the Transaction-Time dimension's own from-instant,
     ``in_z``), the whole of what the form needs to transport."""
     node = db.find(Balance.where(Balance.id == id)).result()
     return node, edge_of(node)
@@ -1372,7 +1372,7 @@ def submit_balance_edit(db: Database, *, id: int, edge: Edge, fields: Mapping[st
 
     def fn(tx: Transaction) -> None:
         current = tx.find(
-            Balance.where(Balance.id == id).as_of(processing=edge.processing)
+            Balance.where(Balance.id == id).as_of(transaction_time=edge.transaction_time)
         ).result()
         tx.update(current.model_copy(update=dict(fields)))
 
@@ -1386,35 +1386,37 @@ Spec: `python.md` §3 (the recipe) and §5 (why it runs optimistic). Graded by `
 ```python
 def render_branch_milestone(db: Database, *, id: int) -> tuple[Branch, Edge]:
     """RENDER time (bitemporal): a plain, non-transactional find — the
-    displayed rectangle plus its edge on BOTH declared axes (business AND
-    processing)."""
+    displayed rectangle plus its edge on BOTH declared axes (Valid Time and
+    Transaction Time)."""
     node = db.find(Branch.where(Branch.id == id)).result()
     return node, edge_of(node)
 
 def submit_branch_edit(
-    db: Database, *, id: int, edge: Edge, fields: Mapping[str, Any], business_from: dt.datetime
+    db: Database, *, id: int, edge: Edge, fields: Mapping[str, Any], valid_from: dt.datetime
 ) -> None:
     """SUBMIT time (bitemporal): re-fetch with EVERY declared axis pinned at
-    the transported edge (`as_of(processing=..., business=...)` — the DISPLAY
+    the transported edge (`as_of(transaction_time=..., valid_time=...)` — the DISPLAY
     coordinate, licensing the optimistic re-fetch) inside an OPTIMISTIC
     transaction, apply ``fields`` via ``model_copy``, and issue a PLAIN
-    (unbounded) bitemporal correction effective from ``business_from`` (the
-    mutation's OWN business instant `B` — the everyday "this correction takes
+    (unbounded) bitemporal correction effective from ``valid_from`` (the
+    mutation's OWN Valid-Time instant `B` — the everyday "this correction takes
     effect from B onward" idiom, `m-bitemp-write-006`; independent of the
-    displayed edge's own business coordinate, which only licenses the
-    re-fetch: ``business_from`` equal to the displayed rectangle's own
+    displayed edge's own Valid-Time coordinate, which only licenses the
+    re-fetch: ``valid_from`` equal to the displayed rectangle's own
     `from_z` degenerates the head interval to empty and is a build-time
     caller error, out of this recipe's scope). A concurrent split since the
     render leaves the observed row's ``in_z`` stale (and, when the key's
-    current rows share an ``in_z``, the business discriminator too) — the
+    current rows share an ``in_z``, the Valid-Time discriminator too) — the
     gated close matches zero rows, ``OptimisticLockConflictError``; an
     untouched rectangle's gate matches, and the edit lands."""
 
     def fn(tx: Transaction) -> None:
         current = tx.find(
-            Branch.where(Branch.id == id).as_of(processing=edge.processing, business=edge.business)
+            Branch.where(Branch.id == id).as_of(
+                transaction_time=edge.transaction_time, valid_time=edge.valid_time
+            )
         ).result()
-        tx.update(current.model_copy(update=dict(fields)), business_from=business_from)
+        tx.update(current.model_copy(update=dict(fields)), valid_from=valid_from)
 
     db.transact(fn, concurrency="optimistic")
 ```

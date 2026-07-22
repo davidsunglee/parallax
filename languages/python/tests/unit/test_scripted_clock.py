@@ -1,13 +1,9 @@
-"""D-29 per-story clock control unit tests (COR-3 Phase 8 increment 7
-completion round): :class:`~parallax.conformance.scripted_clock.ScriptedClock`
-itself, plus the consumption contract it must honor through
-``Database.transact`` (Docker-free fake port). The memoized-per-``UnitOfWork``
-clock read (`unit_work/uow.py`'s own ``_processing_instant_literal``) means
-each FLUSHING ``db.transact`` call consumes exactly one scripted instant, a
-force-flush (``tx.find``) shares the SAME instant as its own transaction's
-commit flush, and a fully read-only/empty transact consumes none at all (the
-shell-level half of this same truth is pinned independently,
-``test_uow_shell.test_a_fully_empty_transaction_never_touches_the_clock``).
+"""Per-story clock-control tests for ``ScriptedClock`` and ``Database.transact``.
+
+The memoized ``UnitOfWork`` clock read means each flushing transaction consumes
+exactly one scripted instant. A force-flush shares the same instant with its
+transaction's commit flush, while a read-only or empty transaction consumes no
+instant. ``test_uow_shell`` independently covers the empty-transaction rule.
 """
 
 from __future__ import annotations

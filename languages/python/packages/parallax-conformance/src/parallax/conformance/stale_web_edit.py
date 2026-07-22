@@ -1,5 +1,4 @@
-"""``parallax.conformance.stale_web_edit`` — the spec §3 stale-web-edit recipe,
-both variants (COR-3 Phase 8 increment 7 completion round).
+"""The specification's audit-only and bitemporal stale-web-edit recipes.
 
 The idiom (`python.md` §3 `:429-461`; the locking-mode-vs-optimistic rule and
 WHY the recipe runs optimistic, §5 `:602-617`): a web form displays one
@@ -88,8 +87,8 @@ def submit_balance_edit(db: Database, *, id: int, edge: Edge, fields: Mapping[st
 
 def render_branch_milestone(db: Database, *, id: int) -> tuple[Branch, Edge]:
     """RENDER time (bitemporal): a plain, non-transactional find — the
-    displayed rectangle plus its edge on BOTH declared axes (business AND
-    processing)."""
+    displayed rectangle plus its edge on BOTH declared axes (Valid Time and
+    Transaction Time)."""
     node = db.find(Branch.where(Branch.id == id)).result()
     return node, edge_of(node)
 
@@ -109,7 +108,7 @@ def submit_branch_edit(
     `from_z` degenerates the head interval to empty and is a build-time
     caller error, out of this recipe's scope). A concurrent split since the
     render leaves the observed row's ``in_z`` stale (and, when the key's
-    current rows share an ``in_z``, the business discriminator too) — the
+    current rows share an ``in_z``, the Valid-Time discriminator too) — the
     gated close matches zero rows, ``OptimisticLockConflictError``; an
     untouched rectangle's gate matches, and the edit lands."""
 

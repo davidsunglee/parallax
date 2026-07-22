@@ -53,13 +53,13 @@ def test_schema_statements_map_value_objects_to_jsonb() -> None:
 
 
 def test_schema_statements_temporal_pk_is_business_key_plus_from_columns() -> None:
-    # A temporal entity's physical PK is the business key plus each axis's fromColumn
+    # A temporal entity's physical PK is the business key plus each axis's start column
     # (m-descriptor): audit-only Balance keys on (bal_id, in_z) so successive
     # milestones sharing one business key coexist.
     (audit,) = provision.schema_statements(_MODELS["balance"])
     assert "primary key (bal_id, in_z)" in audit
-    # Bitemporal Position keys on the business key plus BOTH from-columns, business
-    # axis before processing (from_z then in_z), matching its declared composite index.
+    # Bitemporal Position keys on the business key plus BOTH start columns, Valid Time
+    # before Transaction Time (from_z then in_z), matching its declared composite index.
     (bitemporal,) = provision.schema_statements(_MODELS["position"])
     assert "primary key (pos_id, from_z, in_z)" in bitemporal
 
@@ -113,7 +113,7 @@ def test_schema_statements_tpcs_temporal_pk_includes_the_root_declared_axes() ->
     # bitemporal axes are declared on the abstract ROOT and inherited by every
     # concrete subtype (m-inheritance "Inherited members") — DepositRate/LoanRate
     # declare NO `asOfAttributes` locally. The physical PK must still be the
-    # business key plus EACH axis's from-column (`m-descriptor`), never just the
+    # business key plus EACH axis's start column (`m-descriptor`), never just the
     # business key alone, or a second milestone for the same id could not be
     # stored.
     tables = provision.schema_statements(_MODELS["rate"])
@@ -131,7 +131,7 @@ def test_schema_statements_tph_temporal_pk_includes_the_root_declared_axes() -> 
     # bitemporal axes are declared on the abstract ROOT and inherited by every
     # concrete subtype — Bond/Stock declare NO `asOfAttributes` locally. The
     # shared table's physical PK must still be the business key plus EACH
-    # axis's from-column, never just the business key alone.
+    # axis's start column, never just the business key alone.
     (ddl,) = [
         stmt for stmt in provision.schema_statements(_MODELS["instrument"]) if "instrument" in stmt
     ]
@@ -159,7 +159,7 @@ def test_fixture_statements_tph_resolves_inherited_members_by_name() -> None:
 
 
 def test_fixture_statements_load_multiple_milestones_sharing_one_business_key() -> None:
-    # fixtures/rate.yaml's DepositRate carries TWO processing milestones
+    # fixtures/rate.yaml's DepositRate carries TWO Transaction-Time milestones
     # sharing business key id=1 (a closed historical correction plus the
     # current row) — the temporal-PK fix (`(id, from_z, in_z)`, never `(id)`)
     # is what admits the second row at all; this is the statement-generation
@@ -319,13 +319,9 @@ def test_schema_statements_tph_maps_a_value_object_to_jsonb() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# TPH shared-table DDL derivation through the WHOLE member set (review Spec-3  #
-# fix): `_tph_family_with_a_value_object` above declares its value object on   #
-# the ROOT, which the OLD code (reading `root.value_objects` / `(root,)`      #
-# alone) already handled — it is not regression-sensitive to the chain-wide   #
-# union. This family instead declares a value object AND a unique index on a  #
-# CONCRETE subtype (never the root), the shape the chain-wide fix actually    #
-# closes.                                                                     #
+# TPH shared-table DDL derives from the whole family. This fixture declares a #
+# value object and unique index only on a concrete subtype, proving that      #
+# descendant-owned members still contribute to the root-owned table.         #
 # --------------------------------------------------------------------------- #
 def _tph_family_with_a_descendant_declared_value_object_and_index() -> Metamodel:
     root = Entity(
@@ -350,8 +346,8 @@ def _tph_family_with_a_descendant_declared_value_object_and_index() -> Metamodel
 def test_schema_statements_tph_surfaces_a_descendant_declared_value_object_and_index() -> None:
     # `meta` and the unique index over `code` are declared ONLY on the
     # concrete subtype `Leaf`, never the root — invisible from `root.
-    # value_objects` / `_unique_constraints((root,), ...)` alone (the
-    # pre-chain-wide-fix code); the shared table's DDL must still carry both.
+    # value_objects` / `_unique_constraints((root,), ...)` alone; the shared
+    # table's DDL must still carry both.
     (ddl,) = provision.schema_statements(
         _tph_family_with_a_descendant_declared_value_object_and_index()
     )
@@ -373,11 +369,9 @@ def test_fixture_statements_tph_resolves_an_inherited_value_object_by_name() -> 
 
 
 # --------------------------------------------------------------------------- #
-# TPCS-family DDL derivation through the FULL ancestry chain (review Spec-4    #
-# fix): as-of axes are already proven against the corpus's own Rate/Quote     #
-# family above; these two synthetic families prove the root-declared unique   #
-# secondary index and the root-declared value object, neither of which any    #
-# corpus model combines with table-per-concrete-subtype today.                #
+# TPCS-family DDL derives through the full ancestry chain. These synthetic    #
+# families prove that root-declared unique indices and value objects are      #
+# reproduced in each concrete subtype table.                                 #
 # --------------------------------------------------------------------------- #
 def _tpcs_family_with_a_root_declared_unique_index() -> Metamodel:
     root = Entity(
@@ -433,7 +427,7 @@ def _tpcs_family_with_a_temporal_root_and_matching_index() -> Metamodel:
 
 def test_schema_statements_tpcs_skips_a_root_index_matching_the_temporal_pk() -> None:
     # The root's OWN declared composite unique index names exactly the physical
-    # primary key (business key + from-column) the temporal-PK fix already
+    # primary key (business key + start column) the temporal-PK fix already
     # derives; it must not ALSO appear as a redundant `unique (...)` constraint.
     (ddl,) = provision.schema_statements(_tpcs_family_with_a_temporal_root_and_matching_index())
     assert "primary key (id, in_z)" in ddl

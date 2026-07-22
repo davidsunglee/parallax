@@ -17,15 +17,12 @@ IMPLEMENTING.md "Continuous API Conformance Lane"):
   nothing for the discarded buffer).
 
 The story functions deliberately carry no docstrings: their bodies are the guide
-snippets. They use the D-16 **graduated, full** transaction verbs (COR-3 Phase 7
-increment 6a): ``tx.insert(instance)`` (the Create Payload), ``tx.update(copy)``
+snippets. They use the full transaction verbs: ``tx.insert(instance)`` (the
+Create Payload), ``tx.update(copy)``
 (an edited copy carrying a Change Record — ``model_copy(update={...})``),
 ``tx.delete(node_or_instance)``, and ``tx.find(statement)`` returning
-``Snapshot[T]``. The `m-opt-lock` observation-gating rule (COR-3 Phase 8
-increment 3 for UPDATE, extended to DELETE by a Phase-8 mid-phase review
-remediation and a confirmation-pass residual — `python.md` §5 "a keyed update
-or delete of a versioned row this unit of work never observed raises in
-either mode"): a versioned keyed update/delete REQUIRES the edited copy's /
+``Snapshot[T]``. The `m-opt-lock` observation-gating rule (`python.md` §5)
+requires the edited copy's or
 deleted node's provenance to derive from a `tx.find` this SAME transaction ran
 (the framework never issues an implicit resolving read on a keyed write), so
 every story writing a versioned row fetches it first —
@@ -34,37 +31,32 @@ every story writing a versioned row fetches it first —
 `aborted_delete_leaves_the_row_standing` (whose force-flushed delete, forced
 onto the wire before the deliberate abort exactly like
 `callback_value_withheld_on_abort`'s own force-flush-then-abort pattern, is
-gated exactly like any other keyed delete) each add that observing fetch. The
-core amendment bundle (COR-3 Phase 8) closed the matching corpus gap:
-`m-unit-work-005/006/009/012` now author the SAME observing find(s) before
-their versioned keyed write(s), so every story here grades byte-exact against
+gated exactly like any other keyed delete) each add that observing fetch.
+`m-unit-work-005/006/009/012` author the SAME observing find(s) before their
+versioned keyed write(s), so every story here grades byte-exact against
 its own mirrored case (`test_write_no_drift.py`) as the plain graded idiom —
 no story is guide-only. The one `tx.delete` story that never observes,
 `create_then_delete_a_parent_child_pair`, targets a non-versioned entity
 (Order/OrderItem) never re-observed anywhere in that transaction's own
 choreography — no observation is required there.
 
-**Instance-native grading** (D-23, COR-3 Phase 8 increment 7 completion round):
-a story returning rows returns the TYPED INSTANCES a `Snapshot[T]` itself
+**Instance-native grading:** a story returning rows returns the typed instances
+a `Snapshot[T]` itself
 already materializes (`.results()`), never a rendered row dict — the row
 rendering (`instance_row`, physical-column-keyed) happens at the GRADING seam
 (`test_story_run.py`), the same convention the read/graph stories already use.
-The retired `_as_rows`/`canonical_row` rendering carried a LATENT camelCase
-drift risk invisible on the 10 `m-unit-work` stories (Account's canonical and
-physical column names happen to coincide) that would have surfaced the moment
-a story used an entity whose names diverge (`Balance.acctNum`/`acct_num`,
-`Position.valid_start`, …) — exactly the temporal stories
-below.
+Rendering at the grading seam keeps canonical attribute names separate from
+physical column names such as `Balance.acctNum`/`acct_num` and
+`Position.valid_start`.
 
-**Temporal stories** (D-29/D-30/D-31, COR-3 Phase 8 increment 7 completion
-round) construct axis-governed attributes CLEANLY (never a placeholder
-milestone value, D-31's construction optionality) and drive successive
+**Temporal stories** construct axis-governed attributes without placeholder
+milestone values and drive successive
 distinct Transaction-Time instants via a scripted clock (`clock=`,
 :class:`~parallax.conformance.scripted_clock.ScriptedClock`) — one corpus
 writeSequence entry, one flushing `db.transact` call, one scripted instant,
-in entry order (the engine's own demarcation, DQ4). A "chain-update via a
-sparse edited copy" story (`audit_only_chain_update_via_a_sparse_copy`, the
-Supplier value-object sibling) drives the D-30 fix for real: the edited copy
+in entry order. A "chain-update via a sparse edited copy" story
+(`audit_only_chain_update_via_a_sparse_copy`, the Supplier value-object
+sibling) proves that the edited copy
 touches only the field it changes, and the framework merges the observed
 payload onto it so the chained row still carries every untouched field.
 """
@@ -112,14 +104,14 @@ class WriteStory:
     """One executable public-API story mirroring a corpus write case.
 
     ``run`` returns the TYPED INSTANCES a story's own final observing find
-    materialized (`Snapshot[T].results()`, instance-native grading, D-23) —
+    materialized (`Snapshot[T].results()`, instance-native grading) —
     never a rendered row: the real-Postgres runner (`test_story_run.py`)
     renders them to the physical-column-keyed row form (`instance_row`) at
     the grading seam, the SAME convention the read/graph stories already use.
 
-    ``clock`` (D-29, COR-3 Phase 8 increment 7 completion round) is an
-    OPTIONAL zero-argument :class:`~parallax.core.unit_work.Clock` factory: a
-    temporal writeSequence story needing successive distinct processing
+    ``clock`` is an optional zero-argument
+    :class:`~parallax.core.unit_work.Clock` factory: a
+    temporal writeSequence story needing successive distinct Transaction-Time
     instants across its own choreography (one corpus writeSequence entry, one
     flushing ``db.transact`` call, one Clock read each) sets it to something
     like ``lambda: ScriptedClock([...])``
@@ -127,16 +119,16 @@ class WriteStory:
     not a shared instance, so each harness consumer (the fake-port no-drift
     guard, the real-Postgres story runner) drives its own fresh clock rather
     than exhausting a script the other consumer already advanced. ``None``
-    (every pre-D-29 story, unchanged) connects with no explicit clock at all —
+    connects with no explicit clock at all —
     the system clock (`Database.connect`'s own default).
 
-    ``registry`` (D-33, Phase-9 ledger sweep) is the OPTIONAL
+    ``registry`` is the optional
     :class:`~parallax.core.entity.base.EntityRegistry` a story's own entity
     classes are compiled under, needed only when that differs from the
-    process default (ledger D-20's fix: the Customer/Location/Depot mirror
+    process default. The Customer/Location/Depot mirror
     lives in its OWN `vo_models.CUSTOMER_REGISTRY`, exactly like the graph
-    stories' `_reset_for_registry` precedent in `test_story_run.py`) —
-    `None` (every other story, unchanged) connects through the ingested
+    stories' `_reset_for_registry` precedent in `test_story_run.py`. `None`
+    connects through the ingested
     corpus descriptor, the process-default-registry `resolve_entity_class`
     seam finds every other story's classes through."""
 
@@ -295,7 +287,7 @@ def aborted_delete_leaves_the_row_standing(db: Database) -> list[Entity]:
 
 
 # --------------------------------------------------------------------------- #
-# m-audit-write: Balance (audit-only) milestone-chaining stories (D-29/D-31). #
+# m-audit-write: Balance audit-only milestone-chaining stories.               #
 # --------------------------------------------------------------------------- #
 def audit_only_insert_opens_a_current_milestone(db: Database) -> None:
     def fn(tx: Transaction) -> None:
@@ -327,8 +319,8 @@ def audit_only_chain_update_via_a_sparse_copy(db: Database) -> None:
 
     def update(tx: Transaction) -> None:
         current = tx.find(Balance.where(Balance.id == 1)).result()  # observe the milestone
-        # The edited copy touches ONLY `value` — the D-30 fix merges the
-        # observed payload onto it, so the chained row still carries `A`.
+        # The edited copy touches only `value`; observed-payload merging keeps
+        # the chained row's untouched `acct_num` value.
         tx.update(current.model_copy(update={"value": Decimal("150.00")}))
 
     db.transact(insert)
@@ -396,7 +388,7 @@ def wallet_predicate_delete_is_readless(db: Database) -> list[Entity]:
 
 
 # --------------------------------------------------------------------------- #
-# m-bitemp-write: Position (full bitemporal) stories (D-29/D-31).            #
+# m-bitemp-write: Position full-bitemporal stories.                           #
 # --------------------------------------------------------------------------- #
 def bitemporal_insert_until_opens_one_bounded_rectangle(db: Database) -> None:
     def fn(tx: Transaction) -> None:
@@ -412,9 +404,9 @@ def bitemporal_insert_until_opens_one_bounded_rectangle(db: Database) -> None:
 def bitemporal_plain_update_splits_head_and_new_tail(db: Database) -> None:
     # m-bitemp-write-006: a plain (unbounded) bitemporal `tx.update` is the
     # two-way degenerate of the rectangle split — no middle, no old tail (the
-    # correction runs to infinity): inactivate the original on the processing
-    # axis, then chain head (the OLD value, business [from_z, B)) + a new tail
-    # (the NEW value, business [B, infinity)).
+    # correction runs to infinity): inactivate the original on the Transaction-Time
+    # axis, then chain head (the OLD value, Valid Time [from_z, B)) + a new tail
+    # (the NEW value, Valid Time [B, infinity)).
     def insert(tx: Transaction) -> None:
         tx.insert(
             Position(id=1, acct_num="A", value=Decimal("100.00")),
@@ -434,8 +426,8 @@ def bitemporal_plain_update_splits_head_and_new_tail(db: Database) -> None:
 
 def bitemporal_plain_insert_opens_a_fully_current_rectangle(db: Database) -> None:
     # m-bitemp-write-009: a plain (unbounded) bitemporal insert is a SINGLE
-    # insert of a fully-current rectangle — business [B, infinity) at
-    # processing [txInstant, infinity), current on BOTH axes. No prior row to
+    # insert of a fully-current rectangle — Valid Time [B, infinity) at
+    # Transaction Time [txInstant, infinity), current on BOTH axes. No prior row to
     # close, unlike the plain update/terminate splits.
     def fn(tx: Transaction) -> None:
         tx.insert(
@@ -468,7 +460,7 @@ def bitemporal_update_until_splits_head_middle_tail(db: Database) -> None:
 # --------------------------------------------------------------------------- #
 # m-value-object: Supplier (audit-only) / Branch (bitemporal) VO-owner        #
 # stories — the value-object document rides milestone chaining/splitting     #
-# exactly like a scalar column (D-30/D-31, D-23).                            #
+# exactly like a scalar column.                                               #
 # --------------------------------------------------------------------------- #
 def supplier_audit_chain_update_carries_the_document(db: Database) -> None:
     def insert(tx: Transaction) -> None:
@@ -487,8 +479,8 @@ def supplier_audit_chain_update_carries_the_document(db: Database) -> None:
 
     def update(tx: Transaction) -> None:
         current = tx.find(Supplier.where(Supplier.id == 1)).result()  # observe the milestone
-        # The edited copy touches ONLY `address` — the D-30 fix merges the
-        # observed payload onto it, so the chained row still carries `name`.
+        # The edited copy touches only `address`; observed-payload merging
+        # keeps the chained row's untouched `name` value.
         tx.update(
             current.model_copy(
                 update={
@@ -550,12 +542,12 @@ def branch_bitemporal_rectangle_split_carries_the_document(db: Database) -> None
 
 
 # --------------------------------------------------------------------------- #
-# m-value-object: Customer (non-temporal) VO-owner write stories (D-33, the   #
-# Phase-9 ledger sweep) — the recursive `address` composite (`CustomerGeo`    #
+# m-value-object: Customer non-temporal value-object-owner write stories.     #
+# The recursive `address` composite (`CustomerGeo`                            #
 # declares OPTIONAL `elevation`/`point`, unlike Supplier/Branch's own `Geo`),  #
-# so these are the FIRST write stories to exercise `to_document`'s D-33       #
-# omit-unset-optional-inner-members fix. Compiled under the Customer/         #
-# Location/Depot family's OWN `CUSTOMER_REGISTRY` (ledger D-20), never the    #
+# so these exercise `to_document`'s omission of unset optional inner members.#
+# They compile under the Customer/Location/Depot family's own                 #
+# `CUSTOMER_REGISTRY`, never the                                               #
 # process default — see `WriteStory.registry`'s own docstring.               #
 # --------------------------------------------------------------------------- #
 def customer_insert_carries_the_whole_address_document(db: Database) -> None:
@@ -636,7 +628,7 @@ def customer_update_nulls_the_address_document_out(db: Database) -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Per-story scripted clocks (D-29): one scripted instant per `db.transact`    #
+# Per-story scripted clocks provide one instant per `db.transact` call,       #
 # call above, in entry order, matching each mirrored case's own authored     #
 # `at`/`until` instants.                                                     #
 # --------------------------------------------------------------------------- #

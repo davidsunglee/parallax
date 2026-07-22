@@ -22,8 +22,8 @@ The stages, in order (``m-unit-work`` "Same-transaction write coalescing" /
 - **coalesce** — a same-transaction keyed insert-then-update of one object folds
   the update into the pending insert (a single final-value write, per temporal
   flavor at lowering); a keyed insert-then-delete of one object **cancels** (both
-  annihilate, no DML). An :class:`AtomicUnit` (a materialized predicate write's
-  planned unit, COR-3 Phase 8 increment 5) is opaque here — never a coalescing
+  annihilate, no DML). An :class:`AtomicUnit` representing a materialized
+  predicate write is opaque here — never a coalescing
   candidate, never folded with an unrelated instruction.
 - **collapse** — same-entity, same-mutation, ADJACENT single-row keyed writes
   merge into one multi-row instruction when the injected ``collapse`` policy
@@ -79,11 +79,11 @@ class Observation:
     The optimistic-lock version and/or observed Transaction-Time start a gated write binds,
     attached to a planned write at flush and **never** carried on the durable
     instruction. Neutral here: this milestone pairs it onto the plan; lowering the
-    version gate / advance into SQL is the composition layer's job (M4 / Phase 8).
+    version gate or advance into SQL is the composition layer's job.
 
     ``valid_start`` / ``valid_end`` / ``payload`` extend the vocabulary for a
-    TEMPORAL observation (COR-3 Phase 8 increment 4; `m-audit-write` /
-    `m-bitemp-write`): ``valid_start`` is the observed rectangle's own Valid-Time
+    temporal observation (`m-audit-write` / `m-bitemp-write`): ``valid_start``
+    is the observed rectangle's own Valid-Time
     lower bound — the bitemporal optimistic gate's discriminator candidate AND (via
     :mod:`parallax.core.bitemp_write`'s planning) the Valid-Time lower bound the head
     rectangle's upper bound derives from; ``valid_end`` is the observed rectangle's
@@ -91,8 +91,8 @@ class Observation:
     is the observed row's OTHER columns (every scalar / value-object member besides
     the milestone interval bounds) — the "prior rectangle" values a bitemporal split's
     head/tail carry forward (`m-bitemp-write` "Head/tail old values come from the
-    observed prior rectangle"), and (D-30, COR-3 Phase 8 increment 7 completion round)
-    the values an audit-only chaining ``update`` merges a SPARSE authored row onto
+    observed prior rectangle"), and the values an audit-only chaining ``update``
+    merges a sparse authored row onto
     (`~parallax.core.audit_write.plan`'s own ``_merged_row``) so an unauthored field
     is never silently dropped. ``valid_start`` / ``valid_end`` stay ``None`` for
     a non-temporal or Transaction-Time-Only observation (neither declares Valid Time to
@@ -137,8 +137,8 @@ class PlannedWrite:
     a mismatch and aborting the whole unit of work (`parallax.core.opt_lock`).
     ``None`` for every other write (an unversioned write, or one whose row
     carries its version as plain caller-authored data rather than a recorded
-    observation — the M4-era corpus witnesses this plan-level expectation
-    never touches, since they never populate an observation for that key).
+    observation; corpus cases without an observation never use this
+    plan-level expectation.
     """
 
     instruction: WriteInstruction
@@ -150,7 +150,7 @@ class PlannedWrite:
 class AtomicUnit:
     """A materialized predicate write's ORDERED, INDIVISIBLE planned unit
     (`m-unit-work` "Materialized predicate writes are an atomic planned unit",
-    ADR 0014; COR-3 Phase 8 increment 5): the per-row keyed writes a versioned or
+    ADR 0014): the per-row keyed writes a versioned or
     temporal predicate-selected write materializes to, in the resolving read's
     OWN resolved-row order.
 
@@ -182,7 +182,7 @@ BufferItem = WriteInstruction | AtomicUnit
 # an OPTIONAL parameter the composition layer supplies (`parallax.snapshot.handle`
 # for production, the conformance compile lane identically) — omitted (`None`)
 # is a pure no-op collapse stage, never a behavior a caller must opt into just to
-# keep today's per-instruction lowering.
+# keep per-instruction lowering.
 CollapsePolicy = Callable[[Metamodel, str, str, Sequence[Mapping[str, object]]], bool]
 
 
@@ -193,10 +193,10 @@ class FlushPlan:
     ``writes`` is the coalesced, collapsed, FK-ordered, elision-applied
     sequence — always FLAT (an :class:`AtomicUnit` never survives past
     FK-ordering; its member writes are inlined, adjacent, in their own
-    resolved-row order). ``tx_instant`` is the Clock-supplied processing
+    resolved-row order). ``tx_instant`` is the Clock-supplied Transaction-Time
     instant carried as flush **context** — never an instruction field — that
     the composition layer binds as ``in_z`` when it lowers a temporal write.
-    The composition layer (M4) lowers this plan to DML SQL through ``m-sql`` /
+    The composition layer lowers this plan to DML SQL through ``m-sql`` /
     ``m-dialect``; this scope neither takes a dialect nor emits SQL.
     """
 
@@ -278,8 +278,8 @@ def _coalesce(buffer: Sequence[BufferItem], meta: Metamodel) -> list[BufferItem]
     Every other instruction — a predicate write, a multi-row instruction, or an
     :class:`AtomicUnit` (a materialized predicate write's planned unit, EXEMPT
     from coalescing by construction) — passes through in order. The pair scope
-    is exactly the coalescing witnesses'; a general ordered buffer and
-    predicate-selected buffered writes are deferred (D-3).
+    is limited to the specified coalescing pairs rather than arbitrary ordered
+    buffer rewrites.
     """
     result: list[BufferItem | None] = []
     pending_insert: dict[ObjectKey, int] = {}
@@ -510,7 +510,7 @@ def _elide(instructions: Sequence[WriteInstruction], meta: Metamodel) -> list[Wr
     A keyed update carrying only its primary key names no changed field, so it emits
     no DML — the net-zero elision (uniform for non-temporal and temporal entities;
     a value-identical milestone is never fabricated). Predicate-write per-row no-op
-    elimination is a materialization concern (Phase 8), not applied here.
+    elimination belongs to the materialization boundary, not this planner.
     """
     return [i for i in instructions if not _is_empty_keyed_update(i, meta)]
 
@@ -548,7 +548,7 @@ def _expected_affected(
     version (a versioned row this unit of work observed) — in EITHER
     concurrency mode, so a vanished row is caught even under a locking-mode
     write the version gate never guards. Nothing else ever carries a version
-    observation (a non-versioned entity's row, or an M4-era write whose row
+    observation (a non-versioned entity's row, or a write whose row
     carries its version as plain caller-authored data rather than a recorded
     observation), so this reduces to the single check below without a
     metamodel lookup of its own.

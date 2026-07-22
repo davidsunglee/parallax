@@ -1,7 +1,7 @@
 """Predicate-selected (`*_where`) write unit tests for `parallax.snapshot.handle`.
 
-The set-based verb family (COR-3 Phase 8 increment 5; `python.md` §5): the
-bare-statement guard, inheritance rejection, business-bound validation, readless
+The set-based verb family (`python.md` §5) covers the
+bare-statement guard, inheritance rejection, Valid-Time-bound validation, readless
 dispatch for an unversioned non-temporal target, and materialization — the
 resolving read's need-sensitive projection, per-row no-op elimination, and
 atomic-unit buffering (ADR 0014) — across audit-only, bitemporal, and versioned
@@ -45,12 +45,9 @@ from parallax.snapshot.handle import Database, Transaction
 pytestmark = pytest.mark.unit
 
 
-# A LOCAL audit-only, value-object-bearing entity — the `supplier.yaml` shape
-# (`m-value-object-047`'s own model). This fixture predates the idiomatic
-# mirror: ledger D-21 has since installed `mm.Supplier` for real, so the
-# VO-bearing `update_where` carry-forward pin (finding 2, D-26) could now be
-# rewritten onto it. It stays local because a minimal self-contained shape is
-# all this pin needs, not because the mirror is missing.
+# A local audit-only, value-object-bearing entity with the `supplier.yaml`
+# shape from `m-value-object-047`. The minimal self-contained fixture keeps
+# this predicate-write test independent of the broader model mirror.
 class WhereLedgerAddress(ValueObject, frozen=True):
     city: Attr[str] = VoField(type="string")
 
@@ -77,10 +74,9 @@ class WhereLedger(Entity, frozen=True):
 _WHERE_LEDGER_META = metamodel([WhereLedger])
 
 
-# A LOCAL bitemporal, value-object-bearing entity — confirmation-pass residual
-# P2's own fixture (`m-case-format.md:727`; no corpus witness exercises a
-# VO-bearing bitemporal predicate update, D-26): combines `WherePosition`'s
-# two axes with `WhereLedger`'s value-object shape.
+# A local bitemporal, value-object-bearing entity combines `WherePosition`'s
+# two axes with `WhereLedger`'s value-object shape. No corpus case exercises
+# this predicate-update combination (`m-case-format.md:727`).
 class WhereRectangleAddress(ValueObject, frozen=True):
     city: Attr[str] = VoField(type="string")
 
@@ -113,12 +109,10 @@ class WhereRectangle(Entity, frozen=True):
 _WHERE_RECTANGLE_META = metamodel([WhereRectangle])
 
 
-# A LOCAL versioned NON-TEMPORAL, value-object-bearing entity — mirrors
-# `models/subscriber.yaml`'s own shape (a versioned document owner) —
-# confirmation-pass residual A's own fixture (round 2, the `needs_documents`
-# gate in `parallax.snapshot.handle`'s predicate-write lane): TWO value
-# objects, so a pin can prove minimal-read discipline (the resolving read
-# projects the ASSIGNED document only, never every declared one).
+# A local versioned non-temporal, value-object-bearing entity mirrors
+# `models/subscriber.yaml`. Its two value objects prove minimal-read discipline:
+# the resolving read projects only the assigned document, never every declared
+# document.
 class WhereSubscriberAddress(ValueObject, frozen=True):
     city: Attr[str] = VoField(type="string")
 
@@ -142,8 +136,8 @@ _WHERE_SUBSCRIBER_META = metamodel([WhereSubscriber])
 
 
 # --------------------------------------------------------------------------- #
-# Predicate-selected `_where` verb family (COR-3 Phase 8 increment 5;          #
-# python.md §5): the bare-statement guard, inheritance rejection, business-    #
+# Predicate-selected `_where` verb family (`python.md` §5): the bare-statement #
+# guard, inheritance rejection, Valid-Time-                                   #
 # bound validation, readless dispatch, and materialization (resolve + per-row #
 # no-op elimination + the atomic-unit buffering, ADR 0014).                    #
 # --------------------------------------------------------------------------- #
@@ -176,7 +170,7 @@ def test_readless_delete_where_buffers_one_statement_no_read() -> None:
 
 
 def test_readless_update_where_reorders_assignments_to_column_order() -> None:
-    # Round-6 remaining (c): the SET clause orders by descriptor column order
+    # The SET clause orders by descriptor column order
     # (`lower_predicate_write`'s own `_ordered_cells` reuse), never the
     # AUTHORED assignment order -- reversing the two `.set(...)` calls below
     # (price before name, the opposite of Order's own declared column order)
@@ -321,8 +315,8 @@ def test_materializing_delete_where_writes_every_resolved_row() -> None:
 
 
 def test_materializing_write_with_zero_resolved_rows_writes_nothing() -> None:
-    # DQ2 rider 4 / m-batch-write.md "Zero resolved rows -> zero keyed writes,
-    # success" — a materializing write that resolves nothing still commits
+    # `m-batch-write` requires zero resolved rows to produce zero keyed writes.
+    # A materializing write that resolves nothing still commits
     # cleanly, with no keyed writes at all.
     port = RecordingPort(rows=[])
 
@@ -366,7 +360,7 @@ def test_materializing_terminate_where_over_an_audit_only_target() -> None:
 
     Database.connect(port, BALANCE, clock=FixedClock(FIXED)).transact(fn)
     writes = [op for op in port.ops if op[0] == "write"]
-    assert len(writes) == 2  # one processing-only close per resolved row, no chain
+    assert len(writes) == 2  # one Transaction-Time-only close per resolved row, no chain
     close_sql = POSTGRES.to_driver_sql(
         "update balance set out_z = ? where bal_id = ? and out_z = ?"
     )
@@ -433,8 +427,8 @@ def test_materializing_update_where_audit_only_chains_the_new_value() -> None:
 def test_materializing_update_where_audit_only_carries_the_unassigned_value_object_forward() -> (
     None
 ):
-    # D-26 / finding 2 (`m-case-format.md:727`): an assignment-bearing
-    # `update_where` on an audit-only, VALUE-OBJECT-bearing target must carry
+    # `m-case-format.md:727`: an assignment-bearing `update_where` on an
+    # audit-only, value-object-bearing target must carry
     # the resolved row's OWN `address` document FORWARD into the chained row
     # when the caller does not itself reassign it — so the resolving read
     # must project the document column too (unlike a terminate/delete,
@@ -560,7 +554,7 @@ def test_materializing_terminate_until_where_over_a_bitemporal_target() -> None:
 
 
 def test_materializing_terminate_until_where_writes_per_resolved_row() -> None:
-    # Round-6 remaining (a): the single-row pin above proves the PER-ROW shape
+    # The single-row test above proves the per-row shape
     # (close + head + tail); this proves the MATERIALIZE loop itself resolves
     # and writes MULTIPLE rows, exactly like `update_where`'s / `delete_where`'s
     # own multi-row pins -- N resolved rows -> 3*N keyed writes, no cross-row
@@ -598,10 +592,9 @@ def _rectangle_row(*, address: dict[str, object] | None) -> Row:
 
 
 def test_materializing_bitemporal_update_where_carries_the_unassigned_value_object() -> None:
-    # Confirmation-pass residual P2 (`m-case-format.md:727`): a BITEMPORAL,
-    # value-object-bearing target's assignment-bearing `update_where` must
-    # project the document in its resolving read too (the prior round's gate
-    # covered only an AUDIT-ONLY target) — the resolved row's own `address`
+    # `m-case-format.md:727`: a bitemporal, value-object-bearing target's
+    # assignment-bearing `update_where` must project the document in its
+    # resolving read. The resolved row's own `address`
     # rides head AND the new tail WHOLE when the caller does not itself
     # reassign it (`m-bitemp-write` "head/tail old values come from the
     # observed prior rectangle"; `m-value-object` "the document rides every
@@ -666,8 +659,8 @@ def test_materializing_update_until_where_bitemporal_carries_the_value_object_on
 
 
 def test_materializing_plain_terminate_where_bitemporal_carries_the_document() -> None:
-    # Confirmation-pass residual P2, COMPLETION (`m-case-format.md:727`): a
-    # BITEMPORAL terminate's own head rectangle chains the resolved row's OLD
+    # `m-case-format.md:727`: a bitemporal terminate's head rectangle chains
+    # the resolved row's old
     # payload forward (`bitemp_write.plan`'s terminate branch reads
     # `observed.payload`), so the resolving read must project the document
     # too, even though `terminate` carries no assignments — a bitemporal
@@ -754,17 +747,11 @@ def test_materializing_terminate_where_audit_only_stays_document_free() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Confirmation-pass residual A (round 2, the `needs_documents` gate in the    #
-# predicate-write lane): a VERSIONED NON-TEMPORAL VO-bearing target           #
-# (`WhereSubscriber`, mirroring `models/subscriber.yaml`'s own shape) never   #
-# chains, so that gate used to exclude it categorically -- an                 #
-# assignment-bearing `update_where` assigning an UNCHANGED document could     #
-# never be recognized by per-row no-op elimination (the comparison could not  #
-# see the stored document), emitting an unnecessary gated UPDATE              #
-# (`m-opt-lock.md:92-95`). The fix adds a COMPARISON need, projecting the     #
-# ASSIGNED document(s) only (minimal-read discipline) -- `profile` (never     #
-# assigned by these tests) proves the projection stays minimal, not "every    #
-# declared value object".                                                     #
+# A versioned non-temporal value-object target never chains. Its resolving    #
+# read must project assigned documents so per-row no-op elimination can compare #
+# them with stored values (`m-opt-lock.md:92-95`). `profile`, which these tests #
+# never assign, proves the projection stays minimal rather than including every #
+# declared value object.                                                       #
 # --------------------------------------------------------------------------- #
 def test_materializing_versioned_update_where_eliminates_a_no_op_value_object_row() -> None:
     port = RecordingPort(rows=[{"id": 1, "version": 1, "address": {"city": "Bergen"}}])
@@ -863,9 +850,9 @@ def test_materializing_terminate_until_where_rejects_a_reversed_window_bound() -
 
 
 # --------------------------------------------------------------------------- #
-# The BEHAVIORAL bare-statement rejection, end to end (round-6 confirmation-   #
-# pass strengthening): `is_bare()` returning `False` in `test_where_verbs.py`  #
-# is NECESSARY but not SUFFICIENT on its own — an actual `tx.update_where` /   #
+# The behavioral bare-statement rejection is covered end to end. `is_bare()`  #
+# returning `False` in `test_where_verbs.py` is necessary but an actual        #
+# `tx.update_where` or                                                       #
 # `tx.delete_where` call handed a `.distinct()` statement must itself raise    #
 # the rejection (python.md §5), never merely be provable through the predicate #
 # alone. A port that raises on any I/O proves the guard runs BEFORE the        #

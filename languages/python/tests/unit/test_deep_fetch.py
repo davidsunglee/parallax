@@ -198,7 +198,7 @@ def test_child_operation_appends_propagated_as_of_after_the_in_membership() -> N
     membership, *as_of_terms = child_op.operands
     assert isinstance(membership, Membership)
     assert membership.values == (1, 2)
-    assert len(as_of_terms) == 2  # business then processing (AXIS_ORDER)
+    assert len(as_of_terms) == 2  # Valid Time then Transaction Time (AXIS_ORDER)
 
 
 def test_child_operation_raises_on_a_back_reference_level() -> None:
@@ -300,9 +300,8 @@ def test_plan_accepts_a_non_deep_fetch_operation_with_zero_levels() -> None:
 
 # --------------------------------------------------------------------------- #
 # Root as-of injection over a CONCRETE inheritance target whose family's axes  #
-# are declared on the ROOT alone (COR-3 Phase 7 review remediation, P3/P4):   #
-# `plan()` must inject the default-latest / pinned as-of predicate even       #
-# though `DepositRate`'s own record carries no `as_of_axes` locally.          #
+# are declared on the ROOT alone. `plan()` must inject the default-latest or   #
+# pinned as-of predicate even though `DepositRate` carries no local axes.      #
 # --------------------------------------------------------------------------- #
 def test_concrete_target_root_operation_defaults_every_axis_to_latest() -> None:
     plan = deep_fetch.plan("DepositRate", All(), RATE)

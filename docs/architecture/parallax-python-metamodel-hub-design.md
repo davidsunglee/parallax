@@ -639,15 +639,19 @@ only through Entity declarations and is not passed to the hub separately.
   `MetamodelIssue` or `MetamodelValidationError`. Formation publishes no
   accepted Metamodel or facet set after either error category, and the hub
   installs no class binding.
-- One explicit, deterministic Formation Profile supplies every active rule set
-  and compiler to the formation runner. The profile is drift-checked against
-  the authoritative manifest in
+- One explicit, deterministic composition root supplies two separate immutable
+  values to the formation runner: a Formation Manifest containing only owner
+  identities, complete Issue Code sets, facet keys, and dependency
+  requirements; and a Formation Profile containing every active Rule Set and
+  compiler implementation. The profile is drift-checked against the
+  authoritative manifest in
   [`m-model-formation`](../../core/spec/m-model-formation.md), whose rows name
   every required Rule Set, complete owner Issue Code set, compiler/facet key,
   and module/facet dependency. Runtime contributors are checked against that
-  manifest; they do not define completeness by their own presence. There is no
-  import-time registration, decorator enrollment, entry-point discovery, or
-  ambient formation registry.
+  separately supplied data; they do not define completeness by their own
+  presence. The runner therefore knows contributor identities but imports and
+  owns no contributor implementations. There is no import-time registration,
+  decorator enrollment, entry-point discovery, or ambient formation registry.
 - Formation has three gated phases: resolve, validate, and compile. The fixed
   foundational resolver first collects all identity, namespace, duplicate-key,
   and model-relative reference issues. Any such issue produces no Candidate
@@ -1756,14 +1760,17 @@ parallax/snapshot/
 `m-metamodel` protocols, foundational resolver, Metadata Compiler, Compiled
 Metadata, `MetamodelIssue`, and model-relative lookup contract.
 `parallax.core.model_formation` owns the class-free rule-set, compiler, facet,
-and Formation Profile protocols, deterministic runner, issue aggregation, and
-both `MetamodelValidationError` and `FormationContractError`; it knows no
-contributor set. `parallax.core.relationship` owns the relationship Rule Set,
+Formation Manifest and Formation Profile protocols, deterministic runner,
+issue aggregation, and both `MetamodelValidationError` and
+`FormationContractError`; it imports and owns no contributor implementation
+set, and sees contributor identities only through supplied manifest data.
+`parallax.core.relationship` owns the relationship Rule Set,
 Model Compiler, symmetric Relationship Facet, and typed `view(model)` seam; it
 does not own navigation execution. The private
-`parallax.core._formation_profile` composition root supplies the complete
-built-in contributor set and is drift-checked against the authoritative
-formation manifest plus its active module-catalog consistency.
+`parallax.core._formation_profile` composition root supplies the immutable
+built-in Formation Manifest data and complete built-in contributor profile;
+the runner drift-checks the two and contract tooling checks manifest/catalog
+consistency.
 `parallax.core.descriptor` owns canonical document parsing, serde, and adapters
 to and from that interface. Its public seam exposes `DescriptorError`,
 `DescriptorSyntaxError`, `DescriptorSchemaError`,
@@ -1777,10 +1784,10 @@ additional caller seams.
 | Module | Ownership |
 |---|---|
 | `metamodel.__init__` | Read-only Unresolved Metamodel, Candidate Metamodel, Compiled Metadata, and accepted Metamodel protocols, foundational resolver, Metadata Compiler, Metamodel Issue, typed Facet Key, and model-relative lookup contract. |
-| `model_formation.__init__` | Model Formation Rule Set, Model Compiler, Metamodel Facet, Formation Profile, aggregate validation error, Formation Contract Error, and runner protocols. |
+| `model_formation.__init__` | Formation Manifest data, Model Formation Rule Set, Model Compiler, Metamodel Facet, Formation Profile, aggregate validation error, Formation Contract Error, and runner protocols. |
 | `model_formation._runner` | Deterministic resolve-validate-compile execution, issue aggregation, and immutable facet assembly; no contributor imports or semantic rules. |
 | `relationship.__init__` | Relationship formation rules and issue codes, symmetric Relationship Metadata compilation, typed Relationship Facet access, and no navigation execution. |
-| `_formation_profile` | Private composition root containing the explicit, manifest-complete built-in Rule Set and compiler tuple. |
+| `_formation_profile` | Private composition root containing immutable built-in Formation Manifest data and the explicit, manifest-complete built-in Rule Set and compiler tuple. |
 | `entity._binding` | Atomic class-claim synchronization and the one immutable Metamodel Binding per sealed class-backed hub: opaque hub identity, accepted-Metamodel reference, bidirectional Entity Identity/Class index, and private strong owner reference. It owns no model facts, exposes no hub lifecycle surface, and provides no unbind/reset path. |
 | `entity._declaration` | Shared lower-level Pydantic metaclass engine for Entity and Value Object classes, typed header/annotation parsing through `_members`, immutable declaration payloads and private kind markers, and immediate class-shape validation. It imports neither concrete frontend class nor expression behavior. |
 | `entity._hub` | `MetamodelHub`, fixed-source construction, seal state, delegation to the one accepted Metamodel, adapter selection, class binding, introspection, and export orchestration. It owns no accepted Metadata/facet copies or independent normalized accepted-metadata indexes. |
@@ -2373,15 +2380,16 @@ Acceptance requires:
   cases;
 - both implementations expose the same three recursive Value Object shapes and
   preserve declaration order at every depth;
-- `parallax.core.model_formation` implements the accepted rule-set, compiler,
-  facet, and Formation Profile protocols, deterministic
+- `parallax.core.model_formation` implements the accepted Formation Manifest,
+  rule-set, compiler, facet, and Formation Profile protocols, deterministic
   resolve-validate-compile runner, issue aggregation, and aggregate validation
-  error without importing contributors; it reuses `parallax.core.metamodel`'s
-  `MetamodelIssue` value rather than defining another issue type;
-- the explicit Python composition root supplies the manifest-complete built-in
-  Rule Set and compiler tuple, and drift checks prove both manifest/profile and
-  manifest/catalog consistency with no missing, duplicate, extra, or ambient
-  contributors;
+  error without importing contributor implementations; it reuses
+  `parallax.core.metamodel`'s `MetamodelIssue` value rather than defining
+  another issue type;
+- the explicit Python composition root separately supplies immutable built-in
+  Formation Manifest data and the manifest-complete Rule Set/compiler profile;
+  drift checks prove both manifest/profile and manifest/catalog consistency
+  with no missing, duplicate, extra, or ambient contributors;
 - descriptor parsing and export implement that interface without importing the
   Entity frontend;
 - inheritance, temporal, navigation, SQL, read, and write behavior accepts any

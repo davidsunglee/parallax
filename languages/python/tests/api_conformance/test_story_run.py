@@ -14,11 +14,11 @@ skips with a recorded reason when Docker is unavailable (never silently), and
 the ``python-database`` CI job fails on any skip. A write story's grading is
 the mirrored case's own oracle: a story returning rows must observe its final
 find's `expectRows`; a writeSequence story must leave exactly `then.tableState`
-behind. The one `kind == "boundary"` story (`m-unit-work-004`) is EXCLUDED from
-this file's own grading loop (COR-3 Phase 8 increment 6, DQ5): the D-17
-case-driven boundary runner (`test_boundary_run.py`) grades it — and every
-other boundary-shape case — directly against the corpus now, so the story
-function survives registered only for the Usage Guide and the fake-port wire
+behind. The one `kind == "boundary"` story (`m-unit-work-004`) is excluded from
+this file's grading loop because the case-driven boundary runner
+(`test_boundary_run.py`) grades it — and every other boundary-shape case —
+directly against the corpus. The story remains registered for the Usage Guide
+and the fake-port wire
 pin (`test_write_no_drift.py`). A graph story's grading is bespoke per case
 (see the section below).
 """
@@ -80,7 +80,7 @@ def _reset_for(case_id: str, provisioner: Any) -> Any:
 def _reset_for_registry(case_id: str, provisioner: Any, registry: EntityRegistry) -> Metamodel:
     """Like :func:`_reset_for`, but provisions from ``registry``'s OWN
     :meth:`~parallax.core.entity.base.EntityRegistry.metamodel` rather than
-    the ingested corpus descriptor (ledger D-20): needed whenever `db.find`'s
+    the ingested corpus descriptor. This is needed whenever `db.find`'s
     wrap must resolve through a registry OTHER than the process default (the
     animal family's REAL owner, scoped to
     `animal_owner.ANIMAL_OWNER_REGISTRY`) — structurally equivalent to the
@@ -92,9 +92,9 @@ def _reset_for_registry(case_id: str, provisioner: Any, registry: EntityRegistry
     return meta
 
 
-# `kind == "boundary"` (m-unit-work-004) is EXCLUDED from execution here (COR-3
-# Phase 8 increment 6, DQ5): the D-17 case-driven boundary runner
-# (`tests/api_conformance/test_boundary_run.py`) now grades it directly
+# `kind == "boundary"` (m-unit-work-004) is excluded from execution here because
+# the case-driven boundary runner (`tests/api_conformance/test_boundary_run.py`)
+# grades it directly
 # against the corpus, case-driven like every other boundary case — the hand
 # story's function stays registered (`stories.WRITE_STORIES`) ONLY so the
 # Usage Guide keeps rendering it (`api_suite.EXAMPLES`) and the fake-port
@@ -107,8 +107,8 @@ _STORY_IDS = [story.case_id for story in _EXECUTED_STORIES]
 
 @pytest.mark.parametrize("story", _EXECUTED_STORIES, ids=_STORY_IDS)
 def test_story_runs_through_the_shipped_surface(story: WriteStory, provisioner: Any) -> None:
-    # D-33: a story compiled under its OWN `registry` (the Customer/Location/
-    # Depot mirror's `CUSTOMER_REGISTRY`, ledger D-20) provisions/connects
+    # A story compiled under its own registry (the Customer/Location/Depot
+    # mirror's `CUSTOMER_REGISTRY`) provisions and connects
     # through THAT registry's own metamodel, the SAME `_reset_for_registry`
     # scoping the graph stories below already use — never the bare ingested
     # corpus descriptor `_reset_for` resolves every other story through.
@@ -117,16 +117,16 @@ def test_story_runs_through_the_shipped_surface(story: WriteStory, provisioner: 
         if story.registry is not None
         else _reset_for(story.case_id, provisioner)
     )
-    # D-29: a story's own scripted-clock FACTORY (never a shared instance) —
-    # this consumer's fresh clock, independent of `test_write_no_drift.py`'s.
+    # A story's scripted-clock factory supplies this consumer with a fresh
+    # clock independent of `test_write_no_drift.py`.
     clock = story.clock() if story.clock is not None else None
     db = connect(provisioner.port, meta, clock=clock)
 
     result = story.run(db)
     if result is not None:
         # Commit and abort stories both conclude with an observing find; its
-        # rows must equal the mirrored case's final `expectRows` (D-23,
-        # instance-native grading: a scenario's own `expectRows` is
+        # rows must equal the mirrored case's final `expectRows`. A scenario's
+        # `expectRows` is
         # INSTANCE-form, m-case-format — physical-column-keyed, `instance_row`,
         # never the canonical camelCase `engine.wire_row` used to render).
         compare_rows([instance_row(row) for row in result], _final_find_expect_rows(story.case_id))
@@ -145,7 +145,7 @@ def test_story_runs_through_the_shipped_surface(story: WriteStory, provisioner: 
 
 
 # --------------------------------------------------------------------------- #
-# Graph stories (m-snapshot-read / m-navigate, COR-3 Phase 7 increment 6b):    #
+# Graph stories (`m-snapshot-read` / `m-navigate`)                             #
 # the read-side sibling of the write stories above, executed through the SAME #
 # shipped `parallax.snapshot.connect` + `parallax-postgres` surface. Grading  #
 # is bespoke per story (unlike the write stories' shared row/table-state      #
@@ -220,7 +220,7 @@ def test_empty_intermediate_level_short_circuits(provisioner: Any) -> None:
     assert snapshot.execution.round_trips == 2
 
 
-def test_pinned_graph_at_a_past_business_instant(provisioner: Any) -> None:
+def test_pinned_graph_at_a_past_valid_time_instant(provisioner: Any) -> None:
     story = _GRAPH_STORIES_BY_ID["m-navigate-013"]
     meta = _reset_for(story.case_id, provisioner)
     db = connect(provisioner.port, meta)
@@ -246,8 +246,8 @@ def test_mutation_has_no_writeback(provisioner: Any) -> None:
 
 
 def test_history_of_a_concrete_temporal_node_distinguishes_milestones(provisioner: Any) -> None:
-    # SUPPLEMENTAL (Spec-2 remediation) — NOT tied to any case's exercised
-    # status: `m-inheritance-100`'s own point read is graded by its `ReadStory`
+    # This history check is not tied to any case's exercised status.
+    # `m-inheritance-100`'s point read is graded by its `ReadStory`
     # below (`test_read_story_runs_through_the_shipped_surface`), through the
     # generic case-driven runner, exactly like every other read story. This
     # proves the SEPARATE milestone-HISTORY shape over the SAME fixture: a
@@ -294,8 +294,8 @@ def test_one_to_one_peer_attaches_as_a_single_object(provisioner: Any) -> None:
 
 
 def test_animal_owner_reaches_root_and_narrowed_subtype_view(provisioner: Any) -> None:
-    # The animal family's REAL owner (ledger D-20): provisioned from its OWN
-    # scoped registry, never the ingested descriptor (`_reset_for_registry`).
+    # The animal family is provisioned from its own scoped registry, never the
+    # ingested descriptor (`_reset_for_registry`).
     story = _GRAPH_STORIES_BY_ID["m-snapshot-read-012"]
     meta = _reset_for_registry(story.case_id, provisioner, animal_owner.ANIMAL_OWNER_REGISTRY)
     db = connect(provisioner.port, meta)
@@ -408,8 +408,9 @@ def test_bitemporal_vo_owner_as_of_a_past_audit_point(provisioner: Any) -> None:
 
 
 def _assert_typed_per_variant_graph(case_id: str, snapshot: Any, entity_name: str) -> None:
-    """ledger D-22: each materialized instance renders to its OWN concrete
-    class's declared members plus ``familyVariant`` (`instance_row`,
+    """Render each instance with its concrete class's declared members.
+
+    ``instance_row`` also includes ``familyVariant`` for the
     physical-column-keyed, spec §4 "observable as `type(node)`") — never a
     sibling's null-padded column, matching the case's own per-variant
     `then.graph` exactly (order-insensitive, `compare_rows`)."""
@@ -555,7 +556,7 @@ def test_every_graph_story_mirrors_an_active_case_exactly_once() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Read stories (m-api-conformance S1 remediation): a GENERIC runner, unlike    #
+# Read stories use one generic runner, unlike                                 #
 # the write/graph stories above — every read-only example's execution shape   #
 # is identical (reset, `db.find(build())`, compare), so ONE parametrized test #
 # drives every `read_stories.READ_STORIES` entry instead of a hand-rolled     #
@@ -567,12 +568,12 @@ def test_every_graph_story_mirrors_an_active_case_exactly_once() -> None:
 # API-suite's own polymorphism observation (`python.md` §4: "observable as    #
 # `type(node)`"), not a field the developer surface itself exposes.           #
 #                                                                              #
-# `story.concurrency` (COR-3 Phase 8 increment 6, the `m-read-lock` matrix)   #
-# opts a story into the TRANSACTIONAL half instead: `tx.find(build())` inside #
+# `story.concurrency` (the `m-read-lock` matrix) opts a story into the         #
+# transactional half: `tx.find(build())` inside                               #
 # a `db.transact` of the declared participation mode, still graded against    #
 # the SAME `then.rows` oracle, PLUS the statements this story's own find      #
-# ACTUALLY executed (review remediation finding 3, `_StatementCapturePort`    #
-# below) — the runtime proof that the mode actually drives whether the        #
+# actually executed (`_StatementCapturePort` below) — the runtime proof that  #
+# the mode drives whether the                                                  #
 # emitted SQL carries the shared read-lock suffix (unobservable from          #
 # `then.rows` alone: two stories can return identical rows while one holds a  #
 # lock and the other does not).                                               #
@@ -585,9 +586,9 @@ class _StatementCapturePort:
     binds a read story's find ACTUALLY executes — the SAME port-seam capture
     point ``test_run_sweep._ReadCapturePort`` establishes, generalized to
     record the statement text (not just its rows): `then.rows` alone cannot
-    distinguish whether a `m-read-lock` story's runtime DEVELOPER path
-    emitted the shared read-lock suffix, only the statement text can (review
-    remediation finding 3). ``transaction`` nests another capture wrapper
+    distinguish whether a `m-read-lock` story's runtime developer path emitted
+    the shared read-lock suffix; only the statement text can. ``transaction``
+    nests another capture wrapper
     sharing this SAME ``statements`` list (mirroring ``_ReadCapturePort``'s
     own ``transaction``), so a `tx.find` inside `db.transact` is captured
     from the SAME single execution as a non-transactional `db.find`.
@@ -637,8 +638,8 @@ def test_read_story_runs_through_the_shipped_surface(story: ReadStory, provision
     if expected_round_trips is not None:
         assert snapshot.execution.round_trips == expected_round_trips, story.case_id
 
-    # Review remediation finding 3: grade the statements this story's find
-    # ACTUALLY executed against the case's own authored golden (postgres
+    # Grade the statements this story's find actually executed against the
+    # case's authored Postgres golden
     # dialect) — asserting the `for share of t0` lock suffix's presence
     # (`m-read-lock-002`) or absence (`-003`/`-005`/every other read story)
     # exactly as authored, reusing the SAME driver-SQL translation and

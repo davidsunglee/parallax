@@ -540,8 +540,9 @@ Metamodel
 
 Facet retrieval is total for an accepted Formation Profile. The generic facet
 mechanism is an internal collaboration seam; each owner exposes a typed
-`view(model)` function. `m-metamodel` knows no contributor set and imports no
-semantic owner.
+`view(model)` function. `m-metamodel` imports no semantic owner and knows no
+contributor implementation; opaque facet keys and installed facet values do
+not give it formation-composition responsibility.
 
 The Metadata Compiler may expand an already validated acyclic Value Object
 occurrence graph and build immutable local indexes. It may not decide semantic

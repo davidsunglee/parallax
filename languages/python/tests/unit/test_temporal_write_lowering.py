@@ -1,10 +1,10 @@
-"""Temporal keyed-write DML lowering unit tests (COR-3 Phase 8 increment 4).
+"""Temporal keyed-write DML lowering unit tests.
 
 Pins ``parallax.snapshot.handle.lower_write``'s TEMPORAL dispatch — audit-only
 close-and-chain (`m-audit-write`) and the full-bitemporal rectangle split
 (`m-bitemp-write`) — byte-exact against the corpus goldens (``m-audit-write-001
 ..006``, ``m-bitemp-write-001..003/006..009``, ``m-inheritance-090/091/094..097
-/105``, ``m-value-object-032/033``), the observed-``in_z`` / business-
+/105``, ``m-value-object-032/033``), the observed-``in_z`` / Valid-Time-
 discriminator gate composed with the ``m-opt-lock`` policy (gated only under
 optimistic concurrency, `~parallax.core.opt_lock.gates`), and the two zero-row-
 close outcomes (:class:`~parallax.core.opt_lock.OptimisticLockConflictError` for a
@@ -100,9 +100,9 @@ def test_audit_only_insert_opens_a_current_milestone() -> None:
 
 def test_audit_only_update_closes_then_chains_the_authored_full_row() -> None:
     # m-audit-write-002: an ungated (locking-mode) close, then a chain carrying
-    # the instruction's OWN authored FULL row — merged onto the observation
-    # (D-30), which here carries no `payload` at all, so the merge is an
-    # identity and the chain is exactly the authored row.
+    # the instruction's OWN authored FULL row. The observation carries no
+    # `payload`, so merging is an identity and the chain is exactly the
+    # authored row.
     update = KeyedWrite("update", "Balance", ({"id": 1, "acctNum": "A", "value": 150.00},))
     observation = Observation(tx_start="2024-01-01T00:00:00+00:00")
     statements = _lower(update, BALANCE, "2024-06-01T00:00:00+00:00", observation=observation)
@@ -142,9 +142,9 @@ def test_audit_only_update_carries_every_new_attribute() -> None:
 
 
 def test_audit_only_update_merges_a_sparse_row_onto_the_observed_payload() -> None:
-    # D-30 (COR-3 Phase 8 increment 7 completion round): a SPARSE row (a
-    # public `tx.update(copy)`'s own primary-key-plus-effective-change-set
-    # shape — never authored by the conformance engine, which always supplies
+    # A sparse public `tx.update(copy)` row contains the primary key plus its
+    # effective change set. This shape is never authored by the conformance
+    # engine, which always supplies
     # a full row) merges onto the observed payload, so the chained row still
     # carries `acctNum` even though the instruction's own row never named it.
     sparse_update = KeyedWrite("update", "Balance", ({"id": 1, "value": 150.00},))
@@ -161,7 +161,7 @@ def test_audit_only_update_merges_a_sparse_row_onto_the_observed_payload() -> No
 
 
 def test_audit_only_plan_merges_the_sparse_row_at_the_planner_seam() -> None:
-    # The SAME D-30 merge, pinned directly at the pure planning seam
+    # The same merge is pinned directly at the pure planning seam
     # (`parallax.core.audit_write.plan`) rather than through the full
     # `lower_write` composition — `MilestoneOpen.row` carries the merged
     # payload, never the caller's sparse row alone.

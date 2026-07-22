@@ -1,6 +1,7 @@
-"""The spec §3 stale-web-edit recipe, both variants, against real Postgres
-(COR-3 Phase 8 increment 7 completion round; `python.md` §3 `:429-461`, the
-`HistoricalObservationError` locking-mode rule `:602-617`).
+"""The spec §3 stale-web-edit recipe, both variants, against real Postgres.
+
+The scenarios exercise the `HistoricalObservationError` locking-mode rule in
+`python.md` §5 as well as the render-then-submit recipe in §3.
 
 Neither variant maps to a single active corpus case one-to-one (every
 `m-opt-lock`/`m-bitemp-write` `conflict`-shape case that touches this same
@@ -12,17 +13,14 @@ standalone Docker-backed proofs (`parallax.conformance.stale_web_edit`) rather
 than case-keyed `api_suite.EXAMPLES` entries — force-registering under a
 borrowed case id would misrepresent what that case's own goldens grade. The
 Usage Guide renders both variants through the case-free `api_suite.RECIPES`
-section instead (checkpoint-4 Spec finding 2), citing spec §3 plus THESE
-tests as the grading surface — one source, guide and grading alike.
+section instead, citing spec §3 plus these tests as the grading surface — one
+source for both guide and grading.
 
 Every `Database` here connects with a :class:`~parallax.conformance.
-scripted_clock.ScriptedClock` (D-29): the system clock's microsecond
-resolution is not always distinct across two `db.transact` calls issued back
-to back with no real network latency between them (two local Postgres round
-trips can land in the SAME microsecond), which would collide on a temporal
-entity's own `(pk, from_z, in_z)` uniqueness — a scripted, deterministic
-instant per flushing transaction removes that flakiness entirely, exactly the
-consumption contract D-29 pins.
+scripted_clock.ScriptedClock`: the system clock's microsecond resolution is not
+always distinct across two back-to-back `db.transact` calls. Two equal instants
+would collide on a temporal entity's `(pk, from_z, in_z)` uniqueness, so one
+deterministic instant per flushing transaction removes that flakiness.
 """
 
 from __future__ import annotations
@@ -89,7 +87,7 @@ def test_audit_only_stale_web_edit_updates_the_displayed_milestone(provisioner: 
 
     current = db.find(Balance.where(Balance.id == 1)).result()
     assert current.value == Decimal("150.00")
-    assert current.acct_num == "A"  # the untouched field survives the D-30 merge
+    assert current.acct_num == "A"  # the merge preserves untouched fields
 
 
 def test_audit_only_stale_web_edit_raises_historical_observation_in_locking_mode(
@@ -128,7 +126,7 @@ def test_bitemporal_stale_web_edit_updates_the_displayed_rectangle(provisioner: 
     assert node.name == "Central Branch"
 
     # SUBMIT time — the correction takes effect from I2 onward, distinct from
-    # the displayed rectangle's own business start (I1): a `valid_from`
+    # the displayed rectangle's own Valid-Time start (I1): a `valid_from`
     # equal to the rectangle's own `from_z` degenerates the head interval.
     submit_branch_edit(db, id=1, edge=edge, fields={"name": "Renamed Branch"}, valid_from=_I2)
 

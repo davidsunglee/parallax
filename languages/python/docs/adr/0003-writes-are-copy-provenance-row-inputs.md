@@ -49,16 +49,16 @@ managed-pole merge-back semantics and is deliberately not pulled into this
 slice. The stale-web-edit workflow needs no such gate — provided the
 observation coordinate is transported, not reconstructed: the service
 captures the displayed milestone's edge on every declared axis
-(`edge_of(node)`, whose strict `.processing` accessor yields the milestone's
+(`edge_of(node)`, whose strict `.transaction_time` accessor yields the milestone's
 `in_z` as a plain `datetime`) at render time, then re-fetches with each
 declared axis pinned at the transported edge
-(`as_of(processing=edge.processing, business=edge.business)` for a
+(`as_of(transaction_time=edge.transaction_time, valid_time=edge.valid_time)` for a
 bitemporal entity) inside an optimistic transaction, where the observed
-`in_z` gate — joined by the business discriminator when the key's current
+`in_z` gate — joined by the Valid-Time discriminator when the key's current
 rows share an `in_z` — rejects concurrent changes and targets exactly the
 displayed rectangle. Weaker transports fail — the LATEST sentinel re-resolves to whatever
 milestone is current at replay time, and a wall-clock instant is racy because
-processing instants order by assignment, not commit. Edge transport is
+Transaction-Time instants order by assignment, not commit. Edge transport is
 Reladomo's own mechanism (a detached copy carries its milestone `IN_Z`; the
 merge-back gate binds the carried value) translated to a slice without
 detached objects.

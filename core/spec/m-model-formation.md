@@ -2,10 +2,14 @@
 
 `m-model-formation` owns deterministic composition of module-owned model rules
 and compilers. It depends only on `m-metamodel`; contributing semantic modules
-depend on both. It imports no contributor, performs no discovery, and owns no
-semantic rule or Issue Code.
+depend on both. It imports no contributor implementation, performs no
+discovery, and owns no semantic rule or Issue Code. It knows contributor
+identities, Issue Codes, facet keys, and dependency requirements only through
+the immutable Formation Manifest data supplied to its runner.
 
-The explicit composition root supplies one Formation Profile. Import-time
+The explicit composition root supplies one Formation Manifest and one
+Formation Profile. The manifest contains contract data only; the profile
+contains the corresponding contributor implementations. Import-time
 registration, decorators, entry points, plugins, ambient registries, and
 mutable contributor lists are forbidden.
 
@@ -15,6 +19,19 @@ The following interfaces are exact. `ModuleIdentity` is a canonical
 `m-<slug>` identity from the core module catalog.
 
 ```text
+FormationManifestEntry
+  owner: ModuleIdentity
+  rule_set: FixedResolver | Required | Absent
+  issue_codes: immutable set<IssueCode>
+  compiler: MetadataCompilerRequirement
+          | ModelCompilerRequirement(FacetKey<?>)
+          | Absent
+  required_modules: immutable set<ModuleIdentity>
+  required_facets: immutable set<FacetKey<?>>
+
+FormationManifest
+  entries: nonempty immutable sequence<FormationManifestEntry>
+
 ModelRuleSet
   owner: ModuleIdentity
   issue_codes: immutable set<IssueCode>
@@ -60,7 +77,10 @@ Catalog completeness is measured against this manifest, never against the
 runtime objects that happen to be supplied. The manifest is the authoritative
 closed set for the normalized metamodel contract. A runtime Formation Profile
 is complete only when its contributors match every required row and no other
-row.
+row. The table below is the normative content of the Formation Manifest. Each
+runtime's composition root supplies that content as immutable identity/code/
+facet/dependency data separately from the Formation Profile; the runner never
+derives manifest entries from contributor objects.
 
 | Owner | Rule set | Complete owned Issue Codes | Compiler / facet | Required modules | Required facets |
 |---|---|---|---|---|---|

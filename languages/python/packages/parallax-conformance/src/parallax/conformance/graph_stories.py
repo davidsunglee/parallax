@@ -1,5 +1,4 @@
-"""``parallax.conformance.graph_stories`` — executable API-suite snapshot/graph
-stories (COR-3 Phase 7 increment 6b).
+"""Executable API-suite snapshot and graph stories.
 
 Each story is ONE executable function over the **public** developer surface
 (``parallax.snapshot.connect`` -> ``db.find``), mirroring one corpus
@@ -7,8 +6,8 @@ Each story is ONE executable function over the **public** developer surface
 case whose oracle is a materialized **graph** — a `then.graph`/`then.graphs`
 document, an ``identityChecks`` reference-identity assertion, or a scenario's
 own per-step observable. This is the read-side sibling of ``stories.py``'s
-write stories, needed for the SAME reason (checkpoint 3's S1 lesson): an
-example whose behavior is only observable by EXECUTING it must run through the
+write stories: an example whose behavior is only observable by executing it
+must run through the
 shipped surface, not merely serialize a statement — a wire-level ``graph``
 grade proves the assembled NEUTRAL nodes are correct, but says nothing about
 the frozen-node WRAPPING (`parallax.snapshot.handle`) layered on top by
@@ -41,8 +40,8 @@ counted toward that (or any) case's exercised status — see
 `history_of_a_concrete_temporal_node_distinguishes_milestones`.
 
 The Customer/Location/Depot predicate reads (`m-value-object-001/002/007/
-015/016/017/019`, COR-3 Phase 8 increment 7 completion round, D-20 residue)
-land HERE rather than as ``read_stories.ReadStory`` entries, despite being
+015/016/017/019`) belong here rather than in ``read_stories.ReadStory``,
+despite being
 plain single-statement filters: each is classified ROW-FORM by the corpus
 engine (`then.rows` alone, no `then.graph`) — the values-lane original whose
 own golden SQL omits the `address` document column — but `db.find` is ALWAYS
@@ -53,7 +52,7 @@ for the row-form inheritance family. Rather than leave them permanently
 unreachable the way that family's row-form originals stay, the grading rule
 here asserts the id/name SET the filter selects (the behavior genuinely under
 test) through the real, always-instance-form developer surface, never
-insisting on the now-inapplicable minimal row-form projection — a graph
+insisting on the inapplicable minimal row-form projection — a graph
 story's bespoke per-case assertion (unlike a `ReadStory`'s generic runner,
 which DOES require byte-exact golden SQL) is exactly the seam this needs.
 """
@@ -122,7 +121,7 @@ def empty_intermediate_level_short_circuits(db: Database) -> Snapshot[Any]:
     return db.find(Order.where(Order.id == 4).include(Order.items.statuses))
 
 
-def pinned_graph_at_a_past_business_instant(db: Database) -> Snapshot[Any]:
+def pinned_graph_at_a_past_valid_time_instant(db: Database) -> Snapshot[Any]:
     return db.find(
         Policy.where()
         .as_of(valid_time=dt.datetime(2024, 3, 1, tzinfo=dt.UTC), transaction_time=LATEST)
@@ -160,7 +159,7 @@ def one_to_one_peer_attaches_as_a_single_object(db: Database) -> Snapshot[Any]:
 
 
 def animal_owner_reaches_root_and_narrowed_subtype_view(db: Database) -> Snapshot[Any]:
-    """The animal family's REAL owner (ledger D-20): a root-typed
+    """The animal family's owner exposes both a root-typed
     ``animals`` path (reaching any concrete subtype) and a leaf-typed
     ``pets[Dog]`` narrowed view both reach the SAME row (Alice's Rex) with
     DIFFERENT fetched projections — the family-normalized,
@@ -226,7 +225,7 @@ def bitemporal_vo_owner_as_of_latest(db: Database) -> Snapshot[Any]:
 def bitemporal_vo_owner_as_of_a_past_audit_point(db: Database) -> Snapshot[Any]:
     """An audit read (both axes in the past, `m-value-object-031`)
     reconstructs the ORIGINALLY-believed document, distinct from what the
-    system knows now (`bitemporal_vo_owner_as_of_latest`)."""
+    system knows (`bitemporal_vo_owner_as_of_latest`)."""
     return db.find(
         Branch.where().as_of(
             valid_time=dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
@@ -268,18 +267,18 @@ def tpcs_narrow_to_abstract_subtype_materializes_typed_per_variant_instances(
     db: Database,
 ) -> Snapshot[Any]:
     """The object-lane sibling of the row-form TPCS narrow-to-abstract-subtype
-    read (`m-inheritance-109`, `m-inheritance-052` its values-lane witness):
-    the union-all instance-form lowering ledger D-22 lifts (byte-identical to
-    row-form for this VO-free family) — each `Invoice`/`Receipt` instance
-    carries only its own declared members."""
+    read (`m-inheritance-109`, `m-inheritance-052` its values-lane witness).
+    The union-all instance form is byte-identical to the row form for this
+    value-object-free family, and each `Invoice`/`Receipt` instance carries
+    only its own declared members."""
     return db.find(Document.where(Document.narrow(FinancialDocument)))
 
 
 def customer_nested_eq_city_selects_matching_owners(db: Database) -> Snapshot[Any]:
     """A nested equality predicate through a value-object attribute
     (`m-value-object-001`): the id/name SET this filter selects is the
-    behavior under test — see the module docstring's own note on why this
-    lands here, not as a `ReadStory`."""
+    behavior under test; the module docstring explains why this is a graph
+    story rather than a `ReadStory`."""
     return db.find(Customer.where(Customer.address.city == "Oslo"))
 
 
@@ -394,7 +393,7 @@ GRAPH_STORIES: tuple[GraphStory, ...] = (
         "m-navigate-013",
         "A deep fetch pinned to a past Valid-Time instant materializes the superseded milestone",
         "policy",
-        pinned_graph_at_a_past_business_instant,
+        pinned_graph_at_a_past_valid_time_instant,
     ),
     GraphStory(
         "m-snapshot-read-010",

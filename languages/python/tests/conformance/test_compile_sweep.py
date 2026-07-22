@@ -1,12 +1,11 @@
 """Docker-free compile sweep (m-conformance-adapter `compile`, m-sql).
 
-Parametrized from the corpus at runtime over the reachable intersection (active
-slice ∩ implemented module tags). Every case's compile envelope is
-schema-validated; the reviewed *exercised* set must emit SQL and binds equal to
-the case's ``postgres`` golden after normalization, and every other reachable
-case is reasoned-skipped (no silent gaps) with the Phase-5 gap that keeps it out
-of the sweep. Because read compilation is pure, the refusing port never sees a
-row request — the sweep's honesty is structural.
+Parametrized from the corpus at runtime over the reachable intersection of the
+active slice and implemented module tags. Every case's compile envelope is
+schema-validated; the exercised set must emit SQL and binds equal to the case's
+``postgres`` golden after normalization, and every other reachable case has an
+explicit skip reason. Because read compilation is pure, the refusing port never
+sees a row request.
 
 Marked ``unit`` as well as ``compile_sweep``: it is pure, Docker-free, in-process
 behaviour, so it contributes to the unit-lane branch-coverage gate and also runs
@@ -26,9 +25,8 @@ from parallax.conformance import adapter, case_format, engine, sweep
 
 pytestmark = [pytest.mark.unit, pytest.mark.compile_sweep]
 
-# The reviewed set of reachable read cases whose golden read projection equals the
-# base m-sql *Read projection* the compiler emits and whose predicate this phase
-# lowers. New cases join deliberately as lowering grows.
+# Reachable read cases whose golden projection and predicate are supported by
+# the current compiler.
 #
 # Scalar round-trip + quoted-reserved-identifier reads.
 _SCALAR_READS: Final[frozenset[str]] = frozenset({"m-core-001", "m-descriptor-001"})
@@ -36,32 +34,29 @@ _SCALAR_READS: Final[frozenset[str]] = frozenset({"m-core-001", "m-descriptor-00
 _VALUE_OBJECT_PREDICATE_READS: Final[frozenset[str]] = frozenset(
     f"m-value-object-{n:03d}" for n in (1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14)
 )
-# To-many value-object array-traversal reads (COR-3 Phase 7 increment 4, ledger
-# D-12 closes for this row-form family, m-sql "To-many — exists / notExists and
-# any-element predicates"): the guarded-unnest correlated `EXISTS`/`NOT EXISTS`
+# To-many value-object array-traversal reads (`m-sql`, "To-many — exists /
+# notExists and any-element predicates"): guarded-unnest correlated `EXISTS`/`NOT EXISTS`
 # (bare non-empty/empty-or-absent, and same-element scoped `where`) and the flat
 # any-element `nested*` forms crossing customer.yaml's `address.phones` — row-form,
 # compiled and run below.
 _VALUE_OBJECT_TO_MANY_READS: Final[frozenset[str]] = frozenset(
     f"m-value-object-{n:03d}" for n in range(15, 23)
 )
-# Orders op-algebra reads. The read-projection amendment (Phase 5b) re-goldened these
-# to the full declared scalar projection the default find projection already emits, so
-# they now compile-match with no code change — closing ledger D-11. Includes the named
-# tracer m-op-algebra-002, run end-to-end below; 028 was removed by the amendment.
+# Orders op-algebra reads use the full declared scalar projection emitted by
+# the default find projection. Case 028 is intentionally absent from the corpus.
 _ORDERS_OP_ALGEBRA_READS: Final[frozenset[str]] = frozenset(
     f"m-op-algebra-{n:03d}" for n in (*range(1, 28), 29, 30, 31, 32, 33, 34)
 )
 # Value-object instance-form materialization reads (the object lane): the slot-4
 # document splice projects the `address` column (m-sql *Read projection*). Their graph
-# *observation* — a materialized run — lands with the snapshot branch (Phase 7), so
-# they are compile-exercised here but run-deferred (see the run sweep).
+# *observation* requires materialization, so these cases compile here and execute
+# in the run sweep.
 _VALUE_OBJECT_MATERIALIZATION_READS: Final[frozenset[str]] = frozenset(
     {"m-value-object-023", "m-value-object-024"}
 )
-# Temporal reads (COR-3 Phase-6 milestone 2, m-temporal-read): the as-of predicate is
+# Temporal reads (`m-temporal-read`): the as-of predicate is
 # auto-injected by m-temporal-read (default-latest on omitted axes) and m-sql projects
-# each axis's interval columns (business before processing) from the re-goldened corpus.
+# each axis's interval columns (Valid Time before Transaction Time) from the corpus.
 # Audit-only + boundary (001-008) and bitemporal (013-017) are row-form — compiled and
 # run below.
 _TEMPORAL_READ_ROW_FORM: Final[frozenset[str]] = frozenset(
@@ -70,11 +65,11 @@ _TEMPORAL_READ_ROW_FORM: Final[frozenset[str]] = frozenset(
 # Temporal value-object reads: the document rides the owner's milestone (m-value-object
 # "Inherited temporality"). Instance-form (assert `then.graph`), so — like the non-
 # temporal 023/024 — compile-exercised (slot-4 `address` + injected as-of predicate) but
-# run-deferred to the snapshot branch (Phase 7).
+# executed by the snapshot run sweep rather than this compile-only lane.
 _TEMPORAL_VALUE_OBJECT_READS: Final[frozenset[str]] = frozenset(
     f"m-value-object-{n:03d}" for n in (28, 29, 30, 31)
 )
-# Inheritance-family reads (COR-3 Phase 7 increment 2, ledger D-12 closes for reads):
+# Inheritance-family reads:
 # table-per-hierarchy tag-predicate / abstract-superset / narrow / grouped-branch-OR
 # reads over payment.yaml and animal.yaml (001-006, 011-017), and table-per-concrete-
 # subtype single-concrete + union-all reads over document.yaml (050-053). All row-form
@@ -82,20 +77,17 @@ _TEMPORAL_VALUE_OBJECT_READS: Final[frozenset[str]] = frozenset(
 _INHERITANCE_READS: Final[frozenset[str]] = frozenset(
     f"m-inheritance-{n:03d}" for n in (*range(1, 7), *range(11, 18), 50, 51, 52, 53)
 )
-# Bonus: the two temporal-composed abstract reads (`m-inheritance-092`/`-093`, tagged
-# both `m-inheritance` and `m-temporal-read`) are corpus-commented "Phase 8 temporal
-# composition" and were never a design target of increment 2 — but this increment's
-# lowering is not temporal-specific, and both happen to compile and run byte-exact
+# The temporal-composed abstract reads (`m-inheritance-092`/`-093`, tagged both
+# `m-inheritance` and `m-temporal-read`) compile and run byte-exact
 # (092 degenerates to the plain "abstract root, no tag" case; 093's per-branch as-of
-# is just `inner` applied identically to every union-all branch, m-sql "Temporal
-# abstract reads"). Leaving them silently un-exercised now that they answer `ok`
-# would be exactly the D-11 gap this sweep's honesty check forbids, so they flip too.
+# is just `inner` applied identically to every union-all branch, `m-sql`
+# "Temporal abstract reads").
 _INHERITANCE_TEMPORAL_READS: Final[frozenset[str]] = frozenset(
     {"m-inheritance-092", "m-inheritance-093"}
 )
 # Concrete-target temporal reads over a family whose as-of axes are declared ONLY on
-# the root (COR-3 Phase 7 review remediation — the binding root-ownership decision:
-# temporality is family-wide; `m-inheritance-100` pins `DepositRate` Transaction Time
+# the root. Temporality is family-wide: `m-inheritance-100` pins `DepositRate`
+# Transaction Time
 # through the TPCS concrete position, `m-inheritance-101` pins `Bond` Valid Time
 # through the TPH concrete position, tag predicate included). Both resolve the
 # inherited axis through `inheritance.declaring_entity` (the family root) exactly as
@@ -104,14 +96,14 @@ _INHERITANCE_TEMPORAL_READS: Final[frozenset[str]] = frozenset(
 _INHERITANCE_CONCRETE_TARGET_TEMPORAL_READS: Final[frozenset[str]] = frozenset(
     {"m-inheritance-100", "m-inheritance-101"}
 )
-# Relationship-navigation reads (COR-3 Phase 7 increment 3, m-navigate / m-sql
+# Relationship-navigation reads (`m-navigate` / `m-sql`,
 # "Joins by navigation"): the 13 row-form correlated-EXISTS/anti-join reads over
 # orders.yaml/person.yaml/policy.yaml (to-many, to-one, one-to-one, multi-hop,
 # boolean composition, and the temporal-hop propagation pair 018/023, which MUST
 # lower byte-identically since m-temporal-read's default-injection rule makes a
 # defaulted root indistinguishable from an explicit `asOf(..., now)` one) — all
 # row-form, compiled and run below. The 11 deep-fetch-bearing navigate reads
-# (012-017/019-022/024) stay OUT of this set: increment 5 declares them
+# (012-017/019-022/024) stay out because they declare
 # `compileEligibility: run-only` (query-result-dependent), so `compile` answers
 # the defined `run-only` envelope, never `ok` — asserted by
 # `test_run_only_cases_are_never_compiled`, not this exercised set.
@@ -132,18 +124,18 @@ _NAVIGATE_INHERITANCE_READS: Final[frozenset[str]] = frozenset(
     {"m-inheritance-060", "m-inheritance-061", "m-inheritance-062", "m-inheritance-063"}
     | {"m-inheritance-070", "m-inheritance-071", "m-inheritance-110"}
 )
-# Milestone-set snapshot reads (COR-3 Phase 7 increment 5, m-snapshot-read
+# Milestone-set snapshot reads (`m-snapshot-read`,
 # "Milestone-set graphs"): `history` / `asOfRange` compile to a single, pure
 # statement — no deep-fetch levels, so no query-result-dependent child binds —
 # and stay UNDECLARED (compile-eligible), unlike every other graph-bearing case
-# this increment reaches (D-10's query-result-dependent tail declares only the
-# deep-fetch-bearing ones). Run grades the `then.graphs` observation (per-
+# reachable here because only deep-fetch-bearing cases are query-result-dependent.
+# Run grades the `then.graphs` observation (per-
 # milestone edge-pinned graphs), not `then.rows`, but compile only cares about
 # the one golden statement.
 _SNAPSHOT_READ_MILESTONE_SET_READS: Final[frozenset[str]] = frozenset(
     {"m-snapshot-read-013", "m-snapshot-read-014"}
 )
-# Multi-concrete polymorphic INSTANCE-FORM reads (COR-3 Phase 8 part C, DQ7b):
+# Multi-concrete polymorphic instance-form reads:
 # the `then.graph` siblings of the row-form abstract-multi-concrete reads above
 # (m-inheritance-003/-013/-015/-052), pinning the per-variant node shape
 # (own-branch members only, no null sibling padding, plus `familyVariant`)
@@ -151,18 +143,14 @@ _SNAPSHOT_READ_MILESTONE_SET_READS: Final[frozenset[str]] = frozenset(
 # Every one of the four compiles BYTE-IDENTICAL to its row-form sibling
 # (animal.yaml/payment.yaml/document.yaml declare no value objects, so the
 # instance-form slot-4 delta is empty): table-per-hierarchy (106-108) always
-# did; table-per-concrete-subtype (109) joins here in COR-3 Phase 8 increment 7
-# (ledger D-22), which lifts `_compile_tpcs_read`'s unconditional instance-form
-# refusal for the witnessed VO-free shape (a VO-bearing TPCS multi-concrete
-# family keeps a narrowed refusal, still genuinely unwitnessed). The actual
-# per-variant RUN-time graph materialization for all four is this SAME
-# increment's own `materialize.decode_row` narrowing fix — no longer carved
-# out of `test_run_sweep.py`'s own exercised set either.
+# does; table-per-concrete-subtype case 109 supports the witnessed VO-free shape.
+# A VO-bearing TPCS multi-concrete family retains a narrower refusal because no
+# case witnesses it. Runtime graph materialization is covered by the run sweep.
 _INHERITANCE_INSTANCE_FORM_GRAPH_READS: Final[frozenset[str]] = frozenset(
     {"m-inheritance-106", "m-inheritance-107", "m-inheritance-108", "m-inheritance-109"}
 )
-# The read-lock matrix's four IN-SLICE `read`-shape cases (COR-3 Phase 8
-# increment 6, m-read-lock): `m-read-lock-001` is the harness-lane single-
+# The read-lock matrix's four in-slice read cases (`m-read-lock`):
+# `m-read-lock-001` is the harness-lane single-
 # connection golden — the module's OWN witness for "the default (locking)
 # in-transaction object find" (`m-read-lock.md`), so its `when.uow`-free read
 # still compiles the locked golden through `engine._read_case_concurrency`'s
@@ -198,30 +186,25 @@ COMPILE_EXERCISED: Final[frozenset[str]] = (
     | _READ_LOCK_READS
 )
 
-# The keyed, non-temporal unit-of-work write cases the write path grades byte-exact
-# (COR-3 Phase 6 M4 + COR-3 Phase 8 increment 3, m-unit-work / m-opt-lock /
-# m-inheritance / m-pk-gen): scenario read-your-own-writes / rollback / mixed-op
+# Keyed, non-temporal unit-of-work writes graded byte-exact across `m-unit-work`,
+# `m-opt-lock`, `m-inheritance`, and `m-pk-gen`: read-your-own-writes, rollback, mixed-op
 # flushes, and the FK-ordered writeSequence cases. Each emits its per-step golden DML
 # (a scenario find carries the `for share of t0` read-lock suffix). `m-unit-work-008`/
 # `-010` (the same-transaction insert-then-update / insert-then-delete coalescing
-# witnesses) join here in COR-3 Phase 8 increment 5: both were ALREADY reachable
-# (`m-batch-write` joined `IMPLEMENTED_MODULES` in increment 3 for `m-batch-write-004`'s
-# sake, and both cases tag it alongside `m-unit-work`) but sat reasoned-skipped until
-# the coalescing machinery's own scenario translation was exercised end to end — a
-# stale "unreachable under Option B" comment previously claimed otherwise. The
-# remaining m-pk-gen `sequence`-strategy writeSequence cases (query-result-dependent,
+# witnesses) are compile-exercised through the coalescing machinery. The remaining
+# `m-pk-gen` sequence-strategy writeSequence cases (query-result-dependent,
 # run-only) stay reasoned-skipped; the optimistic-lock conflict-abort scenario
 # (m-opt-lock-012) is `uow`-grouped AND INTERLEAVED (two genuinely concurrent
 # sessions) — it is `compileEligibility: run-only` regardless (its version binds
 # are query-result-dependent, `_skip_reason`'s own run-only branch classifies
-# it, shape-agnostically, before this set is even consulted), and COR-3 Phase 8
-# increment 6 gives it its OWN run-lane entry point over the `Provisioner.peer`
-# seam — see `test_run_sweep.py`'s own `test_interleaved_uow_group_run_sweep`
+# it, shape-agnostically, before this set is even consulted). Its run-lane entry
+# point uses the `Provisioner.peer` seam; see
+# `test_run_sweep.py::test_interleaved_uow_group_run_sweep`
 # (`engine.run_interleaved_scenario_case`), routed to explicitly rather than
 # through this set or `adapter.run_case`.
 #
-# `m-unit-work-002/005/006/009/012` LEFT this set (amendment-review remediation,
-# COR-3 Phase 8): each now authors its observing find(s) grouped with its
+# `m-unit-work-002/005/006/009/012` are excluded because each authors observing
+# finds grouped with its
 # versioned keyed write(s) into ONE `uow` (m-case-format scenario grouping), so
 # the write's version bind is the group's own transaction-scoped observation —
 # a QUERY RESULT the compile lane cannot derive (`m-conformance-adapter`
@@ -232,16 +215,16 @@ COMPILE_EXERCISED: Final[frozenset[str]] = (
 # run-only inclusion for write shapes). `-001`/`-011` stay here: both are
 # insert-only, so neither ever needed an observation.
 _WRITE_SCENARIOS: Final[frozenset[str]] = frozenset(f"m-unit-work-{n:03d}" for n in (1, 8, 10, 11))
-# COR-3 Phase 8 increment 5's READLESS predicate-write scenario flips
-# (`m-batch-write.md` "Predicate-selected readless forms"; ADR 0014's
+# Readless predicate-write scenarios (`m-batch-write`, "Predicate-selected
+# readless forms"; ADR 0014's
 # unversioned/non-temporal exception): an unversioned, non-temporal target's
 # predicate delete/update lowers to exactly ONE statement — no materializing
 # read, no equality-elimination pass. `m-batch-write-006` additionally pins
 # descriptor-declared column order (SET columns/binds) independent of the
 # authored assignment order.
 # `m-batch-write-007` widens this set to the valueObject write lane, which was
-# outside the reviewed keyed set until now. It earns inclusion on the same terms as
-# its two siblings — one statement, no materializing read, a fully authored golden —
+# in the value-object write lane. It has the same terms as its siblings: one
+# statement, no materializing read, and a fully authored golden.
 # and it is the only case that grades the DML spelling of a document extraction:
 # a readless predicate write must render `jsonb_extract_path_text(address, ?)`, not
 # the read lane's `t0.address` (m-sql rule 1's unaliased DML shape). Nothing else in
@@ -250,7 +233,7 @@ _WRITE_SCENARIOS: Final[frozenset[str]] = frozenset(f"m-unit-work-{n:03d}" for n
 _READLESS_PREDICATE_WRITE_SCENARIOS: Final[frozenset[str]] = frozenset(
     {"m-batch-write-005", "m-batch-write-006", "m-batch-write-007"}
 )
-# COR-3 Phase 8 increment 3's 17 compile-eligible flips: the non-temporal opt-lock
+# Compile-eligible non-temporal optimistic-locking and key-generation writes:
 # versioned advance (m-opt-lock-002), the inheritance-family keyed write family
 # (table-per-hierarchy tag derivation/guard, table-per-concrete-subtype own-table
 # routing, the deep-chain and sibling-branch create witnesses, the opt-lock x
@@ -277,17 +260,15 @@ _OPT_LOCK_AND_PK_GEN_WRITE_SEQUENCES: Final[frozenset[str]] = frozenset(
         "m-batch-write-004",
     }
 )
-# `m-batch-write-002` (Phase-8 mid-phase review remediation, finding F item 4):
-# an UNVERSIONED Wallet update whose two rows assign NON-uniform per-key
+# `m-batch-write-002` is an unversioned Wallet update whose two rows assign non-uniform per-key
 # values (`m-batch-write` "Set-based flush": non-uniform values decompose into
 # one UPDATE per distinct key, `_decomposes_per_row`'s own uniform-value
-# check) — genuinely GREEN end to end through this seam already (two
+# check). It compiles as two
 # independent single-row keyed updates, neither versioned nor pk-gen-managed,
-# so neither needs `lower_write`'s multi-row refusal at all), previously
-# hidden behind the stale M4-era-bucket fallback text.
+# so neither needs `lower_write`'s multi-row refusal.
 #
-# COR-3 Phase 8 increment 5's own batch-COLLAPSE writeSequence flips
-# (`m-batch-write.md` "Set-based flush"): the multi-row INSERT + uniform-value
+# Batch-collapse write sequences (`m-batch-write`, "Set-based flush") cover the
+# multi-row INSERT and uniform-value
 # `IN`-list UPDATE (`m-batch-write-001`), the non-versioned `IN`-list DELETE
 # collapse (`m-batch-write-003`, the delete analogue of the multi-row INSERT),
 # and the value-object multi-row INSERT collapse (`m-value-object-045`, each
@@ -300,8 +281,8 @@ _WRITE_SEQUENCES: Final[frozenset[str]] = (
     | _OPT_LOCK_AND_PK_GEN_WRITE_SEQUENCES
     | _BATCH_COLLAPSE_WRITE_SEQUENCES
 )
-# The snapshot-read `mutate` scenario (m-snapshot-read-010, COR-3 Phase 7 increment
-# 5): no write DML at all — its 2 `find` steps' emissions/round-trips grade byte-
+# The `m-snapshot-read-010` mutate scenario emits no write DML. Its two `find`
+# steps' emissions and round trips grade byte-
 # exact through the SAME per-step emission machinery `_assert_write_emissions`
 # already applies to a keyed scenario's steps (the `mutate` action step
 # contributes an empty statement group, `write_golden_statements` above); its
@@ -309,19 +290,18 @@ _WRITE_SEQUENCES: Final[frozenset[str]] = (
 # existing port-capture grading, proving the mutate step's own zero round trips
 # left the re-read observing the UNCHANGED original row (no write-back).
 _SNAPSHOT_MUTATE_SCENARIOS: Final[frozenset[str]] = frozenset({"m-snapshot-read-010"})
-# COR-3 Phase 8 increment 4's 22 compile-eligible temporal keyed-write flips
-# (`m-audit-write` / `m-bitemp-write`, the DQ4 `db.transact` re-route): audit-only
+# Compile-eligible temporal keyed writes (`m-audit-write` / `m-bitemp-write`): audit-only
 # insert/close-and-chain-update/terminate (001-005), the full-bitemporal rectangle
 # split and its plain/bounded-insert degenerates (001-003/006-009), the TPH/TPCS
 # audit and bitemporal composition (090/091/094-097), and the value-object
 # carry-through witnesses (m-value-object-032/033). The materializing predicate
 # forms (m-audit-write-007/009, m-bitemp-write-010-013), the conflict-shape
 # close-only witnesses (run-only, graded by `test_run_sweep.py`), and
-# m-value-object-047 stay reasoned-skipped HERE — permanently, not toward any
-# pending increment: each is `compileEligibility: run-only`
+# `m-value-object-047` stays skipped here because each such case is
+# `compileEligibility: run-only`
 # (query-result-dependent, materializing), so `compile` structurally never
-# grades them. Increment 5 landed their materializing EXECUTION; all of them
-# (m-value-object-047 included — its own trailing verify is an `asOf` read,
+# grades them. The run lane exercises all of them, including
+# `m-value-object-047`, whose trailing verification is an `asOf` read,
 # the same lane every other `asOf` case already lowers) are EXERCISED in the
 # RUN lane instead (`test_run_sweep.py`'s own
 # `_MATERIALIZING_PREDICATE_WRITE_SCENARIOS_EXERCISED`).
@@ -414,43 +394,19 @@ def golden(case: case_format.Case) -> tuple[str, list[object]]:
 def _skip_reason(case: case_format.Case, envelope: dict[str, Any]) -> str:
     """The reason a reachable case is not in the compile-exercised set.
 
-    The read-projection amendment (Phase 5b, ledger D-11) re-goldened every stale
-    read to the projection the compiler emits, so every reachable *ok*-status read is
-    now exercised (asserted by ``test_every_unexercised_reachable_read_is_refused``).
-    What remains reasoned-skipped is (1) `compileEligibility: run-only` cases of
-    ANY shape — a permanent LANE classification, not a forward promise, classified
-    FIRST (Phase-8 mid-phase review remediation, finding F item 1: a scenario/
-    writeSequence run-only case — the pk-gen `sequence`-strategy batch-reservation
-    writes, the materializing predicate-write forms — must never fall through to
-    the shape-specific fallback text below, which promises a FUTURE increment a
-    run-only case never reaches through `compile` at all), (2) the `error`-shape
-    `m-db-error` cases — also a permanent LANE classification: the single-connection
-    trigger is graded end-to-end by the error run lane, the two-connection
-    choreography by the provider proof, (3) the other non-read shapes, whose compile
-    lands with the write path (Phase 6/8) — each reworded to its OWN honest future
-    increment or permanent lane, never a stale blanket promise, and (4) the reads the
-    compiler still refuses with a loud ``SqlGenError`` — deep fetch, deferred past
-    the single-entity read path to the snapshot branch (ledger D-12). Inheritance-
-    family reads closed out of this ledger entry in Phase 7 increment 2; relationship-
-    navigation reads (the correlated-EXISTS semi-join / anti-join, plain and
-    polymorphic) closed out in increment 3; to-many value-object array traversal
-    (the guarded-unnest `nestedExists`/`nestedNotExists` and flat any-element forms)
-    closed out in increment 4 — only the 11 deep-fetch-bearing navigate reads stay
-    refused, forward to increment 5.
+    Run-only cases are classified first, independent of shape. Error cases are
+    divided between the single-connection run lane and the provider's
+    two-connection proof. Remaining non-read shapes receive their write-path
+    classification, while unsupported reads report the compiler diagnostic.
     """
     if envelope.get("status") == "run-only":
-        # Declared `compileEligibility: run-only` (D-10's query-result-dependent
-        # read tail; the pk-gen `sequence`-strategy batch-reservation writeSequence
-        # cases; the materializing predicate-write scenario cases —
+        # Declared `compileEligibility: run-only` covers query-result-dependent
+        # reads, pk-gen sequence reservations, and materializing predicate writes:
         # m-audit-write-007/009, m-bitemp-write-010..-013, m-opt-lock-014/015,
         # m-value-object-047): `run` (never `compile`) is the ONLY lane that ever
         # grades these — the m-conformance-adapter envelope already answers
         # `run-only` without attempting any lowering at all, so this is classified
-        # FIRST, shape-agnostically, BEFORE any shape-specific fallback text below
-        # (Phase-8 mid-phase review remediation, finding F item 1: a run-only
-        # scenario/writeSequence case must never fall through to text promising a
-        # FUTURE increment it never reaches through `compile`). Permanent lane
-        # classification, not a forward promise:
+        # first, shape-agnostically, before any shape-specific fallback text.
         # `test_run_only_cases_are_never_compiled` asserts the envelope.
         reason = envelope.get("diagnostics", [{}])[0].get("message", "")
         return (
@@ -460,7 +416,7 @@ def _skip_reason(case: case_format.Case, envelope: dict[str, Any]) -> str:
         # An error case's trigger DML is authored, not compiled (m-case-format), so
         # neither sub-shape ever joins the compile-exercised set: this is a lane
         # classification. The single-connection statement trigger is graded by the
-        # error run lane (M4 increment 4); the two-connection choreography is
+        # error run lane; the two-connection choreography is
         # run-only and driven by the provider contract proof's barrier-synchronized
         # sessions, which the single-connection adapter lanes cannot hold.
         if engine.eligibility(case) is not None:
@@ -477,7 +433,7 @@ def _skip_reason(case: case_format.Case, envelope: dict[str, Any]) -> str:
     if case.shape == "boundary":
         # Every boundary case (m-auto-retry / m-opt-lock bounded automatic
         # retry — an injected-fault or loop-configuration loop-mechanics
-        # branch, COR-3 Phase 8 increment 6's D-17 case-driven runner) is a
+        # branch) is a
         # declared `api-conformance`-lane assertion the wire golden SQL
         # cannot see (it carries no golden DML at all, m-case-format); the
         # API Conformance Suite verifies it, not `run`.
@@ -490,12 +446,7 @@ def _skip_reason(case: case_format.Case, envelope: dict[str, Any]) -> str:
         # every run-only case is classified above too. The rest are either REFUSED
         # by the keyed-write lowering (inheritance-family / temporal / opt-lock-
         # unobserved writes, whose forward-error diagnostic names its own deferral
-        # or corpus conflict) or lowerable but simply outside the reviewed
-        # exercised set (the 9 account/orders cases plus COR-3 Phase 8 increment
-        # 5's batch/predicate-write flips): a genuine remaining m-core / m-value-
-        # object write this ledger entry has not yet claimed — pk-gen's write-side
-        # id allocation landed in increment 3 (its own module bucket,
-        # `SKIP_REASONS["m-pk-gen"]`) and is never named here again.
+        # or corpus conflict) or lowerable but outside the exercised set.
         if envelope.get("status") == "error":
             message = envelope.get("diagnostics", [{}])[0].get("message", "")
             return f"{case.shape} write refused by the keyed-write lowering: {message}"
@@ -539,7 +490,7 @@ def test_compile_sweep(case: case_format.Case) -> None:
     if case.shape == "rejected":
         # A rejected case carries no golden SQL by construction (m-case-format);
         # its run-only status is shape-intrinsic, not authored per-case
-        # (m-conformance-adapter, resolved DQ3/DQ8) — every reachable rejected
+        # (`m-conformance-adapter`) — every reachable rejected
         # case answers it, never a silent skip.
         assert envelope["status"] == "run-only", envelope
         assert envelope["diagnostics"][0]["code"] == "compile-run-only", envelope
@@ -575,14 +526,10 @@ def test_write_exercised_set_is_reachable() -> None:
 
 
 def test_every_unexercised_reachable_read_is_refused() -> None:
-    """After the read-projection amendment closed D-11, the only reads left out of
-    the exercised set are the ones the Phase-5 compiler refuses with an ``error``
-    envelope (D-12: inheritance-family reads, to-many value-object array traversal) —
-    never an ``ok``-status read whose projection silently mismatches the golden.
+    """Every compile-eligible read outside the exercised set is refused.
 
-    A DECLARED run-only read (`compileEligibility`, COR-3 Phase 7 increment 5's
-    query-result-dependent deep-fetch tail) is exempt: its envelope is the
-    defined ``run-only`` answer, not ``error`` — asserted instead by
+    A declared run-only read is exempt: its envelope is the defined ``run-only``
+    answer, not ``error`` — asserted instead by
     `test_run_only_cases_are_never_compiled`, which every such case must join.
     """
     for case in _REACHABLE:
@@ -597,9 +544,8 @@ def test_every_unexercised_reachable_read_is_refused() -> None:
 def test_run_only_cases_are_never_compiled() -> None:
     """A compile on a run-only case returns the defined ``run-only`` answer.
 
-    Populated in Phase-6 milestone 1: the reachable set now includes the run-only
-    `m-db-error` deadlock / lock-wait cases (single-connection concurrency intent),
-    so this asserts each returns ``run-only`` rather than an emitted golden.
+    The reachable set includes run-only `m-db-error` deadlock and lock-wait
+    cases, each of which returns ``run-only`` rather than an emitted golden.
     """
     run_only = [c for c in _REACHABLE if engine.eligibility(c) is not None]
     assert run_only, "the reachable intersection now includes run-only m-db-error cases"
@@ -610,7 +556,7 @@ def test_run_only_cases_are_never_compiled() -> None:
 
 
 def test_error_and_boundary_lane_partition() -> None:
-    """The error/boundary run-lane classification is exact (M4 increment 4).
+    """The error and boundary run-lane classification is exact.
 
     Every reachable error-shape case is EITHER a single-connection statement
     trigger (graded by the error run lane) XOR a two-connection choreography
@@ -639,8 +585,7 @@ def test_error_and_boundary_lane_partition() -> None:
 def test_scenario_lane_dispatch_is_honest() -> None:
     """Every reachable scenario-shape case whose top-level `lane` is
     `api-conformance` (m-snapshot-read-009's `action: access` closed-world
-    witness — its per-language absence surfacing needs the developer-facing
-    surface a later increment builds) answers a lane-honest `error` from
+    witness) answers a lane-honest `error` from
     `compile` — the SAME `_boundary_lane_error` precedent, extended to a second
     shape (m-case-format "Case lanes"). It carries NO `compileEligibility`
     declaration (neither closed reason — `single-connection` /
@@ -671,30 +616,24 @@ def _skip_text(case_id: str) -> str:
 
 
 def test_displayed_skip_text_stays_honest_for_a_representative_set() -> None:
-    """Regression guard (Phase-8 mid-phase review remediation, finding F item
-    5): pin the DISPLAYED skip text for a representative case per stale-wording
-    class, so wording rot (a forward promise that already landed, a bare
-    diagnostic fragment) fails loudly here rather than only being noticed on a
-    manual sweep read.
+    """Pin displayed skip text for representative classification cases.
+
+    This catches vague forward promises and bare diagnostic fragments.
     """
-    # COR-3 Phase 8 increment 5 retires the structured-predicate-write-refusal
-    # stale-wording class entirely: `m-batch-write-005`/`-006` now compile `ok`
-    # and join `WRITE_EXERCISED` (graded by `_assert_write_emissions` in the
+    # `m-batch-write-005` and `-006` compile successfully and belong to
+    # `WRITE_EXERCISED` (graded by `_assert_write_emissions` in the
     # main sweep, never by `_skip_text` — a case's exercised-status membership
     # is asserted directly there, not re-derived from skip text here).
     assert {"m-batch-write-005", "m-batch-write-006"} <= WRITE_EXERCISED
     # A materializing predicate-write scenario (query-result-dependent,
     # run-only) is classified BEFORE the shape fallback — never the stale
-    # "land with a later write increment / phase" M4-era-bucket promise.
+    # generic scheduling promise.
     materializing_text = _skip_text("m-audit-write-007")
     assert materializing_text.startswith("declared compile-run-only"), materializing_text
     assert "graded by run instead" in materializing_text, materializing_text
     assert "land with a later write increment" not in materializing_text, materializing_text
-    # A genuine M4-era-bucket case (a write that lowers `ok` but sits outside
-    # the reviewed keyed set) reworded to its actual current increment —
-    # pk-gen never named here again (it landed in increment 3, its own module
-    # bucket, `SKIP_REASONS["m-pk-gen"]`), and the text never claims a stale
-    # forward promise now that increment 5 has landed.
+    # A write that lowers successfully but sits outside the keyed set names its
+    # current classification and does not mention unrelated pk-gen behavior.
     bucket_text = _skip_text("m-core-002")
     assert "outside the reviewed keyed" in bucket_text, bucket_text
     assert "m-pk-gen" not in bucket_text, bucket_text
@@ -702,21 +641,12 @@ def test_displayed_skip_text_stays_honest_for_a_representative_set() -> None:
 
 
 def test_m_opt_lock_001_is_query_result_dependent_run_only() -> None:
-    """`m-opt-lock-001` (a KEYED no-op scenario: an observing find, a versioned
-    update whose effective change set is empty — no DML — then a real
-    dependent find under the SAME held lock) was always single-transaction
-    intent (the case's own docstring: the shared lock is "held for the
-    transaction's duration"), but predated the `uow` step-grouping vocabulary
-    and was never retrofitted. The corpus amendment groups its three steps
-    into ONE `uow` and declares `compileEligibility: run-only`
-    (query-result-dependent — the no-op write's licensing derives from the
-    group's own observing find, a query result), so `compile` now answers the
-    DECLARED run-only envelope, never the incidentally-worded `error` an
-    ungrouped unobserved-version write used to produce. It stays OUT of
-    `WRITE_EXERCISED` (a run-only case never answers `ok`); the run lane
-    picks it up through the EXISTING uow-grouped run-only admission clause
-    (`test_run_sweep._reachable_write_cases`) — the same path `m-unit-work-005`
-    already passes through, with no test-code addition here.
+    """`m-opt-lock-001` is a query-result-dependent run-only scenario.
+
+    Its observing find, no-op versioned update, and dependent find share one
+    unit of work and lock lifetime. The update's license comes from the query
+    result, so compile returns the declared run-only envelope and the run lane
+    grades the scenario.
     """
     (case,) = [c for c in _REACHABLE if c.case_id == "m-opt-lock-001"]
     assert case.case_id not in WRITE_EXERCISED

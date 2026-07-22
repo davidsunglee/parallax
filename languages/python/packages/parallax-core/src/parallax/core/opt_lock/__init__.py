@@ -27,18 +27,17 @@ m-opt-lock.md`; `python.md` §5 L584-641; ADR 0013):
    (never a row-carried value).
 4. **Historical-observation licensing** (:func:`check_locking_license`,
    :class:`HistoricalObservationError`): a temporal observation licenses a
-   locking-mode write only when its read was latest-pinned on the processing
+   locking-mode write only when its read was latest-pinned on the Transaction-Time
    axis; a versioned non-temporal row satisfies this trivially. Every
    engine-supplied temporal observation is latest-pinned by construction (the
    conformance engine's case-local shadow tracker only ever tracks the
    CURRENT milestone), so this stays a no-op there — but a REAL
    `Transaction.find` observation of a temporal entity threads the read's own
    Transaction-Time pin through :attr:`~parallax.core.unit_work.Observation.
-   latest_pinned` (Phase-8 mid-phase review remediation), so a locking-mode
+   latest_pinned`, so a locking-mode
    write whose only transaction-scoped observation is historical or
-   edge-pinned genuinely raises here. This landed ahead of the developer-facing
-   typed temporal verbs, which COR-3 Phase 8 increment 7 has since shipped, so
-   the gate is now reachable through those verbs too.
+   edge-pinned genuinely raises here. Typed temporal verbs reach this check
+   through their transaction-scoped observations.
 5. **Conflict classification** (:class:`OptimisticLockConflictError`,
    :class:`StaleWriteError`): the two zero-row-close outcomes `m-opt-lock` /
    `m-audit-write` / `m-bitemp-write` distinguish. ``OptimisticLockConflictError``
@@ -51,9 +50,8 @@ m-opt-lock.md`; `python.md` §5 L584-641; ADR 0013):
    consistency violation, not a detected-and-retriable conflict. Neither
    ``!= 1`` shape ever exceeds 1 (a PK-keyed or milestone-current-row
    statement structurally cannot affect more than one row) — Reladomo's
-   separate corruption class for ``> 1`` is deliberately not mirrored. COR-3
-   Phase 8 increment 6 wired the opt-in into ``m-auto-retry``'s retriability
-   predicate: ``parallax.snapshot.handle``'s :meth:`Database.transact` passes
+   separate corruption class for ``> 1`` is deliberately not mirrored.
+   ``parallax.snapshot.handle``'s :meth:`Database.transact` passes
    ``OptimisticLockConflictError`` and the resolved
    ``retry_optimistic_conflicts`` verdict into
    :func:`~parallax.core.auto_retry.run_with_retry`.
@@ -88,10 +86,8 @@ __all__ = [
     "require_observed_milestone",
 ]
 
-# The derived initial version every versioned INSERT carries, ignoring any
-# row-carried value (`core/schemas/metamodel.schema.json` $comment L165;
-# `m-sql.md` L871's "derived initial version" — pinned here since no COR-3
-# Phase 8 increment 3 corpus witness inserts a versioned row).
+# The derived initial version every versioned insert carries, ignoring any
+# row-carried value (`core/schemas/metamodel.schema.json` and `m-sql.md`).
 INITIAL_VERSION: Final[int] = 1
 
 
@@ -161,7 +157,7 @@ class OptimisticLockConflictError(RuntimeError):
     context an engine or caller needs to render an ``affectedRows`` observation:
     ``entity`` (the write's target entity name), ``key`` (its object key, the
     same ``(pk attribute name, value)`` pairs `~parallax.core.unit_work.
-    ObjectKey` carries), ``expected`` (always ``1`` this increment), and
+    ObjectKey` carries), ``expected`` (always ``1``), and
     ``actual`` (the port's own reported affected-row count).
     """
 
@@ -188,7 +184,7 @@ class StaleWriteError(RuntimeError):
     (`m-audit-write` "Affected-row conflict contract for closes"; `m-bitemp-write`).
 
     A zero-row temporal close is an error in ANY mode, never silent. Under optimistic
-    concurrency the observed-``in_z`` gate (and, bitemporal, the business discriminator)
+    concurrency the observed-``in_z`` gate (and, bitemporal, the Valid-Time discriminator)
     makes a stale close a detectable, retriable :class:`OptimisticLockConflictError` —
     but under locking concurrency the close carries no gate at all (the shared read
     lock is supposed to make it correct), so a zero-row locking-mode close is a
@@ -311,18 +307,17 @@ def classify_mismatch(
 
 def check_locking_license(concurrency: Concurrency, *, latest_pinned: bool) -> None:
     """Raise :class:`HistoricalObservationError` when a locking-mode write's
-    observation was not read latest-pinned on the written (processing) axis.
+    observation was not read latest-pinned on the written Transaction-Time axis.
 
     A no-op in optimistic mode (the observed gate detects staleness instead)
     and for a trivially latest-pinned observation (``latest_pinned=True`` —
-    every versioned non-temporal row, and every ENGINE-supplied temporal
-    observation this increment, which is latest-pinned by construction: the
+    every versioned non-temporal row, and every engine-supplied temporal
+    observation, which is latest-pinned by construction: the
     conformance engine's case-local temporal tracker only ever tracks the
     CURRENT milestone, never a historical or edge-pinned one). A genuinely
     non-latest-pinned observation reaching a locking-mode write — a
-    developer-driven historical/edge-pinned read (COR-3 Phase 8 increment 7's
-    typed temporal verbs) — is the case this check exists to catch; this
-    increment's own callers never construct one.
+    developer-driven historical or edge-pinned read — is the case this check
+    exists to catch.
     """
     if concurrency == "locking" and not latest_pinned:
         raise HistoricalObservationError(

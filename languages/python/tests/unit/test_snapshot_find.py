@@ -1,5 +1,4 @@
-"""Production find executor unit tests (`parallax.snapshot.handle.find` /
-`find_history`, COR-3 Phase 7 increment 5).
+"""Production find-executor tests for ``find`` and ``find_history``.
 
 Exercises the ONE per-level loop against a fake, canned-response `m-db-port`
 (no Docker): round-trip accounting (one statement per non-empty level), the
@@ -209,8 +208,8 @@ def test_find_materializes_family_variant_on_child_level_rows() -> None:
 
 
 def test_find_threads_a_root_narrow_to_a_single_tpcs_concrete() -> None:
-    # S3 (COR-3 Phase 7 increment 7 round-2): a table-per-concrete-subtype
-    # ABSTRACT root narrowed to exactly ONE concrete compiles to an ordinary
+    # A table-per-concrete-subtype abstract root narrowed to exactly one
+    # concrete compiles to an ordinary
     # single-table read (`m-sql`'s `_compile_tpcs_single`) — the row carries no
     # `familyVariant` at all. `find`'s own `CompiledRead.narrow_to`-derived
     # threading into `Assembler.materialize_root` is what lets the assembler still
@@ -278,7 +277,7 @@ def test_find_history_groups_rows_into_chronologically_ordered_edge_pinned_graph
 
 def test_find_history_groups_two_distinct_rows_sharing_one_edge_into_one_graph() -> None:
     # Two DIFFERENT physical InvoiceLine rows (ids 1000 and 2000) sharing the
-    # exact same processing edge (in_z) belong to the SAME milestone graph —
+    # exact same Transaction-Time edge (in_z) belong to the SAME milestone graph —
     # the "edge already seen" branch of the grouping loop (as opposed to the
     # "first row at this edge" branch the single-row-per-edge test above pins).
     port = QueuePort(
@@ -316,10 +315,9 @@ def test_find_history_groups_two_distinct_rows_sharing_one_edge_into_one_graph()
 
 def test_find_history_over_a_concrete_inheritance_target_resolves_the_roots_axes() -> None:
     # `DepositRate` declares NO `as_of_axes` of its own (`Rate`, the
-    # family root, does) — before the COR-3 Phase 7 review remediation,
-    # `milestone_edge`/`_edge_pin`/`_edge_sort_key` consulted `DepositRate`'s
-    # own (empty) record directly and raised "not a temporal entity"; they
-    # must now resolve through the root instead (P3/P4).
+    # family root, does). `milestone_edge`, `_edge_pin`, and `_edge_sort_key`
+    # must resolve through the root rather than consulting the concrete
+    # entity's empty local axis collection.
     port = QueuePort(
         [
             [

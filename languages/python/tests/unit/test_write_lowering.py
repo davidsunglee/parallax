@@ -5,17 +5,17 @@ the developer transaction path and the conformance engine reuse. These tests pin
 its byte-exact non-temporal keyed emissions against the corpus goldens
 (``m-unit-work-001/003/005``, ``m-opt-lock-002/005/006/013``,
 ``m-inheritance-007/008/009/010/084/104``, ``m-pk-gen-001``), compose it with the
-M3 planner for the coalescing / mixed-flush / cancellation cases
+unit-of-work planner for the coalescing / mixed-flush / cancellation cases
 (``-008/-009/-010``), pin the ``m-opt-lock`` version gate/advance/conflict policy
 (observation-required for BOTH update and delete, gate-optimistic-only, a
 row-carried version value refused outright, the derived initial version), the
 inheritance tag derivation/guard/opt-lock composition, and the pk-gen
-``max``/``increment`` marker lowering; the TEMPORAL keyed forms (COR-3 Phase 8
-increment 4: close-and-chain, the rectangle split, the observed-``in_z``/business-
-discriminator gate, `StaleWriteError` vs `OptimisticLockConflictError`) are pinned
-in ``test_temporal_write_lowering.py``. The predicate-selected and multi-row
-batch forms both lower as of COR-3 Phase 8 increment 5; what this seam still
-refuses — a materializing predicate write that reaches it, a mixed-shape
+``max``/``increment`` marker lowering. The temporal keyed forms—close-and-chain,
+the rectangle split, the observed-``in_z``/Valid-Time-discriminator gate, and
+`StaleWriteError` versus `OptimisticLockConflictError`—are pinned in
+``test_temporal_write_lowering.py``. The predicate-selected and multi-row batch
+forms use the same lowering seam. It refuses a materializing predicate write
+that reaches it, a mixed-shape
 multi-row instruction, a milestone verb on a non-temporal entity, an unsupported
 DB-computed marker — raises a loud ``WriteLoweringError``, never a wrong
 emission, mirroring the read compiler's forward-error posture.
@@ -516,10 +516,9 @@ def test_inheritance_family_predicate_write_is_rejected_before_sql(
     # `lower_write` is EXPORTED (`parallax.snapshot.handle.__all__`,
     # `tests/api_surface/public_api.json`), and the conformance engine's readless
     # predicate-write step (`engine._lower_predicate_write_step`) reaches it
-    # straight from a deserialized instruction. Before the lowering-side guard,
-    # the `narrow` case below emitted
-    # `delete from payment where (card_network = ? and t0.kind = ?)` — an alias
-    # the unaliased DML never declares (m-sql rule 1).
+    # straight from a deserialized instruction. The lowering-side guard must
+    # reject the `narrow` case before it can introduce an alias that unaliased
+    # DML never declares (`m-sql` rule 1).
     write = PredicateWrite("delete", WriteTarget("CardPayment", predicate))
     with pytest.raises(inheritance.InheritanceError) as excinfo:
         _lower(write, PAYMENT)
@@ -547,9 +546,8 @@ def test_multi_row_insert_with_differing_row_shapes_is_refused() -> None:
 
 def test_milestone_verb_on_a_non_temporal_entity_is_refused() -> None:
     # The temporal milestone verb set (terminate / *Until) stays refused on a
-    # NON-temporal entity — permanently: `Account` has no processing/business
-    # axis to close, so a milestone verb aimed at it is never sensible,
-    # regardless of which increment implements temporal writes.
+    # NON-temporal entity — permanently: `Account` has no Transaction-/Valid-Time
+    # axis to close, so a milestone verb aimed at it is never sensible.
     with pytest.raises(WriteLoweringError, match="temporal milestone verb"):
         _lower(KeyedWrite("terminate", "Account", ({"id": 1},)), ACCOUNT)
 
