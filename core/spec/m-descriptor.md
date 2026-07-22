@@ -335,8 +335,11 @@ accept, the serde law is:
   itself;
 - byte identity holds exactly where the contract promises it: repeated
   JSON and YAML exports of one accepted Metamodel are byte-identical
-  ("Canonical export"), and a document already in canonical form reproduces
-  its exact bytes — `export(import(d)) == d`.
+  ("Canonical export") — a promise over the canonical writer's own outputs.
+  A document authored in canonical form guarantees `export(import(d))`
+  structurally equal to `d`; source comments and formatting are not
+  preserved, so byte identity between an authored input and its re-export is
+  not promised.
 
 A valid but non-canonical document — a conventional fact spelled out
 explicitly — imports to the same accepted Metamodel as its canonical form and
@@ -517,7 +520,8 @@ validation and no state change. Export is deterministic and all-or-none:
 - repeated document exports of one accepted Metamodel are structurally equal;
 - repeated JSON and YAML exports are byte-identical, and export composes with
   the canonicalization law above: a model authored in canonical form
-  reproduces its exact bytes;
+  re-exports to a structurally equal document (source comments and formatting
+  are not preserved, so authored bytes are not reproduced);
 - export returns its complete result or fails with no partial output.
 
 An unexpected conversion or serialization defect raises:
