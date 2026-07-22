@@ -10,15 +10,12 @@
 #   (bare)     repo-wide gates and reports: verify, lint, lint-md, matrix
 #   core-      validation of the core spec + compatibility corpus
 #   oracle-    the Python reference harness (its own checks + running the oracle)
-#   ts-        the TypeScript implementation (future: java-, rust-, py-, ...)
+#   python-    the Python implementation (future: java-, rust-, ...)
 #
-# Database-backed recipes (verify, ts-db, ts-db-all, oracle-test, python-verify)
-# start Testcontainers containers and need a reachable Docker daemon. Runtimes
-# other than Docker Desktop -- OrbStack, Colima, Podman -- do not create
-# /var/run/docker.sock, and the Node client cannot read Docker CLI contexts, so
-# the ts- lanes fail there with "Could not find a working container runtime
-# strategy". README.md "Running And Inspecting The Project" has the one-time
-# ~/.testcontainers.properties fix.
+# Database-backed recipes (verify, oracle-test, python-verify) start
+# Testcontainers containers and need a reachable Docker daemon. README.md
+# "Running And Inspecting The Project" has the one-time
+# ~/.testcontainers.properties fix for runtimes other than Docker Desktop.
 
 # Path to the reference harness module.
 harness := "reference-harness"
@@ -31,9 +28,9 @@ default:
 # Repo-wide: the top-level gates and reports that span every module.
 # ===========================================================================
 
-# Full merge gate: repo lint + core gates + primary TS lanes + Python lanes + the harness suite (Docker).
+# Full merge gate: repo lint + core gates + Python lanes + the harness suite (Docker).
 # `python-verify` subsumes `python-static`, so only the aggregate is listed here.
-verify: lint oracle-typecheck core-dep-graph ts-typecheck ts-typecheck-tests ts-lint ts-package-check ts-conformance-compile ts-db python-verify oracle-test
+verify: lint oracle-typecheck core-dep-graph python-verify oracle-test
 
 # Every static check that needs no database: harness ruff, markdown, core schema/SQL,
 # and the language-contract diagnostic tools.
@@ -103,67 +100,6 @@ oracle-typecheck:
 # The compatibility suite + the harness's own unit tests (pytest, Testcontainers; Docker).
 oracle-test:
     cd {{harness}} && uv run pytest
-
-# ===========================================================================
-# Language: TypeScript. The pnpm workspace lives under
-# languages/typescript/packages/*; these fan out into it. Future languages get
-# their own <lang>- section (java-, rust-, py-, ...).
-# ===========================================================================
-
-# Static TS lint: Biome (format + lint) and the dependency-cruiser DAG gate.
-ts-lint:
-    pnpm run ts:lint
-
-# TypeScript typecheck across project references (tsc -b, no emit drift).
-ts-typecheck:
-    pnpm run ts:typecheck
-
-# Typecheck test files too (tsc --noEmit per package after the build; catches test/** errors).
-ts-typecheck-tests:
-    pnpm run ts:typecheck-tests
-
-# TypeScript unit / adapter tests (vitest) across the workspace.
-ts-test:
-    pnpm run ts:test
-
-# TypeScript V8 line coverage + the same markdown summary CI prints.
-ts-coverage:
-    pnpm run ts:typecheck
-    pnpm run ts:coverage
-    node languages/typescript/scripts/coverage-summary.mjs coverage/typescript/coverage-summary.json
-
-# Conformance-slice coverage report (JSON + markdown under coverage/).
-ts-conformance-coverage:
-    pnpm run ts:conformance-coverage
-
-# Package-export health across the @parallax/* ESM workspace: publint + attw + knip (Docker-free).
-ts-package-check:
-    pnpm run ts:package-check
-
-# --- TypeScript database testing --------------------------------------------
-
-# Docker-free DB contracts: dialect table, provider selection parsing, matrix profile declarations.
-ts-db-fast:
-    pnpm run ts:typecheck
-    pnpm exec vitest run --root languages/typescript packages/dialect/test/dialect-conformance.test.ts packages/typescript/test/api-conformance/provider-selection.test.ts packages/typescript/test/conformance-profiles.test.ts
-
-# Docker-free conformance lane: full-slice compile sweep + honesty gate + matrix report.
-ts-conformance-compile:
-    pnpm run ts:typecheck
-    pnpm exec vitest run --root languages/typescript packages/conformance
-
-# Primary Docker-backed DB gate: shared adapter/provider contracts, the Postgres compatibility matrix, and Postgres API conformance.
-ts-db: ts-db-fast
-    pnpm exec vitest run --root languages/typescript packages/typescript/test/db-adapter-smoke.test.ts
-    PARALLAX_DATABASES=postgres,mariadb pnpm exec vitest run --root languages/typescript packages/typescript/test/db-provider-contract.test.ts
-    pnpm exec vitest run --root languages/typescript packages/typescript/test/slice-run.test.ts
-    node languages/typescript/scripts/render-guide.mjs --check
-    pnpm exec vitest run --root languages/typescript packages/typescript/test/api-conformance
-
-# Exhaustive Docker-backed DB sweep: primary gate plus MariaDB API and curated matrix profile.
-ts-db-all: ts-db
-    PARALLAX_DATABASES=mariadb pnpm exec vitest run --root languages/typescript packages/typescript/test/api-conformance
-    pnpm exec vitest run --root languages/typescript packages/typescript/test/mariadb-run.test.ts
 
 # ===========================================================================
 # Language: Python. The uv workspace lives under languages/python/packages/*;

@@ -2,10 +2,7 @@ version: 2
 
 updates:
   - package-ecosystem: "npm"
-    directories:
-      - "/"
-      - "/languages/typescript/packages/*"
-      - "/languages/typescript/examples/*"
+    directory: "/"
     schedule:
       interval: "weekly"
       day: "monday"

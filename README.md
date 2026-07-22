@@ -73,11 +73,6 @@ tooling. Start with the document that matches what you want to learn:
 - [Python operational guide](languages/python/GUIDE.md) — layout, commands,
   database setup, implementation status, and blockers.
 
-The TypeScript implementation remains available under
-[`languages/typescript/`](languages/typescript/README.md). Its current
-`slice-mvp-1` claim is deprecated in favor of the lifecycle-complete Snapshot
-and managed-object slices.
-
 ## How The Contract Fits Together
 
 Parallax has three layers of authority:
@@ -112,7 +107,6 @@ the spec, schemas, corpus, and conformance-adapter contract.
 | [`core/schemas/`](core/schemas/) | JSON Schemas for models, operations, cases, writes, and conformance envelopes |
 | [`core/compatibility/`](core/compatibility/) | Canonical models, fixtures, cases, and benchmark workloads |
 | [`languages/python/`](languages/python/) | Primary worked implementation: the Postgres Snapshot slice |
-| [`languages/typescript/`](languages/typescript/) | TypeScript implementation and generated developer API |
 | [`reference-harness/`](reference-harness/) | Non-normative oracle that validates and executes the core corpus |
 | [`docs/adr/`](docs/adr/) | Cross-cutting architecture decisions |
 | [`IMPLEMENTING.md`](IMPLEMENTING.md) | End-to-end playbook for specifying and building a language target |
@@ -151,10 +145,8 @@ just verify
 Docker must be available for database-backed commands. Testcontainers locates
 the daemon by itself under Docker Desktop and on CI, where the socket sits at
 `/var/run/docker.sock`. Alternative runtimes such as OrbStack, Colima, and
-Podman place it elsewhere and publish it through a Docker CLI context. The
-Python client reads that context; the Node client does not, so the TypeScript
-lanes fail with `Could not find a working container runtime strategy`. Point
-both clients at the socket once instead of exporting `DOCKER_HOST` per shell:
+Podman place it elsewhere and publish it through a Docker CLI context. Point
+Testcontainers at the socket once instead of exporting `DOCKER_HOST` per shell:
 
 ```bash
 docker context inspect --format '{{ .Endpoints.docker.Host }}'

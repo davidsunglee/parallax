@@ -13,7 +13,6 @@ from reference_harness.paths import schemas_dir
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _COMPATIBILITY_ROOT = _REPO_ROOT / "core" / "compatibility"
 _SPEC_DIR = _REPO_ROOT / "core" / "spec"
-_TS_SPEC = _REPO_ROOT / "languages" / "typescript" / "spec" / "01-implementation-spec.md"
 
 
 def _validator() -> Draft202012Validator:
@@ -61,20 +60,14 @@ def _slice_claim_block() -> str:
     return _first_json_fence_under_heading(slices, "## ", "First-implementation Conformance Slice")
 
 
-def _ts_v1_claim_block() -> str:
-    """Extract the TypeScript V1 describe JSON fenced under §1.1."""
-    ts_spec = _TS_SPEC.read_text(encoding="utf-8")
-    return _first_json_fence_under_heading(ts_spec, "### ", "1.1 V1 conformance capability claims")
-
-
 def _valid_describe() -> dict:
     return {
         "schemaVersion": "1",
         "command": "describe",
         "status": "ok",
         "adapter": {
-            "language": "typescript",
-            "name": "@parallax/typescript",
+            "language": "reference",
+            "name": "parallax-core",
             "version": "0.1.0",
         },
         "capabilities": {
@@ -102,8 +95,8 @@ def _valid_benchmark() -> dict:
         "command": "benchmark",
         "status": "ok",
         "adapter": {
-            "language": "typescript",
-            "name": "@parallax/typescript",
+            "language": "reference",
+            "name": "parallax-core",
             "version": "0.1.0",
         },
         "benchmark": "core/compatibility/benchmarks/read-mix.yaml",
@@ -144,8 +137,8 @@ def _valid_run(observations: dict) -> dict:
         "command": "run",
         "status": "ok",
         "adapter": {
-            "language": "typescript",
-            "name": "@parallax/typescript",
+            "language": "reference",
+            "name": "parallax-core",
             "version": "0.1.0",
         },
         "case": "core/compatibility/cases/m-deep-fetch-013-deferred-load-batches-latest.yaml",
@@ -350,8 +343,8 @@ def test_benchmark_rejects_legacy_metrics_shape() -> None:
         "command": "benchmark",
         "status": "ok",
         "adapter": {
-            "language": "typescript",
-            "name": "@parallax/typescript",
+            "language": "reference",
+            "name": "parallax-core",
             "version": "0.1.0",
         },
         "benchmark": "core/compatibility/benchmarks/read-mix.yaml",
@@ -390,31 +383,3 @@ def test_canonical_slice_claim_carries_no_profile_wire_key() -> None:
 def test_canonical_slice_claim_is_include_driven() -> None:
     claim = json.loads(_slice_claim_block())
     assert claim["capabilities"]["caseTags"] == {"include": ["slice-mvp-1"]}
-
-
-# --- TypeScript V1 adopts the canonical slice (anti-drift) --------------------
-
-
-def test_typescript_v1_claim_is_schema_valid() -> None:
-    # The §4.5 describe claim must itself be a legal describe document.
-    claim = json.loads(_ts_v1_claim_block())
-    errors = list(_validator().iter_errors(claim))
-    assert errors == []
-
-
-def test_typescript_v1_capabilities_equal_the_canonical_slice() -> None:
-    # TS V1 *is* the canonical slice-mvp-1 slice (Resolved
-    # Question E): its capabilities must equal the canonical claim's
-    # capabilities exactly, so the two can never silently diverge. Only the
-    # adapter identity (language/name/version) is allowed to differ.
-    ts_claim = json.loads(_ts_v1_claim_block())
-    canonical_claim = json.loads(_slice_claim_block())
-    assert ts_claim["capabilities"] == canonical_claim["capabilities"]
-
-
-def test_typescript_v1_claim_adapter_identity_is_typescript() -> None:
-    # Sanity: the one place the two claims are allowed to differ is the adapter
-    # identity. Guards against accidentally copying the reference adapter block.
-    ts_claim = json.loads(_ts_v1_claim_block())
-    assert ts_claim["adapter"]["language"] == "typescript"
-    assert ts_claim["adapter"]["name"] == "@parallax/typescript"
