@@ -1152,16 +1152,14 @@ def _lower_find(
     """Compile a scenario ``find`` step through the read path with the read-lock suffix.
 
     A scenario find is an in-transaction object find; ``concurrency`` (the case's
-    own ``when.uow.concurrency``, unchanged since increment 3's non-temporal
-    conflict lane) decides the ``m-sql`` shared-row-lock suffix (``for share of
-    t0``) exactly as the production `Transaction.find` derives it from
-    ``self._uow.settings.concurrency``: ``locking`` renders it after every clause;
-    ``optimistic`` renders none (an optimistic-mode read takes no lock, COR-3
-    Phase 8 increment 4 — the txtime-write-008 / bitemp-write-014 coalescing
-    witnesses are the first reachable OPTIMISTIC scenarios). ``None`` ALSO
-    renders none — the caller's own :func:`_scenario_needs_lock` gate (COR-3
-    Phase 8 increment 5): a scenario whose write steps are ALL readless
-    predicate writes (`m-batch-write-005`/`-006`) establishes no
+    own ``when.uow.concurrency``) decides the ``m-sql`` shared-row-lock suffix
+    (``for share of t0``) exactly as the production `Transaction.find` derives it
+    from ``self._uow.settings.concurrency``: ``locking`` renders it after every
+    clause; ``optimistic`` renders none (an optimistic-mode read takes no lock —
+    the `m-txtime-write-008` / `m-bitemp-write-014` coalescing witnesses exercise
+    this OPTIMISTIC branch). ``None`` ALSO renders none — the caller's own
+    :func:`_scenario_needs_lock` gate: a scenario whose write steps are ALL
+    readless predicate writes (`m-batch-write-005`/`-006`) establishes no
     transaction-scoped observation at all (`m-read-lock` "an in-transaction
     object find that intends to write acquires a shared row lock" — a readless
     write intends nothing an observation could ever protect), so its find
@@ -1169,9 +1167,8 @@ def _lower_find(
 
     ``result_form`` defaults to ``instance`` — an ORDINARY (managed) scenario
     find mirrors production ``Transaction.find`` (`m-sql` *Read projection*,
-    slot 4 included), the SAME projection every scenario find has always
-    compiled to a value-object-free entity (row-form and instance-form are
-    byte-identical there, so this default flip changes no existing golden).
+    slot 4 included); for a value-object-free entity row-form and instance-form
+    are byte-identical, so the default only matters to VO-bearing targets.
     A materializing predicate write's OWN internal resolving read is ROW-form
     (`m-value-object-047` pins the VO-omission contrast) but is compiled by
     the materializing predicate-write resolve in `parallax.snapshot.handle`
@@ -1181,8 +1178,7 @@ def _lower_find(
     binds are query-result-dependent, so no pure oracle exists to compute them
     from).
 
-    D-18 disposition (COR-3 Phase 8 increment 7, the engine-thinning audit):
-    this composition — `compile_read` + `read_lock.mode_for`, mirroring
+    This composition — `compile_read` + `read_lock.mode_for`, mirroring
     `Transaction.find`'s own derivation — is IRREDUCIBLE adapter content, not
     a residual "mirrors production" gap to close. The case-driven engine has
     no typed Python entity classes at all (a scenario step is a raw,

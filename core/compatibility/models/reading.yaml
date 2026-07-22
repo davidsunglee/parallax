@@ -1,6 +1,6 @@
 # Reading: a TABLE-PER-HIERARCHY inheritance family whose Transaction-Time-Only dimension
 # is declared on the abstract root and inherited by the concrete subtype
-# (m-inheritance x m-txtime-write — Phase 8 temporal composition).
+# (m-inheritance x m-txtime-write).
 #
 # This descriptor is an instance of core/schemas/metamodel.schema.json. It is a NEW,
 # small Transaction-Time-Only family: the whole family maps to ONE shared `reading`
@@ -20,9 +20,9 @@
 # from ordered DML.
 #
 # The composed temporal x inheritance x optimistic-lock conflict witness
-# (m-inheritance-105, COR-3 Phase 8 DQ2 rider 1) additionally needs a persisted
-# CURRENT milestone to observe and race, so this family now carries one fixture
-# row (sibling fixtures/reading.yaml).
+# (m-inheritance-105) additionally needs a persisted CURRENT milestone to
+# observe and race, so this family carries one fixture row (sibling
+# fixtures/reading.yaml).
 entities:
   - name: Reading
     namespace: parallax.compatibility

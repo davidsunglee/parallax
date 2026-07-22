@@ -1,6 +1,6 @@
 # Composed temporal x inheritance x optimistic-lock CONFLICT: the tag guard
 # rides the identity predicates, the observed-in_z gate binds LAST (m-inheritance
-# x m-txtime-write x m-opt-lock — COR-3 Phase 8 DQ2 rider 1).
+# x m-txtime-write x m-opt-lock).
 #
 # MeterReading 1 is read open at in_z 2024-01-01. Before our close flushes, a
 # concurrent transaction closes that milestone (out_z 2024-06-01) and chains a

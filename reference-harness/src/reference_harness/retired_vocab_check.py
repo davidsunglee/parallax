@@ -17,8 +17,9 @@ words "business" or "processing": non-temporal uses such as "business key",
 
 Allow-list (explicitly labeled historical / prior-art / rejection text):
 
-- ``docs/research/**`` and every ``adr`` directory — historical records keep
-  their original vocabulary;
+- ``docs/research/reladomo/**`` and every ``adr`` directory — Reladomo
+  prior-art notes and historical decision records keep their original
+  vocabulary (other research documents are active prose and are scanned);
 - ``core/compatibility/descriptor-errors/`` — negative-test fixtures exist to
   spell the retired forms so serde provably rejects them;
 - glossary ``_Avoid_`` lines and the labeled ``Prior art:`` paragraph — they
@@ -39,87 +40,64 @@ __all__ = ["check_text", "main", "scanned_files"]
 # Temporal nouns that make a business/processing compound a retired temporal
 # phrase (any of whitespace, `/`, `_`, or `-` may join the words, so prose,
 # snake_case identifiers, and kebab-case slugs are all covered).
-_TEMPORAL_NOUNS = "|".join(
-    (
-        "time",
-        "times",
-        "date",
-        "dates",
-        "dimension",
-        "dimensions",
-        "axis",
-        "axes",
-        "instant",
-        "instants",
-        "interval",
-        "intervals",
-        "milestone",
-        "milestones",
-        "coordinate",
-        "coordinates",
-        "coords",
-        "history",
-        "histories",
-        "window",
-        "windows",
-        "bound",
-        "bounds",
-        "binds",
-        "validity",
-        "pin",
-        "pins",
-        "discriminator",
-        "discriminators",
-        "correction",
-        "corrections",
-    )
+_TEMPORAL_NOUN_WORDS = (
+    "time",
+    "times",
+    "date",
+    "dates",
+    "dimension",
+    "dimensions",
+    "axis",
+    "axes",
+    "instant",
+    "instants",
+    "interval",
+    "intervals",
+    "milestone",
+    "milestones",
+    "coordinate",
+    "coordinates",
+    "coords",
+    "history",
+    "histories",
+    "window",
+    "windows",
+    "bound",
+    "bounds",
+    "binds",
+    "validity",
+    "pin",
+    "pins",
+    "discriminator",
+    "discriminators",
+    "correction",
+    "corrections",
 )
+_TEMPORAL_NOUNS = "|".join(_TEMPORAL_NOUN_WORDS)
 
 # Words that are retired ONLY when joined by `-` / `_` (e.g. a
 # business-from bound or a processing-latest read): the spaced forms are
 # ordinary English ("separates the business from ...") and stay legal.
-_JOINED_WORDS = "|".join(
-    (
-        "from",
-        "until",
-        "to",
-        "at",
-        "past",
-        "latest",
-        "only",
-        "bounded",
-        "temporal",
-        "first",
-    )
+_JOINED_WORD_LIST = (
+    "from",
+    "until",
+    "to",
+    "at",
+    "past",
+    "latest",
+    "only",
+    "bounded",
+    "temporal",
+    "first",
 )
+_JOINED_WORDS = "|".join(_JOINED_WORD_LIST)
 
 # camelCase identifier compounds (the retired instruction-field spellings and
-# their kin); matched case-sensitively so prose casing is left to the
-# case-insensitive patterns above.
-_CAMEL_WORDS = "|".join(
-    (
-        "From",
-        "Until",
-        "To",
-        "At",
-        "Time",
-        "Date",
-        "Dates",
-        "Dimension",
-        "Axis",
-        "Axes",
-        "Instant",
-        "Bound",
-        "Bounds",
-        "Window",
-        "Coordinate",
-        "Coords",
-        "History",
-        "Milestone",
-        "Latest",
-        "Past",
-    )
-)
+# their kin), derived from the SAME word lists as the underscore/hyphen
+# patterns so the camel coverage can never drift from them; matched
+# case-sensitively so prose casing is left to the case-insensitive patterns
+# above.
+_CAMEL_WORDS = "|".join(word.capitalize() for word in _TEMPORAL_NOUN_WORDS + _JOINED_WORD_LIST)
 
 # `\b` treats `_` as a word character, so identifier-embedded compounds
 # (`keeps_the_business_bound`) would escape it; these lookarounds bound the
@@ -127,12 +105,19 @@ _CAMEL_WORDS = "|".join(
 _LEFT = r"(?<![A-Za-z0-9])"
 _RIGHT = r"(?![A-Za-z0-9])"
 
+# The camel compound's right boundary: a following lowercase letter or digit
+# extends the token into a DIFFERENT identifier (`businessTimeout`,
+# `businessTime2` — consistent with `_RIGHT`, which treats digits as word
+# characters), while a following uppercase letter starts a new camel hump and
+# IS a boundary (`businessFromValue` still carries the retired compound).
+_CAMEL_RIGHT = r"(?![a-z0-9])"
+
 _RETIRED_PATTERNS = (
     re.compile(
         rf"{_LEFT}(?:business|processing)[\s/_-]+(?:{_TEMPORAL_NOUNS}){_RIGHT}", re.IGNORECASE
     ),
     re.compile(rf"{_LEFT}(?:business|processing)[_-](?:{_JOINED_WORDS}){_RIGHT}", re.IGNORECASE),
-    re.compile(rf"{_LEFT}[bB]usiness(?:{_CAMEL_WORDS})|{_LEFT}[pP]rocessing(?:{_CAMEL_WORDS})"),
+    re.compile(rf"{_LEFT}(?:[bB]usiness|[pP]rocessing)(?:{_CAMEL_WORDS}){_CAMEL_RIGHT}"),
     re.compile(rf"{_LEFT}(?:business|processing)[\s/_-]+as[\s_-]of{_RIGHT}", re.IGNORECASE),
     re.compile(rf"{_LEFT}effective[\s/_-]+dat(?:e|es|ed|ing){_RIGHT}", re.IGNORECASE),
     re.compile(rf"{_LEFT}system[\s/_-]+date{_RIGHT}", re.IGNORECASE),
@@ -159,7 +144,9 @@ _SCANNED_NAMES = {"justfile"}
 _SKIPPED_DIR_NAMES = {"node_modules", "__pycache__", "dist", "adr"}
 
 # Repo-root-relative subtrees exempt as historical / rejection-fixture text.
-_EXEMPT_TREES = ("docs/research", "core/compatibility/descriptor-errors")
+# Only the Reladomo prior-art notes are exempt under docs/research — every
+# other research document is active prose and stays scanned.
+_EXEMPT_TREES = ("docs/research/reladomo", "core/compatibility/descriptor-errors")
 
 # Repo-root-relative files exempt because they exist to spell the retired
 # phrases: this module (whose deny-list and examples name them) and its test
@@ -224,6 +211,14 @@ def check_text(relative_path: str, text: str) -> list[str]:
 
 
 def main(argv: list[str]) -> int:
+    """CLI entry point: scan every active-source file under the repo root
+    *argv[0]*, reporting each violation on stderr as
+    ``path:line: retired temporal vocabulary '<match>'``.
+
+    Exit codes: 0 — no retired temporal vocabulary on any scanned surface;
+    1 — at least one violation; 2 — usage error (argument count, or *argv[0]*
+    is not a directory).
+    """
     if len(argv) != 1:
         print(
             "usage: python -m reference_harness.retired_vocab_check <repo-root>",
