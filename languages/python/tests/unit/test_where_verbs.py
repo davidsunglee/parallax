@@ -18,7 +18,7 @@ import pytest
 import mirrored_models as mm
 import snapshot_models as sm
 import value_object_models as vom
-from parallax.core import AsOfAxisMetadata, Attr, Entity, EntityConfig, Field
+from parallax.core import Attr, Entity, EntityConfig, Field, TxTemporal
 from parallax.core.entity import ModelCopyError
 from parallax.core.entity.expressions import AttributeAssignment
 from parallax.core.entity.value_object import ValueObject, VoField
@@ -29,27 +29,20 @@ pytestmark = pytest.mark.unit
 _FIXED = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
 
 
-# A small LOCAL temporal (audit-only) entity, unregistered elsewhere — the
+# A small LOCAL Transaction-Time-Only entity, unregistered elsewhere — the
 # `.as_of()` / `.history()` bare-statement-guard tests need a real temporal
 # class, and no shared test-fixture entity mirror declares one (mirroring the
 # same local-class pattern `test_snapshot_wrap_values.py`'s own `_WrapTemporalRoot`
 # uses).
-class _WhereTemporalLedger(Entity, frozen=True):
+class _WhereTemporalLedger(TxTemporal, frozen=True):
     __parallax__ = EntityConfig(
         table="where_temporal_ledger",
         namespace="parallax.compatibility",
         mutability="transactional",
-        as_of=(
-            AsOfAxisMetadata(
-                dimension="transactionTime", start_attribute="tx_start", end_attribute="tx_end"
-            ),
-        ),
     )
 
     id: Attr[int] = Field(primary_key=True, pk_generator="none", type="int64")
     amount: Attr[Decimal] = Field(type="decimal(18,2)")
-    tx_start: Attr[dt.datetime] = Field(name="tx_start", column="in_z")
-    tx_end: Attr[dt.datetime] = Field(name="tx_end", column="out_z")
 
 
 # A small LOCAL non-temporal entity mirroring `models/shipment.yaml`'s own

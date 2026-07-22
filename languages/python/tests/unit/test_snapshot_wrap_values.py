@@ -14,7 +14,7 @@ import pytest
 
 import snapshot_models as sm
 from parallax.conformance import models
-from parallax.core import AsOfAxisMetadata, Attr, Entity, EntityConfig, Field, descriptor
+from parallax.core import Attr, Bitemporal, Entity, EntityConfig, Field, descriptor
 from parallax.core.entity import metamodel
 from parallax.core.entity.base import Concrete, FamilyRoot
 from parallax.core.temporal_read import Pin, edge_of, pin_of
@@ -166,27 +166,15 @@ def test_temporal_node_carries_the_whole_graph_pin_and_its_own_edge() -> None:
 # the concrete descriptor's own (empty) `as_of_axes`, so a temporal            #
 # inheritance node never got `pin_of`/`edge_of` attached at all.               #
 # --------------------------------------------------------------------------- #
-class _WrapTemporalRoot(Entity, frozen=True):
+class _WrapTemporalRoot(Bitemporal, frozen=True):
     __parallax__ = EntityConfig(
         namespace="parallax.compatibility",
         mutability="transactional",
-        as_of=(
-            AsOfAxisMetadata(
-                dimension="validTime", start_attribute="valid_start", end_attribute="valid_end"
-            ),
-            AsOfAxisMetadata(
-                dimension="transactionTime", start_attribute="tx_start", end_attribute="tx_end"
-            ),
-        ),
         inheritance=FamilyRoot(strategy="table-per-concrete-subtype"),
     )
 
     id: Attr[int] = Field(primary_key=True, pk_generator="none", type="int64")
     amount: Attr[Decimal] = Field(type="decimal(18,2)")
-    valid_start: Attr[dt.datetime] = Field(name="valid_start", column="from_z")
-    valid_end: Attr[dt.datetime] = Field(name="valid_end", column="thru_z")
-    tx_start: Attr[dt.datetime] = Field(name="tx_start", column="in_z")
-    tx_end: Attr[dt.datetime] = Field(name="tx_end", column="out_z")
 
 
 class _WrapTemporalLeaf(_WrapTemporalRoot, frozen=True):

@@ -645,13 +645,13 @@ _INHERITANCE_SET_BASED_UNSUPPORTED_UNREACHABLE_REASON: Final[str] = (
 # (table=...)` on an abstract node) are already rejected by the class
 # frontend's own, DIFFERENT, unclassified error (`test_inheritance_frontend.py`
 # "tableless and rowless"), not by `InheritanceError.rule`. A descendant
-# declaring `EntityConfig(as_of=...)` (098/099's own rule,
-# `inheritance-temporal-axes-not-root-owned`) or its own `optimisticLocking`
-# attribute (102/103's own rule,
+# extending a temporal base of its own (`TxTemporal`/`Bitemporal`; 098/099's
+# own rule, `inheritance-temporal-axes-not-root-owned`) or declaring its own
+# `optimisticLocking` attribute (102/103's own rule,
 # `inheritance-optimistic-locking-not-root-owned`, ADR 0027) is ALSO
 # independently authorable, and likewise rejected by the class frontend's own,
 # DIFFERENT, unclassified error (`test_inheritance_frontend.py`
-# "family SUBCLASS cannot declare EntityConfig(as_of..." /
+# "family SUBCLASS cannot extend the temporal base" /
 # "only the inheritance family root may declare"), joining the table-placement
 # rules in the same posture. No case in this group can reproduce
 # `then.rejectedRule` through the public class surface because the metaclass
@@ -664,7 +664,7 @@ _INHERITANCE_DESCRIPTOR_REJECT_UNREACHABLE_REASON: Final[str] = (
     "authored, so most of these malformed shapes — an unknown parent, a cycle, multiple "
     "roots, a missing root, a redeclared strategy, a duplicate/misplaced tag — have no "
     "idiomatic spelling at all); the table-placement rules AND a descendant's own "
-    "`as_of` / `optimisticLocking` ARE independently authorable, but the class "
+    "temporal base / `optimisticLocking` ARE independently authorable, but the class "
     "frontend's own existing checks raise a different, unclassified error in each case, "
     "not `InheritanceError.rule` — wiring an idiomatic path to the classified "
     "vocabulary is unbuilt infrastructure, not a capability gap this phase closes "

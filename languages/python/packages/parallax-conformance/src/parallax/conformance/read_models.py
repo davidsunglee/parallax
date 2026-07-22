@@ -1,14 +1,15 @@
 """Idiomatic entity classes the API-suite read stories (`read_stories.py`)
 build statements over: real-named mirrors of ``models/balance.yaml`` (a plain
-audit-only temporal entity), ``models/payment.yaml`` (table-per-hierarchy:
+Transaction-Time-Only temporal entity), ``models/payment.yaml`` (table-per-hierarchy:
 ``Payment`` / ``CardPayment`` / ``CashPayment``), ``models/document.yaml``
 (table-per-concrete-subtype: ``Document`` / ``FinancialDocument`` / ``Invoice``
 / ``Receipt`` / ``Memo`` / ``Folder``), the NON-owner portion of
 ``models/animal.yaml`` (table-per-hierarchy: ``Animal`` / ``Pet`` / ``Dog`` /
 ``Cat``), ``models/rate.yaml`` (table-per-concrete-subtype BITEMPORAL:
-``Rate`` / ``DepositRate`` / ``LoanRate`` — the root ALONE declares the
-family's as-of axes; the concrete subtypes declare none of their own, per the
-binding root-ownership decision, m-inheritance "Inherited members"), and
+``Rate`` / ``DepositRate`` / ``LoanRate`` — the root ALONE selects the
+family's ``Bitemporal`` base; the concrete subtypes declare no temporal shape
+of their own, per the binding root-ownership decision, m-inheritance
+"Inherited members"), and
 ``models/person.yaml`` (``Person`` / ``Passport``, a one-to-one dependent
 relationship).
 
@@ -39,12 +40,11 @@ This module deliberately avoids ``from __future__ import annotations`` so the
 metaclass reads the live ``Attr[T]`` / ``Rel[T]`` objects directly.
 """
 
-import datetime as dt
 from decimal import Decimal
 
 from parallax.core import (
-    AsOfAxisMetadata,
     Attr,
+    Bitemporal,
     Entity,
     EntityConfig,
     Field,
@@ -53,6 +53,7 @@ from parallax.core import (
     RelationshipJoin,
     RelationshipTarget,
     ReverseRelationship,
+    TxTemporal,
 )
 from parallax.core.entity.base import Concrete, FamilyRoot
 
@@ -82,25 +83,15 @@ __all__ = [
 
 
 # --------------------------------------------------------------------------- #
-# Balance: audit-only (single Transaction-Time dimension), mirrors models/balance.yaml.   #
+# Balance: Transaction-Time-Only (the TxTemporal base), mirrors               #
+# models/balance.yaml.                                                        #
 # --------------------------------------------------------------------------- #
-class Balance(Entity, frozen=True):
-    __parallax__ = EntityConfig(
-        table="balance",
-        namespace=_NS,
-        mutability="transactional",
-        as_of=(
-            AsOfAxisMetadata(
-                dimension="transactionTime", start_attribute="tx_start", end_attribute="tx_end"
-            ),
-        ),
-    )
+class Balance(TxTemporal, frozen=True):
+    __parallax__ = EntityConfig(table="balance", namespace=_NS, mutability="transactional")
 
     id: Attr[int] = Field(primary_key=True, pk_generator="none", column="bal_id")
     acct_num: Attr[str] = Field(max_length=32)
     value: Attr[Decimal] = Field(type="decimal(18,2)", column="val")
-    tx_start: Attr[dt.datetime] = Field(name="tx_start", column="in_z")
-    tx_end: Attr[dt.datetime] = Field(name="tx_end", column="out_z")
 
 
 # --------------------------------------------------------------------------- #
@@ -245,31 +236,19 @@ class WildBoar(Animal, frozen=True):
 
 # --------------------------------------------------------------------------- #
 # Rate: table-per-concrete-subtype BITEMPORAL family (models/rate.yaml). The   #
-# root ALONE declares the family's as-of axes (m-inheritance "Inherited        #
-# members", the binding root-ownership decision); DepositRate/LoanRate        #
-# inherit them and declare NONE of their own.                                 #
+# root ALONE selects the Bitemporal base (m-inheritance "Inherited members",  #
+# the binding root-ownership decision); DepositRate/LoanRate inherit the      #
+# family's temporal shape and declare NONE of their own.                      #
 # --------------------------------------------------------------------------- #
-class Rate(Entity, frozen=True):
+class Rate(Bitemporal, frozen=True):
     __parallax__ = EntityConfig(
         namespace=_NS,
         mutability="transactional",
         inheritance=FamilyRoot(strategy="table-per-concrete-subtype"),
-        as_of=(
-            AsOfAxisMetadata(
-                dimension="validTime", start_attribute="valid_start", end_attribute="valid_end"
-            ),
-            AsOfAxisMetadata(
-                dimension="transactionTime", start_attribute="tx_start", end_attribute="tx_end"
-            ),
-        ),
     )
 
     id: Attr[int] = Field(primary_key=True, pk_generator="none", type="int64")
     amount: Attr[Decimal] = Field(type="decimal(18,2)")
-    valid_start: Attr[dt.datetime] = Field(name="valid_start", column="from_z")
-    valid_end: Attr[dt.datetime] = Field(name="valid_end", column="thru_z")
-    tx_start: Attr[dt.datetime] = Field(name="tx_start", column="in_z")
-    tx_end: Attr[dt.datetime] = Field(name="tx_end", column="out_z")
 
 
 class DepositRate(Rate, frozen=True):

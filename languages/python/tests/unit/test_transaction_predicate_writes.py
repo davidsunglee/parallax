@@ -32,7 +32,7 @@ from _transact_support import (
 import inheritance_models as im
 import mirrored_models as mm
 from parallax.conformance.story_models import Order
-from parallax.core import AsOfAxisMetadata, Attr, Entity, EntityConfig, Field, inheritance
+from parallax.core import Attr, Bitemporal, Entity, EntityConfig, Field, TxTemporal, inheritance
 from parallax.core.db_port import JsonDocument, Row
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity import metamodel
@@ -45,30 +45,24 @@ from parallax.snapshot.handle import Database, Transaction
 pytestmark = pytest.mark.unit
 
 
-# A local audit-only, value-object-bearing entity with the `supplier.yaml`
-# shape from `m-value-object-047`. The minimal self-contained fixture keeps
-# this predicate-write test independent of the broader model mirror.
+# A local Transaction-Time-Only, value-object-bearing entity with the
+# `supplier.yaml` shape from `m-value-object-047`. The minimal self-contained
+# fixture keeps this predicate-write test independent of the broader model
+# mirror.
 class WhereLedgerAddress(ValueObject, frozen=True):
     city: Attr[str] = VoField(type="string")
 
 
-class WhereLedger(Entity, frozen=True):
+class WhereLedger(TxTemporal, frozen=True):
     __parallax__ = EntityConfig(
         table="where_ledger",
         namespace="parallax.compatibility",
         mutability="transactional",
-        as_of=(
-            AsOfAxisMetadata(
-                dimension="transactionTime", start_attribute="tx_start", end_attribute="tx_end"
-            ),
-        ),
     )
 
     id: Attr[int] = Field(primary_key=True, pk_generator="none", type="int64")
     name: Attr[str] = Field(max_length=64)
     address: Attr[WhereLedgerAddress | None] = Field(nullable=True, default=None)
-    tx_start: Attr[dt.datetime] = Field(name="tx_start", column="in_z")
-    tx_end: Attr[dt.datetime] = Field(name="tx_end", column="out_z")
 
 
 _WHERE_LEDGER_META = metamodel([WhereLedger])
@@ -81,29 +75,17 @@ class WhereRectangleAddress(ValueObject, frozen=True):
     city: Attr[str] = VoField(type="string")
 
 
-class WhereRectangle(Entity, frozen=True):
+class WhereRectangle(Bitemporal, frozen=True):
     __parallax__ = EntityConfig(
         table="where_rectangle",
         namespace="parallax.compatibility",
         mutability="transactional",
-        as_of=(
-            AsOfAxisMetadata(
-                dimension="validTime", start_attribute="valid_start", end_attribute="valid_end"
-            ),
-            AsOfAxisMetadata(
-                dimension="transactionTime", start_attribute="tx_start", end_attribute="tx_end"
-            ),
-        ),
     )
 
     id: Attr[int] = Field(primary_key=True, pk_generator="none", type="int64")
     acct_num: Attr[str] = Field(max_length=32)
     value: Attr[Decimal] = Field(type="decimal(18,2)")
     address: Attr[WhereRectangleAddress | None] = Field(nullable=True, default=None)
-    valid_start: Attr[dt.datetime] = Field(name="valid_start", column="from_z")
-    valid_end: Attr[dt.datetime] = Field(name="valid_end", column="thru_z")
-    tx_start: Attr[dt.datetime] = Field(name="tx_start", column="in_z")
-    tx_end: Attr[dt.datetime] = Field(name="tx_end", column="out_z")
 
 
 _WHERE_RECTANGLE_META = metamodel([WhereRectangle])

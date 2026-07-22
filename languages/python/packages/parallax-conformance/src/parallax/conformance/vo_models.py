@@ -48,11 +48,9 @@ A ``Database`` exercising this family connects with
 mirroring ``animal_owner.ANIMAL_OWNER_REGISTRY``'s own precedent exactly.
 """
 
-import datetime as dt
-
 from parallax.core import (
-    AsOfAxisMetadata,
     Attr,
+    Bitemporal,
     Entity,
     EntityConfig,
     Field,
@@ -62,6 +60,7 @@ from parallax.core import (
     RelationshipJoin,
     RelationshipTarget,
     ReverseRelationship,
+    TxTemporal,
 )
 from parallax.core.entity.base import EntityRegistry
 from parallax.core.entity.value_object import ValueObject, VoField
@@ -113,51 +112,24 @@ class Address(ValueObject, frozen=True):
     phones: Attr[tuple[Phone, ...]] = VoField(default=())
 
 
-class Supplier(Entity, frozen=True):
-    """Mirror of ``models/supplier.yaml`` (Transaction-Time-only)."""
+class Supplier(TxTemporal, frozen=True):
+    """Mirror of ``models/supplier.yaml`` (Transaction-Time-Only)."""
 
-    __parallax__ = EntityConfig(
-        table="supplier",
-        namespace=_NS,
-        mutability="transactional",
-        as_of=(
-            AsOfAxisMetadata(
-                dimension="transactionTime", start_attribute="tx_start", end_attribute="tx_end"
-            ),
-        ),
-    )
+    __parallax__ = EntityConfig(table="supplier", namespace=_NS, mutability="transactional")
 
     id: Attr[int] = Field(primary_key=True, pk_generator="none", column="sup_id", type="int64")
     name: Attr[str] = Field(max_length=64)
-    tx_start: Attr[dt.datetime] = Field(name="tx_start", column="in_z")
-    tx_end: Attr[dt.datetime] = Field(name="tx_end", column="out_z")
     address: Attr[Address | None] = Field(nullable=True, default=None)
 
 
-class Branch(Entity, frozen=True):
+class Branch(Bitemporal, frozen=True):
     """Mirror of ``models/branch.yaml`` (bitemporal: the SAME address
     composite ``Supplier`` uses, over both axes)."""
 
-    __parallax__ = EntityConfig(
-        table="branch",
-        namespace=_NS,
-        mutability="transactional",
-        as_of=(
-            AsOfAxisMetadata(
-                dimension="validTime", start_attribute="valid_start", end_attribute="valid_end"
-            ),
-            AsOfAxisMetadata(
-                dimension="transactionTime", start_attribute="tx_start", end_attribute="tx_end"
-            ),
-        ),
-    )
+    __parallax__ = EntityConfig(table="branch", namespace=_NS, mutability="transactional")
 
     id: Attr[int] = Field(primary_key=True, pk_generator="none", column="br_id", type="int64")
     name: Attr[str] = Field(max_length=64)
-    valid_start: Attr[dt.datetime] = Field(name="valid_start", column="from_z")
-    valid_end: Attr[dt.datetime] = Field(name="valid_end", column="thru_z")
-    tx_start: Attr[dt.datetime] = Field(name="tx_start", column="in_z")
-    tx_end: Attr[dt.datetime] = Field(name="tx_end", column="out_z")
     address: Attr[Address | None] = Field(nullable=True, default=None)
 
 

@@ -20,7 +20,7 @@ from typing import Final, cast
 
 import mirrored_models as mm
 from parallax.conformance import models
-from parallax.core import AsOfAxisMetadata, Attr, Entity, EntityConfig, Field
+from parallax.core import Attr, Bitemporal, EntityConfig, Field
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import Bind, DbPort, Row
 from parallax.core.descriptor import Metamodel
@@ -78,28 +78,16 @@ FIXED = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
 # `pos_id`/`val`, while the assertions below pin emitted SQL against
 # `where_position`/`id`/`value`. Swapping would rewrite every one of them for no
 # gain, so the local fixture stays.
-class WherePosition(Entity, frozen=True):
+class WherePosition(Bitemporal, frozen=True):
     __parallax__ = EntityConfig(
         table="where_position",
         namespace="parallax.compatibility",
         mutability="transactional",
-        as_of=(
-            AsOfAxisMetadata(
-                dimension="validTime", start_attribute="valid_start", end_attribute="valid_end"
-            ),
-            AsOfAxisMetadata(
-                dimension="transactionTime", start_attribute="tx_start", end_attribute="tx_end"
-            ),
-        ),
     )
 
     id: Attr[int] = Field(primary_key=True, pk_generator="none", type="int64")
     acct_num: Attr[str] = Field(max_length=32)
     value: Attr[Decimal] = Field(type="decimal(18,2)")
-    valid_start: Attr[dt.datetime] = Field(name="valid_start", column="from_z")
-    valid_end: Attr[dt.datetime] = Field(name="valid_end", column="thru_z")
-    tx_start: Attr[dt.datetime] = Field(name="tx_start", column="in_z")
-    tx_end: Attr[dt.datetime] = Field(name="tx_end", column="out_z")
 
 
 WHERE_POSITION_META = metamodel([WherePosition])

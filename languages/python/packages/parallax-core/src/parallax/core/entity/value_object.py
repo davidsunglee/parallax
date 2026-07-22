@@ -13,8 +13,9 @@ An entity declares a value-object member via an ordinary ``Attr[VOClass]`` (or
 ``Attr[tuple[VOClass, ...]]``) field (``parallax.core.entity.base`` detects this
 and routes it into the compiled ``EntityRecord.value_objects`` rather than
 ``attributes`` — the metaclass threads the VO class's own compiled structure
-into the owning entity's record exactly as the ``EntityConfig.as_of`` temporal
-spelling threads declared axes, per the D-7 spelling precedent).
+into the owning entity's record exactly as a temporal framework base
+(``TxTemporal`` / ``Bitemporal``) threads its injected axes, per the D-7
+spelling precedent).
 
 ``ValueObject`` carries no table, primary key, or relationships — value objects
 have no identity (m-value-object contract). This scope depends only on

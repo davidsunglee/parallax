@@ -26,8 +26,8 @@ import datetime as dt
 from decimal import Decimal
 
 from parallax.core import (
-    AsOfAxisMetadata,
     Attr,
+    Bitemporal,
     Entity,
     EntityConfig,
     Field,
@@ -70,36 +70,19 @@ class Wallet(Entity, frozen=True):
     balance: Attr[Decimal] = Field(type="decimal(18,2)")
 
 
-class Position(Entity, frozen=True):
-    """Mirror of ``models/position.yaml`` (full bitemporal — the Phase 8
-    signature shape): the write-family stories' own bitemporal-insert /
-    ``insertUntil`` / ``updateUntil`` witness (``m-bitemp-write-001/-003``,
-    D-31, COR-3 Phase 8 increment 7 completion round). Every axis-governed
-    attribute (``valid_start``/``valid_end``/``tx_start``/``tx_end``) is
-    optional at construction (D-31): a fresh instance names only its payload,
-    and the write path stamps the rest."""
+class Position(Bitemporal, frozen=True):
+    """Mirror of ``models/position.yaml`` (full bitemporal): the write-family
+    stories' own bitemporal-insert / ``insertUntil`` / ``updateUntil`` witness
+    (``m-bitemp-write-001/-003``, D-31). Every axis-governed attribute
+    (``valid_start``/``valid_end``/``tx_start``/``tx_end``) is optional at
+    construction (D-31): a fresh instance names only its payload, and the
+    write path stamps the rest."""
 
-    __parallax__ = EntityConfig(
-        table="position",
-        namespace=_NS,
-        mutability="transactional",
-        as_of=(
-            AsOfAxisMetadata(
-                dimension="validTime", start_attribute="valid_start", end_attribute="valid_end"
-            ),
-            AsOfAxisMetadata(
-                dimension="transactionTime", start_attribute="tx_start", end_attribute="tx_end"
-            ),
-        ),
-    )
+    __parallax__ = EntityConfig(table="position", namespace=_NS, mutability="transactional")
 
     id: Attr[int] = Field(primary_key=True, pk_generator="none", column="pos_id", type="int64")
     acct_num: Attr[str] = Field(max_length=32, column="acct_num")
     value: Attr[Decimal] = Field(type="decimal(18,2)", column="val")
-    valid_start: Attr[dt.datetime] = Field(name="valid_start", column="from_z")
-    valid_end: Attr[dt.datetime] = Field(name="valid_end", column="thru_z")
-    tx_start: Attr[dt.datetime] = Field(name="tx_start", column="in_z")
-    tx_end: Attr[dt.datetime] = Field(name="tx_end", column="out_z")
 
 
 class Order(Entity, frozen=True):
