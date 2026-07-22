@@ -401,6 +401,153 @@ referenced by a compatibility case. *How* a language populates its in-memory mod
 (descriptor files, annotations, decorators, builders) is a per-language choice;
 the serializable canonical form is the portable backbone.
 
+## Descriptor ingestion
+
+Descriptor ingestion is a fixed three-phase contract. Each phase either passes
+the document forward or fails with that phase's error; no phase reports another
+phase's failures, no failing phase produces an Unresolved Metamodel, and only a
+schema-valid document reaches semantic formation.
+
+| Phase | Judged against | Failure |
+|---|---|---|
+| 1 — syntax | the format's grammar (JSON or YAML text) | `DescriptorSyntaxError` |
+| 2 — schema | [`metamodel.schema.json`](../schemas/metamodel.schema.json) (JSON Schema Draft 2020-12) | `DescriptorSchemaError` |
+| 3 — semantic | adapter normalization, then Model Formation over the Unresolved Metamodel | adapter rejection, or `MetamodelValidationError` (`m-model-formation`) |
+
+```text
+DescriptorError(ValueError)
+├── DescriptorSyntaxError
+│     code = "descriptor-invalid-syntax"
+│     format: json | yaml
+│     line, column: one-based source coordinates | absent
+│     cause: the parser failure, preserved
+└── DescriptorSchemaError
+      code = "descriptor-schema-invalid"
+      violations: nonempty immutable canonically ordered
+                  sequence<DescriptorSchemaViolation>
+
+DescriptorSchemaViolation(path, rule, message)
+```
+
+**Phase 1 — syntax.** Text that is not well-formed in its format raises
+`DescriptorSyntaxError` carrying the attempted `format`, optional one-based
+`line`/`column` source coordinates, and the preserved parser `cause`. Source
+coordinates are parser-dependent, so a conforming adapter MAY omit them; the
+code and format are mandatory. Preserving a cause means retaining the original
+failure object where the host language permits, with native exception
+chaining.
+
+**Phase 2 — schema.** The decoded document is validated against the complete
+canonical schema. A conforming adapter evaluates the whole document rather
+than stopping at the first failure and raises one `DescriptorSchemaError`
+carrying every violation. A `DescriptorSchemaViolation` is exactly:
+
+- `path` — the document path from the document root to the value the failed
+  keyword applied to: a sequence of object member names and array indices. The
+  document root is the empty path.
+- `rule` — the failing JSON-Schema keyword (`required`, `enum`, `pattern`,
+  `additionalProperties`, `oneOf`, …). The schema is the sole rule vocabulary;
+  no second spec-owned rule name set exists.
+- `message` — explanatory text, excluded from equality and ordering.
+
+Branching keywords collapse: a failed `oneOf`, `anyOf`, or `not` is exactly
+one violation at the location the keyword applies to, with that keyword as its
+`rule`. Per-branch sub-failures are not reported — raw per-branch output is
+validator-dependent, and the branch set is the schema's concern, not the
+document's. Every other applicator (`allOf`, `if`/`then`/`else`, `properties`,
+`items`, `prefixItems`, `$ref`) is transparent: its component failures report
+at their own document locations under their own failing keywords.
+
+Violation equality is `(path, rule)`, and the violation sequence is
+duplicate-free: violations equal under `(path, rule)` are one violation (e.g.
+several required members missing from one object are one `required` violation
+there). Canonical ordering is `(path, rule)`:
+
+- a strict path prefix orders before its extensions;
+- paths differing at a segment order by the first differing segment — member
+  names compare by codepoint, array indices numerically. The two differing
+  segments always address the same document node, so they are always the same
+  kind;
+- equal paths order by `rule`, codepoint order.
+
+Frontend, validator, and emission order never participate. The schema's
+one-or-many-entities requirement makes an empty document a phase-2 failure:
+Model Formation never receives an empty Unresolved Metamodel from this
+adapter. Both failing phases are pinned by the canonical descriptor-error
+fixtures below.
+
+**Phase 3 — semantic.** Only a schema-valid document is normalized to the
+`m-metamodel` Unresolved Metamodel seam. The adapter — not the schema, and not
+the fixed resolver — completes normalization first: it expands every omitted
+`column` to its conventional member name and populates omitted Sequence
+defaults, so candidate and accepted Metadata never expose an absent Storage
+Location or a partially configured Sequence. The adapter also owns the
+representation-bound semantic rejections this specification names under "Type
+spellings" and "Value encodings" — out-of-bounds or non-canonical decimal
+parameters, non-canonical decimal digit strings, and non-canonical float
+renderings are schema-valid text rejected here, before the Unresolved seam.
+Beyond that seam, failures are representation-independent `MetamodelIssue` /
+`MetamodelValidationError` values: a descriptor document path never appears in
+a `MetamodelIssue` or `ModelLocation`. A frontend MAY map semantic locations
+back to source coordinates separately.
+
+### Descriptor-error fixtures
+
+The reference harness asserts both failing phases against the canonical
+invalid-descriptor fixtures under `core/compatibility/descriptor-errors/`.
+A fixture pairs one raw document with one expectation sidecar by stem; each
+stem has exactly one document, judged by its own format's parser:
+
+```text
+<stem>.json | <stem>.yaml   the raw invalid document
+<stem>.expected.yaml        the expectation sidecar
+```
+
+A sidecar is a mapping carrying exactly the keys its phase admits — no
+others:
+
+| Key | Requirement |
+|---|---|
+| `phase` | the closed phase vocabulary: `syntax` or `schema` |
+| `code` | the phase's code: `descriptor-invalid-syntax` for `syntax`, `descriptor-schema-invalid` for `schema` |
+| `violations` | required for `schema` sidecars; absent for `syntax` sidecars |
+
+`violations` is the nonempty, duplicate-free expected violation list in the
+canonical `(path, rule)` order defined above. Each entry carries exactly
+`path` — the sequence of object member names and array indices from the
+document root, empty for the root itself — and `rule` — the failing
+JSON-Schema keyword. `message` is explanatory text excluded from violation
+identity, so sidecars never carry it.
+
+## Canonical export
+
+Canonical export is the inverse adapter: an accepted Metamodel is exportable
+to the canonical document, JSON, and YAML forms by contract, with no renewed
+validation and no state change. Export is deterministic and all-or-none:
+
+- repeated document exports of one accepted Metamodel are structurally equal;
+- repeated JSON and YAML exports are byte-identical, and export composes with
+  the serde round-trip law above: a model authored in canonical form
+  reproduces its exact bytes;
+- export returns its complete result or fails with no partial output.
+
+An unexpected conversion or serialization defect raises:
+
+```text
+DescriptorExportError(RuntimeError)
+  code = "descriptor-export-failed"
+  target: document | json | yaml
+  cause: the original defect, preserved
+```
+
+`DescriptorExportError` is an adapter-defect boundary like
+`FormationContractError` (`m-model-formation`), not a validation error: an
+accepted Metamodel is exportable by contract, so export performs no model
+validation and can fail only through an implementation defect. It leaves the
+accepted Metamodel unchanged, and it is never raised as or translated to a
+`DescriptorError`, whose two subtypes are ingestion failures over documents.
+The reference harness asserts export byte-determinism over every corpus model.
+
 ## Contract activation
 
 This descriptor revision is a breaking canonical-form change. The schema,

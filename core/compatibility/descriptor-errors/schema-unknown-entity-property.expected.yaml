@@ -1,0 +1,8 @@
+# A property outside the closed entity key set fails the containing object's
+# `additionalProperties: false`, reported at the object that owns the closed
+# key set, not at the unknown key.
+phase: schema
+code: descriptor-schema-invalid
+violations:
+  - path: [entity]
+    rule: additionalProperties

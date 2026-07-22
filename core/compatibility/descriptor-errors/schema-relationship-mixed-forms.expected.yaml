@@ -1,0 +1,9 @@
+# A relationship is exactly one branch of the closed defining/reverse union.
+# A declaration carrying both a defining join and `reverseOf` fails the union
+# as one `oneOf` violation at the relationship object — the branching-keyword
+# collapse rule — never as per-branch sub-errors.
+phase: schema
+code: descriptor-schema-invalid
+violations:
+  - path: [entities, 0, relationships, 0]
+    rule: oneOf

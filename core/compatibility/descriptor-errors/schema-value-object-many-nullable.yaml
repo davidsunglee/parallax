@@ -1,0 +1,14 @@
+entity:
+  name: Customer
+  table: customer
+  attributes:
+    - name: id
+      type: int64
+      primaryKey: true
+  valueObjects:
+    - name: tags
+      multiplicity: many
+      nullable: true
+      attributes:
+        - name: value
+          type: string

@@ -1,0 +1,9 @@
+entity:
+  name: Customer
+  table: customer
+  attributes:
+    - name: id
+      type: int64
+      primaryKey: true
+  valueObjects:
+    - name: address

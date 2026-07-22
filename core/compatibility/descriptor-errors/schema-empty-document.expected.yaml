@@ -1,0 +1,10 @@
+# An empty document fails the schema phase — the root oneOf requires either
+# `entity` or a non-empty `entities` — so Model Formation never receives an
+# empty Unresolved Metamodel from the descriptor adapter. The failed oneOf is
+# one violation at the branching path (here the document root), never
+# per-branch sub-errors.
+phase: schema
+code: descriptor-schema-invalid
+violations:
+  - path: []
+    rule: oneOf

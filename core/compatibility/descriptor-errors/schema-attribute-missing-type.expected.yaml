@@ -1,0 +1,8 @@
+# A missing required member reports `required` at the object that omits it —
+# array indices are ordinary path segments, so the failing attribute object is
+# addressed positionally.
+phase: schema
+code: descriptor-schema-invalid
+violations:
+  - path: [entity, attributes, 0]
+    rule: required

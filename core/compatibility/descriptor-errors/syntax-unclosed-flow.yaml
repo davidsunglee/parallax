@@ -1,0 +1,4 @@
+entity:
+  name: Order
+  table: orders
+  attributes: [

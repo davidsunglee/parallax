@@ -1,0 +1,6 @@
+# Phase-1 minimal pair, JSON side: text truncated mid-object is a syntax
+# failure judged by a JSON parser (a YAML parser must not be substituted — it
+# accepts text a JSON parser rejects). Source coordinates are optional, so
+# only the phase and stable code are asserted.
+phase: syntax
+code: descriptor-invalid-syntax
