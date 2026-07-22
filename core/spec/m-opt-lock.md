@@ -18,9 +18,9 @@ and the Temporal Facet through `m-model-formation`. The Rule Set owns exactly
 `opt-lock-multiple-attributes` (more than one effective explicit version
 Attribute) and `opt-lock-temporal-explicit-attribute` (a Transaction-Time Entity
 also declares an explicit version Attribute). Its Model Compiler produces the
-immutable `OptimisticLockFacet` under `FacetKey(m-opt-lock)`, identifying each
-Entity's effective explicit or Transaction-Time-derived optimistic key without
-copying Attribute Metadata.
+immutable Optimistic Lock Facet ("The Optimistic Lock Facet", below),
+identifying each Entity's effective explicit or Transaction-Time-derived
+optimistic key without copying Attribute Metadata.
 
 Optimistic locking is a **per-unit-of-work participation mode** the caller
 selects (`m-unit-work` strategy selection — `concurrency: optimistic`), not a
@@ -32,6 +32,43 @@ The metamodel only **names** the version column (`optimisticLocking: true`,
 `m-descriptor`); whether the gate is emitted is the unit of work's choice.
 Optimistic mode suits read-mostly workloads and detached edits (`m-detach`), where
 holding a lock across the edit is undesirable or impossible.
+
+## The Optimistic Lock Facet
+
+The Model Compiler consumes the Inheritance and Temporal Facets and produces
+the immutable `OptimisticLockFacet` under `FacetKey(m-opt-lock)`; typed access
+is this module's `view(model) -> OptimisticLockFacet` function.
+
+```text
+OptimisticLockFacet
+  key(EntityIdentity) -> OptimisticKey | absent
+
+OptimisticKey =
+    Unversioned
+  | ExplicitVersion(attribute: AttributeIdentity)
+  | TransactionTimeDerived(start_attribute: AttributeIdentity)
+```
+
+`key` is total, nonthrowing, and expected amortized O(1); it returns absent
+only for an identity outside the accepted Metamodel. It is family-uniform:
+every position in one inheritance family returns the same value, derived from
+the family root, and a standalone Entity is its own root.
+
+- `ExplicitVersion` carries the declaring Attribute Identity of the effective
+  `optimisticLocking: true` Attribute — the root's identity on every
+  descendant view, preserved rather than copied.
+- `TransactionTimeDerived` applies to every Entity whose Temporal Facet shape
+  declares Transaction Time and carries that axis's start Attribute Identity —
+  the observed `tx_start` (physical `in_z`) version analogue below. The two
+  keyed variants are mutually exclusive because a temporal Entity with an
+  explicit version Attribute is rejected
+  (`opt-lock-temporal-explicit-attribute`), and no supported temporal shape
+  lacks Transaction Time.
+- `Unversioned` is the remaining case: a non-temporal Entity with no effective
+  version Attribute. Its writes emit no gate and advance no version.
+
+The facet copies no Attribute Metadata; both keyed variants carry identities
+that resolve through the Metamodel's local lookup.
 
 ## The version column
 

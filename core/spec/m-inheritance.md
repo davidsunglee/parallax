@@ -348,11 +348,124 @@ owns the complete code-set declaration; this module owns each code's meaning.
   cross-category shadowing (`inheritance-member-shadowing`). Disjoint sibling
   branches may reuse a name.
 
+## The Inheritance Facet
+
 After validation, the `m-inheritance` Model Compiler produces the immutable
-`InheritanceFacet` under `FacetKey(m-inheritance)`. It owns ancestry, family
-identity, effective member applicability, strategy, table selection, and
-effective root-owned persistence/temporal/optimistic facts. It retains
-declaration ownership and never copies inherited members into local Metadata.
+`InheritanceFacet` under `FacetKey(m-inheritance)`. Generic
+`Metamodel.facet(...)` retrieval stays hidden behind this module's typed
+`view(model) -> InheritanceFacet` function (`m-model-formation` "Facet
+ownership"). The facet owns ancestry, family identity, effective member
+applicability, strategy, table selection, and the effective root-owned
+Persistence Mode; the Temporal and Optimistic Lock facets derive their own
+root-owned facts through this facet rather than this facet repeating them.
+Every Metadata value the facet returns is the accepted declaration value
+itself — declaring identities and provenance preserved, so an inherited member
+still names the ancestor that introduced it — never a copy, and the facet
+neither mutates nor extends the local declaration view.
+
+```text
+InheritanceFacet
+  entity(EntityIdentity) -> InheritanceEntityView | absent
+  position(members: nonempty sequence<EntityIdentity>)
+    -> InheritancePositionView | absent
+
+InheritanceEntityView
+  entity: EntityIdentity
+  root: EntityIdentity
+  strategy: InheritanceStrategy | absent
+  ancestry: nonempty immutable sequence<EntityIdentity>
+  concrete_subtypes: immutable sequence<EntityIdentity>
+  container: StorageContainer | absent
+  tag_column: string | absent
+  tag_value: string | absent
+  persistence: PersistenceMode
+  applicable_attributes: immutable sequence<AttributeMetadata>
+  applicable_relationships: immutable sequence<RelationshipDeclaration>
+  applicable_value_objects: immutable sequence<ValueObjectMetadata>
+  superset_attributes: immutable sequence<AttributeMetadata>
+  superset_value_objects: immutable sequence<ValueObjectMetadata>
+  applicable_attribute(local_name) -> AttributeMetadata | absent
+  applicable_relationship(local_name) -> RelationshipDeclaration | absent
+  applicable_value_object(local_name) -> ValueObjectMetadata | absent
+
+InheritancePositionView
+  concrete_subtypes: immutable sequence<EntityIdentity>
+  superset_attributes: immutable sequence<AttributeMetadata>
+  superset_value_objects: immutable sequence<ValueObjectMetadata>
+```
+
+`entity(...)` is total, nonthrowing, and expected amortized O(1); it returns
+absent only for an identity outside the accepted Metamodel. It covers
+**every** accepted Entity, not only inheritance participants: a standalone
+Entity has the trivial view whose `root` is itself, whose `ancestry` and
+`concrete_subtypes` are `[entity]`, and whose `strategy`, `tag_column`, and
+`tag_value` are absent. Every view member and named lookup is an expected
+amortized O(1) read of formation output — the compiler precomputes these
+answers once, so behavioral modules never repeat ancestry walks at query or
+write time.
+
+- `root` names the family's root (the family identity); `ancestry` is the
+  parent chain `root -> … -> entity` in that order.
+- `concrete_subtypes` is the position's **effective concrete-subtype set** in
+  the canonical alphabetical order above: every concrete node at or below the
+  position.
+- `strategy` is the root-declared family strategy, present on every
+  participant's view.
+- `container` is the one physical Storage Container a read or write of the
+  position targets: the root's shared table on every table-per-hierarchy view,
+  the concrete subtype's own table under table-per-concrete-subtype, and the
+  declared table of a standalone Entity. It is absent exactly for a
+  table-per-concrete-subtype root or abstract subtype, whose reads lower to
+  per-concrete branches (`m-sql`).
+- `tag_column` is the root strategy's tag column, present on every
+  table-per-hierarchy view; `tag_value` is additionally present on a
+  table-per-hierarchy concrete subtype's view. Both are absent under
+  table-per-concrete-subtype and for a standalone Entity.
+- `persistence` is the effective root-owned Persistence Mode and is never
+  absent; a standalone Entity's view carries its own normalized value.
+- The `applicable_*` sequences are the position's effective navigable members:
+  the ancestry chain's declared members in ancestry order, each ancestor's in
+  declaration order. The `applicable_*` lookups resolve one local name across
+  the whole chain; ancestry-wide name uniqueness
+  (`inheritance-member-shadowing`) makes each lookup unambiguous. A concrete
+  subtype's `applicable_attributes` is exactly the accepted-field chain of a
+  concrete-subtype write and the inherited column chain the physical mapping
+  derives.
+- `superset_attributes` and `superset_value_objects` are the abstract-read
+  projection supersets (`m-sql`) and equal the corresponding
+  `position([entity])` members exactly (the ordering rule below).
+
+`position(...)` is the projection contract for an **arbitrary resolved
+position**: the resolved members of a `narrow`'s authored `to` list — each a
+root, abstract subtype, or concrete subtype — or one member for an ordinary
+position; a standalone Entity is its own trivial one-member position. It is
+total and nonthrowing, returning absent exactly when a member identity is
+outside the accepted Metamodel or the members do not all belong to one
+inheritance family (a standalone Entity forms a position only alone).
+Duplicate and overlapping members are valid input — the position denotes
+their union — and the facet resolves without re-validating: a `narrow`'s
+nonempty-subset validity rule stays with the operation algebra, so a position
+whose effective set is empty returns empty sequences rather than absence.
+
+- `concrete_subtypes` is the position's effective concrete-subtype set — the
+  union of every member's effective set — in the canonical alphabetical order
+  above.
+- `superset_attributes` and `superset_value_objects` are the projection
+  supersets over that effective set. Ancestors contribute first: every
+  ancestor of an effective-set member that is not itself in the set
+  contributes its declared members, with ancestors ordered by traversing the
+  effective set in canonical order and appending each member's root-first
+  ancestor chain, keeping first encounters. Then every effective-set member,
+  in canonical order, contributes its own declared members. Each declaring
+  Entity contributes exactly once, its members in declaration order, so every
+  Attribute and Value Object appears exactly once with its declaring identity
+  preserved. The framework-owned tag column is not a declared Attribute and
+  is never in these sequences; `m-sql` projects it separately.
+
+`position(...)` is expected output-sensitive: its cost is linear in the
+member count plus the returned view's size — resolution over precomputed
+per-Entity formation output, never a repeated whole-model walk — and every
+returned sequence is immutable with O(1) access.
 
 ## Prior art (Reladomo)
 

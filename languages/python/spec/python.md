@@ -884,7 +884,10 @@ distributions of §8. During the COR-45 contract transition, `m-metamodel`,
 `m-model-formation`, and `m-relationship` are distinct normative module rows but
 are co-located in the existing `parallax.core.descriptor` enforcement scope.
 COR-46 separates those scopes as it moves behavioral consumers to the Metamodel
-Interface; COR-45 does not pre-implement that dependency-graph refactor.
+Interface; COR-45 does not pre-implement that dependency-graph refactor. The
+complete COR-46 target topology is specified in this section's closing
+subsection ("The target topology after the metamodel dependency inversion");
+the active rows and fence below govern until that flip lands.
 import-linter forbids every production
 scope-pair import the DAG does not permit — the generated forbidden-edge
 complement below, with the conformance-family scopes exempted as importers
@@ -1078,6 +1081,91 @@ parallax.postgres --> parallax.core.dialect
   `parallax.postgres`, and the composition root in application/test code. Only
   the composition root imports the concrete adapter; the port imports nothing
   application-specific.
+
+### The target topology after the metamodel dependency inversion
+
+Everything above this heading is the **active** graph the gates enforce
+today. This subsection is the **target** graph COR-46 activates as one atomic
+flip: the `core/spec/modules.md` `dependency-graph` edit, this section's row
+and fence replacements, the DAG-sync tool's module-to-scope map, and the
+regenerated import-linter complement change together and leave every gate
+green. When the flip lands, the content below replaces the active rows and
+this subsection is deleted; no temporary row survives. The design rationale,
+the facet-owned delegations that replace today's descriptor-record reads, and
+the acceptance criteria are recorded in
+`docs/architecture/parallax-python-metamodel-hub-design.md` ("Final
+dependency graphs and enforcement scopes").
+
+**Behavioral scopes.** The core flip removes exactly
+`m-pk-gen --> m-descriptor`, `m-inheritance --> m-descriptor`, and
+`m-value-object --> m-descriptor` from the core DAG, and the temporary
+co-location rows become dedicated scopes:
+
+| Behavioral module | Target enforcement scope | Allowed direct dependencies |
+|---|---|---|
+| `m-metamodel` | `parallax.core.metamodel` | `m-core` |
+| `m-model-formation` | `parallax.core.model_formation` | `m-metamodel` |
+| `m-relationship` | `parallax.core.relationship` | `m-metamodel`, `m-model-formation` |
+| `m-descriptor` | `parallax.core.descriptor` (sole owner of the scope) | `m-core`, `m-metamodel` |
+| `m-pk-gen` | `parallax.core.pk_gen` | `m-metamodel` |
+| `m-inheritance` | `parallax.core.inheritance` | `m-metamodel`, `m-model-formation` |
+| `m-value-object` | `parallax.core.value_object` | `m-metamodel`, `m-model-formation` |
+
+Every other behavioral row keeps mirroring the core DAG mechanically.
+
+**Composition root.** `parallax.core._formation_profile` becomes a declared
+support scope whose grants are exactly the formation runner plus every module
+whose Formation Manifest row supplies a Rule Set or compiler; `m-pk-gen`
+supplies neither and is not imported. Its only production importer is the
+seam that seals a model — the temporary Entity-frontend adapter inside
+`parallax.core.entity` until the hub replacement, then `entity._hub`.
+
+```text
+parallax.core._formation_profile --> parallax.core.model_formation
+parallax.core._formation_profile --> parallax.core.metamodel
+parallax.core._formation_profile --> parallax.core.inheritance
+parallax.core._formation_profile --> parallax.core.value_object
+parallax.core._formation_profile --> parallax.core.relationship
+parallax.core._formation_profile --> parallax.core.temporal_read
+parallax.core._formation_profile --> parallax.core.opt_lock
+```
+
+**Support scopes.** The complete target grant set. A support scope's row
+declares **every** direct import it makes, even where the transitive closure
+already permits the import mechanically — the closure-based complement cannot
+reject an undeclared-but-reachable direct import, so the row is the only
+honest declaration. The rows below therefore also declare today's
+undeclared-but-closure-legal direct imports (for example the Entity
+frontend's `parallax.core.inheritance` imports, the handle's
+`parallax.core.dialect` imports, and the postgres adapter's
+`parallax.core.base` imports), and they replace every descriptor-record read
+with `m-metamodel` and the typed owner facets. Behavioral scopes are
+different: `modules.md` lists direct edges only and implies transitives, so a
+behavioral module's reliance on a transitively reachable module remains
+by-design legal.
+
+| Support scope | Allowed direct dependencies after the flip |
+|---|---|
+| `parallax.core.entity` | `m-core`, `m-descriptor`, `m-metamodel`, `m-inheritance`, `m-relationship`, `m-op-algebra`, `m-temporal-read`, `parallax.core._formation_profile` |
+| `parallax.snapshot.handle` | `parallax.snapshot.materialize`, `parallax.core.entity`, `m-core`, `m-metamodel`, `m-op-algebra`, `m-inheritance`, `m-temporal-read`, `m-deep-fetch`, `m-navigate`, `m-dialect`, `m-db-port`, `m-sql`, `m-unit-work`, `m-read-lock`, `m-auto-retry`, `m-opt-lock`, `m-batch-write`, `m-audit-write`, `m-bitemp-write` |
+| `parallax.snapshot.handle._wrap` | `parallax.snapshot.materialize`, `parallax.core.entity`, `m-metamodel`, `m-relationship`, `m-inheritance`, `m-temporal-read` |
+| write-lowering group (`._family`, `._write_types`, `._keyed_sql`, `._write_lowering`) | `m-core`, `m-metamodel`, `m-inheritance`, `m-temporal-read`, `m-dialect`, `m-db-port`, `m-sql`, `m-unit-work`, `m-opt-lock`, `m-audit-write`, `m-bitemp-write` |
+| `parallax.postgres` | `m-core`, `m-db-port`, `m-db-error`, `m-dialect` |
+
+`m-descriptor` appears in exactly one support row after the flip:
+`parallax.core.entity`, the serde seam whose temporary frontend adapter still
+reads registry descriptor records and whose final hub owns descriptor
+ingestion and export. The handle modules' current descriptor-record reads
+(`_database`, `_read`, `_transaction`, `_predicate_writes`, `_write_inputs`)
+migrate to `m-metamodel` lookup and the typed Inheritance, Temporal, and
+Optimistic Lock facet views; the handle's sole relationship-metadata consumer
+is `._wrap`, whose own row grants `m-relationship` for the Relationship
+Facet. After the flip the regenerated
+complement mechanically forbids a descriptor import from every behavioral
+scope and from the write-lowering group; `parallax.snapshot.handle` and
+`._wrap` retain closure reachability to the descriptor scope through
+`parallax.core.entity`, so those two rows are held to this table by review
+and the design's acceptance criteria.
 
 ## 8. Deployable artifact topology
 

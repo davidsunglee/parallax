@@ -240,6 +240,27 @@ Metamodel Facet from an accepted Metamodel; it is not a developer-authored
 string or a registration mechanism.
 _Avoid_: facet registry, plugin key, public metadata property
 
+**Inheritance Facet**:
+The immutable `m-inheritance` view giving every accepted Entity its family
+root, ancestry, effective concrete-subtype set, applicable members, effective
+physical container, tag facts, and effective root-owned Persistence Mode —
+and, for any resolved position including a narrowed one, the canonical
+effective concrete set with the attribute and Value Object projection
+supersets — with declaring identities preserved.
+_Avoid_: flattened entity view, effective metadata cache, ancestry walk helper
+
+**Temporal Facet**:
+The immutable `m-temporal-read` view classifying every accepted Entity as
+Non-Temporal, Transaction-Time-Only, or Bitemporal and resolving its effective
+root-owned As-Of Axes by dimension without copying axis metadata.
+_Avoid_: axis registry, temporal flag, copied axis set
+
+**Optimistic Lock Facet**:
+The immutable `m-opt-lock` view resolving every accepted Entity's
+family-uniform optimistic key: Unversioned, an explicit root-owned version
+Attribute Identity, or the Transaction-Time-derived start Attribute.
+_Avoid_: version column cache, per-subtype version, copied attribute metadata
+
 **Metamodel Lookup**:
 Total, non-throwing lookup of accepted local metadata by structured identity or
 local member name. A miss is ordinary absence and direct access is expected

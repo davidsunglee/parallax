@@ -667,8 +667,9 @@ only through Entity declarations and is not passed to the hub separately.
   transform. Formation never mutates or propagates facts into either
   formation-input state's local declarations.
 - The accepted Metamodel contains the immutable normalized local Metadata view
-  and compiled facets. Behavioral modules read their own facet for
-  constant-time effective metadata instead of repeating stable graph walks.
+  and compiled facets. Behavioral modules read their own facet for precomputed
+  effective metadata — constant-time per-Entity lookups, output-sensitive
+  position construction — instead of repeating stable graph walks.
 - The compilation contracts are exact:
 
   ```text
@@ -852,8 +853,12 @@ only through Entity declarations and is not passed to the hub separately.
   Precision and scale are validated semantic components, not text to be parsed
   by consumers. Descriptor spellings such as `decimal(18,2)` exist only in
   authoring and serde; behavioral modules never receive or inspect type strings.
-  Neutral Value covers null and each corresponding logical value domain,
-  including an immutable JSON tree. An implementation uses idiomatic immutable
+  A Neutral Value is a value drawn from its declared Neutral Type's logical
+  value space (`m-core`); there is no tagged wrapper type, and null belongs to
+  no value space — a position admits null only through its own contract, such
+  as a `nullable` member or the Attribute Default's `DefaultValue(null)`
+  branch. The `Json` space is an immutable structured tree that excludes a
+  bare top-level null. An implementation uses idiomatic immutable
   host-language values while preserving the logical type.
 - Primary-Key Generation is the structured
   `ApplicationAssigned | Max | Sequence(name, batch_size, initial_value,
@@ -943,7 +948,7 @@ only through Entity declarations and is not passed to the hub separately.
     max_length: integer | absent
     read_only: boolean
     optimistic_locking: boolean
-    default: AttributeDefault<NeutralValue>
+    default: NoDefault | DefaultValue(null | ValueOf(type))
   ```
 
   Value Object Attribute Metadata is not this protocol: nested values have no
@@ -1056,12 +1061,15 @@ only through Entity declarations and is not passed to the hub separately.
   are normalized to canonical entity identity, but semantic owner modules
   derive their consequences.
 - Attribute Metadata represents its `default` as the language-neutral narrow
-  algebra `AttributeDefault[T] = NoDefault | DefaultValue[T]`. A
-  `DefaultValue` may contain null, so omitted and explicitly null defaults stay
-  distinct. Other optional properties use ordinary absence when null is not a
-  valid value, and properties with semantic defaults normalize omission to the
-  default value. There is no generic `Optional`, `Presence`, descriptor
-  `Unset`, or public parser sentinel in the interface.
+  algebra `AttributeDefault = NoDefault | DefaultValue(null | ValueOf(type))`,
+  where `ValueOf(type)` is the declared Neutral Type's logical value space
+  (`m-core`). A `DefaultValue` may contain null — null belongs to no Neutral
+  Value space, so the slot admits it explicitly — and omitted and explicitly
+  null defaults stay distinct. Other optional properties use ordinary absence
+  when null is not a valid value, and properties with semantic defaults
+  normalize omission to the default value. There is no tagged value wrapper,
+  generic `Optional`, `Presence`, descriptor `Unset`, or public parser
+  sentinel in the interface.
 - Recursive Value Object metadata uses three distinct read-only protocols:
 
   ```text
@@ -1322,16 +1330,24 @@ only through Entity declarations and is not passed to the hub separately.
   A concrete ancestry, abstract-position projection superset, family identity,
   and physical column set are different effective questions, not one
   `effective_attributes` collection. The owning compiled facet exposes each
-  typed answer, for example:
+  typed answer through the exact facet protocols in `m-inheritance`
+  ("The Inheritance Facet"), `m-temporal-read` ("The Temporal Facet"), and
+  `m-opt-lock` ("The Optimistic Lock Facet"); Python reaches them through each
+  owner package's `view(model)` function with structured Entity Identities:
 
   ```text
-  inheritance.view(models).ancestry_attributes(CardPayment)
-  inheritance.view(models).superset_attributes(Payment)
-  inheritance.view(models).physical_columns(CardPayment)
+  inheritance.view(models).entity(card_payment).applicable_attributes
+  inheritance.view(models).entity(payment).superset_attributes
+  inheritance.view(models).position(narrow_members).superset_value_objects
+  temporal_read.view(models).shape(payment)
+  opt_lock.view(models).key(card_payment)
   ```
 
-  These are constant-time lookups over immutable formation output, not repeated
-  ancestry walks.
+  The per-Entity lookups (`entity(...)`, `shape(...)`, `key(...)` and their
+  view members) are expected amortized constant-time reads of immutable
+  formation output; `position(...)` constructs its view at output-sensitive
+  cost — linear in the member count plus the returned view's size
+  (`m-inheritance`). None repeats an ancestry walk at query or write time.
 - The exact internal facet attachment contract is:
 
   ```text
@@ -1493,7 +1509,7 @@ only through Entity declarations and is not passed to the hub separately.
 
   SnapshotNodeInput
     concrete_entity: EntityIdentity
-    attributes: AttributeIdentity -> NeutralValue
+    attributes: AttributeIdentity -> null | NeutralValue
     value_objects: structured occurrence values
     relationship_views:
       RelationshipViewKey -> null | one node | ordered nodes
@@ -1523,7 +1539,7 @@ only through Entity declarations and is not passed to the hub separately.
     allocate(concrete_entity: EntityIdentity) -> NodeHandle
     populate(
       node: NodeHandle,
-      attributes: AttributeIdentity -> NeutralValue,
+      attributes: AttributeIdentity -> null | NeutralValue,
       value_objects: structured occurrence values,
       relationships:
         RelationshipIdentity ->
@@ -1952,7 +1968,13 @@ codes `snapshot-node-required`, `snapshot-pin-unavailable`, and
 stable code `transaction-owner-mismatch`.
 
 The dependency-free `parallax.core.base` seam implements `m-core` and exposes
-`NeutralType` and `NeutralValue`. The class-free `parallax.core.metamodel` seam
+`NeutralType` and `NeutralValue`. `NeutralType` values are constructible
+structured values. `NeutralValue`, if exported, is typing vocabulary only — a
+static alias naming the idiomatic immutable host values of the `m-core` value
+spaces (bool, int, float, `Decimal`, str, bytes, date, time, datetime, UUID,
+and the immutable JSON tree) — never a constructible runtime wrapper, tag, or
+base class; null enters a position only through that position's own contract,
+so `None` is not part of the alias. The class-free `parallax.core.metamodel` seam
 exposes `UnresolvedMetamodel`, `CandidateMetamodel`, `Metamodel`,
 `UnresolvedEntityDeclaration`, `EntityDeclaration`,
 `MetadataCompiler`, `CompiledMetadata`,
@@ -2012,14 +2034,20 @@ Native blocking graph: `COR-45` → `COR-40` → `COR-46` → `COR-47` →
 `COR-50` → `COR-51`. `COR-45` is the initial frontier.
 
 The current COR-45/COR-40 readiness work deliberately does not close later
-slice contracts. Before their respective tickets start, the following remain
-explicit blockers: COR-46 needs its complete enforceable Python direct-edge
-graph and composition root; COR-47 needs the exhaustive declaration and
-descriptor-input grammar; COR-50 needs inheritance-aware member applicability,
-the recursive Value Object input algebra, Node Handle lifetime/factory order,
-and exact-hub Snapshot inspection keys; COR-51 needs the normative row-codec
-and closed edit-error contracts plus its temporary-symbol deletion ledger.
-None is silently assigned to COR-45 or COR-40.
+slice contracts. COR-46's complete enforceable dependency graphs, enforcement
+scopes, and composition-root imports are specified normatively in §7 of the
+Python spec ("The target topology after the metamodel dependency inversion")
+and motivated in its section below, and
+the compiled facet protocols its behavioral consumers read are normative in
+`m-inheritance` ("The Inheritance Facet"), `m-temporal-read` ("The Temporal
+Facet"), and `m-opt-lock` ("The Optimistic Lock Facet") — inheritance-aware
+member applicability is the Inheritance Facet's `applicable_*` contract.
+Before their respective tickets start, the following remain explicit blockers:
+COR-47 needs the exhaustive declaration and descriptor-input grammar; COR-50
+needs the recursive Value Object input algebra, Node Handle lifetime/factory
+order, and exact-hub Snapshot inspection keys; COR-51 needs the normative
+row-codec and closed edit-error contracts plus its temporary-symbol deletion
+ledger. None is silently assigned to COR-45 or COR-40.
 
 ### COR-45 — Normalize the core Metamodel Interface and canonical descriptor
 
@@ -2205,9 +2233,10 @@ Acceptance requires:
 - class-free identity/local-name lookup is non-throwing, local-only, and
   expected amortized `O(1)`; misses return absence and ordered enumeration is
   separate;
-- Attribute Default is exactly `NoDefault | DefaultValue<T>`, where the value
-  may be null; no descriptor sentinel or generic presence wrapper appears in
-  the interface;
+- Attribute Default is exactly
+  `NoDefault | DefaultValue(null | ValueOf(type))`, its value position typed
+  by the declared Neutral Type; no tagged value wrapper, descriptor sentinel,
+  or generic presence wrapper appears in the interface;
 - top-level, nested, and inner-attribute Value Object metadata are distinct
   recursive protocols, so nested members cannot carry storage facts;
 - every inheritable Entity Metadata member uses the accepted `declared_`
@@ -2288,6 +2317,114 @@ module to consume the Metamodel Interface and typed owner facets rather than
 concrete descriptor records. Keep the old Entity frontend working temporarily
 through an adapter so this prefactor lands independently of the public API
 replacement.
+
+#### Final dependency graphs and enforcement scopes
+
+COR-46 lands the dependency inversion as one atomic flip: the core
+`dependency-graph` edit in `core/spec/modules.md`, the `spec/python.md` §7
+row and fence replacements, the DAG-sync tool's module-to-scope map, and the
+regenerated import-linter complement change together and leave every gate
+green. No temporary row survives the flip. The Python spec is the binding
+product definition, so the complete target tables — behavioral scope mapping,
+composition-root edges, and support-scope grants — live normatively in §7 of
+`languages/python/spec/python.md` ("The target topology after the metamodel
+dependency inversion"); this subsection records the core-side changes and the
+design rationale behind those tables without repeating them.
+
+**Core direct-edge changes.** Exactly three edges leave the fenced
+`dependency-graph` block, and no other core edge changes:
+
+```text
+m-pk-gen --> m-descriptor        removed; m-pk-gen --> m-metamodel remains
+m-inheritance --> m-descriptor   removed; m-metamodel / m-model-formation remain
+m-value-object --> m-descriptor  removed; m-metamodel / m-model-formation remain
+```
+
+After the removal no behavioral module depends on `m-descriptor`. Its own
+edges (`m-descriptor --> m-core`, `m-descriptor --> m-metamodel`) make it the
+interchange/serde adapter over the Metamodel Interface (ADR 0028); the
+conformance family may still reference it by construction.
+
+**Python behavioral scopes.** The three temporary co-location rows in §7 and
+the corresponding `MODULE_SCOPE` entries in
+`languages/python/tools/check_dag_sync.py` are replaced in the same change:
+`m-metamodel`, `m-model-formation`, and `m-relationship` move to their own
+`parallax.core.metamodel`, `parallax.core.model_formation`, and
+`parallax.core.relationship` scopes, `parallax.core.descriptor` becomes the
+sole owner of its scope, and every behavioral row keeps mirroring the core
+DAG mechanically. The §7 target table is normative.
+
+**Composition root.** `parallax.core._formation_profile` becomes a declared
+§7 support scope. Its allowed direct dependencies are exactly the formation
+runner plus every module whose Formation Manifest row supplies a Rule Set or
+compiler; `m-pk-gen` supplies neither, so the composition root does not
+import it. The §7 target fence lists the resulting edges. The only production
+importer of `_formation_profile` is the seam that seals a model: during
+COR-46 the temporary Entity-frontend adapter inside `parallax.core.entity`,
+and from COR-47 `entity._hub`.
+
+**Support-scope grants.** In the same §7 edit, every support grant that
+exists only to read descriptor record metadata moves to the Metamodel
+Interface and typed owner facets, and each support row is completed to
+declare every direct import its scope makes — the closure-based complement
+cannot reject an undeclared-but-reachable direct import, so a support row is
+the only honest declaration of its direct edges. (Behavioral scopes differ:
+`modules.md` lists direct edges only and implies transitives, so a
+behavioral module's reliance on a transitively reachable module remains
+by-design legal.) The §7 target table is normative; the decisions behind it:
+
+- `parallax.core.entity` alone keeps `m-descriptor`: serialization is that
+  seam's concern — the temporary frontend adapter still reads the registry's
+  descriptor records, and the final hub owns descriptor ingestion and export.
+  Its row also declares the frontend's real direct imports that today ride
+  the closure undeclared: `m-core` (neutral values in `entity/statement.py`)
+  and `m-inheritance` (below).
+- `parallax.snapshot.handle`'s row is completed the same way: its modules
+  directly import `m-core`, `m-dialect`, `m-temporal-read`, `m-inheritance`,
+  `m-op-algebra`, and `m-deep-fetch` today, and its descriptor-record reads
+  (`_database`, `_read`, `_transaction`, `_predicate_writes`,
+  `_write_inputs`) migrate to `m-metamodel` lookup plus the typed
+  Inheritance, Temporal, and Optimistic Lock facet views — the handle gains
+  `m-metamodel` and loses nothing but descriptor reachability as a licensed
+  read. Relationship metadata is consumed only by `._wrap`, whose dedicated
+  row grants `m-relationship` for the Relationship Facet; no parent-handle
+  module reads it, so the parent row deliberately carries no
+  `m-relationship` grant.
+- `parallax.postgres`'s row declares its existing direct `m-core` imports.
+
+The `m-inheritance` and `m-relationship` grants on the Entity row name where
+the preserved frontend's inheritance- and relationship-shaped operations
+land, so a COR-46 implementor moves them rather than reinventing them:
+
+- assignment validation against the family write rules (today
+  `inheritance.validate_write_assignment` in `entity/expressions.py`) and
+  narrowed-position resolution (today `resolve_narrow_position` in
+  `entity/graph_state.py`) delegate to the Inheritance Facet through
+  `parallax.core.inheritance.view(model)` — narrowed positions specifically
+  through its typed `position(...)` operation, whose view carries the
+  canonical effective concrete set and the attribute and Value Object
+  projection supersets (`m-inheritance` "The Inheritance Facet"); and
+- relationship traversal and target resolution (today the descriptor-owned
+  `relationship_target` helper in `entity/expressions.py`) delegate to the
+  symmetric Relationship Facet through
+  `parallax.core.relationship.view(model)`, whose Relationship Metadata
+  derives the target from the join.
+
+These grants also regularize declaration with reality: the frontend already
+imports `parallax.core.inheritance` directly, which the closure-based
+generated complement permits (inheritance is transitively reachable through
+`m-op-algebra`) even though the current §7 row never declared it.
+
+**Enforcement effect.** After the flip, `parallax.core.descriptor` is
+reachable from no behavioral scope's transitive closure, so the regenerated
+forbidden-edge complement mechanically rejects a descriptor import from every
+behavioral scope — including `parallax.snapshot.materialize` — and from the
+write-lowering group. `parallax.snapshot.handle` and `._wrap` still reach the
+descriptor scope transitively through `parallax.core.entity`, so their
+descriptor-record independence is proven by the no-descriptor-record
+acceptance criteria and review rather than by the generated complement; the
+COR-51 legacy-surface deletion removes the record surface those paths could
+have reached.
 
 Acceptance requires:
 
@@ -2394,10 +2531,25 @@ Acceptance requires:
   Entity frontend;
 - inheritance, temporal, navigation, SQL, read, and write behavior accepts any
   conforming Metamodel implementation, reads stable effective facts from its
-  owner module's compiled facet, and does not import descriptor records;
+  owner module's compiled facet — narrowed-position projection (the canonical
+  effective concrete set plus the attribute and Value Object supersets)
+  exclusively through the Inheritance Facet's `position(...)` operation — and
+  does not import descriptor records;
 - descriptor-backed behavior and canonical export remain unchanged;
-- the generated import-linter complement reflects the new core edge and no lazy
-  import hides a cycle; and
+- the core `dependency-graph` block no longer contains
+  `m-pk-gen --> m-descriptor`, `m-inheritance --> m-descriptor`, or
+  `m-value-object --> m-descriptor`, no behavioral module depends on
+  `m-descriptor`, and `just core-dep-graph` stays green;
+- §7 of the Python spec and the DAG-sync tool map `m-metamodel`,
+  `m-model-formation`, and `m-relationship` to `parallax.core.metamodel`,
+  `parallax.core.model_formation`, and `parallax.core.relationship`; no
+  temporary co-location mapping remains anywhere, and the behavioral,
+  composition-root, and support-scope grants equal §7's normative target
+  tables ("The target topology after the metamodel dependency inversion"),
+  including the new `parallax.core._formation_profile` row;
+- the regenerated import-linter complement forbids `parallax.core.descriptor`
+  imports from every behavioral scope and from the write-lowering scopes, and
+  no lazy import hides a cycle; and
 - `just python-static` and `just python-verify` pass.
 
 ### COR-47 → COR-50 → COR-51 — Replace the Python Entity registry frontend

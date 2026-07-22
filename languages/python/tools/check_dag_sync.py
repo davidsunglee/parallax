@@ -58,8 +58,10 @@ _END = "# <<< check_dag_sync.py: END GENERATED IMPORT-LINTER CONTRACTS <<<"
 # enforced by the pytest collection boundary, not import-linter, so it is absent.
 MODULE_SCOPE: Mapping[str, str] = {
     "m-core": "parallax.core.base",
-    # COR-45 transition: the three new normative modules are enforced through
-    # the existing descriptor scope until COR-46 separates their runtime homes.
+    # The metamodel, model-formation, and relationship contracts are
+    # implemented inside the descriptor package, so all four module tags
+    # resolve to the one `parallax.core.descriptor` enforcement scope
+    # (spec/python.md §7).
     "m-metamodel": "parallax.core.descriptor",
     "m-model-formation": "parallax.core.descriptor",
     "m-descriptor": "parallax.core.descriptor",
@@ -89,12 +91,12 @@ MODULE_SCOPE: Mapping[str, str] = {
 
 # The write-lowering child cluster (`_family`, `_write_types`, `_keyed_sql`,
 # `_write_lowering`) is enforced as ONE group: the four modules share this grant
-# row rather than each declaring its own. Grouping is deliberate — the cluster's
-# internal homes move (COR-42 Phase 3 re-homed `_MARKER_KEYS` to keep the
-# `_keyed_sql -> _write_lowering` back-edge from existing), and a per-module row
-# would turn every such internal move into a spec edit. The group boundary is
-# what carries the enforcement value: none of the four may reach the read side
-# (`m-snapshot-read`, `m-deep-fetch`, `m-navigate`, `parallax.core.entity`).
+# row rather than each declaring its own. Grouping is deliberate — helpers move
+# between the cluster's modules as the lowering pipeline evolves, and a
+# per-module row would turn every such internal move into a spec edit. The
+# group boundary is what carries the enforcement value: none of the four may
+# reach the read side (`m-snapshot-read`, `m-deep-fetch`, `m-navigate`,
+# `parallax.core.entity`).
 _LOWERING_GROUP_DEPS: frozenset[str] = frozenset(
     {
         "parallax.core.base",
