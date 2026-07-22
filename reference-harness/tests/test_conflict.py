@@ -150,8 +150,8 @@ def test_conflict_input_observed_version_corruption_is_rejected() -> None:
 
 def test_temporal_conflict_close_input_holds_for_authored_cases() -> None:
     cases = _temporal_conflict_close_cases()
-    # The Phase 4 Transaction-Time close family all carry ① (write + at [+ observedTxStart]);
-    # COR-26 adds m-txtime-write-006, the SAME gated close tagged under m-txtime-write.
+    # The Transaction-Time close family all carry ① (write + at [+ observedTxStart]);
+    # m-txtime-write-006 is the SAME gated close, tagged under m-txtime-write.
     assert {_case_id(case.path.stem) for case in cases} >= {
         "m-temporal-read-009",
         "m-temporal-read-010",

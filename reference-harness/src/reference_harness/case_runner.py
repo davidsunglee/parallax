@@ -2250,7 +2250,7 @@ def _assert_rejected(case: Case) -> None:
     )
 
 
-# --- write sequences (Phase 5, m-txtime-write) ------------------------------------------
+# --- write sequences (m-txtime-write) ---------------------------------------------------
 
 
 def _assert_write_step_count(case: Case, dialect: str) -> None:
@@ -2282,7 +2282,7 @@ _SET_CLAUSE_RE = re.compile(r"\bset\s+(.+?)\s+where\b", re.IGNORECASE)
 # at the following whitespace or `(` (the tight `insert into t(` column list).
 _DML_TARGET_RE = re.compile(r"^(?:insert\s+into|delete\s+from|update)\s+([^\s(]+)", re.IGNORECASE)
 
-# The full-bitemporal `*Until` rectangle-split mutations (DQ11): a Valid-Time-bounded
+# The full-bitemporal `*Until` rectangle-split mutations: a Valid-Time-bounded
 # write whose ① carries the valid-time window (`at`/`until`/`validFrom`).
 _UNTIL_MUTATIONS = ("insertUntil", "updateUntil", "terminateUntil")
 

@@ -54,6 +54,21 @@ def test_hash_without_preceding_whitespace_is_data() -> None:
     assert case_comment_violations(text) == []
 
 
+def test_escaped_double_quote_does_not_close_the_scalar() -> None:
+    text = _HEADER + 'note: "an escaped \\" quote then # still data"\n'
+    assert case_comment_violations(text) == []
+
+
+def test_inline_comment_after_an_escaped_quote_scalar_is_flagged() -> None:
+    text = _HEADER + 'note: "an escaped \\" quote" # trailing narration\n'
+    assert case_comment_violations(text) == [(4, "inline comment after the case header")]
+
+
+def test_doubled_single_quote_stays_inside_the_scalar() -> None:
+    text = _HEADER + "tag: 'it''s # data'\n"
+    assert case_comment_violations(text) == []
+
+
 def test_block_scalar_content_is_never_inspected() -> None:
     text = _HEADER + (
         "then:\n"

@@ -51,6 +51,40 @@ def test_retired_identifier_spellings_are_detected() -> None:
         assert check_text("f.py", line), line
 
 
+def test_camel_compounds_cover_every_noun_family() -> None:
+    flagged = [
+        "businessInterval = window",
+        "processingPins = held_views",
+        "obj.businessValidity",
+        "a processingDiscriminator column",
+        "businessCorrection entries",
+        "businessBinds.extend(binds)",
+        "processingMilestones[0]",
+        "businessTimes list",
+    ]
+    for line in flagged:
+        assert check_text("f.py", line), line
+
+
+def test_camel_compound_matches_at_string_edges() -> None:
+    assert check_text("f.py", "businessInterval")
+    assert check_text("f.py", "x = processingPin")
+
+
+def test_camel_compound_followed_by_an_uppercase_hump_is_detected() -> None:
+    assert check_text("f.py", "businessFromValue = 1")
+
+
+def test_digit_and_lowercase_continuations_are_different_identifiers() -> None:
+    legal = [
+        "businessTime2 = clock()",
+        "business_time2 = clock()",
+        "businessTimeout = 30",
+    ]
+    for line in legal:
+        assert check_text("f.py", line) == [], line
+
+
 def test_non_temporal_business_and_processing_words_stay_legal() -> None:
     legal = [
         "the physical key is the business key plus each start column",
@@ -109,6 +143,19 @@ def test_historical_and_fixture_trees_are_pruned(tmp_path: Path) -> None:
     assert main([str(tmp_path)]) == 0
 
     (tmp_path / "core" / "spec" / "dirty.md").write_text(retired)
+    assert main([str(tmp_path)]) == 1
+
+
+def test_non_reladomo_research_docs_are_not_exempt(tmp_path: Path) -> None:
+    reladomo = tmp_path / "docs" / "research" / "reladomo"
+    session = tmp_path / "docs" / "research" / "session"
+    reladomo.mkdir(parents=True)
+    session.mkdir(parents=True)
+    retired = "the business date / processing date pair\n"
+    (reladomo / "notes.md").write_text(retired)
+    assert main([str(tmp_path)]) == 0
+
+    (session / "orm-notes.md").write_text(retired)
     assert main([str(tmp_path)]) == 1
 
 

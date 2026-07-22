@@ -1,6 +1,6 @@
 # Quote: a TABLE-PER-CONCRETE-SUBTYPE inheritance family whose Transaction-Time-Only
 # axis is declared on the abstract root and inherited by the concrete subtype
-# (m-inheritance x m-txtime-write — Phase 8 temporal composition).
+# (m-inheritance x m-txtime-write).
 #
 # This descriptor is an instance of core/schemas/metamodel.schema.json. It is the TPCS
 # counterpart of the table-per-hierarchy `reading` family: a NEW, small

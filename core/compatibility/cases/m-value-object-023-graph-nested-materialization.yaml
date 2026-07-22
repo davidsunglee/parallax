@@ -3,35 +3,24 @@
 # on Postgres AND MariaDB.
 #
 # Reading the owning Customer projects the single structured-document `address`
-# column; every nested value — the to-one `geo` (and its to-one `point`, three
-# levels deep) and the to-many `phones` array — is decoded from that ONE column.
-# There is NO deep-fetch statement and NO per-value-object fetch: roundTrips is 1,
-# a single golden statement, and `then.graph` carries the fully materialized
-# composite for every row. This is the positive proof of the getter-navigation
-# contract — getters to arbitrary depth, materialized with the owner, no child
-# round trip.
-#
-# The graph is the DECLARED projection (what the typed getters expose): only
-# declared members appear (the undeclared `zip` inside `geo` is dropped), every
-# declared member is present (null where the document does not supply it), and the
-# absence states collapse exactly as the read predicates do (m-op-algebra Q5) —
-# a null / missing / JSON-null / non-object `one` member materializes as null
-# (address on id 4; geo on ids 6/8/9/10; point on id 5), and a null / missing /
-# non-array `many` member materializes as [] (phones on ids 3/5/6/8/9/10). Per id,
-# the absence state each row exercises: id 4 a SQL-NULL address column (the whole
-# value object null); id 5 missing city + geo inner keys (geo present-but-all-null,
-# point null, phones missing); id 6 a non-object geo scalar; id 7 explicit
-# JSON-null leaves (point present with null lat/lon) beside a real one-element
-# phones array; id 8 phones an explicit JSON null; ids 9/10 phones a non-array
-# scalar / object whose content collides with a real element's — still []. The
-# golden SQL is identical on both dialects (a bare column projection); MariaDB
-# returns the `json` column as text and Postgres the `jsonb` column parsed, but
-# both decode to the same composite.
-#
-# The `phones` arrays below are authored in a readable order, but element order
-# in a to-many value-object member is UNSPECIFIED (m-value-object): `then.graph`
-# array comparison is order-insensitive (a multiset — element multiplicity is
-# still enforced, only order is not), so a reordered `phones` array still passes.
+# column; the to-one `geo` (and its to-one `point`, three levels deep) and the
+# to-many `phones` array all decode from that ONE column — no deep-fetch statement,
+# no per-value-object fetch, one golden statement, `then.graph` fully materialized:
+# the positive proof of getter navigation to arbitrary depth with no child round
+# trip. The graph is the DECLARED projection: only declared members appear (the
+# undeclared `zip` inside `geo` is dropped), every declared member is present, and
+# absence collapses exactly as the read predicates do (m-op-algebra Q5) — a null /
+# missing / JSON-null / non-object `one` member materializes as null, a null /
+# missing / non-array `many` member as []. Per id: 4 a SQL-NULL address column
+# (whole object null); 5 missing city + geo inner keys (geo all-null, point null,
+# phones missing); 6 a non-object geo scalar; 7 explicit JSON-null point leaves
+# beside a real one-element phones array; 8 phones an explicit JSON null; 9/10
+# phones a non-array scalar / an object colliding with a real element's content —
+# still []. Golden SQL is dialect-identical (a bare column projection; MariaDB
+# returns the `json` column as text, Postgres the `jsonb` parsed — the same
+# composite). Element order in a to-many member is UNSPECIFIED (m-value-object):
+# `then.graph` arrays compare as multisets (multiplicity enforced, order not), so
+# a reordered `phones` array still passes.
 model: models/customer.yaml
 tags: [m-value-object, m-sql, nested, json, materialization, graph, to-one, to-many, slice-snapshot-1, slice-managed-1]
 shape: read

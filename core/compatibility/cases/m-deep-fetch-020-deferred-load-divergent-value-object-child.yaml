@@ -2,46 +2,22 @@
 #
 # m-deep-fetch-019 loads `Customer.locations`, but Location's `address` is Customer's
 # recursive composite VERBATIM, so decoding a Location row with the WRONG (root
-# Customer) descriptor is indistinguishable. This case loads `Customer.depots`
-# instead, whose child Depot declares a DIFFERENT `address` STRUCTURE — a FLAT
-# `{ line, postcode }` in the same `address` column (models/customer.yaml). Decoding a
-# Depot row with Customer's recursive descriptor drops `line`/`postcode` and injects
-# `street`/`city`/`geo`/`phones`, so the per-step read-entity resolution is now
-# OBSERVABLE. The classification the witness proves:
+# Customer) descriptor is indistinguishable. This case loads `Customer.depots`: child
+# Depot declares a FLAT `{ line, postcode }` in the same `address` column
+# (models/customer.yaml), so the wrong descriptor drops `line`/`postcode` and injects
+# `street`/`city`/`geo`/`phones` — the per-step read-entity resolution is OBSERVABLE.
 #
-#   * m-case-format "Read result form" — a relationship `action: load` step is
-#     INSTANCE-FORM (object lane): the SQL-producing read that first materializes the
-#     loaded related objects projects the read entity's OWN instance-form list, its
-#     scalars PLUS any value-object document column it declares.
-#   * m-sql "Read projection" (slot 4) — an instance-form read projects every declared
-#     value-object document column LAST; a `load` to a VO-bearing child therefore rides
-#     the child's whole `address` document on the child-level statement, decoded with
-#     the CHILD Depot's descriptor (the harness walks the relationship path's terminal
-#     entity), never the scenario root's. Depot 201 carries a SQL-NULL document, so its
-#     address materializes null — the absence collapse pinned AT DEPTH for the
-#     divergent flat composite.
-#
-# Steps:
-#   0  find (Customer id 1, Ada)      : INSTANCE-FORM managed find — the developer find
-#      materializes the owner, so the projection carries Customer's scalars in
-#      columnOrder (id, name) then the `address` document LAST (slot 4). expectRows
-#      carries Ada's materialized recursive address.
-#   1  load (depots, on 0)            : the deferred child fetch — INSTANCE-FORM. It
-#      projects Depot's OWN instance-form list `id, customer_id, label, address` (the
-#      FK `customer_id` is a declared scalar in slot 1; the `address` document is slot
-#      4, LAST), honoring the relationship `orderBy: id asc`. expectRows carries each
-#      Depot row WITH its own materialized FLAT `address` — decoded with DEPOT's
-#      descriptor, not Customer's. Customer 1 owns depot 200 (present divergent
-#      { line, postcode }) and 201 (SQL-NULL document -> the whole value object
-#      materializes null, the absence collapse pinned AT DEPTH).
-#
-# Golden SQL is identical on Postgres and MariaDB (bare column projections, no JSON
-# extraction); both decode to the same flat composite. Total roundTrips 2 = managed
-# find (1) + deferred load (1) — one IN-keyed child statement, not one per parent.
-#
-# compileEligibility is run-only / query-result-dependent: the deferred load's
-# `customer_id IN (…)` binds are the distinct parent keys gathered from step 0's find
-# RESULT, exactly as m-deep-fetch-019 names for the analogous fan-out bind.
+# The classification pinned: a relationship `action: load` step is INSTANCE-FORM
+# (m-case-format "Read result form", object lane), and its SQL-producing child read
+# projects the read entity's OWN instance-form list — scalars plus the `address`
+# document LAST (m-sql "Read projection", slot 4) — decoded with the relationship
+# path's TERMINAL entity descriptor (Depot), never the scenario root's. The deferred
+# load emits ONE IN-keyed child statement (not one per parent) honoring
+# `orderBy: id asc`; depot 201's SQL-NULL document materializes a null address — the
+# absence collapse pinned AT DEPTH for the divergent flat composite. Golden SQL is
+# dialect-identical (bare projections, no JSON extraction); compileEligibility is
+# run-only because the `customer_id IN (…)` binds are the distinct parent keys
+# gathered from step 0's find RESULT, exactly as m-deep-fetch-019 names.
 model: models/customer.yaml
 tags: [m-deep-fetch, m-value-object, relationship, to-many, deferred-load, materialization, json, slice-managed-1]
 shape: scenario

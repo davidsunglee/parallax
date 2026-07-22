@@ -1,24 +1,17 @@
 # Same-transaction coalescing on the AUDIT axis (m-txtime-write + m-unit-work): a row
 # inserted and then updated in the SAME unit of work coalesces IN PLACE to a single
-# INSERT carrying the final value — NO closed milestone is fabricated for a state that
-# was never durably observable (Reladomo GenericBiTemporalDirector same-transaction
-# handling). Contrast m-txtime-write-002, whose insert-then-update spans TWO
-# transactions and therefore close-and-chains (a superseded 100 milestone + a current
-# 150 milestone). The same-transaction coalescing rule is m-unit-work.
+# current-milestone INSERT carrying the FINAL value — NO closed milestone is fabricated
+# for a state that was never durably observable (Reladomo GenericBiTemporalDirector
+# same-transaction handling; the coalescing rule is m-unit-work). Contrast
+# m-txtime-write-002, whose insert-then-update spans TWO transactions and therefore
+# close-and-chains a superseded milestone.
 #
-# The scenario runs against the loaded Balance fixtures (accounts 1/2/3); account 9 is
-# the NEW object the unit of work creates. Optimistic mode, so the observing find takes
-# no read lock, keeping its golden a plain temporal read:
-#   step 0 write : buffer INSERT Balance 9 (value 100), then buffer an UPDATE of its
-#                  value to 150 — COALESCED into ONE current-milestone INSERT
-#                  [in_z = 2024-06-01, out_z = infinity] carrying the FINAL value 150.
-#                  No close UPDATE, no superseded 100 row for account 9.  (1 round trip)
-#   step 1 find  : Latest over account 9 observes ONE current row at value 150 — the
-#                  audit trail has a single milestone, not two.
-# The single INSERT (value 150, no close) IS the observable proof of coalescing.
-# roundTrips = 2 (the one coalesced insert + the find). In the neutral write input
-# `at` is the Clock-supplied Transaction-Time instant the flush records (in_z); it
-# is NOT an instruction field in the canonical write-instruction schema.
+# Against the loaded Balance fixtures, step 0 buffers INSERT of NEW account 9 (value
+# 100) then an UPDATE to 150, flushing as ONE INSERT [in_z = 2024-06-01,
+# out_z = infinity] at 150 — no close UPDATE, no superseded 100 row: the single INSERT
+# IS the observable proof. Step 1's Latest find (optimistic mode, so no read lock — a
+# plain temporal read) observes ONE current row at 150. In the neutral write input `at`
+# is the Clock-supplied Transaction-Time instant (in_z), never an instruction field.
 model: models/balance.yaml
 tags: [m-txtime-write, m-unit-work, m-temporal-read, same-transaction-coalescing, scenario, slice-snapshot-1]
 shape: scenario

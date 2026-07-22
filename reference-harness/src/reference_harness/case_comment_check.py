@@ -32,9 +32,18 @@ _BLOCK_SCALAR_INTRODUCER = re.compile(r"(?:^|[\s:])[|>][0-9]*[+-]?[0-9]*$")
 def _has_inline_comment(line: str) -> bool:
     """Whether *line* carries a YAML comment after content: an unquoted ``#``
     preceded by whitespace (YAML's own inline-comment rule, approximated with
-    per-line single/double-quote tracking)."""
+    per-line single/double-quote tracking). Inside a double-quoted scalar a
+    backslash escapes the next character, so an escaped ``\\"`` does not close
+    the scalar; a single-quoted scalar has no backslash escapes — YAML doubles
+    the quote (``''``) instead, which close-then-reopen tracking already treats
+    as staying inside quoted text."""
     quote: str | None = None
-    for index, char in enumerate(line):
+    index = 0
+    while index < len(line):
+        char = line[index]
+        if quote == '"' and char == "\\":
+            index += 2
+            continue
         if quote is not None:
             if char == quote:
                 quote = None
@@ -42,6 +51,7 @@ def _has_inline_comment(line: str) -> bool:
             quote = char
         elif char == "#" and index > 0 and line[index - 1] in {" ", "\t"}:
             return True
+        index += 1
     return False
 
 
@@ -81,6 +91,14 @@ def case_comment_violations(text: str) -> list[tuple[int, str]]:
 
 
 def main(argv: list[str]) -> int:
+    """CLI entry point: check every ``*.yaml`` case under *argv[0]*'s
+    ``cases/`` directory, reporting each violation on stderr as
+    ``path:line: message``.
+
+    Exit codes: 0 — every case is header-comment-only; 1 — at least one
+    comment-placement violation; 2 — usage error (argument count, or *argv[0]*
+    has no ``cases/`` directory).
+    """
     if len(argv) != 1:
         print(
             "usage: python -m reference_harness.case_comment_check <compatibility-dir>",

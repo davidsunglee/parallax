@@ -603,7 +603,7 @@ class Case:
 
     @property
     def is_write_sequence(self) -> bool:
-        """True for a milestone-chaining write case (Phase 5, m-txtime-write).
+        """True for a milestone-chaining write case (m-txtime-write).
 
         A write-sequence case carries ``when.writeSequence`` (ordered mutations) and
         a ``then.tableState`` instead of an operation + ``then.rows``.
