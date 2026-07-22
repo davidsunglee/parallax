@@ -105,10 +105,12 @@ boundaries.
 _Avoid_: type string, database type, Python type annotation
 
 **Neutral Value**:
-The `m-core` logical value vocabulary corresponding to Neutral Types: null,
+A value drawn from the declared Neutral Type's `m-core` logical value space:
 boolean, integer, float, decimal, string, bytes, date, time, timestamp, UUID,
-or an immutable JSON value. Languages represent these idiomatically while
-preserving their logical type and immutability.
+or an immutable JSON value. Null is not a Neutral Value; a position admits
+null only through its own contract, such as a nullable member or
+`DefaultValue(null)`. Languages represent these idiomatically while preserving
+their logical type and immutability.
 _Avoid_: untyped object, descriptor literal, database value
 
 **Relationship Join**:

@@ -34,6 +34,118 @@ table-per-concrete-subtype; **never** table-per-leaf or table-per-class) and
 **`valueObject`** (an embedded composite element mapped to a single dialect-native
 structured-document column).
 
+## Type spellings
+
+`m-descriptor` alone owns the serialized spelling of the `m-core` `NeutralType`
+algebra: an `attribute.type` or Value Object Attribute `type` carries exactly
+one of the spellings below. The structured variant a spelling denotes never
+crosses the `m-metamodel` interface as text, and no behavioral module parses a
+type string.
+
+| `NeutralType` variant (`m-core`) | `type` spelling |
+|---|---|
+| `Boolean` | `boolean` |
+| `Int32` | `int32` |
+| `Int64` | `int64` |
+| `Float32` | `float32` |
+| `Float64` | `float64` |
+| `Decimal(precision, scale)` | `decimal(<precision>,<scale>)` |
+| `String` | `string` |
+| `Bytes` | `bytes` |
+| `Date` | `date` |
+| `Time` | `time` |
+| `Timestamp` | `timestamp` |
+| `Uuid` | `uuid` |
+| `Json` | `json` |
+
+Every spelling is a single lowercase token. `decimal` is the sole parameterized
+spelling: `decimal(` + precision + `,` + scale + `)` with both decimal-integer
+parameters REQUIRED and no interior whitespace — e.g. `decimal(18,2)`. Each
+parameter is spelled as unsigned canonical decimal digits (no sign, no leading
+zeros), and the pair MUST satisfy the `m-core` bounds (`precision >= 1`,
+`0 <= scale <= precision`). The schema admits any digit string, so a spelling
+whose parameters break the bounds or carry non-canonical digits — e.g.
+`decimal(0,9)`, `decimal(2,5)`, or `decimal(09,2)` — is schema-valid text the
+adapter rejects in the semantic phase; every in-bounds spelling round-trips to
+and from the structured `Decimal(precision, scale)` variant.
+Reladomo's per-attribute `timezoneConversion` is intentionally absent
+(timestamps are UTC-normalized globally, per `m-core`).
+
+## Value encodings
+
+`m-descriptor` alone owns the wire encoding of every `m-core` `NeutralValue`.
+An encoded value appears wherever a descriptor document carries a typed value —
+today the attribute `default`. The declared `type` disambiguates the encoding;
+no consumer infers a type from an encoded value's shape.
+
+| Declared `type` | Wire encoding |
+|---|---|
+| `boolean` | JSON/YAML boolean |
+| `int32`, `int64` | JSON/YAML integer |
+| `float32`, `float64` | JSON/YAML number denoting a finite IEEE-754 value, spelled in the canonical shortest round-trip rendering (see "Canonical float rendering" below); no NaN or infinity encoding exists because the `m-core` value spaces are finite |
+| `decimal(p,s)` | string of the exact digits at the declared scale (e.g. `"12.30"` for scale 2): an optional leading `-`, an integer part with no superfluous leading zero, and — only when `s > 0` — a `.` followed by exactly `s` fractional digits. Negative zero, a leading `+`, exponents, and digit grouping are invalid |
+| `date` | ISO-8601 calendar-date string `YYYY-MM-DD` |
+| `time` | ISO-8601 wall-clock string `hh:mm:ss`, with fractional seconds per the timestamp rule |
+| `timestamp` | ISO-8601 UTC instant string `YYYY-MM-DDThh:mm:ss` with the literal offset `+00:00` — the same spelling fixture `tableState` timestamps use; `Z` and non-zero offsets are invalid |
+| `uuid` | canonical lowercase hyphenated UUID string |
+| `bytes` | base64 string (RFC 4648 §4, with `=` padding) |
+| `string` | JSON/YAML string |
+| `json` | native JSON/YAML structure (any value of the JSON data model) |
+
+Fractional seconds (`time` / `timestamp`) are omitted when the microsecond
+component is zero and otherwise carry the fewest digits that represent it
+exactly (no trailing zeros), so each logical value has exactly one canonical
+spelling. The schema constrains each encoding structurally per declared `type`
+(`metamodel.schema.json`); agreement with the declared decimal
+precision/scale, integer range, the canonical-digit rules above, and the
+canonical float rendering below are semantic checks the adapter performs on a
+schema-valid document.
+
+### Canonical float rendering
+
+A `float32` / `float64` value's canonical spelling is the rendering the
+ECMAScript number-to-string algorithm produces (ECMA-262 `Number::toString`
+base 10 — the same rendering RFC 8785 canonical JSON pins): the shortest
+decimal digit sequence that round-trips to the same IEEE-754 value, formatted
+as plain decimal notation for magnitudes in `[10^-6, 10^21)` and as exponential
+notation otherwise, with a lowercase `e`, an explicitly signed exponent with no
+leading zeros, no leading `+` or superfluous leading zeros in the significand,
+no trailing fractional zeros (an integral value carries no decimal point, e.g.
+`1` not `1.0`), and zero — one logical value per `m-core`, so never
+sign-prefixed — rendered as `0`. For `float32` the digit sequence is selected
+at binary32 precision by the same rule `Number::toString` pins for binary64:
+among the decimal digit sequences that read back to the binary32 value under
+round-to-nearest, ties-to-even, take those with the fewest significant digits;
+among equally short candidates, the one whose exact decimal value is closest
+to the exact binary32 value; on an exact halfway tie, the candidate whose
+final digit is even. The formatting rules are unchanged, so every binary32
+value has exactly one canonical spelling.
+
+Ingestion reads a float default as the IEEE-754 value the JSON number denotes
+under round-to-nearest, ties-to-even at the declared width. A number whose
+spelling is not the canonical rendering of the value it denotes (e.g. `1.0`,
+`0.10`, `-0.0`, `1e2`) is rejected in the semantic phase, exactly like a
+non-canonical decimal digit string, so `serialize(deserialize(descriptor)) ==
+descriptor` holds byte-for-byte for float defaults.
+
+### `default` presence semantics
+
+`attribute.default` serializes `m-metamodel`'s
+`AttributeDefault = NoDefault | DefaultValue(value)`:
+
+- an **omitted** `default` key is `NoDefault`;
+- a **present** `default: null` is `DefaultValue(null)` — legal for every
+  declared type;
+- any other present value is `DefaultValue(value)` in the declared type's
+  encoding above.
+
+JSON and YAML both distinguish an absent key from a null value, so no unset
+sentinel value exists, and the canonical serializer never drops an explicit
+`default: null`. The reading is unambiguous for a `json` attribute too: a bare
+top-level `null` is not a member of the `Json` value space (`m-core`), so
+`default: null` always denotes `DefaultValue(null)` and never a `Json` value —
+JSON `null` reaches a `json` default only nested inside an array or object.
+
 ## One or many entities per descriptor
 
 A descriptor declares **either** a single top-level `entity` (a one-entity
@@ -105,7 +217,7 @@ ancestor through its ancestry chain (`m-inheritance`).
 | Property | Values / meaning |
 |---|---|
 | `name` | attribute name (REQUIRED) |
-| `type` | neutral type from the `m-core` table (REQUIRED); `decimal(p,s)` carries precision/scale |
+| `type` | neutral type spelling (REQUIRED; see "Type spellings"); `decimal(p,s)` carries precision/scale |
 | `column` | optional DB column override; omission means the Attribute `name` |
 | `primaryKey` | bool, default `false` |
 | `nullable` | bool, default `false` |
@@ -113,7 +225,7 @@ ancestor through its ancestry chain (`m-inheritance`).
 | `readOnly` | bool, default `false` — immutable after insert |
 | `optimisticLocking` | bool, default `false` — marks the version attribute (`m-opt-lock`) |
 | `pkGeneration` | optional `application-assigned` \| `max` \| Sequence object; legal only when `primaryKey: true`, omission on a primary key means application-assigned |
-| `default` | optional default value |
+| `default` | optional typed default value in the declared type's encoding (see "Value encodings"); omission means no default |
 
 The Sequence object is exactly:
 
@@ -130,11 +242,6 @@ pkGeneration:
 omitted only when the schema supplies their canonical semantic defaults; the
 adapter always exposes a fully populated Sequence value. The retired
 `pkGenerator`, `none`, and `sequenceName` spellings are invalid.
-
-> The `type` value is the neutral type name. `decimal` is written with its
-> precision and scale, e.g. `decimal(18,2)`. Reladomo's per-attribute
-> `timezoneConversion` is intentionally absent (timestamps are UTC-normalized
-> globally, per `m-core`).
 
 The `readOnly` and `optimisticLocking` flags are the metamodel surface two
 modules build on. `readOnly` marks an attribute that is immutable after insert

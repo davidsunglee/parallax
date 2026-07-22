@@ -1,0 +1,35 @@
+# Preference exercises typed attribute defaults (m-descriptor "Value encodings"):
+# a canonical decimal string at the declared scale, a UTC-microsecond timestamp,
+# a native boolean, and an explicit `default: null` (DefaultValue(null)) that
+# canonical serde never drops.
+entity:
+  name: Preference
+  namespace: parallax.compatibility
+  table: preference
+  attributes:
+    - name: id
+      type: int64
+      column: id
+      primaryKey: true
+      pkGeneration: application-assigned
+    - name: threshold
+      type: decimal(9,2)
+      column: threshold
+      default: "12.30"
+    - name: activatedAt
+      type: timestamp
+      column: activated_at
+      default: "2024-01-01T00:00:00+00:00"
+    - name: notify
+      type: boolean
+      column: notify
+      default: true
+    - name: nickname
+      type: string
+      column: nickname
+      nullable: true
+      default: null
+  indices:
+    - name: preference_pk
+      attributes: [id]
+      unique: true
