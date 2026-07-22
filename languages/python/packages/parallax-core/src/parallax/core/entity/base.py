@@ -15,7 +15,17 @@ import re
 import sys
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING, Any, ClassVar, Literal, Self, cast, get_args, get_origin
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    ClassVar,
+    Final,
+    Literal,
+    Self,
+    cast,
+    get_args,
+    get_origin,
+)
 
 from pydantic import BaseModel, ConfigDict
 
@@ -494,6 +504,10 @@ _STANDARD_TEMPORAL_COLUMNS: dict[str, str] = {
     "tx_start": "in_z",
     "tx_end": "out_z",
 }
+# The reserved standard temporal attribute names: on a temporal shape owner and
+# everywhere below a temporal family root, a class body may not declare any of
+# them (the framework's injected declarations are their sole source).
+_STANDARD_TEMPORAL_NAMES: frozenset[str] = frozenset(_STANDARD_TEMPORAL_COLUMNS)
 
 
 def camel_to_snake(name: str) -> str:
@@ -891,29 +905,77 @@ def _infer_neutral_type(inner: object, py_name: str) -> str:
     return neutral
 
 
-def _family_parent(bases: tuple[type, ...]) -> type | None:
-    """The nearest base that is ITSELF a compiled Parallax entity class, or
-    ``None`` — the Python-hierarchy-derived family-membership test (ledger D-7,
-    DQ2): subclassing an entity always joins its family; ``Entity`` itself is
-    never registered, so no false positive arises for an ordinary declaration."""
-    for base in bases:
-        if base in _ENTITY_BY_CLASS:
-            return base
-    return None
+def _family_parent(cls_name: str, bases: tuple[type, ...]) -> type | None:
+    """The single base that is ITSELF a compiled Parallax entity class, or
+    ``None`` — the Python-hierarchy-derived family-membership test: subclassing
+    an entity always joins its family; ``Entity`` itself is never registered,
+    so no false positive arises for an ordinary declaration. Listing two or
+    more compiled entity bases is rejected outright: an author selects exactly
+    one framework Entity base (python.md §2) and a family member has exactly
+    one family parent, while a merged declaration would fuse both bases'
+    declared members, wire maps, and temporal shapes into one class no
+    descriptor can express."""
+    compiled = [base for base in bases if base in _ENTITY_BY_CLASS]
+    if len(compiled) > 1:
+        listed = ", ".join(base.__name__ for base in compiled)
+        raise EntityDefinitionError(
+            f"{cls_name}: extends more than one compiled Parallax entity base "
+            f"({listed}) — an entity extends exactly one framework Entity base, and a "
+            "family member subclasses exactly one family parent"
+        )
+    return compiled[0] if compiled else None
 
 
 def _selected_temporal_base(cls_name: str, bases: tuple[type, ...]) -> type | None:
     """The framework temporal base (:class:`TxTemporal` / :class:`Bitemporal`)
-    listed among ``bases``, or ``None`` for a non-temporal declaration.
-    Listing both is rejected at class-definition time: each base is a complete,
+    this declaration selects, or ``None`` for a non-temporal declaration.
+    Detected through each base's own MRO ancestry — never a compiled entity
+    base's (a family member inherits its root's shape through the family
+    rather than selecting one of its own) — so no intermediate class between
+    the declaration and the framework root can hide the selection. Reaching
+    both shapes is rejected at class-definition time: each base is a complete,
     mutually exclusive temporal shape."""
-    selected = tuple(base for base in bases if base in _TEMPORAL_BASE_ATTRS)
+    selected: dict[type, None] = {}
+    for base in bases:
+        if base in _ENTITY_BY_CLASS:
+            continue
+        for ancestor in base.__mro__:
+            if ancestor in _TEMPORAL_BASE_ATTRS:
+                selected.setdefault(ancestor, None)
     if len(selected) > 1:
         raise EntityDefinitionError(
             f"{cls_name}: TxTemporal and Bitemporal are mutually exclusive temporal "
             "shapes — extend exactly one framework temporal base"
         )
-    return selected[0] if selected else None
+    return next(iter(selected)) if selected else None
+
+
+def _temporal_family_member(bases: tuple[type, ...]) -> bool:
+    """Whether this declaration sits below a framework temporal root — a
+    compiled ancestor's MRO reaches :class:`TxTemporal` / :class:`Bitemporal`,
+    so the standard temporal attributes arrive transitively through the family
+    (root-owned, family-wide shape)."""
+    return any(ancestor in _TEMPORAL_BASE_ATTRS for base in bases for ancestor in base.__mro__)
+
+
+def _reject_temporal_name_redeclaration(
+    cls_name: str,
+    supplier: str,
+    annotations: Mapping[str, Any],
+    namespace: Mapping[str, Any],
+) -> None:
+    """The standard temporal attribute names are reserved wherever the
+    framework supplies them: any class-body entry under one of the four names —
+    annotated or a bare assignment — is rejected, so the injected declarations
+    stay the sole source of the framework-stamped interval attributes and a
+    family's merged wire maps can never carry a conflicting redeclaration."""
+    redeclared = sorted(_STANDARD_TEMPORAL_NAMES & (set(annotations) | set(namespace)))
+    if redeclared:
+        raise EntityDefinitionError(
+            f"{cls_name}.{redeclared[0]}: the standard temporal attribute names "
+            "(valid_start/valid_end/tx_start/tx_end) are reserved — "
+            f"{supplier}; remove the redeclaration"
+        )
 
 
 def _inject_standard_temporal_attrs(
@@ -927,17 +989,14 @@ def _inject_standard_temporal_attrs(
     the conventional snake_case attribute names over the stable physical
     columns, typed Timestamp through ordinary neutral-type inference — exactly
     the declarations a hand-authored class body would carry. The standard
-    temporal attribute names are reserved on a temporal class: the base's own
-    injected declarations are the sole source of the framework-stamped interval
-    attributes, so a class body redeclaring one is rejected."""
-    redeclared = sorted(set(_STANDARD_TEMPORAL_COLUMNS) & set(annotations))
-    if redeclared:
-        raise EntityDefinitionError(
-            f"{cls_name}.{redeclared[0]}: the standard temporal attribute names "
-            "(valid_start/valid_end/tx_start/tx_end) are reserved — "
-            f"{temporal_base.__name__} supplies the framework temporal attributes "
-            "itself; remove the redeclaration"
-        )
+    temporal attribute names are reserved on a temporal class
+    (:func:`_reject_temporal_name_redeclaration`, over the whole class body)."""
+    _reject_temporal_name_redeclaration(
+        cls_name,
+        f"{temporal_base.__name__} supplies the framework temporal attributes itself",
+        annotations,
+        namespace,
+    )
     for py_name in _TEMPORAL_BASE_ATTRS[temporal_base]:
         annotations[py_name] = Attr[_dt.datetime]
         namespace[py_name] = FieldSpec(name=py_name, column=_STANDARD_TEMPORAL_COLUMNS[py_name])
@@ -1134,6 +1193,17 @@ def _check_mutability(value: str) -> str:
     return value
 
 
+# The inert framework-root identity set: exactly `TxTemporal` and `Bitemporal`
+# (`Entity` itself is inert too, but short-circuits earlier by carrying no
+# EntityMeta base). `EntityMeta.__new__` populates it only while THIS module's
+# own two root class statements below execute during import — the window closes
+# for good once both names are seen — so framework-root status is
+# metaclass-private identity: no class-body marker or user declaration can ever
+# mint another inert root.
+_FRAMEWORK_ROOT_NAMES: Final[tuple[str, ...]] = ("TxTemporal", "Bitemporal")
+_FRAMEWORK_ROOTS: dict[str, type] = {}
+
+
 class EntityMeta(ModelMetaclass):
     """Metaclass compiling an entity class body into a metamodel record."""
 
@@ -1148,11 +1218,26 @@ class EntityMeta(ModelMetaclass):
     ) -> type:
         if not any(isinstance(base, EntityMeta) for base in bases):
             return super().__new__(mcs, cls_name, bases, namespace, **kwargs)
-        if namespace.get("__parallax_framework_root__", False):
+        if (
+            len(_FRAMEWORK_ROOTS) < len(_FRAMEWORK_ROOT_NAMES)
+            and cls_name in _FRAMEWORK_ROOT_NAMES
+            and cls_name not in _FRAMEWORK_ROOTS
+            and namespace.get("__module__") == __name__
+        ):
             # `TxTemporal` / `Bitemporal`: inert framework roots exactly like
             # `Entity` itself — never compiled, registered, or family parents;
-            # their sole effect is the shape owner's injection below.
-            return super().__new__(mcs, cls_name, bases, namespace, **kwargs)
+            # their sole effect is the shape owner's injection below. Root
+            # status is established here by identity, during this module's own
+            # import, never read from the class body.
+            root = super().__new__(mcs, cls_name, bases, namespace, **kwargs)
+            _FRAMEWORK_ROOTS[cls_name] = root
+            return root
+        if "__parallax_framework_root__" in namespace:
+            raise EntityDefinitionError(
+                f"{cls_name}: `__parallax_framework_root__` is not a user-declarable "
+                "marker — the inert framework roots are fixed (Entity, TxTemporal, "
+                "Bitemporal); extend one of them instead of declaring a new root"
+            )
 
         config = namespace.get("__parallax__")
         if config is not None and not isinstance(config, EntityConfig):
@@ -1160,17 +1245,19 @@ class EntityMeta(ModelMetaclass):
         config = config if isinstance(config, EntityConfig) else EntityConfig()
 
         annotations: dict[str, Any] = class_body_annotations(namespace)
+        family_parent = _family_parent(cls_name, bases)
 
         # The temporal authoring path: extending a framework temporal base on a
         # standalone entity or a family root injects the standard temporal
         # attribute declarations and axis metadata into THIS class's own
         # compiled record, exactly as if hand-authored. A family subclass never
         # extends one — temporal axes are family-wide, root-owned metadata
-        # (m-inheritance "Inherited members").
+        # (m-inheritance "Inherited members") — and may not redeclare the
+        # standard temporal attribute names its root's shape already supplies.
         temporal_base = _selected_temporal_base(cls_name, bases)
         as_of_axes: tuple[AsOfAxisMetadata, ...] = ()
         if temporal_base is not None:
-            if _family_parent(bases) is not None:
+            if family_parent is not None:
                 raise EntityDefinitionError(
                     f"{cls_name}: a family SUBCLASS cannot extend the temporal base "
                     f"{temporal_base.__name__} — temporal axes are family-wide and only "
@@ -1179,11 +1266,18 @@ class EntityMeta(ModelMetaclass):
                 )
             _inject_standard_temporal_attrs(cls_name, temporal_base, annotations, namespace)
             as_of_axes = _TEMPORAL_BASE_AXES[temporal_base]
+        elif _temporal_family_member(bases):
+            _reject_temporal_name_redeclaration(
+                cls_name,
+                "the family root's framework temporal base supplies them family-wide",
+                annotations,
+                namespace,
+            )
 
-        # D-31: the columns this class's OWN axes govern (empty for a
-        # non-temporal class or a family subclass, which never declares axes
-        # itself — m-inheritance "Inherited members") — every axis-interval
-        # scalar attribute below (`in_z`/`out_z`, bitemporal `from_z`/`thru_z`)
+        # The columns this class's OWN axes govern (empty for a non-temporal
+        # class or a family subclass, which never declares axes itself —
+        # m-inheritance "Inherited members") — every axis-interval scalar
+        # attribute below (`in_z`/`out_z`, bitemporal `from_z`/`thru_z`)
         # becomes optional at construction, never caller-required.
         axis_attributes: frozenset[str] = frozenset(
             attribute
@@ -1255,7 +1349,6 @@ class EntityMeta(ModelMetaclass):
         relationships = tuple(_relationship_of(decl) for decl in rel_decls)
         value_objects = tuple(_value_object_of(decl) for decl in vo_decls)
         _reject_collisions(attributes, relationships, value_objects)
-        family_parent = _family_parent(bases)
         resolved_registry = _resolve_registry(cls_name, registry, family_parent)
         inheritance_record, resolved_table = _derive_inheritance(
             cls_name, config, family_parent, resolved_registry
@@ -1280,7 +1373,7 @@ class EntityMeta(ModelMetaclass):
             if entity.inheritance is not None:
                 # A family subclass declaring its OWN `optimisticLocking`
                 # attribute is rejected regardless of what the root declares
-                # (D-25, ADR 0027) — the same gap the metaclass already closes
+                # (ADR 0027) — the same gap the metaclass already closes
                 # for a temporal-base selection below the family root, closed
                 # here for the version column too. `validate_optimistic_locking_root_owned`
                 # is a pure per-entity structural check — a non-root's own
@@ -1499,8 +1592,6 @@ class TxTemporal(Entity):
     subclass inherits its root's temporal shape transitively
     (``inheritance-temporal-axes-not-root-owned``)."""
 
-    __parallax_framework_root__ = True
-
     if TYPE_CHECKING:
         # The static mirror of the injected standard declarations: the runtime
         # fields and `Attr` descriptors are installed on each shape owner by
@@ -1526,8 +1617,6 @@ class Bitemporal(Entity):
     inherits its root's temporal shape transitively
     (``inheritance-temporal-axes-not-root-owned``)."""
 
-    __parallax_framework_root__ = True
-
     if TYPE_CHECKING:
         # The static mirror of the injected standard declarations (see
         # `TxTemporal` — never executed at runtime).
@@ -1539,8 +1628,9 @@ class Bitemporal(Entity):
 
 # The per-base injection tables: each framework temporal base's standard
 # attribute names and axis metadata, in canonical Valid-Time-first order.
-# Keyed by the base class object itself, so `_selected_temporal_base` matches
-# only a DIRECT extension of the exact framework roots.
+# Keyed by the root class object itself; `_selected_temporal_base` and
+# `_temporal_family_member` match these exact roots through a declaring
+# class's base ancestry.
 _TEMPORAL_BASE_ATTRS: dict[type, tuple[str, ...]] = {
     TxTemporal: ("tx_start", "tx_end"),
     Bitemporal: ("valid_start", "valid_end", "tx_start", "tx_end"),

@@ -301,6 +301,24 @@ def test_history_rejects_a_string_dimension() -> None:
         _balance_stmt().history("tx_time")  # type: ignore[arg-type]
 
 
+def test_dimension_constants_are_frozen() -> None:
+    # `history()` accepts the constants by identity and lowers through their
+    # dimension value, so a mutable singleton could silently flip what an
+    # accepted constant lowers to; both mutation forms are refused and the
+    # lowering stays pinned afterwards.
+    for constant in (TX_TIME, VALID_TIME):
+        with pytest.raises(AttributeError, match="frozen"):
+            constant._dimension = "validTime"  # pyright: ignore[reportPrivateUsage]
+        with pytest.raises(AttributeError, match="frozen"):
+            del constant._dimension  # pyright: ignore[reportPrivateUsage]
+    assert _balance_stmt().history(TX_TIME).serialize() == {
+        "history": {"operand": {"all": {}}, "dimension": "transactionTime"}
+    }
+    assert _position_stmt().history(VALID_TIME).serialize() == {
+        "history": {"operand": {"all": {}}, "dimension": "validTime"}
+    }
+
+
 def test_temporal_clause_is_single_shot() -> None:
     with pytest.raises(ValueError, match="single-shot"):
         _balance_stmt().as_of(tx_time=LATEST).as_of(tx_time=LATEST)
