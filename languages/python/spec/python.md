@@ -376,6 +376,25 @@ class Product(Entity, table="product"):
     note: Attr[str | None]                         # NoDefault (omitted)
 ```
 
+Generation values and structured narrowing use the same option surface — the
+corpus `max` and `sequence` spellings and the two-variant scalar families
+author as:
+
+```python
+class Ticket(Entity, table="ticket"):
+    id: Attr[int] = attr(primary_key=Sequence(
+        name="ticket_seq", initial_value=1000, increment_size=5,
+    ))                                     # batch_size takes its semantic default
+    qty: Attr[int] = attr(type=Int32)      # Attr[int] alone is Int64
+    rating: Attr[float] = attr(type=Float32)
+    weight: Attr[float]                    # Float64 by default
+
+
+class Widget(Entity, table="widget"):
+    id: Attr[int] = attr(primary_key=Max)
+    label: Attr[str]
+```
+
 **Canonical naming.** Python members are snake_case; canonical member names
 are camelCase. The deterministic snake→camel conversion (drop each
 underscore, capitalize the following character) applies at the authoring
@@ -458,6 +477,8 @@ class Order(Entity, table="orders"):
     coupon: Rel["Coupon | None"] = rel(
         cardinality=ManyToOne, join=("coupon_id", "id"),
     )
+    # Spelling coupon as Rel["Coupon"], or customer as Rel[Customer | None],
+    # fails seal() with entity-relationship-annotation-mismatch.
 ```
 
 At runtime on a Snapshot node the three relationship states stay distinct:
