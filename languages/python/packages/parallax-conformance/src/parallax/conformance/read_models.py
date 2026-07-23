@@ -110,9 +110,7 @@ class Payment(Entity, frozen=True):
 
 
 class CardPayment(Payment, frozen=True):
-    __parallax__ = EntityConfig(
-        namespace=_NS, mutability="transactional", inheritance=Concrete(tag_value="card")
-    )
+    __parallax__ = EntityConfig(namespace=_NS, inheritance=Concrete(tag_value="card"))
 
     card_network: Attr[str | None] = Field(
         type="string", column="card_network", max_length=16, nullable=True
@@ -120,9 +118,7 @@ class CardPayment(Payment, frozen=True):
 
 
 class CashPayment(Payment, frozen=True):
-    __parallax__ = EntityConfig(
-        namespace=_NS, mutability="transactional", inheritance=Concrete(tag_value="cash")
-    )
+    __parallax__ = EntityConfig(namespace=_NS, inheritance=Concrete(tag_value="cash"))
 
     tendered: Attr[Decimal | None] = Field(type="decimal(18,2)", nullable=True)
 
@@ -149,19 +145,19 @@ class FinancialDocument(Document, frozen=True):
 
 
 class Invoice(FinancialDocument, frozen=True):
-    __parallax__ = EntityConfig(namespace=_NS, mutability="transactional", inheritance=Concrete())
+    __parallax__ = EntityConfig(namespace=_NS, inheritance=Concrete())
 
     amount_due: Attr[Decimal] = Field(type="decimal(18,2)", column="amount_due")
 
 
 class Receipt(FinancialDocument, frozen=True):
-    __parallax__ = EntityConfig(namespace=_NS, mutability="transactional", inheritance=Concrete())
+    __parallax__ = EntityConfig(namespace=_NS, inheritance=Concrete())
 
     paid_amount: Attr[Decimal] = Field(type="decimal(18,2)", column="paid_amount")
 
 
 class Memo(Document, frozen=True):
-    __parallax__ = EntityConfig(namespace=_NS, mutability="transactional", inheritance=Concrete())
+    __parallax__ = EntityConfig(namespace=_NS, inheritance=Concrete())
 
     body: Attr[str] = Field(max_length=64)
 
@@ -204,17 +200,13 @@ class Pet(Animal, frozen=True):
 
 
 class Dog(Pet, frozen=True):
-    __parallax__ = EntityConfig(
-        namespace=_NS, mutability="transactional", inheritance=Concrete(tag_value="dog")
-    )
+    __parallax__ = EntityConfig(namespace=_NS, inheritance=Concrete(tag_value="dog"))
 
     bark_volume: Attr[int | None] = Field(type="int32", column="bark_volume", nullable=True)
 
 
 class Cat(Pet, frozen=True):
-    __parallax__ = EntityConfig(
-        namespace=_NS, mutability="transactional", inheritance=Concrete(tag_value="cat")
-    )
+    __parallax__ = EntityConfig(namespace=_NS, inheritance=Concrete(tag_value="cat"))
 
     indoor: Attr[bool | None] = Field(type="boolean", column="indoor", nullable=True)
 
@@ -225,9 +217,7 @@ class WildBoar(Animal, frozen=True):
     to ``WildBoar`` — its effective concrete set is ``[Dog, Cat]``, never
     ``WildBoar`` (``m-inheritance-064``/``-072``'s own rejected narrows)."""
 
-    __parallax__ = EntityConfig(
-        namespace=_NS, mutability="transactional", inheritance=Concrete(tag_value="boar")
-    )
+    __parallax__ = EntityConfig(namespace=_NS, inheritance=Concrete(tag_value="boar"))
 
     tusk_length: Attr[Decimal | None] = Field(
         type="decimal(18,2)", column="tusk_length", nullable=True
@@ -252,13 +242,13 @@ class Rate(Bitemporal, frozen=True):
 
 
 class DepositRate(Rate, frozen=True):
-    __parallax__ = EntityConfig(namespace=_NS, mutability="transactional", inheritance=Concrete())
+    __parallax__ = EntityConfig(namespace=_NS, inheritance=Concrete())
 
     grade: Attr[str | None] = Field(type="string", max_length=8, nullable=True)
 
 
 class LoanRate(Rate, frozen=True):
-    __parallax__ = EntityConfig(namespace=_NS, mutability="transactional", inheritance=Concrete())
+    __parallax__ = EntityConfig(namespace=_NS, inheritance=Concrete())
 
     spread: Attr[Decimal | None] = Field(type="decimal(18,2)", nullable=True)
 
