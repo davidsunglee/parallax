@@ -1338,11 +1338,11 @@ class Truck(Vehicle, table="truck", inheritance=ConcreteSubtype):
 ## 7. Source-enforcement topology
 
 Behavioral modules map onto Python submodules (enforcement scopes) inside the
-distributions of §8. During the COR-45 contract transition, `m-metamodel`,
-`m-model-formation`, and `m-relationship` are distinct normative module rows but
-are co-located in the existing `parallax.core.descriptor` enforcement scope.
-COR-46 separates those scopes as it moves behavioral consumers to the Metamodel
-Interface; COR-45 does not pre-implement that dependency-graph refactor. The
+distributions of §8. `m-metamodel` owns the dedicated `parallax.core.metamodel`
+scope; `m-model-formation` and `m-relationship` are distinct normative module
+rows that remain co-located in the existing `parallax.core.descriptor`
+enforcement scope until their own packages land. COR-46 separates the remaining
+scopes as it moves behavioral consumers to the Metamodel Interface. The
 complete COR-46 target topology is specified in this section's closing
 subsection ("The target topology after the metamodel dependency inversion");
 the active rows and fence below govern until that flip lands.
@@ -1355,7 +1355,7 @@ directions; artifact co-location never legalizes a forbidden edge.
 | Behavioral/support module | Source owner/path | Enforcement scope | Allowed direct dependencies | Enforcement rule/config |
 |---|---|---|---|---|
 | `m-core` | `parallax.core.base` | `parallax.core.base` | (none) | generated forbidden contracts, `languages/python/pyproject.toml` |
-| `m-metamodel` | `parallax.core.descriptor` (temporary co-location) | `parallax.core.descriptor` | `m-core` | generated forbidden contracts |
+| `m-metamodel` | `parallax.core.metamodel` | `parallax.core.metamodel` | `m-core` | generated forbidden contracts |
 | `m-model-formation` | `parallax.core.descriptor` (temporary co-location) | `parallax.core.descriptor` | `m-metamodel` | generated forbidden contracts |
 | `m-descriptor` | `parallax.core.descriptor` | `parallax.core.descriptor` | `m-core`, `m-metamodel` | generated forbidden contracts |
 | `m-pk-gen` | `parallax.core.pk_gen` | `parallax.core.pk_gen` | `m-descriptor`, `m-metamodel` | generated forbidden contracts |

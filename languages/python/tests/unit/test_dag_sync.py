@@ -54,10 +54,12 @@ def test_parse_dependency_graph_rejects_missing_block() -> None:
 def test_transitive_closure_follows_edges() -> None:
     adjacency = dag.build_adjacency(dag.parse_dependency_graph(dag.MODULES_MD.read_text()))
     closure = dag.transitive_closure(adjacency, "parallax.core.op_algebra")
-    # op-algebra depends on descriptor + inheritance, and descriptor on core.
+    # op-algebra depends on metamodel + inheritance, inheritance reaches the
+    # co-located descriptor scope, and both reach core.
     assert closure == {
         "parallax.core.descriptor",
         "parallax.core.inheritance",
+        "parallax.core.metamodel",
         "parallax.core.base",
     }
     assert dag.transitive_closure(adjacency, "parallax.core.base") == frozenset()

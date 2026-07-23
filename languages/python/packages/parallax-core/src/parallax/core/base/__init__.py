@@ -1,9 +1,11 @@
 """``parallax.core.base`` enforcement scope (m-core).
 
-The normative primitives the whole spine rests on: the neutral data-type
-vocabulary, global UTC / microsecond normalization for ``timestamp`` instants,
-the native-infinity temporal upper bound, and the ``json`` value-object
-document column type. ``m-core`` depends on nothing.
+The normative primitives the whole spine rests on: the structured
+:data:`~parallax.core.base.NeutralType` algebra and its value-space
+conformance check, the interchange neutral-type name vocabulary, global UTC /
+microsecond normalization for ``timestamp`` instants, the native-infinity
+temporal upper bound, and the ``json`` value-object document column type.
+``m-core`` depends on nothing.
 """
 
 from __future__ import annotations
@@ -13,14 +15,71 @@ import enum
 import re
 from typing import Final
 
+from parallax.core.base._neutral import (
+    BOOLEAN,
+    BYTES,
+    DATE,
+    FLOAT32,
+    FLOAT64,
+    INT32,
+    INT64,
+    JSON,
+    STRING,
+    TIME,
+    TIMESTAMP,
+    UUID,
+    Boolean,
+    Bytes,
+    Date,
+    Decimal,
+    Float32,
+    Float64,
+    Int32,
+    Int64,
+    Json,
+    NeutralType,
+    String,
+    Time,
+    Timestamp,
+    Uuid,
+    matches_neutral_type,
+)
+
 __all__ = [
+    "BOOLEAN",
+    "BYTES",
+    "DATE",
     "DOCUMENT_TYPE",
+    "FLOAT32",
+    "FLOAT64",
     "INFINITY",
     "INFINITY_LITERAL",
+    "INT32",
+    "INT64",
+    "JSON",
     "NEUTRAL_TYPES",
+    "STRING",
+    "TIME",
+    "TIMESTAMP",
+    "UUID",
+    "Boolean",
+    "Bytes",
+    "Date",
+    "Decimal",
+    "Float32",
+    "Float64",
     "InstantError",
+    "Int32",
+    "Int64",
+    "Json",
+    "NeutralType",
+    "String",
     "TemporalBound",
+    "Time",
+    "Timestamp",
+    "Uuid",
     "is_neutral_type",
+    "matches_neutral_type",
     "normalize_instant",
 ]
 
