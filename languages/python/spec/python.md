@@ -1342,8 +1342,9 @@ distributions of §8. `m-metamodel`, `m-model-formation`, and `m-relationship`
 own the dedicated `parallax.core.metamodel`, `parallax.core.model_formation`,
 and `parallax.core.relationship` scopes.
 `parallax.core._formation_profile` is the built-in Model Formation
-composition root; its declared grants name the contributors that exist today and
-grow as each remaining Rule Set and compiler lands. COR-46 separates the remaining
+composition root; its declared grants are exactly the formation runner plus every
+module whose Formation Manifest row supplies a Rule Set or compiler, and
+`m-pk-gen` supplies neither and is not imported. COR-46 separates the remaining
 scopes as it moves behavioral consumers to the Metamodel Interface. The
 complete COR-46 target topology is specified in this section's closing
 subsection ("The target topology after the metamodel dependency inversion");
@@ -1359,7 +1360,7 @@ directions; artifact co-location never legalizes a forbidden edge.
 | `m-core` | `parallax.core.base` | `parallax.core.base` | (none) | generated forbidden contracts, `languages/python/pyproject.toml` |
 | `m-metamodel` | `parallax.core.metamodel` | `parallax.core.metamodel` | `m-core` | generated forbidden contracts |
 | `m-model-formation` | `parallax.core.model_formation` | `parallax.core.model_formation` | `m-metamodel` | generated forbidden contracts |
-| Model formation composition root (support) | `parallax.core._formation_profile` | `parallax.core._formation_profile` | `m-metamodel`, `m-model-formation`, `m-inheritance`, `m-relationship` | generated forbidden contracts |
+| Model formation composition root (support) | `parallax.core._formation_profile` | `parallax.core._formation_profile` | `m-metamodel`, `m-model-formation`, `m-inheritance`, `m-value-object`, `m-relationship`, `m-temporal-read`, `m-opt-lock` | generated forbidden contracts |
 | `m-descriptor` | `parallax.core.descriptor` | `parallax.core.descriptor` | `m-core`, `m-metamodel` | generated forbidden contracts |
 | `m-pk-gen` | `parallax.core.pk_gen` | `parallax.core.pk_gen` | `m-descriptor`, `m-metamodel` | generated forbidden contracts |
 | `m-inheritance` | `parallax.core.inheritance` | `parallax.core.inheritance` | `m-descriptor`, `m-metamodel`, `m-model-formation` | generated forbidden contracts |
@@ -1409,7 +1410,10 @@ prose (`psycopg`) names no enforcement scope.
 parallax.core._formation_profile --> parallax.core.metamodel
 parallax.core._formation_profile --> parallax.core.model_formation
 parallax.core._formation_profile --> parallax.core.inheritance
+parallax.core._formation_profile --> parallax.core.value_object
 parallax.core._formation_profile --> parallax.core.relationship
+parallax.core._formation_profile --> parallax.core.temporal_read
+parallax.core._formation_profile --> parallax.core.opt_lock
 parallax.core.entity --> parallax.core.descriptor
 parallax.core.entity --> parallax.core.op_algebra
 parallax.core.entity --> parallax.core.temporal_read

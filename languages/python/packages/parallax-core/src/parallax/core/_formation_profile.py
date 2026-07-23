@@ -41,15 +41,36 @@ from parallax.core.model_formation import (
     ModelCompiler,
     ModelCompilerRequirement,
     ModelRuleSet,
+    ModuleIdentity,
     form,
 )
+from parallax.core.opt_lock import FACET_KEY as OPT_LOCK_FACET_KEY
+from parallax.core.opt_lock import ISSUE_CODES as OPT_LOCK_ISSUE_CODES
+from parallax.core.opt_lock import MODEL_COMPILER as OPT_LOCK_COMPILER
+from parallax.core.opt_lock import OPT_LOCK_MODULE
+from parallax.core.opt_lock import RULE_SET as OPT_LOCK_RULE_SET
 from parallax.core.relationship import FACET_KEY as RELATIONSHIP_FACET_KEY
 from parallax.core.relationship import ISSUE_CODES as RELATIONSHIP_ISSUE_CODES
 from parallax.core.relationship import MODEL_COMPILER as RELATIONSHIP_COMPILER
 from parallax.core.relationship import RELATIONSHIP_MODULE
 from parallax.core.relationship import RULE_SET as RELATIONSHIP_RULE_SET
+from parallax.core.temporal_read import FACET_KEY as TEMPORAL_FACET_KEY
+from parallax.core.temporal_read import MODEL_COMPILER as TEMPORAL_COMPILER
+from parallax.core.temporal_read import TEMPORAL_READ_MODULE
+from parallax.core.value_object import ISSUE_CODES as VALUE_OBJECT_ISSUE_CODES
+from parallax.core.value_object import RULE_SET as VALUE_OBJECT_RULE_SET
+from parallax.core.value_object import VALUE_OBJECT_MODULE
 
 __all__ = ["BUILTIN_MANIFEST", "BUILTIN_PROFILE", "form_metamodel"]
+
+_PK_GEN_MODULE: Final[ModuleIdentity] = "m-pk-gen"
+"""The one manifest owner this file names without importing it.
+
+Primary-key generation contributes neither a Rule Set nor a compiler — its
+invalid generator states are unconstructible in normalized Metadata — so it has
+nothing to supply and no reason to be imported here. Its row still belongs in the
+manifest, because catalog completeness is measured against the manifest rather
+than against whichever contributors happen to exist."""
 
 BUILTIN_MANIFEST: Final[FormationManifest] = FormationManifest(
     (
@@ -60,10 +81,20 @@ BUILTIN_MANIFEST: Final[FormationManifest] = FormationManifest(
             compiler=METADATA_COMPILER_REQUIRED,
         ),
         FormationManifestEntry(
+            owner=_PK_GEN_MODULE,
+            required_modules=frozenset({METAMODEL_MODULE}),
+        ),
+        FormationManifestEntry(
             owner=INHERITANCE_MODULE,
             rule_set=REQUIRED_RULE_SET,
             issue_codes=INHERITANCE_ISSUE_CODES,
             compiler=ModelCompilerRequirement(INHERITANCE_FACET_KEY),
+            required_modules=frozenset({METAMODEL_MODULE, MODEL_FORMATION_MODULE}),
+        ),
+        FormationManifestEntry(
+            owner=VALUE_OBJECT_MODULE,
+            rule_set=REQUIRED_RULE_SET,
+            issue_codes=VALUE_OBJECT_ISSUE_CODES,
             required_modules=frozenset({METAMODEL_MODULE, MODEL_FORMATION_MODULE}),
         ),
         FormationManifestEntry(
@@ -72,6 +103,29 @@ BUILTIN_MANIFEST: Final[FormationManifest] = FormationManifest(
             issue_codes=RELATIONSHIP_ISSUE_CODES,
             compiler=ModelCompilerRequirement(RELATIONSHIP_FACET_KEY),
             required_modules=frozenset({METAMODEL_MODULE, MODEL_FORMATION_MODULE}),
+        ),
+        FormationManifestEntry(
+            owner=TEMPORAL_READ_MODULE,
+            compiler=ModelCompilerRequirement(TEMPORAL_FACET_KEY),
+            required_modules=frozenset(
+                {METAMODEL_MODULE, MODEL_FORMATION_MODULE, INHERITANCE_MODULE}
+            ),
+            required_facets=frozenset({INHERITANCE_FACET_KEY}),
+        ),
+        FormationManifestEntry(
+            owner=OPT_LOCK_MODULE,
+            rule_set=REQUIRED_RULE_SET,
+            issue_codes=OPT_LOCK_ISSUE_CODES,
+            compiler=ModelCompilerRequirement(OPT_LOCK_FACET_KEY),
+            required_modules=frozenset(
+                {
+                    METAMODEL_MODULE,
+                    MODEL_FORMATION_MODULE,
+                    INHERITANCE_MODULE,
+                    TEMPORAL_READ_MODULE,
+                }
+            ),
+            required_facets=frozenset({INHERITANCE_FACET_KEY, TEMPORAL_FACET_KEY}),
         ),
     )
 )
@@ -88,9 +142,19 @@ class _BuiltinProfile:
 
 
 BUILTIN_PROFILE: Final[_BuiltinProfile] = _BuiltinProfile(
-    rule_sets=(INHERITANCE_RULE_SET, RELATIONSHIP_RULE_SET),
+    rule_sets=(
+        INHERITANCE_RULE_SET,
+        VALUE_OBJECT_RULE_SET,
+        RELATIONSHIP_RULE_SET,
+        OPT_LOCK_RULE_SET,
+    ),
     metadata_compiler=METADATA_COMPILER,
-    model_compilers=(INHERITANCE_COMPILER, RELATIONSHIP_COMPILER),
+    model_compilers=(
+        INHERITANCE_COMPILER,
+        RELATIONSHIP_COMPILER,
+        TEMPORAL_COMPILER,
+        OPT_LOCK_COMPILER,
+    ),
 )
 """The implementations matching :data:`BUILTIN_MANIFEST` row for row."""
 

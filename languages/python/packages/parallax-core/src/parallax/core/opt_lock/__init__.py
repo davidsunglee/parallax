@@ -3,7 +3,14 @@
 The optimistic-locking POLICY scope: this module never renders SQL (`m-sql` /
 `parallax.snapshot.handle.lower_write` is the one seam that does) — it owns the
 version arithmetic, the observation-licensing rules, and the conflict/historical
-error vocabulary the write seam consumes. Five normative pieces (`core/spec/
+error vocabulary the write seam consumes. It also owns the formation half of the
+same concern: the Rule Set that keeps a family's version source unambiguous, and
+the Optimistic Lock Facet naming that source once per formation so no write path
+rediscovers a version column. Consumers reach the facet through :func:`view`, so
+generic facet retrieval stays an internal formation seam.
+``m-opt-lock`` depends on ``m-unit-work``, ``m-temporal-read``, ``m-metamodel``,
+``m-model-formation``, and ``m-inheritance``.
+Five normative pieces (`core/spec/
 m-opt-lock.md`; `python.md` §5 L584-641; ADR 0013):
 
 1. **No-op-first.** An update whose effective change set is empty is dropped
@@ -67,23 +74,65 @@ from __future__ import annotations
 
 from typing import Final
 
+from parallax.core.opt_lock._compile import (
+    MODEL_COMPILER,
+    OptimisticLockModelCompiler,
+    compile_facet,
+)
+from parallax.core.opt_lock._facet import (
+    FACET_KEY,
+    OPT_LOCK_MODULE,
+    UNVERSIONED,
+    ExplicitVersion,
+    OptimisticKey,
+    OptimisticLockFacet,
+    TransactionTimeDerived,
+    Unversioned,
+    view,
+)
+from parallax.core.opt_lock._rules import (
+    ISSUE_CODES,
+    MULTIPLE_ATTRIBUTES,
+    RULE_SET,
+    TEMPORAL_EXPLICIT_ATTRIBUTE,
+    OptimisticLockRuleSet,
+    validate_optimistic_locking,
+)
 from parallax.core.unit_work import Concurrency, Observation
 
 __all__ = [
+    "FACET_KEY",
     "INITIAL_VERSION",
+    "ISSUE_CODES",
+    "MODEL_COMPILER",
+    "MULTIPLE_ATTRIBUTES",
+    "OPT_LOCK_MODULE",
+    "RULE_SET",
+    "TEMPORAL_EXPLICIT_ATTRIBUTE",
+    "UNVERSIONED",
     "CallerAuthoredVersionError",
+    "ExplicitVersion",
     "HistoricalObservationError",
+    "OptimisticKey",
     "OptimisticLockConflictError",
+    "OptimisticLockFacet",
+    "OptimisticLockModelCompiler",
+    "OptimisticLockRuleSet",
     "StaleWriteError",
+    "TransactionTimeDerived",
     "UnobservedMilestoneError",
     "UnobservedVersionError",
+    "Unversioned",
     "advance",
     "check_locking_license",
     "classify_mismatch",
+    "compile_facet",
     "gates",
     "reject_caller_authored_version",
     "require_observed",
     "require_observed_milestone",
+    "validate_optimistic_locking",
+    "view",
 ]
 
 # The derived initial version every versioned insert carries, ignoring any
