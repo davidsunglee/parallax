@@ -1338,10 +1338,13 @@ class Truck(Vehicle, table="truck", inheritance=ConcreteSubtype):
 ## 7. Source-enforcement topology
 
 Behavioral modules map onto Python submodules (enforcement scopes) inside the
-distributions of §8. `m-metamodel` owns the dedicated `parallax.core.metamodel`
-scope; `m-model-formation` and `m-relationship` are distinct normative module
-rows that remain co-located in the existing `parallax.core.descriptor`
-enforcement scope until their own packages land. COR-46 separates the remaining
+distributions of §8. `m-metamodel` and `m-model-formation` own the dedicated
+`parallax.core.metamodel` and `parallax.core.model_formation` scopes;
+`m-relationship` is a distinct normative module row that remains co-located in
+the existing `parallax.core.descriptor` enforcement scope until its own package
+lands. `parallax.core._formation_profile` is the built-in Model Formation
+composition root; its declared grants name the contributors that exist today and
+grow as each remaining Rule Set and compiler lands. COR-46 separates the remaining
 scopes as it moves behavioral consumers to the Metamodel Interface. The
 complete COR-46 target topology is specified in this section's closing
 subsection ("The target topology after the metamodel dependency inversion");
@@ -1356,7 +1359,8 @@ directions; artifact co-location never legalizes a forbidden edge.
 |---|---|---|---|---|
 | `m-core` | `parallax.core.base` | `parallax.core.base` | (none) | generated forbidden contracts, `languages/python/pyproject.toml` |
 | `m-metamodel` | `parallax.core.metamodel` | `parallax.core.metamodel` | `m-core` | generated forbidden contracts |
-| `m-model-formation` | `parallax.core.descriptor` (temporary co-location) | `parallax.core.descriptor` | `m-metamodel` | generated forbidden contracts |
+| `m-model-formation` | `parallax.core.model_formation` | `parallax.core.model_formation` | `m-metamodel` | generated forbidden contracts |
+| Model formation composition root (support) | `parallax.core._formation_profile` | `parallax.core._formation_profile` | `m-metamodel`, `m-model-formation` | generated forbidden contracts |
 | `m-descriptor` | `parallax.core.descriptor` | `parallax.core.descriptor` | `m-core`, `m-metamodel` | generated forbidden contracts |
 | `m-pk-gen` | `parallax.core.pk_gen` | `parallax.core.pk_gen` | `m-descriptor`, `m-metamodel` | generated forbidden contracts |
 | `m-inheritance` | `parallax.core.inheritance` | `parallax.core.inheritance` | `m-descriptor`, `m-metamodel`, `m-model-formation` | generated forbidden contracts |
@@ -1403,6 +1407,8 @@ backticked module tag or `parallax.*` scope declares a grant; unbackticked
 prose (`psycopg`) names no enforcement scope.
 
 ```support-scope-graph
+parallax.core._formation_profile --> parallax.core.metamodel
+parallax.core._formation_profile --> parallax.core.model_formation
 parallax.core.entity --> parallax.core.descriptor
 parallax.core.entity --> parallax.core.op_algebra
 parallax.core.entity --> parallax.core.temporal_read
