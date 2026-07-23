@@ -256,11 +256,13 @@ class FacetKey[T]:
     parameter carries the facet's type through :meth:`Metamodel.facet` and is
     erased at run time, so ``accepts`` is its run-time counterpart: the owner's
     own decision procedure for "is this value my facet?", which the formation
-    seam calls on whatever its compiler returned before installing it. Only the
+    seam calls on whatever a compiler returned before installing it. Only the
     owner can answer that — a facet may be a Protocol, and no generic check can
     see through the erased parameter — so supplying ``accepts`` is part of
     declaring a key, and a value it rejects is a compiler contract failure.
-    ``accepts`` never participates in equality or hashing.
+    ``accepts`` never participates in equality or hashing, so an equal key may
+    carry any check at all; the seam therefore calls the check on the key its own
+    authoritative declaration holds, never one a contributor handed it.
     """
 
     owner: str
