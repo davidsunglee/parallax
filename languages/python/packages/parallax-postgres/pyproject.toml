@@ -10,7 +10,7 @@ dependencies = [
     "parallax-core",
     # The binary extra bundles libpq so the adapter installs self-contained (no
     # system libpq required); parallax-postgres remains the sole psycopg declarer.
-    "psycopg[binary]>=3.2",
+    "psycopg[binary]>=3.3.4",
 ]
 
 [build-system]
