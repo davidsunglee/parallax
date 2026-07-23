@@ -1,5 +1,5 @@
-"""Unit pins for the ``_where`` verb family's own build-time surface (COR-3
-Phase 8 increment 5; python.md §5): the ``.set(...)`` assignment DSL
+"""Unit pins for the ``_where`` verb family's own build-time surface
+(python.md §5): the ``.set(...)`` assignment DSL
 (``entity/expressions.py``) and the bare-statement guard
 (``entity/statement.py``). The materializing/readless DISPATCH and the
 rendered SQL are pinned in ``test_transaction_predicate_writes.py`` /
@@ -48,9 +48,9 @@ class _WhereTemporalLedger(TxTemporal, frozen=True):
 # A small LOCAL non-temporal entity mirroring `models/shipment.yaml`'s own
 # shape — the "required top-level value object missing" exemplar
 # (`destination` is `nullable: false`, unlike every other value-object owner
-# in the corpus) — confirmation-pass residual B's own typed-path fixture
-# (round 2, `inheritance/__init__.py:667`). D-21 has since installed
-# `vo_models.Shipment`, which carries that same non-nullable `destination`; this
+# in the corpus) — the non-nullable value-object write fixture.
+# `vo_models.Shipment` (installed separately) carries that same non-nullable
+# `destination`; this
 # fixture stays local because it ALSO pairs it with the nullable scalar `note`,
 # giving one fixture both the refusal and the scalar-None accept counterpart.
 class _WhereShipmentDestination(ValueObject, frozen=True):
@@ -115,7 +115,7 @@ def test_set_on_a_scalar_passes_a_plain_literal_through_unchanged() -> None:
 
 
 def test_set_on_a_primary_key_attribute_raises() -> None:
-    # Finding 3's own repro: `Person.id.set(2)` must be rejected at `.set()`
+    # `Person.id.set(2)` must be rejected at `.set()`
     # BUILD time (`python.md:667-676`), the SAME classification `model_copy`'s
     # own assignability guard raises for a primary-key `update=` key.
     with pytest.raises(ModelCopyError, match="primary-key fields may not be assigned"):
@@ -133,12 +133,12 @@ def test_set_on_a_scalar_with_a_mismatched_type_raises() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Confirmation-pass residual P3 -- a VALUE-OBJECT-targeted `.set(...)`'s VALUE  #
-# is validated against its declared composite too (the prior round's check     #
-# validated only scalar targets, silently accepting `Customer.address.set(42)` #
-# and binding `42` as the document): a non-document value is rejected with the #
+# A VALUE-OBJECT-targeted `.set(...)`'s VALUE                                  #
+# is validated against its declared composite too (a scalar-only check would   #
+# silently accept `Customer.address.set(42)`                                   #
+# and bind `42` as the document): a non-document value is rejected with the    #
 # SAME wording style the scalar branch above uses; a well-formed document      #
-# stays structurally accepted (D-26 -- a value-object target is not itself     #
+# stays structurally accepted (a value-object target is not itself             #
 # rejected; `test_set_on_a_top_level_value_object_serializes_to_its_document`  #
 # above already pins the well-formed-`ValueObject`-instance shape of this SAME #
 # accept branch). `test_write_instructions.py`'s own `test_member_name_       #
@@ -163,7 +163,7 @@ def test_set_on_a_value_object_with_a_well_formed_document_is_accepted() -> None
 
 
 # --------------------------------------------------------------------------- #
-# Confirmation-pass residual B (round 2, `inheritance/__init__.py:667`): a     #
+# The nullable-gated `None`-assignment refusal: a                              #
 # `None` assignment's nullability-aware handling through the TYPED `.set(...)` #
 # path -- `test_write_instructions.py`'s own `test_member_name_honesty_       #
 # ..._of_none` pins are the serialized/engine-path half of this SAME shared    #
@@ -187,9 +187,9 @@ def test_set_on_a_nullable_value_object_with_none_is_accepted() -> None:
 
 
 def test_set_on_a_non_nullable_scalar_with_none_raises() -> None:
-    # The scalar branch's own extension of residual B: a non-nullable
-    # scalar assigned `None` must be rejected too -- before the fix,
-    # `value is not None and not _type_matches(...)` let a `None` value
+    # The scalar branch's own analogue: a non-nullable
+    # scalar assigned `None` must be rejected too. A guard of
+    # `value is not None and not _type_matches(...)` would let a `None` value
     # bypass validation entirely, the SAME class of bug as the VO branch.
     with pytest.raises(ModelCopyError, match="required attribute is absent"):
         _WhereShipment.name.set(None)

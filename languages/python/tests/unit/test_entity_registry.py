@@ -1,5 +1,4 @@
-"""D-20 explicit scoped entity registries: unit pins (COR-3 Phase 8 increment 7
-Part A, design doc 37 DQ7a Option A).
+"""Explicit scoped entity registries: unit pins.
 
 Every entity class registers into an explicit :class:`EntityRegistry` scope
 (``registry=`` at class-definition time; omitted -> the process
@@ -331,7 +330,7 @@ def test_family_subclass_registry_mismatch_raises() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# S1 (BLOCKING, COR-3 Phase 7 increment 7 round-2): two-registry TPH          #
+# Two-registry TPH                                                            #
 # regression -- a table-per-hierarchy family's SHARED-TABLE default must      #
 # never cross a registry boundary, even for two SAME-NAMED roots.            #
 # --------------------------------------------------------------------------- #
@@ -360,7 +359,7 @@ def test_tph_root_table_does_not_leak_across_registries() -> None:
 
     # A SAME-NAMED root in a DIFFERENT registry, compiled AFTER `animal_a` but
     # BEFORE its own concrete subtype below -- exactly the interleaving that
-    # let the bare-name-keyed bookkeeping overwrite registry A's entry pre-fix.
+    # would let bare-name-keyed bookkeeping overwrite registry A's entry.
     _declare_tph_animal_root("animals_b", registry_b)
 
     class Dog(animal_a, frozen=True):
@@ -373,7 +372,7 @@ def test_tph_root_table_does_not_leak_across_registries() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Shadowing precedence (S1's scrutiny-item-1 pin): a child registry declaring #
+# Shadowing precedence: a child registry declaring                            #
 # a name that ALSO exists in its own `parent` chain is never a collision --   #
 # the child's own entry shadows the parent's, the parent itself unaffected.   #
 # --------------------------------------------------------------------------- #
@@ -405,7 +404,7 @@ def test_child_registry_entry_shadows_a_same_named_parent_entry() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# S2 (BLOCKING, COR-3 Phase 7 increment 7 round-2): class-authored metamodel  #
+# Class-authored metamodel                                                    #
 # assembly (the bare `metamodel(classes)` helper, never only                 #
 # `EntityRegistry.metamodel()`) auto-scopes from the classes it is given, so  #
 # `db.find` resolves through the assembled classes' own registry -- never    #
@@ -449,8 +448,8 @@ def test_bare_metamodel_over_an_incompatible_mixed_set_raises() -> None:
 
 
 def test_db_find_over_a_bare_metamodel_resolves_the_assembled_classs_own_registry() -> None:
-    # Reproduces the reviewer's defect verbatim: pre-fix, `metamodel(...)`
-    # produced a bare, UNTAGGED `Metamodel`, so `resolve_entity_class` fell
+    # Without tagging, `metamodel(...)` would produce a bare, UNTAGGED
+    # `Metamodel`, so `resolve_entity_class` would fall
     # back to the process default registry -- landing on that registry's OWN,
     # unrelated `read_models.Person` (`models/person.yaml`) instead of the
     # assembled `animal_owner.Person` (`models/animal.yaml`'s real polymorphic
@@ -473,20 +472,19 @@ def test_resolve_entity_class_returns_none_for_an_absent_name() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# R1 (BLOCKING, COR-3 Phase 7 increment 7 round-2): S2's original mixed-      #
-# registry check confirmed only that the candidate REACHES every other       #
-# distinct registry, never that it actually RESOLVES every supplied class     #
-# back to itself -- a conflicting same-name pair across registries (or       #
+# Registry selection confirms not only that the candidate REACHES every      #
+# other distinct registry, but that it actually RESOLVES every supplied      #
+# class back to itself -- a conflicting same-name pair across registries (or #
 # shadowed within one registry chain) must reject loudly, never silently     #
 # emit two divergent records for one canonical name.                         #
 # --------------------------------------------------------------------------- #
 def test_bare_metamodel_over_conflicting_same_name_classes_rejects_loudly() -> None:
-    # Reproduces the reviewer's exact call verbatim: `animal_owner.Person`
+    # For example, `animal_owner.Person`
     # (`models/animal.yaml`'s polymorphic owner) and `read_models.Person`
     # (`models/person.yaml`'s unrelated one-to-one Passport owner) share the
     # literal canonical name "Person" but are UNRELATED classes with
-    # divergent descriptors (maxLength, relationships) -- pre-fix, S2's
-    # reachability-only check silently picked ANIMAL_OWNER_REGISTRY (it
+    # divergent descriptors (maxLength, relationships) -- a
+    # reachability-only check would silently pick ANIMAL_OWNER_REGISTRY (it
     # reaches the default registry `read_models.Person` lives in) without
     # confirming that registry resolves EVERY supplied class back to itself,
     # so the assembled Metamodel's own `entities` carried BOTH divergent
@@ -522,11 +520,11 @@ def _declare_shadow_conflict_probe(table: str, registry: EntityRegistry):
 
 
 # --------------------------------------------------------------------------- #
-# P1 (BLOCKING, COR-3 Phase 7 increment 7 round-3): the IDENTICAL class object #
-# repeated in `classes` is harmless repetition, never a conflict -- prompt 89 #
-# requires `metamodel()` "must never emit two records for one canonical       #
-# name," and pre-fix it silently did (`entities` carried the SAME class's     #
-# record twice). The distinct-same-name rejection above (R1) is unaffected:  #
+# The IDENTICAL class object                                                  #
+# repeated in `classes` is harmless repetition, never a conflict:             #
+# `metamodel()` must never emit two records for one canonical name, and       #
+# without deduping it would (`entities` carrying the SAME class's record      #
+# twice). The distinct-same-name rejection above is unaffected:              #
 # TWO DIFFERENT classes sharing a name still raises loudly; only the SAME     #
 # class object repeated dedupes.                                             #
 # --------------------------------------------------------------------------- #
@@ -562,8 +560,8 @@ def test_bare_metamodel_over_an_identical_class_repeated_round_trips_normally() 
 
 
 def test_bare_metamodel_over_a_mixed_set_with_a_repeated_class_dedupes_only_the_repeat() -> None:
-    # A legitimate mixed set (COR-3 Phase 7 increment 7 round-2's own
-    # reproduction, `animal_owner.Person` + its related default-registry
+    # A legitimate mixed set (`animal_owner.Person` + its related
+    # default-registry
     # siblings) still dedupes an identical repetition within it, preserving
     # FIRST-occurrence order for the surviving, non-repeated members.
     meta = metamodel([animal_owner.Person, read_models.Animal, read_models.Animal])

@@ -256,7 +256,7 @@ def family_root(meta: Metamodel, entity: Entity) -> Entity:
 def declaring_entity(meta: Metamodel, entity: Entity) -> Entity:
     """The entity that actually DECLARES ``entity``'s primary key and temporal
     (as-of) axes: the family root for an inheritance participant — temporality
-    is a FAMILY-WIDE property (the binding COR-3 residual-finding correction),
+    is a FAMILY-WIDE property,
     so the primary key and every as-of axis are always declared on the root
     ALONE and inherited unchanged by every abstract and concrete descendant
     ("Inherited members"); a descendant MUST NOT redeclare, add, remove,
@@ -467,7 +467,7 @@ def _reject_descendant_optimistic_locking(participants: tuple[Entity, ...]) -> N
     """Reject any ``abstract-subtype`` or ``concrete-subtype`` that declares its
     own ``optimisticLocking`` attribute.
 
-    The version attribute is a family-wide property (D-25, ADR 0027): only the
+    The version attribute is a family-wide property (ADR 0027): only the
     family ROOT may declare it, and every descendant inherits exactly that
     column — regardless of whether the root itself is versioned. This is
     structural per-entity (it does not need to look at the root's own
@@ -594,8 +594,8 @@ def _reject_tph_tag_values(roots: list[Entity], participants: tuple[Entity, ...]
 
 
 # --------------------------------------------------------------------------- #
-# Concrete-subtype write protocol (m-inheritance "Concrete-subtype writes",   #
-# COR-3 Phase 8 increment 2): the payload-shape rules a model-aware write     #
+# Concrete-subtype write protocol (m-inheritance "Concrete-subtype writes"):  #
+# the payload-shape rules a model-aware write                                 #
 # validator MUST enforce before the target-validity rule, pre-SQL. `entity`   #
 # is the write's resolved target (a concrete subtype for an idiomatic keyed   #
 # verb; the family root by the rejected lane's own "no explicit handle"       #
@@ -675,7 +675,7 @@ def reject_predicate_write(entity: Entity) -> None:
     "Per-object writes are keyed; set-based inheritance writes are out of
     scope").
 
-    A deliberate, TARGET-ENTITY-ONLY call shape (COR-3 Phase 8 increment 5):
+    A deliberate, TARGET-ENTITY-ONLY call shape:
     a predicate-selected write is set-based BY CONSTRUCTION (there is no row at
     all, keyed or otherwise), so this needs no row inspection and never
     synthesizes a fake keyless row just to trigger
@@ -738,7 +738,7 @@ def validate_write_assignment(meta: Metamodel, entity: Entity, name: str, value:
     is likewise nullable-gated, `_check_entity_attribute`) — a NON-nullable
     scalar assigned ``None`` is rejected with the SAME `"required attribute
     is absent (or null)"` wording `write_validate`'s own required-attribute
-    check uses (COR-3 Phase 8 confirmation-pass residual B: `None` is an
+    check uses (`None` is an
     explicit clearing attempt here, never an omitted/sparse member the way
     an absent keyed-write row key is, so this check is UNCONDITIONAL —
     there is no mutation-aware sparseness concept at the assignment
@@ -748,21 +748,21 @@ def validate_write_assignment(meta: Metamodel, entity: Entity, name: str, value:
     `superset_value_objects` — the same family-wide resolution
     `family_attributes` applies to scalars) is likewise validated: a non-``None``
     ``value`` MUST be a well-formed document against the member's declared
-    composite (COR-3 Phase 8 confirmation-pass residual P3) — the SAME
+    composite — the SAME
     error-neutral structural walk `write_validate`'s own declared-composite
     check reuses (`parallax.core.descriptor.vo_document`, the `vo_path`
     precedent), so a non-document value (e.g. ``Customer.address.set(42)``,
     typed or the equivalent serialized ``PredicateWrite`` assignment) is
     rejected with this function's OWN established wording style; a well-formed
     document is accepted — assigning a value object is not itself rejected
-    (D-26 keeps the combination structurally accepted). A ``None`` value is
+    (the combination is structurally accepted). A ``None`` value is
     likewise a legal clearing assignment ONLY when the value object is
     declared ``nullable`` (`m-value-object` "A `nullable: false` value
     object MUST be present at write time") — a NON-nullable value object
     assigned ``None`` is rejected reusing `vo_document_violation`'s own
     ``"value-object-missing"`` rendering (`_vo_assignment_error`, the SAME
     `"required value object is absent (or null)"` wording a nested
-    required-VO violation already renders, residual B) rather than forking
+    required-VO violation already renders) rather than forking
     new text. A ``name`` this family declares NEITHER a scalar attribute NOR
     a value object for (one `validate_instruction`'s own member-name-honesty
     gate already rejects as wholly undeclared) is out of this function's

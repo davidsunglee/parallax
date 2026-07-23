@@ -54,7 +54,7 @@ def test_run_rejected_case_never_provisions_a_container(
     capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # A `rejected`-shape `run` is provisioning-free by contract
-    # (m-conformance-adapter, resolved DQ3): it must never construct a
+    # (m-conformance-adapter): it must never construct a
     # `Provisioner` (Docker), so the shape's short-circuit is proven
     # structurally here rather than merely by exit code — a fake provisioner
     # factory that raises on construction fails loudly if the CLI's dispatch

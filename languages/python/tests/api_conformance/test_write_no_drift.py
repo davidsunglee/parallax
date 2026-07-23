@@ -1,4 +1,4 @@
-"""Write no-drift guard (m-api-conformance, M4 increment 5).
+"""Write no-drift guard (m-api-conformance).
 
 The registered write stories (``parallax.conformance.stories`` — the single
 source the Usage Guide renders and the real-Postgres suite executes) are driven
@@ -59,8 +59,8 @@ _INFINITY: Final[TemporalBound] = INFINITY
 
 # Per-model seed rows every registered story's own finds may need, COLUMN-keyed
 # (the real driver-row convention `parallax.snapshot.handle` decodes) — one small
-# fixed row set per model, keyed by `story.model` (D-29/D-30 completion round:
-# the temporal stories' own observing finds need model-shaped seed data too,
+# fixed row set per model, keyed by `story.model` (the temporal stories'
+# own observing finds need model-shaped seed data too,
 # not just Account's). Id 2 (Linus, balance 250.00) joins ids 1/3 here for
 # `m-opt-lock-002` (the versioned, locking-mode keyed update) — the SAME triple
 # `core/compatibility/fixtures/account.yaml` seeds.
@@ -146,7 +146,7 @@ _SEED_ROWS_BY_CASE: Final[dict[str, list[Row]]] = {
             "out_z": _INFINITY,
         }
     ],
-    # `m-value-object-026`/`-027` (D-33, Phase-9 sweep): each story's own
+    # `m-value-object-026`/`-027`: each story's own
     # SECOND `db.transact` observes its Customer row before replacing/nulling
     # the address out — a per-CASE seed (never per-model: the two stories use
     # different ids AND different original address documents).
@@ -231,7 +231,7 @@ class _RecordingPort:
         ]
 
     def writes(self) -> list[tuple[str, tuple[object, ...]]]:
-        """The executed WRITE statements alone, in wire order (D-29's own
+        """The executed WRITE statements alone, in wire order (the
         writeSequence-story grading rule, below)."""
         return [
             (cast("str", op[1]), cast("tuple[object, ...]", op[2]))
@@ -240,7 +240,7 @@ class _RecordingPort:
         ]
 
     def reads(self) -> list[tuple[str, tuple[object, ...]]]:
-        """The executed READ statements alone, in wire order (D-29's own
+        """The executed READ statements alone, in wire order (the
         writeSequence-story grading rule, below)."""
         return [
             (cast("str", op[1]), cast("tuple[object, ...]", op[2]))
@@ -281,9 +281,9 @@ def _assert_reads_are_proper_selects(port: _RecordingPort) -> None:
     """The read/write partition :func:`_observed_statements` relies on is
     exhaustive and correctly classified: every op the port recorded as a READ
     genuinely is one (a ``select``), never a write emission miscategorized —
-    the structural half of D-29's own writeSequence-story grading rule, so a
+    the structural half of the writeSequence-story grading rule, so a
     story's own observation reads (a genuine ``tx.find`` before a temporal
-    ``tx.update``/``tx.terminate``, needed for the D-30 merge to have a real
+    ``tx.update``/``tx.terminate``, needed for the merge to have a real
     payload to merge onto) are PROVEN to have executed, even though they are
     graded separately from the byte-exact DML compare below (a writeSequence
     case's own `then.statements` vocabulary is WRITE-ONLY — the corpus format
@@ -297,7 +297,7 @@ def _observed_statements(
     port: _RecordingPort, case_id: str
 ) -> list[tuple[str, tuple[object, ...]]]:
     """The statements this case's golden ``then.statements``/``statements``
-    grades against (D-29): a ``writeSequence`` case's own golden vocabulary is
+    grades against: a ``writeSequence`` case's own golden vocabulary is
     WRITE-ONLY, so a writeSequence STORY's own observation reads are excluded
     here (and proven separately, :func:`_assert_reads_are_proper_selects`) —
     never folded into the byte-exact DML compare. A ``scenario`` case's own
@@ -323,11 +323,11 @@ def _assert_statements(
 
 
 def _db(port: _RecordingPort, story: WriteStory) -> Database:
-    # D-29: a story's own scripted-clock FACTORY (never a shared instance) —
+    # A story's own scripted-clock FACTORY (never a shared instance) —
     # this consumer's fresh clock, independent of `test_story_run.py`'s own.
     clock = story.clock() if story.clock is not None else None
-    # D-33: a story compiled under its OWN `registry` (the Customer/Location/
-    # Depot mirror's `CUSTOMER_REGISTRY`, ledger D-20) connects through THAT
+    # A story compiled under its OWN `registry` (the Customer/Location/
+    # Depot mirror's `CUSTOMER_REGISTRY`) connects through THAT
     # registry's metamodel, never the bare ingested corpus descriptor
     # (`_MODELS`) — the same `resolve_entity_class` scoping
     # `test_story_run.py`'s own `_reset_for_registry` observes.
@@ -335,10 +335,8 @@ def _db(port: _RecordingPort, story: WriteStory) -> Database:
     return Database.connect(port, meta, clock=clock)
 
 
-# The no-drift guard grades every EXERCISED story (`m-api-conformance.md`) —
-# the core amendment bundle (COR-3 Phase 8) closed the corpus gap that once
-# kept m-unit-work-005/006/009/012 guide-only, so every write story here is
-# the plain graded idiom now.
+# The no-drift guard grades every EXERCISED story (`m-api-conformance.md`);
+# every write story here is the plain graded idiom.
 _COMMIT_IDS = sorted(s.case_id for s in WRITE_STORIES if s.kind == "commit")
 _ABORT_IDS = sorted(s.case_id for s in WRITE_STORIES if s.kind == "abort")
 

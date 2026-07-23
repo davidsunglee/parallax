@@ -5,7 +5,7 @@ Plain functions returning **envelope** dicts: the JSON documents
 ``core/schemas/conformance-adapter.schema.json``). ``describe`` reports the
 claim; ``compile_case`` / ``run_case`` classify the request against the claim's
 filters in contract order and, for a claimed case, emit an ``error`` envelope
-until the compile/run lanes come online (COR-3 Phase 5+).
+until the compile/run lanes come online.
 """
 
 from __future__ import annotations
@@ -269,7 +269,7 @@ def _run(
     them against each step's
     ``expectRows``. A rejected run touches no database and no port: it reports
     the classified ``rejectedRule`` with ``roundTrips: 0`` (m-conformance-
-    adapter, resolved DQ3/DQ8).
+    adapter).
     """
     if _is_scenario_lane_dispatched(case):
         raise _scenario_lane_error(case)
@@ -309,8 +309,8 @@ def _run(
 def _rejected_shape_run_only(adapter: Adapter) -> Envelope:
     # A `rejected` case carries no golden SQL BY CONSTRUCTION (`then.statements` is
     # disallowed, m-case-format): it is implicitly run-graded, a shape-intrinsic
-    # rule needing no per-case `compileEligibility` authoring (m-conformance-adapter,
-    # resolved DQ3/DQ8) — unlike the query-result-dependent run-only cases above.
+    # rule needing no per-case `compileEligibility` authoring (m-conformance-adapter)
+    # — unlike the query-result-dependent run-only cases above.
     return _non_ok(
         "compile",
         "run-only",

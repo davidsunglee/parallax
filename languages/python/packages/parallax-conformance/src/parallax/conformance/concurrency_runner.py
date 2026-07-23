@@ -1,7 +1,6 @@
 """``parallax.conformance.concurrency_runner`` — the `when.concurrency` rounds
-runner (the m-read-lock behavioral matrix, COR-3 Phase 8 increment 6; joined
-by `m-db-error`'s own five two-session error cases at the increment 7
-completion round's D-28 flip).
+runner (the m-read-lock behavioral matrix, joined by `m-db-error`'s own five
+two-session error cases).
 
 A `concurrencySuccess` / `error`-with-`when.concurrency` case proves a
 GENUINELY two-session concurrency property — the shared read lock actually
@@ -270,11 +269,10 @@ def run_rounds(
     isolation: str | None = None,
 ) -> RoundsRun:
     """Drive ``rounds`` over two independently-held peer sessions (the
-    m-read-lock behavioral matrix and, since the COR-3 Phase 8 increment 7
-    completion round's D-28 flip, `m-db-error`'s own five two-session error
-    cases; `m-case-format` "Error cases" / "concurrencySuccess").
+    m-read-lock behavioral matrix and `m-db-error`'s own five two-session
+    error cases; `m-case-format` "Error cases" / "concurrencySuccess").
 
-    ``isolation`` (D-28) is an OPTIONAL transaction-isolation override (e.g.
+    ``isolation`` is an OPTIONAL transaction-isolation override (e.g.
     ``"serializable"``), applied to BOTH sessions as the SQL-standard `SET
     TRANSACTION ISOLATION LEVEL` — deliberately the very FIRST statement
     either session issues (before even the lock-contention GUCs), since a peer
@@ -283,13 +281,13 @@ def run_rounds(
     own serialization-failure witness needs genuine Postgres SSI (its golden
     SIREAD-predicate-lock write-skew never arises at the default READ
     COMMITTED), a runner-level fact about ONE case `m-case-format` declares
-    no schema field for. ``None`` (every pre-D-28 case, unchanged) issues no
+    no schema field for. ``None`` (a case declaring no isolation) issues no
     override at all — the driver's own default isolation, preserving
-    byte-identical behavior for the already-exercised m-read-lock matrix.
+    byte-identical behavior for the m-read-lock matrix.
 
     Opens exactly two sessions via ``peer_factory`` (never constructs a
-    connection itself) with INCREMENTAL protection (`contextlib.ExitStack`,
-    review remediation finding 4): a session is registered for close the
+    connection itself) with INCREMENTAL protection (`contextlib.ExitStack`):
+    a session is registered for close the
     MOMENT it opens, so a second-peer construction failure — or a
     lock-contention-tuning failure on either session — closes every session
     successfully opened so far rather than leaking the first. Once both are
@@ -419,12 +417,12 @@ def run_rounds(
         secondary = next((exc for node, exc in failures.items() if node != originating_node), None)
         raise originating from secondary
 
-    # `+ 1` when an isolation override is in play (D-28): the SYNTHETIC final
+    # `+ 1` when an isolation override is in play: the SYNTHETIC final
     # commit round the worker above appends at index `len(rounds)`, one past
     # the corpus's own authored rounds — included here so its own outcome
     # (the SSI conflict a write-skew case like `m-db-error-009` can only
     # surface at commit) reaches the caller's grading exactly like any other
-    # round's. Absent for every pre-D-28 case (`isolation is None`),
+    # round's. Absent for a case that declares no isolation (`isolation is None`),
     # preserving byte-identical `RoundsRun` shape there.
     total_rounds = len(rounds) + (1 if isolation is not None else 0)
     return RoundsRun(

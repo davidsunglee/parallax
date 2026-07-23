@@ -312,7 +312,7 @@ def _single_table_projection(
       the dialect's own select-list expression (a `bytes` column projects
       `encode(col, ?)`, which is where a projection BIND comes from and why
       projection binds lead the statement's bind tuple).
-    * **Slot 2** (m-sql resolved Q6) — the raw tag column, projected iff the
+    * **Slot 2** — the raw tag column, projected iff the
       read's OWN `targetEntity` is abstract, NEVER derived from the resolved
       position. ``None`` is "this read projects no tag": a table-per-hierarchy
       read whose own `targetEntity` is concrete, and every
@@ -596,7 +596,7 @@ def _plan_tpcs_read(
             "distinct / orderBy / limit / a read-lock suffix over a table-per-concrete-"
             "subtype union-all read (2+ effective concretes) has no goldened lowering yet"
         )
-    # Instance-form (ledger D-22, COR-3 Phase 8 part C): a VO-FREE family's
+    # Instance-form: a VO-FREE family's
     # union-all lowering is BYTE-IDENTICAL to its row-form sibling (no slot-4
     # value-object columns to add either way — m-inheritance-109 witnesses
     # this exact shape, verified against m-inheritance-052's own golden). A

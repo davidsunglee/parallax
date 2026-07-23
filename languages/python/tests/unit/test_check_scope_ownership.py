@@ -139,7 +139,7 @@ def test_the_success_message_states_the_guarantee_it_actually_proves(
 def test_unowned_production_file_fails(capsys: pytest.CaptureFixture[str]) -> None:
     # `parallax.snapshot` is a distribution package interface, not an enforcement
     # scope, so a module dropped beside it belongs to nothing — the exact shape
-    # `parallax/snapshot/wrap.py` had before COR-42 retired it.
+    # `parallax/snapshot/wrap.py` had before it was retired.
     canary = PY_ROOT / "packages/parallax-snapshot/src/parallax/snapshot/_canary_unowned.py"
     canary.write_text('"""Deliberately outside every enforcement scope."""\n')
     try:

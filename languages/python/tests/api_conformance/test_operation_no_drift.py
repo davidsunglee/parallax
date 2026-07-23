@@ -11,7 +11,7 @@ Two case shapes carry no single top-level ``when.operation`` to compare a built
 entry: a ``rejected`` case (the invalid input is authored under ``when.operation``,
 but building it through the idiomatic surface never returns a ``Statement`` at all
 — the model-aware validator raises immediately, exactly as it does for the corpus's
-own operation-input path, COR-3 Phase 7 increment 1) proves no-drift by comparing
+own operation-input path) proves no-drift by comparing
 the RAW built predicate's own serialization to the case's ``when.operation`` and
 separately asserting the SAME build raises the classified ``then.rejectedRule``;
 a ``scenario`` case's per-step ``find`` bodies are graded by the executable graph
@@ -27,7 +27,7 @@ never a second, hand-duplicated expression that could drift from it. The
 remaining hand-authored entries are the ones that genuinely have no executable
 real-database story yet, OR that pair with a `graph_stories.GraphStory` (a
 graph story's own bare-statement half — including the Customer value-object
-family, D-20 residue, COR-3 Phase 8 increment 7 completion round: `db.find`'s
+family: `db.find`'s
 always-instance-form materialization means these grade bespoke there rather
 than through `read_stories.ReadStory`'s byte-exact generic runner, see that
 module's own docstring), OR that genuinely cannot: a multi-concrete
@@ -104,8 +104,7 @@ BUILDERS: dict[str, Callable[[], Statement]] = {
         | sm.Animal.narrow(sm.Cat, where=sm.Cat.indoor.is_(True))
     ),
     "m-inheritance-052": lambda: im.Document.where().narrow(im.FinancialDocument),
-    # Value-object traversal over the now-installed Customer mirror (D-20
-    # residue, COR-3 Phase 8 increment 7 completion round) — the query-shape
+    # Value-object traversal over the installed Customer mirror — the query-shape
     # no-drift half of the executable graph stories in `graph_stories.py`
     # (see that module's own docstring for why these land as `GraphStory`
     # entries, bespoke-graded, rather than `read_stories.ReadStory` ones).
@@ -123,8 +122,8 @@ BUILDERS: dict[str, Callable[[], Statement]] = {
     "m-value-object-023": lambda: Customer.where(),
     "m-value-object-024": lambda: Customer.where(Customer.address.city == "Oslo"),
     "m-deep-fetch-018": lambda: Customer.where().include(Customer.locations),
-    # Deep-fetch include paths over the now-installed Person/Passport and
-    # animal-owner mirrors (ledger D-20/D-21) — the query-shape no-drift
+    # Deep-fetch include paths over the installed Person/Passport and
+    # animal-owner mirrors — the query-shape no-drift
     # half of the executable graph stories in `graph_stories.py`.
     "m-snapshot-read-007": lambda: Person.where().include(Person.passport),
     "m-snapshot-read-012": lambda: AnimalOwnerPerson.where(AnimalOwnerPerson.id == 10).include(
@@ -139,8 +138,8 @@ BUILDERS: dict[str, Callable[[], Statement]] = {
     "m-inheritance-067": lambda: AnimalOwnerPerson.where().include(
         AnimalOwnerPerson.pets.narrow(Dog), AnimalOwnerPerson.pets.narrow(Cat)
     ),
-    # Value-object-bearing temporal reads over the now-installed Supplier/
-    # Branch mirrors (ledger D-21).
+    # Value-object-bearing temporal reads over the installed Supplier/
+    # Branch mirrors.
     "m-value-object-028": lambda: Supplier.where().as_of(tx_time=LATEST),
     "m-value-object-029": lambda: Supplier.where().as_of(
         tx_time=dt.datetime(2024, 4, 1, tzinfo=dt.UTC)
@@ -150,7 +149,7 @@ BUILDERS: dict[str, Callable[[], Statement]] = {
         valid_time=dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
         tx_time=dt.datetime(2024, 2, 1, tzinfo=dt.UTC),
     ),
-    # Multi-concrete polymorphic INSTANCE-FORM reads (ledger D-22): the SAME
+    # Multi-concrete polymorphic INSTANCE-FORM reads: the SAME
     # statement expression as their row-form values-lane siblings
     # (m-inheritance-003/-013/-015/-052 above), but built over the INSTALLED
     # `read_models` classes rather than the test-only `im`/`sm` mirrors — the
@@ -181,10 +180,10 @@ def test_expression_rejects_bool_misuse() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Rejected-case build-time proofs (m-op-algebra / m-navigate / m-value-object, #
-# COR-3 Phase 7): a rejected case's `when.operation` never becomes a Statement #
+# Rejected-case build-time proofs (m-op-algebra / m-navigate / m-value-object): #
+# a rejected case's `when.operation` never becomes a Statement                 #
 # — the SAME model-aware `validate_operation` the corpus's own rejected lane   #
-# calls (m-conformance-adapter, resolved DQ3) runs INSIDE `Entity.where()` /   #
+# calls (m-conformance-adapter) runs INSIDE `Entity.where()` /                 #
 # `.narrow()`, raising before a Statement is ever returned. No-drift here is   #
 # two proofs: the raw built predicate serializes to the case's own            #
 # `when.operation` (the SAME structural comparison every other example makes, #
@@ -200,7 +199,7 @@ REJECTED_BUILDERS: dict[str, Callable[[], Predicate]] = {
     # `Person.pets` targets the abstract subtype Pet; narrowing past its
     # reachable set (WildBoar, a sibling branch) or naming the wrong `entity`
     # (Animal instead of Pet) both raise `narrow-outside-relationship-target`
-    # over the now-installed animal-owner mirror (ledger D-20).
+    # over the installed animal-owner mirror.
     "m-inheritance-064": lambda: AnimalOwnerPerson.pets.any(Pet.narrow(WildBoar)),
     "m-inheritance-072": lambda: AnimalOwnerPerson.pets.any(AnimalRoot.narrow(Dog)),
 }
@@ -210,7 +209,7 @@ REJECTED_BUILDERS: dict[str, Callable[[], Predicate]] = {
 # one, matching `engine._rejected_target`'s default; the animal-owner pair
 # below targets `Person` itself instead — the predicate is fundamentally
 # about `Person.pets`, and `Person`'s own registry scope is the one that
-# resolves BOTH `Person` and `Pet`/`WildBoar`/`Animal` coherently, ledger D-20).
+# resolves BOTH `Person` and `Pet`/`WildBoar`/`Animal` coherently).
 REJECTED_TARGETS: dict[str, type[Entity]] = {
     "m-value-object-038": vm.Customer,
     "m-inheritance-040": sm.Animal,

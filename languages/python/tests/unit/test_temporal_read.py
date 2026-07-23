@@ -311,7 +311,7 @@ def test_statement_pin_is_absent_for_a_scanned_asof_range_or_history_axis() -> N
 
 
 class _TemporalNode:
-    """A stand-in for a Phase-7 materialized node carrying its attached coordinates."""
+    """A stand-in for a materialized node carrying its attached coordinates."""
 
     __parallax_edge__: Edge
     __parallax_pin__: Pin

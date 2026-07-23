@@ -7,15 +7,15 @@ each knowing how to build its own child query from its parent level's distinct
 gathered keys. It never compiles a statement (``m-sql``), never executes
 anything (``m-db-port``), and reifies no list — the two lifecycle result
 surfaces (operation-backed lists, snapshot graphs) are built **on top of** this
-plan by their own modules (the DQ5 core amendment; ``m-op-list --> m-deep-fetch``,
+plan by their own modules (``m-op-list --> m-deep-fetch``,
 ``m-snapshot-read --> m-deep-fetch``).
 
-Per the amended dependency graph, ``m-deep-fetch`` depends on ``m-navigate``
+Per the dependency graph, ``m-deep-fetch`` depends on ``m-navigate``
 alone — transitively reaching ``m-op-algebra``, ``m-temporal-read``, and
 ``m-inheritance``, all of which this module imports directly (the DAG permits
 any edge ``m-navigate`` itself reaches). Root canonicalization reuses the exact
 composition-at-the-engine order every read compile site shares (``inject_as_of``
-then ``navigate.canonicalize``, the M2 precedent); each level's own propagated
+then ``navigate.canonicalize``); each level's own propagated
 as-of term and relationship resolution reuse ``parallax.core.navigate``'s
 :func:`~parallax.core.navigate.hop_as_of_terms` /
 :func:`~parallax.core.navigate.resolve_relationship` — the SAME primitives a
@@ -348,7 +348,7 @@ def _resolve_position(
     identity's second component): the segment's own narrow when authored, else
     the relationship target's own effective set — a non-polymorphic target's
     trivial one-name set either way. The narrowed branch calls the SHARED
-    ``resolve_narrow_position`` seam (COR-3 Phase 7 increment 7 round-3, P2) --
+    ``resolve_narrow_position`` seam --
     the entity frontend's narrowed-view key derivation
     (``parallax.core.entity.graph_state``) calls the identical function, so
     the two can never drift."""

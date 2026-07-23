@@ -218,7 +218,7 @@ def _validate_narrow(
     entity: str, to: tuple[str, ...], scope: _PositionScope, meta: Metamodel
 ) -> _PositionScope:
     """The four-step validation rule (`m-op-algebra`), plus its relationship-scope
-    carve-out (`m-navigate`, resolved Q10)."""
+    carve-out (`m-navigate`)."""
     if scope.relationship_target is not None:
         # Relationship scope does NOT clamp: `entity` MUST name the relationship
         # target exactly, never a broader or other position.

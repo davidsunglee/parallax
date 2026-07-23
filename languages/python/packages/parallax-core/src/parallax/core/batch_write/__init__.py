@@ -30,15 +30,14 @@ Three collapse rules (``m-batch-write.md`` L15-26):
   keys. A **versioned** entity's update NEVER collapses (even when uniform) —
   every row's gate/advance binds its OWN observed version, which one shared
   statement cannot carry (``m-opt-lock``, ADR 0014); it always decomposes to
-  per-row keyed updates (increment 3's lowering, unchanged, ``m-batch-write-004``'s
-  keyed-delete sibling for updates being the eventual per-row set-based path).
+  per-row keyed updates.
 - **delete** — same-entity, NON-VERSIONED deletes collapse into one ``DELETE``
   with an ``IN`` predicate; a VERSIONED entity's delete never collapses (each
   row's own observed version must gate its own statement).
 
 A **temporal** entity's keyed writes never reach this module's collapse
-decision at all (`m-txtime-write` / `m-bitemp-write` own that lowering,
-unchanged since increment 4) — every function here defensively answers "does
+decision at all (`m-txtime-write` / `m-bitemp-write` own that lowering) —
+every function here defensively answers "does
 not collapse" for one, so an accidental call never silently mis-batches a
 milestone chain.
 
@@ -133,8 +132,8 @@ def update_collapses(
     when the target is UNVERSIONED, non-temporal, no row carries an explicit
     observation control key, and every row assigns the IDENTICAL non-key
     values (the uniform-value case; a non-uniform run stays decomposed to one
-    keyed statement per distinct key — increment 3's per-row lowering, never
-    this module's concern). A **versioned** entity's update NEVER collapses,
+    keyed statement per distinct key, never this module's concern). A
+    **versioned** entity's update NEVER collapses,
     uniform or not — the gate/advance binds a PER-ROW observed version no
     shared statement can carry (`m-opt-lock`, ADR 0014)."""
     if _is_temporal(meta, entity_name):

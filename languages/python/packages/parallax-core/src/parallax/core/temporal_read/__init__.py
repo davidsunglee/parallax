@@ -286,7 +286,7 @@ class Edge:
 
 
 # The private attributes a materialized snapshot node carries (attached by the
-# snapshot materializer through its setattr backdoor, COR-3 Phase 7). `pin_of` /
+# snapshot materializer through its setattr backdoor). `pin_of` /
 # `edge_of` read them; the value model and the milestone-edge computation
 # (`milestone_edge`) are the reusable core the materializer builds on.
 _PIN_ATTR: Final[str] = "__parallax_pin__"
@@ -324,7 +324,7 @@ def milestone_edge(entity: Entity, row: Mapping[str, object]) -> Edge:
     Each declared axis's edge is its milestone's own **from-instant** — the value of
     the axis's start Attribute column in ``row`` — the one instant guaranteed to re-select
     exactly that milestone on a half-open ``[from, to)`` interval. This is the
-    reusable core the snapshot materializer (COR-3 Phase 7) uses to edge-pin each
+    reusable core the snapshot materializer uses to edge-pin each
     ``history`` / ``as_of_range`` result; here it is unit-verifiable against corpus
     row values without a materialized graph.
     """

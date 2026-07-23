@@ -125,7 +125,7 @@ def test_statement_is_frozen_value() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# The supported interface itself (COR-43). `parallax.core.sql_gen` exports      #
+# The supported interface itself. `parallax.core.sql_gen` exports               #
 # exactly six names; everything else in the package is private implementation.  #
 # The result objects are ordinary frozen dataclasses, so equality, `repr`,      #
 # hashing, copying, and same-version pickling are all structural — no           #

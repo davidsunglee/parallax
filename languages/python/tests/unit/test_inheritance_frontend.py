@@ -1,13 +1,11 @@
-"""D-7 inheritance class frontend (DQ2): unit-level no-drift proof against
+"""The inheritance class frontend: unit-level no-drift proof against
 ``models/payment.yaml`` (table-per-hierarchy) and ``models/document.yaml``
-(table-per-concrete-subtype, COR-3 Phase 7 increment 6a). This is the
+(table-per-concrete-subtype). This is the
 build-time proof that ``parent`` / ``role`` derive from the Python class
 hierarchy and ``strategy`` / ``tag`` / ``tagValue`` thread through
 ``EntityConfig(inheritance=...)`` exactly as an ingested descriptor would.
 
-The API-conformance no-drift guard extension this docstring used to defer is
-DONE: `read_stories.py`'s Dog/CardPayment/Invoice examples (COR-3 Phase 7
-increment 6b / the Phase-7 implementation review remediation) already execute
+`read_stories.py`'s Dog/CardPayment/Invoice examples execute
 inheritance-family reads through the shipped surface against real Postgres.
 This file also proves the temporal composition's class-frontend spelling —
 ``models/rate.yaml`` (table-per-concrete-subtype BITEMPORAL, the root ALONE
@@ -39,7 +37,7 @@ _MODELS_DIR = case_format.find_repo_root() / "core" / "compatibility" / "models"
 
 
 def _drop_indices(document: dict[str, object]) -> dict[str, object]:
-    # The class frontend expresses the logical model only (D-8): physical
+    # The class frontend expresses the logical model only: physical
     # indices are a storage concern with no class-level declaration mechanism.
     import copy
 
@@ -229,9 +227,9 @@ def test_abstract_subtype_extending_a_temporal_base_is_rejected() -> None:
 
 
 def test_concrete_subtype_declaring_an_optimistic_locking_attr_is_rejected() -> None:
-    # D-25 / ADR 0027 (subsuming the old ADR-0026-era composition check): a
+    # The family-uniform version rule (ADR 0027): a
     # temporal-family CONCRETE subtype declares no `as_of` of its own (only the
-    # root does, the test above), and the GENERAL root-ownership rule (D-25)
+    # root does, the test above), and the GENERAL root-ownership rule
     # forbids it from carrying its own `optimisticLocking` attribute too — a
     # non-root may never declare its own version attribute at all, temporal or
     # not (`im.Rate` is bitemporal; the rule fires the same way for a
@@ -248,7 +246,7 @@ def test_concrete_subtype_declaring_an_optimistic_locking_attr_is_rejected() -> 
 
 
 # --------------------------------------------------------------------------- #
-# D-25 / ADR 0027: optimistic locking is root-owned and family-uniform — the  #
+# ADR 0027: optimistic locking is root-owned and family-uniform — the         #
 # class-frontend gate (EntityMeta.__new__) rejects a family subclass          #
 # declaring its own `optimisticLocking` attribute, regardless of what the     #
 # root declares, mirroring `parallax.core.inheritance.validate`'s             #

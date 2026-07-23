@@ -330,7 +330,7 @@ def test_run_scenario_case_rollback_step_aborts_but_counts_the_round_trip() -> N
     assert emissions[0].case_pointer == "/scenario/0/write"
 
 
-# --- `uow`-grouped scenario spans (amendment-review remediation) -------------
+# --- `uow`-grouped scenario spans --------------------------------------------
 #
 # `m-unit-work-005/006/009/012` and `m-unit-work-002` are `compileEligibility:
 # run-only` (their version binds are query-result-dependent), so they route
@@ -420,8 +420,8 @@ def _two_group_interleave_steps() -> list[dict[str, object]]:
 def test_scenario_uow_spans_signals_the_two_group_interleave_with_none() -> None:
     # `m-opt-lock-012`'s own shape (two `uow` groups whose steps interleave):
     # `_scenario_uow_spans` returns `None` rather than raising — the caller
-    # routes to `run_interleaved_scenario_case` instead (COR-3 Phase 8
-    # increment 6), which needs a second, peer-backed connection this
+    # routes to `run_interleaved_scenario_case` instead, which needs a
+    # second, peer-backed connection this
     # function does not construct.
     assert (
         engine._scenario_uow_spans(  # pyright: ignore[reportPrivateUsage]
@@ -437,7 +437,7 @@ def test_run_scenario_case_routes_the_two_group_interleave_to_run_interleaved_sc
     # `run_scenario_case` itself constructs no second connection, so it
     # refuses loudly and names the entry point that does, rather than
     # silently mis-executing the interleave (or reference-harness-only
-    # forever, the pre-increment-6 disposition).
+    # forever).
     case = _synthetic_write(
         "scenario",
         {
@@ -472,14 +472,14 @@ def test_scenario_uow_spans_rejects_interleaving_beyond_the_two_group_shape() ->
 
 class _ScriptedPort:
     """A `DbPort` fake with per-call SCRIPTED read rows / write-affected counts
-    (COR-3 Phase 8 increment 6, `run_interleaved_scenario_case`'s own unit
+    (`run_interleaved_scenario_case`'s own unit
     pins) — unlike `FakeWritePort` above (one constant `find_rows` for every
     `execute`, `write_affected` always `1`), a genuinely two-session
     choreography's own conflict needs each connection scripted with its OWN,
     call-ordered sequence to reproduce a real stale-version mismatch
     deterministically, with no real database involved.
 
-    Carries round 5's own documented trust marker
+    Carries the documented trust marker
     (`engine._TERMINATION_LADDER_TRUST_ATTR`): every method here is a plain
     synchronous, in-memory call that never blocks on real I/O at all, so
     there is nothing for the termination ladder to unblock in the first
@@ -566,7 +566,7 @@ def test_run_interleaved_scenario_case_renders_the_conflict_and_discards_the_abo
     assert emissions[4].sql.startswith("update account set")
     assert len(main_port.writes) == 2  # the doomed group's insert + gated update
     assert len(peer_port.writes) == 1  # the concurrent group's own gated update
-    # review remediation finding 1: every find step's own observed rows, in
+    # Every find step's own observed rows, in
     # scenario step order (0, 1, then the trailing ungrouped verify at 4) —
     # the doomed group's discarded insert leaves account 9 absent.
     assert find_rows == [[row_v1], [row_v1], []]
@@ -723,7 +723,7 @@ def test_run_interleaved_scenario_case_reraises_an_unexpected_worker_failure() -
 
 
 def test_await_interleaved_workers_unsticks_both_on_timeout_then_joins_before_raising() -> None:
-    # Review remediation finding 4 (the join-timeout path): a genuine harness
+    # The join-timeout path: a genuine harness
     # defect (a missing turnstile `advance()` somewhere) leaves BOTH workers
     # blocked in `wait_for` forever — the timeout path must wake every one of
     # them (`_Turnstile.release_all`), close the peer connection, JOIN both
@@ -768,8 +768,8 @@ class _CancellableBlockingConnection:
     driver call parked in socket I/O) until its own :meth:`cancel` seam
     fires — never on `_Turnstile.release_all` (nothing here is parked in
     `turnstile.wait_for`) and never on some OTHER connection closing (this
-    is not the peer). This is the shape a confirmation pass on review
-    remediation finding 4 found missing: a worker blocked in REAL database
+    is not the peer). This is the shape not otherwise covered: a worker
+    blocked in REAL database
     I/O on its OWN session, which only :func:`~parallax.conformance.engine.
     _cancel_in_flight_work`'s duck-typed ``cancel()`` probe can reach — the
     first escalation (turnstile release + peer close) cannot wake it, and a
@@ -796,7 +796,7 @@ class _CancellableBlockingConnection:
 
 
 def test_await_interleaved_workers_cancels_a_survivor_blocked_in_real_io_then_joins() -> None:
-    # Confirmation residual on review remediation finding 4: a worker blocked
+    # A worker blocked
     # in REAL database I/O on its OWN (CALLER-OWNED) connection survives the
     # first escalation intact — `release_all` has nothing to wake (the
     # worker is not inside `turnstile.wait_for`) and closing the peer
@@ -840,8 +840,7 @@ def test_await_interleaved_workers_cancels_a_survivor_blocked_in_real_io_then_jo
 class _TerminableBlockingConnection:
     """A fake `DbPort` whose ``execute`` blocks (standing in for a real
     driver call parked in socket I/O) and exposes NO :meth:`cancel`
-    capability at all — the shape the round-2 confirmation pass on review
-    remediation finding 4 needs: a survivor neither `_Turnstile.release_all`
+    capability at all — the shape a survivor neither `_Turnstile.release_all`
     nor :func:`~parallax.conformance.engine._cancel_in_flight_work`'s
     duck-typed ``cancel()`` probe can reach, forcing the THIRD, destructive
     escalation, :func:`~parallax.conformance.engine._terminate_connection`.
@@ -874,13 +873,13 @@ class _TerminableBlockingConnection:
 
 
 def test_await_interleaved_workers_terminates_a_survivor_with_no_cancel_capability() -> None:
-    # Round-2 confirmation pass on review remediation finding 4: a survivor
+    # A survivor
     # neither `release_all` nor the cancellation probe can reach (no
     # `cancel()` capability at all, `main_connection` here — the
     # CALLER-OWNED port) escalates to the THIRD, destructive rung —
     # `_terminate_connection` closes its OWN connection outright — rather
     # than this function ever raising while that worker remains alive; the
-    # corrected contract has no "loud leak" terminal state at all.
+    # contract has no "loud leak" terminal state at all.
     # `is_alive()` must be False for EVERY worker at the moment of the
     # raise, and the raised error must report that the caller-owned port
     # was itself terminated. The fake's own `close()` seam mirrors REAL
@@ -926,8 +925,7 @@ def test_await_interleaved_workers_terminates_a_survivor_with_no_cancel_capabili
 
 class _UnderlyingConnectionSeam:
     """The termination ladder's documented underlying-transport escalation
-    seam for a test fake (round-3 confirmation pass on review remediation
-    finding 4) — mirrors `PostgresAdapter.connection`, the wrapped psycopg
+    seam for a test fake — mirrors `PostgresAdapter.connection`, the wrapped psycopg
     ``Connection`` a real adapter's own outer ``close()`` failure escalates
     to (:func:`~parallax.conformance.engine._terminate_connection`'s rung
     two). Closing THIS is what actually unblocks the survivor's blocked
@@ -946,12 +944,11 @@ class _UnderlyingConnectionSeam:
 class _TerminableOnlyViaUnderlyingSeamConnection:
     """A fake `DbPort` whose own OUTER ``close()`` FAILS (mirroring a real
     driver's own close-time complaint) and whose ``cancel()`` capability is
-    absent entirely — the round-3 confirmation pass's own adversarial shape
-    on review remediation finding 4 (the reviewer's own reproduction: BOTH
-    ``cancel()`` and ``close()`` forced to fail on the same survivor). The
+    absent entirely — the adversarial shape where BOTH
+    ``cancel()`` and ``close()`` fail on the same survivor. The
     escalation's first two rungs (:func:`~parallax.conformance.engine.
     _cancel_in_flight_work`'s probe, then ``connection.close()`` itself)
-    both come up empty — round 2's own "close always works" assumption does
+    both come up empty — a "close always works" assumption does
     not hold here BY DESIGN — forcing :func:`~parallax.conformance.engine.
     _terminate_connection` past the failing outer ``close()`` to the
     documented underlying seam (``self.connection``, mirroring
@@ -978,9 +975,8 @@ class _TerminableOnlyViaUnderlyingSeamConnection:
 
 
 def test_await_interleaved_workers_escalates_past_a_failing_close_to_the_underlying_seam() -> None:
-    # Round-3 confirmation pass on review remediation finding 4 (the
-    # reviewer's own reproduction): `cancel()` absent AND `close()` raising
-    # on the SAME survivor — `_terminate_connection`'s corrected, GUARANTEED
+    # `cancel()` absent AND `close()` raising
+    # on the SAME survivor — `_terminate_connection`'s GUARANTEED
     # ladder must escalate past the failing outer `close()` to the fake's
     # documented underlying seam, unblock it there, join both workers, and
     # raise the SAME terminated-caller-port timeout error the close-succeeds
@@ -1023,7 +1019,7 @@ def test_await_interleaved_workers_escalates_past_a_failing_close_to_the_underly
     assert main_connection.connection.close_calls == 1  # the underlying seam is what unblocked it
     assert peer.closed
     notes = "\n".join(exc_info.value.__notes__)
-    assert "outer close failed" in notes  # the swallowed-by-round-2 failure is now recorded context
+    assert "outer close failed" in notes  # the swallowed failure is recorded context
 
 
 class _NoCloseNoUnderlyingConnection:
@@ -1106,11 +1102,10 @@ def test_terminate_connection_escalates_through_every_rung_when_all_fail() -> No
 
 class _CapabilityLessConnection:
     """A connection exposing NEITHER `close()`, NOR an underlying
-    `connection` attribute, NOR `fileno()` anywhere, NOR round 5's own trust
+    `connection` attribute, NOR `fileno()` anywhere, NOR the trust
     marker — the most defective refusal shape: preflight must name and
     refuse a connection like this BEFORE either worker thread starts, never
-    let it surface only later as the indefinite join hang round 4's own
-    confirmation pass first reproduced. `execute_calls` is this pin's own
+    let it surface only later as an indefinite join hang. `execute_calls` is this pin's own
     observable for "no thread ever started": a defect here refuses before
     either worker is even constructed, so nothing ever calls it."""
 
@@ -1145,7 +1140,7 @@ def test_run_interleaved_scenario_case_refuses_before_any_worker_starts_capabili
     # worker thread starts, all defects reported at once rather than
     # first-failure-only. Covers both positions individually and together
     # (main only / peer only / both). `_ScriptedPort` stands in for the
-    # HEALTHY side because it carries round 5's own trust marker (see its
+    # HEALTHY side because it carries the trust marker (see its
     # own docstring) — the SAME reason it passes preflight everywhere else
     # in this module.
     case = _load_case("m-opt-lock-012")
@@ -1183,15 +1178,12 @@ def test_run_interleaved_scenario_case_refuses_before_any_worker_starts_capabili
 
 
 class _AllRungsRaiseConnection:
-    """The reviewer's own reproduction (the finding that forced the
-    corrected contract to deepen from round 4's structural-only check to
-    round 5's TRUSTED, DECLARED one): a structurally-plausible port — a
+    """A structurally-plausible port whose EVERY runtime rung RAISES: a
     CALLABLE `close()`, a CALLABLE `cancel()`, and an underlying
-    `connection` seam with a CALLABLE `close()` AND `fileno()` too — that
-    would have PASSED round 4's own structural check (every one of those IS
-    callable) yet whose EVERY runtime rung RAISES (`preflight=
-    ('validated',)`, `helper_completed=False` before this fix). No trust
-    marker, not a `PostgresAdapter` — round 5's preflight must refuse it
+    `connection` seam with a CALLABLE `close()` AND `fileno()` too — every
+    one of those IS callable, so a merely structural check would PASS it
+    (`preflight=('validated',)`, `helper_completed=False`). No trust
+    marker, not a `PostgresAdapter` — the trust preflight must refuse it
     WITHOUT EVER CALLING a single one of the raising methods below (a pure
     trust check, never a behavioral probe): `calls` staying empty is this
     pin's own proof that no worker thread ever got far enough to discover
@@ -1235,9 +1227,9 @@ class _AllRungsRaiseConnection:
 
 
 def test_run_interleaved_scenario_case_refuses_before_any_worker_starts_all_rungs_raising() -> None:
-    # The reviewer's demanded pin: a structurally-plausible port whose EVERY
-    # runtime termination rung raises — a shape that PASSED round 4's own
-    # structural preflight check and hung the unbounded post-ladder join —
+    # A structurally-plausible port whose EVERY
+    # runtime termination rung raises — a shape a merely structural
+    # preflight check would pass, hanging the unbounded post-ladder join —
     # must be refused BEFORE either worker thread starts, and the refusal
     # must never invoke a single one of its raising methods.
     case = _load_case("m-opt-lock-012")
@@ -1260,13 +1252,13 @@ def test_run_interleaved_scenario_case_refuses_before_any_worker_starts_all_rung
 
 
 class _RungOneOnlyConnection:
-    """A connection exposing a CALLABLE `close()` and nothing else — round
-    4's own retired structural check accepted a shape like this alone;
-    round 5 (the corrected contract) refuses it anyway, because a callable
-    capability was never the same as a DECLARED trust contract. Reused
+    """A connection exposing a CALLABLE `close()` and nothing else — a merely
+    structural check would accept a shape like this, but the trust preflight
+    refuses it anyway, because a callable capability is never the same as a
+    DECLARED trust contract. Reused
     directly by `_terminate_connection`'s own ladder-mechanics pins below,
     which bypass preflight entirely — proving the ladder itself is
-    untouched by round 5's correction."""
+    untouched by the trust gate."""
 
     def __init__(self) -> None:
         self.close_calls = 0
@@ -1279,7 +1271,7 @@ class _RungTwoOnlyConnection:
     """Exposes NO outer `close()` at all, only an underlying `connection`
     seam whose OWN `close()` is callable — mirrors
     `PostgresAdapter.connection`'s own escalation seam, WITHOUT declaring
-    round 5's own trust contract: refused by preflight for that reason
+    the trust contract: refused by preflight for that reason
     alone, even though `_terminate_connection`'s own ladder (bypassing
     preflight, below) can act on it."""
 
@@ -1386,7 +1378,7 @@ class _FakeAdaptersRegistry:
 
 class _FakePsycopgConnection:
     """A minimal `psycopg.Connection` stand-in carrying only what
-    `PostgresAdapter.__init__` touches — proving round 5's own real-type
+    `PostgresAdapter.__init__` touches — proving the real-type
     trust rule needs no live database at all: `isinstance` against the
     concrete `PostgresAdapter` class is what grants trust, never anything
     this fake's own connection does."""
@@ -1396,7 +1388,7 @@ class _FakePsycopgConnection:
 
 
 def test_validate_termination_trust_accepts_the_postgres_adapter_shape() -> None:
-    # The known-deterministic real type (round 5's OTHER trust path,
+    # The known-deterministic real type (the OTHER trust path,
     # alongside the documented marker): the SAME concrete class
     # `provision.py`'s own `Provisioner.port` constructs, trusted BY
     # CONSTRUCTION — no marker required, nothing beyond `isinstance`
@@ -1414,8 +1406,8 @@ def test_validate_termination_trust_accepts_the_postgres_adapter_shape() -> None
 
 def test_require_interleaved_termination_capability_trusts_the_postgres_adapter_peer_too() -> None:
     # `provision.py`'s own `Provisioner.port` AND `Provisioner.peer()` both
-    # construct this SAME concrete class (COR-3 Phase 8 increment 6's own
-    # peer seam) — the preflight entry point trusts BOTH positions without
+    # construct this SAME concrete class (the peer seam) — the preflight
+    # entry point trusts BOTH positions without
     # a marker, never raising.
     from parallax.postgres import PostgresAdapter
 
@@ -1427,7 +1419,7 @@ def test_require_interleaved_termination_capability_trusts_the_postgres_adapter_
 
 
 def test_require_interleaved_termination_capability_accepts_a_marked_fake() -> None:
-    # The documented marker mechanism (round 5): a fake that DECLARES the
+    # The documented marker mechanism: a fake that DECLARES the
     # deterministic-termination contract passes preflight even though this
     # module never inspects its close()/fileno() shape at all — proven with
     # `_ScriptedPort`, which carries the marker (see its own docstring).
@@ -1490,8 +1482,8 @@ def test_observe_group_find_skips_a_row_missing_its_version_field() -> None:
 
 
 def test_run_write_sequence_case_executes_each_entry_as_its_own_transaction() -> None:
-    # COR-3 Phase 8 increment 4 (DQ4 re-route): each writeSequence entry is its
-    # OWN `db.transact` unit — "the whole sequence in one transaction" retires.
+    # Each writeSequence entry is its
+    # OWN `db.transact` unit, never the whole sequence in one transaction.
     port = FakeWritePort()
     emissions, table_state, round_trips = engine.run_write_sequence_case(
         _case("m-unit-work-003"), "postgres", port
@@ -1525,7 +1517,7 @@ def test_run_write_sequence_case_records_the_temporal_observation_on_the_unit_of
 
 
 def test_run_write_sequence_case_buffers_a_bounded_bitemporal_valid_time_window() -> None:
-    # m-bitemp-write-001 (COR-3 Phase 8 increment 4): the updateUntil entry's
+    # m-bitemp-write-001: the updateUntil entry's
     # canonical instruction carries BOTH `validFrom` and `until`
     # (its bounded rectangle-split window) — `_execute_write_unit` threads both
     # onto the neutral `Transaction._buffer` route unchanged.
@@ -1587,7 +1579,7 @@ def test_write_sequence_compile_wraps_a_lowering_failure_as_engine_error() -> No
 
 
 # --------------------------------------------------------------------------- #
-# Phase-8 mid-phase review remediation, finding C: the row-decomposition       #
+# The row-decomposition                                                        #
 # discriminator (`engine._decomposes_per_row`) is derived SEMANTICALLY —       #
 # mutation kind, versioned-ness, per-row observation control keys, pk-gen      #
 # management, and (for update) per-key value uniformity — never from the       #
@@ -1667,7 +1659,7 @@ def test_rows_carrying_observation_keys_decompose_per_row_even_when_unversioned(
 def test_uniform_multi_row_update_collapses_to_one_in_list_statement() -> None:
     # m-batch-write-001's own update entry: an UNVERSIONED target whose rows
     # assign the SAME value collapses into ONE multi-row `IN`-list UPDATE
-    # (COR-3 Phase 8 increment 5; m-batch-write "Set-based flush").
+    # (m-batch-write "Set-based flush").
     case = _synthetic_write(
         "writeSequence",
         {
@@ -1790,7 +1782,7 @@ def test_predicate_shaped_scenario_write_lowers_readless_not_a_keyerror() -> Non
     # Finding E's own witness (`m-batch-write-005`'s shape): a structured
     # PREDICATE-write instruction (`target`/`predicate`) reaching the scenario
     # compile lane is never mistaken for a keyed-write entry list (no bare
-    # `KeyError`) — COR-3 Phase 8 increment 5 lowers it readless end to end.
+    # `KeyError`) — it lowers readless end to end.
     case = _synthetic_write(
         "scenario",
         {
@@ -2075,7 +2067,7 @@ def test_run_materializing_pair_rejects_a_mismatched_preceding_find_target() -> 
 
 
 def test_run_scenario_case_rejects_a_materializing_pair_whose_find_predicate_differs() -> None:
-    # Finding 4 (`m-case-format.md:715`/`:719`): the preceding find must share
+    # (`m-case-format.md:715`/`:719`): the preceding find must share
     # the write's own target predicate, not merely its entity — unlike the
     # entity-mismatch guard above, this IS reachable through the public
     # `run_scenario_case` entry point: the look-ahead pairing decision
@@ -2132,8 +2124,8 @@ def test_run_write_sequence_case_wraps_a_lowering_error() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Conflict — the optimistic-lock run lane (m-opt-lock, COR-3 Phase 8           #
-# increment 3): single-attempt, given.apply, and when.attempts forms, each     #
+# Conflict — the optimistic-lock run lane (m-opt-lock):                        #
+# single-attempt, given.apply, and when.attempts forms, each                   #
 # driven against the fake in-memory port (no Docker; the real conflict/retry   #
 # semantics against a reset database are the Docker-gated pg-full proof,       #
 # `tests/conformance/test_run_sweep.py::test_conflict_run_sweep`).             #
@@ -2268,8 +2260,8 @@ def test_write_sequence_case_without_a_sequence_list_is_rejected() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Rejected — the pre-SQL model-aware validation lane (COR-3 Phase 7            #
-# increment 1: resolved DQ3/DQ8). Three-way `when` dispatch.                   #
+# Rejected — the pre-SQL model-aware validation lane.                          #
+# Three-way `when` dispatch.                                                   #
 # --------------------------------------------------------------------------- #
 def _rejected_case(case_id: str) -> case_format.Case:
     (case,) = [c for c in case_format.load_cases() if c.case_id == case_id]
@@ -2438,7 +2430,7 @@ def test_read_table_state_projects_value_object_document_columns() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Graph reads (m-deep-fetch / m-snapshot-read, COR-3 Phase 7 increment 5): the #
+# Graph reads (m-deep-fetch / m-snapshot-read): the                            #
 # `run_graph_case` / `run_graphs_case` rendering lane, and the internal graph- #
 # node serializer / identityChecks evaluator / scenario `mutate` action.       #
 # --------------------------------------------------------------------------- #

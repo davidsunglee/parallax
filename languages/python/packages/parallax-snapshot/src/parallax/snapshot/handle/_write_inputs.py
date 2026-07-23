@@ -114,7 +114,7 @@ def observation_key(record: Entity, declaring: Entity, instance: object) -> Obje
 def record_observations(uow: UnitOfWork, meta: Metamodel, result: FindResult, pin: Pin) -> None:
     """Record this unit of work's observed version/temporal-milestone for
     every VERSIONED or TEMPORAL node :func:`find` materialized (`m-opt-lock`;
-    ADR 0013; Phase-8 mid-phase review remediation).
+    ADR 0013).
 
     Keyed by the SAME ``(entity name, ordered pk pairs)`` shape a subsequent
     keyed write's own :func:`~parallax.core.unit_work.object_key` computes —
@@ -176,8 +176,8 @@ def _temporal_observation(
 ) -> Observation:
     """The :class:`Observation` a materialized TEMPORAL row licenses: the
     observed Transaction-Time start (``in_z``) plus pin provenance always, PLUS the
-    observed payload (D-30, COR-3 Phase 8 increment 7 completion round — every
-    real ``Transaction.find`` of a temporal row now carries one, audit-only
+    observed payload (every
+    real ``Transaction.find`` of a temporal row carries one, audit-only
     included) — the same fields temporal lowering (`~parallax.core.
     txtime_write.plan` / `~parallax.core.bitemp_write.plan`) already consumes,
     so a transaction-scoped find -> temporal write sequence works end-to-end,
@@ -185,7 +185,7 @@ def _temporal_observation(
 
     ``fields`` is a plain column-keyed mapping — a materialized
     :class:`~parallax.snapshot.materialize.Node`'s own ``.fields`` (a real
-    ``Transaction.find``), or a raw driver row (COR-3 Phase 8 increment 5's
+    ``Transaction.find``), or a raw driver row (the
     materializing predicate-write resolve, :func:`materialize_row`) — so both
     callers share the SAME payload-extraction logic rather than duplicating it.
     Every extracted value passes through EXACTLY as the port returned it (a
@@ -198,13 +198,13 @@ def _temporal_observation(
     concern (`parallax.conformance.engine._json_bind`), never this seam's.
 
     The bitemporal payload KEEPS a value-object document whenever ``fields``
-    carries one (`include_value_objects=True` below; confirmation-pass
-    residual P2): a real ``Transaction.find`` is always INSTANCE-form, which
+    carries one (`include_value_objects=True` below): a real
+    ``Transaction.find`` is always INSTANCE-form, which
     projects every document unconditionally (`m-sql`), so ``fields`` already
     carries it there; a materializing predicate-write resolve's ROW-form
     ``fields`` carries one whenever its own need-sensitive projection
     requested it (`_predicate_writes._materialize_predicate_write`'s
-    ``needs_documents``, which — completing residual P2 — requests it for
+    ``needs_documents``, which requests it for
     EVERY bitemporal mutation this branch ever sees: update, updateUntil,
     terminate, terminateUntil alike, since the rectangle split chains all
     four) — ``column in fields`` still gates every member exactly as it does
@@ -217,7 +217,7 @@ def _temporal_observation(
     tx_start_column, tx_end_column = axis_columns(declaring, tx_axis)
     tx_start = cast("str", fields[tx_start_column])
     if declaring.temporal != "bitemporal":
-        # Audit-only (D-30): the observed payload every other member besides
+        # Audit-only: the observed payload every other member besides
         # the sole Transaction-Time axis — `txtime_write.plan`'s own update-branch
         # merge (`_merged_row`) overlays a public `tx.update(copy)`'s SPARSE
         # row onto it, so an unauthored field carries forward from THIS
@@ -258,7 +258,7 @@ def _row_payload(
     """``fields``'s own payload (every declared member besides ``excluded``
     axis-bound columns) — the observed-payload source a real TEMPORAL find's
     :class:`Observation` (`_temporal_observation`, above — audit-only and
-    bitemporal alike, D-30) and an audit-only materializing resolve's CHAINED
+    bitemporal alike) and an audit-only materializing resolve's CHAINED
     full row (:func:`materialize_row`) share.
 
     Value-object columns are OMITTED by default (row-form never projects one,
@@ -283,11 +283,11 @@ def _row_payload(
 
 
 # --------------------------------------------------------------------------- #
-# Predicate-write materialization (COR-3 Phase 8 increment 5; m-opt-lock      #
+# Predicate-write materialization (m-opt-lock                                 #
 # "Predicate-selected writes materialize when observations are needed";       #
 # ADR 0014) — plus the build-time window/no-op validators every keyed AND     #
 # `_where` temporal verb shares (`validate_valid_from` / `validate_until`#
-# / `prepare_sparse_row`, S4/N2 COR-3 Phase 8 increment 7 remediation).       #
+# / `prepare_sparse_row`).                                                    #
 # `materialize_row`/`_apply_assignments` below are pure functions the SOLE   #
 # caller (`_predicate_writes._materialize_predicate_write`) drives against    #
 # its OWN resolved rows — never an implicit read of their own.                #
@@ -360,13 +360,13 @@ def validate_valid_from(
 
 
 def prepare_sparse_row(copy: EntityBase) -> dict[str, object] | None:
-    """The sparse keyed ``update``/``updateUntil`` row (N2, COR-3 Phase 8
-    increment 7 remediation): primary key + the edited copy's own effective
+    """The sparse keyed ``update``/``updateUntil`` row: primary key + the
+    edited copy's own effective
     change set (:func:`effective_change_set`) — ``None`` for an EMPTY
     effective set (the no-op-first rule, spec §3/§5): ``update`` returns
     immediately on ``None`` (no window to validate); ``updateUntil`` calls
-    this AFTER its own window-order validation already ran (R2, COR-3 Phase 7
-    increment 7 round-2 — :func:`validate_until` runs BEFORE this no-op
+    this AFTER its own window-order validation already ran
+    (:func:`validate_until` runs BEFORE this no-op
     check, never after, so an equal or reversed window still rejects even
     when the effective change set would otherwise have been empty)."""
     effective = effective_change_set(copy)
@@ -387,12 +387,12 @@ def validate_until(
     — ``until`` must be strictly later than ``valid_from`` — at the verb
     call, before any buffering (never at flush time). Shared by every keyed
     AND ``_where`` ``*Until`` verb (``update_until`` / ``terminate_until`` /
-    ``update_until_where`` / ``terminate_until_where``, S4 COR-3 Phase 8
-    increment 7 remediation) — one validator, so none of the four can drift
+    ``update_until_where`` / ``terminate_until_where``) — one validator,
+    so none of the four can drift
     from the others.
 
-    NORMALIZES both bounds BEFORE comparing them (R2, COR-3 Phase 7 increment
-    7 round-2): comparing raw, un-normalized datetimes let a naive ``until``
+    NORMALIZES both bounds BEFORE comparing them: comparing raw,
+    un-normalized datetimes let a naive ``until``
     (compared against an already-aware ``valid_from``, since
     ``validate_valid_from`` — this verb's own sibling, called first —
     already normalizes/rejects a naive ``valid_from``) leak a bare

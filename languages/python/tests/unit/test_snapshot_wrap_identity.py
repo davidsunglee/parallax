@@ -1,5 +1,5 @@
-"""Frozen developer-surface node identity and projection (COR-3 Phase 7 increment
-6a; spec §3/§4): ``parallax.snapshot.handle._wrap.wrap_graph`` over hand-built
+"""Frozen developer-surface node identity and projection
+(spec §3/§4): ``parallax.snapshot.handle._wrap.wrap_graph`` over hand-built
 neutral graphs (the same ``materialize.Node`` vocabulary ``test_materialize.py``
 builds), diamond projection and narrowed views, and the closed-world load-state
 introspection (``is_loaded`` / ``narrowed`` / ``UnloadedRelationshipError``). The
@@ -126,7 +126,7 @@ def test_back_reference_cycle_closes_on_the_same_wrapped_instance() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Diamond projection merge (review Spec-2 fix): two SIBLING include paths      #
+# Diamond projection merge: two SIBLING include paths                          #
 # reach the SAME logical row through two DIFFERENT `materialize.Node` objects  #
 # (the assembler deliberately never dedupes across sibling levels — each       #
 # attach position keeps its own freshly decoded `Node`, m-snapshot-read-012's  #
@@ -366,7 +366,7 @@ def test_two_narrowed_views_coexist_independently_on_one_node() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Round-4 P2 (COR-3 Phase 7 increment 7): the PATH's own captured D-20        #
+# The PATH's own captured                                                     #
 # registration scope is AUTHORITATIVE for a narrowed view's key derivation,   #
 # never `type(node)`'s own. A multi-hop path (`Kennel.owners.pets`) carries   #
 # its FIRST hop's own registry through the SECOND hop unchanged               #
@@ -377,7 +377,7 @@ def test_two_narrowed_views_coexist_independently_on_one_node() -> None:
 # Single-hop can never exhibit this: a single hop's `_registry` is always     #
 # the immediate owner's OWN registration registry, the SAME class `type(node)`#
 # resolves to when `node` is that same owner -- provably identical by        #
-# construction, never just "untested" (round-3's claim, now proven exactly). #
+# construction, never just "untested".                                       #
 # --------------------------------------------------------------------------- #
 def test_narrowed_view_key_derives_from_the_paths_own_registry_not_types_own() -> None:
     registry_path = EntityRegistry(parent=None)
@@ -391,9 +391,9 @@ def test_narrowed_view_key_derives_from_the_paths_own_registry_not_types_own() -
         function's own): each class's canonical name ("Pet"/"Dog"/"Owner")
         is declared exactly ONCE per scope, the SAME canonical name
         `_build_narrow_pet_family` below ALSO declares in its own, separate
-        scope (D-20: the SAME canonical name coexists across two registries)
+        scope (the SAME canonical name coexists across two registries)
         -- a distinct SCOPE per family avoids Pyright's redeclaration check,
-        never a distinct NAME, which would defeat the very D-20 coexistence
+        never a distinct NAME, which would defeat the very coexistence
         this test proves."""
 
         class Pet(Entity, frozen=True, registry=registry_path):
@@ -489,7 +489,7 @@ def test_narrowed_view_key_derives_from_the_paths_own_registry_not_types_own() -
     (root,) = wrap_graph((owner_node,), "Owner", registry_actual.metamodel(), Pin())
     # `registry_actual`'s OWN classes -- distinct objects from `registry_path`'s
     # same-named "Owner"/"Dog", never the ones the multi-hop `path` was built
-    # through (D-20: the SAME canonical name coexists across two registries).
+    # through (the SAME canonical name coexists across two registries).
     assert type(root) is owner_cls
     assert owner_cls is not path_owner
 
@@ -501,8 +501,8 @@ def test_narrowed_view_key_derives_from_the_paths_own_registry_not_types_own() -
 
 
 # --------------------------------------------------------------------------- #
-# Round-5 P2 (COR-3 Phase 7 increment 7): `RelationshipPath`'s captured D-20  #
-# registration scope is now an INTRINSIC dataclass field                     #
+# `RelationshipPath`'s captured                                              #
+# registration scope is an INTRINSIC dataclass field                         #
 # (`__parallax_registry__`), never a side table keyed by `id(path)` -- so    #
 # `copy.copy` / `copy.deepcopy` / pickling a path (each reconstructs a       #
 # `RelationshipPath` straight from its own stored state, never through       #
@@ -545,7 +545,7 @@ def test_narrowed_view_key_survives_copy_deepcopy_and_pickle_of_the_path() -> No
     """The captured registry travels WITH the path through every reconstruction
     route that bypasses ``__init__``/``__post_init__`` -- proof the intrinsic
     dunder field (never a side table) cannot diverge from the object it
-    describes (COR-3 Phase 7 increment 7 round-5, P2)."""
+    describes."""
     path = _CopySurvivalOwner.pets.narrow(_CopySurvivalDog)
     assert path.__parallax_registry__ is _COPY_SURVIVAL_REGISTRY
 
@@ -581,7 +581,7 @@ def test_narrowed_view_key_falls_back_to_the_default_registry_when_the_path_capt
     """A ``RelationshipPath`` built outside ``Rel.__get__`` (test-only direct
     construction, ``_registry`` omitted) falls back to the process default
     registry for narrow-position resolution -- mirroring ``RelationshipPath``'s
-    own documented fallback (COR-3 Phase 7 increment 7 round-4, P2)."""
+    own documented fallback."""
     owner = Node(
         fields={"id": 10, "name": "Alice", "pets[Dog]": [_dog()]},
         pk_columns=("id",),
@@ -612,7 +612,7 @@ def _iguana() -> Node:
 
 
 # --------------------------------------------------------------------------- #
-# S3 (COR-3 Phase 7 increment 7 round-2): a table-per-concrete-subtype        #
+# A table-per-concrete-subtype                                                #
 # ABSTRACT-position read narrowing (or naturally resolving) to exactly ONE    #
 # concrete emits no `familyVariant` at all (`m-sql`'s `_compile_tpcs_single`) #
 # — wrapping must still instantiate the resolved CONCRETE class, never the   #
@@ -639,7 +639,7 @@ def test_wrap_a_single_resolved_position_node_instantiates_the_concrete_class() 
 
 
 def test_wrap_without_resolved_entity_falls_back_to_the_declared_default() -> None:
-    # The pre-fix (defensive-only) shape: a hand-built `Node` that never went
+    # The defensive-only shape: a hand-built `Node` that never went
     # through the assembler carries no `resolved_entity` at all, so wrapping
     # falls back to the caller's OWN declared default — unchanged behavior for
     # that defensive path, never reachable through `db.find` itself.

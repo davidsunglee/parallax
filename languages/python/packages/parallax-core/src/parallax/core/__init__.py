@@ -2,13 +2,13 @@
 
 The class-free engine spine: metamodel hub, op-algebra nodes, write
 instructions, SQL lowering, the pure dialect strategy, the unit of work,
-and the abstract database port. Populated across COR-3 phases 2+.
+and the abstract database port.
 
 This surface publishes the model-definition and read surface: the frozen entity
 bases (``Entity`` and the temporal framework bases ``TxTemporal`` /
 ``Bitemporal``), the ``Attr`` / ``Rel`` typed-access carriers, the ``Field`` /
-``Relationship`` declaration helpers, the ``ValueObject`` class frontend (D-7),
-the inheritance-family vocabulary (``FamilyRoot`` / ``Concrete``, D-7 DQ2),
+``Relationship`` declaration helpers, the ``ValueObject`` class frontend,
+the inheritance-family vocabulary (``FamilyRoot`` / ``Concrete``),
 the ``Statement`` query surface (predicate,
 result-shaping, deep-fetch ``.include``, subtype ``.narrow``, and the
 axis-keyed temporal-read clauses), the temporal as-of coordinate model

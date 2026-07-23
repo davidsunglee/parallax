@@ -120,7 +120,7 @@ def _json_bind(bind: object) -> object:
     carrier (m-db-port); on the wire it is its underlying JSON document. Every other
     CASE-AUTHORED keyed bind is already JSON-native (scalars; a date rides as the
     write-input string) — but a MATERIALIZING predicate write's carried-forward bind
-    (COR-3 Phase 8 increment 5: an observed gate value, or a chained row's payload
+    (an observed gate value, or a chained row's payload
     column) is sourced from a REAL resolved row, so it may be a driver-native
     ``datetime.datetime`` / the native-infinity :class:`~parallax.core.base.
     TemporalBound` sentinel / a ``Decimal`` — exactly the shapes production code
@@ -195,8 +195,7 @@ def _result_form(case: case_format.Case) -> Literal["row", "instance"]:
 def _canonicalize_read(operation_doc: object, entity: Entity, meta: Metamodel) -> Operation:
     """Deserialize + canonicalize one read: root as-of injection, then per-hop
     navigation canonicalization — the composition-at-the-engine order every read
-    compile site shares (M2 precedent, restated for navigation, COR-3 Phase 7
-    increment 3).
+    compile site shares.
 
     Temporal reads are lowered by ``m-temporal-read`` (the auto-injected as-of
     predicate, defaulted-latest on omitted axes) BEFORE ``m-sql`` compiles the
@@ -224,8 +223,8 @@ def _canonicalize_read(operation_doc: object, entity: Entity, meta: Metamodel) -
 
 def _read_case_concurrency(case: case_format.Case) -> Concurrency | None:
     """A read-shape case's own unit-of-work participation mode — the
-    read-shape half of the `when.uow` threading COR-3 Phase 8 increment 6
-    adds (no previously reachable read case ever carried it, so no other read
+    read-shape half of the `when.uow` threading (no previously reachable read
+    case ever carried it, so no other read
     case's derivation changes).
 
     `when.uow.concurrency` when the case declares it (the read-lock matrix's
@@ -290,7 +289,7 @@ def run_read_case(
     serialization the ``m-db-port`` boundary fixes, keeping the adapter free of any
     wire/grading logic and the observation envelope JSON-serializable.
 
-    An **abstract-target** inheritance read (m-case-format / m-sql resolved Q6)
+    An **abstract-target** inheritance read (m-case-format / m-sql)
     additionally materializes `familyVariant` into each wire row through the
     compiled read's own `~parallax.core.sql_gen.CompiledRead.transform_row`: a
     table-per-hierarchy read derives it from the projected raw tag column via
@@ -316,7 +315,7 @@ def _driver_binds(binds: Sequence[object]) -> list[object]:
 
 
 # --------------------------------------------------------------------------- #
-# Graph reads (m-deep-fetch / m-snapshot-read, COR-3 Phase 7 increment 5): the #
+# Graph reads (m-deep-fetch / m-snapshot-read): the                            #
 # production find executor (`parallax.snapshot.handle`) does EVERY level's own #
 # compile/execute/materialize — no engine-local level loop. This lane only     #
 # deserializes the case's operation, calls the shared executor, and renders    #
@@ -480,11 +479,10 @@ def _resolve_graph_pointer(
 # aborts) its coalesced DML, then a ``find`` reads committed state through the read
 # path. A **writeSequence** lowers each entry independently — no cross-entry
 # coalescing (an insert-then-delete pair across two entries is two round trips, not
-# a cancellation) — and, post the DQ4 re-route below, each entry is its OWN
-# transaction (COR-3 Phase 8 increment 4 changes this from "the whole sequence in
-# one transaction").
+# a cancellation) — and each entry is its OWN
+# transaction (not "the whole sequence in one transaction").
 #
-# COR-3 Phase 8 increment 4 (DQ4 re-route, ledger D-18): the RUN lane now executes
+# The RUN lane executes
 # every write choreography unit — a writeSequence entry, a scenario write step, a
 # conflict attempt — through the SHIPPED ``db.transact`` entry point (one
 # transaction per unit, ``clock=FixedClock(<entry at>)``, ADR 0010), buffered
@@ -500,11 +498,10 @@ def _resolve_graph_pointer(
 # so the adapter reports a ``*-failed`` diagnostic rather than leaking a lower-layer
 # exception type across the conformance seam. `opt_lock.UnobservedVersionError` /
 # `.HistoricalObservationError` / `.CallerAuthoredVersionError` are m-opt-lock's own
-# forward-error posture (COR-3 Phase 8 increment 3; the core amendment bundle adds
-# the last one once the M4-era literal-version passthrough retires);
-# `temporal_state.AmbiguousObservationError` is this increment's own (a shape no
-# reachable case exercises). A deferred witness (the materializing / auto-retry-
-# boundary forms, increments 5/6) that reaches this engine-local write path without
+# forward-error posture; `temporal_state.AmbiguousObservationError` is this
+# engine's own (a shape no reachable case exercises). A deferred witness (the
+# materializing / auto-retry-
+# boundary forms) that reaches this engine-local write path without
 # a recorded observation must degrade to a reasoned `EngineError`, never an
 # uncaught crash of the sweep.
 _LOWERING_ERRORS: Final[tuple[type[Exception], ...]] = (
@@ -588,8 +585,8 @@ def _scenario_needs_lock(steps: Sequence[Mapping[str, object]], meta: Metamodel)
     in-transaction object find that INTENDS TO WRITE acquires a shared row
     lock" — the lock protects an observation a SUBSEQUENT keyed write depends
     on). ``True`` unless EVERY write step in the scenario is a READLESS
-    predicate write (`m-batch-write-005`/`-006`'s own witness, COR-3 Phase 8
-    increment 5): a readless write establishes no transaction-scoped
+    predicate write (`m-batch-write-005`/`-006`'s own witness): a readless
+    write establishes no transaction-scoped
     observation at all, so there is nothing for a lock to protect and the
     scenario's find steps are plain, non-participating verification reads. A
     scenario with no write step at all (a pure read narrative) keeps the
@@ -631,8 +628,7 @@ def _strip_observation(row: Mapping[str, object]) -> tuple[dict[str, object], Ob
 # write's observation there comes solely from its own row's reserved
 # `observedVersion`/`observedTxStart` control keys. The scenario RUN lane
 # (`_run_uow_group`) builds one FRESH instance per `uow` GROUP — never one
-# spanning the whole scenario or crossing a group boundary (COR-3 Phase 8
-# amendment-review remediation retires the prior scenario-wide map); the
+# spanning the whole scenario or crossing a group boundary; the
 # scenario COMPILE lane (`_scenario_lowered`) never populates one at all, so
 # no compile path ever consults a query result (`m-conformance-adapter`
 # "Compile eligibility"). Reladomo prior art (semantics, not idioms): the
@@ -702,7 +698,7 @@ def _observe_group_find(
     (``tx._uow.observe`` — the same neutral seam :func:`_execute_write_unit`
     pokes at, mirroring the production path a real ``Transaction.find``
     builds, where `parallax.snapshot.handle` records observations into
-    `uow.observe`) (COR-3 Phase 8 amendment-review remediation), so a later
+    `uow.observe`), so a later
     keyed write of the SAME object in this SAME group derives its version
     bind from a genuine transaction-scoped observation — never an oracle,
     never a scenario-wide map. Rows are always COLUMN-named here (the real
@@ -809,11 +805,10 @@ def _is_predicate_write_step(raw_write: object) -> bool:
     lowers. A predicate write's `target` names its entity/predicate; a keyed
     write is a plain list of ``{mutation, entity, rows}`` entries — the SHAPE
     signal (a bare mapping vs. a list) is structural, never inferred from a
-    ``KeyError`` (the reachability gap the Phase-8 mid-phase review's finding
-    E first closed; COR-3 Phase 8 increment 5 retires the refusal it left
-    behind and routes this shape to the readless/materializing predicate-write
+    ``KeyError``; this shape routes to the readless/materializing
+    predicate-write
     translation instead — see :func:`_lower_predicate_write_step` /
-    :func:`_run_materializing_pair`).
+    :func:`_run_materializing_pair`.
     """
     return isinstance(raw_write, Mapping)
 
@@ -858,7 +853,7 @@ def _decomposes_per_row(
     `Transaction.insert`/`.update`/`.delete` calls would buffer) rather than
     collapsing into ONE multi-row instruction — the INVERSE of
     :func:`~parallax.core.batch_write.collapses`, the injected `m-batch-write`
-    collapse-eligibility vocabulary (COR-3 Phase 8 increment 5) both this
+    collapse-eligibility vocabulary both this
     engine and the composition layer's own planner collapse stage
     (:func:`_lower_resolved`, `parallax.snapshot.handle.Database.transact`)
     consult identically, so the engine's PRE-collapsed multi-row instruction
@@ -970,8 +965,8 @@ def _build_instructions(
     write is never a legal writeSequence entry shape, `m-case-format`'s
     writeSequence vocabulary is keyed-only).
 
-    A TEMPORAL entity's entry dispatches to :func:`_build_temporal_instruction`
-    (COR-3 Phase 8 increment 4): its authored ``statements`` count is the DML
+    A TEMPORAL entity's entry dispatches to :func:`_build_temporal_instruction`:
+    its authored ``statements`` count is the DML
     STATEMENT count (a close plus zero-to-three chained opens), a DIFFERENT
     accounting from the row-decomposition below, which assumes non-temporal
     semantics and is never applied to a temporal entry's entry.
@@ -985,7 +980,7 @@ def _build_instructions(
     stripping its own reserved observation control keys into an
     :class:`Observation`, keyed by that row's OWN object key — `m-opt-lock`;
     ADR 0013) or stay ONE multi-row instruction (reaching `lower_write`'s own
-    multi-row refusal, the honest increment-5 collapse deferral). A row whose
+    multi-row refusal, the honest collapse deferral). A row whose
     own control keys yield NO observation falls back to
     ``scenario_observations`` — a writeSequence's own permanently-empty
     instance, or (the scenario RUN lane only) a `uow` GROUP's own prior find
@@ -1084,7 +1079,7 @@ def _lower_resolved(
     """Plan one write buffer (coalesce / collapse / FK-order / elide) and lower
     each survivor — PURE, no database. ``collapse=batch_write.collapses`` is
     injected identically to the composition layer's own production wiring
-    (`parallax.snapshot.handle.Database.transact`, COR-3 Phase 8 increment 5) —
+    (`parallax.snapshot.handle.Database.transact`) —
     a case's own PRE-collapsed multi-row entry (`_decomposes_per_row`'s "not
     decomposes" branch) reaches the planner already merged, so the collapse
     stage is a no-op for it; a case entry the engine decomposed per row instead
@@ -1220,11 +1215,11 @@ def _lower_find(
 def _scenario_lowered(case: case_format.Case, dialect_name: str) -> list[_LoweredStep]:
     """Lower every scenario step to its pointer + DML — pure (no database).
 
-    One :class:`TemporalShadow` spans the whole scenario (COR-3 Phase 8
-    increment 4): a later write step's temporal close/chain observes an
+    One :class:`TemporalShadow` spans the whole scenario:
+    a later write step's temporal close/chain observes an
     earlier step's own opened milestone(s), never the database. The compile
-    lane consults NO find-derived observation (COR-3 Phase 8 amendment-review
-    remediation): a keyed write whose version bind is the framework-owned
+    lane consults NO find-derived observation:
+    a keyed write whose version bind is the framework-owned
     advance of a version this SAME scenario's own observing find returned is
     query-result-dependent (`m-conformance-adapter` "Compile eligibility") and
     is therefore declared `compileEligibility: run-only` in the corpus, so it
@@ -1286,8 +1281,8 @@ def _write_sequence_lowered(
     case: case_format.Case, dialect_name: str
 ) -> list[tuple[str, tuple[Statement, ...]]]:
     """Lower each writeSequence entry independently to ``(pointer, statements)`` —
-    pure. One :class:`TemporalShadow` spans the whole sequence (COR-3 Phase 8
-    increment 4): a later entry's temporal close/chain observes an earlier
+    pure. One :class:`TemporalShadow` spans the whole sequence:
+    a later entry's temporal close/chain observes an earlier
     entry's own opened milestone(s), never the database. A writeSequence
     carries no find steps at all (`m-case-format`), so its own
     :data:`ScenarioObservations` map stays permanently empty — every keyed
@@ -1330,7 +1325,7 @@ def _has_action_step(steps: Sequence[Mapping[str, object]]) -> bool:
     """Whether a scenario carries at least one lifecycle **action** step
     (m-case-format "Lifecycle action steps") — the snapshot-read scenario shape
     (`mutate`) this module lowers/runs through a SEPARATE path from the keyed
-    unit-of-work M4 scenarios (`write` / `find` steps only), never mixed."""
+    unit-of-work scenarios (`write` / `find` steps only), never mixed."""
     return any("action" in step for step in steps)
 
 
@@ -1553,14 +1548,14 @@ def _execute_write_unit(
     rollback: bool,
 ) -> None:
     """Execute one choreography unit's ALREADY-RESOLVED instructions through the
-    production ``db.transact`` entry point (COR-3 Phase 8 increment 4, DQ4
-    re-route, ledger D-18) — ONE transaction, ``clock=FixedClock(tx_instant)``
+    production ``db.transact`` entry point — ONE transaction,
+    ``clock=FixedClock(tx_instant)``
     (ADR 0010: instants come from the Clock Strategy, never a per-operation
     override). A single-row instruction buffers through the neutral
     ``Transaction._buffer`` route + ``UnitOfWork.observe`` — never the typed
     instance verbs (`insert` / `update` / `delete`), which this engine's
     case-driven metamodel has no compiled Python classes for. A COLLAPSED
-    multi-row instruction (COR-3 Phase 8 increment 5, `m-batch-write`) buffers
+    multi-row instruction (`m-batch-write`) buffers
     directly on the unit of work instead (:func:`_build_instructions`'s "not
     decomposes" branch already deserialized + `validate_instruction`-ed it, and
     it carries no per-row observation by construction — `Transaction._buffer`'s
@@ -1642,7 +1637,7 @@ def _run_readless_predicate_write(
 class _CapturingPort:
     """A pass-through ``m-db-port`` capturing every executed statement (read
     or write, SQL + binds, in call order) — a MATERIALIZING predicate write's
-    own reporting seam (COR-3 Phase 8 increment 5): its per-row binds are
+    own reporting seam: its per-row binds are
     QUERY-RESULT-DEPENDENT, so there is no pure oracle to derive ``emissions``
     from independently of a real run; :func:`_run_materializing_pair` instead
     reports exactly what executed. Nested ``transaction()`` wrapping shares
@@ -1835,8 +1830,8 @@ def _scenario_uow_spans(
     cannot execute that shape itself (no engine function here constructs a
     connection of its own, and an interleaved race genuinely needs a SECOND,
     peer-backed session) — the caller routes to
-    :func:`run_interleaved_scenario_case` instead (COR-3 Phase 8 increment
-    6). Anything BEYOND that one witnessed shape — three or more interleaved
+    :func:`run_interleaved_scenario_case` instead. Anything BEYOND that one
+    witnessed shape — three or more interleaved
     groups, or a non-contiguous group that is not part of a clean two-group
     interleave — raises loudly rather than silently mis-executing it (scope
     honestly: support what `m-opt-lock-012` needs, refuse the rest)."""
@@ -1899,8 +1894,8 @@ def _run_uow_group(
     end: int,
 ) -> list[_LoweredStep]:
     """Execute one CONTIGUOUS `uow` group's steps (index *start*..*end*
-    inclusive) inside ONE ``db.transact`` (COR-3 Phase 8 amendment-review
-    remediation): in step order, a grouped FIND reads THROUGH the
+    inclusive) inside ONE ``db.transact``: in step order, a grouped FIND
+    reads THROUGH the
     transaction's own connection (``tx._conn`` — force-flushing any pending
     buffered write first, ``tx._uow.read``, exactly as a real
     ``Transaction.find`` does) and records its own observation on the
@@ -1979,12 +1974,12 @@ def _run_uow_group(
 
 # --------------------------------------------------------------------------- #
 # Interleaved `uow` groups — the two-group optimistic-lock race                #
-# (`m-opt-lock-012`, COR-3 Phase 8 increment 6). `_run_uow_group` above runs   #
+# (`m-opt-lock-012`). `_run_uow_group` above runs                              #
 # ONE contiguous group on the main connection; a genuinely interleaved case    #
 # needs TWO groups held open CONCURRENTLY over TWO real sessions (the          #
 # `Provisioner.peer` seam) — a DIFFERENT consumer of that seam than the        #
 # `when.concurrency` rounds runner (`parallax.conformance.concurrency_runner`, #
-# real `db.transact` calls, production routing per D-18/DQ4, not verbatim      #
+# real `db.transact` calls, production routing, not verbatim                   #
 # authored statements). :class:`_Turnstile` sequences the two groups' own      #
 # steps in AUTHORED order across two worker threads — deterministic (never a   #
 # genuine race at the Python level) because optimistic mode's own reads take   #
@@ -2006,7 +2001,7 @@ class _PeerConnection(DbPort, Protocol):
 
 class _Turnstile:
     """A strict, shared step-index cursor two worker threads take turns
-    through (COR-3 Phase 8 increment 6): a thread's own step at index ``i``
+    through: a thread's own step at index ``i``
     calls :meth:`wait_for` ``(i)`` before running it (blocking until every
     EARLIER step, on EITHER thread, has finished) and :meth:`advance` after —
     so the two groups' steps interleave in EXACTLY authored order, never a
@@ -2052,8 +2047,8 @@ class _InterleavedGroupResult:
     conflict (`None` for a group that committed, or that never conflicts),
     any OTHER exception the worker thread raised (re-raised on the main
     thread once both join — never silently swallowed), and every OWN find
-    step's own observed rows (keyed by scenario step index, review
-    remediation finding 1) — the group's own oracle for `expectRows`, the
+    step's own observed rows (keyed by scenario step index) — the group's own
+    oracle for `expectRows`, the
     SAME grade the ordinary scenario run lane (`test_write_run_sweep`'s
     `_ReadCapturePort`) already gives every OTHER find step; without this the
     caller has no way to grade a grouped find at all, only its DML shape."""
@@ -2115,7 +2110,7 @@ def _run_interleaved_group(
     per-group tracking discipline, unwitnessed and out of scope.
 
     Every OWN find step's observed rows land in ``result.rows`` (keyed by
-    scenario step index, review remediation finding 1): the caller's own
+    scenario step index): the caller's own
     oracle for that step's authored ``expectRows`` — without this, a grouped
     find's own DML is graded but its OBSERVATION never is, so a broken abort
     that left a doomed group's writes durable would report well-formed SQL
@@ -2186,9 +2181,9 @@ def _run_interleaved_group(
 # contract deadlock proof's own precedent): a genuine harness defect (a
 # missing `advance()` somewhere) must surface as a loud failure, never an
 # indefinitely hung test session. Named so :func:`_await_interleaved_workers`
-# can be exercised directly with a SHRUNK bound (review remediation finding
-# 4) — a real, unstuck-by-`release_all` timeout path in well under a second,
-# rather than the production bound actually elapsing twice.
+# can be exercised directly with a SHRUNK bound — a real, unstuck-by-
+# `release_all` timeout path in well under a second, rather than the
+# production bound actually elapsing twice.
 _INTERLEAVED_GROUP_JOIN_TIMEOUT: Final[float] = 30.0
 
 
@@ -2197,37 +2192,28 @@ def _underlying_connection(connection: object) -> object | None:
     (:func:`_terminate_connection`): the duck-typed underlying transport
     (mirroring :attr:`~parallax.postgres.PostgresAdapter.connection`, the
     wrapped psycopg ``Connection``), or ``None`` when ``connection`` exposes
-    no such escalation seam at all. Round 4 single-sourced this helper with
-    a since-retired pre-start SHAPE validator too; round 5 (the corrected
-    contract on the interleaved-uow join-timeout residual) narrows that
-    scope back to the ladder alone — preflight
-    (:func:`_require_interleaved_termination_capability`) no longer inspects
-    a connection's shape at all, so this function's "single source" promise
-    is exactly what :func:`_terminate_connection`'s own rungs two and three
-    need and nothing more."""
+    no such escalation seam at all. Used only by
+    :func:`_terminate_connection`'s own rungs two and three; preflight
+    (:func:`_require_interleaved_termination_capability`) does not inspect a
+    connection's shape at all."""
     return getattr(connection, "connection", None)
 
 
 # ---------------------------------------------------------------------------
-# The round-5 corrected contract's own trust marker (the interleaved-uow
-# join-timeout residual, FIFTH confirmation pass on the same helper block).
-# Round 4 deepened the original best-effort design into a pre-start
-# preflight, but validated STRUCTURE only — whether `close()` / `fileno()`
-# were CALLABLE — never whether termination was RELIABLE. The reviewer
-# reproduced exactly the gap that leaves open: a port whose cancellation,
-# close, underlying close, and socket teardown are all CALLABLE yet all
-# RAISE at runtime passed round 4's structural check
-# (`preflight=('validated',)`) and then hung the unbounded post-ladder join
+# The termination ladder's trust marker. A structural check — whether
+# `close()` / `fileno()` are CALLABLE — cannot prove termination is
+# RELIABLE: a port whose cancellation, close, underlying close, and socket
+# teardown are all CALLABLE yet all RAISE at runtime would pass such a check
+# (`preflight=('validated',)`) and then hang the unbounded post-ladder join
 # forever (`helper_completed=False`). Runtime reliability of an arbitrary
-# duck-typed object this module does not itself construct is not provable
-# by inspection — round 4's own reproduction is the proof — so preflight
-# stops inferring a guarantee from shape and starts REQUIRING an explicit,
-# truthful GRANT of trust instead.
+# duck-typed object this module does not itself construct is not provable by
+# inspection, so preflight REQUIRES an explicit, truthful GRANT of trust
+# rather than inferring a guarantee from shape.
 # ---------------------------------------------------------------------------
 _TERMINATION_LADDER_TRUST_ATTR: Final[str] = "termination_ladder_trusted"
-"""The documented trust marker's attribute name (round 5's own design
-choice: a named boolean rather than a separate ABC/Protocol, kept a plain
-duck-typed attribute so a test fake needs no extra base class to declare
+"""The trust marker's attribute name (a named boolean rather than a separate
+ABC/Protocol, kept a plain duck-typed attribute so a test fake needs no
+extra base class to declare
 it). A connection type this module does not itself construct DECLARES the
 deterministic-termination contract by setting this attribute truthy on
 itself — a class attribute (inherited by every instance) is the natural
@@ -2242,15 +2228,13 @@ post-ladder join can never hang past this connection; an UNTRUTHFUL
 declaration is a bug in the DECLARING type, diagnosable at that exact join
 line, never a defect this preflight could have caught — this module's own
 contract is discharged the moment a truthful declaration exists, never by
-attempting to verify one is true (verifying it is exactly round 4's own
-retired mistake: a declaration this module never actually asked for, only
-a shape it hoped implied one)."""
+attempting to verify one is true (a shape cannot be trusted to imply the
+declaration this module needs)."""
 
 
 def _validate_termination_trust(connection: object, label: str) -> list[str]:
-    """Round 5's own pre-start refusal check (the corrected contract on the
-    interleaved-uow join-timeout residual, deepening round 4's own
-    structural-only check into a TRUSTED, DECLARED contract): ``connection``
+    """The pre-start refusal check enforcing the DECLARED termination-trust
+    contract: ``connection``
     passes ONLY when it grants that trust explicitly, by exactly one of —
 
     1. Being the KNOWN-DETERMINISTIC real type,
@@ -2269,12 +2253,11 @@ def _validate_termination_trust(connection: object, label: str) -> list[str]:
        by construction.
 
     A CALLABLE ``close()`` / ``fileno()`` — even a whole structurally
-    plausible ladder of them — is NEVER sufficient on its own: the
-    reviewer's own reproduction is exactly a port with every rung callable
-    and every rung RAISING at runtime, which this check refuses WITHOUT
+    plausible ladder of them — is NEVER sufficient on its own: a port with
+    every rung callable
+    and every rung RAISING at runtime is refused WITHOUT
     CALLING any of them (a pure trust check, never a behavioral probe —
-    nothing here is invoked, only inspected, exactly as round 4's own
-    structural check never invoked anything either).
+    nothing here is invoked, only inspected).
 
     Returns every defect found (empty when ``connection`` validates) rather
     than raising itself — the caller
@@ -2300,15 +2283,13 @@ def _validate_termination_trust(connection: object, label: str) -> list[str]:
 def _require_interleaved_termination_capability(
     main_connection: DbPort, peer_connection: _PeerConnection, case_name: str
 ) -> None:
-    """The corrected contract's own entry point (round 5, the FIFTH
-    confirmation pass on the interleaved-uow join-timeout residual). Round 4
-    validated only that a connection's ``close()`` / ``fileno()`` were
-    CALLABLE — the reviewer reproduced a port that passes that structural
-    check yet whose every runtime rung RAISES, leaving
-    :func:`_await_interleaved_workers`'s own deliberately UNBOUNDED
-    post-ladder join (round 3's design) hanging indefinitely with no live
-    process able to unstick it. So this pass deepens the check from
-    STRUCTURE to TRUST: BEFORE either interleaved-group worker thread
+    """The termination-trust preflight entry point. A merely structural check
+    — that a connection's ``close()`` / ``fileno()`` are CALLABLE — is
+    insufficient: a port that passes it yet whose every runtime rung RAISES
+    would leave :func:`_await_interleaved_workers`'s own deliberately
+    UNBOUNDED post-ladder join hanging indefinitely with no live process
+    able to unstick it. So the check is TRUST, not STRUCTURE: BEFORE either
+    interleaved-group worker thread
     starts, BOTH ``main_connection`` (the caller-owned port) and
     ``peer_connection`` must carry a DECLARED deterministic-termination
     contract (:func:`_validate_termination_trust`) — refusing loudly, naming
@@ -2337,7 +2318,7 @@ def _require_interleaved_termination_capability(
 def _cancel_in_flight_work(connection: object) -> None:
     """Best-effort, non-destructive interruption of whatever ``connection``
     is blocked on right now (:func:`_await_interleaved_workers`'s second
-    escalation, a later confirmation pass on review remediation finding 4):
+    escalation):
     a worker parked in REAL driver I/O wakes for neither
     :meth:`_Turnstile.release_all` (it is not inside ``turnstile.wait_for``)
     nor closing some OTHER session, so its OWN connection's outstanding
@@ -2351,7 +2332,7 @@ def _cancel_in_flight_work(connection: object) -> None:
     tears a session down, whether it is the peer's or the caller's own
     ``ours`` session. A survivor this rung cannot reach (cancellation fails
     or is unavailable) escalates one rung further, to
-    :func:`_terminate_connection` — round 3's own GUARANTEED close ladder,
+    :func:`_terminate_connection` — the GUARANTEED close ladder,
     never best-effort like this rung — which DOES close it; cancellation
     staying non-destructive only means a session that wakes here is never
     needlessly destroyed, not that it can never be destroyed at all. A fake
@@ -2434,17 +2415,16 @@ def _terminate_underlying_socket(  # pragma: no cover - real transport only, Doc
 
 def _terminate_connection(connection: object, label: str) -> list[str]:
     """Escalation rung three (:func:`_await_interleaved_workers`'s FINAL
-    escalation) — a round-3 confirmation pass's own correction on review
-    remediation finding 4: unlike :func:`_cancel_in_flight_work`
+    escalation): unlike :func:`_cancel_in_flight_work`
     (best-effort, non-destructive), this rung is GUARANTEED, never
-    best-effort. Round 2 shipped a single, silently-swallowed ``close()``
-    probe on the assumption that closing always works; the round-3 pass
-    forced BOTH ``cancel()`` and ``close()`` to fail on the SAME survivor
-    and reproduced exactly the failure that assumption was covering for — a
-    live worker still racing the caller after this rung had already run and
-    :func:`_await_interleaved_workers` had already raised.
+    best-effort. A single, silently-swallowed ``close()``
+    probe would assume closing always works; if BOTH ``cancel()`` and
+    ``close()`` fail on the SAME survivor, a
+    live worker keeps racing the caller after this rung has already run and
+    :func:`_await_interleaved_workers` has already raised — which this
+    ladder exists to prevent.
 
-    The corrected ladder, each rung attempted only once the one above it is
+    This ladder, each rung attempted only once the one above it is
     missing or itself raises (never silently — every miss and every raise is
     RECORDED and returned, so the caller can attach the full trail to the
     timeout error as context rather than masking it):
@@ -2463,9 +2443,7 @@ def _terminate_connection(connection: object, label: str) -> list[str]:
        is a universal enough capability name that a test fake can
        legitimately expose the SAME seam a real adapter does, so this rung
        reaches both alike. This is the documented seam a termination-rung
-       test fake must expose once its own OUTER ``close()`` is made to fail
-       — the round-3 confirmation pass's own adversarial pin proves the
-       escalation reaches it.
+       test fake must expose once its own OUTER ``close()`` is made to fail.
     3. :func:`_terminate_underlying_socket` — genuine OS-level socket
        teardown on the underlying connection's raw fd, real-transport only.
 
@@ -2479,19 +2457,14 @@ def _terminate_connection(connection: object, label: str) -> list[str]:
     is this module's own documented contract for an unreachable fake, not a
     bug this rung papers over.
 
-    Round 4 single-sourced rungs 1 and 2's own reach — the underlying
-    transport below is fetched through :func:`_underlying_connection` — with
-    a pre-start SHAPE validator that round 5 (the corrected contract on the
-    interleaved-uow join-timeout residual) has since retired: this ladder's
-    OWN mechanics are untouched by that correction (the round-3 guaranteed
-    escalation below stays exactly as it was), only the GATE above it
-    changed, from re-deriving a guarantee by inspecting this ladder's own
-    rung shapes to requiring a caller-visible, DECLARED trust contract
-    instead (:func:`_require_interleaved_termination_capability`,
-    :data:`_TERMINATION_LADDER_TRUST_ATTR`) — this function no longer has a
-    validator counterpart walking the SAME reach helper for the SAME
-    reason; it is simply this ladder's own single-sourced reach for rungs
-    two and three."""
+    Rungs 1 and 2 reach the underlying transport through
+    :func:`_underlying_connection`. The preflight gate above this ladder does
+    not infer a guarantee by inspecting these rung shapes; it requires a
+    caller-visible, DECLARED trust contract instead
+    (:func:`_require_interleaved_termination_capability`,
+    :data:`_TERMINATION_LADDER_TRUST_ATTR`). :func:`_underlying_connection`
+    is simply this ladder's own single-sourced reach for rungs two and
+    three."""
     failures: list[str] = []
 
     def _attempt(target: object, rung: str) -> bool:
@@ -2534,7 +2507,7 @@ def _await_interleaved_workers(
 ) -> None:
     """Join both interleaved-group worker threads within ``timeout``; on a
     timeout, cooperatively UNSTICK them before raising rather than raising
-    while they may still be alive (review remediation finding 4): wake every
+    while they may still be alive: wake every
     waiter parked in ``turnstile.wait_for`` (:meth:`_Turnstile.release_all` —
     the SAME defensive unstick a worker's own unexpected failure already
     uses), close ``peer_connection`` so any outstanding database work the
@@ -2542,26 +2515,21 @@ def _await_interleaved_workers(
     again, never a second indefinite hang).
 
     That first escalation cannot reach a worker blocked in REAL database I/O
-    on its OWN session (a later confirmation pass's own residual on this same
-    finding): ``release_all`` only wakes a thread parked in
+    on its OWN session: ``release_all`` only wakes a thread parked in
     ``turnstile.wait_for``, and closing ``peer_connection`` touches only the
     ``concurrent`` group's session, never ``main_connection``. So any thread
     STILL alive after that rejoin gets a SECOND escalation:
     :func:`_cancel_in_flight_work` — best-effort, non-destructive, and
-    (round 3's own explicit call) ALLOWED to stay that way, because the
+    ALLOWED to stay that way, because the
     guarantee below lives entirely in the rung after it — on its OWN
     connection (``main_connection`` for ``thread_a``, ``peer_connection``
     for ``thread_b``), then one more bounded rejoin of both.
 
-    ROUND-3 CORRECTED, FINAL CONTRACT (supersedes rounds 1-2's own terminal
-    designs): this function has NO code path — return, raise, or assert —
-    that runs while any started worker is alive. Round 1 raised a loud
-    "could not stop" error with a worker potentially still running; round 2
-    replaced that with a bounded rejoin behind an assumed-guaranteed
-    ``close()`` and an internal ``AssertionError`` safety net for when that
-    assumption failed — and a round-3 confirmation pass reproduced exactly
-    that failure: BOTH ``cancel()`` and ``close()`` forced to fail on the
-    same survivor, a live worker at the very point this function used to
+    FINAL CONTRACT: this function has NO code path — return, raise, or assert
+    — that runs while any started worker is alive. A bounded rejoin behind an
+    assumed-guaranteed ``close()`` is not enough: if BOTH ``cancel()`` and
+    ``close()`` fail on the same survivor, a live worker remains at the very
+    point this function would otherwise
     raise. So any thread STILL alive after the cancel rejoin gets a THIRD
     escalation that is no longer best-effort: :func:`_terminate_connection`'s
     own GUARANTEED close ladder (duck-typed ``close()`` -> the underlying
@@ -2574,9 +2542,7 @@ def _await_interleaved_workers(
     terminated port that fails loudly on next use.
 
     The join AFTER this rung is DELIBERATELY UNBOUNDED (``thread.join()``,
-    no ``timeout=``): this retires round 2's own separate, fixed
-    termination-join bound and its ``AssertionError`` safety net entirely —
-    there is no longer a second, narrower timeout to violate. The trade,
+    no ``timeout=``): there is no second, narrower timeout to violate. The trade,
     made explicit: against a hypothetical FUTURE connection whose own close
     ladder is defeated all the way down (a rung this module cannot reach,
     or one that itself blocks), the failure mode is a diagnosable hang at
@@ -2594,32 +2560,27 @@ def _await_interleaved_workers(
     the caller only reaches that check on the ordinary, non-timeout path, so
     the timeout error below is always what a caller here actually sees.
 
-    Round 4 (a confirmation pass on this SAME join-timeout residual)
-    strengthened that trade from implicit to EXPLICIT: the reviewer
-    reproduced every rung above failing on every worker, leaving this join
-    hanging indefinitely with no live process able to unstick it, so
-    :func:`run_interleaved_scenario_case` was made to call
+    This unbounded join is safe only because
+    :func:`run_interleaved_scenario_case` calls
     :func:`_require_interleaved_termination_capability` on BOTH
     ``main_connection`` and ``peer_connection`` before either worker thread
-    even starts. Round 4's OWN check validated only that a connection's
-    ``close()`` / ``fileno()`` were CALLABLE — and the reviewer reproduced
-    exactly the gap that leaves: a port with every one of those callable,
-    passing that structural check, and every one RAISING at runtime, hanging
-    this SAME join anyway (round 5, the fifth confirmation pass on this
-    block: ``preflight=('validated',)``, ``helper_completed=False``). So
-    round 5 deepened the check from STRUCTURE to TRUST — a connection now
-    passes only by carrying a DECLARED deterministic-termination contract
-    (:func:`_validate_termination_trust`: the known-deterministic
+    even starts. A merely structural check — that a connection's ``close()``
+    / ``fileno()`` are CALLABLE — is insufficient: a port with every one of
+    those callable yet every one RAISING at runtime would pass it and hang
+    this SAME join anyway (``preflight=('validated',)``,
+    ``helper_completed=False``). So the check is TRUST, not STRUCTURE — a
+    connection passes only by carrying a DECLARED deterministic-termination
+    contract (:func:`_validate_termination_trust`: the known-deterministic
     ``PostgresAdapter`` shape, trusted by construction, or an explicit
     :data:`_TERMINATION_LADDER_TRUST_ATTR` marker declaring the SAME
     responsibility). Past that validation, a hang at the join below can only
     mean a connection's trust grant was UNTRUTHFUL — a lying declaration (or
     a `PostgresAdapter` whose own OS-level guarantee was somehow defeated):
     a contract violation by that connection type, diagnosable at this exact
-    line, never an ordinary or expected outcome. The requirement was always
-    real; the declaration only makes it explicit and caller-visible instead
-    of leaving it implicit in an unbounded join a maintainer would otherwise
-    have to reverse-engineer.
+    line, never an ordinary or expected outcome. The declaration makes the
+    requirement explicit and caller-visible instead of leaving it implicit
+    in an unbounded join a maintainer would otherwise have to
+    reverse-engineer.
 
     The terminal state is always honest, never a silent leak: because the
     join above cannot return while a worker remains alive, EVERY path past
@@ -2660,9 +2621,8 @@ def _await_interleaved_workers(
         termination_failures.extend(_terminate_connection(connection, thread.name))
 
     # UNBOUNDED — see docstring: a diagnosable hang here beats ever raising
-    # (or returning) while a worker is still alive; this retires round 2's
-    # own separate, fixed termination-join bound and its `AssertionError`
-    # safety net.
+    # (or returning) while a worker is still alive, so there is no separate,
+    # narrower termination-join bound to violate.
     thread_a.join()
     thread_b.join()
 
@@ -2690,11 +2650,11 @@ def run_interleaved_scenario_case(
     peer_factory: Callable[[], _PeerConnection],
 ) -> tuple[list[Emission], int, int | None, list[list[Row]]]:
     """Run the ONE witnessed interleaved-`uow`-group scenario shape
-    (`m-opt-lock-012`'s two-group optimistic-lock race, COR-3 Phase 8
-    increment 6): the ``ours`` group on the caller's own ``port``, a
+    (`m-opt-lock-012`'s two-group optimistic-lock race): the ``ours`` group
+    on the caller's own ``port``, a
     ``concurrent`` group on a SECOND, peer-backed connection (``peer_factory``
     — this function constructs no connection itself), each a REAL
-    ``db.transact`` (production routing, D-18/DQ4), steps sequenced across
+    ``db.transact`` (production routing), steps sequenced across
     the two in AUTHORED order (:class:`_Turnstile`). Any ungrouped step
     (`m-opt-lock-012`'s own trailing verify find) runs AFTER both groups have
     resolved, on the caller's ``port``.
@@ -2704,7 +2664,7 @@ def run_interleaved_scenario_case(
     count (`then.affectedRows`, the scenario shape's own EXTRA top-level
     assertion this ONE case authors; ``None`` when no group conflicted), and
     EVERY find step's own observed rows (grouped or ungrouped, in scenario
-    step order — review remediation finding 1): the caller's own oracle for
+    step order): the caller's own oracle for
     every authored `expectRows`, the SAME observable the ordinary scenario
     run lane grades for every OTHER find step. Routed to explicitly by the
     run sweep (`test_run_sweep.py`) rather than through `run_scenario_case`/
@@ -2714,8 +2674,8 @@ def run_interleaved_scenario_case(
 
     Before either worker thread starts, both ``port`` and the connection
     ``peer_factory`` produces must carry a TRUSTED deterministic-termination
-    contract (:func:`_require_interleaved_termination_capability`, round 5
-    on the join-timeout residual) — a connection with no declared trust
+    contract (:func:`_require_interleaved_termination_capability`) — a
+    connection with no declared trust
     refuses loudly here, rather than surfacing only much later as an
     indefinite hang at :func:`_await_interleaved_workers`'s own unbounded
     post-ladder join.
@@ -2907,8 +2867,8 @@ def run_write_sequence_case(
     case: case_format.Case, dialect_name: str, port: DbPort
 ) -> tuple[list[Emission], dict[str, list[Row]], int]:
     """Run a writeSequence: each entry executes as its OWN unit of work through
-    ``db.transact`` (COR-3 Phase 8 increment 4, DQ4 re-route — "the whole
-    sequence in one transaction" retires), then report the ordered per-entry
+    ``db.transact`` (one transaction per entry, never the whole sequence in
+    one), then report the ordered per-entry
     emissions, the committed table state, and the total round trips.
 
     The table read-back is the `m-conformance-adapter` write-sequence observation
@@ -3032,10 +2992,10 @@ def _execute_reads(port: DbPort, dialect: Dialect, statements: Sequence[Statemen
 
 
 # --------------------------------------------------------------------------- #
-# Conflict — the optimistic-lock run lane (m-opt-lock; COR-3 Phase 8           #
-# increment 4, DQ4 re-route). Single-attempt (`when.write`) and retry          #
-# (`when.attempts`) forms both drive ONE `db.transact` call per attempt        #
-# (ledger D-18). A non-temporal attempt (the increment-3 versioned keyed       #
+# Conflict — the optimistic-lock run lane (m-opt-lock).                        #
+# Single-attempt (`when.write`) and retry                                      #
+# (`when.attempts`) forms both drive ONE `db.transact` call per attempt.       #
+# A non-temporal attempt (the versioned keyed                                  #
 # UPDATE) buffers through the neutral `Transaction._buffer` route, exactly     #
 # like any other keyed write; a TEMPORAL attempt (`m-txtime-write` /            #
 # `m-bitemp-write`) composes `handle.lower_temporal_close` directly — a        #
@@ -3137,12 +3097,12 @@ def _run_conflict_write(
     write_row: Mapping[str, object],
 ) -> tuple[tuple[Statement, ...], int]:
     """Lower and execute one NON-TEMPORAL conflict attempt's write through
-    ``db.transact`` (COR-3 Phase 8 increment 4, DQ4 re-route) — ONE
+    ``db.transact`` — ONE
     transaction, an inert Clock (never consumed by a non-temporal write).
     Buffers through the neutral ``Transaction._buffer`` route +
     ``UnitOfWork.observe``; the PRODUCTION flush executor's OWN
     ``expected_affected`` check raises :class:`~parallax.core.opt_lock.
-    OptimisticLockConflictError` on a mismatch (unchanged from increment 3),
+    OptimisticLockConflictError` on a mismatch,
     which this lane catches and renders as the ``0`` ``affectedRows``
     observation."""
     statements = _lower_conflict_write(meta, dialect, target, concurrency, write_row)
@@ -3180,7 +3140,7 @@ def _run_conflict_close(
     observed_tx_start: str | None,
 ) -> tuple[tuple[Statement, ...], int]:
     """Lower and execute one TEMPORAL conflict attempt's close through
-    ``db.transact`` (COR-3 Phase 8 increment 4, DQ4 re-route) — ONE
+    ``db.transact`` — ONE
     transaction, ``clock=FixedClock(at)``. Composes
     :func:`~parallax.snapshot.handle.lower_temporal_close` directly (a
     conflict case's own close-only probe, never a REAL chaining mutation) and
@@ -3230,11 +3190,11 @@ def run_conflict_case(
 ) -> tuple[list[Emission], int, dict[str, list[Row]] | None]:
     """Run a `conflict` case (`m-opt-lock` / `m-txtime-write` / `m-bitemp-write`):
     the single-attempt form (`when.write`), or the `when.attempts` retry
-    sequence — each attempt its OWN `db.transact` unit (COR-3 Phase 8
-    increment 4, DQ4 re-route), in order, each with its own statements /
+    sequence — each attempt its OWN `db.transact` unit,
+    in order, each with its own statements /
     affected-row count (the case's own `0`-then-`1` retry-contract witness). A
-    NON-temporal target (`m-opt-lock`'s own versioned keyed UPDATE, unchanged
-    from increment 3) buffers through the neutral `Transaction._buffer` route;
+    NON-temporal target (`m-opt-lock`'s own versioned keyed UPDATE) buffers
+    through the neutral `Transaction._buffer` route;
     a TEMPORAL target composes `handle.lower_temporal_close` directly.
 
     Loads no fixtures itself (the caller's own lifecycle does, per
@@ -3334,7 +3294,7 @@ def run_error_case(
     statement, including the raising one. A ``when.concurrency`` trigger needs
     two barrier-synchronized sessions this single-connection lane cannot drive
     at all — it is refused here UNCONDITIONALLY, never dispatched to from a
-    caller that owns two sessions (COR-3 Phase 8 increment 6:
+    caller that owns two sessions (
     ``m-read-lock-006`` is graded by the CASE-DRIVEN two-session rounds
     runner instead, ``parallax.conformance.concurrency_runner`` — this
     module's own dispatcher (`tests/conformance/test_run_sweep.py`) routes it
@@ -3375,8 +3335,7 @@ def run_error_case(
 
 
 # --------------------------------------------------------------------------- #
-# Rejected — the pre-SQL model-aware validation lane (m-case-format, COR-3     #
-# Phase 7 increment 1: resolved DQ3/DQ8).                                      #
+# Rejected — the pre-SQL model-aware validation lane (m-case-format).          #
 # --------------------------------------------------------------------------- #
 def _rejected_target(meta: Metamodel) -> str:
     """The queried/written root a `rejected` case's `when` omits.
@@ -3391,8 +3350,7 @@ def _rejected_target(meta: Metamodel) -> str:
     `Class.member` reference and do not otherwise depend on it); for a
     `when.write` case it is the entity `validate_write` checks the payload
     against — the same "no explicit handle, so resolve the model's default
-    write/read root" convention, reused rather than restated (COR-3 Phase 8
-    increment 2).
+    write/read root" convention, reused rather than restated.
     """
     root = inheritance.family_of(meta).root
     if root is not None:
@@ -3434,8 +3392,8 @@ def run_rejected_case(case: case_format.Case) -> str:
     every read uses, then checked by the shared `validate_operation`
     (`m-op-algebra` / `m-navigate` / `m-value-object`) — the same validator an
     idiomatic statement frontend calls at build time, so the two paths cannot
-    drift. A `model` input reuses the Phase-3 `m-inheritance` family-invariant
-    validator unchanged. A `write` input (COR-3 Phase 8 increment 2) is
+    drift. A `model` input reuses the `m-inheritance` family-invariant
+    validator unchanged. A `write` input is
     resolved against the model's default entity (`_rejected_target`'s own
     convention, reused here — the family root when the model declares one,
     else the model's single entity, since a rejected `when.write` carries no

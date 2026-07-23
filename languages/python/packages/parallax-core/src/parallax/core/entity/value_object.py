@@ -1,4 +1,4 @@
-"""The ``ValueObject`` class frontend (D-7 value-object spelling, spec §2/§5).
+"""The ``ValueObject`` class frontend (value-object spelling, spec §2/§5).
 
 A ``ValueObject`` subclass is a frozen, metaclass-light Pydantic model whose
 ``Attr[T]`` fields declare either a scalar neutral-typed member or a nested
@@ -223,7 +223,7 @@ def vo_field_info(inner: object) -> tuple[type, Literal["one", "many"]] | None:
 
 class ValueObjectMeta(ModelMetaclass):
     """Metaclass compiling a ``ValueObject`` class body into a
-    :class:`ValueObjectStructure` (D-7 value-object spelling)."""
+    :class:`ValueObjectStructure` (value-object spelling)."""
 
     def __new__(
         mcs,
@@ -348,7 +348,7 @@ def to_document(value: ValueObject | None) -> dict[str, object] | None:
     """Serialize a ``ValueObject`` instance to its canonical nested-dict document
     (canonical member names) — a write input's json-column value. ``None``
     passes through unchanged (an absent/nullable value object). Filtered by
-    Pydantic's own ``model_fields_set`` alone (D-33), mirroring ``full_row``'s
+    Pydantic's own ``model_fields_set`` alone, mirroring ``full_row``'s
     own top-level policy exactly: a member the caller never populated (relying
     on its declared default) is OMITTED, never bound as an explicit ``null``
     the corpus's own narrower document never authors; a member the caller

@@ -184,7 +184,7 @@ def test_identity_key_is_none_without_a_declared_primary_key() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# S3 (COR-3 Phase 7 increment 7 round-2): a table-per-concrete-subtype        #
+# A table-per-concrete-subtype                                                #
 # ABSTRACT-position read narrowing (or naturally resolving) to exactly ONE    #
 # concrete emits no `familyVariant` column (`m-sql`'s `_compile_tpcs_single`) #
 # — identity must still key to the resolved CONCRETE, never the abstract     #
@@ -201,7 +201,7 @@ _INVOICE_ROW = {
 
 
 def test_identity_key_resolves_a_narrowed_single_concrete_tpcs_position() -> None:
-    # Reproduces the reviewer's defect verbatim: without the fix, this returns
+    # Without narrowing, the identity key would be
     # `("FinancialDocument", (1,))` — the ABSTRACT queried position — even
     # though the narrow resolves to exactly one concrete and the row carries
     # no `familyVariant` at all (the SQL legitimately omits it).
@@ -227,7 +227,7 @@ def test_identity_key_stays_root_normalized_when_the_narrow_still_spans_two_conc
 
 
 def test_identity_key_tph_narrowed_to_one_concrete_stays_root_normalized() -> None:
-    # The TPH sibling check the reviewer demands: table-per-hierarchy ALWAYS
+    # The TPH sibling check: table-per-hierarchy ALWAYS
     # carries `familyVariant` for an abstract-target read regardless of the
     # narrow's resolved cardinality (m-inheritance-012), so `identity_key`'s
     # TPCS-only branch never even applies here — no gap to close.
@@ -253,7 +253,7 @@ def test_materialize_root_pk_columns_are_family_normalized() -> None:
 
 
 def test_materialize_root_threads_the_narrow_into_resolved_entity() -> None:
-    # S3: `materialize_root`'s own `narrow_to` (a find executor's
+    # `materialize_root`'s own `narrow_to` (a find executor's
     # `~parallax.core.sql_gen.CompiledRead.narrow_to`) lets the assembler
     # recover a single-resolved-position TPCS row's own concrete even though
     # the row carries no `familyVariant` at all.
@@ -264,7 +264,7 @@ def test_materialize_root_threads_the_narrow_into_resolved_entity() -> None:
 
 
 def test_materialize_root_omitted_narrow_to_defaults_to_none() -> None:
-    # Backward compatible: an omitted `narrow_to` (every pre-S3 caller) behaves
+    # Backward compatible: an omitted `narrow_to` behaves
     # exactly as before.
     asm = Assembler(meta=ORDERS)
     nodes = asm.materialize_root("Order", [{"id": 1, "name": "Ada"}])

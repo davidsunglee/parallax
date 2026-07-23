@@ -393,7 +393,7 @@ def _emit_bounds(body: dict[str, object], valid_from: str | None, until: str | N
 # Member-name honesty (metamodel-aware build-time validator).                  #
 # --------------------------------------------------------------------------- #
 def validate_instruction(instruction: WriteInstruction, meta: Metamodel) -> None:
-    """Validate an instruction's member names against the metamodel (D-1).
+    """Validate an instruction's member names against the metamodel.
 
     A keyed write row key must name a declared attribute or value object of the
     entity — for an inheritance-family participant, ANCESTRY-EFFECTIVE: every
@@ -405,11 +405,11 @@ def validate_instruction(instruction: WriteInstruction, meta: Metamodel) -> None
     compiled record carries only its OWN attributes — m-inheritance "Inherited
     members"). Sibling-branch and framework-owned-metadata fields are already
     caught more specifically, and FIRST, by `validate_write`'s subtype rules
-    (COR-3 Phase 8 increment 2) — this gate only ever sees whatever THAT pass
+    — this gate only ever sees whatever THAT pass
     left unexamined, so widening it to the whole family never re-opens a hole
     the more specific check already closes. A predicate write's assignment
     `attr` must name a `target.entity` member, same family-effective set. This
-    is the member-name honesty gate — the flush-time refusing compile port (M4)
+    is the member-name honesty gate — the flush-time refusing compile port
     is the structural enforcer of the remaining typed / columnOrder
     classification, mirroring the predicate-write materialization split.
 

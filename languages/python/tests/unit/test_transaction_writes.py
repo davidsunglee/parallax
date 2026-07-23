@@ -1,10 +1,10 @@
 """Keyed write-verb unit tests for `parallax.snapshot.handle` (spec §5, Docker-free fake ports).
 
-The instance-taking D-16 verbs and their neutral `_buffer` seam: the
+The instance-taking verbs and their neutral `_buffer` seam: the
 buffer -> flush -> lower -> execute wiring proof, sparse-update no-op
 elimination, the shared `validate_write` model-aware rejection matrix, the typed
 KEYED temporal-window family (`update`/`terminate`/`update_until`/
-`terminate_until`, and D-31's `insert`/`insert_until`), keyed window-order
+`terminate_until`, and `insert`/`insert_until`), keyed window-order
 validation, and the §5 prior-observation license enforced at the developer verb.
 """
 
@@ -72,8 +72,8 @@ def test_commit_flushes_the_buffer_through_the_lowering_seam() -> None:
 
 
 def test_update_lowers_to_its_keyed_dml() -> None:
-    # m-unit-work-005, migrated to the m-opt-lock observation flow (COR-3
-    # Phase 8 increment 3): a keyed update (SET the non-PK members, WHERE the
+    # m-unit-work-005, migrated to the m-opt-lock observation flow: a keyed
+    # update (SET the non-PK members, WHERE the
     # key, version advanced from THIS unit of work's own recorded
     # observation). The edited copy is built from a row `tx.find` fetches
     # INSIDE this transaction — a versioned update requires a prior
@@ -99,8 +99,8 @@ def test_update_lowers_to_its_keyed_dml() -> None:
 
 
 def test_delete_of_an_observed_versioned_row_gates_on_the_observed_version() -> None:
-    # m-unit-work-006, migrated to the m-opt-lock observation flow (COR-3
-    # Phase 8 review remediation): a keyed DELETE of a versioned row requires
+    # m-unit-work-006, migrated to the m-opt-lock observation flow: a keyed
+    # DELETE of a versioned row requires
     # a PRIOR observation exactly like a keyed update (python.md §5) — the
     # deleted row must be fetched INSIDE this transaction first, and the
     # lowered DELETE binds that observed version.
@@ -161,8 +161,8 @@ def test_versioned_update_conflict_aborts_the_whole_unit_of_work() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# D-31 (COR-3 Phase 8 increment 7 completion round): axis-attribute           #
-# construction optionality + `tx.insert_until`, through the PUBLIC verbs.     #
+# Axis-attribute construction optionality + `tx.insert_until`, through the    #
+# PUBLIC verbs.                                                               #
 # --------------------------------------------------------------------------- #
 def test_bitemporal_insert_constructs_cleanly_and_stamps_the_valid_from() -> None:
     branch = mm.Branch(id=1, name="Central", address=None)  # no placeholder axis values
@@ -239,7 +239,7 @@ def test_row_naming_an_undeclared_member_is_rejected_at_buffer_time() -> None:
     # in through `tx.insert`; the member-name honesty gate still protects the
     # lower-level neutral document route directly (`Transaction._buffer`). An
     # otherwise-COMPLETE row isolates this defect from `validate_write` (which
-    # runs first, COR-3 Phase 8 increment 2, and only ever walks Account's OWN
+    # runs first, and only ever walks Account's OWN
     # declared members — it never itself notices a stray extra key).
     port = RecordingPort()
     with pytest.raises(WriteInstructionError, match="shoe_size"):
@@ -254,7 +254,7 @@ def test_row_naming_an_undeclared_member_is_rejected_at_buffer_time() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# validate_write (COR-3 Phase 8 increment 2, m-value-object write validation  #
+# validate_write (m-value-object write validation                             #
 # x m-inheritance concrete-subtype write protocol): the SAME model-aware      #
 # validator the conformance engine's rejected lane calls for the corpus's     #
 # `when.write` cases (m-value-object-039..044 / m-inheritance-086..089) — one #
@@ -313,7 +313,7 @@ def test_buffer_rejects_a_value_type_mismatch() -> None:
     # This corpus case's own idiomatic-surface spelling is unreachable through
     # `tx.insert` (Pydantic's own field coercion raises first, constructing
     # `ContactAddress(street=42, ...)` never even completes) — a SANCTIONED
-    # exception, ledger D-32 (S5, COR-3 Phase 8 increment 7 remediation), so
+    # exception, so
     # this proof exercises the shared validator directly through the private
     # `_buffer` seam instead, exactly like its two siblings above.
     port = RecordingPort()
@@ -429,7 +429,7 @@ def _position_row_dt() -> Row:
 
 
 # --------------------------------------------------------------------------- #
-# Typed KEYED temporal-window verbs (COR-3 Phase 8 increment 7): `update`'s    #
+# Typed KEYED temporal-window verbs: `update`'s                               #
 # own optional bitemporal `valid_from`, `terminate`, `update_until`, and    #
 # `terminate_until` — the KEYED siblings of `update_where` / `terminate_where` #
 # / `update_until_where` / `terminate_until_where`, sharing the SAME           #
@@ -497,8 +497,8 @@ def test_keyed_update_until_lowers_the_rectangle_split() -> None:
 def test_keyed_update_until_with_an_empty_effective_change_set_issues_no_dml() -> None:
     # The SAME sparse-update no-op rule `update` applies (spec §3/§5): a
     # `model_copy()` whose Change Record nets to zero issues no DML at all --
-    # but only AFTER its (here, valid) Valid-Time window is validated (R2,
-    # COR-3 Phase 7 increment 7 round-2: window validation runs BEFORE the
+    # but only AFTER its (here, valid) Valid-Time window is validated
+    # (window validation runs BEFORE the
     # no-op return, for every window verb, never the reverse -- see the
     # sibling equal-bounds pin immediately below for the corrected
     # precedence made visible).
@@ -526,13 +526,12 @@ def test_keyed_update_until_with_an_empty_effective_change_set_issues_no_dml() -
 
 
 def test_keyed_update_until_with_an_empty_change_set_still_rejects_equal_bounds() -> None:
-    # R2 (COR-3 Phase 7 increment 7 round-2): window validation runs BEFORE
+    # Window validation runs BEFORE
     # the empty-effective-change-set no-op return -- equal bounds reject even
-    # when the edited copy's own Change Record nets to zero. The prior round
-    # deliberately kept the no-op-first ordering, matching what it believed
-    # was the existing test's documented precedence (the sibling test above,
-    # pre-fix); the reviewer ruled that precedence WRONG per spec §5 ("all
-    # validated at build") -- this is the corrected behavior.
+    # when the edited copy's own Change Record nets to zero, per spec §5
+    # ("all validated at build"): validating the window only after the no-op
+    # return would let an equal/reversed window slip through when the change
+    # set is empty.
     port = RecordingPort()
     fetched = WherePosition(
         id=1,
@@ -557,11 +556,11 @@ def test_keyed_update_until_with_an_empty_change_set_still_rejects_equal_bounds(
 
 
 def test_keyed_update_until_with_a_naive_until_raises_the_proper_value_error() -> None:
-    # R2: a naive `until` (no tzinfo) must raise the SAME `ValueError` shape
+    # A naive `until` (no tzinfo) must raise the SAME `ValueError` shape
     # `validate_valid_from`'s own `instant_literal` normalization raises
     # for a naive `valid_from` (never a bare `TypeError` leaked by
-    # comparing a naive `until` against an already-aware `valid_from`,
-    # the pre-fix defect: comparison ran before normalization).
+    # comparing a naive `until` against an already-aware `valid_from`
+    # when comparison runs before normalization).
     port = RecordingPort(rows=[_position_row_dt()])
     valid_from = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
     naive_until = dt.datetime(2024, 9, 1)  # NAIVE -- no tzinfo
@@ -574,8 +573,8 @@ def test_keyed_update_until_with_a_naive_until_raises_the_proper_value_error() -
             until=naive_until,
         )
 
-    # `pytest.raises(ValueError, ...)` itself is the pin against the pre-fix
-    # leak: `TypeError` is not a `ValueError`, so an un-normalized comparison
+    # `pytest.raises(ValueError, ...)` itself is the pin against a
+    # `TypeError` leak: `TypeError` is not a `ValueError`, so an un-normalized comparison
     # would escape uncaught here rather than silently satisfy this block.
     with pytest.raises(ValueError, match="naive datetime"):
         Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(
@@ -626,7 +625,7 @@ def test_keyed_terminate_on_a_non_temporal_target_forbids_valid_from() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Window-order validation (S4, COR-3 Phase 8 increment 7 remediation):        #
+# Window-order validation:                                                    #
 # `python.md` §5 "the `*_until` trio additionally requires `until`, with      #
 # `valid_from < until` ... all validated at build" — an EQUAL and a        #
 # REVERSED window both reject, at the verb call, before any buffering, for    #
@@ -669,8 +668,8 @@ def test_keyed_terminate_until_rejects_a_reversed_window_bound() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# The §5 prior-observation license for keyed TEMPORAL update/terminate        #
-# (checkpoint-4 Spec finding 1): the temporal sibling of the versioned        #
+# The §5 prior-observation license for keyed TEMPORAL update/terminate:       #
+# the temporal sibling of the versioned                                       #
 # `require_observed` rule, enforced at the developer verb.                    #
 # --------------------------------------------------------------------------- #
 @pytest.mark.parametrize("concurrency", ["locking", "optimistic"])
@@ -834,9 +833,8 @@ def test_an_edited_copy_of_a_finite_transaction_time_pinned_node_stays_writable(
 # --------------------------------------------------------------------------- #
 # The KEYED verbs' own entity-class guard (`_write_inputs.                     #
 # entity_record_of_instance`). Placed beside the `NoIoPort` harness above,     #
-# which is the only fixture it needs — it travelled here with the rest of the  #
-# keyed-verb region in COR-42 Phase 5, the same way Phase 4's replacement      #
-# observation tests travelled with the reads region.                           #
+# which is the only fixture it needs — it lives here with the rest of the      #
+# keyed-verb region.                                                           #
 # --------------------------------------------------------------------------- #
 def test_a_keyed_verb_refuses_an_instance_of_an_uncompiled_class() -> None:
     # `Entity` (the frontend BASE) is never itself compiled into a metamodel

@@ -19,7 +19,7 @@ Three mutations, one shape each (`m-txtime-write.md` "Milestone-chaining writes"
   ABSENCE of any ``out_z = infinity`` row.
 - **update** — a :class:`MilestoneClose` immediately followed by a
   :class:`MilestoneOpen` carrying the instruction's own row MERGED onto the
-  observed payload (D-30, COR-3 Phase 8 increment 7 completion round; mirrors
+  observed payload (mirrors
   the bitemporal rectangle split's own observed-payload carry-forward,
   `m-bitemp-write` "Head/tail old values come from the observed prior
   rectangle") — a public ``tx.update(copy)`` authors a SPARSE row (primary key
@@ -162,12 +162,12 @@ def _open_row(entity: Entity, tx_instant: str, payload: Mapping[str, object]) ->
 
 
 def _merged_row(observed: Observation | None, row: Mapping[str, object]) -> Mapping[str, object]:
-    """The chained current row an audit-only ``update`` opens (D-30): the
+    """The chained current row an audit-only ``update`` opens: the
     instruction's own (possibly SPARSE) row overlaid onto the observed
     payload — the audit-only analogue of
     :func:`~parallax.core.bitemp_write._merged_payload`. ``None`` when this
     write carries no observation (nothing to merge onto — the instruction's
-    row rides through unchanged, exactly as it did before this fix)."""
+    row rides through unchanged)."""
     if observed is None or observed.payload is None:
         return row
     return {**observed.payload, **row}
@@ -194,7 +194,7 @@ def plan(
     )
     if mutation in _TERMINATE_MUTATIONS:
         return MilestonePlan(steps=(close,))
-    # update: chain the MERGED row (D-30) — the instruction's own row overlaid
+    # update: chain the MERGED row — the instruction's own row overlaid
     # onto the observed payload, mirroring the bitemporal rectangle split.
     new_row = _merged_row(observed, row)
     return MilestonePlan(steps=(close, MilestoneOpen(row=_open_row(entity, tx_instant, new_row))))

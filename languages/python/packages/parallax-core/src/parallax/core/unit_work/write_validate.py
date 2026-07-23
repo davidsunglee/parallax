@@ -1,10 +1,10 @@
 """The model-aware write validator (m-value-object write validation x
-m-inheritance concrete-subtype write protocol, COR-3 Phase 8 increment 2).
+m-inheritance concrete-subtype write protocol).
 
 :func:`validate_write` is the SHARED validator both the conformance engine's
 rejected run lane and the developer transaction verbs (``Transaction._buffer``)
-call -- the "one validator, two callers" pattern the Phase-7 ``validate_operation``
-precedent set (`parallax.core.op_algebra.validate`): the SAME rule classification
+call -- the "one validator, two callers" pattern ``validate_operation``
+established (`parallax.core.op_algebra.validate`): the SAME rule classification
 and check order runs on both paths, so they cannot drift.
 
 Placement (`core/spec/modules.md` §7 DAG): ``m-unit-work`` depends on
@@ -24,9 +24,9 @@ importing `m-value-object`) -- its STRUCTURAL traversal lives in
 pattern), the one scope every caller already depends on; this module renders
 ITS OWN rule vocabulary and message text from the returned violation.
 `parallax.core.inheritance.validate_write_assignment`'s VO-targeted
-assignment-value check (COR-3 Phase 8 confirmation-pass residual P3) reuses
-the SAME shared walk rather than forking it. This is the M2 composition-at-
-the-engine precedent applied to writes: pure per-concern rule functions in
+assignment-value check reuses
+the SAME shared walk rather than forking it. This applies the composition-at-
+the-engine pattern to writes: pure per-concern rule functions in
 their owning scopes, ONE shared compose function (this module) both callers
 invoke, so the rule ORDER stays a single source of truth regardless of which
 scope a given rule's logic lives in.

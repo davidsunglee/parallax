@@ -1,4 +1,4 @@
-"""Phase 1 smoke tests: the four namespace distributions import cleanly."""
+"""Smoke tests: the four namespace distributions import cleanly."""
 
 from __future__ import annotations
 
@@ -27,10 +27,9 @@ _TOP_PACKAGE_NAMES: tuple[str, ...] = (
 
 
 def test_top_package_public_surfaces() -> None:
-    # Phase 3 publishes the model-definition surface on parallax.core; Phase 5 adds
-    # the concrete Postgres adapter surface. Phase 7 increment 6a publishes the
-    # snapshot developer surface (`Snapshot[T]` / `Execution`, §8) alongside
-    # `connect()`.
+    # `parallax.core` publishes the model-definition surface; the concrete
+    # Postgres adapter surface and the snapshot developer surface
+    # (`Snapshot[T]` / `Execution`, §8) are published alongside `connect()`.
     assert {"Entity", "Field", "Relationship", "Attr", "Rel"} <= set(parallax.core.__all__)
     assert "meta" not in parallax.core.__all__
     assert set(parallax.snapshot.__all__) == {
@@ -83,6 +82,6 @@ def test_snapshot_imports_cold_in_a_fresh_interpreter(module: str) -> None:
 
 
 def test_conformance_cli_describe_exits_ok(capsys: pytest.CaptureFixture[str]) -> None:
-    # The wire surface landed in Phase 2: `describe` emits its claim envelope.
+    # The wire surface: `describe` emits its claim envelope.
     assert cli.main(["describe"]) == 0
     assert '"command": "describe"' in capsys.readouterr().out

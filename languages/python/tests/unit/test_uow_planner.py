@@ -250,8 +250,7 @@ def test_object_key_resolves_the_family_effective_primary_key() -> None:
     # `CardPayment`'s own compiled record carries no `id` attribute at all (it
     # is declared on the family root `Payment` alone, m-inheritance "Inherited
     # members") -- a bare `Entity.primary_key` view would wrongly see no key,
-    # making every inheritance-family keyed write unidentifiable (COR-3 Phase
-    # 8 increment 3).
+    # making every inheritance-family keyed write unidentifiable.
     key = object_key(KeyedWrite("update", "CardPayment", ({"id": 1, "amount": 5.00},)), _PAYMENT)
     assert key == ("CardPayment", (("id", 1),))
 
@@ -260,7 +259,7 @@ def test_object_key_is_none_for_a_marker_shaped_primary_key_value() -> None:
     # A pk-gen `max` insert's row carries a DB-computed marker for the id, not
     # a real value (`{computed: "maxPlusOne"}`, `m-pk-gen`): it has no
     # coalescing identity, exactly like an absent pk (kills the planner's own
-    # `TypeError: unhashable type: 'dict'` crash, COR-3 Phase 8 increment 3).
+    # `TypeError: unhashable type: 'dict'` crash).
     marker_insert = KeyedWrite(
         "insert", "Attendee", ({"id": {"computed": "maxPlusOne"}, "name": "Ada"},)
     )
@@ -295,7 +294,7 @@ def test_tx_instant_flows_through_as_plan_context() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Affected-rows expectation (m-opt-lock, COR-3 Phase 8 increment 3).           #
+# Affected-rows expectation (m-opt-lock).                                      #
 # --------------------------------------------------------------------------- #
 def test_expected_affected_is_one_for_a_versioned_update_carrying_an_observation() -> None:
     update = KeyedWrite("update", "Account", ({"id": 1, "balance": 0.00},))
@@ -332,7 +331,7 @@ def test_expected_affected_is_none_for_an_insert_even_with_a_recorded_observatio
 
 
 # --------------------------------------------------------------------------- #
-# Collapse (m-batch-write's injected vocabulary, COR-3 Phase 8 increment 5).   #
+# Collapse (m-batch-write's injected vocabulary).                              #
 # --------------------------------------------------------------------------- #
 def test_collapse_is_a_noop_when_no_policy_is_injected() -> None:
     buffer = [
@@ -422,8 +421,8 @@ def test_collapse_never_touches_a_predicate_write() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# AtomicUnit (a materialized predicate write's planned unit, COR-3 Phase 8    #
-# increment 5, `m-unit-work` "Materialized predicate writes are an atomic     #
+# AtomicUnit (a materialized predicate write's planned unit,                  #
+# `m-unit-work` "Materialized predicate writes are an atomic                  #
 # planned unit"): exempt from coalescing and from collapse; FK-order moves it #
 # as ONE block, its internal row order untouched; flattened to a plain,       #
 # per-row `PlannedWrite` sequence by the time `plan_flush` returns.            #

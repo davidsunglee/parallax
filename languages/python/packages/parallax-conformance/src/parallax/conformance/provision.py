@@ -1,6 +1,6 @@
 """Self-managed provisioning (spec §6, m-conformance-adapter ``self-managed``).
 
-The simple reset path — the only path in v1 (ledger D-4): one session-scoped
+The simple reset path — the only path in v1: one session-scoped
 Testcontainers Postgres pinned to :data:`~parallax.conformance.constants.POSTGRES_IMAGE`,
 and per case ``DROP SCHEMA … CASCADE`` → ``CREATE SCHEMA`` → descriptor-derived
 DDL (``applyDdl``) → fixture rows in descriptor column order (``loadFixtures``).

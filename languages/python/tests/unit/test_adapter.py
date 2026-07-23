@@ -27,8 +27,7 @@ _SCALAR_READ_CASE = case_format.default_cases_dir() / "m-core-001-scalar-types-r
 _RUN_ONLY_CASE = (
     case_format.default_cases_dir() / "m-txtime-write-006-optimistic-gated-chaining-update.yaml"
 )
-# A materializing predicate-write scenario (COR-3 Phase 8 increment 5 lands
-# support for it against a real port); against `_FakePort` — a wrong-shaped
+# A materializing predicate-write scenario; against `_FakePort` — a wrong-shaped
 # canned row and a write path that always raises — it still surfaces a loud
 # `run-failed` error, exercising this lane's own error-reporting contract.
 _ENGINE_GAP_CASE = (
@@ -187,7 +186,7 @@ class _WritePort:
 
 
 def test_run_case_conflict_reports_affected_rows_and_table_state() -> None:
-    # m-opt-lock's run-only conflict shape (COR-3 Phase 8 increment 3): the
+    # m-opt-lock's run-only conflict shape: the
     # adapter's own `run` dispatch wraps `engine.run_conflict_case`'s tuple
     # into the schema's one `affectedRows` observation slot, plus
     # `tableState` when the case authors it.
@@ -285,7 +284,7 @@ def test_run_observations_are_wire_rendered_and_json_serializable() -> None:
 
 def test_run_case_error_on_an_engine_gap() -> None:
     # `_ENGINE_GAP_CASE` (m-txtime-write-007) is a materializing predicate-write
-    # scenario (COR-3 Phase 8 increment 5): its `_FakePort` returns a canned
+    # scenario: its `_FakePort` returns a canned
     # row shaped for a DIFFERENT model and raises `NotImplementedError` on any
     # write, so materialization's own internal resolve/write sequence fails —
     # this lane still reports a loud `run-failed` error rather than silently
@@ -485,7 +484,7 @@ def test_error_envelope() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Error-shape run — the m-db-error classification lane (increment 4).          #
+# Error-shape run — the m-db-error classification lane.                        #
 # --------------------------------------------------------------------------- #
 _ERROR_CASE = case_format.default_cases_dir() / "m-db-error-001-unique-violation-pk.yaml"
 _ERROR_CONCURRENCY_CASE = case_format.default_cases_dir() / "m-db-error-004-deadlock-cycle.yaml"
@@ -575,8 +574,8 @@ def test_compile_case_error_shape_names_the_run_lane() -> None:
 def test_boundary_case_names_the_api_conformance_lane() -> None:
     # m-case-format: every boundary case is on the api-conformance lane — the
     # API Conformance Suite verifies it. Compile short-circuits on the case's
-    # corpus-declared run-only eligibility (every boundary case carries one,
-    # D-10); run classifies it out with the api-conformance reason.
+    # corpus-declared run-only eligibility (every boundary case carries one);
+    # run classifies it out with the api-conformance reason.
     compile_envelope = adapter.compile_case(_BOUNDARY_CASE, "postgres")
     assert compile_envelope["status"] == "run-only"
     assert compile_envelope["diagnostics"][0]["code"] == "compile-run-only"
@@ -586,8 +585,7 @@ def test_boundary_case_names_the_api_conformance_lane() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Rejected — the pre-SQL model-aware validation lane (COR-3 Phase 7            #
-# increment 1: resolved DQ3/DQ8).                                             #
+# Rejected — the pre-SQL model-aware validation lane.                         #
 # --------------------------------------------------------------------------- #
 _REJECTED_OPERATION_CASE = (
     case_format.default_cases_dir() / "m-inheritance-040-rejected-narrow-outside-position.yaml"
@@ -615,7 +613,7 @@ class _NeverCalledPort:
 
 
 def test_compile_case_rejected_shape_is_shape_intrinsic_run_only() -> None:
-    # A rejected case carries no `compileEligibility` declaration (DQ8: its
+    # A rejected case carries no `compileEligibility` declaration (its
     # run-only status is shape-intrinsic, not authored per-case) yet still
     # answers the defined run-only envelope.
     envelope = adapter.compile_case(_REJECTED_OPERATION_CASE, "postgres")
@@ -661,7 +659,7 @@ def test_run_case_rejected_write_reports_the_classified_rule() -> None:
 # --------------------------------------------------------------------------- #
 # Read-result dispatch (`_read_observations`): `then.graph` / `then.graphs` /  #
 # `then.rows` are mutually exclusive, so `run_case` must route each read case  #
-# to its own rendering lane, not just the plain-rows fallback (increment 5).   #
+# to its own rendering lane, not just the plain-rows fallback.                 #
 # --------------------------------------------------------------------------- #
 class _QueuePort:
     """A fake `m-db-port` returning one canned response per `execute()` call,
@@ -828,7 +826,7 @@ def test_run_case_runs_a_genuine_batch_collapse_write() -> None:
     # buffers three inserts collapsing into ONE multi-row INSERT (`statements:
     # 1` for 3 rows — the case author's own declared batch-COLLAPSE intent,
     # `m-batch-write` "Set-based flush") and whose SECOND entry batches a
-    # uniform-value UPDATE over an `IN`-list (COR-3 Phase 8 increment 5): the
+    # uniform-value UPDATE over an `IN`-list: the
     # engine passes each row list through as one multi-row instruction, and
     # `lower_write` renders it end to end — two `execute_write` calls total.
     case_path = case_format.default_cases_dir() / "m-batch-write-001-set-based-flush.yaml"
@@ -844,7 +842,7 @@ def test_run_case_lowers_a_pk_gen_sequence_batch_that_decomposes_per_row() -> No
     # out 2 of a reserved 3-id block — `statements: 2` for 2 rows (the case
     # author's own declared per-row DECOMPOSE intent, distinct from the
     # collapse-intent case above), so the engine splits it into two
-    # independent single-row INSERTs (COR-3 Phase 8 increment 3, m-pk-gen)
+    # independent single-row INSERTs (m-pk-gen)
     # rather than refusing. The registry UPDATE's `{increment: 3}` marker
     # folds into a self-referential `next_val = next_val + ?` SET.
     case_path = case_format.default_cases_dir() / "m-pk-gen-008-sequence-batch-partial.yaml"

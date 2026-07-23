@@ -60,7 +60,7 @@ def test_core_wheel_ships_sql_gen_package(wheelhouse: Wheelhouse) -> None:
     # the load-bearing half — every required path below would still pass against a
     # tree that kept the old single-file compiler beside the split, which is
     # exactly what a stale build or a half-applied split looks like. This is the
-    # complete package as of COR-43 Phase 6 — the five private modules plus the
+    # complete package — the five private modules plus the
     # re-exporting interface, and nothing else.
     names = _names(wheelhouse, "parallax-core")
     assert "parallax/core/sql_gen/__init__.py" in names
@@ -77,7 +77,7 @@ def test_snapshot_wheel_ships_handle_package(wheelhouse: Wheelhouse) -> None:
     # they cannot tell a handle.py from a handle/ directory. Hatch discovers the
     # tree rather than enumerating modules, which makes the absent old path the
     # load-bearing half: it is what would catch a stale build or a half-applied
-    # split. This is the complete package as of COR-42 Phase 6 — the ten private
+    # split. This is the complete package — the ten private
     # modules plus the re-exporting interface.
     names = _names(wheelhouse, "parallax-snapshot")
     assert "parallax/snapshot/handle/__init__.py" in names

@@ -197,11 +197,8 @@ def lower_update(
     binds last").
 
     A versioned row's SET carrying an EXPLICIT value for the version attribute
-    is refused outright (`opt_lock.reject_caller_authored_version`) — the
-    M4-era plain-column-data passthrough some corpus witnesses used to carry
-    retired once the corpus amended those witnesses to author an observing
-    find instead (COR-3 Phase 8 core amendment bundle): the version is
-    framework-owned end to end (ADR 0013), never caller data, so a
+    is refused outright (`opt_lock.reject_caller_authored_version`): the
+    version is framework-owned end to end (ADR 0013), never caller data, so a
     row-carried value is never silently double-assigned against the derived
     advance. Every versioned row's SET derives the advance from this unit of
     work's own recorded observation (`m-opt-lock.require_observed` /
@@ -287,7 +284,7 @@ def lower_delete(
 
 
 # --------------------------------------------------------------------------- #
-# Set-based collapse lowering (COR-3 Phase 8 increment 5; m-batch-write "Set- #
+# Set-based collapse lowering (m-batch-write "Set-                            #
 # based flush"). `parallax.core.batch_write` decides WHETHER a run of rows    #
 # collapses (the planner's own collapse stage, injected via `Database.        #
 # transact`'s `collapse_policy`); everything here renders the ALREADY-        #
@@ -365,7 +362,7 @@ def lower_batched_update(
     """
     # `m-batch-write.update_collapses` excludes a versioned entity outright, so
     # this assertion's failure arm is unreachable from any planner-produced
-    # instruction (see the outline's retained-assertion record, COR-42).
+    # instruction.
     assert version_attr is None, "a versioned entity's update never collapses (m-batch-write)"
     pk_attrs = inheritance.family_primary_key(meta, entity)
     pk_names = {attr.name for attr in pk_attrs}
@@ -404,7 +401,7 @@ def lower_multi_delete(
     """
     # `m-batch-write.delete_collapses` excludes a versioned entity outright, so
     # this assertion's failure arm is unreachable from any planner-produced
-    # instruction (see the outline's retained-assertion record, COR-42).
+    # instruction.
     assert version_attr is None, "a versioned entity's delete never collapses (m-batch-write)"
     pk_attrs = inheritance.family_primary_key(meta, entity)
     in_sql, in_binds = _keys_in_list(pk_attrs, instruction.rows, dialect)
@@ -452,7 +449,7 @@ def _tag_guard(
 
 
 # --------------------------------------------------------------------------- #
-# Readless predicate-write lowering (COR-3 Phase 8 increment 5; ADR 0014's    #
+# Readless predicate-write lowering (ADR 0014's                               #
 # unversioned/non-temporal exception, `m-batch-write.md` "Predicate-selected  #
 # readless forms"). A MATERIALIZING predicate write (versioned or temporal    #
 # target) never reaches here — `_predicate_writes.buffer_predicate` decomposes #
@@ -596,8 +593,8 @@ def key_predicate(
     and its ordered binds — the primary key (family-effective,
     `inheritance.family_primary_key`), then an inheritance-family
     table-per-hierarchy concrete's own tag guard, joining the identity
-    predicates immediately after the pk (`m-inheritance` / `m-sql` resolved
-    Q9) — never present for a table-per-concrete-subtype participant (no
+    predicates immediately after the pk (`m-inheritance` / `m-sql`) — never
+    present for a table-per-concrete-subtype participant (no
     shared table, no tag) or a non-participant.
     """
     keys = inheritance.family_primary_key(meta, entity)

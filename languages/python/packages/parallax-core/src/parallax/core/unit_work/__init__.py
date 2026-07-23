@@ -9,7 +9,7 @@ The module DAG pins ``m-unit-work -> m-op-algebra`` and ``m-unit-work -> m-db-po
 **only** — there is deliberately **no** edge to ``m-sql`` or ``m-dialect``. So this
 scope holds no SQL generation: the planner emits a neutral :class:`FlushPlan`, and
 the write-DML -> SQL lowering (the deliberate ``m-sql`` edge) happens one layer up,
-at the composition surface that legally sees both (M4). These are internal engine
+at the composition surface that legally sees both. These are internal engine
 seams, not part of the developer surface — nothing here is re-exported from
 ``parallax.core``.
 """

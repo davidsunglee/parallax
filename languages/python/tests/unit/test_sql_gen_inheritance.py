@@ -366,7 +366,7 @@ def test_tph_nested_narrow_with_a_trivial_branch_needs_no_grouping() -> None:
 
 def test_tph_abstract_instance_form_projects_the_value_object_document_last() -> None:
     # No corpus inheritance family combines with a value object; a synthetic family
-    # proves the slot ordering: tag column (m-sql resolved Q6), THEN the value-object
+    # proves the slot ordering: tag column (m-sql), THEN the value-object
     # document (m-sql *Read projection*: it rides last among ALL columns).
     from parallax.core.descriptor import Attribute, Entity, Inheritance, Metamodel, ValueObject
 
@@ -464,7 +464,7 @@ def test_transform_row_accepts_any_mapping_and_always_returns_a_fresh_dict() -> 
 
 
 # --------------------------------------------------------------------------- #
-# `CompiledRead.narrow_to` (S3, COR-3 Phase 7 increment 7 round-2): the        #
+# `CompiledRead.narrow_to`: the                                                #
 # root-level authored-narrow a find executor threads into                     #
 # `Assembler.materialize_root` the same way a deep-fetch child level's own    #
 # `FetchLevel.narrow_to` already threads through `attach_level`. It reports   #

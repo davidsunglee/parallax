@@ -85,8 +85,8 @@ class Node:
     column at all (`m-sql`'s `_compile_tpcs_single`), so this is the ONLY
     place that knowledge survives past the SQL boundary for
     `parallax.snapshot.handle` to recover the row's own concrete class instead
-    of falling back to a (possibly abstract) declared default (S3, COR-3
-    Phase 7 increment 7 round-2). ``None`` only for a ``Node`` built outside
+    of falling back to a (possibly abstract) declared default. ``None`` only
+    for a ``Node`` built outside
     the assembler (test-only direct construction) — a caller reading it
     falls back to its own declared default in that defensive case.
     """
@@ -139,8 +139,8 @@ def identity_key(
     non-participant. Returns ``None`` when the (resolved) entity declares no
     primary key at all (defensive; every corpus entity does).
 
-    TABLE-PER-CONCRETE-SUBTYPE is the one exception to root-normalization
-    (ledger D-22, COR-3 Phase 8 part C): each concrete owns its OWN physical
+    TABLE-PER-CONCRETE-SUBTYPE is the one exception to root-normalization:
+    each concrete owns its OWN physical
     table with its OWN independent primary-key namespace (m-inheritance-109's
     own fixture: "Primary keys are per-table, so id 1 recurs across
     Invoice/Receipt/Memo — the rows are distinguished by their concrete
@@ -149,8 +149,8 @@ def identity_key(
     VALUE — identity is the row's own resolved CONCRETE name instead:
     ``familyVariant`` when the row carries one (a 2+-concrete union-all
     position), else the compile-time-resolved position's OWN sole member
-    when it resolves to exactly one concrete (S3, COR-3 Phase 7 increment 7
-    round-2 — a single-resolved-position read's SQL legitimately omits
+    when it resolves to exactly one concrete (a single-resolved-position
+    read's SQL legitimately omits
     `familyVariant`, `m-sql`'s `_compile_tpcs_single`, so ``entity_name`` alone
     is NOT already that row's concrete whenever the QUERIED position itself
     was abstract, e.g. an abstract root/subtype narrowed, or naturally
@@ -192,7 +192,7 @@ def identity_key(
 
 def _resolved_concrete(meta: Metamodel, entity_name: str, narrow_to: tuple[str, ...] | None) -> str:
     """``entity_name``'s own statically-known concrete entity name for THIS
-    decode call (S3, COR-3 Phase 7 increment 7 round-2): the resolved position
+    decode call: the resolved position
     (:func:`_resolved_position`) reduced to its sole member when it resolves
     to exactly one concrete — the SAME position `decode_row`'s value-object
     superset already derives from ``narrow_to``, so identity and decoding can
@@ -269,7 +269,7 @@ def decode_row(
     *Read projection* slot 4), rendered here in whatever order the caller's own
     dict iterates (graph comparison is structural, never key-order-sensitive).
 
-    Deliberately UNNARROWED at this layer (ledger D-22, COR-3 Phase 8 part C):
+    Deliberately UNNARROWED at this layer:
     a multi-concrete position's row keeps every sibling's own null-padded
     column here — the SAME neutral `Node` this module's own callers share
     between the row-form values-lane witnesses (whose `then.graph` / wire
@@ -316,8 +316,8 @@ class Assembler:
     ) -> list[Node]:
         """Decode the root query's own rows into fresh, identity-registered nodes.
 
-        ``narrow_to`` is the root read's OWN top-level authored narrow (S3,
-        COR-3 Phase 7 increment 7 round-2), when the caller's find executor
+        ``narrow_to`` is the root read's OWN top-level authored narrow, when
+        the caller's find executor
         supplies one (`~parallax.core.sql_gen.CompiledRead.narrow_to`)
         — the root-level analogue of a deep-fetch child level's own
         ``FetchLevel.narrow_to``, which :meth:`attach_level` already threads.

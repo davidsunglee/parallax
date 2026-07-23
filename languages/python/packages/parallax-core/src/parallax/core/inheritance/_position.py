@@ -1,5 +1,4 @@
-"""Package-internal narrow-position resolution (COR-3 Phase 7 increment 7
-round-3, P2/Standards 2).
+"""Package-internal narrow-position resolution.
 
 The single seam behind an AUTHORED ``narrow(...)``'s resolved effective
 concrete-subtype set: the alphabetically-sorted union of
@@ -8,9 +7,8 @@ authored subtype name. `m-deep-fetch`'s own dedup-identity derivation
 (``parallax.core.deep_fetch._resolve_position``'s narrowed branch) and the
 entity frontend's narrowed-view key derivation
 (``parallax.core.entity.graph_state``) both call this SAME function, so the
-two can never drift -- the duplication a confirmation-pass review found
-between them (``expressions.py:609`` previously, now removed) is fixed by
-centralizing here rather than by leaving each caller its own copy.
+two can never drift -- each derives the set from this one centralized function
+rather than keeping its own copy.
 
 A non-underscored function in an underscore-prefixed internal module: every
 DAG-permitted consumer of :mod:`parallax.core.inheritance` (this package

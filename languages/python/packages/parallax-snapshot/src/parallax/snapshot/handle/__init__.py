@@ -10,7 +10,7 @@ lowering function; both the developer transaction path (the injected
 ``FlushExecutor``) and the conformance engine reuse it (the conformance family is
 the import-side DAG exemption), so there is exactly one write-lowering seam.
 
-Since COR-42 this module defines nothing: every name below is defined in a private
+This module defines nothing: every name below is defined in a private
 sibling and re-exported here, and no runtime orchestration remains at this level.
 The private modules are implementation rather than seams — nothing outside the
 package imports one except the three sanctioned test seams — so a name's

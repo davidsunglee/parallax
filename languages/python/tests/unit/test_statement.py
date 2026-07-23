@@ -201,7 +201,7 @@ def test_statement_is_a_frozen_value() -> None:
 
 # --------------------------------------------------------------------------- #
 # Axis-keyed temporal-read clauses (m-temporal-read). The idiomatic entity     #
-# class cannot yet DECLARE as-of dimensions (deferred, ledger D-7), so the     #
+# class cannot yet DECLARE as-of dimensions (deferred), so the                 #
 # statement's temporal builders are exercised over a Statement carrying the    #
 # corpus-ingested dimensions directly — proving the wrapper-node construction  #
 # (Valid-Time outer/Transaction-Time inner, LATEST -> latest, single-shot).    #

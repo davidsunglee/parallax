@@ -172,7 +172,7 @@ def test_valid_time_only_entity_is_rejected() -> None:
 
 
 def test_temporal_family_descendant_with_optimistic_locking_attr_is_rejected() -> None:
-    # D-25 / ADR 0027 (subsuming the old ADR-0026-era composition check): a
+    # The family-uniform version rule (ADR 0027): a
     # temporal-family CONCRETE descendant declares no `asOfAttributes` of its
     # own (only the root does), so the per-entity `validate_entity` check alone
     # (LOCAL as-of) would silently ACCEPT an `optimisticLocking` attribute it
@@ -199,7 +199,7 @@ def test_temporal_family_descendant_with_optimistic_locking_attr_is_rejected() -
 
 
 # --------------------------------------------------------------------------- #
-# D-25 / ADR 0027: optimistic locking is root-owned and family-uniform — the  #
+# ADR 0027: optimistic locking is root-owned and family-uniform — the         #
 # empirical shapes `validate_optimistic_locking_root_owned` (via             #
 # `validate_metamodel`) must accept / reject.                                #
 # --------------------------------------------------------------------------- #

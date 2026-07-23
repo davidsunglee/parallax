@@ -1,12 +1,12 @@
 """Docker-free rejected-case run sweep (m-conformance-adapter `run`, m-case-format
-`rejected` cases, COR-3 Phase 7 increment 1: resolved DQ3/DQ8).
+`rejected` cases).
 
 A rejected case executes no SQL and touches no database (m-case-format "Rejected
 cases"): grading its `run` envelope needs no provisioner, so — unlike
 `test_run_sweep.py`, whose every test function threads the Testcontainers
 `provisioner` fixture — this sweep runs entirely in-process. `when.operation` /
-`when.model` / `when.write` inputs are all exercised end-to-end (COR-3 Phase 8
-increment 2 landed the `when.write` half, `validate_write`): the classified
+`when.model` / `when.write` inputs are all exercised end-to-end (the
+`when.write` half via `validate_write`): the classified
 `rejectedRule` observation is compared against the case's own
 `then.rejectedRule`, and a :class:`_RefusingPort` proves the "no database"
 contract structurally, the same way the compile lane's refusing port proves
