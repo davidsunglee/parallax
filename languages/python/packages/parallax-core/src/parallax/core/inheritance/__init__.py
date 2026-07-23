@@ -1,12 +1,17 @@
 """``parallax.core.inheritance`` enforcement scope (m-inheritance).
 
-The closed inheritance-tree model: exactly one abstract ``root`` per descriptor,
-interior ``abstract-subtype`` nodes, row-owning ``concrete-subtype`` leaves, and
-the two strategies (table-per-hierarchy with a ``tag``/``tagValue`` discriminator,
-table-per-concrete-subtype). It computes the effective concrete-subtype set (in
-alphabetical order) for any polymorphic position and hosts the semantic
-descriptor-rejection validator whose ordering pins each corpus ``rejectedRule``.
-``m-inheritance`` depends only on ``m-descriptor``.
+The closed inheritance-tree model: exactly one abstract ``root``, interior
+``abstract-subtype`` nodes, row-owning ``concrete-subtype`` leaves, and the two
+strategies (table-per-hierarchy with a tag discriminator,
+table-per-concrete-subtype). This scope owns the family invariants a model must
+satisfy and the Inheritance Facet that answers, once per formation, every
+family-effective question behavioral modules used to recompute: ancestry, family
+identity, effective concrete-subtype sets, member applicability, physical
+container and tag, and the root-owned Persistence Mode. ``m-inheritance``
+depends on ``m-descriptor``, ``m-metamodel``, and ``m-model-formation``.
+
+Consumers reach the facet through :func:`view`, so generic facet retrieval stays
+an internal formation seam.
 """
 
 from __future__ import annotations
@@ -25,12 +30,77 @@ from parallax.core.descriptor import (
 )
 from parallax.core.descriptor import declaring_entity as _resolve_declaring_entity
 from parallax.core.descriptor.neutral_type import type_matches as _type_matches
+from parallax.core.inheritance._compile import (
+    MODEL_COMPILER,
+    InheritanceModelCompiler,
+    compile_facet,
+)
+from parallax.core.inheritance._facet import (
+    FACET_KEY,
+    INHERITANCE_MODULE,
+    InheritanceEntityView,
+    InheritanceFacet,
+    InheritancePositionView,
+    view,
+)
+from parallax.core.inheritance._rules import (
+    CONCRETE_WITHOUT_ABSTRACT_ROOT,
+    CYCLE,
+    DUPLICATE_TAG_VALUE,
+    ISSUE_CODES,
+    MEMBER_SHADOWING,
+    MISSING_ROOT,
+    MISSING_TAG_VALUE,
+    MULTIPLE_ROOTS,
+    OPTIMISTIC_LOCKING_NOT_ROOT_OWNED,
+    PERSISTENCE_NOT_ROOT_OWNED,
+    PRIMARY_KEY_MISSING,
+    PRIMARY_KEY_MULTIPLE,
+    RULE_SET,
+    STRATEGY_REDECLARED,
+    TAG_ON_CONCRETE_SUBTYPE_STRATEGY,
+    TEMPORAL_AXES_NOT_ROOT_OWNED,
+    TPCS_ABSTRACT_TABLE_FORBIDDEN,
+    TPCS_CONCRETE_TABLE_REQUIRED,
+    TPH_DESCENDANT_TABLE_FORBIDDEN,
+    TPH_ROOT_TABLE_REQUIRED,
+    InheritanceRuleSet,
+)
 
 __all__ = [
+    "CONCRETE_WITHOUT_ABSTRACT_ROOT",
+    "CYCLE",
+    "DUPLICATE_TAG_VALUE",
+    "FACET_KEY",
+    "INHERITANCE_MODULE",
+    "ISSUE_CODES",
+    "MEMBER_SHADOWING",
+    "MISSING_ROOT",
+    "MISSING_TAG_VALUE",
+    "MODEL_COMPILER",
+    "MULTIPLE_ROOTS",
+    "OPTIMISTIC_LOCKING_NOT_ROOT_OWNED",
+    "PERSISTENCE_NOT_ROOT_OWNED",
+    "PRIMARY_KEY_MISSING",
+    "PRIMARY_KEY_MULTIPLE",
+    "RULE_SET",
+    "STRATEGY_REDECLARED",
+    "TAG_ON_CONCRETE_SUBTYPE_STRATEGY",
+    "TEMPORAL_AXES_NOT_ROOT_OWNED",
+    "TPCS_ABSTRACT_TABLE_FORBIDDEN",
+    "TPCS_CONCRETE_TABLE_REQUIRED",
+    "TPH_DESCENDANT_TABLE_FORBIDDEN",
+    "TPH_ROOT_TABLE_REQUIRED",
     "Family",
+    "InheritanceEntityView",
     "InheritanceError",
+    "InheritanceFacet",
+    "InheritanceModelCompiler",
+    "InheritancePositionView",
+    "InheritanceRuleSet",
     "WriteAssignmentError",
     "ancestor_chain",
+    "compile_facet",
     "declaring_entity",
     "effective_concrete_subtypes",
     "effective_table",
@@ -43,6 +113,7 @@ __all__ = [
     "validate",
     "validate_subtype_write",
     "validate_write_assignment",
+    "view",
 ]
 
 
