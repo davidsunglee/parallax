@@ -35,7 +35,7 @@
       "required": ["name"],
       "properties": {
         "name": { "type": "string", "minLength": 1 },
-        "namespace": { "type": "string" },
+        "namespace": { "type": "string", "minLength": 1 },
         "table": { "type": "string", "minLength": 1 },
         "persistence": {
           "enum": ["read-write", "read-only"],
@@ -248,6 +248,13 @@
           },
           "then": {
             "properties": { "type": { "enum": ["int32", "int64"] } }
+          }
+        },
+        {
+          "$comment": "`maxLength` bounds text width and lowers to `varchar(n)` (m-core `String`; m-descriptor `attribute`), so it is meaningful only on a `string` Attribute. Every other variant has a fixed width or its own parameters, and `decimal` carries precision/scale in its own spelling.",
+          "if": { "required": ["maxLength"] },
+          "then": {
+            "properties": { "type": { "const": "string" } }
           }
         }
       ]
