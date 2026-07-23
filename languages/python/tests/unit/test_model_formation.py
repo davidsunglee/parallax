@@ -56,6 +56,7 @@ from parallax.core.model_formation import (
     ModelCompilerRequirement,
     ModelRuleSet,
     ModuleIdentity,
+    RequiredRuleSet,
     form,
 )
 from parallax.core.model_formation import _runner as runner
@@ -410,6 +411,10 @@ def _resolver_row(
     )
 
 
+_RESOLVER_ONLY: Final[FormationManifest] = FormationManifest((_resolver_row(),))
+"""A manifest of the fixed resolver alone, for the seams no contributor takes part in."""
+
+
 def _rule_set_row(owner: ModuleIdentity, *codes: IssueCode) -> FormationManifestEntry:
     return FormationManifestEntry(
         owner=owner, rule_set=REQUIRED_RULE_SET, issue_codes=frozenset(codes)
@@ -462,14 +467,30 @@ def _contract_failure(
 
 
 def test_the_builtin_manifest_declares_the_fixed_resolver_and_metadata_compiler() -> None:
-    (entry,) = BUILTIN_MANIFEST.entries
+    entry = BUILTIN_MANIFEST.entries[0]
     assert entry.owner == METAMODEL_MODULE
     assert entry.rule_set is FIXED_RESOLVER
     assert entry.issue_codes == RESOLVER_ISSUE_CODES
     assert entry.compiler is METADATA_COMPILER_REQUIRED
     assert BUILTIN_PROFILE.metadata_compiler is METADATA_COMPILER
-    assert BUILTIN_PROFILE.rule_sets == ()
-    assert BUILTIN_PROFILE.model_compilers == ()
+
+
+def test_the_builtin_profile_supplies_exactly_the_contributors_the_manifest_declares() -> None:
+    """The composition root's own drift proof, independent of which rows exist yet."""
+    required = [
+        entry.owner
+        for entry in BUILTIN_MANIFEST.entries
+        if isinstance(entry.rule_set, RequiredRuleSet)
+    ]
+    compiling = [
+        entry.owner
+        for entry in BUILTIN_MANIFEST.entries
+        if isinstance(entry.compiler, ModelCompilerRequirement)
+    ]
+    assert sorted(rule_set.owner for rule_set in BUILTIN_PROFILE.rule_sets) == sorted(required)
+    assert sorted(compiler.owner for compiler in BUILTIN_PROFILE.model_compilers) == sorted(
+        compiling
+    )
 
 
 def test_a_hand_built_model_forms_into_an_accepted_metamodel() -> None:
@@ -835,7 +856,7 @@ def test_a_resolver_result_outside_its_contract_is_a_contract_failure(
 def test_a_resolver_code_outside_its_declared_set_is_a_contract_failure() -> None:
     manifest = FormationManifest((_resolver_row(issue_codes=frozenset({"metamodel-index-empty"})),))
     with pytest.raises(FormationContractError) as raised:
-        form(source(*_invalid_model()), manifest, BUILTIN_PROFILE)
+        form(source(*_invalid_model()), manifest, _Profile())
     assert raised.value.code == FORMATION_ISSUE_UNDECLARED
     assert raised.value.owner == METAMODEL_MODULE
 
@@ -915,7 +936,7 @@ def test_a_resolver_that_emits_one_issue_twice_is_a_contract_failure(
 def test_a_metadata_compiler_failure_is_a_contract_failure() -> None:
     profile = _Profile(metadata_compiler=_MetadataCompiler(raises=True))
     failure = _contract_failure(
-        BUILTIN_MANIFEST, profile, FORMATION_COMPILER_FAILED, owner=METAMODEL_MODULE
+        _RESOLVER_ONLY, profile, FORMATION_COMPILER_FAILED, owner=METAMODEL_MODULE
     )
     assert isinstance(failure.cause, RuntimeError)
 
@@ -923,7 +944,7 @@ def test_a_metadata_compiler_failure_is_a_contract_failure() -> None:
 def test_a_metadata_compiler_returning_a_foreign_value_is_a_contract_failure() -> None:
     profile = _Profile(metadata_compiler=_ForeignMetadataCompiler())
     failure = _contract_failure(
-        BUILTIN_MANIFEST, profile, FORMATION_COMPILER_FAILED, owner=METAMODEL_MODULE
+        _RESOLVER_ONLY, profile, FORMATION_COMPILER_FAILED, owner=METAMODEL_MODULE
     )
     assert failure.cause is None
 
@@ -939,7 +960,7 @@ def test_a_metadata_compiler_returning_an_entityless_graph_is_a_contract_failure
     """
     profile = _Profile(metadata_compiler=_EntitylessMetadataCompiler(genuine))
     failure = _contract_failure(
-        BUILTIN_MANIFEST, profile, FORMATION_COMPILER_FAILED, owner=METAMODEL_MODULE
+        _RESOLVER_ONLY, profile, FORMATION_COMPILER_FAILED, owner=METAMODEL_MODULE
     )
     assert failure.cause is None
 

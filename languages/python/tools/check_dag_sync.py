@@ -60,14 +60,11 @@ MODULE_SCOPE: Mapping[str, str] = {
     "m-core": "parallax.core.base",
     "m-metamodel": "parallax.core.metamodel",
     "m-model-formation": "parallax.core.model_formation",
-    # The relationship contract is still implemented inside the descriptor
-    # package, so that tag resolves to the one `parallax.core.descriptor`
-    # enforcement scope (spec/python.md §7).
     "m-descriptor": "parallax.core.descriptor",
     "m-pk-gen": "parallax.core.pk_gen",
     "m-inheritance": "parallax.core.inheritance",
     "m-value-object": "parallax.core.value_object",
-    "m-relationship": "parallax.core.descriptor",
+    "m-relationship": "parallax.core.relationship",
     "m-op-algebra": "parallax.core.op_algebra",
     "m-sql": "parallax.core.sql_gen",
     "m-dialect": "parallax.core.dialect",
@@ -121,6 +118,7 @@ SUPPORT_SCOPE_DEPS: Mapping[str, frozenset[str]] = {
         {
             "parallax.core.metamodel",
             "parallax.core.model_formation",
+            "parallax.core.relationship",
         }
     ),
     "parallax.core.entity": frozenset(
