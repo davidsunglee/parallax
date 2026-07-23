@@ -42,6 +42,7 @@ from parallax.core.model_formation._errors import (
 from parallax.core.model_formation._manifest import (
     FIXED_RESOLVER,
     METADATA_COMPILER_REQUIRED,
+    MODEL_FORMATION_MODULE,
     REQUIRED_RULE_SET,
     CompilerRequirement,
     FixedResolver,
@@ -70,6 +71,7 @@ __all__ = [
     "FORMATION_RULE_SET_FAILED",
     "FORMATION_RULE_SET_RESULT_INVALID",
     "METADATA_COMPILER_REQUIRED",
+    "MODEL_FORMATION_MODULE",
     "REQUIRED_RULE_SET",
     "CompilerRequirement",
     "FixedResolver",

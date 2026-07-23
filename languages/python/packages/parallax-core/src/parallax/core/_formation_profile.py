@@ -28,13 +28,21 @@ from parallax.core.metamodel import (
 from parallax.core.model_formation import (
     FIXED_RESOLVER,
     METADATA_COMPILER_REQUIRED,
+    MODEL_FORMATION_MODULE,
+    REQUIRED_RULE_SET,
     FormationManifest,
     FormationManifestEntry,
     MetadataCompiler,
     ModelCompiler,
+    ModelCompilerRequirement,
     ModelRuleSet,
     form,
 )
+from parallax.core.relationship import FACET_KEY as RELATIONSHIP_FACET_KEY
+from parallax.core.relationship import ISSUE_CODES as RELATIONSHIP_ISSUE_CODES
+from parallax.core.relationship import MODEL_COMPILER as RELATIONSHIP_COMPILER
+from parallax.core.relationship import RELATIONSHIP_MODULE
+from parallax.core.relationship import RULE_SET as RELATIONSHIP_RULE_SET
 
 __all__ = ["BUILTIN_MANIFEST", "BUILTIN_PROFILE", "form_metamodel"]
 
@@ -45,6 +53,13 @@ BUILTIN_MANIFEST: Final[FormationManifest] = FormationManifest(
             rule_set=FIXED_RESOLVER,
             issue_codes=RESOLVER_ISSUE_CODES,
             compiler=METADATA_COMPILER_REQUIRED,
+        ),
+        FormationManifestEntry(
+            owner=RELATIONSHIP_MODULE,
+            rule_set=REQUIRED_RULE_SET,
+            issue_codes=RELATIONSHIP_ISSUE_CODES,
+            compiler=ModelCompilerRequirement(RELATIONSHIP_FACET_KEY),
+            required_modules=frozenset({METAMODEL_MODULE, MODEL_FORMATION_MODULE}),
         ),
     )
 )
@@ -61,9 +76,9 @@ class _BuiltinProfile:
 
 
 BUILTIN_PROFILE: Final[_BuiltinProfile] = _BuiltinProfile(
-    rule_sets=(),
+    rule_sets=(RELATIONSHIP_RULE_SET,),
     metadata_compiler=METADATA_COMPILER,
-    model_compilers=(),
+    model_compilers=(RELATIONSHIP_COMPILER,),
 )
 """The implementations matching :data:`BUILTIN_MANIFEST` row for row."""
 

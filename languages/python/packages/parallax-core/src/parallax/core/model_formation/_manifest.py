@@ -20,6 +20,7 @@ from parallax.core.metamodel import FacetKey, IssueCode
 __all__ = [
     "FIXED_RESOLVER",
     "METADATA_COMPILER_REQUIRED",
+    "MODEL_FORMATION_MODULE",
     "REQUIRED_RULE_SET",
     "CompilerRequirement",
     "FixedResolver",
@@ -34,6 +35,13 @@ __all__ = [
 
 type ModuleIdentity = str
 """A canonical ``m-<slug>`` identity from the core module catalog."""
+
+MODEL_FORMATION_MODULE: Final[ModuleIdentity] = "m-model-formation"
+"""The catalog identity of this scope.
+
+A contributing module's manifest row declares the modules it depends on, and
+every contributor depends on this one for the protocols it implements, so the
+identity is stated once here rather than spelled in each composition root."""
 
 
 @dataclass(frozen=True, slots=True)
