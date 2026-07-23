@@ -15,17 +15,13 @@ from collections.abc import Mapping, Sequence
 from typing import Final
 
 from parallax.core.metamodel import (
-    AbstractRoot,
-    AbstractSubtype,
     AttributeIdentity,
     AttributeLocation,
     AttributeMetadata,
     CandidateMetamodel,
     Cardinality,
-    ConcreteSubtype,
     DefiningRelationshipDeclaration,
     EntityIdentity,
-    InheritanceMetadata,
     IssueCode,
     MetamodelIssue,
     Multiplicity,
@@ -35,6 +31,7 @@ from parallax.core.metamodel import (
     RelationshipLocation,
     RelationshipOrder,
     ReverseRelationshipDeclaration,
+    inheritance_parent,
 )
 from parallax.core.model_formation import ModuleIdentity
 from parallax.core.relationship._facet import RELATIONSHIP_MODULE
@@ -111,14 +108,6 @@ ISSUE_CODES: Final[frozenset[IssueCode]] = frozenset(
 declares it."""
 
 
-def _parent(inheritance: InheritanceMetadata | None) -> EntityIdentity | None:
-    match inheritance:
-        case None | AbstractRoot():
-            return None
-        case AbstractSubtype(parent) | ConcreteSubtype(parent, _):
-            return parent
-
-
 class _Attributes:
     """Attribute lookup by local name at a candidate position, ancestry included.
 
@@ -154,7 +143,7 @@ class _Attributes:
             visited.add(position.identity)
             for attribute in position.attributes:
                 collected.setdefault(attribute.identity.name, attribute)
-            parent = _parent(position.inheritance)
+            parent = inheritance_parent(position.inheritance)
             position = None if parent is None else self._candidate.entity(parent)
         return collected
 
