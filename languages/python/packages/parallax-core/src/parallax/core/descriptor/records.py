@@ -50,6 +50,11 @@ __all__ = [
 ]
 
 Persistence = Literal["read-write", "read-only"]
+"""The Persistence Mode an entity declares: whether Parallax accepts writes for
+its family. Read Write is the semantic default a standalone entity or family
+root falls back to when it declares none, so the two spellings are a declaration
+and never a computed effective mode."""
+
 Temporal = Literal[
     "non-temporal",
     "transaction-time-only",

@@ -25,8 +25,10 @@ import pytest
 
 import inheritance_models as im
 from parallax.conformance import case_format
+from parallax.core import Attr, Entity, EntityConfig, Field, descriptor
 from parallax.core.descriptor import canonicalize
-from parallax.core.entity import descriptor_document, entity_record_of
+from parallax.core.entity import descriptor_document, entity_record_of, metamodel
+from parallax.core.entity.base import Concrete, FamilyRoot
 
 pytestmark = pytest.mark.unit
 
@@ -122,7 +124,7 @@ def test_tph_root_owns_the_shared_table() -> None:
 
 
 def test_tph_concrete_subtype_cannot_override_the_root_table() -> None:
-    from parallax.core import Attr, EntityConfig, Field
+    from parallax.core import EntityConfig, Field
     from parallax.core.entity.base import Concrete
 
     with pytest.raises(Exception, match="family root owns the shared table"):
@@ -154,7 +156,7 @@ def test_tpcs_abstract_subtype_is_tableless_and_concretes_own_their_table() -> N
 
 
 def test_tpcs_root_cannot_declare_a_table() -> None:
-    from parallax.core import Attr, Entity, EntityConfig, Field
+    from parallax.core import Entity, EntityConfig, Field
     from parallax.core.entity.base import FamilyRoot
 
     with pytest.raises(Exception, match="family root is tableless"):
@@ -169,7 +171,7 @@ def test_tpcs_root_cannot_declare_a_table() -> None:
 
 
 def test_abstract_subtype_declaring_a_table_is_rejected() -> None:
-    from parallax.core import Attr, EntityConfig, Field
+    from parallax.core import EntityConfig, Field
 
     with pytest.raises(Exception, match="tableless and rowless"):
 
@@ -180,7 +182,7 @@ def test_abstract_subtype_declaring_a_table_is_rejected() -> None:
 
 
 def test_subclassing_a_non_family_entity_is_rejected() -> None:
-    from parallax.core import Attr, Entity, EntityConfig, Field
+    from parallax.core import Entity, EntityConfig, Field
 
     class Plain(Entity, frozen=True):
         __parallax__ = EntityConfig(table="plain")
@@ -201,7 +203,7 @@ def test_subclassing_a_non_family_entity_is_rejected() -> None:
 # `inheritance-temporal-axes-not-root-owned` descriptor invariant.             #
 # --------------------------------------------------------------------------- #
 def test_concrete_subtype_extending_a_temporal_base_is_rejected() -> None:
-    from parallax.core import Attr, Bitemporal, EntityConfig, Field
+    from parallax.core import Bitemporal, EntityConfig, Field
     from parallax.core.entity.base import Concrete
 
     with pytest.raises(Exception, match="family SUBCLASS cannot extend the temporal base"):
@@ -213,7 +215,7 @@ def test_concrete_subtype_extending_a_temporal_base_is_rejected() -> None:
 
 
 def test_abstract_subtype_extending_a_temporal_base_is_rejected() -> None:
-    from parallax.core import Attr, Bitemporal, EntityConfig, Field
+    from parallax.core import Bitemporal, EntityConfig, Field
 
     with pytest.raises(Exception, match="family SUBCLASS cannot extend the temporal base"):
 
@@ -231,7 +233,7 @@ def test_concrete_subtype_declaring_an_optimistic_locking_attr_is_rejected() -> 
     # non-root may never declare its own version attribute at all, temporal or
     # not (`im.Rate` is bitemporal; the rule fires the same way for a
     # non-temporal family, the tests below).
-    from parallax.core import Attr, EntityConfig, Field
+    from parallax.core import EntityConfig, Field
     from parallax.core.entity.base import Concrete
 
     with pytest.raises(Exception, match="only the inheritance family root may declare"):
@@ -250,7 +252,7 @@ def test_concrete_subtype_declaring_an_optimistic_locking_attr_is_rejected() -> 
 # `inheritance-optimistic-locking-not-root-owned` descriptor invariant.       #
 # --------------------------------------------------------------------------- #
 def test_root_declared_optimistic_locking_is_accepted() -> None:
-    from parallax.core import Attr, Entity, EntityConfig, Field
+    from parallax.core import Entity, EntityConfig, Field
     from parallax.core.entity.base import Concrete, FamilyRoot
 
     class _VersionedApplianceRoot(Entity, frozen=True):
@@ -268,7 +270,7 @@ def test_root_declared_optimistic_locking_is_accepted() -> None:
 
 
 def test_descendant_only_optimistic_locking_is_rejected() -> None:
-    from parallax.core import Attr, Entity, EntityConfig, Field
+    from parallax.core import Entity, EntityConfig, Field
     from parallax.core.entity.base import Concrete, FamilyRoot
 
     class _UnversionedApplianceRoot(Entity, frozen=True):
@@ -285,7 +287,7 @@ def test_descendant_only_optimistic_locking_is_rejected() -> None:
 
 
 def test_root_and_different_descendant_attribute_is_rejected() -> None:
-    from parallax.core import Attr, Entity, EntityConfig, Field
+    from parallax.core import Entity, EntityConfig, Field
     from parallax.core.entity.base import Concrete, FamilyRoot
 
     class _VersionedOvenRoot(Entity, frozen=True):
@@ -300,3 +302,54 @@ def test_root_and_different_descendant_attribute_is_rejected() -> None:
         ):
             __parallax__ = EntityConfig(inheritance=Concrete())
             revision: Attr[int] = Field(type="int64", optimistic_locking=True)
+
+
+# --------------------------------------------------------------------------- #
+# Persistence is root-owned (m-inheritance "Persistence is root-owned"), which  #
+# makes what a class DECLARES the evidence that rule needs: a descendant that   #
+# spells a mode at all is invalid, and absence on a descendant means inherit.   #
+# The class frontend therefore records the mode a class authored and nothing    #
+# else, while the canonical descriptor still spells `persistence` only where    #
+# m-descriptor's omission set allows it.                                        #
+# --------------------------------------------------------------------------- #
+
+
+class _Ledger(Entity, frozen=True):
+    __parallax__ = EntityConfig(
+        table="ledger",
+        mutability="read-only",
+        inheritance=FamilyRoot(strategy="table-per-hierarchy", tag="kind"),
+    )
+    id: Attr[int] = Field(primary_key=True, type="int64")
+
+
+class _AuditLedger(_Ledger, frozen=True):
+    __parallax__ = EntityConfig(mutability="read-only", inheritance=Concrete(tag_value="audit"))
+    note: Attr[str | None] = Field(type="string", max_length=32, nullable=True)
+
+
+class _SilentLedger(_Ledger, frozen=True):
+    __parallax__ = EntityConfig(inheritance=Concrete(tag_value="silent"))
+    label: Attr[str | None] = Field(type="string", max_length=32, nullable=True)
+
+
+def _assembled(classes: list[type], name: str) -> descriptor.Entity:
+    (record,) = [entity for entity in metamodel(classes).entities if entity.name == name]
+    return record
+
+
+def test_a_descendant_declares_the_same_persistence_with_or_without_its_root() -> None:
+    assert _assembled([_AuditLedger], "_AuditLedger").persistence == "read-only"
+    assert _assembled([_Ledger, _AuditLedger], "_AuditLedger").persistence == "read-only"
+    assert _assembled([_SilentLedger], "_SilentLedger").persistence is None
+    assert _assembled([_Ledger, _SilentLedger], "_SilentLedger").persistence is None
+
+
+def test_an_authored_descendant_persistence_survives_assembly_and_is_never_exported() -> None:
+    family = [_Ledger, _AuditLedger]
+    assert _assembled(family, "_Ledger").persistence == "read-only"
+    assert _assembled(family, "_AuditLedger").persistence == "read-only"
+
+    root, descendant = cast("list[dict[str, object]]", descriptor_document(family)["entities"])
+    assert root["persistence"] == "read-only"
+    assert "persistence" not in descendant

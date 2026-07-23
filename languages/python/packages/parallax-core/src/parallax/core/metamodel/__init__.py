@@ -23,6 +23,7 @@ from parallax.core.metamodel._compile import (
     MetamodelMetadataCompiler,
     accept_metamodel,
     compile_metadata,
+    is_compiled_metadata,
 )
 from parallax.core.metamodel._identities import (
     AttributeIdentity,
@@ -80,6 +81,7 @@ from parallax.core.metamodel._resolve import (
     Rejected,
     ResolutionResult,
     Resolved,
+    is_candidate_metamodel,
     resolve,
 )
 from parallax.core.metamodel._states import (
@@ -257,6 +259,8 @@ __all__ = [
     "canonical_issue_key",
     "canonical_location_key",
     "compile_metadata",
+    "is_candidate_metamodel",
+    "is_compiled_metadata",
     "resolve",
     "resolve_entity_reference",
     "sort_issues",

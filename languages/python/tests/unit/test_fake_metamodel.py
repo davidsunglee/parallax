@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import cast
+from typing import TypeGuard, cast
 
 import pytest
 
@@ -170,7 +170,12 @@ def test_read_only_persistence_and_the_temporal_axis_survive_both_paths(
     assert ledger.declared_persistence is None
 
 
+def _is_text(value: object) -> TypeGuard[str]:
+    """The stand-in facet type check the fixture's key carries."""
+    return isinstance(value, str)
+
+
 def test_the_alternate_implementation_serves_the_facets_it_is_given() -> None:
-    key: FacetKey[str] = FacetKey("m-fixture")
+    key: FacetKey[str] = FacetKey("m-fixture", _is_text)
     model = fake.parity_model({key: "installed"})
     assert model.facet(key) == "installed"

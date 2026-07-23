@@ -15,7 +15,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import Any, Final, cast
+from typing import Any, Final, TypeGuard, cast
 
 from parallax.core.base import NeutralType
 from parallax.core.metamodel._identities import (
@@ -57,6 +57,7 @@ __all__ = [
     "MetamodelMetadataCompiler",
     "accept_metamodel",
     "compile_metadata",
+    "is_compiled_metadata",
 ]
 
 
@@ -68,7 +69,21 @@ class _ValueObjectAttributeMetadata:
 
 
 @dataclass(frozen=True, slots=True)
-class _NestedValueObjectMetadata:
+class _OccurrenceMetadata:
+    """Everything a top-level and a nested Value Object occurrence hold alike.
+
+    The two Metadata shapes differ in exactly one fact — the Storage Location a
+    top-level occurrence owns and a nested one cannot — so the members they
+    share, including their local member indexes, are declared once here. This is
+    shared implementation between two private classes and not a relation between
+    the protocols they satisfy: neither occurrence protocol is a subtype of the
+    other, and a consumer holding a nested occurrence still has no ``storage`` to
+    read.
+
+    Each index is installed as a read-only view over a mapping nothing else
+    holds, so accepted lookup state is unreachable for mutation.
+    """
+
     identity: ValueObjectIdentity
     multiplicity: Multiplicity
     nullable: bool
@@ -82,7 +97,16 @@ class _NestedValueObjectMetadata:
     )
 
     def __post_init__(self) -> None:
-        _install_value_object_indexes(self)
+        object.__setattr__(
+            self,
+            "_attribute_index",
+            MappingProxyType({member.identity.name: member for member in self.attributes}),
+        )
+        object.__setattr__(
+            self,
+            "_value_object_index",
+            MappingProxyType({member.identity.path[-1]: member for member in self.value_objects}),
+        )
 
     def attribute(self, name: str) -> ValueObjectAttributeMetadata | None:
         return self._attribute_index.get(name)
@@ -92,48 +116,15 @@ class _NestedValueObjectMetadata:
 
 
 @dataclass(frozen=True, slots=True)
-class _ValueObjectMetadata:
-    identity: ValueObjectIdentity
+class _NestedValueObjectMetadata(_OccurrenceMetadata):
+    """One nested occurrence: the shared surface, owning no Storage Location."""
+
+
+@dataclass(frozen=True, slots=True)
+class _ValueObjectMetadata(_OccurrenceMetadata):
+    """One top-level occurrence: the shared surface plus the location it owns."""
+
     storage: StorageLocation
-    multiplicity: Multiplicity
-    nullable: bool
-    attributes: tuple[ValueObjectAttributeMetadata, ...]
-    value_objects: tuple[NestedValueObjectMetadata, ...]
-    _attribute_index: Mapping[str, ValueObjectAttributeMetadata] = field(
-        init=False, repr=False, compare=False
-    )
-    _value_object_index: Mapping[str, NestedValueObjectMetadata] = field(
-        init=False, repr=False, compare=False
-    )
-
-    def __post_init__(self) -> None:
-        _install_value_object_indexes(self)
-
-    def attribute(self, name: str) -> ValueObjectAttributeMetadata | None:
-        return self._attribute_index.get(name)
-
-    def value_object(self, name: str) -> NestedValueObjectMetadata | None:
-        return self._value_object_index.get(name)
-
-
-def _install_value_object_indexes(
-    metadata: _ValueObjectMetadata | _NestedValueObjectMetadata,
-) -> None:
-    """Build one composite's local member indexes on a frozen instance.
-
-    Each index is installed as a read-only view over a mapping nothing else
-    holds, so accepted lookup state is unreachable for mutation.
-    """
-    object.__setattr__(
-        metadata,
-        "_attribute_index",
-        MappingProxyType({member.identity.name: member for member in metadata.attributes}),
-    )
-    object.__setattr__(
-        metadata,
-        "_value_object_index",
-        MappingProxyType({member.identity.path[-1]: member for member in metadata.value_objects}),
-    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -243,6 +234,21 @@ class _AcceptedMetamodel:
 def compile_metadata(candidate: CandidateMetamodel) -> CompiledMetadata:
     """Compile an accepted candidate into the one immutable accepted graph."""
     return _CompiledMetadata(tuple(_entity_metadata(entity) for entity in candidate.entities))
+
+
+def is_compiled_metadata(value: object) -> TypeGuard[CompiledMetadata]:
+    """Whether ``value`` is Compiled Metadata this module's compiler produced.
+
+    ``m-metamodel`` owns the mandatory Metadata Compiler and this is its only
+    output type, so provenance decides rather than the surface a value presents.
+    Compilation runs only on an accepted candidate, which is nonempty, so an
+    Entity-less graph is an impossible state rather than a model with nothing in
+    it.
+
+    Exists for the seam that receives a compiler's result and must classify a
+    wrong-typed one as a contract failure rather than publish it as a Metamodel.
+    """
+    return isinstance(value, _CompiledMetadata) and bool(value.entities)
 
 
 def _entity_metadata(declaration: EntityDeclaration) -> EntityMetadata:

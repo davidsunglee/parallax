@@ -735,6 +735,18 @@ def _value_object_to_json(vo: ValueObject) -> dict[str, object]:
     return out
 
 
+def _is_family_descendant(entity: Entity) -> bool:
+    """Whether ``entity`` occupies a non-root position in an inheritance family.
+
+    Canonical form omits ``persistence`` on such an entity unconditionally: the
+    mode is family-wide and root-owned, so a descendant has none of its own to
+    spell and absence there means inherit. A record that nonetheless declares one
+    keeps it — that is the evidence family validation is stated over — but it is
+    never part of the canonical spelling.
+    """
+    return entity.inheritance is not None and entity.inheritance.role != "root"
+
+
 def _entity_to_json(entity: Entity) -> dict[str, object]:
     attribute_names = {attribute.name for attribute in entity.attributes}
     for axis in entity.as_of_axes:
@@ -752,7 +764,7 @@ def _entity_to_json(entity: Entity) -> dict[str, object]:
         out["namespace"] = entity.namespace
     if entity.table is not None:
         out["table"] = entity.table
-    if entity.persistence == "read-only":
+    if entity.persistence == "read-only" and not _is_family_descendant(entity):
         out["persistence"] = "read-only"
     if entity.attributes:
         out["attributes"] = [_attribute_to_json(a) for a in entity.attributes]

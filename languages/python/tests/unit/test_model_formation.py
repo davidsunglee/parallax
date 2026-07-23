@@ -5,7 +5,7 @@ from __future__ import annotations
 import random
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Any, Final, cast
+from typing import Any, Final, TypeGuard, cast
 
 import pytest
 from _metamodel_support import Declaration, attribute, identity, key, source
@@ -28,7 +28,9 @@ from parallax.core.metamodel import (
     Resolved,
     UnresolvedEntityDeclaration,
     UnresolvedMetamodel,
+    resolve,
 )
+from parallax.core.metamodel import _resolve as resolver
 from parallax.core.model_formation import (
     FIXED_RESOLVER,
     FORMATION_COMPILER_FAILED,
@@ -68,10 +70,16 @@ _RELATIONSHIP: Final[ModuleIdentity] = "m-relationship"
 _TEMPORAL: Final[ModuleIdentity] = "m-temporal-read"
 _OPT_LOCK: Final[ModuleIdentity] = "m-opt-lock"
 
-_INHERITANCE_FACET: Final[FacetKey[str]] = FacetKey(_INHERITANCE)
-_RELATIONSHIP_FACET: Final[FacetKey[str]] = FacetKey(_RELATIONSHIP)
-_TEMPORAL_FACET: Final[FacetKey[str]] = FacetKey(_TEMPORAL)
-_OPT_LOCK_FACET: Final[FacetKey[str]] = FacetKey(_OPT_LOCK)
+
+def _is_text(value: object) -> TypeGuard[str]:
+    """The stand-in facet type check every double's key carries."""
+    return isinstance(value, str)
+
+
+_INHERITANCE_FACET: Final[FacetKey[str]] = FacetKey(_INHERITANCE, _is_text)
+_RELATIONSHIP_FACET: Final[FacetKey[str]] = FacetKey(_RELATIONSHIP, _is_text)
+_TEMPORAL_FACET: Final[FacetKey[str]] = FacetKey(_TEMPORAL, _is_text)
+_OPT_LOCK_FACET: Final[FacetKey[str]] = FacetKey(_OPT_LOCK, _is_text)
 
 _CYCLE: Final[IssueCode] = "inheritance-cycle"
 _SHADOWING: Final[IssueCode] = "inheritance-member-shadowing"
@@ -201,6 +209,20 @@ class _MutableFacetCompiler:
 
 
 @dataclass(frozen=True, slots=True)
+class _WrongTypeFacetCompiler:
+    """A Model Compiler installing a value of another type than its key promises."""
+
+    owner: ModuleIdentity
+    facet_key: FacetKey[str]
+    requires: frozenset[FacetKey[Any]] = frozenset()
+
+    def compile(
+        self, metadata: CompiledMetadata, required_facets: Mapping[FacetKey[Any], object]
+    ) -> str:
+        return cast(str, 42)
+
+
+@dataclass(frozen=True, slots=True)
 class _FacetMutatingCompiler:
     """A Model Compiler that tries to install a key of its own into what it was handed."""
 
@@ -231,7 +253,7 @@ class _DriftingCompiler:
     @property
     def requires(self) -> frozenset[FacetKey[Any]]:
         self.reads[0] += 1
-        return frozenset() if self.reads[0] == 1 else frozenset({FacetKey("m-absent")})
+        return frozenset() if self.reads[0] == 1 else frozenset({FacetKey("m-absent", _is_text)})
 
     def compile(
         self, metadata: CompiledMetadata, required_facets: Mapping[FacetKey[Any], object]
@@ -260,6 +282,39 @@ class _ForeignMetadataCompiler:
 
     def compile(self, candidate: CandidateMetamodel) -> CompiledMetadata:
         return cast(CompiledMetadata, object())
+
+
+@dataclass(frozen=True, slots=True)
+class _EmptyMetadata:
+    """The whole Compiled Metadata surface over no Entity at all."""
+
+    entities: tuple[Any, ...] = ()
+
+    def entity(self, identity: EntityIdentity) -> None:
+        return None
+
+
+def _genuine_empty_metadata() -> CompiledMetadata:
+    """Compiled Metadata this module produced that nonetheless holds no Entity."""
+    result = resolve(source())
+    assert isinstance(result, Resolved)
+    return METADATA_COMPILER.compile(result.candidate)
+
+
+@dataclass(frozen=True, slots=True)
+class _EntitylessMetadataCompiler:
+    """A Metadata Compiler answering an accepted candidate with an Entity-less graph.
+
+    ``genuine`` selects which way the result is outside the contract: a graph
+    this module really compiled but from nothing, or a foreign object presenting
+    the same surface.
+    """
+
+    genuine: bool
+    owner: ModuleIdentity = METAMODEL_MODULE
+
+    def compile(self, candidate: CandidateMetamodel) -> CompiledMetadata:
+        return _genuine_empty_metadata() if self.genuine else _EmptyMetadata()
 
 
 @dataclass(frozen=True, slots=True)
@@ -506,7 +561,9 @@ def test_a_missing_model_compiler_is_a_missing_facet() -> None:
 
 def test_a_compiler_installing_another_key_than_its_manifest_row_is_drift() -> None:
     manifest = FormationManifest((_resolver_row(), _compiler_row(_INHERITANCE, _INHERITANCE_FACET)))
-    profile = _Profile(model_compilers=(_Compiler(_INHERITANCE, FacetKey(_INHERITANCE + "-alt")),))
+    profile = _Profile(
+        model_compilers=(_Compiler(_INHERITANCE, FacetKey(_INHERITANCE + "-alt", _is_text)),)
+    )
     _contract_failure(manifest, profile, FORMATION_PROFILE_DRIFT, owner=_INHERITANCE)
 
 
@@ -529,7 +586,7 @@ def test_one_facet_key_installed_twice_is_a_duplicate_facet() -> None:
 
 
 def test_a_compiler_installing_a_key_another_module_owns_is_drift() -> None:
-    borrowed: FacetKey[str] = FacetKey(_RELATIONSHIP)
+    borrowed: FacetKey[str] = FacetKey(_RELATIONSHIP, _is_text)
     manifest = FormationManifest((_resolver_row(), _compiler_row(_INHERITANCE, borrowed)))
     profile = _Profile(model_compilers=(_Compiler(_INHERITANCE, borrowed),))
     _contract_failure(manifest, profile, FORMATION_PROFILE_DRIFT, owner=_INHERITANCE)
@@ -644,6 +701,10 @@ def _resolves_to_an_entityless_candidate(unresolved: UnresolvedMetamodel) -> obj
     return Resolved(cast(CandidateMetamodel, _EntitylessCandidate()))
 
 
+def _resolves_to_foreign_declarations(unresolved: UnresolvedMetamodel) -> object:
+    return Resolved(cast(CandidateMetamodel, _ForeignDeclarationCandidate()))
+
+
 @dataclass(frozen=True, slots=True)
 class _EntitylessCandidate:
     """A Candidate Metamodel shape carrying no Entity at all.
@@ -658,6 +719,20 @@ class _EntitylessCandidate:
         return None
 
 
+@dataclass(frozen=True, slots=True)
+class _ForeignDeclarationCandidate:
+    """A Candidate Metamodel shape whose Entity sequence holds a foreign value.
+
+    The outer shape answers every structural question a duck-typed check can
+    ask, so only the seam that knows where a candidate comes from can refuse it.
+    """
+
+    entities: tuple[Any, ...] = (object(),)
+
+    def entity(self, identity: EntityIdentity) -> None:
+        return None
+
+
 @pytest.mark.parametrize(
     "broken",
     [
@@ -666,6 +741,7 @@ class _EntitylessCandidate:
         _returns_a_mutable_rejection,
         _resolves_to_a_foreign_candidate,
         _resolves_to_an_entityless_candidate,
+        _resolves_to_foreign_declarations,
     ],
     ids=[
         "foreign-value",
@@ -673,6 +749,7 @@ class _EntitylessCandidate:
         "mutable-rejection",
         "foreign-candidate",
         "entityless-candidate",
+        "foreign-declarations",
     ],
 )
 def test_a_resolver_result_outside_its_contract_is_a_contract_failure(
@@ -743,6 +820,28 @@ def test_two_equal_emitted_issues_are_a_contract_failure() -> None:
     _contract_failure(manifest, profile, FORMATION_ISSUE_DUPLICATE, owner=_INHERITANCE)
 
 
+def _emits_one_issue_twice(declaration: object) -> list[MetamodelIssue]:
+    """A resolver check that reports one defect twice from a single declaration."""
+    return [_issue(PRIMARY_KEY_MISSING), _issue(PRIMARY_KEY_MISSING)]
+
+
+def test_a_resolver_that_emits_one_issue_twice_is_a_contract_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The fixed resolver is held to distinct issue identities like every other emitter.
+
+    Resolution collapses only the defects a legal model makes reachable along
+    several paths, and it does so where each is discovered. Its aggregate is not
+    exempt: a check that reports one defect twice from one declaration is a
+    contract failure the runner reports, not something resolution absorbs.
+    """
+    monkeypatch.setattr(resolver, "_primary_key_issues", _emits_one_issue_twice)
+    with pytest.raises(FormationContractError) as raised:
+        form(source(*_valid_model()), BUILTIN_MANIFEST, BUILTIN_PROFILE)
+    assert raised.value.code == FORMATION_ISSUE_DUPLICATE
+    assert raised.value.owner == METAMODEL_MODULE
+
+
 def test_a_metadata_compiler_failure_is_a_contract_failure() -> None:
     profile = _Profile(metadata_compiler=_MetadataCompiler(raises=True))
     failure = _contract_failure(
@@ -759,9 +858,47 @@ def test_a_metadata_compiler_returning_a_foreign_value_is_a_contract_failure() -
     assert failure.cause is None
 
 
+@pytest.mark.parametrize("genuine", [True, False], ids=["genuine", "foreign"])
+def test_a_metadata_compiler_returning_an_entityless_graph_is_a_contract_failure(
+    genuine: bool,
+) -> None:
+    """An accepted candidate is nonempty, so metadata over no Entity is impossible.
+
+    Each returned value answers the whole Compiled Metadata surface, so either
+    would otherwise be published as an accepted Metamodel holding no Entity.
+    """
+    profile = _Profile(metadata_compiler=_EntitylessMetadataCompiler(genuine))
+    failure = _contract_failure(
+        BUILTIN_MANIFEST, profile, FORMATION_COMPILER_FAILED, owner=METAMODEL_MODULE
+    )
+    assert failure.cause is None
+
+
+def test_an_empty_frontend_source_is_refused_at_the_resolver_seam() -> None:
+    """Formation begins from a nonempty source, and every frontend rejects an
+    empty one before this seam; resolving one anyway yields no candidate at all,
+    which the seam reports rather than compiling a model with nothing in it."""
+    with pytest.raises(FormationContractError) as raised:
+        form(source(), BUILTIN_MANIFEST, BUILTIN_PROFILE)
+    assert raised.value.code == FORMATION_RESOLVER_RESULT_INVALID
+    assert raised.value.owner == METAMODEL_MODULE
+
+
 def test_a_model_compiler_returning_a_mutable_collection_is_a_contract_failure() -> None:
     manifest = FormationManifest((_resolver_row(), _compiler_row(_INHERITANCE, _INHERITANCE_FACET)))
     profile = _Profile(model_compilers=(_MutableFacetCompiler(_INHERITANCE, _INHERITANCE_FACET),))
+    failure = _contract_failure(manifest, profile, FORMATION_COMPILER_FAILED, owner=_INHERITANCE)
+    assert failure.cause is None
+
+
+def test_a_model_compiler_returning_another_type_than_its_key_promises_fails() -> None:
+    """A facet key's type parameter is erased, so its owner's own check decides.
+
+    The returned value is immutable and perfectly ordinary; only the facet
+    owner knows it is not the facet the key stands for.
+    """
+    manifest = FormationManifest((_resolver_row(), _compiler_row(_INHERITANCE, _INHERITANCE_FACET)))
+    profile = _Profile(model_compilers=(_WrongTypeFacetCompiler(_INHERITANCE, _INHERITANCE_FACET),))
     failure = _contract_failure(manifest, profile, FORMATION_COMPILER_FAILED, owner=_INHERITANCE)
     assert failure.cause is None
 

@@ -14,7 +14,7 @@ import datetime as _dt
 import re
 import sys
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -480,11 +480,17 @@ class EntityConfig:
     class hierarchy alone — subclassing a Parallax entity makes the subclass a
     family member; the descriptor's own tableless-and-rowless role rule decides
     abstractness).
+
+    ``mutability`` is this class's own Persistence Mode declaration, spelled
+    ``"transactional"`` or ``"read-only"``. Leaving it unspelled declares
+    nothing, which is the only correct spelling for a family descendant:
+    Persistence is root-owned, so a descendant inherits the family's mode and
+    declaring one of its own — even the root's — is invalid (m-inheritance).
     """
 
     table: str | None = None
     namespace: str | None = None
-    mutability: str = "transactional"
+    mutability: str | None = None
     inheritance: FamilyRoot | Concrete | None = None
 
 
@@ -626,36 +632,6 @@ def _entity_record_for(cls: type) -> EntityRecord:
     return require_entity_record(cls, entity_record_of(cls))
 
 
-def _frontend_entities(
-    entities: tuple[EntityRecord, ...],
-) -> tuple[EntityRecord, ...]:
-    """Apply the family-root persistence rule to class declarations.
-
-    Persistence is root-owned, so only the entity that is its own family root
-    keeps the mode its config spelled; a descendant declares none and inherits
-    the root's. Relationship and Value Object declarations are already canonical
-    when the metaclass creates them; no declaration-shape adapter or paired
-    metadata copy exists here.
-    """
-    by_name = {entity.name: entity for entity in entities}
-    normalized: list[EntityRecord] = []
-    for owner in entities:
-        family_root = owner
-        seen: set[str] = set()
-        while (
-            family_root.inheritance is not None
-            and family_root.inheritance.parent is not None
-            and family_root.name not in seen
-        ):
-            seen.add(family_root.name)
-            parent = by_name.get(family_root.inheritance.parent)
-            if parent is None:
-                break
-            family_root = parent
-        normalized.append(owner if family_root is owner else replace(owner, persistence=None))
-    return tuple(normalized)
-
-
 def metamodel(classes: Sequence[type]) -> MetamodelRecord:
     """Assemble one :class:`~parallax.core.descriptor.Metamodel` from a set of
     related entity classes.
@@ -706,7 +682,7 @@ def metamodel(classes: Sequence[type]) -> MetamodelRecord:
             continue  # the identical class object repeated -- harmless, dedupe (P1)
         seen[name] = cls
         deduped.append(cls)
-    entities = _frontend_entities(tuple(_entity_record_for(cls) for cls in deduped))
+    entities = tuple(_entity_record_for(cls) for cls in deduped)
     scope = _registry_of_classes(deduped)
     if scope is None:
         return MetamodelRecord(entities=entities)
@@ -1183,18 +1159,29 @@ def _reject_collisions(
         seen.add(name)
 
 
-def _declared_persistence(value: str) -> Persistence:
-    """``EntityConfig.mutability`` as the persistence mode a record declares.
+def _declared_persistence(value: str | None) -> Persistence | None:
+    """``EntityConfig.mutability`` as the persistence mode a class declares, if any.
 
-    The config spelling is the class frontend's own vocabulary and always carries
-    a value, so a class-declared entity always declares its mode; the descriptor
-    property it maps to admits only the two canonical spellings.
+    An unspelled ``mutability`` declares nothing, and that is a fact the record
+    keeps: Persistence is family-wide and root-owned, so absence means the Read
+    Write default on a standalone entity or a family root and means inherit on a
+    descendant — while a descendant that spells any mode at all is invalid
+    (m-inheritance). Normalizing absence to a mode, or erasing a spelled one,
+    would destroy the evidence that rule is stated over. The config vocabulary
+    is the class frontend's own; it maps onto the two canonical descriptor
+    spellings.
     """
-    if value not in ("read-only", "transactional"):
-        raise EntityDefinitionError(
-            f"mutability must be 'read-only' or 'transactional', got {value!r}"
-        )
-    return "read-only" if value == "read-only" else "read-write"
+    match value:
+        case None:
+            return None
+        case "read-only":
+            return "read-only"
+        case "transactional":
+            return "read-write"
+        case _:
+            raise EntityDefinitionError(
+                f"mutability must be 'read-only' or 'transactional', got {value!r}"
+            )
 
 
 # The inert framework-root identity set: exactly `TxTemporal` and `Bitemporal`
