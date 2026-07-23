@@ -433,7 +433,6 @@ def test_reject_predicate_write_is_a_no_op_for_a_non_participant() -> None:
 _VO_ENTITY = Entity(
     name="Gadget",
     table="gadget",
-    mutability="transactional",
     attributes=(
         Attribute(name="id", type="int64", column="id", primary_key=True),
         Attribute(name="code", type="string", column="code"),

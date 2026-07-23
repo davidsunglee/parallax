@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
+from types import MappingProxyType
 from typing import Any, Final, cast
 
 from parallax.core.base import NeutralType
@@ -118,16 +119,20 @@ class _ValueObjectMetadata:
 def _install_value_object_indexes(
     metadata: _ValueObjectMetadata | _NestedValueObjectMetadata,
 ) -> None:
-    """Build one composite's local member indexes on a frozen instance."""
+    """Build one composite's local member indexes on a frozen instance.
+
+    Each index is installed as a read-only view over a mapping nothing else
+    holds, so accepted lookup state is unreachable for mutation.
+    """
     object.__setattr__(
         metadata,
         "_attribute_index",
-        {member.identity.name: member for member in metadata.attributes},
+        MappingProxyType({member.identity.name: member for member in metadata.attributes}),
     )
     object.__setattr__(
         metadata,
         "_value_object_index",
-        {member.identity.path[-1]: member for member in metadata.value_objects},
+        MappingProxyType({member.identity.path[-1]: member for member in metadata.value_objects}),
     )
 
 
@@ -158,23 +163,31 @@ class _EntityMetadata:
         object.__setattr__(
             self,
             "_attribute_index",
-            {member.identity.name: member for member in self.declared_attributes},
+            MappingProxyType({member.identity.name: member for member in self.declared_attributes}),
         )
         object.__setattr__(
             self,
             "_relationship_index",
-            {member.identity.name: member for member in self.declared_relationships},
+            MappingProxyType(
+                {member.identity.name: member for member in self.declared_relationships}
+            ),
         )
         object.__setattr__(
             self,
             "_value_object_index",
-            {member.identity.path[-1]: member for member in self.declared_value_objects},
+            MappingProxyType(
+                {member.identity.path[-1]: member for member in self.declared_value_objects}
+            ),
         )
         object.__setattr__(
-            self, "_axis_index", {axis.dimension: axis for axis in self.declared_as_of_axes}
+            self,
+            "_axis_index",
+            MappingProxyType({axis.dimension: axis for axis in self.declared_as_of_axes}),
         )
         object.__setattr__(
-            self, "_index_index", {member.identity.name: member for member in self.indices}
+            self,
+            "_index_index",
+            MappingProxyType({member.identity.name: member for member in self.indices}),
         )
 
     def attribute(self, name: str) -> AttributeMetadata | None:
@@ -202,7 +215,9 @@ class _CompiledMetadata:
 
     def __post_init__(self) -> None:
         object.__setattr__(
-            self, "_by_identity", {entity.identity: entity for entity in self.entities}
+            self,
+            "_by_identity",
+            MappingProxyType({entity.identity: entity for entity in self.entities}),
         )
 
     def entity(self, identity: EntityIdentity) -> EntityMetadata | None:
@@ -328,6 +343,10 @@ class MetamodelMetadataCompiler:
 
 
 METADATA_COMPILER: Final[MetamodelMetadataCompiler] = MetamodelMetadataCompiler()
+"""The single Metadata Compiler instance a composition root supplies.
+
+It is stateless, so one instance serves every formation; the constant exists so
+a profile names the compiler rather than constructing a second one."""
 
 
 def accept_metamodel(
@@ -338,6 +357,7 @@ def accept_metamodel(
     The accepted Metamodel delegates lookup to that graph rather than copying or
     re-indexing it, and adds facet retrieval only. Retrieval is total for an
     accepted Formation Profile, which the formation runner establishes before
-    any compiler runs.
+    any compiler runs. The facet mapping is snapshotted into a read-only view, so
+    a caller that keeps its own mapping cannot alter an accepted model's facets.
     """
-    return _AcceptedMetamodel(metadata, dict(facets))
+    return _AcceptedMetamodel(metadata, MappingProxyType(dict(facets)))

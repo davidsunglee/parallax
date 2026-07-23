@@ -25,6 +25,7 @@ from parallax.core.metamodel import (
     IssueCode,
     MetamodelIssue,
     Rejected,
+    Resolved,
     UnresolvedEntityDeclaration,
     UnresolvedMetamodel,
 )
@@ -186,6 +187,59 @@ class _FailingCompiler:
 
 
 @dataclass(frozen=True, slots=True)
+class _MutableFacetCompiler:
+    """A Model Compiler installing a facet the caller could still mutate."""
+
+    owner: ModuleIdentity
+    facet_key: FacetKey[str]
+    requires: frozenset[FacetKey[Any]] = frozenset()
+
+    def compile(
+        self, metadata: CompiledMetadata, required_facets: Mapping[FacetKey[Any], object]
+    ) -> str:
+        return cast(str, ["a facet nothing may rely on"])
+
+
+@dataclass(frozen=True, slots=True)
+class _FacetMutatingCompiler:
+    """A Model Compiler that tries to install a key of its own into what it was handed."""
+
+    owner: ModuleIdentity
+    facet_key: FacetKey[str]
+    requires: frozenset[FacetKey[Any]] = frozenset()
+
+    def compile(
+        self, metadata: CompiledMetadata, required_facets: Mapping[FacetKey[Any], object]
+    ) -> str:
+        cast(dict[FacetKey[Any], object], required_facets)[self.facet_key] = "smuggled"
+        return f"facet of {self.owner}"
+
+
+@dataclass(frozen=True, slots=True)
+class _DriftingCompiler:
+    """A Model Compiler whose requirements change after drift checking read them.
+
+    ``requires`` answers with the manifest's declared edge set once — long enough
+    to pass drift checking — and with an unsatisfiable one thereafter, which is
+    the only way the drift-checked ordering proof can fail.
+    """
+
+    owner: ModuleIdentity
+    facet_key: FacetKey[str]
+    reads: list[int] = field(default_factory=lambda: [0])
+
+    @property
+    def requires(self) -> frozenset[FacetKey[Any]]:
+        self.reads[0] += 1
+        return frozenset() if self.reads[0] == 1 else frozenset({FacetKey("m-absent")})
+
+    def compile(
+        self, metadata: CompiledMetadata, required_facets: Mapping[FacetKey[Any], object]
+    ) -> str:
+        return f"facet of {self.owner}"
+
+
+@dataclass(frozen=True, slots=True)
 class _MetadataCompiler:
     """A Metadata Compiler double with a settable owner and failure mode."""
 
@@ -196,6 +250,28 @@ class _MetadataCompiler:
         if self.raises:
             raise RuntimeError("the Metadata Compiler reached an impossible state")
         return METADATA_COMPILER.compile(candidate)
+
+
+@dataclass(frozen=True, slots=True)
+class _ForeignMetadataCompiler:
+    """A Metadata Compiler returning something that is not Compiled Metadata."""
+
+    owner: ModuleIdentity = METAMODEL_MODULE
+
+    def compile(self, candidate: CandidateMetamodel) -> CompiledMetadata:
+        return cast(CompiledMetadata, object())
+
+
+@dataclass(frozen=True, slots=True)
+class _UnreadableProfile:
+    """A profile whose own contract members raise when the runner reads them."""
+
+    rule_sets: tuple[ModelRuleSet, ...] = ()
+    model_compilers: tuple[ModelCompiler[Any], ...] = ()
+
+    @property
+    def metadata_compiler(self) -> MetadataCompiler:
+        raise RuntimeError("the composition root could not answer for its compiler")
 
 
 def _resolver_row(
@@ -328,6 +404,14 @@ def test_a_manifest_names_each_owner_once() -> None:
 # --------------------------------------------------------------------------
 # Profile drift, in the order the checks run.
 # --------------------------------------------------------------------------
+
+
+def test_a_profile_that_cannot_answer_for_its_own_contract_is_drift() -> None:
+    with pytest.raises(FormationContractError) as raised:
+        form(source(*_valid_model()), BUILTIN_MANIFEST, _UnreadableProfile())
+    assert raised.value.code == FORMATION_PROFILE_DRIFT
+    assert isinstance(raised.value.cause, RuntimeError)
+    assert raised.value.__cause__ is raised.value.cause
 
 
 def test_a_manifest_without_exactly_one_metadata_compiler_row_is_drift() -> None:
@@ -552,10 +636,44 @@ def _returns_a_mutable_rejection(unresolved: UnresolvedMetamodel) -> object:
     return Rejected([_issue(PRIMARY_KEY_MISSING)])  # pyright: ignore[reportArgumentType]
 
 
+def _resolves_to_a_foreign_candidate(unresolved: UnresolvedMetamodel) -> object:
+    return Resolved(cast(CandidateMetamodel, object()))
+
+
+def _resolves_to_an_entityless_candidate(unresolved: UnresolvedMetamodel) -> object:
+    return Resolved(cast(CandidateMetamodel, _EntitylessCandidate()))
+
+
+@dataclass(frozen=True, slots=True)
+class _EntitylessCandidate:
+    """A Candidate Metamodel shape carrying no Entity at all.
+
+    Formation input is nonempty, so an empty candidate is a resolver defect
+    rather than a model with nothing in it.
+    """
+
+    entities: tuple[Any, ...] = ()
+
+    def entity(self, identity: EntityIdentity) -> None:
+        return None
+
+
 @pytest.mark.parametrize(
     "broken",
-    [_returns_a_foreign_value, _returns_an_empty_rejection, _returns_a_mutable_rejection],
-    ids=["foreign-value", "empty-rejection", "mutable-rejection"],
+    [
+        _returns_a_foreign_value,
+        _returns_an_empty_rejection,
+        _returns_a_mutable_rejection,
+        _resolves_to_a_foreign_candidate,
+        _resolves_to_an_entityless_candidate,
+    ],
+    ids=[
+        "foreign-value",
+        "empty-rejection",
+        "mutable-rejection",
+        "foreign-candidate",
+        "entityless-candidate",
+    ],
 )
 def test_a_resolver_result_outside_its_contract_is_a_contract_failure(
     monkeypatch: pytest.MonkeyPatch, broken: object
@@ -631,6 +749,41 @@ def test_a_metadata_compiler_failure_is_a_contract_failure() -> None:
         BUILTIN_MANIFEST, profile, FORMATION_COMPILER_FAILED, owner=METAMODEL_MODULE
     )
     assert isinstance(failure.cause, RuntimeError)
+
+
+def test_a_metadata_compiler_returning_a_foreign_value_is_a_contract_failure() -> None:
+    profile = _Profile(metadata_compiler=_ForeignMetadataCompiler())
+    failure = _contract_failure(
+        BUILTIN_MANIFEST, profile, FORMATION_COMPILER_FAILED, owner=METAMODEL_MODULE
+    )
+    assert failure.cause is None
+
+
+def test_a_model_compiler_returning_a_mutable_collection_is_a_contract_failure() -> None:
+    manifest = FormationManifest((_resolver_row(), _compiler_row(_INHERITANCE, _INHERITANCE_FACET)))
+    profile = _Profile(model_compilers=(_MutableFacetCompiler(_INHERITANCE, _INHERITANCE_FACET),))
+    failure = _contract_failure(manifest, profile, FORMATION_COMPILER_FAILED, owner=_INHERITANCE)
+    assert failure.cause is None
+
+
+def test_a_model_compiler_cannot_mutate_the_facets_it_was_handed() -> None:
+    manifest = FormationManifest(
+        (
+            _resolver_row(),
+            _compiler_row(_INHERITANCE, _INHERITANCE_FACET),
+            _compiler_row(
+                _TEMPORAL, _TEMPORAL_FACET, required_facets=frozenset({_INHERITANCE_FACET})
+            ),
+        )
+    )
+    profile = _Profile(
+        model_compilers=(
+            _Compiler(_INHERITANCE, _INHERITANCE_FACET),
+            _FacetMutatingCompiler(_TEMPORAL, _TEMPORAL_FACET, frozenset({_INHERITANCE_FACET})),
+        )
+    )
+    failure = _contract_failure(manifest, profile, FORMATION_COMPILER_FAILED, owner=_TEMPORAL)
+    assert isinstance(failure.cause, TypeError)
 
 
 def test_a_model_compiler_failure_publishes_nothing() -> None:
@@ -736,6 +889,13 @@ def test_model_compilers_run_in_topological_order_with_ascending_owner_tiebreak(
     assert handed[_OPT_LOCK] == (_INHERITANCE, _TEMPORAL)
     assert model.facet(_OPT_LOCK_FACET) == f"facet of {_OPT_LOCK}"
     assert model.facet(_RELATIONSHIP_FACET) == f"facet of {_RELATIONSHIP}"
+
+
+def test_a_profile_whose_requirements_move_after_drift_checking_is_drift() -> None:
+    manifest = FormationManifest((_resolver_row(), _compiler_row(_INHERITANCE, _INHERITANCE_FACET)))
+    profile = _Profile(model_compilers=(_DriftingCompiler(_INHERITANCE, _INHERITANCE_FACET),))
+    failure = _contract_failure(manifest, profile, FORMATION_PROFILE_DRIFT, owner=_INHERITANCE)
+    assert "no Model Compiler is eligible" in str(failure)
 
 
 # --------------------------------------------------------------------------

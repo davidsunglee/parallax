@@ -13,7 +13,9 @@ from __future__ import annotations
 
 import re
 from collections import Counter
-from collections.abc import Mapping, Sequence
+from collections.abc import Generator, Mapping, Sequence
+from contextlib import contextmanager
+from types import MappingProxyType
 from typing import Any, Final, TypeGuard
 
 from parallax.core.metamodel import (
@@ -48,6 +50,7 @@ from parallax.core.model_formation._errors import (
     FORMATION_RESOLVER_RESULT_INVALID,
     FORMATION_RULE_SET_FAILED,
     FORMATION_RULE_SET_RESULT_INVALID,
+    FormationContractCode,
     FormationContractError,
     MetamodelValidationError,
 )
@@ -91,6 +94,27 @@ def _drift(message: str, owner: ModuleIdentity | None = None) -> FormationContra
     return FormationContractError(FORMATION_PROFILE_DRIFT, message, owner=owner)
 
 
+@contextmanager
+def _contract_reads(
+    code: FormationContractCode, message: str, owner: ModuleIdentity | None = None
+) -> Generator[None]:
+    """Classify anything raised while reading a contributor's own contract.
+
+    Every ``owner``, ``issue_codes``, ``facet_key``, and ``requires`` member is
+    arbitrary contributor code, so reading one can raise. Such a failure is a
+    statement about the contributor, never about the model: it leaves the block
+    as a :class:`FormationContractError` under ``code`` with the original
+    exception preserved. A contract error the block raised deliberately keeps
+    its own more specific code.
+    """
+    try:
+        yield
+    except FormationContractError:
+        raise
+    except Exception as error:
+        raise FormationContractError(code, message, owner=owner, cause=error) from error
+
+
 def _issue_code_prefix(owner: ModuleIdentity) -> str:
     """The mandatory Issue Code prefix for ``owner``: its catalog stem plus a hyphen."""
     return f"{owner.removeprefix('m-')}-"
@@ -112,18 +136,23 @@ def _check_profile_drift(manifest: FormationManifest, profile: FormationProfile)
     """Run the nine drift checks in their fixed order, failing on the first.
 
     The order is what makes a drift diagnostic deterministic: a profile with
-    several defects always reports the earliest one.
+    several defects always reports the earliest one. Reading the profile is
+    itself part of the check, so a contributor whose contract members raise is
+    reported as drift rather than escaping as its own exception.
     """
     entries = manifest.entries
-    _check_metadata_compiler(entries, profile)
-    rule_sets = _check_rule_set_presence(entries, profile)
-    _check_declared_issue_codes(entries, rule_sets)
-    _check_issue_code_grammar(entries)
-    _check_single_code_ownership(entries)
-    compilers = _check_model_compiler_presence(entries, profile)
-    _check_compiler_keys(profile)
-    _check_facet_dependencies(entries)
-    _check_declared_edges(entries, compilers)
+    with _contract_reads(
+        FORMATION_PROFILE_DRIFT, "reading the Formation Profile's contract raised"
+    ):
+        _check_metadata_compiler(entries, profile)
+        rule_sets = _check_rule_set_presence(entries, profile)
+        _check_declared_issue_codes(entries, rule_sets)
+        _check_issue_code_grammar(entries)
+        _check_single_code_ownership(entries)
+        compilers = _check_model_compiler_presence(entries, profile)
+        _check_compiler_keys(profile)
+        _check_facet_dependencies(entries)
+        _check_declared_edges(entries, compilers)
 
 
 def _check_metadata_compiler(
@@ -311,6 +340,32 @@ def _is_untyped_tuple(value: object) -> TypeGuard[tuple[object, ...]]:
     return isinstance(value, tuple)
 
 
+def _is_candidate_metamodel(value: object) -> TypeGuard[CandidateMetamodel]:
+    """Whether ``value`` presents the Candidate Metamodel surface later steps read.
+
+    ``Resolved`` is a plain carrier, so a resolver defect can seat any object in
+    it. The surface every later step depends on is a nonempty immutable Entity
+    sequence plus exact lookup; anything else is rejected at this seam rather
+    than surfacing as an attribute error inside a Rule Set.
+    """
+    entities = getattr(value, "entities", None)
+    return (
+        _is_untyped_tuple(entities) and bool(entities) and callable(getattr(value, "entity", None))
+    )
+
+
+def _is_compiled_metadata(value: object) -> TypeGuard[CompiledMetadata]:
+    """Whether ``value`` presents the Compiled Metadata surface an accepted model owns."""
+    entities = getattr(value, "entities", None)
+    return _is_untyped_tuple(entities) and callable(getattr(value, "entity", None))
+
+
+# The builtin containers whose whole purpose is in-place mutation. A facet is an
+# immutable derived view, so returning one of these is a compiler defect; the
+# facet's own type parameter is erased at runtime and cannot be checked.
+_MUTABLE_FACET_TYPES: Final[tuple[type, ...]] = (list, dict, set, bytearray)
+
+
 def _issue_sequence(returned: object) -> tuple[MetamodelIssue, ...] | None:
     """``returned`` as the immutable issue sequence a contributor must produce.
 
@@ -358,7 +413,14 @@ def _resolve_once(
     """
     result = _invoke_resolver(unresolved)
     if isinstance(result, Resolved):
-        return result.candidate
+        candidate = result.candidate
+        if not _is_candidate_metamodel(candidate):
+            raise FormationContractError(
+                FORMATION_RESOLVER_RESULT_INVALID,
+                "the fixed resolver resolved to a value that is not a Candidate Metamodel",
+                owner=METAMODEL_MODULE,
+            )
+        return candidate
     issues = _issue_sequence(result.issues) if isinstance(result, Rejected) else None
     if not issues:
         raise FormationContractError(
@@ -405,7 +467,8 @@ def _run_rule_sets(
     manifest: FormationManifest, profile: FormationProfile, candidate: CandidateMetamodel
 ) -> tuple[MetamodelIssue, ...]:
     """Invoke every Rule Set once, in manifest order, over the same candidate."""
-    rule_sets = {rule_set.owner: rule_set for rule_set in profile.rule_sets}
+    with _contract_reads(FORMATION_PROFILE_DRIFT, "reading the profile's Rule Sets raised"):
+        rule_sets = {rule_set.owner: rule_set for rule_set in profile.rule_sets}
     seen: set[MetamodelIssue] = set()
     aggregate: list[MetamodelIssue] = []
     for entry in manifest.entries:
@@ -434,55 +497,107 @@ def _run_rule_sets(
 
 
 def _compile_metadata(profile: FormationProfile, candidate: CandidateMetamodel) -> CompiledMetadata:
-    compiler = profile.metadata_compiler
+    """Compile the accepted candidate into the one graph the Metamodel will own.
+
+    Drift checking established the compiler's owner, so a defect here is always
+    ``formation-compiler-failed``: the compiler raised, or handed back something
+    that is not Compiled Metadata.
+    """
+    with _contract_reads(
+        FORMATION_COMPILER_FAILED,
+        "reading the Metadata Compiler's contract raised",
+        owner=METAMODEL_MODULE,
+    ):
+        compiler = profile.metadata_compiler
+        owner = compiler.owner
     try:
-        return compiler.compile(candidate)
+        metadata: object = compiler.compile(candidate)
     except Exception as error:
         raise FormationContractError(
             FORMATION_COMPILER_FAILED,
             "the Metadata Compiler failed on an accepted candidate",
-            owner=compiler.owner,
+            owner=owner,
             cause=error,
         ) from error
+    if not _is_compiled_metadata(metadata):
+        raise FormationContractError(
+            FORMATION_COMPILER_FAILED,
+            "the Metadata Compiler returned a value that is not Compiled Metadata",
+            owner=owner,
+        )
+    return metadata
 
 
 def _compilation_order(profile: FormationProfile) -> list[ModelCompiler[Any]]:
     """Model Compilers in topological facet order, ascending owner breaking ties.
 
-    Drift checking already proved every requirement is compiled and the graph is
-    acyclic, so some compiler is always eligible.
+    Drift checking proved every requirement is compiled and the declared graph is
+    acyclic, so a stable profile always leaves some compiler eligible. A profile
+    whose contract members answer differently on a second read invalidates that
+    proof, which is drift rather than an exhausted-iterator error.
     """
-    remaining = sorted(profile.model_compilers, key=lambda compiler: compiler.owner)
-    installed: set[FacetKey[Any]] = set()
-    order: list[ModelCompiler[Any]] = []
-    while remaining:
-        position = next(
-            index
-            for index, compiler in enumerate(remaining)
-            if frozenset(compiler.requires) <= installed
-        )
-        eligible = remaining.pop(position)
-        installed.add(eligible.facet_key)
-        order.append(eligible)
+    with _contract_reads(
+        FORMATION_PROFILE_DRIFT, "reading the Model Compilers' ordering contract raised"
+    ):
+        remaining = sorted(profile.model_compilers, key=lambda compiler: compiler.owner)
+        installed: set[FacetKey[Any]] = set()
+        order: list[ModelCompiler[Any]] = []
+        while remaining:
+            position = next(
+                (
+                    index
+                    for index, compiler in enumerate(remaining)
+                    if frozenset(compiler.requires) <= installed
+                ),
+                None,
+            )
+            if position is None:
+                raise _drift(
+                    "no Model Compiler is eligible; the profile's requirements no longer "
+                    "match the drift-checked contract",
+                    owner=min(compiler.owner for compiler in remaining),
+                )
+            eligible = remaining.pop(position)
+            installed.add(eligible.facet_key)
+            order.append(eligible)
     return order
 
 
 def _compile_facets(
     profile: FormationProfile, metadata: CompiledMetadata
 ) -> Mapping[FacetKey[Any], object]:
-    """Compile the complete facet set, publishing none of it until all succeed."""
+    """Compile the complete facet set, publishing none of it until all succeed.
+
+    Each compiler receives a read-only mapping of exactly the facets it declared,
+    and installs its result only under its own key.
+    """
     facets: dict[FacetKey[Any], object] = {}
     for compiler in _compilation_order(profile):
-        required = {
-            key: facets[key] for key in sorted(compiler.requires, key=lambda facet: facet.owner)
-        }
+        with _contract_reads(
+            FORMATION_COMPILER_FAILED, "reading a Model Compiler's contract raised"
+        ):
+            owner = compiler.owner
+            key = compiler.facet_key
+            required = MappingProxyType(
+                {
+                    needed: facets[needed]
+                    for needed in sorted(compiler.requires, key=lambda facet: facet.owner)
+                }
+            )
         try:
-            facets[compiler.facet_key] = compiler.compile(metadata, required)
+            facet = compiler.compile(metadata, required)
         except Exception as error:
             raise FormationContractError(
                 FORMATION_COMPILER_FAILED,
                 "the Model Compiler failed on accepted metadata",
-                owner=compiler.owner,
+                owner=owner,
                 cause=error,
             ) from error
-    return facets
+        if isinstance(facet, _MUTABLE_FACET_TYPES):
+            raise FormationContractError(
+                FORMATION_COMPILER_FAILED,
+                "the Model Compiler returned a mutable collection as its facet",
+                owner=owner,
+            )
+        facets[key] = facet
+    return MappingProxyType(facets)

@@ -14,7 +14,7 @@ import enum
 from dataclasses import dataclass
 from typing import Final
 
-from parallax.core.base import NeutralType
+from parallax.core.base import NeutralType, String
 from parallax.core.metamodel._identities import (
     AttributeIdentity,
     AttributeReference,
@@ -314,8 +314,10 @@ class AttributeMetadata:
 
     Reference-free, so a frontend supplies it unchanged at the Unresolved seam
     and accepted Metadata reuses it. It duplicates neither its own name nor its
-    Entity's container. A maximum length is either absent or positive; a
-    nonpositive one raises :class:`ValueError`.
+    Entity's container. A maximum length bounds text width, so it is either
+    absent or a positive length on a String Attribute; a nonpositive length, or
+    one on any other type, raises :class:`ValueError`. Both constraints are local
+    to one Attribute, so no Rule Set owns them.
     """
 
     identity: AttributeIdentity
@@ -328,8 +330,12 @@ class AttributeMetadata:
     optimistic_locking: bool = False
 
     def __post_init__(self) -> None:
-        if self.max_length is not None and self.max_length < 1:
+        if self.max_length is None:
+            return
+        if self.max_length < 1:
             raise ValueError(f"an Attribute maximum length is positive, got {self.max_length}")
+        if not isinstance(self.type, String):
+            raise ValueError(f"only a String Attribute bounds its length, not {self.type}")
 
 
 @dataclass(frozen=True, slots=True)

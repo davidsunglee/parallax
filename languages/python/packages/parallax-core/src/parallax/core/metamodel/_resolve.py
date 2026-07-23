@@ -13,8 +13,9 @@ or implements another module's semantic rules.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Iterator, Mapping
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
+from types import MappingProxyType
 from typing import Final
 
 from parallax.core.base import Timestamp
@@ -98,23 +99,80 @@ __all__ = [
 ]
 
 INVALID_ENTITY_IDENTITY: Final[IssueCode] = "metamodel-invalid-entity-identity"
+"""An Entity name is empty or carries a dot. The namespace half of the grammar
+is unconstructible, so only the name can reach resolution malformed."""
+
 DUPLICATE_ENTITY_IDENTITY: Final[IssueCode] = "metamodel-duplicate-entity-identity"
+"""Two or more declarations resolve to one Entity Identity. Duplicates are legal
+frontend input, so this is reported once per identity, not once per extra
+declaration, and every other check still runs over every declaration."""
+
 UNRESOLVED_ENTITY_REFERENCE: Final[IssueCode] = "metamodel-unresolved-entity-reference"
+"""A relationship target, reverse peer owner, or inheritance parent names an
+Entity no declaration bears. The lexical rule alone decides the Identity: there
+is no global unique-name fallback that could rescue the reference."""
+
 UNRESOLVED_ATTRIBUTE_REFERENCE: Final[IssueCode] = "metamodel-unresolved-attribute-reference"
+"""A join target or ordering term names an Attribute its Entity does not declare
+and does not inherit. Its Entity resolved; only the member did not."""
+
 UNRESOLVED_RELATIONSHIP_REFERENCE: Final[IssueCode] = "metamodel-unresolved-relationship-reference"
+"""A reverse declaration names a relationship its peer Entity does not declare.
+Whether the named peer is actually a defining declaration is
+``m-relationship``'s rule, not this one."""
+
 LOCAL_MEMBER_COLLISION: Final[IssueCode] = "metamodel-local-member-collision"
+"""Two local members share a name in one navigable namespace: Attributes,
+relationships, and top-level Value Object occurrences share an Entity's, and
+scalars and nested occurrences share one shape's. Shadowing an inherited member
+is ``m-inheritance``'s rule."""
+
 TEMPORAL_MEMBER_RESERVED: Final[IssueCode] = "metamodel-temporal-member-reserved"
+"""A member that is not the axis's own endpoint bears a conventional temporal
+name the Entity's declared dimensions reserve. Reservation follows the declared
+axes, so the same name is free on a non-temporal Entity."""
+
 PRIMARY_KEY_MISSING: Final[IssueCode] = "metamodel-primary-key-missing"
+"""A standalone Entity declares no primary-key Attribute. An inheritance
+participant's key is family-wide and root-owned, so ``m-inheritance`` reports
+its equivalent."""
+
 PRIMARY_KEY_MULTIPLE: Final[IssueCode] = "metamodel-primary-key-multiple"
+"""A standalone Entity declares more than one primary-key Attribute. Composite
+keys are not part of the contract, so this is a defect rather than a shape."""
+
 INDEX_EMPTY: Final[IssueCode] = "metamodel-index-empty"
+"""An Index declares no Attribute component."""
+
 INDEX_ATTRIBUTE_MISSING: Final[IssueCode] = "metamodel-index-attribute-missing"
+"""An Index component names an Attribute of its own Entity that nothing in the
+Entity's ancestry declares either."""
+
 INDEX_ATTRIBUTE_NOT_LOCAL: Final[IssueCode] = "metamodel-index-attribute-not-local"
+"""An Index component exists but is not local: it belongs to another Entity, or
+it is inherited rather than declared here. A component that exists nowhere is
+``metamodel-index-attribute-missing`` instead."""
+
 INDEX_ATTRIBUTE_DUPLICATE: Final[IssueCode] = "metamodel-index-attribute-duplicate"
+"""One Attribute occurs more than once among an Index's components."""
+
 AS_OF_DIMENSION_DUPLICATE: Final[IssueCode] = "metamodel-as-of-dimension-duplicate"
+"""One Entity declares the same Temporal Dimension on more than one axis."""
+
 AS_OF_ATTRIBUTE_MISSING: Final[IssueCode] = "metamodel-as-of-attribute-missing"
+"""An axis endpoint names an Attribute of its own Entity that the Entity does
+not declare. Axis endpoints are local-only, so ancestry is not consulted."""
+
 AS_OF_ATTRIBUTE_OWNER: Final[IssueCode] = "metamodel-as-of-attribute-owner"
+"""An axis endpoint names an Attribute of another Entity. Ownership is checked
+before existence, so a foreign endpoint never reports as missing."""
+
 AS_OF_ATTRIBUTE_TYPE: Final[IssueCode] = "metamodel-as-of-attribute-type"
+"""An axis endpoint exists and is local but is not a Timestamp."""
+
 AS_OF_ATTRIBUTE_DUPLICATE: Final[IssueCode] = "metamodel-as-of-attribute-duplicate"
+"""One axis names the same Attribute as both its start and its end. Two axes
+sharing an endpoint is not this code; each axis is judged alone."""
 
 RESOLVER_ISSUE_CODES: Final[frozenset[IssueCode]] = frozenset(
     {
@@ -171,7 +229,9 @@ class _CandidateMetamodel:
 
     def __post_init__(self) -> None:
         object.__setattr__(
-            self, "_by_identity", {entity.identity: entity for entity in self.entities}
+            self,
+            "_by_identity",
+            MappingProxyType({entity.identity: entity for entity in self.entities}),
         )
 
     def entity(self, identity: EntityIdentity) -> EntityDeclaration | None:
@@ -205,7 +265,7 @@ def resolve(unresolved: UnresolvedMetamodel) -> ResolutionResult:
     """
     declarations = tuple(unresolved.entities)
     issues: list[MetamodelIssue] = []
-    index: dict[EntityIdentity, UnresolvedEntityDeclaration] = {}
+    index: dict[EntityIdentity, list[UnresolvedEntityDeclaration]] = {}
     for declaration in declarations:
         identity = declaration.identity
         if not _well_formed_entity_name(identity.name):
@@ -216,7 +276,8 @@ def resolve(unresolved: UnresolvedMetamodel) -> ResolutionResult:
                     message=(f"Entity name {identity.name!r} is not a nonempty dot-free name"),
                 )
             )
-        if identity in index:
+        bearers = index.setdefault(identity, [])
+        if bearers:
             issues.append(
                 MetamodelIssue(
                     DUPLICATE_ENTITY_IDENTITY,
@@ -224,8 +285,7 @@ def resolve(unresolved: UnresolvedMetamodel) -> ResolutionResult:
                     message=f"two declarations resolve to Entity {identity.canonical!r}",
                 )
             )
-        else:
-            index[identity] = declaration
+        bearers.append(declaration)
 
     entities: list[EntityDeclaration] = []
     for declaration in declarations:
@@ -253,7 +313,11 @@ def resolve(unresolved: UnresolvedMetamodel) -> ResolutionResult:
         )
 
     if issues:
-        return Rejected(sort_issues(issues))
+        # Duplicate identities are legal input, so one defect is reachable from
+        # several declarations and a repeated component is reachable from one.
+        # A repeated ``(code, location, related)`` identity is a contract failure
+        # at the formation seam, so each identity is reported exactly once.
+        return Rejected(sort_issues(dict.fromkeys(issues)))
     return Resolved(
         _CandidateMetamodel(tuple(sorted(entities, key=lambda entity: entity.identity.sort_key)))
     )
@@ -423,7 +487,7 @@ def _primary_key_issues(declaration: UnresolvedEntityDeclaration) -> list[Metamo
 
 def _index_issues(
     declaration: UnresolvedEntityDeclaration,
-    index: Mapping[EntityIdentity, UnresolvedEntityDeclaration],
+    index: Mapping[EntityIdentity, Sequence[UnresolvedEntityDeclaration]],
 ) -> list[MetamodelIssue]:
     local = {attribute.identity.name for attribute in declaration.attributes}
     issues: list[MetamodelIssue] = []
@@ -458,7 +522,7 @@ def _index_issues(
                     )
                 )
             elif component.name not in local:
-                inherited = _applicable_attribute(declaration, component.name, index) is not None
+                inherited = _applicable_attribute((declaration,), component.name, index)
                 issues.append(
                     MetamodelIssue(
                         INDEX_ATTRIBUTE_NOT_LOCAL if inherited else INDEX_ATTRIBUTE_MISSING,
@@ -550,35 +614,40 @@ def _declared_parent(inheritance: UnresolvedInheritance | None) -> EntityReferen
 
 
 def _applicable_attribute(
-    declaration: UnresolvedEntityDeclaration,
+    positions: Iterable[UnresolvedEntityDeclaration],
     name: str,
-    index: Mapping[EntityIdentity, UnresolvedEntityDeclaration],
-) -> AttributeMetadata | None:
-    """The Attribute ``name`` denotes at ``declaration``'s position, or absence.
+    index: Mapping[EntityIdentity, Sequence[UnresolvedEntityDeclaration]],
+) -> bool:
+    """Whether ``name`` denotes an Attribute applicable at any of ``positions``.
 
-    A declared inheritance parent extends the position's Attribute set, so a
-    reference into a family member resolves against the ancestry chain as well
-    as the local declarations. The walk is purely structural over the parent
-    links the declaration already carries and stops on a cycle; family
-    coherence is ``m-inheritance``'s rule.
+    A declared inheritance parent extends a position's Attribute set, so a
+    reference into a family member is satisfied by the ancestry chain as well as
+    by the local declarations. Duplicate identities are legal input, so every
+    declaration bearing an ancestor's Identity is consulted and the answer never
+    depends on which one a frontend enumerated first. The walk is purely
+    structural over the parent links the declarations already carry and stops on
+    a cycle; family coherence is ``m-inheritance``'s rule.
     """
-    current: UnresolvedEntityDeclaration | None = declaration
-    seen: set[EntityIdentity] = set()
-    while current is not None and current.identity not in seen:
-        seen.add(current.identity)
-        for attribute in current.attributes:
-            if attribute.identity.name == name:
-                return attribute
+    pending = list(positions)
+    expanded: set[EntityIdentity] = set()
+    while pending:
+        current = pending.pop()
+        if any(attribute.identity.name == name for attribute in current.attributes):
+            return True
         parent = _declared_parent(current.inheritance)
         if parent is None:
-            return None
-        current = index.get(resolve_entity_reference(current.identity, parent))
-    return None
+            continue
+        ancestor = resolve_entity_reference(current.identity, parent)
+        if ancestor in expanded:
+            continue
+        expanded.add(ancestor)
+        pending.extend(index.get(ancestor, ()))
+    return False
 
 
 def _resolve_relationships(
     declaration: UnresolvedEntityDeclaration,
-    index: Mapping[EntityIdentity, UnresolvedEntityDeclaration],
+    index: Mapping[EntityIdentity, Sequence[UnresolvedEntityDeclaration]],
 ) -> tuple[tuple[RelationshipDeclaration, ...], list[MetamodelIssue]]:
     resolved: list[RelationshipDeclaration] = []
     issues: list[MetamodelIssue] = []
@@ -597,26 +666,26 @@ def _resolve_relationships(
 def _resolve_defining(
     declaration: UnresolvedEntityDeclaration,
     relationship: UnresolvedDefiningRelationshipDeclaration,
-    index: Mapping[EntityIdentity, UnresolvedEntityDeclaration],
+    index: Mapping[EntityIdentity, Sequence[UnresolvedEntityDeclaration]],
 ) -> tuple[RelationshipDeclaration | None, list[MetamodelIssue]]:
     location = RelationshipLocation(relationship.identity)
     target_identity = resolve_entity_reference(
         declaration.identity, relationship.join.target.entity
     )
-    target = index.get(target_identity)
-    if target is None:
+    target = index.get(target_identity, ())
+    if not target:
         return None, [_unresolved_entity(location, target_identity)]
 
     issues: list[MetamodelIssue] = []
     target_name = relationship.join.target.name
-    if _applicable_attribute(target, target_name, index) is None:
+    if not _applicable_attribute(target, target_name, index):
         issues.append(
             _unresolved_attribute(location, AttributeIdentity(target_identity, target_name))
         )
     order_by: list[RelationshipOrder] = []
     for term in relationship.order_by:
         term_identity = AttributeIdentity(target_identity, term.attribute)
-        if _applicable_attribute(target, term.attribute, index) is None:
+        if not _applicable_attribute(target, term.attribute, index):
             issues.append(_unresolved_attribute(location, term_identity))
             continue
         order_by.append(RelationshipOrder(term_identity, term.direction))
@@ -640,16 +709,18 @@ def _resolve_defining(
 def _resolve_reverse(
     declaration: UnresolvedEntityDeclaration,
     relationship: UnresolvedReverseRelationshipDeclaration,
-    index: Mapping[EntityIdentity, UnresolvedEntityDeclaration],
+    index: Mapping[EntityIdentity, Sequence[UnresolvedEntityDeclaration]],
 ) -> tuple[RelationshipDeclaration | None, list[MetamodelIssue]]:
     location = RelationshipLocation(relationship.identity)
     peer_entity = resolve_entity_reference(declaration.identity, relationship.reverse_of.entity)
-    peer = index.get(peer_entity)
-    if peer is None:
+    peer = index.get(peer_entity, ())
+    if not peer:
         return None, [_unresolved_entity(location, peer_entity)]
 
     peer_identity = RelationshipIdentity(peer_entity, relationship.reverse_of.name)
-    if not any(declared.identity == peer_identity for declared in peer.relationships):
+    if not any(
+        declared.identity == peer_identity for bearer in peer for declared in bearer.relationships
+    ):
         return None, [
             MetamodelIssue(
                 UNRESOLVED_RELATIONSHIP_REFERENCE,
@@ -666,7 +737,7 @@ def _resolve_reverse(
     order_by: list[RelationshipOrder] = []
     for term in relationship.order_by:
         term_identity = AttributeIdentity(peer_entity, term.attribute)
-        if _applicable_attribute(peer, term.attribute, index) is None:
+        if not _applicable_attribute(peer, term.attribute, index):
             issues.append(_unresolved_attribute(location, term_identity))
             continue
         order_by.append(RelationshipOrder(term_identity, term.direction))
@@ -684,7 +755,7 @@ def _resolve_reverse(
 
 def _resolve_inheritance(
     declaration: UnresolvedEntityDeclaration,
-    index: Mapping[EntityIdentity, UnresolvedEntityDeclaration],
+    index: Mapping[EntityIdentity, Sequence[UnresolvedEntityDeclaration]],
 ) -> tuple[InheritanceMetadata | None, list[MetamodelIssue]]:
     inheritance = declaration.inheritance
     match inheritance:
@@ -703,7 +774,7 @@ def _resolve_inheritance(
 def _resolve_parent(
     declaration: UnresolvedEntityDeclaration,
     parent: EntityReference,
-    index: Mapping[EntityIdentity, UnresolvedEntityDeclaration],
+    index: Mapping[EntityIdentity, Sequence[UnresolvedEntityDeclaration]],
 ) -> tuple[EntityIdentity | None, list[MetamodelIssue]]:
     identity = resolve_entity_reference(declaration.identity, parent)
     if identity in index:

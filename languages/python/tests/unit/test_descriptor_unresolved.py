@@ -175,6 +175,64 @@ def test_the_adapter_rejects_an_empty_record_model() -> None:
 
 
 # --------------------------------------------------------------------------- #
+# A model value's own refusal is a fact about the descriptor.                   #
+# --------------------------------------------------------------------------- #
+def test_an_empty_namespace_is_a_descriptor_rejection_naming_its_entity() -> None:
+    key = records.Attribute(name="id", type="int64", column="id", primary_key=True)
+    entity = records.Entity(name="Account", namespace="", table="account", attributes=(key,))
+    with pytest.raises(DescriptorError, match=r"entity '\.Account': an Entity namespace"):
+        unresolved_metamodel(records.Metamodel((entity,)))
+
+
+def test_a_bounded_length_on_a_non_text_attribute_is_a_descriptor_rejection() -> None:
+    key = records.Attribute(name="id", type="int64", column="id", primary_key=True, max_length=8)
+    entity = records.Entity(name="Account", table="account", attributes=(key,))
+    with pytest.raises(DescriptorError, match="only a String Attribute bounds its length"):
+        unresolved_metamodel(records.Metamodel((entity,)))
+
+
+# --------------------------------------------------------------------------- #
+# Persistence: what the Entity declared, not what it resolves to.               #
+# --------------------------------------------------------------------------- #
+@pytest.mark.parametrize(
+    ("declared", "expected"),
+    [
+        (None, None),
+        ("read-write", PersistenceMode.READ_WRITE),
+        ("read-only", PersistenceMode.READ_ONLY),
+    ],
+    ids=["omitted", "read-write", "read-only"],
+)
+def test_the_adapter_reports_the_persistence_the_record_declared(
+    declared: records.Persistence | None, expected: PersistenceMode | None
+) -> None:
+    key = records.Attribute(name="id", type="int64", column="id", primary_key=True)
+    entity = records.Entity(
+        name="Account", table="account", persistence=declared, attributes=(key,)
+    )
+    (declaration,) = unresolved_metamodel(records.Metamodel((entity,))).entities
+    assert declaration.persistence is expected
+
+
+def test_an_authored_read_write_stays_distinguishable_from_an_omitted_one() -> None:
+    def declaration(spelling: str) -> UnresolvedEntityDeclaration:
+        text = f"""
+        entity:
+          name: Account
+          table: account
+          {spelling}
+          attributes:
+            - name: id
+              type: int64
+              primaryKey: true
+        """
+        return _only(text)
+
+    assert declaration("persistence: read-write").persistence is PersistenceMode.READ_WRITE
+    assert declaration("").persistence is None
+
+
+# --------------------------------------------------------------------------- #
 # The seam is enumeration-only over unmirrored declarations.                    #
 # --------------------------------------------------------------------------- #
 def _reachable(value: object) -> Iterator[object]:
