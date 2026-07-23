@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import dataclasses
 from collections.abc import Iterator, Mapping, MutableMapping
-from typing import Any, cast
+from typing import Any, TypeGuard, cast
 
 import pytest
 from _metamodel_support import Declaration, accepted, attribute, identity, instant, key, source
@@ -48,6 +48,17 @@ pytestmark = pytest.mark.unit
 
 _ORDER = identity("Order")
 _ITEM = identity("Item")
+
+
+def _is_text(value: object) -> TypeGuard[str]:
+    """The stand-in facet type check the suite's keys carry."""
+    return isinstance(value, str)
+
+
+def _rejects_everything(value: object) -> TypeGuard[str]:
+    """A second, deliberately different acceptance check for one owner's key."""
+    return False
+
 
 _GEO = ValueObjectShapeDeclaration(
     ValueObjectShapeKey(),
@@ -269,7 +280,7 @@ def test_a_shape_graph_that_re_enters_one_key_is_a_compiler_contract_failure() -
 
 def test_an_accepted_metamodel_delegates_lookup_and_serves_typed_facets() -> None:
     metadata = compile_metadata(accepted(source(_model(), _peer())))
-    facet_key: FacetKey[str] = FacetKey("m-test")
+    facet_key: FacetKey[str] = FacetKey("m-test", _is_text)
     model = accept_metamodel(metadata, {facet_key: "compiled"})
     assert model.entities is metadata.entities
     assert model.entity(_ORDER) is metadata.entity(_ORDER)
@@ -304,8 +315,8 @@ def test_every_index_backing_candidate_or_accepted_lookup_is_read_only() -> None
 
 def test_an_accepted_metamodel_snapshots_the_facet_mapping_it_was_given() -> None:
     metadata = compile_metadata(accepted(source(_model(), _peer())))
-    facet_key: FacetKey[str] = FacetKey("m-test")
-    smuggled: FacetKey[str] = FacetKey("m-smuggled")
+    facet_key: FacetKey[str] = FacetKey("m-test", _is_text)
+    smuggled: FacetKey[str] = FacetKey("m-smuggled", _is_text)
     supplied: dict[FacetKey[Any], object] = {facet_key: "compiled"}
     model = accept_metamodel(metadata, supplied)
     supplied[facet_key] = "replaced"
@@ -316,6 +327,7 @@ def test_an_accepted_metamodel_snapshots_the_facet_mapping_it_was_given() -> Non
 
 
 def test_a_facet_key_is_identified_by_its_owning_module() -> None:
-    assert FacetKey("m-relationship") == FacetKey("m-relationship")
-    assert FacetKey("m-relationship") != FacetKey("m-inheritance")
-    assert FacetKey("m-relationship").owner == "m-relationship"
+    assert FacetKey("m-relationship", _is_text) == FacetKey("m-relationship", _is_text)
+    assert FacetKey("m-relationship", _is_text) != FacetKey("m-inheritance", _is_text)
+    assert FacetKey("m-relationship", _is_text) == FacetKey("m-relationship", _rejects_everything)
+    assert FacetKey("m-relationship", _is_text).owner == "m-relationship"

@@ -30,6 +30,8 @@ from parallax.core.metamodel import (
     Resolved,
     UnresolvedMetamodel,
     accept_metamodel,
+    is_candidate_metamodel,
+    is_compiled_metadata,
     resolve,
     sort_issues,
 )
@@ -340,29 +342,10 @@ def _is_untyped_tuple(value: object) -> TypeGuard[tuple[object, ...]]:
     return isinstance(value, tuple)
 
 
-def _is_candidate_metamodel(value: object) -> TypeGuard[CandidateMetamodel]:
-    """Whether ``value`` presents the Candidate Metamodel surface later steps read.
-
-    ``Resolved`` is a plain carrier, so a resolver defect can seat any object in
-    it. The surface every later step depends on is a nonempty immutable Entity
-    sequence plus exact lookup; anything else is rejected at this seam rather
-    than surfacing as an attribute error inside a Rule Set.
-    """
-    entities = getattr(value, "entities", None)
-    return (
-        _is_untyped_tuple(entities) and bool(entities) and callable(getattr(value, "entity", None))
-    )
-
-
-def _is_compiled_metadata(value: object) -> TypeGuard[CompiledMetadata]:
-    """Whether ``value`` presents the Compiled Metadata surface an accepted model owns."""
-    entities = getattr(value, "entities", None)
-    return _is_untyped_tuple(entities) and callable(getattr(value, "entity", None))
-
-
 # The builtin containers whose whole purpose is in-place mutation. A facet is an
-# immutable derived view, so returning one of these is a compiler defect; the
-# facet's own type parameter is erased at runtime and cannot be checked.
+# immutable derived view, so returning one of these is a compiler defect. This is
+# the floor no facet owner can lower; which immutable values are that owner's
+# facet is its own key's decision.
 _MUTABLE_FACET_TYPES: Final[tuple[type, ...]] = (list, dict, set, bytearray)
 
 
@@ -414,7 +397,7 @@ def _resolve_once(
     result = _invoke_resolver(unresolved)
     if isinstance(result, Resolved):
         candidate = result.candidate
-        if not _is_candidate_metamodel(candidate):
+        if not is_candidate_metamodel(candidate):
             raise FormationContractError(
                 FORMATION_RESOLVER_RESULT_INVALID,
                 "the fixed resolver resolved to a value that is not a Candidate Metamodel",
@@ -519,7 +502,7 @@ def _compile_metadata(profile: FormationProfile, candidate: CandidateMetamodel) 
             owner=owner,
             cause=error,
         ) from error
-    if not _is_compiled_metadata(metadata):
+    if not is_compiled_metadata(metadata):
         raise FormationContractError(
             FORMATION_COMPILER_FAILED,
             "the Metadata Compiler returned a value that is not Compiled Metadata",
@@ -569,7 +552,8 @@ def _compile_facets(
     """Compile the complete facet set, publishing none of it until all succeed.
 
     Each compiler receives a read-only mapping of exactly the facets it declared,
-    and installs its result only under its own key.
+    and installs its result only under its own key — after that key's own owner
+    accepted the value as its facet.
     """
     facets: dict[FacetKey[Any], object] = {}
     for compiler in _compilation_order(profile):
@@ -597,6 +581,16 @@ def _compile_facets(
             raise FormationContractError(
                 FORMATION_COMPILER_FAILED,
                 "the Model Compiler returned a mutable collection as its facet",
+                owner=owner,
+            )
+        with _contract_reads(
+            FORMATION_COMPILER_FAILED, "the facet key's own acceptance check raised", owner=owner
+        ):
+            accepted = key.accepts(facet)
+        if not accepted:
+            raise FormationContractError(
+                FORMATION_COMPILER_FAILED,
+                f"the Model Compiler returned a value {key.owner!r} does not accept as its facet",
                 owner=owner,
             )
         facets[key] = facet

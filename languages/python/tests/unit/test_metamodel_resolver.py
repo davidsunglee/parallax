@@ -423,6 +423,57 @@ def test_a_component_repeated_three_times_reports_one_duplicate_identity() -> No
     assert [issue.code for issue in issues] == [INDEX_ATTRIBUTE_DUPLICATE]
 
 
+def test_every_repetition_a_legal_model_allows_still_reports_each_defect_once() -> None:
+    """One model repeating every position a defect can be reached from twice.
+
+    The formation seam holds the resolver to distinct issue identities, so a
+    repetition that a frontend is allowed to hand over — a duplicated
+    declaration, a repeated Index component, a redeclared Temporal Dimension, a
+    name declared three times, an ordering term repeating a missing Attribute —
+    must not turn a model defect into a contract failure.
+    """
+    component = AttributeIdentity(_ORDER, "absent")
+    axis = AsOfAxisMetadata(
+        TemporalDimension.VALID_TIME,
+        AttributeIdentity(_ORDER, "gone"),
+        AttributeIdentity(_ORDER, "gone"),
+    )
+    declaration = Declaration(
+        identity=_ORDER,
+        attributes=(attribute(_ORDER, "sku"), attribute(_ORDER, "sku"), attribute(_ORDER, "sku")),
+        relationships=(
+            UnresolvedDefiningRelationshipDeclaration(
+                identity=RelationshipIdentity(_ORDER, "items"),
+                cardinality=Cardinality.ONE_TO_MANY,
+                join=UnresolvedRelationshipJoin(
+                    source=AttributeIdentity(_ORDER, "id"),
+                    target=AttributeReference(RelativeEntityReference("Item"), "nowhere"),
+                ),
+                order_by=(
+                    UnresolvedRelationshipOrder("nowhere"),
+                    UnresolvedRelationshipOrder("nowhere"),
+                ),
+            ),
+        ),
+        as_of_axes=(axis, axis),
+        indices=(IndexMetadata(IndexIdentity(_ORDER, "orders_ix"), (component, component)),),
+    )
+    peer = Declaration(identity=_ITEM, attributes=(key(_ITEM),))
+    issues = rejection(source(declaration, declaration, peer))
+    assert len(set(issues)) == len(issues)
+    assert sorted({issue.code for issue in issues}) == [
+        AS_OF_ATTRIBUTE_DUPLICATE,
+        AS_OF_ATTRIBUTE_MISSING,
+        AS_OF_DIMENSION_DUPLICATE,
+        DUPLICATE_ENTITY_IDENTITY,
+        INDEX_ATTRIBUTE_DUPLICATE,
+        INDEX_ATTRIBUTE_MISSING,
+        LOCAL_MEMBER_COLLISION,
+        PRIMARY_KEY_MISSING,
+        UNRESOLVED_ATTRIBUTE_REFERENCE,
+    ]
+
+
 def test_an_unresolvable_relationship_reference_is_reported_once() -> None:
     item = Declaration(
         identity=_ITEM,

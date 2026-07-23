@@ -13,10 +13,11 @@ or implements another module's semantic rules.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Iterator, Mapping, Sequence
+from collections import Counter
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import Final
+from typing import Final, TypeGuard
 
 from parallax.core.base import Timestamp
 from parallax.core.metamodel._identities import (
@@ -95,6 +96,7 @@ __all__ = [
     "Rejected",
     "ResolutionResult",
     "Resolved",
+    "is_candidate_metamodel",
     "resolve",
 ]
 
@@ -256,19 +258,41 @@ type ResolutionResult = Resolved | Rejected
 """The resolver's exact collaboration result."""
 
 
+def is_candidate_metamodel(value: object) -> TypeGuard[CandidateMetamodel]:
+    """Whether ``value`` is a Candidate Metamodel this resolver produced.
+
+    Resolution is fixed and is the sole source of the state semantic Rule Sets
+    validate, so provenance decides: a value that merely presents the surface
+    came from somewhere else, and :class:`Resolved` is a plain carrier that
+    cannot vouch for what a defective resolver seated in it. A candidate is also
+    nonempty, because the frontend source formation begins from is.
+
+    Exists for the seam that receives a resolution result and must classify a
+    wrong-typed one as a contract failure rather than let it reach a Rule Set.
+    """
+    return isinstance(value, _CandidateMetamodel) and bool(value.entities)
+
+
 def resolve(unresolved: UnresolvedMetamodel) -> ResolutionResult:
     """Resolve ``unresolved`` into a Candidate Metamodel or every issue blocking it.
 
     Aggregating: the result names every foundational defect in the model, not
-    the first one found. Resolution never partially succeeds — a rejected model
-    yields no candidate at all.
+    the first one found, and names each of them once — a legal model can make
+    one defect reachable from several duplicate declarations or from a component
+    repeated within one declaration, and each such defect is reported where it
+    is discovered. Resolution never partially succeeds — a rejected model yields
+    no candidate at all.
     """
     declarations = tuple(unresolved.entities)
     issues: list[MetamodelIssue] = []
     index: dict[EntityIdentity, list[UnresolvedEntityDeclaration]] = {}
     for declaration in declarations:
         identity = declaration.identity
-        if not _well_formed_entity_name(identity.name):
+        bearers = index.setdefault(identity, [])
+        # An Identity's grammar is a property of the Identity, and duplication is
+        # a property of the set of declarations bearing it, so each is judged
+        # once for the Identity rather than once per bearer.
+        if not bearers and not _well_formed_entity_name(identity.name):
             issues.append(
                 MetamodelIssue(
                     INVALID_ENTITY_IDENTITY,
@@ -276,8 +300,7 @@ def resolve(unresolved: UnresolvedMetamodel) -> ResolutionResult:
                     message=(f"Entity name {identity.name!r} is not a nonempty dot-free name"),
                 )
             )
-        bearers = index.setdefault(identity, [])
-        if bearers:
+        if len(bearers) == 1:
             issues.append(
                 MetamodelIssue(
                     DUPLICATE_ENTITY_IDENTITY,
@@ -288,16 +311,26 @@ def resolve(unresolved: UnresolvedMetamodel) -> ResolutionResult:
         bearers.append(declaration)
 
     entities: list[EntityDeclaration] = []
+    # Duplicate Identities are legal input, so one Entity's defect is reachable
+    # from every declaration bearing its Identity. Such a defect is reported for
+    # the Identity, not once per bearer; a repetition from any other source stays
+    # in the result, where the formation seam holds this emitter to distinct
+    # issue identities like any other.
+    reached: dict[EntityIdentity, set[MetamodelIssue]] = {}
     for declaration in declarations:
-        issues.extend(_collision_issues(declaration))
-        issues.extend(_temporal_reservation_issues(declaration))
-        issues.extend(_primary_key_issues(declaration))
-        issues.extend(_index_issues(declaration, index))
-        issues.extend(_axis_issues(declaration))
+        declared: list[MetamodelIssue] = []
+        declared.extend(_collision_issues(declaration))
+        declared.extend(_temporal_reservation_issues(declaration))
+        declared.extend(_primary_key_issues(declaration))
+        declared.extend(_index_issues(declaration, index))
+        declared.extend(_axis_issues(declaration))
         relationships, relationship_issues = _resolve_relationships(declaration, index)
         inheritance, inheritance_issues = _resolve_inheritance(declaration, index)
-        issues.extend(relationship_issues)
-        issues.extend(inheritance_issues)
+        declared.extend(relationship_issues)
+        declared.extend(inheritance_issues)
+        sibling = reached.setdefault(declaration.identity, set())
+        issues.extend(issue for issue in declared if issue not in sibling)
+        sibling.update(declared)
         entities.append(
             _EntityDeclaration(
                 identity=declaration.identity,
@@ -313,11 +346,7 @@ def resolve(unresolved: UnresolvedMetamodel) -> ResolutionResult:
         )
 
     if issues:
-        # Duplicate identities are legal input, so one defect is reachable from
-        # several declarations and a repeated component is reachable from one.
-        # A repeated ``(code, location, related)`` identity is a contract failure
-        # at the formation seam, so each identity is reported exactly once.
-        return Rejected(sort_issues(dict.fromkeys(issues)))
+        return Rejected(sort_issues(issues))
     return Resolved(
         _CandidateMetamodel(tuple(sorted(entities, key=lambda entity: entity.identity.sort_key)))
     )
@@ -360,13 +389,23 @@ def _collision_issues(declaration: UnresolvedEntityDeclaration) -> list[Metamode
 def _name_collision_issues(
     positions: Iterable[tuple[str, ModelLocation]],
 ) -> list[MetamodelIssue]:
+    """The colliding positions among ``positions``, each named once.
+
+    Two members of one category that share a name also share a Model Location,
+    so a name declared three times over collides at one position rather than at
+    two; the collision is reported for the position, not for each repetition.
+    """
     issues: list[MetamodelIssue] = []
     first: dict[str, ModelLocation] = {}
+    colliding: set[ModelLocation] = set()
     for name, location in positions:
         declared = first.get(name)
         if declared is None:
             first[name] = location
             continue
+        if location in colliding:
+            continue
+        colliding.add(location)
         issues.append(
             MetamodelIssue(
                 LOCAL_MEMBER_COLLISION,
@@ -413,6 +452,11 @@ def _shape_collision_issues(
 def _temporal_reservation_issues(
     declaration: UnresolvedEntityDeclaration,
 ) -> list[MetamodelIssue]:
+    """The members bearing a name this Entity's temporal shape reserves.
+
+    Members repeating one name share a Model Location, so the reservation is
+    reported for the position rather than for each repetition.
+    """
     reserved: dict[str, TemporalDimension] = {}
     framework: set[AttributeIdentity] = set()
     for axis in declaration.as_of_axes:
@@ -424,11 +468,13 @@ def _temporal_reservation_issues(
         return []
 
     issues: list[MetamodelIssue] = []
+    rejected: set[ModelLocation] = set()
 
     def reject(name: str, location: ModelLocation) -> None:
         dimension = reserved.get(name)
-        if dimension is None:
+        if dimension is None or location in rejected:
             return
+        rejected.add(location)
         issues.append(
             MetamodelIssue(
                 TEMPORAL_MEMBER_RESERVED,
@@ -489,6 +535,12 @@ def _index_issues(
     declaration: UnresolvedEntityDeclaration,
     index: Mapping[EntityIdentity, Sequence[UnresolvedEntityDeclaration]],
 ) -> list[MetamodelIssue]:
+    """The Index defects of one declaration, each component judged once.
+
+    A component occurring several times in one Index is one repetition defect
+    and one component, so the repetition is reported when it is first observed
+    and the component's locality is judged on its first occurrence alone.
+    """
     local = {attribute.identity.name for attribute in declaration.attributes}
     issues: list[MetamodelIssue] = []
     for declared_index in declaration.indices:
@@ -499,10 +551,11 @@ def _index_issues(
                     INDEX_EMPTY, location, message="an Index declares at least one Attribute"
                 )
             )
-        seen: set[AttributeIdentity] = set()
+        occurrences: Counter[AttributeIdentity] = Counter()
         for component in declared_index.attributes:
             related = (AttributeLocation(component),)
-            if component in seen:
+            occurrences[component] += 1
+            if occurrences[component] == 2:
                 issues.append(
                     MetamodelIssue(
                         INDEX_ATTRIBUTE_DUPLICATE,
@@ -511,7 +564,8 @@ def _index_issues(
                         message=f"Attribute {component.name!r} occurs more than once in the Index",
                     )
                 )
-            seen.add(component)
+            if occurrences[component] > 1:
+                continue
             if component.entity != declaration.identity:
                 issues.append(
                     MetamodelIssue(
@@ -539,12 +593,22 @@ def _index_issues(
 
 
 def _axis_issues(declaration: UnresolvedEntityDeclaration) -> list[MetamodelIssue]:
+    """The As-Of Axis defects of one declaration, each position judged once.
+
+    An axis position is one Temporal Dimension of one Entity, so every axis
+    declaring one dimension shares a Model Location: declaring the dimension
+    twice is one repetition defect, and an endpoint defect two such axes both
+    carry is one defect reached twice. An axis whose start and end name one
+    Attribute likewise has a single endpoint to judge.
+    """
     local = {attribute.identity.name: attribute for attribute in declaration.attributes}
     issues: list[MetamodelIssue] = []
-    seen: set[TemporalDimension] = set()
+    dimensions: Counter[TemporalDimension] = Counter()
+    reached: dict[TemporalDimension, set[MetamodelIssue]] = {}
     for axis in declaration.as_of_axes:
         location = AsOfAxisLocation(declaration.identity, axis.dimension)
-        if axis.dimension in seen:
+        dimensions[axis.dimension] += 1
+        if dimensions[axis.dimension] == 2:
             issues.append(
                 MetamodelIssue(
                     AS_OF_DIMENSION_DUPLICATE,
@@ -552,9 +616,9 @@ def _axis_issues(declaration: UnresolvedEntityDeclaration) -> list[MetamodelIssu
                     message="one Temporal Dimension is declared more than once",
                 )
             )
-        seen.add(axis.dimension)
+        declared: list[MetamodelIssue] = []
         if axis.start_attribute == axis.end_attribute:
-            issues.append(
+            declared.append(
                 MetamodelIssue(
                     AS_OF_ATTRIBUTE_DUPLICATE,
                     location,
@@ -562,8 +626,11 @@ def _axis_issues(declaration: UnresolvedEntityDeclaration) -> list[MetamodelIssu
                     message="an axis start and end identify the same Attribute",
                 )
             )
-        for endpoint in (axis.start_attribute, axis.end_attribute):
-            issues.extend(_axis_endpoint_issues(declaration.identity, location, endpoint, local))
+        for endpoint in dict.fromkeys((axis.start_attribute, axis.end_attribute)):
+            declared.extend(_axis_endpoint_issues(declaration.identity, location, endpoint, local))
+        position = reached.setdefault(axis.dimension, set())
+        issues.extend(issue for issue in declared if issue not in position)
+        position.update(declared)
     return issues
 
 
@@ -663,6 +730,34 @@ def _resolve_relationships(
     return tuple(resolved), issues
 
 
+def _unresolvable_attribute(
+    location: ModelLocation,
+    entity: EntityIdentity,
+    bearers: Sequence[UnresolvedEntityDeclaration],
+    index: Mapping[EntityIdentity, Sequence[UnresolvedEntityDeclaration]],
+    issues: list[MetamodelIssue],
+) -> Callable[[str], bool]:
+    """A predicate over ``entity``'s Attribute names that records each miss once.
+
+    One relationship reaches one Attribute of the far Entity from its join
+    target and from every ordering term, so a name that resolves nowhere is one
+    unresolved reference however many of those reached it. The predicate appends
+    that reference to ``issues`` the first time it answers true for a name.
+    """
+    reported: set[AttributeIdentity] = set()
+
+    def unresolvable(name: str) -> bool:
+        if _applicable_attribute(bearers, name, index):
+            return False
+        target = AttributeIdentity(entity, name)
+        if target not in reported:
+            reported.add(target)
+            issues.append(_unresolved_attribute(location, target))
+        return True
+
+    return unresolvable
+
+
 def _resolve_defining(
     declaration: UnresolvedEntityDeclaration,
     relationship: UnresolvedDefiningRelationshipDeclaration,
@@ -677,18 +772,16 @@ def _resolve_defining(
         return None, [_unresolved_entity(location, target_identity)]
 
     issues: list[MetamodelIssue] = []
+    unresolvable = _unresolvable_attribute(location, target_identity, target, index, issues)
     target_name = relationship.join.target.name
-    if not _applicable_attribute(target, target_name, index):
-        issues.append(
-            _unresolved_attribute(location, AttributeIdentity(target_identity, target_name))
-        )
+    unresolvable(target_name)
     order_by: list[RelationshipOrder] = []
     for term in relationship.order_by:
-        term_identity = AttributeIdentity(target_identity, term.attribute)
-        if not _applicable_attribute(target, term.attribute, index):
-            issues.append(_unresolved_attribute(location, term_identity))
+        if unresolvable(term.attribute):
             continue
-        order_by.append(RelationshipOrder(term_identity, term.direction))
+        order_by.append(
+            RelationshipOrder(AttributeIdentity(target_identity, term.attribute), term.direction)
+        )
     if issues:
         return None, issues
     return (
@@ -734,13 +827,14 @@ def _resolve_reverse(
         ]
 
     issues: list[MetamodelIssue] = []
+    unresolvable = _unresolvable_attribute(location, peer_entity, peer, index, issues)
     order_by: list[RelationshipOrder] = []
     for term in relationship.order_by:
-        term_identity = AttributeIdentity(peer_entity, term.attribute)
-        if not _applicable_attribute(peer, term.attribute, index):
-            issues.append(_unresolved_attribute(location, term_identity))
+        if unresolvable(term.attribute):
             continue
-        order_by.append(RelationshipOrder(term_identity, term.direction))
+        order_by.append(
+            RelationshipOrder(AttributeIdentity(peer_entity, term.attribute), term.direction)
+        )
     if issues:
         return None, issues
     return (

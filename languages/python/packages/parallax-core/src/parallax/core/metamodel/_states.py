@@ -12,9 +12,9 @@ guarantee, and a presence check over data members would not be sound.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
-from dataclasses import dataclass
-from typing import Protocol
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass, field
+from typing import Protocol, TypeGuard
 
 from parallax.core.base import NeutralType
 from parallax.core.metamodel._identities import (
@@ -251,12 +251,20 @@ class CompiledMetadata(Protocol):
 class FacetKey[T]:
     """The typed key one compiling module's facet is installed and retrieved under.
 
-    Identity is the owning module's catalog identity, so a module owns exactly
-    one key. The type parameter carries the facet's type through
-    :meth:`Metamodel.facet`; it constrains no runtime state.
+    Identity is the owning module's catalog identity alone, so a module owns
+    exactly one key and two keys naming one owner are the same key. The type
+    parameter carries the facet's type through :meth:`Metamodel.facet` and is
+    erased at run time, so ``accepts`` is its run-time counterpart: the owner's
+    own decision procedure for "is this value my facet?", which the formation
+    seam calls on whatever its compiler returned before installing it. Only the
+    owner can answer that — a facet may be a Protocol, and no generic check can
+    see through the erased parameter — so supplying ``accepts`` is part of
+    declaring a key, and a value it rejects is a compiler contract failure.
+    ``accepts`` never participates in equality or hashing.
     """
 
     owner: str
+    accepts: Callable[[object], TypeGuard[T]] = field(compare=False)
 
 
 class Metamodel(Protocol):
