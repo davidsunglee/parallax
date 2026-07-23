@@ -53,7 +53,6 @@ from parallax.core.inheritance._rules import (
     MEMBER_SHADOWING,
     MISSING_ROOT,
     MISSING_TAG_VALUE,
-    MULTIPLE_ROOTS,
     OPTIMISTIC_LOCKING_NOT_ROOT_OWNED,
     PERSISTENCE_NOT_ROOT_OWNED,
     PRIMARY_KEY_MISSING,
@@ -80,7 +79,6 @@ __all__ = [
     "MISSING_ROOT",
     "MISSING_TAG_VALUE",
     "MODEL_COMPILER",
-    "MULTIPLE_ROOTS",
     "OPTIMISTIC_LOCKING_NOT_ROOT_OWNED",
     "PERSISTENCE_NOT_ROOT_OWNED",
     "PRIMARY_KEY_MISSING",
@@ -185,7 +183,13 @@ def _participants(metamodel: Metamodel) -> tuple[Entity, ...]:
 
 
 def family_of(metamodel: Metamodel) -> Family:
-    """The inheritance :class:`Family` of ``metamodel`` (empty when none participate)."""
+    """The inheritance :class:`Family` of ``metamodel`` (empty when none participate).
+
+    ``root`` is named only when the descriptor declares exactly one: a
+    descriptor carrying several independent families (or none at all) has no
+    single root to name, so ``root`` is ``None`` and a caller needing a
+    particular position's root resolves it with :func:`family_root`.
+    """
     participants = _participants(metamodel)
     roots = [entity for entity in participants if _inh(entity).role == "root"]
     root = roots[0] if len(roots) == 1 else None
@@ -371,26 +375,67 @@ def validate(metamodel: Metamodel) -> None:
     """Validate every inheritance family invariant, raising :class:`InheritanceError`.
 
     The check order pins each corpus ``rejectedRule``: parent resolution,
-    acyclicity, multiple-root detection, strategy and family-owned-fact locality,
-    ancestry-reaches-a-root, missing-root detection, then the selected strategy's
-    table/tag formation rules.
+    acyclicity, strategy and family-owned-fact locality, ancestry-reaches-a-root,
+    missing-root detection, then the selected strategy's table/tag formation
+    rules. The last three are asked once per independent family, so a descriptor
+    declaring several never has one family's root or strategy answer for another.
     """
     participants = _participants(metamodel)
     if not participants:
         return
     by_name = {entity.name: entity for entity in metamodel.entities}
-    roots = [entity for entity in participants if _inh(entity).role == "root"]
 
     _reject_unknown_parent(participants, by_name)
     _reject_cycles(participants)
-    _reject_multiple_roots(roots)
     _reject_strategy_redeclared(participants)
     _reject_descendant_temporal_axes(participants)
     _reject_descendant_optimistic_locking(participants)
     _reject_concrete_without_root(participants, by_name)
-    _reject_missing_root(roots)
-    _reject_strategy_storage(roots[0], participants)
-    _reject_tph_tag_values(roots, participants)
+    rooted = [
+        (_reject_missing_root(root, members), members)
+        for root, members in _families(participants, by_name)
+    ]
+    for root, members in rooted:
+        _reject_strategy_storage(root, members)
+    for root, members in rooted:
+        _reject_tph_tag_values(root, members)
+
+
+def _families(
+    participants: tuple[Entity, ...], by_name: dict[str, Entity]
+) -> list[tuple[Entity | None, tuple[Entity, ...]]]:
+    """Each independent inheritance family of ``participants``: the topmost
+    position its members' parent links reach (``None`` when that position is not
+    a root), paired with the members themselves in declaration order.
+
+    A position has at most one parent, so two roots can never share an ancestry
+    and every participant belongs to exactly one family. Valid only once unknown
+    parents and cycles are rejected: either would leave the upward walk without
+    a terminating top.
+    """
+    grouped: dict[str, list[Entity]] = {}
+    for entity in participants:
+        grouped.setdefault(_family_top(entity, by_name).name, []).append(entity)
+    families: list[tuple[Entity | None, tuple[Entity, ...]]] = []
+    for name, members in grouped.items():
+        top = by_name[name]
+        families.append((top if _inh(top).role == "root" else None, tuple(members)))
+    return families
+
+
+def _family_top(entity: Entity, by_name: dict[str, Entity]) -> Entity:
+    """The highest participant ``entity``'s parent links reach — itself when it
+    declares no parent, and the last participant on the chain when the chain
+    leaves the family (a parent that declares no inheritance of its own)."""
+    top = entity
+    while True:
+        parent = _inh(top).parent
+        if parent is None:
+            return top
+        ancestor = by_name.get(parent)
+        if ancestor is None or ancestor.inheritance is None:
+            return top
+        top = ancestor
 
 
 def _reject_unknown_parent(participants: tuple[Entity, ...], by_name: dict[str, Entity]) -> None:
@@ -418,14 +463,6 @@ def _reject_cycles(participants: tuple[Entity, ...]) -> None:
                 )
             seen.add(current)
             current = _inh(by_name[current]).parent
-
-
-def _reject_multiple_roots(roots: list[Entity]) -> None:
-    if len(roots) > 1:
-        raise InheritanceError(
-            "inheritance-multiple-roots",
-            f"more than one inheritance root: {sorted(root.name for root in roots)}",
-        )
 
 
 def _reject_strategy_redeclared(participants: tuple[Entity, ...]) -> None:
@@ -512,12 +549,15 @@ def _reject_concrete_without_root(
             )
 
 
-def _reject_missing_root(roots: list[Entity]) -> None:
-    if len(roots) == 0:
+def _reject_missing_root(root: Entity | None, members: tuple[Entity, ...]) -> Entity:
+    """``root`` itself once it is one, so a family that reaches no root is
+    rejected here rather than surfacing as a missing strategy downstream."""
+    if root is None:
         raise InheritanceError(
             "inheritance-missing-root",
-            "inheritance participants declare no root",
+            f"inheritance participants {sorted(member.name for member in members)} declare no root",
         )
+    return root
 
 
 def _reject_strategy_storage(root: Entity, participants: tuple[Entity, ...]) -> None:
@@ -570,8 +610,7 @@ def _reject_strategy_storage(root: Entity, participants: tuple[Entity, ...]) -> 
             )
 
 
-def _reject_tph_tag_values(roots: list[Entity], participants: tuple[Entity, ...]) -> None:
-    root = roots[0]
+def _reject_tph_tag_values(root: Entity, participants: tuple[Entity, ...]) -> None:
     if _inh(root).strategy != "table-per-hierarchy":
         return
     concretes = [entity for entity in participants if _inh(entity).role == "concrete-subtype"]

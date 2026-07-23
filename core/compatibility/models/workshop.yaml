@@ -1,0 +1,136 @@
+# Workshop: TWO INDEPENDENT inheritance families in ONE descriptor (m-inheritance).
+#
+# This descriptor is an instance of core/schemas/metamodel.schema.json. It is the
+# corpus witness that "a family has exactly one root" is a statement about a FAMILY,
+# never about the whole model: a descriptor may declare as many independent families
+# as it has roots, each carrying its OWN strategy, and each judged alone. Nothing
+# here is shared between the two trees — no ancestry, no table, no tag column:
+#
+#   Tool       (root, ABSTRACT)     — table-per-hierarchy; shared `tool` table,
+#                                     tag column `kind`; owns id + name + workshop_id
+#     HandTool (concrete-subtype)   — tagValue 'hand';  adds grip_size
+#     PowerTool(concrete-subtype)   — tagValue 'power'; adds wattage
+#
+#   Material   (root, ABSTRACT)     — table-per-concrete-subtype; tableless, rowless,
+#                                     NO tag; owns id + name + workshop_id
+#     Timber   (concrete-subtype)   — its own `timber` table; adds grade
+#     Steel    (concrete-subtype)   — its own `steel` table;  adds alloy
+#
+# The two strategies coexist deliberately: a validator that resolved ONE strategy for
+# the whole descriptor would apply table-per-hierarchy's shared-table rule to Timber
+# and Steel (or table-per-concrete-subtype's tableless rule to Tool) and reject a legal
+# model. Family membership is therefore resolved from each position's own ancestry.
+#
+# `Workshop` is a plain non-inheritance entity owning BOTH families through the
+# inherited `workshop_id` foreign key each root declares, so the two relationships
+# below cross a family boundary in ONE resolution pass:
+#   Workshop.tools     -> Tool     (abstract ROOT)  — reaches { HandTool, PowerTool }
+#   Workshop.materials -> Material (abstract ROOT)  — reaches { Steel, Timber }
+#
+# There are NO fixtures and NO golden SQL for this model: it exists to be FORMED —
+# the corpus-wide model sweep ingests, round-trips, and validates every family
+# invariant against it, so nothing is ever provisioned or executed.
+entities:
+  - name: Tool
+    namespace: parallax.compatibility
+    table: tool
+    inheritance:
+      role: root
+      strategy: table-per-hierarchy
+      tag:
+        column: kind
+    attributes:
+      - name: id
+        type: int64
+        primaryKey: true
+      - name: name
+        type: string
+        maxLength: 32
+      - name: workshopId
+        type: int64
+        column: workshop_id
+        nullable: true
+  - name: HandTool
+    namespace: parallax.compatibility
+    inheritance:
+      role: concrete-subtype
+      parent: Tool
+      tagValue: hand
+    attributes:
+      - name: gripSize
+        type: int32
+        column: grip_size
+        nullable: true
+  - name: PowerTool
+    namespace: parallax.compatibility
+    inheritance:
+      role: concrete-subtype
+      parent: Tool
+      tagValue: power
+    attributes:
+      - name: wattage
+        type: int32
+        nullable: true
+  - name: Material
+    namespace: parallax.compatibility
+    inheritance:
+      role: root
+      strategy: table-per-concrete-subtype
+    attributes:
+      - name: id
+        type: int64
+        primaryKey: true
+      - name: name
+        type: string
+        maxLength: 32
+      - name: workshopId
+        type: int64
+        column: workshop_id
+        nullable: true
+  - name: Timber
+    namespace: parallax.compatibility
+    table: timber
+    inheritance:
+      role: concrete-subtype
+      parent: Material
+    attributes:
+      - name: grade
+        type: string
+        maxLength: 8
+        nullable: true
+  - name: Steel
+    namespace: parallax.compatibility
+    table: steel
+    inheritance:
+      role: concrete-subtype
+      parent: Material
+    attributes:
+      - name: alloy
+        type: string
+        maxLength: 8
+        nullable: true
+  - name: Workshop
+    namespace: parallax.compatibility
+    table: workshop
+    attributes:
+      - name: id
+        type: int64
+        primaryKey: true
+      - name: name
+        type: string
+        maxLength: 32
+    relationships:
+      - name: tools
+        cardinality: one-to-many
+        join:
+          source: id
+          target: { entity: Tool, attribute: workshopId }
+      - name: materials
+        cardinality: one-to-many
+        join:
+          source: id
+          target: { entity: Material, attribute: workshopId }
+    indices:
+      - name: workshop_pk
+        attributes: [id]
+        unique: true
