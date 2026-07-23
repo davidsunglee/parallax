@@ -35,6 +35,8 @@ from parallax.core.db_port import DbPort, JsonDocument, Row
 from parallax.core.descriptor import Attribute, DescriptorError, Entity, Metamodel, column_order
 from parallax.core.descriptor import deserialize as deserialize_metamodel
 from parallax.core.dialect import Dialect, dialect_for
+from parallax.core.metamodel import EntityIdentity, EntityMetadata
+from parallax.core.metamodel import Metamodel as AcceptedMetamodel
 from parallax.core.op_algebra import Operation, OperationError, OperationRejectedError, deserialize
 from parallax.core.op_algebra import validate_operation as validate_op_algebra_operation
 from parallax.core.sql_gen import CompiledRead, SqlGenError, Statement, compile_read
@@ -164,6 +166,29 @@ def load_case_metamodel(case: case_format.Case) -> Metamodel:
     return models.load_model(model_path)
 
 
+def case_model(meta: Metamodel) -> AcceptedMetamodel:
+    """The accepted model a case's parsed record graph forms into.
+
+    Both shapes describe the same descriptor, so a behavioral seam that has
+    migrated to the Metamodel Interface is handed this one while the engine
+    paths that still read records keep the graph they were given.
+    """
+    return models.accepted_model(meta)
+
+
+def case_entity(model: AcceptedMetamodel, entity: Entity) -> EntityMetadata:
+    """``entity``'s accepted Metadata in ``model``.
+
+    A case names an Entity by its bare declared name, which the record graph
+    already resolved; taking that record rather than the name again is what
+    makes the two views provably the same Entity of the same descriptor.
+    """
+    metadata = model.entity(EntityIdentity(entity.namespace, entity.name))
+    if metadata is None:  # pragma: no cover - both views come from one descriptor
+        raise EngineError(f"{entity.canonical_name!r} names no entity the accepted model declares")
+    return metadata
+
+
 def _read_target_and_operation(case: case_format.Case) -> tuple[str, object]:
     when = case.document.get("when")
     if not isinstance(when, Mapping):
@@ -260,12 +285,19 @@ def _compile_statement(case: case_format.Case, dialect_name: str) -> CompiledRea
         )
     target, operation_doc = _read_target_and_operation(case)
     meta = load_case_metamodel(case)
+    model = case_model(meta)
     dialect = dialect_for(dialect_name)
     lock = read_lock.mode_for(_read_case_concurrency(case))
     try:
-        operation = _canonicalize_read(operation_doc, meta.entity(target), meta)
+        entity = meta.entity(target)
+        operation = _canonicalize_read(operation_doc, entity, meta)
         return compile_read(
-            operation, meta, dialect, target, result_form=_result_form(case), lock=lock
+            operation,
+            model,
+            dialect,
+            case_entity(model, entity),
+            result_form=_result_form(case),
+            lock=lock,
         )
     except (OperationError, SqlGenError, TemporalReadError, KeyError) as exc:
         raise EngineError(f"{case.path.name}: {exc}") from exc
@@ -1152,6 +1184,7 @@ def _lower_predicate_write_step(
 def _lower_find(
     step: Mapping[str, object],
     meta: Metamodel,
+    model: AcceptedMetamodel,
     dialect: Dialect,
     concurrency: Concurrency | None,
     *,
@@ -1202,13 +1235,19 @@ def _lower_find(
     find_doc = step.get("find")
     if not isinstance(target, str) or find_doc is None:
         raise EngineError("scenario find step needs `targetEntity` and `find`")
-    operation = _canonicalize_read(find_doc, meta.entity(target), meta)
+    entity = meta.entity(target)
+    operation = _canonicalize_read(find_doc, entity, meta)
     lock = read_lock.mode_for(concurrency)
     # A scenario find's emission is graded on SQL text and binds alone — the
     # compiled read's row transform belongs to whoever consumes the rows, and a
     # scenario find step's rows are consumed by the production find executor.
     return compile_read(
-        operation, meta, dialect, target, result_form=result_form, lock=lock
+        operation,
+        model,
+        dialect,
+        case_entity(model, entity),
+        result_form=result_form,
+        lock=lock,
     ).statement
 
 
@@ -1231,6 +1270,7 @@ def _scenario_lowered(case: case_format.Case, dialect_name: str) -> list[_Lowere
     does.
     """
     meta = load_case_metamodel(case)
+    model = case_model(meta)
     dialect = dialect_for(dialect_name)
     concurrency = _concurrency(case)
     shadow = TemporalShadow()
@@ -1270,7 +1310,7 @@ def _scenario_lowered(case: case_format.Case, dialect_name: str) -> list[_Lowere
                         _LoweredStep(f"/scenario/{index}/write", statements, True, rollback)
                     )
             else:
-                statement = _lower_find(step, meta, dialect, find_lock)
+                statement = _lower_find(step, meta, model, dialect, find_lock)
                 lowered.append(_LoweredStep(f"/scenario/{index}/find", (statement,), False, False))
     except _LOWERING_ERRORS as exc:
         raise EngineError(f"{case.path.name}: {exc}") from exc
@@ -1350,6 +1390,7 @@ def _compile_snapshot_scenario(
     `mutate` contributes no emissions and no round trips at all (m-snapshot-
     read: an in-memory-only change, never SQL)."""
     meta = load_case_metamodel(case)
+    model = case_model(meta)
     dialect = dialect_for(dialect_name)
     emissions: list[Emission] = []
     try:
@@ -1363,9 +1404,10 @@ def _compile_snapshot_scenario(
                 raise EngineError(
                     f"{case.path.name}: scenario find step needs `targetEntity` and `find`"
                 )
-            operation = _canonicalize_read(find_doc, meta.entity(target), meta)
+            entity = meta.entity(target)
+            operation = _canonicalize_read(find_doc, entity, meta)
             statement = compile_read(
-                operation, meta, dialect, target, result_form="instance"
+                operation, model, dialect, case_entity(model, entity), result_form="instance"
             ).statement
             emissions.append(Emission(f"/scenario/{index}/find", statement.sql, statement.binds))
     except (OperationError, SqlGenError, TemporalReadError, KeyError) as exc:
@@ -1920,6 +1962,7 @@ def _run_uow_group(
     group_observations: ScenarioObservations = {}
     instant = normalize_instant(dt.datetime.fromisoformat(tx_instant))
     database = handle.Database(port, meta, dialect=dialect, clock=FixedClock(instant))
+    model = case_model(meta)
     lowered: list[_LoweredStep] = []
 
     def body(tx: handle.Transaction) -> None:
@@ -1948,7 +1991,7 @@ def _run_uow_group(
                     )
                 )
             else:
-                statement = _lower_find(step, meta, dialect, concurrency)
+                statement = _lower_find(step, meta, model, dialect, concurrency)
                 target = cast("str", step["targetEntity"])
                 conn = tx._conn  # pyright: ignore[reportPrivateUsage]
                 rows = tx._uow.read(  # pyright: ignore[reportPrivateUsage]
@@ -2118,6 +2161,7 @@ def _run_interleaved_group(
     """
     lowered: dict[int, _LoweredStep] = {}
     group_observations: ScenarioObservations = {}
+    model = case_model(meta)
 
     def body(tx: handle.Transaction) -> None:
         for position, index in enumerate(indices):
@@ -2151,7 +2195,7 @@ def _run_interleaved_group(
                 if is_last:
                     tx._uow.flush()  # pyright: ignore[reportPrivateUsage]
             else:
-                statement = _lower_find(step, meta, dialect, concurrency)
+                statement = _lower_find(step, meta, model, dialect, concurrency)
                 target = cast("str", step["targetEntity"])
                 conn = tx._conn  # pyright: ignore[reportPrivateUsage]
                 rows = tx._uow.read(  # pyright: ignore[reportPrivateUsage]
@@ -2682,6 +2726,7 @@ def run_interleaved_scenario_case(
     """
     steps = _scenario_steps(case)
     meta = load_case_metamodel(case)
+    model = case_model(meta)
     dialect = dialect_for(dialect_name)
     concurrency = _concurrency(case)
     groups = _scenario_group_step_indices(steps)
@@ -2746,7 +2791,7 @@ def run_interleaved_scenario_case(
                 "interleaved uow race is unsupported — m-opt-lock-012's own ungrouped "
                 "step is a trailing verify find only"
             )
-        statement = _lower_find(step, meta, dialect, concurrency)
+        statement = _lower_find(step, meta, model, dialect, concurrency)
         rows_by_index[index] = _execute_reads(port, dialect, (statement,))
         lowered[index] = _LoweredStep(f"/scenario/{index}/find", (statement,), False, False)
 
@@ -2781,6 +2826,7 @@ def run_scenario_case(
     if _has_action_step(steps):
         return _run_snapshot_scenario(case, dialect_name, port, steps)
     meta = load_case_metamodel(case)
+    model = case_model(meta)
     dialect = dialect_for(dialect_name)
     concurrency = _concurrency(case)
     find_lock = concurrency if _scenario_needs_lock(steps, meta) else None
@@ -2816,7 +2862,7 @@ def run_scenario_case(
                     )
                     index += 2
                     continue
-                statement = _lower_find(step, meta, dialect, find_lock)
+                statement = _lower_find(step, meta, model, dialect, find_lock)
                 _execute_reads(port, dialect, (statement,))
                 lowered.append(_LoweredStep(f"/scenario/{index}/find", (statement,), False, False))
                 index += 1

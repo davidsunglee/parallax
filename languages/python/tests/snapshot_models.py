@@ -142,7 +142,9 @@ class SnapOrderStatus(Entity, frozen=True):
     )
     code: Attr[str] = Field(max_length=16)
     primary_tag: Attr[Tag | None] = Field(nullable=True, default=None)
-    tags: Attr[tuple[Tag, ...]] = Field(nullable=True, default=())
+    # A `many` occurrence is a possibly-empty collection and is never nullable
+    # (m-value-object); a NULL document column still wraps to an empty tuple.
+    tags: Attr[tuple[Tag, ...]] = Field(default=())
 
 
 class AnimalOwner(Entity, frozen=True):

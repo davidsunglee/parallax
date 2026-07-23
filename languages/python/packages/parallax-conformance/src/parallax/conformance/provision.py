@@ -20,8 +20,10 @@ from typing import TYPE_CHECKING, cast
 
 from parallax.conformance import case_format
 from parallax.core import inheritance
+from parallax.core.base import STRING, NeutralType
 from parallax.core.db_port import DbPort, JsonDocument
 from parallax.core.descriptor import Attribute, Entity, Metamodel, column_order
+from parallax.core.descriptor.type_spelling import parse_type_spelling
 from parallax.core.dialect import POSTGRES, Dialect
 
 if TYPE_CHECKING:
@@ -88,8 +90,21 @@ def schema_statements(meta: Metamodel, dialect: Dialect = POSTGRES) -> list[str]
     return statements
 
 
+def _neutral_type(attribute: Attribute) -> NeutralType:
+    """``attribute``'s declared type, structured for the dialect's type mapping.
+
+    Descriptor records still carry the serialized spelling, so provisioning
+    resolves it here; a corpus model that reached provisioning has already been
+    accepted, so an unresolvable spelling is a defect rather than model input.
+    """
+    resolved = parse_type_spelling(attribute.type)
+    if resolved is None:  # pragma: no cover - an accepted model has no such spelling
+        raise ValueError(f"{attribute.name}: {attribute.type!r} is not a neutral type spelling")
+    return resolved
+
+
 def _column_ddl(attribute: Attribute, dialect: Dialect) -> str:
-    column_type = dialect.column_type(attribute.type, attribute.max_length)
+    column_type = dialect.column_type(_neutral_type(attribute), attribute.max_length)
     return f"{dialect.quote(attribute.column)} {column_type}"
 
 
@@ -114,7 +129,7 @@ def _plain_table_ddl(entity: Entity, table: str, dialect: Dialect) -> str:
 # A framework-owned tag column is not a declared attribute (m-inheritance), so
 # provisioning fixes its own physical type — wide enough for any authored
 # tagValue and never asserted byte-exact (no DDL golden, `m-case-format`).
-_TAG_COLUMN_TYPE = "string"
+_TAG_COLUMN_TYPE = STRING
 _TAG_COLUMN_MAX_LENGTH = 32
 
 

@@ -52,6 +52,7 @@ from parallax.conformance.vo_models import CUSTOMER_REGISTRY
 from parallax.core import LATEST, edge_of, is_loaded, narrowed, pin_of
 from parallax.core.descriptor import Metamodel
 from parallax.core.dialect import POSTGRES
+from parallax.core.entity import metamodel
 from parallax.core.entity.base import EntityRegistry
 from parallax.core.entity.expressions import UnloadedRelationshipError
 from parallax.core.entity.value_object import to_document
@@ -74,6 +75,18 @@ def _reset_for(case_id: str, provisioner: Any) -> Any:
     case = _CASES[case_id]
     meta = engine.load_case_metamodel(case)
     provisioner.reset(meta, case_fixtures(case))
+    return meta
+
+
+def _reset_for_model(case_id: str, provisioner: Any, meta: Metamodel) -> Metamodel:
+    """Provision one case's fixtures against an already-assembled ``meta``.
+
+    The supply is a class list rather than a whole registry wherever a scope
+    SHADOWS a name the parent chain also declares: the merged chain then carries
+    a sibling entity whose reference resolves to the shadowing class, which no
+    single model can satisfy.
+    """
+    provisioner.reset(meta, case_fixtures(_CASES[case_id]))
     return meta
 
 
@@ -297,7 +310,7 @@ def test_animal_owner_reaches_root_and_narrowed_subtype_view(provisioner: Any) -
     # The animal family is provisioned from its own scoped registry, never the
     # ingested descriptor (`_reset_for_registry`).
     story = _GRAPH_STORIES_BY_ID["m-snapshot-read-012"]
-    meta = _reset_for_registry(story.case_id, provisioner, animal_owner.ANIMAL_OWNER_REGISTRY)
+    meta = _reset_for_model(story.case_id, provisioner, metamodel(animal_owner.MODEL_CLASSES))
     db = connect(provisioner.port, meta)
     snapshot = story.run(db)
     alice = snapshot.result()
@@ -311,7 +324,7 @@ def test_animal_owner_reaches_root_and_narrowed_subtype_view(provisioner: Any) -
 
 def test_narrowed_pets_view_populates_per_owner(provisioner: Any) -> None:
     story = _GRAPH_STORIES_BY_ID["m-inheritance-065"]
-    meta = _reset_for_registry(story.case_id, provisioner, animal_owner.ANIMAL_OWNER_REGISTRY)
+    meta = _reset_for_model(story.case_id, provisioner, metamodel(animal_owner.MODEL_CLASSES))
     db = connect(provisioner.port, meta)
     snapshot = story.run(db)
     by_name = {person.name: person for person in snapshot.results()}
@@ -326,7 +339,7 @@ def test_narrowed_pets_view_populates_per_owner(provisioner: Any) -> None:
 
 def test_equivalent_narrow_spellings_dedupe_to_one_view(provisioner: Any) -> None:
     story = _GRAPH_STORIES_BY_ID["m-inheritance-066"]
-    meta = _reset_for_registry(story.case_id, provisioner, animal_owner.ANIMAL_OWNER_REGISTRY)
+    meta = _reset_for_model(story.case_id, provisioner, metamodel(animal_owner.MODEL_CLASSES))
     db = connect(provisioner.port, meta)
     snapshot = story.run(db)
     by_name = {person.name: person for person in snapshot.results()}
@@ -337,7 +350,7 @@ def test_equivalent_narrow_spellings_dedupe_to_one_view(provisioner: Any) -> Non
 
 def test_distinct_narrowed_views_populate_independently(provisioner: Any) -> None:
     story = _GRAPH_STORIES_BY_ID["m-inheritance-067"]
-    meta = _reset_for_registry(story.case_id, provisioner, animal_owner.ANIMAL_OWNER_REGISTRY)
+    meta = _reset_for_model(story.case_id, provisioner, metamodel(animal_owner.MODEL_CLASSES))
     db = connect(provisioner.port, meta)
     snapshot = story.run(db)
     alice = next(person for person in snapshot.results() if person.name == "Alice")

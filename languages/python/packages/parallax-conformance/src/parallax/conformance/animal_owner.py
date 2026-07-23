@@ -14,13 +14,20 @@ redeclaring them) that shadows the default registry's own ``Person`` with
 THIS family's real owner, never colliding with it.
 
 A ``Database`` exercising the animal-owner relationship connects with
-``ANIMAL_OWNER_REGISTRY.metamodel()`` (never the bare ``metamodel(classes)``
-helper, and never an ingested corpus descriptor) so ``db.find`` resolves
-``Person`` through THIS scope specifically (`parallax.snapshot.handle`'s
-bridge, ``registry_of`` / ``resolve_entity_class``) — the SAME real
-``rel: Person.pets`` / ``Person.animals`` operation text the corpus's own
-``models/animal.yaml`` authors, at last reproducible from a production-reachable
-mirror (`m-inheritance-064..067`/`-072`, `m-snapshot-read-012`).
+:data:`MODEL_CLASSES` (never an ingested corpus descriptor) so ``db.find``
+resolves ``Person`` through THIS scope specifically
+(`parallax.snapshot.handle`'s bridge, ``registry_of`` /
+``resolve_entity_class``) — the SAME real ``rel: Person.pets`` /
+``Person.animals`` operation text the corpus's own ``models/animal.yaml``
+authors, at last reproducible from a production-reachable mirror
+(`m-inheritance-064..067`/`-072`, `m-snapshot-read-012`).
+
+The class list is the model, not the whole registry chain: this scope shadows
+the default registry's own ``Person``, which leaves that registry's
+``Passport`` — whose reverse relationship names ``Person.passport`` — pointing
+at THIS family's owner instead, a combination no single model can satisfy.
+The classes below are exactly ``models/animal.yaml``, so they name one
+coherent model.
 
 Owned by ``parallax.conformance`` for the same package-boundary reason
 ``read_models``/``story_models``/``graph_models`` are (spec §7/§8): a
@@ -29,7 +36,7 @@ deliberately avoids ``from __future__ import annotations`` so the metaclass
 reads the live ``Attr[T]`` / ``Rel[T]`` objects directly.
 """
 
-from parallax.conformance.read_models import Animal, Pet
+from parallax.conformance.read_models import Animal, Cat, Dog, Pet, WildBoar
 from parallax.core import (
     Attr,
     Entity,
@@ -44,7 +51,7 @@ from parallax.core.entity.base import EntityRegistry
 
 _NS = "parallax.compatibility"
 
-__all__ = ["ANIMAL_OWNER_REGISTRY", "Person"]
+__all__ = ["ANIMAL_OWNER_REGISTRY", "MODEL_CLASSES", "Person"]
 
 # Parent defaults to the process `default_registry()` -- `Animal`/`Pet`/`Dog`/
 # `Cat` (registered there by `read_models.py`) resolve through this registry's
@@ -75,3 +82,12 @@ class Person(Entity, frozen=True, registry=ANIMAL_OWNER_REGISTRY):
             source="id", target=RelationshipTarget(entity="Pet", attribute="ownerId")
         ),
     )
+
+
+MODEL_CLASSES: tuple[type, ...] = (Person, Animal, Pet, Dog, Cat, WildBoar)
+"""``models/animal.yaml`` as classes: the owner plus the whole family it names.
+
+The one supply a ``Database`` exercising this family connects with, so the
+assembled model is scoped to :data:`ANIMAL_OWNER_REGISTRY` and carries no
+sibling entity of the default registry that this scope's shadowed ``Person``
+would leave dangling."""

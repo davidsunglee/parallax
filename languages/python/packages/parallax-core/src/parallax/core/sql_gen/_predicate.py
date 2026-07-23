@@ -57,20 +57,18 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import assert_never
 
-from parallax.core import inheritance
-from parallax.core.descriptor import (
-    Attribute,
-    Entity,
-    Metamodel,
-    NestedValueObject,
-    ValueObject,
-    ValueObjectAttribute,
-    VoPathMiss,
-    find_value_object,
-    find_vo_member,
-    resolve_vo_leaf,
-)
+from parallax.core.base import NeutralType
 from parallax.core.dialect import Dialect
+from parallax.core.inheritance import InheritanceFacet
+from parallax.core.metamodel import (
+    AttributeMetadata,
+    EntityMetadata,
+    Metamodel,
+    Multiplicity,
+    NestedValueObjectMetadata,
+    ValueObjectAttributeMetadata,
+    ValueObjectMetadata,
+)
 from parallax.core.op_algebra import (
     All,
     And,
@@ -106,8 +104,8 @@ from parallax.core.sql_gen._context import SqlGenError
 
 # The family LANE of the compiler — distinct from `parallax.core.inheritance`
 # above, which is the metamodel module. Aliased down to the module-private
-# spelling, so `inheritance.` at any use site below unambiguously means the
-# metamodel.
+# spelling, so a use site below never confuses the two.
+from parallax.core.sql_gen._inheritance import entity_view as _entity_view
 from parallax.core.sql_gen._inheritance import plan_branch_narrow as _plan_branch_narrow
 from parallax.core.sql_gen._inheritance import tag_guard as _tph_tag_guard
 
@@ -157,13 +155,17 @@ class EntityScope:
     """
 
     ctx: _Ctx
-    entity: Entity
+    entity: EntityMetadata
     alias: str = "t0"
     unaliased: bool = False
 
     @property
     def meta(self) -> Metamodel:
         return self.ctx.meta
+
+    @property
+    def facet(self) -> InheritanceFacet:
+        return self.ctx.facet
 
     @property
     def dialect(self) -> Dialect:
@@ -190,35 +192,36 @@ class EntityScope:
         return self.dialect.qualified(self.alias, column)
 
     def column_of(self, attr_ref: str) -> str:
-        return self.own_column(self.entity_attribute(attr_ref).column)
+        return self.own_column(self.entity_attribute(attr_ref).storage.name)
 
-    def entity_attribute(self, attr_ref: str) -> Attribute:
+    def entity_attribute(self, attr_ref: str) -> AttributeMetadata:
         _, _, name = attr_ref.rpartition(".")
         for attribute in self._searchable_attributes():
-            if attribute.name == name:
+            if attribute.identity.name == name:
                 return attribute
-        raise SqlGenError(f"{attr_ref!r} names no attribute on {self.entity.name}")
+        raise SqlGenError(f"{attr_ref!r} names no attribute on {self.entity.identity.name}")
 
-    def _searchable_attributes(self) -> tuple[Attribute, ...]:
+    def _searchable_attributes(self) -> Sequence[AttributeMetadata]:
         """The attributes an `attr_ref`'s class-name-qualified name may resolve to.
 
-        A plain entity resolves only against its own declared attributes
-        (unchanged). An inheritance participant resolves against its **whole
-        family** (`parallax.core.inheritance.family_attributes`): the read's own
-        predicate may reference a root-inherited attribute through a concrete
-        target's own class name, and a `narrow` branch predicate references that
-        branch's own attribute by its own class name — narrow-position validity
-        for the reference is enforced upstream (`m-op-algebra`'s model-aware
-        validator), so this need only widen the search, never re-validate scope.
+        The active entity's **whole family**, which is its family root's
+        projection superset: the read's own predicate may reference a
+        root-inherited attribute through a concrete target's own class name, and
+        a `narrow` branch predicate references that branch's own attribute by its
+        own class name — narrow-position validity for the reference is enforced
+        upstream (`m-op-algebra`'s model-aware validator), so this need only
+        widen the search, never re-validate scope.
+
+        A standalone Entity is its own family root and its own superset, so the
+        widening is the identity there rather than a second code path.
         """
-        if self.entity.inheritance is None:
-            return self.entity.attributes
-        return inheritance.family_attributes(self.meta, self.entity)
+        root = _entity_view(self.facet, self.entity.identity).root
+        return _entity_view(self.facet, root).superset_attributes
 
     def next_alias(self) -> str:
         return self.ctx.next_alias()
 
-    def child(self, entity: Entity, alias: str) -> EntityScope:
+    def child(self, entity: EntityMetadata, alias: str) -> EntityScope:
         """A nested scope for a correlated hop's interior: the SAME statement
         context (so a nested hop's binds and aliases continue this statement's
         single sequence), a different active entity and alias.
@@ -246,7 +249,7 @@ class ElementScope:
     """
 
     ctx: _Ctx
-    container: ValueObject | NestedValueObject
+    container: ValueObjectMetadata | NestedValueObjectMetadata
     alias: str
 
     @property
@@ -259,6 +262,12 @@ class ElementScope:
 
 
 ResolutionScope = EntityScope | ElementScope
+
+# Either kind of Value Object occurrence a dotted path may be walked against.
+# The two Metadata shapes differ only in what a TOP-LEVEL occurrence additionally
+# owns (its Storage Location), and neither member lookup below cares, so the walk
+# takes the union rather than branching on depth.
+_VoContainer = ValueObjectMetadata | NestedValueObjectMetadata
 
 
 # --------------------------------------------------------------------------- #
@@ -332,10 +341,9 @@ def lower_predicate(op: Operation, scope: ResolutionScope) -> str:
             return _lower_navigation(op, scope)
         case DeepFetch():
             raise SqlGenError(
-                "deep fetch (eager graph materialization across relationship levels) lands "
-                "with the snapshot branch's deep-fetch + materialization increment (COR-3 "
-                "Phase 7 increment 5; ledger D-12) — relationship navigation itself lowers "
-                "(increment 3)"
+                "deep fetch (eager graph materialization across relationship levels) is not "
+                "a predicate and is never lowered here: `m-deep-fetch` plans it into one "
+                "read per relationship level, each of which this compiler lowers on its own"
             )
         case AsOf() | AsOfRange() | History():
             # Temporal reads are lowered by `m-temporal-read` (auto-injected as-of
@@ -405,11 +413,11 @@ def _lower_branch_narrow(narrow: Narrow, scope: EntityScope) -> str:
     before this dispatcher ever runs (`_compile._compile_tph_read`); every narrow
     this function receives is nested, so it always groups when it has two terms.
     """
-    plan = _plan_branch_narrow(scope.meta, scope.entity, narrow)
+    plan = _plan_branch_narrow(scope.facet, scope.entity, narrow)
     # Branch predicate first, THEN the guard's binds — the same explicit ordering
     # the top-level read states, for the same reason.
     branch_sql = lower_predicate(plan.operand, scope)
-    tag_sql, tag_binds = _tph_tag_guard(scope, scope.meta, plan.tag)
+    tag_sql, tag_binds = _tph_tag_guard(scope, scope.facet, plan.tag)
     scope.ctx.binds.extend(tag_binds)
     if not branch_sql:
         return tag_sql
@@ -462,8 +470,10 @@ def _hop_where(
 
 
 # --------------------------------------------------------------------------- #
-# Value-object nested predicates (m-value-object; resolved inline — the DAG    #
-# forbids m-op-algebra / m-sql from importing m-value-object).                 #
+# Value-object nested predicates (m-value-object). Every occurrence is         #
+# self-identifying accepted Metadata with its own expected-O(1) member lookup, #
+# so a dotted path resolves through the Metamodel Interface here rather than   #
+# through m-value-object, which the DAG forbids m-sql from importing.          #
 # --------------------------------------------------------------------------- #
 def _lower_nested(
     op: NestedComparison | NestedMembership | NestedNullCheck, scope: EntityScope
@@ -481,7 +491,7 @@ def _lower_nested(
     # The document column is the TARGET's own, so it renders through `own_column`
     # and goes bare in a write's unaliased predicate (m-sql rule 1).
     extraction, path_binds = scope.dialect.nested_extract(
-        scope.own_column(vo.storage_column), segments
+        scope.own_column(vo.storage.name), segments
     )
     scope.ctx.binds.extend(path_binds)
     return _lower_comparator(op, extraction, leaf.type, scope)
@@ -502,7 +512,7 @@ def _lower_element_nested(
     return _lower_comparator(op, extraction, leaf.type, scope)
 
 
-def _flat_vo_path(path: str, entity: Entity) -> tuple[ValueObject, tuple[str, ...]]:
+def _flat_vo_path(path: str, entity: EntityMetadata) -> tuple[ValueObjectMetadata, tuple[str, ...]]:
     """Parse a flat `Class.valueObject(.valueObject)*.attribute` reference
     (m-op-algebra) into its top-level value object and the path segments after
     it (which may cross zero or more nested value objects before reaching a
@@ -517,7 +527,7 @@ def _flat_vo_path(path: str, entity: Entity) -> tuple[ValueObject, tuple[str, ..
 def _lower_comparator(
     op: NestedComparison | NestedMembership | NestedNullCheck,
     extraction: str,
-    leaf_type: str,
+    leaf_type: NeutralType,
     scope: ResolutionScope,
 ) -> str:
     """Render one resolved extraction's comparator fragment (m-sql "valueObject
@@ -546,8 +556,8 @@ def _lower_comparator(
 
 
 def _split_at_many(
-    vo: ValueObject, segments: Sequence[str]
-) -> tuple[ValueObject | NestedValueObject, tuple[str, ...], tuple[str, ...]] | None:
+    vo: ValueObjectMetadata, segments: Sequence[str]
+) -> tuple[_VoContainer, tuple[str, ...], tuple[str, ...]] | None:
     """Split a flat predicate's path at the first `multiplicity: many` hop
     crossed while walking from `vo` (m-op-algebra "Flat predicates through a
     `many` segment mean any element matches"). Returns ``(the many container,
@@ -556,14 +566,14 @@ def _split_at_many(
     walk never crosses a `many` member (the plain scalar-extraction case
     :func:`_lower_nested` handles directly).
     """
-    if vo.multiplicity == "many":
+    if vo.multiplicity is Multiplicity.MANY:
         return vo, (), tuple(segments)
-    container: ValueObject | NestedValueObject = vo
+    container: _VoContainer = vo
     for index, segment in enumerate(segments):
-        member = find_vo_member(container, segment)
-        if not isinstance(member, NestedValueObject):
+        member = container.value_object(segment)
+        if member is None:
             return None  # reached a scalar leaf (or an unresolved segment) uncrossed
-        if member.multiplicity == "many":
+        if member.multiplicity is Multiplicity.MANY:
             return member, tuple(segments[: index + 1]), tuple(segments[index + 1 :])
         container = member
     return None
@@ -571,8 +581,8 @@ def _split_at_many(
 
 def _lower_any_element(
     op: NestedComparison | NestedMembership | NestedNullCheck,
-    vo: ValueObject,
-    crossing: tuple[ValueObject | NestedValueObject, tuple[str, ...], tuple[str, ...]],
+    vo: ValueObjectMetadata,
+    crossing: tuple[_VoContainer, tuple[str, ...], tuple[str, ...]],
     scope: EntityScope,
 ) -> str:
     """Any-element lowering for a flat `nested*` predicate crossing a `many`
@@ -595,7 +605,7 @@ def _lower_any_element(
     # The owning document column is the target's own (bare under `unaliased`); the
     # unnested ELEMENT is not, and stays alias-qualified either way — this very
     # subquery declares `array_alias`, so there is no alias here to leak.
-    guard_sql, guard_binds = scope.dialect.array_guard(scope.own_column(vo.storage_column), pre)
+    guard_sql, guard_binds = scope.dialect.array_guard(scope.own_column(vo.storage.name), pre)
     scope.ctx.binds.extend(guard_binds)
     element = ElementScope(ctx=scope.ctx, container=container, alias=scope.next_alias())
     extraction, path_binds = scope.dialect.nested_extract(element.element_reference(), post)
@@ -625,12 +635,12 @@ def _lower_nested_exists(op: NestedExists | NestedNotExists, scope: EntityScope)
     :class:`ElementScope`; there is no second dispatcher for it.
     """
     vo, pre, container = _resolve_vo_terminus(op.path, scope.entity)
-    if container.multiplicity != "many":
+    if container.multiplicity is not Multiplicity.MANY:
         raise SqlGenError(
             f"nestedExists/nestedNotExists over a `one`-multiplicity value object "
             f"({op.path!r}) has no goldened lowering yet"
         )
-    guard_sql, guard_binds = scope.dialect.array_guard(scope.own_column(vo.storage_column), pre)
+    guard_sql, guard_binds = scope.dialect.array_guard(scope.own_column(vo.storage.name), pre)
     scope.ctx.binds.extend(guard_binds)
     element = ElementScope(ctx=scope.ctx, container=container, alias=scope.next_alias())
     inner = f"select 1 from jsonb_array_elements({guard_sql}) {element.alias}"
@@ -641,8 +651,8 @@ def _lower_nested_exists(op: NestedExists | NestedNotExists, scope: EntityScope)
 
 
 def _resolve_vo_terminus(
-    path: str, entity: Entity
-) -> tuple[ValueObject, tuple[str, ...], ValueObject | NestedValueObject]:
+    path: str, entity: EntityMetadata
+) -> tuple[ValueObjectMetadata, tuple[str, ...], _VoContainer]:
     """Resolve a `nestedExists`/`nestedNotExists` value-object-TERMINATED path
     (`Class.valueObject(.valueObject)*`, m-op-algebra) to its top-level value
     object, the full segment chain from that object's own document column to
@@ -654,10 +664,10 @@ def _resolve_vo_terminus(
         raise SqlGenError(f"nested path {path!r} needs at least Class.valueObject")
     _entity_name, vo_name, *segments = parts
     vo = _value_object(entity, vo_name)
-    container: ValueObject | NestedValueObject = vo
+    container: _VoContainer = vo
     for segment in segments:
-        member = find_vo_member(container, segment)
-        if not isinstance(member, NestedValueObject):
+        member = container.value_object(segment)
+        if member is None:
             raise SqlGenError(
                 f"nested path {path!r}: {segment!r} does not name a nested value object"
             )
@@ -665,24 +675,38 @@ def _resolve_vo_terminus(
     return vo, tuple(segments), container
 
 
-def _value_object(entity: Entity, name: str) -> ValueObject:
-    vo = find_value_object(entity, name)
+def _value_object(entity: EntityMetadata, name: str) -> ValueObjectMetadata:
+    vo = entity.value_object(name)
     if vo is None:
-        raise SqlGenError(f"{entity.name}: {name!r} is not a declared value object")
+        raise SqlGenError(f"{entity.identity.name}: {name!r} is not a declared value object")
     return vo
 
 
-def _resolve_leaf(
-    vo: ValueObject | NestedValueObject, segments: Sequence[str]
-) -> ValueObjectAttribute:
-    """Resolve dotted ``segments`` against ``vo`` via the shared, error-neutral
-    `parallax.core.descriptor.vo_path` walk (the same one `m-op-algebra`'s
-    operation validator uses), classifying a miss into `SqlGenError` verbatim."""
-    result = resolve_vo_leaf(vo, segments)
-    if isinstance(result, VoPathMiss):
-        if result.reason == "scalar-continues":
-            raise SqlGenError(f"value-object path continues past scalar {result.segment!r}")
-        if result.reason == "ends-on-nested":
+def _resolve_leaf(container: _VoContainer, segments: Sequence[str]) -> ValueObjectAttributeMetadata:
+    """Walk dotted ``segments`` (non-empty) against ``container`` to a scalar leaf.
+
+    ``container`` is any already-resolved starting point — a `Class.valueObject`
+    reference's own top-level value object (the flat nested-predicate rules), or
+    the TERMINAL value object a `nestedExists`/`nestedNotExists` `path` resolves
+    to (the scoped `where` element-relative rules, m-value-object same-element
+    semantics). Intermediate segments MUST resolve to a nested value object and
+    the final one MUST resolve to a scalar Attribute, so a path fails in exactly
+    three ways — an undeclared segment, a scalar the path continues past, and a
+    nested object the path ends on — each named by which typed lookup missed at
+    which step.
+    """
+    scope = container
+    for index, segment in enumerate(segments):
+        is_last = index == len(segments) - 1
+        attribute = scope.attribute(segment)
+        if attribute is not None:
+            if not is_last:
+                raise SqlGenError(f"value-object path continues past scalar {segment!r}")
+            return attribute
+        nested = scope.value_object(segment)
+        if nested is None:
+            raise SqlGenError(f"value-object path segment {segment!r} is undeclared")
+        if is_last:
             raise SqlGenError("value-object path does not reach a scalar leaf")
-        raise SqlGenError(f"value-object path segment {result.segment!r} is undeclared")
-    return result
+        scope = nested
+    raise AssertionError("_resolve_leaf: `segments` must be non-empty")  # pragma: no cover

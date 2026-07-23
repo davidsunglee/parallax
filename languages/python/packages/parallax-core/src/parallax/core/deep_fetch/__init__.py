@@ -111,9 +111,9 @@ class FetchLevel:
     derived, never authored).
 
     A **queryable** level (``is_back_reference`` false) additionally carries
-    ``child_target`` (the entity name :func:`~parallax.core.sql_gen.compile_read`
-    compiles against — a single concrete when the resolved position is exactly
-    one, else the relationship's own polymorphic target), ``related_attr`` (the
+    ``child_target`` (the entity this level's own read compiles against — a
+    single concrete when the resolved position is exactly one, else the
+    relationship's own polymorphic target), ``related_attr`` (the
     child-side ``Class.attribute`` the ``IN`` membership binds against) and
     ``related_column`` (the SAME attribute's physical column — what the
     assembler groups the returned child rows by, fanning each back to its
@@ -374,7 +374,7 @@ def _view_key(rel_local: str, narrowed: bool, position: tuple[str, ...]) -> str:
 def _child_target(
     relationship: Relationship, position: tuple[str, ...], segment: PathSegment
 ) -> tuple[str, tuple[str, ...] | None]:
-    """The level's ``compile_read`` target entity, and its ``Narrow.to`` (or
+    """The level's own read target entity, and its ``Narrow.to`` (or
     ``None``) — the child-level analogue of `m-sql`'s abstract-read dispatch,
     but keyed on the RESOLVED POSITION'S cardinality rather than whether the
     named target is itself abstract (m-deep-fetch: a single-concrete narrowed

@@ -418,18 +418,18 @@ def test_a_position_with_no_concrete_subtype_projects_empty_sequences() -> None:
 # A concrete position nested under another concrete position: a table-per-
 # concrete-subtype family may place a concrete subtype under a concrete parent.
 # Parent owns `parent_tbl` and is itself Child's parent; Child owns `child_tbl`.
-# Formation accepts the shape, so the facet answers for it. The effective
-# concrete-subtype set is every concrete node at or below the position, so
-# Parent's set is {Child, Parent} — two physical tables — while its `container`
-# is Parent's own `parent_tbl` alone. This pins both answers as they stand. What
-# a read of a concrete position with concrete descendants targets — its own
-# table only, or the union over its effective set's tables — is settled when the
-# SQL read path is built; a change to `container`'s meaning for this shape must
-# edit this test deliberately.
+# The two members answer different questions and are deliberately not derivable
+# from each other: `container` is the ONE container a read or write of the
+# position's own rows targets, while `concrete_subtypes` is every concrete node
+# at or below it. For Parent those disagree — its own `parent_tbl` against
+# {Child, Parent} — and that is the contract, not an unsettled answer: a read of
+# a polymorphic position derives its branch tables by mapping each effective
+# concrete through THAT concrete's own `container`, never by reaching for the
+# position's own.
 # --------------------------------------------------------------------------
 
 
-def test_a_concrete_position_nested_under_a_concrete_position_pins_todays_facet() -> None:
+def test_a_concrete_positions_own_container_is_not_its_effective_set() -> None:
     root = identity("Root")
     parent = identity("Parent")
     child = identity("Child")

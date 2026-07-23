@@ -105,6 +105,7 @@ _LOWERING_GROUP_DEPS: frozenset[str] = frozenset(
         "parallax.core.opt_lock",
         "parallax.core.txtime_write",
         "parallax.core.bitemp_write",
+        "parallax.core._formation_profile",
     }
 )
 
@@ -146,6 +147,7 @@ SUPPORT_SCOPE_DEPS: Mapping[str, frozenset[str]] = {
             "parallax.core.navigate",
             "parallax.core.db_port",
             "parallax.core.entity",
+            "parallax.core._formation_profile",
         }
     ),
     "parallax.snapshot.handle._wrap": frozenset(

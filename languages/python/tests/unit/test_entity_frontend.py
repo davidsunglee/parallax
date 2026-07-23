@@ -138,7 +138,14 @@ def test_attribute_ref_str_and_relationship_ref_str() -> None:
     assert str(RelationshipRef("Person", "passport")) == "Person.passport"
 
 
-class WithStringRel(Entity, frozen=True):
+# Declared in a registry of its own, never the process default: the
+# relationship below deliberately names an Entity nothing declares, so this
+# class must not become visible to any other registry that forms the model it
+# can see.
+_STRING_REL_REGISTRY = EntityRegistry(parent=None)
+
+
+class WithStringRel(Entity, frozen=True, registry=_STRING_REL_REGISTRY):
     """A relationship declared under ``from __future__ import annotations`` (a string)."""
 
     __parallax__ = EntityConfig(table="with_string_rel", mutability="transactional")
@@ -275,7 +282,11 @@ def test_explicit_none_pk_generator_field_is_rejected_at_definition() -> None:
 
 
 def _define_omitted_optional_pk_generator() -> type:
-    class Seq(Entity, frozen=True):
+    # Declared in a registry of its own, never the process default: a bare
+    # sequence generation names no sequence, which the canonical descriptor
+    # requires, so this class must not become visible to any other registry that
+    # forms the model it can see.
+    class Seq(Entity, frozen=True, registry=EntityRegistry(parent=None)):
         __parallax__ = EntityConfig(table="seq_bare", mutability="transactional")
 
         id: Attr[int] = Field(

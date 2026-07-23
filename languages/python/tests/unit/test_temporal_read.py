@@ -13,6 +13,8 @@ from __future__ import annotations
 import datetime as dt
 
 import pytest
+from _sql_gen_support import model as accepted_model
+from _sql_gen_support import target
 
 from parallax.conformance import models
 from parallax.core import Edge, Pin, UndeclaredAxisError, edge_of, pin_of
@@ -37,6 +39,12 @@ _META = {
     "Ledger": _MODELS["ledger"],
     "Order": _MODELS["orders"],
 }
+_ACCEPTED = {
+    "Balance": accepted_model("balance"),
+    "Position": accepted_model("position"),
+    "Ledger": accepted_model("ledger"),
+    "Order": accepted_model("orders"),
+}
 BALANCE = _META["Balance"].entity("Balance")
 POSITION = _META["Position"].entity("Position")
 LEDGER = _META["Ledger"].entity("Ledger")
@@ -50,7 +58,8 @@ _P = "2024-02-01T00:00:00+00:00"
 def _where(op: oa.Operation, entity: Entity) -> tuple[str, tuple[object, ...]]:
     """Inject the as-of predicate, compile through m-sql, return the WHERE + binds."""
     injected = inject_as_of(op, entity)
-    statement = compile_read(injected, _META[entity.name], POSTGRES, entity.name).statement
+    model = _ACCEPTED[entity.name]
+    statement = compile_read(injected, model, POSTGRES, target(model, entity.name)).statement
     _, _, where = statement.sql.partition(" where ")
     return where, statement.binds
 
