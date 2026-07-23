@@ -65,7 +65,6 @@ _ANIMAL_WITH_UNREGISTERED_CONCRETE = dataclasses.replace(
             name="Iguana",
             namespace="parallax.compatibility",
             table="animal",
-            mutability="transactional",
             inheritance=Inheritance(role="concrete-subtype", parent="Pet", tag_value="iguana"),
         ),
     ),

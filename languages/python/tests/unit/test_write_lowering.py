@@ -654,7 +654,6 @@ _LEDGER = descriptor.Metamodel(
         descriptor.Entity(
             name="LedgerEntry",
             table="ledger_entry",
-            mutability="transactional",
             attributes=(
                 descriptor.Attribute(
                     name="bookId", type="int64", column="book_id", primary_key=True

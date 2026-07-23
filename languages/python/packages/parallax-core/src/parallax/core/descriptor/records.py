@@ -27,9 +27,9 @@ __all__ = [
     "InheritanceRole",
     "Metamodel",
     "Multiplicity",
-    "Mutability",
     "NestedValueObject",
     "OrderByTerm",
+    "Persistence",
     "PkGenerator",
     "PkStrategy",
     "Relationship",
@@ -49,7 +49,7 @@ __all__ = [
     "effective_temporal",
 ]
 
-Mutability = Literal["read-only", "transactional"]
+Persistence = Literal["read-write", "read-only"]
 Temporal = Literal[
     "non-temporal",
     "transaction-time-only",
@@ -65,8 +65,8 @@ InheritanceRole = Literal["root", "abstract-subtype", "concrete-subtype"]
 class Unset:
     """Sentinel for an absent optional value distinct from ``None``.
 
-    Only the attribute ``default`` needs it — a descriptor may explicitly author
-    ``default: null``, which is distinct from declaring no default at all.
+    A declared default of ``None`` is a real default, so absence needs a marker
+    of its own that ``None`` cannot serve as.
     """
 
     __slots__ = ()
@@ -96,7 +96,12 @@ class PkGenerator:
 
 @dataclass(frozen=True, slots=True)
 class Attribute:
-    """A scalar entity attribute mapped to one physical column."""
+    """A scalar entity attribute mapped to one physical column.
+
+    ``default`` is a declaration-frontend affordance that write validation reads
+    to exempt an omitted value; the canonical descriptor has no such property, so
+    it is neither parsed from nor written to a document.
+    """
 
     name: str
     type: str
@@ -242,12 +247,20 @@ class ValueObject:
 
 @dataclass(frozen=True, slots=True)
 class Entity:
-    """One mapped entity: identity, attributes, temporal dimensions, and relations."""
+    """One mapped entity: identity, attributes, temporal dimensions, and relations.
+
+    ``persistence`` is the mode this entity *declares*, and ``None`` records that
+    it declared none. The distinction is load-bearing: Persistence is family-wide
+    and root-owned, so absence on a standalone entity or a family root means the
+    Read Write default while absence on a descendant means inherit — and a
+    descendant that declares any mode at all is invalid. Normalizing an omitted
+    property to the default would erase the only evidence of that.
+    """
 
     name: str
     namespace: str | None = None
     table: str | None = None
-    mutability: Mutability = "transactional"
+    persistence: Persistence | None = None
     attributes: tuple[Attribute, ...] = ()
     as_of_axes: tuple[AsOfAxisMetadata, ...] = ()
     relationships: tuple[RelationshipDeclaration, ...] = ()

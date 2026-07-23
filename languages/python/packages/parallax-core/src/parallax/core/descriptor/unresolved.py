@@ -124,13 +124,31 @@ def unresolved_metamodel(metamodel: records.Metamodel) -> UnresolvedMetamodel:
     """Adapt parsed descriptor records into formation's Unresolved Metamodel.
 
     Raises :class:`DescriptorError` when a record carries a value the model
-    contract cannot represent — an unknown type spelling, or an inheritance
-    position missing the strategy or parent its role requires. An empty document
-    is rejected here as well, so formation never receives an empty source.
+    contract cannot represent — an unknown type spelling, an inheritance position
+    missing the strategy or parent its role requires, or a value a model type
+    refuses such as an empty namespace or a bounded length on a non-text
+    Attribute. An empty document is rejected here as well, so formation never
+    receives an empty source.
     """
     if not metamodel.entities:
         raise DescriptorError("descriptor declares no entity")
-    return _UnresolvedMetamodel(tuple(_declaration(entity) for entity in metamodel.entities))
+    return _UnresolvedMetamodel(tuple(_adapted(entity) for entity in metamodel.entities))
+
+
+def _adapted(entity: records.Entity) -> UnresolvedEntityDeclaration:
+    """One Entity record as a declaration, with model-value rejections classified.
+
+    Model values enforce their own invariants by refusing construction, and this
+    seam is where a record meets them. Their rejection is a fact about the
+    descriptor, so it leaves here as a :class:`DescriptorError` naming the Entity
+    rather than as the raw refusal.
+    """
+    try:
+        return _declaration(entity)
+    except DescriptorError:
+        raise
+    except ValueError as error:
+        raise DescriptorError(f"entity {entity.canonical_name!r}: {error}") from error
 
 
 def _declaration(entity: records.Entity) -> UnresolvedEntityDeclaration:
@@ -152,12 +170,18 @@ def _declaration(entity: records.Entity) -> UnresolvedEntityDeclaration:
 def _persistence(entity: records.Entity) -> PersistenceMode | None:
     """The Persistence Mode this Entity itself declares, if any.
 
-    A descriptor spells only the unusual mode: Read Write is the standalone and
-    root default, and a descendant omits the property entirely. The record
-    normalizes both of those to its own default, so only Read Only survives as a
-    declaration.
+    Absence is a declaration fact, not the Read Write default: on a standalone
+    Entity or a family root it means the default, and on a descendant it means
+    inherit. An explicitly declared Read Write is therefore reported as declared,
+    so a family rule can still see a descendant that spelled a mode at all.
     """
-    return PersistenceMode.READ_ONLY if entity.mutability == "read-only" else None
+    match entity.persistence:
+        case None:
+            return None
+        case "read-write":
+            return PersistenceMode.READ_WRITE
+        case "read-only":
+            return PersistenceMode.READ_ONLY
 
 
 def _attribute(

@@ -108,6 +108,12 @@ def test_an_ill_formed_entity_name_stays_constructible_so_it_can_locate_its_issu
             ),
             id="max-length",
         ),
+        pytest.param(
+            lambda: AttributeMetadata(
+                AttributeIdentity(_ORDERS, "quantity"), base.INT64, Column("quantity"), max_length=8
+            ),
+            id="max-length-on-a-non-text-type",
+        ),
         pytest.param(lambda: UnresolvedRelationshipOrder(""), id="order-term"),
         pytest.param(
             lambda: ValueObjectAttributeDeclaration("", base.STRING), id="value-object-attribute"

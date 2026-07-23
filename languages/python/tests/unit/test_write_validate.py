@@ -48,7 +48,6 @@ pytestmark = pytest.mark.unit
 _WIDGET = Entity(
     name="Widget",
     table="widget",
-    mutability="transactional",
     attributes=(
         Attribute(name="id", type="int64", column="id", primary_key=True),
         Attribute(name="label", type="string", column="label"),
@@ -275,7 +274,6 @@ def test_type_matches_string_accepts_string_and_rejects_others() -> None:
 _GAUGE = Entity(
     name="Gauge",
     table="gauge",
-    mutability="transactional",
     attributes=(
         Attribute(name="id", type="int64", column="id", primary_key=True),
         Attribute(name="reading", type="decimal(18,2)", column="reading"),

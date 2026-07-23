@@ -27,7 +27,6 @@ from typing import Literal, cast
 
 from parallax.core.descriptor.errors import DescriptorError
 from parallax.core.descriptor.records import (
-    UNSET,
     AsOfAxisMetadata,
     Attribute,
     DefiningRelationship,
@@ -39,6 +38,7 @@ from parallax.core.descriptor.records import (
     Multiplicity,
     NestedValueObject,
     OrderByTerm,
+    Persistence,
     PkGenerator,
     PkStrategy,
     RelationshipCardinality,
@@ -168,7 +168,6 @@ def _attribute_from(value: object, where: str) -> Attribute:
                 "readOnly",
                 "optimisticLocking",
                 "pkGeneration",
-                "default",
             }
         ),
         where,
@@ -193,7 +192,6 @@ def _attribute_from(value: object, where: str) -> Attribute:
             if pk is not None
             else (PkGenerator(strategy="none") if primary_key else None)
         ),
-        default=m.get("default", UNSET),
     )
 
 
@@ -451,17 +449,11 @@ def _entity_from(value: object) -> Entity:
     inheritance = (
         _inheritance_from(m["inheritance"], where) if m.get("inheritance") is not None else None
     )
-    persistence_value = m.get("persistence", "read-write")
-    if not isinstance(persistence_value, str):
-        raise DescriptorError(f"{where}: `persistence` must be a string")
-    persistence = _enum(persistence_value, _PERSISTENCE_MODES, "persistence", where)
-    mutability = "transactional" if persistence == "read-write" else "read-only"
-
     entity = Entity(
         name=name,
         namespace=_opt_str(m, "namespace", where),
         table=_opt_str(m, "table", where),
-        mutability=mutability,
+        persistence=_persistence_from(m, where),
         attributes=attributes,
         as_of_axes=as_of,
         relationships=relationships,
@@ -470,6 +462,21 @@ def _entity_from(value: object) -> Entity:
         inheritance=inheritance,
     )
     return entity
+
+
+def _persistence_from(m: Mapping[str, object], where: str) -> Persistence | None:
+    """The `persistence` mode the document declares, or ``None`` when it omits it.
+
+    Omission is preserved rather than resolved to the Read Write default: the
+    default and an inherited mode are both spelled by absence, and only the
+    document itself distinguishes them from a declaration.
+    """
+    if "persistence" not in m:
+        return None
+    value = m["persistence"]
+    if not isinstance(value, str):
+        raise DescriptorError(f"{where}: `persistence` must be a string")
+    return cast("Persistence", _enum(value, _PERSISTENCE_MODES, "persistence", where))
 
 
 def _resolved_relationship_entities(entities: tuple[Entity, ...]) -> tuple[Entity, ...]:
@@ -627,8 +634,6 @@ def _attribute_to_json(attr: Attribute) -> dict[str, object]:
         out["optimisticLocking"] = True
     if attr.pk_generator is not None and attr.pk_generator.strategy != "none":
         out["pkGeneration"] = _pk_to_json(attr.pk_generator)
-    if attr.default is not UNSET:
-        out["default"] = attr.default
     return out
 
 
@@ -747,7 +752,7 @@ def _entity_to_json(entity: Entity) -> dict[str, object]:
         out["namespace"] = entity.namespace
     if entity.table is not None:
         out["table"] = entity.table
-    if entity.mutability == "read-only":
+    if entity.persistence == "read-only":
         out["persistence"] = "read-only"
     if entity.attributes:
         out["attributes"] = [_attribute_to_json(a) for a in entity.attributes]

@@ -135,11 +135,10 @@ def test_pk_generation_object_requires_sequence_strategy() -> None:
         deserialize(document)
 
 
-def test_read_only_and_default_survive_round_trip() -> None:
+def test_read_only_survives_round_trip_and_default_is_not_wire_vocabulary() -> None:
     entity = Entity(
         name="Flag",
         table="flag",
-        mutability="transactional",
         attributes=(
             Attribute(
                 name="id",
@@ -159,23 +158,24 @@ def test_read_only_and_default_survive_round_trip() -> None:
             "table": "flag",
             "attributes": [
                 {"name": "id", "type": "int64", "primaryKey": True},
-                {
-                    "name": "on",
-                    "type": "boolean",
-                    "readOnly": True,
-                    "default": True,
-                },
-                {
-                    "name": "note",
-                    "type": "string",
-                    "nullable": True,
-                    "default": None,
-                },
+                {"name": "on", "type": "boolean", "readOnly": True},
+                {"name": "note", "type": "string", "nullable": True},
             ],
         }
     }
-    assert deserialize(document) == Metamodel(entities=(entity,))
-    assert deserialize(document).entity("Flag").attributes[0].default is UNSET
+    assert all(attr.default is UNSET for attr in deserialize(document).entity("Flag").attributes)
+
+
+def test_authored_default_key_is_rejected() -> None:
+    document = {
+        "entity": {
+            "name": "Flag",
+            "table": "flag",
+            "attributes": [{"name": "id", "type": "int64", "primaryKey": True, "default": 1}],
+        }
+    }
+    with pytest.raises(DescriptorError, match="default"):
+        deserialize(document)
 
 
 def test_multi_entity_uses_entities_array_and_single_uses_entity() -> None:
@@ -476,7 +476,6 @@ def test_serialize_covers_optional_relationship_and_value_object_shapes() -> Non
     entity = Entity(
         name="Rich",
         table="rich",
-        mutability="transactional",
         attributes=(
             Attribute(
                 name="id",

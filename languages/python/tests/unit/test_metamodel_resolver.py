@@ -348,6 +348,81 @@ def test_duplicate_identities_are_legal_input_and_a_rejected_model() -> None:
     assert codes(source(declaration, declaration)) == (DUPLICATE_ENTITY_IDENTITY,)
 
 
+def test_a_reference_into_duplicated_identities_ignores_frontend_order() -> None:
+    """Frontend order is diagnostic only, so it cannot decide which duplicate a
+    reference resolves against."""
+    with_sku = Declaration(identity=_ITEM, attributes=(key(_ITEM), attribute(_ITEM, "sku")))
+    without_sku = Declaration(identity=_ITEM, attributes=(key(_ITEM),))
+    referrer = Declaration(
+        identity=_ORDER,
+        attributes=(key(_ORDER),),
+        relationships=(
+            UnresolvedDefiningRelationshipDeclaration(
+                identity=RelationshipIdentity(_ORDER, "items"),
+                cardinality=Cardinality.ONE_TO_MANY,
+                join=UnresolvedRelationshipJoin(
+                    source=AttributeIdentity(_ORDER, "id"),
+                    target=AttributeReference(RelativeEntityReference("Item"), "sku"),
+                ),
+            ),
+        ),
+    )
+    assert codes(source(with_sku, without_sku, referrer)) == (DUPLICATE_ENTITY_IDENTITY,)
+    assert codes(source(without_sku, with_sku, referrer)) == (DUPLICATE_ENTITY_IDENTITY,)
+
+
+def test_a_reverse_peer_is_found_through_any_declaration_bearing_its_identity() -> None:
+    silent = Declaration(identity=_ORDER, attributes=(key(_ORDER),))
+    declaring = Declaration(
+        identity=_ORDER,
+        attributes=(key(_ORDER),),
+        relationships=(
+            UnresolvedDefiningRelationshipDeclaration(
+                identity=RelationshipIdentity(_ORDER, "items"),
+                cardinality=Cardinality.ONE_TO_MANY,
+                join=UnresolvedRelationshipJoin(
+                    source=AttributeIdentity(_ORDER, "id"),
+                    target=AttributeReference(RelativeEntityReference("Item"), "orderId"),
+                ),
+            ),
+        ),
+    )
+    peer = Declaration(
+        identity=_ITEM,
+        attributes=(key(_ITEM), attribute(_ITEM, "orderId")),
+        relationships=(
+            UnresolvedReverseRelationshipDeclaration(
+                identity=RelationshipIdentity(_ITEM, "order"),
+                reverse_of=RelationshipReference(RelativeEntityReference("Order"), "items"),
+            ),
+        ),
+    )
+    assert codes(source(silent, declaring, peer)) == (DUPLICATE_ENTITY_IDENTITY,)
+    assert codes(source(declaring, silent, peer)) == (DUPLICATE_ENTITY_IDENTITY,)
+
+
+def test_one_defect_reached_from_two_declarations_reports_one_issue_identity() -> None:
+    """A repeated ``(code, location, related)`` is a formation contract failure, so
+    aggregation reports each identity once however many times it was reached."""
+    keyless = Declaration(identity=_ORDER, attributes=(attribute(_ORDER, "sku"),))
+    issues = rejection(source(keyless, keyless))
+    assert [issue.code for issue in issues] == [DUPLICATE_ENTITY_IDENTITY, PRIMARY_KEY_MISSING]
+    assert len(set(issues)) == len(issues)
+
+
+def test_a_component_repeated_three_times_reports_one_duplicate_identity() -> None:
+    component = AttributeIdentity(_ORDER, "id")
+    declaration = Declaration(
+        identity=_ORDER,
+        attributes=(key(_ORDER),),
+        indices=(
+            IndexMetadata(IndexIdentity(_ORDER, "orders_pk"), (component, component, component)),
+        ),
+    )
+    issues = rejection(source(declaration))
+    assert [issue.code for issue in issues] == [INDEX_ATTRIBUTE_DUPLICATE]
+
+
 def test_an_unresolvable_relationship_reference_is_reported_once() -> None:
     item = Declaration(
         identity=_ITEM,

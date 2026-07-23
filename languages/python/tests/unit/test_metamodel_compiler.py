@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import dataclasses
+from collections.abc import Iterator, Mapping, MutableMapping
+from typing import Any, cast
+
 import pytest
 from _metamodel_support import Declaration, accepted, attribute, identity, instant, key, source
 
@@ -271,6 +275,44 @@ def test_an_accepted_metamodel_delegates_lookup_and_serves_typed_facets() -> Non
     assert model.entity(_ORDER) is metadata.entity(_ORDER)
     assert model.entity(EntityIdentity("parallax.test", "Absent")) is None
     assert model.facet(facet_key) == "compiled"
+
+
+def _mappings_within(value: object, seen: set[int]) -> Iterator[Mapping[object, object]]:
+    """Every Mapping reachable from ``value`` through dataclass fields and tuples."""
+    if id(value) in seen:
+        return
+    seen.add(id(value))
+    if isinstance(value, Mapping):
+        # An index's values are the same objects its owner's sequences hold, so
+        # the walk stops here rather than descending twice.
+        yield cast("Mapping[object, object]", value)
+    elif dataclasses.is_dataclass(value) and not isinstance(value, type):
+        for member in dataclasses.fields(value):
+            yield from _mappings_within(getattr(value, member.name), seen)
+    elif isinstance(value, tuple):
+        for item in cast("tuple[object, ...]", value):
+            yield from _mappings_within(item, seen)
+
+
+def test_every_index_backing_candidate_or_accepted_lookup_is_read_only() -> None:
+    candidate = accepted(source(_model(), _peer()))
+    for graph in (candidate, compile_metadata(candidate)):
+        indexes = list(_mappings_within(graph, set()))
+        assert indexes
+        assert not [index for index in indexes if isinstance(index, MutableMapping)]
+
+
+def test_an_accepted_metamodel_snapshots_the_facet_mapping_it_was_given() -> None:
+    metadata = compile_metadata(accepted(source(_model(), _peer())))
+    facet_key: FacetKey[str] = FacetKey("m-test")
+    smuggled: FacetKey[str] = FacetKey("m-smuggled")
+    supplied: dict[FacetKey[Any], object] = {facet_key: "compiled"}
+    model = accept_metamodel(metadata, supplied)
+    supplied[facet_key] = "replaced"
+    supplied[smuggled] = "added"
+    assert model.facet(facet_key) == "compiled"
+    with pytest.raises(KeyError):
+        model.facet(smuggled)
 
 
 def test_a_facet_key_is_identified_by_its_owning_module() -> None:

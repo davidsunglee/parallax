@@ -112,7 +112,6 @@ _PROFILE_AS_VALUE_OBJECT = descriptor.Metamodel(
             name="_WrapScalarProfile",
             table="wrap_scalar_profile",
             namespace="parallax.compatibility",
-            mutability="transactional",
             attributes=(
                 descriptor.Attribute(name="id", type="int64", column="id", primary_key=True),
             ),

@@ -55,7 +55,16 @@ type RuleSetRequirement = FixedResolver | RequiredRuleSet
 """What a manifest row demands in the Rule Set position; absence is ``None``."""
 
 FIXED_RESOLVER: Final[FixedResolver] = FixedResolver()
+"""The Rule Set position of the one row whose validation is the fixed resolver.
+
+Exactly one manifest row carries it. The requirement variants are stateless, so
+one instance serves every row that names it."""
+
 REQUIRED_RULE_SET: Final[RequiredRuleSet] = RequiredRuleSet()
+"""The Rule Set position of a row whose owner must supply a Rule Set.
+
+A row with neither this nor :data:`FIXED_RESOLVER` demands no validation, and a
+profile that supplies a Rule Set for it is drift."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -74,6 +83,10 @@ type CompilerRequirement = MetadataCompilerRequirement | ModelCompilerRequiremen
 """What a manifest row demands in the compiler position; absence is ``None``."""
 
 METADATA_COMPILER_REQUIRED: Final[MetadataCompilerRequirement] = MetadataCompilerRequirement()
+"""The compiler position of the one row demanding the mandatory Metadata Compiler.
+
+Exactly one manifest row carries it and its owner is ``m-metamodel``; every other
+compiling row carries a :class:`ModelCompilerRequirement` naming a facet key."""
 
 
 @dataclass(frozen=True, slots=True)

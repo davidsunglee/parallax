@@ -53,6 +53,7 @@ from parallax.core.descriptor import Metamodel as MetamodelRecord
 from parallax.core.descriptor import ValueObject as ValueObjectRecord
 from parallax.core.descriptor.neutral_type import infer_neutral_type as _infer_neutral_type_lookup
 from parallax.core.descriptor.neutral_type import snake_to_camel
+from parallax.core.descriptor.records import Persistence
 from parallax.core.descriptor.records import Unset as _UnsetType
 from parallax.core.entity._annotations import class_body_annotations
 from parallax.core.entity._validation import require_entity_record
@@ -628,11 +629,13 @@ def _entity_record_for(cls: type) -> EntityRecord:
 def _frontend_entities(
     entities: tuple[EntityRecord, ...],
 ) -> tuple[EntityRecord, ...]:
-    """Apply the existing family-root persistence rule to class declarations.
+    """Apply the family-root persistence rule to class declarations.
 
-    Relationship and Value Object declarations are already canonical when the
-    metaclass creates them; no declaration-shape adapter or paired metadata copy
-    exists here.
+    Persistence is root-owned, so only the entity that is its own family root
+    keeps the mode its config spelled; a descendant declares none and inherits
+    the root's. Relationship and Value Object declarations are already canonical
+    when the metaclass creates them; no declaration-shape adapter or paired
+    metadata copy exists here.
     """
     by_name = {entity.name: entity for entity in entities}
     normalized: list[EntityRecord] = []
@@ -649,12 +652,7 @@ def _frontend_entities(
             if parent is None:
                 break
             family_root = parent
-        normalized.append(
-            replace(
-                owner,
-                mutability=family_root.mutability,
-            )
-        )
+        normalized.append(owner if family_root is owner else replace(owner, persistence=None))
     return tuple(normalized)
 
 
@@ -1185,12 +1183,18 @@ def _reject_collisions(
         seen.add(name)
 
 
-def _check_mutability(value: str) -> str:
+def _declared_persistence(value: str) -> Persistence:
+    """``EntityConfig.mutability`` as the persistence mode a record declares.
+
+    The config spelling is the class frontend's own vocabulary and always carries
+    a value, so a class-declared entity always declares its mode; the descriptor
+    property it maps to admits only the two canonical spellings.
+    """
     if value not in ("read-only", "transactional"):
         raise EntityDefinitionError(
             f"mutability must be 'read-only' or 'transactional', got {value!r}"
         )
-    return value
+    return "read-only" if value == "read-only" else "read-write"
 
 
 # The inert framework-root identity set: exactly `TxTemporal` and `Bitemporal`
@@ -1357,7 +1361,7 @@ class EntityMeta(ModelMetaclass):
             name=cls_name,
             namespace=config.namespace,
             table=resolved_table,
-            mutability=cast("Any", _check_mutability(config.mutability)),
+            persistence=_declared_persistence(config.mutability),
             attributes=attributes,
             as_of_axes=as_of_axes,
             relationships=relationships,
