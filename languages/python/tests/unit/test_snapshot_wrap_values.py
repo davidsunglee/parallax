@@ -1,4 +1,4 @@
-"""Value-object and temporal node wrapping (COR-3 Phase 7 increment 6a; spec
+"""Value-object and temporal node wrapping (spec
 §3/§4): ``parallax.snapshot.handle._wrap.wrap_graph``'s value-object member
 construction, whole-graph pin / per-node edge attachment, and ``Snapshot[T]``'s
 arity accessors. The identity, projection and load-state half lives in
@@ -157,7 +157,7 @@ def test_temporal_node_carries_the_whole_graph_pin_and_its_own_edge() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Temporal inheritance (review Spec-3 fix): a table-per-concrete-subtype       #
+# Temporal inheritance: a table-per-concrete-subtype                           #
 # family whose bitemporal axes are declared on the abstract ROOT and inherited #
 # by every concrete descendant (m-inheritance "Inherited members") — the       #
 # corpus's own Rate/DepositRate shape (`models/rate.yaml`), where the concrete #

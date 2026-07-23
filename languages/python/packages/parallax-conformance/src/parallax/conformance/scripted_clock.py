@@ -1,6 +1,6 @@
 """``parallax.conformance.scripted_clock`` — a harness-owned, ordered-instant Clock.
 
-D-29 (COR-3 Phase 8 increment 7 completion round): every temporal writeSequence
+Every temporal writeSequence
 story needs SUCCESSIVE DISTINCT Transaction-Time instants across its own choreography
 (one corpus writeSequence entry, one flushing ``db.transact`` call, one Clock
 read each — the case-driven engine's own precedent,
@@ -34,7 +34,7 @@ class ClockExhaustedError(RuntimeError):
 
     A story's own authoring convention is one corpus writeSequence entry = one
     flushing ``db.transact`` call = one scripted instant, in entry order (the
-    engine's own demarcation, DQ4) — reaching this error means a story
+    engine's own demarcation) — reaching this error means a story
     consumed more flushing transactions than it scripted instants for, never a
     transient condition to retry past.
     """

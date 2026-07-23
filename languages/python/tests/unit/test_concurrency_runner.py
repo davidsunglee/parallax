@@ -1,5 +1,5 @@
 """``parallax.conformance.concurrency_runner`` unit tests (m-read-lock
-behavioral matrix, COR-3 Phase 8 increment 6, Docker-free fake peer sessions).
+behavioral matrix, Docker-free fake peer sessions).
 
 Pins the pure `when.concurrency.rounds` parsing and the rounds runner's own
 choreography (thread/barrier round-boundary protocol, per-node
@@ -277,7 +277,7 @@ def test_run_rounds_closes_both_sessions_even_when_one_raises() -> None:
 
 
 def test_run_rounds_setup_failure_closes_the_already_open_first_session() -> None:
-    # Review remediation finding 4: a second-peer CONSTRUCTION failure must
+    # A second-peer CONSTRUCTION failure must
     # not leak the already-open first session — incremental `ExitStack`
     # protection registers each session for close the moment it opens.
     a = _FakeSession()
@@ -309,7 +309,7 @@ def test_run_rounds_setup_failure_closes_both_sessions_when_tuning_the_second_fa
 
 
 def test_run_rounds_raises_the_originating_failure_not_a_partners_barrier_break() -> None:
-    # Review remediation finding 4: when the SECOND-checked node (`B`) is the
+    # When the SECOND-checked node (`B`) is the
     # one with the genuine, unexpected defect and the FIRST-checked node
     # (`A`) merely trips over the resulting `barrier.abort()` (a SECONDARY
     # `BrokenBarrierError`, never a defect of its own — `A` has no round-0
@@ -446,7 +446,7 @@ def test_run_rounds_barrier_blocks_the_next_round_until_both_sides_finish() -> N
 
 
 def test_run_rounds_isolation_override_runs_first_and_adds_a_commit_round() -> None:
-    # D-28: an `isolation=` override (`m-db-error-009`'s serializable SSI
+    # An `isolation=` override (`m-db-error-009`'s serializable SSI
     # write-skew) must be each transaction's OWN first statement -- BEFORE
     # either lock-contention GUC -- and appends ONE synthetic, barrier-
     # synchronized COMMIT round after the authored rounds (SSI surfaces the

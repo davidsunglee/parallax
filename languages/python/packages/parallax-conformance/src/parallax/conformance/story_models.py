@@ -10,8 +10,7 @@ exercised by the fake-port write no-drift guard and the real-Postgres
 story-run suite alike — need classes resolvable at ordinary import time, not
 only under pytest's test-path magic.
 
-``Order`` / ``OrderItem`` started (M4) as the write stories' scalar-only
-surface; COR-3 Phase 7 increment 6b widens them to the family's full
+``Order`` / ``OrderItem`` carry the family's full
 relationship set (plus the two sibling entities orders.yaml itself declares,
 ``OrderStatus`` / ``OrderTag``) so the SAME classes also serve the API
 Conformance Suite's navigate / deep-fetch / snapshot-graph examples and
@@ -58,8 +57,8 @@ class Account(Entity, frozen=True):
 class Wallet(Entity, frozen=True):
     """Mirror of ``models/wallet.yaml``: Account minus the optimistic-lock
     ``version`` column and no temporal axis — the readless set-based write
-    family's own witness (``m-batch-write-005``, COR-3 Phase 8 increment 7
-    completion round): a predicate write over an unversioned, non-temporal
+    family's own witness (``m-batch-write-005``): a predicate write over an
+    unversioned, non-temporal
     entity has nothing to gate per row, so it lowers to ONE predicate-shaped
     statement, no materializing read."""
 

@@ -115,7 +115,7 @@ def validate_entity(entity: Entity) -> None:
 
 
 def validate_optimistic_locking_root_owned(entity: Entity) -> None:
-    """The ``m-opt-lock`` x ``m-inheritance`` family invariant (D-25, ADR 0027):
+    """The ``m-opt-lock`` x ``m-inheritance`` family invariant (ADR 0027):
     only an inheritance family's ROOT may declare an ``optimisticLocking``
     version attribute; every descendant inherits it unchanged (or, for a
     non-versioned family, declares none of its own either) — a family is

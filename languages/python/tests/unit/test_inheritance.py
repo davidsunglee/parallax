@@ -66,7 +66,7 @@ _MODEL_FILES = sorted((_REPO / "core" / "compatibility" / "models").glob("*.yaml
 
 def _descriptor_rejection_cases() -> list[tuple[str, dict[str, Any], str]]:
     found: list[tuple[str, dict[str, Any], str]] = []
-    # `*` (not `0*`): the D-25 root-ownership witnesses (m-inheritance-102/103)
+    # `*` (not `0*`): the root-ownership witnesses (m-inheritance-102/103)
     # are the first `when.model` cases numbered past 099, so the glob must not
     # assume every id stays in the 0xx range.
     for path in sorted(_CASES.glob("m-inheritance-*-rejected-*.yaml")):
@@ -219,7 +219,7 @@ def test_concrete_descendants_terminates_on_a_cyclic_family() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Binding decision (COR-3 Phase 7 review remediation, P3/P4): temporality is a #
+# Binding decision: temporality is a                                          #
 # family-wide property; only the root may declare `asOfAxes`, and every       #
 # descendant — abstract-subtype or concrete-subtype — inherits exactly that   #
 # set. `declaring_entity` always resolves to the family root; a non-root      #
@@ -357,7 +357,7 @@ def test_temporal_root_and_root_owned_axes_still_validate_cleanly() -> None:
 
 
 def test_reject_descendant_optimistic_locking_under_a_non_versioned_root() -> None:
-    # D-25 / ADR 0027: a non-versioned TPH root with an abstract-subtype that
+    # ADR 0027: a non-versioned TPH root with an abstract-subtype that
     # declares its own optimisticLocking attribute.
     root = Entity(
         name="Animal",
@@ -419,7 +419,7 @@ def test_versioned_root_and_root_owned_version_still_validates_cleanly() -> None
 
 
 # --------------------------------------------------------------------------- #
-# `reject_predicate_write` (COR-3 Phase 8 increment 5): a predicate-selected  #
+# `reject_predicate_write`: a predicate-selected                              #
 # (set-based) write on ANY inheritance-family entity is unsupported before    #
 # any SQL, the SAME classification a keyless keyed write raises.              #
 # --------------------------------------------------------------------------- #
@@ -446,10 +446,10 @@ def test_reject_predicate_write_is_a_no_op_for_a_non_participant() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# `validate_write_assignment`'s VALUE-OBJECT branch (confirmation-pass         #
-# residual P3): the corpus/mirror `Customer.address` shape                     #
+# `validate_write_assignment`'s VALUE-OBJECT branch: the corpus/mirror         #
+# `Customer.address` shape                                                     #
 # (`test_where_verbs.py` / `test_write_instructions.py`) pins the four         #
-# residual-mandated shapes (typed/serialized reject/accept) but declares no    #
+# mandated shapes (typed/serialized reject/accept) but declares no             #
 # non-nullable NESTED value object or `cardinality: many` member, so this      #
 # synthetic model -- the SAME "hand-built model" convention                    #
 # `test_write_validate.py`'s own `_WIDGET` uses for the sibling scalar walk --  #
@@ -461,8 +461,8 @@ def test_reject_predicate_write_is_a_no_op_for_a_non_participant() -> None:
 # `code` (non-nullable scalar), `nickname` (nullable scalar), and `core`       #
 # (non-nullable TOP-level value object -- `spec`/`tags` above are both         #
 # `nullable: true`, so neither exercises a top-level required-VO rejection)    #
-# extend this same synthetic model for confirmation-pass residual B (round 2,  #
-# `inheritance/__init__.py:667`): a `None` assignment's nullability-aware      #
+# extend this same synthetic model for the nullable-gated `None`-assignment    #
+# refusal: a `None` assignment's nullability-aware                             #
 # handling, pinned directly against the shared check below.                    #
 # --------------------------------------------------------------------------- #
 _VO_ENTITY = Entity(
@@ -558,7 +558,7 @@ def test_validate_write_assignment_rejects_a_top_level_many_element_type_mismatc
 
 
 # --------------------------------------------------------------------------- #
-# Confirmation-pass residual B (round 2, `inheritance/__init__.py:667`): a     #
+# The nullable-gated `None`-assignment refusal: a                             #
 # `None` assignment's nullability-aware handling, direct against the shared   #
 # check (`test_where_verbs.py` / `test_write_instructions.py` pin the same    #
 # fix through the typed and serialized callers respectively).                 #
@@ -580,8 +580,8 @@ def test_validate_write_assignment_accepts_none_for_a_nullable_value_object() ->
 
 def test_validate_write_assignment_rejects_none_for_a_non_nullable_scalar() -> None:
     # `code` declares no `nullable: true` -- an explicit `None` assignment
-    # must be refused too (the scalar branch's own extension of residual B):
-    # before the fix, `value is not None and not _type_matches(...)` let a
+    # must be refused too (the scalar branch's own analogue): a guard of
+    # `value is not None and not _type_matches(...)` would let a
     # `None` value bypass validation entirely, regardless of nullability.
     with pytest.raises(inheritance.WriteAssignmentError, match="required attribute is absent"):
         inheritance.validate_write_assignment(_VO_META, _VO_ENTITY, "code", None)

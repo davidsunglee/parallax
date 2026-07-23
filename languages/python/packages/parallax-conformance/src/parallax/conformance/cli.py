@@ -27,7 +27,7 @@ _EXIT: Final[dict[str, int]] = {"ok": 0, "unsupported": 10, "run-only": 11, "err
 class _NoProvisioningPort:
     """A `DbPort` that raises if touched — the CLI's structural proof that a
     `rejected`-shape ``run`` never provisions and never executes SQL
-    (m-conformance-adapter, resolved DQ3): ``run`` of a rejected case is
+    (m-conformance-adapter): ``run`` of a rejected case is
     dispatched with THIS port instead of a Docker-backed one, so a future
     regression that makes the rejected lane reach the port fails loudly rather
     than silently starting a container.
@@ -72,7 +72,7 @@ def _run_self_managed(
     """Provision a fresh container, reset from the case, and run it.
 
     A `rejected`-shape case is provisioning-free by contract
-    (m-conformance-adapter, resolved DQ3): its run answer is the classified
+    (m-conformance-adapter): its run answer is the classified
     `rejectedRule`, touching no SQL, so it is dispatched BEFORE any
     :class:`~parallax.conformance.provision.Provisioner` is constructed — no
     container starts for it at all (the shape dispatch already lives in

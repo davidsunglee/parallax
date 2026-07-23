@@ -19,11 +19,11 @@ The m-auto-retry rollback / fresh-state steps are the caller's obligations, met
 by construction: each ``attempt`` runs ``port.transaction(...)`` (the adapter
 rolls the database back on any raise) around a **fresh** unit of work (a new
 buffer, new observations, a re-read Clock), so a re-execution re-reads current
-state rather than replaying a stale shadow. No cached state exists to
-invalidate in this slice (the identity map lands with a later phase and must
-hook its invalidation here when it does).
+state rather than replaying a stale shadow. No cached state currently exists
+to invalidate; an identity map, if one is added, must hook its invalidation
+into this path.
 
-**Optimistic-lock conflicts** (`m-opt-lock`, COR-3 Phase 8 increment 6):
+**Optimistic-lock conflicts** (`m-opt-lock`):
 ``OptimisticLockConflictError`` (`parallax.core.opt_lock`) is a plain
 ``RuntimeError``, not a :class:`~parallax.core.db_error.DatabaseError` — the
 ``updatedRows != 1`` gate mismatch is a STRUCTURALLY different signal from a

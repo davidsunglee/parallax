@@ -1,5 +1,5 @@
 """Model-aware operation validation unit tests (m-op-algebra / m-navigate /
-m-value-object, COR-3 Phase 7 increment 1).
+m-value-object).
 
 Each rejected rule is pinned with the exact identifier `validate_operation`
 raises, alongside the representative VALID operations that must NOT be
@@ -201,7 +201,7 @@ def test_root_declared_attribute_needs_no_narrow() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# narrow-outside-relationship-target (m-navigate, resolved Q10).             #
+# narrow-outside-relationship-target (m-navigate).                           #
 # --------------------------------------------------------------------------- #
 def test_narrow_to_outside_relationship_target_rejects() -> None:
     op = Exists(rel="Person.pets", op=Narrow(entity="Pet", to=("WildBoar",), operand=All()))

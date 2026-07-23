@@ -128,7 +128,7 @@ _ATTR_STR = re.compile(r"^Attr\[(?P<inner>.+)\]$", re.DOTALL)
 _REL_STR = re.compile(r"^Rel\[(?P<inner>.+)\]$", re.DOTALL)
 _CAMEL_BOUNDARY = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
 
-# The metamodel registry (ledger D-20, design doc 37 DQ7a Option A): the class
+# The metamodel registry: the class
 # -> its compiled metamodel record stays a single process-wide, CLASS-keyed map
 # (kept off the class itself so the descriptor stays invisible to the public
 # attribute surface) -- a Python class object is already collision-safe, no
@@ -143,21 +143,21 @@ _REGISTRY_OF_CLASS: dict[type, EntityRegistry] = {}
 
 class EntityRegistry:
     """An explicit, independently-collision-checked entity class registration
-    scope (ledger D-20, design doc 37 DQ7a Option A, David-resolved).
+    scope.
 
     Every entity class declares (or, for an inheritance-family subclass,
     inherits from its family root) exactly one registry at class-definition
     time: ``class Person(Entity, frozen=True, registry=animals)``. Omitting
     ``registry=`` registers into the process :func:`default_registry` --
-    zero-ceremony apps are unaffected, since every class this frontend ever
-    compiled before D-20 landed there implicitly, under the same name.
+    zero-ceremony apps are unaffected, since a class compiled without an
+    explicit registry lands there implicitly, under the same name.
 
     A registry's own canonical-name space is independently collision-checked
     (:class:`~parallax.core.entity.errors.RegistryCollisionError`): the SAME
     name registered twice in the SAME registry raises immediately and loudly,
     naming both classes -- the replacement for the historical silent
     last-write-wins module-dict write -- but the SAME name in TWO DIFFERENT
-    registries coexists (the D-20 fix itself). :meth:`resolve` / :meth:`records`
+    registries coexists. :meth:`resolve` / :meth:`records`
     walk only this registry and its own ``parent`` chain, so an unrelated
     sibling registry's same-named class is never visible from here (never
     "every class ever compiled" -- the scoping guarantee `Entity.where` /
@@ -171,8 +171,7 @@ class EntityRegistry:
     vocabulary from scratch. Pass ``parent=None`` for a fully isolated
     registry sharing nothing with the default.
 
-    SHADOWING (S1, COR-3 Phase 7 increment 7 round-2 -- the pin the D-20
-    design left implicit): declaring a name in a CHILD registry that ALSO
+    SHADOWING: declaring a name in a CHILD registry that ALSO
     exists somewhere in its own ``parent`` chain is never a collision --
     :meth:`__parallax_register__`'s own collision check looks only at THIS registry's
     ``_by_name``, never the ``parent`` chain -- and the child's own entry
@@ -199,8 +198,7 @@ class EntityRegistry:
         in this SAME registry raises; the parent chain is never consulted or
         mutated here (a coexisting parent/foreign entry is untouched).
 
-        DUNDER-named (COR-3 Phase 8 increment 7 completion round, Part 8):
-        the sole caller is ``EntityMeta.__new__``, a DIFFERENT class in this
+        DUNDER-named: the sole caller is ``EntityMeta.__new__``, a DIFFERENT class in this
         same module, so a single-underscored name would trip Pyright's
         ``reportPrivateUsage`` -- but never a name that both starts AND ends
         with a double underscore (Python's own name-mangling rule already
@@ -224,7 +222,7 @@ class EntityRegistry:
     def resolve(self, name: str) -> type[BaseModel] | None:
         """The class registered under ``name`` within this registry's own
         scope: this registry's OWN registration if any, else its ``parent``'s
-        -- never a sibling registry's (the D-20 scoping guarantee)."""
+        -- never a sibling registry's (the scoping guarantee)."""
         cls = self._by_name.get(name)
         if cls is not None:
             return cls
@@ -232,8 +230,8 @@ class EntityRegistry:
 
     def own_names(self) -> dict[str, type[BaseModel]]:
         """A copy of THIS registry's own name -> class map (never the
-        ``parent`` chain's) -- the module-scoped ``dict`` a pre-D-20 single-
-        registry app's ``entity_registry()`` observed."""
+        ``parent`` chain's) -- the module-scoped ``dict`` a single-registry
+        app's ``entity_registry()`` observes."""
         return dict(self._by_name)
 
     def records(self) -> dict[str, EntityRecord]:
@@ -254,7 +252,7 @@ class EntityRegistry:
 
     def metamodel(self) -> ScopedMetamodel:
         """This scope's :class:`~parallax.core.descriptor.Metamodel`, tagged
-        with itself -- the D-20 wrap/meta bridge (correction 1): a caller that
+        with itself -- the registry/metamodel bridge: a caller that
         wants `db.find` (`parallax.snapshot.handle`) to resolve THROUGH this
         registry connects a ``Database`` with THIS method's result, never a
         bare, untagged one."""
@@ -276,15 +274,12 @@ def default_registry() -> EntityRegistry:
 @dataclass(frozen=True, slots=True)
 class ScopedMetamodel(MetamodelRecord):
     """A :class:`~parallax.core.descriptor.Metamodel` tagged with the
-    :class:`EntityRegistry` that produced it (ledger D-20 correction 1's
-    wrap/meta bridge): `parallax.snapshot.handle` resolves a decoded row's class
-    through THIS registry, never the process-global default, when a connected
-    ``Database``'s metamodel carries one. A class-authored assembly
-    (:func:`metamodel` over a NON-EMPTY class list) is ALWAYS tagged this way
-    (S2, COR-3 Phase 7 increment 7 round-1 -- R4 residue fixed round-2: this
-    docstring previously, incorrectly, still described a bare
-    ``metamodel(classes)`` call as untagged, the pre-round-1 behavior). The
-    genuinely UNSCOPED (untagged, plain) cases are narrower: a YAML-ingested
+    :class:`EntityRegistry` that produced it: `parallax.snapshot.handle` resolves
+    a decoded row's class through THIS registry, never the process-global
+    default, when a connected ``Database``'s metamodel carries one. A
+    class-authored assembly (:func:`metamodel` over a NON-EMPTY class list) is
+    ALWAYS tagged this way. The genuinely UNSCOPED (untagged, plain) cases are
+    narrower: a YAML-ingested
     `~parallax.core.descriptor.deserialize` result and :func:`metamodel`'s own
     EMPTY-list call (``metamodel([])`` -- no class/registry context to derive
     a scope from at all). Both fall back to :func:`default_registry` unchanged:
@@ -301,14 +296,14 @@ class ScopedMetamodel(MetamodelRecord):
 def registry_of(meta: MetamodelRecord) -> EntityRegistry:
     """The :class:`EntityRegistry` scope a connected ``Metamodel`` resolves
     classes through: its own tagged :class:`ScopedMetamodel` scope if it
-    carries one, else :func:`default_registry` (ledger D-20 correction 1)."""
+    carries one, else :func:`default_registry`."""
     if isinstance(meta, ScopedMetamodel) and meta.registry is not None:
         return meta.registry
     return default_registry()
 
 
 def resolve_entity_class(meta: MetamodelRecord, name: str) -> type[BaseModel] | None:
-    """The Python class ``name`` resolves to within ``meta``'s own D-20 scope
+    """The Python class ``name`` resolves to within ``meta``'s own scope
     (:func:`registry_of`) -- the sole seam `parallax.snapshot.handle` uses to
     turn a decoded row's canonical entity name into a class, never the
     process-global registry directly."""
@@ -330,15 +325,15 @@ class ProvenanceError(ValueError):
 
 
 class FrameworkOwnedAxisError(ValueError):
-    """A fresh instance names an axis-governed attribute at construction (D-31,
-    COR-3 Phase 8 increment 7 completion round): ``in_z``/``out_z`` (and,
+    """A fresh instance names an axis-governed attribute at construction:
+    ``in_z``/``out_z`` (and,
     bitemporal, ``from_z``/``thru_z``) are stamped by the temporal write path
     itself — the milestone director derives every bound from the Clock
     Strategy and the verb's own window arguments (``valid_from``/``until``
     on `insert_until`/`update_until`/`terminate_until`), never from
     caller-authored instance data. ``tx.insert``/``tx.insert_until`` raise
     this the moment the offending field is actually SET on the instance
-    (``model_fields_set``) — replacing the pre-D-31 behavior of silently
+    (``model_fields_set``) — rather than silently
     discarding it at the write path — naming the framework-owned attribute so
     the fix is obvious: omit it and let the verb stamp it (mirrors
     :class:`ModelCopyError`'s own framework-owned-field rejection tone)."""
@@ -359,8 +354,7 @@ class WireNames:
     name) is what the frozen-node wrapper attaches relationship values under;
     ``assignable_py`` is the ``model_copy(update=...)`` allow-list (every
     scalar/value-object python field name except ``pk_py`` and
-    ``framework_owned_py``). ``axis_governed_py`` (D-31, COR-3 Phase 8
-    increment 7 completion round) is the python field name(s) of the
+    ``framework_owned_py``). ``axis_governed_py`` is the python field name(s) of the
     entity's OWN declared axis-interval scalar attributes (``in_z``/``out_z``,
     and bitemporal ``from_z``/``thru_z``) -- populated only on the shape owner
     that actually extends a temporal base (:class:`TxTemporal` /
@@ -439,8 +433,8 @@ _VoDecl = tuple[str, type, Literal["one", "many"], FieldSpec]
 
 @dataclass(frozen=True, slots=True)
 class FamilyRoot:
-    """The inheritance-family ROOT's own vocabulary (ledger D-7's inheritance
-    class spelling, DQ2): ``strategy`` names the mapping strategy exactly as the
+    """The inheritance-family ROOT's own vocabulary (the inheritance class
+    spelling): ``strategy`` names the mapping strategy exactly as the
     descriptor spells it; ``tag`` is the shared discriminator COLUMN name
     (table-per-hierarchy only — ``None`` for table-per-concrete-subtype). A root
     class's own ``EntityConfig.table`` is the TPH family's root-owned shared
@@ -473,8 +467,8 @@ class EntityConfig:
     does, at class-definition time
     (``inheritance-temporal-axes-not-root-owned``).
 
-    ``inheritance`` declares the same family's own vocabulary (ledger D-7,
-    DQ2): a :class:`FamilyRoot` on the family's abstract root, a
+    ``inheritance`` declares the same family's own vocabulary: a
+    :class:`FamilyRoot` on the family's abstract root, a
     :class:`Concrete` on a concrete-subtype leaf, or ``None`` on an
     abstract-subtype interior node (its role and parent derive from the Python
     class hierarchy alone — subclassing a Parallax entity makes the subclass a
@@ -525,10 +519,9 @@ def camel_to_snake(name: str) -> str:
 def entity_registry() -> dict[str, type[BaseModel]]:
     """A copy of the process :func:`default_registry`'s own entity registry,
     keyed by canonical entity name (unaffected by a scoped ``registry=``
-    declared elsewhere -- ledger D-20). Identical to every pre-D-20 caller's
-    observed behavior for a single-registry app: every class this frontend
-    ever compiled without an explicit ``registry=`` lands here, exactly as
-    before."""
+    declared elsewhere). Matches the behavior a single-registry app observes:
+    every class this frontend compiles without an explicit ``registry=`` lands
+    here."""
     return default_registry().own_names()
 
 
@@ -539,15 +532,15 @@ def entity_record_of(cls: type) -> EntityRecord | None:
 
 def entity_records() -> dict[str, EntityRecord]:
     """Every compiled metamodel record visible from the process
-    :func:`default_registry`, keyed by canonical entity name (ledger D-20)."""
+    :func:`default_registry`, keyed by canonical entity name."""
     return default_registry().records()
 
 
 def _registry_of_class(cls: type) -> EntityRegistry:
-    """``cls``'s own D-20 registration scope (:func:`default_registry` for a
+    """``cls``'s own registration scope (:func:`default_registry` for a
     class whose declaration omitted ``registry=``, defensively too for a class
-    this bookkeeping somehow never tracked). PRIVATE (R3, COR-3 Phase 7
-    increment 7 round-2 -- internal machinery, never public): class-authored
+    this bookkeeping somehow never tracked). PRIVATE (internal machinery,
+    never public): class-authored
     metamodel assembly (:func:`metamodel`, THIS module) derives its own scope
     from THIS per-class lookup, never the process default, whenever the
     classes given are in hand."""
@@ -555,12 +548,12 @@ def _registry_of_class(cls: type) -> EntityRegistry:
 
 
 def _conflicting_classes_error(name: str, first: type, second: type) -> ValueError:
-    """The shared conflicting-same-name-classes ``ValueError`` (R1, COR-3
-    Phase 7 increment 7 round-2): ``first``/``second`` are two DIFFERENT
+    """The shared conflicting-same-name-classes ``ValueError``:
+    ``first``/``second`` are two DIFFERENT
     classes that both resolve to canonical entity name ``name`` -- naming
-    both classes and their own D-20 registries, since assembling one
+    both classes and their own registries, since assembling one
     Metamodel from both would let EITHER'S descriptor silently stand in for
-    the other's (the reviewer's exact reproduction, ``animal_owner.Person`` +
+    the other's (e.g. ``animal_owner.Person`` +
     ``read_models.Person``)."""
     return ValueError(
         f"metamodel(classes): {first!r} (registry {_registry_of_class(first)!r}) and "
@@ -573,8 +566,8 @@ def _conflicting_classes_error(name: str, first: type, second: type) -> ValueErr
 
 def _registry_of_classes(classes: Sequence[type]) -> EntityRegistry | None:
     """The single :class:`EntityRegistry` that resolves EVERY one of
-    ``classes`` back to THAT EXACT class (R1/R3, COR-3 Phase 7 increment 7
-    round-2): the seam :func:`metamodel` uses to auto-scope its own result, so
+    ``classes`` back to THAT EXACT class: the seam :func:`metamodel` uses to
+    auto-scope its own result, so
     tagging is automatic wherever the classes are in hand, never a caller's
     own reminder to reach for a specific registry's
     :meth:`EntityRegistry.metamodel` instead.
@@ -585,10 +578,10 @@ def _registry_of_classes(classes: Sequence[type]) -> EntityRegistry | None:
       :func:`_registry_of_class` set that resolves EVERY supplied class's own
       canonical name back to THAT EXACT class object (:meth:`EntityRegistry.
       resolve`) -- never merely whether it "reaches" every other registry in
-      the abstract (S2's original check confirmed reachability but never that
-      the reaching registry's OWN resolution agreed with what was actually
+      the abstract (mere reachability would not confirm that
+      the reaching registry's OWN resolution agrees with what was actually
       supplied, letting a same-name shadow between the classes' own
-      registries silently swap in a DIFFERENT class than the one given, R1):
+      registries silently swap in a DIFFERENT class than the one given):
       this is never a guess, only the unique registry PROVABLY resolving
       every given class correctly (e.g. ``animal_owner.Person``'s own scope
       alongside its related ``read_models`` siblings' default registry
@@ -636,7 +629,7 @@ def metamodel(classes: Sequence[type]) -> MetamodelRecord:
     """Assemble one :class:`~parallax.core.descriptor.Metamodel` from a set of
     related entity classes.
 
-    Automatically SCOPED (S2, COR-3 Phase 7 increment 7 round-2): tagged as a
+    Automatically SCOPED: tagged as a
     :class:`ScopedMetamodel` resolving through the given classes' own registry
     (:func:`_registry_of_classes`) -- tagging is automatic wherever the
     classes are in hand, so `wrap`/`resolve_entity_class` resolve a decoded
@@ -651,7 +644,7 @@ def metamodel(classes: Sequence[type]) -> MetamodelRecord:
     process default registry instead (the same untagged shape a bare
     descriptor-ingested metamodel already carries).
 
-    Rejects loudly (R1, COR-3 Phase 7 increment 7 round-2, BLOCKING) rather
+    Rejects loudly rather
     than silently emitting two records for one canonical name: a conflicting
     same-name pair in ``classes`` -- two DIFFERENT classes that both resolve
     to the same canonical entity name -- is structurally conflicting
@@ -661,7 +654,7 @@ def metamodel(classes: Sequence[type]) -> MetamodelRecord:
     own registries even when the two conflicting classes are not BOTH in
     ``classes`` directly). The IDENTICAL class object repeated in ``classes``
     is never such a conflict -- merely harmless repetition -- and is
-    DEDUPLICATED (P1, COR-3 Phase 7 increment 7 round-3): the assembled
+    DEDUPLICATED: the assembled
     ``entities`` carries exactly ONE record per distinct class, in FIRST-
     occurrence order, never a second copy for a repeated supplied class (a
     caller composing its own class list from several sources, some of which
@@ -679,7 +672,7 @@ def metamodel(classes: Sequence[type]) -> MetamodelRecord:
         if conflicting is not None:
             if conflicting is not cls:
                 raise _conflicting_classes_error(name, conflicting, cls)
-            continue  # the identical class object repeated -- harmless, dedupe (P1)
+            continue  # the identical class object repeated -- harmless, dedupe
         seen[name] = cls
         deduped.append(cls)
     entities = tuple(_entity_record_for(cls) for cls in deduped)
@@ -703,7 +696,7 @@ def _temporal_as_of_axes(record: EntityRecord, cls: type) -> tuple[AsOfAxisMetad
     ``as_of_axes`` of its own when its family's axes live on the root, so
     reading it directly here would wrongly refuse ``ConcreteType.where().as_of(...)``
     as "declares no temporal dimension" for an inherited axis. Resolved within
-    ``cls``'s own D-20 registry scope (never every class ever compiled).
+    ``cls``'s own registry scope (never every class ever compiled).
     """
     if record.inheritance is None:
         return record.as_of_axes
@@ -724,15 +717,14 @@ def _serialize_member(value: object) -> object:
 
 
 def _reject_axis_governed_fields(cls_name: str, names: WireNames, fields_set: set[str]) -> None:
-    """Loud construction-time rejection (D-31, COR-3 Phase 8 increment 7
-    completion round): a fresh instance handed to ``tx.insert``/
+    """Loud construction-time rejection: a fresh instance handed to ``tx.insert``/
     ``tx.insert_until`` may not itself SET an axis-governed attribute
     (``in_z``/``out_z``, bitemporal ``from_z``/``thru_z``) — the temporal
     write path stamps every milestone bound itself (the Clock Strategy plus,
     for the bounded ``*Until`` forms, the verb's own window arguments), so a
-    caller-supplied value is never a legitimate alternative. This REPLACES the
-    pre-D-31 behavior of silently discarding it at the write path (the fresh
-    row's caller-authored axis value was always overwritten unconditionally
+    caller-supplied value is never a legitimate alternative. This rejects
+    loudly rather than silently discarding it at the write path (where the
+    fresh row's caller-authored axis value would be overwritten unconditionally
     by the milestone open/insert step, never surfaced as an error)."""
     supplied = sorted(names.axis_governed_py & fields_set)
     if supplied:
@@ -754,7 +746,7 @@ def full_row(instance: Entity) -> dict[str, object]:
     on its declared default) is OMITTED, producing the narrower ``INSERT``
     the corpus goldens pin (never an explicit bound ``NULL``) — the same
     distinction the ingested write-instruction row already expresses
-    structurally. Raises :class:`FrameworkOwnedAxisError` (D-31) when the
+    structurally. Raises :class:`FrameworkOwnedAxisError` when the
     caller SET an axis-governed attribute (:func:`_reject_axis_governed_fields`) —
     checked before the row is built, so a rejected instance emits no DML at all.
     """
@@ -979,7 +971,7 @@ def _inject_standard_temporal_attrs(
 def _resolve_registry(
     cls_name: str, registry: EntityRegistry | None, family_parent: type | None
 ) -> EntityRegistry:
-    """This class's own D-20 registration scope: an inheritance-family member
+    """This class's own registration scope: an inheritance-family member
     always shares its family root's registry (a family is one coherent
     registration scope, the SAME root-ownership discipline the temporal-base
     selection / ``table`` already follow) — an explicit
@@ -1003,9 +995,8 @@ def _derive_inheritance(
     cls_name: str, config: EntityConfig, family_parent: type | None, registry: EntityRegistry
 ) -> tuple[InheritanceRecord | None, str | None]:
     """Derive the compiled ``Inheritance`` record and this entity's own resolved
-    ``table`` from the Python class hierarchy + ``EntityConfig.inheritance``
-    (ledger D-7, DQ2). Returns ``(None, <default table>)`` — unchanged existing
-    behavior — for a plain, non-family entity.
+    ``table`` from the Python class hierarchy + ``EntityConfig.inheritance``.
+    Returns ``(None, <default table>)`` for a plain, non-family entity.
     """
     if family_parent is None:
         if isinstance(config.inheritance, FamilyRoot):
@@ -1294,7 +1285,7 @@ class EntityMeta(ModelMetaclass):
                 if spec.default is not UNSET:
                     namespace[py_name] = spec.default
                 elif canonical in axis_attributes:
-                    # D-31: axis-governed attributes are optional at
+                    # axis-governed attributes are optional at
                     # construction — a Pydantic default of `None`, never
                     # validated (`model_config` sets no `validate_default`),
                     # so the DECLARED attribute type is unaffected; only an
@@ -1518,7 +1509,7 @@ class Entity(BaseModel, metaclass=EntityMeta):
         return Predicate(Narrow(entity=cls.__name__, to=to, operand=operand))
 
     def model_copy(self, *, update: Mapping[str, Any] | None = None, deep: bool = False) -> Self:
-        """The validating D-16 override (python.md §3): a copy carries a Change
+        """The validating override (python.md §3): a copy carries a Change
         Record mapping each touched field to its EARLIEST original across copy
         chains (copies of copies merge records). Also VALIDATES — Pydantic's
         own ``model_copy`` never validates ``update=`` data — applying the same
@@ -1531,9 +1522,8 @@ class Entity(BaseModel, metaclass=EntityMeta):
 
         An axis-governed attribute (``in_z``/``out_z``, bitemporal
         ``from_z``/``thru_z``) this copy's own ``update`` never NAMES is
-        carried forward WITHOUT re-validation (discovered building the COR-3
-        Phase 8 increment 7 completion round's temporal write-family
-        stories): a materialized CURRENT milestone's real value there may be
+        carried forward WITHOUT re-validation: a materialized CURRENT
+        milestone's real value there may be
         the framework's own open-interval sentinel
         (:data:`~parallax.core.base.TemporalBound.INFINITY` — every real
         Postgres current row's `out_z`/`thru_z` decodes to exactly this,
@@ -1545,7 +1535,7 @@ class Entity(BaseModel, metaclass=EntityMeta):
         constructor below would reject an entirely ordinary "edit one field
         of the CURRENT row" copy. A caller who DOES name an axis field in
         ``update`` still validates normally through the constructor (an axis
-        field remains a legal ``model_copy`` target, D-31)."""
+        field remains a legal ``model_copy`` target)."""
         if not update:
             copied = super().model_copy(update=None, deep=deep)
             carried = dict(changed_fields(self) or {})

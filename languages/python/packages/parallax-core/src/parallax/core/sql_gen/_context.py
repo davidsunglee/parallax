@@ -49,7 +49,7 @@ class SqlGenError(ValueError):
 # a framework guard bound while a plan is being built lands AHEAD of the user   #
 # binds the caller has not lowered yet, and the emitted SQL text — which still  #
 # puts the guard last — silently disagrees with the bind tuple. That is the     #
-# COR-43 defect, and `compile_sweep` cannot see it: the SQL is byte-identical   #
+# defect, and `compile_sweep` cannot see it: the SQL is byte-identical          #
 # whenever only one bind is in flight.                                         #
 #                                                                              #
 # So the rule is enforced by what a planner can HOLD rather than by what its    #

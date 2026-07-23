@@ -2,7 +2,7 @@
 
 Relationship-navigation **canonicalization**: the composition-at-the-engine step
 that runs after ``m-temporal-read``'s :func:`~parallax.core.temporal_read.inject_as_of`
-and before ``m-sql``'s ``compile_read`` (the M2 precedent, restated for navigation).
+and before ``m-sql``'s ``compile_read``.
 Its single job is **per-hop as-of propagation**: for every ``navigate`` / ``exists`` /
 ``notExists`` hop reached anywhere in an already root-injected operation, resolve the
 relationship's target entity and, when that entity (or its inheritance family) is
@@ -12,14 +12,14 @@ temporal, inject the propagated as-of predicate into the hop's own interior as
 downstream of this module ever needs temporal knowledge.
 
 Polymorphic **SQL emission** (the TPH tag predicate, the TPCS grouped ``OR``) is an
-``m-sql`` lowering concern (COR-3 Phase 7 increment 2 already established the
-pattern: ``m-sql`` legally imports ``m-inheritance`` transitively through
-``m-op-algebra``); this module resolves only what **as-of propagation** needs from a
+``m-sql`` lowering concern (``m-sql`` legally imports ``m-inheritance``
+transitively through ``m-op-algebra``); this module resolves only what
+**as-of propagation** needs from a
 polymorphic target — the inheritance family's temporal declaration, always carried on
 the family root (`m-inheritance`) — never the tag/branch shape ``m-sql`` derives
 independently and directly from the same metamodel.
 
-Per the amended dependency graph (ADR 0025 + the DQ5 core amendment), ``m-navigate``
+Per the dependency graph (ADR 0025), ``m-navigate``
 depends on ``m-op-algebra`` (the ``navigate``/``exists``/``notExists`` nodes it walks
 **are** algebra vocabulary), ``m-unit-work`` (navigation resolves through the unit of
 work), ``m-temporal-read`` (a pinned as-of value propagates per hop — the reason this
@@ -27,9 +27,9 @@ module exists at all, since the DAG forbids ``m-sql`` from importing
 ``m-temporal-read``), and ``m-inheritance`` (a relationship target may be a
 polymorphic position; its temporal declaration lives on the family root).
 
-:func:`resolve_relationship` and :func:`hop_as_of_terms` are exported (COR-3 Phase 7
-increment 5) so ``parallax.core.deep_fetch`` — the sole downstream ``m-navigate``
-dependent per the DQ5 amendment — resolves each deep-fetch path segment's
+:func:`resolve_relationship` and :func:`hop_as_of_terms` are exported so
+``parallax.core.deep_fetch`` — the sole downstream ``m-navigate``
+dependent — resolves each deep-fetch path segment's
 relationship and composes each per-level child query's own propagated as-of
 predicate through the SAME primitives this module's own hop canonicalization uses,
 rather than re-deriving temporal/relationship knowledge the DAG already lets it reach
@@ -118,8 +118,8 @@ def _contains_navigation(op: Operation) -> bool:
         ):
             return _contains_navigation(operand)
         case DeepFetch(operand=operand):
-            # A deep-fetch level's own operations are built later (`m-deep-fetch`,
-            # increment 5); only its root `operand` predicate is walked here.
+            # A deep-fetch level's own operations are built later (`m-deep-fetch`);
+            # only its root `operand` predicate is walked here.
             return _contains_navigation(operand)
         case _:
             # Every remaining leaf (All/NoneOp/Comparison/Between/NullCheck/
@@ -197,7 +197,7 @@ def resolve_relationship(rel_ref: str, meta: Metamodel) -> Relationship:
     """Resolve a ``Class.relationship`` reference to its declared :class:`Relationship`.
 
     Exported so `parallax.core.deep_fetch` (the sole downstream `m-navigate`
-    dependent, per the DQ5 core amendment) resolves each deep-fetch path
+    dependent) resolves each deep-fetch path
     segment's relationship through the SAME lookup this module's own hop
     canonicalization uses, rather than re-deriving it.
     """

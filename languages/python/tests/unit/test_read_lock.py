@@ -1,4 +1,4 @@
-"""``parallax.core.read_lock`` unit tests (m-read-lock, COR-3 Phase 8 increment 6).
+"""``parallax.core.read_lock`` unit tests (m-read-lock).
 
 The pure mode -> lock policy scope (:func:`~parallax.core.read_lock.mode_for`):
 mode x find-vs-projection is exercised end-to-end by the compile sweep (the

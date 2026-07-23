@@ -38,7 +38,7 @@ from parallax.core.dialect import dialect_for
 
 pytestmark = pytest.mark.conformance
 
-# Multi-concrete polymorphic INSTANCE-FORM reads (COR-3 Phase 8 part C, DQ7b):
+# Multi-concrete polymorphic INSTANCE-FORM reads:
 # m-inheritance-106/-107/-108/-109 compile byte-identical to their row-form
 # siblings (`test_compile_sweep.py`'s own `COMPILE_EXERCISED`) and are exercised
 # for real — but NOT through this file's own wire-level `_render_node`
@@ -52,18 +52,18 @@ pytestmark = pytest.mark.conformance
 # these four are the OBJECT-lane (developer-surface `db.find`) witnesses each
 # case's own comment names, graded by the API Conformance Suite instead
 # (`tests/api_conformance/test_story_run.py`, `type(node)` + `instance_row`).
-# A structural, PERMANENT lane split (DQ7b: both lanes of the same behavior
-# are now expressed, each through its own grader), never a forward promise.
+# A structural, PERMANENT lane split (both lanes of the same behavior
+# are expressed, each through its own grader), never a forward promise.
 _INSTANCE_FORM_GRAPH_OBJECT_LANE_ONLY: Final[frozenset[str]] = frozenset(
     {"m-inheritance-106", "m-inheritance-107", "m-inheritance-108", "m-inheritance-109"}
 )
 
 # The reachable read cases whose fixtures + observation this phase runs end-to-
-# end: every compile-exercised read (COR-3 Phase 7 increment 5 closes the
-# instance-form-graph run deferral this set once carried — m-value-object-023/
-# -024/-028..-031 and the milestone-set m-snapshot-read-013/-014 now materialize
+# end: every compile-exercised read (including the instance-form-graph reads
+# m-value-object-023/-024/-028..-031 and the milestone-set
+# m-snapshot-read-013/-014, which materialize
 # and grade their `then.graph` / `then.graphs` here) PLUS every case DECLARED
-# `compileEligibility: run-only` (D-10's query-result-dependent deep-fetch tail:
+# `compileEligibility: run-only` (the query-result-dependent deep-fetch tail:
 # `compile` can never emit their query-result-dependent child binds, so `run` is
 # the ONLY lane that ever grades them — derived from the corpus declaration at
 # collection time, never a hard-coded id list, m-conformance-adapter), MINUS the
@@ -169,7 +169,7 @@ def test_run_sweep(case: case_format.Case, provisioner: Any) -> None:
 # SECOND, independent connection this test's ordinary single-`DbPort` seam does
 # not hold open). It stays OUT of `_WRITE_CASES`/`test_write_run_sweep`;
 # `test_interleaved_uow_group_run_sweep` below is its own dedicated entry point
-# (COR-3 Phase 8 increment 6: `engine.run_interleaved_scenario_case`, over the
+# (`engine.run_interleaved_scenario_case`, over the
 # `Provisioner.peer` seam) — a routing exclusion, not a deferral, since the
 # case IS run-lane exercised now, just through a different function.
 _INTERLEAVED_UOW_GROUP_CASES: Final[frozenset[str]] = frozenset({"m-opt-lock-012"})
@@ -177,7 +177,7 @@ _INTERLEAVED_UOW_GROUP_CASES: Final[frozenset[str]] = frozenset({"m-opt-lock-012
 
 def _case_uses_uow_grouping(case: case_format.Case) -> bool:
     """Whether a scenario case's own steps declare the `uow` grouping key
-    (`m-case-format`) — the amendment-review remediation's discriminator
+    (`m-case-format`) — the discriminator
     between "this run-only case's observation is transaction-scoped, and the
     engine's `uow`-grouping seam (`engine._run_uow_group`) is what makes it
     runnable" and every OTHER run-only reason a scenario/writeSequence case
@@ -189,7 +189,7 @@ def _case_uses_uow_grouping(case: case_format.Case) -> bool:
     return any(isinstance(step.get("uow"), str) for step in steps)
 
 
-# COR-3 Phase 8 increment 5's materializing predicate-write run-only scenarios
+# The materializing predicate-write run-only scenarios
 # (`m-opt-lock` "Predicate-selected writes materialize when observations are
 # needed", ADR 0014): each resolves through its OWN internal read
 # (`Transaction._buffer_predicate_instruction`, paired with its immediately
@@ -198,8 +198,8 @@ def _case_uses_uow_grouping(case: case_format.Case) -> bool:
 # grades them, but NONE of them declare `uow` grouping (unlike
 # `m-opt-lock-012`) — `_case_uses_uow_grouping` alone would wrongly exclude
 # every one of them, so this is their own explicit admission clause.
-# `m-value-object-047` joins here too (a corpus amendment, not an increment-5
-# landing): its trailing verify find is now an `asOf` read pinned strictly
+# `m-value-object-047` joins here too (a corpus amendment): its trailing
+# verify find is an `asOf` read pinned strictly
 # inside the closed window, the SAME find lane every OTHER `asOf` case already
 # lowers — the case's own fourth step is not itself a materializing read, but
 # it is run-only and NOT `uow`-grouped, so this explicit admission clause is
@@ -253,7 +253,7 @@ class _ReadCapturePort:
     its ``execute`` calls, in step order (writes go through ``execute_write`` /
     ``transaction``).
 
-    A `uow`-GROUPED find (amendment-review remediation) runs on the
+    A `uow`-GROUPED find runs on the
     transaction's OWN connection (``tx._conn``, ``engine._run_uow_group``) —
     the object ``database.transact``'s closure receives as its argument, which
     a bare pass-through ``transaction(body)`` would hand ``body`` UNWRAPPED
@@ -324,7 +324,7 @@ def test_write_run_sweep(case: case_format.Case, provisioner: Any) -> None:
         # `compare_binds` (the exact-Decimal-fallback comparison
         # `test_write_no_drift.py`'s typed-instance no-drift check already
         # uses): a materializing write's carried-forward payload value
-        # (COR-3 Phase 8 increment 5) is a REAL ``decimal``-typed bind sourced
+        # is a REAL ``decimal``-typed bind sourced
         # from the resolving read's own row (psycopg's native ``Decimal``,
         # never lossily coerced to ``float`` for SQL execution — `m-core`),
         # which a plain YAML-authored golden literal (``200.00``, a ``float``)
@@ -371,7 +371,7 @@ _INTERLEAVED_CASES = _reachable_interleaved_uow_group_cases()
 
 @pytest.mark.parametrize("case", _INTERLEAVED_CASES, ids=[c.case_id for c in _INTERLEAVED_CASES])
 def test_interleaved_uow_group_run_sweep(case: case_format.Case, provisioner: Any) -> None:
-    """`m-opt-lock-012`'s own dedicated entry point (COR-3 Phase 8 increment 6):
+    """`m-opt-lock-012`'s own dedicated entry point:
     the two-group optimistic-lock race, run over a REAL peer connection
     (`engine.run_interleaved_scenario_case`), never through `adapter.run_case`
     (which cannot hold a second session open).
@@ -380,8 +380,8 @@ def test_interleaved_uow_group_run_sweep(case: case_format.Case, provisioner: An
     ordinary scenario — the ordered per-step golden DML (flattened across
     both interleaved groups plus the trailing ungrouped verify find, in
     AUTHORED step order), `then.roundTrips`, and every find step's own
-    observed rows against its authored `expectRows` (review remediation
-    finding 1 — grouped steps 0/1's own observing finds AND the trailing
+    observed rows against its authored `expectRows` (grouped steps 0/1's own
+    observing finds AND the trailing
     ungrouped verify at step 4, the SAME `compare_rows` comparator/
     canonicalization the ordinary lane uses, never a forked row-equality) —
     PLUS the scenario shape's own extra top-level assertion,
@@ -472,7 +472,7 @@ def test_error_run_sweep(case: case_format.Case, provisioner: Any) -> None:
 
 # --------------------------------------------------------------------------- #
 # Conflict — the optimistic-lock run lane (m-opt-lock / m-txtime-write /        #
-# m-bitemp-write, COR-3 Phase 8 increments 3-4). Every reachable conflict      #
+# m-bitemp-write). Every reachable conflict                                    #
 # case declares `compileEligibility: run-only` (single-connection concurrency  #
 # intent), so `run` is the ONLY lane that ever grades it — mirroring the       #
 # pk-gen `sequence` run-only set below, neither joins `WRITE_EXERCISED` (that  #
@@ -584,13 +584,13 @@ def test_conflict_run_sweep(case: case_format.Case, provisioner: Any) -> None:
 
 
 # --------------------------------------------------------------------------- #
-# The pk-gen `sequence`-strategy writeSequence cases (m-pk-gen, COR-3 Phase 8  #
-# increment 3): declared `compileEligibility: run-only` (query-result-        #
+# The pk-gen `sequence`-strategy writeSequence cases (m-pk-gen): declared      #
+# `compileEligibility: run-only` (query-result-                               #
 # dependent — the registry-read-derived allocated ids), so `run` is the ONLY  #
 # lane that ever grades them, same reasoning as the conflict cases above.     #
-# `m-pk-gen-014` (increment 4: a sequence-strategy registry advance composed   #
-# with a temporal audit-only insert in ONE writeSequence, two transactions     #
-# post the DQ4 re-route) joins for the same query-result-dependent reason —    #
+# `m-pk-gen-014` (a sequence-strategy registry advance composed                #
+# with a temporal audit-only insert in ONE writeSequence, two transactions)    #
+# joins for the same query-result-dependent reason —                          #
 # NOT `m-pk-gen-013` (already compile-eligible, `test_compile_sweep`'s own     #
 # `_OPT_LOCK_AND_PK_GEN_WRITE_SEQUENCES`).                                     #
 # --------------------------------------------------------------------------- #
@@ -644,9 +644,8 @@ def test_run_only_write_sequence_run_sweep(case: case_format.Case, provisioner: 
 
 
 # --------------------------------------------------------------------------- #
-# The `when.concurrency` rounds runner (COR-3 Phase 8 increment 6 adds the    #
-# m-read-lock behavioral matrix; the increment 7 completion round's D-28     #
-# flip admits `m-db-error`'s own five two-session error cases too, case-     #
+# The `when.concurrency` rounds runner (the m-read-lock behavioral matrix,   #
+# joined by `m-db-error`'s own five two-session error cases too, case-       #
 # driven through the SAME `Provisioner.peer` choreography with zero new      #
 # machinery beyond the isolation-level knob below): `m-read-lock-006`        #
 # (error / lockWaitTimeout), `-007`/`-008` (concurrencySuccess), and          #

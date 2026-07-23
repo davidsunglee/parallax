@@ -88,7 +88,7 @@ def test_metamodel_assembles_related_classes() -> None:
 
 
 def test_metamodel_of_no_classes_stays_unscoped() -> None:
-    # S2 (COR-3 Phase 7 increment 7 round-2): no class/registry context at all
+    # No class/registry context at all
     # -- the one documented case the untagged, UNSCOPED shape legitimately
     # survives in (never a silent guess at a scope with nothing to derive it
     # from).

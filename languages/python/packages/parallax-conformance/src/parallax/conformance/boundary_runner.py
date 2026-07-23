@@ -1,4 +1,4 @@
-"""``parallax.conformance.boundary_runner`` — the D-17 case-driven boundary runner.
+"""``parallax.conformance.boundary_runner`` — the case-driven boundary runner.
 
 A `boundary` case (`m-auto-retry` / `m-opt-lock`, `m-case-format` "Boundary
 cases") proves a unit-of-work loop-mechanics branch a single-connection
@@ -6,7 +6,7 @@ harness cannot provoke: it carries no golden SQL, only a portable
 `when.boundary` action list, an OPTIONAL `given.fault`, its retry
 configuration (`when.uow`), and the portable `then.outcome`. This module
 hosts the machinery ONE parametrized runner drives against EVERY reachable
-boundary case — never a per-case hand function (the SAME hand-mirroring D-17
+boundary case — never a per-case hand function (the hand-mirroring this runner
 exists to end):
 
 - :func:`boundary_uow` / :func:`boundary_actions` parse a case's own
@@ -130,7 +130,7 @@ def outcome(case: case_format.Case) -> str:
 
 def run_boundary_actions(tx: Transaction, actions: Sequence[str]) -> Account | None:
     """The ONE deterministic `when.boundary` action -> verb mapping every
-    boundary case shares (D-17; never a per-case hand function): every
+    boundary case shares (never a per-case hand function): every
     reachable case targets `models/account.yaml`'s versioned :data:`TARGET_ID`
     row.
 
@@ -210,7 +210,7 @@ class _FaultState:
 
 class FaultInjectingPort:
     """A pass-through ``m-db-port`` DECORATOR over a REAL adapter, injecting
-    ``fault`` at the write seam (D-17): the decorator SIMULATES the fault —
+    ``fault`` at the write seam: the decorator SIMULATES the fault —
     the real classification / retry-loop / optimistic-gate machinery does
     the rest, end to end.
 

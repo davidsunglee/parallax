@@ -37,7 +37,7 @@ class LoweredStatement:
     (``None`` means no expectation — an insert, an unversioned/unobserved write, or a
     chained/opened temporal row: `m-txtime-write` "Chained INSERTs carry no
     expectation"). A non-temporal keyed write lowers to exactly ONE statement, so its
-    own expectation (unchanged from increment 3, `~parallax.core.unit_work.PlannedWrite.
+    own expectation (`~parallax.core.unit_work.PlannedWrite.
     expected_affected`) rides here too. A temporal write lowers to MULTIPLE statements
     (a close, then zero-to-three chained opens) — only the close carries an
     expectation (always ``1``, `m-txtime-write` "The close UPDATE MUST affect exactly
@@ -46,8 +46,8 @@ class LoweredStatement:
 
     ``stale_error`` distinguishes the TWO zero-row-close outcomes on a mismatch: a
     GATED (optimistic) mismatch is the retriable ``m-opt-lock`` conflict
-    (:class:`~parallax.core.opt_lock.OptimisticLockConflictError`, unchanged from
-    increment 3 — every non-temporal expectation and every gated temporal close sets
+    (:class:`~parallax.core.opt_lock.OptimisticLockConflictError` — every
+    non-temporal expectation and every gated temporal close sets
     this ``False``); an UNGATED (locking-mode) temporal close's mismatch is the
     distinct NON-retriable :class:`~parallax.core.opt_lock.StaleWriteError`
     (``stale_error=True`` — the shared read lock, not a gate, was supposed to make it

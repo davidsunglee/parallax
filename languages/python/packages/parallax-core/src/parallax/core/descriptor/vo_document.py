@@ -4,7 +4,7 @@
 walk (a neutral keyed write row's document members, `m-value-object`
 "Writing") and `parallax.core.inheritance.validate_write_assignment`'s
 VO-targeted assignment-value check (a `.set(...)`-built or case-authored
-predicate-write assignment, COR-3 Phase 8 confirmation-pass residual P2/P3)
+predicate-write assignment)
 both need to confirm a value-object-shaped Python value (a plain
 dict/list — never a live ``ValueObject`` instance; every caller already
 serializes one to its canonical document first, `parallax.core.entity.base.

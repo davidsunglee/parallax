@@ -1,8 +1,8 @@
 """`Database` demarcation unit tests (spec §5, Docker-free fake ports).
 
 The observable behavior of `parallax.snapshot.handle._database`, driven entirely
-through the public `Database` surface: `Database.transact` composes M3's
-unit-of-work shell, increment 1's write lowering, and the `m-auto-retry` bounded
+through the public `Database` surface: `Database.transact` composes the
+unit-of-work shell, write lowering, and the `m-auto-retry` bounded
 loop over an injected `m-db-port` — commit and abort wiring, join semantics (same
 Transaction, option conflicts, rollback-only foreclosure), withheld values on
 abort, escaped transaction references, and the retry classification matrix,
@@ -258,8 +258,8 @@ def test_rollback_only_refusal_keeps_the_original_retriability() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Optimistic-lock conflict opt-in (m-opt-lock "Retry contract"; m-auto-retry, #
-# COR-3 Phase 8 increment 6): `retry_optimistic_conflicts` joins             #
+# Optimistic-lock conflict opt-in (m-opt-lock "Retry contract";               #
+# m-auto-retry): `retry_optimistic_conflicts` joins                           #
 # `OptimisticLockConflictError` to the retriable set — the SAME `0`-then-`1`  #
 # affected-rows transition `m-opt-lock-009` witnesses against real Postgres,  #
 # reproduced here with a scripted `write_affected_queue` fake port.           #

@@ -1,5 +1,5 @@
-"""Case-driven API-suite boundary runner (m-auto-retry / m-opt-lock, D-17;
-COR-3 Phase 8 increment 6, m-api-conformance).
+"""Case-driven API-suite boundary runner (m-auto-retry / m-opt-lock,
+m-api-conformance).
 
 ONE parametrized test over EVERY reachable `boundary`-shape corpus case (the
 `m-auto-retry`/`m-opt-lock`/`m-unit-work` bounded-retry loop-mechanics
@@ -119,8 +119,8 @@ def test_boundary_case_runs_through_the_shipped_surface(
 
 
 def test_reachable_boundary_cases_cover_the_expected_eight() -> None:
-    # Grep-verified complete set (D-17's own "the corpus's complete boundary
-    # population" check): `m-auto-retry-001..005`, `m-opt-lock-010/011`,
+    # Grep-verified complete set (the corpus's complete boundary
+    # population): `m-auto-retry-001..005`, `m-opt-lock-010/011`,
     # `m-unit-work-004` — never a hand list at the RUNNER level (the corpus
     # itself drives `_CASES` above); this is a coverage assertion only.
     assert _CASE_IDS

@@ -1,12 +1,12 @@
 """Unit tests for the generated import-linter forbidden-edge complement.
 
-Covers the two Phase 1 canaries required by the structure outline:
+Covers the two canaries the import-linter complement must guarantee:
 
 * a hand-edited generated contract fails ``check_dag_sync.py``; and
 * a deliberately illegal scope import fails ``lint-imports``.
 
 plus generator correctness (DAG parsing, closure, and the conformance-family
-importer exemption), and the COR-42 Phase 7 additions:
+importer exemption), and the support-scope additions:
 
 * ``SUPPORT_SCOPE_DEPS`` is parity-checked against **both** §7 declarations of
   the support-scope graph — the prose table rows and the ``support-scope-graph``
@@ -413,7 +413,7 @@ def test_a_tampered_prose_row_alone_exits_one_at_the_command() -> None:
 
 
 # --------------------------------------------------------------------------
-# The handle grant row after the COR-42 Phase 7 audit.
+# The handle grant row.
 # --------------------------------------------------------------------------
 def test_handle_scope_no_longer_grants_pk_gen() -> None:
     handle = dag.SUPPORT_SCOPE_DEPS["parallax.snapshot.handle"]

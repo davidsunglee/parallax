@@ -10,8 +10,8 @@ inserting a ``group`` node exactly where an ``or`` binds looser than its enclosi
 Expressions reject ``__bool__`` (catching accidental ``and`` / ``or`` / ``not``
 and chained comparisons), pointing at ``&`` / ``|`` / ``~`` and ``.between()``.
 
-Class-level ``Rel[T]`` access yields a :class:`RelationshipPath` (COR-3 Phase 7
-increment 6a): the seed of the deep-fetch ``.include(...)`` spelling
+Class-level ``Rel[T]`` access yields a :class:`RelationshipPath`: the seed of
+the deep-fetch ``.include(...)`` spelling
 (``Order.items.statuses``, deeper hops resolved dynamically via metamodel lookup),
 the hop-level narrowed-view request (``.narrow(*subtypes)``), and the single-hop
 relationship quantifiers (``.any(*predicates)`` / ``.none(*predicates)``,
@@ -372,8 +372,8 @@ class AttributeExpr:
         guard uses (`~parallax.core.entity.base._validate_copy_keys`) — a
         scalar attribute's value must conform to its declared neutral type,
         and a value-object member's value must be a well-formed document
-        against its declared composite (COR-3 Phase 8 confirmation-pass
-        residual P3) — a non-document value (e.g. ``Customer.address.set(42)``)
+        against its declared composite — a non-document value (e.g.
+        ``Customer.address.set(42)``)
         is rejected with the same wording style, never silently bound.
         """
         if self._path:
@@ -566,8 +566,8 @@ class RelationshipPath:
     first hop is statically typed via the ``Rel[T]`` descriptor overload;
     deeper hops resolve dynamically through ``__getattr__``.
 
-    ``__parallax_registry__`` is a DUNDER-named field (COR-3 Phase 7
-    increment 7 round-5, P2 fix): Pyright's ``reportPrivateUsage`` flags a
+    ``__parallax_registry__`` is a DUNDER-named field: Pyright's
+    ``reportPrivateUsage`` flags a
     single-underscore field read from outside this class's own methods, but
     never a name that both starts AND ends with a double underscore (Python's
     own name-mangling rule already exempts it, the same reason
@@ -579,21 +579,20 @@ class RelationshipPath:
     means it travels WITH the instance's own stored state: ``copy.copy``,
     ``copy.deepcopy``, and pickling all reconstruct a ``RelationshipPath``
     from that state directly, never through ``__init__``/``__post_init__``,
-    so a side table keyed by ``id(path)`` would silently lose the entry (the
-    round-5 regression the side-table design had) — an intrinsic field
-    cannot diverge from the object it describes, by construction.
+    so a side table keyed by ``id(path)`` would silently lose the entry — an
+    intrinsic field cannot diverge from the object it describes, by construction.
     """
 
     segments: tuple[PathSegment, ...]
     target: str
-    # This path's own D-20 registration scope (captured at the FIRST hop, from
+    # This path's own registration scope (captured at the FIRST hop, from
     # the owning ``Rel[T]`` descriptor; never a public field, mirroring
     # ``Statement._registry`` — dunder-named instead of single-underscored so
     # it can travel intrinsically; ``compare=False``/``repr=False`` so it
     # never affects equality/hash/repr, exactly as the single-underscored
     # field it replaces never did): a dynamic hop and ``.narrow(...)`` both
     # resolve within it, never the process-global registry — and it is this
-    # SAME captured scope (never ``type(node)``'s own, round-4 P2) that
+    # SAME captured scope (never ``type(node)``'s own) that
     # ``graph_state``'s narrowed-view key derivation resolves a ``.narrow(...)``
     # position within. ``None`` only for a ``RelationshipPath`` built outside
     # ``Rel.__get__`` (test-only direct construction) — falls back to the

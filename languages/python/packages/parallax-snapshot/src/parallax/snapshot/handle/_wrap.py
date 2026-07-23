@@ -1,5 +1,5 @@
 """``parallax.snapshot.handle._wrap`` — frozen developer-surface node wrapping
-(COR-3 Phase 7 increment 6a; spec §3/§4).
+(spec §3/§4).
 
 Private handle implementation, never re-exported through
 ``parallax.snapshot.handle``'s own ``__init__.py``: ``_read`` is its only
@@ -55,11 +55,11 @@ when the neutral row carries it, names the concrete entity directly; a
 single-resolved-position level (no ``familyVariant`` key — a table-per-
 concrete-subtype position resolving to exactly one concrete emits none,
 `m-sql`'s ``_compile_tpcs_single``) uses the node's OWN
-``~parallax.snapshot.materialize.Node.resolved_entity`` instead (S3, COR-3
-Phase 7 increment 7 round-2): the assembler's own compile-time-resolved
+``~parallax.snapshot.materialize.Node.resolved_entity`` instead: the
+assembler's own compile-time-resolved
 concrete, threaded through materialization — never the entity's STATIC
-declared relationship target, which may itself be abstract (the pre-fix
-defect: an abstract-position read narrowing to one concrete wrapped as the
+declared relationship target, which may itself be abstract (otherwise an
+abstract-position read narrowing to one concrete would wrap as the
 ABSTRACT class). The parent's own declared relationship target survives only
 as the LAST-resort default for a defensively (test-only) hand-built ``Node``
 that carries no ``resolved_entity`` at all.
@@ -116,8 +116,8 @@ def wrap_graph(
 
 
 def _concrete_entity_name(node: materialize.Node, default_entity: str) -> str:
-    """``node``'s own concrete entity name (S3, COR-3 Phase 7 increment 7
-    round-2): a row-carried ``familyVariant`` names it directly (a 2+-concrete
+    """``node``'s own concrete entity name: a row-carried ``familyVariant``
+    names it directly (a 2+-concrete
     union-all position); else the assembler's own statically-resolved
     ``node.resolved_entity`` (a single-resolved-position table-per-concrete-
     subtype row, which carries no `familyVariant` at all); ``default_entity``
@@ -263,8 +263,8 @@ def _wrap(
 
     # The merged (logical, union) view for this key — computed once by the
     # discovery pass before any instance existed — never this node's OWN
-    # (possibly narrower) per-view fields directly (Spec-2 fix: a diamond's
-    # second-visited sibling no longer loses its own loaded relationships).
+    # (possibly narrower) per-view fields directly (so a diamond's
+    # second-visited sibling keeps its own loaded relationships).
     fields = merged.get(key, node.fields)
 
     names = wire_names_of(cls)

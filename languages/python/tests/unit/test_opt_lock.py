@@ -1,4 +1,4 @@
-"""``parallax.core.opt_lock`` unit tests (m-opt-lock, COR-3 Phase 8 increment 3).
+"""``parallax.core.opt_lock`` unit tests (m-opt-lock).
 
 Direct, isolated pins for the pure policy scope ``parallax.snapshot.handle``'s
 write-lowering seam consumes: the observed-version requirement

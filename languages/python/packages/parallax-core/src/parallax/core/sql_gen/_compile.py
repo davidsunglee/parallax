@@ -15,7 +15,7 @@ loudly, never silently.
 
 Inheritance-family reads (table-per-hierarchy tag predicates / abstract-read
 superset projection, table-per-concrete-subtype union-all) are ASSEMBLED here
-(COR-3 Phase 7 increment 2, `m-sql` "Metamodel-extension lowering") from plans
+(`m-sql` "Metamodel-extension lowering") from plans
 `_inheritance` resolves — which is where the `parallax.core.inheritance` edge now
 lives, a legal one since `modules.md` already reaches `m-inheritance`
 transitively through `m-op-algebra`. `validate_operation` runs upstream (the
@@ -115,7 +115,7 @@ class CompiledRead:
     """One compiled read: its :class:`Statement`, the root narrow to materialize
     under, and the row transform that materializes `familyVariant`.
 
-    Self-contained by design (COR-43): everything a caller needs to turn driver
+    Self-contained by design: everything a caller needs to turn driver
     rows into observed rows travels WITH the compiled statement, so the two
     execution lanes (the conformance engine's flat wire rows and the production
     snapshot find executor's instance-form graph rows) each shrink to "compile,
@@ -179,7 +179,7 @@ def _projection(
     write's own internal resolving read stays row-form (it constructs no
     instance, `m-value-object-047`) but an assignment-bearing verb still needs
     the raw VO document(s) its own no-op comparison or chained/carried-forward
-    row must read (confirmation-pass residual A) — the caller (the
+    row must read — the caller (the
     materializing predicate-write resolve in `parallax.snapshot.handle`)
     derives this from the verb's own needs, never from `result_form`. ``True``
     projects EVERY declared value object (a chain-bearing need, which must
@@ -242,7 +242,7 @@ def compile_read(
     ``include_value_objects`` opts a **row-form** read into the value-object
     document columns too, independent of ``result_form`` (`m-case-format.md:727`
     — a materializing predicate write's own resolving read projects need-
-    sensitively, on EVERY target class, confirmation-pass residual A): ``True``
+    sensitively, on EVERY target class): ``True``
     projects every declared document (a temporal target's own chain need,
     which must carry forward whichever documents an assignment-bearing verb
     does NOT itself reassign — terminate/delete on a target that never
@@ -428,8 +428,8 @@ def _reject_stacked(kind: str, seen: set[str]) -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Inheritance-family reads (m-sql "Metamodel-extension lowering — inheritance"; #
-# COR-3 Phase 7 increment 2).                                                  #
+# Inheritance-family reads                                                      #
+# (m-sql "Metamodel-extension lowering — inheritance").                         #
 #                                                                               #
 # `_inheritance` resolves the read's queried POSITION and hands back an          #
 # immutable plan; the three assemblers below are its only consumers. Each one   #

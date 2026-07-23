@@ -676,7 +676,7 @@ def _resolve_leaf(
     vo: ValueObject | NestedValueObject, segments: Sequence[str]
 ) -> ValueObjectAttribute:
     """Resolve dotted ``segments`` against ``vo`` via the shared, error-neutral
-    `parallax.core.descriptor.vo_path` walk (S3: the same one `m-op-algebra`'s
+    `parallax.core.descriptor.vo_path` walk (the same one `m-op-algebra`'s
     operation validator uses), classifying a miss into `SqlGenError` verbatim."""
     result = resolve_vo_leaf(vo, segments)
     if isinstance(result, VoPathMiss):

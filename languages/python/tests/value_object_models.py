@@ -1,12 +1,12 @@
 """Idiomatic ``ValueObject`` + entity classes mirroring ``models/customer.yaml``
-(D-7 value-object spelling, COR-3 Phase 7 increment 6a) — the recursive
+— the recursive
 ``Address`` / ``Geo`` / ``Point`` / ``Phone`` composite, one nested VO
 (``geo`` -> ``point``) and one ``cardinality: many`` member (``phones``).
 This module deliberately avoids ``from __future__ import annotations`` so the
 metaclass reads the live ``Attr[T]`` objects directly.
 
-Lives at the top level of ``tests/`` (moved from ``tests/unit/`` in increment
-6b): the unit lane and the API Conformance Suite's VO traversal examples share
+Lives at the top level of ``tests/`` rather than ``tests/unit/``: the unit
+lane and the API Conformance Suite's VO traversal examples share
 these SAME classes (a second copy would race the single process-wide entity
 registry), and only a module on ``pythonpath = ["tools", "tests"]`` resolves
 reliably regardless of collection order.

@@ -1,5 +1,5 @@
 """Unit pins for ``parallax.core.batch_write`` (m-batch-write's injected
-collapse-eligibility vocabulary, COR-3 Phase 8 increment 5).
+collapse-eligibility vocabulary).
 
 Direct, focused tests over the pure decision functions — independent of the
 planner's own collapse-stage adjacency logic (pinned in ``test_planner.py``)

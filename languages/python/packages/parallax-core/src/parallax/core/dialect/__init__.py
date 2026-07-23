@@ -156,8 +156,8 @@ class Dialect:
         SQL text from this driver's own form.
 
         Used only where a caller must REPORT a statement it did not itself lower
-        (the conformance engine's materializing-predicate-write capture, COR-3
-        Phase 8 increment 5: its per-row writes are query-result-dependent, so
+        (the conformance engine's materializing-predicate-write capture: its
+        per-row writes are query-result-dependent, so
         there is no independent pure re-lowering to draw canonical emission text
         from — the executed driver SQL is the only source, and every OTHER
         emission this engine reports is canonical text, so a captured statement

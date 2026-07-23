@@ -1,10 +1,8 @@
-"""D-16 full graduation (DQ1, COR-3 Phase 7 increment 6a): the validating
-``model_copy`` override and its Change Record — ``changed_fields`` /
+"""The validating ``model_copy`` override and its Change Record — ``changed_fields`` /
 ``effective_change_set`` / ``full_row`` / ``primary_key_row`` /
 ``canonical_row`` (spec §3/§5). The version column's own advance is
-framework-owned end to end at the write seam (`m-opt-lock`, COR-3 Phase 8
-increment 3) — ``framework_owned_advance`` retired with the provisional M4-era
-shape it reproduced; see ``test_write_lowering.py`` / ``test_opt_lock.py``.
+framework-owned end to end at the write seam (`m-opt-lock`); see
+``test_write_lowering.py`` / ``test_opt_lock.py``.
 """
 
 from __future__ import annotations
@@ -175,7 +173,7 @@ def test_wire_names_of_rejects_a_non_compiled_entity_class() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# D-31 (COR-3 Phase 8 increment 7 completion round): axis-governed attributes #
+# Axis-governed attributes                                                    #
 # are optional at construction, and a caller-supplied one on a fresh instance #
 # raises loudly at `full_row` (the `insert`/`insert_until` Create Payload     #
 # seam) rather than being silently discarded downstream.                     #
@@ -220,7 +218,7 @@ def test_a_non_temporal_class_declares_no_axis_governed_fields() -> None:
 
 
 def test_the_exported_descriptor_carries_no_default_for_an_axis_attribute() -> None:
-    # D-31's Pydantic-level `None` default is a frontend construction
+    # The Pydantic-level `None` default is a frontend construction
     # affordance ONLY — the compiled descriptor stays byte-identical (the
     # descriptor no-drift guard is the proof; this pin is the unit-level
     # half of it).
@@ -231,8 +229,7 @@ def test_the_exported_descriptor_carries_no_default_for_an_axis_attribute() -> N
 
 
 # --------------------------------------------------------------------------- #
-# Discovered building the COR-3 Phase 8 increment 7 completion round's        #
-# temporal write-family stories: a materialized CURRENT milestone's real      #
+# For a temporal write family, a materialized CURRENT milestone's real        #
 # `out_z`/`thru_z` value is the framework's own open-interval sentinel        #
 # (`TemporalBound.INFINITY` — every real Postgres current row decodes to      #
 # exactly this, `parallax.postgres.adapter._InfinityTimestamptzLoader`),      #

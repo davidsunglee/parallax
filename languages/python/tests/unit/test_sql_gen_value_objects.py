@@ -134,7 +134,7 @@ def test_top_level_many_value_object_any_element_needs_no_path_descent() -> None
 
 # --------------------------------------------------------------------------- #
 # To-many value-object array traversal (m-sql "To-many — exists / notExists    #
-# and any-element predicates"; COR-3 Phase 7 increment 4).                     #
+# and any-element predicates").                                                #
 # --------------------------------------------------------------------------- #
 def test_nested_exists_bare_is_a_non_empty_test_no_where() -> None:
     compiled = compile_read(

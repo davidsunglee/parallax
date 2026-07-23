@@ -1,5 +1,4 @@
-"""Idiomatic entity classes mirroring the corpus's inheritance families
-(D-7 inheritance class spelling, DQ2, COR-3 Phase 7 increment 6a):
+"""Idiomatic entity classes mirroring the corpus's inheritance families:
 ``models/payment.yaml`` (table-per-hierarchy: ``Payment`` / ``CardPayment`` /
 ``CashPayment``), ``models/document.yaml`` (table-per-concrete-subtype, with
 an intermediate abstract subtype and a polymorphic owner: ``Document`` /
@@ -20,8 +19,8 @@ API-suite's execution both resolve the exact SAME registered class, never a
 second, differently-scoped copy that would silently race it in the shared,
 global, process-wide entity registry.
 
-Lives at the top level of ``tests/`` (moved from ``tests/unit/`` in increment
-6b) rather than lane-local: the unit lane's frontend/no-drift tests AND the API
+Lives at the top level of ``tests/`` rather than lane-local: the unit lane's
+frontend/no-drift tests AND the API
 Conformance Suite's descriptor no-drift guard both need the SAME classes, and
 only a module directly on ``pythonpath = ["tools", "tests"]`` resolves
 reliably regardless of which lane's files pytest collects first.

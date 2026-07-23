@@ -1,7 +1,6 @@
 """``parallax.conformance.read_stories`` — executable API-suite READ examples
-(m-api-conformance; review remediation of the S1 finding against Phase-7
-increment 6b: exercised MUST mean executed-and-graded through the shipped
-surface, never serialization-only).
+(m-api-conformance): exercised MUST mean executed-and-graded through the
+shipped surface, never serialization-only.
 
 Every entry is ONE case-driven idiomatic read example: a pure ``build()``
 returning the SAME idiomatic ``Statement`` expression
@@ -30,8 +29,7 @@ or its own ``graph_stories.GraphStory`` instead:
 - the ``customer.yaml`` value-object predicate reads
   (``m-value-object-001/002/007/015/016/017/019``) and its materialization/
   deep-fetch siblings (``m-value-object-023/024``, ``m-deep-fetch-018``): now
-  installed (``parallax.conformance.vo_models.Customer``, D-20 residue, COR-3
-  Phase 8 increment 7 completion round) and executed, but as
+  installed (``parallax.conformance.vo_models.Customer``) and executed, but as
   ``graph_stories.GraphStory`` entries rather than here — the corpus classifies
   the predicate reads ROW-FORM (``then.rows`` alone), while `db.find` is
   ALWAYS instance-form (python.md §4), so this module's byte-exact generic
@@ -44,7 +42,7 @@ or its own ``graph_stories.GraphStory`` instead:
   table-per-concrete-subtype instance-form projection over 2+ resolved
   concretes has no goldened lowering at all yet (``SqlGenError``) — a genuine
   engine gap `db.find`'s instance-form materialization hits, not a
-  partition-honesty concern to paper over by grading around it (ledger D-22).
+  partition-honesty concern to paper over by grading around it.
 """
 
 from __future__ import annotations
@@ -85,9 +83,9 @@ class ReadStory:
     :func:`read_story_snippet` is the Usage Guide's OWN rendered source: it
     layers the participation-mode wrapper on top of ``snippet``, single-
     sourced from ``concurrency`` below rather than a second, independently-
-    authored string (review remediation finding 2).
+    authored string.
 
-    ``concurrency`` (COR-3 Phase 8 increment 6, the `m-read-lock` matrix's
+    ``concurrency`` (the `m-read-lock` matrix's
     -002/-003/-005) opts a story into the TRANSACTIONAL read half instead of
     the default non-transactional one: ``None`` (every other entry, unchanged)
     runs ``db.find(build())``; a declared mode runs
@@ -116,7 +114,7 @@ def read_story_snippet(story: ReadStory) -> str:
     ``db.transact(lambda tx: tx.find(op), concurrency=...)`` wrapper
     `test_story_run.py`'s generic runner actually executes, rendered from
     that SAME field rather than a second, independently-typed copy of the
-    mode (review remediation finding 2: a `m-read-lock-002` vs. `-005`-style
+    mode (a `m-read-lock-002` vs. `-005`-style
     pair renders IDENTICALLY otherwise, hiding the one thing the pair
     exists to demonstrate)."""
     if story.concurrency is None:
@@ -297,7 +295,7 @@ READ_STORIES: Final[tuple[ReadStory, ...]] = (
     # row's superset includes), and table-per-concrete-subtype instance-form
     # projection over 2+ resolved concretes has no goldened lowering at all
     # yet (`SqlGenError`, `sql_gen._compile._compile_tpcs_read`) — a genuine
-    # engine gap, not a Spec-1 partition-honesty concern to paper over. See
+    # engine gap, not a partition-honesty concern to paper over. See
     # `api_suite.CASE_SKIP_REASONS` for the reasoned skip.
     ReadStory(
         "m-inheritance-005",
@@ -335,7 +333,7 @@ READ_STORIES: Final[tuple[ReadStory, ...]] = (
         "op = DepositRate.where().as_of(tx_time=datetime(2024, 1, 15, tzinfo=UTC))",
     ),
     # -- m-read-lock (the runtime lock/omit matrix), models/account.yaml ----- #
-    # (COR-3 Phase 8 increment 6): the `api-conformance`-lane runtime half of
+    # The `api-conformance`-lane runtime half of
     # the read-lock matrix — `tx.find` inside a `db.transact` of the declared
     # mode. `m-read-lock-001` (the harness-lane single-connection golden) and
     # `-006`/`-007`/`-008` (the two-session behavioral proofs) need no idiomatic

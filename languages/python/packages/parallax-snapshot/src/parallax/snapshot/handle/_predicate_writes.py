@@ -1,6 +1,6 @@
 """``parallax.snapshot.handle._predicate_writes`` — the predicate-selected (``_where``) write lane.
 
-The set-based half of the spec §5 write surface (COR-3 Phase 8 increment 5), as
+The set-based half of the spec §5 write surface, as
 free functions rather than :class:`~parallax.snapshot.handle.Transaction`
 methods: bare-statement and Valid-Time-window validation into a canonical
 :class:`~parallax.core.unit_work.PredicateWrite`, the readless-vs-materialize
@@ -68,8 +68,8 @@ def buffer_predicate(
     until: dt.datetime | None = None,
 ) -> None:
     """The neutral seam every ``_where`` verb shares — the SAME seam the
-    conformance engine's predicate-write translation drives (COR-3 Phase 8
-    increment 5), so the developer-facing verbs and the corpus-driven
+    conformance engine's predicate-write translation drives, so the
+    developer-facing verbs and the corpus-driven
     engine path can never diverge in behavior.
 
     1. **Bare-statement guard** (`python.md` §5 "A statement becomes a
@@ -84,8 +84,7 @@ def buffer_predicate(
        ``valid_from``; a Transaction-Time-Only or non-temporal target takes none; the
        ``*Until`` forms additionally require ``until``, with
        ``valid_from < until`` — an equal or reversed window rejects
-       HERE, at build, before any buffering (:func:`validate_until`, S4
-       COR-3 Phase 8 increment 7 remediation).
+       HERE, at build, before any buffering (:func:`validate_until`).
     4. **Build + validate the canonical instruction** (the SAME
        deserialize/`validate_instruction` round trip a keyed write buys in
        ``Transaction._buffer`` — non-empty/no-duplicate assignments are the
@@ -136,8 +135,8 @@ def buffer_predicate_instruction(
     instruction: PredicateWrite,
 ) -> None:
     """The neutral seam UNDERLYING every ``_where`` verb and the
-    conformance engine's own predicate-write translation (COR-3 Phase 8
-    increment 5; `m-case-format` "predicate-shaped case entries deserialize
+    conformance engine's own predicate-write translation (`m-case-format`
+    "predicate-shaped case entries deserialize
     to PredicateWrite through the existing serde and buffer through
     Transaction's own seam"): given an ALREADY-BUILT, already-validated
     :class:`~parallax.core.unit_work.PredicateWrite` instruction, reject an
@@ -215,7 +214,7 @@ def _materialize_predicate_write(
     # Need-sensitive projection (`m-case-format.md:727`): the resolving
     # read projects the resolved row's own value-object document(s) for
     # TWO independent needs, on EVERY target class — never gated on
-    # temporality alone (confirmation-pass residual A, completing P2).
+    # temporality alone.
     #
     # CHAIN need: the verb's OWN milestone plan writes a CHAINED row
     # from the resolved one. A BITEMPORAL target's rectangle split

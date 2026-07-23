@@ -329,7 +329,7 @@ def test_tpcs_delete_targets_the_concretes_own_table_no_tag() -> None:
 
 
 def test_tph_optlock_composition_tag_rides_identity_gate_binds_last() -> None:
-    # m-inheritance-084: the resolved Q9 bind order end to end — pk, tag guard,
+    # m-inheritance-084: the bind order end to end — pk, tag guard,
     # THEN the version gate (no inheritance exception to "the gate binds last").
     update = KeyedWrite("update", "Car", ({"id": 1, "name": "Coupe"},))
     statement = _lower(

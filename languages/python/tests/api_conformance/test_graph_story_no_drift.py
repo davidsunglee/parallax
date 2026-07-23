@@ -1,5 +1,4 @@
-"""DB-free graph-story drivers — the checkpoint-3 R1 precedent applied to the
-read-side stories.
+"""DB-free graph-story drivers for the read-side stories.
 
 Every ``GRAPH_STORIES`` function executes through the shipped in-process
 pipeline (statement build → canonicalize → plan → compile → port →
@@ -90,11 +89,10 @@ def test_the_mutation_story_edits_in_memory_and_rereads_the_original() -> None:
 
 
 def test_the_supplemental_history_story_runs_through_the_shipped_surface() -> None:
-    # SUPPLEMENTAL (Spec-2 remediation): `history_of_a_concrete_temporal_node_
+    # SUPPLEMENTAL: `history_of_a_concrete_temporal_node_
     # distinguishes_milestones` is deliberately NOT a `GRAPH_STORIES` entry (not
     # counted toward any case's exercised status — see `graph_stories`'s own
     # module docstring), but its body still needs a unit-lane, Docker-free
-    # driver exactly like every registered story (the checkpoint-3 R1
-    # precedent this whole file applies).
+    # driver exactly like every registered story.
     db = Database.connect(_CannedPort(), _MODELS["rate"])
     graph_stories.history_of_a_concrete_temporal_node_distinguishes_milestones(db)

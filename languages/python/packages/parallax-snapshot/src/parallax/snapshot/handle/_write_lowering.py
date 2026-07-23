@@ -57,7 +57,7 @@ __all__ = ["lower_temporal_close", "lower_write"]
 
 # The keyed mutation verbs the write seam lowers (the non-temporal write
 # triad). The temporal `*Until` / `terminate` verbs open / split / close
-# milestones and land with the temporal write path (COR-3 Phase 8 increment 4).
+# milestones and land with the temporal write path.
 _NON_TEMPORAL_VERBS: Final[frozenset[str]] = frozenset({"insert", "update", "delete"})
 
 
@@ -89,9 +89,9 @@ def lower_write(
     column/tag machinery (reused unchanged for every chained INSERT — value objects,
     inheritance tag derivation, pk-gen markers all compose exactly as a non-temporal
     insert's do, since a chained row is structurally an ordinary full-row insert). A
-    non-temporal entity's write may be single-row (unchanged since increment 3) or a
+    non-temporal entity's write may be single-row or a
     COLLAPSED multi-row instruction the planner's collapse stage produced
-    (COR-3 Phase 8 increment 5, `m-batch-write`): a multi-row INSERT, a uniform-value
+    (`m-batch-write`): a multi-row INSERT, a uniform-value
     IN-list UPDATE, or a non-versioned IN-list DELETE.
 
     A :class:`~parallax.core.unit_work.PredicateWrite` lowers READLESS
@@ -198,7 +198,7 @@ def lower_write(
 
 
 # --------------------------------------------------------------------------- #
-# Temporal (audit-only / bitemporal) keyed writes (COR-3 Phase 8 increment 4). #
+# Temporal (audit-only / bitemporal) keyed writes.                             #
 # The MILESTONE PLANNING (which rows close, which chain, split arithmetic) is  #
 # `parallax.core.txtime_write` / `.bitemp_write`'s job — pure functions the     #
 # scopes themselves never render SQL with. This seam composes their neutral    #

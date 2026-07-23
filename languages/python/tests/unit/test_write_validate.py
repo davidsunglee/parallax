@@ -1,5 +1,5 @@
-"""``validate_write`` unit tests (m-value-object write validation, COR-3 Phase
-8 increment 2), over a hand-built multi-type synthetic model — the SAME
+"""``validate_write`` unit tests (m-value-object write validation), over a
+hand-built multi-type synthetic model — the SAME
 "synthetic Widget model" convention `test_op_algebra_validate.py` uses for
 `_literal_matches_type`'s full neutral-type sweep, applied here to the write
 side's own `_type_matches`. The 10 in-slice `when.write` rejected corpus
@@ -265,7 +265,7 @@ def test_type_matches_string_accepts_string_and_rejects_others() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Temporal axis columns (COR-3 Phase 8 increment 4): the milestone interval    #
+# Temporal axis columns: the milestone interval                               #
 # bounds a temporal write never authors — excluded from the required/type     #
 # walk regardless of mutation kind, since they are Clock-supplied / axis-     #
 # explicit instruction-level context, never a neutral write-row member        #

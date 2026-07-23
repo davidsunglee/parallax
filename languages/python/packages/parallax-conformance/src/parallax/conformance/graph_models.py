@@ -1,6 +1,6 @@
 """Idiomatic entity classes the API-suite graph stories construct statements
 over: a mirror of ``models/policy.yaml`` (``Policy`` / ``Coverage`` / ``Claim``,
-bitemporal entities that also relate, COR-3 Phase 7 increment 6b). Owned by
+bitemporal entities that also relate). Owned by
 ``parallax.conformance`` for the same reason ``story_models`` is: ``graph_stories.py``
 is a real dev-only package module (its snippets render into the Usage Guide via
 ``gen-usage-guide``, which runs outside pytest entirely), so it needs classes

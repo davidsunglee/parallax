@@ -4,7 +4,7 @@ The developer-facing class frontend: the frozen entity base and its metaclass,
 the ``Attr[T]`` / ``Rel[T]`` typed-access carriers, the ``Field`` /
 ``Relationship`` declaration helpers, canonical descriptor export, the statement
 surface (predicate / temporal-read / deep-fetch-include / subtype-narrowing
-building), the ``ValueObject`` class frontend (D-7), and the closed-world
+building), the ``ValueObject`` class frontend, and the closed-world
 relationship load-state vocabulary (``is_loaded`` / ``narrowed``,
 ``UnloadedRelationshipError``) the frozen snapshot-node wrapper attaches. This
 support scope may import ``m-descriptor``, ``m-op-algebra`` (reaching

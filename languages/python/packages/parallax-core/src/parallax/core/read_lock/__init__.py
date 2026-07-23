@@ -1,6 +1,6 @@
 """``parallax.core.read_lock`` enforcement scope (m-read-lock).
 
-The pure, query-free read-lock POLICY scope (COR-3 Phase 8 increment 6):
+The pure, query-free read-lock POLICY scope:
 `m-read-lock` is the default (`locking`-mode) correctness strategy — an
 in-transaction **object find** that intends to write acquires the dialect's
 shared row lock; `optimistic` mode takes no lock, ever (`m-opt-lock` recovers

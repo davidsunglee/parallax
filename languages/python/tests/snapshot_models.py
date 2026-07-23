@@ -1,5 +1,5 @@
 """Idiomatic entity classes for the frozen-node wrapping / statement-include /
-narrowed-view unit tests (COR-3 Phase 7 increment 6a).
+narrowed-view unit tests.
 
 Shaped after ``models/orders.yaml`` (relationships, deep-fetch paths) and
 ``models/animal.yaml`` (table-per-hierarchy inheritance, a polymorphic owner,
@@ -23,11 +23,11 @@ SAME registered class rather than a second, differently-scoped copy racing it
 in the same registry.
 
 ``AnimalOwner`` stays LOCAL and distinctly named — deliberately, not out of
-necessity: before ledger D-20 (COR-3 Phase 8 increment 7) the animal family's
+necessity: before per-registry scoping the animal family's
 real owner (``models/animal.yaml``'s own ``Person``) could not coexist with
 ``read_models.Person`` (``models/person.yaml``) in the single, global,
 process-wide entity registry, so this module renamed its OWN owner fixture to
-sidestep the collision entirely. D-20's explicit
+sidestep the collision entirely. Explicit
 :class:`~parallax.core.entity.base.EntityRegistry` scoping now lets the two
 coexist (the REAL, production-reachable animal-family owner is installed as
 `parallax.conformance.animal_owner.Person`, scoped to its own registry, and

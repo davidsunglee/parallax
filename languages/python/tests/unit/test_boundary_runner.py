@@ -1,5 +1,4 @@
-"""``parallax.conformance.boundary_runner`` unit tests (D-17, COR-3 Phase 8
-increment 6, Docker-free fake ports).
+"""``parallax.conformance.boundary_runner`` unit tests (Docker-free fake ports).
 
 Pins the pure pieces the real-database suite (`tests/api_conformance/
 test_boundary_run.py`) composes against real Postgres: `when.uow`/

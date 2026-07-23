@@ -1,7 +1,7 @@
 """``parallax.conformance.temporal_state.TemporalShadow`` unit tests.
 
 The case-local tracker that supplies the engine's write lanes with an
-observed current milestone (COR-3 Phase 8 increment 4) is proven end to end
+observed current milestone is proven end to end
 through the engine's own writeSequence/scenario/conflict tests
 (``test_engine.py``, ``test_compile_sweep.py``, ``test_run_sweep.py``); this
 module pins the tracker's OWN seam directly — fixture seeding, resolution,

@@ -6,8 +6,8 @@ smoke (construction, scalar read, bytes round trip through the dialect bind seam
 affected-row semantics, and a transaction callback that commits its value). The
 `m-db-error` translation-boundary proof completes the smoke: two crossed-update
 `peer` connections provoke a genuine `40P01`, and the port boundary re-raises it as
-a neutral ``DatabaseError`` -- narrowed (COR-3 Phase 8 increment 7 completion
-round, D-28) to the FULL-shape assertions (`is_retriable`, `violates_unique_index`,
+a neutral ``DatabaseError`` -- narrowed to the FULL-shape assertions
+(`is_retriable`, `violates_unique_index`,
 the preserved driver message) the corpus's own case-driven grading of this SAME
 choreography (`m-db-error-004`, `parallax.conformance.concurrency_runner`) does not
 check; the exact `errorClass`/`nativeCode` pin lives there now. Docker-gated; a
@@ -105,8 +105,8 @@ def test_deadlock_is_reraised_as_a_retriable_database_error(provisioner: Any) ->
     completes, so exactly one victim is observed. The victim choice is
     non-deterministic; the classification is not.
 
-    NARROWED (COR-3 Phase 8 increment 7 completion round, D-28): the trigger
-    choreography here is now structurally identical to `m-db-error-004`'s own
+    NARROWED: the trigger
+    choreography here is structurally identical to `m-db-error-004`'s own
     corpus case, which grades case-driven, byte-exact against the golden
     `errorClass`/`nativeCode` through `parallax.conformance.concurrency_runner`
     (`tests/conformance/test_run_sweep.py::test_concurrency_rounds`) — so the
@@ -158,7 +158,7 @@ def test_deadlock_is_reraised_as_a_retriable_database_error(provisioner: Any) ->
 
     assert len(victims) == 1, f"expected exactly one deadlock victim, got {len(victims)}"
     victim = victims[0]
-    # `category`/`native_code` exact-value pins retired (D-28): graded
+    # `category`/`native_code` exact-value pins are not asserted here: graded
     # byte-exact against the corpus golden by `m-db-error-004`'s own
     # case-driven proof now (`test_run_sweep.test_concurrency_rounds`).
     assert victim.is_retriable

@@ -62,7 +62,7 @@ def test_core_alone(tmp_path: Path, wheelhouse: Wheelhouse) -> None:
     _install(python, wheelhouse, "parallax-core")
 
     assert _import_ok(python, "parallax.core")
-    # COR-43: the split SQL-generation package cold-imports from the built wheel.
+    # The split SQL-generation package cold-imports from the built wheel.
     # `test_wheels.py` proves the six files SHIP; this proves the private direction
     # actually RESOLVES outside the source tree — a missing module, a leftover
     # import of the retired `compile`, or an import cycle among the five private

@@ -1,8 +1,8 @@
-"""D-7 value-object class frontend: unit-level no-drift proof against
+"""The value-object class frontend: unit-level no-drift proof against
 ``models/customer.yaml``'s recursive ``Address`` / ``Geo`` / ``Point`` /
-``Phone`` composite (COR-3 Phase 7 increment 6a). Ledger D-20's structural
-registry-collision block is resolved, and D-21 has since installed
-``vo_models.Customer`` under its own ``CUSTOMER_REGISTRY`` — the very
+``Phone`` composite. Per-registry scoping resolves the structural
+registry-collision block, and ``vo_models.Customer`` is installed
+under its own ``CUSTOMER_REGISTRY`` — the very
 coexistence mechanism that unblocked it — alongside ``vo_models.Supplier``/
 ``Branch``/``Contact``/``Shipment``. The test-only mirror here is retained
 deliberately: this file's proof is the build-time structural comparison, which
@@ -41,7 +41,7 @@ def _customer_yaml() -> dict[str, object]:
 def test_value_object_class_export_has_no_drift_from_the_corpus_customer_model() -> None:
     # Scoped to the Address/Geo/Point/Phone composite (this module's own
     # focus): `customer.yaml` also declares the `Location` / `Depot` deep-
-    # fetch-witness relationships (D-14), out of scope for a VO-only mirror.
+    # fetch-witness relationships, out of scope for a VO-only mirror.
     corpus = canonicalize(_customer_yaml())
     entities = cast("list[dict[str, object]]", corpus["entities"])
     corpus_customer = next(e for e in entities if e["name"] == "Customer")
@@ -186,7 +186,7 @@ def test_to_document_serializes_a_nested_single_value_object_field() -> None:
 
 
 def test_to_document_omits_an_unset_optional_inner_member() -> None:
-    # D-33: `elevation`/`point` are OPTIONAL (declared with a default) and
+    # `elevation`/`point` are OPTIONAL (declared with a default) and
     # never populated here — omitted entirely, never bound as `null`
     # (`full_row`'s own `model_fields_set` policy, mirrored).
     from parallax.core.entity.value_object import to_document
@@ -252,7 +252,7 @@ def test_to_document_applies_the_omission_policy_to_each_cardinality_many_elemen
 
 
 def test_to_document_omits_every_member_of_a_structurally_incomplete_required_composite() -> None:
-    # D-33 review remediation: `ContactGeo`/`CustomerGeo`
+    # `ContactGeo`/`CustomerGeo`
     # (`parallax.conformance.vo_models`) declare DESCRIPTOR-required members
     # (`country`, etc.) that stay PYTHON-optional (default `None`,
     # `ContactPoint`'s own docstring) so a caller CAN construct a
@@ -284,8 +284,8 @@ def test_to_document_renders_an_explicitly_set_required_member_at_its_default_va
 
 
 def test_to_document_omission_of_a_required_member_still_classifies_to_the_pinned_rule() -> None:
-    # The downstream pipeline pin: the D-33 fix changed HOW an unset required
-    # inner member serializes (an omitted key, never an explicit `null`) but
+    # The downstream pipeline pin: an unset required
+    # inner member serializes as an omitted key, never an explicit `null`, but
     # not WHICH rule fires. `write_validate`'s own required-attribute check
     # and the shared `vo_document_violation` walk both treat "absent key" and
     # "explicit null" identically (`if not present or value is None`), so the
@@ -310,7 +310,7 @@ def test_to_document_omission_of_a_required_member_still_classifies_to_the_pinne
     row = full_row(contact)
     address_document = row["address"]
     assert isinstance(address_document, dict)
-    assert "street" not in address_document  # the D-33 omission, never an explicit null
+    assert "street" not in address_document  # the omission, never an explicit null
 
     case_path = (
         case_format.find_repo_root()

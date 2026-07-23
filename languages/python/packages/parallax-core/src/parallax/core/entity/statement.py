@@ -87,7 +87,7 @@ class Statement:
     # Whether the statement-level ``.narrow(...)`` clause already wrapped the
     # predicate (single-shot, like ``as_of``).
     is_narrowed: bool = False
-    # The target class's own D-20 registration scope, captured at ``Entity.where``
+    # The target class's own registration scope, captured at ``Entity.where``
     # (never a public field -- an implementation-private resolution seam):
     # ``.include`` / ``.narrow`` validate
     # within THIS registry, never the process-global default, so a same-named
@@ -308,7 +308,7 @@ class Statement:
 
     def _scoped_metamodel(self) -> Metamodel:
         """``validate_operation``'s own input, resolved within THIS statement's
-        own D-20 registration scope (:attr:`_registry`, captured at
+        own registration scope (:attr:`_registry`, captured at
         ``Entity.where``) — never the process-global registry (a same-named
         class registered elsewhere must stay invisible here). A deferred
         import (``parallax.core.entity.base`` imports THIS module for
@@ -343,7 +343,7 @@ def build_statement(
     registry: EntityRegistry | None = None,
 ) -> Statement:
     """Build a :class:`Statement` conjoining ``predicates`` (empty is find-all).
-    ``registry`` (ledger D-20) is the target class's own registration scope,
+    ``registry`` is the target class's own registration scope,
     captured here so ``.include`` / ``.narrow`` validate within it later."""
     if not predicates:
         return Statement(target=target, predicate=All(), as_of_axes=as_of_axes, _registry=registry)

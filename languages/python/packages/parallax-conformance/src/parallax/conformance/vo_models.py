@@ -1,5 +1,5 @@
-"""Value-object-bearing entity classes, installed for real (ledger D-21, COR-3
-Phase 8 increment 7): ``models/supplier.yaml`` (Transaction-Time-only, the
+"""Value-object-bearing entity classes, installed for real:
+``models/supplier.yaml`` (Transaction-Time-only, the
 first production-reachable temporal x value-object combination),
 ``models/branch.yaml`` (bitemporal, the SAME recursive ``address`` composite
 over both axes), ``models/contact.yaml`` (non-temporal, REQUIRED nested
@@ -30,14 +30,14 @@ class is looked up by Python object reference through its owning entity's
 the identical simple names (``Geo``, ``Phone``, ``Point``) recur freely
 across ``value_object_models``/this module without any collision.
 
-``Customer``/``Location``/``Depot`` (D-20 residue, COR-3 Phase 8 increment 7
-completion round) mirror ``models/customer.yaml``. ``value_object_models.py``
+``Customer``/``Location``/``Depot`` mirror ``models/customer.yaml``.
+``value_object_models.py``
 ALREADY declares its own test-only ``Customer`` (an ENTITY class, unlike the
 bare VOs above) in the process :func:`~parallax.core.entity.base.default_registry`
 under the SAME canonical name — a genuine
 :class:`~parallax.core.entity.errors.RegistryCollisionError` the moment both
-modules import in one process (empirically confirmed), the exact shape ledger
-D-20 fixed for the animal family's owner (`parallax.conformance.animal_owner`).
+modules import in one process (empirically confirmed), the exact shape
+resolved for the animal family's owner (`parallax.conformance.animal_owner`).
 The fix is identical: ``CUSTOMER_REGISTRY`` is a SEPARATE
 :class:`~parallax.core.entity.base.EntityRegistry` (parent defaults to the
 process default, needed for nothing here since ``Customer``/``Location``/
@@ -207,8 +207,8 @@ class Shipment(Entity, frozen=True):
 
 
 # --------------------------------------------------------------------------- #
-# Customer / Location / Depot (models/customer.yaml, D-20 residue, COR-3      #
-# Phase 8 increment 7 completion round): a non-temporal parent (Customer)     #
+# Customer / Location / Depot (models/customer.yaml): a non-temporal parent   #
+# (Customer)                                                                  #
 # with TWO VO-bearing to-many children reached the same way — Location reuses #
 # Customer's OWN recursive address composite (street/city, geo{country,       #
 # elevation}, geo.point{lat,lon}, phones{type,number}) VERBATIM, while Depot  #
@@ -261,7 +261,7 @@ class DepotAddress(ValueObject, frozen=True):
     postcode: Attr[str | None] = VoField(type="string", nullable=True, default=None)
 
 
-# A SEPARATE registry (ledger D-20's fix, mirroring `animal_owner.
+# A SEPARATE registry (mirroring `animal_owner.
 # ANIMAL_OWNER_REGISTRY`): `value_object_models.Customer` already claims the
 # canonical name "Customer" in the process default registry, so this family's
 # real, installed classes shadow it from their OWN scope rather than colliding

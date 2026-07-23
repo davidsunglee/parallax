@@ -17,9 +17,8 @@ pytestmark = pytest.mark.unit
 # A leading-underscore identifier (never a legitimate public-API token): the
 # Usage Guide's rendered read/graph story snippets must never expose one (the
 # m-inheritance-100 story once leaked `_temporal_as_of_axes`, a
-# framework-internal, in a comment). Scoped to the read/graph snippets this
-# remediation touches — the write stories' own local `_as_rows` helper is a
-# separate, ledgered cleanup (D-23).
+# framework-internal, in a comment). Scoped to the read/graph snippets — the
+# write stories' own local `_as_rows` helper is a separate cleanup.
 _PRIVATE_NAME = re.compile(r"(?<![\w.])_[A-Za-z][A-Za-z0-9_]*")
 
 
@@ -69,9 +68,7 @@ def test_build_skips_covers_cases_without_examples() -> None:
 def test_partition_report_is_a_clean_full_partition() -> None:
     report = api_suite.partition_report()
     assert report.ok, report.errors
-    # Phase 5 registers the first idiomatic examples (the op-algebra read spellings).
-    # Every registered example counts as exercised — the core amendment bundle
-    # (COR-3 Phase 8) retired the guide-only carve-out.
+    # Every registered example counts as exercised.
     assert {e.case_id for e in api_suite.EXAMPLES} <= report.exercised
     assert report.exercised | report.skipped == report.active
 
@@ -110,11 +107,10 @@ def test_fully_exercised_module_makes_its_registry_entry_stale() -> None:
 
 # Modules with NO broad SKIP_REASONS bucket: every one of their active cases is
 # covered case-scoped only (a real example or its own CASE_SKIP_REASONS entry),
-# never a generic module-wide reason — m-unit-work since M4 (the backbone
-# review's partition red-check), m-navigate/m-deep-fetch/m-snapshot-read/
-# m-value-object/m-inheritance since COR-3 Phase 7 increment 6b flipped their
-# blanket "lands with Phase 7" buckets to reasoned, case-scoped entries, and
-# m-read-lock since COR-3 Phase 8 increment 6 (its runtime matrix siblings
+# never a generic module-wide reason — m-unit-work, m-navigate/m-deep-fetch/
+# m-snapshot-read/m-value-object/m-inheritance (each a reasoned, case-scoped
+# entry rather than a blanket module bucket), and
+# m-read-lock (its runtime matrix siblings
 # -002/-003/-005 are real idiomatic read-story examples; its harness-lane
 # golden and two-session behavioral proofs -001/-006/-007/-008 are case-scoped
 # — no case needs a generic module-wide reason).
@@ -238,7 +234,7 @@ def test_render_usage_guide_is_markdownlint_clean(examples: list[Example]) -> No
 
 
 def test_read_and_graph_story_snippets_render_no_private_name() -> None:
-    # Regression guard (COR-3 Spec-2/Standards-3 remediation): a read/graph
+    # Regression guard: a read/graph
     # story's rendered Usage Guide source is the SAME public surface the suite
     # executes — it must never leak a framework-internal `_`-prefixed name.
     for story in READ_STORIES:
@@ -327,9 +323,9 @@ def test_dropping_a_write_example_fails_the_partition() -> None:
 
 
 def test_pk_gen_014_reason_names_its_current_landed_state() -> None:
-    # Regression guard (Phase-8 mid-phase review remediation, finding F item
-    # 5): `m-pk-gen-014` landed in increment 4 — its reason must say so, never
-    # the stale "toward increment 4" forward-promise wording.
+    # Regression guard: `m-pk-gen-014`'s reason must name its current landed
+    # state ("landed in increment 4"), never the stale "toward increment 4"
+    # forward-promise wording.
     reason = api_suite.CASE_SKIP_REASONS["m-pk-gen-014"]
     assert "toward increment 4" not in reason, reason
     assert "landed in increment 4" in reason, reason

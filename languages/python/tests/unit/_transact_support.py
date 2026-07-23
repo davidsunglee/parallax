@@ -2,8 +2,8 @@
 
 The recording fake `m-db-port`, the two `Database` builders over it, the mirrored
 model handles, and the SQL/row goldens that more than one suite drives. Shared by
-`test_database_transact.py` and the three `test_transaction_*.py` suites, which
-COR-42 split apart by observable behavior.
+`test_database_transact.py` and the three `test_transaction_*.py` suites, split
+apart by observable behavior.
 
 Exported names carry no leading underscore: importing an underscored name across
 modules is a `reportPrivateUsage` error under pyright strict, so privacy is
@@ -73,8 +73,8 @@ FIXED = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
 
 # A LOCAL bitemporal entity — the `_where`-verb materialization tests' own
 # bounded/plain rectangle-split fixture. `models/position.yaml` DOES have a
-# shared mirror now (`parallax.conformance.story_models.Position`, installed by
-# D-31), but it is not a drop-in: it maps to table `position` with columns
+# shared mirror now (`parallax.conformance.story_models.Position`), but it is
+# not a drop-in: it maps to table `position` with columns
 # `pos_id`/`val`, while the assertions below pin emitted SQL against
 # `where_position`/`id`/`value`. Swapping would rewrite every one of them for no
 # gain, so the local fixture stays.
@@ -130,7 +130,7 @@ class RecordingPort:
     ``txn_faults`` raises at the next ``transaction`` entries (a driver failure
     the adapter translated and rolled back); ``read_faults`` raises from the
     next ``execute`` calls (a failure inside the transaction body).
-    ``write_affected_queue`` (COR-3 Phase 8 increment 6) scripts a SEQUENCE of
+    ``write_affected_queue`` scripts a SEQUENCE of
     affected-row counts across successive ``execute_write`` calls — an
     optimistic-lock retry-loop probe's own oracle: attempt 0's gated UPDATE
     affects ``0`` (the conflict), a retried attempt's affects ``1`` (success) —
@@ -188,11 +188,11 @@ def db_for(meta: Metamodel, port: RecordingPort) -> Database:
 
 
 # --------------------------------------------------------------------------- #
-# Phase-8 mid-phase review remediation, finding B: `Transaction.find` records #
+# `Transaction.find` records                                                  #
 # a TEMPORAL observation (not just a versioned one) so a locking-mode write's #
 # historical-observation license (`m-opt-lock`) is REAL, not a permanent      #
-# no-op — exercised through the typed `tx.terminate` verb (COR-3 Phase 8      #
-# increment 7), the SAME `_buffer` neutral seam the conformance engine uses.  #
+# no-op — exercised through the typed `tx.terminate` verb, the SAME `_buffer` #
+# neutral seam the conformance engine uses.                                   #
 # --------------------------------------------------------------------------- #
 INFINITY_INSTANT: Final[dt.datetime] = dt.datetime(9999, 12, 31, tzinfo=dt.UTC)
 

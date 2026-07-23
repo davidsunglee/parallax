@@ -1,6 +1,5 @@
 """``parallax.snapshot.handle._read`` — the production find executor and the
-Snapshot result surface (m-deep-fetch / m-snapshot-read; COR-3 Phase 7
-increment 5).
+Snapshot result surface (m-deep-fetch / m-snapshot-read).
 
 The module DAG's snapshot-handle scope already reaches `materialize` + `m-sql`
 + `m-db-port`, so the deliberate DAG-forbidden edges (`m-deep-fetch`/
@@ -208,7 +207,7 @@ def find(
     operation planned with zero levels (root-only instance-form materialization
     — a plain snapshot read, or the source find behind a scenario `mutate`
     action). Canonicalizes the root query (`m-temporal-read` + `m-navigate`,
-    composed here — the M2 precedent), compiles and executes it, then for each
+    composed here), compiles and executes it, then for each
     planned level: gathers the distinct non-null parent keys; an empty gathered
     set attaches the empty/null relationship result and issues no child SQL; a
     back-reference level issues no SQL either (resolved via the assembler's own
@@ -221,8 +220,8 @@ def find(
     re-derived here from the operation a second time. The root's own authored
     narrow (if any, `~parallax.core.sql_gen.CompiledRead.narrow_to`) threads
     into `Assembler.materialize_root` the SAME way a deep-fetch child level's own
-    `FetchLevel.narrow_to` already threads through `attach_level` (S3, COR-3
-    Phase 7 increment 7 round-2): a table-per-concrete-subtype root position
+    `FetchLevel.narrow_to` already threads through `attach_level`: a
+    table-per-concrete-subtype root position
     resolving to exactly one concrete emits no `familyVariant` column, so this
     is what lets the assembler still recover the row's own concrete identity.
     Returns the root's own materialized nodes — reached from them, every
@@ -340,7 +339,7 @@ def _execute_compiled(
     that raises deep inside the tag transform in one direction and, in the other,
     silently leaves the raw tag column standing where `familyVariant` should be.
     Keeping the pair bundled here is the caller-side half of `CompiledRead`'s own
-    self-containment (COR-43) — it makes `find`'s "compile, execute, transform"
+    self-containment — it makes `find`'s "compile, execute, transform"
     structural rather than a convention every level has to remember.
     """
     return [
@@ -411,7 +410,7 @@ def deep_fetch_statement_pin(op: op_algebra.Operation, entity: Entity) -> Pin:
     is peeled first. ``m-temporal-read`` never imports ``m-deep-fetch`` (the
     DAG forbids the reverse dependency direction), so `statement_pin`'s own
     directive-peeling (`Limit`/`OrderBy`/`Distinct` only) cannot see a
-    `DeepFetch` wrapper — this composition, mirroring the M2 precedent, is the
+    `DeepFetch` wrapper — this composition is the
     handle's own job. A milestone-set read (`.history()`/`.as_of_range()`)
     never carries an outer `DeepFetch` (`Statement.include`/`.history`/
     `.as_of_range` mutually refuse the combination, spec §3

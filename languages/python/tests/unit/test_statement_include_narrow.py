@@ -1,4 +1,4 @@
-"""Statement frontend spellings (COR-3 Phase 7 increment 6a, python.md §2):
+"""Statement frontend spellings (python.md §2):
 ``.include(*paths)`` (deep-fetch, chained ``Rel[T]`` class access, hop-level
 ``.narrow()``), relationship ``.any()`` / ``.none()`` quantifiers, the
 ``Entity.narrow(...)`` constructor, and the statement-level ``.narrow(...)``

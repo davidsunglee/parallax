@@ -43,7 +43,7 @@ _NS = "parallax.compatibility"
 # no-drift proof and the API-suite's execution resolve the exact SAME
 # registered class, never a second, differently-scoped copy racing it in the
 # same registry. `animal_owner.Person` (the animal family's REAL owner) lives
-# in its OWN `EntityRegistry` (ledger D-20): a DIFFERENT class than THIS
+# in its OWN `EntityRegistry`: a DIFFERENT class than THIS
 # module's own `Person` (`models/person.yaml`) despite sharing the identical
 # canonical name — the descriptor no-drift proof below is purely class-list-
 # based (`descriptor_document`), so combining classes from two different
@@ -65,8 +65,7 @@ class Attendee(Entity, frozen=True):
 # non-temporal `Customer` root plus its two VO-bearing to-many children,
 # `Location` (reusing Customer's own recursive `address` composite verbatim)
 # and `Depot` (a deliberately DIVERGENT flat `address` composite in the same
-# column) — all installed together in `parallax.conformance.vo_models`
-# (ledger D-20/D-21).
+# column) — all installed together in `parallax.conformance.vo_models`.
 MIRRORED: list[tuple[str, list[type]]] = [
     ("account", [Account]),
     ("pk-max", [Attendee]),

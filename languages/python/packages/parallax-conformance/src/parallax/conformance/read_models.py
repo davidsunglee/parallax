@@ -26,8 +26,8 @@ there for exactly this package-boundary reason) cannot be imported from here.
 
 ``models/animal.yaml``'s own polymorphic owner is ALSO named ``Person`` — a
 literal canonical-name collision with THIS module's ``Person``
-(``models/person.yaml``). Ledger D-20 (COR-3 Phase 8 increment 7) resolves the
-structural constraint that used to make this collision fatal: an explicit,
+(``models/person.yaml``). Per-registry scoping resolves the
+structural constraint that would otherwise make this collision fatal: an explicit,
 independently-collision-checked :class:`~parallax.core.entity.base.EntityRegistry`
 scope now lets the SAME canonical name coexist across two registries. The
 animal family's own owner accordingly lives in a SEPARATE installed module,
@@ -255,7 +255,7 @@ class LoanRate(Rate, frozen=True):
 
 # --------------------------------------------------------------------------- #
 # Person/Passport: a one-to-one dependent relationship (models/person.yaml).   #
-# Installed here (ledger D-20/D-21, COR-3 Phase 8 increment 7): the FIRST      #
+# Installed here: the FIRST                                                   #
 # production-reachable mirror of this model (`m-snapshot-read-007`).          #
 # `mirrored_models.Person`/`.Passport` RE-EXPORT these (the `Balance`          #
 # discipline) rather than redeclaring them.                                   #

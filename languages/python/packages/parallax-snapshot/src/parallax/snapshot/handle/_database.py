@@ -95,8 +95,8 @@ class _ResolvedOptions:
     is stored for the join/conflict contract AND gates
     :func:`_optimistic_conflict_retriable` — the opt-in-only classification
     branch :meth:`Database.transact` injects into
-    :func:`~parallax.core.auto_retry.run_with_retry` (COR-3 Phase 8
-    increment 6; `m-opt-lock` "Retry contract").
+    :func:`~parallax.core.auto_retry.run_with_retry` (`m-opt-lock`
+    "Retry contract").
     """
 
     retries: int
@@ -245,8 +245,8 @@ class Database:
                     flush_executor=_flush_executor(
                         conn, self._meta, self._dialect, options.concurrency
                     ),
-                    # The injected `m-batch-write` collapse vocabulary (COR-3
-                    # Phase 8 increment 5) — `parallax.snapshot.handle` is the
+                    # The injected `m-batch-write` collapse vocabulary —
+                    # `parallax.snapshot.handle` is the
                     # sole module cleared to import both `batch_write` and
                     # `m-unit-work`, so it supplies the SAME policy the
                     # conformance compile lane injects into its own direct
@@ -335,7 +335,7 @@ def _flush_executor(
     own connection, inside the still-open ``port.transaction`` scope — so an
     abort rolls back force-flushed writes with everything else. Checking is
     PER-STATEMENT, not per-planned-write: a non-temporal keyed write lowers to
-    exactly one statement (its own expectation, unchanged from increment 3), while
+    exactly one statement (its own expectation), while
     a temporal write lowers to a close then zero-to-three chained opens — only the
     close carries an expectation (always ``1``), so a mismatch there raises and
     ABORTS BEFORE the chained rows ever execute (`m-txtime-write` "MUST NOT silently
