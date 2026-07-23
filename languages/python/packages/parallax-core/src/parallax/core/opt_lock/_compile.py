@@ -18,7 +18,7 @@ from collections.abc import Mapping
 from typing import Any, Final
 
 from parallax.core.inheritance import FACET_KEY as INHERITANCE_FACET_KEY
-from parallax.core.inheritance import InheritanceFacet
+from parallax.core.inheritance import InheritanceFacet, root_metadata
 from parallax.core.metamodel import (
     CompiledMetadata,
     EntityIdentity,
@@ -55,31 +55,12 @@ def compile_facet(
     return optimistic_lock_facet(
         {
             entity.identity: _key(
-                _root(metadata, inheritance, entity.identity),
+                root_metadata(inheritance, metadata, entity.identity),
                 _shape(temporal, entity.identity),
             )
             for entity in metadata.entities
         }
     )
-
-
-def _root(
-    metadata: CompiledMetadata, inheritance: InheritanceFacet, entity: EntityIdentity
-) -> EntityMetadata:
-    """The Entity whose declarations fix the whole family's key.
-
-    The Inheritance Facet covers every accepted Entity and its root is one of
-    them, so an absent view or an unreachable root is a state formation output
-    cannot be in.
-    """
-    position = inheritance.entity(entity)
-    root = None if position is None else metadata.entity(position.root)
-    if root is None:
-        raise RuntimeError(
-            f"Entity {entity.canonical!r} has no Inheritance Facet view, or names a "
-            "family root the accepted Metamodel does not contain"
-        )
-    return root
 
 
 def _shape(temporal: TemporalFacet, entity: EntityIdentity) -> TemporalShape:

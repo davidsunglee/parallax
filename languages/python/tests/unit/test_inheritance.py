@@ -595,10 +595,9 @@ def test_validate_write_assignment_accepts_none_for_a_nullable_scalar() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# The Model Formation Rule Set. The corpus rejection fixtures above drive the  #
-# descriptor-era classifier; the same fixtures drive the rule set here, now    #
-# asserting the structured `(code, location, related)` an Issue carries rather #
-# than message text.                                                           #
+# The Model Formation Rule Set. The corpus rejection fixtures above are reused #
+# here to drive the rule set, which asserts the structured                     #
+# `(code, location, related)` an Issue carries rather than message text.       #
 # --------------------------------------------------------------------------- #
 
 _RULE_SET_REJECTIONS: Final[Mapping[str, IssueCode]] = {

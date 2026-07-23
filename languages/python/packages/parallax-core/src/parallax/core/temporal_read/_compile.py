@@ -18,10 +18,9 @@ from collections.abc import Mapping
 from typing import Any, Final
 
 from parallax.core.inheritance import FACET_KEY as INHERITANCE_FACET_KEY
-from parallax.core.inheritance import InheritanceFacet
+from parallax.core.inheritance import InheritanceFacet, root_metadata
 from parallax.core.metamodel import (
     CompiledMetadata,
-    EntityIdentity,
     EntityMetadata,
     FacetKey,
     TemporalDimension,
@@ -45,29 +44,10 @@ def compile_facet(metadata: CompiledMetadata, inheritance: InheritanceFacet) -> 
     """Compile every accepted Entity's effective temporal shape."""
     return temporal_facet(
         {
-            entity.identity: _shape(_root(metadata, inheritance, entity.identity))
+            entity.identity: _shape(root_metadata(inheritance, metadata, entity.identity))
             for entity in metadata.entities
         }
     )
-
-
-def _root(
-    metadata: CompiledMetadata, inheritance: InheritanceFacet, entity: EntityIdentity
-) -> EntityMetadata:
-    """The Entity whose declared axes the whole family reads.
-
-    The Inheritance Facet covers every accepted Entity and its root is one of
-    them, so an absent view or an unreachable root is a state formation output
-    cannot be in.
-    """
-    position = inheritance.entity(entity)
-    root = None if position is None else metadata.entity(position.root)
-    if root is None:
-        raise RuntimeError(
-            f"Entity {entity.canonical!r} has no Inheritance Facet view, or names a "
-            "family root the accepted Metamodel does not contain"
-        )
-    return root
 
 
 def _shape(root: EntityMetadata) -> TemporalShape:

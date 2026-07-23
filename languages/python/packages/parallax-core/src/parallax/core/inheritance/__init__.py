@@ -5,10 +5,11 @@ The closed inheritance-tree model: exactly one abstract ``root``, interior
 strategies (table-per-hierarchy with a tag discriminator,
 table-per-concrete-subtype). This scope owns the family invariants a model must
 satisfy and the Inheritance Facet that answers, once per formation, every
-family-effective question behavioral modules used to recompute: ancestry, family
-identity, effective concrete-subtype sets, member applicability, physical
-container and tag, and the root-owned Persistence Mode. ``m-inheritance``
-depends on ``m-descriptor``, ``m-metamodel``, and ``m-model-formation``.
+family-effective question — ancestry, family identity, effective
+concrete-subtype sets, member applicability, physical container and tag, and the
+root-owned Persistence Mode — so a consumer reads a precomputed family fact
+instead of recomputing it. ``m-inheritance`` depends on ``m-descriptor``,
+``m-metamodel``, and ``m-model-formation``.
 
 Consumers reach the facet through :func:`view`, so generic facet retrieval stays
 an internal formation seam.
@@ -34,6 +35,7 @@ from parallax.core.inheritance._compile import (
     MODEL_COMPILER,
     InheritanceModelCompiler,
     compile_facet,
+    root_metadata,
 )
 from parallax.core.inheritance._facet import (
     FACET_KEY,
@@ -109,6 +111,7 @@ __all__ = [
     "family_primary_key",
     "family_root",
     "reject_predicate_write",
+    "root_metadata",
     "superset_value_objects",
     "validate",
     "validate_subtype_write",

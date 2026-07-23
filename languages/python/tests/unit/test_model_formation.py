@@ -563,8 +563,7 @@ def _spec_rows() -> list[_SpecRow]:
     """The authoritative manifest table, read from the owning specification.
 
     The table is the normative content of the Formation Manifest, so reading it
-    here is what makes a composition root that drifts from it a test failure
-    rather than a review finding.
+    here makes a composition root that drifts from it fail this test.
     """
     text = _MANIFEST_SPEC.read_text(encoding="utf-8")
     section = text.split("## Authoritative formation manifest", 1)[1].split("\n## ", 1)[0]

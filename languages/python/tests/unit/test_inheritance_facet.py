@@ -364,8 +364,8 @@ def test_a_position_contributes_each_declaring_entity_exactly_once() -> None:
 def test_position_resolves_the_same_effective_set_the_descriptor_walk_does(
     names: tuple[str, ...],
 ) -> None:
-    # The narrow-position answer behavioral modules read today, restated over
-    # the precomputed facet: the two agree before any consumer migrates.
+    # The facet `position(...)` resolves the same effective concrete-subtype
+    # set the descriptor-level narrow-position walk does over the same names.
     document = case_format.safe_load_yaml((_MODELS / "animal.yaml").read_text(encoding="utf-8"))
     assert isinstance(document, dict)
     records = deserialize(cast("Mapping[str, object]", document))
@@ -412,6 +412,59 @@ def test_a_position_with_no_concrete_subtype_projects_empty_sequences() -> None:
     assert projected.concrete_subtypes == ()
     assert projected.superset_attributes == ()
     assert projected.superset_value_objects == ()
+
+
+# --------------------------------------------------------------------------
+# A concrete position nested under another concrete position: a table-per-
+# concrete-subtype family may place a concrete subtype under a concrete parent.
+# Parent owns `parent_tbl` and is itself Child's parent; Child owns `child_tbl`.
+# Formation accepts the shape, so the facet answers for it. The effective
+# concrete-subtype set is every concrete node at or below the position, so
+# Parent's set is {Child, Parent} — two physical tables — while its `container`
+# is Parent's own `parent_tbl` alone. This pins both answers as they stand. What
+# a read of a concrete position with concrete descendants targets — its own
+# table only, or the union over its effective set's tables — is settled when the
+# SQL read path is built; a change to `container`'s meaning for this shape must
+# edit this test deliberately.
+# --------------------------------------------------------------------------
+
+
+def test_a_concrete_position_nested_under_a_concrete_position_pins_todays_facet() -> None:
+    root = identity("Root")
+    parent = identity("Parent")
+    child = identity("Child")
+    model = form_metamodel(
+        source(
+            Declaration(
+                identity=root,
+                attributes=(key(root),),
+                inheritance=AbstractRoot(TablePerConcreteSubtype()),
+            ),
+            Declaration(
+                identity=parent,
+                container=Table("parent_tbl"),
+                inheritance=ConcreteSubtype(ExactEntityReference(root)),
+            ),
+            Declaration(
+                identity=child,
+                container=Table("child_tbl"),
+                inheritance=ConcreteSubtype(ExactEntityReference(parent)),
+            ),
+        )
+    )
+    facet = inheritance.view(model)
+    root_view = facet.entity(root)
+    parent_view = facet.entity(parent)
+    child_view = facet.entity(child)
+    assert root_view is not None
+    assert parent_view is not None
+    assert child_view is not None
+    assert root_view.container is None
+    assert _names(root_view.concrete_subtypes) == ["Child", "Parent"]
+    assert parent_view.container == Table("parent_tbl")
+    assert _names(parent_view.concrete_subtypes) == ["Child", "Parent"]
+    assert child_view.container == Table("child_tbl")
+    assert _names(child_view.concrete_subtypes) == ["Child"]
 
 
 # --------------------------------------------------------------------------

@@ -26,14 +26,12 @@ from parallax.core.inheritance._facet import (
 )
 from parallax.core.metamodel import (
     AbstractRoot,
-    AbstractSubtype,
     AttributeMetadata,
     CompiledMetadata,
     ConcreteSubtype,
     EntityIdentity,
     EntityMetadata,
     FacetKey,
-    InheritanceMetadata,
     InheritanceStrategy,
     PersistenceMode,
     RelationshipDeclaration,
@@ -41,19 +39,32 @@ from parallax.core.metamodel import (
     TablePerConcreteSubtype,
     TablePerHierarchy,
     ValueObjectMetadata,
+    inheritance_parent,
 )
 from parallax.core.model_formation import ModuleIdentity
 
-__all__ = ["MODEL_COMPILER", "InheritanceModelCompiler", "compile_facet"]
+__all__ = ["MODEL_COMPILER", "InheritanceModelCompiler", "compile_facet", "root_metadata"]
 
 
-def _parent(inheritance: InheritanceMetadata | None) -> EntityIdentity | None:
-    """The Entity this position directly extends, if it extends one."""
-    match inheritance:
-        case None | AbstractRoot():
-            return None
-        case AbstractSubtype(parent) | ConcreteSubtype(parent, _):
-            return parent
+def root_metadata(
+    inheritance: InheritanceFacet, metadata: CompiledMetadata, entity: EntityIdentity
+) -> EntityMetadata:
+    """The Metadata of ``entity``'s family root, resolved through the facet.
+
+    A downstream compiler reads a root's own declarations — its axes, its version
+    Attribute — through this. The Inheritance Facet covers every accepted Entity
+    and its root is one of them, so an absent view, or a root the accepted
+    Metamodel does not contain, is a state formation output cannot be in and
+    raises a compiler contract failure rather than a model defect.
+    """
+    position = inheritance.entity(entity)
+    root = None if position is None else metadata.entity(position.root)
+    if root is None:
+        raise RuntimeError(
+            f"Entity {entity.canonical!r} has no Inheritance Facet view, or names a "
+            "family root the accepted Metamodel does not contain"
+        )
+    return root
 
 
 def compile_facet(metadata: CompiledMetadata) -> InheritanceFacet:
@@ -62,7 +73,7 @@ def compile_facet(metadata: CompiledMetadata) -> InheritanceFacet:
     ancestries = {entity.identity: _ancestry(entity, by_identity) for entity in metadata.entities}
     children: dict[EntityIdentity, list[EntityIdentity]] = {}
     for entity in metadata.entities:
-        parent = _parent(entity.inheritance)
+        parent = inheritance_parent(entity.inheritance)
         if parent is not None:
             children.setdefault(parent, []).append(entity.identity)
     return inheritance_facet(
@@ -87,7 +98,7 @@ def _ancestry(
     visited = {entity.identity}
     position = entity
     while True:
-        parent = _parent(position.inheritance)
+        parent = inheritance_parent(position.inheritance)
         if parent is None:
             break
         ancestor = by_identity.get(parent)

@@ -308,6 +308,23 @@ type UnresolvedInheritance = Inheritance[EntityReference]
 """Inheritance as a frontend declares it."""
 
 
+def inheritance_parent[Parent](inheritance: Inheritance[Parent] | None) -> Parent | None:
+    """The parent reference this inheritance position extends, or ``None``.
+
+    An absent inheritance (a standalone Entity) and an :class:`AbstractRoot`
+    extend nothing; an :class:`AbstractSubtype` and a :class:`ConcreteSubtype`
+    extend the parent they carry. The variant is the role, so the parent reads
+    off the algebra without a separate role field. Resolved and unresolved
+    inheritance share the walk, so ``Parent`` is an ``EntityIdentity`` or an
+    ``EntityReference`` respectively.
+    """
+    match inheritance:
+        case None | AbstractRoot():
+            return None
+        case AbstractSubtype(parent) | ConcreteSubtype(parent, _):
+            return parent
+
+
 @dataclass(frozen=True, slots=True)
 class AttributeMetadata:
     """One self-identifying scalar Attribute.

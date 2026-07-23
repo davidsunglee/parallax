@@ -145,6 +145,7 @@ from parallax.core.metamodel._values import (
     ValueObjectOccurrenceDeclaration,
     ValueObjectShapeDeclaration,
     ValueObjectShapeKey,
+    inheritance_parent,
 )
 
 __all__ = [
@@ -259,6 +260,7 @@ __all__ = [
     "canonical_issue_key",
     "canonical_location_key",
     "compile_metadata",
+    "inheritance_parent",
     "is_candidate_metamodel",
     "is_compiled_metadata",
     "resolve",
