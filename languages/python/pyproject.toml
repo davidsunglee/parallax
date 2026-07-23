@@ -125,11 +125,43 @@ root_packages = [
 ]
 
 [[tool.importlinter.contracts]]
+name = "parallax.core._formation_profile may import only its permitted dependencies"
+type = "forbidden"
+source_modules = ["parallax.core._formation_profile"]
+forbidden_modules = [
+    "parallax.conformance",
+    "parallax.core.auto_retry",
+    "parallax.core.batch_write",
+    "parallax.core.bitemp_write",
+    "parallax.core.db_error",
+    "parallax.core.db_port",
+    "parallax.core.deep_fetch",
+    "parallax.core.descriptor",
+    "parallax.core.dialect",
+    "parallax.core.entity",
+    "parallax.core.inheritance",
+    "parallax.core.navigate",
+    "parallax.core.op_algebra",
+    "parallax.core.opt_lock",
+    "parallax.core.pk_gen",
+    "parallax.core.read_lock",
+    "parallax.core.sql_gen",
+    "parallax.core.temporal_read",
+    "parallax.core.txtime_write",
+    "parallax.core.unit_work",
+    "parallax.core.value_object",
+    "parallax.postgres",
+    "parallax.snapshot.handle",
+    "parallax.snapshot.materialize",
+]
+
+[[tool.importlinter.contracts]]
 name = "parallax.core.auto_retry may import only its permitted dependencies"
 type = "forbidden"
 source_modules = ["parallax.core.auto_retry"]
 forbidden_modules = [
     "parallax.conformance",
+    "parallax.core._formation_profile",
     "parallax.core.batch_write",
     "parallax.core.bitemp_write",
     "parallax.core.deep_fetch",
@@ -153,6 +185,7 @@ type = "forbidden"
 source_modules = ["parallax.core.base"]
 forbidden_modules = [
     "parallax.conformance",
+    "parallax.core._formation_profile",
     "parallax.core.auto_retry",
     "parallax.core.batch_write",
     "parallax.core.bitemp_write",
@@ -164,6 +197,7 @@ forbidden_modules = [
     "parallax.core.entity",
     "parallax.core.inheritance",
     "parallax.core.metamodel",
+    "parallax.core.model_formation",
     "parallax.core.navigate",
     "parallax.core.op_algebra",
     "parallax.core.opt_lock",
@@ -185,6 +219,7 @@ type = "forbidden"
 source_modules = ["parallax.core.batch_write"]
 forbidden_modules = [
     "parallax.conformance",
+    "parallax.core._formation_profile",
     "parallax.core.auto_retry",
     "parallax.core.bitemp_write",
     "parallax.core.db_error",
@@ -210,6 +245,7 @@ type = "forbidden"
 source_modules = ["parallax.core.bitemp_write"]
 forbidden_modules = [
     "parallax.conformance",
+    "parallax.core._formation_profile",
     "parallax.core.auto_retry",
     "parallax.core.batch_write",
     "parallax.core.db_error",
@@ -233,6 +269,7 @@ type = "forbidden"
 source_modules = ["parallax.core.db_error"]
 forbidden_modules = [
     "parallax.conformance",
+    "parallax.core._formation_profile",
     "parallax.core.auto_retry",
     "parallax.core.batch_write",
     "parallax.core.bitemp_write",
@@ -241,6 +278,7 @@ forbidden_modules = [
     "parallax.core.entity",
     "parallax.core.inheritance",
     "parallax.core.metamodel",
+    "parallax.core.model_formation",
     "parallax.core.navigate",
     "parallax.core.op_algebra",
     "parallax.core.opt_lock",
@@ -262,6 +300,7 @@ type = "forbidden"
 source_modules = ["parallax.core.db_port"]
 forbidden_modules = [
     "parallax.conformance",
+    "parallax.core._formation_profile",
     "parallax.core.auto_retry",
     "parallax.core.batch_write",
     "parallax.core.bitemp_write",
@@ -272,6 +311,7 @@ forbidden_modules = [
     "parallax.core.entity",
     "parallax.core.inheritance",
     "parallax.core.metamodel",
+    "parallax.core.model_formation",
     "parallax.core.navigate",
     "parallax.core.op_algebra",
     "parallax.core.opt_lock",
@@ -293,6 +333,7 @@ type = "forbidden"
 source_modules = ["parallax.core.deep_fetch"]
 forbidden_modules = [
     "parallax.conformance",
+    "parallax.core._formation_profile",
     "parallax.core.auto_retry",
     "parallax.core.batch_write",
     "parallax.core.bitemp_write",
@@ -316,6 +357,7 @@ type = "forbidden"
 source_modules = ["parallax.core.descriptor"]
 forbidden_modules = [
     "parallax.conformance",
+    "parallax.core._formation_profile",
     "parallax.core.auto_retry",
     "parallax.core.batch_write",
     "parallax.core.bitemp_write",
@@ -346,6 +388,7 @@ type = "forbidden"
 source_modules = ["parallax.core.dialect"]
 forbidden_modules = [
     "parallax.conformance",
+    "parallax.core._formation_profile",
     "parallax.core.auto_retry",
     "parallax.core.batch_write",
     "parallax.core.bitemp_write",
@@ -356,6 +399,7 @@ forbidden_modules = [
     "parallax.core.entity",
     "parallax.core.inheritance",
     "parallax.core.metamodel",
+    "parallax.core.model_formation",
     "parallax.core.navigate",
     "parallax.core.op_algebra",
     "parallax.core.opt_lock",
@@ -377,6 +421,7 @@ type = "forbidden"
 source_modules = ["parallax.core.entity"]
 forbidden_modules = [
     "parallax.conformance",
+    "parallax.core._formation_profile",
     "parallax.core.auto_retry",
     "parallax.core.batch_write",
     "parallax.core.bitemp_write",
@@ -403,6 +448,7 @@ type = "forbidden"
 source_modules = ["parallax.core.inheritance"]
 forbidden_modules = [
     "parallax.conformance",
+    "parallax.core._formation_profile",
     "parallax.core.auto_retry",
     "parallax.core.batch_write",
     "parallax.core.bitemp_write",
@@ -432,6 +478,40 @@ type = "forbidden"
 source_modules = ["parallax.core.metamodel"]
 forbidden_modules = [
     "parallax.conformance",
+    "parallax.core._formation_profile",
+    "parallax.core.auto_retry",
+    "parallax.core.batch_write",
+    "parallax.core.bitemp_write",
+    "parallax.core.db_error",
+    "parallax.core.db_port",
+    "parallax.core.deep_fetch",
+    "parallax.core.descriptor",
+    "parallax.core.dialect",
+    "parallax.core.entity",
+    "parallax.core.inheritance",
+    "parallax.core.model_formation",
+    "parallax.core.navigate",
+    "parallax.core.op_algebra",
+    "parallax.core.opt_lock",
+    "parallax.core.pk_gen",
+    "parallax.core.read_lock",
+    "parallax.core.sql_gen",
+    "parallax.core.temporal_read",
+    "parallax.core.txtime_write",
+    "parallax.core.unit_work",
+    "parallax.core.value_object",
+    "parallax.postgres",
+    "parallax.snapshot.handle",
+    "parallax.snapshot.materialize",
+]
+
+[[tool.importlinter.contracts]]
+name = "parallax.core.model_formation may import only its permitted dependencies"
+type = "forbidden"
+source_modules = ["parallax.core.model_formation"]
+forbidden_modules = [
+    "parallax.conformance",
+    "parallax.core._formation_profile",
     "parallax.core.auto_retry",
     "parallax.core.batch_write",
     "parallax.core.bitemp_write",
@@ -463,6 +543,7 @@ type = "forbidden"
 source_modules = ["parallax.core.navigate"]
 forbidden_modules = [
     "parallax.conformance",
+    "parallax.core._formation_profile",
     "parallax.core.auto_retry",
     "parallax.core.batch_write",
     "parallax.core.bitemp_write",
@@ -487,6 +568,7 @@ type = "forbidden"
 source_modules = ["parallax.core.op_algebra"]
 forbidden_modules = [
     "parallax.conformance",
+    "parallax.core._formation_profile",
     "parallax.core.auto_retry",
     "parallax.core.batch_write",
     "parallax.core.bitemp_write",
@@ -515,6 +597,7 @@ type = "forbidden"
 source_modules = ["parallax.core.opt_lock"]
 forbidden_modules = [
     "parallax.conformance",
+    "parallax.core._formation_profile",
     "parallax.core.auto_retry",
     "parallax.core.batch_write",
     "parallax.core.bitemp_write",
@@ -539,6 +622,7 @@ type = "forbidden"
 source_modules = ["parallax.core.pk_gen"]
 forbidden_modules = [
     "parallax.conformance",
+    "parallax.core._formation_profile",
     "parallax.core.auto_retry",
     "parallax.core.batch_write",
     "parallax.core.bitemp_write",
@@ -568,6 +652,7 @@ type = "forbidden"
 source_modules = ["parallax.core.read_lock"]
 forbidden_modules = [
     "parallax.conformance",
+    "parallax.core._formation_profile",
     "parallax.core.auto_retry",
     "parallax.core.batch_write",
     "parallax.core.bitemp_write",
@@ -592,6 +677,7 @@ type = "forbidden"
 source_modules = ["parallax.core.sql_gen"]
 forbidden_modules = [
     "parallax.conformance",
+    "parallax.core._formation_profile",
     "parallax.core.auto_retry",
     "parallax.core.batch_write",
     "parallax.core.bitemp_write",
@@ -618,6 +704,7 @@ type = "forbidden"
 source_modules = ["parallax.core.temporal_read"]
 forbidden_modules = [
     "parallax.conformance",
+    "parallax.core._formation_profile",
     "parallax.core.auto_retry",
     "parallax.core.batch_write",
     "parallax.core.bitemp_write",
@@ -645,6 +732,7 @@ type = "forbidden"
 source_modules = ["parallax.core.txtime_write"]
 forbidden_modules = [
     "parallax.conformance",
+    "parallax.core._formation_profile",
     "parallax.core.auto_retry",
     "parallax.core.batch_write",
     "parallax.core.bitemp_write",
@@ -669,6 +757,7 @@ type = "forbidden"
 source_modules = ["parallax.core.unit_work"]
 forbidden_modules = [
     "parallax.conformance",
+    "parallax.core._formation_profile",
     "parallax.core.auto_retry",
     "parallax.core.batch_write",
     "parallax.core.bitemp_write",
@@ -695,6 +784,7 @@ type = "forbidden"
 source_modules = ["parallax.core.value_object"]
 forbidden_modules = [
     "parallax.conformance",
+    "parallax.core._formation_profile",
     "parallax.core.auto_retry",
     "parallax.core.batch_write",
     "parallax.core.bitemp_write",
@@ -724,6 +814,7 @@ type = "forbidden"
 source_modules = ["parallax.postgres"]
 forbidden_modules = [
     "parallax.conformance",
+    "parallax.core._formation_profile",
     "parallax.core.auto_retry",
     "parallax.core.batch_write",
     "parallax.core.bitemp_write",
@@ -732,6 +823,7 @@ forbidden_modules = [
     "parallax.core.entity",
     "parallax.core.inheritance",
     "parallax.core.metamodel",
+    "parallax.core.model_formation",
     "parallax.core.navigate",
     "parallax.core.op_algebra",
     "parallax.core.opt_lock",
@@ -752,6 +844,7 @@ type = "forbidden"
 source_modules = ["parallax.snapshot.handle"]
 forbidden_modules = [
     "parallax.conformance",
+    "parallax.core._formation_profile",
     "parallax.core.pk_gen",
     "parallax.core.value_object",
     "parallax.postgres",
@@ -763,6 +856,7 @@ type = "forbidden"
 source_modules = ["parallax.snapshot.handle._family"]
 forbidden_modules = [
     "parallax.conformance",
+    "parallax.core._formation_profile",
     "parallax.core.auto_retry",
     "parallax.core.batch_write",
     "parallax.core.db_error",
@@ -782,6 +876,7 @@ type = "forbidden"
 source_modules = ["parallax.snapshot.handle._keyed_sql"]
 forbidden_modules = [
     "parallax.conformance",
+    "parallax.core._formation_profile",
     "parallax.core.auto_retry",
     "parallax.core.batch_write",
     "parallax.core.db_error",
@@ -801,6 +896,7 @@ type = "forbidden"
 source_modules = ["parallax.snapshot.handle._wrap"]
 forbidden_modules = [
     "parallax.conformance",
+    "parallax.core._formation_profile",
     "parallax.core.auto_retry",
     "parallax.core.batch_write",
     "parallax.core.bitemp_write",
@@ -821,6 +917,7 @@ type = "forbidden"
 source_modules = ["parallax.snapshot.handle._write_lowering"]
 forbidden_modules = [
     "parallax.conformance",
+    "parallax.core._formation_profile",
     "parallax.core.auto_retry",
     "parallax.core.batch_write",
     "parallax.core.db_error",
@@ -840,6 +937,7 @@ type = "forbidden"
 source_modules = ["parallax.snapshot.handle._write_types"]
 forbidden_modules = [
     "parallax.conformance",
+    "parallax.core._formation_profile",
     "parallax.core.auto_retry",
     "parallax.core.batch_write",
     "parallax.core.db_error",
@@ -859,6 +957,7 @@ type = "forbidden"
 source_modules = ["parallax.snapshot.materialize"]
 forbidden_modules = [
     "parallax.conformance",
+    "parallax.core._formation_profile",
     "parallax.core.auto_retry",
     "parallax.core.batch_write",
     "parallax.core.bitemp_write",

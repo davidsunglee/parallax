@@ -59,10 +59,10 @@ _END = "# <<< check_dag_sync.py: END GENERATED IMPORT-LINTER CONTRACTS <<<"
 MODULE_SCOPE: Mapping[str, str] = {
     "m-core": "parallax.core.base",
     "m-metamodel": "parallax.core.metamodel",
-    # The model-formation and relationship contracts are still implemented
-    # inside the descriptor package, so those tags resolve to the one
-    # `parallax.core.descriptor` enforcement scope (spec/python.md §7).
-    "m-model-formation": "parallax.core.descriptor",
+    "m-model-formation": "parallax.core.model_formation",
+    # The relationship contract is still implemented inside the descriptor
+    # package, so that tag resolves to the one `parallax.core.descriptor`
+    # enforcement scope (spec/python.md §7).
     "m-descriptor": "parallax.core.descriptor",
     "m-pk-gen": "parallax.core.pk_gen",
     "m-inheritance": "parallax.core.inheritance",
@@ -117,6 +117,12 @@ _LOWERING_GROUP_DEPS: frozenset[str] = frozenset(
 # are read back and compared against this table by
 # :func:`check_support_scope_parity`.
 SUPPORT_SCOPE_DEPS: Mapping[str, frozenset[str]] = {
+    "parallax.core._formation_profile": frozenset(
+        {
+            "parallax.core.metamodel",
+            "parallax.core.model_formation",
+        }
+    ),
     "parallax.core.entity": frozenset(
         {
             "parallax.core.descriptor",
