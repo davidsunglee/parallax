@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 import random
+import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Final, TypeGuard, cast
 
 import pytest
 from _metamodel_support import Declaration, attribute, identity, key, source
 
+from parallax.conformance import case_format
 from parallax.core._formation_profile import BUILTIN_MANIFEST, BUILTIN_PROFILE, form_metamodel
 from parallax.core.metamodel import (
     METADATA_COMPILER,
@@ -47,6 +50,7 @@ from parallax.core.model_formation import (
     FORMATION_RULE_SET_RESULT_INVALID,
     METADATA_COMPILER_REQUIRED,
     REQUIRED_RULE_SET,
+    CompilerRequirement,
     FormationContractError,
     FormationManifest,
     FormationManifestEntry,
@@ -530,6 +534,130 @@ def test_the_contract_code_vocabulary_is_closed() -> None:
         FORMATION_RULE_SET_FAILED,
         FORMATION_RULE_SET_RESULT_INVALID,
     ]
+
+
+# --------------------------------------------------------------------------
+# The built-in manifest against the specification's authoritative manifest.
+# --------------------------------------------------------------------------
+
+_MANIFEST_SPEC: Final[Path] = (
+    case_format.find_repo_root() / "core" / "spec" / "m-model-formation.md"
+)
+_BACKTICKED: Final[re.Pattern[str]] = re.compile(r"`([^`]+)`")
+_FACET_KEY: Final[re.Pattern[str]] = re.compile(r"FacetKey\((m-[a-z0-9-]+)\)")
+
+
+@dataclass(frozen=True, slots=True)
+class _SpecRow:
+    """One row of the specification's authoritative formation manifest table."""
+
+    owner: ModuleIdentity
+    rule_set: str
+    issue_codes: frozenset[IssueCode]
+    compiler: str
+    required_modules: frozenset[ModuleIdentity]
+    required_facets: frozenset[ModuleIdentity]
+
+
+def _spec_rows() -> list[_SpecRow]:
+    """The authoritative manifest table, read from the owning specification.
+
+    The table is the normative content of the Formation Manifest, so reading it
+    here is what makes a composition root that drifts from it a test failure
+    rather than a review finding.
+    """
+    text = _MANIFEST_SPEC.read_text(encoding="utf-8")
+    section = text.split("## Authoritative formation manifest", 1)[1].split("\n## ", 1)[0]
+    rows: list[_SpecRow] = []
+    for line in section.splitlines():
+        if not line.startswith("| `m-"):
+            continue
+        cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+        owner, rule_set, codes, compiler, modules, facets = cells
+        rows.append(
+            _SpecRow(
+                owner=_BACKTICKED.findall(owner)[0],
+                rule_set=rule_set,
+                issue_codes=frozenset(_BACKTICKED.findall(codes)),
+                compiler=compiler,
+                required_modules=frozenset(_BACKTICKED.findall(modules)),
+                required_facets=frozenset(_FACET_KEY.findall(facets)),
+            )
+        )
+    return rows
+
+
+def _rule_set_requirement(row: _SpecRow) -> object:
+    if row.rule_set.startswith("fixed resolver"):
+        return FIXED_RESOLVER
+    if row.rule_set == "required":
+        return REQUIRED_RULE_SET
+    return None
+
+
+def _compiler_requirement(row: _SpecRow) -> CompilerRequirement | None:
+    if row.compiler.startswith("mandatory Metadata Compiler"):
+        return METADATA_COMPILER_REQUIRED
+    facets = _FACET_KEY.findall(row.compiler)
+    if not facets:
+        return None
+    return ModelCompilerRequirement(FacetKey(facets[0], _is_text))
+
+
+def test_the_specification_table_is_readable_and_complete() -> None:
+    rows = _spec_rows()
+    assert [row.owner for row in rows] == [
+        METAMODEL_MODULE,
+        "m-pk-gen",
+        _INHERITANCE,
+        "m-value-object",
+        _RELATIONSHIP,
+        _TEMPORAL,
+        _OPT_LOCK,
+    ]
+
+
+def test_the_builtin_manifest_declares_the_specifications_rows_in_its_order() -> None:
+    assert [entry.owner for entry in BUILTIN_MANIFEST.entries] == [
+        row.owner for row in _spec_rows()
+    ]
+
+
+@pytest.mark.parametrize("row", _spec_rows(), ids=lambda row: cast("_SpecRow", row).owner)
+def test_every_builtin_row_matches_its_specification_row(row: _SpecRow) -> None:
+    (entry,) = (entry for entry in BUILTIN_MANIFEST.entries if entry.owner == row.owner)
+    assert entry.rule_set == _rule_set_requirement(row)
+    assert entry.issue_codes == row.issue_codes
+    assert entry.compiler == _compiler_requirement(row)
+    assert entry.required_modules == row.required_modules
+    assert {key.owner for key in entry.required_facets} == row.required_facets
+
+
+def test_every_builtin_issue_code_carries_its_owners_catalog_stem() -> None:
+    offenders = [
+        (entry.owner, code)
+        for entry in BUILTIN_MANIFEST.entries
+        for code in sorted(entry.issue_codes)
+        if not code.startswith(f"{entry.owner.removeprefix('m-')}-")
+    ]
+    assert offenders == []
+
+
+def test_no_builtin_issue_code_is_claimed_by_two_owners() -> None:
+    claimed: dict[IssueCode, ModuleIdentity] = {}
+    collisions: list[tuple[IssueCode, ModuleIdentity, ModuleIdentity]] = []
+    for entry in BUILTIN_MANIFEST.entries:
+        for code in sorted(entry.issue_codes):
+            owner = claimed.setdefault(code, entry.owner)
+            if owner != entry.owner:
+                collisions.append((code, owner, entry.owner))
+    assert collisions == []
+
+
+def test_the_builtin_facet_keys_are_owned_by_the_modules_that_declare_them() -> None:
+    for entry in BUILTIN_MANIFEST.entries:
+        if isinstance(entry.compiler, ModelCompilerRequirement):
+            assert entry.compiler.facet_key.owner == entry.owner
 
 
 # --------------------------------------------------------------------------

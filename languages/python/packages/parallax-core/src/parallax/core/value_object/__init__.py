@@ -2,11 +2,16 @@
 
 The recursive embedded-composite model: a top-level value object and all its
 nested value objects (to arbitrary depth) map to one ``json`` document column.
-This scope resolves a dotted access path against the declared structure, reports
-the leaf's neutral type for literal typing, and answers whether a path crosses a
+This scope owns the shape invariants a declared composite must satisfy, resolves
+a dotted access path against the declared structure, reports the leaf's neutral
+type for literal typing, and answers whether a path crosses a
 ``multiplicity: many`` member — the fact that decides core's flat **any-element**
-vs terminated **same-element** semantics. ``m-value-object`` depends only on
-``m-descriptor``.
+vs terminated **same-element** semantics. ``m-value-object`` depends on
+``m-descriptor``, ``m-metamodel``, and ``m-model-formation``.
+
+It contributes a Rule Set and no compiler: accepted occurrences are expanded
+into path-identified Metadata by the mandatory Metadata Compiler, so there is no
+Value Object facet to view.
 """
 
 from __future__ import annotations
@@ -14,15 +19,33 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 from parallax.core.descriptor import NestedValueObject, ValueObject, ValueObjectAttribute
+from parallax.core.value_object._rules import (
+    CONTAINMENT_CYCLE,
+    EMPTY,
+    ISSUE_CODES,
+    MANY_NULLABLE,
+    RULE_SET,
+    VALUE_OBJECT_MODULE,
+    ValueObjectRuleSet,
+    validate_value_objects,
+)
 
 __all__ = [
+    "CONTAINMENT_CYCLE",
+    "EMPTY",
+    "ISSUE_CODES",
+    "MANY_NULLABLE",
+    "RULE_SET",
+    "VALUE_OBJECT_MODULE",
     "Container",
     "ValueObjectError",
+    "ValueObjectRuleSet",
     "crosses_many",
     "document_column",
     "leaf_type",
     "member",
     "resolve",
+    "validate_value_objects",
 ]
 
 # A value-object container: the top-level document or any nested value object.

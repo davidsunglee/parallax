@@ -13,8 +13,16 @@ that can legally compose both scopes (the conformance engine; later the snapshot
 handle and the statement compile path) applies :func:`inject_as_of` before
 ``compile_read``.
 
-``m-temporal-read`` depends on ``m-op-algebra`` only (transitively ``m-descriptor``
-/ ``m-core``); it never imports ``m-dialect`` or ``m-sql``. The open upper bound is
+This scope also owns the Temporal Facet: the immutable per-formation view that
+answers each Entity's effective temporal shape from its family root's declared
+As-Of Axes. It contributes that Model Compiler and no Rule Set, because every
+axis defect belongs to ``m-metamodel`` or ``m-inheritance``. Consumers reach the
+facet through :func:`view`, so generic facet retrieval stays an internal
+formation seam.
+
+``m-temporal-read`` depends on ``m-op-algebra``, ``m-metamodel``,
+``m-model-formation``, and ``m-inheritance``; it never imports ``m-dialect`` or
+``m-sql``. The open upper bound is
 carried as the ``m-core`` canonical ``infinity`` literal — a plain bind — so the
 dialect's physical infinity representation stays owned by the adapter, exactly as
 every other literal (``m-sql``: the current-row bind is the ``infinity`` literal).
@@ -43,19 +51,46 @@ from parallax.core.op_algebra import (
     Or,
     OrderBy,
 )
+from parallax.core.temporal_read._compile import (
+    MODEL_COMPILER,
+    TemporalReadModelCompiler,
+    compile_facet,
+)
+from parallax.core.temporal_read._facet import (
+    FACET_KEY,
+    NON_TEMPORAL,
+    TEMPORAL_READ_MODULE,
+    Bitemporal,
+    NonTemporal,
+    TemporalFacet,
+    TemporalShape,
+    TransactionTimeOnly,
+    view,
+)
 
 __all__ = [
     "AXIS_ORDER",
+    "FACET_KEY",
     "LATEST",
+    "MODEL_COMPILER",
+    "NON_TEMPORAL",
+    "TEMPORAL_READ_MODULE",
     "TX_TIME",
     "VALID_TIME",
+    "Bitemporal",
     "Edge",
     "Latest",
+    "NonTemporal",
     "Pin",
     "TemporalDimensionConstant",
+    "TemporalFacet",
     "TemporalReadError",
+    "TemporalReadModelCompiler",
+    "TemporalShape",
+    "TransactionTimeOnly",
     "UndeclaredAxisError",
     "attr_ref_for_column",
+    "compile_facet",
     "conjunction_terms",
     "edge_of",
     "inject_as_of",
@@ -63,6 +98,7 @@ __all__ = [
     "pin_of",
     "resolve_pinned_instants",
     "statement_pin",
+    "view",
 ]
 
 # Valid Time is the OUTER pin (the corpus's bitemporal nesting order) and its
