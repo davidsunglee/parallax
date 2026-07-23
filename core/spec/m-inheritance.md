@@ -293,11 +293,12 @@ owns the complete code-set declaration; this module owns each code's meaning.
   an unknown parent is `metamodel-unresolved-entity-reference`, not a duplicate
   inheritance-owned code.
 - **Acyclicity** — parent links form no cycle (`inheritance-cycle`).
-- **Single root** — a family has **exactly one** root. A descriptor with
-  inheritance participants but **no** root (a zero-root / abstract-orphan family) is
-  rejected with `inheritance-missing-root`; one that reaches **more than one** root
-  is rejected with `inheritance-multiple-roots`. (A concrete participant that never
-  tops out at a root is the distinct concrete-without-abstract-root case below.)
+- **Single root** — a family has **exactly one** root. A family is a position's own
+  ancestry, not the whole model: a descriptor MAY declare **several independent
+  families**, each with its own root and its own strategy, and each is judged alone.
+  A family with **no** root (a zero-root / abstract-orphan family) is rejected with
+  `inheritance-missing-root`. (A concrete participant that never tops out at a root
+  is the distinct concrete-without-abstract-root case below.)
 - **Concrete under an abstract root** — every concrete subtype has an abstract
   root ancestor (`inheritance-concrete-without-abstract-root`).
 - **TPH table ownership** — the root declares exactly one table

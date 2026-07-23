@@ -3,10 +3,11 @@
 # `Pet` is an `abstract-subtype` whose `parent` (`Widget`) is a plain,
 # non-inheritance entity — so the descriptor has inheritance participants but ZERO
 # roots and no concrete subtype (an abstract-orphan chain). A family has EXACTLY one
-# root, so both "more than one" (inheritance-multiple-roots) and "none" are invalid;
-# this pins the zero-root shape. Because there is no concrete subtype, the
-# concrete-without-abstract-root check never fires — only the missing-root check
-# catches it, so a model-aware validator MUST reject it before any SQL.
+# root, and a family reaching NONE is the shape this pins; a descriptor declaring
+# several independent rooted families is legal and is not this case. Because there
+# is no concrete subtype, the concrete-without-abstract-root check never fires —
+# only the missing-root check catches it, so a model-aware validator MUST reject it
+# before any SQL.
 model: models/payment.yaml
 tags: [m-inheritance, m-descriptor, rejected, negative, slice-snapshot-1, slice-managed-1]
 shape: rejected

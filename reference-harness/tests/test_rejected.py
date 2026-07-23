@@ -33,7 +33,6 @@ from reference_harness.inheritance import (
     INHERITANCE_CONCRETE_WITHOUT_ABSTRACT_ROOT,
     INHERITANCE_MISSING_ROOT,
     INHERITANCE_MISSING_TAG_VALUE,
-    INHERITANCE_MULTIPLE_ROOTS,
     INHERITANCE_TEMPORAL_AXES_NOT_ROOT_OWNED,
     INHERITANCE_UNKNOWN_PARENT,
     MODEL_REJECTED_RULES,
@@ -98,7 +97,7 @@ def test_inheritance_model_negatives_are_covered() -> None:
     for rule in used:
         assert rule in MODEL_REJECTED_RULES, f"{rule!r} is not an inheritance model rule"
     # Structural invariants that a family MUST reject have at least one witness.
-    assert {INHERITANCE_UNKNOWN_PARENT, INHERITANCE_MULTIPLE_ROOTS} <= used
+    assert {INHERITANCE_UNKNOWN_PARENT, INHERITANCE_MISSING_ROOT} <= used
 
 
 # --- inheritance family invariants closed by the Phase 3 review --------------
@@ -106,10 +105,9 @@ def test_inheritance_model_negatives_are_covered() -> None:
 # Two family invariants the per-entity metamodel schema deliberately delegates to
 # the semantic validator (m-inheritance): under table-per-hierarchy every concrete
 # subtype MUST declare a `tagValue` (else its rows are indistinguishable in the
-# shared table), and a family has EXACTLY ONE root (zero roots is as invalid as
-# more than one). These are the reproduce-then-green regressions for the two holes
-# the review found: before the fix `validate_family` ACCEPTED both malformed
-# descriptors.
+# shared table), and a family has EXACTLY ONE root — a statement about one family's
+# own ancestry, so a descriptor declaring SEVERAL independent rooted families is
+# legal and only the zero-root shape is rejected.
 
 
 def _tph_root(**overrides: Any) -> dict[str, Any]:
@@ -151,6 +149,73 @@ def test_tph_concrete_subtype_missing_tag_value_is_rejected() -> None:
     with pytest.raises(RejectionError) as exc:
         validate_family(descriptor)
     assert exc.value.rule == INHERITANCE_MISSING_TAG_VALUE
+
+
+def test_independent_families_in_one_descriptor_are_accepted() -> None:
+    # Two families that share no ancestry, each rooted and each under its OWN
+    # strategy. "Exactly one root" is asked of a family, not of the descriptor, and
+    # the strategy-scoped checks are likewise per family: resolving one strategy for
+    # the whole descriptor would apply the table-per-hierarchy shared-table rule to
+    # the table-per-concrete-subtype family (or the reverse) and reject a legal model.
+    descriptor = {
+        "entities": [
+            _tph_root(),
+            {
+                "name": "Dog",
+                "inheritance": {"role": "concrete-subtype", "parent": "Animal", "tagValue": "dog"},
+                "attributes": [
+                    {"name": "barkVolume", "type": "int32", "column": "bark_volume"},
+                ],
+            },
+            {
+                "name": "Document",
+                "inheritance": {"role": "root", "strategy": "table-per-concrete-subtype"},
+                "attributes": [
+                    {"name": "id", "type": "int64", "column": "id", "primaryKey": True},
+                ],
+            },
+            {
+                "name": "Invoice",
+                "table": "invoice",
+                "inheritance": {"role": "concrete-subtype", "parent": "Document"},
+                "attributes": [{"name": "total", "type": "int64", "column": "total"}],
+            },
+        ]
+    }
+    validate_family(descriptor)
+
+
+def test_zero_root_family_beside_a_rooted_one_is_rejected() -> None:
+    # A rooted family does not answer for its neighbour: the abstract-orphan chain
+    # (`Pet` under the plain `Widget`) reaches no root of its own and MUST still be
+    # rejected, even though the descriptor declares a perfectly valid family too.
+    descriptor = {
+        "entities": [
+            _tph_root(),
+            {
+                "name": "Dog",
+                "inheritance": {"role": "concrete-subtype", "parent": "Animal", "tagValue": "dog"},
+                "attributes": [
+                    {"name": "barkVolume", "type": "int32", "column": "bark_volume"},
+                ],
+            },
+            {
+                "name": "Widget",
+                "table": "widget",
+                "attributes": [{"name": "id", "type": "int64", "column": "id", "primaryKey": True}],
+            },
+            {
+                "name": "Pet",
+                "inheritance": {"role": "abstract-subtype", "parent": "Widget"},
+                "attributes": [
+                    {"name": "licenseId", "type": "string", "column": "license_id"},
+                ],
+            },
+        ]
+    }
+    with pytest.raises(RejectionError) as exc:
+        validate_family(descriptor)
+    assert exc.value.rule == INHERITANCE_MISSING_ROOT
 
 
 def test_zero_root_abstract_orphan_family_is_rejected() -> None:

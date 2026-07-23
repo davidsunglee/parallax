@@ -5,8 +5,10 @@ one Entity: whether the parent links form a closed tree under exactly one
 abstract root, whether the strategy's physical mapping is declared where that
 strategy puts it, whether the facts a family owns as a whole stay on its root,
 and whether a descendant's own members leave the inherited namespace
-unambiguous. Parent resolution is not here — foundational resolution owns it, so
-a candidate's parents already name existing Entities.
+unambiguous. A family is a position's own ancestry, never the model: one model
+carries as many independent families as it declares roots, and each is judged
+alone. Parent resolution is not here — foundational resolution owns it, so a
+candidate's parents already name existing Entities.
 
 A position whose ancestry does not resolve is reported for that alone: the rest
 of these rules are questions about a chain, and there is no chain to ask them
@@ -21,7 +23,6 @@ from typing import Final
 
 from parallax.core.inheritance._facet import INHERITANCE_MODULE
 from parallax.core.metamodel import (
-    MODEL_ROOT,
     AbstractRoot,
     AbstractSubtype,
     AsOfAxisLocation,
@@ -53,7 +54,6 @@ __all__ = [
     "MEMBER_SHADOWING",
     "MISSING_ROOT",
     "MISSING_TAG_VALUE",
-    "MULTIPLE_ROOTS",
     "OPTIMISTIC_LOCKING_NOT_ROOT_OWNED",
     "PERSISTENCE_NOT_ROOT_OWNED",
     "PRIMARY_KEY_MISSING",
@@ -76,11 +76,6 @@ closed tree and reach no root."""
 MISSING_ROOT: Final[IssueCode] = "inheritance-missing-root"
 """An abstract position's ancestry reaches no abstract root, so its family has
 none. A concrete position in the same shape is reported by its own code."""
-
-MULTIPLE_ROOTS: Final[IssueCode] = "inheritance-multiple-roots"
-"""A model's inheritance participants declare more than one abstract root. The
-rule is model-wide rather than per-ancestry: a root has no parent, so two roots
-never share an ancestry and a per-ancestry reading could never fire."""
 
 CONCRETE_WITHOUT_ABSTRACT_ROOT: Final[IssueCode] = "inheritance-concrete-without-abstract-root"
 """A concrete subtype's ancestry reaches no abstract root. Only an abstract root
@@ -154,7 +149,6 @@ ISSUE_CODES: Final[frozenset[IssueCode]] = frozenset(
     {
         CYCLE,
         MISSING_ROOT,
-        MULTIPLE_ROOTS,
         CONCRETE_WITHOUT_ABSTRACT_ROOT,
         STRATEGY_REDECLARED,
         MISSING_TAG_VALUE,
@@ -290,26 +284,6 @@ def _unrooted_issue(participant: _Participant) -> MetamodelIssue:
         location,
         message="the ancestry of this abstract position reaches no abstract root",
     )
-
-
-def _multiple_root_issues(roots: Sequence[EntityIdentity]) -> list[MetamodelIssue]:
-    """The model-wide single-root rule.
-
-    Every other rule below is asked of one family, resolved from a position's
-    own ancestry. This one is asked of the model: its participants resolve to
-    one family identity, so a second root is a second family the contract does
-    not admit.
-    """
-    if len(roots) < 2:
-        return []
-    return [
-        MetamodelIssue(
-            MULTIPLE_ROOTS,
-            MODEL_ROOT,
-            tuple(EntityLocation(root) for root in roots),
-            message=f"{len(roots)} inheritance roots are declared; exactly one is allowed",
-        )
-    ]
 
 
 def _local_members(declaration: EntityDeclaration) -> Iterator[tuple[str, ModelLocation]]:
@@ -555,18 +529,12 @@ def validate_inheritance(candidate: CandidateMetamodel) -> tuple[MetamodelIssue,
         identity: _resolution(participant, participants)
         for identity, participant in participants.items()
     }
-    roots = [
-        identity
-        for identity, participant in participants.items()
-        if isinstance(participant.inheritance, AbstractRoot)
-    ]
     issues = _cycle_issues(resolutions)
     issues.extend(
         _unrooted_issue(participants[identity])
         for identity, resolution in resolutions.items()
         if isinstance(resolution, _Unrooted)
     )
-    issues.extend(_multiple_root_issues(roots))
 
     families: dict[EntityIdentity, tuple[InheritanceStrategy, list[_Participant]]] = {}
     for identity, resolution in resolutions.items():

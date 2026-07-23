@@ -28,7 +28,6 @@ from parallax.core.descriptor import (
     unresolved_metamodel,
 )
 from parallax.core.metamodel import (
-    MODEL_ROOT,
     UNRESOLVED_ENTITY_REFERENCE,
     AbstractRoot,
     AbstractSubtype,
@@ -82,13 +81,47 @@ def _descriptor_rejection_cases() -> list[tuple[str, dict[str, Any], str]]:
 
 _REJECTIONS = _descriptor_rejection_cases()
 
+_INDEPENDENT_FAMILIES: Final[dict[str, Any]] = {
+    "entities": [
+        {
+            "name": "Payment",
+            "table": "payment",
+            "inheritance": {
+                "role": "root",
+                "strategy": "table-per-hierarchy",
+                "tag": {"column": "kind"},
+            },
+            "attributes": [{"name": "id", "type": "int64", "primaryKey": True}],
+        },
+        {
+            "name": "CardPayment",
+            "inheritance": {"role": "concrete-subtype", "parent": "Payment", "tagValue": "card"},
+            "attributes": [{"name": "network", "type": "string", "nullable": True}],
+        },
+        {
+            "name": "Document",
+            "inheritance": {"role": "root", "strategy": "table-per-concrete-subtype"},
+            "attributes": [{"name": "id", "type": "int64", "primaryKey": True}],
+        },
+        {
+            "name": "Invoice",
+            "table": "invoice",
+            "inheritance": {"role": "concrete-subtype", "parent": "Document"},
+            "attributes": [{"name": "total", "type": "int64", "nullable": True}],
+        },
+    ]
+}
+"""Two families that share no ancestry, each rooted and each with its own
+strategy — the shape a hub model assembles from independently declared
+families."""
+
 
 def test_every_descriptor_rejection_case_is_covered() -> None:
-    # 17 inline-descriptor inheritance rejection cases carry `when.model` (13
-    # original + the two temporal-axis root-ownership witnesses,
-    # m-inheritance-098/099, + the two optimistic-locking root-ownership
-    # witnesses, m-inheritance-102/103).
-    assert len(_REJECTIONS) == 17
+    # 16 inline-descriptor inheritance rejection cases carry `when.model` (12
+    # structural/strategy witnesses + the two temporal-axis root-ownership
+    # witnesses, m-inheritance-098/099, + the two optimistic-locking
+    # root-ownership witnesses, m-inheritance-102/103).
+    assert len(_REJECTIONS) == 16
 
 
 @pytest.mark.parametrize("stem, model, rule", _REJECTIONS, ids=[r[0] for r in _REJECTIONS])
@@ -108,6 +141,38 @@ def test_valid_inheritance_family_passes_validation() -> None:
 
 def test_non_inheritance_descriptor_validates_trivially() -> None:
     inheritance.validate(_MODELS["account"])  # no participants, no raise
+
+
+def test_independent_families_in_one_descriptor_pass_validation() -> None:
+    # `workshop` declares two families that share no ancestry, each under its own
+    # strategy: resolving one strategy for the whole descriptor would apply the
+    # table-per-hierarchy shared-table rule to the table-per-concrete-subtype family.
+    inheritance.validate(_MODELS["workshop"])  # no raise
+
+
+def test_a_rootless_family_beside_a_rooted_one_is_rejected() -> None:
+    # A rooted family does not answer for its neighbour: the abstract-orphan chain
+    # reaches no root of its own and is still rejected.
+    descriptor = deserialize(
+        {
+            "entities": [
+                *_INDEPENDENT_FAMILIES["entities"],
+                {
+                    "name": "Widget",
+                    "table": "widget",
+                    "attributes": [{"name": "id", "type": "int64", "primaryKey": True}],
+                },
+                {
+                    "name": "Pet",
+                    "inheritance": {"role": "abstract-subtype", "parent": "Widget"},
+                    "attributes": [{"name": "licenseId", "type": "string", "maxLength": 16}],
+                },
+            ]
+        }
+    )
+    with pytest.raises(inheritance.InheritanceError) as caught:
+        inheritance.validate(descriptor)
+    assert caught.value.rule == "inheritance-missing-root"
 
 
 @pytest.mark.parametrize(
@@ -602,7 +667,6 @@ def test_validate_write_assignment_accepts_none_for_a_nullable_scalar() -> None:
 
 _RULE_SET_REJECTIONS: Final[Mapping[str, IssueCode]] = {
     "m-inheritance-021-rejected-cycle": inheritance.CYCLE,
-    "m-inheritance-022-rejected-multiple-roots": inheritance.MULTIPLE_ROOTS,
     "m-inheritance-023-rejected-concrete-without-abstract-root": (
         inheritance.CONCRETE_WITHOUT_ABSTRACT_ROOT
     ),
@@ -682,7 +746,6 @@ def test_the_owned_issue_code_set_is_closed() -> None:
         "inheritance-member-shadowing",
         "inheritance-missing-root",
         "inheritance-missing-tag-value",
-        "inheritance-multiple-roots",
         "inheritance-optimistic-locking-not-root-owned",
         "inheritance-persistence-not-root-owned",
         "inheritance-primary-key-missing",
@@ -747,18 +810,50 @@ def test_a_cycle_is_reported_once_from_its_canonically_first_member() -> None:
     assert issue.related == (EntityLocation(EntityIdentity(None, "Pet")),)
 
 
-def test_multiple_roots_is_a_statement_about_the_whole_model() -> None:
-    (model,) = [
-        inline
-        for name, inline, _ in _REJECTIONS
-        if name == "m-inheritance-022-rejected-multiple-roots"
+def test_independent_families_coexist_in_one_model() -> None:
+    formed = form_metamodel(unresolved_metamodel(parse_document(_INDEPENDENT_FAMILIES)))
+    facet = inheritance.view(formed)
+    views = {
+        entity.identity.name: found
+        for entity in formed.entities
+        if (found := facet.entity(entity.identity)) is not None
+    }
+    assert {name: view.root.name for name, view in views.items()} == {
+        "Payment": "Payment",
+        "CardPayment": "Payment",
+        "Document": "Document",
+        "Invoice": "Document",
+    }
+    assert views["CardPayment"].strategy == TablePerHierarchy("kind")
+    assert views["Invoice"].strategy == TablePerConcreteSubtype()
+
+
+def test_a_rootless_family_is_reported_beside_a_rooted_one() -> None:
+    model: dict[str, Any] = {
+        "entities": [
+            *_INDEPENDENT_FAMILIES["entities"],
+            {
+                "name": "Folder",
+                "table": "folder",
+                "attributes": [{"name": "id", "type": "int64", "primaryKey": True}],
+            },
+            {
+                "name": "Archive",
+                "inheritance": {"role": "abstract-subtype", "parent": "Folder"},
+                "attributes": [{"name": "label", "type": "string", "nullable": True}],
+            },
+            {
+                "name": "Receipt",
+                "table": "receipt",
+                "inheritance": {"role": "concrete-subtype", "parent": "Folder"},
+                "attributes": [{"name": "scan", "type": "string", "nullable": True}],
+            },
+        ]
+    }
+    assert sorted(issue.code for issue in _formation_error(model).issues) == [
+        inheritance.CONCRETE_WITHOUT_ABSTRACT_ROOT,
+        inheritance.MISSING_ROOT,
     ]
-    (issue,) = _formation_error(model).issues
-    assert issue.location == MODEL_ROOT
-    assert issue.related == (
-        EntityLocation(EntityIdentity(None, "Animal")),
-        EntityLocation(EntityIdentity(None, "Beast")),
-    )
 
 
 def test_a_descendant_axis_is_located_at_the_axis_it_declares() -> None:

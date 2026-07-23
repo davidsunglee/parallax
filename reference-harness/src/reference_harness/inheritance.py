@@ -80,7 +80,6 @@ _TAG_COLUMN_MAX_LENGTH = 32
 INHERITANCE_UNKNOWN_PARENT = "inheritance-unknown-parent"
 INHERITANCE_CYCLE = "inheritance-cycle"
 INHERITANCE_MISSING_ROOT = "inheritance-missing-root"
-INHERITANCE_MULTIPLE_ROOTS = "inheritance-multiple-roots"
 INHERITANCE_CONCRETE_WITHOUT_ABSTRACT_ROOT = "inheritance-concrete-without-abstract-root"
 INHERITANCE_TPH_ROOT_TABLE_REQUIRED = "inheritance-tph-root-table-required"
 INHERITANCE_TPH_DESCENDANT_TABLE_FORBIDDEN = "inheritance-tph-descendant-table-forbidden"
@@ -108,7 +107,6 @@ MODEL_REJECTED_RULES: frozenset[str] = frozenset(
         INHERITANCE_UNKNOWN_PARENT,
         INHERITANCE_CYCLE,
         INHERITANCE_MISSING_ROOT,
-        INHERITANCE_MULTIPLE_ROOTS,
         INHERITANCE_CONCRETE_WITHOUT_ABSTRACT_ROOT,
         INHERITANCE_TPH_ROOT_TABLE_REQUIRED,
         INHERITANCE_TPH_DESCENDANT_TABLE_FORBIDDEN,
@@ -529,15 +527,32 @@ def validate_family(descriptor: dict[str, Any]) -> None:
     validate_family_defs(defs)
 
 
+def _independent_families(
+    participants: list[dict[str, Any]], family: Family
+) -> list[tuple[str, list[dict[str, Any]]]]:
+    """Each independent inheritance family among *participants*: the name of the
+    topmost declared position its members' ancestry reaches, paired with those
+    members in declaration order.
+
+    A position declares at most one parent, so two roots can never share an
+    ancestry and every participant falls in exactly one family. Meaningful only
+    once unknown parents and cycles are rejected, which is what makes each
+    upward walk terminate at a single top.
+    """
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for definition in participants:
+        top = family.ancestry(definition["name"])[0]
+        grouped.setdefault(top, []).append(definition)
+    return list(grouped.items())
+
+
 def validate_family_defs(entity_defs: list[dict[str, Any]]) -> None:
-    """The list-of-definitions form of :func:`validate_family`."""
-    # Phase constraint (Finding 3): every inheritance participant in the descriptor
-    # is treated as ONE family — this validator does NOT split the participants into
-    # connected components by ancestry, so two INDEPENDENT valid families declared in
-    # a single descriptor would be wrongly rejected (e.g. as multiple roots). This
-    # matches the current corpus (one inheritance family per model) and is a
-    # deliberate scope limit; multi-family-per-descriptor support is out of scope for
-    # now (see the outline's Open Questions).
+    """The list-of-definitions form of :func:`validate_family`.
+
+    A descriptor may declare several independent families; the root-scoped and
+    strategy-scoped checks below are therefore asked once per family, so one
+    family's root never answers for another's.
+    """
     participants = [d for d in entity_defs if inheritance_of(d) is not None]
     if not participants:
         return
@@ -566,15 +581,6 @@ def validate_family_defs(entity_defs: list[dict[str, Any]]) -> None:
                 )
             seen.add(current)
             current = parent_of(by_name[current]) if current in by_name else None
-
-    # 3. The inheritance participants form exactly one family with one root.
-    roots = [d["name"] for d in participants if role_of(d) == ROLE_ROOT]
-    if len(roots) > 1:
-        raise RejectionError(
-            INHERITANCE_MULTIPLE_ROOTS,
-            f"the descriptor declares more than one inheritance root {sorted(roots)}; a "
-            f"family has exactly one root",
-        )
 
     # 4. A non-root participant MUST NOT redeclare the family strategy.
     for definition in participants:
@@ -643,89 +649,96 @@ def validate_family_defs(entity_defs: list[dict[str, Any]]) -> None:
                 f"(ancestry top is {top!r})",
             )
 
-    # 7. Exactly one root: check #3 rejects the >1 shape; this rejects the zero-root
-    #    shape. A family with a CONCRETE participant and no root is already caught by
-    #    check #6 (concrete-without-abstract-root), which runs first, so reaching this
-    #    point with no root means every participant is an abstract orphan whose
-    #    ancestry never tops out at a `root` (participants exist, zero roots, no
-    #    concrete) — a family that can never be instantiated or discriminated.
-    if not roots:
-        raise RejectionError(
-            INHERITANCE_MISSING_ROOT,
-            "the descriptor declares inheritance participants but no root; a family has "
-            "exactly one root",
-        )
+    families = _independent_families(participants, family)
 
-    # Strategy-scoped checks (the strategy is the root's; exactly one root is now
-    # guaranteed by checks #3 and #7).
-    root_block = inheritance_of(by_name[roots[0]])
-    strategy = root_block.get("strategy") if root_block else None
-
-    if strategy == STRATEGY_TPCS:
-        # 8. Abstract positions are tableless; every concrete owns one table.
-        for definition in participants:
-            if role_of(definition) in ABSTRACT_ROLES and "table" in definition:
-                raise RejectionError(
-                    INHERITANCE_TPCS_ABSTRACT_TABLE_FORBIDDEN,
-                    f"table-per-concrete-subtype abstract position "
-                    f"{definition['name']!r} declares a table",
-                )
-            if role_of(definition) == ROLE_CONCRETE and "table" not in definition:
-                raise RejectionError(
-                    INHERITANCE_TPCS_CONCRETE_TABLE_REQUIRED,
-                    f"table-per-concrete-subtype concrete {definition['name']!r} declares no table",
-                )
-        # 8. A table-per-concrete-subtype family declares no tag / tagValue anywhere.
-        for definition in participants:
-            block = inheritance_of(definition)
-            if block is not None and ("tag" in block or "tagValue" in block):
-                raise RejectionError(
-                    INHERITANCE_TAG_ON_CONCRETE_SUBTYPE_STRATEGY,
-                    f"table-per-concrete-subtype family carries a tag/tagValue on "
-                    f"{definition['name']!r}; only table-per-hierarchy uses a tag",
-                )
-
-    if strategy == STRATEGY_TPH:
-        concretes = [d for d in participants if role_of(d) == ROLE_CONCRETE]
-        root_definition = by_name[roots[0]]
-        if "table" not in root_definition:
+    # 7. Every family reaches exactly one root. Its members share one ancestry, so
+    #    "more than one" is unrepresentable and only the zero-root shape remains.
+    #    A family with a CONCRETE participant and no root is already caught by check
+    #    #6 (concrete-without-abstract-root), which runs first, so reaching this
+    #    point rootless means every member is an abstract orphan whose ancestry never
+    #    tops out at a `root` — a family that can never be instantiated or
+    #    discriminated.
+    for top, members in families:
+        if role_of(by_name.get(top, {})) != ROLE_ROOT:
             raise RejectionError(
-                INHERITANCE_TPH_ROOT_TABLE_REQUIRED,
-                f"table-per-hierarchy root {root_definition['name']!r} declares no shared table",
+                INHERITANCE_MISSING_ROOT,
+                f"the inheritance participants "
+                f"{sorted(member['name'] for member in members)} declare no root; a "
+                f"family has exactly one root",
             )
-        for definition in participants:
-            if role_of(definition) != ROLE_ROOT and "table" in definition:
+
+    # Strategy-scoped checks, asked of each family under ITS OWN root's strategy.
+    for top, members in families:
+        root_definition = by_name[top]
+        root_block = inheritance_of(root_definition)
+        strategy = root_block.get("strategy") if root_block else None
+
+        if strategy == STRATEGY_TPCS:
+            # 8. Abstract positions are tableless; every concrete owns one table.
+            for definition in members:
+                if role_of(definition) in ABSTRACT_ROLES and "table" in definition:
+                    raise RejectionError(
+                        INHERITANCE_TPCS_ABSTRACT_TABLE_FORBIDDEN,
+                        f"table-per-concrete-subtype abstract position "
+                        f"{definition['name']!r} declares a table",
+                    )
+                if role_of(definition) == ROLE_CONCRETE and "table" not in definition:
+                    raise RejectionError(
+                        INHERITANCE_TPCS_CONCRETE_TABLE_REQUIRED,
+                        f"table-per-concrete-subtype concrete {definition['name']!r} "
+                        f"declares no table",
+                    )
+            # 8. A table-per-concrete-subtype family declares no tag / tagValue anywhere.
+            for definition in members:
+                block = inheritance_of(definition)
+                if block is not None and ("tag" in block or "tagValue" in block):
+                    raise RejectionError(
+                        INHERITANCE_TAG_ON_CONCRETE_SUBTYPE_STRATEGY,
+                        f"table-per-concrete-subtype family carries a tag/tagValue on "
+                        f"{definition['name']!r}; only table-per-hierarchy uses a tag",
+                    )
+
+        if strategy == STRATEGY_TPH:
+            concretes = [d for d in members if role_of(d) == ROLE_CONCRETE]
+            if "table" not in root_definition:
                 raise RejectionError(
-                    INHERITANCE_TPH_DESCENDANT_TABLE_FORBIDDEN,
-                    f"table-per-hierarchy descendant {definition['name']!r} repeats "
-                    f"the root-owned shared table",
+                    INHERITANCE_TPH_ROOT_TABLE_REQUIRED,
+                    f"table-per-hierarchy root {root_definition['name']!r} declares no "
+                    f"shared table",
                 )
-        # 9. Every concrete subtype declares a tagValue: table-per-hierarchy rows share
-        #    one table and are told apart ONLY by the tag column, so a concrete subtype
-        #    with no tagValue would be indistinguishable in the shared table. The
-        #    per-entity metamodel schema leaves tagValue optional (its presence is a
-        #    cross-entity rule the root's strategy owns), so it is enforced here, before
-        #    the family-wide uniqueness check below (which then sees only real values).
-        tagged: list[tuple[str, str]] = []
-        for definition in concretes:
-            value = inheritance_of(definition).get("tagValue")  # type: ignore[union-attr]
-            if value is None:
-                raise RejectionError(
-                    INHERITANCE_MISSING_TAG_VALUE,
-                    f"table-per-hierarchy concrete subtype {definition['name']!r} declares "
-                    f"no tagValue; the shared table cannot discriminate its rows without one",
-                )
-            tagged.append((definition["name"], value))
-        # 10. tagValue values are unique across the whole family (presence is #9).
-        seen_values: dict[str, str] = {}
-        for name, value in tagged:
-            if value in seen_values:
-                raise RejectionError(
-                    INHERITANCE_DUPLICATE_TAG_VALUE,
-                    f"concrete subtypes {seen_values[value]!r} and {name!r} "
-                    f"share tagValue {value!r}",
-                )
-            seen_values[value] = name
+            for definition in members:
+                if role_of(definition) != ROLE_ROOT and "table" in definition:
+                    raise RejectionError(
+                        INHERITANCE_TPH_DESCENDANT_TABLE_FORBIDDEN,
+                        f"table-per-hierarchy descendant {definition['name']!r} repeats "
+                        f"the root-owned shared table",
+                    )
+            # 9. Every concrete subtype declares a tagValue: table-per-hierarchy rows share
+            #    one table and are told apart ONLY by the tag column, so a concrete subtype
+            #    with no tagValue would be indistinguishable in the shared table. The
+            #    per-entity metamodel schema leaves tagValue optional (its presence is a
+            #    cross-entity rule the root's strategy owns), so it is enforced here, before
+            #    the family-wide uniqueness check below (which then sees only real values).
+            tagged: list[tuple[str, str]] = []
+            for definition in concretes:
+                value = inheritance_of(definition).get("tagValue")  # type: ignore[union-attr]
+                if value is None:
+                    raise RejectionError(
+                        INHERITANCE_MISSING_TAG_VALUE,
+                        f"table-per-hierarchy concrete subtype {definition['name']!r} declares "
+                        f"no tagValue; the shared table cannot discriminate its rows without one",
+                    )
+                tagged.append((definition["name"], value))
+            # 10. tagValue values are unique across the whole family (presence is #9).
+            seen_values: dict[str, str] = {}
+            for name, value in tagged:
+                if value in seen_values:
+                    raise RejectionError(
+                        INHERITANCE_DUPLICATE_TAG_VALUE,
+                        f"concrete subtypes {seen_values[value]!r} and {name!r} "
+                        f"share tagValue {value!r}",
+                    )
+                seen_values[value] = name
 
 
 # --- operation-level narrow / subtype-scope validation (raises RejectionError) --

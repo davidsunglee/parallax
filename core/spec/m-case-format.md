@@ -1035,7 +1035,7 @@ checked payload-shape-first then target-validity):
 **Model** rules (`m-inheritance` closed-tree family invariants — the cross-entity
 invariants per-entity schema validation cannot express, carried inline under
 `when.model`): `inheritance-unknown-parent`, `inheritance-cycle`,
-`inheritance-missing-root`, `inheritance-multiple-roots`,
+`inheritance-missing-root`,
 `inheritance-concrete-without-abstract-root`,
 `inheritance-tph-root-table-required`,
 `inheritance-tph-descendant-table-forbidden`,

@@ -826,7 +826,6 @@
             "inheritance-unknown-parent",
             "inheritance-cycle",
             "inheritance-missing-root",
-            "inheritance-multiple-roots",
             "inheritance-concrete-without-abstract-root",
             "inheritance-tph-root-table-required",
             "inheritance-tph-descendant-table-forbidden",
