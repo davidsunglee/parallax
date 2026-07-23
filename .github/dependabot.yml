@@ -34,6 +34,19 @@ updates:
       prefix-development: "chore"
       include: "scope"
 
+  - package-ecosystem: "uv"
+    directory: "/languages/python"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:20"
+      timezone: "America/New_York"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore"
+      prefix-development: "chore"
+      include: "scope"
+
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
