@@ -4,7 +4,13 @@ Hand-rolled, snake-to-camel-aware serialization between the frozen metamodel
 records and the canonical ``metamodel.schema.json`` document shape. Python
 record fields are snake_case; canonical descriptor keys are camelCase.
 
-``deserialize`` reads a descriptor document (JSON- or YAML-derived) into records;
+``parse_document`` reads a descriptor document (JSON- or YAML-derived) into
+records and stops there: cross-entity references keep their authored spelling,
+because resolving them belongs to the foundational resolver behind the
+``m-metamodel`` Unresolved seam. ``deserialize`` is the older entry that also
+resolves references and compiles relationships eagerly, for consumers that
+still read a self-contained record graph.
+
 ``serialize`` re-emits the **canonical minimal** form, dropping every optional
 key whose value equals the fact import re-derives — including an
 application-assigned ``pkGeneration`` on a declared key — and normalizing
@@ -44,7 +50,7 @@ from parallax.core.descriptor.records import (
     ValueObjectAttribute,
 )
 
-__all__ = ["canonicalize", "deserialize", "serialize"]
+__all__ = ["canonicalize", "deserialize", "parse_document", "serialize"]
 
 _PERSISTENCE_MODES: frozenset[str] = frozenset({"read-write", "read-only"})
 _PK_STRATEGIES: frozenset[str] = frozenset({"application-assigned", "max", "sequence"})
@@ -551,20 +557,40 @@ def _resolved_relationship_entities(entities: tuple[Entity, ...]) -> tuple[Entit
     return resolved
 
 
-def deserialize(document: Mapping[str, object]) -> Metamodel:
-    """Parse a descriptor document into a :class:`Metamodel`."""
+def _parsed_entities(document: Mapping[str, object]) -> tuple[Entity, ...]:
+    """The document's entity records in authoring order, references untouched.
+
+    The single-``entity`` and ``entities`` forms are mutually exclusive, and an
+    empty model is rejected here — the source, not a later seam, is where a
+    frontend owns emptiness.
+    """
     _closed(document, frozenset({"entity", "entities"}), "descriptor")
     has_single = "entity" in document
     has_many = "entities" in document
     if has_single == has_many:
         raise DescriptorError("descriptor must declare exactly one of `entity` or `entities`")
     if has_single:
-        entities = (_entity_from(document["entity"]),)
-        return Metamodel(entities=_resolved_relationship_entities(entities))
+        return (_entity_from(document["entity"]),)
     entities = tuple(_entity_from(item) for item in _list(document["entities"], "entities"))
     if not entities:
         raise DescriptorError("`entities` must not be empty")
-    return Metamodel(entities=_resolved_relationship_entities(entities))
+    return entities
+
+
+def parse_document(document: Mapping[str, object]) -> Metamodel:
+    """Parse a descriptor document into records without resolving references.
+
+    Every Entity Reference keeps its authored relative or qualified spelling and
+    no relationship is paired, so parsing reports only shape defects. Whether
+    the references resolve, whether a relationship pairs, and every other
+    model-wide question belong to Model Formation.
+    """
+    return Metamodel(entities=_parsed_entities(document))
+
+
+def deserialize(document: Mapping[str, object]) -> Metamodel:
+    """Parse a descriptor document into a reference-resolved :class:`Metamodel`."""
+    return Metamodel(entities=_resolved_relationship_entities(_parsed_entities(document)))
 
 
 # --------------------------------------------------------------------------- #
