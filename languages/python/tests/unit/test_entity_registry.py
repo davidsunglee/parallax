@@ -231,9 +231,7 @@ def test_narrow_resolves_subtype_names_regardless_of_registry() -> None:
         id: Attr[int] = Field(primary_key=True, pk_generator="none")
 
     class NarrowLeafProbe(NarrowRootProbe, frozen=True):
-        __parallax__ = EntityConfig(
-            mutability="transactional", inheritance=Concrete(tag_value="leaf")
-        )
+        __parallax__ = EntityConfig(inheritance=Concrete(tag_value="leaf"))
 
         detail: Attr[str] = Field(nullable=True, default=None)
 
@@ -323,9 +321,7 @@ def test_family_subclass_registry_mismatch_raises() -> None:
         under test."""
 
         class FamilyLeafProbe(FamilyRootProbe, frozen=True, registry=registry):
-            __parallax__ = EntityConfig(
-                mutability="transactional", inheritance=Concrete(tag_value="leaf")
-            )
+            __parallax__ = EntityConfig(inheritance=Concrete(tag_value="leaf"))
 
         return FamilyLeafProbe
 
@@ -368,9 +364,7 @@ def test_tph_root_table_does_not_leak_across_registries() -> None:
     _declare_tph_animal_root("animals_b", registry_b)
 
     class Dog(animal_a, frozen=True):
-        __parallax__ = EntityConfig(
-            mutability="transactional", inheritance=Concrete(tag_value="dog")
-        )
+        __parallax__ = EntityConfig(inheritance=Concrete(tag_value="dog"))
 
     record = entity_record_of(Dog)
     assert record is not None

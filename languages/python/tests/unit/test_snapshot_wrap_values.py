@@ -180,7 +180,6 @@ class _WrapTemporalLeaf(_WrapTemporalRoot, frozen=True):
     __parallax__ = EntityConfig(
         table="wrap_temporal_leaf",
         namespace="parallax.compatibility",
-        mutability="transactional",
         inheritance=Concrete(),
     )
 

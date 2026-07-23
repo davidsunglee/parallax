@@ -405,14 +405,10 @@ def test_narrowed_view_key_derives_from_the_paths_own_registry_not_types_own() -
             id: Attr[int] = Field(primary_key=True, pk_generator="none")
 
         class Dog(Pet, frozen=True):
-            __parallax__ = EntityConfig(
-                table="dog_path", mutability="transactional", inheritance=Concrete()
-            )
+            __parallax__ = EntityConfig(table="dog_path", inheritance=Concrete())
 
         class CustomDog(Pet, frozen=True):
-            __parallax__ = EntityConfig(
-                table="custom_dog_path", mutability="transactional", inheritance=Concrete()
-            )
+            __parallax__ = EntityConfig(table="custom_dog_path", inheritance=Concrete())
 
         # Registered by the class statement's own side effect (widens this
         # scope's "Pet" family beyond `registry_actual`'s, below): referenced
@@ -466,9 +462,7 @@ def test_narrowed_view_key_derives_from_the_paths_own_registry_not_types_own() -
             id: Attr[int] = Field(primary_key=True, pk_generator="none")
 
         class Dog(Pet, frozen=True):
-            __parallax__ = EntityConfig(
-                table="dog_actual", mutability="transactional", inheritance=Concrete()
-            )
+            __parallax__ = EntityConfig(table="dog_actual", inheritance=Concrete())
 
         class Owner(Entity, frozen=True, registry=registry_actual):
             __parallax__ = EntityConfig(table="owner_actual", mutability="transactional")
@@ -531,9 +525,7 @@ class _CopySurvivalPet(Entity, frozen=True, registry=_COPY_SURVIVAL_REGISTRY):
 
 
 class _CopySurvivalDog(_CopySurvivalPet, frozen=True):
-    __parallax__ = EntityConfig(
-        table="copy_survival_dog", mutability="transactional", inheritance=Concrete()
-    )
+    __parallax__ = EntityConfig(table="copy_survival_dog", inheritance=Concrete())
 
 
 class _CopySurvivalOwner(Entity, frozen=True, registry=_COPY_SURVIVAL_REGISTRY):
