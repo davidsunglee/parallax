@@ -23,7 +23,7 @@ complete Issue Code set is:
 | `relationship-reverse-cycle` | A reverse declaration names another reverse declaration, directly or transitively. |
 | `relationship-reverse-not-defining` | A reverse declaration does not resolve to one defining declaration. |
 | `relationship-reverse-inconsistent` | A reverse declaration's source/target orientation is inconsistent with the defining direction. |
-| `relationship-defining-duplicate` | More than one defining declaration claims the same bidirectional association. |
+| `relationship-defining-duplicate` | More than one reverse declaration claims the same defining declaration. |
 | `relationship-order-on-to-one` | Ordering is declared for a direction whose target multiplicity is One. |
 | `relationship-order-attribute-invalid` | An ordering term does not name a target-local Attribute. |
 

@@ -15,9 +15,10 @@ identity cache (`m-process-cache`). The version-check SQL is fixed by `m-sql`;
 
 Its model-formation contribution consumes `m-metamodel`, the Inheritance Facet,
 and the Temporal Facet through `m-model-formation`. The Rule Set owns exactly
-`opt-lock-multiple-attributes` (more than one effective explicit version
-Attribute) and `opt-lock-temporal-explicit-attribute` (a Transaction-Time Entity
-also declares an explicit version Attribute). Its Model Compiler produces the
+`opt-lock-multiple-attributes` (a declaring position names more than one explicit
+version Attribute) and `opt-lock-temporal-explicit-attribute` (a declaring
+position with a Transaction-Time As-Of Axis also declares an explicit version
+Attribute). Its Model Compiler produces the
 immutable Optimistic Lock Facet ("The Optimistic Lock Facet", below),
 identifying each Entity's effective explicit or Transaction-Time-derived
 optimistic key without copying Attribute Metadata.
