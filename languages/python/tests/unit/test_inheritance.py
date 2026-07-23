@@ -1,15 +1,19 @@
-"""m-inheritance: family model, effective concrete sets, and descriptor rejection."""
+"""m-inheritance: family model, the Rule Set, and descriptor rejection."""
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Final, cast
 
 import pytest
+from _metamodel_support import Declaration, accepted, attribute, identity, key, source
 
 from parallax.conformance import case_format
 from parallax.conformance import models as corpus_models
 from parallax.core import inheritance
+from parallax.core._formation_profile import form_metamodel
+from parallax.core.base import STRING
 from parallax.core.descriptor import (
     AsOfAxisMetadata,
     Attribute,
@@ -20,13 +24,44 @@ from parallax.core.descriptor import (
     ValueObject,
     ValueObjectAttribute,
     deserialize,
+    parse_document,
+    unresolved_metamodel,
 )
+from parallax.core.metamodel import (
+    MODEL_ROOT,
+    UNRESOLVED_ENTITY_REFERENCE,
+    AbstractRoot,
+    AbstractSubtype,
+    AttributeLocation,
+    Column,
+    ConcreteSubtype,
+    EntityIdentity,
+    EntityLocation,
+    ExactEntityReference,
+    IssueCode,
+    MetamodelIssue,
+    PersistenceMode,
+    Table,
+    TablePerConcreteSubtype,
+    TablePerHierarchy,
+    TemporalDimension,
+    ValueObjectAttributeDeclaration,
+    ValueObjectIdentity,
+    ValueObjectLocation,
+    ValueObjectOccurrenceDeclaration,
+    ValueObjectShapeDeclaration,
+    ValueObjectShapeKey,
+    sort_issues,
+)
+from parallax.core.metamodel import AsOfAxisLocation as AxisLocation
+from parallax.core.model_formation import MetamodelValidationError
 
 pytestmark = pytest.mark.unit
 
 _REPO = case_format.find_repo_root()
 _MODELS = corpus_models.load_models(_REPO / "core" / "compatibility" / "models")
 _CASES = _REPO / "core" / "compatibility" / "cases"
+_MODEL_FILES = sorted((_REPO / "core" / "compatibility" / "models").glob("*.yaml"))
 
 
 def _descriptor_rejection_cases() -> list[tuple[str, dict[str, Any], str]]:
@@ -557,3 +592,385 @@ def test_validate_write_assignment_accepts_none_for_a_nullable_scalar() -> None:
     # clearing assignment, mirroring `write_validate`'s own null short-
     # circuit for a nullable attribute.
     inheritance.validate_write_assignment(_VO_META, _VO_ENTITY, "nickname", None)  # no raise
+
+
+# --------------------------------------------------------------------------- #
+# The Model Formation Rule Set. The corpus rejection fixtures above drive the  #
+# descriptor-era classifier; the same fixtures drive the rule set here, now    #
+# asserting the structured `(code, location, related)` an Issue carries rather #
+# than message text.                                                           #
+# --------------------------------------------------------------------------- #
+
+_RULE_SET_REJECTIONS: Final[Mapping[str, IssueCode]] = {
+    "m-inheritance-021-rejected-cycle": inheritance.CYCLE,
+    "m-inheritance-022-rejected-multiple-roots": inheritance.MULTIPLE_ROOTS,
+    "m-inheritance-023-rejected-concrete-without-abstract-root": (
+        inheritance.CONCRETE_WITHOUT_ABSTRACT_ROOT
+    ),
+    "m-inheritance-024-rejected-abstract-root-with-table": (
+        inheritance.TPCS_ABSTRACT_TABLE_FORBIDDEN
+    ),
+    "m-inheritance-026-rejected-tpcs-concrete-tag-value": (
+        inheritance.TAG_ON_CONCRETE_SUBTYPE_STRATEGY
+    ),
+    "m-inheritance-027-rejected-duplicate-tag-value": inheritance.DUPLICATE_TAG_VALUE,
+    "m-inheritance-028-rejected-inconsistent-hierarchy-table": (
+        inheritance.TPH_DESCENDANT_TABLE_FORBIDDEN
+    ),
+    "m-inheritance-029-rejected-abstract-subtype-with-table": (
+        inheritance.TPH_DESCENDANT_TABLE_FORBIDDEN
+    ),
+    "m-inheritance-031-rejected-tph-missing-tag-value": inheritance.MISSING_TAG_VALUE,
+    "m-inheritance-032-rejected-missing-root": inheritance.MISSING_ROOT,
+    "m-inheritance-098-rejected-temporal-axes-on-abstract-subtype": (
+        inheritance.TEMPORAL_AXES_NOT_ROOT_OWNED
+    ),
+    "m-inheritance-099-rejected-temporal-axes-redeclared-on-concrete": (
+        inheritance.TEMPORAL_AXES_NOT_ROOT_OWNED
+    ),
+    "m-inheritance-102-rejected-optlock-declaring-descendant": (
+        inheritance.OPTIMISTIC_LOCKING_NOT_ROOT_OWNED
+    ),
+    "m-inheritance-103-rejected-optlock-second-version": (
+        inheritance.OPTIMISTIC_LOCKING_NOT_ROOT_OWNED
+    ),
+}
+"""The fixtures this module's Rule Set rejects, with the one code each yields."""
+
+_RESOLVER_REJECTIONS: Final[Mapping[str, IssueCode]] = {
+    "m-inheritance-020-rejected-unknown-parent": UNRESOLVED_ENTITY_REFERENCE,
+}
+"""An unknown parent is foundational reference resolution's answer, so the
+model never reaches a Rule Set and no inheritance-owned code duplicates it."""
+
+_UNREPRESENTABLE: Final[tuple[str, ...]] = (
+    "m-inheritance-025-rejected-strategy-redeclared",
+    "m-inheritance-030-rejected-tpcs-root-tag",
+)
+"""The fixtures the accepted inheritance algebra makes unconstructible: the
+strategy lives on the root variant alone and the tag column lives on the
+table-per-hierarchy strategy alone, so neither spelling survives adaptation and
+neither reaches formation as a model to reject."""
+
+
+def _formation_error(model: dict[str, Any]) -> MetamodelValidationError:
+    with pytest.raises(MetamodelValidationError) as caught:
+        form_metamodel(unresolved_metamodel(parse_document(model)))
+    return caught.value
+
+
+def _rule_issues(*declarations: Declaration) -> tuple[MetamodelIssue, ...]:
+    """The inheritance issues a resolvable model is rejected with."""
+    return sort_issues(inheritance.RULE_SET.validate(accepted(source(*declarations))))
+
+
+def _codes(*declarations: Declaration) -> list[IssueCode]:
+    return [issue.code for issue in _rule_issues(*declarations)]
+
+
+def _shape(*names: str) -> ValueObjectShapeDeclaration:
+    return ValueObjectShapeDeclaration(
+        key=ValueObjectShapeKey(),
+        attributes=tuple(ValueObjectAttributeDeclaration(name, type=STRING) for name in names),
+    )
+
+
+def test_the_owned_issue_code_set_is_closed() -> None:
+    assert sorted(inheritance.ISSUE_CODES) == [
+        "inheritance-concrete-without-abstract-root",
+        "inheritance-cycle",
+        "inheritance-duplicate-tag-value",
+        "inheritance-member-shadowing",
+        "inheritance-missing-root",
+        "inheritance-missing-tag-value",
+        "inheritance-multiple-roots",
+        "inheritance-optimistic-locking-not-root-owned",
+        "inheritance-persistence-not-root-owned",
+        "inheritance-primary-key-missing",
+        "inheritance-primary-key-multiple",
+        "inheritance-strategy-redeclared",
+        "inheritance-tag-on-concrete-subtype-strategy",
+        "inheritance-temporal-axes-not-root-owned",
+        "inheritance-tpcs-abstract-table-forbidden",
+        "inheritance-tpcs-concrete-table-required",
+        "inheritance-tph-descendant-table-forbidden",
+        "inheritance-tph-root-table-required",
+    ]
+    assert inheritance.RULE_SET.owner == inheritance.INHERITANCE_MODULE
+    assert inheritance.RULE_SET.issue_codes == inheritance.ISSUE_CODES
+
+
+def test_every_corpus_rejection_fixture_is_classified() -> None:
+    classified = {*_RULE_SET_REJECTIONS, *_RESOLVER_REJECTIONS, *_UNREPRESENTABLE}
+    assert classified == {stem for stem, _, _ in _REJECTIONS}
+
+
+@pytest.mark.parametrize(
+    ("stem", "code"),
+    sorted({**_RULE_SET_REJECTIONS, **_RESOLVER_REJECTIONS}.items()),
+)
+def test_a_rejection_fixture_forms_into_its_one_issue(stem: str, code: IssueCode) -> None:
+    (model,) = [inline for name, inline, _ in _REJECTIONS if name == stem]
+    assert [issue.code for issue in _formation_error(model).issues] == [code]
+
+
+@pytest.mark.parametrize("stem", _UNREPRESENTABLE)
+def test_an_unrepresentable_fixture_carries_no_declaration_to_reject(stem: str) -> None:
+    (model,) = [inline for name, inline, _ in _REJECTIONS if name == stem]
+    formed = form_metamodel(unresolved_metamodel(parse_document(model)))
+    for entity in formed.entities:
+        match entity.inheritance:
+            case AbstractRoot(strategy):
+                # A root's strategy is the only place one exists, and the
+                # table-per-concrete-subtype variant carries no tag column.
+                assert isinstance(strategy, TablePerConcreteSubtype | TablePerHierarchy)
+            case ConcreteSubtype() | AbstractSubtype():
+                assert not hasattr(entity.inheritance, "strategy")
+            case None:
+                pass
+
+
+@pytest.mark.parametrize("path", _MODEL_FILES, ids=lambda path: cast("Path", path).stem)
+def test_every_corpus_model_satisfies_the_family_invariants(path: Path) -> None:
+    document = case_format.safe_load_yaml(path.read_text(encoding="utf-8"))
+    assert isinstance(document, dict)
+    candidate = parse_document(cast("dict[str, object]", document))
+    formed = form_metamodel(unresolved_metamodel(candidate))
+    assert inheritance.view(formed).entity(formed.entities[0].identity) is not None
+
+
+def test_a_cycle_is_reported_once_from_its_canonically_first_member() -> None:
+    (model,) = [
+        inline for name, inline, _ in _REJECTIONS if name == "m-inheritance-021-rejected-cycle"
+    ]
+    (issue,) = _formation_error(model).issues
+    assert issue.location == EntityLocation(EntityIdentity(None, "Paw"))
+    assert issue.related == (EntityLocation(EntityIdentity(None, "Pet")),)
+
+
+def test_multiple_roots_is_a_statement_about_the_whole_model() -> None:
+    (model,) = [
+        inline
+        for name, inline, _ in _REJECTIONS
+        if name == "m-inheritance-022-rejected-multiple-roots"
+    ]
+    (issue,) = _formation_error(model).issues
+    assert issue.location == MODEL_ROOT
+    assert issue.related == (
+        EntityLocation(EntityIdentity(None, "Animal")),
+        EntityLocation(EntityIdentity(None, "Beast")),
+    )
+
+
+def test_a_descendant_axis_is_located_at_the_axis_it_declares() -> None:
+    (model,) = [
+        inline
+        for name, inline, _ in _REJECTIONS
+        if name == "m-inheritance-098-rejected-temporal-axes-on-abstract-subtype"
+    ]
+    (issue,) = _formation_error(model).issues
+    assert issue.location == AxisLocation(
+        EntityIdentity(None, "Pet"), TemporalDimension.TRANSACTION_TIME
+    )
+    assert issue.related == (EntityLocation(EntityIdentity(None, "Animal")),)
+
+
+def test_a_model_without_participants_reports_nothing() -> None:
+    plain = identity("Plain")
+    assert _codes(Declaration(identity=plain, attributes=(key(plain),))) == []
+
+
+# --------------------------------------------------------------------------- #
+# Family invariants the corpus carries no inline-model fixture for.            #
+# --------------------------------------------------------------------------- #
+
+_ROOT = identity("Ledger")
+_MID = identity("Journal")
+_LEAF = identity("Entry")
+_SIBLING = identity("Note")
+_SHARED_TABLE: Final = Table("ledger")
+
+
+def _hierarchy(
+    *,
+    root_container: Table | None = _SHARED_TABLE,
+    root_attributes: tuple[Any, ...] | None = None,
+) -> Declaration:
+    return Declaration(
+        identity=_ROOT,
+        container=root_container,
+        attributes=(key(_ROOT),) if root_attributes is None else root_attributes,
+        inheritance=AbstractRoot(TablePerHierarchy("kind")),
+    )
+
+
+def _concrete(
+    entity: EntityIdentity,
+    *,
+    parent: EntityIdentity = _ROOT,
+    tag_value: str | None = "entry",
+    **members: Any,
+) -> Declaration:
+    return Declaration(
+        identity=entity,
+        inheritance=ConcreteSubtype(ExactEntityReference(parent), tag_value),
+        **members,
+    )
+
+
+def test_a_table_per_hierarchy_root_declares_the_shared_container() -> None:
+    issues = _rule_issues(_hierarchy(root_container=None), _concrete(_LEAF))
+    assert [issue.code for issue in issues] == [inheritance.TPH_ROOT_TABLE_REQUIRED]
+    assert issues[0].location == EntityLocation(_ROOT)
+
+
+def test_a_table_per_concrete_subtype_concrete_declares_its_own_container() -> None:
+    issues = _rule_issues(
+        Declaration(
+            identity=_ROOT,
+            attributes=(key(_ROOT),),
+            inheritance=AbstractRoot(TablePerConcreteSubtype()),
+        ),
+        _concrete(_LEAF, tag_value=None),
+    )
+    assert [issue.code for issue in issues] == [inheritance.TPCS_CONCRETE_TABLE_REQUIRED]
+    assert issues[0].location == EntityLocation(_LEAF)
+
+
+def test_a_family_without_a_primary_key_is_unidentifiable_at_every_position() -> None:
+    issues = _rule_issues(_hierarchy(root_attributes=()), _concrete(_LEAF))
+    assert [issue.code for issue in issues] == [inheritance.PRIMARY_KEY_MISSING] * 2
+    assert [issue.location for issue in issues] == [
+        EntityLocation(_LEAF),
+        EntityLocation(_ROOT),
+    ]
+
+
+def test_a_descendant_key_makes_its_own_chain_carry_two() -> None:
+    issues = _rule_issues(_hierarchy(), _concrete(_LEAF, attributes=(key(_LEAF, "entryId"),)))
+    assert [issue.code for issue in issues] == [inheritance.PRIMARY_KEY_MULTIPLE]
+    assert issues[0].location == EntityLocation(_LEAF)
+    assert issues[0].related == (
+        AttributeLocation(key(_ROOT).identity),
+        AttributeLocation(key(_LEAF, "entryId").identity),
+    )
+
+
+def test_a_descendant_declares_no_persistence_mode() -> None:
+    issues = _rule_issues(_hierarchy(), _concrete(_LEAF, persistence=PersistenceMode.READ_ONLY))
+    assert [issue.code for issue in issues] == [inheritance.PERSISTENCE_NOT_ROOT_OWNED]
+    assert issues[0].location == EntityLocation(_LEAF)
+    assert issues[0].related == (EntityLocation(_ROOT),)
+
+
+def test_a_root_declared_persistence_mode_is_accepted() -> None:
+    assert (
+        _codes(
+            Declaration(
+                identity=_ROOT,
+                container=Table("ledger"),
+                persistence=PersistenceMode.READ_ONLY,
+                attributes=(key(_ROOT),),
+                inheritance=AbstractRoot(TablePerHierarchy("kind")),
+            ),
+            _concrete(_LEAF),
+        )
+        == []
+    )
+
+
+def test_a_descendant_may_not_redeclare_an_ancestor_member() -> None:
+    issues = _rule_issues(
+        _hierarchy(root_attributes=(key(_ROOT), attribute(_ROOT, "label", type=STRING))),
+        _concrete(_LEAF, attributes=(attribute(_LEAF, "label", type=STRING),)),
+    )
+    assert [issue.code for issue in issues] == [inheritance.MEMBER_SHADOWING]
+    assert issues[0].location == AttributeLocation(attribute(_LEAF, "label").identity)
+    assert issues[0].related == (AttributeLocation(attribute(_ROOT, "label").identity),)
+
+
+def test_shadowing_crosses_member_categories() -> None:
+    issues = _rule_issues(
+        _hierarchy(root_attributes=(key(_ROOT), attribute(_ROOT, "label", type=STRING))),
+        _concrete(
+            _LEAF,
+            value_objects=(
+                ValueObjectOccurrenceDeclaration(
+                    name="label", storage=Column("label"), shape=_shape("text")
+                ),
+            ),
+        ),
+    )
+    assert [issue.code for issue in issues] == [inheritance.MEMBER_SHADOWING]
+    assert issues[0].location == ValueObjectLocation(ValueObjectIdentity(_LEAF, ("label",)))
+    assert issues[0].related == (AttributeLocation(attribute(_ROOT, "label").identity),)
+
+
+def test_shadowing_names_the_nearest_ancestor_that_declares_the_member() -> None:
+    issues = _rule_issues(
+        _hierarchy(root_attributes=(key(_ROOT), attribute(_ROOT, "label", type=STRING))),
+        Declaration(
+            identity=_MID,
+            attributes=(attribute(_MID, "label", type=STRING),),
+            inheritance=AbstractSubtype(ExactEntityReference(_ROOT)),
+        ),
+        _concrete(_LEAF, parent=_MID, attributes=(attribute(_LEAF, "label", type=STRING),)),
+    )
+    assert [(issue.location, issue.related) for issue in issues] == [
+        (
+            AttributeLocation(attribute(_LEAF, "label").identity),
+            (AttributeLocation(attribute(_MID, "label").identity),),
+        ),
+        (
+            AttributeLocation(attribute(_MID, "label").identity),
+            (AttributeLocation(attribute(_ROOT, "label").identity),),
+        ),
+    ]
+
+
+def test_disjoint_sibling_branches_may_reuse_a_name() -> None:
+    assert (
+        _codes(
+            _hierarchy(),
+            _concrete(_LEAF, attributes=(attribute(_LEAF, "label", type=STRING),)),
+            _concrete(
+                _SIBLING,
+                tag_value="note",
+                attributes=(attribute(_SIBLING, "label", type=STRING),),
+            ),
+        )
+        == []
+    )
+
+
+def test_a_shared_tag_value_is_reported_against_the_later_claimant() -> None:
+    issues = _rule_issues(
+        _hierarchy(),
+        _concrete(_LEAF, tag_value="same"),
+        _concrete(_SIBLING, tag_value="same"),
+    )
+    assert [issue.code for issue in issues] == [inheritance.DUPLICATE_TAG_VALUE]
+    assert issues[0].location == EntityLocation(_SIBLING)
+    assert issues[0].related == (EntityLocation(_LEAF),)
+
+
+def test_the_report_is_the_same_whichever_order_a_frontend_enumerates() -> None:
+    root = _hierarchy(root_attributes=(key(_ROOT), attribute(_ROOT, "label", type=STRING)))
+    leaf = _concrete(
+        _LEAF,
+        attributes=(attribute(_LEAF, "label", type=STRING), key(_LEAF, "entryId")),
+        persistence=PersistenceMode.READ_ONLY,
+    )
+    sibling = _concrete(_SIBLING, tag_value="note")
+    orders = (
+        (root, leaf, sibling),
+        (sibling, leaf, root),
+        (leaf, root, sibling),
+    )
+    reports = {tuple(_rule_issues(*permutation)) for permutation in orders}
+    assert len(reports) == 1
+    assert [issue.code for issue in next(iter(reports))] == [
+        inheritance.PERSISTENCE_NOT_ROOT_OWNED,
+        inheritance.PRIMARY_KEY_MULTIPLE,
+        inheritance.MEMBER_SHADOWING,
+    ]

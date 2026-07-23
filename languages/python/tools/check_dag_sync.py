@@ -118,6 +118,7 @@ SUPPORT_SCOPE_DEPS: Mapping[str, frozenset[str]] = {
         {
             "parallax.core.metamodel",
             "parallax.core.model_formation",
+            "parallax.core.inheritance",
             "parallax.core.relationship",
         }
     ),

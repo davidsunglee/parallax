@@ -25,10 +25,13 @@ import pytest
 
 import inheritance_models as im
 from parallax.conformance import case_format
-from parallax.core import Attr, Entity, EntityConfig, Field, descriptor
-from parallax.core.descriptor import canonicalize
+from parallax.core import Attr, Entity, EntityConfig, Field, descriptor, inheritance
+from parallax.core._formation_profile import form_metamodel
+from parallax.core.descriptor import canonicalize, unresolved_metamodel
 from parallax.core.entity import descriptor_document, entity_record_of, metamodel
 from parallax.core.entity.base import Concrete, FamilyRoot
+from parallax.core.metamodel import EntityIdentity, EntityLocation, PersistenceMode
+from parallax.core.model_formation import MetamodelValidationError
 
 pytestmark = pytest.mark.unit
 
@@ -311,6 +314,13 @@ def test_root_and_different_descendant_attribute_is_rejected() -> None:
 # The class frontend therefore records the mode a class authored and nothing    #
 # else, while the canonical descriptor still spells `persistence` only where    #
 # m-descriptor's omission set allows it.                                        #
+#                                                                               #
+# `_AuditLedger` is deliberately that invalid shape, so this family is a        #
+# NEGATIVE fixture on two levels at once: assembly and canonical export are     #
+# pinned below exactly as they behave for any descendant, and the family        #
+# formation the same declarations feed is pinned as rejected. The two are one   #
+# statement -- authorship survives assembly PRECISELY so the family rule has    #
+# something to reject -- so neither half may be read alone.                     #
 # --------------------------------------------------------------------------- #
 
 
@@ -353,3 +363,20 @@ def test_an_authored_descendant_persistence_survives_assembly_and_is_never_expor
     root, descendant = cast("list[dict[str, object]]", descriptor_document(family)["entities"])
     assert root["persistence"] == "read-only"
     assert "persistence" not in descendant
+
+
+def test_a_descendant_authored_persistence_makes_the_family_an_invalid_model() -> None:
+    with pytest.raises(MetamodelValidationError) as caught:
+        form_metamodel(unresolved_metamodel(metamodel([_Ledger, _AuditLedger])))
+    (issue,) = caught.value.issues
+    assert issue.code == inheritance.PERSISTENCE_NOT_ROOT_OWNED
+    assert issue.location == EntityLocation(EntityIdentity(None, "_AuditLedger"))
+    assert issue.related == (EntityLocation(EntityIdentity(None, "_Ledger")),)
+
+
+def test_a_descendant_that_declares_no_mode_inherits_the_root_owned_one() -> None:
+    model = form_metamodel(unresolved_metamodel(metamodel([_Ledger, _SilentLedger])))
+    facet = inheritance.view(model)
+    silent = facet.entity(EntityIdentity(None, "_SilentLedger"))
+    assert silent is not None
+    assert silent.persistence is PersistenceMode.READ_ONLY

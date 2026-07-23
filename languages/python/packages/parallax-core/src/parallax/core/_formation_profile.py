@@ -18,6 +18,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Final
 
+from parallax.core.inheritance import FACET_KEY as INHERITANCE_FACET_KEY
+from parallax.core.inheritance import INHERITANCE_MODULE
+from parallax.core.inheritance import ISSUE_CODES as INHERITANCE_ISSUE_CODES
+from parallax.core.inheritance import MODEL_COMPILER as INHERITANCE_COMPILER
+from parallax.core.inheritance import RULE_SET as INHERITANCE_RULE_SET
 from parallax.core.metamodel import (
     METADATA_COMPILER,
     METAMODEL_MODULE,
@@ -55,6 +60,13 @@ BUILTIN_MANIFEST: Final[FormationManifest] = FormationManifest(
             compiler=METADATA_COMPILER_REQUIRED,
         ),
         FormationManifestEntry(
+            owner=INHERITANCE_MODULE,
+            rule_set=REQUIRED_RULE_SET,
+            issue_codes=INHERITANCE_ISSUE_CODES,
+            compiler=ModelCompilerRequirement(INHERITANCE_FACET_KEY),
+            required_modules=frozenset({METAMODEL_MODULE, MODEL_FORMATION_MODULE}),
+        ),
+        FormationManifestEntry(
             owner=RELATIONSHIP_MODULE,
             rule_set=REQUIRED_RULE_SET,
             issue_codes=RELATIONSHIP_ISSUE_CODES,
@@ -76,9 +88,9 @@ class _BuiltinProfile:
 
 
 BUILTIN_PROFILE: Final[_BuiltinProfile] = _BuiltinProfile(
-    rule_sets=(RELATIONSHIP_RULE_SET,),
+    rule_sets=(INHERITANCE_RULE_SET, RELATIONSHIP_RULE_SET),
     metadata_compiler=METADATA_COMPILER,
-    model_compilers=(RELATIONSHIP_COMPILER,),
+    model_compilers=(INHERITANCE_COMPILER, RELATIONSHIP_COMPILER),
 )
 """The implementations matching :data:`BUILTIN_MANIFEST` row for row."""
 

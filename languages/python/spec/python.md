@@ -1359,7 +1359,7 @@ directions; artifact co-location never legalizes a forbidden edge.
 | `m-core` | `parallax.core.base` | `parallax.core.base` | (none) | generated forbidden contracts, `languages/python/pyproject.toml` |
 | `m-metamodel` | `parallax.core.metamodel` | `parallax.core.metamodel` | `m-core` | generated forbidden contracts |
 | `m-model-formation` | `parallax.core.model_formation` | `parallax.core.model_formation` | `m-metamodel` | generated forbidden contracts |
-| Model formation composition root (support) | `parallax.core._formation_profile` | `parallax.core._formation_profile` | `m-metamodel`, `m-model-formation`, `m-relationship` | generated forbidden contracts |
+| Model formation composition root (support) | `parallax.core._formation_profile` | `parallax.core._formation_profile` | `m-metamodel`, `m-model-formation`, `m-inheritance`, `m-relationship` | generated forbidden contracts |
 | `m-descriptor` | `parallax.core.descriptor` | `parallax.core.descriptor` | `m-core`, `m-metamodel` | generated forbidden contracts |
 | `m-pk-gen` | `parallax.core.pk_gen` | `parallax.core.pk_gen` | `m-descriptor`, `m-metamodel` | generated forbidden contracts |
 | `m-inheritance` | `parallax.core.inheritance` | `parallax.core.inheritance` | `m-descriptor`, `m-metamodel`, `m-model-formation` | generated forbidden contracts |
@@ -1408,6 +1408,7 @@ prose (`psycopg`) names no enforcement scope.
 ```support-scope-graph
 parallax.core._formation_profile --> parallax.core.metamodel
 parallax.core._formation_profile --> parallax.core.model_formation
+parallax.core._formation_profile --> parallax.core.inheritance
 parallax.core._formation_profile --> parallax.core.relationship
 parallax.core.entity --> parallax.core.descriptor
 parallax.core.entity --> parallax.core.op_algebra
