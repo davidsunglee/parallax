@@ -5,11 +5,14 @@ normalize) that turns an ``m-op-algebra`` operation into one canonical
 ``Statement`` per dialect. Dialect variation enters only through the injected
 ``Dialect`` strategy. ``m-sql`` depends on ``m-op-algebra`` and ``m-dialect``.
 
-The six names below are the whole supported seam; everything else in this
+The seven names below are the whole supported seam; everything else in this
 package is private implementation. ``compile_read`` returns a self-contained
 :class:`CompiledRead` — statement, root narrow, and row transform together — so
 a caller executes and transforms without re-deriving anything from the
-operation it just compiled.
+operation it just compiled. ``column_order`` is the canonical physical column
+order the projection rule fixes, exported because storage-shaped callers outside
+this package (DDL derivation, keyed write emission, table read-back) must order
+their own columns the same way rather than each restating the law.
 
 That implementation is five private modules, each owning one concern:
 
@@ -59,6 +62,7 @@ from parallax.core.sql_gen._compile import (
     CompiledRead,
     SqlGenError,
     Statement,
+    column_order,
     compile_read,
     compile_write_predicate,
 )
@@ -68,6 +72,7 @@ __all__ = [
     "CompiledRead",
     "SqlGenError",
     "Statement",
+    "column_order",
     "compile_read",
     "compile_write_predicate",
 ]

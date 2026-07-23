@@ -9,14 +9,15 @@ separated, canonical clause order), so ``normalize`` is a fixed-point identity
 check rather than a rewrite — the language target never depends on the reference harness's
 sqlglot normalizer (non-normative). Temporal reads are canonicalized upstream by
 ``m-temporal-read`` (``inject_as_of``) into ordinary predicate nodes before they
-reach this compiler; deep fetch (`DeepFetch`), the one node this phase does not
-yet lower, raises a clear :class:`SqlGenError` so a mis-routed case fails
+reach this compiler; deep fetch (`DeepFetch`) is planned by `m-deep-fetch` into
+one read per relationship level and is never a predicate, so reaching this
+compiler as one raises a clear :class:`SqlGenError` and a mis-routed case fails
 loudly, never silently.
 
 Inheritance-family reads (table-per-hierarchy tag predicates / abstract-read
 superset projection, table-per-concrete-subtype union-all) are ASSEMBLED here
 (`m-sql` "Metamodel-extension lowering") from plans
-`_inheritance` resolves — which is where the `parallax.core.inheritance` edge now
+`_inheritance` resolves — which is where the `parallax.core.inheritance` edge
 lives, a legal one since `modules.md` already reaches `m-inheritance`
 transitively through `m-op-algebra`. `validate_operation` runs upstream (the
 conformance engine / statement frontend), so a narrow reaching this compiler is
@@ -36,8 +37,10 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Literal, assert_never
 
-from parallax.core.descriptor import Entity, Metamodel, column_order
 from parallax.core.dialect import Dialect, LockMode
+from parallax.core.inheritance import InheritanceFacet
+from parallax.core.inheritance import view as _inheritance_view
+from parallax.core.metamodel import EntityMetadata, Metamodel
 from parallax.core.op_algebra import (
     Distinct,
     Limit,
@@ -51,13 +54,14 @@ from parallax.core.sql_gen._context import SqlGenError
 
 # The family LANE of this compiler — distinct from `parallax.core.inheritance`
 # above, which is the metamodel module. Each name is aliased down to the
-# module-private spelling it had while this file owned it, so `inheritance.` at
-# any use site below still unambiguously means the metamodel.
+# module-private spelling it had while this file owned it, so a use site below
+# never confuses the two.
 from parallax.core.sql_gen._inheritance import IDENTITY_TRANSFORM as _IDENTITY_TRANSFORM
 from parallax.core.sql_gen._inheritance import RowTransform as _RowTransform
 from parallax.core.sql_gen._inheritance import TpcsSinglePlan as _TpcsSinglePlan
 from parallax.core.sql_gen._inheritance import TpcsUnionPlan as _TpcsUnionPlan
 from parallax.core.sql_gen._inheritance import TphPlan as _TphPlan
+from parallax.core.sql_gen._inheritance import column_order
 from parallax.core.sql_gen._inheritance import plan_inheritance_read as _plan_inheritance_read
 from parallax.core.sql_gen._inheritance import tag_guard as _tph_tag_guard
 
@@ -72,6 +76,7 @@ __all__ = [
     "CompiledRead",
     "SqlGenError",
     "Statement",
+    "column_order",
     "compile_read",
     "compile_write_predicate",
 ]
@@ -149,7 +154,8 @@ class CompiledRead:
 # Projection.                                                                  #
 # --------------------------------------------------------------------------- #
 def _projection(
-    entity: Entity,
+    entity: EntityMetadata,
+    facet: InheritanceFacet,
     dialect: Dialect,
     alias: str,
     result_form: _ResultForm,
@@ -189,24 +195,26 @@ def _projection(
     discipline, `m-sql`) — in EITHER case the declared value-object order is
     preserved, never the caller's own set iteration order.
     """
-    by_column = {attr.column: attr for attr in entity.attributes}
+    by_column = {attribute.storage.name: attribute for attribute in entity.declared_attributes}
     exprs: list[str] = []
     binds: list[object] = []
-    scalar_columns = [attr.column for attr in entity.attributes]
-    for column in column_order(entity):
+    for column in column_order(entity, facet):
         attribute = by_column.get(column)
-        if attribute is None or column not in scalar_columns:
-            continue
+        if attribute is None:
+            continue  # a value object's document column — slot 4, appended below
         expr, extra = dialect.project(alias, column, attribute.type)
         exprs.append(expr)
         binds.extend(extra)
+    declared_vos = entity.declared_value_objects
     if result_form == "instance" or include_value_objects is True:
-        projected_vos = entity.value_objects
+        projected_vos = tuple(declared_vos)
     elif include_value_objects:
-        projected_vos = tuple(vo for vo in entity.value_objects if vo.name in include_value_objects)
+        projected_vos = tuple(
+            member for member in declared_vos if member.identity.path[-1] in include_value_objects
+        )
     else:
         projected_vos = ()
-    exprs.extend(dialect.qualified(alias, vo.storage_column) for vo in projected_vos)
+    exprs.extend(dialect.qualified(alias, member.storage.name) for member in projected_vos)
     return ", ".join(exprs), binds
 
 
@@ -215,9 +223,9 @@ def _projection(
 # --------------------------------------------------------------------------- #
 def compile_read(
     op: Operation,
-    meta: Metamodel,
+    model: Metamodel,
     dialect: Dialect,
-    target: str,
+    target: EntityMetadata,
     *,
     result_form: _ResultForm = "row",
     lock: LockMode | None = None,
@@ -225,6 +233,10 @@ def compile_read(
     include_value_objects: bool | frozenset[str] = False,
 ) -> CompiledRead:
     """Compile a read operation to one self-contained :class:`CompiledRead`.
+
+    ``target`` is the queried Entity's accepted Metadata, taken from ``model``:
+    the caller already resolved which position it is reading, so this compiler
+    never re-resolves a name against the model.
 
     The result carries everything the caller needs to consume the read's rows —
     the canonical ``Statement`` for ``dialect``, the root ``narrow_to`` to
@@ -266,7 +278,7 @@ def compile_read(
 
     ``relationship_order`` marks the peeled ``orderBy`` (if any) as a **declared
     relationship ordering** (`m-deep-fetch` "Ordered to-many children", a deep-fetch
-    child level's own descriptor-derived directive) rather than a user-authored
+    child level's own model-derived directive) rather than a user-authored
     directive: a NULLABLE key renders through the dialect's NULLS-last rule
     (`Dialect.null_order`) instead of the plain `col dir` rendering every ordinary
     `orderBy` operation node still gets — the canonical, dialect-independent
@@ -274,22 +286,22 @@ def compile_read(
     non-nullable key renders identically either way, matching every existing
     relationship-ordering golden byte-for-byte).
     """
-    entity = meta.entity(target)
+    facet = _inheritance_view(model)
     predicate, distinct, order_keys, limit = _peel_directives(op)
     # The read's own TOP-LEVEL authored narrow, taken from the SAME peel the
     # lowering below uses — so what the caller materializes under can never
     # disagree with what was compiled.
     narrow_to = predicate.to if isinstance(predicate, Narrow) else None
-    if entity.inheritance is not None:
+    if target.inheritance is not None:
         statement, transform = _compile_inheritance_read(
-            entity,
+            target,
             predicate,
             distinct,
             order_keys,
             limit,
-            meta,
+            model,
+            facet,
             dialect,
-            target,
             result_form,
             lock,
             relationship_order,
@@ -297,15 +309,20 @@ def compile_read(
         return CompiledRead(statement, narrow_to, transform)
     # One context per statement (the mutable accumulator), one resolution scope
     # over it (the immutable "what does a leaf resolve against" half).
-    ctx = _Ctx(meta, dialect)
-    scope = _EntityScope(ctx, entity)
+    ctx = _Ctx(model, facet, dialect)
+    scope = _EntityScope(ctx, target)
 
     proj_sql, proj_binds = _projection(
-        entity, dialect, scope.alias, result_form, include_value_objects=include_value_objects
+        target,
+        facet,
+        dialect,
+        scope.alias,
+        result_form,
+        include_value_objects=include_value_objects,
     )
     ctx.binds.extend(proj_binds)
     select = f"select {'distinct ' if distinct else ''}{proj_sql}"
-    parts = [select, f"from {entity.table} {scope.alias}"]
+    parts = [select, f"from {_table(target)} {scope.alias}"]
 
     where_sql = _lower_predicate(predicate, scope)
     if where_sql:
@@ -318,8 +335,16 @@ def compile_read(
     return CompiledRead(statement, narrow_to, _IDENTITY_TRANSFORM)
 
 
+def _table(entity: EntityMetadata) -> str:
+    """A non-family read target's own table."""
+    container = entity.declared_container
+    if container is None:  # pragma: no cover - a standalone Entity always declares one
+        raise SqlGenError(f"{entity.identity.canonical}: read target declares no table")
+    return container.name
+
+
 def compile_write_predicate(
-    op: Operation, meta: Metamodel, dialect: Dialect, target: str
+    op: Operation, model: Metamodel, dialect: Dialect, target: EntityMetadata
 ) -> CompiledPredicate:
     """Render a BARE write predicate (`m-batch-write.md` "Predicate-selected
     readless forms"): the UNALIASED where-clause SQL and its ordered binds —
@@ -336,9 +361,8 @@ def compile_write_predicate(
     directive reaching this raises :class:`SqlGenError` exactly as it would
     inside an ordinary read's predicate.
     """
-    entity = meta.entity(target)
-    ctx = _Ctx(meta, dialect)
-    scope = _EntityScope(ctx, entity, unaliased=True)
+    ctx = _Ctx(model, _inheritance_view(model), dialect)
+    scope = _EntityScope(ctx, target, unaliased=True)
     where_sql = _lower_predicate(op, scope)
     return CompiledPredicate(where_sql, tuple(ctx.binds))
 
@@ -441,14 +465,14 @@ def _reject_stacked(kind: str, seen: set[str]) -> None:
 # evaluation-order accident.                                                     #
 # --------------------------------------------------------------------------- #
 def _compile_inheritance_read(
-    entity: Entity,
+    entity: EntityMetadata,
     predicate: Operation,
     distinct: bool,
     order_keys: tuple[OrderKey, ...],
     limit: int | None,
-    meta: Metamodel,
+    model: Metamodel,
+    facet: InheritanceFacet,
     dialect: Dialect,
-    target: str,
     result_form: _ResultForm,
     lock: LockMode | None,
     relationship_order: bool = False,
@@ -465,33 +489,51 @@ def _compile_inheritance_read(
         distinct,
         order_keys,
         limit,
-        meta,
-        target,
+        facet,
         result_form == "instance",
         lock,
     )
     match plan:
         case _TphPlan():
             return _compile_tph_read(
-                plan, entity, distinct, order_keys, limit, meta, dialect, lock, relationship_order
+                plan,
+                entity,
+                distinct,
+                order_keys,
+                limit,
+                model,
+                facet,
+                dialect,
+                lock,
+                relationship_order,
             )
         case _TpcsSinglePlan():
             return _compile_tpcs_single(
-                plan, entity, distinct, order_keys, limit, meta, dialect, lock, relationship_order
+                plan,
+                entity,
+                distinct,
+                order_keys,
+                limit,
+                model,
+                facet,
+                dialect,
+                lock,
+                relationship_order,
             )
         case _TpcsUnionPlan():
-            return _compile_tpcs_read(plan, entity, meta, dialect)
+            return _compile_tpcs_read(plan, entity, model, facet, dialect)
         case _:  # pragma: no cover - exhaustiveness guard
             assert_never(plan)
 
 
 def _compile_tph_read(
     plan: _TphPlan,
-    entity: Entity,
+    entity: EntityMetadata,
     distinct: bool,
     order_keys: tuple[OrderKey, ...],
     limit: int | None,
-    meta: Metamodel,
+    model: Metamodel,
+    facet: InheritanceFacet,
     dialect: Dialect,
     lock: LockMode | None,
     relationship_order: bool = False,
@@ -503,7 +545,7 @@ def _compile_tph_read(
     is projected — is decided by :func:`_plan_inheritance_read`; this builds the
     statement's context and sequences the four bind phases.
     """
-    ctx = _Ctx(meta, dialect)
+    ctx = _Ctx(model, facet, dialect)
     scope = _EntityScope(ctx, entity)
     proj_sql, proj_binds = plan.projection(dialect, scope.alias)
     ctx.binds.extend(proj_binds)
@@ -517,7 +559,7 @@ def _compile_tph_read(
         # Planned, then bound HERE — after the user predicate above has pushed its
         # own binds (m-sql "Grouped branch predicates": branch-predicate-first,
         # then tag).
-        tag_sql, tag_binds = _tph_tag_guard(scope, meta, plan.tag)
+        tag_sql, tag_binds = _tph_tag_guard(scope, facet, plan.tag)
         where_terms.append(tag_sql)
         ctx.binds.extend(tag_binds)
     if where_terms:
@@ -530,8 +572,9 @@ def _compile_tph_read(
 
 def _compile_tpcs_read(
     plan: _TpcsUnionPlan,
-    entity: Entity,
-    meta: Metamodel,
+    entity: EntityMetadata,
+    model: Metamodel,
+    facet: InheritanceFacet,
     dialect: Dialect,
 ) -> tuple[Statement, _RowTransform]:
     """Assemble a table-per-concrete-subtype `union all` read (m-sql "Inheritance —
@@ -539,14 +582,14 @@ def _compile_tpcs_read(
 
     Each branch gets a FRESH ``_Ctx``: that is the whole mechanism behind a branch
     restarting its own alias scheme at `t0`, and behind the per-branch binds being
-    separable so they concatenate in the plan's alphabetical branch order. The
+    separable so they concatenate in the plan's canonical branch order. The
     clause tail has no place to land in a union, which is why the plan refused a
     `distinct` / `orderBy` / `limit` / read-lock read before reaching here.
     """
     branch_sqls: list[str] = []
     all_binds: list[object] = []
     for branch in plan.branches:
-        branch_ctx = _Ctx(meta, dialect)
+        branch_ctx = _Ctx(model, facet, dialect)
         branch_scope = _EntityScope(branch_ctx, entity)
         proj_sql, proj_binds = branch.projection(dialect, branch_scope.alias)
         branch_ctx.binds.extend(proj_binds)
@@ -563,11 +606,12 @@ def _compile_tpcs_read(
 
 def _compile_tpcs_single(
     plan: _TpcsSinglePlan,
-    entity: Entity,
+    entity: EntityMetadata,
     distinct: bool,
     order_keys: tuple[OrderKey, ...],
     limit: int | None,
-    meta: Metamodel,
+    model: Metamodel,
+    facet: InheritanceFacet,
     dialect: Dialect,
     lock: LockMode | None,
     relationship_order: bool = False,
@@ -585,7 +629,7 @@ def _compile_tpcs_single(
     sequences its bind phases explicitly — here projection, then user predicate,
     then limit; there is no framework tag guard on this lane.
     """
-    ctx = _Ctx(meta, dialect)
+    ctx = _Ctx(model, facet, dialect)
     scope = _EntityScope(ctx, entity)
     proj_sql, proj_binds = plan.projection(dialect, scope.alias)
     ctx.binds.extend(proj_binds)

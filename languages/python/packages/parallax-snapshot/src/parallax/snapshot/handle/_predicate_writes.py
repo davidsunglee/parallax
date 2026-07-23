@@ -47,6 +47,7 @@ from parallax.core.unit_work import (
     UnitOfWork,
     instructions,
 )
+from parallax.snapshot.handle._accepted import accepted_target
 from parallax.snapshot.handle._family import assignment_member, members, version_attribute
 from parallax.snapshot.handle._write_inputs import (
     materialize_row,
@@ -273,11 +274,12 @@ def _materialize_predicate_write(
     # non-family target (a family predicate write is rejected before SQL), so
     # its compiled row transform is always the identity — only the statement is
     # consumed here.
+    model, target_metadata = accepted_target(meta, instruction.target.entity)
     statement = compile_read(
         plan_.root_operation,
-        meta,
+        model,
         dialect,
-        instruction.target.entity,
+        target_metadata,
         result_form="row",
         lock=lock,
         include_value_objects=needs_documents,

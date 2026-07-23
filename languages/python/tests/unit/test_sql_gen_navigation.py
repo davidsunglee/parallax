@@ -13,31 +13,30 @@ the private-module split must preserve.
 from __future__ import annotations
 
 import pytest
+from _sql_gen_support import formed, model, target
 
-from parallax.conformance import models
 from parallax.core import op_algebra as oa
 from parallax.core.dialect import POSTGRES
 from parallax.core.sql_gen import SqlGenError, compile_read
 
 pytestmark = pytest.mark.unit
 
-_MODELS = models.load_models()
-ORDERS = _MODELS["orders"]
-ANIMAL = _MODELS["animal"]
-DOCUMENT = _MODELS["document"]
-PERSON = _MODELS["person"]
+ORDERS = model("orders")
+ANIMAL = model("animal")
+DOCUMENT = model("document")
+PERSON = model("person")
 
 
 def test_unvalidated_unknown_relationship_is_rejected() -> None:
     with pytest.raises(SqlGenError, match="names no declared relationship"):
-        compile_read(oa.Exists(rel="Order.missing"), ORDERS, POSTGRES, "Order")
+        compile_read(oa.Exists(rel="Order.missing"), ORDERS, POSTGRES, target(ORDERS, "Order"))
 
 
 def test_navigate_to_many_lowers_to_correlated_exists() -> None:
     op = oa.Navigate(
         rel="Order.items", op=oa.Comparison(op="eq", attr="OrderItem.sku", value="A-100")
     )
-    compiled = compile_read(op, ORDERS, POSTGRES, "Order")
+    compiled = compile_read(op, ORDERS, POSTGRES, target(ORDERS, "Order"))
     assert compiled.statement.sql.endswith(
         "where exists (select 1 from order_item t1 where t1.order_id = t0.id and t1.sku = ?)"
     )
@@ -45,7 +44,7 @@ def test_navigate_to_many_lowers_to_correlated_exists() -> None:
 
 
 def test_exists_with_no_inner_op_is_a_pure_correlation_check() -> None:
-    compiled = compile_read(oa.Exists(rel="Order.items"), ORDERS, POSTGRES, "Order")
+    compiled = compile_read(oa.Exists(rel="Order.items"), ORDERS, POSTGRES, target(ORDERS, "Order"))
     assert compiled.statement.sql.endswith(
         "where exists (select 1 from order_item t1 where t1.order_id = t0.id)"
     )
@@ -53,7 +52,9 @@ def test_exists_with_no_inner_op_is_a_pure_correlation_check() -> None:
 
 
 def test_not_exists_negates_the_semi_join() -> None:
-    compiled = compile_read(oa.NotExists(rel="Order.items"), ORDERS, POSTGRES, "Order")
+    compiled = compile_read(
+        oa.NotExists(rel="Order.items"), ORDERS, POSTGRES, target(ORDERS, "Order")
+    )
     assert compiled.statement.sql.endswith(
         "where not exists (select 1 from order_item t1 where t1.order_id = t0.id)"
     )
@@ -66,7 +67,7 @@ def test_navigate_composes_inside_the_boolean_algebra() -> None:
             oa.Comparison(op="eq", attr="Order.active", value=True),
         )
     )
-    compiled = compile_read(op, ORDERS, POSTGRES, "Order")
+    compiled = compile_read(op, ORDERS, POSTGRES, target(ORDERS, "Order"))
     assert compiled.statement.sql.endswith(
         "where not exists (select 1 from order_item t1 where t1.order_id = t0.id) and t0.active = ?"
     )
@@ -77,7 +78,7 @@ def test_reverse_to_one_navigation_resolves_the_mirror_correlation() -> None:
     op = oa.Navigate(
         rel="OrderItem.order", op=oa.Comparison(op="eq", attr="Order.name", value="Ada")
     )
-    compiled = compile_read(op, ORDERS, POSTGRES, "OrderItem")
+    compiled = compile_read(op, ORDERS, POSTGRES, target(ORDERS, "OrderItem"))
     assert compiled.statement.sql.endswith(
         "where exists (select 1 from orders t1 where t1.id = t0.order_id and t1.name = ?)"
     )
@@ -88,14 +89,16 @@ def test_one_to_one_navigation_lowers_like_any_to_one_hop() -> None:
     op = oa.Navigate(
         rel="Person.passport", op=oa.Comparison(op="eq", attr="Passport.number", value="P-AAA")
     )
-    compiled = compile_read(op, PERSON, POSTGRES, "Person")
+    compiled = compile_read(op, PERSON, POSTGRES, target(PERSON, "Person"))
     assert compiled.statement.sql.endswith(
         "where exists (select 1 from passport t1 where t1.person_id = t0.id and t1.number = ?)"
     )
 
 
 def test_nullable_many_to_one_exists_correlates_on_the_owned_fk() -> None:
-    compiled = compile_read(oa.Exists(rel="OrderStatus.orderItem"), ORDERS, POSTGRES, "OrderStatus")
+    compiled = compile_read(
+        oa.Exists(rel="OrderStatus.orderItem"), ORDERS, POSTGRES, target(ORDERS, "OrderStatus")
+    )
     assert compiled.statement.sql.endswith(
         "where exists (select 1 from order_item t1 where t1.id = t0.order_item_id)"
     )
@@ -109,7 +112,7 @@ def test_multi_hop_exists_continues_the_single_alias_sequence() -> None:
             op=oa.Comparison(op="eq", attr="OrderStatus.code", value="PACKED"),
         ),
     )
-    compiled = compile_read(op, ORDERS, POSTGRES, "Order")
+    compiled = compile_read(op, ORDERS, POSTGRES, target(ORDERS, "Order"))
     assert compiled.statement.sql.endswith(
         "where exists (select 1 from order_item t1 where t1.order_id = t0.id and "
         "exists (select 1 from order_status t2 where t2.order_item_id = t1.id and t2.code = ?))"
@@ -119,7 +122,7 @@ def test_multi_hop_exists_continues_the_single_alias_sequence() -> None:
 
 def test_not_exists_multi_hop_negates_only_the_outer_hop() -> None:
     op = oa.NotExists(rel="Order.items", op=oa.Exists(rel="OrderItem.statuses"))
-    compiled = compile_read(op, ORDERS, POSTGRES, "Order")
+    compiled = compile_read(op, ORDERS, POSTGRES, target(ORDERS, "Order"))
     assert compiled.statement.sql.endswith(
         "where not exists (select 1 from order_item t1 where t1.order_id = t0.id and "
         "exists (select 1 from order_status t2 where t2.order_item_id = t1.id))"
@@ -142,7 +145,7 @@ def test_sibling_hops_continue_one_alias_sequence() -> None:
             oa.Exists(rel="Order.tags"),
         )
     )
-    compiled = compile_read(op, ORDERS, POSTGRES, "Order")
+    compiled = compile_read(op, ORDERS, POSTGRES, target(ORDERS, "Order"))
     assert compiled.statement.sql.endswith(
         "where exists (select 1 from order_item t1 where t1.order_id = t0.id and "
         "exists (select 1 from order_status t2 where t2.order_item_id = t1.id)) and "
@@ -154,14 +157,18 @@ def test_sibling_hops_continue_one_alias_sequence() -> None:
 # Polymorphic navigation lowering (m-sql "Polymorphic navigation lowering").   #
 # --------------------------------------------------------------------------- #
 def test_tph_abstract_root_relationship_target_injects_no_tag() -> None:
-    compiled = compile_read(oa.Exists(rel="Person.animals"), ANIMAL, POSTGRES, "Person")
+    compiled = compile_read(
+        oa.Exists(rel="Person.animals"), ANIMAL, POSTGRES, target(ANIMAL, "Person")
+    )
     assert compiled.statement.sql.endswith(
         "where exists (select 1 from animal t1 where t1.owner_id = t0.id)"
     )
 
 
 def test_tph_abstract_subtype_relationship_target_injects_the_in_list() -> None:
-    compiled = compile_read(oa.Exists(rel="Person.pets"), ANIMAL, POSTGRES, "Person")
+    compiled = compile_read(
+        oa.Exists(rel="Person.pets"), ANIMAL, POSTGRES, target(ANIMAL, "Person")
+    )
     assert compiled.statement.sql.endswith(
         "where exists (select 1 from animal t1 where t1.owner_id = t0.id and t1.kind in (?, ?))"
     )
@@ -170,7 +177,7 @@ def test_tph_abstract_subtype_relationship_target_injects_the_in_list() -> None:
 
 def test_tph_relationship_narrow_to_one_concrete_lowers_to_eq() -> None:
     op = oa.Exists(rel="Person.pets", op=oa.Narrow(entity="Pet", to=("Cat",), operand=oa.All()))
-    compiled = compile_read(op, ANIMAL, POSTGRES, "Person")
+    compiled = compile_read(op, ANIMAL, POSTGRES, target(ANIMAL, "Person"))
     assert compiled.statement.sql.endswith(
         "where exists (select 1 from animal t1 where t1.owner_id = t0.id and t1.kind = ?)"
     )
@@ -181,7 +188,7 @@ def test_tph_relationship_narrow_to_abstract_subtype_matches_the_broad_relations
     op = oa.Exists(
         rel="Person.animals", op=oa.Narrow(entity="Animal", to=("Pet",), operand=oa.All())
     )
-    compiled = compile_read(op, ANIMAL, POSTGRES, "Person")
+    compiled = compile_read(op, ANIMAL, POSTGRES, target(ANIMAL, "Person"))
     assert compiled.statement.sql.endswith(
         "where exists (select 1 from animal t1 where t1.owner_id = t0.id and t1.kind in (?, ?))"
     )
@@ -189,7 +196,9 @@ def test_tph_relationship_narrow_to_abstract_subtype_matches_the_broad_relations
 
 
 def test_tpcs_abstract_root_relationship_target_groups_every_branch_alphabetically() -> None:
-    compiled = compile_read(oa.Exists(rel="Folder.documents"), DOCUMENT, POSTGRES, "Folder")
+    compiled = compile_read(
+        oa.Exists(rel="Folder.documents"), DOCUMENT, POSTGRES, target(DOCUMENT, "Folder")
+    )
     assert compiled.statement.sql.endswith(
         "where (exists (select 1 from invoice t1 where t1.folder_id = t0.id) "
         "or exists (select 1 from memo t2 where t2.folder_id = t0.id) "
@@ -202,7 +211,7 @@ def test_tpcs_relationship_narrow_drops_the_excluded_branch_but_keeps_its_alias_
         rel="Folder.documents",
         op=oa.Narrow(entity="Document", to=("FinancialDocument",), operand=oa.All()),
     )
-    compiled = compile_read(op, DOCUMENT, POSTGRES, "Folder")
+    compiled = compile_read(op, DOCUMENT, POSTGRES, target(DOCUMENT, "Folder"))
     assert compiled.statement.sql.endswith(
         "where (exists (select 1 from invoice t1 where t1.folder_id = t0.id) "
         "or exists (select 1 from receipt t2 where t2.folder_id = t0.id))"
@@ -215,7 +224,7 @@ def test_tpcs_relationship_narrow_to_a_single_concrete_is_one_exists_no_grouping
     op = oa.Exists(
         rel="Folder.documents", op=oa.Narrow(entity="Document", to=("Invoice",), operand=oa.All())
     )
-    compiled = compile_read(op, DOCUMENT, POSTGRES, "Folder")
+    compiled = compile_read(op, DOCUMENT, POSTGRES, target(DOCUMENT, "Folder"))
     assert compiled.statement.sql.endswith(
         "where exists (select 1 from invoice t1 where t1.folder_id = t0.id)"
     )
@@ -299,13 +308,13 @@ def test_tpcs_branches_take_their_aliases_as_each_branch_opens() -> None:
             ),
         ),
     )
-    meta = Metamodel(entities=(doc, inv, rec, owner, folder))
+    meta = formed(Metamodel(entities=(doc, inv, rec, owner, folder)))
 
     op = oa.Exists(
         rel="Folder.docs",
         op=oa.Exists(rel="Doc.owner", op=oa.Comparison(op="eq", attr="Owner.name", value="N")),
     )
-    compiled = compile_read(op, meta, POSTGRES, "Folder")
+    compiled = compile_read(op, meta, POSTGRES, target(meta, "Folder"))
     assert compiled.statement.sql.endswith(
         "where (exists (select 1 from inv t1 where t1.folder_id = t0.id and "
         "exists (select 1 from owner t2 where t2.id = t1.owner_id and t2.name = ?)) "

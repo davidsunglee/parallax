@@ -16,6 +16,21 @@ from __future__ import annotations
 
 import pytest
 
+from parallax.core.base import (
+    BOOLEAN,
+    BYTES,
+    DATE,
+    FLOAT32,
+    FLOAT64,
+    INT32,
+    INT64,
+    JSON,
+    STRING,
+    TIME,
+    TIMESTAMP,
+    UUID,
+    Decimal,
+)
 from parallax.core.dialect import INFINITY, POSTGRES, Dialect, dialect_for
 
 pytestmark = [pytest.mark.unit, pytest.mark.dialect]
@@ -47,30 +62,41 @@ def test_row_limit_and_read_lock(dialect: Dialect) -> None:
 
 @pytest.mark.parametrize("dialect", DIALECTS, ids=IDS)
 def test_column_type_mapping(dialect: Dialect) -> None:
-    assert dialect.column_type("int64", None) == "bigint"
-    assert dialect.column_type("int32", None) == "integer"
-    assert dialect.column_type("boolean", None) == "boolean"
-    assert dialect.column_type("timestamp", None) == "timestamptz"
-    assert dialect.column_type("json", None) == "jsonb"
-    assert dialect.column_type("uuid", None) == "uuid"
-    assert dialect.column_type("bytes", None) == "bytea"
-    assert dialect.column_type("string", 64) == "varchar(64)"
-    assert dialect.column_type("string", None) == "text"
-    assert dialect.column_type("decimal(18,2)", None) == "numeric(18, 2)"
+    assert dialect.column_type(INT64, None) == "bigint"
+    assert dialect.column_type(INT32, None) == "integer"
+    assert dialect.column_type(BOOLEAN, None) == "boolean"
+    assert dialect.column_type(TIMESTAMP, None) == "timestamptz"
+    assert dialect.column_type(JSON, None) == "jsonb"
+    assert dialect.column_type(UUID, None) == "uuid"
+    assert dialect.column_type(BYTES, None) == "bytea"
+    assert dialect.column_type(FLOAT32, None) == "real"
+    assert dialect.column_type(FLOAT64, None) == "double precision"
+    assert dialect.column_type(DATE, None) == "date"
+    assert dialect.column_type(TIME, None) == "time"
+    assert dialect.column_type(STRING, 64) == "varchar(64)"
+    assert dialect.column_type(STRING, None) == "text"
+    assert dialect.column_type(Decimal(18, 2), None) == "numeric(18, 2)"
 
 
 @pytest.mark.parametrize("dialect", DIALECTS, ids=IDS)
-def test_column_type_rejects_unknown(dialect: Dialect) -> None:
-    with pytest.raises(ValueError, match="no postgres column type"):
-        dialect.column_type("mystery", None)
+def test_null_cast_spells_a_decimal_placeholder_apart_from_its_ddl_type(
+    dialect: Dialect,
+) -> None:
+    # The union-all placeholder cast is a decision of its own: a decimal casts to
+    # `decimal(p, s)` even though its DDL column type is `numeric(p, s)`, while
+    # every other type reuses the DDL mapping (a bounded string still narrows to
+    # `varchar(n)`).
+    assert dialect.null_cast(Decimal(18, 2), None) == "decimal(18, 2)"
+    assert dialect.null_cast(STRING, 64) == "varchar(64)"
+    assert dialect.null_cast(INT32, None) == "integer"
 
 
 @pytest.mark.parametrize("dialect", DIALECTS, ids=IDS)
 def test_bytes_projection_shape(dialect: Dialect) -> None:
-    expr, binds = dialect.project("t0", "payload", "bytes")
+    expr, binds = dialect.project("t0", "payload", BYTES)
     assert expr == "encode(t0.payload, ?) payload_hex"
     assert binds == ["hex"]
-    plain_expr, plain_binds = dialect.project("t0", "name", "string")
+    plain_expr, plain_binds = dialect.project("t0", "name", STRING)
     assert plain_expr == "t0.name"
     assert plain_binds == []
 
@@ -85,10 +111,10 @@ def test_nested_extraction_and_cast(dialect: Dialect) -> None:
     bare, bare_binds = dialect.nested_extract("address", ("geo", "country"))
     assert bare == "jsonb_extract_path_text(address, ?, ?)"
     assert bare_binds == ["geo", "country"]
-    assert dialect.nested_cast("EXT", "string") == "EXT"  # text compares directly
-    assert dialect.nested_cast("EXT", "int64") == "cast(EXT as bigint)"
-    assert dialect.nested_cast("EXT", "float64") == "cast(EXT as double precision)"
-    assert dialect.nested_cast("EXT", "decimal(18,2)") == "cast(EXT as decimal(18, 2))"
+    assert dialect.nested_cast("EXT", STRING) == "EXT"  # text compares directly
+    assert dialect.nested_cast("EXT", INT64) == "cast(EXT as bigint)"
+    assert dialect.nested_cast("EXT", FLOAT64) == "cast(EXT as double precision)"
+    assert dialect.nested_cast("EXT", Decimal(18, 2)) == "cast(EXT as decimal(18, 2))"
 
 
 @pytest.mark.parametrize("dialect", DIALECTS, ids=IDS)

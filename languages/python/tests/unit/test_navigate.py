@@ -14,10 +14,11 @@ the rewritten operation straight to `compile_read` only to assert the FRAGMENT
 from __future__ import annotations
 
 import pytest
+from _sql_gen_support import formed, target
 
 from parallax.conformance import models
 from parallax.core import op_algebra as oa
-from parallax.core.descriptor import deserialize
+from parallax.core.descriptor import Metamodel, deserialize
 from parallax.core.dialect import POSTGRES
 from parallax.core.navigate import canonicalize, resolve_relationship
 from parallax.core.sql_gen import compile_read
@@ -33,8 +34,15 @@ _B = "2024-03-01T00:00:00+00:00"
 _P = "2024-02-01T00:00:00+00:00"
 
 
-def _where(op: oa.Operation, meta: object, target: str) -> tuple[str, tuple[object, ...]]:
-    statement = compile_read(op, meta, POSTGRES, target).statement  # type: ignore[arg-type]
+def _where(op: oa.Operation, meta: Metamodel, name: str) -> tuple[str, tuple[object, ...]]:
+    """The `where` clause and binds `m-sql` lowers ``op`` to over ``meta``.
+
+    The suite authors its models as descriptor records (`canonicalize` reads
+    those), so each is formed here for the read compiler; both views describe the
+    same document.
+    """
+    model = formed(meta)
+    statement = compile_read(op, model, POSTGRES, target(model, name)).statement
     _, _, where = statement.sql.partition(" where ")
     return where, statement.binds
 

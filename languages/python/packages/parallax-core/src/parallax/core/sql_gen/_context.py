@@ -6,8 +6,9 @@ to live here — it is the one name the whole package raises, so any other home
 would make some module import sideways.
 
 :class:`Ctx` is the whole of that state, and it is deliberately small: the
-metamodel and dialect a statement renders against, its ordered bind list, and its
-alias counter. It holds **no resolution policy** — no active entity, no alias, no
+metamodel, its Inheritance Facet, and the dialect a statement renders against,
+its ordered bind list, and its alias counter. It holds **no resolution policy** —
+no active entity, no alias, no
 aliased-versus-unaliased rendering decision, no attribute search. Those are the
 `_predicate` resolution scope's, which is also what makes a `Ctx` a plain mutable
 accumulator: with nothing per-scope left on it, exactly ONE exists per statement
@@ -34,8 +35,9 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from parallax.core.descriptor import Entity, Metamodel
 from parallax.core.dialect import Dialect
+from parallax.core.inheritance import InheritanceFacet
+from parallax.core.metamodel import EntityMetadata, Metamodel
 
 
 class SqlGenError(ValueError):
@@ -93,13 +95,16 @@ class PlanScope(ColumnScope, Protocol):
     def meta(self) -> Metamodel: ...
 
     @property
-    def entity(self) -> Entity: ...
+    def facet(self) -> InheritanceFacet: ...
+
+    @property
+    def entity(self) -> EntityMetadata: ...
 
     def column_of(self, attr_ref: str) -> str: ...
 
     def next_alias(self) -> str: ...
 
-    def child(self, entity: Entity, alias: str) -> PlanScope: ...
+    def child(self, entity: EntityMetadata, alias: str) -> PlanScope: ...
 
 
 class Ctx:
@@ -112,12 +117,17 @@ class Ctx:
     resolution scope holds this same object, so a correlated subquery's aliases
     and binds continue the enclosing statement's single sequence by identity
     rather than by an argument someone has to remember to thread.
+
+    ``facet`` is the model's Inheritance Facet, the one facet `m-sql` reads: it
+    is retrieved once per compiled statement and travels with the model it was
+    compiled from, so no lowering step re-derives a family answer.
     """
 
-    __slots__ = ("_next_alias_index", "binds", "dialect", "meta")
+    __slots__ = ("_next_alias_index", "binds", "dialect", "facet", "meta")
 
-    def __init__(self, meta: Metamodel, dialect: Dialect) -> None:
+    def __init__(self, meta: Metamodel, facet: InheritanceFacet, dialect: Dialect) -> None:
         self.meta = meta
+        self.facet = facet
         self.dialect = dialect
         self.binds: list[object] = []
         # The next alias INDEX after this statement's own `t0`, which is never

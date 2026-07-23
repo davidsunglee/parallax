@@ -15,6 +15,23 @@ import re
 from dataclasses import dataclass
 from typing import Final, Literal
 
+from parallax.core.base import (
+    Boolean,
+    Bytes,
+    Date,
+    Decimal,
+    Float32,
+    Float64,
+    Int32,
+    Int64,
+    Json,
+    NeutralType,
+    String,
+    Time,
+    Timestamp,
+    Uuid,
+)
+
 __all__ = [
     "INFINITY",
     "POSTGRES",
@@ -59,14 +76,16 @@ class Dialect:
         return f"{alias}.{self.quote(column)}"
 
     # -- projections ------------------------------------------------------- #
-    def project(self, alias: str, column: str, neutral_type: str) -> tuple[str, list[object]]:
+    def project(
+        self, alias: str, column: str, neutral_type: NeutralType
+    ) -> tuple[str, list[object]]:
         """The select-list expression (and any projection-introduced binds) for a column.
 
         A `bytes` column projects the hex-encoded text so the wire value is stable
         (`encode(t0.col, ?) col_hex`, bind `hex`); every other column projects the
         plain alias-qualified reference with no bind.
         """
-        if neutral_type == "bytes":
+        if isinstance(neutral_type, Bytes):
             return f"encode({self.qualified(alias, column)}, ?) {column}_hex", ["hex"]
         return self.qualified(alias, column), []
 
@@ -106,17 +125,17 @@ class Dialect:
         holes = ", ".join(["?"] * len(segments))
         return (f"jsonb_extract_path_text({document}, {holes})", list(segments))
 
-    def nested_cast(self, extraction: str, neutral_type: str) -> str:
+    def nested_cast(self, extraction: str, neutral_type: NeutralType) -> str:
         """Cast a text extraction to a non-text declared type before comparing."""
-        base = _base_type(neutral_type)
-        if base == "decimal":
-            inner = neutral_type[len("decimal") :].strip("() ")
-            p, s = (part.strip() for part in inner.split(","))
-            return f"cast({extraction} as decimal({p}, {s}))"
-        target = _CAST_TARGETS.get(base)
-        if target is None:
-            return extraction  # string / text — compare directly
-        return f"cast({extraction} as {target})"
+        match neutral_type:
+            case Decimal(precision, scale):
+                return f"cast({extraction} as decimal({precision}, {scale}))"
+            case Int32() | Int64():
+                return f"cast({extraction} as bigint)"
+            case Float32() | Float64():
+                return f"cast({extraction} as double precision)"
+            case _:
+                return extraction  # string / text — compare directly
 
     def array_guard(self, document: str, segments: tuple[str, ...]) -> tuple[str, list[object]]:
         """The array-type guard fragment for a `multiplicity: many` value-object
@@ -168,7 +187,7 @@ class Dialect:
         return driver_sql.replace("%s", "?")
 
     # -- inheritance (m-inheritance / m-sql) -------------------------------- #
-    def null_cast(self, neutral_type: str, max_length: int | None) -> str:
+    def null_cast(self, neutral_type: NeutralType, max_length: int | None) -> str:
         """The ``CAST`` target-type spelling for a ``NULL`` placeholder column in a
         table-per-concrete-subtype union-all branch (m-sql "table-per-concrete-
         subtype lowering").
@@ -182,57 +201,46 @@ class Dialect:
         (which reaches it through :meth:`nested_cast`), but
         **not** :meth:`column_type`'s own ``numeric(p, s)`` DDL spelling.
         """
-        if _base_type(neutral_type) == "decimal":
-            inner = neutral_type[len("decimal") :].strip("() ")
-            p, s = (part.strip() for part in inner.split(","))
-            return f"decimal({p}, {s})"
+        if isinstance(neutral_type, Decimal):
+            return f"decimal({neutral_type.precision}, {neutral_type.scale})"
         return self.column_type(neutral_type, max_length)
 
     # -- DDL type mapping -------------------------------------------------- #
-    def column_type(self, neutral_type: str, max_length: int | None) -> str:
+    def column_type(self, neutral_type: NeutralType, max_length: int | None) -> str:
         """The concrete column type for a neutral type (used by DDL derivation)."""
-        base = _base_type(neutral_type)
-        if base == "string":
-            return f"varchar({max_length})" if max_length is not None else "text"
-        if base == "decimal":
-            inner = neutral_type[len("decimal") :].strip("() ")
-            p, s = (part.strip() for part in inner.split(","))
-            return f"numeric({p}, {s})"
-        mapped = _DDL_TYPES.get(base)
-        if mapped is None:
-            raise ValueError(f"no {self.name} column type for neutral type {neutral_type!r}")
-        return mapped
+        match neutral_type:
+            case String():
+                return f"varchar({max_length})" if max_length is not None else "text"
+            case Decimal(precision, scale):
+                return f"numeric({precision}, {scale})"
+            case Boolean():
+                return "boolean"
+            case Int32():
+                return "integer"
+            case Int64():
+                return "bigint"
+            case Float32():
+                return "real"
+            case Float64():
+                return "double precision"
+            case Bytes():
+                return "bytea"
+            case Date():
+                return "date"
+            case Time():
+                return "time"
+            case Timestamp():
+                return "timestamptz"
+            case Uuid():
+                return "uuid"
+            case Json():
+                return "jsonb"
 
     # -- errors ------------------------------------------------------------ #
     def classify(self, code: str) -> str | None:
         """The neutral m-db-error category for a native code, or ``None``."""
         return self.error_codes.get(code)
 
-
-def _base_type(neutral_type: str) -> str:
-    return neutral_type.split("(", 1)[0]
-
-
-_CAST_TARGETS: Final[dict[str, str]] = {
-    "int32": "bigint",
-    "int64": "bigint",
-    "float32": "double precision",
-    "float64": "double precision",
-}
-
-_DDL_TYPES: Final[dict[str, str]] = {
-    "boolean": "boolean",
-    "int32": "integer",
-    "int64": "bigint",
-    "float32": "real",
-    "float64": "double precision",
-    "bytes": "bytea",
-    "date": "date",
-    "time": "time",
-    "timestamp": "timestamptz",
-    "uuid": "uuid",
-    "json": "jsonb",
-}
 
 # Postgres reserved words that appear as declared columns in the corpus and so
 # must be quoted (m-descriptor-001 witnesses the shared-reserved `order`).

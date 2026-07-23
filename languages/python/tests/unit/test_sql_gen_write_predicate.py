@@ -16,8 +16,8 @@ and nowhere else.
 from __future__ import annotations
 
 import pytest
+from _sql_gen_support import model, target
 
-from parallax.conformance import models
 from parallax.core import op_algebra as oa
 from parallax.core.dialect import POSTGRES
 from parallax.core.sql_gen import (
@@ -29,11 +29,10 @@ from parallax.core.sql_gen import (
 
 pytestmark = pytest.mark.unit
 
-_MODELS = models.load_models()
-ORDERS = _MODELS["orders"]
-ACCOUNT = _MODELS["account"]
-CUSTOMER = _MODELS["customer"]
-PAYMENT = _MODELS["payment"]
+ORDERS = model("orders")
+ACCOUNT = model("account")
+CUSTOMER = model("customer")
+PAYMENT = model("payment")
 
 
 # --------------------------------------------------------------------------- #
@@ -44,7 +43,7 @@ def test_comparison_renders_the_column_unaliased() -> None:
         oa.Comparison(op="lessThan", attr="Account.balance", value=100),
         ACCOUNT,
         POSTGRES,
-        "Account",
+        target(ACCOUNT, "Account"),
     )
     sql, binds = predicate.sql, predicate.binds
     assert sql == "balance < ?"
@@ -58,7 +57,7 @@ def test_the_rendered_fragment_is_a_predicate_not_a_statement() -> None:
         oa.Comparison(op="lessThan", attr="Account.balance", value=100),
         ACCOUNT,
         POSTGRES,
-        "Account",
+        target(ACCOUNT, "Account"),
     )
     sql = predicate.sql
     assert "select" not in sql
@@ -70,12 +69,12 @@ def test_all_renders_the_empty_fragment_and_none_renders_unsatisfiable() -> None
     # Compared as whole `CompiledPredicate` values: the frozen result object is
     # part of the seam, so equality against a freshly constructed literal pins
     # BOTH members at once and would catch a silently reordered pair.
-    assert compile_write_predicate(oa.All(), ACCOUNT, POSTGRES, "Account") == CompiledPredicate(
-        "", ()
-    )
-    assert compile_write_predicate(oa.NoneOp(), ACCOUNT, POSTGRES, "Account") == CompiledPredicate(
-        "1 = 0", ()
-    )
+    assert compile_write_predicate(
+        oa.All(), ACCOUNT, POSTGRES, target(ACCOUNT, "Account")
+    ) == CompiledPredicate("", ())
+    assert compile_write_predicate(
+        oa.NoneOp(), ACCOUNT, POSTGRES, target(ACCOUNT, "Account")
+    ) == CompiledPredicate("1 = 0", ())
 
 
 # --------------------------------------------------------------------------- #
@@ -146,7 +145,7 @@ def test_all_renders_the_empty_fragment_and_none_renders_unsatisfiable() -> None
 def test_write_predicate_vocabulary_matches_the_read_dispatch(
     op: oa.Operation, expected_sql: str, expected_binds: tuple[object, ...]
 ) -> None:
-    predicate = compile_write_predicate(op, ACCOUNT, POSTGRES, "Account")
+    predicate = compile_write_predicate(op, ACCOUNT, POSTGRES, target(ACCOUNT, "Account"))
     sql, binds = predicate.sql, predicate.binds
     assert sql == expected_sql
     assert binds == expected_binds
@@ -154,7 +153,7 @@ def test_write_predicate_vocabulary_matches_the_read_dispatch(
     # clause, differing ONLY in the alias qualification of each column: strip the
     # root alias from the read's clause and the two fragments coincide exactly,
     # binds included.
-    read = compile_read(op, ACCOUNT, POSTGRES, "Account")
+    read = compile_read(op, ACCOUNT, POSTGRES, target(ACCOUNT, "Account"))
     read_where = read.statement.sql.split(" where ", 1)[1]
     assert read_where.replace("t0.", "") == expected_sql
     assert read.statement.binds == expected_binds
@@ -173,7 +172,7 @@ def test_write_predicate_binds_follow_operand_order() -> None:
         ),
         ACCOUNT,
         POSTGRES,
-        "Account",
+        target(ACCOUNT, "Account"),
     )
     sql, binds = predicate.sql, predicate.binds
     assert sql == "balance < ? and owner = ? and version = ?"
@@ -184,7 +183,9 @@ def test_navigation_correlates_an_aliased_subquery_against_the_unaliased_owner()
     # A hop opens its own aliased sub-select exactly as it does in a read, but the
     # correlation's OWNER side stays unaliased — the readless `delete from orders
     # where exists (...)` shape.
-    predicate = compile_write_predicate(oa.Exists(rel="Order.items"), ORDERS, POSTGRES, "Order")
+    predicate = compile_write_predicate(
+        oa.Exists(rel="Order.items"), ORDERS, POSTGRES, target(ORDERS, "Order")
+    )
     sql, binds = predicate.sql, predicate.binds
     assert sql == "exists (select 1 from order_item t1 where t1.order_id = id)"
     assert binds == ()
@@ -202,7 +203,7 @@ def test_value_object_document_column_renders_unaliased() -> None:
         oa.NestedComparison(op="nestedEq", path="Customer.address.city", value="Boston"),
         CUSTOMER,
         POSTGRES,
-        "Customer",
+        target(CUSTOMER, "Customer"),
     )
     sql, binds = predicate.sql, predicate.binds
     assert sql == "jsonb_extract_path_text(address, ?) = ?"
@@ -213,7 +214,7 @@ def test_value_object_document_column_renders_unaliased() -> None:
         oa.NestedComparison(op="nestedEq", path="Customer.address.city", value="Boston"),
         CUSTOMER,
         POSTGRES,
-        "Customer",
+        target(CUSTOMER, "Customer"),
     )
     read_where = read.statement.sql.split(" where ", 1)[1]
     assert read_where == "jsonb_extract_path_text(t0.address, ?) = ?"
@@ -230,7 +231,7 @@ def test_to_many_value_object_traversal_keeps_only_its_own_element_alias() -> No
         oa.NestedComparison(op="nestedEq", path="Customer.address.phones.number", value="555"),
         oa.NestedExists(path="Customer.address.phones"),
     ):
-        sql = compile_write_predicate(op, CUSTOMER, POSTGRES, "Customer").sql
+        sql = compile_write_predicate(op, CUSTOMER, POSTGRES, target(CUSTOMER, "Customer")).sql
         assert "t0." not in sql
         assert "jsonb_extract_path(address, ?)" in sql
         assert "jsonb_array_elements(" in sql and " t1" in sql
@@ -257,7 +258,7 @@ def test_inheritance_tag_guard_renders_unaliased() -> None:
         to=("CardPayment",),
         operand=oa.Comparison(op="eq", attr="CardPayment.cardNetwork", value="Visa"),
     )
-    predicate = compile_write_predicate(op, PAYMENT, POSTGRES, "CardPayment")
+    predicate = compile_write_predicate(op, PAYMENT, POSTGRES, target(PAYMENT, "CardPayment"))
     sql, binds = predicate.sql, predicate.binds
     assert sql == "(card_network = ? and kind = ?)"
     assert binds == ("Visa", "card")
@@ -270,9 +271,11 @@ def test_inheritance_tag_guard_renders_unaliased() -> None:
     # — so the comparison is against the read's leading grouped term, which does
     # coincide exactly modulo alias qualification, tag bind last in both.
     grouped = oa.Group(operand=op)
-    grouped_write = compile_write_predicate(grouped, PAYMENT, POSTGRES, "CardPayment")
+    grouped_write = compile_write_predicate(
+        grouped, PAYMENT, POSTGRES, target(PAYMENT, "CardPayment")
+    )
     write_sql, write_binds = grouped_write.sql, grouped_write.binds
-    read = compile_read(grouped, PAYMENT, POSTGRES, "CardPayment")
+    read = compile_read(grouped, PAYMENT, POSTGRES, target(PAYMENT, "CardPayment"))
     read_where = read.statement.sql.split(" where ", 1)[1]
     assert read_where == "((t0.card_network = ? and t0.kind = ?)) and t0.kind = ?"
     read_branch, _, _target_guard = read_where.rpartition(" and ")
@@ -287,7 +290,10 @@ def test_inheritance_tag_guard_renders_unaliased() -> None:
 def test_unbound_attribute_is_refused() -> None:
     with pytest.raises(SqlGenError, match="names no attribute"):
         compile_write_predicate(
-            oa.Comparison(op="eq", attr="Account.mystery", value=1), ACCOUNT, POSTGRES, "Account"
+            oa.Comparison(op="eq", attr="Account.mystery", value=1),
+            ACCOUNT,
+            POSTGRES,
+            target(ACCOUNT, "Account"),
         )
 
 
@@ -306,7 +312,7 @@ def test_a_result_shaping_directive_reaching_a_write_predicate_is_refused(
     # so a directive here is a caller wiring defect and refuses exactly as it would
     # inside an ordinary read's predicate (no directive PEELING happens here).
     with pytest.raises(SqlGenError, match="result-shaping directive nested inside a predicate"):
-        compile_write_predicate(op, ORDERS, POSTGRES, "Order")
+        compile_write_predicate(op, ORDERS, POSTGRES, target(ORDERS, "Order"))
 
 
 @pytest.mark.parametrize(
@@ -318,10 +324,10 @@ def test_a_result_shaping_directive_reaching_a_write_predicate_is_refused(
         ),
         (
             oa.DeepFetch(operand=oa.All(), paths=((oa.PathSegment(rel="Order.items"),),)),
-            "deep fetch .* increment 5",
+            "deep fetch .* is not a predicate",
         ),
     ],
 )
 def test_deferred_nodes_are_refused(op: oa.Operation, message: str) -> None:
     with pytest.raises(SqlGenError, match=message):
-        compile_write_predicate(op, ORDERS, POSTGRES, "Order")
+        compile_write_predicate(op, ORDERS, POSTGRES, target(ORDERS, "Order"))

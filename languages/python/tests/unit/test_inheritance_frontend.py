@@ -27,7 +27,7 @@ from parallax.core import Attr, Entity, EntityConfig, Field, descriptor, inherit
 from parallax.core._formation_profile import form_metamodel
 from parallax.core.descriptor import canonicalize, unresolved_metamodel
 from parallax.core.entity import descriptor_document, entity_record_of, metamodel
-from parallax.core.entity.base import Concrete, FamilyRoot
+from parallax.core.entity.base import Concrete, EntityRegistry, FamilyRoot
 from parallax.core.metamodel import EntityIdentity, EntityLocation, PersistenceMode
 from parallax.core.model_formation import MetamodelValidationError
 
@@ -322,7 +322,13 @@ def test_root_and_different_descendant_attribute_is_rejected() -> None:
 # --------------------------------------------------------------------------- #
 
 
-class _Ledger(Entity, frozen=True):
+# Declared in a registry of its own, never the process default: the family is
+# deliberately not a valid model, so it must not become visible to any other
+# registry that forms the model it can see.
+_LEDGER_REGISTRY = EntityRegistry(parent=None)
+
+
+class _Ledger(Entity, frozen=True, registry=_LEDGER_REGISTRY):
     __parallax__ = EntityConfig(
         table="ledger",
         mutability="read-only",
@@ -331,12 +337,12 @@ class _Ledger(Entity, frozen=True):
     id: Attr[int] = Field(primary_key=True, type="int64")
 
 
-class _AuditLedger(_Ledger, frozen=True):
+class _AuditLedger(_Ledger, frozen=True, registry=_LEDGER_REGISTRY):
     __parallax__ = EntityConfig(mutability="read-only", inheritance=Concrete(tag_value="audit"))
     note: Attr[str | None] = Field(type="string", max_length=32, nullable=True)
 
 
-class _SilentLedger(_Ledger, frozen=True):
+class _SilentLedger(_Ledger, frozen=True, registry=_LEDGER_REGISTRY):
     __parallax__ = EntityConfig(inheritance=Concrete(tag_value="silent"))
     label: Attr[str | None] = Field(type="string", max_length=32, nullable=True)
 

@@ -269,8 +269,11 @@ def _declare_sample_probe(table: str, registry: EntityRegistry, flavor_default: 
 
 
 def test_db_find_instantiates_the_connected_registrys_own_class() -> None:
-    registry_a = EntityRegistry()
-    registry_b = EntityRegistry()
+    # Root registries: a `find` forms the model its connected registry can SEE,
+    # so inheriting the process default would drag every unrelated class this
+    # session ever declared into a read that is about these two alone.
+    registry_a = EntityRegistry(parent=None)
+    registry_b = EntityRegistry(parent=None)
     sample_a = _declare_sample_probe("sample_a", registry_a, "a")
     _declare_sample_probe("sample_b", registry_b, "b")
 

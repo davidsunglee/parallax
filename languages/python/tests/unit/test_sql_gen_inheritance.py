@@ -12,18 +12,17 @@ table-per-concrete-subtype `union all` restarts.
 from __future__ import annotations
 
 import pytest
+from _sql_gen_support import formed, model, target
 
-from parallax.conformance import models
 from parallax.core import op_algebra as oa
 from parallax.core.dialect import POSTGRES
 from parallax.core.sql_gen import SqlGenError, compile_read
 
 pytestmark = pytest.mark.unit
 
-_MODELS = models.load_models()
-PAYMENT = _MODELS["payment"]
-ANIMAL = _MODELS["animal"]
-DOCUMENT = _MODELS["document"]
+PAYMENT = model("payment")
+ANIMAL = model("animal")
+DOCUMENT = model("document")
 
 
 def test_narrow_nested_under_a_table_per_concrete_subtype_family_is_refused() -> None:
@@ -38,19 +37,29 @@ def test_narrow_nested_under_a_table_per_concrete_subtype_family_is_refused() ->
         )
     )
     with pytest.raises(SqlGenError, match="table-per-concrete-subtype"):
-        compile_read(op, DOCUMENT, POSTGRES, "Document")
+        compile_read(op, DOCUMENT, POSTGRES, target(DOCUMENT, "Document"))
+
+
+def test_a_narrow_naming_an_undeclared_entity_is_refused() -> None:
+    # `validate_operation` runs upstream, so a narrow reaching this compiler is
+    # already position-valid; an unresolvable member therefore means the caller
+    # skipped that step, and refusing loudly is what keeps it from silently
+    # lowering to an empty position.
+    op = oa.Narrow(entity="Animal", to=("Unicorn",), operand=oa.All())
+    with pytest.raises(SqlGenError, match="names an entity the model does not declare"):
+        compile_read(op, ANIMAL, POSTGRES, target(ANIMAL, "Animal"))
 
 
 def test_tph_tag_predicate_whole_family_root_injects_none() -> None:
     # Reading the abstract root untouched (no narrow) spans the whole shared
     # table: the absence of a tag predicate IS the contract (m-sql).
-    compiled = compile_read(oa.All(), PAYMENT, POSTGRES, "Payment")
+    compiled = compile_read(oa.All(), PAYMENT, POSTGRES, target(PAYMENT, "Payment"))
     assert "where" not in compiled.statement.sql
     assert compiled.statement.binds == ()
 
 
 def test_tph_tag_predicate_one_concrete_injects_eq() -> None:
-    compiled = compile_read(oa.All(), PAYMENT, POSTGRES, "CardPayment")
+    compiled = compile_read(oa.All(), PAYMENT, POSTGRES, target(PAYMENT, "CardPayment"))
     assert compiled.statement.sql.endswith("where t0.kind = ?")
     assert compiled.statement.binds == ("card",)
 
@@ -59,7 +68,7 @@ def test_tph_tag_predicate_several_concretes_injects_in_alphabetical_order() -> 
     # Pet (abstract subtype) resolves to {Cat, Dog} — a PROPER SUBSET of the whole
     # animal table — so it injects `in (...)`, never the whole-family "no tag" form,
     # even though it is reached with no narrow at all.
-    compiled = compile_read(oa.All(), ANIMAL, POSTGRES, "Pet")
+    compiled = compile_read(oa.All(), ANIMAL, POSTGRES, target(ANIMAL, "Pet"))
     assert compiled.statement.sql.endswith("where t0.kind in (?, ?)")
     assert compiled.statement.binds == ("cat", "dog")
 
@@ -71,7 +80,7 @@ def test_tph_user_predicate_then_tag_binds_user_first() -> None:
         oa.Comparison(op="greaterThan", attr="CardPayment.amount", value=60),
         PAYMENT,
         POSTGRES,
-        "CardPayment",
+        target(PAYMENT, "CardPayment"),
     )
     assert compiled.statement.sql.endswith("where t0.amount > ? and t0.kind = ?")
     assert compiled.statement.binds == (60, "card")
@@ -89,7 +98,7 @@ def test_tph_narrow_to_one_concrete_from_an_abstract_target_still_carries_the_ta
         ),
         ANIMAL,
         POSTGRES,
-        "Animal",
+        target(ANIMAL, "Animal"),
     )
     assert compiled.statement.sql == (
         "select t0.id, t0.name, t0.owner_id, t0.license_id, t0.bark_volume, t0.kind "
@@ -119,7 +128,7 @@ def test_tph_grouped_branch_predicates_join_by_or() -> None:
         ),
         ANIMAL,
         POSTGRES,
-        "Animal",
+        target(ANIMAL, "Animal"),
     )
     assert compiled.statement.sql.endswith(
         "where (t0.bark_volume > ? and t0.kind = ?) or (t0.indoor = ? and t0.kind = ?)"
@@ -151,7 +160,7 @@ def test_user_binds_precede_framework_tag_binds() -> None:
         ),
         ANIMAL,
         POSTGRES,
-        "Person",
+        target(ANIMAL, "Person"),
     )
     assert compiled.statement.sql.endswith(
         "where exists (select 1 from animal t1 "
@@ -164,7 +173,7 @@ def test_tph_abstract_superset_projection_ordering() -> None:
     # Ancestry prefix (Animal's own, then Pet's own) first, never alphabetized
     # across the chain, THEN each concrete's own block in alphabetical subtype
     # order (Cat before Dog before WildBoar), THEN the raw tag column last.
-    compiled = compile_read(oa.All(), ANIMAL, POSTGRES, "Animal")
+    compiled = compile_read(oa.All(), ANIMAL, POSTGRES, target(ANIMAL, "Animal"))
     assert compiled.statement.sql == (
         "select t0.id, t0.name, t0.owner_id, t0.license_id, t0.indoor, t0.bark_volume, "
         "t0.tusk_length, t0.kind from animal t0"
@@ -176,10 +185,16 @@ def test_tph_equivalent_narrow_spellings_collapse() -> None:
     # descendants) resolve to the same effective set and MUST lower identically,
     # regardless of the authored `to` order or spelling (m-op-algebra / m-sql).
     by_abstract = compile_read(
-        oa.Narrow(entity="Animal", to=("Pet",), operand=oa.All()), ANIMAL, POSTGRES, "Animal"
+        oa.Narrow(entity="Animal", to=("Pet",), operand=oa.All()),
+        ANIMAL,
+        POSTGRES,
+        target(ANIMAL, "Animal"),
     )
     by_concretes = compile_read(
-        oa.Narrow(entity="Animal", to=("Dog", "Cat"), operand=oa.All()), ANIMAL, POSTGRES, "Animal"
+        oa.Narrow(entity="Animal", to=("Dog", "Cat"), operand=oa.All()),
+        ANIMAL,
+        POSTGRES,
+        target(ANIMAL, "Animal"),
     )
     # The LOWERING is what must collapse. `narrow_to` deliberately does not: it
     # reports the narrow the caller AUTHORED, which materialization resolves for
@@ -191,14 +206,17 @@ def test_tph_narrow_canonical_alphabetical_order_independent_of_authored_order()
     # The `to` list's authored order never leaks into the lowered `in (...)` list —
     # it is always the family's canonical alphabetical order.
     compiled = compile_read(
-        oa.Narrow(entity="Animal", to=("Dog", "Cat"), operand=oa.All()), ANIMAL, POSTGRES, "Animal"
+        oa.Narrow(entity="Animal", to=("Dog", "Cat"), operand=oa.All()),
+        ANIMAL,
+        POSTGRES,
+        target(ANIMAL, "Animal"),
     )
     assert compiled.statement.sql.endswith("where t0.kind in (?, ?)")
     assert compiled.statement.binds == ("cat", "dog")
 
 
 def test_tpcs_single_concrete_is_an_ordinary_read_no_tag_no_union() -> None:
-    compiled = compile_read(oa.All(), DOCUMENT, POSTGRES, "Invoice")
+    compiled = compile_read(oa.All(), DOCUMENT, POSTGRES, target(DOCUMENT, "Invoice"))
     assert compiled.statement.sql == (
         "select t0.id, t0.title, t0.folder_id, t0.currency, t0.amount_due from invoice t0"
     )
@@ -207,7 +225,7 @@ def test_tpcs_single_concrete_is_an_ordinary_read_no_tag_no_union() -> None:
 
 
 def test_tpcs_union_all_branch_order_alias_restart_casts_and_literal() -> None:
-    compiled = compile_read(oa.All(), DOCUMENT, POSTGRES, "FinancialDocument")
+    compiled = compile_read(oa.All(), DOCUMENT, POSTGRES, target(DOCUMENT, "FinancialDocument"))
     branches = compiled.statement.sql.split(" union all ")
     assert len(branches) == 2
     # Alphabetical branch order (Invoice, Receipt); every branch restarts at `t0`.
@@ -287,7 +305,7 @@ def test_tpcs_union_restarts_aliases_per_branch_and_concatenates_binds() -> None
             Attribute(name="name", type="string", column="name", max_length=32),
         ),
     )
-    meta = Metamodel(entities=(root, invoice, receipt, owner))
+    meta = formed(Metamodel(entities=(root, invoice, receipt, owner)))
 
     op = oa.And(
         operands=(
@@ -295,7 +313,7 @@ def test_tpcs_union_restarts_aliases_per_branch_and_concatenates_binds() -> None
             oa.Exists(rel="Doc.owner", op=oa.Comparison(op="eq", attr="Owner.name", value="N")),
         )
     )
-    compiled = compile_read(op, meta, POSTGRES, "Doc")
+    compiled = compile_read(op, meta, POSTGRES, target(meta, "Doc"))
     branches = compiled.statement.sql.split(" union all ")
     assert len(branches) == 2
     # BOTH branches restart the whole sequence: base `t0`, hop alias `t1`.
@@ -317,7 +335,7 @@ def test_tpcs_string_cast_placeholder_diverges_by_declared_length() -> None:
     # The abstract ROOT read pulls in Memo too, whose `body` needs a bounded
     # varchar(64) placeholder on the other two branches, and Memo's own branch
     # NULL-casts the FinancialDocument-only `currency` (varchar(3)).
-    compiled = compile_read(oa.All(), DOCUMENT, POSTGRES, "Document")
+    compiled = compile_read(oa.All(), DOCUMENT, POSTGRES, target(DOCUMENT, "Document"))
     assert "cast(null as varchar(64)) body" in compiled.statement.sql
     assert "cast(null as varchar(3)) currency" in compiled.statement.sql
 
@@ -327,17 +345,17 @@ def test_tpcs_equivalent_narrow_spellings_collapse() -> None:
         oa.Narrow(entity="Document", to=("FinancialDocument",), operand=oa.All()),
         DOCUMENT,
         POSTGRES,
-        "Document",
+        target(DOCUMENT, "Document"),
     )
     by_concretes = compile_read(
         oa.Narrow(entity="Document", to=("Receipt", "Invoice"), operand=oa.All()),
         DOCUMENT,
         POSTGRES,
-        "Document",
+        target(DOCUMENT, "Document"),
     )
     assert by_abstract.statement == by_concretes.statement
     # And matches reading the abstract subtype directly, no narrow at all.
-    direct = compile_read(oa.All(), DOCUMENT, POSTGRES, "FinancialDocument")
+    direct = compile_read(oa.All(), DOCUMENT, POSTGRES, target(DOCUMENT, "FinancialDocument"))
     assert by_abstract.statement == direct.statement
 
 
@@ -358,7 +376,7 @@ def test_tph_nested_narrow_with_a_trivial_branch_needs_no_grouping() -> None:
         ),
         ANIMAL,
         POSTGRES,
-        "Animal",
+        target(ANIMAL, "Animal"),
     )
     assert compiled.statement.sql.endswith("where t0.kind = ? or (t0.indoor = ? and t0.kind = ?)")
     assert compiled.statement.binds == ("dog", True, "cat")
@@ -368,22 +386,35 @@ def test_tph_abstract_instance_form_projects_the_value_object_document_last() ->
     # No corpus inheritance family combines with a value object; a synthetic family
     # proves the slot ordering: tag column (m-sql), THEN the value-object
     # document (m-sql *Read projection*: it rides last among ALL columns).
-    from parallax.core.descriptor import Attribute, Entity, Inheritance, Metamodel, ValueObject
+    from parallax.core.descriptor import (
+        Attribute,
+        Entity,
+        Inheritance,
+        Metamodel,
+        ValueObject,
+        ValueObjectAttribute,
+    )
 
     root = Entity(
         name="Root",
         table="root_tbl",
         inheritance=Inheritance(role="root", strategy="table-per-hierarchy", tag_column="kind"),
         attributes=(Attribute(name="id", type="int64", column="id", primary_key=True),),
-        value_objects=(ValueObject(name="meta", column="meta"),),
+        value_objects=(
+            ValueObject(
+                name="meta",
+                column="meta",
+                attributes=(ValueObjectAttribute(name="note", type="string"),),
+            ),
+        ),
     )
     leaf = Entity(
         name="Leaf",
         inheritance=Inheritance(role="concrete-subtype", parent="Root", tag_value="leaf"),
         attributes=(Attribute(name="x", type="int32", column="x"),),
     )
-    meta = Metamodel(entities=(root, leaf))
-    compiled = compile_read(oa.All(), meta, POSTGRES, "Root", result_form="instance")
+    meta = formed(Metamodel(entities=(root, leaf)))
+    compiled = compile_read(oa.All(), meta, POSTGRES, target(meta, "Root"), result_form="instance")
     assert compiled.statement.sql == "select t0.id, t0.x, t0.kind, t0.meta from root_tbl t0"
 
 
@@ -398,8 +429,8 @@ def test_a_concrete_target_read_transforms_rows_by_identity() -> None:
     # materialize — but the row still comes back as a FRESH dict, so the caller
     # need not care which form it got.
     row = {"id": 1, "amount": "100.00", "card_network": "Visa"}
-    for meta, target in ((PAYMENT, "CardPayment"), (DOCUMENT, "Invoice")):
-        compiled = compile_read(oa.All(), meta, POSTGRES, target)
+    for concrete_model, name in ((PAYMENT, "CardPayment"), (DOCUMENT, "Invoice")):
+        compiled = compile_read(oa.All(), concrete_model, POSTGRES, target(concrete_model, name))
         transformed = compiled.transform_row(row)
         assert transformed == row
         assert transformed is not row
@@ -408,7 +439,7 @@ def test_a_concrete_target_read_transforms_rows_by_identity() -> None:
 def test_tph_abstract_read_transforms_rows_through_the_tag_map() -> None:
     # The raw tag column is POPPED (it is framework-owned and never reaches the
     # caller) and its value mapped to the declaring concrete's name.
-    compiled = compile_read(oa.All(), PAYMENT, POSTGRES, "Payment")
+    compiled = compile_read(oa.All(), PAYMENT, POSTGRES, target(PAYMENT, "Payment"))
     assert compiled.transform_row({"id": 1, "amount": "100.00", "kind": "card"}) == {
         "id": 1,
         "amount": "100.00",
@@ -423,14 +454,17 @@ def test_tph_tag_transform_holds_regardless_of_narrow_cardinality() -> None:
     # and still transformed. The map is the WHOLE family's, not the narrow's
     # resolved position — `WildBoar` is outside the narrow and still maps.
     compiled = compile_read(
-        oa.Narrow(entity="Animal", to=("Dog",), operand=oa.All()), ANIMAL, POSTGRES, "Animal"
+        oa.Narrow(entity="Animal", to=("Dog",), operand=oa.All()),
+        ANIMAL,
+        POSTGRES,
+        target(ANIMAL, "Animal"),
     )
     assert compiled.transform_row({"id": 1, "kind": "dog"})["familyVariant"] == "Dog"
     assert compiled.transform_row({"id": 2, "kind": "boar"})["familyVariant"] == "WildBoar"
 
 
 def test_tpcs_union_read_renames_the_projected_literal_column() -> None:
-    compiled = compile_read(oa.All(), DOCUMENT, POSTGRES, "Document")
+    compiled = compile_read(oa.All(), DOCUMENT, POSTGRES, target(DOCUMENT, "Document"))
     transformed = compiled.transform_row({"id": 1, "title": "A", "family_variant": "Invoice"})
     assert transformed == {"id": 1, "title": "A", "familyVariant": "Invoice"}
     assert "family_variant" not in transformed
@@ -444,7 +478,7 @@ def test_tpcs_narrow_to_a_single_concrete_carries_no_family_variant() -> None:
         oa.Narrow(entity="Document", to=("Invoice",), operand=oa.All()),
         DOCUMENT,
         POSTGRES,
-        "Document",
+        target(DOCUMENT, "Document"),
     )
     assert "family_variant" not in compiled.statement.sql
     assert compiled.transform_row({"id": 1, "title": "A"}) == {"id": 1, "title": "A"}
@@ -453,7 +487,7 @@ def test_tpcs_narrow_to_a_single_concrete_carries_no_family_variant() -> None:
 def test_transform_row_accepts_any_mapping_and_always_returns_a_fresh_dict() -> None:
     from types import MappingProxyType
 
-    compiled = compile_read(oa.All(), PAYMENT, POSTGRES, "Payment")
+    compiled = compile_read(oa.All(), PAYMENT, POSTGRES, target(PAYMENT, "Payment"))
     source = MappingProxyType({"id": 1, "kind": "card"})
     transformed = compiled.transform_row(source)
     assert isinstance(transformed, dict)
@@ -472,12 +506,16 @@ def test_transform_row_accepts_any_mapping_and_always_returns_a_fresh_dict() -> 
 # materialization, which knows the row.                                       #
 # --------------------------------------------------------------------------- #
 def test_narrow_to_is_none_for_a_bare_read() -> None:
-    assert compile_read(oa.All(), DOCUMENT, POSTGRES, "Document").narrow_to is None
+    assert (
+        compile_read(oa.All(), DOCUMENT, POSTGRES, target(DOCUMENT, "Document")).narrow_to is None
+    )
 
 
 def test_narrow_to_carries_a_top_level_narrows_authored_subtypes() -> None:
     narrowed = oa.Narrow(entity="Document", to=("Invoice",), operand=oa.All())
-    assert compile_read(narrowed, DOCUMENT, POSTGRES, "Document").narrow_to == ("Invoice",)
+    assert compile_read(narrowed, DOCUMENT, POSTGRES, target(DOCUMENT, "Document")).narrow_to == (
+        "Invoice",
+    )
 
 
 def test_narrow_to_survives_the_directive_peel() -> None:
@@ -488,7 +526,7 @@ def test_narrow_to_survives_the_directive_peel() -> None:
     # witness this shape at all.
     narrowed = oa.Narrow(entity="Animal", to=("Cat", "Dog"), operand=oa.All())
     op = oa.Limit(operand=oa.OrderBy(operand=narrowed, keys=()), count=1)
-    assert compile_read(op, ANIMAL, POSTGRES, "Animal").narrow_to == ("Cat", "Dog")
+    assert compile_read(op, ANIMAL, POSTGRES, target(ANIMAL, "Animal")).narrow_to == ("Cat", "Dog")
 
 
 def test_a_mid_predicate_narrow_is_not_the_reads_own_narrow() -> None:
@@ -508,4 +546,86 @@ def test_a_mid_predicate_narrow_is_not_the_reads_own_narrow() -> None:
             ),
         )
     )
-    assert compile_read(op, ANIMAL, POSTGRES, "Animal").narrow_to is None
+    assert compile_read(op, ANIMAL, POSTGRES, target(ANIMAL, "Animal")).narrow_to is None
+
+
+# --------------------------------------------------------------------------- #
+# A concrete position that itself has concrete descendants. Every branch table  #
+# is that branch's OWN concrete's container, never the queried position's — the #
+# two are different facts, and for this shape they disagree.                    #
+# --------------------------------------------------------------------------- #
+def test_a_concrete_position_with_a_concrete_descendant_unions_both_own_tables() -> None:
+    from parallax.core.descriptor import Attribute, Entity, Inheritance, Metamodel
+
+    root = Entity(
+        name="Doc",
+        inheritance=Inheritance(role="root", strategy="table-per-concrete-subtype"),
+        attributes=(Attribute(name="id", type="int64", column="id", primary_key=True),),
+    )
+    parent = Entity(
+        name="Parent",
+        table="parent_tbl",
+        inheritance=Inheritance(role="concrete-subtype", parent="Doc"),
+        attributes=(Attribute(name="note", type="int32", column="note"),),
+    )
+    child = Entity(
+        name="Child",
+        table="child_tbl",
+        inheritance=Inheritance(role="concrete-subtype", parent="Parent"),
+        attributes=(Attribute(name="extra", type="int32", column="extra"),),
+    )
+    meta = formed(Metamodel(entities=(root, parent, child)))
+
+    # Reading Parent spans {Child, Parent}: two branches over two OWN tables,
+    # each NULL-casting the columns it does not declare. Parent is in its own
+    # effective set, so its columns contribute in the member block (canonical
+    # order Child, Parent) rather than in the inherited prefix, which carries
+    # only the abstract root's own.
+    compiled = compile_read(oa.All(), meta, POSTGRES, target(meta, "Parent"))
+    assert compiled.statement.sql == (
+        "select t0.id, t0.extra, t0.note, 'Child' family_variant from child_tbl t0 "
+        "union all "
+        "select t0.id, cast(null as integer) extra, t0.note, 'Parent' family_variant "
+        "from parent_tbl t0"
+    )
+    # Reading the leaf resolves to one concrete and reads that concrete's table.
+    leaf = compile_read(oa.All(), meta, POSTGRES, target(meta, "Child"))
+    assert leaf.statement.sql == "select t0.id, t0.note, t0.extra from child_tbl t0"
+
+
+def test_family_attribute_resolution_spans_the_roots_projection_superset() -> None:
+    # A predicate resolves an attribute reference against the whole family, which
+    # is the family root's projection superset: the ancestry prefix plus every
+    # concrete's own block. An abstract position with no concrete descendant
+    # contributes to no such block, so its own attributes are unreachable — a
+    # position no valid read can name, since narrowing to it resolves to the
+    # empty set.
+    from parallax.core.descriptor import Attribute, Entity, Inheritance, Metamodel
+
+    root = Entity(
+        name="Root",
+        table="root_tbl",
+        inheritance=Inheritance(role="root", strategy="table-per-hierarchy", tag_column="kind"),
+        attributes=(Attribute(name="id", type="int64", column="id", primary_key=True),),
+    )
+    leaf = Entity(
+        name="Leaf",
+        inheritance=Inheritance(role="concrete-subtype", parent="Root", tag_value="leaf"),
+        attributes=(Attribute(name="x", type="int32", column="x"),),
+    )
+    barren = Entity(
+        name="Barren",
+        inheritance=Inheritance(role="abstract-subtype", parent="Root"),
+        attributes=(Attribute(name="y", type="int32", column="y"),),
+    )
+    meta = formed(Metamodel(entities=(root, leaf, barren)))
+
+    # The root's own and the concrete's own both resolve from the concrete target.
+    compiled = compile_read(
+        oa.Comparison(op="eq", attr="Root.id", value=1), meta, POSTGRES, target(meta, "Leaf")
+    )
+    assert compiled.statement.sql.endswith("where t0.id = ? and t0.kind = ?")
+    with pytest.raises(SqlGenError, match="names no attribute"):
+        compile_read(
+            oa.Comparison(op="eq", attr="Barren.y", value=1), meta, POSTGRES, target(meta, "Leaf")
+        )

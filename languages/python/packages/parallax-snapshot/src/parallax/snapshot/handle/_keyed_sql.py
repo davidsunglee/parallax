@@ -31,6 +31,7 @@ from parallax.core.descriptor import Attribute, Entity, Metamodel, column_order
 from parallax.core.dialect import Dialect
 from parallax.core.sql_gen import Statement, compile_write_predicate
 from parallax.core.unit_work import Concurrency, KeyedWrite, Observation, PredicateWrite
+from parallax.snapshot.handle._accepted import accepted_target
 from parallax.snapshot.handle._family import assignment_member, members, version_attribute
 from parallax.snapshot.handle._write_types import WriteLoweringError
 
@@ -498,8 +499,9 @@ def lower_predicate_write(
             "target has no readless template — it must materialize to keyed writes before "
             "reaching lower_write (m-opt-lock; ADR 0014); this is a caller wiring defect"
         )
+    model, target_metadata = accepted_target(meta, instruction.target.entity)
     predicate = compile_write_predicate(
-        instruction.target.predicate, meta, dialect, instruction.target.entity
+        instruction.target.predicate, model, dialect, target_metadata
     )
     where_sql, predicate_binds = predicate.sql, predicate.binds
     if instruction.mutation == "delete":
