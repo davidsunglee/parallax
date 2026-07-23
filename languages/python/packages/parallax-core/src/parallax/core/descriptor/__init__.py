@@ -44,7 +44,14 @@ from parallax.core.descriptor.records import (
     effective_as_of_axes,
     effective_temporal,
 )
-from parallax.core.descriptor.serde import canonicalize, deserialize, serialize
+from parallax.core.descriptor.serde import (
+    canonicalize,
+    deserialize,
+    parse_document,
+    serialize,
+)
+from parallax.core.descriptor.type_spelling import parse_type_spelling
+from parallax.core.descriptor.unresolved import unresolved_metamodel
 from parallax.core.descriptor.validate import (
     validate_entity,
     validate_metamodel,
@@ -96,9 +103,12 @@ __all__ = [
     "find_value_object",
     "find_vo_member",
     "infer_neutral_type",
+    "parse_document",
+    "parse_type_spelling",
     "resolve_vo_leaf",
     "serialize",
     "snake_to_camel",
+    "unresolved_metamodel",
     "validate_entity",
     "validate_metamodel",
     "validate_optimistic_locking_root_owned",
