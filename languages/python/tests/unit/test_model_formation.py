@@ -76,10 +76,35 @@ def _is_text(value: object) -> TypeGuard[str]:
     return isinstance(value, str)
 
 
+def _accepts_everything(value: object) -> TypeGuard[str]:
+    """An acceptance check that abdicates: no value it is asked about is refused."""
+    return True
+
+
+def _rejects_everything(value: object) -> TypeGuard[str]:
+    """An acceptance check that refuses every value, its owner's own facet included."""
+    return False
+
+
+@dataclass(slots=True)
+class _CustomMutableFacet:
+    """A mutable facet outside the builtin container types the runner refuses outright."""
+
+    entries: list[str]
+
+
 _INHERITANCE_FACET: Final[FacetKey[str]] = FacetKey(_INHERITANCE, _is_text)
 _RELATIONSHIP_FACET: Final[FacetKey[str]] = FacetKey(_RELATIONSHIP, _is_text)
 _TEMPORAL_FACET: Final[FacetKey[str]] = FacetKey(_TEMPORAL, _is_text)
 _OPT_LOCK_FACET: Final[FacetKey[str]] = FacetKey(_OPT_LOCK, _is_text)
+
+_PERMISSIVE_INHERITANCE_FACET: Final[FacetKey[str]] = FacetKey(_INHERITANCE, _accepts_everything)
+"""A key equal to ``_INHERITANCE_FACET`` whose acceptance check refuses nothing.
+
+Key identity is the owning module alone, so this compares equal to the key the
+manifest declares for ``m-inheritance`` and passes every drift check that
+compares the two. It exists so a compiler can offer the runner a weaker
+acceptance check than the one that module really published."""
 
 _CYCLE: Final[IssueCode] = "inheritance-cycle"
 _SHADOWING: Final[IssueCode] = "inheritance-member-shadowing"
@@ -220,6 +245,51 @@ class _WrongTypeFacetCompiler:
         self, metadata: CompiledMetadata, required_facets: Mapping[FacetKey[Any], object]
     ) -> str:
         return cast(str, 42)
+
+
+@dataclass(frozen=True, slots=True)
+class _SubstitutedKeyCompiler:
+    """A Model Compiler offering an equal key of its own alongside any facet value.
+
+    Composed with a permissive key and a value the owning module's real key
+    rejects, it is the whole substitution attempt: whether the value is
+    installed depends only on which of the two equal keys the runner asks.
+    """
+
+    owner: ModuleIdentity
+    facet_key: FacetKey[str]
+    returns: object
+    requires: frozenset[FacetKey[Any]] = frozenset()
+
+    def compile(
+        self, metadata: CompiledMetadata, required_facets: Mapping[FacetKey[Any], object]
+    ) -> str:
+        return cast(str, self.returns)
+
+
+def _key_log() -> list[FacetKey[Any]]:
+    """A fresh per-compiler record of the prerequisite keys it was handed."""
+    return []
+
+
+@dataclass(frozen=True, slots=True)
+class _KeyInspectingCompiler:
+    """A Model Compiler keeping the prerequisite key objects it was handed.
+
+    A compiler can read the acceptance check of every key in its required-facet
+    mapping, so which key objects those are is observable contract surface.
+    """
+
+    owner: ModuleIdentity
+    facet_key: FacetKey[str]
+    requires: frozenset[FacetKey[Any]] = frozenset()
+    inspected: list[FacetKey[Any]] = field(default_factory=_key_log)
+
+    def compile(
+        self, metadata: CompiledMetadata, required_facets: Mapping[FacetKey[Any], object]
+    ) -> str:
+        self.inspected.extend(required_facets)
+        return f"facet of {self.owner}"
 
 
 @dataclass(frozen=True, slots=True)
@@ -901,6 +971,69 @@ def test_a_model_compiler_returning_another_type_than_its_key_promises_fails() -
     profile = _Profile(model_compilers=(_WrongTypeFacetCompiler(_INHERITANCE, _INHERITANCE_FACET),))
     failure = _contract_failure(manifest, profile, FORMATION_COMPILER_FAILED, owner=_INHERITANCE)
     assert failure.cause is None
+
+
+@pytest.mark.parametrize(
+    "returns",
+    [42, _CustomMutableFacet(["a facet nothing may rely on"])],
+    ids=["wrong-type", "custom-mutable"],
+)
+def test_a_model_compiler_cannot_substitute_its_own_acceptance_check(returns: object) -> None:
+    """A facet key is equal to any key naming its owner, however that key answers.
+
+    A compiler therefore passes every drift check while supplying a key whose
+    acceptance check refuses nothing, and only the manifest's key carries the
+    check its owner really published. The refused values are the two the weaker
+    check hides: one of another type entirely, and one the caller could still
+    mutate but that is none of the builtin containers refused outright.
+    """
+    manifest = FormationManifest((_resolver_row(), _compiler_row(_INHERITANCE, _INHERITANCE_FACET)))
+    profile = _Profile(
+        model_compilers=(
+            _SubstitutedKeyCompiler(_INHERITANCE, _PERMISSIVE_INHERITANCE_FACET, returns),
+        )
+    )
+    failure = _contract_failure(manifest, profile, FORMATION_COMPILER_FAILED, owner=_INHERITANCE)
+    assert failure.cause is None
+
+
+def test_a_model_compiler_cannot_refuse_the_facet_its_own_module_accepts() -> None:
+    """The manifest's acceptance check is the whole check, not the stricter of two.
+
+    Supplying a key that refuses everything is a compiler passing a verdict on
+    its own result; what it returned is the facet the module's declared key
+    accepts, so formation installs it and the model serves it.
+    """
+    manifest = FormationManifest((_resolver_row(), _compiler_row(_INHERITANCE, _INHERITANCE_FACET)))
+    refusing: FacetKey[str] = FacetKey(_INHERITANCE, _rejects_everything)
+    profile = _Profile(model_compilers=(_Compiler(_INHERITANCE, refusing),))
+    model = form(source(*_valid_model()), manifest, profile)
+    assert model.facet(_INHERITANCE_FACET) == f"facet of {_INHERITANCE}"
+
+
+def test_a_model_compiler_is_handed_the_manifests_key_for_every_facet_it_requires() -> None:
+    """Prerequisite keys reach a compiler as the manifest declares them.
+
+    A compiler names what it requires with keys of its own, and equality cannot
+    tell those apart from the ones the required modules published. Handing back
+    the compiler's own keys would let one module present another module's key
+    with an acceptance check that module never wrote.
+    """
+    manifest = FormationManifest(
+        (
+            _resolver_row(),
+            _compiler_row(_INHERITANCE, _INHERITANCE_FACET),
+            _compiler_row(
+                _TEMPORAL, _TEMPORAL_FACET, required_facets=frozenset({_INHERITANCE_FACET})
+            ),
+        )
+    )
+    inspecting = _KeyInspectingCompiler(
+        _TEMPORAL, _TEMPORAL_FACET, frozenset({_PERMISSIVE_INHERITANCE_FACET})
+    )
+    profile = _Profile(model_compilers=(_Compiler(_INHERITANCE, _INHERITANCE_FACET), inspecting))
+    form(source(*_valid_model()), manifest, profile)
+    assert [handed.accepts for handed in inspecting.inspected] == [_is_text]
 
 
 def test_a_model_compiler_cannot_mutate_the_facets_it_was_handed() -> None:

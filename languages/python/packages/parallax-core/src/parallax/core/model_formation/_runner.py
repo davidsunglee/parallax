@@ -89,7 +89,7 @@ def form(
     if issues:
         raise MetamodelValidationError(issues)
     metadata = _compile_metadata(profile, candidate)
-    return accept_metamodel(metadata, _compile_facets(profile, metadata))
+    return accept_metamodel(metadata, _compile_facets(manifest, profile, metadata))
 
 
 def _drift(message: str, owner: ModuleIdentity | None = None) -> FormationContractError:
@@ -232,14 +232,28 @@ def _check_single_code_ownership(entries: Sequence[FormationManifestEntry]) -> N
                 )
 
 
-def _check_model_compiler_presence(
-    entries: Sequence[FormationManifestEntry], profile: FormationProfile
-) -> Mapping[ModuleIdentity, ModelCompiler[Any]]:
-    required = {
+def _declared_facet_keys(
+    entries: Sequence[FormationManifestEntry],
+) -> Mapping[ModuleIdentity, FacetKey[Any]]:
+    """Each compiling owner's facet key exactly as the manifest declares it.
+
+    This is the only key the runner ever validates or installs a facet under. A
+    key's identity is its owner alone, so a compiler-supplied key that satisfies
+    every drift check may still carry an ``accepts`` its owner never wrote;
+    resolving the key by owner here leaves the compiler no say in the check its
+    own result is measured against.
+    """
+    return {
         entry.owner: entry.compiler.facet_key
         for entry in entries
         if isinstance(entry.compiler, ModelCompilerRequirement)
     }
+
+
+def _check_model_compiler_presence(
+    entries: Sequence[FormationManifestEntry], profile: FormationProfile
+) -> Mapping[ModuleIdentity, ModelCompiler[Any]]:
+    required = _declared_facet_keys(entries)
     supplied: dict[ModuleIdentity, ModelCompiler[Any]] = {}
     for compiler in profile.model_compilers:
         if compiler.owner not in required:
@@ -511,7 +525,9 @@ def _compile_metadata(profile: FormationProfile, candidate: CandidateMetamodel) 
     return metadata
 
 
-def _compilation_order(profile: FormationProfile) -> list[ModelCompiler[Any]]:
+def _compilation_order(
+    declared: Mapping[ModuleIdentity, FacetKey[Any]], profile: FormationProfile
+) -> list[ModelCompiler[Any]]:
     """Model Compilers in topological facet order, ascending owner breaking ties.
 
     Drift checking proved every requirement is compiled and the declared graph is
@@ -541,30 +557,36 @@ def _compilation_order(profile: FormationProfile) -> list[ModelCompiler[Any]]:
                     owner=min(compiler.owner for compiler in remaining),
                 )
             eligible = remaining.pop(position)
-            installed.add(eligible.facet_key)
+            installed.add(declared[eligible.owner])
             order.append(eligible)
     return order
 
 
 def _compile_facets(
-    profile: FormationProfile, metadata: CompiledMetadata
+    manifest: FormationManifest, profile: FormationProfile, metadata: CompiledMetadata
 ) -> Mapping[FacetKey[Any], object]:
     """Compile the complete facet set, publishing none of it until all succeed.
 
-    Each compiler receives a read-only mapping of exactly the facets it declared,
-    and installs its result only under its own key — after that key's own owner
-    accepted the value as its facet.
+    Every key here is the manifest's, resolved by owner: a compiler names its own
+    facet and its prerequisites with keys that compare equal to the declared ones
+    however their acceptance checks answer, so trusting one would let a compiler
+    decide whether its own result is a facet, or hand a peer another module's key
+    carrying a check that module never wrote. Each compiler receives a read-only
+    mapping of exactly the facets it declared, keyed the way the manifest
+    declares them, and its result is installed only after the owning module's own
+    acceptance check accepted it.
     """
+    declared = _declared_facet_keys(manifest.entries)
     facets: dict[FacetKey[Any], object] = {}
-    for compiler in _compilation_order(profile):
+    for compiler in _compilation_order(declared, profile):
         with _contract_reads(
             FORMATION_COMPILER_FAILED, "reading a Model Compiler's contract raised"
         ):
             owner = compiler.owner
-            key = compiler.facet_key
+            key = declared[owner]
             required = MappingProxyType(
                 {
-                    needed: facets[needed]
+                    declared[needed.owner]: facets[needed]
                     for needed in sorted(compiler.requires, key=lambda facet: facet.owner)
                 }
             )
