@@ -908,7 +908,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "parallax-core", editable = "packages/parallax-core" },
-    { name = "psycopg", extras = ["binary"], specifier = ">=3.2" },
+    { name = "psycopg", extras = ["binary"], specifier = ">=3.3.4" },
 ]
 
 [[package]]
