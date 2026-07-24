@@ -72,6 +72,15 @@ from parallax.core.inheritance._rules import (
     TPH_ROOT_TABLE_REQUIRED,
     InheritanceRuleSet,
 )
+from parallax.core.metamodel import (
+    AbstractRoot,
+    AbstractSubtype,
+    ConcreteSubtype,
+    EntityIdentity,
+    EntityMetadata,
+    PrimaryKey,
+)
+from parallax.core.metamodel import Metamodel as AcceptedMetamodel
 
 __all__ = [
     "CONCRETE_WITHOUT_ABSTRACT_ROOT",
@@ -651,7 +660,9 @@ def _reject_tph_tag_values(root: Entity, participants: tuple[Entity, ...]) -> No
 _FORBIDDEN_METADATA_KEYS: frozenset[str] = frozenset({"tag", "tagValue", "familyVariant"})
 
 
-def validate_subtype_write(meta: Metamodel, entity: Entity, row: Mapping[str, object]) -> None:
+def validate_subtype_write(
+    model: AcceptedMetamodel, entity: EntityMetadata, row: Mapping[str, object]
+) -> None:
     """Validate a concrete-subtype write payload's SHAPE, raising :class:`InheritanceError`.
 
     A no-op for a non-participant ``entity`` (every entity outside an inheritance
@@ -670,49 +681,73 @@ def validate_subtype_write(meta: Metamodel, entity: Entity, row: Mapping[str, ob
     """
     if entity.inheritance is None:
         return
-    root = family_root(meta, entity)
-    pk_names = frozenset(attribute.name for attribute in root.attributes if attribute.primary_key)
+    facet = view(model)
+    position = _entity_view(facet, entity.identity)
+    root = _entity_view(facet, position.root)
+    pk_names = frozenset(
+        attribute.identity.name
+        for attribute in root.applicable_attributes
+        if isinstance(attribute.primary_key, PrimaryKey)
+    )
+    name = entity.identity.name
     if not pk_names & row.keys():
         raise InheritanceError(
             "subtype-write-set-based-unsupported",
-            f"{entity.name}: write carries none of the family's primary-key attribute(s) "
+            f"{name}: write carries none of the family's primary-key attribute(s) "
             f"{sorted(pk_names)} -- a keyless payload denotes an unsupported set-based "
             "inheritance write",
-            entity=entity.name,
+            entity=name,
         )
     forbidden = _FORBIDDEN_METADATA_KEYS
-    if root.inheritance is not None and root.inheritance.tag_column is not None:
-        forbidden = forbidden | {root.inheritance.tag_column}
+    if position.tag_column is not None:
+        forbidden = forbidden | {position.tag_column}
     carried_metadata = sorted(forbidden & row.keys())
     if carried_metadata:
         raise InheritanceError(
             "subtype-write-metadata-field",
-            f"{entity.name}: write carries framework-owned metadata field(s) "
+            f"{name}: write carries framework-owned metadata field(s) "
             f"{carried_metadata} -- the tag / tagValue / familyVariant are derived, never "
             "authored",
-            entity=entity.name,
+            entity=name,
         )
-    effective = effective_concrete_subtypes(meta, entity.name)
-    accepted = _concrete_accepted_field_names(meta, effective)
+    effective = tuple(concrete.name for concrete in position.concrete_subtypes)
+    accepted = _concrete_accepted_field_names(facet, position.concrete_subtypes)
     candidate_fields = frozenset(row)
-    if not any(candidate_fields <= names for names in accepted.values()):
+    if not any(candidate_fields <= names for names in accepted):
         raise InheritanceError(
             "subtype-write-sibling-attribute",
-            f"{entity.name}: no single concrete subtype in the effective set {sorted(effective)} "
+            f"{name}: no single concrete subtype in the effective set {sorted(effective)} "
             f"accepts every field {sorted(candidate_fields)} -- the accepted fields are exactly "
             "the target's own ancestry chain",
-            entity=entity.name,
+            entity=name,
         )
-    if entity.inheritance.role != "concrete-subtype":
+    if not isinstance(entity.inheritance, ConcreteSubtype):
         raise InheritanceError(
             "abstract-write-target",
-            f"{entity.name}: a create/update/delete/terminate handle MUST name a concrete "
-            f"subtype, not the abstract {entity.inheritance.role}",
-            entity=entity.name,
+            f"{name}: a create/update/delete/terminate handle MUST name a concrete "
+            f"subtype, not the abstract {_ABSTRACT_ROLES[type(entity.inheritance)]}",
+            entity=name,
         )
 
 
-def reject_predicate_write(entity: Entity) -> None:
+# The role spellings an abstract position reports. The variant is the role, so
+# the algebra carries no role field of its own; a concrete position never
+# reaches this table.
+_ABSTRACT_ROLES: Mapping[type, str] = {
+    AbstractRoot: "root",
+    AbstractSubtype: "abstract-subtype",
+}
+
+
+def _entity_view(facet: InheritanceFacet, identity: EntityIdentity) -> InheritanceEntityView:
+    """``identity``'s family-effective view; the facet covers every accepted Entity."""
+    position = facet.entity(identity)
+    if position is None:  # pragma: no cover - the facet covers every accepted Entity
+        raise ValueError(f"{identity.canonical}: the model declares no such entity")
+    return position
+
+
+def reject_predicate_write(entity: EntityMetadata) -> None:
     """Reject a predicate-selected (set-based) write on ANY inheritance-family
     ``entity`` — root, abstract-subtype, or concrete-subtype alike — with the
     SAME ``subtype-write-set-based-unsupported`` classification
@@ -734,13 +769,14 @@ def reject_predicate_write(entity: Entity) -> None:
     """
     if entity.inheritance is None:
         return
+    name = entity.identity.name
     raise InheritanceError(
         "subtype-write-set-based-unsupported",
-        f"{entity.name}: a predicate-selected (set-based) write on an inheritance-family "
+        f"{name}: a predicate-selected (set-based) write on an inheritance-family "
         "entity is unsupported (subtype-write-set-based-unsupported) — per-object writes "
         "are keyed (m-inheritance 'Per-object writes are keyed; set-based inheritance "
         "writes are out of scope')",
-        entity=entity.name,
+        entity=name,
     )
 
 
@@ -907,19 +943,18 @@ def _joined(base: str, path: str) -> str:
 
 
 def _concrete_accepted_field_names(
-    meta: Metamodel, effective: Sequence[str]
-) -> dict[str, frozenset[str]]:
-    """Each concrete subtype in ``effective`` mapped to its OWN accepted field set: the
-    union of every abstract ancestor's declared attributes/value-objects (ancestry
-    order irrelevant here -- only membership matters) plus the concrete's own."""
-    result: dict[str, frozenset[str]] = {}
-    for name in effective:
-        concrete = meta.entity(name)
-        names: set[str] = set()
-        for ancestor in ancestor_chain(meta, [name]):
-            names |= {attribute.name for attribute in ancestor.attributes}
-            names |= {vo.name for vo in ancestor.value_objects}
-        names |= {attribute.name for attribute in concrete.attributes}
-        names |= {vo.name for vo in concrete.value_objects}
-        result[name] = frozenset(names)
-    return result
+    facet: InheritanceFacet, effective: Sequence[EntityIdentity]
+) -> tuple[frozenset[str], ...]:
+    """Each concrete subtype in ``effective`` mapped to its OWN accepted field set.
+
+    A concrete position's applicable members are exactly its own ancestry chain's
+    declarations, which is the set a write targeting it may name; a sibling
+    branch's member is absent from every one of them.
+    """
+    return tuple(
+        frozenset(
+            {member.identity.name for member in position.applicable_attributes}
+            | {member.identity.path[-1] for member in position.applicable_value_objects}
+        )
+        for position in (_entity_view(facet, concrete) for concrete in effective)
+    )

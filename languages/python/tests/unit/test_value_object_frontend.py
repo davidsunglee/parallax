@@ -26,6 +26,7 @@ from parallax.core.entity import descriptor_document
 from parallax.core.entity.errors import EntityDefinitionError
 from parallax.core.entity.expressions import Predicate
 from parallax.core.entity.value_object import ValueObject, VoField, structure_of, wire_names_of
+from parallax.core.metamodel import EntityIdentity
 from parallax.core.op_algebra import NestedComparison, NestedExists, serialize
 
 pytestmark = pytest.mark.unit
@@ -321,9 +322,11 @@ def test_to_document_omission_of_a_required_member_still_classifies_to_the_pinne
     )
     expected_rule = case_document(case_format.load_case(case_path))["then"]["rejectedRule"]
 
-    meta = models.load_models()["contact"]
+    model = models.accepted_model(models.load_models()["contact"])
+    metadata = model.entity(EntityIdentity("parallax.compatibility", "Contact"))
+    assert metadata is not None
     with pytest.raises(WriteRejectedError) as exc_info:
-        validate_write(meta.entity("Contact"), row, meta, mutation="insert")
+        validate_write(metadata, row, model, mutation="insert")
     assert exc_info.value.rule == expected_rule
 
 

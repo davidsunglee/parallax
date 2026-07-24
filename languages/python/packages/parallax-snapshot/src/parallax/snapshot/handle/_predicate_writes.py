@@ -101,7 +101,7 @@ def buffer_predicate(
             "as_of_range / narrow / include are all rejected on a write target (python.md §5)"
         )
     entity = meta.entity(statement.target)
-    inheritance.reject_predicate_write(entity)
+    inheritance.reject_predicate_write(accepted_target(meta, statement.target)[1])
     declaring = inheritance.declaring_entity(meta, entity)
     valid_from_literal = validate_valid_from(declaring, mutation, valid_from)
     until_literal: str | None = None
@@ -156,7 +156,7 @@ def buffer_predicate_instruction(
     cross-module helper.
     """
     entity = meta.entity(instruction.target.entity)
-    inheritance.reject_predicate_write(entity)
+    inheritance.reject_predicate_write(accepted_target(meta, instruction.target.entity)[1])
     declaring = inheritance.declaring_entity(meta, entity)
     version_attr = version_attribute(declaring)
     if not declaring.is_temporal and version_attr is None:

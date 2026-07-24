@@ -36,6 +36,7 @@ from parallax.core.metamodel import (
     ConcreteSubtype,
     EntityIdentity,
     EntityLocation,
+    EntityMetadata,
     ExactEntityReference,
     IssueCode,
     MetamodelIssue,
@@ -80,6 +81,15 @@ def _descriptor_rejection_cases() -> list[tuple[str, dict[str, Any], str]]:
 
 
 _REJECTIONS = _descriptor_rejection_cases()
+
+
+def _metadata(stem: str, name: str) -> EntityMetadata:
+    """One corpus Entity's accepted Metadata, formed from its own model file."""
+    model = corpus_models.accepted_model(_MODELS[stem])
+    metadata = model.entity(EntityIdentity("parallax.compatibility", name))
+    assert metadata is not None
+    return metadata
+
 
 _INDEPENDENT_FAMILIES: Final[dict[str, Any]] = {
     "entities": [
@@ -489,25 +499,20 @@ def test_versioned_root_and_root_owned_version_still_validates_cleanly() -> None
 # any SQL, the SAME classification a keyless keyed write raises.              #
 # --------------------------------------------------------------------------- #
 def test_reject_predicate_write_raises_for_a_concrete_subtype() -> None:
-    animal = _MODELS["animal"]
-    dog = animal.entity("Dog")
     with pytest.raises(inheritance.InheritanceError) as caught:
-        inheritance.reject_predicate_write(dog)
+        inheritance.reject_predicate_write(_metadata("animal", "Dog"))
     assert caught.value.rule == "subtype-write-set-based-unsupported"
     assert caught.value.entity == "Dog"
 
 
 def test_reject_predicate_write_raises_for_the_abstract_root() -> None:
-    animal = _MODELS["animal"]
-    root = animal.entity("Animal")
     with pytest.raises(inheritance.InheritanceError) as caught:
-        inheritance.reject_predicate_write(root)
+        inheritance.reject_predicate_write(_metadata("animal", "Animal"))
     assert caught.value.rule == "subtype-write-set-based-unsupported"
 
 
 def test_reject_predicate_write_is_a_no_op_for_a_non_participant() -> None:
-    account = _MODELS["account"].entity("Account")
-    inheritance.reject_predicate_write(account)  # no raise
+    inheritance.reject_predicate_write(_metadata("account", "Account"))  # no raise
 
 
 # --------------------------------------------------------------------------- #

@@ -51,6 +51,7 @@ from parallax.core.unit_work import (
 # by the private MODULE names and by the package's frozen `__all__`, not by
 # per-name underscores, which under pyright strict would make every intra-package
 # import a reportPrivateUsage error.
+from parallax.snapshot.handle._accepted import accepted_target
 from parallax.snapshot.handle._predicate_writes import (
     buffer_predicate,
     buffer_predicate_instruction,
@@ -430,7 +431,8 @@ class Transaction:
         if until is not None:
             doc["until"] = until
         instruction = instructions.deserialize(doc)
-        validate_write(self._meta.entity(entity), row, self._meta, mutation=mutation)
+        model, metadata = accepted_target(self._meta, entity)
+        validate_write(metadata, row, model, mutation=mutation)
         instructions.validate_instruction(instruction, self._meta)
         self._uow.buffer(instruction)
 
