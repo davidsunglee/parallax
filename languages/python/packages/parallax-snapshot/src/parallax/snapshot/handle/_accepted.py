@@ -19,23 +19,40 @@ from parallax.core.descriptor.unresolved import unresolved_metamodel
 from parallax.core.metamodel import EntityIdentity, EntityMetadata
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
 
-__all__ = ["accepted_target"]
+__all__ = ["accepted_entity", "accepted_model", "accepted_target"]
 
 
-def accepted_target(meta: Metamodel, target: str) -> tuple[AcceptedMetamodel, EntityMetadata]:
-    """``meta`` as an accepted model, paired with ``target``'s accepted Metadata.
+def accepted_model(meta: Metamodel) -> AcceptedMetamodel:
+    """``meta`` as an accepted model.
+
+    Forming is not free, so a caller that resolves several Entities of one graph
+    forms once and resolves each through :func:`accepted_entity` rather than
+    calling :func:`accepted_target` repeatedly.
+
+    Raises :class:`~parallax.core.model_formation.MetamodelValidationError` when
+    the graph does not form.
+    """
+    return form_metamodel(unresolved_metamodel(meta))
+
+
+def accepted_entity(model: AcceptedMetamodel, meta: Metamodel, target: str) -> EntityMetadata:
+    """``target``'s accepted Metadata in ``model``, which ``meta`` formed into.
 
     ``target`` is resolved through the record graph's own Entity lookup first, so
     a bare and a namespace-qualified spelling reach the same Entity here as they
     do everywhere else a handle names one.
 
-    Raises :class:`~parallax.core.model_formation.MetamodelValidationError` when
-    the graph does not form, and :class:`KeyError` when it declares no such
-    Entity — the same failures the record graph's own lookup already produces.
+    Raises :class:`KeyError` when the graph declares no such Entity — the same
+    failure the record graph's own lookup already produces.
     """
     entity = meta.entity(target)
-    model = form_metamodel(unresolved_metamodel(meta))
     metadata = model.entity(EntityIdentity(entity.namespace, entity.name))
     if metadata is None:  # pragma: no cover - both views come from one record graph
         raise KeyError(entity.canonical_name)
-    return model, metadata
+    return metadata
+
+
+def accepted_target(meta: Metamodel, target: str) -> tuple[AcceptedMetamodel, EntityMetadata]:
+    """``meta`` as an accepted model, paired with ``target``'s accepted Metadata."""
+    model = accepted_model(meta)
+    return model, accepted_entity(model, meta, target)
