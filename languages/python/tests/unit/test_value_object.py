@@ -3,11 +3,25 @@
 from __future__ import annotations
 
 import pytest
+from _metamodel_support import Declaration, identity, key, source
 
 from parallax.conformance import case_format
 from parallax.conformance import models as corpus_models
 from parallax.core import value_object as vo
-from parallax.core.descriptor import NestedValueObject, ValueObject, ValueObjectAttribute
+from parallax.core._formation_profile import form_metamodel
+from parallax.core.base import FLOAT64, STRING, NeutralType
+from parallax.core.metamodel import (
+    Column,
+    EntityIdentity,
+    Metamodel,
+    Multiplicity,
+    Table,
+    ValueObjectAttributeDeclaration,
+    ValueObjectMetadata,
+    ValueObjectOccurrenceDeclaration,
+    ValueObjectShapeDeclaration,
+    ValueObjectShapeKey,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -16,9 +30,14 @@ _MODELS = corpus_models.load_models(
 )
 
 
-def _address() -> ValueObject:
-    customer = _MODELS["customer"].entity("Customer")
-    (address,) = customer.value_objects
+def _model(stem: str) -> Metamodel:
+    return corpus_models.accepted_model(_MODELS[stem])
+
+
+def _address() -> ValueObjectMetadata:
+    customer = _model("customer").entity(EntityIdentity("parallax.compatibility", "Customer"))
+    assert customer is not None
+    (address,) = customer.declared_value_objects
     return address
 
 
@@ -28,21 +47,23 @@ def test_document_column_is_the_top_level_backing_column() -> None:
 
 def test_member_resolves_direct_children() -> None:
     address = _address()
-    assert isinstance(vo.member(address, "city"), ValueObjectAttribute)
-    assert isinstance(vo.member(address, "geo"), NestedValueObject)
+    assert vo.member(address, "city") is address.attribute("city")
+    assert vo.member(address, "geo") is address.value_object("geo")
     assert vo.member(address, "missing") is None
 
 
 @pytest.mark.parametrize(
     ("path", "expected_type"),
     [
-        (["city"], "string"),
-        (["geo", "country"], "string"),
-        (["geo", "point", "lat"], "float64"),
-        (["phones", "number"], "string"),
+        (["city"], STRING),
+        (["geo", "country"], STRING),
+        (["geo", "point", "lat"], FLOAT64),
+        (["phones", "number"], STRING),
     ],
 )
-def test_resolve_and_leaf_type_walk_nested_paths(path: list[str], expected_type: str) -> None:
+def test_resolve_and_leaf_type_walk_nested_paths(
+    path: list[str], expected_type: NeutralType
+) -> None:
     assert vo.leaf_type(_address(), path) == expected_type
 
 
@@ -61,13 +82,33 @@ def test_crosses_many_flags_paths_through_many_members(path: list[str], expected
 
 
 def test_crosses_many_is_true_for_a_many_top_level_value_object() -> None:
-    many = ValueObject(
+    # No corpus model declares a to-many occurrence at the top level, so the
+    # branch is proven over a hand-built model rather than a corpus one.
+    owner = identity("Tagged")
+    occurrence = ValueObjectOccurrenceDeclaration(
         name="tags",
-        column="tags",
-        multiplicity="many",
-        attributes=(ValueObjectAttribute(name="label", type="string"),),
+        storage=Column("tags"),
+        shape=ValueObjectShapeDeclaration(
+            key=ValueObjectShapeKey(),
+            attributes=(ValueObjectAttributeDeclaration("label", type=STRING),),
+        ),
+        multiplicity=Multiplicity.MANY,
     )
-    assert vo.crosses_many(many, ["label"]) is True
+    model = form_metamodel(
+        source(
+            Declaration(
+                identity=owner,
+                container=Table("tagged"),
+                attributes=(key(owner),),
+                value_objects=(occurrence,),
+            )
+        )
+    )
+    entity = model.entity(owner)
+    assert entity is not None
+    tags = entity.value_object("tags")
+    assert tags is not None
+    assert vo.crosses_many(tags, ["label"]) is True
 
 
 @pytest.mark.parametrize(
