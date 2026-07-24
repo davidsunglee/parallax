@@ -47,6 +47,7 @@ from parallax.core.entity.base import (
     resolve_entity_metadata,
 )
 from parallax.core.entity.errors import EntityDefinitionError, RegistryCollisionError
+from parallax.core.model_formation import MetamodelValidationError
 from parallax.snapshot.handle import Database
 
 pytestmark = pytest.mark.unit
@@ -212,6 +213,46 @@ def test_where_and_include_validate_within_the_declaring_registry() -> None:
     # foreign, same-named registry elsewhere).
     with pytest.raises(AttributeError, match="declares no relationship"):
         _ = spoke_x.extra.bogus_hop  # type: ignore[attr-defined]
+
+
+def test_a_build_time_narrow_over_an_unformable_scope_refuses_rather_than_deferring() -> None:
+    # Build-time validation forms the target's reachable closure and validates
+    # the operation against it. When that closure is itself unsatisfiable -- here
+    # a family root declares a relationship to an Entity absent from its own
+    # isolated registry -- the failure MUST surface at statement build, never be
+    # silently deferred so an unvalidated statement is constructed.
+    peer_registry = EntityRegistry(parent=None)
+
+    class Peer(Entity, frozen=True, registry=peer_registry):
+        __parallax__ = EntityConfig(table="unformable_peer", mutability="transactional")
+
+        id: Attr[int] = Field(primary_key=True, pk_generator="none")
+
+    scoped = EntityRegistry(parent=None)
+
+    class UnformableRoot(Entity, frozen=True, registry=scoped):
+        __parallax__ = EntityConfig(
+            table="unformable_root",
+            mutability="transactional",
+            inheritance=FamilyRoot(strategy="table-per-hierarchy", tag="kind"),
+        )
+
+        id: Attr[int] = Field(primary_key=True, pk_generator="none")
+        peer_id: Attr[int] = Field(type="int64")
+        peer: Rel[Peer] = Relationship(
+            cardinality="one-to-one",
+            join=RelationshipJoin(
+                source="peerId", target=RelationshipTarget(entity="Peer", attribute="id")
+            ),
+        )
+
+    class UnformableLeaf(UnformableRoot, frozen=True):
+        __parallax__ = EntityConfig(inheritance=Concrete(tag_value="leaf"))
+
+        detail: Attr[str] = Field(nullable=True, default=None)
+
+    with pytest.raises(MetamodelValidationError):
+        UnformableRoot.where(UnformableRoot.narrow(UnformableLeaf))
 
 
 def test_narrow_resolves_subtype_names_regardless_of_registry() -> None:

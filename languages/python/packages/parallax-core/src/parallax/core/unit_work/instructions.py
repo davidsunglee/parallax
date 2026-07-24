@@ -42,7 +42,7 @@ from types import MappingProxyType
 from typing import Final, Literal, cast
 
 from parallax.core import inheritance, op_algebra
-from parallax.core.metamodel import EntityMetadata
+from parallax.core.metamodel import EntityMetadata, entity_by_name
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
 from parallax.core.op_algebra import Operation
 
@@ -455,10 +455,13 @@ def validate_instruction(instruction: WriteInstruction, model: AcceptedMetamodel
 
 
 def _entity(model: AcceptedMetamodel, name: str) -> EntityMetadata:
-    for entity in model.entities:
-        if name in (entity.identity.canonical, entity.identity.name):
-            return entity
-    raise WriteInstructionError(f"unknown entity {name!r}")
+    """The accepted Metadata a write's bare-or-canonical target names, by
+    :func:`~parallax.core.metamodel.entity_by_name`'s ambiguity-rejecting rule;
+    an unknown or ambiguous name raises :class:`WriteInstructionError`."""
+    entity = entity_by_name(model, name)
+    if entity is None:
+        raise WriteInstructionError(f"unknown entity {name!r}")
+    return entity
 
 
 def _declared_members(model: AcceptedMetamodel, entity: EntityMetadata) -> frozenset[str]:

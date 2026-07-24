@@ -50,6 +50,7 @@ __all__ = [
     "UnresolvedMetamodel",
     "ValueObjectAttributeMetadata",
     "ValueObjectMetadata",
+    "entity_by_name",
 ]
 
 
@@ -283,3 +284,29 @@ class Metamodel(Protocol):
     def entities(self) -> Sequence[EntityMetadata]: ...
     def entity(self, identity: EntityIdentity) -> EntityMetadata | None: ...
     def facet[T](self, key: FacetKey[T]) -> T: ...
+
+
+def entity_by_name(model: Metamodel, name: str) -> EntityMetadata | None:
+    """The accepted Metadata a bare-or-canonical Entity spelling names within
+    ``model``, or ``None`` when it names none — rejecting an ambiguous bare name.
+
+    An exact canonical spelling (``<namespace>.<name>``, or a bare ``<name>`` for
+    an ownerless Entity) matches that Entity. A bare local name matches only when
+    exactly one Entity carries it; a bare name two Entities share across distinct
+    namespaces is ambiguous and misses, never a silent first match. This is the
+    accepted-model counterpart of a descriptor record graph's own by-name lookup,
+    so a frontend resolving a spelling against a bare accepted model agrees with
+    one resolving through a scoped record graph. A free utility over the protocol,
+    never a protocol method: the accepted ``Metamodel`` seam itself stays
+    Identity-keyed and accepts no name string.
+    """
+    bare: EntityMetadata | None = None
+    bare_matches = 0
+    for entity in model.entities:
+        identity = entity.identity
+        if identity.canonical == name:
+            return entity
+        if identity.name == name:
+            bare = entity
+            bare_matches += 1
+    return bare if bare_matches == 1 else None

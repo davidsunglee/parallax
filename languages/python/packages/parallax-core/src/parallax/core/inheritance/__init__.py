@@ -30,7 +30,6 @@ from parallax.core.descriptor import (
     Entity,
     Inheritance,
     Metamodel,
-    ValueObject,
 )
 from parallax.core.descriptor import declaring_entity as _resolve_declaring_entity
 from parallax.core.inheritance._columns import column_order
@@ -113,19 +112,16 @@ __all__ = [
     "InheritancePositionView",
     "InheritanceRuleSet",
     "WriteAssignmentError",
-    "ancestor_chain",
     "column_order",
     "compile_facet",
     "declaring_entity",
     "effective_concrete_subtypes",
-    "effective_table",
     "family_attributes",
     "family_of",
     "family_primary_key",
     "family_root",
     "reject_predicate_write",
     "root_metadata",
-    "superset_value_objects",
     "validate",
     "validate_subtype_write",
     "validate_write_assignment",
@@ -226,21 +222,6 @@ def effective_concrete_subtypes(metamodel: Metamodel, position: str) -> tuple[st
     return tuple(sorted(family_of(metamodel).concrete_descendants(entity.name)))
 
 
-def effective_table(metamodel: Metamodel, entity: Entity) -> str | None:
-    """The physical table used by ``entity`` under its family's strategy.
-
-    A TPH participant resolves to the root-owned shared table without copying that
-    declaration into descendant Metadata. A TPCS participant and a standalone
-    Entity use their own declared table.
-    """
-    if entity.inheritance is None:
-        return entity.table
-    root = family_root(metamodel, entity)
-    if root.inheritance is not None and root.inheritance.strategy == "table-per-hierarchy":
-        return root.table
-    return entity.table
-
-
 def _root_name(meta: Metamodel, entity: Entity) -> str | None:
     """The name of ``entity``'s family root, or ``None`` if unresolvable.
 
@@ -297,36 +278,6 @@ def declaring_entity(meta: Metamodel, entity: Entity) -> Entity:
     return _resolve_declaring_entity(meta, entity)
 
 
-def ancestor_chain(meta: Metamodel, effective_concretes: Sequence[str]) -> tuple[Entity, ...]:
-    """Every abstract ancestor (root + abstract-subtype) reachable from any
-    concrete in ``effective_concretes``, in canonical ancestry order (m-inheritance
-    "Canonical concrete-subtype ordering": the inherited-column prefix of a
-    superset stays ancestry order, root first, never alphabetized across the
-    chain).
-
-    Processes ``effective_concretes`` in the family's own canonical alphabetical
-    order and appends each concrete's own ancestor chain (root-to-parent) in that
-    order, skipping an ancestor already added — the deterministic "first
-    encountered" union a shared ancestor (e.g. the root) needs when several
-    concretes in the set pass through it.
-    """
-    ordered: list[Entity] = []
-    seen: set[str] = set()
-    for name in sorted(effective_concretes):
-        chain: list[Entity] = []
-        start_inheritance = meta.entity(name).inheritance
-        parent_name = start_inheritance.parent if start_inheritance is not None else None
-        while parent_name is not None:
-            ancestor = meta.entity(parent_name)
-            chain.append(ancestor)
-            parent_name = ancestor.inheritance.parent if ancestor.inheritance is not None else None
-        for ancestor in reversed(chain):
-            if ancestor.name not in seen:
-                seen.add(ancestor.name)
-                ordered.append(ancestor)
-    return tuple(ordered)
-
-
 def family_attributes(meta: Metamodel, entity: Entity) -> tuple[Attribute, ...]:
     """Every attribute declared anywhere in ``entity``'s inheritance family.
 
@@ -363,27 +314,6 @@ def family_primary_key(meta: Metamodel, entity: Entity) -> tuple[Attribute, ...]
     :func:`family_attributes` rather than re-deriving the family walk.
     """
     return tuple(attr for attr in family_attributes(meta, entity) if attr.primary_key)
-
-
-def superset_value_objects(meta: Metamodel, position: Sequence[str]) -> list[ValueObject]:
-    """Every value object reachable from ``position`` (an effective concrete
-    set), in the family's stable superset order: each ancestor's own value
-    objects in ancestry order, then each position concrete's own in canonical
-    alphabetical order.
-
-    The one shared resolution both `m-sql`'s abstract-read/union-all
-    projection and `m-snapshot-read`'s row-decoding superset use — DAG-safe for
-    both (each already depends on `m-inheritance` directly: `m-sql` through
-    `m-op-algebra`, `m-snapshot-read` through `m-deep-fetch` -> `m-navigate`),
-    so the identical family-value-object walk lives here once rather than
-    staying duplicated in each caller.
-    """
-    value_objects: list[ValueObject] = []
-    for ancestor in ancestor_chain(meta, position):
-        value_objects.extend(ancestor.value_objects)
-    for name in sorted(position):
-        value_objects.extend(meta.entity(name).value_objects)
-    return value_objects
 
 
 def validate(metamodel: Metamodel) -> None:

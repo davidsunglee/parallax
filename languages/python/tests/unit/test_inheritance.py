@@ -224,16 +224,6 @@ def test_inheritance_error_carries_rule_and_entity() -> None:
     assert error.entity == "Pet"
 
 
-def test_ancestor_chain_orders_root_first_then_deeper_abstract_nodes() -> None:
-    animal = _MODELS["animal"]
-    assert [e.name for e in inheritance.ancestor_chain(animal, ("Cat", "Dog"))] == [
-        "Animal",
-        "Pet",
-    ]
-    # WildBoar's own chain is just the root (a sibling branch directly under it).
-    assert [e.name for e in inheritance.ancestor_chain(animal, ("WildBoar",))] == ["Animal"]
-
-
 def test_family_attributes_widens_across_the_whole_family() -> None:
     animal = _MODELS["animal"]
     names = {attr.name for attr in inheritance.family_attributes(animal, animal.entity("Dog"))}
