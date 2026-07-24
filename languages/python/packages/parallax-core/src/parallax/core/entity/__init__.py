@@ -2,9 +2,9 @@
 
 The developer-facing class frontend: the frozen entity base and its metaclass,
 the ``Attr[T]`` / ``Rel[T]`` typed-access carriers, the ``Field`` /
-``Relationship`` declaration helpers, canonical descriptor export, the statement
-surface (predicate / temporal-read / deep-fetch-include / subtype-narrowing
-building), the ``ValueObject`` class frontend, and the closed-world
+``Relationship`` declaration helpers, the statement surface (predicate /
+temporal-read / deep-fetch-include / subtype-narrowing building), the
+``ValueObject`` class frontend, and the closed-world
 relationship load-state vocabulary (``is_loaded`` / ``narrowed``,
 ``UnloadedRelationshipError``) the frozen snapshot-node wrapper attaches. This
 support scope may import ``m-descriptor`` (the class-time record graph it still
@@ -34,7 +34,6 @@ from parallax.core.entity.base import (
     canonical_row,
     changed_fields,
     default_registry,
-    descriptor_document,
     effective_change_set,
     entity_metadata_of,
     entity_record_of,
@@ -123,7 +122,6 @@ __all__ = [
     "canonical_row",
     "changed_fields",
     "default_registry",
-    "descriptor_document",
     "effective_change_set",
     "entity_metadata_of",
     "entity_record_of",

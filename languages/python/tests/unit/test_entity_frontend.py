@@ -33,13 +33,14 @@ from parallax.core.descriptor import (
 )
 from parallax.core.descriptor import (
     DefiningRelationship,
+    DescriptorError,
     canonicalize,
+    export_document,
 )
 from parallax.core.entity import (
     AttributeRef,
     RelationshipRef,
     camel_to_snake,
-    descriptor_document,
     entity_record_of,
     metamodel,
     registry_of,
@@ -54,7 +55,17 @@ def test_mirrored_class_export_matches_the_corpus_logical_model(
     stem: str, classes: list[type]
 ) -> None:
     corpus = mm.drop_indices(canonicalize(_raw_model(stem)))
-    assert descriptor_document(classes) == corpus
+    assert _by_identity(export_document(metamodel(classes))) == _by_identity(corpus)
+
+
+def _by_identity(document: dict[str, object]) -> dict[str, object]:
+    """``document`` with its entities in canonical identity order — an accepted
+    model enumerates that way while the corpus preserves its authored order."""
+    if "entity" in document:
+        return document
+    entities = cast("list[dict[str, object]]", document["entities"])
+    ordered = sorted(entities, key=lambda entity: (entity.get("namespace", ""), entity["name"]))
+    return {**document, "entities": ordered}
 
 
 def _raw_model(stem: str) -> dict[str, object]:
@@ -290,14 +301,23 @@ def _define_omitted_optional_pk_generator() -> type:
     return Seq
 
 
-def test_omitted_optional_pk_generator_field_defines_and_exports() -> None:
-    # Omitting every optional key (absent != None) is valid and collapses to the
-    # bare sequence strategy, confirming the present-None rejection does not leak
-    # into the legitimately-partial object form.
+def test_omitted_optional_pk_generator_field_defines_but_cannot_form() -> None:
+    # Omitting every optional key (absent != None) is a legitimately-partial
+    # object form the class frontend ACCEPTS at class definition, unlike the
+    # present-None case above which it rejects at class-body evaluation. The
+    # compiled record carries a bare sequence naming no sequence; the accepted
+    # primary-key generation algebra requires a named sequence, so the model
+    # CANNOT form — the canonical schema's own object-form-with-name requirement,
+    # surfaced at assembly rather than at class definition.
     seq = _define_omitted_optional_pk_generator()
-    exported = cast("dict[str, object]", descriptor_document([seq])["entity"])
-    attributes = cast("list[dict[str, object]]", exported["attributes"])
-    assert attributes[0]["pkGeneration"] == "sequence"
+    record = entity_record_of(seq)
+    assert record is not None
+    (pk,) = [attr for attr in record.attributes if attr.primary_key]
+    assert pk.pk_generator is not None
+    assert pk.pk_generator.strategy == "sequence"
+    assert pk.pk_generator.sequence_name is None
+    with pytest.raises(DescriptorError, match="sequence generation names its sequence"):
+        metamodel([seq])
 
 
 def test_object_form_pk_generator_defines_and_exports() -> None:
@@ -316,7 +336,7 @@ def test_object_form_pk_generator_defines_and_exports() -> None:
             },
         )
 
-    exported = cast("dict[str, object]", descriptor_document([SeqObjectForm])["entity"])
+    exported = cast("dict[str, object]", export_document(metamodel([SeqObjectForm]))["entity"])
     attributes = cast("list[dict[str, object]]", exported["attributes"])
     assert attributes[0]["pkGeneration"] == {
         "strategy": "sequence",

@@ -21,8 +21,8 @@ import pytest
 import value_object_models as vm
 from parallax.conformance import case_format
 from parallax.core import Attr
-from parallax.core.descriptor import canonicalize
-from parallax.core.entity import descriptor_document
+from parallax.core.descriptor import canonicalize, export_document
+from parallax.core.entity import metamodel
 from parallax.core.entity.errors import EntityDefinitionError
 from parallax.core.entity.expressions import Predicate
 from parallax.core.entity.value_object import ValueObject, VoField, structure_of, wire_names_of
@@ -46,7 +46,7 @@ def test_value_object_class_export_has_no_drift_from_the_corpus_customer_model()
     corpus = canonicalize(_customer_yaml())
     entities = cast("list[dict[str, object]]", corpus["entities"])
     corpus_customer = next(e for e in entities if e["name"] == "Customer")
-    mine = cast("dict[str, object]", descriptor_document([vm.Customer])["entity"])
+    mine = cast("dict[str, object]", export_document(metamodel([vm.Customer]))["entity"])
     assert mine["attributes"] == corpus_customer["attributes"]
     assert mine["valueObjects"] == corpus_customer["valueObjects"]
 

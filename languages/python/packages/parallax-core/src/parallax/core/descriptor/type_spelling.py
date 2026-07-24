@@ -33,7 +33,7 @@ from parallax.core.base import (
     NeutralType,
 )
 
-__all__ = ["parse_type_spelling"]
+__all__ = ["format_type_spelling", "parse_type_spelling"]
 
 _NULLARY_SPELLINGS: Final[dict[str, NeutralType]] = {
     "boolean": BOOLEAN,
@@ -48,6 +48,13 @@ _NULLARY_SPELLINGS: Final[dict[str, NeutralType]] = {
     "timestamp": TIMESTAMP,
     "uuid": UUID,
     "json": JSON,
+}
+
+# The exact inverse of the nullary spelling table, so a formatted spelling always
+# parses back to the value it named. Variants are frozen value objects compared by
+# value, so a freshly constructed nullary type keys the same entry as its singleton.
+_NULLARY_FORMATS: Final[dict[NeutralType, str]] = {
+    neutral: spelling for spelling, neutral in _NULLARY_SPELLINGS.items()
 }
 
 # A canonical unsigned parameter pair: no sign, no interior space, and no
@@ -75,3 +82,17 @@ def parse_type_spelling(spelling: str) -> NeutralType | None:
     if precision < 1 or not 0 <= scale <= precision:
         return None
     return Decimal(precision, scale)
+
+
+def format_type_spelling(neutral: NeutralType) -> str:
+    """The canonical spelling ``neutral`` is written as — the inverse of
+    :func:`parse_type_spelling`.
+
+    ``decimal`` is the sole parameterized spelling: its precision and scale are
+    written as unsigned canonical digits with no interior whitespace, so the
+    result round-trips back to the same bounded :class:`~parallax.core.base.Decimal`.
+    Every other variant has a single lowercase token.
+    """
+    if isinstance(neutral, Decimal):
+        return f"decimal({neutral.precision},{neutral.scale})"
+    return _NULLARY_FORMATS[neutral]

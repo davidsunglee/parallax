@@ -24,8 +24,8 @@ import pytest
 import inheritance_models as im
 from parallax.conformance import case_format
 from parallax.core import Attr, Entity, EntityConfig, Field, descriptor, inheritance
-from parallax.core.descriptor import canonicalize
-from parallax.core.entity import descriptor_document, entity_record_of, metamodel
+from parallax.core.descriptor import canonicalize, export_document
+from parallax.core.entity import entity_record_of, metamodel
 from parallax.core.entity.base import Concrete, EntityRegistry, FamilyRoot
 from parallax.core.metamodel import EntityIdentity, EntityLocation, PersistenceMode
 from parallax.core.model_formation import MetamodelValidationError
@@ -53,18 +53,29 @@ def _corpus(stem: str) -> dict[str, object]:
     return _drop_indices(canonicalize(cast("dict[str, object]", raw)))
 
 
+def _by_identity(document: dict[str, object]) -> dict[str, object]:
+    # An accepted model enumerates entities in canonical identity order while the
+    # corpus preserves its authored order, so a multi-entity document is compared
+    # with its entities sorted by identity.
+    if "entity" in document:
+        return document
+    entities = cast("list[dict[str, object]]", document["entities"])
+    ordered = sorted(entities, key=lambda entity: (entity.get("namespace", ""), entity["name"]))
+    return {**document, "entities": ordered}
+
+
 def test_table_per_hierarchy_class_export_has_no_drift_from_payment_yaml() -> None:
     corpus = _corpus("payment")
-    mine = descriptor_document([im.Payment, im.CardPayment, im.CashPayment])
-    assert mine == corpus
+    mine = export_document(metamodel([im.Payment, im.CardPayment, im.CashPayment]))
+    assert _by_identity(mine) == _by_identity(corpus)
 
 
 def test_table_per_concrete_subtype_class_export_has_no_drift_from_document_yaml() -> None:
     corpus = _corpus("document")
-    mine = descriptor_document(
-        [im.Document, im.FinancialDocument, im.Invoice, im.Receipt, im.Memo, im.Folder]
+    mine = export_document(
+        metamodel([im.Document, im.FinancialDocument, im.Invoice, im.Receipt, im.Memo, im.Folder])
     )
-    assert mine == corpus
+    assert _by_identity(mine) == _by_identity(corpus)
 
 
 def test_temporal_tpcs_class_export_has_no_drift_from_rate_yaml() -> None:
@@ -74,8 +85,8 @@ def test_temporal_tpcs_class_export_has_no_drift_from_rate_yaml() -> None:
     # on `DepositRate`/`LoanRate`) threads through exactly as the ingested
     # descriptor's root-only axis declarations do.
     corpus = _corpus("rate")
-    mine = descriptor_document([im.Rate, im.DepositRate, im.LoanRate])
-    assert mine == corpus
+    mine = export_document(metamodel([im.Rate, im.DepositRate, im.LoanRate]))
+    assert _by_identity(mine) == _by_identity(corpus)
 
 
 def test_temporal_base_on_a_family_root_injects_the_axes_on_the_root_alone() -> None:
@@ -367,11 +378,18 @@ def test_a_descendant_declares_the_same_persistence_with_or_without_its_root() -
 
 
 def test_an_authored_descendant_persistence_survives_assembly_and_is_never_exported() -> None:
+    # This family is invalid (a descendant declares its own mode), so it cannot
+    # form and canonical export over an accepted model is unavailable for it. The
+    # canonical omission is therefore pinned on the compiled records directly,
+    # through the record-level serde `serialize` reproduces byte-for-byte.
     family = [_Ledger, _AuditLedger]
-    assert _assembled(family, "_Ledger").persistence == "read-only"
-    assert _assembled(family, "_AuditLedger").persistence == "read-only"
+    root_record = _assembled(family, "_Ledger")
+    descendant_record = _assembled(family, "_AuditLedger")
+    assert root_record.persistence == "read-only"
+    assert descendant_record.persistence == "read-only"
 
-    root, descendant = cast("list[dict[str, object]]", descriptor_document(family)["entities"])
+    records = descriptor.Metamodel(entities=(root_record, descendant_record))
+    root, descendant = cast("list[dict[str, object]]", descriptor.serialize(records)["entities"])
     assert root["persistence"] == "read-only"
     assert "persistence" not in descendant
 
