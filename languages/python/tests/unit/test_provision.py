@@ -21,11 +21,15 @@ from parallax.core.descriptor import (
     Inheritance,
     Metamodel,
     ValueObject,
+    ValueObjectAttribute,
 )
+from parallax.core.metamodel import Metamodel as AcceptedMetamodel
+from parallax.core.model_formation import MetamodelValidationError
 
 pytestmark = pytest.mark.unit
 
-_MODELS = models.load_models()
+_RECORDS = models.load_models()
+_MODELS = {stem: models.accepted_model(meta) for stem, meta in _RECORDS.items()}
 
 
 def test_reset_statements() -> None:
@@ -153,7 +157,7 @@ def test_fixture_statements_tph_resolves_inherited_members_by_name() -> None:
     # `licenseId` (Pet's own, inherited) BY NAME alongside its own `barkVolume`.
     fixtures = provision.load_fixtures("models/animal.yaml")
     statements = provision.fixture_statements(_MODELS["animal"], fixtures)
-    dog_sql, dog_binds = statements[0]
+    dog_sql, dog_binds = next((sql, binds) for sql, binds in statements if "Rex" in binds)
     assert "name" in dog_sql and "license_id" in dog_sql and "bark_volume" in dog_sql
     assert "Rex" in dog_binds and "L-100" in dog_binds
 
@@ -264,16 +268,31 @@ def test_schema_statements_skip_the_milestone_index_the_temporal_pk_enforces() -
     assert "unique" not in audit
 
 
-def test_schema_statements_reject_an_unresolvable_unique_index() -> None:
+def test_an_index_naming_an_undeclared_attribute_never_reaches_provisioning() -> None:
+    # An accepted model's every Index names a declared Attribute (the resolver's
+    # `metamodel-index-attribute-missing`), so provisioning's own unresolvable-
+    # column guard is unreachable defensive code — the defect is caught before a
+    # model can form.
     import dataclasses
 
-    meta = _MODELS["error-cases"]
-    (tag_entity,) = [e for e in meta.entities if e.name == "Tag"]
-    broken_index = dataclasses.replace(tag_entity.indices[1], attributes=("noSuchAttr",))
-    broken_entity = dataclasses.replace(tag_entity, indices=(broken_index,))
-    broken_meta = dataclasses.replace(meta, entities=(broken_entity,))
-    with pytest.raises(ValueError, match="noSuchAttr"):
-        provision.schema_statements(broken_meta)
+    broken = dataclasses.replace(
+        _RECORDS["error-cases"],
+        entities=tuple(
+            dataclasses.replace(
+                entity,
+                indices=(dataclasses.replace(entity.indices[1], attributes=("noSuchAttr",)),),
+            )
+            if entity.name == "Tag"
+            else entity
+            for entity in _RECORDS["error-cases"].entities
+        ),
+    )
+    with pytest.raises(MetamodelValidationError, match="metamodel-index-attribute"):
+        models.accepted_model(
+            dataclasses.replace(
+                broken, entities=(next(e for e in broken.entities if e.name == "Tag"),)
+            )
+        )
 
 
 # --------------------------------------------------------------------------- #
@@ -281,23 +300,29 @@ def test_schema_statements_reject_an_unresolvable_unique_index() -> None:
 # inheritance with a value object today; a synthetic family proves the        #
 # ancestry-derived DDL/fixture paths carry a value-object member correctly).   #
 # --------------------------------------------------------------------------- #
-def _tph_family_with_a_value_object() -> Metamodel:
+def _tph_family_with_a_value_object() -> AcceptedMetamodel:
     root = Entity(
         name="Root",
         table="root_tbl",
         inheritance=Inheritance(role="root", strategy="table-per-hierarchy", tag_column="kind"),
         attributes=(Attribute(name="id", type="int64", column="id", primary_key=True),),
-        value_objects=(ValueObject(name="meta", column="meta"),),
+        value_objects=(
+            ValueObject(
+                name="meta",
+                column="meta",
+                attributes=(ValueObjectAttribute(name="note", type="string"),),
+            ),
+        ),
     )
     leaf = Entity(
         name="Leaf",
         inheritance=Inheritance(role="concrete-subtype", parent="Root", tag_value="leaf"),
         attributes=(Attribute(name="x", type="int32", column="x"),),
     )
-    return Metamodel(entities=(root, leaf))
+    return models.accepted_model(Metamodel(entities=(root, leaf)))
 
 
-def _tpcs_family_with_a_value_object() -> Metamodel:
+def _tpcs_family_with_a_value_object() -> AcceptedMetamodel:
     root = Entity(
         name="Root",
         inheritance=Inheritance(role="root", strategy="table-per-concrete-subtype"),
@@ -308,9 +333,15 @@ def _tpcs_family_with_a_value_object() -> Metamodel:
         table="leaf",
         inheritance=Inheritance(role="concrete-subtype", parent="Root"),
         attributes=(Attribute(name="x", type="int32", column="x"),),
-        value_objects=(ValueObject(name="meta", column="meta"),),
+        value_objects=(
+            ValueObject(
+                name="meta",
+                column="meta",
+                attributes=(ValueObjectAttribute(name="note", type="string"),),
+            ),
+        ),
     )
-    return Metamodel(entities=(root, leaf))
+    return models.accepted_model(Metamodel(entities=(root, leaf)))
 
 
 def test_schema_statements_tph_maps_a_value_object_to_jsonb() -> None:
@@ -323,7 +354,7 @@ def test_schema_statements_tph_maps_a_value_object_to_jsonb() -> None:
 # value object and unique index only on a concrete subtype, proving that      #
 # descendant-owned members still contribute to the root-owned table.         #
 # --------------------------------------------------------------------------- #
-def _tph_family_with_a_descendant_declared_value_object_and_index() -> Metamodel:
+def _tph_family_with_a_descendant_declared_value_object_and_index() -> AcceptedMetamodel:
     root = Entity(
         name="Root",
         table="root_tbl",
@@ -337,10 +368,16 @@ def _tph_family_with_a_descendant_declared_value_object_and_index() -> Metamodel
             Attribute(name="x", type="int32", column="x"),
             Attribute(name="code", type="string", column="code", max_length=8),
         ),
-        value_objects=(ValueObject(name="meta", column="meta"),),
+        value_objects=(
+            ValueObject(
+                name="meta",
+                column="meta",
+                attributes=(ValueObjectAttribute(name="note", type="string"),),
+            ),
+        ),
         indices=(Index(name="leaf_code_uq", attributes=("code",), unique=True),),
     )
-    return Metamodel(entities=(root, leaf))
+    return models.accepted_model(Metamodel(entities=(root, leaf)))
 
 
 def test_schema_statements_tph_surfaces_a_descendant_declared_value_object_and_index() -> None:
@@ -373,7 +410,7 @@ def test_fixture_statements_tph_resolves_an_inherited_value_object_by_name() -> 
 # families prove that root-declared unique indices and value objects are      #
 # reproduced in each concrete subtype table.                                 #
 # --------------------------------------------------------------------------- #
-def _tpcs_family_with_a_root_declared_unique_index() -> Metamodel:
+def _tpcs_family_with_a_root_declared_unique_index() -> AcceptedMetamodel:
     root = Entity(
         name="Root",
         inheritance=Inheritance(role="root", strategy="table-per-concrete-subtype"),
@@ -389,7 +426,7 @@ def _tpcs_family_with_a_root_declared_unique_index() -> Metamodel:
         inheritance=Inheritance(role="concrete-subtype", parent="Root"),
         attributes=(Attribute(name="x", type="int32", column="x"),),
     )
-    return Metamodel(entities=(root, leaf))
+    return models.accepted_model(Metamodel(entities=(root, leaf)))
 
 
 def test_schema_statements_tpcs_surfaces_a_root_declared_unique_index() -> None:
@@ -400,7 +437,7 @@ def test_schema_statements_tpcs_surfaces_a_root_declared_unique_index() -> None:
     assert "unique (code)" in ddl
 
 
-def _tpcs_family_with_a_temporal_root_and_matching_index() -> Metamodel:
+def _tpcs_family_with_a_temporal_root_and_matching_index() -> AcceptedMetamodel:
     root = Entity(
         name="Root",
         inheritance=Inheritance(role="root", strategy="table-per-concrete-subtype"),
@@ -422,7 +459,7 @@ def _tpcs_family_with_a_temporal_root_and_matching_index() -> Metamodel:
         inheritance=Inheritance(role="concrete-subtype", parent="Root"),
         attributes=(Attribute(name="x", type="int32", column="x"),),
     )
-    return Metamodel(entities=(root, leaf))
+    return models.accepted_model(Metamodel(entities=(root, leaf)))
 
 
 def test_schema_statements_tpcs_skips_a_root_index_matching_the_temporal_pk() -> None:
@@ -434,35 +471,36 @@ def test_schema_statements_tpcs_skips_a_root_index_matching_the_temporal_pk() ->
     assert "unique" not in ddl
 
 
-def _tpcs_family_with_a_redundantly_declared_index() -> Metamodel:
-    # A malformed-but-tolerated declaration: the ROOT and the CONCRETE each
-    # declare their OWN unique index over the SAME resolved column — the chain
-    # walk must emit that constraint exactly once, never twice.
-    root = Entity(
-        name="Root",
-        inheritance=Inheritance(role="root", strategy="table-per-concrete-subtype"),
+def _entity_with_two_indices_over_one_column() -> AcceptedMetamodel:
+    # One entity declaring two DISTINCT unique indices over the SAME resolved
+    # column — the chain walk must emit that constraint exactly once, never
+    # twice. A cross-member duplicate cannot form (an index names only local
+    # attributes, the resolver's `metamodel-index-attribute-not-local`), so a
+    # single entity is where a duplicate resolved-column set can legally arise.
+    widget = Entity(
+        name="Widget",
+        table="widget",
         attributes=(
             Attribute(name="id", type="int64", column="id", primary_key=True),
             Attribute(name="code", type="string", column="code", max_length=8),
         ),
-        indices=(Index(name="root_code_uq", attributes=("code",), unique=True),),
+        indices=(
+            Index(name="widget_code_uq", attributes=("code",), unique=True),
+            Index(name="widget_code_uq_dup", attributes=("code",), unique=True),
+        ),
     )
-    leaf = Entity(
-        name="Leaf",
-        table="leaf",
-        inheritance=Inheritance(role="concrete-subtype", parent="Root"),
-        attributes=(Attribute(name="x", type="int32", column="x"),),
-        indices=(Index(name="leaf_code_uq", attributes=("code",), unique=True),),
-    )
-    return Metamodel(entities=(root, leaf))
+    return models.accepted_model(Metamodel(entities=(widget,)))
 
 
-def test_schema_statements_tpcs_deduplicates_a_redundant_index_across_the_chain() -> None:
-    (ddl,) = provision.schema_statements(_tpcs_family_with_a_redundantly_declared_index())
+def test_schema_statements_deduplicates_a_redundant_unique_index() -> None:
+    (ddl,) = provision.schema_statements(_entity_with_two_indices_over_one_column())
     assert ddl.count("unique (code)") == 1
 
 
-def test_schema_statements_rejects_an_axis_with_an_unknown_start_attribute() -> None:
+def test_an_axis_naming_an_unknown_attribute_never_reaches_provisioning() -> None:
+    # An accepted model's As-Of Axes reference declared Attributes (the
+    # resolver's `metamodel-as-of-attribute-missing`), so provisioning never
+    # resolves a milestone column against an unknown attribute.
     malformed = Entity(
         name="MalformedTemporal",
         table="malformed_temporal",
@@ -475,6 +513,5 @@ def test_schema_statements_rejects_an_axis_with_an_unknown_start_attribute() -> 
             ),
         ),
     )
-
-    with pytest.raises(ValueError, match="no attribute 'missing_tx_start'"):
-        provision.schema_statements(Metamodel(entities=(malformed,)))
+    with pytest.raises(MetamodelValidationError, match="metamodel-as-of-attribute"):
+        models.accepted_model(Metamodel(entities=(malformed,)))

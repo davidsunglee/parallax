@@ -75,6 +75,7 @@ __all__ = [
     "Emission",
     "EngineError",
     "RunOnly",
+    "case_model",
     "compile_read_case",
     "compile_scenario_case",
     "compile_write_sequence_case",

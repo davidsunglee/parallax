@@ -2,8 +2,8 @@
 
 The simple reset path — the only path in v1: one session-scoped
 Testcontainers Postgres pinned to :data:`~parallax.conformance.constants.POSTGRES_IMAGE`,
-and per case ``DROP SCHEMA … CASCADE`` → ``CREATE SCHEMA`` → descriptor-derived
-DDL (``applyDdl``) → fixture rows in descriptor column order (``loadFixtures``).
+and per case ``DROP SCHEMA … CASCADE`` → ``CREATE SCHEMA`` → model-derived
+DDL (``applyDdl``) → fixture rows in canonical column order (``loadFixtures``).
 
 DDL and fixture *statement generation* is pure (``schema_statements`` /
 ``fixture_statements``) and unit-tested without Docker; the container lifecycle
@@ -18,13 +18,20 @@ from contextlib import suppress
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
-from parallax.conformance import case_format
+from parallax.conformance import case_format, models
 from parallax.core import inheritance
-from parallax.core.base import STRING, NeutralType
+from parallax.core.base import STRING
 from parallax.core.db_port import DbPort, JsonDocument
-from parallax.core.descriptor import Attribute, Entity, Metamodel, column_order
-from parallax.core.descriptor.type_spelling import parse_type_spelling
+from parallax.core.descriptor import Metamodel as DescriptorMetamodel
 from parallax.core.dialect import POSTGRES, Dialect
+from parallax.core.inheritance import InheritanceEntityView, InheritanceFacet, column_order
+from parallax.core.metamodel import (
+    AttributeMetadata,
+    EntityIdentity,
+    EntityMetadata,
+    Metamodel,
+    PrimaryKey,
+)
 
 if TYPE_CHECKING:
     from parallax.postgres import PostgresAdapter
@@ -43,17 +50,31 @@ def reset_statements() -> list[str]:
     return ["drop schema if exists public cascade", "create schema public"]
 
 
-def _tables(meta: Metamodel) -> list[tuple[Entity, str]]:
-    tables: list[tuple[Entity, str]] = []
-    for entity in meta.entities:
-        table = inheritance.effective_table(meta, entity)
-        if table is not None:
-            tables.append((entity, table))
+def _position(facet: InheritanceFacet, entity: EntityMetadata) -> InheritanceEntityView:
+    """``entity``'s family-effective view; the facet covers every accepted Entity."""
+    view = facet.entity(entity.identity)
+    if view is None:  # pragma: no cover - the facet covers every accepted Entity
+        raise ValueError(f"{entity.identity.canonical}: the model declares no such entity")
+    return view
+
+
+def _tables(model: Metamodel, facet: InheritanceFacet) -> list[tuple[EntityMetadata, str]]:
+    """Every row-owning Entity paired with the physical table it targets.
+
+    The container is the position's own row storage, which is the root-owned
+    shared table for a table-per-hierarchy participant and absent for a
+    tableless abstract position.
+    """
+    tables: list[tuple[EntityMetadata, str]] = []
+    for entity in model.entities:
+        container = _position(facet, entity).container
+        if container is not None:
+            tables.append((entity, container.name))
     return tables
 
 
-def schema_statements(meta: Metamodel, dialect: Dialect = POSTGRES) -> list[str]:
-    """Descriptor-derived ``create table`` DDL for every row-owning table.
+def schema_statements(model: Metamodel, dialect: Dialect = POSTGRES) -> list[str]:
+    """Model-derived ``create table`` DDL for every row-owning table.
 
     A table is created once even when several entities map to it. For a
     non-inheritance entity that is the plain per-entity column set. For an
@@ -62,68 +83,34 @@ def schema_statements(meta: Metamodel, dialect: Dialect = POSTGRES) -> list[str]
     concrete's own columns (nullable — a card row leaves the cash-only column
     null and vice versa), the inherited (root + abstract-subtype) columns, and
     the framework-owned tag column, physically nullable-free since every row
-    carries one — created exactly once, from the first entity `_tables`
-    encounters mapped to that table (its declaration-order position in the
-    model file); a table-per-concrete-subtype table is one concrete's own
-    ancestry-derived full column chain (root → … → that concrete), no tag.
-    DDL is not asserted byte-exact anywhere in the corpus (`m-case-format`), so
-    column order and the tag column's own type are this provisioning path's own
-    choice, not a golden.
+    carries one — created exactly once, from the first entity ``_tables``
+    encounters mapped to that table; a table-per-concrete-subtype table is one
+    concrete's own ancestry-derived full column chain (root → … → that
+    concrete), no tag. DDL is not asserted byte-exact anywhere in the corpus
+    (`m-case-format`), so column order and the tag column's own type are this
+    provisioning path's own choice, not a golden.
 
     A **temporal** Entity's physical primary key is its declared primary key plus
-    the physical column of each As-Of Axis's ``startAttribute``
-    (``m-descriptor``): many milestone rows share one domain identity, so the
-    declared key alone would reject a second milestone. Start-Attribute columns
-    are appended in declared axis order (Valid-Time before Transaction-Time),
-    matching each model's declared composite unique index.
+    the physical column of each As-Of Axis's start Attribute: many milestone
+    rows share one domain identity, so the declared key alone would reject a
+    second milestone. Start-Attribute columns are appended in declared axis
+    order (Valid-Time before Transaction-Time), matching each model's declared
+    composite unique index.
     """
+    facet = inheritance.view(model)
     statements: list[str] = []
     seen_tables: set[str] = set()
-    for entity, table in _tables(meta):
+    for entity, table in _tables(model, facet):
         if table in seen_tables:
             continue
         seen_tables.add(table)
-        if entity.inheritance is None:
-            statements.append(_plain_table_ddl(entity, table, dialect))
-        else:
-            statements.append(_inheritance_table_ddl(meta, entity, table, dialect))
+        statements.append(_table_ddl(model, facet, entity, table, dialect))
     return statements
 
 
-def _neutral_type(attribute: Attribute) -> NeutralType:
-    """``attribute``'s declared type, structured for the dialect's type mapping.
-
-    Descriptor records still carry the serialized spelling, so provisioning
-    resolves it here; a corpus model that reached provisioning has already been
-    accepted, so an unresolvable spelling is a defect rather than model input.
-    """
-    resolved = parse_type_spelling(attribute.type)
-    if resolved is None:  # pragma: no cover - an accepted model has no such spelling
-        raise ValueError(f"{attribute.name}: {attribute.type!r} is not a neutral type spelling")
-    return resolved
-
-
-def _column_ddl(attribute: Attribute, dialect: Dialect) -> str:
-    column_type = dialect.column_type(_neutral_type(attribute), attribute.max_length)
-    return f"{dialect.quote(attribute.column)} {column_type}"
-
-
-def _plain_table_ddl(entity: Entity, table: str, dialect: Dialect) -> str:
-    columns: list[str] = []
-    pk_columns: list[str] = []
-    for attribute in entity.attributes:
-        columns.append(_column_ddl(attribute, dialect))
-        if attribute.primary_key:
-            pk_columns.append(dialect.quote(attribute.column))
-    for value_object in entity.value_objects:
-        columns.append(f"{dialect.quote(value_object.storage_column)} jsonb")
-    pk_columns.extend(
-        dialect.quote(_attribute_column(entity, axis.start_attribute)) for axis in entity.as_of_axes
-    )
-    if pk_columns:
-        columns.append(f"primary key ({', '.join(pk_columns)})")
-    columns.extend(_unique_constraints((entity,), pk_columns, dialect))
-    return f"create table {dialect.quote(table)} ({', '.join(columns)})"
+def _column_ddl(attribute: AttributeMetadata, dialect: Dialect) -> str:
+    column_type = dialect.column_type(attribute.type, attribute.max_length)
+    return f"{dialect.quote(attribute.storage.name)} {column_type}"
 
 
 # A framework-owned tag column is not a declared attribute (m-inheritance), so
@@ -133,165 +120,130 @@ _TAG_COLUMN_TYPE = STRING
 _TAG_COLUMN_MAX_LENGTH = 32
 
 
-def _inheritance_table_ddl(meta: Metamodel, entity: Entity, table: str, dialect: Dialect) -> str:
-    root = inheritance.family_root(meta, entity)
-    assert root.inheritance is not None
-    if root.inheritance.strategy == "table-per-hierarchy":
-        return _tph_table_ddl(meta, root, table, dialect)
-    return _tpcs_table_ddl(meta, entity, dialect)
+def _table_ddl(
+    model: Metamodel,
+    facet: InheritanceFacet,
+    entity: EntityMetadata,
+    table: str,
+    dialect: Dialect,
+) -> str:
+    """One table's ``create table``.
 
-
-def _tph_table_ddl(meta: Metamodel, root: Entity, table: str, dialect: Dialect) -> str:
-    """A table-per-hierarchy family's ONE shared table, merging every member
-    sharing it — root, every intermediate abstract-subtype, and every
-    concrete subtype.
-
-    Value objects and unique secondary indices may be declared on ANY member
-    of the family (m-inheritance "Inherited members"), so both are derived
-    from the WHOLE member set (``ancestors + concretes``) rather than read off
-    ``root`` alone: reading them off the root only would silently drop an
-    intermediate- or concrete-declared value object, or a secondary unique
-    index declared anywhere but the root. As-of axes are DIFFERENT: temporality
-    is a family-wide property the root ALONE declares (the
-    `inheritance-temporal-axes-not-root-owned` invariant rejects any
-    descendant that does), so the milestone-interval PK suffix is read off
-    ``root`` directly — never unioned across the member set.
+    A table-per-hierarchy family's ONE shared table merges every member sharing
+    it — root, every intermediate abstract subtype, and every concrete — because
+    value objects and unique secondary indices may be declared on ANY member
+    (m-inheritance "Inherited members"). Every other table stores one position's
+    own ancestry chain: a table-per-concrete-subtype concrete's root → … →
+    concrete, and a standalone Entity's own single-member chain. As-of axes are
+    DIFFERENT again: temporality is family-wide and root-declared, so the
+    milestone-interval primary-key suffix is read off the root alone.
     """
-    assert root.inheritance is not None
-    concretes = sorted(
-        (
-            entity
-            for entity in meta.entities
-            if entity.inheritance is not None
-            and entity.inheritance.role == "concrete-subtype"
-            and inheritance.family_root(meta, entity).name == root.name
-        ),
-        key=lambda entity: entity.name,
-    )
+    view = _position(facet, entity)
+    root = _root(model, facet, entity)
+    if view.tag_column is not None:
+        members = _family_members(model, facet, root.identity)
+        projection = facet.position([root.identity])
+        assert projection is not None  # a root always denotes its own family position
+        attributes: Sequence[AttributeMetadata] = projection.superset_attributes
+        value_objects = projection.superset_value_objects
+    else:
+        members = tuple(
+            member
+            for member in (model.entity(identity) for identity in view.ancestry)
+            if member is not None
+        )
+        attributes = view.applicable_attributes
+        value_objects = view.applicable_value_objects
+
+    # The tag sits immediately after the root's own columns (m-sql column order),
+    # before any descendant's columns, so its physical slot matches the canonical
+    # column order a write binds in.
+    root_column_count = len(root.declared_attributes)
     columns: list[str] = []
     pk_columns: list[str] = []
-    for attribute in root.attributes:
+    for index, attribute in enumerate(attributes):
         columns.append(_column_ddl(attribute, dialect))
-        if attribute.primary_key:
-            pk_columns.append(dialect.quote(attribute.column))
-    tag_col = root.inheritance.tag_column
-    if tag_col is not None:
-        columns.append(
-            f"{dialect.quote(tag_col)} "
-            f"{dialect.column_type(_TAG_COLUMN_TYPE, _TAG_COLUMN_MAX_LENGTH)}"
-        )
-    ancestors = inheritance.ancestor_chain(meta, tuple(c.name for c in concretes))
-    for ancestor in ancestors:
-        if ancestor.name == root.name:
-            continue  # root's own columns already emitted above, in their declared order
-        for attribute in ancestor.attributes:
-            columns.append(_column_ddl(attribute, dialect))
-    for concrete in concretes:
-        for attribute in concrete.attributes:
-            columns.append(_column_ddl(attribute, dialect))
-
-    # The whole family sharing this table: every ancestor (root first) plus
-    # every concrete row-owner — the complete member set value objects and
-    # unique indices may be declared across (never root-only).
-    members = (*ancestors, *concretes)
-    for member in members:
-        for value_object in member.value_objects:
-            columns.append(f"{dialect.quote(value_object.storage_column)} jsonb")
-
-    # The root's own as-of axes — the family's ONLY legal declaration site
-    # (temporality is family-wide; `validate` rejects a descendant that
-    # declares any) — appended as the table's milestone-interval PK suffix.
+        if isinstance(attribute.primary_key, PrimaryKey):
+            pk_columns.append(dialect.quote(attribute.storage.name))
+        if index + 1 == root_column_count and view.tag_column is not None:
+            columns.append(
+                f"{dialect.quote(view.tag_column)} "
+                f"{dialect.column_type(_TAG_COLUMN_TYPE, _TAG_COLUMN_MAX_LENGTH)}"
+            )
+    columns.extend(f"{dialect.quote(member.storage.name)} jsonb" for member in value_objects)
     pk_columns.extend(
-        dialect.quote(_attribute_column(root, axis.start_attribute)) for axis in root.as_of_axes
+        dialect.quote(_attribute_column(root, axis.start_attribute.name))
+        for axis in root.declared_as_of_axes
     )
-
     if pk_columns:
         columns.append(f"primary key ({', '.join(pk_columns)})")
     columns.extend(_unique_constraints(members, pk_columns, dialect))
     return f"create table {dialect.quote(table)} ({', '.join(columns)})"
 
 
-def _tpcs_table_ddl(meta: Metamodel, concrete: Entity, dialect: Dialect) -> str:
-    """A table-per-concrete-subtype concrete's own table, its full
-    ancestry-derived column chain (root → … → concrete).
+def _root(model: Metamodel, facet: InheritanceFacet, entity: EntityMetadata) -> EntityMetadata:
+    root = model.entity(_position(facet, entity).root)
+    if root is None:  # pragma: no cover - a family root is always an accepted Entity
+        raise ValueError(f"{entity.identity.canonical}: the model declares no family root")
+    return root
 
-    A TPCS family's temporal as-of axes are declared on the abstract ROOT
-    ALONE and inherited by every concrete subtype — never repeated or amended
-    lower (`inheritance-temporal-axes-not-root-owned`) — so the axes are
-    derived through `inheritance.declaring_entity` (which resolves to the
-    root for any participant) rather than read off `concrete` directly:
-    reading them off the concrete alone would silently omit the
-    milestone start-Attribute columns from the physical primary key, leaving no
-    way to store a second milestone for the same domain identity
-    (`m-descriptor`: the physical key includes each dimension's start Attribute
-    column). Any unique secondary index, though, MAY be
-    declared on any ancestor along ``concrete``'s own chain (m-inheritance
-    "Inherited members" places no such restriction on non-temporal members),
-    so value objects and unique indices are unioned across the whole chain
-    (today's corpus declares value objects only on the concrete, but a root-
-    or intermediate-declared one must not be dropped either).
-    """
-    assert concrete.table is not None
-    chain = (*inheritance.ancestor_chain(meta, (concrete.name,)), concrete)
-    columns: list[str] = []
-    pk_columns: list[str] = []
-    for member in chain:
-        for attribute in member.attributes:
-            columns.append(_column_ddl(attribute, dialect))
-            if attribute.primary_key:
-                pk_columns.append(dialect.quote(attribute.column))
-    for member in chain:
-        for value_object in member.value_objects:
-            columns.append(f"{dialect.quote(value_object.storage_column)} jsonb")
-    declaring = inheritance.declaring_entity(meta, concrete)
-    pk_columns.extend(
-        dialect.quote(_attribute_column(declaring, axis.start_attribute))
-        for axis in declaring.as_of_axes
+
+def _family_members(
+    model: Metamodel, facet: InheritanceFacet, root: EntityIdentity
+) -> tuple[EntityMetadata, ...]:
+    """Every accepted Entity whose family root is ``root``, in canonical order."""
+    return tuple(
+        member
+        for member in model.entities
+        if (position := facet.entity(member.identity)) is not None and position.root == root
     )
-    if pk_columns:
-        columns.append(f"primary key ({', '.join(pk_columns)})")
-    columns.extend(_unique_constraints(chain, pk_columns, dialect))
-    return f"create table {dialect.quote(concrete.table)} ({', '.join(columns)})"
 
 
 def _unique_constraints(
-    chain: Sequence[Entity], pk_columns: list[str], dialect: Dialect
+    chain: Sequence[EntityMetadata], pk_columns: list[str], dialect: Dialect
 ) -> list[str]:
     """``unique (…)`` constraints for the declared unique secondary indices of
     every entity in ``chain`` (a plain entity's own single-element chain, a
     table-per-concrete-subtype concrete's full ancestry, or a table-per-hierarchy
     table's whole member set — an ancestor's own index, e.g. its temporal
-    composite, is otherwise invisible from a concrete descriptor alone).
+    composite, is otherwise invisible from a concrete declaration alone).
 
-    An index's attribute names resolve to physical columns through the WHOLE
-    chain's scalar attributes. The composite milestone indices name the
+    An index's Attribute Identities resolve to physical columns through the
+    WHOLE chain's scalar attributes. The composite milestone indices name the
     start Attribute (for example, ``tx_start`` maps to ``in_z``), so an index
     declared on one chain member may reference an attribute inherited from
-    another. The index matching the
-    physical primary key is skipped — ``primary key (…)`` already enforces it
-    — what remains are the true secondaries (a unique business column, a
-    one-to-one FK column), which must be enforced for the `m-db-error`
-    uniqueViolation-via-secondary-index triggers to raise. A duplicate
-    constraint (the same resolved column set declared more than once in the
-    chain) is emitted once. An unresolvable attribute name fails loudly rather
-    than silently dropping a declared constraint.
+    another. The index matching the physical primary key is skipped —
+    ``primary key (…)`` already enforces it — what remains are the true
+    secondaries (a unique business column, a one-to-one FK column), which must
+    be enforced for the `m-db-error` uniqueViolation-via-secondary-index
+    triggers to raise. A duplicate constraint (the same resolved column set
+    declared more than once in the chain) is emitted once. An unresolvable
+    attribute name fails loudly rather than silently dropping a declared
+    constraint.
     """
     resolve: dict[str, str] = {}
     for member in chain:
-        resolve.update({attribute.name: attribute.column for attribute in member.attributes})
+        resolve.update(
+            {
+                attribute.identity.name: attribute.storage.name
+                for attribute in member.declared_attributes
+            }
+        )
     constraints: list[str] = []
     seen: set[frozenset[str]] = set()
     for member in chain:
         for index in member.indices:
             if not index.unique:
                 continue
-            unresolved = [name for name in index.attributes if name not in resolve]
+            unresolved = [
+                attribute.name for attribute in index.attributes if attribute.name not in resolve
+            ]
             if unresolved:
                 raise ValueError(
-                    f"{member.name}: unique index {index.name!r} names attributes with no "
-                    f"physical column: {unresolved}"
+                    f"{member.identity.name}: unique index {index.identity.name!r} names "
+                    f"attributes with no physical column: {unresolved}"
                 )
-            quoted = [dialect.quote(resolve[name]) for name in index.attributes]
+            quoted = [dialect.quote(resolve[attribute.name]) for attribute in index.attributes]
             if set(quoted) == set(pk_columns):
                 continue
             key = frozenset(quoted)
@@ -302,77 +254,63 @@ def _unique_constraints(
     return constraints
 
 
-def _attribute_column(entity: Entity, attribute_name: str) -> str:
-    for attribute in entity.attributes:
-        if attribute.name == attribute_name:
-            return attribute.column
-    raise ValueError(f"{entity.name}: no attribute {attribute_name!r}")
+def _attribute_column(entity: EntityMetadata, name: str) -> str:
+    attribute = entity.attribute(name)
+    if attribute is None:  # pragma: no cover - an accepted axis names a declared Attribute
+        raise ValueError(f"{entity.identity.name}: no attribute {name!r}")
+    return attribute.storage.name
 
 
 def _fixture_columns(
-    meta: Metamodel, entity: Entity
-) -> tuple[list[str], dict[str, tuple[str, bool]], tuple[str, object] | None]:
+    facet: InheritanceFacet, entity: EntityMetadata
+) -> tuple[Sequence[str], dict[str, tuple[str, bool]], tuple[str, object] | None]:
     """The column order, member resolution map, and an optional (framework-owned)
     tag assignment for one fixture-bearing entity.
 
-    A plain (non-inheritance) entity is unchanged: ``column_order`` and its own
-    attributes/value-objects. An inheritance participant's fixture rows carry
-    every ancestry-inherited member BY NAME (`m-case-format`: a Dog fixture row
-    authors ``name``/``ownerId`` — Animal's own — alongside its own
-    ``barkVolume``), so the column order and resolution map are derived from the
-    full ancestry chain (root → … → this concrete) instead of the entity's own
-    ``column_order`` view. A table-per-hierarchy concrete additionally always
-    binds its tag column from its own declared ``tagValue`` — never authored in
-    the fixture row (m-inheritance: "framework-owned metadata, never authored").
+    An inheritance participant's fixture rows carry every ancestry-inherited
+    member BY NAME (`m-case-format`: a Dog fixture row authors ``name`` /
+    ``ownerId`` — Animal's own — alongside its own ``barkVolume``), and the
+    canonical column order is family-effective for exactly that reason, so one
+    derivation serves a participant and a standalone Entity alike. A
+    table-per-hierarchy concrete additionally always binds its tag column from
+    its own declared ``tagValue`` — never authored in the fixture row
+    (m-inheritance: "framework-owned metadata, never authored").
     """
-    if entity.inheritance is None:
-        member_by_column: dict[str, tuple[str, bool]] = {
-            attr.column: (attr.name, False) for attr in entity.attributes
-        }
-        member_by_column.update((vo.storage_column, (vo.name, True)) for vo in entity.value_objects)
-        return list(column_order(entity)), member_by_column, None
-
-    chain = (*inheritance.ancestor_chain(meta, (entity.name,)), entity)
-    col_order: list[str] = []
-    member_by_column = {}
-    for member in chain:
-        for attribute in member.attributes:
-            col_order.append(attribute.column)
-            member_by_column[attribute.column] = (attribute.name, False)
-        for vo in member.value_objects:
-            col_order.append(vo.storage_column)
-            member_by_column[vo.storage_column] = (vo.name, True)
-
+    view = _position(facet, entity)
+    member_by_column: dict[str, tuple[str, bool]] = {
+        attribute.storage.name: (attribute.identity.name, False)
+        for attribute in view.applicable_attributes
+    }
+    member_by_column.update(
+        (member.storage.name, (member.identity.path[-1], True))
+        for member in view.applicable_value_objects
+    )
     tag_assignment: tuple[str, object] | None = None
-    root = inheritance.family_root(meta, entity)
-    if root.inheritance is not None and root.inheritance.strategy == "table-per-hierarchy":
-        tag_col = root.inheritance.tag_column
-        tag_value = entity.inheritance.tag_value
-        if tag_col is not None and tag_value is not None:
-            tag_assignment = (tag_col, tag_value)
-    return col_order, member_by_column, tag_assignment
+    if view.tag_column is not None and view.tag_value is not None:
+        tag_assignment = (view.tag_column, view.tag_value)
+    return column_order(entity, facet), member_by_column, tag_assignment
 
 
 def fixture_statements(
-    meta: Metamodel, fixtures: Mapping[str, object], dialect: Dialect = POSTGRES
+    model: Metamodel, fixtures: Mapping[str, object], dialect: Dialect = POSTGRES
 ) -> list[tuple[str, list[object]]]:
-    """``insert`` statements for the model's fixtures, in descriptor column order.
+    """``insert`` statements for the model's fixtures, in canonical column order.
 
-    Columns and binds follow the descriptor ``column_order`` derivation (the same
-    canonical physical order DDL and row-write lowering use) for a plain entity —
-    an inheritance participant's ancestry-derived order, `_fixture_columns` —
-    never the fixture mapping's key order, so re-spelling a fixture row with
-    permuted keys emits byte-identical SQL (python.md §6 ``loadFixtures``). A
-    physical column with no member in the row (an omitted nullable) is skipped,
-    so only authored members bind; a table-per-hierarchy concrete's tag column is
-    always bound first, derived from its own ``tagValue`` (never a fixture member).
+    Columns and binds follow the canonical physical column order (the same one
+    DDL and row-write lowering use) rather than the fixture mapping's key order,
+    so re-spelling a fixture row with permuted keys emits byte-identical SQL
+    (python.md §6 ``loadFixtures``). A physical column with no member in the row
+    (an omitted nullable) is skipped, so only authored members bind; a
+    table-per-hierarchy concrete's tag column is always bound first, derived
+    from its own ``tagValue`` (never a fixture member).
     """
+    facet = inheritance.view(model)
     statements: list[tuple[str, list[object]]] = []
-    for entity, table in _tables(meta):
-        rows = fixtures.get(entity.name)
+    for entity, table in _tables(model, facet):
+        rows = fixtures.get(entity.identity.name)
         if not isinstance(rows, list):
             continue
-        col_order, member_by_column, tag_assignment = _fixture_columns(meta, entity)
+        col_order, member_by_column, tag_assignment = _fixture_columns(facet, entity)
         for row in cast("list[object]", rows):
             if not isinstance(row, Mapping):
                 continue
@@ -385,8 +323,8 @@ def fixture_statements(
                 binds.append(tag_value)
             for column in col_order:
                 member = member_by_column.get(column)
-                if member is None:  # pragma: no cover - defends a malformed column plan
-                    continue
+                if member is None:
+                    continue  # the framework-owned tag column binds above, never here
                 name, is_value_object = member
                 if name not in member_row:
                     continue  # fixture omits this (nullable) column
@@ -462,18 +400,22 @@ class Provisioner:  # pragma: no cover - exercised by the Docker provider / conf
         self._peers.append(peer)
         return peer
 
-    def reset(self, meta: Metamodel, fixtures: Mapping[str, object]) -> None:
-        """Reset the schema, apply the descriptor DDL, and load the fixtures.
+    def reset(self, meta: DescriptorMetamodel, fixtures: Mapping[str, object]) -> None:
+        """Reset the schema, apply the model-derived DDL, and load the fixtures.
 
-        Fixture binds carry the neutral :class:`JsonDocument` carrier for value
-        objects; the adapter recognizes it at its boundary and binds the driver's
-        native structured-document type, so no psycopg bind mechanics leak here.
+        Takes the descriptor record graph the harness already holds and forms it
+        into the accepted model the pure statement generators consume, so a
+        caller hands the same view it names a case's model with. Fixture binds
+        carry the neutral :class:`JsonDocument` carrier for value objects; the
+        adapter recognizes it at its boundary and binds the driver's native
+        structured-document type, so no psycopg bind mechanics leak here.
         """
+        model = models.accepted_model(meta)
         for statement in reset_statements():
             self._adapter.execute_write(statement, [])
-        for statement in schema_statements(meta):
+        for statement in schema_statements(model):
             self._adapter.execute_write(statement, [])
-        for sql, binds in fixture_statements(meta, fixtures):
+        for sql, binds in fixture_statements(model, fixtures):
             self._adapter.execute_write(POSTGRES.to_driver_sql(sql), binds)
 
     def close(self) -> None:
