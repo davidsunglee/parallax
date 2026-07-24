@@ -92,7 +92,7 @@ def _flush_and_lower(
     concurrency: Concurrency = "locking",
     observations: Mapping[ObjectKey, Observation] | None = None,
 ) -> list[Statement]:
-    plan = plan_flush(buffer, observations or {}, None, meta)
+    plan = plan_flush(buffer, observations or {}, None, models.accepted_model(meta))
     return [
         lowered.statement
         for planned in plan.writes

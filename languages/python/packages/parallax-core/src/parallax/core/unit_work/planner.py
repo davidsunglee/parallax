@@ -32,7 +32,7 @@ The stages, in order (``m-unit-work`` "Same-transaction write coalescing" /
   (``collapse=None``) leaves every instruction exactly as coalesce produced it.
   Deterministic in buffer order: a run never regroups across an intervening,
   differently-keyed instruction or an :class:`AtomicUnit` boundary.
-- **FK-order** — a topological order over the descriptor foreign-key graph:
+- **FK-order** — a topological order over the declared foreign-key graph:
   inserts parent-first, deletes child-first, updates between (the canonical
   INSERT -> UPDATE -> DELETE flush order). An :class:`AtomicUnit` moves as ONE
   block (ranked by its own target entity), its internal row order untouched.
@@ -48,7 +48,15 @@ from dataclasses import dataclass
 from typing import Final
 
 from parallax.core import inheritance
-from parallax.core.descriptor import Metamodel
+from parallax.core.metamodel import (
+    AttributeMetadata,
+    Cardinality,
+    DefiningRelationshipDeclaration,
+    EntityIdentity,
+    EntityMetadata,
+    Metamodel,
+    PrimaryKey,
+)
 from parallax.core.unit_work.instructions import KeyedWrite, WriteInstruction
 
 __all__ = [
@@ -66,6 +74,55 @@ __all__ = [
 # One object's identity: (entity, ordered (pk-attribute-name, value) pairs). The
 # coalescing scope and the observation binding are keyed by it.
 ObjectKey = tuple[str, tuple[tuple[str, object], ...]]
+
+
+@dataclass(frozen=True, slots=True)
+class _Targets:
+    """The per-flush resolution of the write IR's own entity spellings.
+
+    A write instruction names its entity by the spelling its canonical document
+    carries (`write-instruction.schema.json`), which is a wire spelling rather
+    than an Entity Identity. Resolving it needs the model, and every stage below
+    then needs the same Entity's family-effective members, so one resolution is
+    made per flush and threaded down rather than repeated per instruction.
+    """
+
+    model: Metamodel
+    by_spelling: Mapping[str, EntityMetadata]
+    families: inheritance.InheritanceFacet
+
+    def entity(self, spelling: str) -> EntityMetadata | None:
+        """The accepted Metadata ``spelling`` names, or absence.
+
+        The canonical spelling always resolves; a bare declared name resolves
+        only when the model declares it once, so an ambiguous bare name reaches
+        no Entity rather than an arbitrary one.
+        """
+        return self.by_spelling.get(spelling)
+
+    def members(self, entity: EntityMetadata) -> Sequence[AttributeMetadata]:
+        """``entity``'s family-effective Attributes, root first.
+
+        An inheritance participant declares only its own members while its
+        writes name every inherited one, so the applicable chain — not the
+        Entity's own declarations — is what a write-side member lookup reads.
+        """
+        position = self.families.entity(entity.identity)
+        if position is None:  # pragma: no cover - the facet covers every accepted Entity
+            return entity.declared_attributes
+        return position.applicable_attributes
+
+
+def _targets(model: Metamodel) -> _Targets:
+    by_spelling = {entity.identity.canonical: entity for entity in model.entities}
+    counts: dict[str, int] = {}
+    for entity in model.entities:
+        counts[entity.identity.name] = counts.get(entity.identity.name, 0) + 1
+    for entity in model.entities:
+        if counts[entity.identity.name] == 1:
+            by_spelling.setdefault(entity.identity.name, entity)
+    return _Targets(model=model, by_spelling=by_spelling, families=inheritance.view(model))
+
 
 _INSERT_VERBS: Final[frozenset[str]] = frozenset({"insert", "insertUntil"})
 _UPDATE_VERBS: Final[frozenset[str]] = frozenset({"update", "updateUntil"})
@@ -176,14 +233,14 @@ class AtomicUnit:
 # write's atomic planned unit.
 BufferItem = WriteInstruction | AtomicUnit
 
-# The injected `m-batch-write` collapse-eligibility policy (`meta, entity_name,
+# The injected `m-batch-write` collapse-eligibility policy (`model, entity,
 # mutation, rows) -> collapses`): this scope takes no edge to `m-batch-write`
 # (the `m-unit-work ↮ m-batch-write` contract), so `plan_flush` accepts it as
 # an OPTIONAL parameter the composition layer supplies (`parallax.snapshot.handle`
 # for production, the conformance compile lane identically) — omitted (`None`)
 # is a pure no-op collapse stage, never a behavior a caller must opt into just to
 # keep per-instruction lowering.
-CollapsePolicy = Callable[[Metamodel, str, str, Sequence[Mapping[str, object]]], bool]
+CollapsePolicy = Callable[[Metamodel, EntityMetadata, str, Sequence[Mapping[str, object]]], bool]
 
 
 @dataclass(frozen=True, slots=True)
@@ -208,7 +265,7 @@ def plan_flush(
     buffer: Sequence[BufferItem],
     observations: Mapping[ObjectKey, Observation],
     tx_instant: str | None,
-    meta: Metamodel,
+    model: Metamodel,
     *,
     collapse: CollapsePolicy | None = None,
 ) -> FlushPlan:
@@ -220,39 +277,49 @@ def plan_flush(
     seam is DML-neutral by DAG design). ``collapse`` is the injected
     ``m-batch-write`` vocabulary (omitted: the collapse stage is a no-op).
     """
-    coalesced = _coalesce(buffer, meta)
-    collapsed = _collapse(coalesced, meta, collapse, observations)
-    ordered = _fk_order(collapsed, meta)
-    elided = _elide(ordered, meta)
-    writes = tuple(_attach_observation(instr, observations, meta) for instr in elided)
+    targets = _targets(model)
+    coalesced = _coalesce(buffer, targets)
+    collapsed = _collapse(coalesced, targets, collapse, observations)
+    ordered = _fk_order(collapsed, targets)
+    elided = _elide(ordered, targets)
+    writes = tuple(_attach_observation(instr, observations, targets) for instr in elided)
     return FlushPlan(writes=writes, tx_instant=tx_instant)
 
 
 # --------------------------------------------------------------------------- #
 # Object identity.                                                             #
 # --------------------------------------------------------------------------- #
-def object_key(instruction: WriteInstruction, meta: Metamodel) -> ObjectKey | None:
+def object_key(instruction: WriteInstruction, model: Metamodel) -> ObjectKey | None:
     """The identity of the single object a keyed write targets, or ``None``.
 
-    ``None`` when the instruction is not a single-row keyed write, when the row
-    does not carry every primary-key attribute (a pk-generated insert whose key is
-    entirely DB-computed), or when a carried primary-key VALUE is itself a
-    DB-computed marker (`m-pk-gen`'s `{computed: ...}` / `{increment: ...}` — a
+    ``None`` when the instruction is not a single-row keyed write, when its
+    entity spelling names no Entity of ``model``, when the row does not carry
+    every primary-key attribute (a pk-generated insert whose key is entirely
+    DB-computed), or when a carried primary-key VALUE is itself a DB-computed
+    marker (`m-pk-gen`'s `{computed: ...}` / `{increment: ...}` — a
     marker-shaped pk value has no coalescing identity, exactly like an absent
     one) — an unidentifiable write is never coalesced nor observation-bound.
+    """
+    return _object_key(instruction, _targets(model))
 
-    Primary-key resolution is FAMILY-EFFECTIVE
-    (`inheritance.family_primary_key`): an inheritance participant's key is
-    declared on the root alone (m-inheritance "Inherited members"), so the
-    bare per-entity ``Entity.primary_key`` view is wrongly empty for a
-    concrete subtype — every corpus family's own keyed writes.
+
+def _object_key(instruction: WriteInstruction, targets: _Targets) -> ObjectKey | None:
+    """:func:`object_key` over an already-resolved flush context.
+
+    Primary-key resolution is FAMILY-EFFECTIVE: an inheritance participant's key
+    is declared on the root alone (m-inheritance "Inherited members"), so the
+    Entity's own declared Attributes are wrongly empty for a concrete subtype —
+    every corpus family's own keyed writes — and the applicable member chain the
+    Inheritance Facet precomputes is what carries the inherited key.
     """
     if not isinstance(instruction, KeyedWrite) or len(instruction.rows) != 1:
         return None
-    entity = meta.entity(instruction.entity)
-    pk_names = [attr.name for attr in inheritance.family_primary_key(meta, entity)]
-    if not pk_names:
+    entity = targets.entity(instruction.entity)
+    if entity is None:
         return None
+    # An accepted Entity always carries a primary key, so the family-effective
+    # chain is never empty and only the row itself can leave a write unkeyed.
+    pk_names = _primary_key_names(targets, entity)
     row = instruction.rows[0]
     pairs: list[tuple[str, object]] = []
     for name in pk_names:
@@ -265,10 +332,19 @@ def object_key(instruction: WriteInstruction, meta: Metamodel) -> ObjectKey | No
     return (instruction.entity, tuple(pairs))
 
 
+def _primary_key_names(targets: _Targets, entity: EntityMetadata) -> list[str]:
+    """``entity``'s family-effective primary-key Attribute names, in chain order."""
+    return [
+        attribute.identity.name
+        for attribute in targets.members(entity)
+        if isinstance(attribute.primary_key, PrimaryKey)
+    ]
+
+
 # --------------------------------------------------------------------------- #
 # Coalesce (same-transaction insert-then-update / insert-then-delete).         #
 # --------------------------------------------------------------------------- #
-def _coalesce(buffer: Sequence[BufferItem], meta: Metamodel) -> list[BufferItem]:
+def _coalesce(buffer: Sequence[BufferItem], targets: _Targets) -> list[BufferItem]:
     """Fold each same-transaction insert-then-X of one object (m-unit-work).
 
     A keyed single-row insert opens a pending insert for its object; a subsequent
@@ -288,7 +364,7 @@ def _coalesce(buffer: Sequence[BufferItem], meta: Metamodel) -> list[BufferItem]
             result.append(item)
             continue
         instruction = item
-        key = object_key(instruction, meta)
+        key = _object_key(instruction, targets)
         if not isinstance(instruction, KeyedWrite) or key is None:
             # A predicate write or an unidentifiable keyed write never coalesces.
             result.append(instruction)
@@ -301,7 +377,7 @@ def _coalesce(buffer: Sequence[BufferItem], meta: Metamodel) -> list[BufferItem]
             index = pending_insert[key]
             base = result[index]
             assert isinstance(base, KeyedWrite)  # a pending-insert slot is always a KeyedWrite
-            result[index] = _merge_update_into_insert(base, instruction, meta)
+            result[index] = _merge_update_into_insert(base, instruction, targets)
         elif verb in _DELETE_VERBS and key in pending_insert:
             # Insert-then-delete cancels: the pending insert annihilates, no DML.
             result[pending_insert.pop(key)] = None
@@ -311,7 +387,7 @@ def _coalesce(buffer: Sequence[BufferItem], meta: Metamodel) -> list[BufferItem]
 
 
 def _merge_update_into_insert(
-    insert: KeyedWrite, update: KeyedWrite, meta: Metamodel
+    insert: KeyedWrite, update: KeyedWrite, targets: _Targets
 ) -> KeyedWrite:
     """Overlay ``update``'s non-key row fields onto ``insert``'s row.
 
@@ -319,7 +395,10 @@ def _merge_update_into_insert(
     still opens a current milestone / fully-current rectangle at lowering per
     temporal flavor) but carries the FINAL values — no ``INSERT`` + ``UPDATE``.
     """
-    pk_names = {attr.name for attr in meta.entity(insert.entity).primary_key}
+    entity = targets.entity(insert.entity)
+    # Both instructions already carry a resolved object key, so the Entity is
+    # always known here; the guard keeps the walk total rather than asserting.
+    pk_names: set[str] = set() if entity is None else set(_primary_key_names(targets, entity))
     merged = dict(insert.rows[0])
     for name, value in update.rows[0].items():
         if name not in pk_names:
@@ -339,7 +418,7 @@ def _merge_update_into_insert(
 # --------------------------------------------------------------------------- #
 def _collapse(
     buffer: Sequence[BufferItem],
-    meta: Metamodel,
+    targets: _Targets,
     collapse: CollapsePolicy | None,
     observations: Mapping[ObjectKey, Observation],
 ) -> list[BufferItem]:
@@ -372,16 +451,18 @@ def _collapse(
     def flush_run() -> None:
         if not run:
             return
-        if len(run) == 1:
-            result.append(run[0])
-        elif collapse(meta, run[0].entity, run[0].mutation, [row for w in run for row in w.rows]):
+        entity = targets.entity(run[0].entity)
+        rows = [row for w in run for row in w.rows]
+        if len(run) == 1 or entity is None:
+            result.extend(run)
+        elif collapse(targets.model, entity, run[0].mutation, rows):
             result.append(_merge_rows(run))
         else:
             result.extend(run)
         run.clear()
 
     def observed(item: KeyedWrite) -> bool:
-        key = object_key(item, meta)
+        key = _object_key(item, targets)
         return key is not None and key in observations
 
     for item in buffer:
@@ -421,9 +502,9 @@ def _merge_rows(run: Sequence[KeyedWrite]) -> KeyedWrite:
 
 
 # --------------------------------------------------------------------------- #
-# FK-order (topological over the descriptor foreign-key graph).                #
+# FK-order (topological over the declared foreign-key graph).                  #
 # --------------------------------------------------------------------------- #
-def _fk_order(items: Sequence[BufferItem], meta: Metamodel) -> list[WriteInstruction]:
+def _fk_order(items: Sequence[BufferItem], targets: _Targets) -> list[WriteInstruction]:
     """Order writes so a parent row inserts before a child that references it and
     deletes after: inserts parent-first, deletes child-first, updates between.
 
@@ -434,17 +515,14 @@ def _fk_order(items: Sequence[BufferItem], meta: Metamodel) -> list[WriteInstruc
     member writes, in their own resolved-row order, once the bucket sort has
     fixed its position: this is how it "moves as one block."
     """
-    ranks = _fk_ranks(meta)
+    ranks = _fk_ranks(targets.model)
 
     def representative(item: BufferItem) -> WriteInstruction:
         return item.writes[0] if isinstance(item, AtomicUnit) else item
 
     def rank(item: BufferItem) -> int:
-        entity_name = _instruction_entity(representative(item))
-        resolved = meta.by_name.get(entity_name)
-        if resolved is not None:
-            entity_name = resolved.canonical_name
-        return ranks.get(entity_name, 0)
+        entity = targets.entity(_instruction_entity(representative(item)))
+        return 0 if entity is None else ranks.get(entity.identity, 0)
 
     def mutation(item: BufferItem) -> str:
         return representative(item).mutation
@@ -462,37 +540,46 @@ def _fk_order(items: Sequence[BufferItem], meta: Metamodel) -> list[WriteInstruc
     ]
 
 
-def _fk_ranks(meta: Metamodel) -> dict[str, int]:
+def _fk_ranks(model: Metamodel) -> dict[EntityIdentity, int]:
     """A topological rank per entity: a referenced entity ranks before its referencer.
 
     A ``many-to-one`` relationship means the source holds the foreign key (source
     after related); a ``one-to-many`` means the related entity holds it (related
     after source). ``one-to-one`` contributes no FK-order edge because its
-    storage owner is ambiguous. Ties break by
-    declaration order; a (defensive) cycle falls back to declaration order.
+    storage owner is ambiguous. Ties break by the accepted model's own canonical
+    Entity order; a (defensive) cycle falls back to it too.
+
+    Only DEFINING declarations contribute: a reverse declaration names a defining
+    one rather than repeating it, and the inverted direction it denotes yields
+    the very edge the defining side already contributed, so reading both would
+    add nothing and would need the paired cardinality this scope cannot see.
+    Every declared target is an accepted Entity of this model, so an edge always
+    lands on a ranked position.
     """
-    names = [entity.canonical_name for entity in meta.entities]
-    prereqs: dict[str, set[str]] = {name: set() for name in names}
-    for entity in meta.entities:
-        for rel in meta.relationships_for(entity):
-            related = rel.join.target.entity
-            if related not in prereqs:
-                continue  # a relationship reaching outside this model has no local order
-            if rel.cardinality == "many-to-one":
-                prereqs[entity.canonical_name].add(related)
-            elif rel.cardinality == "one-to-many":
-                prereqs[related].add(entity.canonical_name)
-    remaining = set(names)
-    order: list[str] = []
+    identities = [entity.identity for entity in model.entities]
+    prereqs: dict[EntityIdentity, set[EntityIdentity]] = {
+        identity: set() for identity in identities
+    }
+    for entity in model.entities:
+        for declaration in entity.declared_relationships:
+            if not isinstance(declaration, DefiningRelationshipDeclaration):
+                continue
+            related = declaration.join.target.entity
+            if declaration.cardinality is Cardinality.MANY_TO_ONE:
+                prereqs[entity.identity].add(related)
+            elif declaration.cardinality is Cardinality.ONE_TO_MANY:
+                prereqs[related].add(entity.identity)
+    remaining = set(identities)
+    order: list[EntityIdentity] = []
     while remaining:
-        ready = [n for n in names if n in remaining and not (prereqs[n] & remaining)]
+        ready = [i for i in identities if i in remaining and not (prereqs[i] & remaining)]
         if not ready:
             # Defensive: reachable models are acyclic; a cycle keeps declaration order.
-            order.extend(n for n in names if n in remaining)  # pragma: no cover
+            order.extend(i for i in identities if i in remaining)  # pragma: no cover
             break  # pragma: no cover
         order.append(ready[0])
         remaining.discard(ready[0])
-    return {name: rank for rank, name in enumerate(order)}
+    return {identity: rank for rank, identity in enumerate(order)}
 
 
 def _instruction_entity(instruction: WriteInstruction) -> str:
@@ -504,7 +591,7 @@ def _instruction_entity(instruction: WriteInstruction) -> str:
 # --------------------------------------------------------------------------- #
 # Elide (empty effective change set).                                          #
 # --------------------------------------------------------------------------- #
-def _elide(instructions: Sequence[WriteInstruction], meta: Metamodel) -> list[WriteInstruction]:
+def _elide(instructions: Sequence[WriteInstruction], targets: _Targets) -> list[WriteInstruction]:
     """Drop a keyed update whose effective change set is empty.
 
     A keyed update carrying only its primary key names no changed field, so it emits
@@ -512,13 +599,16 @@ def _elide(instructions: Sequence[WriteInstruction], meta: Metamodel) -> list[Wr
     a value-identical milestone is never fabricated). Predicate-write per-row no-op
     elimination belongs to the materialization boundary, not this planner.
     """
-    return [i for i in instructions if not _is_empty_keyed_update(i, meta)]
+    return [i for i in instructions if not _is_empty_keyed_update(i, targets)]
 
 
-def _is_empty_keyed_update(instruction: WriteInstruction, meta: Metamodel) -> bool:
+def _is_empty_keyed_update(instruction: WriteInstruction, targets: _Targets) -> bool:
     if not isinstance(instruction, KeyedWrite) or instruction.mutation not in _UPDATE_VERBS:
         return False
-    pk_names = {attr.name for attr in meta.entity(instruction.entity).primary_key}
+    entity = targets.entity(instruction.entity)
+    if entity is None:
+        return False
+    pk_names = set(_primary_key_names(targets, entity))
     return all(all(key in pk_names for key in row) for row in instruction.rows)
 
 
@@ -528,9 +618,9 @@ def _is_empty_keyed_update(instruction: WriteInstruction, meta: Metamodel) -> bo
 def _attach_observation(
     instruction: WriteInstruction,
     observations: Mapping[ObjectKey, Observation],
-    meta: Metamodel,
+    targets: _Targets,
 ) -> PlannedWrite:
-    key = object_key(instruction, meta)
+    key = _object_key(instruction, targets)
     observation = observations.get(key) if key is not None else None
     return PlannedWrite(
         instruction=instruction,

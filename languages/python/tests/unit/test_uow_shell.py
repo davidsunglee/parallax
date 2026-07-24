@@ -17,7 +17,7 @@ from collections.abc import Callable
 import pytest
 
 from parallax.conformance import models
-from parallax.core.descriptor import Metamodel
+from parallax.core.metamodel import Metamodel
 from parallax.core.unit_work import (
     Clock,
     EscapedTransactionError,
@@ -37,8 +37,8 @@ from parallax.core.unit_work import (
 pytestmark = pytest.mark.unit
 
 _MODELS = models.load_models()
-_ACCOUNT = _MODELS["account"]
-_BALANCE = _MODELS["balance"]
+_ACCOUNT = models.accepted_model(_MODELS["account"])
+_BALANCE = models.accepted_model(_MODELS["balance"])
 _FIXED = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
 
 
