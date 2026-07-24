@@ -37,6 +37,7 @@ from parallax.core.db_port import DbPort
 from parallax.core.descriptor import Metamodel
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.entity import Statement as EntityStatement
+from parallax.core.metamodel import Metamodel as AcceptedMetamodel
 from parallax.core.unit_work import (
     Clock,
     Concurrency,
@@ -59,6 +60,7 @@ from parallax.core.unit_work import (
 # by the private MODULE names and by the package's frozen `__all__`, not by
 # per-name underscores, which under pyright strict would make every intra-package
 # import a reportPrivateUsage error.
+from parallax.snapshot.handle._accepted import accepted_model
 from parallax.snapshot.handle._read import (
     Snapshot,
     deep_fetch_statement_pin,
@@ -228,6 +230,11 @@ class Database:
             ),
         )
 
+        # The unit of work plans against the accepted model, so this demarcation
+        # forms the record graph once per outermost transaction rather than per
+        # flush; a joining call inherits the active unit of work's own.
+        model = accepted_model(self._meta)
+
         def attempt() -> T:
             def in_txn(conn: DbPort) -> T:
                 def body(uow: UnitOfWork) -> T:
@@ -241,9 +248,9 @@ class Database:
                     body,
                     settings=TransactionSettings(concurrency=options.concurrency),
                     clock=self._clock,
-                    meta=self._meta,
+                    meta=model,
                     flush_executor=_flush_executor(
-                        conn, self._meta, self._dialect, options.concurrency
+                        conn, self._meta, model, self._dialect, options.concurrency
                     ),
                     # The injected `m-batch-write` collapse vocabulary —
                     # `parallax.snapshot.handle` is the
@@ -325,7 +332,11 @@ def _refuse_conflict(name: str, explicit: object | None, active_value: object) -
 
 
 def _flush_executor(
-    conn: DbPort, meta: Metamodel, dialect: Dialect, concurrency: Concurrency
+    conn: DbPort,
+    meta: Metamodel,
+    model: AcceptedMetamodel,
+    dialect: Dialect,
+    concurrency: Concurrency,
 ) -> FlushExecutor:
     """The unit of work's injected flush sink: lower each planned write, execute
     every lowered statement in order, and enforce each STATEMENT's own
@@ -353,13 +364,16 @@ def _flush_executor(
                     dialect.to_driver_sql(lowered.statement.sql), list(lowered.statement.binds)
                 )
                 if lowered.expected_affected is not None and affected != lowered.expected_affected:
-                    raise _conflict_error(planned, meta, affected, lowered)
+                    raise _conflict_error(planned, model, affected, lowered)
 
     return execute
 
 
 def _conflict_error(
-    planned: PlannedWrite, meta: Metamodel, actual: int | None, lowered: LoweredStatement
+    planned: PlannedWrite,
+    model: AcceptedMetamodel,
+    actual: int | None,
+    lowered: LoweredStatement,
 ) -> opt_lock.OptimisticLockConflictError | opt_lock.StaleWriteError:
     """The affected-row-mismatch error for one lowered statement — the retriable
     gated conflict, or (``lowered.stale_error``) the non-retriable ungated
@@ -370,7 +384,7 @@ def _conflict_error(
     engine's standalone conflict-close probe."""
     instruction = planned.instruction
     assert isinstance(instruction, KeyedWrite)  # only a keyed write ever carries an expectation
-    key = object_key(instruction, meta)
+    key = object_key(instruction, model)
     assert key is not None  # an expectation is attached only alongside a resolved object key
     assert lowered.expected_affected is not None  # the caller's own guard
     return opt_lock.classify_mismatch(

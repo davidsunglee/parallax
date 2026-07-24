@@ -5,7 +5,7 @@ The set-based / batched-write COLLAPSE VOCABULARY: pure functions over the
 same-entity, same-mutation single-row :class:`~parallax.core.unit_work.KeyedWrite`
 instructions **collapses** into one multi-row instruction, or stays decomposed
 (``m-batch-write.md`` "Set-based flush"). This module **renders no SQL** — the
-module DAG pins it to ``base`` / ``db_port`` / ``descriptor`` / ``inheritance`` /
+module DAG pins it to ``base`` / ``db_port`` / ``metamodel`` / ``inheritance`` /
 ``op_algebra`` / ``unit_work`` only (``modules.md`` §7's sole declared edge is
 ``m-batch-write --> m-unit-work``); the composition layer
 (:mod:`parallax.snapshot.handle`, the sole module cleared to import both this
@@ -13,17 +13,19 @@ scope and ``m-sql``/``m-dialect``) renders the collapsed instruction's DML, and
 the same layer injects this module's decision functions into
 :func:`~parallax.core.unit_work.planner.plan_flush`'s optional collapse-policy
 parameter — the injection the ``m-unit-work ↛ m-batch-write`` contract demands
-(``m-unit-work`` MUST NOT import this scope).
+(``m-unit-work`` MUST NOT import this scope). The planner resolves the write
+IR's own entity spelling once per flush, so every entry point below takes the
+already-resolved Entity Metadata rather than a name.
 
 Three collapse rules (``m-batch-write.md`` L15-26):
 
 - **insert** — same-entity inserts ALWAYS collapse into one multi-row
-  ``INSERT`` (one statement, many value tuples), UNLESS the entity's primary
-  key is pk-gen **managed** (a ``sequence`` / ``max`` strategy — each row's own
-  key allocation is independent, so a shared statement cannot express it,
-  ``m-pk-gen``). A versioned entity's insert collapses too: the initial version
-  is a derived CONSTANT (``opt_lock.INITIAL_VERSION``), never an observation, so
-  no per-row gate is needed.
+  ``INSERT``, UNLESS the entity's primary key is pk-gen **managed** (a
+  ``sequence`` / ``max`` generation — each row's own key allocation is
+  independent, so a shared statement cannot express it, ``m-pk-gen``). A
+  versioned entity's insert collapses too: the initial version is a derived
+  CONSTANT (``opt_lock.INITIAL_VERSION``), never an observation, so no per-row
+  gate is needed.
 - **update** — same-entity updates setting the SAME columns collapse into a
   batched ``UPDATE``: once per distinct key when the new values differ, or ONE
   statement with an ``IN`` predicate when the new value is UNIFORM across the
@@ -34,6 +36,11 @@ Three collapse rules (``m-batch-write.md`` L15-26):
 - **delete** — same-entity, NON-VERSIONED deletes collapse into one ``DELETE``
   with an ``IN`` predicate; a VERSIONED entity's delete never collapses (each
   row's own observed version must gate its own statement).
+
+Every one of those facts is family-wide — a version Attribute, an As-Of Axis,
+and the primary key are all root-owned — so each is read off the family-effective
+member chain the Inheritance Facet precomputes rather than off the position's own
+declarations, which are empty for a concrete subtype.
 
 A **temporal** entity's keyed writes never reach this module's collapse
 decision at all (`m-txtime-write` / `m-bitemp-write` own that lowering) —
@@ -66,7 +73,13 @@ from collections.abc import Mapping, Sequence
 from typing import Final
 
 from parallax.core import inheritance
-from parallax.core.descriptor import Metamodel
+from parallax.core.metamodel import (
+    ApplicationAssigned,
+    AttributeMetadata,
+    EntityMetadata,
+    Metamodel,
+    PrimaryKey,
+)
 
 __all__ = [
     "collapses",
@@ -87,24 +100,37 @@ _UPDATE_MUTATIONS: Final[frozenset[str]] = frozenset({"update", "updateUntil"})
 _OBSERVATION_CONTROL_KEYS: Final[frozenset[str]] = frozenset({"observedVersion", "observedTxStart"})
 
 
-def _is_versioned(meta: Metamodel, entity_name: str) -> bool:
-    declaring = inheritance.declaring_entity(meta, meta.entity(entity_name))
-    return any(attr.optimistic_locking for attr in declaring.attributes)
+def _family_members(model: Metamodel, entity: EntityMetadata) -> Sequence[AttributeMetadata]:
+    """``entity``'s family-effective Attributes: its own ancestry chain's."""
+    position = inheritance.view(model).entity(entity.identity)
+    if position is None:  # pragma: no cover - the facet covers every accepted Entity
+        return entity.declared_attributes
+    return position.applicable_attributes
 
 
-def _is_temporal(meta: Metamodel, entity_name: str) -> bool:
-    return inheritance.declaring_entity(meta, meta.entity(entity_name)).is_temporal
+def _is_versioned(model: Metamodel, entity: EntityMetadata) -> bool:
+    return any(attribute.optimistic_locking for attribute in _family_members(model, entity))
 
 
-def _is_pk_gen_managed(meta: Metamodel, entity_name: str) -> bool:
-    """Whether ``entity_name``'s (family-effective) primary key is allocated by
-    a `pkGenerator` strategy other than ``none`` (`m-pk-gen`) — each row's own
-    key allocation is independent, so a shared multi-row statement cannot
-    express it."""
-    entity = meta.entity(entity_name)
-    pk_attrs = inheritance.family_primary_key(meta, entity)
+def _is_temporal(model: Metamodel, entity: EntityMetadata) -> bool:
+    """Whether ``entity``'s family declares an As-Of Axis.
+
+    Temporality is family-wide and root-owned, so the question is asked of the
+    family root's own declaration; a descendant declares none of its own.
+    """
+    position = inheritance.view(model).entity(entity.identity)
+    root = entity if position is None else model.entity(position.root)
+    return root is not None and bool(root.declared_as_of_axes)
+
+
+def _is_pk_gen_managed(model: Metamodel, entity: EntityMetadata) -> bool:
+    """Whether ``entity``'s (family-effective) primary key is framework-allocated
+    (`m-pk-gen`) — each row's own key allocation is independent, so a shared
+    multi-row statement cannot express it."""
     return any(
-        attr.pk_generator is not None and attr.pk_generator.strategy != "none" for attr in pk_attrs
+        isinstance(attribute.primary_key, PrimaryKey)
+        and not isinstance(attribute.primary_key.generation, ApplicationAssigned)
+        for attribute in _family_members(model, entity)
     )
 
 
@@ -112,20 +138,20 @@ def _rows_carry_observation_keys(rows: Sequence[Mapping[str, object]]) -> bool:
     return any(_OBSERVATION_CONTROL_KEYS & row.keys() for row in rows)
 
 
-def insert_collapses(meta: Metamodel, entity_name: str) -> bool:
+def insert_collapses(model: Metamodel, entity: EntityMetadata) -> bool:
     """Whether same-entity ``insert`` rows collapse into one multi-row ``INSERT``
     (`m-batch-write.md` L17-19). ``False`` for a temporal entity (its keyed
     writes are `m-txtime-write` / `m-bitemp-write` territory, never this
     module's decision) or a pk-gen-**managed** entity; ``True`` otherwise,
     versioned or not (the initial version is a derived constant, never an
     observation, `m-opt-lock.INITIAL_VERSION`)."""
-    if _is_temporal(meta, entity_name):
+    if _is_temporal(model, entity):
         return False
-    return not _is_pk_gen_managed(meta, entity_name)
+    return not _is_pk_gen_managed(model, entity)
 
 
 def update_collapses(
-    meta: Metamodel, entity_name: str, rows: Sequence[Mapping[str, object]]
+    model: Metamodel, entity: EntityMetadata, rows: Sequence[Mapping[str, object]]
 ) -> bool:
     """Whether a run of same-entity ``update`` rows collapses into ONE
     ``UPDATE ... WHERE id IN (...)`` statement (`m-batch-write.md` L20-22): only
@@ -136,23 +162,26 @@ def update_collapses(
     **versioned** entity's update NEVER collapses,
     uniform or not — the gate/advance binds a PER-ROW observed version no
     shared statement can carry (`m-opt-lock`, ADR 0014)."""
-    if _is_temporal(meta, entity_name):
+    if _is_temporal(model, entity):
         return False
-    if _is_versioned(meta, entity_name):
+    if _is_versioned(model, entity):
         return False
     if _rows_carry_observation_keys(rows):
         return False
     if len(rows) < 2:
         return False
-    entity = meta.entity(entity_name)
-    pk_names = frozenset(attr.name for attr in inheritance.family_primary_key(meta, entity))
+    pk_names = frozenset(
+        attribute.identity.name
+        for attribute in _family_members(model, entity)
+        if isinstance(attribute.primary_key, PrimaryKey)
+    )
     excluded = pk_names | _OBSERVATION_CONTROL_KEYS
     assigned = [{k: v for k, v in row.items() if k not in excluded} for row in rows]
     first = assigned[0]
     return all(candidate == first for candidate in assigned[1:])
 
 
-def delete_collapses(meta: Metamodel, entity_name: str) -> bool:
+def delete_collapses(model: Metamodel, entity: EntityMetadata) -> bool:
     """Whether same-entity ``delete`` rows collapse into one
     ``DELETE ... WHERE id IN (...)`` statement (`m-batch-write.md` L23-26,
     "the delete analogue of the multi-row INSERT"). ``False`` for a temporal
@@ -160,22 +189,25 @@ def delete_collapses(meta: Metamodel, entity_name: str) -> bool:
     territory) or a VERSIONED one — a versioned entity's set-based delete
     NEVER collapses (`m-batch-write.md` L26): each row must be removed under
     its own observed version (`m-batch-write-004`)."""
-    if _is_temporal(meta, entity_name):
+    if _is_temporal(model, entity):
         return False
-    return not _is_versioned(meta, entity_name)
+    return not _is_versioned(model, entity)
 
 
 def collapses(
-    meta: Metamodel, entity_name: str, mutation: str, rows: Sequence[Mapping[str, object]]
+    model: Metamodel,
+    entity: EntityMetadata,
+    mutation: str,
+    rows: Sequence[Mapping[str, object]],
 ) -> bool:
-    """The single ``(meta, entity_name, mutation, rows) -> bool`` entry point
+    """The single ``(model, entity, mutation, rows) -> bool`` entry point
     (`~parallax.core.unit_work.planner.CollapsePolicy`'s own shape) — the
     function :mod:`parallax.snapshot.handle` and the conformance engine inject
     into :func:`~parallax.core.unit_work.planner.plan_flush` IDENTICALLY,
     dispatching to :func:`insert_collapses` / :func:`update_collapses` /
     :func:`delete_collapses` by ``mutation``."""
     if mutation in _INSERT_MUTATIONS:
-        return insert_collapses(meta, entity_name)
+        return insert_collapses(model, entity)
     if mutation in _UPDATE_MUTATIONS:
-        return update_collapses(meta, entity_name, rows)
-    return delete_collapses(meta, entity_name)
+        return update_collapses(model, entity, rows)
+    return delete_collapses(model, entity)

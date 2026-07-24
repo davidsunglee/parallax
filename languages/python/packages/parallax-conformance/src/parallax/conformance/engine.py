@@ -827,7 +827,7 @@ def _build_temporal_instruction(
     instruction = instructions.deserialize(doc)
     instructions.validate_instruction(instruction, meta)
     assert isinstance(instruction, KeyedWrite)  # a temporal entry is always keyed
-    pk_key = object_key(instruction, meta)
+    pk_key = object_key(instruction, case_model(meta))
     is_insert = mutation in _TEMPORAL_INSERT_MUTATIONS
     is_coalescing_candidate = not is_insert and pk_key is not None and pk_key in unit_inserted
     observation: Observation | None = None
@@ -940,7 +940,9 @@ def _decomposes_per_row(
         return True
     if _rows_carry_observation_keys(raw_rows):
         return True
-    return not batch_write.collapses(meta, entity_name, mutation, raw_rows)
+    model = case_model(meta)
+    entity = case_entity(model, meta.entity(entity_name))
+    return not batch_write.collapses(model, entity, mutation, raw_rows)
 
 
 def _check_statement_count_consistency(entry: Mapping[str, object], decomposed_count: int) -> None:
@@ -1068,6 +1070,7 @@ def _build_instructions(
         instructions.validate_instruction(instruction, meta)
         return [(instruction, None, None)]
     _check_statement_count_consistency(entry, len(raw_rows))
+    model = case_model(meta)
     out: list[tuple[WriteInstruction, ObjectKey | None, Observation | None]] = []
     for raw_row in raw_rows:
         clean_row, observation = _strip_observation(raw_row)
@@ -1076,7 +1079,7 @@ def _build_instructions(
             {"mutation": mutation, "entity": entity_name, "rows": [clean_row]}
         )
         instructions.validate_instruction(instruction, meta)
-        key = object_key(instruction, meta)
+        key = object_key(instruction, model)
         if observation is None and key is not None:
             observation = scenario_observations.get(key)
         if observation is None:
@@ -1140,7 +1143,9 @@ def _lower_resolved(
         for _instruction, key, observation in resolved
         if key is not None and observation is not None
     }
-    plan = plan_flush(buffer, observations, tx_instant, meta, collapse=batch_write.collapses)
+    plan = plan_flush(
+        buffer, observations, tx_instant, case_model(meta), collapse=batch_write.collapses
+    )
     statements: list[Statement] = []
     for planned in plan.writes:
         statements.extend(
@@ -1187,7 +1192,7 @@ def _lower_predicate_write_step(
     instruction = instructions.deserialize(_canonical_predicate_doc(raw_write))
     assert isinstance(instruction, PredicateWrite)  # a predicate-shaped step always builds this
     instructions.validate_instruction(instruction, meta)
-    plan = plan_flush([instruction], {}, None, meta, collapse=batch_write.collapses)
+    plan = plan_flush([instruction], {}, None, case_model(meta), collapse=batch_write.collapses)
     statements = [
         lowered.statement
         for planned in plan.writes
@@ -3159,10 +3164,10 @@ def _lower_conflict_write(
     instructions.validate_instruction(instruction, meta)
     observations: dict[ObjectKey, Observation] = {}
     if observation is not None:
-        key = object_key(instruction, meta)
+        key = object_key(instruction, case_model(meta))
         if key is not None:
             observations[key] = observation
-    plan = plan_flush([instruction], observations, _INERT_CLOCK_INSTANT, meta)
+    plan = plan_flush([instruction], observations, _INERT_CLOCK_INSTANT, case_model(meta))
     statements: list[Statement] = []
     for planned in plan.writes:
         statements.extend(
@@ -3199,7 +3204,7 @@ def _run_conflict_write(
             {"mutation": "update", "entity": target, "rows": [clean_row]}
         )
         if observation is not None:
-            key = object_key(instruction, meta)
+            key = object_key(instruction, case_model(meta))
             if key is not None:
                 # The documented neutral seam (Transaction._buffer route + uow.observe).
                 tx._uow.observe(key, observation)  # pyright: ignore[reportPrivateUsage]

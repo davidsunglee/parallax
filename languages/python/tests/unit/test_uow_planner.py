@@ -10,16 +10,21 @@ elision, object identity, and the neutral observation binding.
 from __future__ import annotations
 
 import pytest
+from _metamodel_support import Declaration, attribute, identity, key, source
 
 from parallax.conformance import models
 from parallax.core import batch_write, op_algebra
-from parallax.core.descriptor import (
-    Attribute,
-    DefiningRelationship,
-    Entity,
-    Metamodel,
-    RelationshipJoin,
-    RelationshipTarget,
+from parallax.core._formation_profile import form_metamodel
+from parallax.core.descriptor import Metamodel as DescriptorMetamodel
+from parallax.core.metamodel import (
+    AttributeIdentity,
+    AttributeReference,
+    Cardinality,
+    RelationshipIdentity,
+    RelativeEntityReference,
+    Table,
+    UnresolvedDefiningRelationshipDeclaration,
+    UnresolvedRelationshipJoin,
 )
 from parallax.core.unit_work import (
     AtomicUnit,
@@ -35,14 +40,14 @@ from parallax.core.unit_work import (
 pytestmark = pytest.mark.unit
 
 _MODELS = models.load_models()
-_ACCOUNT = _MODELS["account"]
-_BALANCE = _MODELS["balance"]
-_POSITION = _MODELS["position"]
-_ORDERS = _MODELS["orders"]
-_PERSON = _MODELS["person"]
-_PAYMENT = _MODELS["payment"]
-_PK_MAX = _MODELS["pk-max"]
-_WALLET = _MODELS["wallet"]
+_ACCOUNT = models.accepted_model(_MODELS["account"])
+_BALANCE = models.accepted_model(_MODELS["balance"])
+_POSITION = models.accepted_model(_MODELS["position"])
+_ORDERS = models.accepted_model(_MODELS["orders"])
+_PERSON = models.accepted_model(_MODELS["person"])
+_PAYMENT = models.accepted_model(_MODELS["payment"])
+_PK_MAX = models.accepted_model(_MODELS["pk-max"])
+_WALLET = models.accepted_model(_MODELS["wallet"])
 
 _B1 = "2024-01-01T00:00:00+00:00"
 
@@ -178,32 +183,62 @@ def test_mixed_flush_is_insert_then_update_then_delete() -> None:
 
 def test_one_to_one_relationships_contribute_no_fk_edge() -> None:
     # Person <-> Passport are both one-to-one: neither the many-to-one nor the
-    # one-to-many edge fires, so ranking simply keeps declaration order.
+    # one-to-many edge fires, so ranking falls back to the accepted model's own
+    # canonical Entity order.
     buffer = [
         KeyedWrite("insert", "Person", ({"id": 1},)),
         KeyedWrite("insert", "Passport", ({"id": 2},)),
     ]
     plan = plan_flush(buffer, {}, None, _PERSON)
-    assert _entities(plan) == ["Person", "Passport"]
+    assert _entities(plan) == ["Passport", "Person"]
 
 
-def test_relationship_reaching_outside_the_model_contributes_no_local_fk_order() -> None:
-    widget = Entity(
-        name="Widget",
-        attributes=(Attribute(name="id", type="int64", column="id", primary_key=True),),
-        relationships=(
-            DefiningRelationship(
-                name="gadget",
-                cardinality="many-to-one",
-                join=RelationshipJoin(
-                    source="id", target=RelationshipTarget(entity="Gadget", attribute="id")
+def test_a_defining_many_to_one_orders_its_source_after_its_target() -> None:
+    # No corpus model declares a defining `many-to-one` (each is authored from
+    # the `one-to-many` side with a reverse peer), so the source-holds-the-key
+    # direction is proven over a hand-built model. Canonical Entity order puts
+    # `Alpha` first; the FK edge overrides it.
+    parent = identity("Zeta")
+    child = identity("Alpha")
+    model = form_metamodel(
+        source(
+            Declaration(identity=parent, container=Table("zeta"), attributes=(key(parent),)),
+            Declaration(
+                identity=child,
+                container=Table("alpha"),
+                attributes=(key(child), attribute(child, "zetaId")),
+                relationships=(
+                    UnresolvedDefiningRelationshipDeclaration(
+                        identity=RelationshipIdentity(child, "zeta"),
+                        cardinality=Cardinality.MANY_TO_ONE,
+                        join=UnresolvedRelationshipJoin(
+                            source=AttributeIdentity(child, "zetaId"),
+                            target=AttributeReference(RelativeEntityReference("Zeta"), "id"),
+                        ),
+                    ),
                 ),
             ),
-        ),
+        )
     )
-    meta = Metamodel(entities=(widget,))
-    plan = plan_flush([KeyedWrite("insert", "Widget", ({"id": 1},))], {}, None, meta)
-    assert _entities(plan) == ["Widget"]
+    buffer = [
+        KeyedWrite("insert", "Alpha", ({"id": 1, "zetaId": 2},)),
+        KeyedWrite("insert", "Zeta", ({"id": 2},)),
+    ]
+    assert _entities(plan_flush(buffer, {}, None, model)) == ["Zeta", "Alpha"]
+
+
+def test_an_instruction_naming_an_undeclared_entity_ranks_first_and_passes_through() -> None:
+    # Every declared relationship target is an accepted Entity, so the only way
+    # an instruction reaches an unranked position is by naming an entity the
+    # model does not declare at all: it takes the leading rank and survives.
+    buffer = [
+        KeyedWrite("insert", "OrderItem", ({"id": 10},)),
+        KeyedWrite("insert", "Gadget", ({"id": 1},)),
+        # An undeclared entity is unkeyed too, so elision never drops its update.
+        KeyedWrite("update", "Gadget", ({"id": 1},)),
+    ]
+    plan = plan_flush(buffer, {}, None, _ORDERS)
+    assert _entities(plan) == ["Gadget", "OrderItem", "Gadget"]
 
 
 # --------------------------------------------------------------------------- #
@@ -240,10 +275,8 @@ def test_object_key_is_none_for_unidentifiable_writes() -> None:
     assert object_key(predicate, _ACCOUNT) is None
 
 
-def test_object_key_is_none_for_a_keyless_entity() -> None:
-    blob = Entity(name="Blob", attributes=(Attribute(name="data", type="string", column="data"),))
-    meta = Metamodel(entities=(blob,))
-    assert object_key(KeyedWrite("delete", "Blob", ({"data": "x"},)), meta) is None
+def test_object_key_is_none_for_an_entity_the_model_does_not_declare() -> None:
+    assert object_key(KeyedWrite("delete", "Blob", ({"data": "x"},)), _ACCOUNT) is None
 
 
 def test_object_key_resolves_the_family_effective_primary_key() -> None:
@@ -382,8 +415,10 @@ def test_collapse_never_regroups_across_an_intervening_different_entity() -> Non
         KeyedWrite("insert", "Person", ({"id": 99},)),
         KeyedWrite("insert", "Wallet", ({"id": 2, "owner": "Bo", "balance": 2.00},)),
     ]
-    meta = Metamodel(entities=(*_WALLET.entities, *_PERSON.entities))
-    plan = plan_flush(buffer, {}, None, meta, collapse=batch_write.collapses)
+    model = models.accepted_model(
+        DescriptorMetamodel(entities=(*_MODELS["wallet"].entities, *_MODELS["person"].entities))
+    )
+    plan = plan_flush(buffer, {}, None, model, collapse=batch_write.collapses)
     # FK-order groups all inserts together, but the two Wallet rows were NEVER
     # adjacent in BUFFER order (Person interrupted the run), so they stay two
     # separate single-row instructions rather than merging into one.

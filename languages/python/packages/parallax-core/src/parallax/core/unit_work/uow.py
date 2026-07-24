@@ -27,7 +27,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Literal
 
-from parallax.core.descriptor import Metamodel
+from parallax.core.metamodel import Metamodel
 from parallax.core.unit_work.clock import Clock, instant_literal
 from parallax.core.unit_work.instructions import WriteInstruction
 from parallax.core.unit_work.planner import (
