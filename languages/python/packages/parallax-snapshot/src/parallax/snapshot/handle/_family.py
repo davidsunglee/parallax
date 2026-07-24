@@ -35,6 +35,7 @@ from parallax.core.metamodel import (
     Metamodel,
     PrimaryKey,
     TemporalDimension,
+    entity_by_name,
 )
 
 __all__ = [
@@ -69,13 +70,14 @@ def entity_of(model: Metamodel, name: str) -> EntityMetadata:
 
     The write-lowering group resolves within the accepted model itself (it holds
     no descriptor record graph and no entity-scope seam): a write target is an
-    unambiguous declared name, so a canonical-or-bare Identity match is exact.
-    Raises :class:`KeyError` when the model declares no such Entity, mirroring the
-    record graph's own lookup."""
-    for entity in model.entities:
-        if name in (entity.identity.canonical, entity.identity.name):
-            return entity
-    raise KeyError(name)  # pragma: no cover - a write target always names a declared Entity
+    unambiguous declared name, resolved by
+    :func:`~parallax.core.metamodel.entity_by_name`'s ambiguity-rejecting
+    bare-or-canonical rule. Raises :class:`KeyError` when the model declares no
+    such Entity, mirroring the record graph's own lookup."""
+    entity = entity_by_name(model, name)
+    if entity is None:  # pragma: no cover - a write target always names a declared Entity
+        raise KeyError(name)
+    return entity
 
 
 def declaring(model: Metamodel, entity: EntityMetadata) -> EntityMetadata:
@@ -94,6 +96,10 @@ def declaring(model: Metamodel, entity: EntityMetadata) -> EntityMetadata:
 
 
 def tx_time_axis(declaring_entity: EntityMetadata) -> AsOfAxisMetadata:
+    """``declaring_entity``'s Transaction-Time as-of axis (its start/end attribute
+    references). Temporal axes are family-wide and root-owned, so resolve through
+    :func:`declaring` first; raises :class:`ValueError` when the entity declares no
+    Transaction-Time dimension (callers guard on a temporal declaring Entity)."""
     axis = declaring_entity.as_of_axis(TemporalDimension.TRANSACTION_TIME)
     if axis is None:  # pragma: no cover - callers guard on a temporal declaring Entity
         raise ValueError(f"{declaring_entity.identity.canonical}: no Transaction-Time axis")
@@ -101,6 +107,10 @@ def tx_time_axis(declaring_entity: EntityMetadata) -> AsOfAxisMetadata:
 
 
 def valid_time_axis(declaring_entity: EntityMetadata) -> AsOfAxisMetadata:
+    """``declaring_entity``'s Valid-Time as-of axis (its start/end attribute
+    references). Family-wide and root-owned like every axis, so resolve through
+    :func:`declaring` first; raises :class:`ValueError` when the entity declares no
+    Valid-Time dimension (callers guard on a Bitemporal declaring Entity)."""
     axis = declaring_entity.as_of_axis(TemporalDimension.VALID_TIME)
     if axis is None:  # pragma: no cover - callers guard on a Bitemporal declaring Entity
         raise ValueError(f"{declaring_entity.identity.canonical}: no Valid-Time axis")
@@ -108,6 +118,10 @@ def valid_time_axis(declaring_entity: EntityMetadata) -> AsOfAxisMetadata:
 
 
 def axis_columns(declaring_entity: EntityMetadata, axis: AsOfAxisMetadata) -> tuple[str, str]:
+    """The physical ``(start, end)`` storage column names ``axis`` names on
+    ``declaring_entity`` — the interval bounds a temporal write reads and stamps.
+    Raises :class:`ValueError` when the axis names a column the entity does not
+    declare (an accepted axis always names declared columns)."""
     start = declaring_entity.attribute(axis.start_attribute.name)
     end = declaring_entity.attribute(axis.end_attribute.name)
     if start is None or end is None:  # pragma: no cover - an accepted axis names declared columns

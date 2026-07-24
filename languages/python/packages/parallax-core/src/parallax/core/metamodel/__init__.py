@@ -97,6 +97,7 @@ from parallax.core.metamodel._states import (
     UnresolvedMetamodel,
     ValueObjectAttributeMetadata,
     ValueObjectMetadata,
+    entity_by_name,
 )
 from parallax.core.metamodel._values import (
     APPLICATION_ASSIGNED,
@@ -263,6 +264,7 @@ __all__ = [
     "canonical_issue_key",
     "canonical_location_key",
     "compile_metadata",
+    "entity_by_name",
     "inheritance_parent",
     "is_candidate_metamodel",
     "is_compiled_metadata",

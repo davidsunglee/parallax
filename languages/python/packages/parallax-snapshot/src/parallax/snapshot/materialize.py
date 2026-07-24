@@ -59,6 +59,7 @@ from parallax.core.metamodel import (
     PrimaryKey,
     TablePerConcreteSubtype,
     ValueObjectMetadata,
+    entity_by_name,
 )
 
 __all__ = [
@@ -111,12 +112,14 @@ def _entity(meta: Metamodel, name: str) -> EntityMetadata:
     """The accepted Metadata a bare-or-canonical Entity spelling names.
 
     m-snapshot-read resolves within the accepted model itself: a level's target
-    is an unambiguous declared name, so a canonical-or-bare Identity match is
-    exact. Raises :class:`KeyError` when the model declares no such Entity."""
-    for entity in meta.entities:
-        if name in (entity.identity.canonical, entity.identity.name):
-            return entity
-    raise KeyError(name)  # pragma: no cover - a level target always names a declared Entity
+    is an unambiguous declared name, resolved by
+    :func:`~parallax.core.metamodel.entity_by_name`'s ambiguity-rejecting
+    bare-or-canonical rule. Raises :class:`KeyError` when the model declares no
+    such Entity."""
+    entity = entity_by_name(meta, name)
+    if entity is None:  # pragma: no cover - a level target always names a declared Entity
+        raise KeyError(name)
+    return entity
 
 
 def _declaring(meta: Metamodel, entity: EntityMetadata) -> EntityMetadata:

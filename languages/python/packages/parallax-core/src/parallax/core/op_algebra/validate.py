@@ -62,6 +62,7 @@ from parallax.core.metamodel import (
     RelationshipDeclaration,
     ValueObjectAttributeMetadata,
     ValueObjectMetadata,
+    entity_by_name,
 )
 from parallax.core.op_algebra.nodes import (
     All,
@@ -273,13 +274,10 @@ def _walk(op: Operation, model: Metamodel, scope: _PositionScope) -> None:
 # --------------------------------------------------------------------------- #
 def _lookup_entity(model: Metamodel, name: str) -> EntityMetadata | None:
     """The accepted Metadata a bare-or-canonical Entity spelling names, or
-    absence — the accepted-model counterpart of the descriptor's own
-    bare-or-canonical lookup, over the authored `Class` prefix of an operation
-    reference."""
-    for entity in model.entities:
-        if name in (entity.identity.canonical, entity.identity.name):
-            return entity
-    return None
+    absence, over the authored `Class` prefix of an operation reference —
+    :func:`~parallax.core.metamodel.entity_by_name`'s ambiguity-rejecting rule,
+    so an ambiguous bare name is a miss rather than a silent first match."""
+    return entity_by_name(model, name)
 
 
 def _effective_set(model: Metamodel, entity: EntityMetadata) -> frozenset[str]:

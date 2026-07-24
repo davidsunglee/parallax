@@ -1,11 +1,22 @@
-"""The entity base class and its metaclass (support scope, definition half).
+"""The entity frontend's definition and Metamodel-assembly core (support scope).
 
 Developers author frozen Pydantic entity classes; a ``ModelMetaclass`` subclass
 unwraps the ``Attr[T]`` / ``Rel[T]`` annotations so Pydantic builds ordinary
 inner-typed fields, installs the typed class-level descriptors, and compiles the
 class body into a canonical :class:`~parallax.core.descriptor.Entity` record.
-Reserved-name and canonical-name-collision checks run at class-definition time.
-The class carries no information absent from the descriptor schema.
+Reserved-name and canonical-name-collision checks run at class-definition time,
+and a compiled class carries no information absent from the descriptor schema.
+
+Every class registers into an explicit :class:`EntityRegistry`, and this module
+assembles a registry's or a class set's records into an accepted
+:class:`~parallax.core.metamodel.Metamodel`, forming it once and tagging it with
+the scope a caller resolves through (:func:`metamodel`,
+:meth:`EntityRegistry.metamodel`). Over that scope it answers the frontend's
+name-and-class resolution (:func:`resolve_entity_metadata`,
+:func:`entity_metadata_of`, :func:`resolve_entity_class`) and fail-fast,
+build-time statement validation against an operation's reachable closure
+(:func:`validate_in_scope`). Only the accepted model crosses to the snapshot
+handle; the backing descriptor record graph and the registry stay private here.
 """
 
 from __future__ import annotations
@@ -86,9 +97,8 @@ from parallax.core.entity.value_object import (
     vo_field_info,
     vo_instance_validator,
 )
-from parallax.core.metamodel import EntityIdentity, EntityMetadata, FacetKey
+from parallax.core.metamodel import EntityIdentity, EntityMetadata, FacetKey, entity_by_name
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
-from parallax.core.model_formation import MetamodelValidationError
 from parallax.core.op_algebra import (
     All,
     Narrow,
@@ -408,13 +418,12 @@ def resolve_entity_metadata(meta: AcceptedMetamodel, name: str) -> EntityMetadat
     The name-resolution seam every handle / materialize caller uses where it once
     resolved a descriptor record by name: a scoped assembly result resolves the
     spelling through its own record graph (bare-or-canonical), a bare accepted
-    model falls back to an Identity scan."""
+    model by the same ambiguity-rejecting by-name rule
+    (:func:`~parallax.core.metamodel.entity_by_name`), so an ambiguous bare name
+    is a miss rather than a silent first match."""
     if isinstance(meta, _ScopedMetamodel):
         return meta.entity_by_name(name)
-    for entity in meta.entities:
-        if name in (entity.identity.canonical, entity.identity.name):
-            return entity
-    return None  # pragma: no cover - a resolved name always names a declared Entity here
+    return entity_by_name(meta, name)
 
 
 def entity_metadata_of(meta: AcceptedMetamodel, cls: type) -> EntityMetadata | None:
@@ -464,8 +473,7 @@ def _reachable_records(records: MetamodelRecord, roots: set[str]) -> MetamodelRe
 
 
 def validate_in_scope(registry: EntityRegistry, target: str, op: Operation) -> None:
-    """Early-validate ``op`` against ``target``'s registry scope, degrading
-    gracefully when even the reachable closure cannot form.
+    """Early-validate ``op`` against ``target``'s registry scope.
 
     ``Entity.where`` / ``.include`` / ``.narrow`` fail-fast by resolving the
     class's own registration scope into an accepted model and running the
@@ -473,16 +481,13 @@ def validate_in_scope(registry: EntityRegistry, target: str, op: Operation) -> N
     closure of ``target`` plus every Entity the operation references, rather than
     the whole registry chain, so a cross-entity include/navigation target is
     present while a shadowing scope that leaves an unrelated sibling's reverse
-    relationship dangling never blocks a coherent read's own validation. Should
-    even that closure fail to form, the operation is left for the connected
-    ``Database``'s own coherent model, which the read actually runs against, to
-    validate at execution."""
+    relationship dangling never blocks a coherent read's own validation. A
+    closure that cannot itself form -- a scope that merges an Entity
+    unsatisfiable within it, reachable from the read -- surfaces as a build-time
+    error here, never a silently unvalidated statement."""
     roots = {target, *referenced_entities(op)}
     records = _reachable_records(_registry_records(registry), roots)
-    try:
-        model = _scoped_metamodel(records, registry)
-    except MetamodelValidationError:  # pragma: no cover - a coherent operation's closure forms
-        return
+    model = _scoped_metamodel(records, registry)
     root = resolve_entity_metadata(model, target)
     if root is not None:  # a compiled Entity class always resolves in its own scope
         validate_operation(root, op, model)
