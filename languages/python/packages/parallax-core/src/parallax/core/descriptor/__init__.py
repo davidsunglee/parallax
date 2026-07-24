@@ -9,6 +9,7 @@ entity frontend build on. ``m-descriptor`` depends only on ``m-core``.
 from __future__ import annotations
 
 from parallax.core.descriptor.errors import DescriptorError
+from parallax.core.descriptor.export import DescriptorExportError, export_document
 from parallax.core.descriptor.neutral_type import (
     NEUTRAL_FROM_PY,
     infer_neutral_type,
@@ -72,6 +73,7 @@ __all__ = [
     "Attribute",
     "DefiningRelationship",
     "DescriptorError",
+    "DescriptorExportError",
     "Entity",
     "Index",
     "Inheritance",
@@ -100,6 +102,7 @@ __all__ = [
     "deserialize",
     "effective_as_of_axes",
     "effective_temporal",
+    "export_document",
     "find_value_object",
     "find_vo_member",
     "infer_neutral_type",

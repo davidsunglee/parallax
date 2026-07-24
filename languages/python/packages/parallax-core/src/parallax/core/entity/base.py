@@ -54,7 +54,6 @@ from parallax.core.descriptor import (
     DescriptorError,
     RelationshipDeclaration,
     ReverseRelationship,
-    serialize,
     validate_entity,
     validate_optimistic_locking_root_owned,
 )
@@ -67,8 +66,8 @@ from parallax.core.descriptor.neutral_type import infer_neutral_type as _infer_n
 from parallax.core.descriptor.neutral_type import snake_to_camel
 from parallax.core.descriptor.records import Persistence
 from parallax.core.descriptor.records import Unset as _UnsetType
-from parallax.core.descriptor.unresolved import unresolved_metamodel
 from parallax.core.entity._annotations import class_body_annotations
+from parallax.core.entity._declaration import native_metamodel
 from parallax.core.entity._validation import require_entity_record
 from parallax.core.entity.errors import (
     EntityDefinitionError,
@@ -126,7 +125,6 @@ __all__ = [
     "canonical_row",
     "changed_fields",
     "default_registry",
-    "descriptor_document",
     "effective_change_set",
     "entity_metadata_of",
     "entity_record_of",
@@ -298,29 +296,24 @@ def default_registry() -> EntityRegistry:
 @dataclass(frozen=True, slots=True)
 class _ScopedMetamodel:
     """The accepted :class:`~parallax.core.metamodel.Metamodel` an Entity-class
-    assembly produces: the formed accepted model by delegation, plus the two
-    things assembly alone can supply and the accepted protocol does not carry --
-    the :class:`EntityRegistry` a decoded row's class resolves through, and the
-    descriptor record graph that turns a bare-or-qualified Entity spelling into
-    the structured Identity the accepted model is keyed by.
+    assembly produces: the formed accepted model by delegation, plus the one thing
+    assembly alone can supply and the accepted protocol does not carry -- the
+    :class:`EntityRegistry` a decoded row's class resolves through.
 
     `parallax.snapshot.handle` receives this as the accepted ``Metamodel``
-    protocol alone (``entities`` / ``entity`` / ``facet``); the record graph and
-    registry stay private to this scope and reach a handle only through the
-    entity-scope seams :func:`resolve_entity_class` /
-    :func:`resolve_entity_metadata` / :func:`entity_metadata_of`, which narrow to
-    this wrapper internally.
+    protocol alone (``entities`` / ``entity`` / ``facet``); the registry stays
+    private to this scope and reaches a handle only through the entity-scope seams
+    :func:`resolve_entity_class` / :func:`resolve_entity_metadata` /
+    :func:`entity_metadata_of`, which narrow to this wrapper internally.
 
     A class-authored assembly (:func:`metamodel` over a NON-EMPTY class list) is
     ALWAYS scoped this way. The genuinely UNSCOPED (untagged) cases are narrower:
-    :func:`metamodel`'s own EMPTY-list call and a bare descriptor record graph
-    normalized through :func:`accepted_metamodel` carry ``registry=None`` and
-    fall back to :func:`default_registry`. Lives in ``parallax.core.entity``
-    (never ``parallax.core.metamodel`` itself, which must not grow a dependency
-    on the Entity frontend or the descriptor scope)."""
+    a bare descriptor record graph normalized through :func:`accepted_metamodel`
+    carries ``registry=None`` and falls back to :func:`default_registry`. Lives in
+    ``parallax.core.entity`` (never ``parallax.core.metamodel`` itself, which must
+    not grow a dependency on the Entity frontend or the descriptor scope)."""
 
     _accepted: AcceptedMetamodel
-    _records: MetamodelRecord
     registry: EntityRegistry | None
 
     @property
@@ -335,14 +328,11 @@ class _ScopedMetamodel:
 
     def entity_by_name(self, name: str) -> EntityMetadata | None:
         """The accepted Metadata a bare-or-namespace-qualified Entity spelling
-        resolves to: the descriptor record graph resolves the spelling to a
-        structured Identity (its own bare-or-canonical lookup, preserved from the
-        descriptor era), then the accepted model resolves that Identity."""
-        try:
-            record = self._records.entity(name)
-        except KeyError:
-            return None
-        return self._accepted.entity(EntityIdentity(record.namespace, record.name))
+        resolves to over the formed model, or ``None`` -- the free
+        :func:`~parallax.core.metamodel.entity_by_name`'s bare-or-canonical
+        resolution, which rejects an ambiguous bare name rather than taking a
+        silent first match."""
+        return entity_by_name(self._accepted, name)
 
 
 def _scoped_metamodel(
@@ -350,12 +340,12 @@ def _scoped_metamodel(
 ) -> _ScopedMetamodel:
     """Form the accepted model from ``records`` once and wrap it with its scope.
 
-    The forming responsibility (``form_metamodel`` over the descriptor-backed
-    ``unresolved_metamodel`` view) lives here rather than in the handle, so a
-    connected ``Database`` receives an accepted model directly. Forming is not
-    free and runs per assembly call -- correctness first."""
-    accepted = form_metamodel(unresolved_metamodel(records))
-    return _ScopedMetamodel(_accepted=accepted, _records=records, registry=registry)
+    The forming responsibility (``form_metamodel`` over the entity frontend's own
+    native ``UnresolvedMetamodel`` view) lives here rather than in the handle, so a
+    connected ``Database`` receives an accepted model directly. Forming is not free
+    and runs per assembly call -- correctness first."""
+    accepted = form_metamodel(native_metamodel(records))
+    return _ScopedMetamodel(_accepted=accepted, registry=registry)
 
 
 def _registry_records(registry: EntityRegistry) -> MetamodelRecord:
@@ -416,9 +406,9 @@ def resolve_entity_metadata(meta: AcceptedMetamodel, name: str) -> EntityMetadat
     resolves to within ``meta``'s scope, or ``None`` when it names none.
 
     The name-resolution seam every handle / materialize caller uses where it once
-    resolved a descriptor record by name: a scoped assembly result resolves the
-    spelling through its own record graph (bare-or-canonical), a bare accepted
-    model by the same ambiguity-rejecting by-name rule
+    resolved a descriptor record by name: both a scoped assembly result and a bare
+    accepted model resolve the spelling over the formed model by the same
+    ambiguity-rejecting by-name rule
     (:func:`~parallax.core.metamodel.entity_by_name`), so an ambiguous bare name
     is a miss rather than a silent first match."""
     if isinstance(meta, _ScopedMetamodel):
@@ -855,17 +845,11 @@ def metamodel(classes: Sequence[type]) -> AcceptedMetamodel:
     :func:`registry_of`'s own documented fallback resolves through the process
     default registry instead.
 
-    The forming responsibility (record graph -> accepted model) lands here per
-    call; the record graph the accepted model retains for name resolution is
-    entity-scope-private."""
+    The compiled records the given classes carry are adapted into the entity
+    frontend's own native ``UnresolvedMetamodel`` and formed into the accepted
+    model here, per call; name resolution runs over the accepted model itself."""
     records, scope = _descriptor_metamodel(classes)
     return _scoped_metamodel(records, scope)
-
-
-def descriptor_document(classes: Sequence[type]) -> dict[str, object]:
-    """Return the canonical descriptor document for related entity classes."""
-    records, _scope = _descriptor_metamodel(classes)
-    return serialize(records)
 
 
 def _temporal_as_of_axes(record: EntityRecord, cls: type) -> tuple[AsOfAxisMetadata, ...]:

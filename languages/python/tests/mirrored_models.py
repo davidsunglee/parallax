@@ -46,7 +46,7 @@ _NS = "parallax.compatibility"
 # in its OWN `EntityRegistry`: a DIFFERENT class than THIS
 # module's own `Person` (`models/person.yaml`) despite sharing the identical
 # canonical name — the descriptor no-drift proof below is purely class-list-
-# based (`descriptor_document`), so combining classes from two different
+# based (`export_document(metamodel(classes))`), so combining classes from two different
 # registries into one "animal" entry is exactly as sound as any other.
 
 
