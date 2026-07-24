@@ -612,7 +612,7 @@ def test_validate_write_assignment_rejects_a_missing_required_nested_value_objec
 def test_validate_write_assignment_rejects_a_nested_many_element_type_mismatch() -> None:
     # The offending leaf's path threads through a NESTED `cardinality: many`
     # member's own bracket-indexed element (`spec.grid[0].cell`) — the shared
-    # walk's (`parallax.core.descriptor.vo_document`) own index-prefixing.
+    # walk's (`parallax.core.metamodel._vo_document`) own index-prefixing.
     document: dict[str, object] = {
         "note": "n",
         "detail": {"hint": "h"},

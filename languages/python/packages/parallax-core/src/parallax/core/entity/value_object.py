@@ -371,7 +371,7 @@ def to_document(value: ValueObject | None) -> dict[str, object] | None:
     attribute classifies to ``write-required-attribute-missing``, an omitted
     (or explicit-``null``) required nested value object to
     ``write-required-value-object-missing`` (the shared
-    ``parallax.core.descriptor.vo_document.vo_document_violation`` walk treats
+    ``parallax.core.metamodel._vo_document.vo_document_violation`` walk treats
     "absent key" and "explicit null" identically, so this function's own
     omit-vs-null choice never changes which rule fires). Applied recursively:
     a nested ``ValueObject`` member and each ``tuple[VOClass, ...]`` element
