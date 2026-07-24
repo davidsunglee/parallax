@@ -65,7 +65,7 @@ def _lower_full(
 ) -> list[LoweredStatement]:
     return lower_write(
         PlannedWrite(instruction=instruction, observation=observation),
-        meta,
+        models.accepted_model(meta),
         dialect,
         concurrency,
         tx_instant,
@@ -501,7 +501,7 @@ def test_bitemporal_close_composes_the_valid_time_discriminator_and_in_z_gate() 
     lowered = lower_temporal_close(
         {"id": 1},
         "Position",
-        POSITION,
+        models.accepted_model(POSITION),
         POSTGRES,
         "optimistic",
         "2024-10-01T00:00:00+00:00",
@@ -528,7 +528,7 @@ def test_bitemporal_close_is_fully_ungated_under_locking() -> None:
     lowered = lower_temporal_close(
         {"id": 1},
         "Position",
-        POSITION,
+        models.accepted_model(POSITION),
         POSTGRES,
         "locking",
         "2024-10-01T00:00:00+00:00",
@@ -546,7 +546,7 @@ def test_temporal_close_requires_an_effective_table() -> None:
         lower_temporal_close(
             {"id": 1},
             "Balance",
-            malformed,
+            models.accepted_model(malformed),
             POSTGRES,
             "locking",
             "2024-10-01T00:00:00+00:00",
@@ -772,7 +772,9 @@ def test_temporal_write_requires_a_transaction_instant() -> None:
     # flush; no reachable case skips it) — never a wrong emission.
     insert = KeyedWrite("insert", "Balance", ({"id": 1, "acctNum": "A", "value": 100.00},))
     with pytest.raises(WriteLoweringError, match="no transaction instant supplied"):
-        lower_write(PlannedWrite(instruction=insert), BALANCE, POSTGRES, "locking")
+        lower_write(
+            PlannedWrite(instruction=insert), models.accepted_model(BALANCE), POSTGRES, "locking"
+        )
 
 
 # --------------------------------------------------------------------------- #

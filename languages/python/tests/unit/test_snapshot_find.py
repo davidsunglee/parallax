@@ -29,11 +29,11 @@ from parallax.snapshot.materialize import Node
 pytestmark = pytest.mark.unit
 
 _MODELS = models.load_models()
-ORDERS = _MODELS["orders"]
-ANIMAL = _MODELS["animal"]
-INVOICE = _MODELS["invoice"]
-RATE = _MODELS["rate"]
-DOCUMENT = _MODELS["document"]
+ORDERS = models.accepted_model(_MODELS["orders"])
+ANIMAL = models.accepted_model(_MODELS["animal"])
+INVOICE = models.accepted_model(_MODELS["invoice"])
+RATE = models.accepted_model(_MODELS["rate"])
+DOCUMENT = models.accepted_model(_MODELS["document"])
 
 _UTC = dt.UTC
 
@@ -364,7 +364,7 @@ def test_find_history_over_a_concrete_inheritance_target_resolves_the_roots_axes
 
 
 def test_find_history_refuses_a_plan_carrying_deep_fetch_levels() -> None:
-    policy = _MODELS["policy"]
+    policy = models.accepted_model(_MODELS["policy"])
     port = QueuePort([[]])
     op = deserialize(
         {

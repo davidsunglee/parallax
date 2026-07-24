@@ -24,8 +24,7 @@ import pytest
 import inheritance_models as im
 from parallax.conformance import case_format
 from parallax.core import Attr, Entity, EntityConfig, Field, descriptor, inheritance
-from parallax.core._formation_profile import form_metamodel
-from parallax.core.descriptor import canonicalize, unresolved_metamodel
+from parallax.core.descriptor import canonicalize
 from parallax.core.entity import descriptor_document, entity_record_of, metamodel
 from parallax.core.entity.base import Concrete, EntityRegistry, FamilyRoot
 from parallax.core.metamodel import EntityIdentity, EntityLocation, PersistenceMode
@@ -348,7 +347,15 @@ class _SilentLedger(_Ledger, frozen=True, registry=_LEDGER_REGISTRY):
 
 
 def _assembled(classes: list[type], name: str) -> descriptor.Entity:
-    (record,) = [entity for entity in metamodel(classes).entities if entity.name == name]
+    # The compiled descriptor records the frontend produces per class, before
+    # formation validates the assembled family — this fixture inspects a
+    # descendant-authored persistence that survives compilation but makes the
+    # assembled model invalid.
+    (record,) = [
+        entity
+        for cls in classes
+        if (entity := entity_record_of(cls)) is not None and entity.name == name
+    ]
     return record
 
 
@@ -371,7 +378,7 @@ def test_an_authored_descendant_persistence_survives_assembly_and_is_never_expor
 
 def test_a_descendant_authored_persistence_makes_the_family_an_invalid_model() -> None:
     with pytest.raises(MetamodelValidationError) as caught:
-        form_metamodel(unresolved_metamodel(metamodel([_Ledger, _AuditLedger])))
+        metamodel([_Ledger, _AuditLedger])
     (issue,) = caught.value.issues
     assert issue.code == inheritance.PERSISTENCE_NOT_ROOT_OWNED
     assert issue.location == EntityLocation(EntityIdentity(None, "_AuditLedger"))
@@ -379,7 +386,7 @@ def test_a_descendant_authored_persistence_makes_the_family_an_invalid_model() -
 
 
 def test_a_descendant_that_declares_no_mode_inherits_the_root_owned_one() -> None:
-    model = form_metamodel(unresolved_metamodel(metamodel([_Ledger, _SilentLedger])))
+    model = metamodel([_Ledger, _SilentLedger])
     facet = inheritance.view(model)
     silent = facet.entity(EntityIdentity(None, "_SilentLedger"))
     assert silent is not None

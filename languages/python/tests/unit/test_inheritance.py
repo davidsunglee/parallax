@@ -56,6 +56,7 @@ from parallax.core.metamodel import (
     sort_issues,
 )
 from parallax.core.metamodel import AsOfAxisLocation as AxisLocation
+from parallax.core.metamodel import Metamodel as AcceptedMetamodel
 from parallax.core.model_formation import MetamodelValidationError
 from parallax.core.unit_work import WriteRejectedError, validate_write
 
@@ -560,7 +561,6 @@ _VO_ENTITY = Entity(
                 ),
                 NestedValueObject(
                     name="grid",
-                    nullable=True,
                     multiplicity="many",
                     attributes=(ValueObjectAttribute(name="cell", type="string"),),
                 ),
@@ -570,7 +570,6 @@ _VO_ENTITY = Entity(
             name="tags",
             column="tags",
             multiplicity="many",
-            nullable=True,
             attributes=(ValueObjectAttribute(name="label", type="string"),),
         ),
         ValueObject(
@@ -584,30 +583,40 @@ _VO_ENTITY = Entity(
 _VO_META = Metamodel(entities=(_VO_ENTITY,))
 
 
+def _require_metadata(model: AcceptedMetamodel, entity: Entity) -> EntityMetadata:
+    metadata = model.entity(EntityIdentity(entity.namespace, entity.name))
+    assert metadata is not None
+    return metadata
+
+
+_VO_MODEL = corpus_models.accepted_model(_VO_META)
+_VO_METADATA = _require_metadata(_VO_MODEL, _VO_ENTITY)
+
+
 def test_validate_write_assignment_accepts_a_well_formed_nested_value_object() -> None:
     document: dict[str, object] = {
         "note": "n",
         "detail": {"hint": "h"},
         "grid": [{"cell": "a"}],
     }
-    inheritance.validate_write_assignment(_VO_META, _VO_ENTITY, "spec", document)  # no raise
+    inheritance.validate_write_assignment(_VO_MODEL, _VO_METADATA, "spec", document)  # no raise
 
 
 def test_validate_write_assignment_rejects_a_many_value_object_non_list() -> None:
     with pytest.raises(inheritance.WriteAssignmentError, match="must bind a list of documents"):
-        inheritance.validate_write_assignment(_VO_META, _VO_ENTITY, "tags", "not-a-list")
+        inheritance.validate_write_assignment(_VO_MODEL, _VO_METADATA, "tags", "not-a-list")
 
 
 def test_validate_write_assignment_rejects_a_missing_required_attribute() -> None:
     document: dict[str, object] = {"detail": {"hint": "h"}}
     with pytest.raises(inheritance.WriteAssignmentError, match="required attribute is absent"):
-        inheritance.validate_write_assignment(_VO_META, _VO_ENTITY, "spec", document)
+        inheritance.validate_write_assignment(_VO_MODEL, _VO_METADATA, "spec", document)
 
 
 def test_validate_write_assignment_rejects_a_missing_required_nested_value_object() -> None:
     document: dict[str, object] = {"note": "n"}
     with pytest.raises(inheritance.WriteAssignmentError, match="required value object is absent"):
-        inheritance.validate_write_assignment(_VO_META, _VO_ENTITY, "spec", document)
+        inheritance.validate_write_assignment(_VO_MODEL, _VO_METADATA, "spec", document)
 
 
 def test_validate_write_assignment_rejects_a_nested_many_element_type_mismatch() -> None:
@@ -620,14 +629,14 @@ def test_validate_write_assignment_rejects_a_nested_many_element_type_mismatch()
         "grid": [{"cell": 42}],
     }
     with pytest.raises(inheritance.WriteAssignmentError, match=r"spec\.grid\[0\]\.cell"):
-        inheritance.validate_write_assignment(_VO_META, _VO_ENTITY, "spec", document)
+        inheritance.validate_write_assignment(_VO_MODEL, _VO_METADATA, "spec", document)
 
 
 def test_validate_write_assignment_rejects_a_top_level_many_element_type_mismatch() -> None:
     # A TOP-level `cardinality: many` member's own element violation paths
     # bracket-first, with no leading dot (`Gadget.tags[0].label`).
     with pytest.raises(inheritance.WriteAssignmentError, match=r"tags\[0\]\.label"):
-        inheritance.validate_write_assignment(_VO_META, _VO_ENTITY, "tags", [{"label": 42}])
+        inheritance.validate_write_assignment(_VO_MODEL, _VO_METADATA, "tags", [{"label": 42}])
 
 
 # --------------------------------------------------------------------------- #
@@ -642,13 +651,13 @@ def test_validate_write_assignment_rejects_none_for_a_non_nullable_value_object(
     # object is, reusing `vo_document_violation`'s own `"value-object-
     # missing"` wording rather than forking new text.
     with pytest.raises(inheritance.WriteAssignmentError, match="required value object is absent"):
-        inheritance.validate_write_assignment(_VO_META, _VO_ENTITY, "core", None)
+        inheritance.validate_write_assignment(_VO_MODEL, _VO_METADATA, "core", None)
 
 
 def test_validate_write_assignment_accepts_none_for_a_nullable_value_object() -> None:
     # `spec` is `nullable: true` -- an explicit `None` is a legal clearing
     # assignment, never itself a structural violation.
-    inheritance.validate_write_assignment(_VO_META, _VO_ENTITY, "spec", None)  # no raise
+    inheritance.validate_write_assignment(_VO_MODEL, _VO_METADATA, "spec", None)  # no raise
 
 
 def test_validate_write_assignment_rejects_none_for_a_non_nullable_scalar() -> None:
@@ -657,14 +666,14 @@ def test_validate_write_assignment_rejects_none_for_a_non_nullable_scalar() -> N
     # `value is not None and not _type_matches(...)` would let a
     # `None` value bypass validation entirely, regardless of nullability.
     with pytest.raises(inheritance.WriteAssignmentError, match="required attribute is absent"):
-        inheritance.validate_write_assignment(_VO_META, _VO_ENTITY, "code", None)
+        inheritance.validate_write_assignment(_VO_MODEL, _VO_METADATA, "code", None)
 
 
 def test_validate_write_assignment_accepts_none_for_a_nullable_scalar() -> None:
     # `nickname` is `nullable: true` -- an explicit `None` is a legal
     # clearing assignment, mirroring `write_validate`'s own null short-
     # circuit for a nullable attribute.
-    inheritance.validate_write_assignment(_VO_META, _VO_ENTITY, "nickname", None)  # no raise
+    inheritance.validate_write_assignment(_VO_MODEL, _VO_METADATA, "nickname", None)  # no raise
 
 
 # --------------------------------------------------------------------------- #
@@ -684,6 +693,8 @@ _INVOICE_ENTITY = Entity(
     ),
 )
 _INVOICE_DESCRIPTOR = Metamodel(entities=(_INVOICE_ENTITY,))
+_INVOICE_MODEL = corpus_models.accepted_model(_INVOICE_DESCRIPTOR)
+_INVOICE_METADATA = _require_metadata(_INVOICE_MODEL, _INVOICE_ENTITY)
 _INVOICE_ACCEPTED = form_metamodel(
     source(
         Declaration(
@@ -697,7 +708,7 @@ _INVOICE_ACCEPTED = form_metamodel(
 
 def _assignment_rejects(value: object) -> bool:
     try:
-        inheritance.validate_write_assignment(_INVOICE_DESCRIPTOR, _INVOICE_ENTITY, "amount", value)
+        inheritance.validate_write_assignment(_INVOICE_MODEL, _INVOICE_METADATA, "amount", value)
     except inheritance.WriteAssignmentError:
         return True
     return False

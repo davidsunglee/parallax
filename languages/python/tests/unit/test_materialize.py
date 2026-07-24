@@ -24,6 +24,7 @@ from parallax.core.descriptor import (
     ValueObject,
     ValueObjectAttribute,
 )
+from parallax.core.model_formation import MetamodelValidationError
 from parallax.snapshot.materialize import (
     Assembler,
     MaterializeError,
@@ -35,10 +36,10 @@ from parallax.snapshot.materialize import (
 pytestmark = pytest.mark.unit
 
 _MODELS = models.load_models()
-ORDERS = _MODELS["orders"]
-ANIMAL = _MODELS["animal"]
-CUSTOMER = _MODELS["customer"]
-DOCUMENT = _MODELS["document"]
+ORDERS = models.accepted_model(_MODELS["orders"])
+ANIMAL = models.accepted_model(_MODELS["animal"])
+CUSTOMER = models.accepted_model(_MODELS["customer"])
+DOCUMENT = models.accepted_model(_MODELS["document"])
 
 
 def _doc(decoded: dict[str, object], key: str) -> dict[str, Any]:
@@ -149,7 +150,7 @@ def test_decode_row_decodes_a_top_level_many_cardinality_value_object() -> None:
             ),
         ),
     )
-    meta = Metamodel(entities=(entity,))
+    meta = models.accepted_model(Metamodel(entities=(entity,)))
     row = {"id": 1, "stops": [{"label": "a"}, {"label": "b"}]}
     assert decode_row(meta, "Fleet", row)["stops"] == [{"label": "a"}, {"label": "b"}]
 
@@ -175,12 +176,16 @@ def test_identity_key_degrades_to_entity_name_for_a_non_participant() -> None:
     assert key[0] == "Order"
 
 
-def test_identity_key_is_none_without_a_declared_primary_key() -> None:
+def test_a_standalone_entity_without_a_primary_key_does_not_form() -> None:
+    # The accepted Metamodel requires a standalone Entity to declare exactly one
+    # primary-key Attribute (m-metamodel `metamodel-primary-key-missing`), so a
+    # key-less entity never forms and never reaches `identity_key` — its `None`
+    # return for an entity that declares no primary key is defensive.
     entity = Entity(
         name="NoPk", table="no_pk", attributes=(Attribute(name="x", type="int64", column="x"),)
     )
-    meta = Metamodel(entities=(entity,))
-    assert identity_key(meta, "NoPk", {"x": 1}) is None
+    with pytest.raises(MetamodelValidationError, match="metamodel-primary-key-missing"):
+        models.accepted_model(Metamodel(entities=(entity,)))
 
 
 # --------------------------------------------------------------------------- #

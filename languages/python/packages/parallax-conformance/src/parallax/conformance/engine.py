@@ -32,10 +32,11 @@ from parallax.core import batch_write, inheritance, navigate, opt_lock, read_loc
 from parallax.core.base import INFINITY_LITERAL, TemporalBound, normalize_instant
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import DbPort, JsonDocument, Row
-from parallax.core.descriptor import Attribute, DescriptorError, Entity, Metamodel, column_order
+from parallax.core.descriptor import Attribute, DescriptorError, Entity, Metamodel
 from parallax.core.descriptor import deserialize as deserialize_metamodel
 from parallax.core.dialect import Dialect, dialect_for
-from parallax.core.metamodel import EntityIdentity, EntityMetadata
+from parallax.core.entity import accepted_metamodel
+from parallax.core.metamodel import EntityIdentity, EntityMetadata, PrimaryKey, TablePerHierarchy
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
 from parallax.core.op_algebra import Operation, OperationError, OperationRejectedError, deserialize
 from parallax.core.op_algebra import validate_operation as validate_op_algebra_operation
@@ -395,7 +396,7 @@ def run_graph_case(
     dialect = dialect_for(dialect_name)
     try:
         raw_op = deserialize(operation_doc)
-        result = find(raw_op, meta, dialect, target, port)
+        result = find(raw_op, accepted_metamodel(meta), dialect, target, port)
     except (
         OperationError,
         SqlGenError,
@@ -425,7 +426,7 @@ def run_graphs_case(
     dialect = dialect_for(dialect_name)
     try:
         raw_op = deserialize(operation_doc)
-        result = find_history(raw_op, meta, dialect, target, port)
+        result = find_history(raw_op, accepted_metamodel(meta), dialect, target, port)
     except (OperationError, SqlGenError, TemporalReadError, KeyError) as exc:
         raise EngineError(f"{case.path.name}: {exc}") from exc
     emissions = [
@@ -838,9 +839,9 @@ def _build_temporal_instruction(
     if until is not None:
         doc["until"] = until
     instruction = instructions.deserialize(doc)
-    instructions.validate_instruction(instruction, meta)
-    assert isinstance(instruction, KeyedWrite)  # a temporal entry is always keyed
     model = case_model(meta)
+    instructions.validate_instruction(instruction, model)
+    assert isinstance(instruction, KeyedWrite)  # a temporal entry is always keyed
     entity_metadata = case_entity(model, meta.entity(entity_name))
     pk_key = object_key(instruction, model)
     is_insert = mutation in _TEMPORAL_INSERT_MUTATIONS
@@ -1082,7 +1083,7 @@ def _build_instructions(
         instruction = instructions.deserialize(
             {"mutation": mutation, "entity": entity_name, "rows": clean_rows}
         )
-        instructions.validate_instruction(instruction, meta)
+        instructions.validate_instruction(instruction, case_model(meta))
         return [(instruction, None, None)]
     _check_statement_count_consistency(entry, len(raw_rows))
     model = case_model(meta)
@@ -1093,7 +1094,7 @@ def _build_instructions(
         instruction = instructions.deserialize(
             {"mutation": mutation, "entity": entity_name, "rows": [clean_row]}
         )
-        instructions.validate_instruction(instruction, meta)
+        instructions.validate_instruction(instruction, model)
         key = object_key(instruction, model)
         if observation is None and key is not None:
             observation = scenario_observations.get(key)
@@ -1158,14 +1159,13 @@ def _lower_resolved(
         for _instruction, key, observation in resolved
         if key is not None and observation is not None
     }
-    plan = plan_flush(
-        buffer, observations, tx_instant, case_model(meta), collapse=batch_write.collapses
-    )
+    model = case_model(meta)
+    plan = plan_flush(buffer, observations, tx_instant, model, collapse=batch_write.collapses)
     statements: list[Statement] = []
     for planned in plan.writes:
         statements.extend(
             lowered.statement
-            for lowered in lower_write(planned, meta, dialect, concurrency, tx_instant)
+            for lowered in lower_write(planned, model, dialect, concurrency, tx_instant)
         )
     return tuple(statements)
 
@@ -1206,12 +1206,13 @@ def _lower_predicate_write_step(
     """
     instruction = instructions.deserialize(_canonical_predicate_doc(raw_write))
     assert isinstance(instruction, PredicateWrite)  # a predicate-shaped step always builds this
-    instructions.validate_instruction(instruction, meta)
-    plan = plan_flush([instruction], {}, None, case_model(meta), collapse=batch_write.collapses)
+    model = case_model(meta)
+    instructions.validate_instruction(instruction, model)
+    plan = plan_flush([instruction], {}, None, model, collapse=batch_write.collapses)
     statements = [
         lowered.statement
         for planned in plan.writes
-        for lowered in lower_write(planned, meta, dialect, concurrency, None)
+        for lowered in lower_write(planned, model, dialect, concurrency, None)
     ]
     assert len(statements) == 1  # a readless predicate write is always exactly one statement
     return statements[0]
@@ -1492,7 +1493,7 @@ def _run_snapshot_scenario(
             )
         try:
             raw_op = deserialize(find_doc)
-            result = find(raw_op, meta, dialect, target, port)
+            result = find(raw_op, accepted_metamodel(meta), dialect, target, port)
             pin = _find_step_pin(meta, target, raw_op)
         except (OperationError, SqlGenError, TemporalReadError, KeyError) as exc:
             raise EngineError(f"{case.path.name}: {exc}") from exc
@@ -1648,7 +1649,9 @@ def _execute_write_unit(
     its round trips — before the provider rolls the transaction back.
     """
     instant = normalize_instant(dt.datetime.fromisoformat(tx_instant))
-    database = handle.Database(port, meta, dialect=dialect, clock=FixedClock(instant))
+    database = handle.Database(
+        port, accepted_metamodel(meta), dialect=dialect, clock=FixedClock(instant)
+    )
 
     def body(tx: handle.Transaction) -> None:
         for instruction, key, observation in resolved:
@@ -1703,9 +1706,10 @@ def _run_readless_predicate_write(
     materialization then happens exactly where production does it")."""
     instruction = instructions.deserialize(_canonical_predicate_doc(raw_write))
     assert isinstance(instruction, PredicateWrite)
-    instructions.validate_instruction(instruction, meta)
+    model = accepted_metamodel(meta)
+    instructions.validate_instruction(instruction, model)
     instant = normalize_instant(dt.datetime.fromisoformat(tx_instant))
-    database = handle.Database(port, meta, dialect=dialect, clock=FixedClock(instant))
+    database = handle.Database(port, model, dialect=dialect, clock=FixedClock(instant))
 
     def body(tx: handle.Transaction) -> None:
         tx._buffer_predicate_instruction(instruction)  # pyright: ignore[reportPrivateUsage]
@@ -1775,7 +1779,7 @@ def _is_materializing_write_step(
     )
     if not isinstance(instruction, PredicateWrite):
         return None
-    instructions.validate_instruction(instruction, meta)
+    instructions.validate_instruction(instruction, case_model(meta))
     entity = meta.entity(instruction.target.entity)
     declaring = inheritance.declaring_entity(meta, entity)
     if declaring.is_temporal or _is_versioned_entity(meta, instruction.target.entity):
@@ -1847,7 +1851,9 @@ def _run_materializing_pair(
     tx_instant = _entry_instant(cast("Mapping[str, object]", write_step["write"]))
     instant = normalize_instant(dt.datetime.fromisoformat(tx_instant))
     capture = _CapturingPort(port)
-    database = handle.Database(capture, meta, dialect=dialect, clock=FixedClock(instant))
+    database = handle.Database(
+        capture, accepted_metamodel(meta), dialect=dialect, clock=FixedClock(instant)
+    )
     rollback = write_step.get("rollback") is True
 
     def body(tx: handle.Transaction) -> None:
@@ -2002,7 +2008,9 @@ def _run_uow_group(
     doomed = _group_is_doomed(steps, start, end)
     group_observations: ScenarioObservations = {}
     instant = normalize_instant(dt.datetime.fromisoformat(tx_instant))
-    database = handle.Database(port, meta, dialect=dialect, clock=FixedClock(instant))
+    database = handle.Database(
+        port, accepted_metamodel(meta), dialect=dialect, clock=FixedClock(instant)
+    )
     model = case_model(meta)
     lowered: list[_LoweredStep] = []
 
@@ -2782,7 +2790,9 @@ def run_interleaved_scenario_case(
     shadow = TemporalShadow()
     _seed_shadow_from_fixtures(case, meta, shadow)
     instant = normalize_instant(dt.datetime.fromisoformat(_INERT_CLOCK_INSTANT))
-    main_db = handle.Database(port, meta, dialect=dialect, clock=FixedClock(instant))
+    main_db = handle.Database(
+        port, accepted_metamodel(meta), dialect=dialect, clock=FixedClock(instant)
+    )
     peer_connection = peer_factory()
     try:
         _require_interleaved_termination_capability(port, peer_connection, case.path.name)
@@ -2796,7 +2806,9 @@ def run_interleaved_scenario_case(
         with contextlib.suppress(Exception):
             peer_connection.close()
         raise
-    peer_db = handle.Database(peer_connection, meta, dialect=dialect, clock=FixedClock(instant))
+    peer_db = handle.Database(
+        peer_connection, accepted_metamodel(meta), dialect=dialect, clock=FixedClock(instant)
+    )
     turnstile = _Turnstile()
     result_a = _InterleavedGroupResult(lowered={})
     result_b = _InterleavedGroupResult(lowered={})
@@ -2985,81 +2997,68 @@ def run_write_sequence_case(
     return emissions, table_state, len(emissions)
 
 
-def read_table_state(port: DbPort, meta: Metamodel, dialect: Dialect) -> dict[str, list[Row]]:
+def read_table_state(
+    port: DbPort, meta: Metamodel | AcceptedMetamodel, dialect: Dialect
+) -> dict[str, list[Row]]:
     """The committed contents of every model table, in canonical wire form.
 
     Each row-owning table is read back with every physical column in FAMILY
     columnOrder (`_table_column_order` — a shared table is read once), so the
     observation reports exactly the state ``then.tableState`` asserts — derived
-    from the metamodel, never from the case's expectations.
+    from the metamodel, never from the case's expectations. Takes either the
+    corpus descriptor record graph or an already-accepted (scoped) model.
     """
+    model = accepted_metamodel(meta)
+    facet = inheritance.view(model)
     state: dict[str, list[Row]] = {}
-    for entity in meta.entities:
-        table = inheritance.effective_table(meta, entity)
-        if table is None or table in state:
+    for entity in model.entities:
+        view = facet.entity(entity.identity)
+        container = None if view is None else view.container
+        if container is None or container.name in state:
             continue
-        columns = ", ".join(
-            dialect.quote(column) for column in _table_column_order(meta, entity, table)
-        )
+        table = container.name
+        columns = ", ".join(dialect.quote(column) for column in _table_column_order(model, entity))
         sql = f"select {columns} from {dialect.quote(table)}"
         rows = port.execute(dialect.to_driver_sql(sql), [])
         state[table] = [wire_row(row) for row in rows]
     return state
 
 
-def _table_column_order(meta: Metamodel, entity: Entity, table: str) -> list[str]:
-    """``table``'s FULL physical columns in canonical order (m-sql
+def _table_column_order(model: AcceptedMetamodel, entity: EntityMetadata) -> list[str]:
+    """``entity``'s table's FULL physical columns in canonical order (m-sql
     ``column_order``'s own rule — primary key first, then the inheritance tag,
     then the remaining scalars, then value-object documents).
 
-    For a plain entity this is its own bare view (`column_order`). For an
-    inheritance-family table it is EVERY entity mapped to it, unioned
-    family-wide: a table-per-hierarchy shared table carries every sibling
-    concrete's own columns (`then.tableState` asserts the WHOLE row, e.g.
-    `m-inheritance-007`'s inserted `CardPayment` row still reports the
-    cash-only `tendered` column as `null`), and a table-per-concrete-subtype
-    table is one concrete's own ancestry chain. `column_order`'s own docstring
-    defers exactly this "full inherited chain" resolution to "above this
-    per-entity view" — the read-back analogue of
-    `parallax.snapshot.handle`'s write-emission `_family_column_order`
-    (a sibling resolution, not reused directly: write emission touches only
-    ONE participant's own columns, this touches every participant SHARING
-    the physical table).
+    For a plain entity or a table-per-concrete-subtype concrete this is its own
+    family-effective column order (`inheritance.column_order`). A
+    table-per-hierarchy shared table is EVERY family member's columns unioned
+    family-wide (the Inheritance Facet's projection superset over the family's
+    whole concrete set), since `then.tableState` asserts the WHOLE row (e.g.
+    `m-inheritance-007`'s inserted `CardPayment` row still reports the cash-only
+    `tendered` column as `null`).
     """
-    if entity.inheritance is None:
-        return list(column_order(entity))
-    root = inheritance.family_root(meta, entity)
-    assert root.inheritance is not None  # a resolved family root always carries one
-    if root.inheritance.strategy == "table-per-hierarchy":
-        members = sorted(
-            (
-                candidate
-                for candidate in meta.entities
-                if candidate.inheritance is not None
-                and inheritance.family_root(meta, candidate) is root
-            ),
-            key=lambda candidate: candidate.name,
-        )
-    else:
-        members = [entity]
-    pk_columns = [attr.column for attr in root.attributes if attr.primary_key]
-    tag_columns = [root.inheritance.tag_column] if root.inheritance.tag_column is not None else []
-    chain = (*inheritance.ancestor_chain(meta, tuple(member.name for member in members)), *members)
-    rest_columns: list[str] = []
-    document_columns: list[str] = []
-    seen_rest: set[str] = set()
-    seen_docs: set[str] = set()
-    for member in chain:
-        for attribute in member.attributes:
-            if attribute.primary_key or attribute.column in seen_rest:
-                continue
-            seen_rest.add(attribute.column)
-            rest_columns.append(attribute.column)
-        for vo in member.value_objects:  # pragma: no cover - no reachable family model
-            if vo.storage_column in seen_docs:  # declares a value object yet (defensive dedup)
-                continue
-            seen_docs.add(vo.storage_column)
-            document_columns.append(vo.storage_column)
+    facet = inheritance.view(model)
+    view = facet.entity(entity.identity)
+    if view is None:  # pragma: no cover - the facet covers every accepted Entity
+        return []
+    root_view = facet.entity(view.root)
+    if root_view is None or not isinstance(root_view.strategy, TablePerHierarchy):
+        return list(inheritance.column_order(entity, facet))
+    position = facet.position(list(root_view.concrete_subtypes))
+    if position is None:  # pragma: no cover - a family's own concrete set is one position
+        return list(inheritance.column_order(entity, facet))
+    pk_columns = [
+        attribute.storage.name
+        for attribute in position.superset_attributes
+        if isinstance(attribute.primary_key, PrimaryKey)
+    ]
+    tag_columns = [root_view.tag_column] if root_view.tag_column is not None else []
+    rest_columns = [
+        attribute.storage.name
+        for attribute in position.superset_attributes
+        if not isinstance(attribute.primary_key, PrimaryKey)
+    ]
+    document_columns = [vo.storage.name for vo in position.superset_value_objects]
     return [*pk_columns, *tag_columns, *rest_columns, *document_columns]
 
 
@@ -3181,8 +3180,8 @@ def _lower_conflict_write(
     instruction = instructions.deserialize(
         {"mutation": "update", "entity": target, "rows": [clean_row]}
     )
-    instructions.validate_instruction(instruction, meta)
     model = case_model(meta)
+    instructions.validate_instruction(instruction, model)
     observations: dict[ObjectKey, Observation] = {}
     if observation is not None:
         key = object_key(instruction, model)
@@ -3193,7 +3192,7 @@ def _lower_conflict_write(
     for planned in plan.writes:
         statements.extend(
             lowered.statement
-            for lowered in lower_write(planned, meta, dialect, concurrency, _INERT_CLOCK_INSTANT)
+            for lowered in lower_write(planned, model, dialect, concurrency, _INERT_CLOCK_INSTANT)
         )
     return tuple(statements)
 
@@ -3218,7 +3217,9 @@ def _run_conflict_write(
     statements = _lower_conflict_write(meta, dialect, target, concurrency, write_row)
     clean_row, observation = _strip_observation(write_row)
     instant = normalize_instant(dt.datetime.fromisoformat(_INERT_CLOCK_INSTANT))
-    database = handle.Database(port, meta, dialect=dialect, clock=FixedClock(instant))
+    database = handle.Database(
+        port, accepted_metamodel(meta), dialect=dialect, clock=FixedClock(instant)
+    )
 
     def body(tx: handle.Transaction) -> int:
         instruction = instructions.deserialize(
@@ -3263,11 +3264,12 @@ def _run_conflict_close(
     """
     row = dict(write_row)
     observed_valid_start = cast("str | None", row.pop("valid_start", None))
+    model = accepted_metamodel(meta)
     lowered = handle.lower_temporal_close(
-        row, target, meta, dialect, concurrency, at, observed_tx_start, observed_valid_start
+        row, target, model, dialect, concurrency, at, observed_tx_start, observed_valid_start
     )
     instant = normalize_instant(dt.datetime.fromisoformat(at))
-    database = handle.Database(port, meta, dialect=dialect, clock=FixedClock(instant))
+    database = handle.Database(port, model, dialect=dialect, clock=FixedClock(instant))
 
     def body(tx: handle.Transaction) -> int:
         # The neutral connection seam.
@@ -3523,9 +3525,10 @@ def run_rejected_case(case: case_format.Case) -> str:
             operation = deserialize(when["operation"])
         except OperationError as exc:
             raise EngineError(f"{case.path.name}: {exc}") from exc
-        target = _rejected_target(meta)
+        model = case_model(meta)
+        root = case_entity(model, meta.entity(_rejected_target(meta)))
         try:
-            validate_op_algebra_operation(target, operation, meta)
+            validate_op_algebra_operation(root, operation, model)
         except OperationRejectedError as exc:
             return exc.rule
         raise EngineError(

@@ -35,6 +35,7 @@ from pydantic import BaseModel, ConfigDict
 from pydantic._internal._model_construction import ModelMetaclass
 
 from parallax.core import inheritance as _inheritance
+from parallax.core._formation_profile import form_metamodel
 from parallax.core.descriptor import (
     UNSET,
     AsOfAxisMetadata,
@@ -55,6 +56,7 @@ from parallax.core.descriptor.neutral_type import infer_neutral_type as _infer_n
 from parallax.core.descriptor.neutral_type import snake_to_camel
 from parallax.core.descriptor.records import Persistence
 from parallax.core.descriptor.records import Unset as _UnsetType
+from parallax.core.descriptor.unresolved import unresolved_metamodel
 from parallax.core.entity._annotations import class_body_annotations
 from parallax.core.entity._validation import require_entity_record
 from parallax.core.entity.errors import (
@@ -84,7 +86,16 @@ from parallax.core.entity.value_object import (
     vo_field_info,
     vo_instance_validator,
 )
-from parallax.core.op_algebra import All, Narrow, Operation, validate_operation
+from parallax.core.metamodel import EntityIdentity, EntityMetadata, FacetKey
+from parallax.core.metamodel import Metamodel as AcceptedMetamodel
+from parallax.core.model_formation import MetamodelValidationError
+from parallax.core.op_algebra import (
+    All,
+    Narrow,
+    Operation,
+    referenced_entities,
+    validate_operation,
+)
 
 __all__ = [
     "Bitemporal",
@@ -95,17 +106,19 @@ __all__ = [
     "EntityRegistry",
     "FamilyRoot",
     "FrameworkOwnedAxisError",
+    "MetamodelSource",
     "ModelCopyError",
     "ProvenanceError",
-    "ScopedMetamodel",
     "TxTemporal",
     "WireNames",
+    "accepted_metamodel",
     "camel_to_snake",
     "canonical_row",
     "changed_fields",
     "default_registry",
     "descriptor_document",
     "effective_change_set",
+    "entity_metadata_of",
     "entity_record_of",
     "entity_records",
     "entity_registry",
@@ -114,6 +127,7 @@ __all__ = [
     "primary_key_row",
     "registry_of",
     "resolve_entity_class",
+    "resolve_entity_metadata",
     "snake_to_camel",
     "wire_names_of",
 ]
@@ -250,13 +264,13 @@ class EntityRegistry:
         )
         return merged
 
-    def metamodel(self) -> ScopedMetamodel:
-        """This scope's :class:`~parallax.core.descriptor.Metamodel`, tagged
-        with itself -- the registry/metamodel bridge: a caller that
-        wants `db.find` (`parallax.snapshot.handle`) to resolve THROUGH this
-        registry connects a ``Database`` with THIS method's result, never a
-        bare, untagged one."""
-        return ScopedMetamodel(entities=tuple(self.records().values()), registry=self)
+    def metamodel(self) -> AcceptedMetamodel:
+        """This scope's accepted :class:`~parallax.core.metamodel.Metamodel`,
+        tagged with itself -- the registry/metamodel bridge: a caller that wants
+        `db.find` (`parallax.snapshot.handle`) to resolve THROUGH this registry
+        connects a ``Database`` with THIS method's result, never a bare, untagged
+        one."""
+        return _scoped_metamodel(_registry_records(self), self)
 
 
 _default_registry: EntityRegistry | None = None
@@ -272,46 +286,206 @@ def default_registry() -> EntityRegistry:
 
 
 @dataclass(frozen=True, slots=True)
-class ScopedMetamodel(MetamodelRecord):
-    """A :class:`~parallax.core.descriptor.Metamodel` tagged with the
-    :class:`EntityRegistry` that produced it: `parallax.snapshot.handle` resolves
-    a decoded row's class through THIS registry, never the process-global
-    default, when a connected ``Database``'s metamodel carries one. A
-    class-authored assembly (:func:`metamodel` over a NON-EMPTY class list) is
-    ALWAYS tagged this way. The genuinely UNSCOPED (untagged, plain) cases are
-    narrower: a YAML-ingested
-    `~parallax.core.descriptor.deserialize` result and :func:`metamodel`'s own
-    EMPTY-list call (``metamodel([])`` -- no class/registry context to derive
-    a scope from at all). Both fall back to :func:`default_registry` unchanged:
-    zero-ceremony apps, and the long-standing ingested-descriptor +
-    installed-mirror pairing (``Database.connect(port, ingested_meta)``
-    wrapping via a same-named class the DEFAULT registry independently
-    holds), both keep today's behavior. Lives in ``parallax.core.entity``
-    (never ``parallax.core.descriptor`` itself, which must not grow a
-    dependency on entity classes -- the import-linter DAG constraint)."""
+class _ScopedMetamodel:
+    """The accepted :class:`~parallax.core.metamodel.Metamodel` an Entity-class
+    assembly produces: the formed accepted model by delegation, plus the two
+    things assembly alone can supply and the accepted protocol does not carry --
+    the :class:`EntityRegistry` a decoded row's class resolves through, and the
+    descriptor record graph that turns a bare-or-qualified Entity spelling into
+    the structured Identity the accepted model is keyed by.
 
-    registry: EntityRegistry | None = None
+    `parallax.snapshot.handle` receives this as the accepted ``Metamodel``
+    protocol alone (``entities`` / ``entity`` / ``facet``); the record graph and
+    registry stay private to this scope and reach a handle only through the
+    entity-scope seams :func:`resolve_entity_class` /
+    :func:`resolve_entity_metadata` / :func:`entity_metadata_of`, which narrow to
+    this wrapper internally.
+
+    A class-authored assembly (:func:`metamodel` over a NON-EMPTY class list) is
+    ALWAYS scoped this way. The genuinely UNSCOPED (untagged) cases are narrower:
+    :func:`metamodel`'s own EMPTY-list call and a bare descriptor record graph
+    normalized through :func:`accepted_metamodel` carry ``registry=None`` and
+    fall back to :func:`default_registry`. Lives in ``parallax.core.entity``
+    (never ``parallax.core.metamodel`` itself, which must not grow a dependency
+    on the Entity frontend or the descriptor scope)."""
+
+    _accepted: AcceptedMetamodel
+    _records: MetamodelRecord
+    registry: EntityRegistry | None
+
+    @property
+    def entities(self) -> Sequence[EntityMetadata]:
+        return self._accepted.entities
+
+    def entity(self, identity: EntityIdentity) -> EntityMetadata | None:
+        return self._accepted.entity(identity)
+
+    def facet[T](self, key: FacetKey[T]) -> T:
+        return self._accepted.facet(key)
+
+    def entity_by_name(self, name: str) -> EntityMetadata | None:
+        """The accepted Metadata a bare-or-namespace-qualified Entity spelling
+        resolves to: the descriptor record graph resolves the spelling to a
+        structured Identity (its own bare-or-canonical lookup, preserved from the
+        descriptor era), then the accepted model resolves that Identity."""
+        try:
+            record = self._records.entity(name)
+        except KeyError:
+            return None
+        return self._accepted.entity(EntityIdentity(record.namespace, record.name))
 
 
-def registry_of(meta: MetamodelRecord) -> EntityRegistry:
+def _scoped_metamodel(
+    records: MetamodelRecord, registry: EntityRegistry | None
+) -> _ScopedMetamodel:
+    """Form the accepted model from ``records`` once and wrap it with its scope.
+
+    The forming responsibility (``form_metamodel`` over the descriptor-backed
+    ``unresolved_metamodel`` view) lives here rather than in the handle, so a
+    connected ``Database`` receives an accepted model directly. Forming is not
+    free and runs per assembly call -- correctness first."""
+    accepted = form_metamodel(unresolved_metamodel(records))
+    return _ScopedMetamodel(_accepted=accepted, _records=records, registry=registry)
+
+
+def _registry_records(registry: EntityRegistry) -> MetamodelRecord:
+    """``registry``'s visible entity records as one descriptor record graph --
+    the class-definition-time family-resolution input and the record graph a
+    scoped accepted model keeps for name resolution."""
+    return MetamodelRecord(entities=tuple(registry.records().values()))
+
+
+type MetamodelSource = AcceptedMetamodel | MetamodelRecord
+"""What a composition root may hand a ``Database``: an accepted model (a
+class-authored :func:`metamodel` / :meth:`EntityRegistry.metamodel` result) or a
+bare descriptor record graph (a YAML-ingested `~parallax.core.descriptor.
+deserialize` result). :func:`accepted_metamodel` normalizes either to an
+accepted model; the alias lets `parallax.snapshot.handle` name the union without
+importing the descriptor scope directly."""
+
+
+def accepted_metamodel(source: MetamodelSource) -> AcceptedMetamodel:
+    """``source`` as an accepted :class:`~parallax.core.metamodel.Metamodel`.
+
+    An already-accepted model (a scoped assembly result or any other accepted
+    model) passes through unchanged; a bare descriptor record graph (a
+    YAML-ingested `~parallax.core.descriptor.deserialize` result, the conformance
+    run lane's model) is formed and wrapped, scoped to the process
+    :func:`default_registry`. The composition-root seam a ``Database`` normalizes
+    its own metamodel argument through, so a handle always holds an accepted
+    model regardless of how the caller spelled it."""
+    if isinstance(source, MetamodelRecord):
+        return _scoped_metamodel(source, None)
+    return source
+
+
+def registry_of(meta: AcceptedMetamodel) -> EntityRegistry:
     """The :class:`EntityRegistry` scope a connected ``Metamodel`` resolves
-    classes through: its own tagged :class:`ScopedMetamodel` scope if it
-    carries one, else :func:`default_registry`."""
-    if isinstance(meta, ScopedMetamodel) and meta.registry is not None:
+    classes through: its own scope if it carries one, else
+    :func:`default_registry`."""
+    if isinstance(meta, _ScopedMetamodel) and meta.registry is not None:
         return meta.registry
     return default_registry()
 
 
-def resolve_entity_class(meta: MetamodelRecord, name: str) -> type[BaseModel] | None:
+def resolve_entity_class(meta: AcceptedMetamodel, name: str) -> type[BaseModel] | None:
     """The Python class ``name`` resolves to within ``meta``'s own scope
     (:func:`registry_of`) -- the sole seam `parallax.snapshot.handle` uses to
     turn a decoded row's canonical entity name into a class, never the
     process-global registry directly."""
-    try:
-        local_name = meta.entity(name).name
-    except KeyError:
-        local_name = name
+    local_name = name
+    if isinstance(meta, _ScopedMetamodel):
+        metadata = meta.entity_by_name(name)
+        if metadata is not None:
+            local_name = metadata.identity.name
     return registry_of(meta).resolve(local_name)
+
+
+def resolve_entity_metadata(meta: AcceptedMetamodel, name: str) -> EntityMetadata | None:
+    """The accepted Metadata a bare-or-namespace-qualified Entity spelling
+    resolves to within ``meta``'s scope, or ``None`` when it names none.
+
+    The name-resolution seam every handle / materialize caller uses where it once
+    resolved a descriptor record by name: a scoped assembly result resolves the
+    spelling through its own record graph (bare-or-canonical), a bare accepted
+    model falls back to an Identity scan."""
+    if isinstance(meta, _ScopedMetamodel):
+        return meta.entity_by_name(name)
+    for entity in meta.entities:
+        if name in (entity.identity.canonical, entity.identity.name):
+            return entity
+    return None  # pragma: no cover - a resolved name always names a declared Entity here
+
+
+def entity_metadata_of(meta: AcceptedMetamodel, cls: type) -> EntityMetadata | None:
+    """The accepted Metadata of a compiled Entity class within ``meta``, or
+    ``None`` -- the class-keyed sibling of :func:`resolve_entity_metadata` a
+    keyed write uses to resolve the metadata of the instance it is given."""
+    record = entity_record_of(cls)
+    if record is None:
+        return None
+    return meta.entity(EntityIdentity(record.namespace, record.name))
+
+
+def _reachable_records(records: MetamodelRecord, roots: set[str]) -> MetamodelRecord:
+    """The record graph of every Entity in ``roots`` and everything reachable
+    from them through inheritance (their whole families) and relationships
+    (defining join targets and reverse peers), transitively.
+
+    This is the coherent model an operation validates against: ``roots`` is the
+    read's own root plus every Entity the operation references, so a cross-entity
+    deep-fetch or navigation target is present, while an unrelated Entity a
+    shadowing registry chain leaves dangling (a default-registry sibling whose
+    reverse relationship points at a shadowed name) is excluded — the whole-chain
+    view could not form it."""
+    by_name = records.by_name
+    children: dict[str, list[EntityRecord]] = {}
+    for entity in records.entities:
+        if entity.inheritance is not None and entity.inheritance.parent is not None:
+            children.setdefault(entity.inheritance.parent, []).append(entity)
+    seen: set[str] = set()
+    stack = list(roots)
+    while stack:
+        name = stack.pop()
+        entity = by_name.get(name)
+        if entity is None or entity.name in seen:
+            continue
+        seen.add(entity.name)
+        inheritance_facts = entity.inheritance
+        if inheritance_facts is not None and inheritance_facts.parent is not None:
+            stack.append(inheritance_facts.parent)
+        stack.extend(child.name for child in children.get(entity.name, ()))
+        for relationship in entity.relationships:
+            if isinstance(relationship, DefiningRelationship):
+                stack.append(relationship.join.target.entity)
+            else:
+                stack.append(relationship.reverse_of.rpartition(".")[0])
+    return MetamodelRecord(entities=tuple(e for e in records.entities if e.name in seen))
+
+
+def validate_in_scope(registry: EntityRegistry, target: str, op: Operation) -> None:
+    """Early-validate ``op`` against ``target``'s registry scope, degrading
+    gracefully when even the reachable closure cannot form.
+
+    ``Entity.where`` / ``.include`` / ``.narrow`` fail-fast by resolving the
+    class's own registration scope into an accepted model and running the
+    model-aware validator. The operation is validated against the reachable
+    closure of ``target`` plus every Entity the operation references, rather than
+    the whole registry chain, so a cross-entity include/navigation target is
+    present while a shadowing scope that leaves an unrelated sibling's reverse
+    relationship dangling never blocks a coherent read's own validation. Should
+    even that closure fail to form, the operation is left for the connected
+    ``Database``'s own coherent model, which the read actually runs against, to
+    validate at execution."""
+    roots = {target, *referenced_entities(op)}
+    records = _reachable_records(_registry_records(registry), roots)
+    try:
+        model = _scoped_metamodel(records, registry)
+    except MetamodelValidationError:  # pragma: no cover - a coherent operation's closure forms
+        return
+    root = resolve_entity_metadata(model, target)
+    if root is not None:  # a compiled Entity class always resolves in its own scope
+        validate_operation(root, op, model)
 
 
 class ModelCopyError(EntityDefinitionError):
@@ -625,44 +799,24 @@ def _entity_record_for(cls: type) -> EntityRecord:
     return require_entity_record(cls, entity_record_of(cls))
 
 
-def metamodel(classes: Sequence[type]) -> MetamodelRecord:
-    """Assemble one :class:`~parallax.core.descriptor.Metamodel` from a set of
-    related entity classes.
+def _descriptor_metamodel(
+    classes: Sequence[type],
+) -> tuple[MetamodelRecord, EntityRegistry | None]:
+    """The descriptor record graph a class set assembles into, plus the single
+    :class:`EntityRegistry` that scopes it (``None`` for an empty class set).
 
-    Automatically SCOPED: tagged as a
-    :class:`ScopedMetamodel` resolving through the given classes' own registry
-    (:func:`_registry_of_classes`) -- tagging is automatic wherever the
-    classes are in hand, so `wrap`/`resolve_entity_class` resolve a decoded
-    row's class through THIS scope, never the process default, once a
-    connected ``Database`` carries the result. Without this, an owner class
-    declared in its own registry (e.g. ``animal_owner.Person``) would resolve
-    through the process default instead, landing on that DEFAULT registry's
-    own, unrelated same-named entity (``read_models.Person``) the moment it
-    also happened to be imported. ``classes`` empty -- no class/registry
-    context at all -- stays UNSCOPED: a bare, untagged ``Metamodel``, for
-    which :func:`registry_of`'s own documented fallback resolves through the
-    process default registry instead (the same untagged shape a bare
-    descriptor-ingested metamodel already carries).
-
-    Rejects loudly rather
-    than silently emitting two records for one canonical name: a conflicting
-    same-name pair in ``classes`` -- two DIFFERENT classes that both resolve
-    to the same canonical entity name -- is structurally conflicting
-    regardless of which registries are involved (checked here, independently
-    of :func:`_registry_of_classes`'s own registry-selection hardening, which
-    additionally catches a same-name conflict shadowed between the classes'
-    own registries even when the two conflicting classes are not BOTH in
-    ``classes`` directly). The IDENTICAL class object repeated in ``classes``
-    is never such a conflict -- merely harmless repetition -- and is
-    DEDUPLICATED: the assembled
-    ``entities`` carries exactly ONE record per distinct class, in FIRST-
-    occurrence order, never a second copy for a repeated supplied class (a
-    caller composing its own class list from several sources, some of which
-    may legitimately overlap, never has to de-duplicate it by hand first).
-
-    This function lives alongside :func:`_registry_of_classes` so automatic
-    scoping does not require exporting package-internal registry machinery.
-    """
+    Rejects loudly rather than silently emitting two records for one canonical
+    name: a conflicting same-name pair in ``classes`` -- two DIFFERENT classes
+    that both resolve to the same canonical entity name -- is structurally
+    conflicting regardless of which registries are involved (checked here,
+    independently of :func:`_registry_of_classes`'s own registry-selection
+    hardening, which additionally catches a same-name conflict shadowed between
+    the classes' own registries even when the two conflicting classes are not
+    BOTH in ``classes`` directly). The IDENTICAL class object repeated in
+    ``classes`` is never such a conflict -- merely harmless repetition -- and is
+    DEDUPLICATED: the assembled ``entities`` carries exactly ONE record per
+    distinct class, in FIRST-occurrence order, never a second copy for a repeated
+    supplied class."""
     classes = tuple(classes)
     seen: dict[str, type] = {}
     deduped: list[type] = []
@@ -676,15 +830,37 @@ def metamodel(classes: Sequence[type]) -> MetamodelRecord:
         seen[name] = cls
         deduped.append(cls)
     entities = tuple(_entity_record_for(cls) for cls in deduped)
-    scope = _registry_of_classes(deduped)
-    if scope is None:
-        return MetamodelRecord(entities=entities)
-    return ScopedMetamodel(entities=entities, registry=scope)
+    return MetamodelRecord(entities=entities), _registry_of_classes(deduped)
+
+
+def metamodel(classes: Sequence[type]) -> AcceptedMetamodel:
+    """Assemble one accepted :class:`~parallax.core.metamodel.Metamodel` from a
+    set of related entity classes.
+
+    Automatically SCOPED: the result resolves a decoded row's class through the
+    given classes' own registry (:func:`_registry_of_classes`) -- scoping is
+    automatic wherever the classes are in hand, so `resolve_entity_class` /
+    `resolve_entity_metadata` resolve through THIS scope, never the process
+    default, once a connected ``Database`` carries the result. Without this, an
+    owner class declared in its own registry (e.g. ``animal_owner.Person``) would
+    resolve through the process default instead, landing on that DEFAULT
+    registry's own, unrelated same-named entity (``read_models.Person``) the
+    moment it also happened to be imported. ``classes`` empty -- no
+    class/registry context at all -- stays UNSCOPED, for which
+    :func:`registry_of`'s own documented fallback resolves through the process
+    default registry instead.
+
+    The forming responsibility (record graph -> accepted model) lands here per
+    call; the record graph the accepted model retains for name resolution is
+    entity-scope-private."""
+    records, scope = _descriptor_metamodel(classes)
+    return _scoped_metamodel(records, scope)
 
 
 def descriptor_document(classes: Sequence[type]) -> dict[str, object]:
     """Return the canonical descriptor document for related entity classes."""
-    return serialize(metamodel(classes))
+    records, _scope = _descriptor_metamodel(classes)
+    return serialize(records)
 
 
 def _temporal_as_of_axes(record: EntityRecord, cls: type) -> tuple[AsOfAxisMetadata, ...]:
@@ -700,8 +876,8 @@ def _temporal_as_of_axes(record: EntityRecord, cls: type) -> tuple[AsOfAxisMetad
     """
     if record.inheritance is None:
         return record.as_of_axes
-    meta = _registry_of_class(cls).metamodel()
-    return _inheritance.declaring_entity(meta, record).as_of_axes
+    records = _registry_records(_registry_of_class(cls))
+    return _inheritance.declaring_entity(records, record).as_of_axes
 
 
 def _serialize_member(value: object) -> object:
@@ -1035,7 +1211,7 @@ def _derive_inheritance(
             "a Parallax entity always joins its family (ledger D-7)"
         )
     try:
-        temp_meta = registry.metamodel()
+        temp_meta = _registry_records(registry)
         root_record = _inheritance.family_root(temp_meta, parent_record)
     except ValueError as exc:  # pragma: no cover - guards a malformed family
         raise EntityDefinitionError(f"{cls_name}: {exc}") from exc
@@ -1482,7 +1658,7 @@ class Entity(BaseModel, metaclass=EntityMeta):
         registry = _registry_of_class(cls)
         as_of = _temporal_as_of_axes(record, cls) if record is not None else ()
         statement = build_statement(cls.__name__, predicates, as_of_axes=as_of, registry=registry)
-        validate_operation(cls.__name__, statement.predicate, registry.metamodel())
+        validate_in_scope(registry, cls.__name__, statement.predicate)
         return statement
 
     @classmethod

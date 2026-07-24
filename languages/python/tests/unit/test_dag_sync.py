@@ -314,9 +314,9 @@ def test_a_tampered_prose_row_alone_fails_generation(
     original = dag.PYTHON_MD.read_text()
     edited = original.replace(
         "| `parallax.snapshot.handle._wrap` | `parallax.snapshot.materialize`, "
-        "`parallax.core.entity`, `m-descriptor`,",
+        "`parallax.core.entity`, `m-metamodel`,",
         "| `parallax.snapshot.handle._wrap` | `parallax.snapshot.materialize`, "
-        "`parallax.core.entity`, `m-sql`, `m-descriptor`,",
+        "`parallax.core.entity`, `m-sql`, `m-metamodel`,",
         1,
     )
     assert edited != original
@@ -359,8 +359,8 @@ def test_fence_and_tool_edited_consistently_still_fail_a_stale_prose_row(
     tampered = tmp_path / "python.md"
     original = dag.PYTHON_MD.read_text()
     edited = original.replace(
-        "parallax.snapshot.handle._wrap --> parallax.core.descriptor\n",
-        "parallax.snapshot.handle._wrap --> parallax.core.descriptor\n"
+        "parallax.snapshot.handle._wrap --> parallax.core.metamodel\n",
+        "parallax.snapshot.handle._wrap --> parallax.core.metamodel\n"
         "parallax.snapshot.handle._wrap --> parallax.core.sql_gen\n",
         1,
     )
@@ -390,9 +390,9 @@ def test_a_tampered_prose_row_alone_exits_one_at_the_command() -> None:
     original = dag.PYTHON_MD.read_text()
     edited = original.replace(
         "| `parallax.snapshot.handle._wrap` | `parallax.snapshot.materialize`, "
-        "`parallax.core.entity`, `m-descriptor`,",
+        "`parallax.core.entity`, `m-metamodel`,",
         "| `parallax.snapshot.handle._wrap` | `parallax.snapshot.materialize`, "
-        "`parallax.core.entity`, `m-sql`, `m-descriptor`,",
+        "`parallax.core.entity`, `m-sql`, `m-metamodel`,",
         1,
     )
     assert edited != original

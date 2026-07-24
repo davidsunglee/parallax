@@ -50,9 +50,8 @@ from parallax.conformance.read_stories import READ_STORIES, ReadStory
 from parallax.conformance.stories import WRITE_STORIES, WriteStory
 from parallax.conformance.vo_models import CUSTOMER_REGISTRY
 from parallax.core import LATEST, edge_of, is_loaded, narrowed, pin_of
-from parallax.core.descriptor import Metamodel
 from parallax.core.dialect import POSTGRES
-from parallax.core.entity import metamodel
+from parallax.core.entity import MetamodelSource, metamodel
 from parallax.core.entity.base import EntityRegistry
 from parallax.core.entity.expressions import UnloadedRelationshipError
 from parallax.core.entity.value_object import to_document
@@ -78,7 +77,7 @@ def _reset_for(case_id: str, provisioner: Any) -> Any:
     return meta
 
 
-def _reset_for_model(case_id: str, provisioner: Any, meta: Metamodel) -> Metamodel:
+def _reset_for_model(case_id: str, provisioner: Any, meta: MetamodelSource) -> MetamodelSource:
     """Provision one case's fixtures against an already-assembled ``meta``.
 
     The supply is a class list rather than a whole registry wherever a scope
@@ -90,7 +89,9 @@ def _reset_for_model(case_id: str, provisioner: Any, meta: Metamodel) -> Metamod
     return meta
 
 
-def _reset_for_registry(case_id: str, provisioner: Any, registry: EntityRegistry) -> Metamodel:
+def _reset_for_registry(
+    case_id: str, provisioner: Any, registry: EntityRegistry
+) -> MetamodelSource:
     """Like :func:`_reset_for`, but provisions from ``registry``'s OWN
     :meth:`~parallax.core.entity.base.EntityRegistry.metamodel` rather than
     the ingested corpus descriptor. This is needed whenever `db.find`'s

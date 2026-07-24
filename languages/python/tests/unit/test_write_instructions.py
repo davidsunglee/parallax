@@ -32,10 +32,10 @@ _SCHEMA = cast(
 _validate = cast("Callable[[object, object], None]", jsonschema.validate)
 
 _MODELS = models.load_models()
-_ACCOUNT = _MODELS["account"]
-_PAYMENT = _MODELS["payment"]
-_BALANCE = _MODELS["balance"]
-_POSITION = _MODELS["position"]
+_ACCOUNT = models.accepted_model(_MODELS["account"])
+_PAYMENT = models.accepted_model(_MODELS["payment"])
+_BALANCE = models.accepted_model(_MODELS["balance"])
+_POSITION = models.accepted_model(_MODELS["position"])
 
 _B1 = "2024-01-01T00:00:00+00:00"
 _B2 = "2024-06-01T00:00:00+00:00"
@@ -504,7 +504,7 @@ def test_member_name_honesty_rejects_unknown_entity() -> None:
 def test_member_name_honesty_covers_value_object_members() -> None:
     # A top-level value-object name is a legal write-row key (m-value-object); the
     # honesty check accepts it alongside scalar attributes.
-    customer = _MODELS["customer"]
+    customer = models.accepted_model(_MODELS["customer"])
     keyed = wi.deserialize(
         {
             "mutation": "insert",
@@ -568,7 +568,7 @@ def test_member_name_honesty_rejects_a_scalar_type_mismatched_assignment() -> No
 # accepted. `test_where_verbs.py` covers the typed-path half of this check.     #
 # --------------------------------------------------------------------------- #
 def test_member_name_honesty_rejects_a_non_document_value_object_assignment() -> None:
-    customer = _MODELS["customer"]
+    customer = models.accepted_model(_MODELS["customer"])
     predicate = wi.deserialize(
         {
             "mutation": "update",
@@ -581,7 +581,7 @@ def test_member_name_honesty_rejects_a_non_document_value_object_assignment() ->
 
 
 def test_member_name_honesty_accepts_a_well_formed_value_object_assignment() -> None:
-    customer = _MODELS["customer"]
+    customer = models.accepted_model(_MODELS["customer"])
     document: dict[str, object] = {
         "street": "1 Aurora Ave",
         "city": "Oslo",
@@ -606,7 +606,7 @@ def test_member_name_honesty_rejects_a_non_nullable_value_object_assignment_of_n
     # `models/shipment.yaml`'s `destination` is `nullable: false` (the corpus's
     # "required top-level value object missing" exemplar), so a `None`
     # assignment is invalid.
-    shipment = _MODELS["shipment"]
+    shipment = models.accepted_model(_MODELS["shipment"])
     predicate = wi.deserialize(
         {
             "mutation": "update",
@@ -621,7 +621,7 @@ def test_member_name_honesty_rejects_a_non_nullable_value_object_assignment_of_n
 def test_member_name_honesty_accepts_a_nullable_value_object_assignment_of_none() -> None:
     # `Customer.address` is `nullable: true` -- an explicit `None` stays a
     # legal clearing assignment.
-    customer = _MODELS["customer"]
+    customer = models.accepted_model(_MODELS["customer"])
     predicate = wi.deserialize(
         {
             "mutation": "update",
@@ -635,7 +635,7 @@ def test_member_name_honesty_accepts_a_nullable_value_object_assignment_of_none(
 def test_member_name_honesty_rejects_a_non_nullable_scalar_assignment_of_none() -> None:
     # `Shipment.name` declares no `nullable: true`, so an explicit `None`
     # assignment is refused just as it is for a required value object.
-    shipment = _MODELS["shipment"]
+    shipment = models.accepted_model(_MODELS["shipment"])
     predicate = wi.deserialize(
         {
             "mutation": "update",

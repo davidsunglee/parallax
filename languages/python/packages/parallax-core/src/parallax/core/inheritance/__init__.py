@@ -24,17 +24,15 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
+from parallax.core.base import decode_neutral_literal, matches_neutral_type
 from parallax.core.descriptor import (
     Attribute,
     Entity,
     Inheritance,
     Metamodel,
     ValueObject,
-    VoDocumentViolation,
-    vo_document_violation,
 )
 from parallax.core.descriptor import declaring_entity as _resolve_declaring_entity
-from parallax.core.descriptor.neutral_type import type_matches as _type_matches
 from parallax.core.inheritance._columns import column_order
 from parallax.core.inheritance._compile import (
     MODEL_COMPILER,
@@ -79,6 +77,8 @@ from parallax.core.metamodel import (
     EntityIdentity,
     EntityMetadata,
     PrimaryKey,
+    VoDocumentViolation,
+    vo_document_violation,
 )
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
 
@@ -792,103 +792,102 @@ class WriteAssignmentError(ValueError):
         self.rule = rule
 
 
-def validate_write_assignment(meta: Metamodel, entity: Entity, name: str, value: object) -> None:
+def validate_write_assignment(
+    model: AcceptedMetamodel, entity: EntityMetadata, name: str, value: object
+) -> None:
     """The ONE predicate-write assignment check every caller applies to one
     `{attr, value}` pair (`m-opt-lock` "Version values are framework-owned";
     `python.md` §5 "each field may be assigned at most once"): mirroring
     `model_copy`'s own assignability rule (`parallax.core.entity.base.
     _validate_copy_keys`), a primary-key or optimistic-locking (version)
     target is rejected outright — a family's version/key columns are declared
-    only on the root (`family_attributes`), so this walk is FAMILY-EFFECTIVE,
-    exactly like every other write-side member-name resolution. Neither
-    `entity.expressions.AttributeExpr.set` (the typed path, `parallax.core.
-    entity`) nor `unit_work.instructions.validate_instruction` (the case-
-    authored engine/serialized path, `parallax.core.unit_work`) may import the
-    other (`core/spec/modules.md` §7 DAG), so this classification lives here,
-    the ONE scope both already depend on — the "one validator, two callers"
-    pattern (`parallax.core.op_algebra.validate_operation` / `parallax.core.
-    unit_work.write_validate.validate_write`'s own precedent) extended across
-    a DAG boundary neither scope alone can bridge.
+    only on the root, so this walk reads the Inheritance Facet's FAMILY-EFFECTIVE
+    applicable members, exactly like every other write-side member-name
+    resolution. Neither `entity.expressions.AttributeExpr.set` (the typed path,
+    `parallax.core.entity`) nor `unit_work.instructions.validate_instruction`
+    (the case-authored engine/serialized path, `parallax.core.unit_work`) may
+    import the other (`core/spec/modules.md` §7 DAG), so this classification
+    lives here, the ONE scope both already depend on — the "one validator, two
+    callers" pattern (`parallax.core.op_algebra.validate_operation` /
+    `parallax.core.unit_work.write_validate.validate_write`'s own precedent)
+    extended across a DAG boundary neither scope alone can bridge.
 
     For an ordinary scalar attribute, a non-``None`` ``value`` MUST also
-    conform to its declared `m-core` neutral type (`parallax.core.descriptor.
-    neutral_type.type_matches`, the SAME category-level scalar-value policy
-    `write_validate` applies to a keyed write row). A ``None`` value is a
-    legal CLEARING assignment ONLY when the attribute is declared
-    ``nullable`` (mirroring `write_validate`'s own null short-circuit, which
-    is likewise nullable-gated, `_check_entity_attribute`) — a NON-nullable
-    scalar assigned ``None`` is rejected with the SAME `"required attribute
-    is absent (or null)"` wording `write_validate`'s own required-attribute
-    check uses (`None` is an
-    explicit clearing attempt here, never an omitted/sparse member the way
-    an absent keyed-write row key is, so this check is UNCONDITIONAL —
-    there is no mutation-aware sparseness concept at the assignment
-    boundary, every named assignment is "present" by construction).
+    conform to its declared `m-core` neutral type (`matches_neutral_type` over
+    the decoded literal, the SAME exact scalar-value policy `write_validate`
+    applies to a keyed write row). A ``None`` value is a legal CLEARING
+    assignment ONLY when the attribute is declared ``nullable`` (mirroring
+    `write_validate`'s own null short-circuit, which is likewise
+    nullable-gated, `_check_entity_attribute`) — a NON-nullable scalar assigned
+    ``None`` is rejected with the SAME `"required attribute is absent (or
+    null)"` wording `write_validate`'s own required-attribute check uses
+    (`None` is an explicit clearing attempt here, never an omitted/sparse
+    member the way an absent keyed-write row key is, so this check is
+    UNCONDITIONAL — there is no mutation-aware sparseness concept at the
+    assignment boundary, every named assignment is "present" by construction).
 
-    A ``name`` naming a VALUE-OBJECT member instead (FAMILY-EFFECTIVE,
-    `superset_value_objects` — the same family-wide resolution
-    `family_attributes` applies to scalars) is likewise validated: a non-``None``
-    ``value`` MUST be a well-formed document against the member's declared
-    composite — the SAME
+    A ``name`` naming a VALUE-OBJECT member instead (FAMILY-EFFECTIVE through the
+    same facet view) is likewise validated: a non-``None`` ``value`` MUST be a
+    well-formed document against the member's declared composite — the SAME
     error-neutral structural walk `write_validate`'s own declared-composite
-    check reuses (`parallax.core.descriptor.vo_document`, the `vo_path`
-    precedent), so a non-document value (e.g. ``Customer.address.set(42)``,
-    typed or the equivalent serialized ``PredicateWrite`` assignment) is
-    rejected with this function's OWN established wording style; a well-formed
-    document is accepted — assigning a value object is not itself rejected
-    (the combination is structurally accepted). A ``None`` value is
-    likewise a legal clearing assignment ONLY when the value object is
-    declared ``nullable`` (`m-value-object` "A `nullable: false` value
-    object MUST be present at write time") — a NON-nullable value object
-    assigned ``None`` is rejected reusing `vo_document_violation`'s own
-    ``"value-object-missing"`` rendering (`_vo_assignment_error`, the SAME
-    `"required value object is absent (or null)"` wording a nested
-    required-VO violation already renders) rather than forking
-    new text. A ``name`` this family declares NEITHER a scalar attribute NOR
-    a value object for (one `validate_instruction`'s own member-name-honesty
-    gate already rejects as wholly undeclared) is out of this function's
-    scope — it returns silently, leaving that classification to its own
-    owning check.
+    check reuses (`parallax.core.metamodel.vo_document_violation`), so a
+    non-document value (e.g. ``Customer.address.set(42)``, typed or the
+    equivalent serialized ``PredicateWrite`` assignment) is rejected with this
+    function's OWN established wording style; a well-formed document is accepted
+    — assigning a value object is not itself rejected (the combination is
+    structurally accepted). A ``None`` value is likewise a legal clearing
+    assignment ONLY when the value object is declared ``nullable``
+    (`m-value-object` "A `nullable: false` value object MUST be present at write
+    time") — a NON-nullable value object assigned ``None`` is rejected reusing
+    `vo_document_violation`'s own ``"value-object-missing"`` rendering
+    (`_vo_assignment_error`, the SAME `"required value object is absent (or
+    null)"` wording a nested required-VO violation already renders) rather than
+    forking new text. A ``name`` this family declares NEITHER a scalar attribute
+    NOR a value object for (one `validate_instruction`'s own
+    member-name-honesty gate already rejects as wholly undeclared) is out of
+    this function's scope — it returns silently, leaving that classification to
+    its own owning check.
     """
-    for attribute in family_attributes(meta, entity):
-        if attribute.name != name:
+    position = _entity_view(view(model), entity.identity)
+    owner = entity.identity.name
+    for attribute in position.applicable_attributes:
+        if attribute.identity.name != name:
             continue
-        if attribute.primary_key:
+        if isinstance(attribute.primary_key, PrimaryKey):
             raise WriteAssignmentError(
-                "primary-key", f"{entity.name}.{name}: primary-key fields may not be assigned"
+                "primary-key", f"{owner}.{name}: primary-key fields may not be assigned"
             )
         if attribute.optimistic_locking:
             raise WriteAssignmentError(
                 "optimistic-locking",
-                f"{entity.name}.{name}: framework-owned fields (the version column) may not "
-                "be assigned",
+                f"{owner}.{name}: framework-owned fields (the version column) may not be assigned",
             )
         if value is None:
             if not attribute.nullable:
                 raise WriteAssignmentError(
                     "value-type-mismatch",
-                    f"{entity.name}.{name}: required attribute is absent (or null)",
+                    f"{owner}.{name}: required attribute is absent (or null)",
                 )
             return
-        if not _type_matches(value, attribute.type):
+        if not matches_neutral_type(decode_neutral_literal(value, attribute.type), attribute.type):
             raise WriteAssignmentError(
                 "value-type-mismatch",
-                f"{entity.name}.{name}: value {value!r} does not match the declared type "
+                f"{owner}.{name}: value {value!r} does not match the declared type "
                 f"{attribute.type!r}",
             )
         return
-    for value_object in superset_value_objects(meta, (entity.name,)):
-        if value_object.name != name:
+    for value_object in position.applicable_value_objects:
+        if value_object.identity.path[-1] != name:
             continue
         if value is None:
             if not value_object.nullable:
                 raise _vo_assignment_error(
-                    entity.name, name, VoDocumentViolation("", "value-object-missing")
+                    owner, name, VoDocumentViolation("", "value-object-missing")
                 )
             return
         violation = vo_document_violation(value_object, value)
         if violation is not None:
-            raise _vo_assignment_error(entity.name, name, violation)
+            raise _vo_assignment_error(owner, name, violation)
         return
 
 

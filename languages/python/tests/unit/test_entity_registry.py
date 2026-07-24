@@ -38,12 +38,13 @@ from parallax.core.entity import metamodel
 from parallax.core.entity.base import (
     EntityRegistry,
     ModelCopyError,
-    ScopedMetamodel,
     default_registry,
     entity_record_of,
     entity_records,
     entity_registry,
+    registry_of,
     resolve_entity_class,
+    resolve_entity_metadata,
 )
 from parallax.core.entity.errors import EntityDefinitionError, RegistryCollisionError
 from parallax.snapshot.handle import Database
@@ -356,8 +357,10 @@ def test_tph_root_table_does_not_leak_across_registries() -> None:
     A same-named root in another registry cannot affect either the declaring
     root or the effective table derived for its descendants.
     """
-    registry_a = EntityRegistry()
-    registry_b = EntityRegistry()
+    # Isolated (parent=None) so each registry's own accepted model forms from its
+    # own coherent family alone, never the process default chain.
+    registry_a = EntityRegistry(parent=None)
+    registry_b = EntityRegistry(parent=None)
     animal_a = _declare_tph_animal_root("animals_a", registry_a)
 
     # A SAME-NAMED root in a DIFFERENT registry, compiled AFTER `animal_a` but
@@ -371,7 +374,12 @@ def test_tph_root_table_does_not_leak_across_registries() -> None:
     record = entity_record_of(Dog)
     assert record is not None
     assert record.table is None
-    assert inheritance.effective_table(registry_a.metamodel(), record) == "animals_a"
+    model = registry_a.metamodel()
+    dog = resolve_entity_metadata(model, "Dog")
+    assert dog is not None
+    view = inheritance.view(model).entity(dog.identity)
+    assert view is not None and view.container is not None
+    assert view.container.name == "animals_a"
 
 
 # --------------------------------------------------------------------------- #
@@ -416,8 +424,7 @@ def test_child_registry_entry_shadows_a_same_named_parent_entry() -> None:
 # --------------------------------------------------------------------------- #
 def test_bare_metamodel_auto_scopes_from_a_single_registrys_classes() -> None:
     meta = metamodel([animal_owner.Person, read_models.Animal, read_models.Pet])
-    assert isinstance(meta, ScopedMetamodel)
-    assert meta.registry is animal_owner.ANIMAL_OWNER_REGISTRY
+    assert registry_of(meta) is animal_owner.ANIMAL_OWNER_REGISTRY
 
 
 def test_bare_metamodel_over_a_mixed_registry_set_scopes_to_the_narrower_child() -> None:
@@ -428,8 +435,7 @@ def test_bare_metamodel_over_a_mixed_registry_set_scopes_to_the_narrower_child()
     # registry: the identical tag `ANIMAL_OWNER_REGISTRY.metamodel()` itself
     # would produce, never a guess.
     meta = metamodel([animal_owner.Person, read_models.Animal, read_models.Pet])
-    assert isinstance(meta, ScopedMetamodel)
-    assert meta.registry is animal_owner.ANIMAL_OWNER_REGISTRY
+    assert registry_of(meta) is animal_owner.ANIMAL_OWNER_REGISTRY
 
 
 def test_bare_metamodel_over_an_incompatible_mixed_set_raises() -> None:
@@ -469,7 +475,7 @@ def test_db_find_over_a_bare_metamodel_resolves_the_assembled_classs_own_registr
 
 
 def test_resolve_entity_class_returns_none_for_an_absent_name() -> None:
-    meta = metamodel([animal_owner.Person])
+    meta = metamodel([animal_owner.Person, read_models.Animal, read_models.Pet])
 
     assert resolve_entity_class(meta, "MissingEntity") is None
 
@@ -532,9 +538,13 @@ def _declare_shadow_conflict_probe(table: str, registry: EntityRegistry):
 # class object repeated dedupes.                                             #
 # --------------------------------------------------------------------------- #
 def test_bare_metamodel_over_an_identical_class_repeated_dedupes_to_one_record() -> None:
-    meta = metamodel([read_models.Person, read_models.Person])
-    assert len(meta.entities) == 1
-    assert meta.entities[0].name == "Person"
+    # `read_models.Person` owns a `passport` relationship, so its target is
+    # supplied too for the model to form; the repeated `Person` still dedupes to
+    # exactly one record.
+    meta = metamodel([read_models.Person, read_models.Person, read_models.Passport])
+    names = [entity.identity.name for entity in meta.entities]
+    assert names.count("Person") == 1
+    assert sorted(names) == ["Passport", "Person"]
 
 
 def test_bare_metamodel_over_an_identical_class_repeated_round_trips_normally() -> None:
@@ -549,9 +559,12 @@ def test_bare_metamodel_over_an_identical_class_repeated_round_trips_normally() 
             read_models.Pet,
         ]
     )
-    assert isinstance(meta, ScopedMetamodel)
-    assert meta.registry is animal_owner.ANIMAL_OWNER_REGISTRY
-    assert [entity.name for entity in meta.entities] == ["Person", "Animal", "Pet"]
+    assert registry_of(meta) is animal_owner.ANIMAL_OWNER_REGISTRY
+    # The accepted model enumerates in canonical identity order; the repeated
+    # `Person` still dedupes to one record.
+    names = [entity.identity.name for entity in meta.entities]
+    assert names.count("Person") == 1
+    assert sorted(names) == ["Animal", "Person", "Pet"]
 
     port = _CannedPort([{"id": 1, "name": "Alice"}])
     db = Database.connect(port, meta)
@@ -567,5 +580,7 @@ def test_bare_metamodel_over_a_mixed_set_with_a_repeated_class_dedupes_only_the_
     # default-registry
     # siblings) still dedupes an identical repetition within it, preserving
     # FIRST-occurrence order for the surviving, non-repeated members.
-    meta = metamodel([animal_owner.Person, read_models.Animal, read_models.Animal])
-    assert [entity.name for entity in meta.entities] == ["Person", "Animal"]
+    meta = metamodel([animal_owner.Person, read_models.Animal, read_models.Pet, read_models.Animal])
+    names = [entity.identity.name for entity in meta.entities]
+    assert names.count("Animal") == 1
+    assert sorted(names) == ["Animal", "Person", "Pet"]

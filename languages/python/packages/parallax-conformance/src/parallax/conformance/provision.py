@@ -18,12 +18,13 @@ from contextlib import suppress
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
-from parallax.conformance import case_format, models
+from parallax.conformance import case_format
 from parallax.core import inheritance
 from parallax.core.base import STRING
 from parallax.core.db_port import DbPort, JsonDocument
 from parallax.core.descriptor import Metamodel as DescriptorMetamodel
 from parallax.core.dialect import POSTGRES, Dialect
+from parallax.core.entity import accepted_metamodel
 from parallax.core.inheritance import InheritanceEntityView, InheritanceFacet, column_order
 from parallax.core.metamodel import (
     AttributeMetadata,
@@ -249,7 +250,7 @@ def _unique_constraints(
             unresolved = [
                 attribute.name for attribute in index.attributes if attribute.name not in resolve
             ]
-            if unresolved:
+            if unresolved:  # pragma: no cover - the resolver rejects a non-local index attribute
                 raise ValueError(
                     f"{member.identity.name}: unique index {index.identity.name!r} names "
                     f"attributes with no physical column: {unresolved}"
@@ -411,17 +412,18 @@ class Provisioner:  # pragma: no cover - exercised by the Docker provider / conf
         self._peers.append(peer)
         return peer
 
-    def reset(self, meta: DescriptorMetamodel, fixtures: Mapping[str, object]) -> None:
+    def reset(self, meta: DescriptorMetamodel | Metamodel, fixtures: Mapping[str, object]) -> None:
         """Reset the schema, apply the model-derived DDL, and load the fixtures.
 
-        Takes the descriptor record graph the harness already holds and forms it
-        into the accepted model the pure statement generators consume, so a
-        caller hands the same view it names a case's model with. Fixture binds
-        carry the neutral :class:`JsonDocument` carrier for value objects; the
-        adapter recognizes it at its boundary and binds the driver's native
-        structured-document type, so no psycopg bind mechanics leak here.
+        Takes either the descriptor record graph the corpus harness holds or an
+        already-accepted model (a scoped ``EntityRegistry.metamodel()`` result),
+        normalizing it to the accepted model the pure statement generators
+        consume, so a caller hands whichever view it names a case's model with.
+        Fixture binds carry the neutral :class:`JsonDocument` carrier for value
+        objects; the adapter recognizes it at its boundary and binds the driver's
+        native structured-document type, so no psycopg bind mechanics leak here.
         """
-        model = models.accepted_model(meta)
+        model = accepted_metamodel(meta)
         for statement in reset_statements():
             self._adapter.execute_write(statement, [])
         for statement in schema_statements(model):

@@ -29,14 +29,14 @@ import datetime as dt
 from collections.abc import Mapping
 from typing import Any
 
-from parallax.core import inheritance, opt_lock, read_lock
+from parallax.core import opt_lock, read_lock
 from parallax.core.db_port import DbPort
-from parallax.core.descriptor import Entity, Metamodel
 from parallax.core.dialect import Dialect
 from parallax.core.entity import Entity as EntityBase
 from parallax.core.entity import Statement as EntityStatement
-from parallax.core.entity import full_row, primary_key_row
+from parallax.core.entity import full_row, primary_key_row, resolve_entity_metadata
 from parallax.core.entity.expressions import AttributeAssignment
+from parallax.core.metamodel import EntityMetadata, Metamodel
 from parallax.core.unit_work import (
     KeyedMutation,
     ObjectKey,
@@ -51,7 +51,7 @@ from parallax.core.unit_work import (
 # by the private MODULE names and by the package's frozen `__all__`, not by
 # per-name underscores, which under pyright strict would make every intra-package
 # import a reportPrivateUsage error.
-from parallax.snapshot.handle._accepted import accepted_target
+from parallax.snapshot.handle._family import declaring as declaring_of
 from parallax.snapshot.handle._predicate_writes import (
     buffer_predicate,
     buffer_predicate_instruction,
@@ -67,7 +67,7 @@ from parallax.snapshot.handle._read import (
     snapshot_from_history_result,
 )
 from parallax.snapshot.handle._write_inputs import (
-    entity_record_of_instance,
+    metadata_of_instance,
     observation_key,
     prepare_sparse_row,
     record_observations,
@@ -139,7 +139,9 @@ class Transaction:
         record, declaring, valid_from_literal = self._prepare_keyed_write(
             instance, "insert", valid_from
         )
-        self._buffer("insert", record.name, full_row(instance), valid_from=valid_from_literal)
+        self._buffer(
+            "insert", record.identity.name, full_row(instance), valid_from=valid_from_literal
+        )
         self._inserted_keys.add(observation_key(record, declaring, instance))
 
     def insert_until(
@@ -164,7 +166,7 @@ class Transaction:
         until_literal = validate_until(declaring, "insertUntil", valid_from, until)
         self._buffer(
             "insertUntil",
-            record.name,
+            record.identity.name,
             full_row(instance),
             valid_from=valid_from_literal,
             until=until_literal,
@@ -200,7 +202,7 @@ class Transaction:
         if row is None:
             return
         self._require_observed_milestone(record, declaring, copy)
-        self._buffer("update", record.name, row, valid_from=valid_from_literal)
+        self._buffer("update", record.identity.name, row, valid_from=valid_from_literal)
 
     def delete(self, node_or_instance: EntityBase) -> None:
         """Buffer a keyed ``delete``, keyed off ``node_or_instance``'s primary
@@ -209,9 +211,9 @@ class Transaction:
         finite Transaction-Time instant is read-only and raises
         :class:`~parallax.snapshot.handle.TransactionTimePinReadOnlyError`
         before any buffering, exactly as every other keyed verb does."""
-        record = entity_record_of_instance(node_or_instance)
-        validate_source_pin(record.name, source_pin(node_or_instance))
-        self._buffer("delete", record.name, primary_key_row(node_or_instance))
+        record = metadata_of_instance(self._meta, node_or_instance)
+        validate_source_pin(record.identity.name, source_pin(node_or_instance))
+        self._buffer("delete", record.identity.name, primary_key_row(node_or_instance))
 
     # --- typed keyed temporal-window verbs (python.md §5). Every mutation   #
     # kind below is already a valid                                          #
@@ -237,7 +239,7 @@ class Transaction:
         self._require_observed_milestone(record, declaring, node_or_instance)
         self._buffer(
             "terminate",
-            record.name,
+            record.identity.name,
             primary_key_row(node_or_instance),
             valid_from=valid_from_literal,
         )
@@ -269,7 +271,7 @@ class Transaction:
         self._require_observed_milestone(record, declaring, copy)
         self._buffer(
             "updateUntil",
-            record.name,
+            record.identity.name,
             row,
             valid_from=valid_from_literal,
             until=until_literal,
@@ -293,7 +295,7 @@ class Transaction:
         self._require_observed_milestone(record, declaring, node_or_instance)
         self._buffer(
             "terminateUntil",
-            record.name,
+            record.identity.name,
             primary_key_row(node_or_instance),
             valid_from=valid_from_literal,
             until=until_literal,
@@ -304,14 +306,12 @@ class Transaction:
         node_or_instance: EntityBase,
         mutation: KeyedMutation,
         valid_from: dt.datetime | None,
-    ) -> tuple[Entity, Entity, str | None]:
+    ) -> tuple[EntityMetadata, EntityMetadata, str | None]:
         """The keyed-verb prep every verb above (``delete`` excepted — it takes
-        no Valid-Time bound) opens with: resolve the written
-        instance's own :class:`~parallax.core.descriptor.Entity` record and
-        its family's DECLARING entity
-        (:func:`~parallax.core.inheritance.declaring_entity` — the entity
-        that actually carries the temporal/versioned shape), refuse a source
-        view pinned at a finite Transaction-Time instant
+        no Valid-Time bound) opens with: resolve the written instance's own
+        accepted Metadata and its family's DECLARING entity (the entity that
+        actually carries the temporal/versioned shape), refuse a source view
+        pinned at a finite Transaction-Time instant
         (:func:`validate_source_pin` — the Transaction-Time past is read-only;
         an edited copy carries no pin, so the stale-web-edit recipe's
         optimistic edge-pinned re-fetch stays writable), then validate +
@@ -321,14 +321,14 @@ class Transaction:
         (a ``*Until`` verb's own :func:`validate_until` needs it too, for
         its error message), and the rendered instant literal (``None`` for a
         non-temporal/audit-only target)."""
-        record = entity_record_of_instance(node_or_instance)
-        declaring = inheritance.declaring_entity(self._meta, record)
-        validate_source_pin(record.name, source_pin(node_or_instance))
+        record = metadata_of_instance(self._meta, node_or_instance)
+        declaring = declaring_of(self._meta, record)
+        validate_source_pin(record.identity.name, source_pin(node_or_instance))
         valid_from_literal = validate_valid_from(declaring, mutation, valid_from)
         return record, declaring, valid_from_literal
 
     def _require_observed_milestone(
-        self, record: Entity, declaring: Entity, instance: EntityBase
+        self, record: EntityMetadata, declaring: EntityMetadata, instance: EntityBase
     ) -> None:
         """The `python.md` §5 prior-observation license for a keyed TEMPORAL
         update/terminate (:func:`opt_lock.require_observed_milestone` — the
@@ -346,12 +346,12 @@ class Transaction:
         empty-change-set no-op return (the no-op-first ordering `m-opt-lock`
         fixes: a no-op is dropped before any observation concern) and AFTER
         window validation (the window rejects first)."""
-        if not declaring.is_temporal:
+        if not declaring.declared_as_of_axes:
             return
         key = observation_key(record, declaring, instance)
         if key in self._inserted_keys:
             return
-        opt_lock.require_observed_milestone(record.name, self._uow.observation_for(key))
+        opt_lock.require_observed_milestone(record.identity.name, self._uow.observation_for(key))
 
     def find(self, statement: EntityStatement) -> Snapshot[Any]:
         """Run a participating read for ``statement`` and return ``Snapshot[T]``
@@ -381,8 +381,9 @@ class Transaction:
         """
         target = statement.target
         op = statement.operation()
-        read_model, read_target = accepted_target(self._meta, target)
-        pin = deep_fetch_statement_pin(op, declaring_metadata(read_model, read_target))
+        read_target = resolve_entity_metadata(self._meta, target)
+        assert read_target is not None  # a statement's target is always declared
+        pin = deep_fetch_statement_pin(op, declaring_metadata(self._meta, read_target))
         lock = read_lock.mode_for(self._uow.settings.concurrency)
         if is_milestone_set_op(op):
             history_result = self._uow.read(
@@ -432,8 +433,9 @@ class Transaction:
         if until is not None:
             doc["until"] = until
         instruction = instructions.deserialize(doc)
-        model, metadata = accepted_target(self._meta, entity)
-        validate_write(metadata, row, model, mutation=mutation)
+        metadata = resolve_entity_metadata(self._meta, entity)
+        assert metadata is not None  # `entity` names the written instance's own compiled class
+        validate_write(metadata, row, self._meta, mutation=mutation)
         instructions.validate_instruction(instruction, self._meta)
         self._uow.buffer(instruction)
 

@@ -422,23 +422,17 @@ type = "forbidden"
 source_modules = ["parallax.core.entity"]
 forbidden_modules = [
     "parallax.conformance",
-    "parallax.core._formation_profile",
     "parallax.core.auto_retry",
     "parallax.core.batch_write",
     "parallax.core.bitemp_write",
     "parallax.core.db_error",
-    "parallax.core.db_port",
     "parallax.core.deep_fetch",
     "parallax.core.dialect",
     "parallax.core.navigate",
-    "parallax.core.opt_lock",
     "parallax.core.pk_gen",
     "parallax.core.read_lock",
-    "parallax.core.relationship",
     "parallax.core.sql_gen",
     "parallax.core.txtime_write",
-    "parallax.core.unit_work",
-    "parallax.core.value_object",
     "parallax.postgres",
     "parallax.snapshot.handle",
     "parallax.snapshot.materialize",
@@ -902,6 +896,7 @@ type = "forbidden"
 source_modules = ["parallax.snapshot.handle._family"]
 forbidden_modules = [
     "parallax.conformance",
+    "parallax.core._formation_profile",
     "parallax.core.auto_retry",
     "parallax.core.batch_write",
     "parallax.core.db_error",
@@ -910,6 +905,8 @@ forbidden_modules = [
     "parallax.core.navigate",
     "parallax.core.pk_gen",
     "parallax.core.read_lock",
+    "parallax.core.relationship",
+    "parallax.core.value_object",
     "parallax.postgres",
     "parallax.snapshot.materialize",
 ]
@@ -920,6 +917,7 @@ type = "forbidden"
 source_modules = ["parallax.snapshot.handle._keyed_sql"]
 forbidden_modules = [
     "parallax.conformance",
+    "parallax.core._formation_profile",
     "parallax.core.auto_retry",
     "parallax.core.batch_write",
     "parallax.core.db_error",
@@ -928,6 +926,8 @@ forbidden_modules = [
     "parallax.core.navigate",
     "parallax.core.pk_gen",
     "parallax.core.read_lock",
+    "parallax.core.relationship",
+    "parallax.core.value_object",
     "parallax.postgres",
     "parallax.snapshot.materialize",
 ]
@@ -938,18 +938,15 @@ type = "forbidden"
 source_modules = ["parallax.snapshot.handle._wrap"]
 forbidden_modules = [
     "parallax.conformance",
-    "parallax.core._formation_profile",
     "parallax.core.auto_retry",
     "parallax.core.batch_write",
     "parallax.core.bitemp_write",
     "parallax.core.db_error",
     "parallax.core.dialect",
-    "parallax.core.opt_lock",
     "parallax.core.pk_gen",
     "parallax.core.read_lock",
     "parallax.core.sql_gen",
     "parallax.core.txtime_write",
-    "parallax.core.value_object",
     "parallax.postgres",
 ]
 
@@ -959,6 +956,7 @@ type = "forbidden"
 source_modules = ["parallax.snapshot.handle._write_lowering"]
 forbidden_modules = [
     "parallax.conformance",
+    "parallax.core._formation_profile",
     "parallax.core.auto_retry",
     "parallax.core.batch_write",
     "parallax.core.db_error",
@@ -967,6 +965,8 @@ forbidden_modules = [
     "parallax.core.navigate",
     "parallax.core.pk_gen",
     "parallax.core.read_lock",
+    "parallax.core.relationship",
+    "parallax.core.value_object",
     "parallax.postgres",
     "parallax.snapshot.materialize",
 ]
@@ -977,6 +977,7 @@ type = "forbidden"
 source_modules = ["parallax.snapshot.handle._write_types"]
 forbidden_modules = [
     "parallax.conformance",
+    "parallax.core._formation_profile",
     "parallax.core.auto_retry",
     "parallax.core.batch_write",
     "parallax.core.db_error",
@@ -985,6 +986,8 @@ forbidden_modules = [
     "parallax.core.navigate",
     "parallax.core.pk_gen",
     "parallax.core.read_lock",
+    "parallax.core.relationship",
+    "parallax.core.value_object",
     "parallax.postgres",
     "parallax.snapshot.materialize",
 ]

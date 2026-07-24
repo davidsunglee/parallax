@@ -34,6 +34,7 @@ from parallax.core import op_algebra as oa
 from parallax.core.db_port import JsonDocument
 from parallax.core.descriptor import Metamodel
 from parallax.core.dialect import POSTGRES, Dialect
+from parallax.core.model_formation import MetamodelValidationError
 from parallax.core.sql_gen import Statement
 from parallax.core.unit_work import (
     Concurrency,
@@ -73,11 +74,12 @@ def _lower(
     concurrency: Concurrency = "locking",
     tx_instant: str | None = None,
 ) -> list[Statement]:
+    model = models.accepted_model(meta)
     return [
         lowered.statement
         for lowered in lower_write(
             PlannedWrite(instruction=instruction, observation=observation),
-            meta,
+            model,
             dialect,
             concurrency,
             tx_instant,
@@ -92,11 +94,12 @@ def _flush_and_lower(
     concurrency: Concurrency = "locking",
     observations: Mapping[ObjectKey, Observation] | None = None,
 ) -> list[Statement]:
-    plan = plan_flush(buffer, observations or {}, None, models.accepted_model(meta))
+    model = models.accepted_model(meta)
+    plan = plan_flush(buffer, observations or {}, None, model)
     return [
         lowered.statement
         for planned in plan.writes
-        for lowered in lower_write(planned, meta, POSTGRES, concurrency)
+        for lowered in lower_write(planned, model, POSTGRES, concurrency)
     ]
 
 
@@ -668,17 +671,14 @@ _LEDGER = descriptor.Metamodel(
 )
 
 
-def test_multi_row_delete_on_a_composite_key_uses_a_row_constructor_in_list() -> None:
-    # `(<pk1>, <pk2>) in ((?, ?), …)`, one entry per row in row order, binds
-    # grouped per row in key-declaration order — never the single-column
-    # `<pk> in (?, …)` form, which would silently key on `book_id` alone and
-    # delete every line of the book.
-    delete = KeyedWrite(
-        "delete", "LedgerEntry", ({"bookId": 7, "lineNo": 1}, {"bookId": 7, "lineNo": 2})
-    )
-    statement = _lower(delete, _LEDGER)[0]
-    assert statement.sql == "delete from ledger_entry where (book_id, line_no) in ((?, ?), (?, ?))"
-    assert statement.binds == (7, 1, 7, 2)
+def test_a_composite_primary_key_does_not_form() -> None:
+    # The accepted Metamodel admits exactly one primary-key Attribute per
+    # standalone Entity (m-metamodel `metamodel-primary-key-multiple`), so a
+    # composite-key entity never forms and never reaches lowering — the
+    # `(<pk1>, <pk2>) in (...)` row-constructor branch `_keyed_sql` keeps is
+    # defensive under that contract.
+    with pytest.raises(MetamodelValidationError, match="metamodel-primary-key-multiple"):
+        models.accepted_model(_LEDGER)
 
 
 def test_readless_predicate_delete_lowers_to_one_statement() -> None:

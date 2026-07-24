@@ -42,7 +42,8 @@ from types import MappingProxyType
 from typing import Final, Literal, cast
 
 from parallax.core import inheritance, op_algebra
-from parallax.core.descriptor import Entity, Metamodel
+from parallax.core.metamodel import EntityMetadata
+from parallax.core.metamodel import Metamodel as AcceptedMetamodel
 from parallax.core.op_algebra import Operation
 
 __all__ = [
@@ -392,25 +393,24 @@ def _emit_bounds(body: dict[str, object], valid_from: str | None, until: str | N
 # --------------------------------------------------------------------------- #
 # Member-name honesty (metamodel-aware build-time validator).                  #
 # --------------------------------------------------------------------------- #
-def validate_instruction(instruction: WriteInstruction, meta: Metamodel) -> None:
+def validate_instruction(instruction: WriteInstruction, model: AcceptedMetamodel) -> None:
     """Validate an instruction's member names against the metamodel.
 
     A keyed write row key must name a declared attribute or value object of the
     entity — for an inheritance-family participant, ANCESTRY-EFFECTIVE: every
-    member declared anywhere in the family (`inheritance.family_attributes` /
-    `inheritance.superset_value_objects`), never just the target's own LOCAL
-    declarations, else a well-formed concrete-subtype write naming a root- or
-    abstract-subtype-inherited member (`CardPayment`'s inherited `id`/`amount`)
-    would be wrongly rejected as "undeclared" (a family participant's own
-    compiled record carries only its OWN attributes — m-inheritance "Inherited
-    members"). Sibling-branch and framework-owned-metadata fields are already
-    caught more specifically, and FIRST, by `validate_write`'s subtype rules
-    — this gate only ever sees whatever THAT pass
-    left unexamined, so widening it to the whole family never re-opens a hole
-    the more specific check already closes. A predicate write's assignment
-    `attr` must name a `target.entity` member, same family-effective set. This
-    is the member-name honesty gate — the flush-time refusing compile port
-    is the structural enforcer of the remaining typed / columnOrder
+    member the Inheritance Facet's applicable-member view carries, never just
+    the target's own LOCAL declarations, else a well-formed concrete-subtype
+    write naming a root- or abstract-subtype-inherited member (`CardPayment`'s
+    inherited `id`/`amount`) would be wrongly rejected as "undeclared" (a family
+    participant's own accepted Metadata carries only its OWN attributes —
+    m-inheritance "Inherited members"). Sibling-branch and
+    framework-owned-metadata fields are already caught more specifically, and
+    FIRST, by `validate_write`'s subtype rules — this gate only ever sees
+    whatever THAT pass left unexamined, so widening it to the whole family never
+    re-opens a hole the more specific check already closes. A predicate write's
+    assignment `attr` must name a `target.entity` member, same family-effective
+    set. This is the member-name honesty gate — the flush-time refusing compile
+    port is the structural enforcer of the remaining typed / columnOrder
     classification, mirroring the predicate-write materialization split.
 
     Once a predicate-write assignment's `attr` names a genuinely declared
@@ -423,49 +423,53 @@ def validate_instruction(instruction: WriteInstruction, meta: Metamodel) -> None
     pattern neither scope can otherwise share, `core/spec/modules.md` section 7 DAG).
     """
     if isinstance(instruction, KeyedWrite):
-        entity = _entity(meta, instruction.entity)
-        members = _declared_members(entity, meta)
+        entity = _entity(model, instruction.entity)
+        members = _declared_members(model, entity)
         for row in instruction.rows:
             unknown = sorted(key for key in row if key not in members)
             if unknown:
                 raise WriteInstructionError(
-                    f"{entity.name}: keyed write row names undeclared member(s) {unknown}"
+                    f"{entity.identity.name}: keyed write row names undeclared member(s) {unknown}"
                 )
     else:
-        entity = _entity(meta, instruction.target.entity)
-        members = _declared_members(entity, meta)
+        entity = _entity(model, instruction.target.entity)
+        members = _declared_members(model, entity)
         seen: set[str] = set()
         for assignment in instruction.assignments:
             owner, _, member = assignment.attr.rpartition(".")
-            if owner != entity.name or member not in members:
+            if owner != entity.identity.name or member not in members:
                 raise WriteInstructionError(
-                    f"{entity.name}: assignment {assignment.attr!r} does not name a declared member"
+                    f"{entity.identity.name}: assignment {assignment.attr!r} does not name a "
+                    "declared member"
                 )
             if member in seen:
                 raise WriteInstructionError(
-                    f"{entity.name}: assignment {assignment.attr!r} is duplicated — each field "
-                    "may be assigned at most once (python.md §5)"
+                    f"{entity.identity.name}: assignment {assignment.attr!r} is duplicated — each "
+                    "field may be assigned at most once (python.md §5)"
                 )
             seen.add(member)
             try:
-                inheritance.validate_write_assignment(meta, entity, member, assignment.value)
+                inheritance.validate_write_assignment(model, entity, member, assignment.value)
             except inheritance.WriteAssignmentError as exc:
                 raise WriteInstructionError(str(exc)) from exc
 
 
-def _entity(meta: Metamodel, name: str) -> Entity:
-    try:
-        return meta.entity(name)
-    except KeyError:
-        raise WriteInstructionError(f"unknown entity {name!r}") from None
+def _entity(model: AcceptedMetamodel, name: str) -> EntityMetadata:
+    for entity in model.entities:
+        if name in (entity.identity.canonical, entity.identity.name):
+            return entity
+    raise WriteInstructionError(f"unknown entity {name!r}")
 
 
-def _declared_members(entity: Entity, meta: Metamodel) -> frozenset[str]:
+def _declared_members(model: AcceptedMetamodel, entity: EntityMetadata) -> frozenset[str]:
     """The declared attribute + value-object names a write may reference (business
     names, never physical columns) — ``entity``'s whole inheritance FAMILY for a
-    participant, its own declarations otherwise (`inheritance.family_attributes`
-    / `inheritance.superset_value_objects` already degrade to the plain
-    single-entity view for a non-participant, so no branch is needed here)."""
-    attrs = inheritance.family_attributes(meta, entity)
-    value_objects = inheritance.superset_value_objects(meta, (entity.name,))
-    return frozenset({attr.name for attr in attrs} | {vo.name for vo in value_objects})
+    participant, its own declarations otherwise (the Inheritance Facet's
+    applicable-member view already degrades to the plain single-entity view for a
+    non-participant, so no branch is needed here)."""
+    view = inheritance.view(model).entity(entity.identity)
+    if view is None:  # pragma: no cover - the facet covers every accepted Entity
+        return frozenset()
+    attrs = {attribute.identity.name for attribute in view.applicable_attributes}
+    value_objects = {vo.identity.path[-1] for vo in view.applicable_value_objects}
+    return frozenset(attrs | value_objects)

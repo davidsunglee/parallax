@@ -26,7 +26,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, cast, overload
 
-from parallax.core.descriptor.relationship import relationship_target
+from parallax.core.metamodel import RelationshipIdentity
 from parallax.core.op_algebra import (
     And,
     Between,
@@ -383,17 +383,21 @@ class AttributeExpr:
                 "a nested path (m-value-object)"
             )
         from parallax.core import inheritance
-        from parallax.core.entity.base import ModelCopyError, default_registry
+        from parallax.core.entity.base import (
+            ModelCopyError,
+            default_registry,
+            resolve_entity_metadata,
+        )
 
         registry = self._registry if self._registry is not None else default_registry()
-        meta = registry.metamodel()
+        model = registry.metamodel()
+        entity = resolve_entity_metadata(model, self._entity)
         serialized = _serialize_assignment_value(value)
-        try:
-            inheritance.validate_write_assignment(
-                meta, meta.entity(self._entity), self._head, serialized
-            )
-        except inheritance.WriteAssignmentError as exc:
-            raise ModelCopyError(str(exc)) from exc
+        if entity is not None:  # a compiled attribute expression always resolves its own entity
+            try:
+                inheritance.validate_write_assignment(model, entity, self._head, serialized)
+            except inheritance.WriteAssignmentError as exc:
+                raise ModelCopyError(str(exc)) from exc
         return AttributeAssignment(attr=self.ref, value=serialized)
 
     def __bool__(self) -> bool:
@@ -608,7 +612,12 @@ class RelationshipPath:
     def __getattr__(self, name: str) -> RelationshipPath:
         if name.startswith("_"):
             raise AttributeError(name)
-        from parallax.core.entity.base import default_registry, snake_to_camel
+        from parallax.core import relationship as relationship_facet
+        from parallax.core.entity.base import (
+            default_registry,
+            resolve_entity_metadata,
+            snake_to_camel,
+        )
 
         registry = (
             self.__parallax_registry__
@@ -616,20 +625,23 @@ class RelationshipPath:
             else default_registry()
         )
         canonical = snake_to_camel(name)
-        record = registry.records().get(self.target)
-        if record is None:
+        model = registry.metamodel()
+        owner = resolve_entity_metadata(model, self.target)
+        if owner is None:
             raise AttributeError(
                 f"{self.target!r} is not a registered Parallax entity class; import it "
                 f"before chaining `.{name}`"
             )
-        for relationship in record.relationships:
-            if relationship.name == canonical:
-                return RelationshipPath(
-                    segments=(*self.segments, PathSegment(rel=f"{self.target}.{canonical}")),
-                    target=relationship_target(record, relationship),
-                    __parallax_registry__=registry,
-                )
-        raise AttributeError(f"{self.target!r} declares no relationship {canonical!r}")
+        direction = relationship_facet.view(model).relationship(
+            RelationshipIdentity(source_entity=owner.identity, name=canonical)
+        )
+        if direction is None:
+            raise AttributeError(f"{self.target!r} declares no relationship {canonical!r}")
+        return RelationshipPath(
+            segments=(*self.segments, PathSegment(rel=f"{self.target}.{canonical}")),
+            target=direction.join.target.entity.name,
+            __parallax_registry__=registry,
+        )
 
     def narrow(self, *subtypes: type) -> RelationshipPath:
         """A hop-level narrowed-view request (``Owner.pets.narrow(Dog)``),

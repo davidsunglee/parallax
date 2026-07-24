@@ -10,14 +10,17 @@ recording, and atomic keyed-unit buffering.
 Every entry point threads ``(uow, meta, conn, dialect)`` — the four pieces of
 transaction state this lane actually reads — mirroring
 :func:`~parallax.snapshot.handle._write_inputs.record_observations`'s own shape.
+``meta`` is the accepted Metamodel; family shape comes from the Inheritance,
+Temporal, and Optimistic Lock facets through :mod:`parallax.snapshot.handle._family`.
 ``Transaction`` keeps five thin ``_where`` delegates plus the frozen
 ``_buffer_predicate_instruction`` seam the conformance engine calls, so this
 module buffers through ``uow.buffer`` directly and never reaches back into
 ``Transaction``.
 
-Depends on :mod:`parallax.snapshot.handle._family` (the version attribute and
-the member-to-column map) and :mod:`parallax.snapshot.handle._write_inputs`
-(window validation and the per-row materialization).
+Depends on :mod:`parallax.snapshot.handle._family` (the declaring root, version
+attribute, and the member-to-column map) and
+:mod:`parallax.snapshot.handle._write_inputs` (window validation and the per-row
+materialization).
 
 Names crossing a module boundary are spelled bare; a helper whose every caller
 lives here keeps its underscore. Privacy is carried by this MODULE's leading
@@ -32,10 +35,15 @@ from collections.abc import Sequence
 
 from parallax.core import deep_fetch, inheritance, op_algebra, read_lock
 from parallax.core.db_port import DbPort, Row
-from parallax.core.descriptor import Attribute, Entity, Metamodel
 from parallax.core.dialect import Dialect, LockMode
 from parallax.core.entity import Statement as EntityStatement
 from parallax.core.entity.expressions import AttributeAssignment
+from parallax.core.metamodel import (
+    AttributeMetadata,
+    EntityMetadata,
+    Metamodel,
+    TemporalDimension,
+)
 from parallax.core.sql_gen import Statement, compile_read
 from parallax.core.unit_work import (
     AtomicUnit,
@@ -47,8 +55,13 @@ from parallax.core.unit_work import (
     UnitOfWork,
     instructions,
 )
-from parallax.snapshot.handle._accepted import accepted_target
-from parallax.snapshot.handle._family import assignment_member, members, version_attribute
+from parallax.snapshot.handle._family import (
+    assignment_member,
+    declaring,
+    entity_of,
+    members,
+    version_attribute,
+)
 from parallax.snapshot.handle._write_inputs import (
     materialize_row,
     validate_until,
@@ -100,14 +113,14 @@ def buffer_predicate(
             "(nothing but a predicate) — order_by / limit / distinct / as_of / history / "
             "as_of_range / narrow / include are all rejected on a write target (python.md §5)"
         )
-    entity = meta.entity(statement.target)
-    inheritance.reject_predicate_write(accepted_target(meta, statement.target)[1])
-    declaring = inheritance.declaring_entity(meta, entity)
-    valid_from_literal = validate_valid_from(declaring, mutation, valid_from)
+    entity = entity_of(meta, statement.target)
+    inheritance.reject_predicate_write(entity)
+    declaring_entity = declaring(meta, entity)
+    valid_from_literal = validate_valid_from(declaring_entity, mutation, valid_from)
     until_literal: str | None = None
     if until is not None:
         assert valid_from is not None  # `*_until_where` verbs require both together
-        until_literal = validate_until(declaring, mutation, valid_from, until)
+        until_literal = validate_until(declaring_entity, mutation, valid_from, until)
 
     doc: dict[str, object] = {
         "mutation": mutation,
@@ -155,17 +168,17 @@ def buffer_predicate_instruction(
     engine`), making it a frozen external seam rather than an ordinary
     cross-module helper.
     """
-    entity = meta.entity(instruction.target.entity)
-    inheritance.reject_predicate_write(accepted_target(meta, instruction.target.entity)[1])
-    declaring = inheritance.declaring_entity(meta, entity)
-    version_attr = version_attribute(declaring)
-    if not declaring.is_temporal and version_attr is None:
+    entity = entity_of(meta, instruction.target.entity)
+    inheritance.reject_predicate_write(entity)
+    declaring_entity = declaring(meta, entity)
+    version_attr = version_attribute(meta, declaring_entity)
+    if not declaring_entity.declared_as_of_axes and version_attr is None:
         # Readless (`m-batch-write.md` "Predicate-selected readless forms"):
         # one statement, no materialization, no equality-elimination pass.
         uow.buffer(instruction)
         return
     _materialize_predicate_write(
-        uow, meta, conn, dialect, instruction, entity, declaring, version_attr
+        uow, meta, conn, dialect, instruction, entity, declaring_entity, version_attr
     )
 
 
@@ -175,9 +188,9 @@ def _materialize_predicate_write(
     conn: DbPort,
     dialect: Dialect,
     instruction: PredicateWrite,
-    entity: Entity,
-    declaring: Entity,
-    version_attr: Attribute | None,
+    entity: EntityMetadata,
+    declaring_entity: EntityMetadata,
+    version_attr: AttributeMetadata | None,
 ) -> None:
     """Materialize a predicate write on a VERSIONED or TEMPORAL target
     (`m-opt-lock` "Predicate-selected writes materialize when observations
@@ -207,12 +220,13 @@ def _materialize_predicate_write(
     one(s).
     """
     lock: LockMode | None = read_lock.mode_for(uow.settings.concurrency)
-    model, target_metadata = accepted_target(meta, instruction.target.entity)
-    plan_ = deep_fetch.plan(target_metadata, instruction.target.predicate, model)
+    plan_ = deep_fetch.plan(entity, instruction.target.predicate, meta)
     assignments = {
         assignment_member(assignment.attr): assignment.value
         for assignment in instruction.assignments
     }
+    is_temporal = bool(declaring_entity.declared_as_of_axes)
+    is_bitemporal = declaring_entity.as_of_axis(TemporalDimension.VALID_TIME) is not None
     # Need-sensitive projection (`m-case-format.md:727`): the resolving
     # read projects the resolved row's own value-object document(s) for
     # TWO independent needs, on EVERY target class — never gated on
@@ -259,9 +273,7 @@ def _materialize_predicate_write(
     # one, matching an ordinary read's own need-driven projection.
     assignment_bearing = instruction.mutation in ("update", "updateUntil")
     chain_need = (
-        version_attr is None
-        and declaring.is_temporal
-        and (declaring.temporal == "bitemporal" or instruction.mutation == "update")
+        version_attr is None and is_temporal and (is_bitemporal or instruction.mutation == "update")
     )
     needs_documents: bool | frozenset[str]
     if chain_need:
@@ -277,9 +289,9 @@ def _materialize_predicate_write(
     # consumed here.
     statement = compile_read(
         plan_.root_operation,
-        model,
+        meta,
         dialect,
-        target_metadata,
+        entity,
         result_form="row",
         lock=lock,
         include_value_objects=needs_documents,
@@ -289,7 +301,7 @@ def _materialize_predicate_write(
     pending: list[tuple[ObjectKey, Observation | None]] = []
     for row in rows:
         key, observation, new_row = materialize_row(
-            meta, entity, declaring, version_attr, instruction.mutation, assignments, row
+            meta, entity, declaring_entity, version_attr, instruction.mutation, assignments, row
         )
         if new_row is None:
             continue  # per-row no-op elimination (assignment-bearing verbs only)

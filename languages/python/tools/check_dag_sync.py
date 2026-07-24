@@ -96,8 +96,9 @@ MODULE_SCOPE: Mapping[str, str] = {
 _LOWERING_GROUP_DEPS: frozenset[str] = frozenset(
     {
         "parallax.core.base",
-        "parallax.core.descriptor",
+        "parallax.core.metamodel",
         "parallax.core.inheritance",
+        "parallax.core.temporal_read",
         "parallax.core.dialect",
         "parallax.core.db_port",
         "parallax.core.sql_gen",
@@ -105,7 +106,6 @@ _LOWERING_GROUP_DEPS: frozenset[str] = frozenset(
         "parallax.core.opt_lock",
         "parallax.core.txtime_write",
         "parallax.core.bitemp_write",
-        "parallax.core._formation_profile",
     }
 )
 
@@ -128,33 +128,46 @@ SUPPORT_SCOPE_DEPS: Mapping[str, frozenset[str]] = {
     ),
     "parallax.core.entity": frozenset(
         {
+            "parallax.core.base",
             "parallax.core.descriptor",
+            "parallax.core.metamodel",
+            "parallax.core.model_formation",
+            "parallax.core.inheritance",
+            "parallax.core.relationship",
             "parallax.core.op_algebra",
             "parallax.core.temporal_read",
+            "parallax.core._formation_profile",
         }
     ),
     "parallax.snapshot.handle": frozenset(
         {
             "parallax.snapshot.materialize",
+            "parallax.core.entity",
+            "parallax.core.base",
+            "parallax.core.metamodel",
+            "parallax.core.op_algebra",
+            "parallax.core.inheritance",
+            "parallax.core.temporal_read",
+            "parallax.core.deep_fetch",
+            "parallax.core.navigate",
+            "parallax.core.dialect",
+            "parallax.core.db_port",
+            "parallax.core.sql_gen",
             "parallax.core.unit_work",
-            "parallax.core.auto_retry",
             "parallax.core.read_lock",
+            "parallax.core.auto_retry",
             "parallax.core.opt_lock",
             "parallax.core.batch_write",
             "parallax.core.txtime_write",
             "parallax.core.bitemp_write",
-            "parallax.core.sql_gen",
-            "parallax.core.navigate",
-            "parallax.core.db_port",
-            "parallax.core.entity",
-            "parallax.core._formation_profile",
         }
     ),
     "parallax.snapshot.handle._wrap": frozenset(
         {
             "parallax.snapshot.materialize",
             "parallax.core.entity",
-            "parallax.core.descriptor",
+            "parallax.core.metamodel",
+            "parallax.core.relationship",
             "parallax.core.inheritance",
             "parallax.core.temporal_read",
         }

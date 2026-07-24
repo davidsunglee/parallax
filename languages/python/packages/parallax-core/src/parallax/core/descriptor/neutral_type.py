@@ -75,7 +75,7 @@ def snake_to_camel(name: str) -> str:
     return head + "".join(part[:1].upper() + part[1:] for part in tail)
 
 
-def type_matches(value: object, neutral_type: str) -> bool:
+def type_matches(value: object, neutral_type: str) -> bool:  # pragma: no cover - no live caller
     """Whether ``value`` is a member of the space ``neutral_type`` spells, by
     EXACT `m-core` logical membership — the same contract a neutral keyed write
     row is graded against (`parallax.core.base.matches_neutral_type`), applied
@@ -89,18 +89,12 @@ def type_matches(value: object, neutral_type: str) -> bool:
     literal, and an over-precise decimal are all non-members, exactly as they
     are for a keyed write row.
 
-    The ONE scalar-value-policy check both `parallax.core.inheritance.
-    validate_write_assignment` (the assignment's own scalar leaf, in turn
-    reached by both `parallax.core.entity.expressions.AttributeExpr.set` and
-    `parallax.core.unit_work.instructions.validate_instruction`) and the
-    error-neutral Value Object document walk
-    (`parallax.core.descriptor.vo_document`) apply — those scopes may not import
-    each other (`core/spec/modules.md` §7 DAG) but each already depends on this
-    module, so the check lives here once rather than staying forked. The
-    `m-metamodel` interface carries a structured Neutral Type, so a keyed write
-    row over accepted Metadata calls that shared membership check directly; only
-    a predicate-write assignment, which still holds the descriptor's type
-    spelling, needs this spelling-parsing entry point.
+    The descriptor-scope spelling-parsing entry point over the shared `m-core`
+    membership check, structurally reached through the error-neutral Value Object
+    document walk (`parallax.core.descriptor.vo_document`). A consumer holding a
+    structured accepted Neutral Type calls the `m-core` membership check
+    directly; only a caller still holding the descriptor's type spelling needs
+    this parse-first form.
     """
     declared = parse_type_spelling(neutral_type)
     if declared is None:  # pragma: no cover - a resolved descriptor spells only representable types
