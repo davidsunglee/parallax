@@ -58,6 +58,7 @@ from parallax.snapshot.handle._predicate_writes import (
 )
 from parallax.snapshot.handle._read import (
     Snapshot,
+    declaring_metadata,
     deep_fetch_statement_pin,
     find,
     find_history,
@@ -380,8 +381,8 @@ class Transaction:
         """
         target = statement.target
         op = statement.operation()
-        entity = inheritance.declaring_entity(self._meta, self._meta.entity(target))
-        pin = deep_fetch_statement_pin(op, entity)
+        read_model, read_target = accepted_target(self._meta, target)
+        pin = deep_fetch_statement_pin(op, declaring_metadata(read_model, read_target))
         lock = read_lock.mode_for(self._uow.settings.concurrency)
         if is_milestone_set_op(op):
             history_result = self._uow.read(

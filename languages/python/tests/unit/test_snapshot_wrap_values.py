@@ -51,7 +51,9 @@ def test_entity_level_value_object_members_wrap_into_their_declared_classes() ->
         },
         pk_columns=("id",),
     )
-    (root,) = wrap_graph((status,), "SnapOrderStatus", _ORDERS, Pin())
+    (root,) = wrap_graph(
+        (status,), "SnapOrderStatus", _ORDERS, models.accepted_model(_ORDERS), Pin()
+    )
     assert isinstance(root, sm.SnapOrderStatus)
     assert root.primary_tag is None
     assert len(root.tags) == 2
@@ -77,7 +79,9 @@ def test_a_null_cardinality_many_value_object_column_wraps_to_an_empty_tuple() -
         },
         pk_columns=("id",),
     )
-    (root,) = wrap_graph((empty_status,), "SnapOrderStatus", _ORDERS, Pin())
+    (root,) = wrap_graph(
+        (empty_status,), "SnapOrderStatus", _ORDERS, models.accepted_model(_ORDERS), Pin()
+    )
     assert isinstance(root, sm.SnapOrderStatus)
     assert root.tags == ()
 
@@ -115,7 +119,13 @@ _PROFILE_AS_VALUE_OBJECT = descriptor.Metamodel(
             attributes=(
                 descriptor.Attribute(name="id", type="int64", column="id", primary_key=True),
             ),
-            value_objects=(descriptor.ValueObject(name="profile", column="profile"),),
+            value_objects=(
+                descriptor.ValueObject(
+                    name="profile",
+                    column="profile",
+                    attributes=(descriptor.ValueObjectAttribute(name="note", type="string"),),
+                ),
+            ),
         ),
     )
 )
@@ -132,7 +142,13 @@ def test_a_value_object_member_with_no_registered_class_is_refused() -> None:
     node = Node(fields={"id": 1, "profile": {"note": "x"}}, pk_columns=("id",))
     match = r"_WrapScalarProfile\.profile: no registered ValueObject"
     with pytest.raises(LookupError, match=match):
-        wrap_graph((node,), "_WrapScalarProfile", _PROFILE_AS_VALUE_OBJECT, Pin())
+        wrap_graph(
+            (node,),
+            "_WrapScalarProfile",
+            _PROFILE_AS_VALUE_OBJECT,
+            models.accepted_model(_PROFILE_AS_VALUE_OBJECT),
+            Pin(),
+        )
 
 
 # --------------------------------------------------------------------------- #
@@ -151,7 +167,7 @@ def test_temporal_node_carries_the_whole_graph_pin_and_its_own_edge() -> None:
         pk_columns=("bal_id",),
     )
     pin = Pin(tx_time=dt.datetime(2024, 2, 1, tzinfo=dt.UTC))
-    (root,) = wrap_graph((row,), "Balance", _BALANCE, pin)
+    (root,) = wrap_graph((row,), "Balance", _BALANCE, models.accepted_model(_BALANCE), pin)
     assert pin_of(root) is pin
     assert edge_of(root).tx_time == dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
 
@@ -206,7 +222,9 @@ def test_temporal_tpcs_concrete_node_carries_pin_and_edge() -> None:
         valid_time=dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
         tx_time=dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
     )
-    (root,) = wrap_graph((row,), "_WrapTemporalLeaf", _TEMPORAL_TPCS, pin)
+    (root,) = wrap_graph(
+        (row,), "_WrapTemporalLeaf", _TEMPORAL_TPCS, models.accepted_model(_TEMPORAL_TPCS), pin
+    )
     assert isinstance(root, _WrapTemporalLeaf)
     assert pin_of(root) is pin
     assert edge_of(root).valid_time == dt.datetime(2024, 1, 1, tzinfo=dt.UTC)

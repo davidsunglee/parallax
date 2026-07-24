@@ -13,10 +13,10 @@ that can legally compose both scopes (the conformance engine; later the snapshot
 handle and the statement compile path) applies :func:`inject_as_of` before
 ``compile_read``.
 
-The read-injection entry points (:func:`inject_as_of`,
-:func:`resolve_pinned_instants`) take accepted Entity Metadata; the
-milestone-edge and statement-pin surfaces still take a descriptor record, so the
-two axis lookups below are spelled once each rather than bridged.
+Every entry point here takes accepted Entity Metadata, and each resolves an
+axis through the same declared lookup, so the wire dimension spelling an
+operation node carries meets the model's own Temporal Dimension in exactly one
+place.
 
 This scope also owns the Temporal Facet: the immutable per-formation view that
 answers each Entity's effective temporal shape from its family root's declared
@@ -41,9 +41,8 @@ from dataclasses import dataclass
 from typing import Final
 
 from parallax.core.base import INFINITY_LITERAL, normalize_instant
-from parallax.core.descriptor import AsOfAxisMetadata, Entity, TemporalDimension
 from parallax.core.metamodel import AsOfAxisMetadata as AcceptedAsOfAxis
-from parallax.core.metamodel import EntityMetadata
+from parallax.core.metamodel import AttributeIdentity, EntityMetadata
 from parallax.core.metamodel import TemporalDimension as AcceptedDimension
 from parallax.core.op_algebra import (
     All,
@@ -77,7 +76,6 @@ from parallax.core.temporal_read._facet import (
 )
 
 __all__ = [
-    "AXIS_ORDER",
     "FACET_KEY",
     "LATEST",
     "MODEL_COMPILER",
@@ -97,7 +95,6 @@ __all__ = [
     "TemporalShape",
     "TransactionTimeOnly",
     "UndeclaredAxisError",
-    "attr_ref_for_column",
     "compile_facet",
     "conjunction_terms",
     "edge_of",
@@ -109,16 +106,12 @@ __all__ = [
     "view",
 ]
 
-# Valid Time is the OUTER pin (the corpus's bitemporal nesting order) and its
-# injected fragment reads first; Transaction Time is inner. The injected terms
-# therefore compose Valid-Time-first. Exported for the record-graph consumers that
-# order a temporal entity's own declared axes; a consumer holding accepted Metadata
-# reads the same rank off the Temporal Dimension's own member value instead.
-AXIS_ORDER: Final[dict[TemporalDimension, int]] = {"validTime": 0, "transactionTime": 1}
-
 # The wire dimension spelling an operation node carries, mapped to the accepted
-# model's own Temporal Dimension. The two vocabularies meet only here.
-_DIMENSIONS: Final[Mapping[TemporalDimension, AcceptedDimension]] = {
+# model's own Temporal Dimension. The two vocabularies meet only here. Valid Time
+# is the OUTER pin (the corpus's bitemporal nesting order) and its injected
+# fragment reads first; that rank is the Dimension's own member value, so
+# ordering axes needs no table of its own.
+_DIMENSIONS: Final[Mapping[str, AcceptedDimension]] = {
     "validTime": AcceptedDimension.VALID_TIME,
     "transactionTime": AcceptedDimension.TRANSACTION_TIME,
 }
@@ -169,9 +162,9 @@ class TemporalDimensionConstant:
 
     __slots__ = ("_dimension",)
 
-    _dimension: TemporalDimension
+    _dimension: str
 
-    def __init__(self, dimension: TemporalDimension) -> None:
+    def __init__(self, dimension: str) -> None:
         # Frozen by hand, matching `Edge`: construction writes through
         # `object.__setattr__`, and the overrides below refuse every later
         # assignment or deletion.
@@ -184,7 +177,7 @@ class TemporalDimensionConstant:
         raise AttributeError(f"TemporalDimensionConstant is frozen; cannot delete {name!r}")
 
     @property
-    def dimension(self) -> TemporalDimension:
+    def dimension(self) -> str:
         """The canonical dimension spelling this constant maps to at the wire boundary."""
         return self._dimension
 
@@ -332,7 +325,7 @@ def edge_of(node: object) -> Edge:
     return edge
 
 
-def milestone_edge(entity: Entity, row: Mapping[str, object]) -> Edge:
+def milestone_edge(entity: EntityMetadata, row: Mapping[str, object]) -> Edge:
     """Compute a milestone's :class:`Edge` from one row's interval columns (the edge-pin rule).
 
     Each declared axis's edge is its milestone's own **from-instant** — the value of
@@ -341,23 +334,27 @@ def milestone_edge(entity: Entity, row: Mapping[str, object]) -> Edge:
     reusable core the snapshot materializer uses to edge-pin each
     ``history`` / ``as_of_range`` result; here it is unit-verifiable against corpus
     row values without a materialized graph.
+
+    ``entity`` is the Entity whose declaration carries the family's axes, which
+    the caller resolves; a position that inherits them declares none of its own.
     """
-    if not entity.as_of_axes:
-        raise TemporalReadError(f"{entity.name} is not a temporal entity")
-    coords: dict[TemporalDimension, _dt.datetime] = {}
-    for axis in entity.as_of_axes:
+    name = entity.identity.name
+    if not entity.declared_as_of_axes:
+        raise TemporalReadError(f"{name} is not a temporal entity")
+    coords: dict[AcceptedDimension, _dt.datetime] = {}
+    for axis in entity.declared_as_of_axes:
         start_column = _column_for_attribute(entity, axis.start_attribute)
         value = row.get(start_column)
         if not isinstance(value, _dt.datetime):
             raise TemporalReadError(
-                f"{entity.name}.{axis.start_attribute}: milestone start column "
+                f"{name}.{axis.start_attribute.name}: milestone start column "
                 f"{start_column!r} "
                 "is not a timestamp instant"
             )
         coords[axis.dimension] = normalize_instant(value)
     return Edge(
-        tx_time=coords.get("transactionTime"),
-        valid_time=coords.get("validTime"),
+        tx_time=coords.get(AcceptedDimension.TRANSACTION_TIME),
+        valid_time=coords.get(AcceptedDimension.VALID_TIME),
     )
 
 
@@ -445,7 +442,7 @@ def _inject_core(core: Operation, entity: EntityMetadata) -> Operation:
     return terms[0] if len(terms) == 1 else And(operands=terms)
 
 
-def _declared_axis(dimension: TemporalDimension, entity: EntityMetadata) -> AcceptedAsOfAxis:
+def _declared_axis(dimension: str, entity: EntityMetadata) -> AcceptedAsOfAxis:
     """The As-Of Axis ``entity`` declares for the wire dimension ``dimension``.
 
     ``entity`` is the Entity whose declaration actually carries the family's
@@ -458,18 +455,6 @@ def _declared_axis(dimension: TemporalDimension, entity: EntityMetadata) -> Acce
     reason = "non-temporal entity" if not entity.declared_as_of_axes else "undeclared dimension"
     raise TemporalReadError(
         f"{entity.identity.name} declares no temporal dimension {dimension!r} ({reason})"
-    )
-
-
-def _resolve_axis(dimension: TemporalDimension, entity: Entity) -> AsOfAxisMetadata:
-    """:func:`_declared_axis`'s record-graph counterpart, for the surfaces that
-    still take one; the two answer the same question and raise the same way."""
-    for axis in entity.as_of_axes:
-        if axis.dimension == dimension:
-            return axis
-    reason = "non-temporal entity" if not entity.as_of_axes else "undeclared dimension"
-    raise TemporalReadError(
-        f"{entity.name} declares no temporal dimension {dimension!r} ({reason})"
     )
 
 
@@ -504,35 +489,19 @@ def _terms(mode: _AxisMode, axis: AcceptedAsOfAxis, entity: EntityMetadata) -> l
     ]
 
 
-def attr_ref_for_column(entity: Entity, column: str) -> str:
-    """The ``Entity.attribute`` reference of the interval column ``column``.
+def _column_for_attribute(entity: EntityMetadata, attribute: AttributeIdentity) -> str:
+    """The physical column an axis endpoint Attribute is stored in.
 
-    A temporal entity's interval columns are ordinary declared attributes
-    (``m-descriptor``: ``startAttribute`` / ``endAttribute`` reference ordinary
-    Attributes), so the injected comparison references them by name exactly
-    as a user predicate would, and ``m-sql`` resolves the column with no temporal
-    special-casing. Exported so ``m-navigate`` can build the identically-shaped
-    per-hop as-of predicate over a temporal entity reached by navigation (the same
-    column-lookup rule, applied to the hop's own target entity).
+    An As-Of Axis names ordinary declared Attributes, so the interval bounds
+    resolve through the Entity's own local member lookup with no temporal
+    special-casing.
     """
-    for attr in entity.attributes:
-        if attr.column == column:
-            return f"{entity.name}.{attr.name}"
-    # Defensive: a well-formed temporal descriptor always declares its interval
-    # columns as attributes (the descriptor validator + `m-descriptor` authoring
-    # rule guarantee it), so this is unreachable for a validated metamodel.
-    raise TemporalReadError(  # pragma: no cover - guards a malformed descriptor
-        f"{entity.name}: interval column {column!r} is not a declared attribute"
-    )
-
-
-def _column_for_attribute(entity: Entity, attribute_name: str) -> str:
-    for attribute in entity.attributes:
-        if attribute.name == attribute_name:
-            return attribute.column
-    raise TemporalReadError(  # pragma: no cover - guards a malformed descriptor
-        f"{entity.name}: temporal Attribute {attribute_name!r} is not declared"
-    )
+    declared = entity.attribute(attribute.name)
+    if declared is None:  # pragma: no cover - an accepted axis names a declared Attribute
+        raise TemporalReadError(
+            f"{entity.identity.name}: temporal Attribute {attribute.name!r} is not declared"
+        )
+    return declared.storage.name
 
 
 def conjunction_terms(op: Operation) -> tuple[Operation, ...]:
@@ -582,7 +551,7 @@ def resolve_pinned_instants(op: Operation, entity: EntityMetadata) -> dict[Accep
     return pins
 
 
-def statement_pin(op: Operation, entity: Entity) -> Pin:
+def statement_pin(op: Operation, entity: EntityMetadata) -> Pin:
     """The as-of coordinates a statement's OWN temporal wrapper explicitly
     pins (spec §3 ``snapshot.pin``): an OMITTED axis (no wrapper at all — its
     latest default is injected only at lowering) or a SCANNED axis (``history``
@@ -600,14 +569,14 @@ def statement_pin(op: Operation, entity: Entity) -> Pin:
     valid_time: _dt.datetime | Latest | None = None
     current = core
     while isinstance(current, (AsOf, AsOfRange, History)):
-        axis = _resolve_axis(current.dimension, entity)
+        axis = _declared_axis(current.dimension, entity)
         if isinstance(current, AsOf):
             value: _dt.datetime | Latest = (
                 LATEST
                 if current.coordinate == "latest"
                 else _dt.datetime.fromisoformat(current.coordinate)
             )
-            if axis.dimension == "transactionTime":
+            if axis.dimension is AcceptedDimension.TRANSACTION_TIME:
                 tx_time = value
             else:
                 valid_time = value

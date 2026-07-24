@@ -25,17 +25,19 @@ from __future__ import annotations
 import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, cast
+from typing import Any, Final, cast
 
 from parallax.core import deep_fetch, inheritance, op_algebra
 from parallax.core.db_port import DbPort, Row
-from parallax.core.descriptor import Entity, Metamodel
+from parallax.core.descriptor import Metamodel
 from parallax.core.dialect import Dialect, LockMode
+from parallax.core.metamodel import AsOfAxisMetadata as AcceptedAsOfAxis
+from parallax.core.metamodel import EntityMetadata, TemporalDimension
+from parallax.core.metamodel import Metamodel as AcceptedMetamodel
 from parallax.core.sql_gen import CompiledRead, Statement, compile_read
-from parallax.core.temporal_read import AXIS_ORDER, Edge, Pin, milestone_edge, statement_pin
+from parallax.core.temporal_read import Edge, Pin, milestone_edge, statement_pin
 from parallax.snapshot import materialize
 from parallax.snapshot.handle._accepted import accepted_entity, accepted_model, accepted_target
-from parallax.snapshot.handle._family import axis_columns
 from parallax.snapshot.handle._wrap import wrap_graph
 
 __all__ = [
@@ -310,7 +312,7 @@ def find_history(
     # `~parallax.core.temporal_read` per-entity primitive below (`milestone_edge`,
     # `_edge_pin`, `_edge_sort_key`) MUST resolve through it rather than the
     # queried target's own (possibly locally-empty) `as_of_axes`.
-    entity = inheritance.declaring_entity(meta, meta.entity(target))
+    entity = declaring_metadata(model, metadata)
     compiled = compile_read(plan_.root_operation, model, dialect, metadata, result_form="instance")
     statements: list[ExecutedStatement] = []
     rows = _execute(port, dialect, compiled.statement, statements)
@@ -394,23 +396,58 @@ def _distinct_keys(rows: Sequence[Row], column: str) -> list[op_algebra.Scalar]:
     return cast("list[op_algebra.Scalar]", list(values))
 
 
-def _edge_sort_key(entity: Entity, row: Row) -> tuple[object, ...]:
+# The wire spelling each Temporal Dimension is emitted under in a milestone-set
+# graph's `then.graphs` pin entry (`m-case-format`). The dimension itself is
+# structured everywhere above this seam.
+_DIMENSION_NAMES: Final[Mapping[TemporalDimension, str]] = {
+    TemporalDimension.VALID_TIME: "validTime",
+    TemporalDimension.TRANSACTION_TIME: "transactionTime",
+}
+
+
+def declaring_metadata(model: AcceptedMetamodel, entity: EntityMetadata) -> EntityMetadata:
+    """The accepted Metadata of the position that DECLARES ``entity``'s family
+    facts — its family root, which for a standalone Entity is itself.
+
+    Temporality and the physical primary key are family-wide and root-owned
+    (`m-inheritance` "Inherited members"), so every per-entity milestone
+    primitive below resolves through this rather than through the queried
+    target's own (possibly locally empty) declaration.
+    """
+    position = inheritance.view(model).entity(entity.identity)
+    root = entity if position is None else model.entity(position.root)
+    if root is None:  # pragma: no cover - a family root is always an accepted Entity
+        raise ValueError(f"{entity.identity.canonical}: the model declares no family root")
+    return root
+
+
+def _start_column(entity: EntityMetadata, axis: AcceptedAsOfAxis) -> str:
+    declared = entity.attribute(axis.start_attribute.name)
+    if declared is None:  # pragma: no cover - an accepted axis names a declared Attribute
+        raise ValueError(f"{entity.identity.canonical}: {axis.start_attribute.name} is undeclared")
+    return declared.storage.name
+
+
+def _edge_sort_key(entity: EntityMetadata, row: Row) -> tuple[object, ...]:
     """Valid Time first, then Transaction Time (m-sql's bind-order convention),
     each dimension's start-column value — used only to chronologically order a
-    milestone-set read's grouped graphs, never to select or filter rows."""
-    ordered = sorted(entity.as_of_axes, key=lambda axis: AXIS_ORDER[axis.dimension])
-    return tuple(row[axis_columns(entity, axis)[0]] for axis in ordered)
+    milestone-set read's grouped graphs, never to select or filter rows. A
+    Temporal Dimension's member value IS that canonical rank."""
+    ordered = sorted(entity.declared_as_of_axes, key=lambda axis: axis.dimension.value)
+    return tuple(row[_start_column(entity, axis)] for axis in ordered)
 
 
-def _edge_pin(entity: Entity, edge: Edge) -> dict[str, object]:
+def _edge_pin(entity: EntityMetadata, edge: Edge) -> dict[str, object]:
     """The milestone-set `then.graphs` `pin` entry keyed by dimension."""
     return {
-        axis.dimension: (edge.valid_time if axis.dimension == "validTime" else edge.tx_time)
-        for axis in entity.as_of_axes
+        _DIMENSION_NAMES[axis.dimension]: (
+            edge.valid_time if axis.dimension is TemporalDimension.VALID_TIME else edge.tx_time
+        )
+        for axis in entity.declared_as_of_axes
     }
 
 
-def deep_fetch_statement_pin(op: op_algebra.Operation, entity: Entity) -> Pin:
+def deep_fetch_statement_pin(op: op_algebra.Operation, entity: EntityMetadata) -> Pin:
     """``snapshot.pin`` for ``op`` (spec §3): identical to
     ``~parallax.core.temporal_read.statement_pin``, except that an outer
     ``DeepFetch`` directive (``.include(...)`` composed after ``.as_of(...)``)
@@ -437,13 +474,14 @@ def is_milestone_set_op(op: op_algebra.Operation) -> bool:
     return isinstance(current, (op_algebra.AsOfRange, op_algebra.History))
 
 
-def _pin_from_milestone(entity: Entity, milestone_pin: Mapping[str, object]) -> Pin:
+def _pin_from_milestone(entity: EntityMetadata, milestone_pin: Mapping[str, object]) -> Pin:
     """One milestone's own edge, rendered as a :class:`Pin` (spec §3: each
     milestone-set root is edge-pinned at its own milestone's from-instant)."""
     coords: dict[str, object] = {}
-    for axis in entity.as_of_axes:
-        if axis.dimension in milestone_pin:
-            coords[axis.dimension] = milestone_pin[axis.dimension]
+    for axis in entity.declared_as_of_axes:
+        name = _DIMENSION_NAMES[axis.dimension]
+        if name in milestone_pin:
+            coords[name] = milestone_pin[name]
     return Pin(
         tx_time=cast("Any", coords.get("transactionTime")),
         valid_time=cast("Any", coords.get("validTime")),
@@ -453,16 +491,18 @@ def _pin_from_milestone(entity: Entity, milestone_pin: Mapping[str, object]) -> 
 def snapshot_from_find_result(
     result: FindResult, target: str, meta: Metamodel, pin: Pin
 ) -> Snapshot[Any]:
-    roots = wrap_graph(result.nodes, target, meta, pin)
+    model = accepted_model(meta)
+    roots = wrap_graph(result.nodes, target, meta, model, pin)
     return Snapshot(roots, pin, result.execution)
 
 
 def snapshot_from_history_result(
     result: HistoryFindResult, target: str, meta: Metamodel
 ) -> Snapshot[Any]:
-    entity = inheritance.declaring_entity(meta, meta.entity(target))
+    model, metadata = accepted_target(meta, target)
+    entity = declaring_metadata(model, metadata)
     roots: list[Any] = []
     for graph in result.graphs:
         milestone_pin = _pin_from_milestone(entity, graph.pin)
-        roots.extend(wrap_graph(graph.nodes, target, meta, milestone_pin))
+        roots.extend(wrap_graph(graph.nodes, target, meta, model, milestone_pin))
     return Snapshot(tuple(roots), Pin(), result.execution)

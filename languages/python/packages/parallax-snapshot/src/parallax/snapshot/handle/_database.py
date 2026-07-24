@@ -31,7 +31,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
-from parallax.core import batch_write, inheritance, opt_lock
+from parallax.core import batch_write, opt_lock
 from parallax.core.auto_retry import run_with_retry
 from parallax.core.db_port import DbPort
 from parallax.core.descriptor import Metamodel
@@ -60,9 +60,10 @@ from parallax.core.unit_work import (
 # by the private MODULE names and by the package's frozen `__all__`, not by
 # per-name underscores, which under pyright strict would make every intra-package
 # import a reportPrivateUsage error.
-from parallax.snapshot.handle._accepted import accepted_model
+from parallax.snapshot.handle._accepted import accepted_model, accepted_target
 from parallax.snapshot.handle._read import (
     Snapshot,
+    declaring_metadata,
     deep_fetch_statement_pin,
     find,
     find_history,
@@ -168,8 +169,8 @@ class Database:
         """
         target = statement.target
         op = statement.operation()
-        entity = inheritance.declaring_entity(self._meta, self._meta.entity(target))
-        pin = deep_fetch_statement_pin(op, entity)
+        read_model, read_target = accepted_target(self._meta, target)
+        pin = deep_fetch_statement_pin(op, declaring_metadata(read_model, read_target))
         if is_milestone_set_op(op):
             history_result = find_history(op, self._meta, self._dialect, target, self._port)
             return snapshot_from_history_result(history_result, target, self._meta)

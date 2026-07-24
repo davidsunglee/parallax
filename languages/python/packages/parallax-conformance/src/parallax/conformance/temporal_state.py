@@ -23,9 +23,8 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 
-from parallax.core import bitemp_write, txtime_write
-from parallax.core.descriptor import Metamodel
-from parallax.core.inheritance import declaring_entity, family_primary_key
+from parallax.core import bitemp_write, inheritance, temporal_read, txtime_write
+from parallax.core.metamodel import EntityMetadata, Metamodel, PrimaryKey, TemporalDimension
 from parallax.core.unit_work import KeyedWrite, Observation
 
 __all__ = ["AmbiguousObservationError", "TemporalShadow"]
@@ -51,21 +50,23 @@ class TemporalShadow:
         self._current: dict[_ObjectKey, list[Observation]] = {}
 
     def seed_fixtures(
-        self, meta: Metamodel, entity_name: str, rows: Sequence[Mapping[str, object]]
+        self, model: Metamodel, entity: EntityMetadata, rows: Sequence[Mapping[str, object]]
     ) -> None:
-        """Seed the tracker from a case's loaded fixture rows for ``entity_name``
+        """Seed the tracker from a case's loaded fixture rows for ``entity``
         (`given.fixtures: true`, or a scenario/conflict case's own default
         lifecycle load). A non-temporal entity's rows are a no-op."""
-        entity = meta.entity(entity_name)
-        declaring = declaring_entity(meta, entity)
-        if not declaring.as_of_axes:
+        shape = temporal_read.view(model).shape(entity.identity)
+        if shape is None or isinstance(shape, temporal_read.NonTemporal):
             return
-        tx_start, tx_end = txtime_write.axis_attr_names(declaring, "transactionTime")
-        is_bitemporal = declaring.temporal == "bitemporal"
+        entity_name = entity.identity.name
+        tx_start, tx_end = _axis_names(model, entity, TemporalDimension.TRANSACTION_TIME)
+        is_bitemporal = isinstance(shape, temporal_read.Bitemporal)
         valid_start, valid_end = (
-            txtime_write.axis_attr_names(declaring, "validTime") if is_bitemporal else (None, None)
+            _axis_names(model, entity, TemporalDimension.VALID_TIME)
+            if is_bitemporal
+            else (None, None)
         )
-        pk_names = [attr.name for attr in family_primary_key(meta, entity)]
+        pk_names = _primary_key_names(model, entity)
         for row in rows:
             if row.get(tx_end) != "infinity":
                 continue  # not current on Transaction Time
@@ -79,7 +80,7 @@ class TemporalShadow:
             self._current.setdefault(key, []).append(observation)
 
     def resolve(
-        self, meta: Metamodel, entity_name: str, row: Mapping[str, object]
+        self, model: Metamodel, entity: EntityMetadata, row: Mapping[str, object]
     ) -> Observation | None:
         """The tracked observation a temporal update/terminate/updateUntil/
         terminateUntil instruction's close/chain consumes, or ``None`` for a
@@ -94,8 +95,8 @@ class TemporalShadow:
         ``write.validFrom`` fields, never this tracker (see the module
         docstring).
         """
-        entity = meta.entity(entity_name)
-        pk_names = [attr.name for attr in family_primary_key(meta, entity)]
+        entity_name = entity.identity.name
+        pk_names = _primary_key_names(model, entity)
         key = self._key(entity_name, pk_names, row)
         candidates = self._current.get(key)
         if not candidates:
@@ -110,8 +111,8 @@ class TemporalShadow:
 
     def advance(
         self,
-        meta: Metamodel,
-        entity_name: str,
+        model: Metamodel,
+        entity: EntityMetadata,
         instruction: KeyedWrite,
         tx_instant: str,
         observed: Observation | None,
@@ -122,23 +123,26 @@ class TemporalShadow:
         never a separately re-derived arithmetic, so the tracker and the
         rendered SQL can never disagree (m-txtime-write.md / m-bitemp-write.md
         "the engine supplies observed rows from case state")."""
-        entity = meta.entity(entity_name)
-        declaring = declaring_entity(meta, entity)
-        pk_names = [attr.name for attr in family_primary_key(meta, entity)]
+        entity_name = entity.identity.name
+        pk_names = _primary_key_names(model, entity)
         key = self._key(entity_name, pk_names, instruction.rows[0])
-        plan_fn = bitemp_write.plan if declaring.temporal == "bitemporal" else txtime_write.plan
-        milestone_plan = plan_fn(instruction, declaring, tx_instant, observed)
+        is_bitemporal = isinstance(
+            temporal_read.view(model).shape(entity.identity), temporal_read.Bitemporal
+        )
+        plan_fn = bitemp_write.plan if is_bitemporal else txtime_write.plan
+        milestone_plan = plan_fn(instruction, model, entity, tx_instant, observed)
         opened = [
             step for step in milestone_plan.steps if isinstance(step, txtime_write.MilestoneOpen)
         ]
         if not opened:
             self._current.pop(key, None)  # a terminate/terminateUntil closes with no chain
             return
-        is_bitemporal = declaring.temporal == "bitemporal"
         valid_start, valid_end = (
-            txtime_write.axis_attr_names(declaring, "validTime") if is_bitemporal else (None, None)
+            _axis_names(model, entity, TemporalDimension.VALID_TIME)
+            if is_bitemporal
+            else (None, None)
         )
-        tx_start, tx_end = txtime_write.axis_attr_names(declaring, "transactionTime")
+        tx_start, tx_end = _axis_names(model, entity, TemporalDimension.TRANSACTION_TIME)
         self._current[key] = [
             Observation(
                 tx_start=_as_str(step.row[tx_start]),
@@ -152,6 +156,28 @@ class TemporalShadow:
     @staticmethod
     def _key(entity_name: str, pk_names: Sequence[str], row: Mapping[str, object]) -> _ObjectKey:
         return (entity_name, tuple(row[name] for name in pk_names))
+
+
+def _axis_names(
+    model: Metamodel, entity: EntityMetadata, dimension: TemporalDimension
+) -> tuple[str, str]:
+    """``entity``'s family-effective Attribute names for one temporal dimension."""
+    return txtime_write.axis_attr_names(model, entity, dimension)
+
+
+def _primary_key_names(model: Metamodel, entity: EntityMetadata) -> list[str]:
+    """``entity``'s family-effective primary-key Attribute names.
+
+    A participant's key is declared on its family root alone, so the applicable
+    member chain the Inheritance Facet precomputes is what carries it.
+    """
+    position = inheritance.view(model).entity(entity.identity)
+    members = entity.declared_attributes if position is None else position.applicable_attributes
+    return [
+        attribute.identity.name
+        for attribute in members
+        if isinstance(attribute.primary_key, PrimaryKey)
+    ]
 
 
 def _as_str(value: object) -> str:

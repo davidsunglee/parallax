@@ -36,6 +36,7 @@ from parallax.conformance import models, stale_web_edit
 from parallax.core import TX_TIME, opt_lock
 from parallax.core.db_port import JsonDocument, Row
 from parallax.core.dialect import POSTGRES
+from parallax.core.metamodel import EntityIdentity
 from parallax.core.unit_work import (
     FixedClock,
 )
@@ -453,7 +454,9 @@ def test_pin_from_milestone_skips_an_axis_absent_from_the_milestone_pin() -> Non
     # `_edge_pin` always populates every declared axis in practice) — a
     # bitemporal entity's OWN as-of-attribute loop must skip an axis absent
     # from a given milestone's pin, not KeyError.
-    position = models.load_models()["position"].entity("Position")
+    model = models.accepted_model(models.load_models()["position"])
+    position = model.entity(EntityIdentity("parallax.compatibility", "Position"))
+    assert position is not None
     pin = _pin_from_milestone(position, {"transactionTime": _MILESTONE_INSTANT})
     assert pin.tx_time == _MILESTONE_INSTANT
     assert pin.valid_time is None

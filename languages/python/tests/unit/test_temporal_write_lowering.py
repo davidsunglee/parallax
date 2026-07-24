@@ -22,6 +22,8 @@ from parallax.conformance import models
 from parallax.core.db_port import JsonDocument
 from parallax.core.descriptor import Metamodel
 from parallax.core.dialect import POSTGRES, Dialect
+from parallax.core.metamodel import EntityIdentity, EntityMetadata, TemporalDimension
+from parallax.core.metamodel import Metamodel as AcceptedMetamodel
 from parallax.core.unit_work import Concurrency, KeyedWrite, Observation, PlannedWrite
 from parallax.snapshot.handle import (
     LoweredStatement,
@@ -31,6 +33,15 @@ from parallax.snapshot.handle import (
 )
 
 pytestmark = pytest.mark.unit
+
+
+def _accepted(name: str, meta: Metamodel) -> tuple[AcceptedMetamodel, EntityMetadata]:
+    """One corpus model and one of its Entities, both accepted."""
+    model = models.accepted_model(meta)
+    entity = model.entity(EntityIdentity("parallax.compatibility", name))
+    assert entity is not None
+    return model, entity
+
 
 _MODELS = models.load_models()
 BALANCE = _MODELS["balance"]
@@ -171,9 +182,8 @@ def test_audit_only_plan_merges_the_sparse_row_at_the_planner_seam() -> None:
     observation = Observation(
         tx_start="2024-01-01T00:00:00+00:00", payload={"id": 1, "acctNum": "A", "value": 100.00}
     )
-    plan = txtime_write.plan(
-        sparse_update, BALANCE.entity("Balance"), "2024-06-01T00:00:00+00:00", observation
-    )
+    model, entity = _accepted("Balance", BALANCE)
+    plan = txtime_write.plan(sparse_update, model, entity, "2024-06-01T00:00:00+00:00", observation)
     close, opened = plan.steps
     assert isinstance(close, txtime_write.MilestoneClose)
     assert isinstance(opened, txtime_write.MilestoneOpen)
@@ -195,9 +205,8 @@ def test_audit_only_plan_carries_a_full_row_unchanged_when_no_payload_is_observe
     observation = Observation(tx_start="2024-01-01T00:00:00+00:00")  # no payload at all
     from parallax.core import txtime_write
 
-    plan = txtime_write.plan(
-        full_update, BALANCE.entity("Balance"), "2024-06-01T00:00:00+00:00", observation
-    )
+    model, entity = _accepted("Balance", BALANCE)
+    plan = txtime_write.plan(full_update, model, entity, "2024-06-01T00:00:00+00:00", observation)
     _close, opened = plan.steps
     assert isinstance(opened, txtime_write.MilestoneOpen)
     assert opened.row["acctNum"] == "A"
@@ -776,5 +785,6 @@ def test_axis_attr_names_refuses_an_axis_the_entity_does_not_declare() -> None:
     # instruction (`txtime_write._axis`), not a normal-path outcome.
     from parallax.core import txtime_write
 
-    with pytest.raises(txtime_write.TemporalPlanningError, match="declares no 'validTime'"):
-        txtime_write.axis_attr_names(BALANCE.entity("Balance"), "validTime")
+    model, entity = _accepted("Balance", BALANCE)
+    with pytest.raises(txtime_write.TemporalPlanningError, match="declares no VALID_TIME"):
+        txtime_write.axis_attr_names(model, entity, TemporalDimension.VALID_TIME)
