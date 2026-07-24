@@ -305,13 +305,14 @@ def _decoded_temporal[T](decode: Callable[[str], T], literal: str) -> T | str:
     """A microsecond-precision temporal literal decoded, unless it carries
     non-zero sub-microsecond precision.
 
-    ``datetime.fromisoformat`` / ``time.fromisoformat`` silently truncate a
-    fractional second past the sixth digit, so a literal whose seventh or later
-    fractional digit is non-zero would decode to a rounded microsecond value that
-    is not the value written. Such a literal names no member of a
-    microsecond-precision space and decodes to itself so membership fails; a
-    literal whose extra digits are all trailing zeros still spells an exact
-    microsecond value and decodes normally.
+    ``datetime.fromisoformat`` / ``time.fromisoformat`` silently truncate any
+    fractional field past the sixth digit, so a literal whose seventh or later
+    fractional digit is non-zero — in the fractional second or in a fractional
+    timezone offset — would decode to a value that is not the value written: a
+    truncated fractional second, or an instant shifted by a sub-microsecond
+    offset. Such a literal names no member of a microsecond-precision space and
+    decodes to itself so membership fails; a literal whose extra digits are all
+    trailing zeros still spells an exact microsecond value and decodes normally.
     """
     if not _within_microsecond_precision(literal):
         return literal
@@ -319,11 +320,18 @@ def _decoded_temporal[T](decode: Callable[[str], T], literal: str) -> T | str:
 
 
 def _within_microsecond_precision(literal: str) -> bool:
-    """Whether a temporal literal's fractional second has no non-zero digit past
-    the sixth. A literal with at most six fractional digits, or with only
-    trailing zeros beyond the sixth, spells an exact microsecond value; the
-    fractional separator is ``.`` or ``,`` and its digit run ends the fractional
-    field (a timezone offset or the string's end follows)."""
+    """Whether every fractional field in a temporal literal has no non-zero digit
+    past the sixth.
+
+    A temporal literal may spell more than one fractional field — a fractional
+    second and a fractional timezone offset — and ``.`` also serves as an
+    alternate date-time separator, so each ``.``/``,``-initiated digit run is
+    inspected rather than only the first. A run of at most six digits, or one
+    whose digits beyond the sixth are all zero, spells an exact microsecond
+    value; any run with a non-zero digit past the sixth carries sub-microsecond
+    precision and rejects the literal. A ``.`` used as the date-time separator
+    introduces the two-digit hour, a short run that passes on its own.
+    """
     for index, char in enumerate(literal):
         if char in ".,":
             digits = ""
@@ -331,7 +339,8 @@ def _within_microsecond_precision(literal: str) -> bool:
                 if following not in "0123456789":
                     break
                 digits += following
-            return len(digits) <= 6 or all(digit == "0" for digit in digits[6:])
+            if len(digits) > 6 and any(digit != "0" for digit in digits[6:]):
+                return False
     return True
 
 
