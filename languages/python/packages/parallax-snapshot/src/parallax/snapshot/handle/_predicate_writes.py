@@ -207,7 +207,8 @@ def _materialize_predicate_write(
     one(s).
     """
     lock: LockMode | None = read_lock.mode_for(uow.settings.concurrency)
-    plan_ = deep_fetch.plan(instruction.target.entity, instruction.target.predicate, meta)
+    model, target_metadata = accepted_target(meta, instruction.target.entity)
+    plan_ = deep_fetch.plan(target_metadata, instruction.target.predicate, model)
     assignments = {
         assignment_member(assignment.attr): assignment.value
         for assignment in instruction.assignments
@@ -274,7 +275,6 @@ def _materialize_predicate_write(
     # non-family target (a family predicate write is rejected before SQL), so
     # its compiled row transform is always the identity — only the statement is
     # consumed here.
-    model, target_metadata = accepted_target(meta, instruction.target.entity)
     statement = compile_read(
         plan_.root_operation,
         model,

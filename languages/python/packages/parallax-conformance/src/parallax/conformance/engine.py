@@ -217,7 +217,9 @@ def _result_form(case: case_format.Case) -> Literal["row", "instance"]:
     return "row"
 
 
-def _canonicalize_read(operation_doc: object, entity: Entity, meta: Metamodel) -> Operation:
+def _canonicalize_read(
+    operation_doc: object, entity: EntityMetadata, model: AcceptedMetamodel
+) -> Operation:
     """Deserialize + canonicalize one read: root as-of injection, then per-hop
     navigation canonicalization — the composition-at-the-engine order every read
     compile site shares.
@@ -227,11 +229,10 @@ def _canonicalize_read(operation_doc: object, entity: Entity, meta: Metamodel) -
     resulting plain predicate: the module DAG forbids ``m-sql`` from importing
     ``m-temporal-read``, so this composition site (the conformance engine, which
     may reference both) is the canonicalize step. ``inject_as_of`` is a strict
-    identity for a non-temporal target. ``entity`` resolves through
-    `inheritance.declaring_entity` first: an inheritance participant's as-of
-    axes are declared on the family root alone (`m-inheritance`), so a
-    concrete- or abstract-subtype-target read's own record carries none of its
-    own — the root's axes are what ``inject_as_of`` must see.
+    identity for a non-temporal target, and it sees the Entity that actually
+    DECLARES the family's axes: an inheritance participant's as-of axes are
+    declared on the family root alone (`m-inheritance`), so a concrete- or
+    abstract-subtype-target read's own declaration carries none of its own.
     ``parallax.core.navigate.canonicalize`` runs immediately after: it resolves
     the root's own pinned per-axis instant (``resolve_pinned_instants``, read
     from the SAME raw operation) and injects the matching per-hop as-of
@@ -240,10 +241,25 @@ def _canonicalize_read(operation_doc: object, entity: Entity, meta: Metamodel) -
     operation carries no navigation node at all.
     """
     raw_op = deserialize(operation_doc)
-    temporal_entity = inheritance.declaring_entity(meta, entity)
+    temporal_entity = _family_declarer(model, entity)
     root_pins = resolve_pinned_instants(raw_op, temporal_entity)
     injected = inject_as_of(raw_op, temporal_entity)
-    return navigate.canonicalize(injected, meta, root_pins)
+    return navigate.canonicalize(injected, model, entity, root_pins)
+
+
+def _family_declarer(model: AcceptedMetamodel, entity: EntityMetadata) -> EntityMetadata:
+    """``entity``'s family root, which owns the family-wide declarations.
+
+    A standalone Entity is its own root, so this is the identity there rather
+    than a second code path.
+    """
+    view = inheritance.view(model).entity(entity.identity)
+    if view is None:  # pragma: no cover - the facet covers every accepted Entity
+        raise EngineError(f"{entity.identity.canonical!r} names no entity the model declares")
+    root = model.entity(view.root)
+    if root is None:  # pragma: no cover - a family root is an accepted Entity
+        raise EngineError(f"{view.root.canonical!r} names no entity the model declares")
+    return root
 
 
 def _read_case_concurrency(case: case_format.Case) -> Concurrency | None:
@@ -289,13 +305,13 @@ def _compile_statement(case: case_format.Case, dialect_name: str) -> CompiledRea
     dialect = dialect_for(dialect_name)
     lock = read_lock.mode_for(_read_case_concurrency(case))
     try:
-        entity = meta.entity(target)
-        operation = _canonicalize_read(operation_doc, entity, meta)
+        metadata = case_entity(model, meta.entity(target))
+        operation = _canonicalize_read(operation_doc, metadata, model)
         return compile_read(
             operation,
             model,
             dialect,
-            case_entity(model, entity),
+            metadata,
             result_form=_result_form(case),
             lock=lock,
         )
@@ -1235,8 +1251,8 @@ def _lower_find(
     find_doc = step.get("find")
     if not isinstance(target, str) or find_doc is None:
         raise EngineError("scenario find step needs `targetEntity` and `find`")
-    entity = meta.entity(target)
-    operation = _canonicalize_read(find_doc, entity, meta)
+    metadata = case_entity(model, meta.entity(target))
+    operation = _canonicalize_read(find_doc, metadata, model)
     lock = read_lock.mode_for(concurrency)
     # A scenario find's emission is graded on SQL text and binds alone — the
     # compiled read's row transform belongs to whoever consumes the rows, and a
@@ -1245,7 +1261,7 @@ def _lower_find(
         operation,
         model,
         dialect,
-        case_entity(model, entity),
+        metadata,
         result_form=result_form,
         lock=lock,
     ).statement
@@ -1404,10 +1420,10 @@ def _compile_snapshot_scenario(
                 raise EngineError(
                     f"{case.path.name}: scenario find step needs `targetEntity` and `find`"
                 )
-            entity = meta.entity(target)
-            operation = _canonicalize_read(find_doc, entity, meta)
+            metadata = case_entity(model, meta.entity(target))
+            operation = _canonicalize_read(find_doc, metadata, model)
             statement = compile_read(
-                operation, model, dialect, case_entity(model, entity), result_form="instance"
+                operation, model, dialect, metadata, result_form="instance"
             ).statement
             emissions.append(Emission(f"/scenario/{index}/find", statement.sql, statement.binds))
     except (OperationError, SqlGenError, TemporalReadError, KeyError) as exc:

@@ -11,9 +11,12 @@ plan by their own modules (``m-op-list --> m-deep-fetch``,
 ``m-snapshot-read --> m-deep-fetch``).
 
 Per the dependency graph, ``m-deep-fetch`` depends on ``m-navigate``
-alone — transitively reaching ``m-op-algebra``, ``m-temporal-read``, and
-``m-inheritance``, all of which this module imports directly (the DAG permits
-any edge ``m-navigate`` itself reaches). Root canonicalization reuses the exact
+alone — transitively reaching ``m-op-algebra``, ``m-temporal-read``,
+``m-inheritance``, and ``m-relationship``, all of which this module imports
+directly (the DAG permits any edge ``m-navigate`` itself reaches). A level's
+to-many decision and its correlation columns come from the Relationship Facet
+rather than from a declaration, because a reverse declaration carries neither an
+inverted cardinality nor a swapped join of its own. Root canonicalization reuses the exact
 composition-at-the-engine order every read compile site shares (``inject_as_of``
 then ``navigate.canonicalize``); each level's own propagated
 as-of term and relationship resolution reuse ``parallax.core.navigate``'s
@@ -51,10 +54,22 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
+from typing import Final, Literal
 
-from parallax.core import inheritance, navigate
-from parallax.core.descriptor import Entity, Metamodel, Relationship, TemporalDimension
-from parallax.core.inheritance._position import resolve_narrow_position
+from parallax.core import inheritance, navigate, relationship
+from parallax.core.inheritance import InheritanceEntityView, InheritanceFacet
+from parallax.core.metamodel import (
+    AttributeIdentity,
+    Cardinality,
+    EntityIdentity,
+    EntityMetadata,
+    Metamodel,
+    RelationshipIdentity,
+    RelativeEntityReference,
+    SortDirection,
+    TemporalDimension,
+    resolve_entity_reference,
+)
 from parallax.core.op_algebra import (
     And,
     DeepFetch,
@@ -66,6 +81,7 @@ from parallax.core.op_algebra import (
     PathSegment,
     Scalar,
 )
+from parallax.core.relationship import RelationshipFacet, RelationshipMetadata
 from parallax.core.temporal_read import inject_as_of, resolve_pinned_instants
 
 __all__ = [
@@ -126,7 +142,8 @@ class FetchLevel:
 
     A **back-reference** level (``is_back_reference`` true) carries none of the
     above — :meth:`child_operation` is never called for it; ``back_reference_family``
-    names the family the assembler resolves through its identity map instead.
+    names the family the assembler resolves through its identity map instead, as
+    that map keys a row on its family ROOT's declared name.
     """
 
     attach_key: str
@@ -181,23 +198,23 @@ class FetchPlan:
     levels: tuple[FetchLevel, ...]
 
 
-def plan(target: str, op: Operation, meta: Metamodel) -> FetchPlan:
-    """Plan a deep fetch against ``meta`` — a pure function of ``op`` alone.
+def plan(entity: EntityMetadata, op: Operation, model: Metamodel) -> FetchPlan:
+    """Plan a deep fetch against ``model`` — a pure function of ``op`` alone.
 
     ``op`` is the read's raw (undeserialized-no-further, but not yet temporally
     injected or navigation-canonicalized) operation: a ``DeepFetch`` node, or any
     other read operation planned with zero levels (the degenerate "materialize
     with no relationships" case a plain snapshot read, or a milestone-set
     ``history`` / ``asOfRange`` read, needs — both funnel through the SAME root
-    canonicalization this function performs). ``target`` is the read's queried
-    root entity (``targetEntity``) — an inheritance participant (abstract root,
+    canonicalization this function performs). ``entity`` is the read's queried
+    root Entity (``targetEntity``) — an inheritance participant (abstract root,
     abstract subtype, or concrete subtype) declares no as-of axes of its own
     when its family's axes live on the root (`m-inheritance`), so the root
-    query's as-of injection resolves through `inheritance.declaring_entity`
-    (the family root) rather than ``target``'s own (possibly empty) record.
+    query's as-of injection resolves through the Inheritance Facet's family root
+    rather than ``entity``'s own (possibly empty) declaration.
     """
-    root_entity = meta.entity(target)
-    temporal_entity = inheritance.declaring_entity(meta, root_entity)
+    families = inheritance.view(model)
+    temporal_entity = _entity(model, _entity_view(families, entity.identity).root)
     if isinstance(op, DeepFetch):
         root_raw: Operation = op.operand
         paths: tuple[tuple[PathSegment, ...], ...] = op.paths
@@ -207,10 +224,12 @@ def plan(target: str, op: Operation, meta: Metamodel) -> FetchPlan:
 
     root_pins = resolve_pinned_instants(root_raw, temporal_entity)
     root_injected = inject_as_of(root_raw, temporal_entity)
-    root_operation = navigate.canonicalize(root_injected, meta, root_pins)
+    root_operation = navigate.canonicalize(root_injected, model, entity, root_pins)
 
-    builder = _PlanBuilder(meta=meta, root_pins=root_pins)
-    builder.seed_root(root_entity)
+    builder = _PlanBuilder(
+        model=model, families=families, directions=relationship.view(model), root_pins=root_pins
+    )
+    builder.seed_root(entity)
     for path in paths:
         builder.add_path(path)
     return FetchPlan(root_operation=root_operation, levels=tuple(builder.levels))
@@ -230,20 +249,34 @@ def _new_children() -> dict[tuple[int, str, tuple[str, ...]], int]:
     return {}
 
 
-def _new_ancestor_families() -> dict[int, frozenset[str]]:
+def _new_ancestor_families() -> dict[int, frozenset[EntityIdentity]]:
+    return {}
+
+
+def _new_owners() -> dict[int, EntityMetadata]:
     return {}
 
 
 @dataclass(slots=True)
 class _PlanBuilder:
-    meta: Metamodel
+    model: Metamodel
+    families: InheritanceFacet
+    directions: RelationshipFacet
     root_pins: Mapping[TemporalDimension, str]
     levels: list[FetchLevel] = field(default_factory=_new_levels)
     _children: dict[tuple[int, str, tuple[str, ...]], int] = field(default_factory=_new_children)
-    _ancestor_families: dict[int, frozenset[str]] = field(default_factory=_new_ancestor_families)
+    _ancestor_families: dict[int, frozenset[EntityIdentity]] = field(
+        default_factory=_new_ancestor_families
+    )
+    # Each trie node's own Entity: the scope a segment beneath it names its
+    # ``Class.relationship`` reference relative to.
+    _owners: dict[int, EntityMetadata] = field(default_factory=_new_owners)
 
-    def seed_root(self, root_entity: Entity) -> None:
-        self._ancestor_families[_ROOT_ID] = frozenset({_family_name(self.meta, root_entity)})
+    def seed_root(self, root_entity: EntityMetadata) -> None:
+        self._ancestor_families[_ROOT_ID] = frozenset(
+            {_entity_view(self.families, root_entity.identity).root}
+        )
+        self._owners[_ROOT_ID] = root_entity
 
     def add_path(self, path: tuple[PathSegment, ...]) -> None:
         parent_id = _ROOT_ID
@@ -257,22 +290,24 @@ class _PlanBuilder:
                 "level (m-case-format 'Back-reference cycles' — the ancestor-revisit hop's "
                 "rows are already fully known; no corpus case needs a level beneath one)"
             )
-        relationship = navigate.resolve_relationship(segment.rel, self.meta)
-        related_entity = self.meta.entity(relationship.join.target.entity)
-        position = _resolve_position(self.meta, relationship, segment)
+        owner = self._owners[parent_id]
+        declaration = navigate.resolve_relationship(segment.rel, owner.identity, self.model)
+        direction = self._direction(declaration.identity)
+        related_entity = _entity(self.model, direction.join.target.entity)
+        position = _resolve_position(self.families, related_entity, segment)
         key = (parent_id, segment.rel, position)
         existing = self._children.get(key)
         if existing is not None:
             return existing
 
-        family = _family_name(self.meta, related_entity)
+        family = _entity_view(self.families, related_entity.identity).root
         parent_ancestors = self._ancestor_families[parent_id]
         is_back_reference = family in parent_ancestors
 
         _, _, rel_local = segment.rel.rpartition(".")
         attach_key = _view_key(rel_local, bool(segment.narrow), position)
-        to_many = relationship.cardinality == "one-to-many"
-        parent_column = _owner_column(self.meta, segment.rel, relationship)
+        to_many = direction.cardinality is Cardinality.ONE_TO_MANY
+        parent_column = _attribute_column(self.families, direction.join.source)
         parent_ref: ParentRef = RootRef() if parent_id == _ROOT_ID else LevelRef(parent_id)
 
         if is_back_reference:
@@ -282,21 +317,20 @@ class _PlanBuilder:
                 parent=parent_ref,
                 parent_column=parent_column,
                 is_back_reference=True,
-                back_reference_family=family,
+                back_reference_family=family.name,
             )
         else:
-            child_target, narrow_to = _child_target(relationship, position, segment)
-            related_attr_name = relationship.join.target.attribute
+            child_target, narrow_to = _child_target(direction, position, segment)
             level = FetchLevel(
                 attach_key=attach_key,
                 to_many=to_many,
                 parent=parent_ref,
                 parent_column=parent_column,
                 child_target=child_target,
-                related_attr=f"{child_target}.{related_attr_name}",
-                related_column=_resolve_attr_column(self.meta, related_entity, related_attr_name),
-                as_of_terms=navigate.hop_as_of_terms(related_entity, self.meta, self.root_pins),
-                order_keys=_order_keys(relationship, child_target),
+                related_attr=f"{child_target}.{direction.join.target.name}",
+                related_column=_attribute_column(self.families, direction.join.target),
+                as_of_terms=navigate.hop_as_of_terms(related_entity, self.model, self.root_pins),
+                order_keys=_order_keys(direction, child_target),
                 narrow_to=narrow_to,
             )
 
@@ -304,60 +338,97 @@ class _PlanBuilder:
         self.levels.append(level)
         self._children[key] = index
         self._ancestor_families[index] = parent_ancestors | {family}
+        self._owners[index] = related_entity
         return index
+
+    def _direction(self, identity: RelationshipIdentity) -> RelationshipMetadata:
+        """The navigable direction ``identity`` denotes.
+
+        A reverse declaration carries no cardinality or join of its own, so the
+        facet — which owns the inversion and the join swap — is the only place a
+        level's to-many decision and correlation columns can come from.
+        """
+        direction = self.directions.relationship(identity)
+        if direction is None:  # pragma: no cover - the facet covers every accepted declaration
+            raise DeepFetchError(
+                f"{identity.source_entity.canonical}.{identity.name} names no relationship "
+                "direction the model declares"
+            )
+        return direction
 
 
 # --------------------------------------------------------------------------- #
 # Pure resolution helpers (mirror m-navigate / m-sql's own mechanical rules).  #
+#                                                                              #
+# Each facet read below is total for an accepted model, so its absence branch  #
+# names a state formation cannot produce rather than a model defect a plan     #
+# could carry.                                                                 #
 # --------------------------------------------------------------------------- #
-def _family_name(meta: Metamodel, entity: Entity) -> str:
-    """The family-normalized identity name (m-snapshot-read): the inheritance
-    family's root name for a participant, else the entity's own name."""
-    if entity.inheritance is None:
-        return entity.name
-    return inheritance.family_root(meta, entity).name
+def _entity(model: Metamodel, identity: EntityIdentity) -> EntityMetadata:
+    entity = model.entity(identity)
+    if entity is None:  # pragma: no cover - a resolved reference names a declared Entity
+        raise DeepFetchError(f"{identity.canonical}: the model declares no such entity")
+    return entity
 
 
-def _resolve_attr_column(meta: Metamodel, entity: Entity, attr_name: str) -> str:
-    candidates = (
-        inheritance.family_attributes(meta, entity)
-        if entity.inheritance is not None
-        else entity.attributes
-    )
-    for attribute in candidates:
-        if attribute.name == attr_name:
-            return attribute.column
+def _entity_view(facet: InheritanceFacet, identity: EntityIdentity) -> InheritanceEntityView:
+    view = facet.entity(identity)
+    if view is None:  # pragma: no cover - the facet covers every accepted Entity
+        raise DeepFetchError(f"{identity.canonical}: the model declares no such entity")
+    return view
+
+
+def _attribute_column(facet: InheritanceFacet, attribute: AttributeIdentity) -> str:
+    """The PHYSICAL column ``attribute`` names on the position it is addressed at.
+
+    A join reaches an Attribute through a position, which may be an inheritance
+    participant that inherits it, so the search widens to the family root's own
+    projection superset. A standalone Entity is its own root and its own
+    superset, so the widening is the identity there rather than a second path.
+    """
+    root = _entity_view(facet, attribute.entity).root
+    for candidate in _entity_view(facet, root).superset_attributes:
+        if candidate.identity.name == attribute.name:
+            return candidate.storage.name
     raise DeepFetchError(  # pragma: no cover - guards an unvalidated relationship
-        f"{entity.name}: {attr_name!r} names no declared attribute"
+        f"{attribute.entity.canonical}: {attribute.name!r} names no declared attribute"
     )
-
-
-def _owner_column(meta: Metamodel, rel_ref: str, relationship: Relationship) -> str:
-    """The PHYSICAL column, on the hop's OWNER entity, whose distinct values this
-    level gathers from its parent rows (the join's LHS attribute, resolved to its
-    column — family-wide when the owner is an inheritance participant)."""
-    class_name, _, _ = rel_ref.rpartition(".")
-    owner_entity = meta.entity(class_name)
-    return _resolve_attr_column(meta, owner_entity, relationship.join.source)
 
 
 def _resolve_position(
-    meta: Metamodel, relationship: Relationship, segment: PathSegment
+    facet: InheritanceFacet, related: EntityMetadata, segment: PathSegment
 ) -> tuple[str, ...]:
     """The hop's resolved effective concrete-subtype set (m-deep-fetch dedup
     identity's second component): the segment's own narrow when authored, else
     the relationship target's own effective set — a non-polymorphic target's
-    trivial one-name set either way. The narrowed branch calls the SHARED
-    ``resolve_narrow_position`` seam --
-    the entity frontend's narrowed-view key derivation
-    (``parallax.core.entity.graph_state``) calls the identical function, so
-    the two can never drift."""
-    related = meta.entity(relationship.join.target.entity)
+    trivial one-name set either way.
+
+    Each authored narrow name is resolved relative to the target's own
+    namespace, exactly as any other bare model reference is, and the facet
+    resolves their union to the position's canonical effective set.
+
+    A family position names its members by their DECLARED names, because those
+    are the names a narrowed view key spells and the names a graph assembler
+    keys a row's own concrete and family identity by; a non-participant names
+    itself canonically, as the relationship's own declared target does.
+    """
     if related.inheritance is None:
-        return (relationship.join.target.entity,)
+        return (related.identity.canonical,)
     if segment.narrow:
-        return resolve_narrow_position(meta, segment.narrow)
-    return tuple(inheritance.effective_concrete_subtypes(meta, related.name))
+        members = tuple(
+            resolve_entity_reference(related.identity, RelativeEntityReference(name))
+            for name in segment.narrow
+        )
+        position = facet.position(members)
+        if position is None:
+            raise DeepFetchError(
+                f"narrow to {sorted(identity.canonical for identity in members)} names an "
+                "entity the model does not declare, or spans more than one inheritance family"
+            )
+        return tuple(identity.name for identity in position.concrete_subtypes)
+    return tuple(
+        identity.name for identity in _entity_view(facet, related.identity).concrete_subtypes
+    )
 
 
 def _view_key(rel_local: str, narrowed: bool, position: tuple[str, ...]) -> str:
@@ -372,7 +443,7 @@ def _view_key(rel_local: str, narrowed: bool, position: tuple[str, ...]) -> str:
 
 
 def _child_target(
-    relationship: Relationship, position: tuple[str, ...], segment: PathSegment
+    direction: RelationshipMetadata, position: tuple[str, ...], segment: PathSegment
 ) -> tuple[str, tuple[str, ...] | None]:
     """The level's own read target entity, and its ``Narrow.to`` (or
     ``None``) — the child-level analogue of `m-sql`'s abstract-read dispatch,
@@ -386,20 +457,32 @@ def _child_target(
     wrapped only when the segment itself authored one (a broad hop reaching 2+
     concretes naturally needs no wrapper — `m-sql`'s own effective-set
     resolution already returns the same set from the bare target)."""
-    related = relationship.join.target.entity
     if len(position) == 1:
         return position[0], None
     if segment.narrow:
-        return related, tuple(segment.narrow)
-    return related, None
+        return direction.join.target.entity.canonical, tuple(segment.narrow)
+    return direction.join.target.entity.canonical, None
 
 
-def _order_keys(relationship: Relationship, qualifier: str) -> tuple[OrderKey, ...]:
+_SORT_DIRECTIONS: Final[Mapping[SortDirection, Literal["asc", "desc"]]] = {
+    SortDirection.ASCENDING: "asc",
+    SortDirection.DESCENDING: "desc",
+}
+
+
+def _order_keys(direction: RelationshipMetadata, qualifier: str) -> tuple[OrderKey, ...]:
     """The declared relationship ``orderBy``, canonicalized to qualified `OrderKey`s
     (m-deep-fetch "Ordered to-many children"). The class-name qualifier is
     resolution-inert (`m-sql`'s `entity_attribute` matches on the bare attribute
-    name alone) but keeps the reference grammar's shape."""
+    name alone) but keeps the reference grammar's shape.
+
+    This is the translation boundary between the metamodel's Sort Direction and
+    the operation algebra's own wire vocabulary: an accepted ordering term always
+    carries a direction (an omitted one normalizes to ascending at formation),
+    while an authored sort key may still leave its own unset."""
     return tuple(
-        OrderKey(attr=f"{qualifier}.{term.attr}", direction=term.direction)
-        for term in relationship.order_by
+        OrderKey(
+            attr=f"{qualifier}.{term.attribute.name}", direction=_SORT_DIRECTIONS[term.direction]
+        )
+        for term in direction.order_by
     )

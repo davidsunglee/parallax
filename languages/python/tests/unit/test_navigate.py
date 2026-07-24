@@ -15,33 +15,38 @@ from __future__ import annotations
 
 import pytest
 from _sql_gen_support import formed, target
+from _sql_gen_support import model as accepted_model
 
-from parallax.conformance import models
 from parallax.core import op_algebra as oa
-from parallax.core.descriptor import Metamodel, deserialize
+from parallax.core.descriptor import deserialize
 from parallax.core.dialect import POSTGRES
+from parallax.core.metamodel import Metamodel, TemporalDimension
 from parallax.core.navigate import canonicalize, resolve_relationship
 from parallax.core.sql_gen import compile_read
 
 pytestmark = pytest.mark.unit
 
-_MODELS = models.load_models()
-ORDERS = _MODELS["orders"]
-POLICY = _MODELS["policy"]
-LEASE = _MODELS["lease"]
+ORDERS = accepted_model("orders")
+POLICY = accepted_model("policy")
+LEASE = accepted_model("lease")
 
 _B = "2024-03-01T00:00:00+00:00"
 _P = "2024-02-01T00:00:00+00:00"
 
+VALID_TIME = TemporalDimension.VALID_TIME
+TX_TIME = TemporalDimension.TRANSACTION_TIME
 
-def _where(op: oa.Operation, meta: Metamodel, name: str) -> tuple[str, tuple[object, ...]]:
-    """The `where` clause and binds `m-sql` lowers ``op`` to over ``meta``.
+# A hop's bare `Class.relationship` reference resolves relative to the Entity the
+# reference is written against, so every canonicalization names the read's own
+# queried Entity alongside its model.
+ORDER = target(ORDERS, "Order")
+POLICY_ENTITY = target(POLICY, "Policy")
+TENANT = target(LEASE, "Tenant")
+LEASE_ENTITY = target(LEASE, "Lease")
 
-    The suite authors its models as descriptor records (`canonicalize` reads
-    those), so each is formed here for the read compiler; both views describe the
-    same document.
-    """
-    model = formed(meta)
+
+def _where(op: oa.Operation, model: Metamodel, name: str) -> tuple[str, tuple[object, ...]]:
+    """The `where` clause and binds `m-sql` lowers ``op`` to over ``model``."""
     statement = compile_read(op, model, POSTGRES, target(model, name)).statement
     _, _, where = statement.sql.partition(" where ")
     return where, statement.binds
@@ -57,17 +62,17 @@ def test_canonicalize_is_identity_without_any_navigation_node() -> None:
             oa.Comparison(op="greaterThan", attr="Order.qty", value=25),
         )
     )
-    assert canonicalize(op, ORDERS) is op
+    assert canonicalize(op, ORDERS, ORDER) is op
 
 
 def test_canonicalize_is_identity_for_a_deep_fetch_root_with_no_navigation() -> None:
     op = oa.DeepFetch(operand=oa.All(), paths=((oa.PathSegment(rel="Order.items"),),))
-    assert canonicalize(op, ORDERS) is op
+    assert canonicalize(op, ORDERS, ORDER) is op
 
 
 def test_relationship_resolution_rejects_an_unknown_member() -> None:
     with pytest.raises(ValueError, match="names no declared relationship"):
-        resolve_relationship("Order.missing", ORDERS)
+        resolve_relationship("Order.missing", ORDER.identity, ORDERS)
 
 
 def test_walk_recurses_through_every_wrapping_node_kind() -> None:
@@ -97,7 +102,7 @@ def test_walk_recurses_through_every_wrapping_node_kind() -> None:
         oa.DeepFetch(operand=hop, paths=()),
     ]
     for op in wrapped_ops:
-        canonical = canonicalize(op, ORDERS)
+        canonical = canonicalize(op, ORDERS, ORDER)
         assert type(canonical) is type(op), op
 
 
@@ -107,14 +112,14 @@ def test_walk_recurses_through_every_wrapping_node_kind() -> None:
 def test_non_temporal_target_carries_no_as_of_term() -> None:
     inner = oa.Comparison(op="eq", attr="OrderItem.sku", value="A-100")
     op = oa.Exists(rel="Order.items", op=inner)
-    canonical = canonicalize(op, ORDERS)
+    canonical = canonicalize(op, ORDERS, ORDER)
     assert isinstance(canonical, oa.Exists)
     assert canonical.op is inner
 
 
 def test_non_temporal_bare_hop_stays_op_none() -> None:
     op = oa.Exists(rel="Order.items")
-    canonical = canonicalize(op, ORDERS)
+    canonical = canonicalize(op, ORDERS, ORDER)
     assert isinstance(canonical, oa.Exists)
     assert canonical.op is None
 
@@ -127,7 +132,7 @@ def test_non_temporal_bare_hop_stays_op_none() -> None:
 # temporal -> non-temporal (the child carries NO as-of term).                  #
 # --------------------------------------------------------------------------- #
 def test_non_temporal_root_reaching_a_temporal_target_defaults_every_axis_to_latest() -> None:
-    canonical = canonicalize(oa.Exists(rel="Tenant.leases"), LEASE)
+    canonical = canonicalize(oa.Exists(rel="Tenant.leases"), LEASE, TENANT)
     where, binds = _where(canonical, LEASE, "Tenant")
     assert where == "exists (select 1 from lease t1 where t1.tenant_id = t0.id and t1.out_z = ?)"
     assert binds == ("infinity",)
@@ -135,7 +140,7 @@ def test_non_temporal_root_reaching_a_temporal_target_defaults_every_axis_to_lat
 
 def test_temporal_root_reaching_a_non_temporal_target_carries_no_as_of_term() -> None:
     inner = oa.Comparison(op="eq", attr="LeaseNote.text", value="renewed")
-    canonical = canonicalize(oa.Exists(rel="Lease.notes", op=inner), LEASE)
+    canonical = canonicalize(oa.Exists(rel="Lease.notes", op=inner), LEASE, LEASE_ENTITY)
     assert isinstance(canonical, oa.Exists)
     assert canonical.op is inner
 
@@ -148,7 +153,7 @@ def test_bare_hop_over_a_temporal_target_gets_the_latest_default_both_axes() -> 
         rel="Policy.coverages",
         op=oa.Comparison(op="greaterThanEquals", attr="Coverage.amount", value=600),
     )
-    canonical = canonicalize(op, POLICY)
+    canonical = canonicalize(op, POLICY, POLICY_ENTITY)
     where, binds = _where(canonical, POLICY, "Policy")
     assert where == (
         "exists (select 1 from coverage t1 where t1.policy_id = t0.id and t1.amount >= ? "
@@ -158,7 +163,7 @@ def test_bare_hop_over_a_temporal_target_gets_the_latest_default_both_axes() -> 
 
 
 def test_bare_hop_with_no_inner_op_gets_only_the_as_of_term() -> None:
-    canonical = canonicalize(oa.Exists(rel="Policy.coverages"), POLICY)
+    canonical = canonicalize(oa.Exists(rel="Policy.coverages"), POLICY, POLICY_ENTITY)
     where, binds = _where(canonical, POLICY, "Policy")
     assert where == (
         "exists (select 1 from coverage t1 where t1.policy_id = t0.id "
@@ -172,7 +177,7 @@ def test_bare_hop_with_no_inner_op_gets_only_the_as_of_term() -> None:
 # --------------------------------------------------------------------------- #
 def test_root_pinned_instant_propagates_to_the_hop_valid_time_first() -> None:
     op = oa.Exists(rel="Policy.coverages")
-    canonical = canonicalize(op, POLICY, root_pins={"validTime": _B, "transactionTime": _P})
+    canonical = canonicalize(op, POLICY, POLICY_ENTITY, root_pins={VALID_TIME: _B, TX_TIME: _P})
     where, binds = _where(canonical, POLICY, "Policy")
     assert where == (
         "exists (select 1 from coverage t1 where t1.policy_id = t0.id and "
@@ -183,7 +188,7 @@ def test_root_pinned_instant_propagates_to_the_hop_valid_time_first() -> None:
 
 def test_root_pin_on_one_axis_only_still_defaults_the_other_to_latest() -> None:
     op = oa.Exists(rel="Policy.coverages")
-    canonical = canonicalize(op, POLICY, root_pins={"validTime": _B})
+    canonical = canonicalize(op, POLICY, POLICY_ENTITY, root_pins={VALID_TIME: _B})
     where, binds = _where(canonical, POLICY, "Policy")
     assert where == (
         "exists (select 1 from coverage t1 where t1.policy_id = t0.id and "
@@ -197,7 +202,7 @@ def test_root_pin_on_one_axis_only_still_defaults_the_other_to_latest() -> None:
 # --------------------------------------------------------------------------- #
 def test_multi_hop_propagates_the_same_root_pin_to_every_hop() -> None:
     op = oa.Exists(rel="Policy.coverages", op=oa.Exists(rel="Coverage.claims"))
-    canonical = canonicalize(op, POLICY, root_pins={"validTime": _B, "transactionTime": _P})
+    canonical = canonicalize(op, POLICY, POLICY_ENTITY, root_pins={VALID_TIME: _B, TX_TIME: _P})
     where, binds = _where(canonical, POLICY, "Policy")
     assert where == (
         "exists (select 1 from coverage t1 where t1.policy_id = t0.id and "
@@ -284,13 +289,13 @@ _ZOO_MODEL = {
         },
     ]
 }
-_ZOO = deserialize(_ZOO_MODEL)
+_ZOO = formed(deserialize(_ZOO_MODEL))
 
 
 def test_polymorphic_temporal_relationship_target_resolves_axes_via_the_family_root() -> None:
     # `Zoo.creatures` targets the abstract root `Creature` directly, so this also
     # covers the non-narrowed, whole-family case (m-sql injects no tag predicate).
-    canonical = canonicalize(oa.Exists(rel="Zoo.creatures"), _ZOO)
+    canonical = canonicalize(oa.Exists(rel="Zoo.creatures"), _ZOO, target(_ZOO, "Zoo"))
     where, binds = _where(canonical, _ZOO, "Zoo")
     assert where == (
         "exists (select 1 from lion t1 where t1.zoo_id = t0.id and t1.thru_z = ? and t1.out_z = ?)"

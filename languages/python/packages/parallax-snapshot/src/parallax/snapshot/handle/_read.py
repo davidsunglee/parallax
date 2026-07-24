@@ -34,7 +34,7 @@ from parallax.core.dialect import Dialect, LockMode
 from parallax.core.sql_gen import CompiledRead, Statement, compile_read
 from parallax.core.temporal_read import AXIS_ORDER, Edge, Pin, milestone_edge, statement_pin
 from parallax.snapshot import materialize
-from parallax.snapshot.handle._accepted import accepted_target
+from parallax.snapshot.handle._accepted import accepted_entity, accepted_model, accepted_target
 from parallax.snapshot.handle._family import axis_columns
 from parallax.snapshot.handle._wrap import wrap_graph
 
@@ -229,10 +229,13 @@ def find(
     attached level's nodes hang off `Node.fields` — plus the full ordered
     execution record.
     """
-    plan_ = deep_fetch.plan(target, op, meta)
+    # One formation per find: every level's own Entity is resolved against the
+    # model this call already formed, never re-formed per level.
+    model = accepted_model(meta)
+    root_entity = accepted_entity(model, meta, target)
+    plan_ = deep_fetch.plan(root_entity, op, model)
     statements: list[ExecutedStatement] = []
 
-    model, root_entity = accepted_target(meta, target)
     root_compiled = compile_read(
         plan_.root_operation, model, dialect, root_entity, result_form="instance", lock=lock
     )
@@ -260,7 +263,7 @@ def find(
             level_nodes.append(nodes)
             continue
         child_target, child_op = level.child_operation(keys)
-        _, child_entity = accepted_target(meta, child_target)
+        child_entity = accepted_entity(model, meta, child_target)
         child_compiled = compile_read(
             child_op,
             model,
@@ -296,7 +299,8 @@ def find_history(
     first, matching the corpus's own authored `then.graphs` order) rather than
     relying on the database's unspecified natural row order.
     """
-    plan_ = deep_fetch.plan(target, op, meta)
+    model, metadata = accepted_target(meta, target)
+    plan_ = deep_fetch.plan(metadata, op, model)
     if plan_.levels:
         # m-case-format: a v1 milestone-set read carries no includes.
         raise ValueError("a milestone-set (history / asOfRange) read carries no deep-fetch levels")
@@ -307,7 +311,6 @@ def find_history(
     # `_edge_pin`, `_edge_sort_key`) MUST resolve through it rather than the
     # queried target's own (possibly locally-empty) `as_of_axes`.
     entity = inheritance.declaring_entity(meta, meta.entity(target))
-    model, metadata = accepted_target(meta, target)
     compiled = compile_read(plan_.root_operation, model, dialect, metadata, result_form="instance")
     statements: list[ExecutedStatement] = []
     rows = _execute(port, dialect, compiled.statement, statements)

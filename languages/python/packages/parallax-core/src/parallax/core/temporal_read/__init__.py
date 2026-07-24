@@ -13,6 +13,11 @@ that can legally compose both scopes (the conformance engine; later the snapshot
 handle and the statement compile path) applies :func:`inject_as_of` before
 ``compile_read``.
 
+The read-injection entry points (:func:`inject_as_of`,
+:func:`resolve_pinned_instants`) take accepted Entity Metadata; the
+milestone-edge and statement-pin surfaces still take a descriptor record, so the
+two axis lookups below are spelled once each rather than bridged.
+
 This scope also owns the Temporal Facet: the immutable per-formation view that
 answers each Entity's effective temporal shape from its family root's declared
 As-Of Axes. It contributes that Model Compiler and no Rule Set, because every
@@ -37,6 +42,9 @@ from typing import Final
 
 from parallax.core.base import INFINITY_LITERAL, normalize_instant
 from parallax.core.descriptor import AsOfAxisMetadata, Entity, TemporalDimension
+from parallax.core.metamodel import AsOfAxisMetadata as AcceptedAsOfAxis
+from parallax.core.metamodel import EntityMetadata
+from parallax.core.metamodel import TemporalDimension as AcceptedDimension
 from parallax.core.op_algebra import (
     All,
     And,
@@ -103,11 +111,17 @@ __all__ = [
 
 # Valid Time is the OUTER pin (the corpus's bitemporal nesting order) and its
 # injected fragment reads first; Transaction Time is inner. The injected terms
-# therefore compose Valid-Time-first. Exported (m-navigate reuses the same ordering
-# when propagating a
-# root's as-of coordinates per hop).
+# therefore compose Valid-Time-first. Exported for the record-graph consumers that
+# order a temporal entity's own declared axes; a consumer holding accepted Metadata
+# reads the same rank off the Temporal Dimension's own member value instead.
 AXIS_ORDER: Final[dict[TemporalDimension, int]] = {"validTime": 0, "transactionTime": 1}
-_AXIS_ORDER = AXIS_ORDER
+
+# The wire dimension spelling an operation node carries, mapped to the accepted
+# model's own Temporal Dimension. The two vocabularies meet only here.
+_DIMENSIONS: Final[Mapping[TemporalDimension, AcceptedDimension]] = {
+    "validTime": AcceptedDimension.VALID_TIME,
+    "transactionTime": AcceptedDimension.TRANSACTION_TIME,
+}
 
 
 class TemporalReadError(ValueError):
@@ -378,7 +392,7 @@ class _Scan:
 _AxisMode = _Latest | _Containment | _Range | _Scan
 
 
-def inject_as_of(op: Operation, entity: Entity) -> Operation:
+def inject_as_of(op: Operation, entity: EntityMetadata) -> Operation:
     """Rewrite the temporal wrapper nodes of ``op`` into plain ``m-op-algebra`` predicates.
 
     The single lowering entry point for a temporal read. For a **non-temporal**
@@ -402,21 +416,24 @@ def inject_as_of(op: Operation, entity: Entity) -> Operation:
     return _rewrap_directives(injected, directives)
 
 
-def _inject_core(core: Operation, entity: Entity) -> Operation:
-    modes: dict[TemporalDimension, _AxisMode] = {}
+def _inject_core(core: Operation, entity: EntityMetadata) -> Operation:
+    modes: dict[AcceptedDimension, _AxisMode] = {}
     current: Operation = core
     while isinstance(current, (AsOf, AsOfRange, History)):
-        axis = _resolve_axis(current.dimension, entity)
+        axis = _declared_axis(current.dimension, entity)
         if axis.dimension in modes:
             raise TemporalReadError(
-                f"{entity.name}: the {axis.dimension} dimension is pinned or scanned twice"
+                f"{entity.identity.name}: the {current.dimension} dimension is pinned "
+                "or scanned twice"
             )
         modes[axis.dimension] = _mode_of(current)
         current = current.operand
     user_predicate = current
 
     axis_terms: list[Operation] = []
-    for axis in sorted(entity.as_of_axes, key=lambda item: _AXIS_ORDER[item.dimension]):
+    # A Temporal Dimension's member value IS its canonical axis rank, so
+    # Valid-Time-first needs no separate ordering table.
+    for axis in sorted(entity.declared_as_of_axes, key=lambda item: item.dimension.value):
         mode = modes.get(axis.dimension, _Latest())
         axis_terms.extend(_terms(mode, axis, entity))
 
@@ -428,7 +445,25 @@ def _inject_core(core: Operation, entity: Entity) -> Operation:
     return terms[0] if len(terms) == 1 else And(operands=terms)
 
 
+def _declared_axis(dimension: TemporalDimension, entity: EntityMetadata) -> AcceptedAsOfAxis:
+    """The As-Of Axis ``entity`` declares for the wire dimension ``dimension``.
+
+    ``entity`` is the Entity whose declaration actually carries the family's
+    axes, which the caller resolves; a read against a position that inherits
+    them therefore never reaches this with an empty declaration of its own.
+    """
+    axis = entity.as_of_axis(_DIMENSIONS[dimension])
+    if axis is not None:
+        return axis
+    reason = "non-temporal entity" if not entity.declared_as_of_axes else "undeclared dimension"
+    raise TemporalReadError(
+        f"{entity.identity.name} declares no temporal dimension {dimension!r} ({reason})"
+    )
+
+
 def _resolve_axis(dimension: TemporalDimension, entity: Entity) -> AsOfAxisMetadata:
+    """:func:`_declared_axis`'s record-graph counterpart, for the surfaces that
+    still take one; the two answer the same question and raise the same way."""
     for axis in entity.as_of_axes:
         if axis.dimension == dimension:
             return axis
@@ -448,9 +483,9 @@ def _mode_of(wrapper: AsOf | AsOfRange | History) -> _AxisMode:
     return _Containment(instant=wrapper.coordinate)
 
 
-def _terms(mode: _AxisMode, axis: AsOfAxisMetadata, entity: Entity) -> list[Operation]:
-    start_ref = f"{entity.name}.{axis.start_attribute}"
-    end_ref = f"{entity.name}.{axis.end_attribute}"
+def _terms(mode: _AxisMode, axis: AcceptedAsOfAxis, entity: EntityMetadata) -> list[Operation]:
+    start_ref = f"{entity.identity.name}.{axis.start_attribute.name}"
+    end_ref = f"{entity.identity.name}.{axis.end_attribute.name}"
     if isinstance(mode, _Scan):
         return []
     if isinstance(mode, _Latest):
@@ -518,7 +553,7 @@ def conjunction_terms(op: Operation) -> tuple[Operation, ...]:
     return (op,)
 
 
-def resolve_pinned_instants(op: Operation, entity: Entity) -> dict[TemporalDimension, str]:
+def resolve_pinned_instants(op: Operation, entity: EntityMetadata) -> dict[AcceptedDimension, str]:
     """The per-axis literal instant this read pins ``entity`` to a specific PAST
     moment (an ``asOf(..., date=<instant>)`` wrapper) — the coordinate ``m-navigate``
     re-applies, matched by axis, to a temporal entity reached by navigation.
@@ -536,10 +571,10 @@ def resolve_pinned_instants(op: Operation, entity: Entity) -> dict[TemporalDimen
     this from already-lowered predicate nodes).
     """
     core, _directives = _peel_directives(op)
-    pins: dict[TemporalDimension, str] = {}
+    pins: dict[AcceptedDimension, str] = {}
     current = core
     while isinstance(current, (AsOf, AsOfRange, History)):
-        axis = _resolve_axis(current.dimension, entity)
+        axis = _declared_axis(current.dimension, entity)
         mode = _mode_of(current)
         if isinstance(mode, _Containment):
             pins[axis.dimension] = mode.instant

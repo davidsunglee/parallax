@@ -34,6 +34,13 @@ relationship and composes each per-level child query's own propagated as-of
 predicate through the SAME primitives this module's own hop canonicalization uses,
 rather than re-deriving temporal/relationship knowledge the DAG already lets it reach
 only through this module.
+
+A hop's target comes from the identity-resolved Relationship Declaration the
+owning Entity's own Metadata carries, never from a paired relationship facet: a
+defining declaration names the target in its own join, and a reverse declaration
+reaches the Entity that declares its peer. As-of propagation needs the target and
+nothing else about the direction, so this module reads no cardinality, join
+column, or ordering at all.
 """
 
 from __future__ import annotations
@@ -43,7 +50,17 @@ from types import MappingProxyType
 
 from parallax.core import inheritance
 from parallax.core.base import INFINITY_LITERAL
-from parallax.core.descriptor import Entity, Metamodel, Relationship, TemporalDimension
+from parallax.core.metamodel import (
+    DefiningRelationshipDeclaration,
+    EntityIdentity,
+    EntityMetadata,
+    Metamodel,
+    RelationshipDeclaration,
+    RelativeEntityReference,
+    ReverseRelationshipDeclaration,
+    TemporalDimension,
+    resolve_entity_reference,
+)
 from parallax.core.op_algebra import (
     And,
     AsOf,
@@ -63,7 +80,7 @@ from parallax.core.op_algebra import (
     Or,
     OrderBy,
 )
-from parallax.core.temporal_read import AXIS_ORDER, conjunction_terms
+from parallax.core.temporal_read import conjunction_terms
 
 __all__ = ["canonicalize", "hop_as_of_terms", "resolve_relationship"]
 
@@ -72,14 +89,19 @@ _EMPTY_PINS: Mapping[TemporalDimension, str] = MappingProxyType({})
 
 def canonicalize(
     op: Operation,
-    meta: Metamodel,
+    model: Metamodel,
+    entity: EntityMetadata,
     root_pins: Mapping[TemporalDimension, str] = _EMPTY_PINS,
 ) -> Operation:
     """Rewrite every navigation hop in ``op`` to carry its own per-hop as-of term.
 
     ``op`` is the operation **after** the root's own `inject_as_of` has already run
     (the engine/handle composition order: `inject_as_of` then `canonicalize` then
-    `compile_read`). ``root_pins`` is the root read's resolved per-axis instant —
+    `compile_read`). ``entity`` is the read's queried Entity: a hop's
+    ``Class.relationship`` reference names its class relative to the Entity the
+    reference is written against, which is ``entity`` at the top level and the
+    enclosing hop's own target inside a hop's interior. ``root_pins`` is the root
+    read's resolved per-axis instant —
     :func:`~parallax.core.temporal_read.resolve_pinned_instants` computed from the
     SAME raw operation `inject_as_of` consumed — mapping an axis to the specific past
     instant the root pinned; an axis absent from the map (undeclared by the root,
@@ -93,7 +115,7 @@ def canonicalize(
     """
     if not _contains_navigation(op):
         return op
-    return _walk(op, meta, root_pins)
+    return _walk(op, model, entity, root_pins)
 
 
 # --------------------------------------------------------------------------- #
@@ -131,47 +153,56 @@ def _contains_navigation(op: Operation) -> bool:
 # --------------------------------------------------------------------------- #
 # The rewrite walk (only run once navigation is known to exist somewhere).    #
 # --------------------------------------------------------------------------- #
-def _walk(op: Operation, meta: Metamodel, root_pins: Mapping[TemporalDimension, str]) -> Operation:
+def _walk(
+    op: Operation,
+    model: Metamodel,
+    entity: EntityMetadata,
+    root_pins: Mapping[TemporalDimension, str],
+) -> Operation:
     match op:
         case Navigate(rel=rel, op=inner):
-            return Navigate(rel=rel, op=_hop_inner(rel, inner, meta, root_pins))
+            return Navigate(rel=rel, op=_hop_inner(rel, inner, model, entity, root_pins))
         case Exists(rel=rel, op=inner):
-            return Exists(rel=rel, op=_hop_inner(rel, inner, meta, root_pins))
+            return Exists(rel=rel, op=_hop_inner(rel, inner, model, entity, root_pins))
         case NotExists(rel=rel, op=inner):
-            return NotExists(rel=rel, op=_hop_inner(rel, inner, meta, root_pins))
+            return NotExists(rel=rel, op=_hop_inner(rel, inner, model, entity, root_pins))
         case And(operands=operands):
-            return And(operands=tuple(_walk(operand, meta, root_pins) for operand in operands))
+            return And(
+                operands=tuple(_walk(operand, model, entity, root_pins) for operand in operands)
+            )
         case Or(operands=operands):
-            return Or(operands=tuple(_walk(operand, meta, root_pins) for operand in operands))
+            return Or(
+                operands=tuple(_walk(operand, model, entity, root_pins) for operand in operands)
+            )
         case Not(operand=operand):
-            return Not(operand=_walk(operand, meta, root_pins))
+            return Not(operand=_walk(operand, model, entity, root_pins))
         case Group(operand=operand):
-            return Group(operand=_walk(operand, meta, root_pins))
-        case Narrow(entity=entity, to=to, operand=operand):
-            return Narrow(entity=entity, to=to, operand=_walk(operand, meta, root_pins))
+            return Group(operand=_walk(operand, model, entity, root_pins))
+        case Narrow(entity=narrowed, to=to, operand=operand):
+            return Narrow(entity=narrowed, to=to, operand=_walk(operand, model, entity, root_pins))
         case OrderBy(operand=operand, keys=keys):
-            return OrderBy(operand=_walk(operand, meta, root_pins), keys=keys)
+            return OrderBy(operand=_walk(operand, model, entity, root_pins), keys=keys)
         case Limit(operand=operand, count=count):
-            return Limit(operand=_walk(operand, meta, root_pins), count=count)
+            return Limit(operand=_walk(operand, model, entity, root_pins), count=count)
         case Distinct(operand=operand):
-            return Distinct(operand=_walk(operand, meta, root_pins))
+            return Distinct(operand=_walk(operand, model, entity, root_pins))
         case AsOf(operand=operand, dimension=dimension, coordinate=coordinate):
             return AsOf(
-                operand=_walk(operand, meta, root_pins),
+                operand=_walk(operand, model, entity, root_pins),
                 dimension=dimension,
                 coordinate=coordinate,
             )
         case AsOfRange(operand=operand, dimension=dimension, start=start, end=end):
             return AsOfRange(
-                operand=_walk(operand, meta, root_pins),
+                operand=_walk(operand, model, entity, root_pins),
                 dimension=dimension,
                 start=start,
                 end=end,
             )
         case History(operand=operand, dimension=dimension):
-            return History(operand=_walk(operand, meta, root_pins), dimension=dimension)
+            return History(operand=_walk(operand, model, entity, root_pins), dimension=dimension)
         case DeepFetch(operand=operand, paths=paths):
-            return DeepFetch(operand=_walk(operand, meta, root_pins), paths=paths)
+            return DeepFetch(operand=_walk(operand, model, entity, root_pins), paths=paths)
         case _:
             # Every remaining node (All/NoneOp/Comparison/Between/NullCheck/
             # StringMatch/Membership/NestedComparison/NestedMembership/
@@ -182,52 +213,87 @@ def _walk(op: Operation, meta: Metamodel, root_pins: Mapping[TemporalDimension, 
 def _hop_inner(
     rel: str,
     inner: Operation | None,
-    meta: Metamodel,
+    model: Metamodel,
+    owner: EntityMetadata,
     root_pins: Mapping[TemporalDimension, str],
 ) -> Operation | None:
     """The hop's rewritten interior: its own navigation walked, then its own
-    per-hop as-of term (if temporal) appended after (m-navigate As-of propagation)."""
-    relationship = resolve_relationship(rel, meta)
-    target = meta.entity(relationship.join.target.entity)
-    walked = _walk(inner, meta, root_pins) if inner is not None else None
-    return _inject_hop_as_of(walked, target, meta, root_pins)
+    per-hop as-of term (if temporal) appended after (m-navigate As-of propagation).
+
+    The interior's own hop references resolve against this hop's TARGET, which is
+    the Entity their bare class names are written against.
+    """
+    declaration = resolve_relationship(rel, owner.identity, model)
+    target = _entity(model, _hop_target(declaration))
+    walked = _walk(inner, model, target, root_pins) if inner is not None else None
+    return _inject_hop_as_of(walked, target, model, root_pins)
 
 
-def resolve_relationship(rel_ref: str, meta: Metamodel) -> Relationship:
-    """Resolve a ``Class.relationship`` reference to its declared :class:`Relationship`.
+def _entity(model: Metamodel, identity: EntityIdentity) -> EntityMetadata:
+    entity = model.entity(identity)
+    if entity is None:  # pragma: no cover - guards an unvalidated operation
+        raise ValueError(f"{identity.canonical!r} names no declared entity")
+    return entity
+
+
+def resolve_relationship(
+    rel_ref: str, owner: EntityIdentity, model: Metamodel
+) -> RelationshipDeclaration:
+    """Resolve a ``Class.relationship`` reference to its identity-resolved Declaration.
+
+    The reference's class name is bare, so it resolves in ``owner``'s own namespace
+    like any other relative model reference; ``owner`` is the Entity the reference
+    is written against, never a model-wide search over declared names.
 
     Exported so `parallax.core.deep_fetch` (the sole downstream `m-navigate`
     dependent) resolves each deep-fetch path
     segment's relationship through the SAME lookup this module's own hop
     canonicalization uses, rather than re-deriving it.
     """
-    class_name, _, member_name = rel_ref.rpartition(".")
-    try:
-        return meta.relationship(class_name, member_name)
-    except KeyError as exc:
-        # Unreachable for a validated operation (`m-op-algebra` validates every
-        # relationship reference before canonicalization).
-        raise ValueError(  # pragma: no cover - malformed / unvalidated operation
-            f"{rel_ref!r} names no declared relationship on {class_name}"
-        ) from exc
+    class_name, dot, member_name = rel_ref.rpartition(".")
+    if not dot:  # pragma: no cover - guards an unvalidated operation
+        raise ValueError(f"relationship reference {rel_ref!r} needs Class.relationship")
+    declaring = model.entity(resolve_entity_reference(owner, RelativeEntityReference(class_name)))
+    declaration = None if declaring is None else declaring.relationship(member_name)
+    if declaration is None:
+        raise ValueError(f"{rel_ref!r} names no declared relationship on {class_name}")
+    return declaration
 
 
-def _temporal_declarer(meta: Metamodel, entity: Entity) -> Entity:
-    """The entity that actually DECLARES ``entity``'s as-of axes.
+def _hop_target(declaration: RelationshipDeclaration) -> EntityIdentity:
+    """The Entity one hop over ``declaration`` reaches.
 
-    A plain entity declares its own; an inheritance participant's temporal axes are
-    declared on the family ROOT and inherited by every concrete subtype
-    (`m-inheritance`), so a relationship target that names an abstract position (or
-    even a concrete leaf) must resolve to the root to find them — the shared
-    `inheritance.declaring_entity` resolution (also reused by `m-snapshot-read`'s
-    identity/pin-edge resolution and the conformance provisioning DDL).
+    A defining declaration names its target in its own join. A reverse
+    declaration repeats none of its peer's mapping facts, so the Entity it
+    reaches is simply the one that declares that peer — no peer lookup and no
+    paired direction are needed to say so.
     """
-    return inheritance.declaring_entity(meta, entity)
+    match declaration:
+        case DefiningRelationshipDeclaration(join=join):
+            return join.target.entity
+        case ReverseRelationshipDeclaration(reverse_of=reverse_of):
+            return reverse_of.source_entity
+
+
+def _temporal_declarer(model: Metamodel, entity: EntityMetadata) -> EntityMetadata:
+    """The Entity that actually DECLARES ``entity``'s as-of axes.
+
+    A standalone Entity declares its own; an inheritance participant's temporal
+    axes are declared on the family ROOT and inherited by every concrete subtype
+    (`m-inheritance`), so a relationship target naming an abstract position (or
+    even a concrete leaf) must resolve to the root to find them. The Inheritance
+    Facet answers that for both shapes at once — a standalone Entity is its own
+    root — so there is no ancestry walk and no second code path here.
+    """
+    view = inheritance.view(model).entity(entity.identity)
+    if view is None:  # pragma: no cover - the facet covers every accepted Entity
+        raise ValueError(f"{entity.identity.canonical!r} names no declared entity")
+    return _entity(model, view.root)
 
 
 def hop_as_of_terms(
-    target: Entity,
-    meta: Metamodel,
+    target: EntityMetadata,
+    model: Metamodel,
     root_pins: Mapping[TemporalDimension, str],
 ) -> tuple[Operation, ...]:
     """The per-axis as-of term(s) for a hop's target Entity (m-navigate
@@ -242,13 +308,16 @@ def hop_as_of_terms(
     own interior is rewritten by :func:`_inject_hop_as_of` below (which now
     builds on this same term derivation).
     """
-    declarer = _temporal_declarer(meta, target)
-    if not declarer.as_of_axes:
+    declarer = _temporal_declarer(model, target)
+    axes = declarer.declared_as_of_axes
+    if not axes:
         return ()
     terms: list[Operation] = []
-    for axis in sorted(declarer.as_of_axes, key=lambda item: AXIS_ORDER[item.dimension]):
-        start_ref = f"{declarer.name}.{axis.start_attribute}"
-        end_ref = f"{declarer.name}.{axis.end_attribute}"
+    # A Temporal Dimension's member value IS its canonical axis rank, so
+    # Valid-Time-first needs no separate ordering table.
+    for axis in sorted(axes, key=lambda item: item.dimension.value):
+        start_ref = f"{declarer.identity.name}.{axis.start_attribute.name}"
+        end_ref = f"{declarer.identity.name}.{axis.end_attribute.name}"
         instant = root_pins.get(axis.dimension)
         if instant is None:
             terms.append(Comparison(op="eq", attr=end_ref, value=INFINITY_LITERAL))
@@ -260,8 +329,8 @@ def hop_as_of_terms(
 
 def _inject_hop_as_of(
     inner: Operation | None,
-    target: Entity,
-    meta: Metamodel,
+    target: EntityMetadata,
+    model: Metamodel,
     root_pins: Mapping[TemporalDimension, str],
 ) -> Operation | None:
     """Append the target Entity's own per-axis as-of term(s) after ``inner``.
@@ -276,7 +345,7 @@ def _inject_hop_as_of(
     non-temporal (or axis-undeclared) root simply never populates ``root_pins`` for
     that axis.
     """
-    terms = hop_as_of_terms(target, meta, root_pins)
+    terms = hop_as_of_terms(target, model, root_pins)
     if not terms:
         return inner
     if inner is None:

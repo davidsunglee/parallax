@@ -12,10 +12,11 @@ assertion here is over the returned `FetchPlan` / `FetchLevel` shape alone.
 from __future__ import annotations
 
 import pytest
+from _sql_gen_support import model as accepted_model
+from _sql_gen_support import target as entity_of
 
-from parallax.conformance import models
 from parallax.core import deep_fetch
-from parallax.core.descriptor import Metamodel
+from parallax.core.metamodel import Metamodel
 from parallax.core.op_algebra import (
     All,
     And,
@@ -31,11 +32,10 @@ from parallax.core.op_algebra import (
 
 pytestmark = pytest.mark.unit
 
-_MODELS = models.load_models()
-ORDERS = _MODELS["orders"]
-ANIMAL = _MODELS["animal"]
-POLICY = _MODELS["policy"]
-RATE = _MODELS["rate"]
+ORDERS = accepted_model("orders")
+ANIMAL = accepted_model("animal")
+POLICY = accepted_model("policy")
+RATE = accepted_model("rate")
 
 
 def _seg(rel: str, narrow: tuple[str, ...] = ()) -> PathSegment:
@@ -43,13 +43,13 @@ def _seg(rel: str, narrow: tuple[str, ...] = ()) -> PathSegment:
 
 
 def _plan(
-    meta: Metamodel,
+    model: Metamodel,
     target: str,
     paths: tuple[tuple[PathSegment, ...], ...],
     operand: Operation | None = None,
 ) -> deep_fetch.FetchPlan:
     op = DeepFetch(operand=operand if operand is not None else All(), paths=paths)
-    return deep_fetch.plan(target, op, meta)
+    return deep_fetch.plan(entity_of(model, target), op, model)
 
 
 # --------------------------------------------------------------------------- #
@@ -127,6 +127,14 @@ def test_narrowed_view_key_is_alphabetical_no_spaces() -> None:
     assert plan.levels[0].attach_key == "pets[Cat,Dog]"
 
 
+def test_a_narrow_naming_an_undeclared_subtype_is_rejected() -> None:
+    # A narrow denotes ONE position, so a member the model does not declare (or
+    # one belonging to another family) resolves to no position at all rather
+    # than silently contributing nothing to the union.
+    with pytest.raises(deep_fetch.DeepFetchError, match="does not declare"):
+        _plan(ANIMAL, "Person", ((_seg("Person.pets", ("Ghost",)),),))
+
+
 # --------------------------------------------------------------------------- #
 # `1 + L` accounting: L counts distinct (post-dedup) hops.                    #
 # --------------------------------------------------------------------------- #
@@ -192,7 +200,7 @@ def test_child_operation_has_no_order_by_when_relationship_declares_none() -> No
 def test_child_operation_appends_propagated_as_of_after_the_in_membership() -> None:
     # every axis defaults to latest (the root operand pins none explicitly)
     op = DeepFetch(operand=All(), paths=((_seg("Policy.coverages"),),))
-    plan = deep_fetch.plan("Policy", op, POLICY)
+    plan = deep_fetch.plan(entity_of(POLICY, "Policy"), op, POLICY)
     _target, child_op = plan.levels[0].child_operation([1, 2])
     assert isinstance(child_op, And)
     membership, *as_of_terms = child_op.operands
@@ -284,7 +292,7 @@ def test_zero_paths_plans_zero_levels() -> None:
 def test_root_operation_is_canonicalized_even_with_zero_paths() -> None:
     literal = Comparison(op="eq", attr="Order.id", value=1)
     op = DeepFetch(operand=literal, paths=())
-    plan = deep_fetch.plan("Order", op, ORDERS)
+    plan = deep_fetch.plan(entity_of(ORDERS, "Order"), op, ORDERS)
     assert plan.root_operation == literal
 
 
@@ -293,7 +301,7 @@ def test_plan_accepts_a_non_deep_fetch_operation_with_zero_levels() -> None:
     # the degenerate "materialize with no relationships" shape a plain snapshot
     # find or a scenario's own `find` step needs.
     literal = Comparison(op="eq", attr="Order.id", value=1)
-    plan = deep_fetch.plan("Order", literal, ORDERS)
+    plan = deep_fetch.plan(entity_of(ORDERS, "Order"), literal, ORDERS)
     assert plan.levels == ()
     assert plan.root_operation == literal
 
@@ -304,7 +312,7 @@ def test_plan_accepts_a_non_deep_fetch_operation_with_zero_levels() -> None:
 # pinned as-of predicate even though `DepositRate` carries no local axes.      #
 # --------------------------------------------------------------------------- #
 def test_concrete_target_root_operation_defaults_every_axis_to_latest() -> None:
-    plan = deep_fetch.plan("DepositRate", All(), RATE)
+    plan = deep_fetch.plan(entity_of(RATE, "DepositRate"), All(), RATE)
     # Valid-Time-first (m-temporal-read), both defaulted to the current
     # milestone since neither axis is pinned: `thru_z = infinity`, `out_z = infinity`.
     assert plan.root_operation == And(
@@ -317,7 +325,7 @@ def test_concrete_target_root_operation_defaults_every_axis_to_latest() -> None:
 
 def test_concrete_target_root_operation_injects_a_pinned_axis() -> None:
     op = AsOf(operand=All(), dimension="transactionTime", coordinate="2024-01-15T00:00:00+00:00")
-    plan = deep_fetch.plan("DepositRate", op, RATE)
+    plan = deep_fetch.plan(entity_of(RATE, "DepositRate"), op, RATE)
     assert plan.root_operation == And(
         operands=(
             # Valid Time defaults to latest (never pinned by this operation)
