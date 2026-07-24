@@ -1,11 +1,13 @@
 """``parallax.snapshot.handle._family`` — the shared family-descriptor leaf.
 
 Every question of the form "what shape does this entity's FAMILY declare?"
-answers here: the temporal axes (:func:`tx_time_axis` / :func:`valid_time_axis`),
-the optimistic-lock version attribute (:func:`version_attribute`), and the
-writable member-to-column map (:func:`members`), plus the small
-``Class.member`` reference split (:func:`assignment_member`) that resolves an
-authored assignment against those members.
+answers here off the accepted Metamodel and its facets: the declaring root
+(:func:`declaring`), the temporal axes (:func:`tx_time_axis` /
+:func:`valid_time_axis`) and their physical columns (:func:`axis_columns`), the
+optimistic-lock version attribute (:func:`version_attribute`), and the writable
+member-to-column map (:func:`members`), plus the small ``Class.member`` reference
+split (:func:`assignment_member`) that resolves an authored assignment against
+those members.
 
 This is the package's bottom leaf: it imports no other handle module, so every
 write-side module (`_keyed_sql`, `_write_lowering`, `_write_inputs`,
@@ -25,12 +27,22 @@ Mirrors :mod:`parallax.core.entity._annotations`.
 
 from __future__ import annotations
 
-from parallax.core import inheritance
-from parallax.core.descriptor import AsOfAxisMetadata, Attribute, Entity, Metamodel
+from parallax.core import inheritance, opt_lock
+from parallax.core.metamodel import (
+    AsOfAxisMetadata,
+    AttributeMetadata,
+    EntityMetadata,
+    Metamodel,
+    PrimaryKey,
+    TemporalDimension,
+)
 
 __all__ = [
     "assignment_member",
     "axis_columns",
+    "declaring",
+    "entity_of",
+    "family_primary_key",
     "members",
     "tx_time_axis",
     "valid_time_axis",
@@ -38,29 +50,84 @@ __all__ = [
 ]
 
 
-def tx_time_axis(declaring: Entity) -> AsOfAxisMetadata:
-    return next(axis for axis in declaring.as_of_axes if axis.dimension == "transactionTime")
+def family_primary_key(model: Metamodel, entity: EntityMetadata) -> tuple[AttributeMetadata, ...]:
+    """``entity``'s FAMILY-EFFECTIVE primary key (`m-inheritance` "Inherited
+    members"): the primary-key Attributes of its applicable-member chain, so an
+    inherited key resolves at the ancestor that declares it."""
+    view = inheritance.view(model).entity(entity.identity)
+    if view is None:  # pragma: no cover - the facet covers every accepted Entity
+        return ()
+    return tuple(
+        attribute
+        for attribute in view.applicable_attributes
+        if isinstance(attribute.primary_key, PrimaryKey)
+    )
 
 
-def valid_time_axis(declaring: Entity) -> AsOfAxisMetadata:
-    return next(axis for axis in declaring.as_of_axes if axis.dimension == "validTime")
+def entity_of(model: Metamodel, name: str) -> EntityMetadata:
+    """The accepted Metadata a write's bare-or-canonical target spelling names.
+
+    The write-lowering group resolves within the accepted model itself (it holds
+    no descriptor record graph and no entity-scope seam): a write target is an
+    unambiguous declared name, so a canonical-or-bare Identity match is exact.
+    Raises :class:`KeyError` when the model declares no such Entity, mirroring the
+    record graph's own lookup."""
+    for entity in model.entities:
+        if name in (entity.identity.canonical, entity.identity.name):
+            return entity
+    raise KeyError(name)  # pragma: no cover - a write target always names a declared Entity
 
 
-def axis_columns(declaring: Entity, axis: AsOfAxisMetadata) -> tuple[str, str]:
-    by_name = {attribute.name: attribute.column for attribute in declaring.attributes}
-    return by_name[axis.start_attribute], by_name[axis.end_attribute]
+def declaring(model: Metamodel, entity: EntityMetadata) -> EntityMetadata:
+    """The accepted Metadata that DECLARES ``entity``'s family facts — its family
+    root, itself for a standalone Entity.
+
+    Temporality, the version column, and the physical primary key are family-wide
+    and root-owned (`m-inheritance` "Inherited members"), so every write-side
+    family fact resolves through this rather than through a possibly-empty local
+    declaration."""
+    position = inheritance.view(model).entity(entity.identity)
+    if position is None:  # pragma: no cover - the facet covers every accepted Entity
+        return entity
+    root = model.entity(position.root)
+    return entity if root is None else root
 
 
-def version_attribute(declaring: Entity) -> Attribute | None:
-    """``declaring``'s own ``optimisticLocking`` version attribute, if any.
+def tx_time_axis(declaring_entity: EntityMetadata) -> AsOfAxisMetadata:
+    axis = declaring_entity.as_of_axis(TemporalDimension.TRANSACTION_TIME)
+    if axis is None:  # pragma: no cover - callers guard on a temporal declaring Entity
+        raise ValueError(f"{declaring_entity.identity.canonical}: no Transaction-Time axis")
+    return axis
 
-    ``declaring`` is already the FAMILY-EFFECTIVE declaring entity (the root for
-    an inheritance participant, `inheritance.declaring_entity` — the version
-    column is family-wide metadata declared only there, `m-opt-lock` "The
-    version column"; ADR 0027), so a plain local scan of its own attributes is
-    correct without a further family walk.
-    """
-    return next((attr for attr in declaring.attributes if attr.optimistic_locking), None)
+
+def valid_time_axis(declaring_entity: EntityMetadata) -> AsOfAxisMetadata:
+    axis = declaring_entity.as_of_axis(TemporalDimension.VALID_TIME)
+    if axis is None:  # pragma: no cover - callers guard on a Bitemporal declaring Entity
+        raise ValueError(f"{declaring_entity.identity.canonical}: no Valid-Time axis")
+    return axis
+
+
+def axis_columns(declaring_entity: EntityMetadata, axis: AsOfAxisMetadata) -> tuple[str, str]:
+    start = declaring_entity.attribute(axis.start_attribute.name)
+    end = declaring_entity.attribute(axis.end_attribute.name)
+    if start is None or end is None:  # pragma: no cover - an accepted axis names declared columns
+        raise ValueError(f"{declaring_entity.identity.canonical}: axis names an undeclared column")
+    return start.storage.name, end.storage.name
+
+
+def version_attribute(
+    model: Metamodel, declaring_entity: EntityMetadata
+) -> AttributeMetadata | None:
+    """``declaring_entity``'s family version attribute, if any.
+
+    The Optimistic Lock Facet names the version column by Identity for a family
+    whose root declares one (`m-opt-lock` "The version column"; ADR 0027), and it
+    is family-uniform, so resolving through the declaring root's own local lookup
+    recovers the accepted Attribute Metadata."""
+    key = opt_lock.view(model).key(declaring_entity.identity)
+    if not isinstance(key, opt_lock.ExplicitVersion):
+        return None
+    return declaring_entity.attribute(key.attribute.name)
 
 
 def assignment_member(attr: str) -> str:
@@ -69,13 +136,17 @@ def assignment_member(attr: str) -> str:
     return member
 
 
-def members(meta: Metamodel, entity: Entity) -> dict[str, tuple[str, bool]]:
+def members(model: Metamodel, entity: EntityMetadata) -> dict[str, tuple[str, bool]]:
     """Map each writable member name to `(column, is_value_object)`, FAMILY-WIDE
-    (`inheritance.family_attributes` / `.superset_value_objects` — both already
-    degrade to ``entity``'s own declarations for a non-participant)."""
+    (the Inheritance Facet's applicable-member view, which already degrades to
+    ``entity``'s own declarations for a non-participant)."""
+    view = inheritance.view(model).entity(entity.identity)
+    if view is None:  # pragma: no cover - the facet covers every accepted Entity
+        return {}
     resolved: dict[str, tuple[str, bool]] = {
-        attr.name: (attr.column, False) for attr in inheritance.family_attributes(meta, entity)
+        attribute.identity.name: (attribute.storage.name, False)
+        for attribute in view.applicable_attributes
     }
-    for value_object in inheritance.superset_value_objects(meta, (entity.name,)):
-        resolved[value_object.name] = (value_object.storage_column, True)
+    for value_object in view.applicable_value_objects:
+        resolved[value_object.identity.path[-1]] = (value_object.storage.name, True)
     return resolved

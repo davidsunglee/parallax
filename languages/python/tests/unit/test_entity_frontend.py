@@ -38,11 +38,11 @@ from parallax.core.descriptor import (
 from parallax.core.entity import (
     AttributeRef,
     RelationshipRef,
-    ScopedMetamodel,
     camel_to_snake,
     descriptor_document,
     entity_record_of,
     metamodel,
+    registry_of,
     snake_to_camel,
 )
 
@@ -82,19 +82,11 @@ def test_camel_to_snake_default_table(entity_name: str, table: str) -> None:
 
 def test_metamodel_assembles_related_classes() -> None:
     assembled = metamodel([mm.Person, mm.Passport])
-    assert tuple(e.name for e in assembled.entities) == ("Person", "Passport")
-    assert isinstance(assembled, ScopedMetamodel)
-    assert assembled.registry is not None
-
-
-def test_metamodel_of_no_classes_stays_unscoped() -> None:
-    # No class/registry context at all
-    # -- the one documented case the untagged, UNSCOPED shape legitimately
-    # survives in (never a silent guess at a scope with nothing to derive it
-    # from).
-    assembled = metamodel([])
-    assert not isinstance(assembled, ScopedMetamodel)
-    assert assembled.entities == ()
+    # The accepted model enumerates in canonical identity order.
+    assert tuple(e.identity.name for e in assembled.entities) == ("Passport", "Person")
+    # The assembled model is scoped to a registry that resolves the given classes
+    # back to themselves (auto-scoping, so `db.find` resolves through it).
+    assert registry_of(assembled).resolve("Person") is mm.Person
 
 
 def test_metamodel_rejects_a_non_entity_class() -> None:

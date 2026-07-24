@@ -24,8 +24,8 @@ from typing import Final
 
 from parallax.core import bitemp_write, inheritance, opt_lock, txtime_write
 from parallax.core.base import INFINITY_LITERAL
-from parallax.core.descriptor import Entity, Metamodel
 from parallax.core.dialect import Dialect
+from parallax.core.metamodel import EntityMetadata, Metamodel, TemporalDimension
 from parallax.core.sql_gen import Statement
 from parallax.core.unit_work import (
     Concurrency,
@@ -34,9 +34,10 @@ from parallax.core.unit_work import (
     PlannedWrite,
     PredicateWrite,
 )
-from parallax.snapshot.handle._accepted import accepted_target
 from parallax.snapshot.handle._family import (
     axis_columns,
+    declaring,
+    entity_of,
     tx_time_axis,
     valid_time_axis,
     version_attribute,
@@ -62,6 +63,20 @@ __all__ = ["lower_temporal_close", "lower_write"]
 _NON_TEMPORAL_VERBS: Final[frozenset[str]] = frozenset({"insert", "update", "delete"})
 
 
+def _effective_table(meta: Metamodel, entity: EntityMetadata) -> str:
+    view = inheritance.view(meta).entity(entity.identity)
+    container = None if view is None else view.container
+    if container is None:
+        raise WriteLoweringError(
+            f"{entity.identity.name!r}: temporal write target has no effective table"
+        )
+    return container.name
+
+
+def _is_bitemporal(declaring_entity: EntityMetadata) -> bool:
+    return declaring_entity.as_of_axis(TemporalDimension.VALID_TIME) is not None
+
+
 def lower_write(
     planned: PlannedWrite,
     meta: Metamodel,
@@ -82,12 +97,12 @@ def lower_write(
     forms.
 
     Dispatches on the entity's FAMILY-EFFECTIVE temporal classification (ADR 0026:
-    an inheritance participant declares its as-of axes on the root alone, so
-    `entity.is_temporal` — a bare, non-flattening LOCAL view — would silently miss a
-    temporal-family concrete's own write). A temporal entity's write composes
+    an inheritance participant declares its as-of axes on the root alone, so a
+    bare, non-flattening LOCAL view would silently miss a temporal-family concrete's
+    own write). A temporal entity's write composes
     `parallax.core.txtime_write` / `parallax.core.bitemp_write`'s neutral milestone
-    plan with the `m-opt-lock` gate policy and this seam's existing descriptor-driven
-    column/tag machinery (reused unchanged for every chained INSERT — value objects,
+    plan with the `m-opt-lock` gate policy and this seam's existing column/tag
+    machinery (reused unchanged for every chained INSERT — value objects,
     inheritance tag derivation, pk-gen markers all compose exactly as a non-temporal
     insert's do, since a chained row is structurally an ordinary full-row insert). A
     non-temporal entity's write may be single-row or a
@@ -112,26 +127,26 @@ def lower_write(
     instruction = planned.instruction
     if isinstance(instruction, PredicateWrite):
         return [LoweredStatement(lower_predicate_write(instruction, meta, dialect))]
-    entity = meta.entity(instruction.entity)
+    entity = entity_of(meta, instruction.entity)
     # Temporal classification MUST be the family-EFFECTIVE one (ADR 0026) — see the
     # docstring above.
-    declaring = inheritance.declaring_entity(meta, entity)
-    if declaring.is_temporal:
+    declaring_entity = declaring(meta, entity)
+    if declaring_entity.declared_as_of_axes:
         if len(instruction.rows) != 1:
             raise WriteLoweringError(
-                f"multi-row temporal {instruction.mutation!r} on {entity.name!r} "
+                f"multi-row temporal {instruction.mutation!r} on {entity.identity.name!r} "
                 f"({len(instruction.rows)} rows): a temporal keyed write lowers one row at a "
                 "time (m-txtime-write / m-bitemp-write) — the set-based batch collapse never "
                 "applies to a temporal entity's own milestone chain (m-batch-write)"
             )
         if tx_instant is None:
             raise WriteLoweringError(
-                f"temporal write on {entity.name!r}: no transaction instant supplied "
+                f"temporal write on {entity.identity.name!r}: no transaction instant supplied "
                 "(FlushPlan.tx_instant) — a temporal write cannot lower without one"
             )
         return _lower_temporal_write(
             entity,
-            declaring,
+            declaring_entity,
             instruction,
             dialect,
             meta,
@@ -141,30 +156,24 @@ def lower_write(
         )
     if instruction.mutation not in _NON_TEMPORAL_VERBS:
         raise WriteLoweringError(
-            f"{instruction.mutation!r} is a temporal milestone verb, and {entity.name!r} "
+            f"{instruction.mutation!r} is a temporal milestone verb, and {entity.identity.name!r} "
             "declares no temporal dimension — a milestone verb never applies to a "
             "non-temporal entity (m-txtime-write / m-bitemp-write)"
         )
-    version_attr = version_attribute(declaring)
+    version_attr = version_attribute(meta, declaring_entity)
     if instruction.mutation == "insert":
         if len(instruction.rows) > 1:
             return [
                 LoweredStatement(
-                    lower_multi_insert(entity, instruction, dialect, meta, declaring, version_attr)
+                    lower_multi_insert(entity, instruction, dialect, meta, version_attr)
                 )
             ]
-        return [
-            LoweredStatement(
-                lower_insert(entity, instruction, dialect, meta, declaring, version_attr)
-            )
-        ]
+        return [LoweredStatement(lower_insert(entity, instruction, dialect, meta, version_attr))]
     if instruction.mutation == "update":
         if len(instruction.rows) > 1:
             return [
                 LoweredStatement(
-                    lower_batched_update(
-                        entity, instruction, dialect, meta, declaring, version_attr
-                    )
+                    lower_batched_update(entity, instruction, dialect, meta, version_attr)
                 )
             ]
         return [
@@ -174,7 +183,6 @@ def lower_write(
                     instruction,
                     dialect,
                     meta,
-                    declaring,
                     version_attr,
                     planned.observation,
                     concurrency,
@@ -184,15 +192,11 @@ def lower_write(
         ]
     if len(instruction.rows) > 1:
         return [
-            LoweredStatement(
-                lower_multi_delete(entity, instruction, dialect, meta, declaring, version_attr)
-            )
+            LoweredStatement(lower_multi_delete(entity, instruction, dialect, meta, version_attr))
         ]
     return [
         LoweredStatement(
-            lower_delete(
-                entity, instruction, dialect, meta, declaring, version_attr, planned.observation
-            ),
+            lower_delete(entity, instruction, dialect, meta, version_attr, planned.observation),
             expected_affected=planned.expected_affected,
         )
     ]
@@ -210,8 +214,8 @@ def lower_write(
 # exactly as they do for an ordinary insert, since a chained row IS one).      #
 # --------------------------------------------------------------------------- #
 def _lower_temporal_write(
-    entity: Entity,
-    declaring: Entity,
+    entity: EntityMetadata,
+    declaring_entity: EntityMetadata,
     instruction: KeyedWrite,
     dialect: Dialect,
     meta: Metamodel,
@@ -221,10 +225,10 @@ def _lower_temporal_write(
 ) -> list[LoweredStatement]:
     # The milestone arithmetic reads the family's axes through the Temporal
     # Facet, so it takes the write's own target position rather than the
-    # declaring one this seam resolved for its record-side machinery.
-    model, target = accepted_target(meta, instruction.entity)
-    plan_fn = bitemp_write.plan if declaring.temporal == "bitemporal" else txtime_write.plan
-    milestone_plan = plan_fn(instruction, model, target, tx_instant, observation)
+    # declaring one this seam resolves for its column machinery.
+    target = entity_of(meta, instruction.entity)
+    plan_fn = bitemp_write.plan if _is_bitemporal(declaring_entity) else txtime_write.plan
+    milestone_plan = plan_fn(instruction, meta, target, tx_instant, observation)
     if observation is not None:
         # The REAL licensing check (`m-opt-lock` "Locking mode additionally
         # requires that the observation be of the current milestone"): every
@@ -235,27 +239,25 @@ def _lower_temporal_write(
         # edge-pinned raises `HistoricalObservationError` here.
         opt_lock.check_locking_license(concurrency, latest_pinned=observation.latest_pinned)
     gated = opt_lock.gates(concurrency)
-    version_attr = version_attribute(declaring)  # always None for a temporal entity
+    version_attr = version_attribute(meta, declaring_entity)  # always None for a temporal entity
     statements: list[LoweredStatement] = []
     for step in milestone_plan.steps:
         if isinstance(step, txtime_write.MilestoneClose):
             statements.append(
-                _render_close(step, entity, declaring, dialect, meta, tx_instant, gated)
+                _render_close(step, entity, declaring_entity, dialect, meta, tx_instant, gated)
             )
         else:
-            synthetic = KeyedWrite(mutation="insert", entity=entity.name, rows=(step.row,))
+            synthetic = KeyedWrite(mutation="insert", entity=entity.identity.name, rows=(step.row,))
             statements.append(
-                LoweredStatement(
-                    lower_insert(entity, synthetic, dialect, meta, declaring, version_attr)
-                )
+                LoweredStatement(lower_insert(entity, synthetic, dialect, meta, version_attr))
             )
     return statements
 
 
 def _render_close(
     step: txtime_write.MilestoneClose,
-    entity: Entity,
-    declaring: Entity,
+    entity: EntityMetadata,
+    declaring_entity: EntityMetadata,
     dialect: Dialect,
     meta: Metamodel,
     tx_instant: str,
@@ -274,22 +276,20 @@ def _render_close(
     them — gating is concurrency-driven, never data-driven (`m-bitemp-write`
     "Locking-mode closes are UNGATED").
     """
-    tx_axis = tx_time_axis(declaring)
-    tx_start_column, tx_end_column = axis_columns(declaring, tx_axis)
-    where_sql, key_binds = key_predicate(meta, entity, step.identity, dialect, declaring)
+    tx_axis = tx_time_axis(declaring_entity)
+    tx_start_column, tx_end_column = axis_columns(declaring_entity, tx_axis)
+    where_sql, key_binds = key_predicate(meta, entity, step.identity, dialect)
     where_sql = f"{where_sql} and {dialect.quote(tx_end_column)} = ?"
     key_binds = (*key_binds, INFINITY_LITERAL)
     if gated and step.gate_valid_start is not None:
-        valid_axis = valid_time_axis(declaring)
-        valid_start_column, _valid_end_column = axis_columns(declaring, valid_axis)
+        valid_axis = valid_time_axis(declaring_entity)
+        valid_start_column, _valid_end_column = axis_columns(declaring_entity, valid_axis)
         where_sql = f"{where_sql} and {dialect.quote(valid_start_column)} = ?"
         key_binds = (*key_binds, step.gate_valid_start)
     if gated and step.gate_tx_start is not None:
         where_sql = f"{where_sql} and {dialect.quote(tx_start_column)} = ?"
         key_binds = (*key_binds, step.gate_tx_start)
-    table = inheritance.effective_table(meta, entity)
-    if table is None:
-        raise WriteLoweringError(f"{entity.name!r}: temporal write target has no effective table")
+    table = _effective_table(meta, entity)
     statement = Statement(
         f"update {table} set {dialect.quote(tx_end_column)} = ? where {where_sql}",
         (tx_instant, *key_binds),
@@ -323,8 +323,8 @@ def lower_temporal_close(
     the write row's own ``valid_start``) — never a shadow-tracker lookup, a
     conflict case tests a KNOWN stale-or-fresh value.
     """
-    entity = meta.entity(entity_name)
-    declaring = inheritance.declaring_entity(meta, entity)
+    entity = entity_of(meta, entity_name)
+    declaring_entity = declaring(meta, entity)
     if observed_tx_start is not None or observed_valid_start is not None:
         opt_lock.check_locking_license(concurrency, latest_pinned=True)
     step = txtime_write.MilestoneClose(
@@ -333,4 +333,4 @@ def lower_temporal_close(
         gate_valid_start=observed_valid_start,
     )
     gated = opt_lock.gates(concurrency)
-    return _render_close(step, entity, declaring, dialect, meta, tx_instant, gated)
+    return _render_close(step, entity, declaring_entity, dialect, meta, tx_instant, gated)

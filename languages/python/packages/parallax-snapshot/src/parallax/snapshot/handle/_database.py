@@ -34,10 +34,16 @@ from typing import Any
 from parallax.core import batch_write, opt_lock
 from parallax.core.auto_retry import run_with_retry
 from parallax.core.db_port import DbPort
-from parallax.core.descriptor import Metamodel
 from parallax.core.dialect import POSTGRES, Dialect
+
+# Sibling implementation modules. None of these names carries a leading
+# underscore, precisely because it crosses a module boundary: privacy is carried
+# by the private MODULE names and by the package's frozen `__all__`, not by
+# per-name underscores, which under pyright strict would make every intra-package
+# import a reportPrivateUsage error.
+from parallax.core.entity import MetamodelSource, accepted_metamodel, resolve_entity_metadata
 from parallax.core.entity import Statement as EntityStatement
-from parallax.core.metamodel import Metamodel as AcceptedMetamodel
+from parallax.core.metamodel import Metamodel
 from parallax.core.unit_work import (
     Clock,
     Concurrency,
@@ -54,13 +60,6 @@ from parallax.core.unit_work import (
     object_key,
     run_unit_of_work,
 )
-
-# Sibling implementation modules. None of these names carries a leading
-# underscore, precisely because it crosses a module boundary: privacy is carried
-# by the private MODULE names and by the package's frozen `__all__`, not by
-# per-name underscores, which under pyright strict would make every intra-package
-# import a reportPrivateUsage error.
-from parallax.snapshot.handle._accepted import accepted_model, accepted_target
 from parallax.snapshot.handle._read import (
     Snapshot,
     declaring_metadata,
@@ -129,13 +128,16 @@ class Database:
     def __init__(
         self,
         port: DbPort,
-        meta: Metamodel,
+        meta: MetamodelSource,
         *,
         dialect: Dialect = POSTGRES,
         clock: Clock | None = None,
     ) -> None:
         self._port = port
-        self._meta = meta
+        # Normalize whatever the composition root handed us to an accepted model:
+        # a class-authored `metamodel(...)` result passes through, a bare
+        # descriptor-ingested record graph is formed and wrapped here.
+        self._meta = accepted_metamodel(meta)
         self._dialect = dialect
         self._clock: Clock = clock if clock is not None else SystemClock()
 
@@ -143,7 +145,7 @@ class Database:
     def connect(
         cls,
         adapter: DbPort,
-        meta: Metamodel,
+        meta: MetamodelSource,
         *,
         dialect: Dialect = POSTGRES,
         clock: Clock | None = None,
@@ -169,8 +171,9 @@ class Database:
         """
         target = statement.target
         op = statement.operation()
-        read_model, read_target = accepted_target(self._meta, target)
-        pin = deep_fetch_statement_pin(op, declaring_metadata(read_model, read_target))
+        read_target = resolve_entity_metadata(self._meta, target)
+        assert read_target is not None  # a statement's target is always declared
+        pin = deep_fetch_statement_pin(op, declaring_metadata(self._meta, read_target))
         if is_milestone_set_op(op):
             history_result = find_history(op, self._meta, self._dialect, target, self._port)
             return snapshot_from_history_result(history_result, target, self._meta)
@@ -231,10 +234,9 @@ class Database:
             ),
         )
 
-        # The unit of work plans against the accepted model, so this demarcation
-        # forms the record graph once per outermost transaction rather than per
-        # flush; a joining call inherits the active unit of work's own.
-        model = accepted_model(self._meta)
+        # The unit of work plans against the accepted model the ``Database`` already
+        # holds; a joining call inherits the active unit of work's own.
+        model = self._meta
 
         def attempt() -> T:
             def in_txn(conn: DbPort) -> T:
@@ -250,9 +252,7 @@ class Database:
                     settings=TransactionSettings(concurrency=options.concurrency),
                     clock=self._clock,
                     meta=model,
-                    flush_executor=_flush_executor(
-                        conn, self._meta, model, self._dialect, options.concurrency
-                    ),
+                    flush_executor=_flush_executor(conn, model, self._dialect, options.concurrency),
                     # The injected `m-batch-write` collapse vocabulary —
                     # `parallax.snapshot.handle` is the
                     # sole module cleared to import both `batch_write` and
@@ -334,8 +334,7 @@ def _refuse_conflict(name: str, explicit: object | None, active_value: object) -
 
 def _flush_executor(
     conn: DbPort,
-    meta: Metamodel,
-    model: AcceptedMetamodel,
+    model: Metamodel,
     dialect: Dialect,
     concurrency: Concurrency,
 ) -> FlushExecutor:
@@ -360,7 +359,7 @@ def _flush_executor(
 
     def execute(plan: FlushPlan) -> None:
         for planned in plan.writes:
-            for lowered in lower_write(planned, meta, dialect, concurrency, plan.tx_instant):
+            for lowered in lower_write(planned, model, dialect, concurrency, plan.tx_instant):
                 affected = conn.execute_write(
                     dialect.to_driver_sql(lowered.statement.sql), list(lowered.statement.binds)
                 )
@@ -372,7 +371,7 @@ def _flush_executor(
 
 def _conflict_error(
     planned: PlannedWrite,
-    model: AcceptedMetamodel,
+    model: Metamodel,
     actual: int | None,
     lowered: LoweredStatement,
 ) -> opt_lock.OptimisticLockConflictError | opt_lock.StaleWriteError:

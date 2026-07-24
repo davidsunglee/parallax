@@ -30,12 +30,12 @@ back-reference level's resolution depends on and what a future identity-check
 observation compares by Python reference (`is`), never by value.
 
 Per the amended dependency graph, ``m-snapshot-read`` depends on ``m-deep-fetch``
-alone (transitively reaching ``m-descriptor`` / ``m-inheritance`` /
-``m-temporal-read``, all of which this module imports directly — the same
-transitive-reachability latitude every other scope in this DAG already uses).
-It never imports ``m-sql`` / ``m-dialect``: `familyVariant` materialization
-(the raw tag column -> subtype name, or the projected literal rename) is
-`m-sql`-owned, carried by the compiled read itself
+alone (transitively reaching ``m-metamodel`` / ``m-inheritance`` /
+``m-temporal-read``, whose accepted Metadata and Inheritance Facet this module
+reads directly — the same transitive-reachability latitude every other scope in
+this DAG already uses). It never imports ``m-sql`` / ``m-dialect``:
+`familyVariant` materialization (the raw tag column -> subtype name, or the
+projected literal rename) is `m-sql`-owned, carried by the compiled read itself
 (`~parallax.core.sql_gen.CompiledRead.transform_row`) and applied by the CALLER
 to a level's rows before handing them here — this module only ever sees rows
 whose keys are already the neutral wire-shaped ones (scalars, a `familyVariant`
@@ -50,7 +50,16 @@ from typing import cast
 
 from parallax.core import inheritance
 from parallax.core.deep_fetch import FetchLevel
-from parallax.core.descriptor import Metamodel, NestedValueObject, ValueObject
+from parallax.core.metamodel import (
+    AttributeMetadata,
+    EntityMetadata,
+    Metamodel,
+    Multiplicity,
+    NestedValueObjectMetadata,
+    PrimaryKey,
+    TablePerConcreteSubtype,
+    ValueObjectMetadata,
+)
 
 __all__ = [
     "Assembler",
@@ -59,6 +68,8 @@ __all__ = [
     "decode_row",
     "identity_key",
 ]
+
+_VoContainer = ValueObjectMetadata | NestedValueObjectMetadata
 
 
 class MaterializeError(ValueError):
@@ -96,33 +107,70 @@ class Node:
     resolved_entity: str | None = None
 
 
+def _entity(meta: Metamodel, name: str) -> EntityMetadata:
+    """The accepted Metadata a bare-or-canonical Entity spelling names.
+
+    m-snapshot-read resolves within the accepted model itself: a level's target
+    is an unambiguous declared name, so a canonical-or-bare Identity match is
+    exact. Raises :class:`KeyError` when the model declares no such Entity."""
+    for entity in meta.entities:
+        if name in (entity.identity.canonical, entity.identity.name):
+            return entity
+    raise KeyError(name)  # pragma: no cover - a level target always names a declared Entity
+
+
+def _declaring(meta: Metamodel, entity: EntityMetadata) -> EntityMetadata:
+    """``entity``'s family root (itself for a standalone Entity): the primary key,
+    like the temporal axes, is family-wide metadata declared only there
+    (m-inheritance "Inherited members")."""
+    position = inheritance.view(meta).entity(entity.identity)
+    if position is None:  # pragma: no cover - the facet covers every accepted Entity
+        return entity
+    root = meta.entity(position.root)
+    return entity if root is None else root
+
+
+def _declared_primary_key(entity: EntityMetadata) -> tuple[AttributeMetadata, ...]:
+    return tuple(
+        attribute
+        for attribute in entity.declared_attributes
+        if isinstance(attribute.primary_key, PrimaryKey)
+    )
+
+
 def _resolved_position(
     meta: Metamodel, entity_name: str, narrow_to: tuple[str, ...] | None
 ) -> tuple[str, ...]:
     """The row's resolved effective concrete-subtype set — mirrors `m-sql`'s own
-    narrow resolution (`_narrow_effective_set`) so a level's value-object
-    superset decodes the SAME position the compiled projection actually
-    fetched, whether reached by an authored narrow or a bare polymorphic
-    target's own full effective set."""
-    entity = meta.entity(entity_name)
+    narrow resolution so a level's value-object superset decodes the SAME
+    position the compiled projection actually fetched, whether reached by an
+    authored narrow or a bare polymorphic target's own full effective set."""
+    entity = _entity(meta, entity_name)
     if entity.inheritance is None:
         return (entity_name,)
+    facet = inheritance.view(meta)
     if narrow_to is None:
-        return tuple(inheritance.effective_concrete_subtypes(meta, entity_name))
-    resolved: set[str] = set()
-    for name in narrow_to:
-        resolved.update(inheritance.effective_concrete_subtypes(meta, name))
-    return tuple(sorted(resolved))
+        view = facet.entity(entity.identity)
+        if view is None:  # pragma: no cover - the facet covers every accepted Entity
+            return (entity_name,)
+        return tuple(identity.name for identity in view.concrete_subtypes)
+    members = [_entity(meta, name).identity for name in narrow_to]
+    position = facet.position(members)
+    if position is None:  # pragma: no cover - a validated narrow names one family
+        return (entity_name,)
+    return tuple(identity.name for identity in position.concrete_subtypes)
 
 
-def _superset_value_objects(meta: Metamodel, position: Sequence[str]) -> list[ValueObject]:
-    """Every value object reachable from ``position`` (ancestry prefix, then
-    each concrete's own — the SAME ordering `m-sql`'s own projection uses, not
-    that it matters for decoding: only the SET of declared value objects, not
-    their order, decides what a row's document columns hold) — the shared
-    `inheritance.superset_value_objects` resolution (also used by `m-sql`'s
-    abstract-read/union-all projection)."""
-    return inheritance.superset_value_objects(meta, position)
+def _superset_value_objects(
+    meta: Metamodel, position: Sequence[str]
+) -> tuple[ValueObjectMetadata, ...]:
+    """Every value object reachable from ``position`` (an effective concrete set)
+    — the Inheritance Facet's own projection superset (ancestry prefix, then each
+    concrete's own; only the SET of declared value objects, not their order,
+    decides what a row's document columns hold)."""
+    members = [_entity(meta, name).identity for name in position]
+    view = inheritance.view(meta).position(members)
+    return () if view is None else tuple(view.superset_value_objects)
 
 
 def identity_key(
@@ -149,14 +197,7 @@ def identity_key(
     VALUE — identity is the row's own resolved CONCRETE name instead:
     ``familyVariant`` when the row carries one (a 2+-concrete union-all
     position), else the compile-time-resolved position's OWN sole member
-    when it resolves to exactly one concrete (a single-resolved-position
-    read's SQL legitimately omits
-    `familyVariant`, `m-sql`'s `_compile_tpcs_single`, so ``entity_name`` alone
-    is NOT already that row's concrete whenever the QUERIED position itself
-    was abstract, e.g. an abstract root/subtype narrowed, or naturally
-    resolving, down to one concrete — :func:`_resolved_position` (the SAME
-    resolution `decode_row`'s own value-object superset already shares)
-    recovers it).
+    when it resolves to exactly one concrete (:func:`_resolved_position`).
 
     The coordinate component m-snapshot-read's identity triple names (the
     lowered as-of per axis) is intentionally omitted from this key: within ONE
@@ -165,22 +206,19 @@ def identity_key(
     never carry two different coordinates in the same graph — the coordinate is
     a graph-wide constant here, never a distinguishing key component.
     """
-    entity = meta.entity(entity_name)
-    # `inheritance.declaring_entity`: the family root for a participant (the
-    # primary key, like the temporal axes, is family-wide metadata declared
-    # only there — m-inheritance "Inherited members") — else `entity` itself.
-    # Graph-identity FAMILY normalization and temporal-coordinate resolution
-    # are conceptually distinct questions, but under the family-wide
-    # root-ownership invariant (ADR 0026) both resolve identically, so this
-    # reuses the ONE shared resolver rather than a second, duplicate walk.
-    declaring = inheritance.declaring_entity(meta, entity)
-    if not declaring.primary_key:
+    entity = _entity(meta, entity_name)
+    view = inheritance.view(meta).entity(entity.identity)
+    if view is None:  # pragma: no cover - the facet covers every accepted Entity
         return None
-    pk = tuple(row[attr.column] for attr in declaring.primary_key)
-    name = declaring.name
-    if declaring.inheritance is not None and declaring.inheritance.strategy == (
-        "table-per-concrete-subtype"
-    ):
+    declaring = meta.entity(view.root)
+    if declaring is None:  # pragma: no cover - a family root is always accepted
+        return None
+    pk_attrs = _declared_primary_key(declaring)
+    if not pk_attrs:
+        return None
+    pk = tuple(row[attr.storage.name] for attr in pk_attrs)
+    name = declaring.identity.name
+    if isinstance(view.strategy, TablePerConcreteSubtype):
         variant = row.get("familyVariant")
         name = (
             variant
@@ -192,21 +230,20 @@ def identity_key(
 
 def _resolved_concrete(meta: Metamodel, entity_name: str, narrow_to: tuple[str, ...] | None) -> str:
     """``entity_name``'s own statically-known concrete entity name for THIS
-    decode call: the resolved position
-    (:func:`_resolved_position`) reduced to its sole member when it resolves
-    to exactly one concrete — the SAME position `decode_row`'s value-object
-    superset already derives from ``narrow_to``, so identity and decoding can
-    never disagree on what a `familyVariant`-less row's own concrete is.
-    Degrades to ``entity_name`` unchanged when the position spans 2+ concretes
-    (a row's own ``familyVariant`` field is authoritative there instead — this
-    helper is consulted only when the row carries none)."""
+    decode call: the resolved position reduced to its sole member when it
+    resolves to exactly one concrete — the SAME position `decode_row`'s
+    value-object superset already derives from ``narrow_to``, so identity and
+    decoding can never disagree on what a `familyVariant`-less row's own concrete
+    is. Degrades to ``entity_name`` unchanged when the position spans 2+
+    concretes (a row's own ``familyVariant`` field is authoritative there
+    instead — this helper is consulted only when the row carries none)."""
     position = _resolved_position(meta, entity_name, narrow_to)
     return position[0] if len(position) == 1 else entity_name
 
 
 def _pk_columns(meta: Metamodel, entity_name: str) -> tuple[str, ...]:
-    declaring = inheritance.declaring_entity(meta, meta.entity(entity_name))
-    return tuple(attr.column for attr in declaring.primary_key)
+    declaring = _declaring(meta, _entity(meta, entity_name))
+    return tuple(attr.storage.name for attr in _declared_primary_key(declaring))
 
 
 # --------------------------------------------------------------------------- #
@@ -215,9 +252,7 @@ def _pk_columns(meta: Metamodel, entity_name: str) -> tuple[str, ...]:
 # is present (null / [] where the document does not supply it) — the same     #
 # absence-state vocabulary the predicate side collapses (m-op-algebra).       #
 # --------------------------------------------------------------------------- #
-def _decode_element(
-    raw: object, container: ValueObject | NestedValueObject
-) -> dict[str, object] | None:
+def _decode_element(raw: object, container: _VoContainer) -> dict[str, object] | None:
     """Decode one ``one``-shaped value-object document (or array element) to its
     DECLARED shape: a non-mapping (SQL NULL, JSON null, a non-object scalar)
     collapses to ``None`` — the whole composite absent — never a partial dict."""
@@ -226,20 +261,19 @@ def _decode_element(
     document = cast("Mapping[str, object]", raw)
     result: dict[str, object] = {}
     for attribute in container.attributes:
-        result[attribute.name] = document.get(attribute.name)
+        result[attribute.identity.name] = document.get(attribute.identity.name)
     for nested in container.value_objects:
-        nested_raw = document.get(nested.name)
-        result[nested.name] = (
+        member_name = nested.identity.path[-1]
+        nested_raw = document.get(member_name)
+        result[member_name] = (
             _decode_many(nested_raw, nested)
-            if nested.multiplicity == "many"
+            if nested.multiplicity is Multiplicity.MANY
             else _decode_element(nested_raw, nested)
         )
     return result
 
 
-def _decode_many(
-    raw: object, container: ValueObject | NestedValueObject
-) -> list[dict[str, object] | None]:
+def _decode_many(raw: object, container: _VoContainer) -> list[dict[str, object] | None]:
     """Decode a ``many``-multiplicity member: a non-list (SQL NULL, JSON null, a
     non-array scalar or object) collapses to an EMPTY list — never a
     nullability violation, per m-value-object's own array-absence rule."""
@@ -249,8 +283,8 @@ def _decode_many(
     return [_decode_element(item, container) for item in items]
 
 
-def _decode_value_object(raw: object, vo: ValueObject) -> object:
-    if vo.multiplicity == "many":
+def _decode_value_object(raw: object, vo: ValueObjectMetadata) -> object:
+    if vo.multiplicity is Multiplicity.MANY:
         return _decode_many(raw, vo)
     return _decode_element(raw, vo)
 
@@ -274,20 +308,19 @@ def decode_row(
     column here — the SAME neutral `Node` this module's own callers share
     between the row-form values-lane witnesses (whose `then.graph` / wire
     rendering, `parallax.conformance.engine._render_node`, WANTS the padded
-    superset, e.g. `m-snapshot-read-012`'s own root-typed `animals` level) and
-    `parallax.snapshot.handle`'s object-lane wrapping. Per-variant narrowing is
-    `wrap`'s OWN job (see its module docstring / `_wrap`): it already resolves
-    each column through the CONCRETE class's own `wire_names_of`, so a
-    sibling's column — absent from that class's own declared members — is
-    skipped, never assigned. Narrowing here would corrupt the values-lane
-    goldens that share this exact same `Node`.
+    superset) and `parallax.snapshot.handle`'s object-lane wrapping. Per-variant
+    narrowing is `wrap`'s OWN job (see its module docstring / `_wrap`): it
+    already resolves each column through the CONCRETE class's own
+    `wire_names_of`, so a sibling's column — absent from that class's own
+    declared members — is skipped, never assigned. Narrowing here would corrupt
+    the values-lane goldens that share this exact same `Node`.
     """
     position = _resolved_position(meta, entity_name, narrow_to)
     value_objects = _superset_value_objects(meta, position)
-    vo_columns = {vo.storage_column for vo in value_objects}
+    vo_columns = {vo.storage.name for vo in value_objects}
     fields: dict[str, object] = {key: value for key, value in row.items() if key not in vo_columns}
     for vo in value_objects:
-        fields[vo.storage_column] = _decode_value_object(row.get(vo.storage_column), vo)
+        fields[vo.storage.name] = _decode_value_object(row.get(vo.storage.name), vo)
     return fields
 
 

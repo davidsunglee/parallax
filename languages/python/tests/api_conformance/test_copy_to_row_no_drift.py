@@ -56,8 +56,8 @@ from parallax.snapshot.handle import lower_write
 pytestmark = [pytest.mark.unit, pytest.mark.api_conformance]
 
 _MODELS = models.load_models()
-_ACCOUNT = _MODELS["account"]
-_BALANCE = _MODELS["balance"]
+_ACCOUNT = models.accepted_model(_MODELS["account"])
+_BALANCE = models.accepted_model(_MODELS["balance"])
 
 
 def _edited_account_row(*, version: int = 1) -> dict[str, object]:

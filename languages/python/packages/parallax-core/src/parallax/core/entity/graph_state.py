@@ -9,22 +9,57 @@ carrying a ``.narrow(...)`` hop — checks the node's own private narrowed-view
 mapping instead, keyed by the SAME derived view key
 (``rel[Concrete,…]``, the RESOLVED effective concrete-subtype set, never the
 authored subtype names verbatim) ``m-deep-fetch``'s own view-key derivation
-produces — resolved via the shared ``resolve_narrow_position`` seam
-(``parallax.core.inheritance``) the identical way, so the two can never
-drift.
+produces — resolved through the Inheritance Facet's ``position(...)`` the
+identical way, so the two can never drift.
 """
 
 from __future__ import annotations
 
-from parallax.core.entity.base import default_registry, wire_names_of
+from parallax.core import inheritance
+from parallax.core.descriptor import Metamodel as MetamodelRecord
+from parallax.core.entity.base import (
+    EntityRegistry,
+    default_registry,
+    resolve_entity_metadata,
+    wire_names_of,
+)
 from parallax.core.entity.expressions import (
     UNLOADED,
     RelationshipPath,
     UnloadedRelationshipError,
 )
-from parallax.core.inheritance._position import resolve_narrow_position
+from parallax.core.model_formation import MetamodelValidationError
 
 __all__ = ["is_loaded", "narrowed"]
+
+
+def _narrow_position(registry: EntityRegistry, names: tuple[str, ...]) -> tuple[str, ...]:
+    """The resolved effective concrete-subtype set of an authored narrow within
+    ``registry``'s scope, through the Inheritance Facet.
+
+    A registry chain that merges an unsatisfiable Entity (a shadowed name that
+    leaves a sibling's reverse relationship dangling) cannot form the accepted
+    model the facet needs; the narrow position depends only on the inheritance
+    family, which the descriptor family walk resolves without forming
+    references, so it is the fallback for that pathological chain."""
+    try:
+        model = registry.metamodel()
+    except MetamodelValidationError:
+        records = MetamodelRecord(entities=tuple(registry.records().values()))
+        resolved: set[str] = set()
+        for name in names:
+            resolved.update(inheritance.effective_concrete_subtypes(records, name))
+        return tuple(sorted(resolved))
+    members = [
+        metadata.identity
+        for name in names
+        if (metadata := resolve_entity_metadata(model, name)) is not None
+    ]
+    position = inheritance.view(model).position(members)
+    if position is None:
+        return ()
+    return tuple(identity.name for identity in position.concrete_subtypes)
+
 
 _NARROWED_ATTR = "__parallax_narrowed__"
 
@@ -35,7 +70,7 @@ def _view_key(path: str | RelationshipPath) -> str:
     from its own LAST segment. A narrowed hop's view key is keyed by the
     RESOLVED effective concrete-subtype set, never the authored names
     (mirrors ``m-deep-fetch``'s own ``_resolve_position`` so the two can
-    never drift, via the shared ``resolve_narrow_position`` seam): resolved
+    never drift, through the Inheritance Facet's ``position(...)``): resolved
     within ``path``'s OWN captured registration scope — read directly off
     ``path.__parallax_registry__`` (an intrinsic dunder-named field,
     never a side table keyed by identity), never the checked node's own
@@ -60,8 +95,8 @@ def _view_key(path: str | RelationshipPath) -> str:
     registry = path.__parallax_registry__
     if registry is None:
         registry = default_registry()
-    position = resolve_narrow_position(registry.metamodel(), last.narrow)
-    return f"{rel_local}[{','.join(position)}]"
+    concretes = _narrow_position(registry, last.narrow)
+    return f"{rel_local}[{','.join(concretes)}]"
 
 
 def is_loaded(node: object, path: str | RelationshipPath) -> bool:

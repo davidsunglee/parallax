@@ -17,7 +17,7 @@ from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Literal
 
 from parallax.core.base import normalize_instant
-from parallax.core.descriptor import AsOfAxisMetadata, Metamodel, TemporalDimension
+from parallax.core.descriptor import AsOfAxisMetadata, TemporalDimension
 from parallax.core.entity.expressions import Predicate, RelationshipPath, and_terms
 from parallax.core.op_algebra import (
     All,
@@ -34,7 +34,6 @@ from parallax.core.op_algebra import (
     OrderKey,
     PathSegment,
     serialize,
-    validate_operation,
 )
 from parallax.core.temporal_read import TX_TIME, VALID_TIME, Latest, TemporalDimensionConstant
 
@@ -210,7 +209,7 @@ class Statement:
             )
         new_paths = self.include_paths + tuple(path.segments for path in paths)
         node = DeepFetch(operand=self.predicate, paths=new_paths)
-        validate_operation(self.target, node, self._scoped_metamodel())
+        self._validate(node)
         return replace(self, include_paths=new_paths)
 
     def narrow(self, *subtypes: type) -> Statement:
@@ -228,7 +227,7 @@ class Statement:
             raise ValueError("a narrow clause is single-shot; derive from the un-narrowed base")
         to = tuple(_subtype_name(subtype) for subtype in subtypes)
         node = Narrow(entity=self.target, to=to, operand=self.predicate)
-        validate_operation(self.target, node, self._scoped_metamodel())
+        self._validate(node)
         return replace(self, predicate=node, is_narrowed=True)
 
     def operation(self) -> Operation:
@@ -306,19 +305,22 @@ class Statement:
         )
         raise ValueError(f"{self.target} {detail}")
 
-    def _scoped_metamodel(self) -> Metamodel:
-        """``validate_operation``'s own input, resolved within THIS statement's
-        own registration scope (:attr:`_registry`, captured at
-        ``Entity.where``) — never the process-global registry (a same-named
-        class registered elsewhere must stay invisible here). A deferred
+    def _validate(self, node: Operation) -> None:
+        """Validate ``node`` against this statement's own scope's accepted model
+        (:attr:`_registry`, captured at ``Entity.where`` — never the
+        process-global registry, so a same-named class registered elsewhere
+        stays invisible here), resolving this statement's target to the accepted
+        Metadata ``validate_operation`` takes as its root position. A deferred
         import (``parallax.core.entity.base`` imports THIS module for
-        :class:`Statement`; the reverse edge can only be resolved at call
-        time). Falls back to the process default registry for a ``Statement``
-        built outside ``Entity.where`` (``_registry`` unset)."""
-        from parallax.core.entity.base import default_registry
+        :class:`Statement`; the reverse edge resolves at call time). Falls back
+        to the process default registry for a ``Statement`` built outside
+        ``Entity.where`` (``_registry`` unset). ``validate_in_scope`` is the
+        entity scope's own shared fail-fast seam (also driven by ``Entity.where``
+        in the same scope), imported by name across this scope's two modules."""
+        from parallax.core.entity.base import default_registry, validate_in_scope
 
         registry = self._registry if self._registry is not None else default_registry()
-        return registry.metamodel()
+        validate_in_scope(registry, self.target, node)
 
 
 def _subtype_name(cls: type) -> str:

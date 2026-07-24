@@ -62,19 +62,93 @@ from parallax.core.op_algebra import (
     Scalar,
     StringMatch,
     deserialize,
+    referenced_entities,
     validate_operation,
 )
 
 pytestmark = pytest.mark.unit
+
+
+def test_referenced_entities_collects_every_class_the_operation_names() -> None:
+    # The reachable-closure seed the Entity frontend forms its early-validation
+    # model from: the `Class` prefix of every attribute / nested-path /
+    # relationship reference, plus every `narrow` entity and subtype, reached
+    # through every wrapper and combinator.
+    op = DeepFetch(
+        operand=AsOf(
+            operand=And(
+                operands=(
+                    Not(
+                        operand=Group(
+                            operand=Or(
+                                operands=(
+                                    Comparison(op="eq", attr="Animal.name", value="x"),
+                                    Between(attr="Dog.barkVolume", lower=1, upper=3),
+                                    NullCheck(op="isNull", attr="Cat.whisker"),
+                                    StringMatch(op="like", attr="Pet.tag", value="p"),
+                                    Membership(op="in", attr="WildBoar.id", values=(1,)),
+                                )
+                            )
+                        )
+                    ),
+                    Narrow(entity="Animal", to=("Dog", "Cat"), operand=All()),
+                    Navigate(
+                        rel="Person.pets",
+                        op=NestedComparison(op="nestedEq", path="Pet.spec.n", value="v"),
+                    ),
+                    Exists(rel="Owner.kennels", op=None),
+                    NotExists(rel="Kennel.owners", op=None),
+                    NestedMembership(path="Order.address.zip", values=("1",)),
+                    NestedNullCheck(op="nestedIsNull", path="Item.meta.flag"),
+                    NestedExists(path="Status.tags", where=None),
+                    NestedNotExists(path="Status.notes", where=None),
+                    NoneOp(),
+                )
+            ),
+            dimension="validTime",
+            coordinate="latest",
+        ),
+        paths=((PathSegment(rel="Root.leaves", narrow=("Leaf",)),),),
+    )
+    assert referenced_entities(op) == frozenset(
+        {
+            "Animal",
+            "Dog",
+            "Cat",
+            "Pet",
+            "WildBoar",
+            "Person",
+            "Owner",
+            "Kennel",
+            "Order",
+            "Item",
+            "Status",
+            "Root",
+            "Leaf",
+        }
+    )
+
 
 _MODEL_DIR = case_format.find_repo_root() / "core" / "compatibility" / "models"
 _ANIMAL = corpus_models.load_model(_MODEL_DIR / "animal.yaml")
 _CUSTOMER = corpus_models.load_model(_MODEL_DIR / "customer.yaml")
 
 
+def _validate(target: str, op: Operation, meta: Metamodel) -> None:
+    """Form ``meta`` into an accepted model, resolve ``target`` to its accepted
+    root Metadata, and run the model-aware validator over ``op``."""
+    model = corpus_models.accepted_model(meta)
+    root = next(
+        entity
+        for entity in model.entities
+        if target in (entity.identity.name, entity.identity.canonical)
+    )
+    validate_operation(root, op, model)
+
+
 def _rejects(op: Operation, meta: Metamodel, target: str) -> OperationRejectedError:
     with pytest.raises(OperationRejectedError) as excinfo:
-        validate_operation(target, op, meta)
+        _validate(target, op, meta)
     return excinfo.value
 
 
@@ -141,20 +215,20 @@ def test_nested_narrow_cannot_broaden_back_out_of_the_enclosing_narrow() -> None
 
 def test_narrow_within_position_accepts() -> None:
     op = Narrow(entity="Animal", to=("Dog",), operand=All())
-    validate_operation("Animal", op, _ANIMAL)  # no raise
+    _validate("Animal", op, _ANIMAL)  # no raise
 
 
 def test_equivalent_narrow_spelling_is_not_outside_position() -> None:
     # `to=[Pet]` and `to=[Cat, Dog]` resolve to the SAME effective set — both are
     # valid, non-broadening narrows of the Animal root (m-op-algebra "the serde
     # preserves the authored `to` list verbatim"; the boundary this rule pins).
-    validate_operation("Animal", Narrow(entity="Animal", to=("Pet",), operand=All()), _ANIMAL)
-    validate_operation("Animal", Narrow(entity="Animal", to=("Cat", "Dog"), operand=All()), _ANIMAL)
+    _validate("Animal", Narrow(entity="Animal", to=("Pet",), operand=All()), _ANIMAL)
+    _validate("Animal", Narrow(entity="Animal", to=("Cat", "Dog"), operand=All()), _ANIMAL)
 
 
 def test_redundant_self_narrow_is_valid() -> None:
     # Narrowing a position to itself is a documented no-op, not a rejection.
-    validate_operation("Pet", Narrow(entity="Pet", to=("Pet",), operand=All()), _ANIMAL)
+    _validate("Pet", Narrow(entity="Pet", to=("Pet",), operand=All()), _ANIMAL)
 
 
 def test_narrow_empty_effective_set_rejects() -> None:
@@ -193,11 +267,11 @@ def test_subtype_attribute_within_narrow_scope_accepts() -> None:
         to=("Dog",),
         operand=Comparison(op="greaterThan", attr="Dog.barkVolume", value=3),
     )
-    validate_operation("Animal", op, _ANIMAL)  # no raise
+    _validate("Animal", op, _ANIMAL)  # no raise
 
 
 def test_root_declared_attribute_needs_no_narrow() -> None:
-    validate_operation("Animal", Comparison(op="eq", attr="Animal.name", value="Rex"), _ANIMAL)
+    _validate("Animal", Comparison(op="eq", attr="Animal.name", value="Rex"), _ANIMAL)
 
 
 # --------------------------------------------------------------------------- #
@@ -224,11 +298,11 @@ def test_narrow_within_relationship_target_accepts() -> None:
             operand=All(),
         ),
     )
-    validate_operation("Person", op, _ANIMAL)  # no raise
+    _validate("Person", op, _ANIMAL)  # no raise
 
 
 def test_navigate_with_no_inner_operation_accepts() -> None:
-    validate_operation("Person", Navigate(rel="Person.pets"), _ANIMAL)
+    _validate("Person", Navigate(rel="Person.pets"), _ANIMAL)
 
 
 def test_not_exists_relationship_target_scope_propagates() -> None:
@@ -248,7 +322,7 @@ def test_deep_fetch_path_narrow_outside_relationship_target_rejects() -> None:
 
 def test_deep_fetch_path_narrow_within_relationship_target_accepts() -> None:
     op = DeepFetch(operand=All(), paths=((PathSegment(rel="Person.pets", narrow=("Dog",)),),))
-    validate_operation("Person", op, _ANIMAL)  # no raise
+    _validate("Person", op, _ANIMAL)  # no raise
 
 
 # --------------------------------------------------------------------------- #
@@ -281,18 +355,18 @@ def test_nested_literal_type_mismatch_rejects() -> None:
 
 def test_nested_comparison_valid_string_literal_accepts() -> None:
     op = NestedComparison(op="nestedEq", path="Customer.address.city", value="Oslo")
-    validate_operation("Customer", op, _CUSTOMER)  # no raise
+    _validate("Customer", op, _CUSTOMER)  # no raise
 
 
 def test_nested_comparison_null_literal_always_matches() -> None:
     # The absence-collapse rule: a `null` literal matches any declared type.
     op = NestedComparison(op="nestedEq", path="Customer.address.city", value=None)
-    validate_operation("Customer", op, _CUSTOMER)  # no raise
+    _validate("Customer", op, _CUSTOMER)  # no raise
 
 
 def test_nested_membership_all_valid_literals_accepts() -> None:
     op = NestedMembership(path="Customer.address.city", values=("Oslo", "Bergen"))
-    validate_operation("Customer", op, _CUSTOMER)  # no raise
+    _validate("Customer", op, _CUSTOMER)  # no raise
 
 
 def test_nested_path_short_form_rejects_as_unknown_member() -> None:
@@ -309,7 +383,7 @@ def test_nested_path_mid_scalar_segment_rejects() -> None:
 
 def test_nested_path_descends_through_intermediate_nested_value_object() -> None:
     op = NestedComparison(op="nestedEq", path="Customer.address.geo.country", value="Norway")
-    validate_operation("Customer", op, _CUSTOMER)  # no raise
+    _validate("Customer", op, _CUSTOMER)  # no raise
 
 
 def test_nested_exists_short_form_rejects_as_unknown_member() -> None:
@@ -347,13 +421,13 @@ def _nested(path: str, value: Scalar) -> NestedComparison:
 
 
 def test_literal_matches_type_boolean() -> None:
-    validate_operation("Widget", _nested("Widget.spec.flag", True), _MULTI_TYPE_MODEL)
+    _validate("Widget", _nested("Widget.spec.flag", True), _MULTI_TYPE_MODEL)
     exc = _rejects(_nested("Widget.spec.flag", 1), _MULTI_TYPE_MODEL, "Widget")
     assert exc.rule == "nested-literal-type-mismatch"
 
 
 def test_literal_matches_type_int() -> None:
-    validate_operation("Widget", _nested("Widget.spec.count", 3), _MULTI_TYPE_MODEL)
+    _validate("Widget", _nested("Widget.spec.count", 3), _MULTI_TYPE_MODEL)
     exc = _rejects(_nested("Widget.spec.count", "3"), _MULTI_TYPE_MODEL, "Widget")
     assert exc.rule == "nested-literal-type-mismatch"
     # A bool is never a numeric literal (m-core: `True` never equals `1`).
@@ -362,20 +436,20 @@ def test_literal_matches_type_int() -> None:
 
 
 def test_literal_matches_type_float_and_decimal() -> None:
-    validate_operation("Widget", _nested("Widget.spec.ratio", 1.5), _MULTI_TYPE_MODEL)
-    validate_operation("Widget", _nested("Widget.spec.amount", 2), _MULTI_TYPE_MODEL)
+    _validate("Widget", _nested("Widget.spec.ratio", 1.5), _MULTI_TYPE_MODEL)
+    _validate("Widget", _nested("Widget.spec.amount", 2), _MULTI_TYPE_MODEL)
     exc = _rejects(_nested("Widget.spec.ratio", "x"), _MULTI_TYPE_MODEL, "Widget")
     assert exc.rule == "nested-literal-type-mismatch"
 
 
 def test_literal_matches_type_string_and_portable_fallback() -> None:
-    validate_operation("Widget", _nested("Widget.spec.label", "x"), _MULTI_TYPE_MODEL)
+    _validate("Widget", _nested("Widget.spec.label", "x"), _MULTI_TYPE_MODEL)
     exc = _rejects(_nested("Widget.spec.label", 1), _MULTI_TYPE_MODEL, "Widget")
     assert exc.rule == "nested-literal-type-mismatch"
 
     # date / time / timestamp / uuid / bytes / json ride the portable literal as a
     # string (m-op-algebra's typed-literal vocabulary has no dedicated carrier).
-    validate_operation("Widget", _nested("Widget.spec.whenMade", "2024-01-02"), _MULTI_TYPE_MODEL)
+    _validate("Widget", _nested("Widget.spec.whenMade", "2024-01-02"), _MULTI_TYPE_MODEL)
     exc = _rejects(_nested("Widget.spec.whenMade", 1), _MULTI_TYPE_MODEL, "Widget")
     assert exc.rule == "nested-literal-type-mismatch"
 
@@ -388,12 +462,12 @@ def test_nested_membership_literal_type_mismatch_rejects() -> None:
 
 def test_nested_null_check_resolves_the_path_without_a_type_check() -> None:
     op = NestedNullCheck(op="nestedIsNotNull", path="Customer.address.city")
-    validate_operation("Customer", op, _CUSTOMER)  # no raise
+    _validate("Customer", op, _CUSTOMER)  # no raise
 
 
 def test_nested_exists_value_object_terminated_path_accepts() -> None:
-    validate_operation("Customer", NestedExists(path="Customer.address.geo"), _CUSTOMER)
-    validate_operation("Customer", NestedNotExists(path="Customer.address.phones"), _CUSTOMER)
+    _validate("Customer", NestedExists(path="Customer.address.geo"), _CUSTOMER)
+    _validate("Customer", NestedNotExists(path="Customer.address.phones"), _CUSTOMER)
 
 
 def test_nested_exists_first_segment_not_value_object_rejects() -> None:
@@ -465,7 +539,7 @@ def test_nested_exists_scoped_where_valid_compound_accepts() -> None:
         )
     )
     op = NestedExists(path="Customer.address.geo", where=where)
-    validate_operation("Customer", op, _CUSTOMER)  # no raise
+    _validate("Customer", op, _CUSTOMER)  # no raise
 
 
 def test_nested_exists_no_where_still_validates_the_terminal_path() -> None:
@@ -484,7 +558,7 @@ def test_corpus_scoped_where_cases_still_validate_unrejected(case_id: str) -> No
     case = _load_rejected_case(case_id)
     when = cast("Mapping[str, Any]", case.document["when"])
     op = deserialize(cast("Mapping[str, object]", when["operation"]))
-    validate_operation("Customer", op, _CUSTOMER)  # no raise
+    _validate("Customer", op, _CUSTOMER)  # no raise
 
 
 def test_deep_fetch_value_object_segment_rejects() -> None:
@@ -495,7 +569,7 @@ def test_deep_fetch_value_object_segment_rejects() -> None:
 
 def test_deep_fetch_relationship_path_accepts() -> None:
     op = DeepFetch(operand=All(), paths=((PathSegment(rel="Customer.locations"),),))
-    validate_operation("Customer", op, _CUSTOMER)  # no raise
+    _validate("Customer", op, _CUSTOMER)  # no raise
 
 
 def test_navigate_value_object_target_rejects() -> None:
@@ -504,7 +578,7 @@ def test_navigate_value_object_target_rejects() -> None:
 
 
 def test_navigate_relationship_target_accepts() -> None:
-    validate_operation("Customer", Navigate(rel="Customer.locations"), _CUSTOMER)
+    _validate("Customer", Navigate(rel="Customer.locations"), _CUSTOMER)
 
 
 def test_find_root_value_object_rejects() -> None:
@@ -515,12 +589,12 @@ def test_find_root_value_object_rejects() -> None:
 
 def test_unknown_class_that_is_not_a_value_object_raises_plain_error() -> None:
     with pytest.raises(ValueError, match="names no declared entity or value object"):
-        validate_operation("Customer", Comparison(op="eq", attr="Bogus.name", value=1), _CUSTOMER)
+        _validate("Customer", Comparison(op="eq", attr="Bogus.name", value=1), _CUSTOMER)
 
 
 def test_unknown_relationship_that_is_not_a_value_object_raises_plain_error() -> None:
     with pytest.raises(ValueError, match="names no declared relationship"):
-        validate_operation("Customer", Navigate(rel="Customer.bogus"), _CUSTOMER)
+        _validate("Customer", Navigate(rel="Customer.bogus"), _CUSTOMER)
 
 
 # --------------------------------------------------------------------------- #
@@ -537,7 +611,7 @@ def test_boolean_combinators_walk_every_operand() -> None:
             Membership(op="in", attr="Customer.id", values=(1, 2, 3)),
         )
     )
-    validate_operation("Customer", valid, _CUSTOMER)  # no raise
+    _validate("Customer", valid, _CUSTOMER)  # no raise
 
     rejecting = And(
         operands=(
@@ -567,49 +641,45 @@ def test_negation_and_grouping_and_result_shaping_wrappers_propagate() -> None:
     good = Comparison(op="eq", attr="Customer.name", value="Ada")
     bad = NullCheck(op="isNotNull", attr="address.city")
 
-    validate_operation("Customer", Not(operand=good), _CUSTOMER)
+    _validate("Customer", Not(operand=good), _CUSTOMER)
     exc = _rejects(Not(operand=bad), _CUSTOMER, "Customer")
     assert exc.rule == "find-root-value-object"
 
-    validate_operation("Customer", Group(operand=good), _CUSTOMER)
+    _validate("Customer", Group(operand=good), _CUSTOMER)
     exc = _rejects(Group(operand=bad), _CUSTOMER, "Customer")
     assert exc.rule == "find-root-value-object"
 
-    validate_operation(
-        "Customer", OrderBy(operand=good, keys=(OrderKey(attr="Customer.id"),)), _CUSTOMER
-    )
+    _validate("Customer", OrderBy(operand=good, keys=(OrderKey(attr="Customer.id"),)), _CUSTOMER)
     exc = _rejects(
         OrderBy(operand=bad, keys=(OrderKey(attr="Customer.id"),)), _CUSTOMER, "Customer"
     )
     assert exc.rule == "find-root-value-object"
 
-    validate_operation("Customer", Limit(operand=good, count=1), _CUSTOMER)
+    _validate("Customer", Limit(operand=good, count=1), _CUSTOMER)
     exc = _rejects(Limit(operand=bad, count=1), _CUSTOMER, "Customer")
     assert exc.rule == "find-root-value-object"
 
-    validate_operation("Customer", Distinct(operand=good), _CUSTOMER)
+    _validate("Customer", Distinct(operand=good), _CUSTOMER)
     exc = _rejects(Distinct(operand=bad), _CUSTOMER, "Customer")
     assert exc.rule == "find-root-value-object"
 
-    validate_operation(
-        "Customer", AsOf(operand=good, dimension="validTime", coordinate="latest"), _CUSTOMER
-    )
+    _validate("Customer", AsOf(operand=good, dimension="validTime", coordinate="latest"), _CUSTOMER)
     exc = _rejects(
         AsOf(operand=bad, dimension="validTime", coordinate="latest"), _CUSTOMER, "Customer"
     )
     assert exc.rule == "find-root-value-object"
 
-    validate_operation("Customer", History(operand=good, dimension="validTime"), _CUSTOMER)
+    _validate("Customer", History(operand=good, dimension="validTime"), _CUSTOMER)
     exc = _rejects(History(operand=bad, dimension="validTime"), _CUSTOMER, "Customer")
     assert exc.rule == "find-root-value-object"
 
     range_op = AsOfRange(operand=good, dimension="validTime", start="2024-01-01", end="2024-02-01")
-    validate_operation("Customer", range_op, _CUSTOMER)
+    _validate("Customer", range_op, _CUSTOMER)
     bad_range = AsOfRange(operand=bad, dimension="validTime", start="2024-01-01", end="2024-02-01")
     exc = _rejects(bad_range, _CUSTOMER, "Customer")
     assert exc.rule == "find-root-value-object"
 
 
 def test_none_and_all_are_no_ops() -> None:
-    validate_operation("Customer", All(), _CUSTOMER)
-    validate_operation("Customer", NoneOp(), _CUSTOMER)
+    _validate("Customer", All(), _CUSTOMER)
+    _validate("Customer", NoneOp(), _CUSTOMER)

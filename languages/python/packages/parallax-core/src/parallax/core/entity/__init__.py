@@ -7,8 +7,10 @@ surface (predicate / temporal-read / deep-fetch-include / subtype-narrowing
 building), the ``ValueObject`` class frontend, and the closed-world
 relationship load-state vocabulary (``is_loaded`` / ``narrowed``,
 ``UnloadedRelationshipError``) the frozen snapshot-node wrapper attaches. This
-support scope may import ``m-descriptor``, ``m-op-algebra`` (reaching
-``m-inheritance`` transitively), and ``m-temporal-read``.
+support scope may import ``m-descriptor`` (the class-time record graph it still
+compiles), ``m-metamodel``, ``m-inheritance``, ``m-relationship``,
+``m-op-algebra``, ``m-temporal-read``, and the ``parallax.core._formation_profile``
+composition root that seals a record graph into an accepted Metamodel.
 """
 
 from __future__ import annotations
@@ -22,17 +24,19 @@ from parallax.core.entity.base import (
     EntityMeta,
     EntityRegistry,
     FamilyRoot,
+    MetamodelSource,
     ModelCopyError,
     ProvenanceError,
-    ScopedMetamodel,
     TxTemporal,
     WireNames,
+    accepted_metamodel,
     camel_to_snake,
     canonical_row,
     changed_fields,
     default_registry,
     descriptor_document,
     effective_change_set,
+    entity_metadata_of,
     entity_record_of,
     entity_records,
     entity_registry,
@@ -41,6 +45,7 @@ from parallax.core.entity.base import (
     primary_key_row,
     registry_of,
     resolve_entity_class,
+    resolve_entity_metadata,
     snake_to_camel,
     wire_names_of,
 )
@@ -90,6 +95,7 @@ __all__ = [
     "FamilyRoot",
     "Field",
     "FieldSpec",
+    "MetamodelSource",
     "ModelCopyError",
     "NameCollisionError",
     "OrderByTerm",
@@ -104,7 +110,6 @@ __all__ = [
     "ReservedNameError",
     "ReverseRelationship",
     "ReverseRelationshipSpec",
-    "ScopedMetamodel",
     "Statement",
     "TxTemporal",
     "UnloadedRelationshipError",
@@ -113,12 +118,14 @@ __all__ = [
     "VoField",
     "VoFieldSpec",
     "WireNames",
+    "accepted_metamodel",
     "camel_to_snake",
     "canonical_row",
     "changed_fields",
     "default_registry",
     "descriptor_document",
     "effective_change_set",
+    "entity_metadata_of",
     "entity_record_of",
     "entity_records",
     "entity_registry",
@@ -129,6 +136,7 @@ __all__ = [
     "primary_key_row",
     "registry_of",
     "resolve_entity_class",
+    "resolve_entity_metadata",
     "snake_to_camel",
     "wire_names_of",
 ]

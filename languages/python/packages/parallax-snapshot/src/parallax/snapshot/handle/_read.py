@@ -29,15 +29,13 @@ from typing import Any, Final, cast
 
 from parallax.core import deep_fetch, inheritance, op_algebra
 from parallax.core.db_port import DbPort, Row
-from parallax.core.descriptor import Metamodel
 from parallax.core.dialect import Dialect, LockMode
+from parallax.core.entity import resolve_entity_metadata
 from parallax.core.metamodel import AsOfAxisMetadata as AcceptedAsOfAxis
-from parallax.core.metamodel import EntityMetadata, TemporalDimension
-from parallax.core.metamodel import Metamodel as AcceptedMetamodel
+from parallax.core.metamodel import EntityMetadata, Metamodel, TemporalDimension
 from parallax.core.sql_gen import CompiledRead, Statement, compile_read
 from parallax.core.temporal_read import Edge, Pin, milestone_edge, statement_pin
 from parallax.snapshot import materialize
-from parallax.snapshot.handle._accepted import accepted_entity, accepted_model, accepted_target
 from parallax.snapshot.handle._wrap import wrap_graph
 
 __all__ = [
@@ -231,15 +229,14 @@ def find(
     attached level's nodes hang off `Node.fields` — plus the full ordered
     execution record.
     """
-    # One formation per find: every level's own Entity is resolved against the
-    # model this call already formed, never re-formed per level.
-    model = accepted_model(meta)
-    root_entity = accepted_entity(model, meta, target)
-    plan_ = deep_fetch.plan(root_entity, op, model)
+    # ``meta`` is the accepted model the connected ``Database`` already holds, so
+    # every level's own Entity resolves against it directly.
+    root_entity = _metadata(meta, target)
+    plan_ = deep_fetch.plan(root_entity, op, meta)
     statements: list[ExecutedStatement] = []
 
     root_compiled = compile_read(
-        plan_.root_operation, model, dialect, root_entity, result_form="instance", lock=lock
+        plan_.root_operation, meta, dialect, root_entity, result_form="instance", lock=lock
     )
     root_rows = _execute_compiled(port, dialect, root_compiled, statements)
 
@@ -265,10 +262,10 @@ def find(
             level_nodes.append(nodes)
             continue
         child_target, child_op = level.child_operation(keys)
-        child_entity = accepted_entity(model, meta, child_target)
+        child_entity = _metadata(meta, child_target)
         child_compiled = compile_read(
             child_op,
-            model,
+            meta,
             dialect,
             child_entity,
             result_form="instance",
@@ -301,19 +298,19 @@ def find_history(
     first, matching the corpus's own authored `then.graphs` order) rather than
     relying on the database's unspecified natural row order.
     """
-    model, metadata = accepted_target(meta, target)
-    plan_ = deep_fetch.plan(metadata, op, model)
+    metadata = _metadata(meta, target)
+    plan_ = deep_fetch.plan(metadata, op, meta)
     if plan_.levels:
         # m-case-format: a v1 milestone-set read carries no includes.
         raise ValueError("a milestone-set (history / asOfRange) read carries no deep-fetch levels")
-    # `inheritance.declaring_entity` resolves the entity whose `as_of_axes`
-    # are this target's FAMILY's actual temporal declaration (the root, for a
-    # participant — temporality is family-wide, `m-inheritance`); every
+    # `declaring_metadata` resolves the entity whose as-of axes are this target's
+    # FAMILY's actual temporal declaration (the root, for a participant —
+    # temporality is family-wide, `m-inheritance`); every
     # `~parallax.core.temporal_read` per-entity primitive below (`milestone_edge`,
     # `_edge_pin`, `_edge_sort_key`) MUST resolve through it rather than the
-    # queried target's own (possibly locally-empty) `as_of_axes`.
-    entity = declaring_metadata(model, metadata)
-    compiled = compile_read(plan_.root_operation, model, dialect, metadata, result_form="instance")
+    # queried target's own (possibly locally-empty) axes.
+    entity = declaring_metadata(meta, metadata)
+    compiled = compile_read(plan_.root_operation, meta, dialect, metadata, result_form="instance")
     statements: list[ExecutedStatement] = []
     rows = _execute(port, dialect, compiled.statement, statements)
 
@@ -405,7 +402,17 @@ _DIMENSION_NAMES: Final[Mapping[TemporalDimension, str]] = {
 }
 
 
-def declaring_metadata(model: AcceptedMetamodel, entity: EntityMetadata) -> EntityMetadata:
+def _metadata(meta: Metamodel, name: str) -> EntityMetadata:
+    """``name``'s accepted Metadata within ``meta``'s scope, raising when the
+    model declares no such Entity — the same failure the record graph's own
+    lookup produced before the frontend returned accepted models."""
+    metadata = resolve_entity_metadata(meta, name)
+    if metadata is None:  # pragma: no cover - a queried target is always declared
+        raise KeyError(name)
+    return metadata
+
+
+def declaring_metadata(model: Metamodel, entity: EntityMetadata) -> EntityMetadata:
     """The accepted Metadata of the position that DECLARES ``entity``'s family
     facts — its family root, which for a standalone Entity is itself.
 
@@ -491,18 +498,16 @@ def _pin_from_milestone(entity: EntityMetadata, milestone_pin: Mapping[str, obje
 def snapshot_from_find_result(
     result: FindResult, target: str, meta: Metamodel, pin: Pin
 ) -> Snapshot[Any]:
-    model = accepted_model(meta)
-    roots = wrap_graph(result.nodes, target, meta, model, pin)
+    roots = wrap_graph(result.nodes, target, meta, pin)
     return Snapshot(roots, pin, result.execution)
 
 
 def snapshot_from_history_result(
     result: HistoryFindResult, target: str, meta: Metamodel
 ) -> Snapshot[Any]:
-    model, metadata = accepted_target(meta, target)
-    entity = declaring_metadata(model, metadata)
+    entity = declaring_metadata(meta, _metadata(meta, target))
     roots: list[Any] = []
     for graph in result.graphs:
         milestone_pin = _pin_from_milestone(entity, graph.pin)
-        roots.extend(wrap_graph(graph.nodes, target, meta, model, milestone_pin))
+        roots.extend(wrap_graph(graph.nodes, target, meta, milestone_pin))
     return Snapshot(tuple(roots), Pin(), result.execution)

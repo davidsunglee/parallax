@@ -48,7 +48,11 @@ from parallax.core.op_algebra.nodes import (
     StringOp,
 )
 from parallax.core.op_algebra.serde import OperationError, deserialize, serialize
-from parallax.core.op_algebra.validate import OperationRejectedError, validate_operation
+from parallax.core.op_algebra.validate import (
+    OperationRejectedError,
+    referenced_entities,
+    validate_operation,
+)
 
 __all__ = [
     "All",
@@ -91,6 +95,7 @@ __all__ = [
     "StringMatch",
     "StringOp",
     "deserialize",
+    "referenced_entities",
     "serialize",
     "validate_operation",
 ]

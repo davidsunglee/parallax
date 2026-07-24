@@ -10,7 +10,6 @@ value-object, temporal and ``Snapshot[T]`` half lives in
 from __future__ import annotations
 
 import copy
-import dataclasses
 import datetime as dt
 import pickle
 from decimal import Decimal
@@ -20,7 +19,7 @@ import pytest
 
 import mirrored_models  # noqa: F401  # pyright: ignore[reportUnusedImport] - registers Balance
 import snapshot_models as sm
-from parallax.conformance import models, read_models
+from parallax.conformance import read_models
 from parallax.conformance.story_models import Order as _soOrder
 from parallax.conformance.story_models import OrderItem as _soOrderItem
 from parallax.conformance.story_models import OrderStatus as _soOrderStatus
@@ -39,7 +38,8 @@ from parallax.core import (
 )
 from parallax.core.descriptor import Entity as EntityDescriptor
 from parallax.core.descriptor import Inheritance
-from parallax.core.entity import metamodel
+from parallax.core.descriptor import Metamodel as MetamodelRecord
+from parallax.core.entity import accepted_metamodel, entity_record_of, metamodel
 from parallax.core.entity.base import Concrete, EntityRegistry, FamilyRoot
 from parallax.core.entity.expressions import RelationshipPath, UnloadedRelationshipError
 from parallax.core.op_algebra import PathSegment
@@ -50,23 +50,29 @@ from parallax.snapshot.materialize import Node
 pytestmark = pytest.mark.unit
 
 _ORDERS = metamodel([sm.SnapOrder, sm.SnapOrderItem, sm.SnapOrderStatus])
-_ANIMAL = metamodel([sm.Animal, sm.Pet, sm.Dog, sm.Cat, sm.WildBoar, sm.AnimalOwner])
+_ANIMAL_CLASSES = [sm.Animal, sm.Pet, sm.Dog, sm.Cat, sm.WildBoar, sm.AnimalOwner]
+_ANIMAL = metamodel(_ANIMAL_CLASSES)
 # A metamodel the corpus/database DOES declare a concrete "Iguana" family member
-# for (a legitimate descriptor entity, resolvable through `family_root`), but
-# for which no Python class was ever registered — the exact defensive scenario
+# for (a legitimate entity, resolvable through the Inheritance Facet), but for
+# which no Python class was ever registered — the exact defensive scenario
 # `_wrap._wrap`'s own `LookupError` guards, distinct from `identity_key`'s
-# unrelated (and differently-worded) `meta.entity(...)` `KeyError` for a name
-# the METAMODEL itself does not know at all.
-_ANIMAL_WITH_UNREGISTERED_CONCRETE = dataclasses.replace(
-    _ANIMAL,
-    entities=(
-        *_ANIMAL.entities,
-        EntityDescriptor(
-            name="Iguana",
-            namespace="parallax.compatibility",
-            inheritance=Inheritance(role="concrete-subtype", parent="Pet", tag_value="iguana"),
-        ),
-    ),
+# unrelated `KeyError` for a name the METAMODEL itself does not know at all. The
+# extra concrete is added to the descriptor record graph and formed into an
+# accepted model like any other.
+_ANIMAL_RECORDS = tuple(
+    record for cls in _ANIMAL_CLASSES if (record := entity_record_of(cls)) is not None
+)
+_ANIMAL_WITH_UNREGISTERED_CONCRETE = accepted_metamodel(
+    MetamodelRecord(
+        entities=(
+            *_ANIMAL_RECORDS,
+            EntityDescriptor(
+                name="Iguana",
+                namespace="parallax.compatibility",
+                inheritance=Inheritance(role="concrete-subtype", parent="Pet", tag_value="iguana"),
+            ),
+        )
+    )
 )
 _DOCUMENT = metamodel(
     [
@@ -102,9 +108,7 @@ def _order_root() -> Node:
 
 
 def test_wrap_graph_produces_a_frozen_instance_of_the_registered_class() -> None:
-    (root,) = wrap_graph(
-        (_order_root(),), "SnapOrder", _ORDERS, models.accepted_model(_ORDERS), Pin()
-    )
+    (root,) = wrap_graph((_order_root(),), "SnapOrder", accepted_metamodel(_ORDERS), Pin())
     assert isinstance(root, sm.SnapOrder)
     assert root.id == 1
     assert root.name == "Ada"
@@ -112,9 +116,7 @@ def test_wrap_graph_produces_a_frozen_instance_of_the_registered_class() -> None
 
 
 def test_included_to_many_relationship_is_a_tuple_of_wrapped_instances() -> None:
-    (root,) = wrap_graph(
-        (_order_root(),), "SnapOrder", _ORDERS, models.accepted_model(_ORDERS), Pin()
-    )
+    (root,) = wrap_graph((_order_root(),), "SnapOrder", accepted_metamodel(_ORDERS), Pin())
     assert isinstance(root, sm.SnapOrder)
     assert isinstance(root.items, tuple)
     assert len(root.items) == 1
@@ -123,9 +125,7 @@ def test_included_to_many_relationship_is_a_tuple_of_wrapped_instances() -> None
 
 
 def test_back_reference_cycle_closes_on_the_same_wrapped_instance() -> None:
-    (root,) = wrap_graph(
-        (_order_root(),), "SnapOrder", _ORDERS, models.accepted_model(_ORDERS), Pin()
-    )
+    (root,) = wrap_graph((_order_root(),), "SnapOrder", accepted_metamodel(_ORDERS), Pin())
     assert isinstance(root, sm.SnapOrder)
     assert root.items[0].order is root  # graph-local identity, hard pointer
 
@@ -177,8 +177,7 @@ def test_diamond_projection_merges_a_relationship_loaded_on_only_one_sibling_pat
     (root,) = wrap_graph(
         (_diamond_order_asymmetric_include(),),
         "Order",
-        _STORY_ORDERS,
-        models.accepted_model(_STORY_ORDERS),
+        accepted_metamodel(_STORY_ORDERS),
         Pin(),
     )
     assert isinstance(root, _soOrder)
@@ -227,8 +226,7 @@ def test_diamond_projection_does_not_double_wire_a_relationship_loaded_on_both_p
     (root,) = wrap_graph(
         (_diamond_order_conflicting_include(),),
         "Order",
-        _STORY_ORDERS,
-        models.accepted_model(_STORY_ORDERS),
+        accepted_metamodel(_STORY_ORDERS),
         Pin(),
     )
     assert isinstance(root, _soOrder)
@@ -250,7 +248,7 @@ def test_unloaded_relationship_access_raises_naming_the_path() -> None:
         },
         pk_columns=("id",),
     )
-    (root,) = wrap_graph((bare,), "SnapOrder", _ORDERS, models.accepted_model(_ORDERS), Pin())
+    (root,) = wrap_graph((bare,), "SnapOrder", accepted_metamodel(_ORDERS), Pin())
     assert isinstance(root, sm.SnapOrder)
     assert is_loaded(root, "items") is False
     with pytest.raises(UnloadedRelationshipError, match="items"):
@@ -258,9 +256,7 @@ def test_unloaded_relationship_access_raises_naming_the_path() -> None:
 
 
 def test_loaded_to_one_relationship_is_the_node_or_none() -> None:
-    (root,) = wrap_graph(
-        (_order_root(),), "SnapOrder", _ORDERS, models.accepted_model(_ORDERS), Pin()
-    )
+    (root,) = wrap_graph((_order_root(),), "SnapOrder", accepted_metamodel(_ORDERS), Pin())
     assert isinstance(root, sm.SnapOrder)
     item = root.items[0]
     assert is_loaded(item, "order") is True
@@ -279,7 +275,7 @@ def test_loaded_to_one_relationship_attached_as_none_wraps_to_none() -> None:
         },
         pk_columns=("id",),
     )
-    (root,) = wrap_graph((orphan,), "SnapOrderItem", _ORDERS, models.accepted_model(_ORDERS), Pin())
+    (root,) = wrap_graph((orphan,), "SnapOrderItem", accepted_metamodel(_ORDERS), Pin())
     assert isinstance(root, sm.SnapOrderItem)
     assert is_loaded(root, "order") is True
     assert root.order is None
@@ -299,7 +295,7 @@ def test_loaded_empty_to_many_is_an_empty_tuple() -> None:
         },
         pk_columns=("id",),
     )
-    (root,) = wrap_graph((parent,), "SnapOrder", _ORDERS, models.accepted_model(_ORDERS), Pin())
+    (root,) = wrap_graph((parent,), "SnapOrder", accepted_metamodel(_ORDERS), Pin())
     assert isinstance(root, sm.SnapOrder)
     assert root.items == ()
     assert is_loaded(root, "items") is True
@@ -341,7 +337,7 @@ def test_polymorphic_children_materialize_as_their_concrete_classes() -> None:
         fields={"id": 10, "name": "Alice", "animals": [_dog(), _cat()]},
         pk_columns=("id",),
     )
-    (root,) = wrap_graph((owner,), "AnimalOwner", _ANIMAL, models.accepted_model(_ANIMAL), Pin())
+    (root,) = wrap_graph((owner,), "AnimalOwner", accepted_metamodel(_ANIMAL), Pin())
     assert isinstance(root, sm.AnimalOwner)
     dog, cat = root.animals
     assert type(dog) is sm.Dog
@@ -355,7 +351,7 @@ def test_narrowed_view_is_independent_of_the_broad_relationship() -> None:
         fields={"id": 10, "name": "Alice", "pets[Dog]": [_dog()]},
         pk_columns=("id",),
     )
-    (root,) = wrap_graph((owner,), "AnimalOwner", _ANIMAL, models.accepted_model(_ANIMAL), Pin())
+    (root,) = wrap_graph((owner,), "AnimalOwner", accepted_metamodel(_ANIMAL), Pin())
     assert isinstance(root, sm.AnimalOwner)
     path = sm.AnimalOwner.pets.narrow(sm.Dog)
     assert is_loaded(root, "pets") is False
@@ -376,7 +372,7 @@ def test_two_narrowed_views_coexist_independently_on_one_node() -> None:
         fields={"id": 10, "name": "Alice", "pets[Dog]": [_dog()], "pets[Cat]": [_cat()]},
         pk_columns=("id",),
     )
-    (root,) = wrap_graph((owner,), "AnimalOwner", _ANIMAL, models.accepted_model(_ANIMAL), Pin())
+    (root,) = wrap_graph((owner,), "AnimalOwner", accepted_metamodel(_ANIMAL), Pin())
     assert isinstance(root, sm.AnimalOwner)
     dogs = cast("tuple[object, ...]", narrowed(root, sm.AnimalOwner.pets.narrow(sm.Dog)))
     cats = cast("tuple[object, ...]", narrowed(root, sm.AnimalOwner.pets.narrow(sm.Cat)))
@@ -422,6 +418,7 @@ def test_narrowed_view_key_derives_from_the_paths_own_registry_not_types_own() -
             )
 
             id: Attr[int] = Field(primary_key=True, pk_generator="none")
+            owner_id: Attr[int] = Field(type="int64")
 
         class Dog(Pet, frozen=True):
             __parallax__ = EntityConfig(table="dog_path", inheritance=Concrete())
@@ -439,6 +436,7 @@ def test_narrowed_view_key_derives_from_the_paths_own_registry_not_types_own() -
             __parallax__ = EntityConfig(table="owner_path", mutability="transactional")
 
             id: Attr[int] = Field(primary_key=True, pk_generator="none")
+            kennel_id: Attr[int] = Field(type="int64")
             pets: Rel[tuple[Pet, ...]] = Relationship(
                 cardinality="one-to-many",
                 join=RelationshipJoin(
@@ -508,9 +506,7 @@ def test_narrowed_view_key_derives_from_the_paths_own_registry_not_types_own() -
     dog_row = Node(fields={"id": 1, "owner_id": 10, "familyVariant": "Dog"}, pk_columns=("id",))
     owner_node = Node(fields={"id": 10, "pets[CustomDog,Dog]": [dog_row]}, pk_columns=("id",))
     actual_meta = registry_actual.metamodel()
-    (root,) = wrap_graph(
-        (owner_node,), "Owner", actual_meta, models.accepted_model(actual_meta), Pin()
-    )
+    (root,) = wrap_graph((owner_node,), "Owner", accepted_metamodel(actual_meta), Pin())
     # `registry_actual`'s OWN classes -- distinct objects from `registry_path`'s
     # same-named "Owner"/"Dog", never the ones the multi-hop `path` was built
     # through (the SAME canonical name coexists across two registries).
@@ -590,8 +586,7 @@ def test_narrowed_view_key_survives_copy_deepcopy_and_pickle_of_the_path() -> No
     (root,) = wrap_graph(
         (owner_node,),
         "_CopySurvivalOwner",
-        survival_meta,
-        models.accepted_model(survival_meta),
+        accepted_metamodel(survival_meta),
         Pin(),
     )
 
@@ -616,7 +611,7 @@ def test_narrowed_view_key_falls_back_to_the_default_registry_when_the_path_capt
         fields={"id": 10, "name": "Alice", "pets[Dog]": [_dog()]},
         pk_columns=("id",),
     )
-    (root,) = wrap_graph((owner,), "AnimalOwner", _ANIMAL, models.accepted_model(_ANIMAL), Pin())
+    (root,) = wrap_graph((owner,), "AnimalOwner", accepted_metamodel(_ANIMAL), Pin())
     path = RelationshipPath(
         segments=(PathSegment(rel="AnimalOwner.pets", narrow=("Dog",)),), target="Dog"
     )
@@ -634,8 +629,7 @@ def test_wrap_raises_lookup_error_for_an_unregistered_concrete_class() -> None:
         wrap_graph(
             (owner,),
             "AnimalOwner",
-            _ANIMAL_WITH_UNREGISTERED_CONCRETE,
-            models.accepted_model(_ANIMAL_WITH_UNREGISTERED_CONCRETE),
+            accepted_metamodel(_ANIMAL_WITH_UNREGISTERED_CONCRETE),
             Pin(),
         )
 
@@ -669,9 +663,7 @@ def test_wrap_a_single_resolved_position_node_instantiates_the_concrete_class() 
         pk_columns=("id",),
         resolved_entity="Invoice",
     )
-    (root,) = wrap_graph(
-        (node,), "FinancialDocument", _DOCUMENT, models.accepted_model(_DOCUMENT), Pin()
-    )
+    (root,) = wrap_graph((node,), "FinancialDocument", accepted_metamodel(_DOCUMENT), Pin())
     assert type(root) is read_models.Invoice
     assert root.amount_due == Decimal("120.00")
 
@@ -691,5 +683,5 @@ def test_wrap_without_resolved_entity_falls_back_to_the_declared_default() -> No
         },
         pk_columns=("id",),
     )
-    (root,) = wrap_graph((node,), "Invoice", _DOCUMENT, models.accepted_model(_DOCUMENT), Pin())
+    (root,) = wrap_graph((node,), "Invoice", accepted_metamodel(_DOCUMENT), Pin())
     assert type(root) is read_models.Invoice

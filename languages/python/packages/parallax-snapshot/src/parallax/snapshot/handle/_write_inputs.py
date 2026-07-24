@@ -9,19 +9,20 @@ plus the observation machinery a read leaves behind for it:
   (:class:`TransactionTimePinReadOnlyError`, :func:`validate_source_pin`,
   :func:`source_pin`), and the sparse keyed ``update`` row
   (:func:`prepare_sparse_row`);
-* instance -> record resolution (:func:`entity_record_of_instance`) and the
+* instance -> accepted-Metadata resolution (:func:`metadata_of_instance`) and the
   verb-time license key (:func:`observation_key`);
 * observation recording after a real :func:`~parallax.snapshot.handle.find`
   (:func:`record_observations`) and its row-form twin for a materializing
   predicate-write resolve (:func:`materialize_row`), which share their payload
   extraction through the module-local ``_temporal_observation`` / ``_row_payload``.
 
-Depends on :mod:`parallax.snapshot.handle._family` (family-effective axes,
-version attribute, member-to-column map) and — for the
+Physical facts come from the accepted Metamodel and its facets, resolved through
+:mod:`parallax.snapshot.handle._family` (the declaring root, family-effective
+axes and primary key, version attribute, member-to-column map). For the
 :class:`~parallax.snapshot.handle.FindResult` :func:`record_observations`
-consumes — on :mod:`parallax.snapshot.handle._read`. That edge is deliberately
-one-way: the pin helpers ``Transaction.find`` shares with the read executor stay
-in ``_read``, so ``_read`` never imports this module.
+consumes it also imports :mod:`parallax.snapshot.handle._read`. That edge is
+deliberately one-way: the pin helpers ``Transaction.find`` shares with the read
+executor stay in ``_read``, so ``_read`` never imports this module.
 
 Names crossing a module boundary (read from ``_transaction`` / ``_predicate_writes``)
 are spelled bare; a helper whose every caller lives here keeps its underscore.
@@ -38,20 +39,22 @@ import datetime as dt
 from collections.abc import Mapping
 from typing import Final, cast
 
-from parallax.core import inheritance
 from parallax.core.base import normalize_instant
 from parallax.core.db_port import Row
-from parallax.core.descriptor import AsOfAxisMetadata, Attribute, Entity, Metamodel
 from parallax.core.entity import Entity as EntityBase
-
-# `entity_record_of` is the core registry lookup this module's own
-# `entity_record_of_instance` wraps (it adds the not-a-Parallax-entity refusal):
-# near-miss spellings, deliberately both visible here.
 from parallax.core.entity import (
     canonical_row,
     effective_change_set,
-    entity_record_of,
+    entity_metadata_of,
     primary_key_row,
+)
+from parallax.core.metamodel import (
+    AsOfAxisMetadata,
+    AttributeMetadata,
+    EntityMetadata,
+    Metamodel,
+    PrimaryKey,
+    TemporalDimension,
 )
 from parallax.core.temporal_read import LATEST, Latest, Pin
 from parallax.core.unit_work import (
@@ -63,6 +66,9 @@ from parallax.core.unit_work import (
 )
 from parallax.snapshot.handle._family import (
     axis_columns,
+    declaring,
+    entity_of,
+    family_primary_key,
     members,
     tx_time_axis,
     valid_time_axis,
@@ -72,8 +78,8 @@ from parallax.snapshot.handle._read import FindResult
 
 __all__ = [
     "TransactionTimePinReadOnlyError",
-    "entity_record_of_instance",
     "materialize_row",
+    "metadata_of_instance",
     "observation_key",
     "prepare_sparse_row",
     "record_observations",
@@ -100,7 +106,27 @@ class TransactionTimePinReadOnlyError(ValueError):
     code: Final[str] = "transaction-time-pin-read-only"
 
 
-def observation_key(record: Entity, declaring: Entity, instance: object) -> ObjectKey:
+def _declared_primary_key(entity: EntityMetadata) -> tuple[AttributeMetadata, ...]:
+    """``entity``'s OWN declared primary key — used where ``entity`` is already
+    the declaring root, so its local declaration IS the family key."""
+    return tuple(
+        attribute
+        for attribute in entity.declared_attributes
+        if isinstance(attribute.primary_key, PrimaryKey)
+    )
+
+
+def _is_temporal(declaring_entity: EntityMetadata) -> bool:
+    return bool(declaring_entity.declared_as_of_axes)
+
+
+def _is_bitemporal(declaring_entity: EntityMetadata) -> bool:
+    return declaring_entity.as_of_axis(TemporalDimension.VALID_TIME) is not None
+
+
+def observation_key(
+    record: EntityMetadata, declaring_entity: EntityMetadata, instance: object
+) -> ObjectKey:
     """The ``(entity name, ordered pk pairs)`` observation key for a WRITTEN
     instance — the same shape :func:`record_observations` records under (the
     instance's OWN entity name, never family-normalized; pk pairs by canonical
@@ -108,7 +134,13 @@ def observation_key(record: Entity, declaring: Entity, instance: object) -> Obje
     `unit_work.object_key` computes at flush, so a verb-time license lookup
     and the flush-time attach can never diverge."""
     row = primary_key_row(instance)
-    return (record.name, tuple((attr.name, row[attr.name]) for attr in declaring.primary_key))
+    return (
+        record.identity.name,
+        tuple(
+            (attr.identity.name, row[attr.identity.name])
+            for attr in _declared_primary_key(declaring_entity)
+        ),
+    )
 
 
 def record_observations(uow: UnitOfWork, meta: Metamodel, result: FindResult, pin: Pin) -> None:
@@ -139,37 +171,39 @@ def record_observations(uow: UnitOfWork, meta: Metamodel, result: FindResult, pi
     """
     latest_pinned = pin.tx_time is None or pin.tx_time is LATEST
     for entity_name, node in result.all_nodes:
-        entity = meta.entity(entity_name)
-        declaring = inheritance.declaring_entity(meta, entity)
-        pk_attrs = declaring.primary_key
+        entity = entity_of(meta, entity_name)
+        declaring_entity = declaring(meta, entity)
+        pk_attrs = _declared_primary_key(declaring_entity)
         if not pk_attrs or any(  # pragma: no cover - defends a malformed model/projection
-            attr.column not in node.fields for attr in pk_attrs
+            attr.storage.name not in node.fields for attr in pk_attrs
         ):
             continue
         key: ObjectKey = (
             entity_name,
-            tuple((attr.name, node.fields[attr.column]) for attr in pk_attrs),
+            tuple((attr.identity.name, node.fields[attr.storage.name]) for attr in pk_attrs),
         )
-        version_attr = version_attribute(declaring)
+        version_attr = version_attribute(meta, declaring_entity)
         if version_attr is not None:
-            if version_attr.column in node.fields:
-                uow.observe(key, Observation(version=cast("int", node.fields[version_attr.column])))
+            if version_attr.storage.name in node.fields:
+                uow.observe(
+                    key, Observation(version=cast("int", node.fields[version_attr.storage.name]))
+                )
             continue
-        if not declaring.is_temporal:
+        if not _is_temporal(declaring_entity):
             continue
-        tx_axis = tx_time_axis(declaring)
-        tx_start_column, _tx_end_column = axis_columns(declaring, tx_axis)
+        tx_axis = tx_time_axis(declaring_entity)
+        tx_start_column, _tx_end_column = axis_columns(declaring_entity, tx_axis)
         if tx_start_column not in node.fields:  # pragma: no cover - malformed model/projection
             continue
         uow.observe(
             key,
-            _temporal_observation(meta, declaring, node.fields, tx_axis, latest_pinned),
+            _temporal_observation(meta, declaring_entity, node.fields, tx_axis, latest_pinned),
         )
 
 
 def _temporal_observation(
     meta: Metamodel,
-    declaring: Entity,
+    declaring_entity: EntityMetadata,
     fields: Mapping[str, object],
     tx_axis: AsOfAxisMetadata,
     latest_pinned: bool,
@@ -192,10 +226,9 @@ def _temporal_observation(
     real ``timestamptz`` column may be a driver-native ``datetime.datetime``
     or the native-infinity sentinel, never pre-rendered to a wire string here)
     — the SAME driver-native-passthrough contract every other temporal bind in
-    this seam already carries (`test_transaction_reads.py::
-    test_optimistic_mode_temporal_write_after_an_as_of_find_gates_on_observed_in_z`);
-    wire-rendering for REPORTING is the conformance ADAPTER's own boundary
-    concern (`parallax.conformance.engine._json_bind`), never this seam's.
+    this seam already carries; wire-rendering for REPORTING is the conformance
+    ADAPTER's own boundary concern (`parallax.conformance.engine._json_bind`),
+    never this seam's.
 
     The bitemporal payload KEEPS a value-object document whenever ``fields``
     carries one (`include_value_objects=True` below): a real
@@ -204,19 +237,15 @@ def _temporal_observation(
     carries it there; a materializing predicate-write resolve's ROW-form
     ``fields`` carries one whenever its own need-sensitive projection
     requested it (`_predicate_writes._materialize_predicate_write`'s
-    ``needs_documents``, which requests it for
-    EVERY bitemporal mutation this branch ever sees: update, updateUntil,
-    terminate, terminateUntil alike, since the rectangle split chains all
-    four) — ``column in fields`` still gates every member exactly as it does
-    for scalars, so this is a no-op only for a VO-free entity, and never
-    drops one `bitemp_write.plan`'s head/middle/tail split (`_merged_payload`
-    / the old-payload rectangles) needs to carry forward whole
-    (`m-bitemp-write` "head/tail old values"; `m-value-object` "the document
-    rides every chained/split row whole").
+    ``needs_documents``) — ``column in fields`` still gates every member exactly
+    as it does for scalars, so this is a no-op only for a VO-free entity, and
+    never drops one `bitemp_write.plan`'s head/middle/tail split needs to carry
+    forward whole (`m-bitemp-write` "head/tail old values"; `m-value-object`
+    "the document rides every chained/split row whole").
     """
-    tx_start_column, tx_end_column = axis_columns(declaring, tx_axis)
+    tx_start_column, tx_end_column = axis_columns(declaring_entity, tx_axis)
     tx_start = cast("str", fields[tx_start_column])
-    if declaring.temporal != "bitemporal":
+    if not _is_bitemporal(declaring_entity):
         # Audit-only: the observed payload every other member besides
         # the sole Transaction-Time axis — `txtime_write.plan`'s own update-branch
         # merge (`_merged_row`) overlays a public `tx.update(copy)`'s SPARSE
@@ -224,20 +253,20 @@ def _temporal_observation(
         # observation rather than being silently dropped.
         payload = _row_payload(
             meta,
-            declaring,
+            declaring_entity,
             fields,
             {tx_start_column, tx_end_column},
             include_value_objects=True,
         )
         return Observation(tx_start=tx_start, payload=payload, latest_pinned=latest_pinned)
-    valid_axis = valid_time_axis(declaring)
-    valid_start_column, valid_end_column = axis_columns(declaring, valid_axis)
+    valid_axis = valid_time_axis(declaring_entity)
+    valid_start_column, valid_end_column = axis_columns(declaring_entity, valid_axis)
     if valid_start_column not in fields or valid_end_column not in fields:  # pragma: no cover
         return Observation(
             tx_start=tx_start, latest_pinned=latest_pinned
         )  # malformed model/projection
     excluded = {tx_start_column, tx_end_column, valid_start_column, valid_end_column}
-    payload = _row_payload(meta, declaring, fields, excluded, include_value_objects=True)
+    payload = _row_payload(meta, declaring_entity, fields, excluded, include_value_objects=True)
     return Observation(
         tx_start=tx_start,
         valid_start=cast("str", fields[valid_start_column]),
@@ -249,7 +278,7 @@ def _temporal_observation(
 
 def _row_payload(
     meta: Metamodel,
-    declaring: Entity,
+    declaring_entity: EntityMetadata,
     fields: Mapping[str, object],
     excluded: set[str],
     *,
@@ -275,7 +304,7 @@ def _row_payload(
     """
     return {
         name: fields[column]
-        for name, (column, is_value_object) in members(meta, declaring).items()
+        for name, (column, is_value_object) in members(meta, declaring_entity).items()
         if (include_value_objects or not is_value_object)
         and column in fields
         and column not in excluded
@@ -290,7 +319,7 @@ def _row_payload(
 # / `prepare_sparse_row`).                                                    #
 # `materialize_row`/`_apply_assignments` below are pure functions the SOLE   #
 # caller (`_predicate_writes._materialize_predicate_write`) drives against    #
-# its OWN resolved rows — never an implicit read of their own.                #
+# its OWN resolved rows — never an implicit read of their own.               #
 # --------------------------------------------------------------------------- #
 # The private slot `parallax.snapshot.handle._wrap` attaches a materialized
 # temporal node's whole-graph Pin under — the same spelling
@@ -337,24 +366,25 @@ def validate_source_pin(entity_name: str, pin: Pin | None) -> None:
 
 
 def validate_valid_from(
-    declaring: Entity, mutation: KeyedMutation, valid_from: dt.datetime | None
+    declaring_entity: EntityMetadata, mutation: KeyedMutation, valid_from: dt.datetime | None
 ) -> str | None:
     """Validate and render a write verb's ``valid_from`` (`python.md` §5):
     a Bitemporal target requires it (the mutation's own Valid-Time instant
     ``B``, `m-bitemp-write` "Plain (unbounded) bitemporal writes"); a
     non-temporal or Transaction-Time-Only target takes none."""
-    if declaring.temporal == "bitemporal":
+    name = declaring_entity.identity.name
+    if _is_bitemporal(declaring_entity):
         if valid_from is None:
             raise ValueError(
-                f"{declaring.name}: a bitemporal {mutation!r} requires valid_from "
+                f"{name}: a bitemporal {mutation!r} requires valid_from "
                 "(the mutation's own Valid-Time instant)"
             )
         return instant_literal(valid_from)
     if valid_from is not None:
-        shape = "a Transaction-Time-Only" if declaring.is_temporal else "a non-temporal"
+        shape = "a Transaction-Time-Only" if _is_temporal(declaring_entity) else "a non-temporal"
         raise ValueError(
-            f"{declaring.name}: {shape} {mutation!r} takes no valid_from "
-            f"({declaring.name!r} declares no Valid-Time dimension to bound)"
+            f"{name}: {shape} {mutation!r} takes no valid_from "
+            f"({name!r} declares no Valid-Time dimension to bound)"
         )
     return None
 
@@ -378,7 +408,10 @@ def prepare_sparse_row(copy: EntityBase) -> dict[str, object] | None:
 
 
 def validate_until(
-    declaring: Entity, mutation: KeyedMutation, valid_from: dt.datetime, until: dt.datetime
+    declaring_entity: EntityMetadata,
+    mutation: KeyedMutation,
+    valid_from: dt.datetime,
+    until: dt.datetime,
 ) -> str:
     """Validate + render a ``*Until`` verb's window bound (`python.md` §5:
     "both aware-UTC-microsecond datetimes, all validated at build" ... "the
@@ -404,7 +437,7 @@ def validate_until(
     until_normalized = normalize_instant(until)
     if until_normalized <= valid_from_normalized:
         raise ValueError(
-            f"{declaring.name}: {mutation!r} requires valid_from < until "
+            f"{declaring_entity.identity.name}: {mutation!r} requires valid_from < until "
             f"(python.md §5) — got valid_from={valid_from!r}, until={until!r}"
         )
     return until_normalized.isoformat()
@@ -412,9 +445,9 @@ def validate_until(
 
 def materialize_row(
     meta: Metamodel,
-    entity: Entity,
-    declaring: Entity,
-    version_attr: Attribute | None,
+    entity: EntityMetadata,
+    declaring_entity: EntityMetadata,
+    version_attr: AttributeMetadata | None,
     mutation: KeyedMutation,
     assignments: Mapping[str, object],
     row: Row,
@@ -431,29 +464,31 @@ def materialize_row(
     no assignments to compare). ``row`` is the resolve's OWN row-form row
     (never an implicit second read).
     """
-    pk_attrs = inheritance.family_primary_key(meta, entity)
-    pk_row = {attr.name: row[attr.column] for attr in pk_attrs}
-    key: ObjectKey = (entity.name, tuple(pk_row.items()))
+    pk_attrs = family_primary_key(meta, entity)
+    pk_row = {attr.identity.name: row[attr.storage.name] for attr in pk_attrs}
+    key: ObjectKey = (entity.identity.name, tuple(pk_row.items()))
     assignment_bearing = mutation in ("update", "updateUntil")
 
     if version_attr is not None:
-        observation = Observation(version=cast("int", row[version_attr.column]))
+        observation = Observation(version=cast("int", row[version_attr.storage.name]))
         if not assignment_bearing:
             return key, observation, dict(pk_row)
         new_row, changed = _apply_assignments(meta, entity, pk_row, row, assignments)
         return key, observation, (new_row if changed else None)
 
-    tx_axis = tx_time_axis(declaring)
-    tx_start_column, tx_end_column = axis_columns(declaring, tx_axis)
+    tx_axis = tx_time_axis(declaring_entity)
+    tx_start_column, tx_end_column = axis_columns(declaring_entity, tx_axis)
     tx_start = cast("str", row[tx_start_column])
-    if declaring.temporal == "bitemporal":
+    if _is_bitemporal(declaring_entity):
         # A SPARSE new row: `bitemp_write.plan` merges it onto the observed
         # payload itself (`_merged_payload`), the bitemporal analogue of an
         # edited copy's effective change set.
-        observation = _temporal_observation(meta, declaring, row, tx_axis, latest_pinned=True)
+        observation = _temporal_observation(
+            meta, declaring_entity, row, tx_axis, latest_pinned=True
+        )
         if not assignment_bearing:
             return key, observation, dict(pk_row)
-        new_row, changed = _apply_assignments(meta, declaring, pk_row, row, assignments)
+        new_row, changed = _apply_assignments(meta, declaring_entity, pk_row, row, assignments)
         return key, observation, (new_row if changed else None)
 
     # Audit-only: `txtime_write.plan` chains the instruction's OWN authored
@@ -468,17 +503,15 @@ def materialize_row(
         # (`m-opt-lock` "Predicate-selected writes materialize when
         # observations are needed" — observations are MODE-INDEPENDENT; only
         # the GATE is mode-dependent, `m-txtime-write.md:65`). The observed
-        # `in_z` is the temporal analogue of a versioned optimistic gate
-        # (`m-txtime-write` "Affected-row conflict contract for closes"), so
-        # an OPTIMISTIC-mode close binds it (`and in_z = ?`, `m-opt-lock.md`
-        # "Temporal entities derive the version from the Transaction-Time dimension"),
-        # gate-last, exactly as a keyed temporal terminate already does
-        # (`m-txtime-write-006`) — `txtime_write.plan` composes the gate
-        # candidate straight from this SAME observation, no separate branch.
-        # A LOCKING-mode close still renders ungated (the render seam only
-        # ever BINDS the candidate under optimistic concurrency,
-        # `~parallax.core.opt_lock.gates`), so recording the observation here
-        # never changes locking mode's own ungated shape.
+        # `in_z` is the temporal analogue of a versioned optimistic gate, so
+        # an OPTIMISTIC-mode close binds it (`and in_z = ?`), gate-last,
+        # exactly as a keyed temporal terminate already does — `txtime_write.
+        # plan` composes the gate candidate straight from this SAME
+        # observation, no separate branch. A LOCKING-mode close still renders
+        # ungated (the render seam only ever BINDS the candidate under
+        # optimistic concurrency, `~parallax.core.opt_lock.gates`), so
+        # recording the observation here never changes locking mode's own
+        # ungated shape.
         return key, observation, dict(pk_row)
     # Reached only for an assignment-bearing (`update`) audit-only mutation —
     # exactly when `_materialize_predicate_write`'s own resolving read
@@ -490,19 +523,19 @@ def materialize_row(
         **pk_row,
         **_row_payload(
             meta,
-            declaring,
+            declaring_entity,
             row,
             {tx_start_column, tx_end_column},
             include_value_objects=True,
         ),
     }
-    new_row, changed = _apply_assignments(meta, declaring, full_row, row, assignments)
+    new_row, changed = _apply_assignments(meta, declaring_entity, full_row, row, assignments)
     return key, observation, (new_row if changed else None)
 
 
 def _apply_assignments(
     meta: Metamodel,
-    entity: Entity,
+    entity: EntityMetadata,
     base_row: Mapping[str, object],
     row: Row,
     assignments: Mapping[str, object],
@@ -525,8 +558,10 @@ def _apply_assignments(
     return new_row, changed
 
 
-def entity_record_of_instance(instance: EntityBase) -> Entity:
-    record = entity_record_of(type(instance))
-    if record is None:
+def metadata_of_instance(meta: Metamodel, instance: EntityBase) -> EntityMetadata:
+    """``instance``'s accepted Entity Metadata within ``meta``, or a loud
+    ``TypeError`` for a class this metamodel does not declare."""
+    metadata = entity_metadata_of(meta, type(instance))
+    if metadata is None:
         raise TypeError(f"{type(instance).__name__} is not a registered Parallax entity class")
-    return record
+    return metadata

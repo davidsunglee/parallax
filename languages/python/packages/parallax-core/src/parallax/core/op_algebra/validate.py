@@ -35,12 +35,13 @@ Rule provenance:
   and is never a navigation, deep-fetch, or `find()` root — it is reached only
   by value, through its owner.
 
-DAG note: `m-op-algebra` depends only on `m-metamodel` and `m-inheritance`
-(`modules.md`); it may **not** import `m-value-object` (the same constraint
-`m-sql`'s `sql_gen/_predicate.py` already documents). The value-object
-structural checks therefore use the shared, error-neutral descriptor walk also
-used by `sql_gen/_predicate.py`, avoiding both a forbidden dependency and a
-duplicate path traversal.
+The active position's effective concrete-subtype sets come from the Inheritance
+Facet; value-object paths resolve through the accepted Metadata's own O(1)
+nested lookups (`entity.value_object(name)`, then `scope.attribute` /
+`scope.value_object` per segment), classifying each miss at the call site.
+Relationship targets come from the queried Entity's own identity-resolved
+declarations — a defining declaration's join target, or a reverse declaration's
+peer source — so this validator needs no relationship facet.
 """
 
 from __future__ import annotations
@@ -49,19 +50,19 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import assert_never
 
-from parallax.core.descriptor import (
-    Entity,
+from parallax.core import inheritance
+from parallax.core.base import Boolean, Float32, Float64, Int32, Int64, NeutralType, String
+from parallax.core.base import Decimal as DecimalType
+from parallax.core.metamodel import (
+    DefiningRelationshipDeclaration,
+    EntityIdentity,
+    EntityMetadata,
     Metamodel,
-    NestedValueObject,
-    Relationship,
-    ValueObject,
-    ValueObjectAttribute,
-    VoPathMiss,
-    find_value_object,
-    find_vo_member,
-    resolve_vo_leaf,
+    NestedValueObjectMetadata,
+    RelationshipDeclaration,
+    ValueObjectAttributeMetadata,
+    ValueObjectMetadata,
 )
-from parallax.core.inheritance import effective_concrete_subtypes
 from parallax.core.op_algebra.nodes import (
     All,
     And,
@@ -95,7 +96,72 @@ from parallax.core.op_algebra.nodes import (
     StringMatch,
 )
 
-__all__ = ["OperationRejectedError", "validate_operation"]
+__all__ = ["OperationRejectedError", "referenced_entities", "validate_operation"]
+
+_VoContainer = ValueObjectMetadata | NestedValueObjectMetadata
+
+
+def referenced_entities(op: Operation) -> frozenset[str]:
+    """The bare Entity spellings ``op`` names anywhere — the ``Class`` prefix of
+    every attribute / nested-path / relationship reference, plus every ``narrow``
+    entity and subtype name.
+
+    A caller assembling a coherent model to validate ``op`` against needs every
+    Entity the operation reaches, not only the read's own root: a deep-fetch or
+    navigation path names a target the root's family does not otherwise reach."""
+    names: set[str] = set()
+    _collect_entities(op, names)
+    return frozenset(names)
+
+
+def _class_of(reference: str) -> str:
+    return reference.partition(".")[0]
+
+
+def _collect_entities(op: Operation, names: set[str]) -> None:
+    match op:
+        case All() | NoneOp():
+            return
+        case (
+            Comparison(attr=attr)
+            | Between(attr=attr)
+            | NullCheck(attr=attr)
+            | StringMatch(attr=attr)
+            | Membership(attr=attr)
+        ):
+            names.add(_class_of(attr))
+        case NestedComparison(path=path) | NestedMembership(path=path) | NestedNullCheck(path=path):
+            names.add(_class_of(path))
+        case NestedExists(path=path) | NestedNotExists(path=path):
+            names.add(_class_of(path))
+        case And(operands=operands) | Or(operands=operands):
+            for operand in operands:
+                _collect_entities(operand, names)
+        case (
+            Not(operand=operand)
+            | Group(operand=operand)
+            | OrderBy(operand=operand)
+            | Limit(operand=operand)
+            | Distinct(operand=operand)
+            | AsOf(operand=operand)
+            | AsOfRange(operand=operand)
+            | History(operand=operand)
+        ):
+            _collect_entities(operand, names)
+        case Narrow(entity=entity, to=to, operand=operand):
+            names.add(entity)
+            names.update(to)
+            _collect_entities(operand, names)
+        case Navigate(rel=rel, op=inner) | Exists(rel=rel, op=inner) | NotExists(rel=rel, op=inner):
+            names.add(_class_of(rel))
+            if inner is not None:
+                _collect_entities(inner, names)
+        case DeepFetch(operand=operand, paths=paths):
+            _collect_entities(operand, names)
+            for path in paths:
+                for segment in path:
+                    names.add(_class_of(segment.rel))
+                    names.update(segment.narrow)
 
 
 class OperationRejectedError(ValueError):
@@ -113,33 +179,34 @@ class OperationRejectedError(ValueError):
 class _PositionScope:
     """The threaded polymorphic-position state (`m-op-algebra` four-step rule).
 
-    ``effective`` is the active position's effective concrete-subtype set.
-    ``relationship_target`` is set only while validating inside a navigation
-    filter's `op` (`m-navigate`): a `narrow` encountered there does not clamp
-    like a same-position narrow — its `entity` must equal this name exactly.
+    ``effective`` is the active position's effective concrete-subtype set (by
+    declared name). ``relationship_target`` is the canonical name of the
+    relationship target, set only while validating inside a navigation filter's
+    `op` (`m-navigate`): a `narrow` encountered there does not clamp like a
+    same-position narrow — its `entity` must name this target exactly.
     """
 
     effective: frozenset[str]
     relationship_target: str | None = None
 
 
-def validate_operation(target: str, op: Operation, meta: Metamodel) -> None:
-    """Validate ``op`` against ``meta``, raising :class:`OperationRejectedError`.
+def validate_operation(root: EntityMetadata, op: Operation, model: Metamodel) -> None:
+    """Validate ``op`` against ``model``, raising :class:`OperationRejectedError`.
 
-    ``target`` is the read's queried root position — the `targetEntity` a
-    normal read case authors (or, for a `when.operation` `rejected` case that
-    carries none, the model-aware default `m-op-algebra` fixes: the
-    inheritance family root, or the model's own single entity when it declares
-    no inheritance family at all). It seeds the initial active position for
-    the narrow / subtype-attribute checks; the value-object structural checks
-    below resolve their own entity from each node's own `Class.member`
-    reference and do not otherwise depend on ``target``.
+    ``root`` is the read's queried root position, already resolved to accepted
+    Metadata by the caller — the `targetEntity` a normal read case authors, or,
+    for a `when.operation` `rejected` case that carries none, the model-aware
+    default `m-op-algebra` fixes (the inheritance family root, or the model's
+    own single entity). It seeds the initial active position for the narrow /
+    subtype-attribute checks; the value-object structural checks below resolve
+    their own entity from each node's own `Class.member` reference and do not
+    otherwise depend on ``root``.
     """
-    scope = _PositionScope(effective=frozenset(effective_concrete_subtypes(meta, target)))
-    _walk(op, meta, scope)
+    scope = _PositionScope(effective=_effective_set(model, root))
+    _walk(op, model, scope)
 
 
-def _walk(op: Operation, meta: Metamodel, scope: _PositionScope) -> None:
+def _walk(op: Operation, model: Metamodel, scope: _PositionScope) -> None:
     match op:
         case All() | NoneOp():
             return
@@ -150,25 +217,25 @@ def _walk(op: Operation, meta: Metamodel, scope: _PositionScope) -> None:
             | StringMatch(attr=attr)
             | Membership(attr=attr)
         ):
-            _check_attr_ref(attr, meta, scope)
+            _check_attr_ref(attr, model, scope)
         case NestedComparison():
-            _check_nested_comparison(op, meta)
+            _check_nested_comparison(op, model)
         case NestedMembership():
-            _check_nested_membership(op, meta)
+            _check_nested_membership(op, model)
         case NestedNullCheck():
-            _check_nested_null_check(op, meta)
+            _check_nested_null_check(op, model)
         case NestedExists(path=path, where=where) | NestedNotExists(path=path, where=where):
             # The path is value-object-TERMINATED (ends at the object itself, not a
             # leaf). The optional `where` is element-relative (no `Class` prefix) —
             # a different addressing scheme the narrow/attribute position tracking
             # above does not apply to — so it is validated against the TERMINAL
             # value-object descriptor `path` resolves to, not walked by `_walk`.
-            container = _check_nested_vo_terminated(path, meta)
+            container = _check_nested_vo_terminated(path, model)
             if where is not None:
                 _check_element_predicate(where, container)
         case And(operands=operands) | Or(operands=operands):
             for operand in operands:
-                _walk(operand, meta, scope)
+                _walk(operand, model, scope)
         case (
             Not(operand=operand)
             | Group(operand=operand)
@@ -179,50 +246,74 @@ def _walk(op: Operation, meta: Metamodel, scope: _PositionScope) -> None:
             | AsOfRange(operand=operand)
             | History(operand=operand)
         ):
-            _walk(operand, meta, scope)
+            _walk(operand, model, scope)
         case Narrow(entity=entity, to=to, operand=operand):
-            new_scope = _validate_narrow(entity, to, scope, meta)
-            _walk(operand, meta, new_scope)
+            new_scope = _validate_narrow(entity, to, scope, model)
+            _walk(operand, model, new_scope)
         case Navigate(rel=rel, op=inner) | Exists(rel=rel, op=inner) | NotExists(rel=rel, op=inner):
-            relationship = _resolve_relationship(
-                rel, meta, wrong_kind_rule="navigate-value-object-target"
+            target = _relationship_target(
+                rel, model, wrong_kind_rule="navigate-value-object-target"
             )
             hop_scope = _PositionScope(
-                effective=frozenset(
-                    effective_concrete_subtypes(meta, relationship.join.target.entity)
-                ),
-                relationship_target=relationship.join.target.entity,
+                effective=_effective_set(model, target),
+                relationship_target=target.identity.canonical,
             )
             if inner is not None:
-                _walk(inner, meta, hop_scope)
+                _walk(inner, model, hop_scope)
         case DeepFetch(operand=operand, paths=paths):
-            _walk(operand, meta, scope)
+            _walk(operand, model, scope)
             for path in paths:
-                _check_deep_fetch_path(path, meta)
+                _check_deep_fetch_path(path, model)
         case _:  # pragma: no cover - exhaustiveness guard
             assert_never(op)
+
+
+# --------------------------------------------------------------------------- #
+# Entity / position resolution.                                               #
+# --------------------------------------------------------------------------- #
+def _lookup_entity(model: Metamodel, name: str) -> EntityMetadata | None:
+    """The accepted Metadata a bare-or-canonical Entity spelling names, or
+    absence — the accepted-model counterpart of the descriptor's own
+    bare-or-canonical lookup, over the authored `Class` prefix of an operation
+    reference."""
+    for entity in model.entities:
+        if name in (entity.identity.canonical, entity.identity.name):
+            return entity
+    return None
+
+
+def _effective_set(model: Metamodel, entity: EntityMetadata) -> frozenset[str]:
+    """``entity``'s effective concrete-subtype set (by declared name): itself for
+    a standalone Entity, else its family view's concrete descendants."""
+    view = inheritance.view(model).entity(entity.identity)
+    if view is None:  # pragma: no cover - the facet covers every accepted Entity
+        return frozenset({entity.identity.name})
+    return frozenset(identity.name for identity in view.concrete_subtypes)
+
+
+def _resolve_to_set(to: Sequence[str], model: Metamodel) -> frozenset[str]:
+    resolved: set[str] = set()
+    for name in to:
+        entity = _lookup_entity(model, name)
+        if entity is not None:
+            resolved.update(_effective_set(model, entity))
+    return frozenset(resolved)
 
 
 # --------------------------------------------------------------------------- #
 # Narrow / subtype-attribute position tracking (m-op-algebra x m-inheritance,  #
 # m-navigate relationship scope).                                             #
 # --------------------------------------------------------------------------- #
-def _resolve_to_set(to: Sequence[str], meta: Metamodel) -> frozenset[str]:
-    resolved: set[str] = set()
-    for name in to:
-        resolved.update(effective_concrete_subtypes(meta, name))
-    return frozenset(resolved)
-
-
 def _validate_narrow(
-    entity: str, to: tuple[str, ...], scope: _PositionScope, meta: Metamodel
+    entity: str, to: tuple[str, ...], scope: _PositionScope, model: Metamodel
 ) -> _PositionScope:
     """The four-step validation rule (`m-op-algebra`), plus its relationship-scope
     carve-out (`m-navigate`)."""
     if scope.relationship_target is not None:
         # Relationship scope does NOT clamp: `entity` MUST name the relationship
         # target exactly, never a broader or other position.
-        if meta.entity(entity).canonical_name != scope.relationship_target:
+        target = _lookup_entity(model, entity)
+        if target is None or target.identity.canonical != scope.relationship_target:
             raise OperationRejectedError(
                 "narrow-outside-relationship-target",
                 f"a relationship-scope narrow's `entity` ({entity!r}) must name the "
@@ -230,7 +321,7 @@ def _validate_narrow(
                 "subtypes are reached only through `to`, never by naming a broader or "
                 "other position",
             )
-        resolved = _resolve_to_set(to, meta)
+        resolved = _resolve_to_set(to, model)
         if not resolved or not resolved <= scope.effective:
             raise OperationRejectedError(
                 "narrow-outside-relationship-target",
@@ -242,10 +333,10 @@ def _validate_narrow(
 
     # Step 1: resolve `entity` and CLAMP (intersect) it with the active position —
     # a narrow can only ever constrain the active position, never broaden it.
-    entity_resolved = frozenset(effective_concrete_subtypes(meta, entity))
+    entity_resolved = _resolve_to_set((entity,), model)
     effective_position = entity_resolved & scope.effective
     # Steps 2-3: resolve each `to` entry, union, and deduplicate.
-    resolved = _resolve_to_set(to, meta)
+    resolved = _resolve_to_set(to, model)
     # Step 4: accept iff the resolved set is non-empty AND a subset of the
     # effective position; it becomes the active position for `operand`.
     if not resolved:
@@ -263,11 +354,11 @@ def _validate_narrow(
     return _PositionScope(effective=resolved)
 
 
-def _check_attr_ref(attr_ref: str, meta: Metamodel, scope: _PositionScope) -> None:
+def _check_attr_ref(attr_ref: str, model: Metamodel, scope: _PositionScope) -> None:
     class_name, _, _attr_name = attr_ref.rpartition(".")
-    entity = meta.by_name.get(class_name)
+    entity = _lookup_entity(model, class_name)
     if entity is None:
-        if _is_value_object_name_anywhere(meta, class_name):
+        if _is_value_object_name_anywhere(model, class_name):
             raise OperationRejectedError(
                 "find-root-value-object",
                 f"{attr_ref!r} is rooted at the value object {class_name!r}, not a "
@@ -275,94 +366,120 @@ def _check_attr_ref(attr_ref: str, meta: Metamodel, scope: _PositionScope) -> No
                 "queried only through its owner (m-value-object contract 5)",
             )
         raise ValueError(f"{attr_ref!r} names no declared entity or value object {class_name!r}")
-    _check_subtype_attribute_scope(meta, entity, scope)
+    _check_subtype_attribute_scope(model, entity, scope)
 
 
-def _check_subtype_attribute_scope(meta: Metamodel, entity: Entity, scope: _PositionScope) -> None:
+def _check_subtype_attribute_scope(
+    model: Metamodel, entity: EntityMetadata, scope: _PositionScope
+) -> None:
     if entity.inheritance is None:
         return
-    own_effective = frozenset(effective_concrete_subtypes(meta, entity.name))
+    own_effective = _effective_set(model, entity)
     if not scope.effective <= own_effective:
         raise OperationRejectedError(
             "subtype-attribute-outside-narrow-scope",
-            f"{entity.name} is not available to every concrete in the active position "
-            f"{sorted(scope.effective)}; narrow to {sorted(own_effective)} first",
+            f"{entity.identity.name} is not available to every concrete in the active "
+            f"position {sorted(scope.effective)}; narrow to {sorted(own_effective)} first",
         )
 
 
 # --------------------------------------------------------------------------- #
 # Navigation / deep-fetch relationship targets (m-value-object contract 4).    #
 # --------------------------------------------------------------------------- #
-def _resolve_relationship(rel_ref: str, meta: Metamodel, *, wrong_kind_rule: str) -> Relationship:
+def _declaration_target(declaration: RelationshipDeclaration) -> EntityIdentity:
+    """The Entity a declared relationship navigates to: a defining declaration's
+    join target, or a reverse declaration's peer source (the reverse direction
+    points back at the Entity the peer was declared on)."""
+    if isinstance(declaration, DefiningRelationshipDeclaration):
+        return declaration.join.target.entity
+    return declaration.reverse_of.source_entity
+
+
+def _relationship_target(rel_ref: str, model: Metamodel, *, wrong_kind_rule: str) -> EntityMetadata:
     class_name, _, member_name = rel_ref.rpartition(".")
-    entity = meta.entity(class_name)
-    try:
-        return meta.relationship(entity, member_name)
-    except KeyError:
-        pass
-    if find_value_object(entity, member_name) is not None:
+    entity = _lookup_entity(model, class_name)
+    if entity is None:  # pragma: no cover - a referenced relationship owner is in the closure
+        raise ValueError(f"{rel_ref!r} names no declared entity {class_name!r}")
+    declaration = entity.relationship(member_name)
+    if declaration is not None:
+        target = model.entity(_declaration_target(declaration))
+        if target is None:  # pragma: no cover - a resolved declaration names a declared Entity
+            raise ValueError(f"{rel_ref!r} names a relationship whose target is undeclared")
+        return target
+    if entity.value_object(member_name) is not None:
         raise OperationRejectedError(
             wrong_kind_rule,
             f"{rel_ref!r} names the value object {member_name!r}, not a relationship; a "
             "value object has no identity to correlate and materializes with its owner, "
             "never via a fetch level or semi-join (m-value-object contract 4)",
         )
-    raise ValueError(f"{rel_ref!r} names no declared relationship on {entity.name}")
+    raise ValueError(f"{rel_ref!r} names no declared relationship on {entity.identity.name}")
 
 
-def _check_deep_fetch_path(path: tuple[PathSegment, ...], meta: Metamodel) -> None:
+def _check_deep_fetch_path(path: tuple[PathSegment, ...], model: Metamodel) -> None:
     for segment in path:
-        relationship = _resolve_relationship(
-            segment.rel, meta, wrong_kind_rule="deep-fetch-value-object-segment"
+        target = _relationship_target(
+            segment.rel, model, wrong_kind_rule="deep-fetch-value-object-segment"
         )
         if segment.narrow:
             # A path narrow carries only `to` — the position is the hop's target,
             # implicitly (m-op-algebra `deepFetch` directive) — so only the subset
             # check applies here; there is no separate `entity` to mismatch.
-            target_effective = frozenset(
-                effective_concrete_subtypes(meta, relationship.join.target.entity)
-            )
-            resolved = _resolve_to_set(segment.narrow, meta)
+            target_effective = _effective_set(model, target)
+            resolved = _resolve_to_set(segment.narrow, model)
             if not resolved or not resolved <= target_effective:
                 raise OperationRejectedError(
                     "narrow-outside-relationship-target",
                     f"deep-fetch path narrow {list(segment.narrow)} resolves to "
                     f"{sorted(resolved)}, which is not a non-empty subset of "
-                    f"{relationship.join.target.entity}'s effective concrete set "
+                    f"{target.identity.name}'s effective concrete set "
                     f"{sorted(target_effective)}",
                 )
 
 
 # --------------------------------------------------------------------------- #
 # Nested value-object predicates (m-op-algebra "Nested value-object            #
-# predicates"; resolved against the shared, error-neutral                     #
-# `parallax.core.descriptor.vo_path` walk because the DAG forbids             #
-# m-op-algebra from importing m-value-object.                                 #
+# predicates"), resolved through the accepted Metadata's own O(1) nested       #
+# lookups — the value-object structural checks classify each miss at the call  #
+# site, so m-op-algebra needs no m-value-object dependency.                    #
 # --------------------------------------------------------------------------- #
-def _is_value_object_name_anywhere(meta: Metamodel, name: str) -> bool:
-    return any(find_value_object(entity, name) is not None for entity in meta.entities)
+def _is_value_object_name_anywhere(model: Metamodel, name: str) -> bool:
+    return any(entity.value_object(name) is not None for entity in model.entities)
 
 
-def _classify_vo_path_miss(path: str, miss: VoPathMiss) -> OperationRejectedError:
-    """Translate an error-neutral :class:`VoPathMiss` into this module's own
-    `nested-path-unknown-member` classification and message text."""
-    if miss.reason == "scalar-continues":
-        return OperationRejectedError(
-            "nested-path-unknown-member",
-            f"{path!r}: {miss.segment!r} is a scalar attribute but the path continues",
-        )
-    if miss.reason == "ends-on-nested":
-        return OperationRejectedError(
-            "nested-path-unknown-member",
-            f"{path!r} ends on the nested value object {miss.segment!r}, not a scalar leaf",
-        )
-    return OperationRejectedError(
-        "nested-path-unknown-member",
-        f"{path!r}: {miss.segment!r} names no declared member",
-    )
+def _resolve_leaf(
+    path: str, container: _VoContainer, segments: Sequence[str]
+) -> ValueObjectAttributeMetadata:
+    """Walk dotted ``segments`` (non-empty) against ``container`` to a scalar leaf,
+    classifying the three ways a path fails: an undeclared segment, a scalar the
+    path continues past, and a nested object the path ends on."""
+    scope: _VoContainer = container
+    for index, segment in enumerate(segments):
+        is_last = index == len(segments) - 1
+        attribute = scope.attribute(segment)
+        if attribute is not None:
+            if not is_last:
+                raise OperationRejectedError(
+                    "nested-path-unknown-member",
+                    f"{path!r}: {segment!r} is a scalar attribute but the path continues",
+                )
+            return attribute
+        nested = scope.value_object(segment)
+        if nested is None:
+            raise OperationRejectedError(
+                "nested-path-unknown-member",
+                f"{path!r}: {segment!r} names no declared member",
+            )
+        if is_last:
+            raise OperationRejectedError(
+                "nested-path-unknown-member",
+                f"{path!r} ends on the nested value object {segment!r}, not a scalar leaf",
+            )
+        scope = nested
+    raise AssertionError("_resolve_leaf: `segments` must be non-empty")  # pragma: no cover
 
 
-def _resolve_nested_leaf(path: str, meta: Metamodel) -> ValueObjectAttribute:
+def _resolve_nested_leaf(path: str, model: Metamodel) -> ValueObjectAttributeMetadata:
     """Resolve a `Class.valueObject(.valueObject)*.attribute` path to its leaf."""
     parts = path.split(".")
     if len(parts) < 3:
@@ -371,23 +488,20 @@ def _resolve_nested_leaf(path: str, meta: Metamodel) -> ValueObjectAttribute:
             f"{path!r} needs at least Class.valueObject.attribute",
         )
     class_name, vo_name, *segments = parts
-    entity = meta.entity(class_name)
-    vo = find_value_object(entity, vo_name)
+    entity = _lookup_entity(model, class_name)
+    if entity is None:  # pragma: no cover - a referenced value-object owner is in the closure
+        raise ValueError(f"{path!r}: {class_name!r} names no declared entity")
+    vo = entity.value_object(vo_name)
     if vo is None:
         raise OperationRejectedError(
             "nested-path-first-segment-not-value-object",
             f"{class_name}.{vo_name} is not a declared value object on {class_name} "
             "(m-op-algebra nested-predicate resolver MUST)",
         )
-    result = resolve_vo_leaf(vo, segments)
-    if isinstance(result, VoPathMiss):
-        raise _classify_vo_path_miss(path, result)
-    return result
+    return _resolve_leaf(path, vo, segments)
 
 
-def _resolve_element_leaf(
-    container: ValueObject | NestedValueObject, path: str
-) -> ValueObjectAttribute:
+def _resolve_element_leaf(container: _VoContainer, path: str) -> ValueObjectAttributeMetadata:
     """Resolve an element-relative path (`type`, `geo.country`) to its leaf.
 
     ``container`` is the TERMINAL value-object descriptor a `nestedExists`/
@@ -395,13 +509,10 @@ def _resolve_element_leaf(
     scoped `where`'s own paths are relative to that SAME element (`m-value-object`
     same-element semantics), never re-prefixed with `Class.valueObject`.
     """
-    result = resolve_vo_leaf(container, path.split("."))
-    if isinstance(result, VoPathMiss):
-        raise _classify_vo_path_miss(path, result)
-    return result
+    return _resolve_leaf(path, container, path.split("."))
 
 
-def _check_nested_vo_terminated(path: str, meta: Metamodel) -> ValueObject | NestedValueObject:
+def _check_nested_vo_terminated(path: str, model: Metamodel) -> _VoContainer:
     """Resolve a `nestedExists`/`nestedNotExists` path (ends at a value object),
     returning the TERMINAL value-object descriptor — the same-element scope an
     optional `where` predicate's element-relative members resolve against.
@@ -412,17 +523,19 @@ def _check_nested_vo_terminated(path: str, meta: Metamodel) -> ValueObject | Nes
             "nested-path-unknown-member", f"{path!r} needs at least Class.valueObject"
         )
     class_name, vo_name, *segments = parts
-    entity = meta.entity(class_name)
-    vo = find_value_object(entity, vo_name)
+    entity = _lookup_entity(model, class_name)
+    if entity is None:  # pragma: no cover - a referenced value-object owner is in the closure
+        raise ValueError(f"{path!r}: {class_name!r} names no declared entity")
+    vo = entity.value_object(vo_name)
     if vo is None:
         raise OperationRejectedError(
             "nested-path-first-segment-not-value-object",
             f"{class_name}.{vo_name} is not a declared value object on {class_name}",
         )
-    container: ValueObject | NestedValueObject = vo
+    container: _VoContainer = vo
     for segment in segments:
-        member = find_vo_member(container, segment)
-        if not isinstance(member, NestedValueObject):
+        member = container.value_object(segment)
+        if member is None:
             raise OperationRejectedError(
                 "nested-path-unknown-member",
                 f"{path!r}: {segment!r} does not name a nested value object",
@@ -431,7 +544,7 @@ def _check_nested_vo_terminated(path: str, meta: Metamodel) -> ValueObject | Nes
     return container
 
 
-def _literal_matches_type(value: Scalar, neutral_type: str) -> bool:
+def _literal_matches_type(value: Scalar, neutral_type: NeutralType) -> bool:
     """Whether a polymorphic operation literal matches a leaf's declared neutral type.
 
     `m-op-algebra`: "each type MUST match the leaf attribute's declared neutral
@@ -442,14 +555,14 @@ def _literal_matches_type(value: Scalar, neutral_type: str) -> bool:
     if value is None:
         return True
     if isinstance(value, bool):
-        return neutral_type == "boolean"
-    if neutral_type == "boolean":
+        return isinstance(neutral_type, Boolean)
+    if isinstance(neutral_type, Boolean):
         return False
-    if neutral_type in ("int32", "int64"):
+    if isinstance(neutral_type, (Int32, Int64)):
         return isinstance(value, int)
-    if neutral_type in ("float32", "float64") or neutral_type.startswith("decimal"):
+    if isinstance(neutral_type, (Float32, Float64, DecimalType)):
         return isinstance(value, (int, float))
-    if neutral_type == "string":
+    if isinstance(neutral_type, String):
         return isinstance(value, str)
     # date / time / timestamp / uuid / bytes / json ride the portable literal as a
     # string (the algebra's typed-literal vocabulary has no dedicated carrier for
@@ -457,7 +570,7 @@ def _literal_matches_type(value: Scalar, neutral_type: str) -> bool:
     return isinstance(value, str)
 
 
-def _check_typed_literal(path: str, value: Scalar, leaf: ValueObjectAttribute) -> None:
+def _check_typed_literal(path: str, value: Scalar, leaf: ValueObjectAttributeMetadata) -> None:
     """Reject ``value`` if it does not match ``leaf``'s declared neutral type.
 
     Shared by the flat nested rules and the scoped element-relative rules
@@ -472,19 +585,19 @@ def _check_typed_literal(path: str, value: Scalar, leaf: ValueObjectAttribute) -
         )
 
 
-def _check_nested_comparison(node: NestedComparison, meta: Metamodel) -> None:
-    leaf = _resolve_nested_leaf(node.path, meta)
+def _check_nested_comparison(node: NestedComparison, model: Metamodel) -> None:
+    leaf = _resolve_nested_leaf(node.path, model)
     _check_typed_literal(node.path, node.value, leaf)
 
 
-def _check_nested_membership(node: NestedMembership, meta: Metamodel) -> None:
-    leaf = _resolve_nested_leaf(node.path, meta)
+def _check_nested_membership(node: NestedMembership, model: Metamodel) -> None:
+    leaf = _resolve_nested_leaf(node.path, model)
     for value in node.values:
         _check_typed_literal(node.path, value, leaf)
 
 
-def _check_nested_null_check(node: NestedNullCheck, meta: Metamodel) -> None:
-    _resolve_nested_leaf(node.path, meta)
+def _check_nested_null_check(node: NestedNullCheck, model: Metamodel) -> None:
+    _resolve_nested_leaf(node.path, model)
 
 
 # --------------------------------------------------------------------------- #
@@ -492,22 +605,18 @@ def _check_nested_null_check(node: NestedNullCheck, meta: Metamodel) -> None:
 # same-element semantics; the serde's `elementPredicate` grammar admits only  #
 # the nested*-family + boolean combinators here, element-relative paths).     #
 # --------------------------------------------------------------------------- #
-def _check_element_comparison(
-    node: NestedComparison, container: ValueObject | NestedValueObject
-) -> None:
+def _check_element_comparison(node: NestedComparison, container: _VoContainer) -> None:
     leaf = _resolve_element_leaf(container, node.path)
     _check_typed_literal(node.path, node.value, leaf)
 
 
-def _check_element_membership(
-    node: NestedMembership, container: ValueObject | NestedValueObject
-) -> None:
+def _check_element_membership(node: NestedMembership, container: _VoContainer) -> None:
     leaf = _resolve_element_leaf(container, node.path)
     for value in node.values:
         _check_typed_literal(node.path, value, leaf)
 
 
-def _check_element_predicate(op: Operation, container: ValueObject | NestedValueObject) -> None:
+def _check_element_predicate(op: Operation, container: _VoContainer) -> None:
     """Validate a `nestedExists`/`nestedNotExists` `where` against ``container``
     — the TERMINAL value-object descriptor its `path` resolves to.
 

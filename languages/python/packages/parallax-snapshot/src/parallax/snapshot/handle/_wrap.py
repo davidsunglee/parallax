@@ -17,28 +17,14 @@ the rows already passed through the database) plus the implementation-private
   family-normalized name + primary key — coordinate-omitted, safe within one
   graph's single pin, m-snapshot-read "Graph-local identity resolution"), never
   by a neutral :class:`~parallax.snapshot.materialize.Node`'s own python
-  identity. The assembler deliberately does NOT dedupe across sibling levels —
-  each attach position keeps its own freshly decoded ``Node`` so the WIRE
-  `then.graph` rendering stays per-view (m-snapshot-read-012's own
-  diamond-position contract: two views of one row may carry different fetched
-  projections) — so two *different* ``Node`` objects can share one logical key
-  (a back-reference, or two sibling include paths reaching the same row,
-  m-snapshot-read-001). A discovery pass (:func:`_discover`) walks the WHOLE
-  per-view forest once, groups every ``Node`` object by its logical key, and
-  merges each group's fields into ONE union view (:func:`_merged_fields`,
-  first-seen wins on a key more than one sibling carries, so a relationship or
-  narrowed view loaded on either path wires exactly once, never double-wired) —
-  BEFORE any frozen instance is built, so a diamond's later-encountered
-  sibling's own loaded relationships and attribute superset are never lost
-  (spec §3 "projections targeting the same key merge into one node"); the
-  per-view ``Node.fields`` dicts themselves are never mutated, so the wire
-  `then.graph` rendering (which walks those per-view objects directly) stays
-  byte-identical. Only the merged view feeds the frozen instance; the identity
-  cache then keyed the SAME way closes the cycle or the diamond without
-  re-validating or re-building it. A node whose (resolved) entity declares no
-  primary key at all falls back to the ``Node``'s own python identity
-  (defensive; every corpus entity declares one), which never merges with
-  another node (a singleton group of one);
+  identity. A discovery pass (:func:`_discover`) walks the WHOLE per-view forest
+  once, groups every ``Node`` object by its logical key, and merges each group's
+  fields into ONE union view (:func:`_merged_fields`, first-seen wins) BEFORE any
+  frozen instance is built, so a diamond's later-encountered sibling's own loaded
+  relationships and attribute superset are never lost (spec §3 "projections
+  targeting the same key merge into one node"); the per-view ``Node.fields``
+  dicts themselves are never mutated, so the wire `then.graph` rendering stays
+  byte-identical;
 - a relationship outside the include set is set to the private ``UNLOADED``
   sentinel, which the ``Rel`` descriptor's instance access translates into
   :class:`~parallax.core.entity.expressions.UnloadedRelationshipError`;
@@ -50,19 +36,19 @@ the rows already passed through the database) plus the implementation-private
   under the private ``__parallax_pin__`` / ``__parallax_edge__`` slots
   ``pin_of`` / ``edge_of`` already read.
 
+Physical and relationship facts come from the accepted Metamodel and its facets:
+each row's own concrete Entity resolves through ``m-metamodel`` name lookup, its
+navigable relationships through the Relationship Facet, its family-effective
+value objects and declaring root through the Inheritance Facet, and its concrete
+Python class through the Entity frontend's own registry seam.
+
 Polymorphic children materialize as their CONCRETE classes: ``familyVariant``,
 when the neutral row carries it, names the concrete entity directly; a
-single-resolved-position level (no ``familyVariant`` key — a table-per-
-concrete-subtype position resolving to exactly one concrete emits none,
-`m-sql`'s ``_compile_tpcs_single``) uses the node's OWN
-``~parallax.snapshot.materialize.Node.resolved_entity`` instead: the
-assembler's own compile-time-resolved
-concrete, threaded through materialization — never the entity's STATIC
-declared relationship target, which may itself be abstract (otherwise an
-abstract-position read narrowing to one concrete would wrap as the
-ABSTRACT class). The parent's own declared relationship target survives only
-as the LAST-resort default for a defensively (test-only) hand-built ``Node``
-that carries no ``resolved_entity`` at all.
+single-resolved-position level (no ``familyVariant`` key) uses the node's OWN
+``~parallax.snapshot.materialize.Node.resolved_entity`` instead. The parent's own
+declared relationship target survives only as the LAST-resort default for a
+defensively (test-only) hand-built ``Node`` that carries no ``resolved_entity``
+at all.
 
 Hashability is conditional, exactly per spec §3: this module does nothing
 special to make a node hashable or to guard against one — a back-reference
@@ -76,14 +62,13 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import cast
 
-from parallax.core import inheritance
-from parallax.core.descriptor import Entity, Metamodel, Relationship, ValueObject
-from parallax.core.entity import resolve_entity_class, wire_names_of
+from parallax.core import inheritance, relationship
+from parallax.core.entity import resolve_entity_class, resolve_entity_metadata, wire_names_of
 from parallax.core.entity.expressions import UNLOADED
 from parallax.core.entity.value_object import ValueObject as ValueObjectBase
 from parallax.core.entity.value_object import wire_names_of as vo_wire_names_of
-from parallax.core.metamodel import EntityIdentity
-from parallax.core.metamodel import Metamodel as AcceptedMetamodel
+from parallax.core.metamodel import EntityMetadata, Metamodel, Multiplicity, ValueObjectMetadata
+from parallax.core.relationship import RelationshipMetadata
 from parallax.core.temporal_read import Pin, milestone_edge
 from parallax.snapshot import materialize
 
@@ -97,8 +82,7 @@ _EDGE_ATTR = "__parallax_edge__"
 def wrap_graph(
     nodes: Sequence[materialize.Node],
     root_entity: str,
-    meta: Metamodel,
-    model: AcceptedMetamodel,
+    model: Metamodel,
     pin: Pin,
 ) -> tuple[object, ...]:
     """Wrap one materialized graph's root nodes (and, transitively, everything
@@ -109,67 +93,63 @@ def wrap_graph(
     Two passes: :func:`_discover` walks the whole per-view forest once,
     grouping every distinct ``Node`` object by its logical identity key, then
     :func:`_merged_fields` unions each group's fields into the one logical view
-    :func:`_wrap` actually builds a frozen instance from — the projection merge
-    m-snapshot-read/spec §3 require, computed once, before any instance exists.
+    :func:`_wrap` actually builds a frozen instance from.
     """
     groups: dict[object, list[materialize.Node]] = {}
     visited: set[int] = set()
     for node in nodes:
-        _discover(node, root_entity, meta, visited, groups)
+        _discover(node, root_entity, model, visited, groups)
     merged = _merged_fields(groups)
     cache: dict[object, object] = {}
-    return tuple(_wrap(node, root_entity, meta, model, pin, cache, merged) for node in nodes)
+    return tuple(_wrap(node, root_entity, model, pin, cache, merged) for node in nodes)
 
 
 def _concrete_entity_name(node: materialize.Node, default_entity: str) -> str:
     """``node``'s own concrete entity name: a row-carried ``familyVariant``
-    names it directly (a 2+-concrete
-    union-all position); else the assembler's own statically-resolved
-    ``node.resolved_entity`` (a single-resolved-position table-per-concrete-
-    subtype row, which carries no `familyVariant` at all); ``default_entity``
-    (the caller's declared relationship target / root — possibly abstract)
-    survives only as the defensive fallback for a hand-built ``Node`` no
-    assembler ever populated ``resolved_entity`` on."""
+    names it directly (a 2+-concrete union-all position); else the assembler's
+    own statically-resolved ``node.resolved_entity`` (a single-resolved-position
+    table-per-concrete-subtype row, which carries no `familyVariant` at all);
+    ``default_entity`` (the caller's declared relationship target / root —
+    possibly abstract) survives only as the defensive fallback for a hand-built
+    ``Node`` no assembler ever populated ``resolved_entity`` on."""
     variant = node.fields.get("familyVariant")
     if isinstance(variant, str):
         return variant
     return node.resolved_entity if node.resolved_entity is not None else default_entity
 
 
-def _family_relationships(meta: Metamodel, entity: Entity) -> tuple[Relationship, ...]:
-    """``entity``'s own declared relationships PLUS every inheritance-family
-    sibling's (a TPH/TPCS family shares its root's/siblings' declared
-    relationships in principle; today's corpus declares relationships only on
-    the non-participant OWNER side, but this stays family-complete for any
-    future participant-declared relationship)."""
-    if entity.inheritance is None:
-        return meta.relationships_for(entity)
-    root = inheritance.family_root(meta, entity)
-    collected: list[Relationship] = list(meta.relationships_for(entity))
-    for candidate in meta.entities:
-        if candidate.name == entity.name or candidate.inheritance is None:
-            continue
-        try:
-            if inheritance.family_root(meta, candidate).name == root.name:
-                collected.extend(meta.relationships_for(candidate))
-        except ValueError:  # pragma: no cover - guards a malformed family
-            continue
-    return tuple(collected)
+def _entity(model: Metamodel, name: str) -> EntityMetadata:
+    metadata = resolve_entity_metadata(model, name)
+    if metadata is None:  # pragma: no cover - a materialized row's concrete is always declared
+        raise LookupError(
+            f"{name!r} has no registered Parallax entity class; import it before "
+            "wrapping a Snapshot[T] result"
+        )
+    return metadata
 
 
-def _identity_cache_key(node: materialize.Node, concrete_name: str, meta: Metamodel) -> object:
+def _relationships(model: Metamodel, entity: EntityMetadata) -> tuple[RelationshipMetadata, ...]:
+    """``entity``'s navigable relationship directions (the Relationship Facet's
+    own per-Entity value): today's corpus declares relationships only on the
+    non-participant owner side, so an Entity's own directions are its complete
+    navigable set."""
+    directions = relationship.view(model).relationships(entity.identity)
+    return tuple(directions) if directions is not None else ()
+
+
+def _identity_cache_key(node: materialize.Node, concrete_name: str, model: Metamodel) -> object:
     """The wrap-time dedup/merge key: the LOGICAL identity triple (family-normalized
     name + primary key) when the (resolved) entity declares one, else the
     ``Node``'s own python identity — the same defensive fallback
     ``~parallax.snapshot.materialize.identity_key`` documents for an entity
     with no declared primary key (none exists in the corpus today)."""
-    return materialize.identity_key(meta, concrete_name, node.fields) or id(node)
+    return materialize.identity_key(model, concrete_name, node.fields) or id(node)
 
 
 def _discover_related(
     value: object,
     default_entity: str,
-    meta: Metamodel,
+    model: Metamodel,
     visited: set[int],
     groups: dict[object, list[materialize.Node]],
 ) -> None:
@@ -180,47 +160,42 @@ def _discover_related(
         return
     if isinstance(value, list):
         for item in cast("list[object]", value):
-            _discover(cast("materialize.Node", item), default_entity, meta, visited, groups)
+            _discover(cast("materialize.Node", item), default_entity, model, visited, groups)
         return
-    _discover(cast("materialize.Node", value), default_entity, meta, visited, groups)
+    _discover(cast("materialize.Node", value), default_entity, model, visited, groups)
 
 
 def _discover(
     node: materialize.Node,
     default_entity: str,
-    meta: Metamodel,
+    model: Metamodel,
     visited: set[int],
     groups: dict[object, list[materialize.Node]],
 ) -> None:
     """Walk the WHOLE per-view neutral forest reachable from ``node``, grouping
     every distinct ``Node`` python object by its logical identity key (the
     merge's phase 1). ``visited`` guards a back-reference cycle (the assembler
-    reuses the SAME ancestor ``Node`` object,
-    ``Assembler._attach_back_reference``) — each object is discovered at most
-    once, so a group never lists the same object twice; two SIBLING levels
-    reaching the same row (m-snapshot-read-001's diamond) are two DIFFERENT
-    objects and both land in the group.
+    reuses the SAME ancestor ``Node`` object); two SIBLING levels reaching the
+    same row (m-snapshot-read-001's diamond) are two DIFFERENT objects and both
+    land in the group.
     """
     node_id = id(node)
     if node_id in visited:
         return
     visited.add(node_id)
     concrete_name = _concrete_entity_name(node, default_entity)
-    key = _identity_cache_key(node, concrete_name, meta)
+    key = _identity_cache_key(node, concrete_name, model)
     groups.setdefault(key, []).append(node)
-    entity_record = meta.entity(concrete_name)
-    for relationship in _family_relationships(meta, entity_record):
-        rel_name = relationship.name
+    entity = _entity(model, concrete_name)
+    for direction in _relationships(model, entity):
+        rel_name = direction.identity.name
+        target_name = direction.join.target.entity.name
         if rel_name in node.fields:
-            _discover_related(
-                node.fields[rel_name], relationship.join.target.entity, meta, visited, groups
-            )
+            _discover_related(node.fields[rel_name], target_name, model, visited, groups)
         prefix = f"{rel_name}["
         for field_key, field_value in node.fields.items():
             if field_key.startswith(prefix):
-                _discover_related(
-                    field_value, relationship.join.target.entity, meta, visited, groups
-                )
+                _discover_related(field_value, target_name, model, visited, groups)
 
 
 def _merged_fields(
@@ -246,32 +221,30 @@ def _merged_fields(
 def _wrap(
     node: materialize.Node,
     default_entity: str,
-    meta: Metamodel,
-    model: AcceptedMetamodel,
+    model: Metamodel,
     pin: Pin,
     cache: dict[object, object],
     merged: Mapping[object, Mapping[str, object]],
 ) -> object:
     concrete_name = _concrete_entity_name(node, default_entity)
-    key = _identity_cache_key(node, concrete_name, meta)
+    key = _identity_cache_key(node, concrete_name, model)
     cached = cache.get(key)
     if cached is not None:
         return cached
 
-    cls = resolve_entity_class(meta, concrete_name)
+    cls = resolve_entity_class(model, concrete_name)
     if cls is None:
         raise LookupError(
             f"{concrete_name!r} has no registered Parallax entity class; import it before "
             "wrapping a Snapshot[T] result"
         )
-    entity_record = meta.entity(concrete_name)
+    entity = _entity(model, concrete_name)
     instance = cls.model_construct()
     cache[key] = instance
 
     # The merged (logical, union) view for this key — computed once by the
     # discovery pass before any instance existed — never this node's OWN
-    # (possibly narrower) per-view fields directly (so a diamond's
-    # second-visited sibling keeps its own loaded relationships).
+    # (possibly narrower) per-view fields directly.
     fields = merged.get(key, node.fields)
 
     names = wire_names_of(cls)
@@ -281,28 +254,20 @@ def _wrap(
         py_name = names.column_to_py.get(column)
         if py_name is None:
             continue  # a relationship attach key, handled below
-        object.__setattr__(instance, py_name, _wrap_member(value, entity_record, column, meta))
+        object.__setattr__(instance, py_name, _wrap_member(value, entity, column, model))
 
-    relationships = _family_relationships(meta, entity_record)
+    directions = _relationships(model, entity)
     narrowed_views: dict[str, object] = {}
-    for relationship in relationships:
-        rel_name = relationship.name
+    for direction in directions:
+        rel_name = direction.identity.name
+        target_name = direction.join.target.entity.name
         py_name = names.relationship_py.get(rel_name)
         # `py_name` is only absent for a SIBLING-declared relationship this
         # concrete class's own MRO does not carry (no corpus/fixture today
-        # declares one — every relationship rides the family's non-participant
-        # owner side); the narrowed-view scan below still applies to it.
+        # declares one); the narrowed-view scan below still applies to it.
         if py_name is not None:  # pragma: no branch
             if rel_name in fields:
-                loaded = _wrap_related(
-                    fields[rel_name],
-                    relationship.join.target.entity,
-                    meta,
-                    model,
-                    pin,
-                    cache,
-                    merged,
-                )
+                loaded = _wrap_related(fields[rel_name], target_name, model, pin, cache, merged)
                 object.__setattr__(instance, py_name, loaded)
             else:
                 object.__setattr__(instance, py_name, UNLOADED)
@@ -310,13 +275,7 @@ def _wrap(
         for field_key, field_value in fields.items():
             if field_key.startswith(prefix):
                 narrowed_views[field_key] = _wrap_related(
-                    field_value,
-                    relationship.join.target.entity,
-                    meta,
-                    model,
-                    pin,
-                    cache,
-                    merged,
+                    field_value, target_name, model, pin, cache, merged
                 )
 
     if narrowed_views:
@@ -324,26 +283,29 @@ def _wrap(
 
     # A temporal inheritance participant declares its as-of axes on the family
     # root (m-inheritance "Inherited members"), never re-declares them locally
-    # on a concrete descendant — `inheritance.declaring_entity` resolves the
-    # entity that actually carries them (a TPH/TPCS concrete node gets its
-    # pin/edge attached from the root's axes), the same resolution
-    # `m-navigate`'s per-hop propagation and `m-snapshot-read`'s own
-    # identity/pk resolution already share.
-    declaring = inheritance.declaring_entity(meta, entity_record)
-    if declaring.as_of_axes:
+    # on a concrete descendant — the Inheritance Facet resolves the entity that
+    # actually carries them (a TPH/TPCS concrete node gets its pin/edge attached
+    # from the root's axes).
+    declaring = _declaring(model, entity)
+    if declaring.declared_as_of_axes:
         object.__setattr__(instance, _PIN_ATTR, pin)
-        declaring_metadata = model.entity(EntityIdentity(declaring.namespace, declaring.name))
-        assert declaring_metadata is not None  # both views come from one record graph
-        object.__setattr__(instance, _EDGE_ATTR, milestone_edge(declaring_metadata, fields))
+        object.__setattr__(instance, _EDGE_ATTR, milestone_edge(declaring, fields))
 
     return instance
+
+
+def _declaring(model: Metamodel, entity: EntityMetadata) -> EntityMetadata:
+    position = inheritance.view(model).entity(entity.identity)
+    if position is None:  # pragma: no cover - the facet covers every accepted Entity
+        return entity
+    root = model.entity(position.root)
+    return entity if root is None else root
 
 
 def _wrap_related(
     value: object,
     default_entity: str,
-    meta: Metamodel,
-    model: AcceptedMetamodel,
+    model: Metamodel,
     pin: Pin,
     cache: dict[object, object],
     merged: Mapping[object, Mapping[str, object]],
@@ -353,45 +315,36 @@ def _wrap_related(
     if isinstance(value, list):
         items = cast("list[object]", value)
         return tuple(
-            _wrap(cast("materialize.Node", item), default_entity, meta, model, pin, cache, merged)
+            _wrap(cast("materialize.Node", item), default_entity, model, pin, cache, merged)
             for item in items
         )
-    return _wrap(cast("materialize.Node", value), default_entity, meta, model, pin, cache, merged)
+    return _wrap(cast("materialize.Node", value), default_entity, model, pin, cache, merged)
 
 
-def _wrap_member(value: object, entity: Entity, column: str, meta: Metamodel) -> object:
+def _wrap_member(value: object, entity: EntityMetadata, column: str, model: Metamodel) -> object:
     """A scalar member passes through; a value-object member's decoded nested
     dict wraps into its declared ``ValueObject`` subclass (or a tuple of them,
     ``multiplicity: many``) — the SAME instances-only contract the write side
     enforces (spec §2)."""
-    vo = next((v for v in _family_value_objects(meta, entity) if v.storage_column == column), None)
+    vo = next((v for v in _family_value_objects(model, entity) if v.storage.name == column), None)
     if vo is None:
         return value
-    vo_class = _vo_class_for(entity, vo.name, meta)
-    if vo.multiplicity == "many":
+    vo_class = _vo_class_for(entity, vo.identity.path[-1], model)
+    if vo.multiplicity is Multiplicity.MANY:
         items = cast("list[Mapping[str, object] | None]", value) if isinstance(value, list) else []
         return tuple(_wrap_vo(item, vo_class) for item in items if item is not None)
     return _wrap_vo(cast("Mapping[str, object] | None", value), vo_class)
 
 
-def _family_value_objects(meta: Metamodel, entity: Entity) -> tuple[ValueObject, ...]:
-    if entity.inheritance is None:
-        return entity.value_objects
-    root = inheritance.family_root(meta, entity)
-    collected: list[ValueObject] = list(entity.value_objects)
-    for candidate in meta.entities:
-        if candidate.name == entity.name or candidate.inheritance is None:
-            continue
-        try:
-            if inheritance.family_root(meta, candidate).name == root.name:
-                collected.extend(candidate.value_objects)
-        except ValueError:  # pragma: no cover - guards a malformed family
-            continue
-    return tuple(collected)
+def _family_value_objects(
+    model: Metamodel, entity: EntityMetadata
+) -> tuple[ValueObjectMetadata, ...]:
+    view = inheritance.view(model).entity(entity.identity)
+    return () if view is None else tuple(view.applicable_value_objects)
 
 
-def _vo_class_for(entity: Entity, vo_name: str, meta: Metamodel) -> type[ValueObjectBase]:
-    cls = resolve_entity_class(meta, entity.name)
+def _vo_class_for(entity: EntityMetadata, vo_name: str, model: Metamodel) -> type[ValueObjectBase]:
+    cls = resolve_entity_class(model, entity.identity.name)
     if cls is not None:
         names = wire_names_of(cls)
         py_name = names.name_to_py.get(vo_name)
@@ -400,7 +353,8 @@ def _vo_class_for(entity: Entity, vo_name: str, meta: Metamodel) -> type[ValueOb
             if vo_class is not None:
                 return cast("type[ValueObjectBase]", vo_class)
     raise LookupError(
-        f"{entity.name}.{vo_name}: no registered ValueObject class for this value-object member"
+        f"{entity.identity.name}.{vo_name}: no registered ValueObject class for this "
+        "value-object member"
     )
 
 

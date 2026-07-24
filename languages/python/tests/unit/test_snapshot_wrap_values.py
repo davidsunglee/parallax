@@ -15,7 +15,7 @@ import pytest
 import snapshot_models as sm
 from parallax.conformance import models
 from parallax.core import Attr, Bitemporal, Entity, EntityConfig, Field, descriptor
-from parallax.core.entity import metamodel
+from parallax.core.entity import accepted_metamodel, entity_record_of, metamodel
 from parallax.core.entity.base import Concrete, FamilyRoot
 from parallax.core.temporal_read import Pin, edge_of, pin_of
 from parallax.snapshot.handle import Execution, NoResultFound, Snapshot, TooManyResultsFound
@@ -51,9 +51,7 @@ def test_entity_level_value_object_members_wrap_into_their_declared_classes() ->
         },
         pk_columns=("id",),
     )
-    (root,) = wrap_graph(
-        (status,), "SnapOrderStatus", _ORDERS, models.accepted_model(_ORDERS), Pin()
-    )
+    (root,) = wrap_graph((status,), "SnapOrderStatus", accepted_metamodel(_ORDERS), Pin())
     assert isinstance(root, sm.SnapOrderStatus)
     assert root.primary_tag is None
     assert len(root.tags) == 2
@@ -79,9 +77,7 @@ def test_a_null_cardinality_many_value_object_column_wraps_to_an_empty_tuple() -
         },
         pk_columns=("id",),
     )
-    (root,) = wrap_graph(
-        (empty_status,), "SnapOrderStatus", _ORDERS, models.accepted_model(_ORDERS), Pin()
-    )
+    (root,) = wrap_graph((empty_status,), "SnapOrderStatus", accepted_metamodel(_ORDERS), Pin())
     assert isinstance(root, sm.SnapOrderStatus)
     assert root.tags == ()
 
@@ -135,7 +131,8 @@ def test_a_value_object_member_with_no_registered_class_is_refused() -> None:
     # The premise: the CLASS really does map `profile` as a scalar, so the
     # refusal below comes from the disagreement with the descriptor above and
     # not from a malformed class declaration.
-    compiled = metamodel([_WrapScalarProfile]).entity("_WrapScalarProfile")
+    compiled = entity_record_of(_WrapScalarProfile)
+    assert compiled is not None
     assert [attr.name for attr in compiled.attributes] == ["id", "profile"]
     assert compiled.value_objects == ()
 
@@ -145,8 +142,7 @@ def test_a_value_object_member_with_no_registered_class_is_refused() -> None:
         wrap_graph(
             (node,),
             "_WrapScalarProfile",
-            _PROFILE_AS_VALUE_OBJECT,
-            models.accepted_model(_PROFILE_AS_VALUE_OBJECT),
+            accepted_metamodel(_PROFILE_AS_VALUE_OBJECT),
             Pin(),
         )
 
@@ -167,7 +163,7 @@ def test_temporal_node_carries_the_whole_graph_pin_and_its_own_edge() -> None:
         pk_columns=("bal_id",),
     )
     pin = Pin(tx_time=dt.datetime(2024, 2, 1, tzinfo=dt.UTC))
-    (root,) = wrap_graph((row,), "Balance", _BALANCE, models.accepted_model(_BALANCE), pin)
+    (root,) = wrap_graph((row,), "Balance", accepted_metamodel(_BALANCE), pin)
     assert pin_of(root) is pin
     assert edge_of(root).tx_time == dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
 
@@ -222,9 +218,7 @@ def test_temporal_tpcs_concrete_node_carries_pin_and_edge() -> None:
         valid_time=dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
         tx_time=dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
     )
-    (root,) = wrap_graph(
-        (row,), "_WrapTemporalLeaf", _TEMPORAL_TPCS, models.accepted_model(_TEMPORAL_TPCS), pin
-    )
+    (root,) = wrap_graph((row,), "_WrapTemporalLeaf", accepted_metamodel(_TEMPORAL_TPCS), pin)
     assert isinstance(root, _WrapTemporalLeaf)
     assert pin_of(root) is pin
     assert edge_of(root).valid_time == dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
