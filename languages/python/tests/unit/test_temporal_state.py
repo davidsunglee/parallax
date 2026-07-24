@@ -15,11 +15,15 @@ import pytest
 
 from parallax.conformance import models
 from parallax.conformance.temporal_state import AmbiguousObservationError, TemporalShadow
+from parallax.core.metamodel import EntityIdentity
 from parallax.core.unit_work import KeyedWrite
 
 pytestmark = pytest.mark.unit
 
-POSITION = models.load_models()["position"]
+POSITION = models.accepted_model(models.load_models()["position"])
+_POSITION_ENTITY = POSITION.entity(EntityIdentity("parallax.compatibility", "Position"))
+assert _POSITION_ENTITY is not None
+POSITION_ENTITY = _POSITION_ENTITY
 
 
 def test_resolve_raises_when_more_than_one_current_milestone_is_tracked_for_a_pk() -> None:
@@ -32,7 +36,7 @@ def test_resolve_raises_when_more_than_one_current_milestone_is_tracked_for_a_pk
     shadow = TemporalShadow()
     shadow.seed_fixtures(
         POSITION,
-        "Position",
+        POSITION_ENTITY,
         [
             {
                 "id": 1,
@@ -55,14 +59,14 @@ def test_resolve_raises_when_more_than_one_current_milestone_is_tracked_for_a_pk
         ],
     )
     with pytest.raises(AmbiguousObservationError, match="2 current milestones"):
-        shadow.resolve(POSITION, "Position", {"id": 1})
+        shadow.resolve(POSITION, POSITION_ENTITY, {"id": 1})
 
 
 def test_resolve_returns_none_for_a_pk_the_tracker_has_never_seen_open() -> None:
     # An insert's pk, or a genuinely unobserved close: the write itself
     # surfaces a conflict/stale error at execution, never this tracker.
     shadow = TemporalShadow()
-    assert shadow.resolve(POSITION, "Position", {"id": 99}) is None
+    assert shadow.resolve(POSITION, POSITION_ENTITY, {"id": 99}) is None
 
 
 def test_seed_fixtures_skips_a_row_not_current_on_transaction_time() -> None:
@@ -71,7 +75,7 @@ def test_seed_fixtures_skips_a_row_not_current_on_transaction_time() -> None:
     shadow = TemporalShadow()
     shadow.seed_fixtures(
         POSITION,
-        "Position",
+        POSITION_ENTITY,
         [
             {
                 "id": 1,
@@ -84,7 +88,7 @@ def test_seed_fixtures_skips_a_row_not_current_on_transaction_time() -> None:
             }
         ],
     )
-    assert shadow.resolve(POSITION, "Position", {"id": 1}) is None
+    assert shadow.resolve(POSITION, POSITION_ENTITY, {"id": 1}) is None
 
 
 def test_advance_replaces_tracked_state_with_the_newly_opened_rows() -> None:
@@ -97,8 +101,8 @@ def test_advance_replaces_tracked_state_with_the_newly_opened_rows() -> None:
         ({"id": 1, "acctNum": "A", "value": 100.00},),
         valid_from="2024-01-01T00:00:00+00:00",
     )
-    shadow.advance(POSITION, "Position", insert, "2024-01-01T00:00:00+00:00", None)
-    observation = shadow.resolve(POSITION, "Position", {"id": 1})
+    shadow.advance(POSITION, POSITION_ENTITY, insert, "2024-01-01T00:00:00+00:00", None)
+    observation = shadow.resolve(POSITION, POSITION_ENTITY, {"id": 1})
     assert observation is not None
     assert observation.tx_start == "2024-01-01T00:00:00+00:00"
     assert observation.valid_start == "2024-01-01T00:00:00+00:00"

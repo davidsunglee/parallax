@@ -34,6 +34,7 @@ from parallax.core.unit_work import (
     PlannedWrite,
     PredicateWrite,
 )
+from parallax.snapshot.handle._accepted import accepted_target
 from parallax.snapshot.handle._family import (
     axis_columns,
     tx_time_axis,
@@ -218,8 +219,12 @@ def _lower_temporal_write(
     observation: Observation | None,
     tx_instant: str,
 ) -> list[LoweredStatement]:
+    # The milestone arithmetic reads the family's axes through the Temporal
+    # Facet, so it takes the write's own target position rather than the
+    # declaring one this seam resolved for its record-side machinery.
+    model, target = accepted_target(meta, instruction.entity)
     plan_fn = bitemp_write.plan if declaring.temporal == "bitemporal" else txtime_write.plan
-    milestone_plan = plan_fn(instruction, declaring, tx_instant, observation)
+    milestone_plan = plan_fn(instruction, model, target, tx_instant, observation)
     if observation is not None:
         # The REAL licensing check (`m-opt-lock` "Locking mode additionally
         # requires that the observation be of the current milestone"): every

@@ -39,15 +39,10 @@ _ACCEPTED = {
     "Ledger": accepted_model("ledger"),
     "Order": accepted_model("orders"),
 }
-# `inject_as_of` reads accepted Metadata; the milestone-edge and statement-pin
-# surfaces still read the record graph, so each Entity is held in both views.
 BALANCE = target(_ACCEPTED["Balance"], "Balance")
 POSITION = target(_ACCEPTED["Position"], "Position")
 LEDGER = target(_ACCEPTED["Ledger"], "Ledger")
 ORDERS = target(_ACCEPTED["Order"], "Order")
-BALANCE_RECORD = _MODELS["balance"].entity("Balance")
-POSITION_RECORD = _MODELS["position"].entity("Position")
-ORDERS_RECORD = _MODELS["orders"].entity("Order")
 
 _D = "2024-04-01T00:00:00+00:00"
 _B = "2024-03-01T00:00:00+00:00"
@@ -242,13 +237,13 @@ def test_milestone_edge_reads_each_axis_from_column() -> None:
         "from_z": dt.datetime(2024, 6, 1, tzinfo=dt.UTC),
         "in_z": dt.datetime(2024, 4, 1, tzinfo=dt.UTC),
     }
-    edge = milestone_edge(POSITION_RECORD, row)
+    edge = milestone_edge(POSITION, row)
     assert edge.valid_time == dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
     assert edge.tx_time == dt.datetime(2024, 4, 1, tzinfo=dt.UTC)
 
 
 def test_edge_strict_accessor_raises_on_undeclared_axis() -> None:
-    edge = milestone_edge(BALANCE_RECORD, {"in_z": dt.datetime(2024, 6, 1, tzinfo=dt.UTC)})
+    edge = milestone_edge(BALANCE, {"in_z": dt.datetime(2024, 6, 1, tzinfo=dt.UTC)})
     assert edge.tx_time == dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
     assert edge.tx_time_or_none == dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
     assert edge.valid_time_or_none is None
@@ -274,12 +269,12 @@ def test_edge_equality_and_hashing() -> None:
 
 def test_milestone_edge_on_non_temporal_entity_raises() -> None:
     with pytest.raises(TemporalReadError, match="not a temporal entity"):
-        milestone_edge(ORDERS_RECORD, {})
+        milestone_edge(ORDERS, {})
 
 
 def test_milestone_edge_rejects_a_non_instant_from_column() -> None:
     with pytest.raises(TemporalReadError, match="not a timestamp instant"):
-        milestone_edge(BALANCE_RECORD, {"in_z": "not-a-datetime"})
+        milestone_edge(BALANCE, {"in_z": "not-a-datetime"})
 
 
 def test_directive_distinct_survives_injection() -> None:
@@ -302,7 +297,7 @@ def test_statement_pin_reads_both_bitemporal_axes() -> None:
         dimension="transactionTime",
         coordinate="latest",
     )
-    pin = statement_pin(op, POSITION_RECORD)
+    pin = statement_pin(op, POSITION)
     assert pin.tx_time is LATEST
     assert pin.valid_time == dt.datetime.fromisoformat(_B)
 
@@ -312,10 +307,10 @@ def test_statement_pin_is_absent_for_a_scanned_asof_range_or_history_axis() -> N
     # coordinate, even though `statement_pin` still walks through them (called
     # unconditionally ahead of the milestone-set/pinned-read branch decision).
     ranged = oa.AsOfRange(operand=oa.All(), dimension="transactionTime", start=_P, end="infinity")
-    assert statement_pin(ranged, POSITION_RECORD) == Pin()
+    assert statement_pin(ranged, POSITION) == Pin()
 
     scanned = oa.History(operand=oa.All(), dimension="transactionTime")
-    assert statement_pin(scanned, POSITION_RECORD) == Pin()
+    assert statement_pin(scanned, POSITION) == Pin()
 
 
 class _TemporalNode:

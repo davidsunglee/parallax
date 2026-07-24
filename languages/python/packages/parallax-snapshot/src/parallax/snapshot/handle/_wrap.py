@@ -82,6 +82,8 @@ from parallax.core.entity import resolve_entity_class, wire_names_of
 from parallax.core.entity.expressions import UNLOADED
 from parallax.core.entity.value_object import ValueObject as ValueObjectBase
 from parallax.core.entity.value_object import wire_names_of as vo_wire_names_of
+from parallax.core.metamodel import EntityIdentity
+from parallax.core.metamodel import Metamodel as AcceptedMetamodel
 from parallax.core.temporal_read import Pin, milestone_edge
 from parallax.snapshot import materialize
 
@@ -93,7 +95,11 @@ _EDGE_ATTR = "__parallax_edge__"
 
 
 def wrap_graph(
-    nodes: Sequence[materialize.Node], root_entity: str, meta: Metamodel, pin: Pin
+    nodes: Sequence[materialize.Node],
+    root_entity: str,
+    meta: Metamodel,
+    model: AcceptedMetamodel,
+    pin: Pin,
 ) -> tuple[object, ...]:
     """Wrap one materialized graph's root nodes (and, transitively, everything
     reachable through them) into frozen instances of the caller's registered
@@ -112,7 +118,7 @@ def wrap_graph(
         _discover(node, root_entity, meta, visited, groups)
     merged = _merged_fields(groups)
     cache: dict[object, object] = {}
-    return tuple(_wrap(node, root_entity, meta, pin, cache, merged) for node in nodes)
+    return tuple(_wrap(node, root_entity, meta, model, pin, cache, merged) for node in nodes)
 
 
 def _concrete_entity_name(node: materialize.Node, default_entity: str) -> str:
@@ -241,6 +247,7 @@ def _wrap(
     node: materialize.Node,
     default_entity: str,
     meta: Metamodel,
+    model: AcceptedMetamodel,
     pin: Pin,
     cache: dict[object, object],
     merged: Mapping[object, Mapping[str, object]],
@@ -291,6 +298,7 @@ def _wrap(
                     fields[rel_name],
                     relationship.join.target.entity,
                     meta,
+                    model,
                     pin,
                     cache,
                     merged,
@@ -305,6 +313,7 @@ def _wrap(
                     field_value,
                     relationship.join.target.entity,
                     meta,
+                    model,
                     pin,
                     cache,
                     merged,
@@ -323,7 +332,9 @@ def _wrap(
     declaring = inheritance.declaring_entity(meta, entity_record)
     if declaring.as_of_axes:
         object.__setattr__(instance, _PIN_ATTR, pin)
-        object.__setattr__(instance, _EDGE_ATTR, milestone_edge(declaring, fields))
+        declaring_metadata = model.entity(EntityIdentity(declaring.namespace, declaring.name))
+        assert declaring_metadata is not None  # both views come from one record graph
+        object.__setattr__(instance, _EDGE_ATTR, milestone_edge(declaring_metadata, fields))
 
     return instance
 
@@ -332,6 +343,7 @@ def _wrap_related(
     value: object,
     default_entity: str,
     meta: Metamodel,
+    model: AcceptedMetamodel,
     pin: Pin,
     cache: dict[object, object],
     merged: Mapping[object, Mapping[str, object]],
@@ -341,10 +353,10 @@ def _wrap_related(
     if isinstance(value, list):
         items = cast("list[object]", value)
         return tuple(
-            _wrap(cast("materialize.Node", item), default_entity, meta, pin, cache, merged)
+            _wrap(cast("materialize.Node", item), default_entity, meta, model, pin, cache, merged)
             for item in items
         )
-    return _wrap(cast("materialize.Node", value), default_entity, meta, pin, cache, merged)
+    return _wrap(cast("materialize.Node", value), default_entity, meta, model, pin, cache, merged)
 
 
 def _wrap_member(value: object, entity: Entity, column: str, meta: Metamodel) -> object:

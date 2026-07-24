@@ -57,8 +57,9 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Final
 
+from parallax.core import temporal_read
 from parallax.core.base import INFINITY_LITERAL
-from parallax.core.descriptor import AsOfAxisMetadata, Entity, TemporalDimension
+from parallax.core.metamodel import EntityMetadata, Metamodel, TemporalDimension
 from parallax.core.unit_work import KeyedWrite, Observation
 
 __all__ = [
@@ -131,33 +132,32 @@ class MilestonePlan:
     steps: tuple[MilestoneStep, ...]
 
 
-def axis_attr_names(entity: Entity, dimension: TemporalDimension) -> tuple[str, str]:
-    """``entity``'s declared Attribute names for a temporal dimension.
+def axis_attr_names(
+    model: Metamodel, entity: EntityMetadata, dimension: TemporalDimension
+) -> tuple[str, str]:
+    """``entity``'s effective Attribute names for a temporal dimension.
 
-    A temporal entity's interval columns are ordinary declared attributes
-    (`m-descriptor`; mirrors `~parallax.core.temporal_read.attr_ref_for_column`'s
-    own lookup): the milestone plan's rows are Attribute-keyed (like any other
-    neutral write row), so this is how
-    a mutation's open/close steps name the axis bounds they set. ``entity`` MUST
-    be the FAMILY-EFFECTIVE declaring entity (the root, for an inheritance
-    participant) — its axes and their governing attributes are ALWAYS declared
-    there (`m-inheritance` "Inherited members"), never on a descendant.
+    A temporal entity's interval columns are ordinary declared attributes, and
+    the milestone plan's rows are Attribute-keyed like any other neutral write
+    row, so this is how a mutation's open/close steps name the axis bounds they
+    set. The axes are family-wide and root-owned, so they are read through the
+    Temporal Facet: a concrete subtype answers with its family's axes without
+    the caller resolving a declaring position first.
     """
-    axis = _axis(entity, dimension)
-    return axis.start_attribute, axis.end_attribute
+    axis = temporal_read.view(model).axis(entity.identity, dimension)
+    if axis is None:
+        raise TemporalPlanningError(
+            f"{entity.identity.name} declares no {dimension.name} temporal dimension"
+        )
+    return axis.start_attribute.name, axis.end_attribute.name
 
 
-def _axis(entity: Entity, dimension: TemporalDimension) -> AsOfAxisMetadata:
-    for axis in entity.as_of_axes:
-        if axis.dimension == dimension:
-            return axis
-    raise TemporalPlanningError(f"{entity.name} declares no {dimension!r} temporal dimension")
-
-
-def _open_row(entity: Entity, tx_instant: str, payload: Mapping[str, object]) -> dict[str, object]:
+def _open_row(
+    model: Metamodel, entity: EntityMetadata, tx_instant: str, payload: Mapping[str, object]
+) -> dict[str, object]:
     """The fresh current-milestone row ``payload`` opens at ``tx_instant`` on the
     sole Transaction-Time dimension."""
-    in_name, out_name = axis_attr_names(entity, "transactionTime")
+    in_name, out_name = axis_attr_names(model, entity, TemporalDimension.TRANSACTION_TIME)
     return {**payload, in_name: tx_instant, out_name: INFINITY_LITERAL}
 
 
@@ -174,12 +174,16 @@ def _merged_row(observed: Observation | None, row: Mapping[str, object]) -> Mapp
 
 
 def plan(
-    instruction: KeyedWrite, entity: Entity, tx_instant: str, observed: Observation | None
+    instruction: KeyedWrite,
+    model: Metamodel,
+    entity: EntityMetadata,
+    tx_instant: str,
+    observed: Observation | None,
 ) -> MilestonePlan:
     """Plan one Transaction-Time-Only keyed temporal write.
 
-    Pure: renders no SQL, takes no dialect. ``entity`` is the family-effective
-    declaring entity (the root, for an inheritance participant — `m-inheritance`).
+    Pure: renders no SQL, takes no dialect. ``entity`` is the write's own target
+    position; its family's axes are resolved through the Temporal Facet.
     ``observed`` is the caller-supplied observation of the CURRENT milestone this
     write's close (if any) targets — never derived here, never an implicit read
     (`m-txtime-write` "The engine supplies observed rows from case state").
@@ -187,7 +191,7 @@ def plan(
     mutation = instruction.mutation
     row = instruction.rows[0]
     if mutation in _INSERT_MUTATIONS:
-        return MilestonePlan(steps=(MilestoneOpen(row=_open_row(entity, tx_instant, row)),))
+        return MilestonePlan(steps=(MilestoneOpen(row=_open_row(model, entity, tx_instant, row)),))
     close = MilestoneClose(
         identity=row,
         gate_tx_start=observed.tx_start if observed is not None else None,
@@ -197,4 +201,6 @@ def plan(
     # update: chain the MERGED row — the instruction's own row overlaid
     # onto the observed payload, mirroring the bitemporal rectangle split.
     new_row = _merged_row(observed, row)
-    return MilestonePlan(steps=(close, MilestoneOpen(row=_open_row(entity, tx_instant, new_row))))
+    return MilestonePlan(
+        steps=(close, MilestoneOpen(row=_open_row(model, entity, tx_instant, new_row)))
+    )

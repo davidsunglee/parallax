@@ -189,6 +189,22 @@ def case_entity(model: AcceptedMetamodel, entity: Entity) -> EntityMetadata:
     return metadata
 
 
+def _declaring_metadata(model: AcceptedMetamodel, entity: Entity) -> EntityMetadata:
+    """The accepted Metadata of the position that DECLARES ``entity``'s family
+    facts — its family root, itself for a standalone Entity.
+
+    Temporality is family-wide and root-owned (`m-inheritance` "Inherited
+    members"), so a read's pin resolves through the root rather than through a
+    concrete descendant's own (locally empty) declaration.
+    """
+    metadata = case_entity(model, entity)
+    position = inheritance.view(model).entity(metadata.identity)
+    root = metadata if position is None else model.entity(position.root)
+    if root is None:  # pragma: no cover - a family root is always an accepted Entity
+        raise EngineError(f"{entity.canonical_name!r} names no family root the model declares")
+    return root
+
+
 def _read_target_and_operation(case: case_format.Case) -> tuple[str, object]:
     when = case.document.get("when")
     if not isinstance(when, Mapping):
@@ -827,15 +843,17 @@ def _build_temporal_instruction(
     instruction = instructions.deserialize(doc)
     instructions.validate_instruction(instruction, meta)
     assert isinstance(instruction, KeyedWrite)  # a temporal entry is always keyed
-    pk_key = object_key(instruction, case_model(meta))
+    model = case_model(meta)
+    entity_metadata = case_entity(model, meta.entity(entity_name))
+    pk_key = object_key(instruction, model)
     is_insert = mutation in _TEMPORAL_INSERT_MUTATIONS
     is_coalescing_candidate = not is_insert and pk_key is not None and pk_key in unit_inserted
     observation: Observation | None = None
     if not is_insert and not is_coalescing_candidate:
-        observation = shadow.resolve(meta, entity_name, row)
+        observation = shadow.resolve(model, entity_metadata, row)
     key = pk_key if observation is not None else None
     if is_insert or (observation is not None and not is_coalescing_candidate):
-        shadow.advance(meta, entity_name, instruction, tx_instant, observation)
+        shadow.advance(model, entity_metadata, instruction, tx_instant, observation)
     if is_insert and pk_key is not None:
         unit_inserted.add(pk_key)
     return instruction, key, observation
@@ -1496,8 +1514,8 @@ def _find_step_pin(meta: Metamodel, target: str, raw_op: Operation) -> Pin:
     :func:`_grade_mutate_step` hands the production write seam's finite-pin
     rule, resolved through the family-declaring entity exactly as the read
     path resolves it."""
-    declaring = inheritance.declaring_entity(meta, meta.entity(target))
-    return statement_pin(raw_op, declaring)
+    model = case_model(meta)
+    return statement_pin(raw_op, _declaring_metadata(model, meta.entity(target)))
 
 
 def _grade_mutate_step(
@@ -1596,8 +1614,13 @@ def _seed_shadow_from_fixtures(
     if case.shape == "writeSequence" and not fixtures_flag:
         return
     fixtures = provision.load_fixtures(cast("str", case.document["model"]))
+    model = case_model(meta)
     for entity_name, rows in fixtures.items():
-        shadow.seed_fixtures(meta, entity_name, cast("list[Mapping[str, object]]", rows))
+        shadow.seed_fixtures(
+            model,
+            case_entity(model, meta.entity(entity_name)),
+            cast("list[Mapping[str, object]]", rows),
+        )
 
 
 def _execute_write_unit(

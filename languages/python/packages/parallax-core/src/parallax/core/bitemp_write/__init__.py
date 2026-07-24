@@ -58,7 +58,7 @@ from collections.abc import Mapping
 from typing import Final
 
 from parallax.core.base import INFINITY_LITERAL
-from parallax.core.descriptor import Entity
+from parallax.core.metamodel import EntityMetadata, Metamodel, TemporalDimension
 from parallax.core.txtime_write import MilestoneClose, MilestoneOpen, MilestonePlan, axis_attr_names
 from parallax.core.unit_work import KeyedWrite, Observation
 
@@ -72,14 +72,15 @@ _BOUNDED_MUTATIONS: Final[frozenset[str]] = frozenset(
 
 
 def _open(
-    entity: Entity,
+    model: Metamodel,
+    entity: EntityMetadata,
     tx_instant: str,
     valid_from: str,
     valid_end: str,
     payload: Mapping[str, object],
 ) -> MilestoneOpen:
-    tx_start, tx_end = axis_attr_names(entity, "transactionTime")
-    valid_start, valid_end_attribute = axis_attr_names(entity, "validTime")
+    tx_start, tx_end = axis_attr_names(model, entity, TemporalDimension.TRANSACTION_TIME)
+    valid_start, valid_end_attribute = axis_attr_names(model, entity, TemporalDimension.VALID_TIME)
     row = {
         **payload,
         valid_start: valid_from,
@@ -97,13 +98,18 @@ def _merged_payload(observed: Observation, row: Mapping[str, object]) -> dict[st
 
 
 def plan(
-    instruction: KeyedWrite, entity: Entity, tx_instant: str, observed: Observation | None
+    instruction: KeyedWrite,
+    model: Metamodel,
+    entity: EntityMetadata,
+    tx_instant: str,
+    observed: Observation | None,
 ) -> MilestonePlan:
     """Plan one full-bitemporal keyed write: the rectangle split or one of its
     unbounded/insert degenerates.
 
-    Pure: renders no SQL, takes no dialect. ``entity`` is the family-effective
-    declaring entity (the root, for an inheritance participant). ``observed`` is
+    Pure: renders no SQL, takes no dialect. ``entity`` is the write's own target
+    position; its family's axes are resolved through the Temporal Facet.
+    ``observed`` is
     REQUIRED for every close-bearing mutation (update / updateUntil / terminate /
     terminateUntil) — the head/tail rectangles' old Valid-Time bounds and payload
     come from it, unconditionally of concurrency mode (`m-bitemp-write` "Head/tail
@@ -116,7 +122,7 @@ def plan(
 
     if mutation in _INSERT_MUTATIONS:
         valid_end = instruction.until if instruction.until is not None else INFINITY_LITERAL
-        return MilestonePlan(steps=(_open(entity, tx_instant, valid_from, valid_end, row),))
+        return MilestonePlan(steps=(_open(model, entity, tx_instant, valid_from, valid_end, row),))
 
     assert observed is not None  # every close-bearing mutation needs the observed rectangle
     obs_from = observed.valid_start
@@ -130,24 +136,24 @@ def plan(
     )
 
     if mutation == "terminate":
-        head = _open(entity, tx_instant, obs_from, valid_from, old_payload)
+        head = _open(model, entity, tx_instant, obs_from, valid_from, old_payload)
         return MilestonePlan(steps=(close, head))
     if mutation == "terminateUntil":
         until = instruction.until
         assert until is not None
-        head = _open(entity, tx_instant, obs_from, valid_from, old_payload)
-        tail = _open(entity, tx_instant, until, obs_to, old_payload)
+        head = _open(model, entity, tx_instant, obs_from, valid_from, old_payload)
+        tail = _open(model, entity, tx_instant, until, obs_to, old_payload)
         return MilestonePlan(steps=(close, head, tail))
     if mutation in _UPDATE_MUTATIONS:
         new_payload = _merged_payload(observed, row)
-        head = _open(entity, tx_instant, obs_from, valid_from, old_payload)
+        head = _open(model, entity, tx_instant, obs_from, valid_from, old_payload)
         if mutation in _BOUNDED_MUTATIONS:
             until = instruction.until
             assert until is not None
-            middle = _open(entity, tx_instant, valid_from, until, new_payload)
-            tail = _open(entity, tx_instant, until, obs_to, old_payload)
+            middle = _open(model, entity, tx_instant, valid_from, until, new_payload)
+            tail = _open(model, entity, tx_instant, until, obs_to, old_payload)
             return MilestonePlan(steps=(close, head, middle, tail))
-        new_tail = _open(entity, tx_instant, valid_from, obs_to, new_payload)
+        new_tail = _open(model, entity, tx_instant, valid_from, obs_to, new_payload)
         return MilestonePlan(steps=(close, head, new_tail))
     raise ValueError(  # pragma: no cover - defends an unrecognized mutation
         f"bitemp_write.plan: unrecognized temporal mutation {mutation!r}"
