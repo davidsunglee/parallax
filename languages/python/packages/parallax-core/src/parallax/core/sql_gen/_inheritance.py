@@ -74,7 +74,6 @@ from parallax.core.metamodel import (
     AttributeMetadata,
     EntityIdentity,
     EntityMetadata,
-    PrimaryKey,
     RelativeEntityReference,
     TablePerHierarchy,
     ValueObjectMetadata,
@@ -203,37 +202,6 @@ RowTransform = _IdentityTransform | _TagTransform | _LiteralTransform
 # carries no `familyVariant`; equality is structural, so a copied/unpickled
 # `CompiledRead` still compares equal to one holding this very object.
 IDENTITY_TRANSFORM = _IdentityTransform()
-
-
-# --------------------------------------------------------------------------- #
-# Canonical physical column order.                                             #
-# --------------------------------------------------------------------------- #
-def column_order(entity: EntityMetadata, facet: InheritanceFacet) -> tuple[str, ...]:
-    """``entity``'s physical columns in canonical order (m-sql).
-
-    Primary-key columns first, then the table-per-hierarchy tag column (m-sql
-    slots the framework-owned tag immediately after the primary key), then the
-    remaining scalar columns in declaration order, and finally each value
-    object's single backing document column in declaration order
-    (m-value-object: the document column is positional, after the scalars).
-
-    FAMILY-EFFECTIVE by construction, which is why the Inheritance Facet is a
-    parameter rather than an implementation detail: an inheritance participant's
-    own declaration carries only its locally declared members — its inherited
-    ones, the primary key among them, are declared on ancestors — so the order is
-    taken from the position's applicable member chain (root first, each
-    contributor's members in declaration order). A standalone Entity's chain is
-    itself alone, so the two cases need no separate spellings.
-    """
-    view = entity_view(facet, entity.identity)
-    keys: list[str] = []
-    rest: list[str] = []
-    for attribute in view.applicable_attributes:
-        target = keys if isinstance(attribute.primary_key, PrimaryKey) else rest
-        target.append(attribute.storage.name)
-    tag = [] if view.tag_column is None else [view.tag_column]
-    documents = [member.storage.name for member in view.applicable_value_objects]
-    return (*keys, *tag, *rest, *documents)
 
 
 # --------------------------------------------------------------------------- #

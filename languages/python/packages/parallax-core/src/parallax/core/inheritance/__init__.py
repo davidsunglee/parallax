@@ -11,6 +11,10 @@ root-owned Persistence Mode — so a consumer reads a precomputed family fact
 instead of recomputing it. ``m-inheritance`` depends on ``m-descriptor``,
 ``m-metamodel``, and ``m-model-formation``.
 
+It also owns :func:`column_order`, the canonical physical column order of an
+Entity's table: the order is family-effective, and the table-per-hierarchy tag
+is the one physical column no declared Attribute backs.
+
 Consumers reach the facet through :func:`view`, so generic facet retrieval stays
 an internal formation seam.
 """
@@ -31,6 +35,7 @@ from parallax.core.descriptor import (
 )
 from parallax.core.descriptor import declaring_entity as _resolve_declaring_entity
 from parallax.core.descriptor.neutral_type import type_matches as _type_matches
+from parallax.core.inheritance._columns import column_order
 from parallax.core.inheritance._compile import (
     MODEL_COMPILER,
     InheritanceModelCompiler,
@@ -100,6 +105,7 @@ __all__ = [
     "InheritanceRuleSet",
     "WriteAssignmentError",
     "ancestor_chain",
+    "column_order",
     "compile_facet",
     "declaring_entity",
     "effective_concrete_subtypes",

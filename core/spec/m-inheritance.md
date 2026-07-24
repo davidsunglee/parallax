@@ -178,6 +178,35 @@ of that subtype's table — the subtype is selected by *which table* is queried.
 Each concrete table **physically contains columns for the full inherited attribute
 chain** plus the concrete subtype's own attributes, derived from the ancestry.
 
+### Canonical column order
+
+`columnOrder` is an entity's physical columns in canonical order, and this
+module owns the law: **primary-key columns first, then the table-per-hierarchy
+`tag` column, then the remaining scalar attributes in declaration order, then
+each value object's single backing document column in declaration order**
+(`m-value-object`). Every consumer that shapes storage — read projection
+(`m-sql`), keyed and batch writes (`m-batch-write`, `m-opt-lock`), DDL
+derivation, and table read-back — orders its own columns by this law rather than
+restating it.
+
+The order is **family-effective**, which is the first reason it belongs here: a
+participant declares only its local members while its physical table also
+carries every ancestor's, so the order is taken from the position's applicable
+member chain — root first, each contributor's members in declaration order. A
+standalone entity's chain is itself alone, so both cases share one rule.
+
+The second reason is that the `tag` column is the only physical column **no
+declared attribute backs**, and this module is what contributes it. Temporality
+*designates* already-declared attributes as axis bounds and optimistic locking
+*marks* an already-declared attribute, so neither contributes a column of its
+own; the descriptor's value phase expands conventional-column spellings into
+declared attributes before formation, which is what keeps the rest of column
+order a declaration fact.
+
+If a future feature ever synthesizes a physical column that no declared
+attribute backs, that feature's owner becomes a **co-owner** of this law and the
+single-owner answer stated here needs revisiting.
+
 ## Abstract-position reads
 
 A read targeting an abstract position (the root or an abstract subtype,
