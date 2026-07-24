@@ -79,10 +79,11 @@ def test_schema_statements_create_the_shared_table_once() -> None:
 def test_schema_statements_tph_merges_the_whole_family_plus_the_tag_column() -> None:
     # The shared `payment` table physically carries the root's own columns, the
     # tag column, and EVERY concrete's own column (nullable — a card row leaves
-    # `tendered` null and a cash row leaves `card_network` null).
+    # `tendered` null and a cash row leaves `card_network` null). The tag sits
+    # in canonical column order, immediately after the primary key.
     (ddl,) = [stmt for stmt in provision.schema_statements(_MODELS["payment"]) if "payment" in stmt]
     assert ddl == (
-        "create table payment (id bigint, amount numeric(18, 2), kind varchar(32), "
+        "create table payment (id bigint, kind varchar(32), amount numeric(18, 2), "
         "card_network varchar(16), tendered numeric(18, 2), primary key (id))"
     )
 

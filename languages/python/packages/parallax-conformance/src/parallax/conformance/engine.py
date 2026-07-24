@@ -168,11 +168,12 @@ def load_case_metamodel(case: case_format.Case) -> Metamodel:
 
 
 def case_model(meta: Metamodel) -> AcceptedMetamodel:
-    """The accepted model a case's parsed record graph forms into.
+    """The accepted model over a case's parsed record graph.
 
-    Both shapes describe the same descriptor, so a behavioral seam that has
-    migrated to the Metamodel Interface is handed this one while the engine
-    paths that still read records keep the graph they were given.
+    The two views describe one descriptor: a seam that consumes the Metamodel
+    Interface takes this accepted model, and a seam that reads the record graph
+    directly keeps the graph, so an Entity resolved through either is the same
+    Entity of the same descriptor.
     """
     return models.accepted_model(meta)
 
@@ -198,12 +199,7 @@ def _declaring_metadata(model: AcceptedMetamodel, entity: Entity) -> EntityMetad
     members"), so a read's pin resolves through the root rather than through a
     concrete descendant's own (locally empty) declaration.
     """
-    metadata = case_entity(model, entity)
-    position = inheritance.view(model).entity(metadata.identity)
-    root = metadata if position is None else model.entity(position.root)
-    if root is None:  # pragma: no cover - a family root is always an accepted Entity
-        raise EngineError(f"{entity.canonical_name!r} names no family root the model declares")
-    return root
+    return _family_declarer(model, case_entity(model, entity))
 
 
 def _read_target_and_operation(case: case_format.Case) -> tuple[str, object]:
@@ -3186,12 +3182,13 @@ def _lower_conflict_write(
         {"mutation": "update", "entity": target, "rows": [clean_row]}
     )
     instructions.validate_instruction(instruction, meta)
+    model = case_model(meta)
     observations: dict[ObjectKey, Observation] = {}
     if observation is not None:
-        key = object_key(instruction, case_model(meta))
+        key = object_key(instruction, model)
         if key is not None:
             observations[key] = observation
-    plan = plan_flush([instruction], observations, _INERT_CLOCK_INSTANT, case_model(meta))
+    plan = plan_flush([instruction], observations, _INERT_CLOCK_INSTANT, model)
     statements: list[Statement] = []
     for planned in plan.writes:
         statements.extend(

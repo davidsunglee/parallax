@@ -41,15 +41,19 @@ from parallax.core.base import (
 )
 from parallax.core.base import Decimal as DecimalType
 from parallax.core.metamodel import (
+    AbstractRoot,
     AsOfAxisMetadata,
     AttributeIdentity,
     AttributeMetadata,
     Column,
+    ConcreteSubtype,
     EntityMetadata,
+    ExactEntityReference,
     Metamodel,
     Multiplicity,
     NestedValueObjectOccurrenceDeclaration,
     Table,
+    TablePerHierarchy,
     TemporalDimension,
     ValueObjectAttributeDeclaration,
     ValueObjectOccurrenceDeclaration,
@@ -406,3 +410,113 @@ def test_temporal_axis_attributes_are_never_type_checked_even_when_present() -> 
     # actually-authored one, not this pre-SQL structural validator.
     row = {"id": 1, "reading": 20.00, "txStart": 12345}
     validate_write(_GAUGE_METADATA, row, _GAUGE_MODEL, mutation="insert")
+
+
+# --------------------------------------------------------------------------- #
+# Inherited members: a concrete-subtype write is validated over its whole      #
+# family-effective member set, not only the subtype's own declarations         #
+# (`m-inheritance` "Inherited members"). A required attribute or value object   #
+# the root introduces is required of a subtype insert, and an inherited         #
+# attribute's declared type is enforced on any mutation; a root-owned as-of     #
+# axis's interval bounds stay excluded family-effectively, exactly as a         #
+# standalone entity's own axis bounds are.                                      #
+# --------------------------------------------------------------------------- #
+_ROOT = identity("Vehicle")
+_TRUCK = identity("Truck")
+_PLATE = ValueObjectOccurrenceDeclaration(
+    name="plate",
+    storage=Column("plate"),
+    nullable=False,
+    shape=ValueObjectShapeDeclaration(
+        key=ValueObjectShapeKey(),
+        attributes=(ValueObjectAttributeDeclaration("serial", type=STRING),),
+    ),
+)
+_FAMILY_MODEL = form_metamodel(
+    source(
+        Declaration(
+            identity=_ROOT,
+            container=Table("vehicle"),
+            attributes=(key(_ROOT), attribute(_ROOT, "name", type=STRING)),
+            value_objects=(_PLATE,),
+            inheritance=AbstractRoot(TablePerHierarchy("kind")),
+        ),
+        Declaration(
+            identity=_TRUCK,
+            attributes=(attribute(_TRUCK, "payload", type=INT64),),
+            inheritance=ConcreteSubtype(ExactEntityReference(_ROOT), "truck"),
+        ),
+    )
+)
+_TRUCK_METADATA = _entity(_FAMILY_MODEL, "Truck")
+
+
+def _valid_truck_row() -> dict[str, object]:
+    return {"id": 1, "name": "n", "payload": 5, "plate": {"serial": "s"}}
+
+
+def test_a_subtype_insert_requires_an_inherited_required_attribute() -> None:
+    row = _valid_truck_row()
+    del row["name"]
+    with pytest.raises(WriteRejectedError) as exc_info:
+        validate_write(_TRUCK_METADATA, row, _FAMILY_MODEL, mutation="insert")
+    assert exc_info.value.rule == "write-required-attribute-missing"
+
+
+def test_a_subtype_insert_requires_an_inherited_required_value_object() -> None:
+    row = _valid_truck_row()
+    del row["plate"]
+    with pytest.raises(WriteRejectedError) as exc_info:
+        validate_write(_TRUCK_METADATA, row, _FAMILY_MODEL, mutation="insert")
+    assert exc_info.value.rule == "write-required-value-object-missing"
+
+
+def test_a_subtype_update_type_checks_an_inherited_attribute() -> None:
+    with pytest.raises(WriteRejectedError) as exc_info:
+        validate_write(_TRUCK_METADATA, {"id": 1, "name": 123}, _FAMILY_MODEL, mutation="update")
+    assert exc_info.value.rule == "write-value-type-mismatch"
+
+
+def test_a_complete_subtype_insert_over_inherited_members_is_accepted() -> None:
+    validate_write(_TRUCK_METADATA, _valid_truck_row(), _FAMILY_MODEL, mutation="insert")
+
+
+_LEDGER = identity("Ledger")
+_CASH = identity("CashLedger")
+_LEDGER_MODEL = form_metamodel(
+    source(
+        Declaration(
+            identity=_LEDGER,
+            container=Table("ledger"),
+            attributes=(
+                key(_LEDGER),
+                attribute(_LEDGER, "amount", type=_MONEY),
+                attribute(_LEDGER, "txStart", type=TIMESTAMP, column="tx_from"),
+                attribute(_LEDGER, "txEnd", type=TIMESTAMP, column="tx_to"),
+            ),
+            as_of_axes=(
+                AsOfAxisMetadata(
+                    dimension=TemporalDimension.TRANSACTION_TIME,
+                    start_attribute=AttributeIdentity(_LEDGER, "txStart"),
+                    end_attribute=AttributeIdentity(_LEDGER, "txEnd"),
+                ),
+            ),
+            inheritance=AbstractRoot(TablePerHierarchy("kind")),
+        ),
+        Declaration(
+            identity=_CASH,
+            attributes=(attribute(_CASH, "note", type=STRING),),
+            inheritance=ConcreteSubtype(ExactEntityReference(_LEDGER), "cash"),
+        ),
+    )
+)
+_CASH_METADATA = _entity(_LEDGER_MODEL, "CashLedger")
+
+
+def test_a_subtype_insert_excludes_inherited_root_owned_axis_bounds() -> None:
+    # The root's Valid-Time interval bounds reach the subtype through the family
+    # member set, yet a full-document insert that omits them is still valid: an
+    # inherited axis bound is no more authored on a neutral write row than a
+    # standalone entity's own axis bound is.
+    row = {"id": 1, "amount": Decimal("1.00"), "note": "n"}
+    validate_write(_CASH_METADATA, row, _LEDGER_MODEL, mutation="insert")

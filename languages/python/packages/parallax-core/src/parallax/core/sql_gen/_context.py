@@ -44,6 +44,19 @@ class SqlGenError(ValueError):
     """An operation cannot be lowered to SQL (unsupported node or unbound reference)."""
 
 
+def declared_table(entity: EntityMetadata) -> str:
+    """``entity``'s own physical table name.
+
+    A monomorphic read or navigation hop renders against a single Entity's own
+    container; a row-owning Entity always declares one, so its absence is an
+    impossible model state rather than a runtime input.
+    """
+    container = entity.declared_container
+    if container is None:  # pragma: no cover - a row-owning Entity always declares a container
+        raise SqlGenError(f"{entity.identity.canonical}: read/navigation target declares no table")
+    return container.name
+
+
 # --------------------------------------------------------------------------- #
 # Planner capabilities.                                                        #
 #                                                                              #
