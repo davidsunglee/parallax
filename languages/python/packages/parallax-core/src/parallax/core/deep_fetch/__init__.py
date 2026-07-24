@@ -14,9 +14,9 @@ Per the dependency graph, ``m-deep-fetch`` depends on ``m-navigate``
 alone — transitively reaching ``m-op-algebra``, ``m-temporal-read``,
 ``m-inheritance``, and ``m-relationship``, all of which this module imports
 directly (the DAG permits any edge ``m-navigate`` itself reaches). A level's
-to-many decision and its correlation columns come from the Relationship Facet
-rather than from a declaration, because a reverse declaration carries neither an
-inverted cardinality nor a swapped join of its own. Root canonicalization reuses the exact
+to-many decision and its correlation columns are read off the compiled
+direction ``m-navigate`` resolves, because a reverse declaration carries neither
+an inverted cardinality nor a swapped join of its own. Root canonicalization reuses the exact
 composition-at-the-engine order every read compile site shares (``inject_as_of``
 then ``navigate.canonicalize``); each level's own propagated
 as-of term and relationship resolution reuse ``parallax.core.navigate``'s
@@ -56,7 +56,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Final, Literal
 
-from parallax.core import inheritance, navigate, relationship
+from parallax.core import inheritance, navigate
 from parallax.core.inheritance import InheritanceEntityView, InheritanceFacet
 from parallax.core.metamodel import (
     AttributeIdentity,
@@ -64,7 +64,6 @@ from parallax.core.metamodel import (
     EntityIdentity,
     EntityMetadata,
     Metamodel,
-    RelationshipIdentity,
     RelativeEntityReference,
     SortDirection,
     TemporalDimension,
@@ -81,7 +80,7 @@ from parallax.core.op_algebra import (
     PathSegment,
     Scalar,
 )
-from parallax.core.relationship import RelationshipFacet, RelationshipMetadata
+from parallax.core.relationship import RelationshipMetadata
 from parallax.core.temporal_read import inject_as_of, resolve_pinned_instants
 
 __all__ = [
@@ -226,9 +225,7 @@ def plan(entity: EntityMetadata, op: Operation, model: Metamodel) -> FetchPlan:
     root_injected = inject_as_of(root_raw, temporal_entity)
     root_operation = navigate.canonicalize(root_injected, model, entity, root_pins)
 
-    builder = _PlanBuilder(
-        model=model, families=families, directions=relationship.view(model), root_pins=root_pins
-    )
+    builder = _PlanBuilder(model=model, families=families, root_pins=root_pins)
     builder.seed_root(entity)
     for path in paths:
         builder.add_path(path)
@@ -261,7 +258,6 @@ def _new_owners() -> dict[int, EntityMetadata]:
 class _PlanBuilder:
     model: Metamodel
     families: InheritanceFacet
-    directions: RelationshipFacet
     root_pins: Mapping[TemporalDimension, str]
     levels: list[FetchLevel] = field(default_factory=_new_levels)
     _children: dict[tuple[int, str, tuple[str, ...]], int] = field(default_factory=_new_children)
@@ -291,8 +287,7 @@ class _PlanBuilder:
                 "rows are already fully known; no corpus case needs a level beneath one)"
             )
         owner = self._owners[parent_id]
-        declaration = navigate.resolve_relationship(segment.rel, owner.identity, self.model)
-        direction = self._direction(declaration.identity)
+        direction = navigate.resolve_relationship(segment.rel, owner.identity, self.model)
         related_entity = _entity(self.model, direction.join.target.entity)
         position = _resolve_position(self.families, related_entity, segment)
         key = (parent_id, segment.rel, position)
@@ -340,21 +335,6 @@ class _PlanBuilder:
         self._ancestor_families[index] = parent_ancestors | {family}
         self._owners[index] = related_entity
         return index
-
-    def _direction(self, identity: RelationshipIdentity) -> RelationshipMetadata:
-        """The navigable direction ``identity`` denotes.
-
-        A reverse declaration carries no cardinality or join of its own, so the
-        facet — which owns the inversion and the join swap — is the only place a
-        level's to-many decision and correlation columns can come from.
-        """
-        direction = self.directions.relationship(identity)
-        if direction is None:  # pragma: no cover - the facet covers every accepted declaration
-            raise DeepFetchError(
-                f"{identity.source_entity.canonical}.{identity.name} names no relationship "
-                "direction the model declares"
-            )
-        return direction
 
 
 # --------------------------------------------------------------------------- #

@@ -35,12 +35,13 @@ predicate through the SAME primitives this module's own hop canonicalization use
 rather than re-deriving temporal/relationship knowledge the DAG already lets it reach
 only through this module.
 
-A hop's target comes from the identity-resolved Relationship Declaration the
-owning Entity's own Metadata carries, never from a paired relationship facet: a
-defining declaration names the target in its own join, and a reverse declaration
-reaches the Entity that declares its peer. As-of propagation needs the target and
-nothing else about the direction, so this module reads no cardinality, join
-column, or ordering at all.
+A hop resolves to the navigable **direction** the Relationship Facet already
+compiled, so this module never pairs a reverse declaration with its peer nor
+swaps a join to find the far side: every direction — defining or reverse —
+names the Entity it reaches as its own ``join.target.entity``. As-of propagation
+needs that target and nothing else, so this module reads no cardinality, join
+column, or ordering itself; it resolves the direction downstream consumers need
+and stops there.
 """
 
 from __future__ import annotations
@@ -48,16 +49,14 @@ from __future__ import annotations
 from collections.abc import Mapping
 from types import MappingProxyType
 
-from parallax.core import inheritance
+from parallax.core import inheritance, relationship
 from parallax.core.base import INFINITY_LITERAL
 from parallax.core.metamodel import (
-    DefiningRelationshipDeclaration,
     EntityIdentity,
     EntityMetadata,
     Metamodel,
-    RelationshipDeclaration,
+    RelationshipIdentity,
     RelativeEntityReference,
-    ReverseRelationshipDeclaration,
     TemporalDimension,
     resolve_entity_reference,
 )
@@ -80,6 +79,7 @@ from parallax.core.op_algebra import (
     Or,
     OrderBy,
 )
+from parallax.core.relationship import RelationshipMetadata
 from parallax.core.temporal_read import conjunction_terms
 
 __all__ = ["canonicalize", "hop_as_of_terms", "resolve_relationship"]
@@ -223,8 +223,8 @@ def _hop_inner(
     The interior's own hop references resolve against this hop's TARGET, which is
     the Entity their bare class names are written against.
     """
-    declaration = resolve_relationship(rel, owner.identity, model)
-    target = _entity(model, _hop_target(declaration))
+    direction = resolve_relationship(rel, owner.identity, model)
+    target = _entity(model, direction.join.target.entity)
     walked = _walk(inner, model, target, root_pins) if inner is not None else None
     return _inject_hop_as_of(walked, target, model, root_pins)
 
@@ -238,12 +238,16 @@ def _entity(model: Metamodel, identity: EntityIdentity) -> EntityMetadata:
 
 def resolve_relationship(
     rel_ref: str, owner: EntityIdentity, model: Metamodel
-) -> RelationshipDeclaration:
-    """Resolve a ``Class.relationship`` reference to its identity-resolved Declaration.
+) -> RelationshipMetadata:
+    """Resolve a ``Class.relationship`` reference to the direction it navigates.
 
     The reference's class name is bare, so it resolves in ``owner``'s own namespace
     like any other relative model reference; ``owner`` is the Entity the reference
-    is written against, never a model-wide search over declared names.
+    is written against, never a model-wide search over declared names. The
+    Identity that resolution produces then selects the direction from the
+    Relationship Facet, the one place a reverse direction's inverted cardinality
+    and swapped join exist — so a caller reads a compiled direction rather than
+    re-pairing declarations.
 
     Exported so `parallax.core.deep_fetch` (the sole downstream `m-navigate`
     dependent) resolves each deep-fetch path
@@ -253,26 +257,13 @@ def resolve_relationship(
     class_name, dot, member_name = rel_ref.rpartition(".")
     if not dot:  # pragma: no cover - guards an unvalidated operation
         raise ValueError(f"relationship reference {rel_ref!r} needs Class.relationship")
-    declaring = model.entity(resolve_entity_reference(owner, RelativeEntityReference(class_name)))
-    declaration = None if declaring is None else declaring.relationship(member_name)
-    if declaration is None:
+    declaring = resolve_entity_reference(owner, RelativeEntityReference(class_name))
+    direction = relationship.view(model).relationship(
+        RelationshipIdentity(source_entity=declaring, name=member_name)
+    )
+    if direction is None:
         raise ValueError(f"{rel_ref!r} names no declared relationship on {class_name}")
-    return declaration
-
-
-def _hop_target(declaration: RelationshipDeclaration) -> EntityIdentity:
-    """The Entity one hop over ``declaration`` reaches.
-
-    A defining declaration names its target in its own join. A reverse
-    declaration repeats none of its peer's mapping facts, so the Entity it
-    reaches is simply the one that declares that peer — no peer lookup and no
-    paired direction are needed to say so.
-    """
-    match declaration:
-        case DefiningRelationshipDeclaration(join=join):
-            return join.target.entity
-        case ReverseRelationshipDeclaration(reverse_of=reverse_of):
-            return reverse_of.source_entity
+    return direction
 
 
 def _temporal_declarer(model: Metamodel, entity: EntityMetadata) -> EntityMetadata:

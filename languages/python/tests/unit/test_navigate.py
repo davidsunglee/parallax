@@ -20,7 +20,7 @@ from _sql_gen_support import model as accepted_model
 from parallax.core import op_algebra as oa
 from parallax.core.descriptor import deserialize
 from parallax.core.dialect import POSTGRES
-from parallax.core.metamodel import Metamodel, TemporalDimension
+from parallax.core.metamodel import AttributeIdentity, Cardinality, Metamodel, TemporalDimension
 from parallax.core.navigate import canonicalize, resolve_relationship
 from parallax.core.sql_gen import compile_read
 
@@ -73,6 +73,19 @@ def test_canonicalize_is_identity_for_a_deep_fetch_root_with_no_navigation() -> 
 def test_relationship_resolution_rejects_an_unknown_member() -> None:
     with pytest.raises(ValueError, match="names no declared relationship"):
         resolve_relationship("Order.missing", ORDER.identity, ORDERS)
+
+
+def test_resolution_answers_a_reverse_hop_with_its_compiled_inverted_direction() -> None:
+    """`OrderItem.order` is authored as nothing but ``reverseOf: Order.items``, so
+    a many-to-one cardinality and a child-to-parent join exist only because the
+    Relationship Facet derived them. Resolving one proves this module reads that
+    compiled direction rather than pairing the peer declaration itself.
+    """
+    order_item = target(ORDERS, "OrderItem")
+    direction = resolve_relationship("OrderItem.order", order_item.identity, ORDERS)
+    assert direction.cardinality is Cardinality.MANY_TO_ONE
+    assert direction.join.source == AttributeIdentity(order_item.identity, "orderId")
+    assert direction.join.target == AttributeIdentity(ORDER.identity, "id")
 
 
 def test_walk_recurses_through_every_wrapping_node_kind() -> None:
