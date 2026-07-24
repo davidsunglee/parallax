@@ -340,11 +340,20 @@ def _runtime_member(value: object, declared: base.NeutralType) -> bool:
         ("2026-01-01T00:00:00.1234567+00:00", base.TIMESTAMP, False),
         ("2026-01-01T00:00:00.12345678+00:00", base.TIMESTAMP, False),
         ("2026-01-01T00:00:00,1234567+00:00", base.TIMESTAMP, False),
+        # A '.' date-time separator introduces the hour, so the fractional
+        # second is a later run, and a fractional timezone offset is another;
+        # sub-microsecond precision in any fractional field is rejected.
+        ("2026-01-01.00:00:00.1234567+00:00", base.TIMESTAMP, False),
+        ("2026-01-01.00:00:00,1234567+00:00", base.TIMESTAMP, False),
+        ("2026-01-01.00:00:00.1234560+00:00", base.TIMESTAMP, True),
+        ("2026-01-01T00:00:00.123456+01:02:03.1234567", base.TIMESTAMP, False),
+        ("2026-01-01T00:00:00.123456+01:02:03.1234560", base.TIMESTAMP, True),
         ("00:00:00", base.TIME, True),
         ("00:00:00.123456", base.TIME, True),
         ("00:00:00.1234560", base.TIME, True),
         ("00:00:00.1234567", base.TIME, False),
         ("00:00:00,1234567", base.TIME, False),
+        ("00:00:00.123456+01:02:03.1234567", base.TIME, False),
     ],
 )
 def test_runtime_neutral_membership_is_exact_lossless_and_total(
