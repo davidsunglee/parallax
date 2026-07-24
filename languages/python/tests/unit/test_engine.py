@@ -2306,6 +2306,28 @@ def test_run_rejected_case_write_dispatch_over_an_inheritance_model() -> None:
     assert engine.run_rejected_case(case) == "abstract-write-target"
 
 
+def test_a_default_target_over_a_multi_family_model_is_refused() -> None:
+    # The default-target convention names "the family root", singular, so a
+    # model carrying several families has no default to resolve and the case
+    # must name its target explicitly — never an arbitrary one of them.
+    from pathlib import Path
+
+    case = case_format.Case(
+        path=Path("m-inheritance-997-synthetic-rejected.yaml"),
+        case_id="m-inheritance-997",
+        shape="rejected",
+        tags=("m-inheritance", "rejected", "slice-snapshot-1"),
+        model="models/workshop.yaml",
+        document={
+            "model": "models/workshop.yaml",
+            "when": {"write": {"id": 1}},
+            "then": {"rejectedRule": "x"},
+        },
+    )
+    with pytest.raises(engine.EngineError, match="no single inheritance family root"):
+        engine.run_rejected_case(case)
+
+
 def test_run_rejected_case_raises_when_operation_unexpectedly_accepted() -> None:
     valid: dict[str, object] = {"operation": {"all": {}}}
     with pytest.raises(engine.EngineError, match="accepted an operation"):

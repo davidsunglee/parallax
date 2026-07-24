@@ -491,7 +491,8 @@ def lower_predicate_write(
     declares.
     """
     entity = meta.entity(instruction.target.entity)
-    inheritance.reject_predicate_write(entity)
+    model, target_metadata = accepted_target(meta, instruction.target.entity)
+    inheritance.reject_predicate_write(target_metadata)
     declaring = inheritance.declaring_entity(meta, entity)
     if declaring.is_temporal or version_attribute(declaring) is not None:
         raise WriteLoweringError(
@@ -499,7 +500,6 @@ def lower_predicate_write(
             "target has no readless template — it must materialize to keyed writes before "
             "reaching lower_write (m-opt-lock; ADR 0014); this is a caller wiring defect"
         )
-    model, target_metadata = accepted_target(meta, instruction.target.entity)
     predicate = compile_write_predicate(
         instruction.target.predicate, model, dialect, target_metadata
     )

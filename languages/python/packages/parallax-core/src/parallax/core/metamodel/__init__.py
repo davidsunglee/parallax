@@ -3,8 +3,9 @@
 The representation-independent model contract: canonical identities, lexical
 reference resolution, the closed metadata vocabularies, the formation-state
 protocol family, the shared Metamodel Issue value with its canonical ordering
-law, the fixed foundational resolver, and the one Metadata Compiler that
-produces the sole accepted metadata graph. It owns no JSON/YAML spelling, no
+law, the fixed foundational resolver, the one Metadata Compiler that produces
+the sole accepted metadata graph, and the structural conformance of a written
+document to a Value Object occurrence. It owns no JSON/YAML spelling, no
 inherited or effective semantic view, no query or SQL behavior, and no
 lifecycle. ``m-metamodel`` depends only on ``m-core``.
 
@@ -147,6 +148,7 @@ from parallax.core.metamodel._values import (
     ValueObjectShapeKey,
     inheritance_parent,
 )
+from parallax.core.metamodel._vo_document import VoDocumentViolation, vo_document_violation
 
 __all__ = [
     "APPLICATION_ASSIGNED",
@@ -256,6 +258,7 @@ __all__ = [
     "ValueObjectOccurrenceDeclaration",
     "ValueObjectShapeDeclaration",
     "ValueObjectShapeKey",
+    "VoDocumentViolation",
     "accept_metamodel",
     "canonical_issue_key",
     "canonical_location_key",
@@ -266,4 +269,5 @@ __all__ = [
     "resolve",
     "resolve_entity_reference",
     "sort_issues",
+    "vo_document_violation",
 ]

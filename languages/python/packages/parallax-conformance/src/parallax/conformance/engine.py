@@ -3081,6 +3081,28 @@ def _apply_given_apply(case: case_format.Case, dialect: Dialect, port: DbPort) -
         port.execute_write(dialect.to_driver_sql(sql), _driver_binds(binds))
 
 
+def _default_family_root(meta: Metamodel) -> Entity | None:
+    """The family root the default-target conventions resolve through.
+
+    ``None`` when the model declares no inheritance family at all, so a caller
+    falls back to the model's own entities. A model declaring SEVERAL families
+    has no single root to name, and picking one of them would silently target an
+    entity the case never asked for, so it is refused: the conventions below all
+    say "the family root", singular, and a case over such a model must name its
+    target explicitly.
+    """
+    family = inheritance.family_of(meta)
+    if not family.participants:
+        return None
+    if family.root is None:
+        raise EngineError(
+            "the case's model declares no single inheritance family root; a case whose "
+            "`when` names no explicit target has no default to resolve against a model "
+            "carrying several families"
+        )
+    return family.root
+
+
 def _conflict_target(meta: Metamodel) -> str:
     """The entity a conflict case's write targets, when ``when.write`` carries no
     explicit reference (`m-case-format`: a conflict case's write names no
@@ -3092,12 +3114,12 @@ def _conflict_target(meta: Metamodel) -> str:
     default-target convention — this resolves to the family's SOLE concrete
     subtype (every reachable temporal-inheritance conflict model declares
     exactly one)."""
-    family = inheritance.family_of(meta)
-    if family.root is None:
+    root = _default_family_root(meta)
+    if root is None:
         return meta.entities[0].name
     concretes = sorted(
         entity.name
-        for entity in family.participants
+        for entity in inheritance.family_of(meta).participants
         if entity.inheritance is not None and entity.inheritance.role == "concrete-subtype"
     )
     if len(concretes) != 1:
@@ -3414,7 +3436,7 @@ def _rejected_target(meta: Metamodel) -> str:
     against — the same "no explicit handle, so resolve the model's default
     write/read root" convention, reused rather than restated.
     """
-    root = inheritance.family_of(meta).root
+    root = _default_family_root(meta)
     if root is not None:
         return root.name
     return meta.entities[0].name
@@ -3499,9 +3521,10 @@ def run_rejected_case(case: case_format.Case) -> str:
             "family the case expects rejected pre-SQL"
         )
     row = cast("Mapping[str, object]", when["write"])
-    target = meta.entity(_rejected_target(meta))
+    model = case_model(meta)
+    target = case_entity(model, meta.entity(_rejected_target(meta)))
     try:
-        validate_write(target, row, meta)
+        validate_write(target, row, model)
     except WriteRejectedError as exc:
         return exc.rule
     raise EngineError(

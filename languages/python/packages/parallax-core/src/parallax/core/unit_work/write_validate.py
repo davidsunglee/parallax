@@ -16,20 +16,14 @@ So the payload-shape / target-validity rules (`m-inheritance` "Concrete-subtype
 writes") are PURE functions living in their own owning scope
 (:func:`parallax.core.inheritance.validate_subtype_write`) and called directly
 from here; the declared-composite walk (`m-value-object` "Writing") cannot
-reach its own owning scope's helpers at all, so -- mirroring the established
-`parallax.core.descriptor.vo_path` precedent (`m-op-algebra` / `m-sql` resolve
-value-object paths directly against `m-descriptor` records rather than
-importing `m-value-object`) -- its STRUCTURAL traversal lives in
-`parallax.core.descriptor.vo_document` (error-neutral, `vo_path`'s own
-pattern), the one scope every caller already depends on; this module renders
-ITS OWN rule vocabulary and message text from the returned violation.
-`parallax.core.inheritance.validate_write_assignment`'s VO-targeted
-assignment-value check reuses
-the SAME shared walk rather than forking it. This applies the composition-at-
-the-engine pattern to writes: pure per-concern rule functions in
-their owning scopes, ONE shared compose function (this module) both callers
-invoke, so the rule ORDER stays a single source of truth regardless of which
-scope a given rule's logic lives in.
+reach its own owning scope's helpers at all, so its structural traversal is the
+Metadata reading `m-metamodel` owns
+(:func:`~parallax.core.metamodel.vo_document_violation`, error-neutral) and this
+module renders ITS OWN rule vocabulary and message text from the returned
+violation. This applies the composition-at-the-engine pattern to writes: pure
+per-concern rule functions in their owning scopes, ONE shared compose function
+(this module) both callers invoke, so the rule ORDER stays a single source of
+truth regardless of which scope a given rule's logic lives in.
 
 Check order: the inheritance payload-shape/target-validity rules run FIRST,
 unconditionally, whenever ``entity`` participates in a family -- resolving
@@ -72,17 +66,15 @@ from collections.abc import Mapping
 from typing import Final, cast
 
 from parallax.core import inheritance
-from parallax.core.descriptor import (
-    UNSET,
-    Attribute,
-    Entity,
+from parallax.core.base import decode_neutral_literal, matches_neutral_type
+from parallax.core.metamodel import (
+    AttributeMetadata,
+    EntityMetadata,
     Metamodel,
-    NestedValueObject,
-    ValueObject,
+    ValueObjectMetadata,
     VoDocumentViolation,
     vo_document_violation,
 )
-from parallax.core.descriptor.neutral_type import type_matches as _type_matches
 
 __all__ = ["WriteRejectedError", "validate_write"]
 
@@ -93,11 +85,6 @@ __all__ = ["WriteRejectedError", "validate_write"]
 _FULL_DOCUMENT_MUTATIONS: Final[frozenset[str]] = frozenset({"insert", "insertUntil"})
 
 _MarkerKeys: Final[tuple[frozenset[str], ...]] = (frozenset({"computed"}), frozenset({"increment"}))
-
-# A value-object container: the top-level document or any nested value object
-# (mirrors `parallax.core.value_object.Container`, restated here -- that scope
-# is unreachable from `m-unit-work`, see the module docstring).
-_VoContainer = ValueObject | NestedValueObject
 
 
 class WriteRejectedError(ValueError):
@@ -111,33 +98,32 @@ class WriteRejectedError(ValueError):
         self.rule = rule
 
 
-def _temporal_axis_columns(entity: Entity) -> frozenset[str]:
-    """The physical columns ``entity``'s OWN declared as-of axes govern (the
-    milestone interval bounds) — excluded from the required/type walk below,
-    since they are NEVER part of the neutral write input (`m-unit-work` "the
-    instant surface is dimension-explicit"; ADR 0010: the Transaction-Time instant is
-    Clock-supplied flush context, never an instruction field; the Valid-Time
-    bounds are instruction fields, ``validFrom`` / ``until``, never row members.
+def _temporal_axis_members(entity: EntityMetadata) -> frozenset[str]:
+    """The Attributes ``entity``'s OWN declared as-of axes govern (the milestone
+    interval bounds) — excluded from the required/type walk below, since they are
+    NEVER part of the neutral write input (`m-unit-work` "the instant surface is
+    dimension-explicit"; ADR 0010: the Transaction-Time instant is Clock-supplied
+    flush context, never an instruction field; the Valid-Time bounds are
+    instruction fields, ``validFrom`` / ``until``, never row members).
 
     Bare LOCAL axes, never family-resolved: an inheritance participant's own
-    declared attributes never include an INHERITED axis's governing columns
+    declared attributes never include an INHERITED axis's governing attributes
     anyway (temporal axes are root-owned metadata a descendant MUST NOT
     redeclare, `m-inheritance` "Inherited members"), so this reduces correctly
-    to a no-op for a concrete-subtype ``entity`` — its own bare
-    ``as_of_axes`` is already empty in that case.
+    to a no-op for a concrete-subtype ``entity`` — its own bare declared axes
+    are already empty in that case.
     """
-    columns: set[str] = set()
-    by_name = {attribute.name: attribute.column for attribute in entity.attributes}
-    for axis in entity.as_of_axes:
-        columns.add(by_name[axis.start_attribute])
-        columns.add(by_name[axis.end_attribute])
-    return frozenset(columns)
+    return frozenset(
+        name
+        for axis in entity.declared_as_of_axes
+        for name in (axis.start_attribute.name, axis.end_attribute.name)
+    )
 
 
 def validate_write(
-    entity: Entity,
+    entity: EntityMetadata,
     row: Mapping[str, object],
-    meta: Metamodel,
+    model: Metamodel,
     *,
     mutation: str = "insert",
 ) -> None:
@@ -147,32 +133,32 @@ def validate_write(
     docstring for the check order and the mutation-aware required-ness rule.
     """
     try:
-        inheritance.validate_subtype_write(meta, entity, row)
+        inheritance.validate_subtype_write(model, entity, row)
     except inheritance.InheritanceError as exc:
         raise WriteRejectedError(exc.rule, str(exc)) from exc
     full_document = mutation in _FULL_DOCUMENT_MUTATIONS
-    axis_columns = _temporal_axis_columns(entity)
-    for attribute in entity.attributes:
-        if attribute.column in axis_columns:
+    axis_members = _temporal_axis_members(entity)
+    owner = entity.identity.name
+    for attribute in entity.declared_attributes:
+        if attribute.identity.name in axis_members:
             continue
-        _check_entity_attribute(row, attribute, required=full_document, owner=entity.name)
-    for vo in entity.value_objects:
-        _check_value_object_member(row, vo, required=full_document, owner=entity.name)
+        _check_entity_attribute(row, attribute, required=full_document, owner=owner)
+    for value_object in entity.declared_value_objects:
+        _check_value_object_member(row, value_object, required=full_document, owner=owner)
 
 
 # --------------------------------------------------------------------------- #
-# The entity's own top-level scalar attributes (depth 0): a declared `default` #
-# or a DB-computed marker exempts an absent/marker-shaped value; neither       #
-# concept exists below the top level (`m-value-object` "Writing").             #
+# The entity's own top-level scalar attributes (depth 0): a DB-computed marker #
+# exempts a marker-shaped value; the concept does not exist below the top      #
+# level (`m-value-object` "Writing").                                          #
 # --------------------------------------------------------------------------- #
 def _check_entity_attribute(
-    row: Mapping[str, object], attribute: Attribute, *, required: bool, owner: str
+    row: Mapping[str, object], attribute: AttributeMetadata, *, required: bool, owner: str
 ) -> None:
-    name = attribute.name
-    present = name in row
+    name = attribute.identity.name
     value = row.get(name)
-    if not present or value is None:
-        if required and not attribute.nullable and attribute.default is UNSET:
+    if name not in row or value is None:
+        if required and not attribute.nullable:
             raise WriteRejectedError(
                 "write-required-attribute-missing",
                 f"{owner}.{name}: required attribute is absent (or null)",
@@ -180,7 +166,7 @@ def _check_entity_attribute(
         return
     if _is_scalar_write_marker(value):
         return
-    if not _type_matches(value, attribute.type):
+    if not matches_neutral_type(decode_neutral_literal(value, attribute.type), attribute.type):
         raise WriteRejectedError(
             "write-value-type-mismatch",
             f"{owner}.{name}: value {value!r} does not match the declared type {attribute.type!r}",
@@ -188,16 +174,15 @@ def _check_entity_attribute(
 
 
 # --------------------------------------------------------------------------- #
-# Value-object members (top-level or nested, arbitrary depth): a PRESENT      #
-# document is always validated as a whole, regardless of the outer mutation.  #
+# Value-object members: a PRESENT document is always validated as a whole,     #
+# regardless of the outer mutation.                                           #
 # --------------------------------------------------------------------------- #
 def _check_value_object_member(
-    row: Mapping[str, object], vo: _VoContainer, *, required: bool, owner: str
+    row: Mapping[str, object], vo: ValueObjectMetadata, *, required: bool, owner: str
 ) -> None:
-    name = vo.name
-    present = name in row
+    name = vo.identity.path[-1]
     value = row.get(name)
-    if not present or value is None:
+    if name not in row or value is None:
         if required and not vo.nullable:
             raise WriteRejectedError(
                 "write-required-value-object-missing",
@@ -210,11 +195,9 @@ def _check_value_object_member(
 
 
 # --------------------------------------------------------------------------- #
-# Renders THIS module's own rule vocabulary / message text from a shared,     #
-# error-neutral `parallax.core.descriptor.vo_document` violation (the         #
-# extracted `vo_path`-precedent walk both this module and                     #
-# `parallax.core.inheritance.validate_write_assignment` reuse) -- the shared  #
-# module owns no text of its own, see its own docstring.                      #
+# Renders THIS module's own rule vocabulary / message text from the shared,   #
+# error-neutral `m-metamodel` document violation -- that reading owns no text #
+# of its own, see its own docstring.                                          #
 # --------------------------------------------------------------------------- #
 def _rejected_error(violation: VoDocumentViolation, *, base: str) -> WriteRejectedError:
     path = _joined(base, violation.path)
@@ -248,7 +231,7 @@ def _rejected_error(violation: VoDocumentViolation, *, base: str) -> WriteReject
 def _joined(base: str, path: str) -> str:
     """``base`` plus a shared-walk violation's own relative ``path`` — a nested
     member dot-joins, a ``many`` element index attaches bracket-first (no dot,
-    matching this module's OWN pre-extraction owner-string convention, e.g.
+    matching this module's OWN owner-string convention, e.g.
     ``"Supplier.address.phones[0].number"``)."""
     if not path:
         return base
@@ -259,11 +242,7 @@ def _joined(base: str, path: str) -> str:
 
 # --------------------------------------------------------------------------- #
 # DB-computed write markers (scalar attribute columns only, `m-value-object`   #
-# "Writing" marker disambiguation). The m-core neutral type check itself is    #
-# `parallax.core.descriptor.neutral_type.type_matches` (imported above as      #
-# `_type_matches`) -- the ONE scalar-value-policy check this module and        #
-# `parallax.core.inheritance.validate_write_assignment` both apply, so it      #
-# lives in the shared scope both already depend on rather than staying forked. #
+# "Writing" marker disambiguation).                                            #
 # --------------------------------------------------------------------------- #
 def _is_scalar_write_marker(value: object) -> bool:
     if not isinstance(value, Mapping):

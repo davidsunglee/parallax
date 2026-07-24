@@ -5,6 +5,13 @@ Value Object Attribute metadata, operation literals and assignments, and
 neutral row cells. A structured value carries no serialized spelling — parsing
 and formatting the ``decimal(p,s)`` family and its siblings belongs to the
 interchange seams that transport them.
+
+Value-space membership is asked of native carriers, so a seam that received a
+value in its portable literal form decodes it first. The literal form is a
+property of the value space rather than of any one transport — every seam that
+carries a ``NeutralValue`` through the JSON data model spells it the same way —
+so :func:`decode_neutral_literal` states that one inverse here instead of
+leaving each seam to invent its own.
 """
 
 from __future__ import annotations
@@ -14,6 +21,7 @@ import decimal as _decimal
 import math as _math
 import struct as _struct
 import uuid as _uuid
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Final, TypeGuard, cast
 
@@ -44,6 +52,7 @@ __all__ = [
     "Time",
     "Timestamp",
     "Uuid",
+    "decode_neutral_literal",
     "matches_neutral_type",
 ]
 
@@ -182,9 +191,10 @@ def matches_neutral_type(value: object, declared: NeutralType) -> bool:
     ``bool``/``int``/``float``/``decimal.Decimal``/``str``/``bytes``/
     ``datetime.date``/``datetime.time``/``datetime.datetime``/``uuid.UUID``,
     and the JSON data model for :class:`Json`. A wire spelling is never a
-    member of the space it encodes, so a serde seam decodes before asking:
-    the string ``"2026-01-01"`` is not a :class:`Date` value and the integer
-    ``2`` is not a :class:`Float64` value.
+    member of the space it encodes, so a seam holding one calls
+    :func:`decode_neutral_literal` before asking: the string ``"2026-01-01"``
+    is not a :class:`Date` value and the integer ``2`` is not a
+    :class:`Float64` value.
 
     ``bool`` is a Python ``int`` subclass but a distinct space, so an integer
     space rejects it and :class:`Boolean` accepts nothing else.
@@ -218,6 +228,53 @@ def matches_neutral_type(value: object, declared: NeutralType) -> bool:
             return isinstance(value, _uuid.UUID)
         case Json():
             return value is not None and _is_json_value(value)
+
+
+def decode_neutral_literal(value: object, declared: NeutralType) -> object:
+    """``value`` as a carrier of ``declared``'s value space, when it spells one.
+
+    The inverse of the portable literal encoding: a JSON number spells a
+    :class:`Decimal` and widens to a float space, an ISO-8601 string spells a
+    :class:`Date`, :class:`Time`, or :class:`Timestamp`, a canonical UUID string
+    spells a :class:`Uuid`, and a lowercase-hex string spells :class:`Bytes`.
+    Every other space is already carried natively, so its literal decodes to
+    itself.
+
+    Total and nonthrowing: a value that is not a literal of ``declared`` — a
+    malformed spelling, a truth value where a number belongs, or an unrelated
+    object — is returned unchanged, so :func:`matches_neutral_type` alone
+    decides membership and this function never classifies a defect on its own.
+    """
+    match declared:
+        case Float32() | Float64() if _is_integer(value):
+            return float(value)
+        case Decimal() if _is_integer(value):
+            return _decimal.Decimal(value)
+        case Decimal() if isinstance(value, float):
+            # Through the shortest round-tripping text, so the decoded value has
+            # the digits the literal was written with rather than the binary
+            # expansion of the float that carried it.
+            return _decimal.Decimal(repr(value))
+        case Bytes() if isinstance(value, str):
+            return _decoded(bytes.fromhex, value)
+        case Date() if isinstance(value, str):
+            return _decoded(_dt.date.fromisoformat, value)
+        case Time() if isinstance(value, str):
+            return _decoded(_dt.time.fromisoformat, value)
+        case Timestamp() if isinstance(value, str):
+            return _decoded(_dt.datetime.fromisoformat, value)
+        case Uuid() if isinstance(value, str):
+            return _decoded(_uuid.UUID, value)
+        case _:
+            return value
+
+
+def _decoded[T](decode: Callable[[str], T], literal: str) -> T | str:
+    """``literal`` decoded, or the literal itself when it is not well formed."""
+    try:
+        return decode(literal)
+    except ValueError:
+        return literal
 
 
 def _is_integer(value: object) -> TypeGuard[int]:
