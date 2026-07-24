@@ -243,9 +243,11 @@ def decode_neutral_literal(value: object, declared: NeutralType) -> object:
 
     Total and nonthrowing: a value that is not a literal of ``declared`` — a
     malformed spelling, a truth value where a number belongs, an integer no
-    float of the width represents exactly, or an unrelated object — is returned
-    unchanged, so :func:`matches_neutral_type` alone decides membership and this
-    function never rounds, overflows, or classifies a defect on its own.
+    float of the width represents exactly, a :class:`Time` or :class:`Timestamp`
+    literal carrying non-zero sub-microsecond precision, or an unrelated
+    object — is returned unchanged, so :func:`matches_neutral_type` alone decides
+    membership and this function never rounds, truncates, overflows, or
+    classifies a defect on its own.
     """
     match declared:
         case Float64() if _is_integer(value):
@@ -264,9 +266,9 @@ def decode_neutral_literal(value: object, declared: NeutralType) -> object:
         case Date() if isinstance(value, str):
             return _decoded(_dt.date.fromisoformat, value)
         case Time() if isinstance(value, str):
-            return _decoded(_dt.time.fromisoformat, value)
+            return _decoded_temporal(_dt.time.fromisoformat, value)
         case Timestamp() if isinstance(value, str):
-            return _decoded(_dt.datetime.fromisoformat, value)
+            return _decoded_temporal(_dt.datetime.fromisoformat, value)
         case Uuid() if isinstance(value, str):
             return _decoded(_uuid.UUID, value)
         case _:
@@ -297,6 +299,40 @@ def _decoded[T](decode: Callable[[str], T], literal: str) -> T | str:
         return decode(literal)
     except ValueError:
         return literal
+
+
+def _decoded_temporal[T](decode: Callable[[str], T], literal: str) -> T | str:
+    """A microsecond-precision temporal literal decoded, unless it carries
+    non-zero sub-microsecond precision.
+
+    ``datetime.fromisoformat`` / ``time.fromisoformat`` silently truncate a
+    fractional second past the sixth digit, so a literal whose seventh or later
+    fractional digit is non-zero would decode to a rounded microsecond value that
+    is not the value written. Such a literal names no member of a
+    microsecond-precision space and decodes to itself so membership fails; a
+    literal whose extra digits are all trailing zeros still spells an exact
+    microsecond value and decodes normally.
+    """
+    if not _within_microsecond_precision(literal):
+        return literal
+    return _decoded(decode, literal)
+
+
+def _within_microsecond_precision(literal: str) -> bool:
+    """Whether a temporal literal's fractional second has no non-zero digit past
+    the sixth. A literal with at most six fractional digits, or with only
+    trailing zeros beyond the sixth, spells an exact microsecond value; the
+    fractional separator is ``.`` or ``,`` and its digit run ends the fractional
+    field (a timezone offset or the string's end follows)."""
+    for index, char in enumerate(literal):
+        if char in ".,":
+            digits = ""
+            for following in literal[index + 1 :]:
+                if following not in "0123456789":
+                    break
+                digits += following
+            return len(digits) <= 6 or all(digit == "0" for digit in digits[6:])
+    return True
 
 
 def _is_integer(value: object) -> TypeGuard[int]:
