@@ -255,6 +255,33 @@ def test_a_build_time_narrow_over_an_unformable_scope_refuses_rather_than_deferr
         UnformableRoot.where(UnformableRoot.narrow(UnformableLeaf))
 
 
+def test_an_unformable_whole_chain_still_serves_a_coherent_closure_scoped_read() -> None:
+    # The complement of the refusal above, over the production-reachable mirror:
+    # `ANIMAL_OWNER_REGISTRY` shadows the default registry's own `Person` with
+    # `models/animal.yaml`'s polymorphic owner, which declares no `passport`
+    # relationship -- so the default registry's `Passport.holder`
+    # (`ReverseRelationship(reverse_of="Person.passport")`) is left dangling and
+    # the WHOLE registry chain cannot form. Build-time validation narrows to the
+    # target's reachable closure (`Person` plus its `animals`/`pets` families),
+    # which excludes that unrelated dangling sibling, so a coherent read on the
+    # SAME target still builds.
+    #
+    # Both facts MUST live together: the precondition (the whole chain is
+    # unformable) is what makes the closure-scoped success meaningful -- were
+    # fixture drift ever to let `ANIMAL_OWNER_REGISTRY.metamodel()` form, the
+    # build below would pass without exercising closure narrowing at all.
+    # `animal_owner`'s own module-scope import of `read_models` compiles
+    # `Passport` into the default-registry parent, so the precondition holds
+    # regardless of the order tests run in.
+    with pytest.raises(MetamodelValidationError):
+        animal_owner.ANIMAL_OWNER_REGISTRY.metamodel()
+
+    statement = animal_owner.Person.where(animal_owner.Person.id == 1).include(
+        animal_owner.Person.pets
+    )
+    assert statement.target == "Person"
+
+
 def test_narrow_resolves_subtype_names_regardless_of_registry() -> None:
     # `Entity.narrow`'s subtype resolution (`entity_record_of`) is CLASS-keyed
     # (never name-keyed), so it needs no registry scoping at all -- confirmed
