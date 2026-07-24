@@ -30,7 +30,6 @@ from parallax.core.sql_gen import (
     CompiledRead,
     SqlGenError,
     Statement,
-    column_order,
     compile_read,
     compile_write_predicate,
 )
@@ -135,14 +134,15 @@ def test_statement_is_frozen_value() -> None:
 
 # --------------------------------------------------------------------------- #
 # The supported interface itself. `parallax.core.sql_gen` exports               #
-# exactly seven names; everything else in the package is private implementation.#
+# exactly six names; everything else in the package is private implementation.  #
 # The result objects are ordinary frozen dataclasses, so equality, `repr`,      #
 # hashing, copying, and same-version pickling are all structural — no           #
 # `__reduce__`, no stored callable, nothing to keep in sync by hand.            #
 # --------------------------------------------------------------------------- #
-def test_the_package_exports_exactly_the_seven_supported_names() -> None:
+def test_the_package_exports_exactly_the_six_supported_names() -> None:
     # An EXACT set, not a superset: re-exporting a private helper is precisely the
-    # regression this guards, and a superset assertion would not see it.
+    # regression this guards, and a superset assertion would not see it. Canonical
+    # column order is `m-inheritance`'s export, so its absence here is the point.
     import parallax.core.sql_gen as sql_gen
 
     assert set(sql_gen.__all__) == {
@@ -150,7 +150,6 @@ def test_the_package_exports_exactly_the_seven_supported_names() -> None:
         "CompiledRead",
         "SqlGenError",
         "Statement",
-        "column_order",
         "compile_read",
         "compile_write_predicate",
     }
@@ -160,7 +159,6 @@ def test_the_package_exports_exactly_the_seven_supported_names() -> None:
     assert sql_gen.CompiledRead is CompiledRead
     assert sql_gen.SqlGenError is SqlGenError
     assert sql_gen.Statement is Statement
-    assert sql_gen.column_order is column_order
     assert sql_gen.compile_read is compile_read
     assert sql_gen.compile_write_predicate is compile_write_predicate
 
@@ -356,30 +354,3 @@ def test_a_record_free_model_lowers_navigation_and_value_object_paths() -> None:
     )
     assert nested.statement.sql.endswith("where jsonb_extract_path_text(t0.contact_doc, ?, ?) = ?")
     assert nested.statement.binds == ("address", "city", "Oslo")
-
-
-def test_the_column_order_helper_states_the_canonical_physical_order() -> None:
-    model = _fake_model()
-    account = model.entity(fake_metamodel.ACCOUNT)
-    assert account is not None
-    # Primary key first, then the remaining scalars in declaration order, then
-    # the value object's backing document column last.
-    assert column_order(account, inheritance.view(model)) == (
-        "id",
-        "ledger_label",
-        "balance",
-        "opened_on",
-        "contact_doc",
-    )
-
-
-def test_the_column_order_helper_slots_the_tag_after_the_key_and_spans_the_family() -> None:
-    # An inheritance participant's own declaration carries only its own members,
-    # so the order is the ancestry chain's: the root's key, then the family tag,
-    # then the remaining scalars in chain order.
-    assert column_order(target(PAYMENT, "CardPayment"), inheritance.view(PAYMENT)) == (
-        "id",
-        "kind",
-        "amount",
-        "card_network",
-    )

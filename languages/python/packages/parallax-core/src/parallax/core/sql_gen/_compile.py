@@ -38,7 +38,7 @@ from dataclasses import dataclass
 from typing import Literal, assert_never
 
 from parallax.core.dialect import Dialect, LockMode
-from parallax.core.inheritance import InheritanceFacet
+from parallax.core.inheritance import InheritanceFacet, column_order
 from parallax.core.inheritance import view as _inheritance_view
 from parallax.core.metamodel import EntityMetadata, Metamodel
 from parallax.core.op_algebra import (
@@ -61,7 +61,6 @@ from parallax.core.sql_gen._inheritance import RowTransform as _RowTransform
 from parallax.core.sql_gen._inheritance import TpcsSinglePlan as _TpcsSinglePlan
 from parallax.core.sql_gen._inheritance import TpcsUnionPlan as _TpcsUnionPlan
 from parallax.core.sql_gen._inheritance import TphPlan as _TphPlan
-from parallax.core.sql_gen._inheritance import column_order
 from parallax.core.sql_gen._inheritance import plan_inheritance_read as _plan_inheritance_read
 from parallax.core.sql_gen._inheritance import tag_guard as _tph_tag_guard
 
@@ -76,7 +75,6 @@ __all__ = [
     "CompiledRead",
     "SqlGenError",
     "Statement",
-    "column_order",
     "compile_read",
     "compile_write_predicate",
 ]
