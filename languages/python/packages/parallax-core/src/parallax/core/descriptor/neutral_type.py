@@ -1,4 +1,5 @@
-"""Shared, error-neutral Python-scalar-type inference (m-descriptor).
+"""Shared, error-neutral `m-descriptor` scalar-type support: neutral-type
+inference, canonical-name derivation, and exact descriptor-spelling membership.
 
 The Entity class frontend (``parallax.core.entity.base``) and the ValueObject
 class frontend (``parallax.core.entity.value_object``) each infer a scalar
@@ -18,6 +19,15 @@ returns the resolved type name or ``None``, never raising — the unresolved-typ
 message text (and the decimal-needs-precision special case, whose fix-it
 snippet differs, ``Field(...)`` vs ``VoField(...)``) is each caller's OWN
 classification, so neither frontend's own wording changes.
+
+The module also owns exact descriptor-spelling membership: :func:`type_matches`
+grades whether a value belongs to the space a resolved type spelling names,
+parsing the spelling and applying the same `m-core` logical membership a keyed
+write row is graded against (:func:`~parallax.core.base.matches_neutral_type`
+over :func:`~parallax.core.base.decode_neutral_literal`). A predicate-write
+assignment still carries the descriptor's type spelling rather than a structured
+Neutral Type, so it needs this spelling-parsing entry point; its callers cannot
+import each other yet each already depends on this module.
 """
 
 from __future__ import annotations

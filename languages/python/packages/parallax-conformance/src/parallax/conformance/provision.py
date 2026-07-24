@@ -86,9 +86,12 @@ def schema_statements(model: Metamodel, dialect: Dialect = POSTGRES) -> list[str
     carries one — created exactly once, from the first entity ``_tables``
     encounters mapped to that table; a table-per-concrete-subtype table is one
     concrete's own ancestry-derived full column chain (root → … → that
-    concrete), no tag. DDL is not asserted byte-exact anywhere in the corpus
-    (`m-case-format`), so column order and the tag column's own type are this
-    provisioning path's own choice, not a golden.
+    concrete), no tag. Columns emit in the inheritance-owned canonical order
+    (`m-inheritance`, the rule `inheritance.column_order` states): primary key,
+    then the framework-owned tag, then the remaining scalars in family-effective
+    declaration order, then each value object's document column. DDL is not
+    asserted byte-exact anywhere in the corpus (`m-case-format`), so only the tag
+    column's own physical type is this provisioning path's choice, not a golden.
 
     A **temporal** Entity's physical primary key is its declared primary key plus
     the physical column of each As-Of Axis's start Attribute: many milestone

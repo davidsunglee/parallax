@@ -514,7 +514,7 @@ _CASH_METADATA = _entity(_LEDGER_MODEL, "CashLedger")
 
 
 def test_a_subtype_insert_excludes_inherited_root_owned_axis_bounds() -> None:
-    # The root's Valid-Time interval bounds reach the subtype through the family
+    # The root's Transaction-Time interval bounds reach the subtype through the family
     # member set, yet a full-document insert that omits them is still valid: an
     # inherited axis bound is no more authored on a neutral write row than a
     # standalone entity's own axis bound is.
