@@ -32,7 +32,9 @@ and a malformed inheritance payload has no well-defined "target entity" for the
 composite walk to run against (`m-inheritance` "A validator checks these
 payload-shape rules... before the target-validity rule"). The declared-composite
 walk (required-attribute / required-value-object / value-type-mismatch) runs
-second, over ``entity``'s own scalar attributes and value objects.
+second, over ``entity``'s family-effective scalar attributes and value objects
+(`m-inheritance` "Inherited members"), so an inherited required member and an
+inherited Attribute's declared type are enforced on a concrete-subtype write.
 
 ``mutation`` classifies whether ``row`` is expected to be a FULL document
 (``insert`` / ``insertUntil`` -- every declared member must be present) or a
@@ -98,24 +100,28 @@ class WriteRejectedError(ValueError):
         self.rule = rule
 
 
-def _temporal_axis_members(entity: EntityMetadata) -> frozenset[str]:
-    """The Attributes ``entity``'s OWN declared as-of axes govern (the milestone
+def _family_axis_members(
+    model: Metamodel, view: inheritance.InheritanceEntityView
+) -> frozenset[str]:
+    """The Attributes ``view``'s FAMILY-EFFECTIVE as-of axes govern (the milestone
     interval bounds) — excluded from the required/type walk below, since they are
     NEVER part of the neutral write input (`m-unit-work` "the instant surface is
     dimension-explicit"; ADR 0010: the Transaction-Time instant is Clock-supplied
     flush context, never an instruction field; the Valid-Time bounds are
     instruction fields, ``validFrom`` / ``until``, never row members).
 
-    Bare LOCAL axes, never family-resolved: an inheritance participant's own
-    declared attributes never include an INHERITED axis's governing attributes
-    anyway (temporal axes are root-owned metadata a descendant MUST NOT
-    redeclare, `m-inheritance` "Inherited members"), so this reduces correctly
-    to a no-op for a concrete-subtype ``entity`` — its own bare declared axes
-    are already empty in that case.
+    Resolved through the family root: temporal axes are root-owned metadata a
+    descendant MUST NOT redeclare (`m-inheritance` "Inherited members"), so the
+    root's axes are the whole family's, and an inherited bound reaches the walk
+    only because the applicable-member set carries the root's Attributes. A
+    standalone entity is its own root, so this reduces to its own declared axes.
     """
+    root = model.entity(view.root)
+    if root is None:  # pragma: no cover - an accepted model contains every family root
+        return frozenset()
     return frozenset(
         name
-        for axis in entity.declared_as_of_axes
+        for axis in root.declared_as_of_axes
         for name in (axis.start_attribute.name, axis.end_attribute.name)
     )
 
@@ -131,19 +137,28 @@ def validate_write(
 
     Raises :class:`WriteRejectedError` naming the violated rule. See the module
     docstring for the check order and the mutation-aware required-ness rule.
+
+    The required-attribute / required-value-object / value-type walk runs over
+    ``entity``'s FAMILY-EFFECTIVE member set (`m-inheritance` "Inherited
+    members"), so an inherited required member is required of a subtype write
+    and an inherited Attribute's declared type is enforced — a standalone entity
+    contributes only its own declarations.
     """
     try:
         inheritance.validate_subtype_write(model, entity, row)
     except inheritance.InheritanceError as exc:
         raise WriteRejectedError(exc.rule, str(exc)) from exc
+    view = inheritance.view(model).entity(entity.identity)
+    if view is None:  # pragma: no cover - the facet covers every accepted Entity
+        raise ValueError(f"{entity.identity.canonical}: the model declares no such entity")
     full_document = mutation in _FULL_DOCUMENT_MUTATIONS
-    axis_members = _temporal_axis_members(entity)
+    axis_members = _family_axis_members(model, view)
     owner = entity.identity.name
-    for attribute in entity.declared_attributes:
+    for attribute in view.applicable_attributes:
         if attribute.identity.name in axis_members:
             continue
         _check_entity_attribute(row, attribute, required=full_document, owner=owner)
-    for value_object in entity.declared_value_objects:
+    for value_object in view.applicable_value_objects:
         _check_value_object_member(row, value_object, required=full_document, owner=owner)
 
 

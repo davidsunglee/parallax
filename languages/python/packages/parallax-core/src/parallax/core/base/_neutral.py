@@ -234,20 +234,24 @@ def decode_neutral_literal(value: object, declared: NeutralType) -> object:
     """``value`` as a carrier of ``declared``'s value space, when it spells one.
 
     The inverse of the portable literal encoding: a JSON number spells a
-    :class:`Decimal` and widens to a float space, an ISO-8601 string spells a
+    :class:`Decimal` and, when some float of the target width carries it
+    exactly, a :class:`Float32` or :class:`Float64`; an ISO-8601 string spells a
     :class:`Date`, :class:`Time`, or :class:`Timestamp`, a canonical UUID string
     spells a :class:`Uuid`, and a lowercase-hex string spells :class:`Bytes`.
     Every other space is already carried natively, so its literal decodes to
     itself.
 
     Total and nonthrowing: a value that is not a literal of ``declared`` — a
-    malformed spelling, a truth value where a number belongs, or an unrelated
-    object — is returned unchanged, so :func:`matches_neutral_type` alone
-    decides membership and this function never classifies a defect on its own.
+    malformed spelling, a truth value where a number belongs, an integer no
+    float of the width represents exactly, or an unrelated object — is returned
+    unchanged, so :func:`matches_neutral_type` alone decides membership and this
+    function never rounds, overflows, or classifies a defect on its own.
     """
     match declared:
-        case Float32() | Float64() if _is_integer(value):
-            return float(value)
+        case Float64() if _is_integer(value):
+            return _integer_as_float(value, binary32=False)
+        case Float32() if _is_integer(value):
+            return _integer_as_float(value, binary32=True)
         case Decimal() if _is_integer(value):
             return _decimal.Decimal(value)
         case Decimal() if isinstance(value, float):
@@ -267,6 +271,24 @@ def decode_neutral_literal(value: object, declared: NeutralType) -> object:
             return _decoded(_uuid.UUID, value)
         case _:
             return value
+
+
+def _integer_as_float(value: int, *, binary32: bool) -> float | int:
+    """``value`` as the float that carries it exactly, or ``value`` unchanged.
+
+    An integer spells a float value only when a float of the target width
+    represents it exactly. A magnitude that overflows the width, or one whose
+    low bits no mantissa of the width can hold, is not a literal of the space:
+    it decodes to itself so membership fails, never rounding to a nearby float
+    or overflowing to infinity.
+    """
+    try:
+        widened = float(value)
+        if binary32:
+            widened = _struct.unpack("<f", _struct.pack("<f", widened))[0]
+    except OverflowError:
+        return value
+    return widened if widened == value else value
 
 
 def _decoded[T](decode: Callable[[str], T], literal: str) -> T | str:

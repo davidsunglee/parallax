@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from decimal import Decimal
 from pathlib import Path
 from typing import Any, Final, cast
 
@@ -14,6 +15,7 @@ from parallax.conformance import models as corpus_models
 from parallax.core import inheritance
 from parallax.core._formation_profile import form_metamodel
 from parallax.core.base import STRING
+from parallax.core.base import Decimal as DecimalType
 from parallax.core.descriptor import (
     AsOfAxisMetadata,
     Attribute,
@@ -55,6 +57,7 @@ from parallax.core.metamodel import (
 )
 from parallax.core.metamodel import AsOfAxisLocation as AxisLocation
 from parallax.core.model_formation import MetamodelValidationError
+from parallax.core.unit_work import WriteRejectedError, validate_write
 
 pytestmark = pytest.mark.unit
 
@@ -662,6 +665,63 @@ def test_validate_write_assignment_accepts_none_for_a_nullable_scalar() -> None:
     # clearing assignment, mirroring `write_validate`'s own null short-
     # circuit for a nullable attribute.
     inheritance.validate_write_assignment(_VO_META, _VO_ENTITY, "nickname", None)  # no raise
+
+
+# --------------------------------------------------------------------------- #
+# The predicate-write assignment check and the keyed-write-row check enforce   #
+# ONE scalar value contract: exact `m-core` logical membership, not a          #
+# category guess. A `Decimal` carrying more fractional digits than a           #
+# `decimal(p,s)` position can represent is a non-member both entry points      #
+# reject, and a representable one both accept.                                  #
+# --------------------------------------------------------------------------- #
+_INVOICE = identity("Invoice")
+_INVOICE_ENTITY = Entity(
+    name="Invoice",
+    table="invoice",
+    attributes=(
+        Attribute(name="id", type="int64", column="id", primary_key=True),
+        Attribute(name="amount", type="decimal(18,2)", column="amount"),
+    ),
+)
+_INVOICE_DESCRIPTOR = Metamodel(entities=(_INVOICE_ENTITY,))
+_INVOICE_ACCEPTED = form_metamodel(
+    source(
+        Declaration(
+            identity=_INVOICE,
+            container=Table("invoice"),
+            attributes=(key(_INVOICE), attribute(_INVOICE, "amount", type=DecimalType(18, 2))),
+        )
+    )
+)
+
+
+def _assignment_rejects(value: object) -> bool:
+    try:
+        inheritance.validate_write_assignment(_INVOICE_DESCRIPTOR, _INVOICE_ENTITY, "amount", value)
+    except inheritance.WriteAssignmentError:
+        return True
+    return False
+
+
+def _row_rejects(value: object) -> bool:
+    metadata = _INVOICE_ACCEPTED.entity(_INVOICE)
+    assert metadata is not None
+    try:
+        validate_write(metadata, {"id": 1, "amount": value}, _INVOICE_ACCEPTED, mutation="insert")
+    except WriteRejectedError:
+        return True
+    return False
+
+
+@pytest.mark.parametrize(
+    ("value", "rejected"),
+    [(Decimal("1.005"), True), (Decimal("1.00"), False)],
+)
+def test_both_write_entry_points_share_the_exact_scalar_type_contract(
+    value: object, rejected: bool
+) -> None:
+    assert _assignment_rejects(value) is rejected
+    assert _row_rejects(value) is rejected
 
 
 # --------------------------------------------------------------------------- #

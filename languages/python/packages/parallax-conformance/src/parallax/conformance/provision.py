@@ -155,22 +155,30 @@ def _table_ddl(
         attributes = view.applicable_attributes
         value_objects = view.applicable_value_objects
 
-    # The tag sits immediately after the root's own columns (m-sql column order),
-    # before any descendant's columns, so its physical slot matches the canonical
-    # column order a write binds in.
-    root_column_count = len(root.declared_attributes)
-    columns: list[str] = []
+    # Canonical physical column order (`m-inheritance` canonical column order,
+    # the rule `inheritance.column_order` states): the primary key, then the
+    # framework-owned tag immediately after it, then the remaining scalars in
+    # family-effective declaration order, and finally each value object's single
+    # document column.
+    key_columns: list[str] = []
+    rest_columns: list[str] = []
     pk_columns: list[str] = []
-    for index, attribute in enumerate(attributes):
-        columns.append(_column_ddl(attribute, dialect))
+    for attribute in attributes:
         if isinstance(attribute.primary_key, PrimaryKey):
+            key_columns.append(_column_ddl(attribute, dialect))
             pk_columns.append(dialect.quote(attribute.storage.name))
-        if index + 1 == root_column_count and view.tag_column is not None:
-            columns.append(
-                f"{dialect.quote(view.tag_column)} "
-                f"{dialect.column_type(_TAG_COLUMN_TYPE, _TAG_COLUMN_MAX_LENGTH)}"
-            )
-    columns.extend(f"{dialect.quote(member.storage.name)} jsonb" for member in value_objects)
+        else:
+            rest_columns.append(_column_ddl(attribute, dialect))
+    tag_columns = (
+        [
+            f"{dialect.quote(view.tag_column)} "
+            f"{dialect.column_type(_TAG_COLUMN_TYPE, _TAG_COLUMN_MAX_LENGTH)}"
+        ]
+        if view.tag_column is not None
+        else []
+    )
+    documents = [f"{dialect.quote(member.storage.name)} jsonb" for member in value_objects]
+    columns: list[str] = [*key_columns, *tag_columns, *rest_columns, *documents]
     pk_columns.extend(
         dialect.quote(_attribute_column(root, axis.start_attribute.name))
         for axis in root.declared_as_of_axes

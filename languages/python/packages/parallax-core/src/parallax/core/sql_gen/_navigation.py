@@ -77,6 +77,7 @@ from parallax.core.metamodel import (
 from parallax.core.op_algebra import Exists, Narrow, Navigate, NotExists, Operation
 from parallax.core.sql_gen._context import PlanScope as _PlanScope
 from parallax.core.sql_gen._context import SqlGenError
+from parallax.core.sql_gen._context import declared_table as _table
 from parallax.core.sql_gen._inheritance import TagPredicate as _TagPredicate
 from parallax.core.sql_gen._inheritance import entity_view as _entity_view
 from parallax.core.sql_gen._inheritance import narrow_position as _narrow_position
@@ -267,14 +268,6 @@ def open_branch(branch: HopBranch, scope: _PlanScope) -> OpenBranch:
         tag_binds=tag_binds,
         keyword=branch.keyword,
     )
-
-
-def _table(target: EntityMetadata) -> str:
-    """A monomorphic hop target's own table."""
-    container = target.declared_container
-    if container is None:  # pragma: no cover - a standalone Entity always declares one
-        raise SqlGenError(f"{target.identity.canonical}: relationship target declares no table")
-    return container.name
 
 
 def _plan_simple_hop(

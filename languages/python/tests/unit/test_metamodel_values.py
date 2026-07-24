@@ -303,3 +303,49 @@ def test_neutral_value_conformance_is_exact_logical_membership(
     value: object, declared: base.NeutralType, expected: bool
 ) -> None:
     assert base.matches_neutral_type(value, declared) is expected
+
+
+# A runtime write validator asks membership of a value that may still carry its
+# portable literal spelling, so it decodes first and then checks membership. That
+# composite must be exact (no value the space cannot represent is admitted),
+# lossless (an integer literal spells a float value only when some float of the
+# target width carries it exactly), and total (a value outside the space
+# classifies as a non-member, never raises).
+def _runtime_member(value: object, declared: base.NeutralType) -> bool:
+    return base.matches_neutral_type(base.decode_neutral_literal(value, declared), declared)
+
+
+@pytest.mark.parametrize(
+    ("value", "declared", "expected"),
+    [
+        (3, base.FLOAT64, True),
+        (2**53, base.FLOAT64, True),
+        (2**53 + 1, base.FLOAT64, False),
+        (10**1000, base.FLOAT64, False),
+        (-(10**1000), base.FLOAT64, False),
+        (3, base.FLOAT32, True),
+        (2**24, base.FLOAT32, True),
+        (2**24 + 1, base.FLOAT32, False),
+        (2**64, base.FLOAT32, True),
+        (10**40, base.FLOAT32, False),
+        (10**1000, base.FLOAT32, False),
+        ("123e4567-e89b-12d3-a456-426614174000", base.UUID, True),
+        ("not-a-uuid", base.UUID, False),
+        ("deadbeef", base.BYTES, True),
+        ("not-hex", base.BYTES, False),
+        ("2026-01-01", base.DATE, True),
+    ],
+)
+def test_runtime_neutral_membership_is_exact_lossless_and_total(
+    value: object, declared: base.NeutralType, expected: bool
+) -> None:
+    assert _runtime_member(value, declared) is expected
+
+
+@pytest.mark.parametrize("declared", [base.FLOAT32, base.FLOAT64])
+def test_decoding_a_huge_integer_literal_does_not_raise(declared: base.NeutralType) -> None:
+    # A magnitude no float can carry must not overflow; it decodes to itself and
+    # fails membership, never crashing the validator that called it.
+    decoded = base.decode_neutral_literal(10**1000, declared)
+    assert decoded == 10**1000
+    assert base.matches_neutral_type(decoded, declared) is False

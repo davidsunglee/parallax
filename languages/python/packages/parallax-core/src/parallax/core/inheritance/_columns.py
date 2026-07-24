@@ -9,10 +9,7 @@ scope alone.
 
 This scope is also the only one that contributes a physical column the Metamodel
 does not otherwise carry: the table-per-hierarchy tag, a bare string on the
-strategy with no Attribute behind it. Should a future feature ever synthesize a
-physical column that is likewise backed by no declared Attribute, that feature's
-owner becomes a co-owner of this law and the single-owner answer needs
-revisiting.
+strategy with no Attribute behind it.
 """
 
 from __future__ import annotations

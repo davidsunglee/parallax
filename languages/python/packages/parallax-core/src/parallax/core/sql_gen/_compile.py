@@ -51,6 +51,7 @@ from parallax.core.op_algebra import (
 )
 from parallax.core.sql_gen._context import Ctx as _Ctx
 from parallax.core.sql_gen._context import SqlGenError
+from parallax.core.sql_gen._context import declared_table as _table
 
 # The family LANE of this compiler — distinct from `parallax.core.inheritance`
 # above, which is the metamodel module. Each name is aliased down to the
@@ -331,14 +332,6 @@ def compile_read(
     # A non-family read projects no tag and no variant literal, so there is
     # nothing to materialize.
     return CompiledRead(statement, narrow_to, _IDENTITY_TRANSFORM)
-
-
-def _table(entity: EntityMetadata) -> str:
-    """A non-family read target's own table."""
-    container = entity.declared_container
-    if container is None:  # pragma: no cover - a standalone Entity always declares one
-        raise SqlGenError(f"{entity.identity.canonical}: read target declares no table")
-    return container.name
 
 
 def compile_write_predicate(
