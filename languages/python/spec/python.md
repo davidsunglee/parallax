@@ -1673,6 +1673,16 @@ hatchling.
   proves `psycopg`, `parallax.snapshot`, testcontainers, and conformance
   modules are absent from both the installed distribution list and the import
   space.
+- **Descriptor text-ingestion schema phase.** `parallax.core.descriptor`'s
+  schema-validation phase (`m-descriptor` ingestion phase 2) evaluates
+  `core/schemas/metamodel.schema.json` with `jsonschema`, imported lazily
+  (function-local) so `parallax-core`'s declared manifest stays `pydantic` and
+  `pyyaml` alone — the table row above is unchanged. Only `parallax-conformance`
+  (dev-only) declares `jsonschema`, and only it ingests descriptor text; the
+  native Entity-class frontend never ingests text, so common-runtime code never
+  exercises this import. A caller reaching the schema phase without
+  `jsonschema` installed gets a clear, actionable error naming the missing
+  dependency rather than a bare `ImportError`.
 - **Lifecycle extension manifest proof.** `parallax-snapshot` depends only on
   `parallax-core`; the clean-install check proves no sibling lifecycle
   artifact exists in the graph and no concrete driver is present.

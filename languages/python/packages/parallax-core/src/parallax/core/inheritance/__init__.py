@@ -829,7 +829,7 @@ def _vo_assignment_error(
     mismatch raises — a malformed value-object assignment is, from this
     function's own vocabulary, just another shape of "the value does not
     match the declared type") from a shared, error-neutral
-    ``parallax.core.descriptor.vo_document`` violation — that module owns no
+    ``parallax.core.metamodel._vo_document`` violation — that module owns no
     text of its own, see its own docstring."""
     path = _joined(f"{entity_name}.{name}", violation.path)
     if violation.reason == "not-a-list":

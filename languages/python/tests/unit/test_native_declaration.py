@@ -15,6 +15,11 @@ import pytest
 from parallax.core.descriptor import records
 from parallax.core.descriptor.errors import DescriptorError
 from parallax.core.entity._declaration import native_metamodel
+from parallax.core.metamodel import (
+    EntityIdentity,
+    ExactEntityReference,
+    UnresolvedDefiningRelationshipDeclaration,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -79,3 +84,35 @@ def test_an_inheritance_descendant_without_a_parent_is_rejected() -> None:
     )
     with pytest.raises(DescriptorError, match="names its parent"):
         native_metamodel(_one(entity))
+
+
+def test_a_qualified_relationship_target_resolves_to_an_exact_reference() -> None:
+    # A dot-qualified Entity spelling is exact regardless of the declaring
+    # Entity's own namespace — the same authoring rule the descriptor-backed
+    # adapter honors for a compiled class record (`m-descriptor` "relationship").
+    source = records.Entity(
+        name="Order",
+        namespace="shop",
+        table="order",
+        attributes=(
+            _ID_PK,
+            records.Attribute(name="warehouseId", type="int64", column="warehouse_id"),
+        ),
+        relationships=(
+            records.DefiningRelationship(
+                name="warehouse",
+                cardinality="many-to-one",
+                join=records.RelationshipJoin(
+                    source="warehouseId",
+                    target=records.RelationshipTarget(entity="ops.Warehouse", attribute="id"),
+                ),
+            ),
+        ),
+    )
+    (declaration,) = native_metamodel(_one(source)).entities
+    (relationship,) = declaration.relationships
+    assert isinstance(relationship, UnresolvedDefiningRelationshipDeclaration)
+    assert relationship.join.target.entity == ExactEntityReference(
+        EntityIdentity("ops", "Warehouse")
+    )
+    assert relationship.join.target.name == "id"
