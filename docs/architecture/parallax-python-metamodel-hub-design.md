@@ -2066,8 +2066,8 @@ Native blocking graph: `COR-45` → `COR-40` → `COR-46` → `COR-47` →
 The current COR-45/COR-40 readiness work deliberately does not close later
 slice contracts. COR-46's complete enforceable dependency graphs, enforcement
 scopes, and composition-root imports are specified normatively in §7 of the
-Python spec ("The target topology after the metamodel dependency inversion")
-and motivated in its section below, and
+Python spec ("Source-enforcement topology") and motivated in its section
+below, and
 the compiled facet protocols its behavioral consumers read are normative in
 `m-inheritance` ("The Inheritance Facet"), `m-temporal-read` ("The Temporal
 Facet"), and `m-opt-lock` ("The Optimistic Lock Facet") — inheritance-aware
@@ -2353,25 +2353,32 @@ COR-46 lands the dependency inversion as one atomic flip: the core
 row and fence replacements, the DAG-sync tool's module-to-scope map, and the
 regenerated import-linter complement change together and leave every gate
 green. No temporary row survives the flip. The Python spec is the binding
-product definition, so the complete target tables — behavioral scope mapping,
+product definition, so the complete tables — behavioral scope mapping,
 composition-root edges, and support-scope grants — live normatively in §7 of
-`languages/python/spec/python.md` ("The target topology after the metamodel
-dependency inversion"); this subsection records the core-side changes and the
-design rationale behind those tables without repeating them.
+`languages/python/spec/python.md` ("Source-enforcement topology"); this
+subsection records the core-side changes and the design rationale behind
+those tables without repeating them.
 
-**Core direct-edge changes.** Exactly three edges leave the fenced
-`dependency-graph` block, and no other core edge changes:
+**Core direct-edge changes.** Three edges leave the fenced `dependency-graph`
+block, and three edges join it that make an already-legal transitive reach
+direct:
 
 ```text
 m-pk-gen --> m-descriptor        removed; m-pk-gen --> m-metamodel remains
 m-inheritance --> m-descriptor   removed; m-metamodel / m-model-formation remain
 m-value-object --> m-descriptor  removed; m-metamodel / m-model-formation remain
+m-sql --> m-metamodel            added; was reachable only via m-op-algebra
+m-sql --> m-inheritance          added; was reachable only via m-op-algebra
+m-deep-fetch --> m-relationship  added; was reachable only via m-navigate
 ```
 
-After the removal no behavioral module depends on `m-descriptor`. Its own
-edges (`m-descriptor --> m-core`, `m-descriptor --> m-metamodel`) make it the
-interchange/serde adapter over the Metamodel Interface (ADR 0028); the
-conformance family may still reference it by construction.
+The three added edges change no closure or complement — SQL generation and
+deep fetch already reached those modules transitively — they only make a
+direct import honest at the DAG level. After the three removals no behavioral
+module depends on `m-descriptor`. Its own edges (`m-descriptor --> m-core`,
+`m-descriptor --> m-metamodel`) make it the interchange/serde adapter over the
+Metamodel Interface (ADR 0028); the conformance family may still reference it
+by construction.
 
 **Python behavioral scopes.** The three temporary co-location rows in §7 and
 the corresponding `MODULE_SCOPE` entries in
@@ -2380,13 +2387,13 @@ the corresponding `MODULE_SCOPE` entries in
 `parallax.core.metamodel`, `parallax.core.model_formation`, and
 `parallax.core.relationship` scopes, `parallax.core.descriptor` becomes the
 sole owner of its scope, and every behavioral row keeps mirroring the core
-DAG mechanically. The §7 target table is normative.
+DAG mechanically. The §7 table is normative.
 
 **Composition root.** `parallax.core._formation_profile` becomes a declared
 §7 support scope. Its allowed direct dependencies are exactly the formation
 runner plus every module whose Formation Manifest row supplies a Rule Set or
 compiler; `m-pk-gen` supplies neither, so the composition root does not
-import it. The §7 target fence lists the resulting edges. The only production
+import it. The §7 fence lists the resulting edges. The only production
 importer of `_formation_profile` is the seam that seals a model: during
 COR-46 the temporary Entity-frontend adapter inside `parallax.core.entity`,
 and from COR-47 `entity._hub`.
@@ -2399,7 +2406,7 @@ cannot reject an undeclared-but-reachable direct import, so a support row is
 the only honest declaration of its direct edges. (Behavioral scopes differ:
 `modules.md` lists direct edges only and implies transitives, so a
 behavioral module's reliance on a transitively reachable module remains
-by-design legal.) The §7 target table is normative; the decisions behind it:
+by-design legal.) The §7 table is normative; the decisions behind it:
 
 - `parallax.core.entity` alone keeps `m-descriptor`: serialization is that
   seam's concern — the temporary frontend adapter still reads the registry's
@@ -2569,9 +2576,9 @@ Acceptance requires:
   `m-model-formation`, and `m-relationship` to `parallax.core.metamodel`,
   `parallax.core.model_formation`, and `parallax.core.relationship`; no
   temporary co-location mapping remains anywhere, and the behavioral,
-  composition-root, and support-scope grants equal §7's normative target
-  tables ("The target topology after the metamodel dependency inversion"),
-  including the new `parallax.core._formation_profile` row;
+  composition-root, and support-scope grants equal §7's normative tables
+  ("Source-enforcement topology"), including the
+  `parallax.core._formation_profile` row;
 - the regenerated import-linter complement forbids `parallax.core.descriptor`
   imports from every behavioral scope and from the write-lowering scopes, and
   no lazy import hides a cycle; and

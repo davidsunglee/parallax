@@ -5,9 +5,9 @@ enforcement scope, and ``tools/check_dag_sync.py`` turns those scopes into
 import-linter ``forbidden`` contracts. Nothing proved the *converse*: that every
 production source file actually falls inside one of them. A file outside every
 scope is governed by no contract at all — it may import anything, and no gate
-says so. That was not hypothetical. ``parallax/snapshot/wrap.py`` shipped as
-production code owned by no scope until COR-42 retired it; a review-time
-inventory found it, and only because someone went looking.
+says so. That was not hypothetical: a production module once shipped owned by
+no scope, discovered only because a review-time inventory happened to go
+looking for it.
 
 This walks the filesystem instead. Every ``packages/*/src/**/*.py`` file in the
 production distributions must resolve to exactly one *most-specific*

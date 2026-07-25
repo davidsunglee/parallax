@@ -7,7 +7,7 @@ a dotted access path against the declared structure, reports the leaf's neutral
 type for literal typing, and answers whether a path crosses a
 ``multiplicity: many`` member — the fact that decides core's flat **any-element**
 vs terminated **same-element** semantics. ``m-value-object`` depends on
-``m-descriptor``, ``m-metamodel``, and ``m-model-formation``.
+``m-metamodel`` and ``m-model-formation``.
 
 It contributes a Rule Set and no compiler: accepted occurrences are expanded
 into path-identified Metadata by the mandatory Metadata Compiler, so there is no
