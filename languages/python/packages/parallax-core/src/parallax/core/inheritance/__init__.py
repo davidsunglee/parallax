@@ -280,12 +280,12 @@ def validate_write_assignment(
     """The ONE predicate-write assignment check every caller applies to one
     `{attr, value}` pair (`m-opt-lock` "Version values are framework-owned";
     `python.md` §5 "each field may be assigned at most once"): mirroring
-    `model_copy`'s own assignability rule (`parallax.core.entity.base.
+    `model_copy`'s own assignability rule (`parallax.core.entity._entity.
     _validate_copy_keys`), a primary-key or optimistic-locking (version)
     target is rejected outright — a family's version/key columns are declared
     only on the root, so this walk reads the Inheritance Facet's FAMILY-EFFECTIVE
     applicable members, exactly like every other write-side member-name
-    resolution. Neither `entity.expressions.AttributeExpr.set` (the typed path,
+    resolution. Neither `entity._expressions.AttributeExpr.set` (the typed path,
     `parallax.core.entity`) nor `unit_work.instructions.validate_instruction`
     (the case-authored engine/serialized path, `parallax.core.unit_work`) may
     import the other (`core/spec/modules.md` §7 DAG), so this classification

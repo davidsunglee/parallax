@@ -419,7 +419,7 @@ def validate_instruction(instruction: WriteInstruction, model: AcceptedMetamodel
     does not conform to its declared neutral type
     (`python.md:667-676`/`m-case-format.md:700` -- the SAME classification a
     `.set(...)`-built assignment is rejected with at build time,
-    `entity.expressions.AttributeExpr.set`; the "one validator, two callers"
+    `entity._expressions.AttributeExpr.set`; the "one validator, two callers"
     pattern neither scope can otherwise share, `core/spec/modules.md` section 7 DAG).
     """
     if isinstance(instruction, KeyedWrite):

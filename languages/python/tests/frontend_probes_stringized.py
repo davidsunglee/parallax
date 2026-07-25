@@ -1,15 +1,12 @@
-"""Declaration probes on the live-annotation path.
+"""Declaration probes on the stringized-annotation path.
 
-This module deliberately omits ``from __future__ import annotations`` so the
-engine sees real ``Attr[T]`` / ``Rel[T]`` objects and type inference runs against
-the concrete inner type. ``frontend_probes_stringized`` is the twin covering the
-same rejections on the stringized path, which is separate code.
-
-Each ``define_*`` helper builds a declaration expected to fail; the trailing
-``return`` keeps the class referenced for the type checker even though the engine
-raises before it runs. Declaring inside a function also means re-invoking a
-helper is itself the repeated-declaration case.
+The twin of ``frontend_probes``: identical rejections declared under
+``from __future__ import annotations``, so the engine sees annotation *text* and
+resolves it against the class body before module globals. The two paths are
+separate code, so every code in the closed set is proved on both.
 """
+
+from __future__ import annotations
 
 from decimal import Decimal
 

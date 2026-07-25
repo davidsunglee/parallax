@@ -17,6 +17,7 @@ import enum
 import re
 from typing import Final
 
+from parallax.core.base._inference import NEUTRAL_FROM_PYTHON, infer_neutral_type
 from parallax.core.base._neutral import (
     BOOLEAN,
     BYTES,
@@ -61,6 +62,7 @@ __all__ = [
     "INT32",
     "INT64",
     "JSON",
+    "NEUTRAL_FROM_PYTHON",
     "NEUTRAL_TYPES",
     "STRING",
     "TIME",
@@ -84,6 +86,7 @@ __all__ = [
     "Uuid",
     "coerce_neutral_input",
     "decode_neutral_literal",
+    "infer_neutral_type",
     "is_neutral_type",
     "matches_neutral_type",
     "normalize_instant",

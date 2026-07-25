@@ -1,685 +1,280 @@
-"""Entity frontend (definition half): descriptor export and rejections."""
+"""The Entity class frontend: the authoring grammar and what it compiles to.
 
-from __future__ import annotations
+This module omits ``from __future__ import annotations`` so the engine sees live
+annotation objects; ``test_declaration_engine`` covers the stringized path and
+``test_entity_definition_codes`` covers every rejection on both.
+"""
 
+import ast
 import datetime as dt
+import inspect
 from decimal import Decimal
-from typing import cast
 
 import pytest
 
-import frontend_probes
-import mirrored_models as mm
-from parallax.conformance import case_format
 from parallax.core import (
+    MANY_TO_ONE,
+    ONE_TO_MANY,
+    ONE_TO_ONE,
+    READ_ONLY,
     Attr,
     Bitemporal,
     Entity,
-    EntityConfig,
     EntityDefinitionError,
-    EntityRegistry,
-    FamilyRoot,
-    Field,
-    NameCollisionError,
     Rel,
-    Relationship,
-    RelationshipJoin,
-    RelationshipTarget,
-    ReservedNameError,
     TxTemporal,
+    asc,
+    attr,
+    desc,
+    index,
+    rel,
 )
-from parallax.core.descriptor import (
-    AsOfAxisMetadata as AsOfAxisRecord,
-)
-from parallax.core.descriptor import (
-    DefiningRelationship,
-    DescriptorError,
-    canonicalize,
-    export_document,
-)
+from parallax.core.base import Decimal as NeutralDecimal
+from parallax.core.base import Float32, Int32, Int64, String, Timestamp
 from parallax.core.entity import (
-    AttributeRef,
-    RelationshipRef,
-    camel_to_snake,
-    entity_record_of,
-    metamodel,
-    registry_of,
-    snake_to_camel,
+    UNLOADED,
+    AttributeExpr,
+    Predicate,
+    RelationshipPath,
+    UnloadedRelationshipError,
+    canonical_row,
+    changed_fields,
+    effective_change_set,
+    full_row,
+    primary_key_row,
+    wire_names_of,
 )
+from parallax.core.entity import _declaration as engine
+from parallax.core.entity import _entity as entity_module
+from parallax.core.entity._errors import FrameworkOwnedAxisError, ModelCopyError, ProvenanceError
+from parallax.core.metamodel import (
+    APPLICATION_ASSIGNED,
+    MAX,
+    Column,
+    EntityIdentity,
+    Max,
+    PrimaryKey,
+    Sequence,
+    SortDirection,
+    Table,
+    UnresolvedDefiningRelationshipDeclaration,
+    UnresolvedRelationshipOrder,
+)
+from parallax.core.op_algebra import Comparison, serialize
 
 pytestmark = pytest.mark.unit
 
 
-@pytest.mark.parametrize("stem, classes", mm.MIRRORED, ids=[stem for stem, _ in mm.MIRRORED])
-def test_mirrored_class_export_matches_the_corpus_logical_model(
-    stem: str, classes: list[type]
-) -> None:
-    corpus = mm.drop_indices(canonicalize(_raw_model(stem)))
-    assert _by_identity(export_document(metamodel(classes))) == _by_identity(corpus)
-
-
-def _by_identity(document: dict[str, object]) -> dict[str, object]:
-    """``document`` with its entities in canonical identity order — an accepted
-    model enumerates that way while the corpus preserves its authored order."""
-    if "entity" in document:
-        return document
-    entities = cast("list[dict[str, object]]", document["entities"])
-    ordered = sorted(entities, key=lambda entity: (entity.get("namespace", ""), entity["name"]))
-    return {**document, "entities": ordered}
-
-
-def _raw_model(stem: str) -> dict[str, object]:
-    path = case_format.find_repo_root() / "core" / "compatibility" / "models" / f"{stem}.yaml"
-    loaded = case_format.safe_load_yaml(path.read_text(encoding="utf-8"))
-    assert isinstance(loaded, dict)
-    return cast("dict[str, object]", loaded)
-
-
-@pytest.mark.parametrize(
-    ("snake", "camel"),
-    [("id", "id"), ("order_id", "orderId"), ("person_id", "personId"), ("a_b_c", "aBC")],
-)
-def test_snake_to_camel_conversion(snake: str, camel: str) -> None:
-    assert snake_to_camel(snake) == camel
-
-
-@pytest.mark.parametrize(
-    ("entity_name", "table"),
-    [("Account", "account"), ("OrderItem", "order_item"), ("PkSequence", "pk_sequence")],
-)
-def test_camel_to_snake_default_table(entity_name: str, table: str) -> None:
-    assert camel_to_snake(entity_name) == table
-
-
-def test_metamodel_assembles_related_classes() -> None:
-    assembled = metamodel([mm.Person, mm.Passport])
-    # The accepted model enumerates in canonical identity order.
-    assert tuple(e.identity.name for e in assembled.entities) == ("Passport", "Person")
-    # The assembled model is scoped to a registry that resolves the given classes
-    # back to themselves (auto-scoping, so `db.find` resolves through it).
-    assert registry_of(assembled).resolve("Person") is mm.Person
-
-
-def test_metamodel_rejects_a_non_entity_class() -> None:
-    with pytest.raises(TypeError, match="is not a Parallax entity class"):
-        metamodel([int])
-
-
-def test_attribute_descriptor_get_on_class_and_instance() -> None:
-    account = mm.Account(id=1, owner="alice", balance=Decimal("9.99"), version=1)
-    descriptor = mm.Account.__dict__["owner"]
-    # Class access yields the expression object (the seed of a predicate); its
-    # underlying reference identifies the attribute.
-    assert descriptor.__get__(None, mm.Account).ref == AttributeRef("Account", "owner")
-    assert descriptor.__get__(account, mm.Account) == "alice"
-    # Normal instance access returns the stored value (non-data descriptor).
-    assert account.owner == "alice"
-
-
-def test_relationship_descriptor_get_on_class_and_instance() -> None:
-    descriptor = mm.Passport.__dict__["holder"]
-    # Class access yields a RelationshipPath (the include/any/none seed); its
-    # `.ref` mirrors AttributeExpr's own class-access identity, and `.target`
-    # is the declared relationship's own related entity.
-    path = descriptor.__get__(None, mm.Passport)
-    assert path.ref == RelationshipRef("Passport", "holder")
-    assert path.target == "Person"
-    person = mm.Person(id=2, name="p")
-    carrier = _Carrier()
-    carrier.holder = person  # a materialized peer lives in the instance __dict__
-    assert descriptor.__get__(carrier, mm.Passport) is person
-
-
-class _Carrier:
-    """A plain object whose ``__dict__`` stands in for a materialized instance."""
-
-    holder: object
-
-
-def test_attribute_ref_str_and_relationship_ref_str() -> None:
-    assert str(AttributeRef("Account", "owner")) == "Account.owner"
-    assert str(RelationshipRef("Person", "passport")) == "Person.passport"
-
-
-# Declared in a registry of its own, never the process default: the
-# relationship below deliberately names an Entity nothing declares, so this
-# class must not become visible to any other registry that forms the model it
-# can see.
-_STRING_REL_REGISTRY = EntityRegistry(parent=None)
-
-
-class WithStringRel(Entity, frozen=True, registry=_STRING_REL_REGISTRY):
-    """A relationship declared under ``from __future__ import annotations`` (a string)."""
-
-    __parallax__ = EntityConfig(table="with_string_rel", mutability="transactional")
-
-    id: Attr[int] = Field(primary_key=True, type="int64")
-    peer: Rel[object] = Relationship(
-        cardinality="many-to-one",
-        join=RelationshipJoin(
-            source="id", target=RelationshipTarget(entity="Peer", attribute="id")
-        ),
+class Customer(Entity, table="customer", namespace="sales"):
+    id: Attr[int] = attr(primary_key=True)
+    tax_id: Attr[str] = attr(name="taxID")
+    bin_no: Attr[str] = attr(column="BIN_NO")
+    orders: Rel[tuple["Order", ...]] = rel(
+        reverse_of="customer", order_by=("placed_at", desc("id"))
     )
 
 
-def test_string_annotation_relationship_is_unwrapped() -> None:
-    record = entity_record_of(WithStringRel)
-    assert record is not None
-    relationship = record.relationships[0]
-    assert isinstance(relationship, DefiningRelationship)
-    assert relationship.join.target.entity == "Peer"
+class Coupon(Entity, table="coupon", namespace="sales"):
+    id: Attr[int] = attr(primary_key=True)
 
 
-class FutureInferred(Entity, frozen=True):
-    """Neutral-type inference under ``from __future__ import annotations`` (no ``type=``).
-
-    This module stringizes annotations, so ``Attr[int]`` reaches the metaclass as
-    the string ``"Attr[int]"``; inference must still resolve the inner type.
-    """
-
-    __parallax__ = EntityConfig(table="future_inferred", mutability="transactional")
-
-    id: Attr[int] = Field(primary_key=True)
-    name: Attr[str]
-    active: Attr[bool] = Field(default=False)
-    amount: Attr[Decimal] = Field(type="decimal(9,2)")
-
-
-def test_future_annotations_infer_neutral_types_without_explicit_type() -> None:
-    record = entity_record_of(FutureInferred)
-    assert record is not None
-    by_name = {attr.name: attr for attr in record.attributes}
-    assert by_name["id"].type == "int64"
-    assert by_name["name"].type == "string"
-    assert by_name["active"].type == "boolean"
-    assert by_name["amount"].type == "decimal(9,2)"
+class Order(
+    Entity,
+    table="orders",
+    namespace="sales",
+    indices=(index("order_customer", "customer_id"),),
+):
+    id: Attr[int] = attr(primary_key=True)
+    placed_at: Attr[dt.datetime]
+    qty: Attr[int] = attr(type=Int32)
+    rating: Attr[float] = attr(type=Float32)
+    amount: Attr[Decimal] = attr(precision=18, scale=2)
+    version: Attr[int] = attr(optimistic_locking=True)
+    customer_id: Attr[int]
+    customer: Rel[Customer] = rel(cardinality=MANY_TO_ONE, join=("customer_id", "id"))
+    coupon_id: Attr[int | None]
+    coupon: Rel[Coupon | None] = rel(cardinality=MANY_TO_ONE, join=("coupon_id", "id"))
 
 
-def test_future_annotation_explicit_type_survives_unresolvable_inner() -> None:
-    # A name visible only in function scope is absent from the module globals the
-    # resolver evaluates against, so the inner type stays a string; an explicit
-    # `type=` means inference is never consulted and the class still compiles —
-    # the fallback path that keeps forward references from breaking definitions.
-    class LocalOnly:
-        pass
-
-    class WidgetWithUnresolvedInner(Entity, frozen=True):
-        __parallax__ = EntityConfig(table="widget", mutability="transactional")
-
-        id: Attr[int] = Field(primary_key=True, type="int64")
-        payload: Attr[LocalOnly] = Field(type="int64")
-
-    record = entity_record_of(WidgetWithUnresolvedInner)
-    assert record is not None
-    assert {attr.name for attr in record.attributes} == {"id", "payload"}
+class Ticket(Entity, table="ticket"):
+    id: Attr[int] = attr(
+        primary_key=Sequence(name="ticket_seq", initial_value=1000, increment_size=5)
+    )
+    label: Attr[str] = attr(max_length=32, read_only=True)
 
 
-def _define_invalid_neutral_type() -> type:
-    class Bad(Entity, frozen=True):
-        __parallax__ = EntityConfig(table="bad", mutability="transactional")
-
-        id: Attr[int] = Field(primary_key=True, type="widget")
-
-    return Bad
+class Widget(Entity, table="widget", name="WIDGET"):
+    id: Attr[int] = attr(primary_key=MAX)
+    label: Attr[str]
 
 
-def test_invalid_neutral_type_is_rejected_at_definition() -> None:
-    with pytest.raises(EntityDefinitionError, match="not a neutral type"):
-        _define_invalid_neutral_type()
+class Reading(TxTemporal, table="reading"):
+    id: Attr[int] = attr(primary_key=True)
+    celsius: Attr[float]
 
 
-def _define_out_of_range_max_length() -> type:
-    class Bad(Entity, frozen=True):
-        __parallax__ = EntityConfig(table="bad", mutability="transactional")
-
-        id: Attr[int] = Field(primary_key=True, type="int64")
-        label: Attr[str] = Field(type="string", max_length=0)
-
-    return Bad
+class Episode(Bitemporal, table="episode"):
+    id: Attr[int] = attr(primary_key=True)
 
 
-def test_out_of_range_max_length_is_rejected_at_definition() -> None:
-    with pytest.raises(EntityDefinitionError, match="maxLength"):
-        _define_out_of_range_max_length()
+class Line(Entity, table="line"):
+    id: Attr[int] = attr(primary_key=True)
+    basket_id: Attr[int]
 
 
-def _define_wrong_typed_pk_generator() -> type:
-    class Bad(Entity, frozen=True):
-        __parallax__ = EntityConfig(table="bad", mutability="transactional")
+class Account(Entity, table="account"):
+    id: Attr[int] = attr(primary_key=True)
 
-        id: Attr[int] = Field(
-            primary_key=True,
-            type="int64",
-            pk_generator={"strategy": "sequence", "batchSize": "not-an-int"},
+
+def _order() -> Order:
+    return Order(
+        id=1,
+        placed_at=dt.datetime(2026, 1, 1, tzinfo=dt.UTC),
+        qty=2,
+        rating=4.5,
+        amount=Decimal("1.50"),
+        version=1,
+        customer_id=7,
+    )
+
+
+def test_the_entity_name_is_the_class_name_unless_the_header_overrides_it() -> None:
+    assert Order.identity == EntityIdentity("sales", "Order")
+    assert Widget.identity == EntityIdentity(None, "WIDGET")
+    assert Order.container == Table("orders")
+
+
+def test_persistence_is_declared_only_where_it_is_exceptional() -> None:
+    class Archive(Entity, table="archive", persistence=READ_ONLY):
+        id: Attr[int] = attr(primary_key=True)
+
+    assert Order.persistence is None
+    assert Archive.persistence is READ_ONLY
+
+
+def test_the_scalar_families_narrow_only_through_the_type_option() -> None:
+    by_name = {member.identity.name: member for member in Order.attributes}
+    assert by_name["id"].type == Int64()
+    assert by_name["qty"].type == Int32()
+    assert by_name["rating"].type == Float32()
+    assert by_name["amount"].type == NeutralDecimal(18, 2)
+    assert by_name["placedAt"].type == Timestamp()
+    assert Customer.attributes[1].type == String()
+
+
+def test_name_overrides_the_canonical_member_and_column_overrides_its_storage() -> None:
+    by_name = {member.identity.name: member for member in Customer.attributes}
+    assert set(by_name) == {"id", "taxID", "binNo"}
+    assert by_name["taxID"].storage == Column("taxID")
+    assert by_name["binNo"].storage == Column("BIN_NO")
+
+
+def test_the_primary_key_algebra_carries_its_generation_on_the_key_branch() -> None:
+    assert Order.attributes[0].primary_key == PrimaryKey(APPLICATION_ASSIGNED)
+    assert Widget.attributes[0].primary_key == PrimaryKey(MAX)
+    assert Ticket.attributes[0].primary_key == PrimaryKey(
+        Sequence(name="ticket_seq", batch_size=1, initial_value=1000, increment_size=5)
+    )
+
+
+def test_a_generation_is_spelled_as_its_value_and_never_as_its_type() -> None:
+    with pytest.raises(EntityDefinitionError) as caught:
+        attr(primary_key=Max)
+    assert caught.value.code == "entity-option-invalid-value"
+
+
+def test_the_remaining_attribute_options_reach_the_declaration() -> None:
+    label = Ticket.attributes[1]
+    assert label.max_length == 32
+    assert label.read_only is True
+    version = next(m for m in Order.attributes if m.identity.name == "version")
+    assert version.optimistic_locking is True
+
+
+def test_relationship_facts_split_between_the_annotation_and_the_factory() -> None:
+    reverse = Customer.relationships[0]
+    assert reverse.order_by == (
+        UnresolvedRelationshipOrder("placedAt", SortDirection.ASCENDING),
+        UnresolvedRelationshipOrder("id", SortDirection.DESCENDING),
+    )
+    defining = next(m for m in Order.relationships if m.identity.name == "customer")
+    assert isinstance(defining, UnresolvedDefiningRelationshipDeclaration)
+    assert defining.cardinality is MANY_TO_ONE
+    assert defining.dependent is False
+    assert defining.join.source.name == "customerId"
+
+
+def test_a_dependent_ordered_defining_relationship_records_both_facts() -> None:
+    class Basket(Entity, table="basket"):
+        id: Attr[int] = attr(primary_key=True)
+        lines: Rel[tuple[Line, ...]] = rel(
+            cardinality=ONE_TO_MANY,
+            join=("id", "basket_id"),
+            dependent=True,
+            order_by=(asc("id"),),
+            name="basketLines",
         )
 
-    return Bad
-
-
-def test_wrong_typed_pk_generator_mapping_is_rejected_at_definition() -> None:
-    # The malformed batchSize used to be coerced to None and the class defined
-    # successfully, exporting a bare `pkGeneration: sequence`; now it is rejected.
-    with pytest.raises(EntityDefinitionError, match="pk generator: `batchSize`"):
-        _define_wrong_typed_pk_generator()
-
-
-def _define_explicit_none_pk_generator() -> type:
-    class Bad(Entity, frozen=True):
-        __parallax__ = EntityConfig(table="bad", mutability="transactional")
-
-        id: Attr[int] = Field(
-            primary_key=True,
-            type="int64",
-            pk_generator={"strategy": "sequence", "batchSize": None},
-        )
-
-    return Bad
-
-
-def test_explicit_none_pk_generator_field_is_rejected_at_definition() -> None:
-    # A present optional key carrying `None` (distinct from an omitted key) is a
-    # malformed declaration rejected when the class body is evaluated, naming the
-    # offending NoneType — never silently normalized to a bare sequence strategy.
-    with pytest.raises(EntityDefinitionError, match=r"`batchSize`.*NoneType"):
-        _define_explicit_none_pk_generator()
-
-
-def _define_omitted_optional_pk_generator() -> type:
-    # Declared in a registry of its own, never the process default: a bare
-    # sequence generation names no sequence, which the canonical descriptor
-    # requires, so this class must not become visible to any other registry that
-    # forms the model it can see.
-    class Seq(Entity, frozen=True, registry=EntityRegistry(parent=None)):
-        __parallax__ = EntityConfig(table="seq_bare", mutability="transactional")
-
-        id: Attr[int] = Field(
-            primary_key=True,
-            type="int64",
-            pk_generator={"strategy": "sequence"},
-        )
-
-    return Seq
-
-
-def test_omitted_optional_pk_generator_field_defines_but_cannot_form() -> None:
-    # Omitting every optional key (absent != None) is a legitimately-partial
-    # object form the class frontend ACCEPTS at class definition, unlike the
-    # present-None case above which it rejects at class-body evaluation. The
-    # compiled record carries a bare sequence naming no sequence; the accepted
-    # primary-key generation algebra requires a named sequence, so the model
-    # CANNOT form — the canonical schema's own object-form-with-name requirement,
-    # surfaced at assembly rather than at class definition.
-    seq = _define_omitted_optional_pk_generator()
-    record = entity_record_of(seq)
-    assert record is not None
-    (pk,) = [attr for attr in record.attributes if attr.primary_key]
-    assert pk.pk_generator is not None
-    assert pk.pk_generator.strategy == "sequence"
-    assert pk.pk_generator.sequence_name is None
-    with pytest.raises(DescriptorError, match="sequence generation names its sequence"):
-        metamodel([seq])
-
-
-def test_object_form_pk_generator_defines_and_exports() -> None:
-    class SeqObjectForm(Entity, frozen=True):
-        __parallax__ = EntityConfig(table="seq", mutability="transactional")
-
-        id: Attr[int] = Field(
-            primary_key=True,
-            type="int64",
-            pk_generator={
-                "strategy": "sequence",
-                "sequenceName": "seq_ids",
-                "batchSize": 5,
-                "initialValue": 100,
-                "incrementSize": 10,
-            },
-        )
-
-    exported = cast("dict[str, object]", export_document(metamodel([SeqObjectForm]))["entity"])
-    attributes = cast("list[dict[str, object]]", exported["attributes"])
-    assert attributes[0]["pkGeneration"] == {
-        "strategy": "sequence",
-        "name": "seq_ids",
-        "batchSize": 5,
-        "initialValue": 100,
-        "incrementSize": 10,
-    }
-
-
-def _define_string_plain_field() -> type:
-    class Bad(Entity, frozen=True):
-        __parallax__ = EntityConfig(table="bad", mutability="transactional")
-
-        id: Attr[int] = Field(primary_key=True, type="int64")
-        qty: int = 5
-
-    return Bad
-
-
-def test_string_plain_annotation_is_rejected() -> None:
-    with pytest.raises(EntityDefinitionError, match="Attr"):
-        _define_string_plain_field()
-
-
-def test_field_default_becomes_the_instance_default() -> None:
-    class Toggle(Entity, frozen=True):
-        __parallax__ = EntityConfig(table="toggle", mutability="transactional")
-
-        id: Attr[int] = Field(primary_key=True, type="int64")
-        active: Attr[bool] = Field(type="boolean", default=True)
-
-    assert Toggle(id=1).active is True
-
-
-def test_reserved_field_name_is_rejected() -> None:
-    with pytest.raises(ReservedNameError):
-        frontend_probes.define_reserved_name()
-
-
-def test_canonical_name_collision_is_rejected() -> None:
-    with pytest.raises(NameCollisionError):
-        frontend_probes.define_name_collision()
-
-
-def test_non_attr_field_is_rejected() -> None:
-    with pytest.raises(EntityDefinitionError, match="Attr"):
-        frontend_probes.define_non_attr_field()
-
-
-def test_entity_without_attributes_is_rejected() -> None:
-    with pytest.raises(EntityDefinitionError, match="no attributes"):
-        frontend_probes.define_no_attributes()
-
-
-def test_relationship_without_a_relationship_spec_is_rejected() -> None:
-    with pytest.raises(EntityDefinitionError, match="Relationship"):
-        frontend_probes.define_relationship_without_spec()
-
-
-def test_bad_parallax_config_is_rejected() -> None:
-    with pytest.raises(EntityDefinitionError, match="EntityConfig"):
-        frontend_probes.define_bad_config()
-
-
-def test_bad_mutability_is_rejected() -> None:
-    with pytest.raises(EntityDefinitionError, match="mutability"):
-        frontend_probes.define_bad_mutability()
-
-
-def test_decimal_without_precision_is_rejected() -> None:
-    with pytest.raises(EntityDefinitionError, match="decimal"):
-        frontend_probes.define_decimal_without_type()
-
-
-def test_unmapped_python_type_is_rejected() -> None:
-    with pytest.raises(EntityDefinitionError, match="neutral type"):
-        frontend_probes.define_unmapped_attribute()
-
-
-def test_tx_temporal_base_declares_the_transaction_time_axis() -> None:
-    # The temporal class spelling: extending `TxTemporal` injects the standard
-    # `tx_start`/`tx_end` attributes (columns `in_z`/`out_z`) and the
-    # Transaction-Time axis metadata into the shape owner's compiled record;
-    # the effective temporal classification derives from the injected axes
-    # exactly as for an ingested descriptor, and the typed statement surface
-    # accepts the declared axis.
-    from mirrored_models import Balance
-    from parallax.core.entity import entity_records
-
-    record = entity_records()["Balance"]
-    assert record.temporal == "transaction-time-only"
-    (axis,) = record.as_of_axes
-    assert (axis.dimension, axis.start_attribute, axis.end_attribute) == (
-        "transactionTime",
-        "tx_start",
-        "tx_end",
-    )
-    by_name = {attr.name: attr for attr in record.attributes}
-    assert by_name["tx_start"].column == "in_z"
-    assert by_name["tx_end"].column == "out_z"
-    pinned = Balance.where().as_of(tx_time=dt.datetime(2024, 4, 1, tzinfo=dt.UTC))
-    assert "asOf" in pinned.serialize()
-
-
-def test_bitemporal_base_declares_both_axes_valid_time_first() -> None:
-    # The standalone `Bitemporal` selection: both axes injected in canonical
-    # Valid-Time-first order, the standard attributes appended AFTER the
-    # user-declared members over the stable physical columns.
-    class _FrontendBitemporalQuote(Bitemporal, frozen=True):
-        __parallax__ = EntityConfig(table="frontend_bitemporal_quote")
-
-        id: Attr[int] = Field(primary_key=True, pk_generator="none", type="int64")
-        px: Attr[Decimal] = Field(type="decimal(18,2)")
-
-    record = entity_record_of(_FrontendBitemporalQuote)
-    assert record is not None
-    assert record.temporal == "bitemporal"
-    assert [
-        (axis.dimension, axis.start_attribute, axis.end_attribute) for axis in record.as_of_axes
-    ] == [
-        ("validTime", "valid_start", "valid_end"),
-        ("transactionTime", "tx_start", "tx_end"),
-    ]
-    assert [(attr.name, attr.column) for attr in record.attributes] == [
-        ("id", "id"),
-        ("px", "px"),
-        ("valid_start", "from_z"),
-        ("valid_end", "thru_z"),
-        ("tx_start", "in_z"),
-        ("tx_end", "out_z"),
-    ]
-
-
-def test_base_declared_entity_compiles_to_the_hand_authored_record() -> None:
-    # Record equivalence: a base-declared entity and a class body hand-authoring
-    # the identical standard `Attr` declarations compile to the same record —
-    # the injection is invisible downstream (same attributes, columns, neutral
-    # types, and axis metadata; only the class name differs).
-    from dataclasses import replace
-
-    class _FrontendEquivalenceTx(TxTemporal, frozen=True):
-        __parallax__ = EntityConfig(table="frontend_equiv_ledger")
-
-        id: Attr[int] = Field(primary_key=True, pk_generator="none", type="int64")
-        amount: Attr[Decimal] = Field(type="decimal(18,2)")
-
-    class _FrontendEquivalenceHand(Entity, frozen=True):
-        __parallax__ = EntityConfig(table="frontend_equiv_ledger")
-
-        id: Attr[int] = Field(primary_key=True, pk_generator="none", type="int64")
-        amount: Attr[Decimal] = Field(type="decimal(18,2)")
-        tx_start: Attr[dt.datetime] = Field(name="tx_start", column="in_z")
-        tx_end: Attr[dt.datetime] = Field(name="tx_end", column="out_z")
-
-    base_record = entity_record_of(_FrontendEquivalenceTx)
-    hand_record = entity_record_of(_FrontendEquivalenceHand)
-    assert base_record is not None
-    assert hand_record is not None
-    expected = replace(
-        hand_record,
-        name="_FrontendEquivalenceTx",
-        as_of_axes=(
-            AsOfAxisRecord(
-                dimension="transactionTime", start_attribute="tx_start", end_attribute="tx_end"
-            ),
-        ),
-    )
-    assert base_record == expected
-
-
-def test_redeclaring_a_standard_temporal_attribute_is_rejected() -> None:
-    with pytest.raises(EntityDefinitionError, match="reserved"):
-
-        class _FrontendBadRedeclare(TxTemporal, frozen=True):  # pyright: ignore[reportUnusedClass]
-            __parallax__ = EntityConfig(table="frontend_bad_redeclare")
-
-            id: Attr[int] = Field(primary_key=True, pk_generator="none", type="int64")
-            tx_start: Attr[dt.datetime] = Field(name="tx_start", column="in_z")
-
-
-def test_extending_both_temporal_bases_is_rejected() -> None:
-    with pytest.raises(EntityDefinitionError, match="mutually exclusive"):
-
-        class _FrontendBadDualBase(  # pyright: ignore[reportUnusedClass]
-            TxTemporal, Bitemporal, frozen=True
-        ):
-            __parallax__ = EntityConfig(table="frontend_bad_dual_base")
-
-            id: Attr[int] = Field(primary_key=True, pk_generator="none", type="int64")
-
-
-def test_extending_both_temporal_bases_is_rejected_bitemporal_first() -> None:
-    with pytest.raises(EntityDefinitionError, match="mutually exclusive"):
-
-        class _FrontendBadDualBaseSwap(  # pyright: ignore[reportUnusedClass]
-            Bitemporal, TxTemporal, frozen=True
-        ):
-            __parallax__ = EntityConfig(table="frontend_bad_dual_base_swap")
-
-            id: Attr[int] = Field(primary_key=True, pk_generator="none", type="int64")
-
-
-_DUAL_REGISTRY = EntityRegistry(parent=None)
-
-
-class _FrontendDualTxRoot(TxTemporal, frozen=True, registry=_DUAL_REGISTRY):
-    """A compiled Transaction-Time-Only family root for the one-compiled-base
-    rejection cases."""
-
-    __parallax__ = EntityConfig(
-        table="frontend_dual_tx_root",
-        inheritance=FamilyRoot(strategy="table-per-hierarchy", tag="kind"),
-    )
-
-    id: Attr[int] = Field(primary_key=True, pk_generator="none", type="int64")
-    a: Attr[str] = Field(max_length=8)
-
-
-class _FrontendDualBiRoot(Bitemporal, frozen=True, registry=_DUAL_REGISTRY):
-    """A compiled Bitemporal family root for the one-compiled-base rejection
-    cases."""
-
-    __parallax__ = EntityConfig(
-        table="frontend_dual_bi_root",
-        inheritance=FamilyRoot(strategy="table-per-hierarchy", tag="kind"),
-    )
-
-    id: Attr[int] = Field(primary_key=True, pk_generator="none", type="int64")
-    b: Attr[str] = Field(max_length=8)
-
-
-class _FrontendDualTxInterior(_FrontendDualTxRoot, frozen=True):
-    """An abstract-subtype interior member of the Transaction-Time family — the
-    intermediate hop for the indirect dual-base rejection case."""
-
-    __parallax__ = EntityConfig()
-
-
-def test_two_compiled_entity_bases_are_rejected_tx_family_first() -> None:
-    with pytest.raises(
-        EntityDefinitionError,
-        match=(
-            r"more than one compiled Parallax entity base "
-            r"\(_FrontendDualTxRoot, _FrontendDualBiRoot\)"
-        ),
-    ):
-
-        class _FrontendDualBothTxFirst(  # pyright: ignore[reportUnusedClass]
-            _FrontendDualTxRoot, _FrontendDualBiRoot, frozen=True
-        ):
-            __parallax__ = EntityConfig()
-
-
-def test_two_compiled_entity_bases_are_rejected_bitemporal_family_first() -> None:
-    with pytest.raises(
-        EntityDefinitionError,
-        match=(
-            r"more than one compiled Parallax entity base "
-            r"\(_FrontendDualBiRoot, _FrontendDualTxRoot\)"
-        ),
-    ):
-
-        class _FrontendDualBothBiFirst(  # pyright: ignore[reportUnusedClass]
-            _FrontendDualBiRoot, _FrontendDualTxRoot, frozen=True
-        ):
-            __parallax__ = EntityConfig()
-
-
-def test_two_compiled_entity_bases_via_an_intermediate_class_are_rejected() -> None:
-    with pytest.raises(
-        EntityDefinitionError,
-        match=(
-            r"more than one compiled Parallax entity base "
-            r"\(_FrontendDualTxInterior, _FrontendDualBiRoot\)"
-        ),
-    ):
-
-        class _FrontendDualBothViaInterior(  # pyright: ignore[reportUnusedClass]
-            _FrontendDualTxInterior, _FrontendDualBiRoot, frozen=True
-        ):
-            __parallax__ = EntityConfig()
-
-
-def test_user_declared_framework_root_marker_is_rejected() -> None:
-    # Framework-root status is metaclass-private identity (the fixed set
-    # Entity/TxTemporal/Bitemporal): a class-body marker cannot mint an inert,
-    # unregistered root, and the attempt fails loudly at class definition
-    # rather than silently compiling or silently skipping compilation.
-    with pytest.raises(EntityDefinitionError, match="not a user-declarable"):
-
-        class _FrontendForgedRoot(TxTemporal, frozen=True):  # pyright: ignore[reportUnusedClass]
-            __parallax_framework_root__ = True
-
-            id: Attr[int] = Field(primary_key=True, pk_generator="none", type="int64")
-
-    assert entity_record_of(Entity) is None
-    assert entity_record_of(TxTemporal) is None
-    assert entity_record_of(Bitemporal) is None
-
-
-def test_unannotated_temporal_name_assignment_is_rejected() -> None:
-    # A bare (unannotated) class-body assignment under a standard temporal name
-    # is a redeclaration too: without the rejection the injection step would
-    # silently overwrite the user's FieldSpec with the framework's own.
-    with pytest.raises(EntityDefinitionError, match=r"tx_start.*reserved"):
-
-        class _FrontendBareTemporalAssign(  # pyright: ignore[reportUnusedClass]
-            TxTemporal, frozen=True
-        ):
-            __parallax__ = EntityConfig(table="frontend_bare_temporal_assign")
-
-            id: Attr[int] = Field(primary_key=True, pk_generator="none", type="int64")
-            tx_start = Field(name="tx_start", column="weird_col")
-
-
-def test_temporal_name_redeclaration_below_the_family_root_is_rejected() -> None:
-    # The four standard temporal names are reserved family-wide, not only on
-    # the shape owner: a subclass rebinding one to a different column would
-    # corrupt the family's MRO-merged wire maps.
-    with pytest.raises(EntityDefinitionError, match=r"valid_start.*reserved.*family root"):
-
-        class _FrontendDualBadSub(  # pyright: ignore[reportUnusedClass]
-            _FrontendDualBiRoot, frozen=True
-        ):
-            __parallax__ = EntityConfig()
-
-            valid_start: Attr[dt.datetime] = Field(name="valid_start", column="other_col")
-
-
-def test_type_checking_mirror_matches_the_injection_tables() -> None:
+    declaration = Basket.relationships[0]
+    assert isinstance(declaration, UnresolvedDefiningRelationshipDeclaration)
+    assert declaration.identity.name == "basketLines"
+    assert declaration.dependent is True
+    assert declaration.order_by[0].direction is SortDirection.ASCENDING
+
+
+def test_a_one_to_one_join_names_members_by_their_python_spelling() -> None:
+    class Profile(Entity, table="profile"):
+        id: Attr[int] = attr(primary_key=True)
+        account_id: Attr[int]
+        account: Rel[Account] = rel(cardinality=ONE_TO_ONE, join=("account_id", "id"))
+
+    declaration = Profile.relationships[0]
+    assert isinstance(declaration, UnresolvedDefiningRelationshipDeclaration)
+    assert declaration.join.source.name == "accountId"
+    assert declaration.join.target.name == "id"
+
+
+def test_indices_are_local_declaration_ordered_and_lowered_to_identities() -> None:
+    (declared,) = Order.indices
+    assert declared.identity.name == "order_customer"
+    assert [component.name for component in declared.attributes] == ["customerId"]
+    assert declared.unique is False
+
+
+def test_class_level_member_access_seeds_operation_nodes() -> None:
+    assert isinstance(Order.id, AttributeExpr)
+    predicate = Order.id == 1
+    assert isinstance(predicate, Predicate)
+    assert isinstance(predicate.op, Comparison)
+    assert serialize(predicate.op) == {"eq": {"attr": "Order.id", "value": 1}}
+    path = Order.customer
+    assert isinstance(path, RelationshipPath)
+    assert path.target == "Customer"
+
+
+def test_instance_access_returns_the_member_value_and_relationships_stay_closed_world() -> None:
+    order = _order()
+    assert order.qty == 2
+    assert order.coupon_id is None
+    object.__setattr__(order, "customer", UNLOADED)
+    with pytest.raises(UnloadedRelationshipError):
+        _ = order.customer
+
+
+def test_a_temporal_shape_owner_receives_the_framework_members_and_axes() -> None:
+    names = [member.identity.name for member in Reading.attributes]
+    assert names == ["id", "celsius", "tx_start", "tx_end"]
+    assert [member.storage.name for member in Reading.attributes[2:]] == ["in_z", "out_z"]
+    assert len(Episode.as_of_axes) == 2
+    assert Reading(id=1, celsius=1.5).tx_start is None
+
+
+def test_the_type_checking_mirror_matches_the_engine_injection_table() -> None:
     # The `if TYPE_CHECKING:` blocks on TxTemporal/Bitemporal are the one
-    # hand-maintained static duplicate of the runtime injection metadata; drift
-    # would typecheck a surface the metaclass never installs (or hide one it
-    # does), so pin declared name order, annotation, and Field(name=, column=)
-    # against the injection tables themselves.
-    import ast
-    import inspect
-
-    from parallax.core.entity import base as entity_base
-
-    tree = ast.parse(inspect.getsource(entity_base))
-    mirrors: dict[str, list[tuple[str, str, dict[str, object]]]] = {}
+    # hand-maintained static duplicate of the engine's injection metadata; drift
+    # would type-check a surface the engine never installs, or hide one it does.
+    tree = ast.parse(inspect.getsource(entity_module))
+    mirrors: dict[str, list[tuple[str, str]]] = {}
     for node in ast.walk(tree):
         if not (isinstance(node, ast.ClassDef) and node.name in ("TxTemporal", "Bitemporal")):
             continue
@@ -690,23 +285,74 @@ def test_type_checking_mirror_matches_the_injection_tables() -> None:
                 and stmt.test.id == "TYPE_CHECKING"
             ):
                 continue
-            entries: list[tuple[str, str, dict[str, object]]] = []
+            entries: list[tuple[str, str]] = []
             for decl in stmt.body:
                 assert isinstance(decl, ast.AnnAssign), ast.dump(decl)
                 assert isinstance(decl.target, ast.Name)
-                assert isinstance(decl.value, ast.Call)
-                kwargs: dict[str, object] = {}
-                for keyword in decl.value.keywords:
-                    assert keyword.arg is not None
-                    kwargs[keyword.arg] = ast.literal_eval(keyword.value)
-                entries.append((decl.target.id, ast.unparse(decl.annotation), kwargs))
+                entries.append((decl.target.id, ast.unparse(decl.annotation)))
             mirrors[node.name] = entries
-    columns = entity_base._STANDARD_TEMPORAL_COLUMNS  # pyright: ignore[reportPrivateUsage]
+    injection = engine._TEMPORAL_MEMBERS  # pyright: ignore[reportPrivateUsage]
+    valid_time = engine.TemporalDimension.VALID_TIME
+    transaction_time = engine.TemporalDimension.TRANSACTION_TIME
     expected = {
-        base.__name__: [
-            (py_name, "Attr[_dt.datetime]", {"name": py_name, "column": columns[py_name]})
-            for py_name in attrs
-        ]
-        for base, attrs in entity_base._TEMPORAL_BASE_ATTRS.items()  # pyright: ignore[reportPrivateUsage]
+        "TxTemporal": [
+            (py_name, "Attr[_dt.datetime]") for py_name, _ in injection[transaction_time]
+        ],
+        "Bitemporal": [
+            (py_name, "Attr[_dt.datetime]")
+            for dimension in (valid_time, transaction_time)
+            for py_name, _ in injection[dimension]
+        ],
     }
     assert mirrors == expected
+
+
+def test_wire_names_expose_the_member_roles_the_write_path_needs() -> None:
+    names = wire_names_of(Order)
+    assert names.name_to_py["placedAt"] == "placed_at"
+    assert names.column_to_py["BIN_NO" if "BIN_NO" in names.column_to_py else "id"] is not None
+    assert names.pk_py == frozenset({"id"})
+    assert names.framework_owned_py == frozenset({"version"})
+    assert names.relationship_py == {"customer": "customer", "coupon": "coupon"}
+    assert "id" not in names.assignable_py
+    assert "version" not in names.assignable_py
+
+
+def test_a_write_row_carries_only_the_members_the_caller_set() -> None:
+    order = _order()
+    row = full_row(order)
+    assert row["id"] == 1
+    assert row["qty"] == 2
+    assert "couponId" not in row
+    assert primary_key_row(order) == {"id": 1}
+    assert canonical_row(order, {"qty": 3}) == {"qty": 3}
+
+
+def test_setting_a_framework_stamped_axis_member_is_rejected_before_any_row_is_built() -> None:
+    fresh = Reading(id=1, celsius=1.0, tx_start=dt.datetime(2026, 1, 1, tzinfo=dt.UTC))
+    with pytest.raises(FrameworkOwnedAxisError, match="tx_start"):
+        full_row(fresh)
+
+
+def test_an_edited_copy_records_its_earliest_original_and_drops_a_net_zero_change() -> None:
+    order = _order()
+    assert changed_fields(order) is None
+    with pytest.raises(ProvenanceError):
+        effective_change_set(order)
+    once = order.model_copy(update={"qty": 5})
+    assert changed_fields(once) == {"qty": 2}
+    assert effective_change_set(once) == {"qty": 5}
+    back = once.model_copy(update={"qty": 2})
+    assert effective_change_set(back) == {}
+
+
+@pytest.mark.parametrize("member", ["id", "version", "customer", "nonesuch"])
+def test_an_unassignable_copy_target_is_rejected(member: str) -> None:
+    with pytest.raises(ModelCopyError):
+        _order().model_copy(update={member: 1})
+
+
+def test_every_entity_class_is_frozen_without_declaring_it() -> None:
+    order = _order()
+    with pytest.raises(ValueError, match="frozen"):
+        order.qty = 3  # pyright: ignore[reportAttributeAccessIssue]

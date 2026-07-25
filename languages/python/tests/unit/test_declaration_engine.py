@@ -1,0 +1,308 @@
+"""The shared declaration engine in isolation.
+
+Header parsing, the framework-mint capability token, the temporal-axis marker
+read off the MRO, the eagerly built declaration payload, and annotation
+resolution against the class body before module globals. This module declares
+under ``from __future__ import annotations`` deliberately: the stringized path is
+the one where class-body resolution matters.
+"""
+
+from __future__ import annotations
+
+import pytest
+
+from parallax.core import (
+    MANY_TO_ONE,
+    ONE_TO_MANY,
+    READ_ONLY,
+    TABLE_PER_CONCRETE_SUBTYPE,
+    AbstractRoot,
+    AbstractSubtype,
+    Attr,
+    Bitemporal,
+    ConcreteSubtype,
+    Entity,
+    EntityDefinitionError,
+    Rel,
+    TablePerHierarchy,
+    TxTemporal,
+    ValueObject,
+    attr,
+    desc,
+    index,
+    rel,
+)
+from parallax.core.entity._declaration import (
+    DeclarationKind,
+    build_class,
+    declaration_of,
+    inherited_axes,
+    is_declared_class,
+    members_of,
+    shape_of,
+    snake_to_camel,
+)
+from parallax.core.metamodel import (
+    NOT_PRIMARY_KEY,
+    AttributeIdentity,
+    Column,
+    EntityIdentity,
+    ExactEntityReference,
+    IndexIdentity,
+    IndexMetadata,
+    Multiplicity,
+    PersistenceMode,
+    PrimaryKey,
+    RelationshipIdentity,
+    RelativeEntityReference,
+    SortDirection,
+    Table,
+    TemporalDimension,
+    UnresolvedDefiningRelationshipDeclaration,
+    UnresolvedEntityDeclaration,
+    UnresolvedReverseRelationshipDeclaration,
+)
+from parallax.core.metamodel import AbstractSubtype as AcceptedAbstractSubtype
+from parallax.core.metamodel import ConcreteSubtype as AcceptedConcreteSubtype
+
+pytestmark = pytest.mark.unit
+
+
+class Warehouse(
+    Entity,
+    table="warehouse",
+    name="WAREHOUSE",
+    namespace="ops",
+    persistence=READ_ONLY,
+    indices=(index("warehouse_code", "code", unique=True),),
+):
+    id: Attr[int] = attr(primary_key=True)
+    code: Attr[str] = attr(column="wh_code", max_length=8)
+    crates: Rel[tuple[Crate, ...]] = rel(reverse_of="warehouse", order_by=(desc("id"),))
+
+
+class Crate(Entity, table="crate", namespace="ops"):
+    id: Attr[int] = attr(primary_key=True)
+    warehouse_id: Attr[int]
+    warehouse: Rel[Warehouse] = rel(cardinality=MANY_TO_ONE, join=("warehouse_id", "id"))
+
+
+@pytest.mark.parametrize(
+    ("snake", "camel"),
+    [("id", "id"), ("order_id", "orderId"), ("tax_id_no", "taxIdNo"), ("a_b_c", "aBC")],
+)
+def test_canonical_member_names_convert_deterministically(snake: str, camel: str) -> None:
+    assert snake_to_camel(snake) == camel
+
+
+def test_the_class_header_supplies_every_entity_level_fact() -> None:
+    declaration = declaration_of(Warehouse)
+    assert declaration.identity == EntityIdentity("ops", "WAREHOUSE")
+    assert declaration.container == Table("warehouse")
+    assert declaration.persistence is PersistenceMode.READ_ONLY
+    assert declaration.indices == (
+        IndexMetadata(
+            identity=IndexIdentity(declaration.identity, "warehouse_code"),
+            attributes=(AttributeIdentity(declaration.identity, "code"),),
+            unique=True,
+        ),
+    )
+
+
+def test_an_entity_class_is_its_own_unresolved_declaration() -> None:
+    view: UnresolvedEntityDeclaration = Warehouse
+    assert view.identity == EntityIdentity("ops", "WAREHOUSE")
+    assert [member.identity.name for member in view.attributes] == ["id", "code"]
+    assert [member.identity.name for member in view.relationships] == ["crates"]
+    assert view.value_objects == ()
+    assert view.as_of_axes == ()
+    assert view.inheritance is None
+
+
+def test_attribute_facts_come_from_the_annotation_and_the_factory_together() -> None:
+    identity, code = Warehouse.attributes
+    assert identity.primary_key == PrimaryKey()
+    assert identity.storage == Column("id")
+    assert code.primary_key is NOT_PRIMARY_KEY
+    assert code.storage == Column("wh_code")
+    assert code.max_length == 8
+    assert code.nullable is False
+
+
+def test_a_column_defaults_to_the_canonical_member_name() -> None:
+    class Shipment(Entity, table="shipment"):
+        id: Attr[int] = attr(primary_key=True)
+        tracking_code: Attr[str]
+
+    assert Shipment.attributes[1].storage == Column("trackingCode")
+
+
+def test_nullability_comes_from_the_annotation_alone() -> None:
+    class Coupon(Entity, table="coupon"):
+        id: Attr[int] = attr(primary_key=True)
+        label: Attr[str | None]
+
+    assert Coupon.attributes[1].nullable is True
+    assert Coupon(id=1).label is None
+
+
+def test_a_class_target_is_exact_and_a_bare_string_target_is_relative() -> None:
+    defining = Crate.relationships[0]
+    assert isinstance(defining, UnresolvedDefiningRelationshipDeclaration)
+    assert defining.identity == RelationshipIdentity(Crate.identity, "warehouse")
+    assert defining.cardinality is MANY_TO_ONE
+    assert defining.join.source == AttributeIdentity(Crate.identity, "warehouseId")
+    assert defining.join.target.entity == ExactEntityReference(Warehouse.identity)
+    assert defining.join.target.name == "id"
+
+    reverse = Warehouse.relationships[0]
+    assert isinstance(reverse, UnresolvedReverseRelationshipDeclaration)
+    assert reverse.reverse_of.entity == RelativeEntityReference("Crate")
+    assert reverse.reverse_of.name == "warehouse"
+    assert reverse.order_by[0].attribute == "id"
+    assert reverse.order_by[0].direction is SortDirection.DESCENDING
+
+
+def test_a_many_relationship_is_spelled_as_a_tuple_annotation() -> None:
+    class Bin(Entity, table="bin"):
+        id: Attr[int] = attr(primary_key=True)
+        crates: Rel[tuple[Crate, ...]] = rel(cardinality=ONE_TO_MANY, join=("id", "warehouse_id"))
+
+    declaration = Bin.relationships[0]
+    assert isinstance(declaration, UnresolvedDefiningRelationshipDeclaration)
+    assert declaration.cardinality is ONE_TO_MANY
+
+
+def test_framework_axes_travel_on_the_mro_marker() -> None:
+    assert inherited_axes((Entity,)) == ()
+    assert inherited_axes((TxTemporal,)) == (TemporalDimension.TRANSACTION_TIME,)
+    assert inherited_axes((Bitemporal,)) == (
+        TemporalDimension.VALID_TIME,
+        TemporalDimension.TRANSACTION_TIME,
+    )
+
+
+def test_a_temporal_shape_owner_receives_the_framework_members_in_canonical_order() -> None:
+    class Reading(Bitemporal, table="reading"):
+        id: Attr[int] = attr(primary_key=True)
+
+    names = [member.identity.name for member in Reading.attributes]
+    assert names == ["id", "valid_start", "valid_end", "tx_start", "tx_end"]
+    columns = [member.storage.name for member in Reading.attributes]
+    assert columns == ["id", "from_z", "thru_z", "in_z", "out_z"]
+    assert [axis.dimension for axis in Reading.as_of_axes] == [
+        TemporalDimension.VALID_TIME,
+        TemporalDimension.TRANSACTION_TIME,
+    ]
+
+
+def test_a_descendant_inherits_the_family_axes_and_declares_none_of_its_own() -> None:
+    class Meter(TxTemporal, table="meter", inheritance=AbstractRoot(TablePerHierarchy("kind"))):
+        id: Attr[int] = attr(primary_key=True)
+
+    class GasMeter(Meter, inheritance=ConcreteSubtype(tag_value="gas")):
+        pressure: Attr[float | None]
+
+    assert Meter.as_of_axes != ()
+    assert GasMeter.as_of_axes == ()
+    assert GasMeter.container is None
+    assert GasMeter.inheritance == AcceptedConcreteSubtype(
+        ExactEntityReference(Meter.identity), "gas"
+    )
+
+
+def test_the_bare_subtype_role_spellings_are_accepted() -> None:
+    class Vehicle(Entity, inheritance=AbstractRoot(TABLE_PER_CONCRETE_SUBTYPE)):
+        id: Attr[int] = attr(primary_key=True)
+
+    class Wheeled(Vehicle, inheritance=AbstractSubtype):
+        axles: Attr[int | None]
+
+    class Car(Wheeled, table="car", inheritance=ConcreteSubtype):
+        doors: Attr[int | None]
+
+    assert Vehicle.container is None
+    assert Wheeled.inheritance == AcceptedAbstractSubtype(ExactEntityReference(Vehicle.identity))
+    assert Car.inheritance == AcceptedConcreteSubtype(ExactEntityReference(Wheeled.identity), None)
+    assert Car.container == Table("car")
+
+
+def test_a_nested_value_object_shape_resolves_against_the_class_body_first() -> None:
+    class Parcel(Entity, table="parcel"):
+        class Dimensions(ValueObject):
+            width: Attr[float]
+            height: Attr[float]
+
+        id: Attr[int] = attr(primary_key=True)
+        size: Attr[Dimensions | None]
+
+    occurrence = Parcel.value_objects[0]
+    assert occurrence.name == "size"
+    assert occurrence.nullable is True
+    assert occurrence.multiplicity is Multiplicity.ONE
+    assert [leaf.name for leaf in occurrence.shape.attributes] == ["width", "height"]
+
+
+class Tag(ValueObject):
+    """A reusable shape both occurrences below name."""
+
+    label: Attr[str]
+
+
+class Note(ValueObject):
+    """A reusable shape reached through a Many occurrence."""
+
+    body: Attr[str]
+
+
+def test_one_shape_key_is_minted_per_value_object_class_and_reused_by_occurrences() -> None:
+    class Left(Entity, table="left"):
+        id: Attr[int] = attr(primary_key=True)
+        tag: Attr[Tag | None]
+
+    class Right(Entity, table="right"):
+        id: Attr[int] = attr(primary_key=True)
+        tag: Attr[Tag | None]
+
+    assert Left.value_objects[0].shape.key is Right.value_objects[0].shape.key
+    assert shape_of(Tag).shape.key is Left.value_objects[0].shape.key
+
+
+def test_a_many_value_object_occurrence_defaults_to_the_empty_tuple() -> None:
+    class Ledger(Entity, table="ledger"):
+        id: Attr[int] = attr(primary_key=True)
+        notes: Attr[tuple[Note, ...]]
+
+    assert Ledger.value_objects[0].multiplicity is Multiplicity.MANY
+    assert Ledger(id=1).notes == ()
+
+
+def test_the_mint_token_is_the_only_way_to_declare_a_framework_root() -> None:
+    with pytest.raises(EntityDefinitionError) as caught:
+        build_class(
+            type,
+            "Counterfeit",
+            (Entity,),
+            {},
+            kind=DeclarationKind.ENTITY,
+            mint=object(),
+            axes=(),
+            header=None,
+        )
+    assert caught.value.code == "entity-header-unknown-option"
+
+
+def test_a_framework_root_declares_nothing_and_is_never_a_candidate() -> None:
+    assert is_declared_class(Entity, DeclarationKind.ENTITY)
+    assert is_declared_class(ValueObject, DeclarationKind.VALUE_OBJECT)
+    with pytest.raises(EntityDefinitionError) as caught:
+        declaration_of(Entity)
+    assert caught.value.code == "entity-base-invalid"
+
+
+def test_member_correspondences_are_built_from_the_same_walk_as_the_declaration() -> None:
+    names = members_of(Warehouse)
+    assert names.py_to_name == {"id": "id", "code": "code"}
+    assert names.column_to_py == {"id": "id", "wh_code": "code"}
+    assert names.relationship_py == {"crates": "crates"}
+    assert names.pk_py == frozenset({"id"})

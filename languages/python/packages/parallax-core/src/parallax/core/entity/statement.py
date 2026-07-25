@@ -13,12 +13,13 @@ operation the corpus authors (the operation no-drift guard).
 from __future__ import annotations
 
 import datetime as dt
-from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING, Literal
+from dataclasses import dataclass, replace
+from typing import Literal
 
 from parallax.core.base import normalize_instant
-from parallax.core.descriptor import AsOfAxisMetadata, TemporalDimension
-from parallax.core.entity.expressions import Predicate, RelationshipPath, and_terms
+from parallax.core.entity._declaration import declaration_of
+from parallax.core.entity._expressions import Predicate, RelationshipPath, and_terms
+from parallax.core.metamodel import AsOfAxisMetadata, TemporalDimension
 from parallax.core.op_algebra import (
     All,
     And,
@@ -35,10 +36,8 @@ from parallax.core.op_algebra import (
     PathSegment,
     serialize,
 )
+from parallax.core.op_algebra.nodes import TemporalDimension as WireDimension
 from parallax.core.temporal_read import TX_TIME, VALID_TIME, Latest, TemporalDimensionConstant
-
-if TYPE_CHECKING:
-    from parallax.core.entity.base import EntityRegistry
 
 __all__ = ["Statement", "UnsupportedFeatureError"]
 
@@ -86,14 +85,6 @@ class Statement:
     # Whether the statement-level ``.narrow(...)`` clause already wrapped the
     # predicate (single-shot, like ``as_of``).
     is_narrowed: bool = False
-    # The target class's own registration scope, captured at ``Entity.where``
-    # (never a public field -- an implementation-private resolution seam):
-    # ``.include`` / ``.narrow`` validate
-    # within THIS registry, never the process-global default, so a same-named
-    # class registered in an unrelated registry can never leak into scope here.
-    # ``None`` only for a ``Statement`` built outside ``Entity.where`` (test-only
-    # direct construction) -- falls back to the process default registry.
-    _registry: EntityRegistry | None = field(default=None, repr=False, compare=False)
 
     def order_by(self, *keys: OrderKey) -> Statement:
         """Order the result by one or more keys (``Attr.asc()`` / ``Attr.desc()``)."""
@@ -208,8 +199,6 @@ class Statement:
                 "(snapshot-history-includes, spec §3)"
             )
         new_paths = self.include_paths + tuple(path.segments for path in paths)
-        node = DeepFetch(operand=self.predicate, paths=new_paths)
-        self._validate(node)
         return replace(self, include_paths=new_paths)
 
     def narrow(self, *subtypes: type) -> Statement:
@@ -225,9 +214,8 @@ class Statement:
         """
         if self.is_narrowed:
             raise ValueError("a narrow clause is single-shot; derive from the un-narrowed base")
-        to = tuple(_subtype_name(subtype) for subtype in subtypes)
+        to = tuple(declaration_of(subtype).identity.name for subtype in subtypes)
         node = Narrow(entity=self.target, to=to, operand=self.predicate)
-        self._validate(node)
         return replace(self, predicate=node, is_narrowed=True)
 
     def operation(self) -> Operation:
@@ -290,13 +278,18 @@ class Statement:
             )
         return replace(self, temporal=op)
 
-    def _dimension(self, name: _DimensionName) -> TemporalDimension:
+    def _dimension(self, name: _DimensionName) -> WireDimension:
         """The canonical wire dimension for the developer-surface coordinate
         spelling ``name`` (the snake→camel boundary: ``tx_time`` maps to
         ``transactionTime``), validated against the target's declared axes."""
-        dimension: TemporalDimension = "validTime" if name == "valid_time" else "transactionTime"
+        declared = (
+            TemporalDimension.VALID_TIME
+            if name == "valid_time"
+            else TemporalDimension.TRANSACTION_TIME
+        )
+        dimension: WireDimension = "validTime" if name == "valid_time" else "transactionTime"
         for axis in self.as_of_axes:
-            if axis.dimension == dimension:
+            if axis.dimension is declared:
                 return dimension
         detail = (
             "declares no temporal dimension"
@@ -304,30 +297,6 @@ class Statement:
             else f"declares no {name} dimension"
         )
         raise ValueError(f"{self.target} {detail}")
-
-    def _validate(self, node: Operation) -> None:
-        """Validate ``node`` against this statement's own scope's accepted model
-        (:attr:`_registry`, captured at ``Entity.where`` — never the
-        process-global registry, so a same-named class registered elsewhere
-        stays invisible here), resolving this statement's target to the accepted
-        Metadata ``validate_operation`` takes as its root position. A deferred
-        import (``parallax.core.entity.base`` imports THIS module for
-        :class:`Statement`; the reverse edge resolves at call time). Falls back
-        to the process default registry for a ``Statement`` built outside
-        ``Entity.where`` (``_registry`` unset). ``validate_in_scope`` is the
-        entity scope's own shared fail-fast seam (also driven by ``Entity.where``
-        in the same scope), imported by name across this scope's two modules."""
-        from parallax.core.entity.base import default_registry, validate_in_scope
-
-        registry = self._registry if self._registry is not None else default_registry()
-        validate_in_scope(registry, self.target, node)
-
-
-def _subtype_name(cls: type) -> str:
-    from parallax.core.entity.base import entity_record_of
-
-    record = entity_record_of(cls)
-    return record.name if record is not None else cls.__name__
 
 
 def _instant(value: _Pin) -> str:
@@ -342,26 +311,13 @@ def build_statement(
     predicates: tuple[Predicate, ...],
     *,
     as_of_axes: tuple[AsOfAxisMetadata, ...] = (),
-    registry: EntityRegistry | None = None,
 ) -> Statement:
-    """Build a :class:`Statement` conjoining ``predicates`` (empty is find-all).
-    ``registry`` is the target class's own registration scope,
-    captured here so ``.include`` / ``.narrow`` validate within it later."""
+    """Build a :class:`Statement` conjoining ``predicates`` (empty is find-all)."""
     if not predicates:
-        return Statement(target=target, predicate=All(), as_of_axes=as_of_axes, _registry=registry)
+        return Statement(target=target, predicate=All(), as_of_axes=as_of_axes)
     if len(predicates) == 1:
-        return Statement(
-            target=target,
-            predicate=predicates[0].op,
-            as_of_axes=as_of_axes,
-            _registry=registry,
-        )
+        return Statement(target=target, predicate=predicates[0].op, as_of_axes=as_of_axes)
     operands: list[Operation] = []
     for predicate in predicates:
         operands.extend(and_terms(predicate))
-    return Statement(
-        target=target,
-        predicate=And(operands=tuple(operands)),
-        as_of_axes=as_of_axes,
-        _registry=registry,
-    )
+    return Statement(target=target, predicate=And(operands=tuple(operands)), as_of_axes=as_of_axes)

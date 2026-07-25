@@ -1,14 +1,11 @@
-"""The value-object class frontend: unit-level no-drift proof against
-``models/customer.yaml``'s recursive ``Address`` / ``Geo`` / ``Point`` /
-``Phone`` composite. Per-registry scoping resolves the structural
-registry-collision block, and ``vo_models.Customer`` is installed
-under its own ``CUSTOMER_REGISTRY`` — the very
-coexistence mechanism that unblocked it — alongside ``vo_models.Supplier``/
-``Branch``/``Contact``/``Shipment``. The test-only mirror here is retained
-deliberately: this file's proof is the build-time structural comparison, which
-wants a declaration it fully controls rather than one that may evolve with the
-corpus. The ``ValueObject`` class frontend threads its declared structure into
-the compiled entity record exactly as an ingested descriptor would.
+"""The Value Object class frontend.
+
+The structural no-drift proof runs against ``models/customer.yaml``'s recursive
+``Address`` / ``Geo`` / ``Point`` / ``Phone`` composite: the class declarations in
+``value_object_models`` must compile to the same member names, types,
+nullability, and multiplicities the corpus authors. The remaining cases cover
+element-scoped expressions, the document serializer's omission policy, and the
+rejections a Value Object body owns.
 """
 
 from __future__ import annotations
@@ -17,406 +14,179 @@ from decimal import Decimal
 from typing import cast
 
 import pytest
+from value_object_bad_models import (
+    build_entity_only_option_value_object,
+    build_header_bearing_value_object,
+    build_non_attr_annotated_value_object,
+)
 
 import value_object_models as vm
 from parallax.conformance import case_format
-from parallax.core import Attr
-from parallax.core.descriptor import canonicalize, export_document
-from parallax.core.entity import metamodel
-from parallax.core.entity.errors import EntityDefinitionError
-from parallax.core.entity.expressions import Predicate
-from parallax.core.entity.value_object import ValueObject, VoField, structure_of, wire_names_of
-from parallax.core.metamodel import EntityIdentity
-from parallax.core.op_algebra import NestedComparison, NestedExists, serialize
+from parallax.core import Attr, ValueObject, attr
+from parallax.core.base import Decimal as NeutralDecimal
+from parallax.core.base import Float64, NeutralType, String
+from parallax.core.entity import ElementAttributeExpr, EntityDefinitionError, Predicate, to_document
+from parallax.core.entity._declaration import shape_of
+from parallax.core.metamodel import (
+    Column,
+    Multiplicity,
+    NestedValueObjectOccurrenceDeclaration,
+    ValueObjectAttributeDeclaration,
+    ValueObjectOccurrenceDeclaration,
+    ValueObjectShapeDeclaration,
+)
+from parallax.core.op_algebra import serialize
 
 pytestmark = pytest.mark.unit
 
+_CORPUS_TYPES: dict[str, NeutralType] = {
+    "string": String(),
+    "float64": Float64(),
+}
 
-def _customer_yaml() -> dict[str, object]:
+
+def _corpus_customer() -> dict[str, object]:
     path = case_format.find_repo_root() / "core" / "compatibility" / "models" / "customer.yaml"
     loaded = case_format.safe_load_yaml(path.read_text(encoding="utf-8"))
     assert isinstance(loaded, dict)
-    return cast("dict[str, object]", loaded)
+    entities = cast("list[dict[str, object]]", cast("dict[str, object]", loaded)["entities"])
+    return next(entity for entity in entities if entity["name"] == "Customer")
 
 
-def test_value_object_class_export_has_no_drift_from_the_corpus_customer_model() -> None:
-    # Scoped to the Address/Geo/Point/Phone composite (this module's own
-    # focus): `customer.yaml` also declares the `Location` / `Depot` deep-
-    # fetch-witness relationships, out of scope for a VO-only mirror.
-    corpus = canonicalize(_customer_yaml())
-    entities = cast("list[dict[str, object]]", corpus["entities"])
-    corpus_customer = next(e for e in entities if e["name"] == "Customer")
-    mine = cast("dict[str, object]", export_document(metamodel([vm.Customer]))["entity"])
-    assert mine["attributes"] == corpus_customer["attributes"]
-    assert mine["valueObjects"] == corpus_customer["valueObjects"]
+def _assert_shape_matches(shape: ValueObjectShapeDeclaration, corpus: dict[str, object]) -> None:
+    """Compare one declared shape against its corpus spelling, leaves first."""
+    leaves = cast("list[dict[str, object]]", corpus.get("attributes", []))
+    assert list(shape.attributes) == [
+        ValueObjectAttributeDeclaration(
+            name=cast("str", leaf["name"]),
+            type=_CORPUS_TYPES[cast("str", leaf["type"])],
+            nullable=bool(leaf.get("nullable", False)),
+        )
+        for leaf in leaves
+    ]
+    nested = cast("list[dict[str, object]]", corpus.get("valueObjects", []))
+    assert [occurrence.name for occurrence in shape.value_objects] == [
+        cast("str", member["name"]) for member in nested
+    ]
+    for occurrence, member in zip(shape.value_objects, nested, strict=True):
+        assert isinstance(occurrence, NestedValueObjectOccurrenceDeclaration)
+        assert occurrence.nullable is bool(member.get("nullable", False))
+        expected = Multiplicity.MANY if member.get("multiplicity") == "many" else Multiplicity.ONE
+        assert occurrence.multiplicity is expected
+        _assert_shape_matches(occurrence.shape, member)
 
 
-def test_entity_rooted_nested_predicate_serializes_the_dotted_canonical_path() -> None:
-    predicate = vm.Customer.address.city == "Berlin"
+def test_the_declared_composite_has_no_drift_from_the_corpus_customer_model() -> None:
+    corpus = _corpus_customer()
+    declared = vm.Customer.value_objects
+    corpus_occurrences = cast("list[dict[str, object]]", corpus["valueObjects"])
+    assert [occurrence.name for occurrence in declared] == [
+        cast("str", member["name"]) for member in corpus_occurrences
+    ]
+    for occurrence, member in zip(declared, corpus_occurrences, strict=True):
+        assert isinstance(occurrence, ValueObjectOccurrenceDeclaration)
+        assert occurrence.storage == Column(cast("str", member["name"]))
+        assert occurrence.nullable is bool(member.get("nullable", False))
+        _assert_shape_matches(occurrence.shape, member)
+
+
+def test_a_value_object_occurrence_owns_its_storage_and_nested_ones_do_not() -> None:
+    (address,) = vm.Customer.value_objects
+    assert address.storage == Column("address")
+    geo = address.shape.value_objects[0]
+    assert not hasattr(geo, "storage")
+
+
+def test_element_scoped_access_builds_paths_with_no_entity_prefix() -> None:
+    expression = vm.Phone.type
+    assert isinstance(expression, ElementAttributeExpr)
+    predicate = expression == "home"
     assert isinstance(predicate, Predicate)
-    assert serialize(predicate.op) == {
-        "nestedEq": {"path": "Customer.address.city", "value": "Berlin"}
-    }
+    assert serialize(predicate.op) == {"nestedEq": {"path": "type", "value": "home"}}
 
 
-def test_deeply_nested_entity_rooted_predicate_reaches_the_leaf() -> None:
+def test_an_entity_rooted_nested_predicate_carries_the_dotted_canonical_path() -> None:
     predicate = vm.Customer.address.geo.country == "DE"
+    assert isinstance(predicate, Predicate)
     assert serialize(predicate.op) == {
         "nestedEq": {"path": "Customer.address.geo.country", "value": "DE"}
     }
 
 
-def test_element_scoped_phone_predicate_has_no_leading_entity_prefix() -> None:
-    predicate = vm.Phone.type == "home"
-    assert serialize(predicate.op) == {"nestedEq": {"path": "type", "value": "home"}}
-
-
-def test_element_scoped_predicate_composes_and_serializes_element_relative() -> None:
-    predicate = vm.Phone.type == "home"
-    op = predicate.op
-    assert isinstance(op, NestedComparison)
-    assert op.path == "type"
-
-
-def test_element_scoped_path_chains_through_a_nested_value_object() -> None:
-    # Mirrors the entity-rooted `AttributeExpr`'s own dynamic hop, but starting
-    # from an ELEMENT-scope root (`Address` used directly, no leading entity
-    # name) — the class docstring's own worked example.
-    predicate = vm.Address.geo.country == "DE"
-    assert serialize(predicate.op) == {"nestedEq": {"path": "geo.country", "value": "DE"}}
-
-
-def test_element_scoped_dynamic_hop_rejects_a_private_name() -> None:
-    with pytest.raises(AttributeError):
-        vm.Address.geo.__getattr__("_hidden")
-
-
-def test_element_scoped_predicate_operators_cover_every_comparison_and_membership_form() -> None:
-    assert serialize((vm.Phone.type != "home").op) == {
-        "nestedNotEq": {"path": "type", "value": "home"}
-    }
-    assert serialize((vm.Phone.number > "1").op) == {"nestedGt": {"path": "number", "value": "1"}}
-    assert serialize((vm.Phone.number >= "1").op) == {"nestedGte": {"path": "number", "value": "1"}}
-    assert serialize((vm.Phone.number < "9").op) == {"nestedLt": {"path": "number", "value": "9"}}
-    assert serialize((vm.Phone.number <= "9").op) == {"nestedLte": {"path": "number", "value": "9"}}
-    assert serialize(vm.Phone.type.is_(True).op) == {"nestedEq": {"path": "type", "value": True}}
-    assert serialize(vm.Phone.type.in_(["home", "work"]).op) == {
-        "nestedIn": {"path": "type", "values": ["home", "work"]}
-    }
-    assert serialize(vm.Phone.type.is_null().op) == {"nestedIsNull": {"path": "type"}}
-    assert serialize(vm.Phone.type.is_not_null().op) == {"nestedIsNotNull": {"path": "type"}}
-    with pytest.raises(TypeError):
-        bool(vm.Phone.type)
-
-
-def test_any_over_a_value_object_terminated_path_builds_nested_exists() -> None:
-    predicate = vm.Customer.address.phones.any(
-        vm.Phone.type == "home", vm.Phone.number == "555-9999"
-    )
-    op = predicate.op
-    assert isinstance(op, NestedExists)
-    assert op.path == "Customer.address.phones"
-    assert serialize(predicate.op) == {
-        "nestedExists": {
-            "path": "Customer.address.phones",
-            "where": {
-                "and": {
-                    "operands": [
-                        {"nestedEq": {"path": "type", "value": "home"}},
-                        {"nestedEq": {"path": "number", "value": "555-9999"}},
-                    ]
-                }
-            },
-        }
-    }
-
-
-def test_none_with_no_predicates_emits_the_bare_absence_test() -> None:
-    predicate = vm.Customer.address.phones.none()
-    assert serialize(predicate.op) == {"nestedNotExists": {"path": "Customer.address.phones"}}
-
-
-def test_value_object_instances_round_trip_through_construction() -> None:
-    phone = vm.Phone(type="home", number="555-1234")
-    address = vm.Address(
-        street="Main St",
-        city="Berlin",
-        geo=vm.Geo(country="DE", elevation=34.0, point=vm.Point(lat=52.5, lon=13.4)),
-        phones=(phone,),
-    )
-    customer = vm.Customer(id=1, name="Ada", address=address)
-    assert customer.address is address
-    assert address.geo is not None
-    assert address.geo.point is not None
-    assert address.geo.point.lat == 52.5
-    assert address.phones == (phone,)
-
-
-def test_value_object_is_the_only_legal_json_column_input() -> None:
-    with pytest.raises(Exception, match="never a raw dict"):
-        vm.Customer(id=1, name="Ada", address={"street": "Main St", "city": "Berlin"})  # type: ignore[arg-type]
-
-
-def test_to_document_serializes_a_value_object_instance_to_its_canonical_document() -> None:
-    from parallax.core.entity.value_object import to_document
-
-    phone = vm.Phone(type="home", number="555-1234")
-    address = vm.Address(street="Main St", city="Berlin", geo=None, phones=(phone,))
-    document = to_document(address)
-    assert document == {
-        "street": "Main St",
-        "city": "Berlin",
-        "geo": None,
-        "phones": [{"type": "home", "number": "555-1234"}],
-    }
+def test_the_document_omits_a_member_the_caller_never_set() -> None:
+    assert to_document(vm.Geo(country="DE")) == {"country": "DE"}
     assert to_document(None) is None
 
 
-def test_to_document_serializes_a_nested_single_value_object_field() -> None:
-    from parallax.core.entity.value_object import to_document
+def test_a_many_occurrence_always_renders_even_when_empty() -> None:
+    document = to_document(vm.Address(street="a", city="b"))
+    assert document == {"street": "a", "city": "b", "phones": []}
 
+
+def test_the_document_renders_nested_occurrences_recursively() -> None:
     address = vm.Address(
-        street="Main St",
-        city="Berlin",
-        geo=vm.Geo(country="DE", elevation=None, point=None),
-        phones=(),
+        street="a",
+        city="b",
+        geo=vm.Geo(country="DE", point=vm.Point(lat=1.0, lon=2.0)),
+        phones=(vm.Phone(type="home", number="1"),),
     )
-    document = to_document(address)
-    assert document is not None
-    assert document["geo"] == {"country": "DE", "elevation": None, "point": None}
-
-
-def test_to_document_omits_an_unset_optional_inner_member() -> None:
-    # `elevation`/`point` are OPTIONAL (declared with a default) and
-    # never populated here — omitted entirely, never bound as `null`
-    # (`full_row`'s own `model_fields_set` policy, mirrored).
-    from parallax.core.entity.value_object import to_document
-
-    document = to_document(vm.Geo(country="DE"))
-    assert document == {"country": "DE"}
-
-
-def test_to_document_renders_a_set_optional_inner_member() -> None:
-    from parallax.core.entity.value_object import to_document
-
-    document = to_document(vm.Geo(country="DE", elevation=10.0))
-    assert document == {"country": "DE", "elevation": 10.0}
-
-
-def test_to_document_renders_an_explicitly_set_member_even_at_its_default_value() -> None:
-    # The unset-vs-explicitly-set distinction `full_row` draws: `elevation`
-    # is explicitly assigned `None` here (its own default value) rather than
-    # simply omitted at construction — `model_fields_set` still records it as
-    # SET, so it renders as an explicit `null`, unlike the omitted case above.
-    from parallax.core.entity.value_object import to_document
-
-    document = to_document(vm.Geo(country="DE", elevation=None))
-    assert document == {"country": "DE", "elevation": None}
-
-
-def test_to_document_applies_the_omission_policy_recursively_to_a_nested_value_object() -> None:
-    # The nested `geo` member filters by its OWN `model_fields_set`: `point`
-    # is set but only sets `lat` on it, so `point`'s own `lon` is omitted too
-    # — recursive, not just one level deep. The outer `Address`'s own unset
-    # required-many `phones` member uses its empty-tuple default, serialized as
-    # the sole zero-element representation `[]`.
-    from parallax.core.entity.value_object import to_document
-
-    address = vm.Address(
-        street="Main St", city="Berlin", geo=vm.Geo(country="DE", point=vm.Point(lat=1.0))
-    )
-    document = to_document(address)
-    assert document == {
-        "street": "Main St",
-        "city": "Berlin",
-        "geo": {"country": "DE", "point": {"lat": 1.0}},
-        "phones": [],
+    assert to_document(address) == {
+        "street": "a",
+        "city": "b",
+        "geo": {"country": "DE", "point": {"lat": 1.0, "lon": 2.0}},
+        "phones": [{"type": "home", "number": "1"}],
     }
 
 
-def test_to_document_applies_the_omission_policy_to_each_cardinality_many_element() -> None:
-    # Each `phones` tuple element filters by ITS OWN `model_fields_set`,
-    # independent of its siblings.
-    from parallax.core.entity.value_object import to_document
-
-    address = vm.Address(
-        street="Main St",
-        city="Berlin",
-        phones=(vm.Phone(type="home"), vm.Phone(number="555-1234")),
-    )
-    document = to_document(address)
-    assert document == {
-        "street": "Main St",
-        "city": "Berlin",
-        "phones": [{"type": "home"}, {"number": "555-1234"}],
-    }
+def test_a_value_object_member_takes_instances_only() -> None:
+    with pytest.raises(TypeError, match="never a raw mapping"):
+        vm.Address(street="a", city="b", geo={"country": "DE"})  # pyright: ignore[reportArgumentType]
+    with pytest.raises(TypeError, match="never a raw mapping"):
+        vm.Address(street="a", city="b", phones=({"type": "home"},))  # pyright: ignore[reportArgumentType]
 
 
-def test_to_document_omits_every_member_of_a_structurally_incomplete_required_composite() -> None:
-    # `ContactGeo`/`CustomerGeo`
-    # (`parallax.conformance.vo_models`) declare DESCRIPTOR-required members
-    # (`country`, etc.) that stay PYTHON-optional (default `None`,
-    # `ContactPoint`'s own docstring) so a caller CAN construct a
-    # structurally-incomplete instance — `to_document` filters PURELY by
-    # `model_fields_set`, with no descriptor-nullability awareness (mirroring
-    # `full_row` exactly): an entirely-unset instance of a REQUIRED-member
-    # composite still serializes to an empty document, exactly like an
-    # optional one. This is the RESOLVED contract, not a gap — required-member
-    # enforcement is `validate_write`'s job (see the pipeline pin below),
-    # never this serializer's.
-    from parallax.conformance.vo_models import ContactGeo, CustomerGeo
-    from parallax.core.entity.value_object import to_document
-
-    assert to_document(ContactGeo()) == {}
-    assert to_document(CustomerGeo()) == {}
+def test_a_many_occurrence_requires_a_tuple() -> None:
+    with pytest.raises(TypeError, match="requires a tuple"):
+        vm.Address(street="a", city="b", phones=[vm.Phone(type="home")])  # pyright: ignore[reportArgumentType]
 
 
-def test_to_document_renders_an_explicitly_set_required_member_at_its_default_value() -> None:
-    # `country` is DESCRIPTOR-required (`ContactGeo`'s own docstring) but
-    # stays PYTHON-optional (default `None`); explicitly setting it to that
-    # SAME default value still renders (`model_fields_set` records it as SET),
-    # exactly like the optional `elevation` pin above — required-ness plays NO
-    # role in `to_document`'s own filtering, only `model_fields_set` does.
-    from parallax.conformance.vo_models import ContactGeo
-    from parallax.core.entity.value_object import to_document
-
-    document = to_document(ContactGeo(country=None))
-    assert document == {"country": None}
+def test_one_shape_is_minted_per_class_and_shared_by_every_occurrence() -> None:
+    assert shape_of(vm.Address).shape is vm.Customer.value_objects[0].shape
+    assert shape_of(vm.Geo).shape is vm.Customer.value_objects[0].shape.value_objects[0].shape
 
 
-def test_to_document_omission_of_a_required_member_still_classifies_to_the_pinned_rule() -> None:
-    # The downstream pipeline pin: an unset required
-    # inner member serializes as an omitted key, never an explicit `null`, but
-    # not WHICH rule fires. `write_validate`'s own required-attribute check
-    # and the shared `vo_document_violation` walk both treat "absent key" and
-    # "explicit null" identically (`if not present or value is None`), so the
-    # SAME structurally-incomplete `Contact` instance
-    # `test_write_no_drift.py`'s own build-time proof constructs for
-    # `m-value-object-039` still classifies to that case's own corpus-pinned
-    # rule here, at the `to_document` -> `validate_write` seam directly.
-    from conftest import case_document
-    from parallax.conformance import case_format, models
-    from parallax.conformance.vo_models import Contact, ContactAddress, ContactGeo, ContactPoint
-    from parallax.core.entity.base import full_row
-    from parallax.core.unit_work import WriteRejectedError, validate_write
+def test_a_value_object_scalar_admits_the_naming_and_type_shaping_options() -> None:
+    class Money(ValueObject):
+        amount_due: Attr[Decimal] = attr(precision=12, scale=4, name="due")
 
-    contact = Contact(
-        id=1,
-        name="Acme",
-        address=ContactAddress(
-            city="Oslo",
-            geo=ContactGeo(country="NO", point=ContactPoint(lat=59.9, lon=10.7)),
-        ),
-    )
-    row = full_row(contact)
-    address_document = row["address"]
-    assert isinstance(address_document, dict)
-    assert "street" not in address_document  # the omission, never an explicit null
-
-    case_path = (
-        case_format.find_repo_root()
-        / "core"
-        / "compatibility"
-        / "cases"
-        / "m-value-object-039-rejected-write-required-attribute-depth-1.yaml"
-    )
-    expected_rule = case_document(case_format.load_case(case_path))["then"]["rejectedRule"]
-
-    model = models.accepted_model(models.load_models()["contact"])
-    metadata = model.entity(EntityIdentity("parallax.compatibility", "Contact"))
-    assert metadata is not None
-    with pytest.raises(WriteRejectedError) as exc_info:
-        validate_write(metadata, row, model, mutation="insert")
-    assert exc_info.value.rule == expected_rule
+    (leaf,) = shape_of(Money).shape.attributes
+    assert leaf.name == "due"
+    assert leaf.type == NeutralDecimal(12, 4)
 
 
-def test_a_cardinality_many_value_object_member_rejects_a_list_not_a_tuple() -> None:
-    with pytest.raises(Exception, match="never a raw dict/list"):
-        vm.Address(
-            street="Main St",
-            city="Berlin",
-            geo=None,
-            phones=[vm.Phone(type="home", number="1")],  # type: ignore[arg-type]
-        )
+@pytest.mark.parametrize(
+    ("build", "code"),
+    [
+        (build_non_attr_annotated_value_object, "entity-annotation-invalid"),
+        (build_entity_only_option_value_object, "entity-option-context-invalid"),
+        (build_header_bearing_value_object, "entity-header-unknown-option"),
+    ],
+)
+def test_a_value_object_body_outside_the_grammar_is_rejected(build: object, code: str) -> None:
+    builder = cast("object", build)
+    assert callable(builder)
+    with pytest.raises(EntityDefinitionError) as caught:
+        builder()
+    assert caught.value.code == code
 
 
-def test_a_cardinality_many_value_object_member_rejects_a_non_value_object_element() -> None:
-    with pytest.raises(Exception, match="is not a"):
-        vm.Address(street="Main St", city="Berlin", geo=None, phones=(object(),))  # type: ignore[arg-type]
+def test_shape_lookup_rejects_a_class_the_engine_never_built() -> None:
+    with pytest.raises(EntityDefinitionError) as caught:
+        shape_of(int)
+    assert caught.value.code == "entity-annotation-invalid"
 
 
-def test_structure_of_and_wire_names_of_reject_a_non_value_object_class() -> None:
-    with pytest.raises(EntityDefinitionError, match="not a compiled ValueObject class"):
-        structure_of(int)
-    with pytest.raises(EntityDefinitionError, match="not a compiled ValueObject class"):
-        wire_names_of(int)
-
-
-def test_a_value_object_field_without_an_explicit_type_infers_the_neutral_type() -> None:
-    class Inferred(ValueObject, frozen=True):
-        flag: Attr[bool] = VoField()
-
-    assert structure_of(Inferred).attributes[0].type == "boolean"
-
-
-def test_a_value_object_decimal_field_without_an_explicit_precision_is_rejected() -> None:
-    with pytest.raises(Exception, match="explicit precision"):
-
-        class BadDecimal(ValueObject, frozen=True):  # pyright: ignore[reportUnusedClass]
-            amount: Attr[Decimal] = VoField()
-
-
-def test_a_value_object_union_typed_field_that_is_not_optional_is_rejected() -> None:
-    # A `X | Y` union with no `None` member: `_strip_optional` leaves it
-    # unchanged (its own single-nullable-member narrowing does not apply),
-    # so type inference still fails — a Union is not a recognized neutral type.
-    with pytest.raises(Exception, match="cannot infer a neutral type"):
-
-        class BadUnion(ValueObject, frozen=True):  # pyright: ignore[reportUnusedClass]
-            weird: Attr[int | str] = VoField()
-
-
-def test_a_value_object_forward_ref_unresolvable_at_class_body_scope_falls_back_to_raw_text() -> (
-    None
-):
-    # `_LocalOnly` resolves lexically here (pyright/ruff see a real name), but
-    # the metaclass's own annotation resolver evaluates forward references
-    # against the DEFINING MODULE's globals only, never the enclosing
-    # function's locals — so it can't find `_LocalOnly` either, exercising
-    # `_attr_inner`'s `NameError` fallback (the raw text is kept, and neutral-
-    # type inference then rejects it exactly like any other unresolvable type).
-    class _LocalOnly(ValueObject, frozen=True):
-        pass
-
-    with pytest.raises(Exception, match="cannot infer a neutral type"):
-
-        class BadForwardRef(ValueObject, frozen=True):  # pyright: ignore[reportUnusedClass]
-            weird: Attr[_LocalOnly] = VoField()
-
-
-def test_a_tuple_typed_field_of_non_value_object_elements_is_rejected() -> None:
-    # `tuple[int, ...]` is not `tuple[VOClass, ...]`: `vo_field_info` declines
-    # it (not a value-object member), so it falls through to plain neutral-type
-    # inference, which has no tuple mapping either.
-    with pytest.raises(Exception, match="cannot infer a neutral type"):
-
-        class BadTuple(ValueObject, frozen=True):  # pyright: ignore[reportUnusedClass]
-            values: Attr[tuple[int, ...]] = VoField()
-
-
-def test_a_stringized_non_attr_annotation_is_rejected() -> None:
-    # This test module has `from __future__ import annotations`, so `plain`'s
-    # annotation is the raw string `"int"` — exercises `_attr_inner`'s OWN
-    # stringized-annotation branch (as opposed to the live-annotation fallback
-    # `value_object_bad_models.py` exercises).
-    with pytest.raises(EntityDefinitionError, match="must be annotated Attr"):
-
-        class BadPlain(ValueObject, frozen=True):  # pyright: ignore[reportUnusedClass]
-            plain: int
-
-
-def test_a_value_object_field_not_annotated_attr_is_rejected() -> None:
-    import value_object_bad_models as bad
-
-    with pytest.raises(EntityDefinitionError, match="must be annotated Attr"):
-        bad.build_non_attr_annotated_value_object()
+def test_a_value_object_is_frozen_without_declaring_it() -> None:
+    phone = vm.Phone(type="home", number="1")
+    with pytest.raises(ValueError, match="frozen"):
+        phone.number = "2"  # pyright: ignore[reportAttributeAccessIssue]
