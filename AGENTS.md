@@ -10,15 +10,12 @@
 
 ## Code Documentation
 
-- Keep comments and docstrings timeless and code-local. Explain current contracts, invariants, non-obvious behavior, complex logic, and rationale. Do not narrate straightforward code or restate names, types, assignments, or control flow.
-- Never reference plans, reviews, phases, increments, prompts, handoffs, issue or Linear IDs (for example, `COR-45`), or other planning and execution artifacts in comments or docstrings. Keep task history in the issue tracker and durable design rationale in design documents.
-- When behavior changes, update or remove affected comments and docstrings; stale documentation is a defect.
-
-### Required Documentation
-
-- Modules: Start each module with a module-level comment or docstring that states its responsibility and boundary. One sentence is enough for a simple module.
-- Exported APIs: Document every exported symbol at its defining declaration, including its contract and any important constraints, errors, or lifecycle behavior. Re-export lists do not need to repeat the source documentation.
-- Compatibility cases: Start each case with one detailed header comment that explains the scenario, expected observable behavior, and semantic distinction it pins down. The case body must contain no comments.
+- Prefer clear names, types, and structure over comments.
+- Document declarations intentionally exported from their defining module, focusing on contracts; re-export lists do not need to repeat the source documentation.
+- Otherwise, document only non-obvious behavior, constraints, or rationale.
+- Keep comments and docstrings timeless and code-local. Never narrate straightforward code. Never reference planning or execution artifacts like issues, plans, or reviews.
+- Update or remove affected comments and docstrings when behavior changes; stale documentation is a defect.
+- Compatibility cases: start each case with one detailed header comment that explains the scenario, expected observable behavior, and semantic distinction it pins down. The case body must contain no comments.
 
 ## Reladomo Prior Art
 
