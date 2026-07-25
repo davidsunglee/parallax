@@ -38,6 +38,7 @@ from parallax.core.model_formation import (
     FormationManifest,
     FormationManifestEntry,
     MetadataCompiler,
+    MetamodelValidationError,
     ModelCompiler,
     ModelCompilerRequirement,
     ModelRuleSet,
@@ -61,7 +62,10 @@ from parallax.core.value_object import ISSUE_CODES as VALUE_OBJECT_ISSUE_CODES
 from parallax.core.value_object import RULE_SET as VALUE_OBJECT_RULE_SET
 from parallax.core.value_object import VALUE_OBJECT_MODULE
 
-__all__ = ["BUILTIN_MANIFEST", "BUILTIN_PROFILE", "form_metamodel"]
+__all__ = ["BUILTIN_MANIFEST", "BUILTIN_PROFILE", "MetamodelValidationError", "form_metamodel"]
+# `MetamodelValidationError` is the error `form_metamodel` raises; re-exported
+# here so a caller granted only this composition root (never `m-model-formation`
+# directly) can catch the one error its own `form_metamodel` call can produce.
 
 _PK_GEN_MODULE: Final[ModuleIdentity] = "m-pk-gen"
 """The one manifest owner this file names without importing it.

@@ -26,7 +26,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from typing import Final, Literal, Protocol, cast, runtime_checkable
 
-from parallax.conformance import case_format, models, provision, temporal_state
+from parallax.conformance import _descriptor_family, case_format, models, provision, temporal_state
 from parallax.conformance.temporal_state import TemporalShadow
 from parallax.core import batch_write, inheritance, navigate, opt_lock, read_lock
 from parallax.core.base import (
@@ -37,7 +37,7 @@ from parallax.core.base import (
 )
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import DbPort, JsonDocument, Row
-from parallax.core.descriptor import Attribute, DescriptorError, Entity, Metamodel
+from parallax.core.descriptor import Attribute, DescriptorError, Entity, Metamodel, declaring_entity
 from parallax.core.descriptor import deserialize as deserialize_metamodel
 from parallax.core.dialect import Dialect, dialect_for
 from parallax.core.entity import accepted_metamodel
@@ -722,10 +722,10 @@ def _versioned_non_temporal_version_attribute(
     VERSIONED, NON-TEMPORAL entity (`m-opt-lock`) — ``None`` otherwise (a
     temporal entity's observation flows through :class:`TemporalShadow`
     instead, never this map; `_build_temporal_instruction`). Resolved through
-    the FAMILY-declaring entity (`inheritance.declaring_entity`): the version
+    the FAMILY-declaring entity (`declaring_entity`): the version
     column is family-wide metadata declared only on the root
     (`m-opt-lock` "The version column")."""
-    declaring = inheritance.declaring_entity(meta, meta.entity(entity_name))
+    declaring = declaring_entity(meta, meta.entity(entity_name))
     if declaring.is_temporal:
         return None
     return next((attr for attr in declaring.attributes if attr.optimistic_locking), None)
@@ -748,7 +748,7 @@ def _row_object_key(
     primary key is absent from ``row`` — never reachable for a well-formed
     corpus find, but this seam takes no data on faith."""
     entity = meta.entity(entity_name)
-    pk_attrs = inheritance.family_primary_key(meta, entity)
+    pk_attrs = _descriptor_family.family_primary_key(meta, entity)
     if not pk_attrs:  # pragma: no cover - defends a malformed model
         return None
     pairs: list[tuple[str, object]] = []
@@ -808,7 +808,7 @@ def _entry_instant(entry: Mapping[str, object]) -> str:
 
 
 def _is_temporal_entity(meta: Metamodel, entity_name: str) -> bool:
-    return inheritance.declaring_entity(meta, meta.entity(entity_name)).is_temporal
+    return declaring_entity(meta, meta.entity(entity_name)).is_temporal
 
 
 _TEMPORAL_INSERT_MUTATIONS: Final[frozenset[str]] = frozenset({"insert", "insertUntil"})
@@ -1048,7 +1048,7 @@ def _decoded_predicate_write(
 
 
 def _is_versioned_entity(meta: Metamodel, entity_name: str) -> bool:
-    declaring = inheritance.declaring_entity(meta, meta.entity(entity_name))
+    declaring = declaring_entity(meta, meta.entity(entity_name))
     return any(attr.optimistic_locking for attr in declaring.attributes)
 
 
@@ -1982,7 +1982,7 @@ def _is_materializing_write_step(
     decoded = _decoded_predicate_write(instruction, meta, model)
     instructions.validate_instruction(decoded, model)
     entity = meta.entity(instruction.target.entity)
-    declaring = inheritance.declaring_entity(meta, entity)
+    declaring = declaring_entity(meta, entity)
     if declaring.is_temporal or _is_versioned_entity(meta, instruction.target.entity):
         return decoded
     return None
@@ -3316,7 +3316,7 @@ def _default_family_root(meta: Metamodel) -> Entity | None:
     say "the family root", singular, and a case over such a model must name its
     target explicitly.
     """
-    family = inheritance.family_of(meta)
+    family = _descriptor_family.family_of(meta)
     if not family.participants:
         return None
     if family.root is None:
@@ -3344,7 +3344,7 @@ def _conflict_target(meta: Metamodel) -> str:
         return meta.entities[0].name
     concretes = sorted(
         entity.name
-        for entity in inheritance.family_of(meta).participants
+        for entity in _descriptor_family.family_of(meta).participants
         if entity.inheritance is not None and entity.inheritance.role == "concrete-subtype"
     )
     if len(concretes) != 1:
@@ -3359,7 +3359,7 @@ def _identity_key(
     meta: Metamodel, entity_name: str, row: Mapping[str, object]
 ) -> tuple[tuple[str, object], ...]:
     pk_names = [
-        attr.name for attr in inheritance.family_primary_key(meta, meta.entity(entity_name))
+        attr.name for attr in _descriptor_family.family_primary_key(meta, meta.entity(entity_name))
     ]
     return tuple((name, row[name]) for name in pk_names)
 
@@ -3717,8 +3717,9 @@ def run_rejected_case(case: case_format.Case) -> str:
     every read uses, then checked by the shared `validate_operation`
     (`m-op-algebra` / `m-navigate` / `m-value-object`) — the same validator an
     idiomatic statement frontend calls at build time, so the two paths cannot
-    drift. A `model` input reuses the `m-inheritance` family-invariant
-    validator unchanged. A `write` input is
+    drift. A `model` input is checked by the raw-descriptor family-invariant
+    validator (:func:`_descriptor_family.validate`, m-inheritance's own family
+    invariants). A `write` input is
     resolved against the model's default entity (`_rejected_target`'s own
     convention, reused here — the family root when the model declares one,
     else the model's single entity, since a rejected `when.write` carries no
@@ -3758,7 +3759,7 @@ def run_rejected_case(case: case_format.Case) -> str:
         except DescriptorError as exc:
             raise EngineError(f"{case.path.name}: {exc}") from exc
         try:
-            inheritance.validate(inline_meta)
+            _descriptor_family.validate(inline_meta)
         except inheritance.InheritanceError as exc:
             return exc.rule
         raise EngineError(

@@ -16,7 +16,9 @@ identical way, so the two can never drift.
 from __future__ import annotations
 
 from parallax.core import inheritance
+from parallax.core._formation_profile import MetamodelValidationError
 from parallax.core.descriptor import Metamodel as MetamodelRecord
+from parallax.core.entity._family import effective_concrete_subtypes
 from parallax.core.entity.base import (
     EntityRegistry,
     default_registry,
@@ -28,7 +30,6 @@ from parallax.core.entity.expressions import (
     RelationshipPath,
     UnloadedRelationshipError,
 )
-from parallax.core.model_formation import MetamodelValidationError
 
 __all__ = ["is_loaded", "narrowed"]
 
@@ -40,7 +41,8 @@ def _narrow_position(registry: EntityRegistry, names: tuple[str, ...]) -> tuple[
     A registry chain that merges an unsatisfiable Entity (a shadowed name that
     leaves a sibling's reverse relationship dangling) cannot form the accepted
     model the facet needs; the narrow position depends only on the inheritance
-    family, which the descriptor family walk resolves without forming
+    family, which :func:`~parallax.core.entity._family.effective_concrete_subtypes`
+    resolves directly from the raw descriptor record graph, without forming
     references, so it is the fallback for that pathological chain."""
     try:
         model = registry.metamodel()
@@ -48,7 +50,7 @@ def _narrow_position(registry: EntityRegistry, names: tuple[str, ...]) -> tuple[
         records = MetamodelRecord(entities=tuple(registry.records().values()))
         resolved: set[str] = set()
         for name in names:
-            resolved.update(inheritance.effective_concrete_subtypes(records, name))
+            resolved.update(effective_concrete_subtypes(records, name))
         return tuple(sorted(resolved))
     members = [
         metadata.identity

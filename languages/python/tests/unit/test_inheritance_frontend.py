@@ -209,9 +209,9 @@ def test_subclassing_a_non_family_entity_is_rejected() -> None:
 # Binding decision: temporal axes are family-wide; only the family ROOT may    #
 # select a temporal shape (by extending `TxTemporal`/`Bitemporal`). The class  #
 # frontend rejects a subclass that lists a temporal base of its own, at        #
-# class-definition time, consistently with                                     #
-# `parallax.core.inheritance.validate`'s                                       #
-# `inheritance-temporal-axes-not-root-owned` descriptor invariant.             #
+# class-definition time, consistently with the raw-descriptor family           #
+# invariant `_descriptor_family.validate`'s own                                #
+# `inheritance-temporal-axes-not-root-owned` classification.                   #
 # --------------------------------------------------------------------------- #
 def test_concrete_subtype_extending_a_temporal_base_is_rejected() -> None:
     from parallax.core import Bitemporal, EntityConfig, Field
@@ -256,11 +256,11 @@ def test_concrete_subtype_declaring_an_optimistic_locking_attr_is_rejected() -> 
 
 
 # --------------------------------------------------------------------------- #
-# ADR 0027: optimistic locking is root-owned and family-uniform — the         #
-# class-frontend gate (EntityMeta.__new__) rejects a family subclass          #
-# declaring its own `optimisticLocking` attribute, regardless of what the     #
-# root declares, mirroring `parallax.core.inheritance.validate`'s             #
-# `inheritance-optimistic-locking-not-root-owned` descriptor invariant.       #
+# ADR 0027: optimistic locking is root-owned and family-uniform — the          #
+# class-frontend gate (EntityMeta.__new__) rejects a family subclass           #
+# declaring its own `optimisticLocking` attribute, regardless of what the      #
+# root declares, mirroring `_descriptor_family.validate`'s own                 #
+# `inheritance-optimistic-locking-not-root-owned` classification.              #
 # --------------------------------------------------------------------------- #
 def test_root_declared_optimistic_locking_is_accepted() -> None:
     from parallax.core import Entity, EntityConfig, Field

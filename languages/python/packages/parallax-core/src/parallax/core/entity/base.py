@@ -45,7 +45,6 @@ from pydantic import BaseModel, ConfigDict
 # Pydantic seam offers a metaclass hook.
 from pydantic._internal._model_construction import ModelMetaclass
 
-from parallax.core import inheritance as _inheritance
 from parallax.core._formation_profile import form_metamodel
 from parallax.core.descriptor import (
     UNSET,
@@ -54,6 +53,7 @@ from parallax.core.descriptor import (
     DescriptorError,
     RelationshipDeclaration,
     ReverseRelationship,
+    declaring_entity,
     validate_entity,
     validate_optimistic_locking_root_owned,
 )
@@ -68,6 +68,7 @@ from parallax.core.descriptor.records import Persistence
 from parallax.core.descriptor.records import Unset as _UnsetType
 from parallax.core.entity._annotations import class_body_annotations
 from parallax.core.entity._declaration import native_metamodel
+from parallax.core.entity._family import family_root
 from parallax.core.entity._validation import require_entity_record
 from parallax.core.entity.errors import (
     EntityDefinitionError,
@@ -866,7 +867,7 @@ def _temporal_as_of_axes(record: EntityRecord, cls: type) -> tuple[AsOfAxisMetad
     if record.inheritance is None:
         return record.as_of_axes
     records = _registry_records(_registry_of_class(cls))
-    return _inheritance.declaring_entity(records, record).as_of_axes
+    return declaring_entity(records, record).as_of_axes
 
 
 def _serialize_member(value: object) -> object:
@@ -1201,7 +1202,7 @@ def _derive_inheritance(
         )
     try:
         temp_meta = _registry_records(registry)
-        root_record = _inheritance.family_root(temp_meta, parent_record)
+        root_record = family_root(temp_meta, parent_record)
     except ValueError as exc:  # pragma: no cover - guards a malformed family
         raise EntityDefinitionError(f"{cls_name}: {exc}") from exc
     assert root_record.inheritance is not None  # a resolved root always carries one

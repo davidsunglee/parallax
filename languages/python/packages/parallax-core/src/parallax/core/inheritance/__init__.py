@@ -8,8 +8,8 @@ satisfy and the Inheritance Facet that answers, once per formation, every
 family-effective question — ancestry, family identity, effective
 concrete-subtype sets, member applicability, physical container and tag, and the
 root-owned Persistence Mode — so a consumer reads a precomputed family fact
-instead of recomputing it. ``m-inheritance`` depends on ``m-descriptor``,
-``m-metamodel``, and ``m-model-formation``.
+instead of recomputing it. ``m-inheritance`` depends on ``m-metamodel`` and
+``m-model-formation``.
 
 It also owns :func:`column_order`, the canonical physical column order of an
 Entity's table: the order is family-effective, and the table-per-hierarchy tag
@@ -22,16 +22,8 @@ an internal formation seam.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
 
 from parallax.core.base import coerce_neutral_input, matches_neutral_type
-from parallax.core.descriptor import (
-    Attribute,
-    Entity,
-    Inheritance,
-    Metamodel,
-)
-from parallax.core.descriptor import declaring_entity as _resolve_declaring_entity
 from parallax.core.inheritance._columns import column_order
 from parallax.core.inheritance._compile import (
     MODEL_COMPILER,
@@ -104,7 +96,6 @@ __all__ = [
     "TPCS_CONCRETE_TABLE_REQUIRED",
     "TPH_DESCENDANT_TABLE_FORBIDDEN",
     "TPH_ROOT_TABLE_REQUIRED",
-    "Family",
     "InheritanceEntityView",
     "InheritanceError",
     "InheritanceFacet",
@@ -114,15 +105,8 @@ __all__ = [
     "WriteAssignmentError",
     "column_order",
     "compile_facet",
-    "declaring_entity",
-    "effective_concrete_subtypes",
-    "family_attributes",
-    "family_of",
-    "family_primary_key",
-    "family_root",
     "reject_predicate_write",
     "root_metadata",
-    "validate",
     "validate_subtype_write",
     "validate_write_assignment",
     "view",
@@ -130,7 +114,10 @@ __all__ = [
 
 
 class InheritanceError(ValueError):
-    """A descriptor violates an m-inheritance family invariant.
+    """An inheritance family invariant is violated: either a raw descriptor's
+    structural family shape (``parallax.conformance._descriptor_family.validate``)
+    or an accepted model's concrete-subtype write-payload shape
+    (:func:`validate_subtype_write` / :func:`reject_predicate_write`).
 
     ``rule`` is the corpus ``rejectedRule`` classification (e.g.
     ``inheritance-cycle``); ``entity`` names the offending participant when one.
@@ -140,441 +127,6 @@ class InheritanceError(ValueError):
         super().__init__(message)
         self.rule = rule
         self.entity = entity
-
-
-@dataclass(frozen=True, slots=True)
-class Family:
-    """The inheritance participants of one descriptor, indexed for traversal."""
-
-    participants: tuple[Entity, ...]
-    root: Entity | None
-
-    @property
-    def strategy(self) -> str | None:
-        """The family mapping strategy declared by its root (``None`` if no root)."""
-        if self.root is None:
-            return None
-        return _inh(self.root).strategy
-
-    def _children(self) -> dict[str, list[Entity]]:
-        children: dict[str, list[Entity]] = {}
-        for entity in self.participants:
-            parent = _inh(entity).parent
-            if parent is not None:
-                children.setdefault(parent, []).append(entity)
-        return children
-
-    def concrete_descendants(self, name: str) -> frozenset[str]:
-        """Every concrete-subtype name at or under the position ``name``."""
-        children = self._children()
-        by_name = {entity.name: entity for entity in self.participants}
-        result: set[str] = set()
-        stack = [name]
-        seen: set[str] = set()
-        while stack:
-            current = stack.pop()
-            if current in seen:
-                continue
-            seen.add(current)
-            entity = by_name.get(current)
-            if entity is not None and _inh(entity).role == "concrete-subtype":
-                result.add(current)
-            stack.extend(child.name for child in children.get(current, []))
-        return frozenset(result)
-
-
-def _inh(entity: Entity) -> Inheritance:
-    if entity.inheritance is None:  # pragma: no cover - callers guard on participation
-        raise ValueError(f"{entity.name} is not an inheritance participant")
-    return entity.inheritance
-
-
-def _participants(metamodel: Metamodel) -> tuple[Entity, ...]:
-    return tuple(entity for entity in metamodel.entities if entity.inheritance is not None)
-
-
-def family_of(metamodel: Metamodel) -> Family:
-    """The inheritance :class:`Family` of ``metamodel`` (empty when none participate).
-
-    ``root`` is named only when the descriptor declares exactly one: a
-    descriptor carrying several independent families (or none at all) has no
-    single root to name, so ``root`` is ``None`` and a caller needing a
-    particular position's root resolves it with :func:`family_root`.
-    """
-    participants = _participants(metamodel)
-    roots = [entity for entity in participants if _inh(entity).role == "root"]
-    root = roots[0] if len(roots) == 1 else None
-    return Family(participants=participants, root=root)
-
-
-def effective_concrete_subtypes(metamodel: Metamodel, position: str) -> tuple[str, ...]:
-    """The alphabetically-ordered effective concrete-subtype set for ``position``.
-
-    A concrete subtype resolves to itself; an abstract root or subtype resolves to
-    all concrete descendants; a plain (non-participant) entity is its own trivial
-    set. The order is alphabetical (the corpus's effective-set ordering).
-    """
-    entity = metamodel.entity(position)
-    if entity.inheritance is None:
-        return (position,)
-    if entity.inheritance.role == "concrete-subtype":
-        return (entity.name,)
-    return tuple(sorted(family_of(metamodel).concrete_descendants(entity.name)))
-
-
-def _root_name(meta: Metamodel, entity: Entity) -> str | None:
-    """The name of ``entity``'s family root, or ``None`` if unresolvable.
-
-    Composes with the shared ``m-descriptor``-scope ancestry walk
-    (:func:`~parallax.core.descriptor.declaring_entity`) rather than
-    re-deriving it: the descriptor-level resolver already "resolves to what
-    it can reach" for a malformed (cyclic/unresolvable) ancestry, falling back
-    to ``entity`` itself, which is never a root — so this only needs to check
-    the resolved entity's own role, never re-walk ``parent`` links itself.
-    """
-    if entity.inheritance is None:
-        return None
-    resolved = _resolve_declaring_entity(meta, entity)
-    if resolved.inheritance is None or resolved.inheritance.role != "root":
-        return None
-    return resolved.name
-
-
-def family_root(meta: Metamodel, entity: Entity) -> Entity:
-    """The abstract root of ``entity``'s inheritance family.
-
-    Raises :class:`ValueError` if ``entity`` does not participate, or its
-    ancestry does not resolve to a root (a malformed family; `validate` is the
-    authority on rejecting those before this is ever called).
-    """
-    root_name = _root_name(meta, entity)
-    if root_name is None:
-        raise ValueError(f"{entity.name}: no resolvable inheritance root (m-inheritance)")
-    return meta.entity(root_name)
-
-
-def declaring_entity(meta: Metamodel, entity: Entity) -> Entity:
-    """The entity that actually DECLARES ``entity``'s primary key and temporal
-    (as-of) axes: the family root for an inheritance participant — temporality
-    is a FAMILY-WIDE property,
-    so the primary key and every as-of axis are always declared on the root
-    ALONE and inherited unchanged by every abstract and concrete descendant
-    ("Inherited members"); a descendant MUST NOT redeclare, add, remove,
-    override, or shadow them (the `inheritance-temporal-axes-not-root-owned`
-    family invariant, enforced by :func:`validate`) — else ``entity`` itself.
-
-    The one shared resolution every DAG-legal caller needing an inheritance
-    participant's declaring entity reuses: graph-local identity / primary-key
-    resolution (`m-snapshot-read`), per-hop temporal propagation (`m-navigate`),
-    frozen-node pin/edge attachment (the snapshot handle's wrap), and
-    inheritance-aware DDL derivation (the conformance provisioning path).
-
-    A thin ``m-inheritance``-scope alias over the shared ``m-descriptor``-scope
-    walk (:func:`~parallax.core.descriptor.declaring_entity`) — never re-derived
-    here — kept as its own name in this module because every caller above
-    already depends on ``m-inheritance``, never ``m-descriptor`` directly, for
-    this family-aware resolution.
-    """
-    return _resolve_declaring_entity(meta, entity)
-
-
-def family_attributes(meta: Metamodel, entity: Entity) -> tuple[Attribute, ...]:
-    """Every attribute declared anywhere in ``entity``'s inheritance family.
-
-    Used to resolve an attribute reference whose ``Class.attribute`` class-name
-    prefix names any ancestor or sibling concrete within the same family (a
-    concrete-target read referencing a root-inherited attribute, or a branch
-    predicate inside a `narrow` referencing that branch's own attribute, m-sql
-    predicate lowering) — narrow-position validity for the reference is already
-    enforced upstream by `m-op-algebra`'s model-aware validator, so this need only
-    search, never re-validate scope. Assumes attribute names are unique within one
-    family (the shared-table / ancestry-derived column set is a disjoint union,
-    m-inheritance).
-    """
-    root_name = _root_name(meta, entity)
-    if root_name is None:
-        return entity.attributes
-    attrs: list[Attribute] = []
-    for candidate in meta.entities:
-        if candidate.inheritance is not None and _root_name(meta, candidate) == root_name:
-            attrs.extend(candidate.attributes)
-    return tuple(attrs)
-
-
-def family_primary_key(meta: Metamodel, entity: Entity) -> tuple[Attribute, ...]:
-    """``entity``'s FAMILY-EFFECTIVE primary key (m-inheritance "Inherited
-    members"): declared on the root alone and inherited unchanged by every
-    abstract and concrete descendant — exactly the temporal-axis and
-    optimistic-locking root-ownership rules, applied to the identity key
-    itself. ``Entity.primary_key`` is a bare LOCAL view (``self.attributes``
-    filtered): for a concrete subtype whose key is declared on an ancestor
-    (every corpus family), that view is wrongly EMPTY, which would silently
-    make a keyed write / observation / coalescing lookup unidentifiable
-    (`m-unit-work` object identity, `m-sql` keyed DML). Composes with
-    :func:`family_attributes` rather than re-deriving the family walk.
-    """
-    return tuple(attr for attr in family_attributes(meta, entity) if attr.primary_key)
-
-
-def validate(metamodel: Metamodel) -> None:
-    """Validate every inheritance family invariant, raising :class:`InheritanceError`.
-
-    The check order pins each corpus ``rejectedRule``: parent resolution,
-    acyclicity, strategy and family-owned-fact locality, ancestry-reaches-a-root,
-    missing-root detection, then the selected strategy's table/tag formation
-    rules. The last three are asked once per independent family, so a descriptor
-    declaring several never has one family's root or strategy answer for another.
-    """
-    participants = _participants(metamodel)
-    if not participants:
-        return
-    by_name = {entity.name: entity for entity in metamodel.entities}
-
-    _reject_unknown_parent(participants, by_name)
-    _reject_cycles(participants)
-    _reject_strategy_redeclared(participants)
-    _reject_descendant_temporal_axes(participants)
-    _reject_descendant_optimistic_locking(participants)
-    _reject_concrete_without_root(participants, by_name)
-    rooted = [
-        (_reject_missing_root(root, members), members)
-        for root, members in _families(participants, by_name)
-    ]
-    for root, members in rooted:
-        _reject_strategy_storage(root, members)
-    for root, members in rooted:
-        _reject_tph_tag_values(root, members)
-
-
-def _families(
-    participants: tuple[Entity, ...], by_name: dict[str, Entity]
-) -> list[tuple[Entity | None, tuple[Entity, ...]]]:
-    """Each independent inheritance family of ``participants``: the topmost
-    position its members' parent links reach (``None`` when that position is not
-    a root), paired with the members themselves in declaration order.
-
-    A position has at most one parent, so two roots can never share an ancestry
-    and every participant belongs to exactly one family. Valid only once unknown
-    parents and cycles are rejected: either would leave the upward walk without
-    a terminating top.
-    """
-    grouped: dict[str, list[Entity]] = {}
-    for entity in participants:
-        grouped.setdefault(_family_top(entity, by_name).name, []).append(entity)
-    families: list[tuple[Entity | None, tuple[Entity, ...]]] = []
-    for name, members in grouped.items():
-        top = by_name[name]
-        families.append((top if _inh(top).role == "root" else None, tuple(members)))
-    return families
-
-
-def _family_top(entity: Entity, by_name: dict[str, Entity]) -> Entity:
-    """The highest participant ``entity``'s parent links reach — itself when it
-    declares no parent, and the last participant on the chain when the chain
-    leaves the family (a parent that declares no inheritance of its own)."""
-    top = entity
-    while True:
-        parent = _inh(top).parent
-        if parent is None:
-            return top
-        ancestor = by_name.get(parent)
-        if ancestor is None or ancestor.inheritance is None:
-            return top
-        top = ancestor
-
-
-def _reject_unknown_parent(participants: tuple[Entity, ...], by_name: dict[str, Entity]) -> None:
-    for entity in participants:
-        parent = _inh(entity).parent
-        if parent is not None and parent not in by_name:
-            raise InheritanceError(
-                "inheritance-unknown-parent",
-                f"{entity.name} names parent {parent!r}, which the descriptor does not declare",
-                entity=entity.name,
-            )
-
-
-def _reject_cycles(participants: tuple[Entity, ...]) -> None:
-    by_name = {entity.name: entity for entity in participants}
-    for start in participants:
-        seen: set[str] = set()
-        current: str | None = start.name
-        while current is not None and current in by_name:
-            if current in seen:
-                raise InheritanceError(
-                    "inheritance-cycle",
-                    f"parent links form a cycle through {current!r}",
-                    entity=current,
-                )
-            seen.add(current)
-            current = _inh(by_name[current]).parent
-
-
-def _reject_strategy_redeclared(participants: tuple[Entity, ...]) -> None:
-    for entity in participants:
-        inh = _inh(entity)
-        if inh.role != "root" and inh.strategy is not None:
-            raise InheritanceError(
-                "inheritance-strategy-redeclared",
-                f"non-root {entity.name} redeclares the family strategy",
-                entity=entity.name,
-            )
-
-
-def _reject_descendant_temporal_axes(participants: tuple[Entity, ...]) -> None:
-    """Reject any ``abstract-subtype`` or ``concrete-subtype`` that declares its
-    own ``asOfAttributes``.
-
-    Temporality is a family-wide property: only the family ROOT may declare
-    as-of axes, and every descendant inherits exactly that set (never
-    redeclares, adds, removes, overrides, or shadows an axis) — regardless of
-    whether the root itself is temporal. A non-temporal root with a temporal
-    descendant would leave the family's root-owned coordinate system
-    ill-defined (mixed temporality is not supported); a temporal root whose
-    descendant redeclares or adds an axis would make the descendant's own
-    temporal profile diverge from the family it belongs to. Both shapes are
-    rejected here, uniformly, before any SQL.
-    """
-    for entity in participants:
-        if _inh(entity).role != "root" and entity.as_of_axes:
-            raise InheritanceError(
-                "inheritance-temporal-axes-not-root-owned",
-                f"non-root {entity.name} declares its own as-of axes; temporal axes are a "
-                "family-wide property and MUST be declared only on the root",
-                entity=entity.name,
-            )
-
-
-def _reject_descendant_optimistic_locking(participants: tuple[Entity, ...]) -> None:
-    """Reject any ``abstract-subtype`` or ``concrete-subtype`` that declares its
-    own ``optimisticLocking`` attribute.
-
-    The version attribute is a family-wide property (ADR 0027): only the
-    family ROOT may declare it, and every descendant inherits exactly that
-    column — regardless of whether the root itself is versioned. This is
-    structural per-entity (it does not need to look at the root's own
-    attributes), so it fires uniformly for both malformed shapes: a
-    non-versioned root with a version-declaring descendant, and a versioned
-    root whose descendant redeclares or adds a second version attribute.
-    """
-    for entity in participants:
-        if _inh(entity).role == "root":
-            continue
-        if any(attribute.optimistic_locking for attribute in entity.attributes):
-            raise InheritanceError(
-                "inheritance-optimistic-locking-not-root-owned",
-                f"non-root {entity.name} declares its own optimisticLocking attribute; "
-                "the version attribute is family-wide and MUST be declared only on the "
-                "root",
-                entity=entity.name,
-            )
-
-
-def _reject_concrete_without_root(
-    participants: tuple[Entity, ...], by_name: dict[str, Entity]
-) -> None:
-    for entity in participants:
-        if _inh(entity).role != "concrete-subtype":
-            continue
-        current: str | None = entity.name
-        reached_root = False
-        while current is not None:
-            node = by_name.get(current)
-            if node is None or node.inheritance is None:
-                break
-            if node.inheritance.role == "root":
-                reached_root = True
-                break
-            current = node.inheritance.parent
-        if not reached_root:
-            raise InheritanceError(
-                "inheritance-concrete-without-abstract-root",
-                f"concrete subtype {entity.name} has no abstract root ancestor",
-                entity=entity.name,
-            )
-
-
-def _reject_missing_root(root: Entity | None, members: tuple[Entity, ...]) -> Entity:
-    """``root`` itself once it is one, so a family that reaches no root is
-    rejected here rather than surfacing as a missing strategy downstream."""
-    if root is None:
-        raise InheritanceError(
-            "inheritance-missing-root",
-            f"inheritance participants {sorted(member.name for member in members)} declare no root",
-        )
-    return root
-
-
-def _reject_strategy_storage(root: Entity, participants: tuple[Entity, ...]) -> None:
-    strategy = _inh(root).strategy
-    if strategy == "table-per-hierarchy":
-        if root.table is None:
-            raise InheritanceError(
-                "inheritance-tph-root-table-required",
-                f"table-per-hierarchy root {root.name} declares no shared table",
-                entity=root.name,
-            )
-        for entity in participants:
-            if entity is not root and entity.table is not None:
-                raise InheritanceError(
-                    "inheritance-tph-descendant-table-forbidden",
-                    f"table-per-hierarchy descendant {entity.name} repeats the root-owned "
-                    "shared table",
-                    entity=entity.name,
-                )
-        return
-
-    if strategy != "table-per-concrete-subtype":
-        return
-    for entity in participants:
-        role = _inh(entity).role
-        if role in ("root", "abstract-subtype") and entity.table is not None:
-            raise InheritanceError(
-                "inheritance-tpcs-abstract-table-forbidden",
-                f"table-per-concrete-subtype abstract position {entity.name} declares a table",
-                entity=entity.name,
-            )
-        if role == "concrete-subtype" and entity.table is None:
-            raise InheritanceError(
-                "inheritance-tpcs-concrete-table-required",
-                f"table-per-concrete-subtype concrete {entity.name} declares no table",
-                entity=entity.name,
-            )
-    if _inh(root).tag_column is not None:
-        raise InheritanceError(
-            "inheritance-tag-on-concrete-subtype-strategy",
-            f"table-per-concrete-subtype root {root.name} declares a tag column",
-            entity=root.name,
-        )
-    for entity in participants:
-        if _inh(entity).tag_value is not None:
-            raise InheritanceError(
-                "inheritance-tag-on-concrete-subtype-strategy",
-                f"table-per-concrete-subtype subtype {entity.name} declares a tagValue",
-                entity=entity.name,
-            )
-
-
-def _reject_tph_tag_values(root: Entity, participants: tuple[Entity, ...]) -> None:
-    if _inh(root).strategy != "table-per-hierarchy":
-        return
-    concretes = [entity for entity in participants if _inh(entity).role == "concrete-subtype"]
-    seen_values: dict[str, str] = {}
-    for entity in concretes:
-        tag_value = _inh(entity).tag_value
-        if tag_value is None:
-            raise InheritanceError(
-                "inheritance-missing-tag-value",
-                f"table-per-hierarchy concrete subtype {entity.name} declares no tagValue",
-                entity=entity.name,
-            )
-        if tag_value in seen_values:
-            raise InheritanceError(
-                "inheritance-duplicate-tag-value",
-                f"tagValue {tag_value!r} is shared by {seen_values[tag_value]} and {entity.name}",
-                entity=entity.name,
-            )
-        seen_values[tag_value] = entity.name
 
 
 # --------------------------------------------------------------------------- #
