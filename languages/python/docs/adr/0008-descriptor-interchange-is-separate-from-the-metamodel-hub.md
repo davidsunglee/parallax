@@ -1,7 +1,7 @@
 # Descriptor interchange is separate from the Metamodel Hub
 
 The common Python runtime owns `MetamodelHub`, including its fixed model scope,
-sealing lifecycle, accepted metadata, facets, and introspection. Its public
+constructor sealing, accepted metadata, facets, and introspection. Its public
 constructor accepts the complete Entity Class set. An optional descriptor
 distribution instead owns decoded-document, JSON, and YAML ingestion; canonical
 document, JSON, and YAML export; and every descriptor-specific error. It
@@ -12,8 +12,9 @@ private but versioned with the first-party distributions; it is not a
 supported third-party frontend extension point.
 
 `MetamodelHub` therefore exposes no descriptor factory or export methods. The
-descriptor distribution's ingestion functions create unsealed hubs, and its
-export functions accept sealed hubs. This keeps the common runtime independent
+descriptor distribution's ingestion functions create hubs through that seam,
+which seals in the constructor, and its export functions accept any hub. This
+keeps the common runtime independent
 of optional parsing, schema, YAML, and serialization dependencies while
 preserving one Hub lifecycle and one accepted-metadata truth for class-backed
 and descriptor-backed models.
@@ -53,10 +54,13 @@ no independently maintained second schema.
 `DescriptorSchemaError`, and `DescriptorValueError` subclasses, together with
 the frozen `DescriptorSchemaViolation` and `DescriptorValueViolation` records.
 It separately exports `DescriptorExportError(RuntimeError)`: export failure is
-an adapter defect, not invalid caller input. Supplying an unsealed, internally
-sealing, or rejected hub to an exporter raises the common runtime's
-`MetamodelStateError`. The common runtime re-exports no descriptor errors or
-violation records.
+an adapter defect, not invalid caller input. An exporter performs no hub-state
+check, because a hub exists only sealed. The ingestion functions additionally
+raise the common runtime's `MetamodelValidationError` when the ingested
+document is representationally valid but semantically invalid; that error is
+the common runtime's, not a descriptor error, and the descriptor phases still
+run first. The common runtime re-exports no descriptor errors or violation
+records.
 
 Those functions and error values are the complete public descriptor surface.
 Descriptor record classes, serde helpers, schema machinery, type-spelling

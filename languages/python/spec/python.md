@@ -300,10 +300,10 @@ equivalence obligation.
 
 | Keyword | Value | Applies to | Meaning |
 |---|---|---|---|
-| `table=` | `str` | standalone entities, TPH roots, TPCS concrete subtypes | the physical `Table(name)` Storage Container — always explicit, never derived from a name; forbidden on TPH descendants and TPCS roots/abstract subtypes (seal-time family rules) |
+| `table=` | `str` | standalone entities, TPH roots, TPCS concrete subtypes | the physical `Table(name)` Storage Container — always explicit, never derived from a name; forbidden on TPH descendants and TPCS roots/abstract subtypes (formation-time family rules) |
 | `name=` | `str` | any Entity | canonical Entity-name override — any nonempty dot-free string; omission means the class `__name__` verbatim |
 | `namespace=` | `str` | any Entity | the Entity Identity namespace, declared per class and never inherited from a base class or module; omitted means unnamespaced |
-| `persistence=` | `ReadOnly` | standalone entities and family roots | the exceptional read-only mapping; omission means Read Write; any descendant declaration is a seal-time issue |
+| `persistence=` | `ReadOnly` | standalone entities and family roots | the exceptional read-only mapping; omission means Read Write; any descendant declaration is a formation-time issue |
 | `inheritance=` | role value (below) | every family participant | the participant's inheritance role |
 | `indices=` | tuple of `index(...)` values | any Entity | the local physical indices |
 
@@ -313,7 +313,7 @@ mirroring `attr(name=)`. A standalone Entity (no `inheritance=`) that omits
 `table=` fails at class creation (`entity-header-missing-option`), the parity
 of the descriptor schema's phase-2 `table` requirement; family table
 incoherence (a TPH descendant declaring `table=`, a TPCS concrete omitting
-it) stays the seal-time `inheritance-*` issue family.
+it) stays the formation-time `inheritance-*` issue family.
 
 Every Entity Class declares exactly one Parallax base: a framework root
 (`Entity`, `TxTemporal`, `Bitemporal`) or exactly one domain Entity
@@ -328,7 +328,7 @@ read-only `tx_start`/`tx_end`
 attributes (physical `in_z`/`out_z`); `Bitemporal` additionally supplies
 `valid_start`/`valid_end` (`from_z`/`thru_z`). A descendant inherits its
 root's temporal base and cannot change shape; a member redeclaring a reserved
-temporal name is the seal-time `metamodel-temporal-member-reserved` issue. An
+temporal name is the formation-time `metamodel-temporal-member-reserved` issue. An
 unknown header keyword or ill-typed value fails at class creation
 (`EntityDefinitionError`, below).
 
@@ -346,7 +346,7 @@ parent supplied by Python subclassing:
 The variant is the role, so strategy on a descendant, a tag value on a root,
 or a tag under TPCS is unspellable. Family-semantic violations that remain
 spellable (a TPH descendant declaring `table=`, a descendant `persistence=`,
-zero or multiple roots, missing or duplicate tag values) are seal-time
+zero or multiple roots, missing or duplicate tag values) are formation-time
 `inheritance-*` issues; the two frontends enforce the same accepted-model
 invariants, while the rejection phase and surface remain frontend-specific
 (the descriptor schema rejects some of these spellings at ingestion, before
@@ -357,7 +357,7 @@ ordered sequence of members by Python member name, with the component order
 preserved and every component a local scalar Attribute of the declaring
 Entity — never a relationship, Value Object, or inherited member. The
 factory rejects an empty member list at call time; an unknown, duplicate, or
-non-local member name is the seal-time `metamodel-index-*` issue family.
+non-local member name is the formation-time `metamodel-index-*` issue family.
 
 Member references are uniform across the grammar: the strings in `join=`,
 `reverse_of=`, `order_by=`, and `index(...)` are Python declaration names
@@ -485,18 +485,18 @@ rel(reverse_of=target_relationship_name, order_by=(...), name=...)
   `Rel[T | None]`; and scalar optionality follows the loaded-null rule —
   `Rel[T | None]` exactly where a loaded-null answer is possible (a defining
   to-one whose join source attribute is nullable, and every reverse to-one),
-  forbidden elsewhere. The rule is checked during `seal()`'s Python
+  forbidden elsewhere. The rule is checked in the hub constructor's Python
   realization phase from the accepted model; every mismatch — multiplicity
   and optionality alike — is reported together, in canonical order, as
   `EntityDefinitionError(code=
-  "entity-relationship-annotation-mismatch")`, and the hub is rejected. The
+  "entity-relationship-annotation-mismatch")`, and no hub is created. The
   annotation never absorbs the *unloaded* state, which always raises
   (`UnloadedRelationshipError`); `None` means exactly "loaded, and there is
   none".
 - **Ordering.** `order_by=` is a tuple of target-local member names: a bare
   string means ascending; `desc("name")` marks descending, with an `asc()`
   twin for symmetry. Ordering is legal only on a to-many direction; an
-  unknown member is the seal-time `relationship-order-attribute-invalid`
+  unknown member is the formation-time `relationship-order-attribute-invalid`
   issue, and an empty or omitted tuple means no ordering.
 
 ```python
@@ -521,7 +521,7 @@ class Order(Entity, table="orders"):
         cardinality=ManyToOne, join=("coupon_id", "id"),
     )
     # Spelling coupon as Rel["Coupon"], or customer as Rel[Customer | None],
-    # fails seal() with entity-relationship-annotation-mismatch.
+    # fails hub construction with entity-relationship-annotation-mismatch.
 ```
 
 At runtime on a Snapshot node the three relationship states stay distinct:
@@ -555,7 +555,7 @@ referenced by each occurrence's annotation. Neither form is a hub candidate
 or requires registration — occurrences are reached only through Entity
 declarations. `Attr[Address]` is a One occurrence, `Attr[Address | None]` is
 One-nullable, `Attr[tuple[Address, ...]]` is Many (never nullable; a
-`| None` Many surfaces at seal as `value-object-many-nullable`). A Value
+`| None` Many surfaces during formation as `value-object-many-nullable`). A Value
 Object scalar carries the full Neutral Type algebra (the schema admits any
 `type` spelling on a Value Object attribute; the corpus `float64` Value
 Object members exercise a non-string scalar), so on Value Object scalar
@@ -566,17 +566,17 @@ creation: storage, keys, generation, locking, and `max_length=` (the schema
 gives a Value Object attribute no length bound). An
 Entity-level occurrence member additionally admits `column=`, the occurrence's
 Structured Column override. Containment cycles and empty composites are the
-seal-time `value-object-*` issues shared with the descriptor frontend.
+formation-time `value-object-*` issues shared with the descriptor frontend.
 
-#### Class creation versus seal
+#### Class creation versus hub construction
 
 Class creation (and the `attr`/`rel`/`index` factory calls themselves) rejects
 only what prevents a coherent Python class or candidate declaration; every
 model-semantic rule — cross-member, cross-class, family, index, ordering, and
-reference resolution — fails at `seal()` through the same `MetamodelIssue`
-codes the descriptor frontend produces, so the two frontends report
-equivalent outcomes for models both can author. The Python realization phase
-after formation adds only
+reference resolution — fails during hub construction through the same
+`MetamodelIssue` codes the descriptor frontend produces, so the two frontends
+report equivalent outcomes for models both can author. The Python realization
+phase that follows formation inside the same constructor adds only
 Python-fact checks: the Entity Class claim and the annotation-shape
 agreement rule. An intrinsically invalid factory argument fails at the
 factory call itself (`entity-option-invalid-value`); an option whose
@@ -596,7 +596,7 @@ set is:
 | `entity-option-context-invalid` | factory call / class creation | an option illegal in context: mixed defining/reverse `rel(...)` forms, Entity-only options on a Value Object member, an empty `index(...)` member list, a `Max`/`Sequence` generation on a non-integer member |
 | `entity-reserved-member-name` | class creation | a reserved query-root, `model_*`, or framework-temporal member name |
 | `entity-canonical-name-collision` | class creation | two members converting to one canonical name |
-| `entity-relationship-annotation-mismatch` | seal (realization) | a `Rel` annotation shape — multiplicity or optionality — disagreeing with the accepted model; all mismatches reported together in canonical order |
+| `entity-relationship-annotation-mismatch` | hub construction (realization) | a `Rel` annotation shape — multiplicity or optionality — disagreeing with the accepted model; all mismatches reported together in canonical order |
 
 #### Canonical descriptor input
 
@@ -619,7 +619,8 @@ a fixed-source hub with no Entity Class binding inputs. It is not exported as
 a supported third-party frontend extension point, and there is no registration,
 discovery, or lazy-import mechanism.
 
-All three yield the same `UNSEALED` fixed-source hub on success. The phase
+All three yield the same sealed fixed-source hub on success — the seam seals in
+the constructor, so a returned hub is always authoritative. The phase
 boundaries are exact: syntax failures raise
 `DescriptorSyntaxError(descriptor-invalid-syntax)` before a hub exists;
 canonical-schema violations raise
@@ -627,8 +628,12 @@ canonical-schema violations raise
 value-phase rejections (`m-descriptor` "Type spellings" — e.g. the
 schema-valid but unconstructible `decimal(0,9)`) raise
 `DescriptorValueError(descriptor-value-invalid)` before a hub exists; every
-semantic model rule fails later, inside `seal()`, as
-`MetamodelValidationError`. A document uses the schema's two top-level forms:
+semantic model rule fails last, still inside the same call, as
+`MetamodelValidationError`. Each `hub_from_*` function therefore raises both
+families in that fixed phase order: `DescriptorError` for representation
+defects and `MetamodelValidationError` for model defects. The two remain
+disjoint types, so one call site catches both. A document uses the schema's two
+top-level forms:
 `entity:` for one Entity or `entities:` for several. Successful ingestion
 converts the accepted input into immutable descriptor-owned records and
 retains no caller-owned mutable document. The same model flows through any
@@ -676,22 +681,21 @@ from parallax.descriptor import hub_from_document, hub_from_json, hub_from_yaml
 
 models = hub_from_yaml(yaml_text)       # or hub_from_json(json_text)
 models = hub_from_document(document)    # e.g. json.loads(json_text)
-models.seal()
 ```
 
-The same package exports a sealed class-backed or descriptor-backed hub
+The same package exports a class-backed or descriptor-backed hub
 through `export_document(hub) -> dict[str, object]`,
 `export_json(hub) -> str`, or `export_yaml(hub) -> str`.
 `export_document` returns a fresh tree of ordinary mappings, lists, and
-JSON-compatible scalar values. Export from `UNSEALED`, internal `SEALING`, or
-`REJECTED` propagates the Hub's `MetamodelStateError`; it is not wrapped as a
-descriptor error. Export from `SEALED` renews no validation, performs no state
-change, and retains no descriptor cache. Repeated document results are
-structurally equal and repeated text results byte-identical. Unexpected
+JSON-compatible scalar values. Every hub is sealed by construction, so export
+performs no hub-state check and has no state failure to propagate; it renews no
+validation, performs no state change, and retains no descriptor cache. Repeated
+document results are structurally equal and repeated text results
+byte-identical. Unexpected
 conversion or serialization defects raise
 `DescriptorExportError(code="descriptor-export-failed")` with target
 `document`, `json`, or `yaml` and the original cause, return no partial output,
-and leave the hub sealed.
+and leave the hub unchanged.
 
 `parallax.descriptor` publicly exports the ingestion base
 `DescriptorError(ValueError)` and its `DescriptorSyntaxError`,

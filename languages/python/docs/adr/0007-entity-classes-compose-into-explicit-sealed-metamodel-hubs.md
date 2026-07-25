@@ -2,12 +2,12 @@
 
 Python Entity Class headers declare their mapping facts but do not enroll the
 class in a model or mutate shared state. A class-backed `MetamodelHub` receives
-its complete Entity Class set in one constructor call, and an explicit
-`seal()` submits an Unresolved Metamodel to the shared resolution, validation,
-and compilation gates, freezes the accepted Metamodel, and binds every class
-atomically. The hub does not implement those rules. Entity Classes are always
-frozen; typed class-header keywords replace `EntityConfig`, `__parallax__`,
-and the redundant Pydantic `frozen=True` option.
+its complete Entity Class set in one constructor call, and that call seals: it
+submits an Unresolved Metamodel to the shared resolution, validation, and
+compilation gates, freezes the accepted Metamodel, and binds every class
+atomically before returning. The hub does not implement those rules. Entity
+Classes are always frozen; typed class-header keywords replace `EntityConfig`,
+`__parallax__`, and the redundant Pydantic `frozen=True` option.
 
 The internal declaration direction is shared and acyclic. A lower-level
 `entity._declaration` engine owns the common Pydantic metaclass machinery,
@@ -48,7 +48,7 @@ the same class object raises
 `MetamodelDefinitionError(code="metamodel-duplicate-entity-class")`. Both
 identify the zero-based argument index. Distinct classes that declare the same
 Entity Identity are instead valid source inputs whose conflict is aggregated
-during whole-model sealing. Descriptor-backed construction likewise rejects an
+during whole-model formation. Descriptor-backed construction likewise rejects an
 empty Entity source during schema parsing, so every Unresolved Metamodel is
 nonempty before formation.
 
@@ -66,20 +66,21 @@ raises `DescriptorValueError(code="descriptor-value-invalid")` with the same
 canonically ordered document-path violation shape over the value-rule
 vocabulary `m-descriptor` owns. All three share the public
 `DescriptorError(ValueError)` base and
-occur before a hub exists. Only input every ingestion phase accepts reaches
-an `UNSEALED` hub;
-all reference and semantic failures then use `MetamodelValidationError` and
-semantic Model Locations during sealing.
+occur before a hub exists. Only input every ingestion phase accepts reaches hub
+construction; all reference and semantic failures then use
+`MetamodelValidationError` and semantic Model Locations, raised from the same
+ingestion call. An ingestion function therefore raises both families, in that
+fixed phase order, rather than deferring model semantics to a second call.
 
-The Descriptor Frontend can canonically export every sealed hub without
-renewed validation. Repeated descriptor documents are structurally equal, and
-repeated JSON/YAML results are byte-identical. The Hub exposes no descriptor
-method, and sealing does not eagerly export or retain a mirrored descriptor
-graph. An unexpected conversion or serialization defect raises
+The Descriptor Frontend can canonically export every hub without renewed
+validation. Repeated descriptor documents are structurally equal, and repeated
+JSON/YAML results are byte-identical. The Hub exposes no descriptor method, and
+construction does not eagerly export or retain a mirrored descriptor graph. An
+unexpected conversion or serialization defect raises
 `DescriptorExportError(code="descriptor-export-failed")` with target
 `document`, `json`, or `yaml` and the original cause, returns no partial output,
-and leaves the hub `SEALED`; export from any other hub state raises
-`MetamodelStateError`.
+and leaves the hub unchanged. Every hub is sealed, so the exporters have no hub
+state to check.
 
 Invalid declarations produce `MetamodelValidationError` with canonical core
 issues. A defective Formation Profile, undeclared or duplicate issue identity,
@@ -88,37 +89,48 @@ top-level `FormationContractError`, preserving the contributing module and
 compiler cause when applicable. Neither failure publishes facets, accepts the
 Metamodel, or installs an Entity Class binding.
 
-Sealing is a synchronized single-flight `UNSEALED -> SEALED | REJECTED`
-transition. Concurrent callers wait for the owning attempt and observe its
-terminal outcome; successful resealing is an idempotent no-op, while rejected
-resealing reproduces the terminal failure. `SEALING` is internal: ordinary hub
-operations still fail as unsealed, and owning-thread re-entry fails immediately
-with coded `MetamodelStateError` instead of deadlocking. The accepted
-Metamodel, complete facet set, and all Entity Class bindings become visible
-together only at `SEALED`.
+Sealing happens in the constructor. `MetamodelHub(*classes)` and the private
+`_from_unresolved(source)` seam each return a fully sealed hub or raise, so
+there is no `seal()` operation and no unsealed, sealing, or rejected state. The
+accepted Metamodel, complete facet set, and all Entity Class bindings are held
+in locals until every step succeeds and are then published in one final
+assignment; a failure anywhere raises out of the constructor, letting no hub
+object escape and leaving no published facet, binding, or orphaned class claim.
+A corrected model is a new constructor call, so nothing is retried, resealed, or
+interrogated for a stored terminal cause.
 
-Only `seal()` participates in single-flight waiting. During `UNSEALED` and the
-internal `SEALING` phase, Entity enumeration, metadata/export, facet access,
-query/path construction, resolver/codec access, connection, and execution fail
-immediately as `MetamodelStateError(code="metamodel-unsealed")`. In `REJECTED`
-they fail as `metamodel-rejected` with the terminal seal failure as cause;
-calling `seal()` itself reproduces that failure. In `SEALED` they are available
-and every successful or idempotent `seal()` returns `None`. Direct expression
-use of an unbound Entity Class raises `metamodel-class-not-bound`.
+Because a hub exists only sealed, every model-dependent operation — Entity
+enumeration, metadata/export, facet access, query/path construction,
+resolver/codec access, connection, and execution — is available on every hub a
+caller can name, and none performs a lifecycle check. `MetamodelStateError`
+consequently carries only two codes: `metamodel-class-already-bound` for a claim
+collision, and `metamodel-class-not-bound` for direct expression use of an
+Entity Class no hub has claimed. Two constructor calls share no lifecycle state,
+so the atomic class claim is the hub's only synchronization point.
 
-Ordinary frozen concrete Entity construction is the sole pre-binding exception
-because it reads no model facts and creates no binding. Such a value cannot be
-queried or persisted until its class is permanently bound; abstract-role
-instantiation remains forbidden by the declaration itself.
+Ordinary frozen concrete Entity construction is the sole exception permitted
+without a binding, because it reads no model facts and creates no binding. Such
+a value cannot be queried or persisted until its class is permanently bound;
+abstract-role instantiation remains forbidden by the declaration itself.
+
+We rejected an explicit `seal()` with an observable `UNSEALED -> SEALED |
+REJECTED` state machine. Its unsealed state had no capabilities, so the type's
+first state could do nothing but be forgotten, and preserving it would have cost
+an idempotent-reseal rule, a stored terminal failure to reproduce, waiting
+callers, and owning-thread re-entry detection for a phase boundary nothing
+needs. The one real cost of sealing in the constructor is that the Descriptor
+Frontend's ingestion functions now raise `MetamodelValidationError` as well as
+`DescriptorError`, so the public API no longer separates representation failure
+from model failure by call site.
 
 After language-neutral formation succeeds, one synchronized realization phase
 checks the complete Entity Class set before installing any binding. A class
 already claimed by another sealed hub is process-dependent state, so the
-losing hub raises
+losing constructor raises
 `MetamodelStateError(code="metamodel-class-already-bound")`, reports every
-conflicting Entity Identity in canonical order, installs nothing, and becomes
-`REJECTED`; it is not a metadata-validation or formation-contract failure.
-Racing hubs that share any class therefore have exactly one winner.
+conflicting Entity Identity in canonical order, and installs nothing; it is not
+a metadata-validation or formation-contract failure. Racing constructions that
+share any class therefore have exactly one winner.
 
 A successful binding is permanent for that Entity Class object's lifetime and
 keeps its immutable sealed hub reachable. There is no supported unbind, hub
@@ -135,7 +147,7 @@ guarantee. Every claimed class points to this same Metamodel Binding, so no
 metadata is copied per class.
 
 Runtime consumers receive the Metamodel Binding, never hub construction,
-sealing, connection, or other lifecycle operations. An **Entity Class
+connection, or other lifecycle operations. An **Entity Class
 Binding** is only one class-to-Entity-Identity association within it, not a
 second metadata implementation or necessarily another concrete value type.
 Descriptor-backed hubs have neither kind of Python binding. Consequently
@@ -199,7 +211,6 @@ class Order(Entity, table="orders"):
 
 
 models = MetamodelHub(Order)
-models.seal()
 ```
 
 The declaration frontend compiles Python annotations and `attr(...)` options
@@ -298,11 +309,11 @@ Python's ordinary class namespace enforces the same navigable-member rule as
 core formation: Entity attributes, relationships, and top-level Value Objects
 cannot share a name, nor can a Value Object scalar and nested Value Object.
 The temporal framework bases reserve their standard temporal attribute names.
-Sealing also rejects a domain descendant that shadows any ancestor navigable
+Formation also rejects a domain descendant that shadows any ancestor navigable
 member, including a cross-category or identical redeclaration. Separate sibling
 branches may reuse a name.
 Class creation rejects an empty top-level or nested Value Object declaration.
-Each must contain at least one scalar or nested member; sealing retains the
+Each must contain at least one scalar or nested member; formation retains the
 core `value-object-empty` guard for representation-independent conformance.
 One Value Object class may be reused at multiple Entity or nested paths; each
 use compiles to a distinct path-identified occurrence. Direct and indirect
@@ -354,7 +365,6 @@ class Supplier(Entity, table="supplier"):
 
 
 models = MetamodelHub(Customer, Supplier)
-models.seal()
 ```
 
 Inheritance declarations and accepted metadata instantiate the same core
@@ -488,9 +498,9 @@ exposes it and `parallax.snapshot` re-exports that same class for ordinary
 callers; top-level `parallax.core` does not. For a valid Snapshot node,
 `is_loaded` remains the nonthrowing preflight operation.
 
-Before sealing, ordinary frozen values may be constructed, but model-dependent
-operations such as queries, metadata lookup, Descriptor Frontend export, and database-handle
-binding fail. An Entity Class belongs permanently to at most one sealed hub
+Ordinary frozen values may be constructed from an unclaimed class, but
+model-dependent operations such as queries and database-handle binding fail. An
+Entity Class belongs permanently to at most one sealed hub
 for that class object's lifetime. Each Find Query carries that hub's identity,
 every database handle is permanently paired with the same sealed hub, and
 cross-hub execution is rejected before adapter or SQL work. There is no
