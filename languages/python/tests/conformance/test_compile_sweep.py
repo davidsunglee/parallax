@@ -276,10 +276,22 @@ _OPT_LOCK_AND_PK_GEN_WRITE_SEQUENCES: Final[frozenset[str]] = frozenset(
 _BATCH_COLLAPSE_WRITE_SEQUENCES: Final[frozenset[str]] = frozenset(
     {"m-batch-write-001", "m-batch-write-003", "m-value-object-045"}
 )
+# `m-core-007` witnesses the decimal(p,s) write BOUNDARY itself (m-core "Decimal
+# precision/scale WRITE boundary"): a single-row insert authoring a decimal(18,4)
+# value at all four fractional digits (9999.9999). The case YAML necessarily
+# authors that value as a wire-spelled Python float; it decodes to a native
+# `Decimal` at the case-format ingestion seam before the (coercion-only)
+# developer-facing write validator ever sees it. Compile-exercised byte-identical
+# here regardless — a keyed write's compile-time lowering never runs value-type
+# validation at all (member-name honesty only) — and the SAME case joins the
+# Docker run sweep through `WRITE_EXERCISED`, proving end to end that the decode
+# keeps this authored decimal write intact against real Postgres.
+_DECIMAL_PRECISION_WRITE_SEQUENCES: Final[frozenset[str]] = frozenset({"m-core-007"})
 _WRITE_SEQUENCES: Final[frozenset[str]] = (
     frozenset({"m-unit-work-003", "m-unit-work-007", "m-batch-write-002"})
     | _OPT_LOCK_AND_PK_GEN_WRITE_SEQUENCES
     | _BATCH_COLLAPSE_WRITE_SEQUENCES
+    | _DECIMAL_PRECISION_WRITE_SEQUENCES
 )
 # The `m-snapshot-read-010` mutate scenario emits no write DML. Its two `find`
 # steps' emissions and round trips grade byte-

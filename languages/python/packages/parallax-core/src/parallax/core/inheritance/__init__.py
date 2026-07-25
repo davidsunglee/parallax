@@ -24,7 +24,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
-from parallax.core.base import decode_neutral_literal, matches_neutral_type
+from parallax.core.base import coerce_neutral_input, matches_neutral_type
 from parallax.core.descriptor import (
     Attribute,
     Entity,
@@ -744,8 +744,9 @@ def validate_write_assignment(
 
     For an ordinary scalar attribute, a non-``None`` ``value`` MUST also
     conform to its declared `m-core` neutral type (`matches_neutral_type` over
-    the decoded literal, the SAME exact scalar-value policy `write_validate`
-    applies to a keyed write row). A ``None`` value is a legal CLEARING
+    the input-policy-coerced value, `~parallax.core.base.coerce_neutral_input`
+    — the SAME exact scalar-value policy `write_validate` applies to a keyed
+    write row). A ``None`` value is a legal CLEARING
     assignment ONLY when the attribute is declared ``nullable`` (mirroring
     `write_validate`'s own null short-circuit, which is likewise
     nullable-gated, `_check_entity_attribute`) — a NON-nullable scalar assigned
@@ -799,7 +800,7 @@ def validate_write_assignment(
                     f"{owner}.{name}: required attribute is absent (or null)",
                 )
             return
-        if not matches_neutral_type(decode_neutral_literal(value, attribute.type), attribute.type):
+        if not matches_neutral_type(coerce_neutral_input(value, attribute.type), attribute.type):
             raise WriteAssignmentError(
                 "value-type-mismatch",
                 f"{owner}.{name}: value {value!r} does not match the declared type "

@@ -2932,3 +2932,110 @@ def test_run_scenario_case_reports_an_unraised_expect_error_loudly() -> None:
     port = FakeDbPort([{"id": 1, "name": "Ada"}])
     with pytest.raises(engine.EngineError, match="but the mutation was accepted"):
         engine.run_scenario_case(case, "postgres", port)
+
+
+# --------------------------------------------------------------------------- #
+# Case-format ingestion decode (m-case-format / m-core): `decode_write_row`    #
+# and its Value Object / predicate-assignment helpers, exercised directly     #
+# over real corpus models -- customer.yaml's recursive nested composite (a    #
+# to-one `geo`, a to-many `phones`) and account.yaml's decimal `balance`.      #
+# --------------------------------------------------------------------------- #
+def _accepted_entity(
+    model_name: str, entity_name: str, namespace: str = "parallax.compatibility"
+) -> tuple[Any, Any]:
+    from parallax.conformance import models as _models
+    from parallax.core.metamodel import EntityIdentity
+
+    model = _models.accepted_model(_models.load_models()[model_name])
+    entity = model.entity(EntityIdentity(namespace, entity_name))
+    assert entity is not None
+    return model, entity
+
+
+def test_decode_write_row_decodes_a_to_one_value_objects_own_leaves() -> None:
+    model, customer = _accepted_entity("customer", "Customer")
+    row: dict[str, object] = {
+        "id": 1,
+        "name": "Ada",
+        "address": {"street": "s", "city": "c", "geo": {"country": "US", "elevation": 5}},
+    }
+    decoded = engine.decode_write_row(customer, row, model)
+    address = cast("dict[str, object]", decoded["address"])
+    geo = cast("dict[str, object]", address["geo"])
+    assert geo["elevation"] == 5.0  # an int spells a float64 value (lossless)
+
+
+def test_decode_write_row_decodes_each_element_of_a_many_value_object() -> None:
+    model, customer = _accepted_entity("customer", "Customer")
+    row: dict[str, object] = {
+        "id": 1,
+        "name": "Ada",
+        "address": {
+            "street": "s",
+            "city": "c",
+            "phones": [{"type": "home", "number": "1"}, {"type": "work", "number": "2"}],
+        },
+    }
+    decoded = engine.decode_write_row(customer, row, model)
+    address = cast("dict[str, object]", decoded["address"])
+    phones = cast("list[object]", address["phones"])
+    assert len(phones) == 2
+
+
+def test_decode_write_row_leaves_a_malformed_many_value_object_unchanged() -> None:
+    # A string is technically a `Sequence`, but is never a legal `many`
+    # occurrence value -- `_decoded_vo_value` leaves it exactly as authored,
+    # the SAME structural shape `vo_document_violation` itself classifies as a
+    # rejection; decoding never masks that.
+    model, customer = _accepted_entity("customer", "Customer")
+    row: dict[str, object] = {
+        "id": 1,
+        "name": "Ada",
+        "address": {"street": "s", "city": "c", "phones": "not-a-list"},
+    }
+    decoded = engine.decode_write_row(customer, row, model)
+    address = cast("dict[str, object]", decoded["address"])
+    assert address["phones"] == "not-a-list"
+
+
+def test_decode_write_row_leaves_a_non_document_value_object_unchanged() -> None:
+    model, customer = _accepted_entity("customer", "Customer")
+    row = {"id": 1, "name": "Ada", "address": "not-a-document"}
+    decoded = engine.decode_write_row(customer, row, model)
+    assert decoded["address"] == "not-a-document"
+
+
+def test_decode_write_row_decodes_an_int_literal_to_an_exact_decimal() -> None:
+    model, account = _accepted_entity("account", "Account")
+    decoded = engine.decode_write_row(account, {"id": 1, "owner": "Ada", "balance": 100}, model)
+    assert decoded["balance"] == decimal.Decimal(100)
+
+
+def test_decoded_assignment_value_decodes_a_value_object_assignment() -> None:
+    # `_decoded_assignment_value`'s value-object branch -- a predicate-write
+    # assignment naming a whole Value Object member, mirrored against the
+    # SAME per-leaf decode `decode_write_row` applies to a keyed row.
+    model, customer = _accepted_entity("customer", "Customer")
+    value: dict[str, object] = {
+        "street": "s",
+        "city": "c",
+        "geo": {"country": "US", "elevation": 5},
+    }
+    decoded = engine._decoded_assignment_value(  # pyright: ignore[reportPrivateUsage]
+        customer, "address", value, model
+    )
+    geo = cast("dict[str, object]", cast("dict[str, object]", decoded)["geo"])
+    assert geo["elevation"] == 5.0
+
+
+def test_decoded_assignment_value_leaves_an_undeclared_member_unchanged() -> None:
+    # A member matching neither a declared scalar attribute nor a value
+    # object -- a garbage predicate-write target -- passes through untouched;
+    # the member-name honesty check classifies THAT defect, not this decode.
+    model, customer = _accepted_entity("customer", "Customer")
+    assert (
+        engine._decoded_assignment_value(  # pyright: ignore[reportPrivateUsage]
+            customer, "nonsense", 42, model
+        )
+        == 42
+    )

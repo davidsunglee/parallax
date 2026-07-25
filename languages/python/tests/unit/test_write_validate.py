@@ -11,8 +11,14 @@ witnessed shapes do not reach on their own: depth-0 entity-attribute
 required-ness (a corpus shape none of the ten witness — every witnessed case
 happens to keep the entity's own scalar attributes complete), the DB-computed-
 marker exemption, sparse-mutation leniency at every level, to-many value-object
-array walking, and the full m-core neutral-type vocabulary — in both the native
-carrier and the portable literal spelling a neutral write row may carry.
+array walking, and the full m-core neutral-type vocabulary at the DEVELOPER
+input-policy boundary (`python.md` "Neutral scalar type mapping") — a native
+carrier, plus the narrow adjacent forms the input policy itself widens (an
+`int` for a `decimal` / `float`, a canonical UUID string), conform; a
+wire-only spelling (a float for a `decimal`, an ISO date/time/timestamp
+string, a hex `bytes` string) does not, since `validate_write` only ever sees
+an already-native write input on this path (the case-format ingestion seam
+decodes a wire spelling before it ever reaches here).
 """
 
 from __future__ import annotations
@@ -307,9 +313,14 @@ def test_a_nested_many_element_violation_keeps_its_index_on_the_nested_member() 
 
 # --------------------------------------------------------------------------- #
 # Value conformance: the full m-core neutral-type vocabulary, exercised       #
-# through `validate_write` over each depth-0 attribute — a native carrier and #
-# the portable literal spelling a neutral write row may carry for it both     #
-# conform, and neither a wrong carrier nor a malformed literal does.          #
+# through `validate_write` over each depth-0 attribute against the DEVELOPER  #
+# input policy (`python.md` "Neutral scalar type mapping") — a native carrier #
+# and the input policy's own narrow adjacent forms (an `int` for a `decimal`  #
+# or `float`, a canonical UUID string) conform; a WIRE-only spelling (a       #
+# `float` for a `decimal`, an ISO date/time/timestamp string, a hex `bytes`   #
+# string) does not, since this validator only ever sees an already-native     #
+# write input — decoding a wire spelling is the case-format ingestion seam's  #
+# own job, upstream of this boundary.                                        #
 # --------------------------------------------------------------------------- #
 _TYPE_CASES: list[tuple[str, object, bool]] = [
     ("flag", True, True),
@@ -319,31 +330,31 @@ _TYPE_CASES: list[tuple[str, object, bool]] = [
     ("count", True, False),  # a bool is never a numeric literal
     ("count", 2**31, False),  # outside the declared width
     ("ratio", 1.5, True),
-    ("ratio", 3, True),  # an integer literal spells a float value
+    ("ratio", 3, True),  # an integer literal spells a float value (lossless)
     ("ratio", "x", False),
     ("amount", Decimal("1.00"), True),
-    ("amount", 3, True),
-    ("amount", 1.5, True),
-    ("amount", 1.005, False),  # more fractional digits than the declared scale
+    ("amount", 3, True),  # an int widens to an exact decimal
+    ("amount", 1.5, False),  # a float is NEVER coerced to a decimal
+    ("amount", 1.005, False),
     ("amount", "x", False),
     ("whenMade", dt.date(2024, 1, 1), True),
-    ("whenMade", "2024-01-01", True),
+    ("whenMade", "2024-01-01", False),  # an ISO string is a wire spelling, not input policy
     ("whenMade", "not-a-date", False),
     ("whenMade", dt.datetime(2024, 1, 1, tzinfo=dt.UTC), False),  # not a bare date
     ("whenMade", 5, False),
     ("whenTouched", dt.time(12, 0), True),
-    ("whenTouched", "12:00", True),
+    ("whenTouched", "12:00", False),  # likewise a wire spelling
     ("whenTouched", 5, False),
     ("tstamp", dt.datetime(2024, 1, 1, tzinfo=dt.UTC), True),
-    ("tstamp", "2024-01-01T00:00:00Z", True),
+    ("tstamp", "2024-01-01T00:00:00Z", False),  # likewise a wire spelling
     ("tstamp", "2024-01-01T00:00:00", False),  # a naive instant carries no offset
     ("tstamp", 5, False),
     ("uid", uuid.UUID("123e4567-e89b-12d3-a456-426614174000"), True),
-    ("uid", "123e4567-e89b-12d3-a456-426614174000", True),
+    ("uid", "123e4567-e89b-12d3-a456-426614174000", True),  # canonical string: input policy
     ("uid", "not-a-uuid", False),
     ("uid", 5, False),
     ("blob", b"\x01\x02", True),
-    ("blob", "0102", True),
+    ("blob", "0102", False),  # a hex string is a wire spelling, not input policy
     ("blob", "not-hex", False),
     ("blob", 5, False),
 ]
@@ -401,14 +412,16 @@ def test_temporal_axis_attributes_are_never_required_on_a_full_document_insert()
     # A full-document (insert) row omitting `txStart` / `txEnd`
     # entirely is still valid: the milestone bounds are Clock-supplied /
     # instruction-level, never authored on the neutral write row.
-    validate_write(_GAUGE_METADATA, {"id": 1, "reading": 20.00}, _GAUGE_MODEL, mutation="insert")
+    validate_write(
+        _GAUGE_METADATA, {"id": 1, "reading": Decimal("20.00")}, _GAUGE_MODEL, mutation="insert"
+    )
 
 
 def test_temporal_axis_attributes_are_never_type_checked_even_when_present() -> None:
     # A stray, wrongly-typed axis value is silently ignored (excluded before the
     # type walk ever sees it) — the lowering seam is what would reject an
     # actually-authored one, not this pre-SQL structural validator.
-    row = {"id": 1, "reading": 20.00, "txStart": 12345}
+    row = {"id": 1, "reading": Decimal("20.00"), "txStart": 12345}
     validate_write(_GAUGE_METADATA, row, _GAUGE_MODEL, mutation="insert")
 
 

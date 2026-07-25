@@ -21,7 +21,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Literal, cast
 
-from parallax.core.base import NeutralType, decode_neutral_literal, matches_neutral_type
+from parallax.core.base import NeutralType, coerce_neutral_input, matches_neutral_type
 from parallax.core.metamodel._states import NestedValueObjectMetadata, ValueObjectMetadata
 from parallax.core.metamodel._values import Multiplicity
 
@@ -52,7 +52,8 @@ class VoDocumentViolation:
       document is present: a document binds atomically, so there is no sparse
       write below its boundary.
     - ``"type-mismatch"`` — a scalar leaf's value is neither a member of its
-      declared value space nor a literal spelling one.
+      declared value space nor one of the adjacent forms the developer input
+      policy widens (`~parallax.core.base.coerce_neutral_input`).
 
     ``value`` carries the offending runtime value for the three reasons that have
     one, and ``declared_type`` the leaf's declared type for ``"type-mismatch"``
@@ -104,7 +105,7 @@ def _element_violation(container: _Container, value: object) -> VoDocumentViolat
             if not attribute.nullable:
                 return VoDocumentViolation(name, "attribute-missing")
             continue
-        if not matches_neutral_type(decode_neutral_literal(leaf, attribute.type), attribute.type):
+        if not matches_neutral_type(coerce_neutral_input(leaf, attribute.type), attribute.type):
             return VoDocumentViolation(name, "type-mismatch", leaf, attribute.type)
     for nested in container.value_objects:
         name = nested.identity.path[-1]
