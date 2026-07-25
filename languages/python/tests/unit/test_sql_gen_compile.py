@@ -21,7 +21,7 @@ import pytest
 from _sql_gen_support import model, target
 
 import fake_metamodel
-from parallax.core import inheritance
+from parallax.core import inheritance, relationship
 from parallax.core import op_algebra as oa
 from parallax.core.dialect import POSTGRES
 from parallax.core.metamodel import Metamodel
@@ -312,7 +312,12 @@ def test_distinct_read_suppresses_the_lock_even_in_locking_mode() -> None:
 # --------------------------------------------------------------------------- #
 def _fake_model() -> Metamodel:
     base = fake_metamodel.parity_model()
-    return fake_metamodel.parity_model({inheritance.FACET_KEY: inheritance.compile_facet(base)})
+    return fake_metamodel.parity_model(
+        {
+            inheritance.FACET_KEY: inheritance.compile_facet(base),
+            relationship.FACET_KEY: relationship.compile_facet(base),
+        }
+    )
 
 
 def test_a_record_free_model_compiles_the_same_reads() -> None:

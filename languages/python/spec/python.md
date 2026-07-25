@@ -1365,7 +1365,7 @@ directions; artifact co-location never legalizes a forbidden edge.
 | `m-value-object` | `parallax.core.value_object` | `parallax.core.value_object` | `m-metamodel`, `m-model-formation` | generated forbidden contracts |
 | `m-relationship` | `parallax.core.relationship` | `parallax.core.relationship` | `m-metamodel`, `m-model-formation` | generated forbidden contracts |
 | `m-op-algebra` | `parallax.core.op_algebra` | `parallax.core.op_algebra` | `m-metamodel`, `m-inheritance` | generated forbidden contracts |
-| `m-sql` | `parallax.core.sql_gen` | `parallax.core.sql_gen` | `m-op-algebra`, `m-dialect`, `m-metamodel`, `m-inheritance` | generated forbidden contracts |
+| `m-sql` | `parallax.core.sql_gen` | `parallax.core.sql_gen` | `m-op-algebra`, `m-dialect`, `m-metamodel`, `m-inheritance`, `m-relationship` | generated forbidden contracts |
 | `m-dialect` | `parallax.core.dialect` (incl. driver-free `dialect.postgres`) | `parallax.core.dialect` | `m-core` | generated forbidden contracts |
 | `m-db-port` | `parallax.core.db_port` (abstract) | `parallax.core.db_port` | `m-core` | generated forbidden contracts |
 | `m-db-error` | `parallax.core.db_error` | `parallax.core.db_error` | `m-db-port`, `m-dialect` | generated forbidden contracts |
