@@ -56,15 +56,15 @@ The explicit, self-contained model scope owned by the common Python runtime.
 Its public constructor receives the complete set of Entity Classes at once;
 importing or declaring a class never mutates a hub. An optional Descriptor
 Frontend can produce the same model scope through a narrow source seam, but
-descriptor ingestion and export are not hub operations. The hub becomes
-authoritative when sealed, fixing its normalized declarations, compiled
-Metamodel Facets, Entity Class bindings when applicable, and model-relative
-name resolution.
+descriptor ingestion and export are not hub operations. Construction seals: it
+returns an authoritative hub whose normalized declarations, compiled Metamodel
+Facets, Entity Class bindings when applicable, and model-relative name
+resolution are already fixed, or it raises and creates nothing.
 _Avoid_: schema registry, entity registry, ambient registry, dual model, descriptor facade, class reflection cache
 
 **Descriptor Frontend**:
 The optional interchange boundary that translates canonical descriptor
-documents into unsealed Metamodel Hubs and sealed Metamodel Hubs back into
+documents into Metamodel Hubs and Metamodel Hubs back into
 canonical descriptor documents. It owns descriptor formats, parsing, schema
 checks, value conversion, serialization, and descriptor-specific errors while
 depending inward on the common Python runtime.
