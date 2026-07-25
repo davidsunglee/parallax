@@ -4,9 +4,10 @@ The neutral, frozen ``slots`` dataclasses that make up a parsed model
 descriptor — an in-memory instance of ``core/schemas/metamodel.schema.json``.
 Every record is immutable and shareable; derived facts (an entity's effective
 ``temporal`` classification, its physical ``column_order``) are computed
-accessors, never re-authored fields. No behavioural scope reads these records:
-they serve the entity frontend's own adapter and the conformance engine's
-raw-descriptor seams, which answer structural family questions here — through
+accessors, never re-authored fields. Within ``m-descriptor``, they are the
+substrate for descriptor operations; no other behavioural scope reads them
+directly. The entity frontend's own adapter and the conformance engine's
+raw-descriptor seams answer structural family questions here — through
 :func:`declaring_entity`, :func:`family_root_name`, and
 :func:`concrete_descendant_names` — for a document that has not formed, or
 never will.
