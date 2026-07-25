@@ -225,7 +225,7 @@ current authoring or runtime behavior.
 Persistence Mode is the separate `ReadWrite | ReadOnly` mapping capability.
 Omission on a standalone Entity or family root normalizes to ReadWrite, the
 ordinary ORM case; only an exceptional non-writable mapping spells
-`persistence=ReadOnly`. Persistence Mode is family-wide and root-owned. A
+`persistence=READ_ONLY`. Persistence Mode is family-wide and root-owned. A
 descendant declaration is rejected even when it repeats the root; omission is
 the only valid descendant form. Entity values remain frozen in either mode,
 and the vocabulary is unrelated to security access or transaction semantics.

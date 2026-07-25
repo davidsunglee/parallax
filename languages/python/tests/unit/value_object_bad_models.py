@@ -1,19 +1,35 @@
-"""A lazily-constructed, deliberately mis-annotated ``ValueObject`` field —
-exercises ``value_object.py``'s own ``_attr_inner`` LIVE-annotation fallback
-(python.md §2's ``Attr[...]``-only field-annotation contract: every declared
-field must be ``Attr[T]``, never a bare Python type). This module avoids
-``from __future__ import annotations`` so the metaclass reads the field's
-LIVE (non-stringized) annotation object directly — mirroring how
-``value_object_models.py`` / ``snapshot_models.py`` themselves avoid it. The
-offending class is built lazily (inside a function, never at module import
-time) so importing this module never raises.
+"""Deliberately mis-declared Value Object classes, built lazily.
+
+This module omits ``from __future__ import annotations`` so the engine reads the
+live annotation objects directly; each offending class is built inside a function
+so importing the module never raises.
 """
 
-from parallax.core.entity.value_object import ValueObject
+from parallax.core import Attr, ValueObject, attr
 
 
 def build_non_attr_annotated_value_object() -> type[ValueObject]:
-    class BadAnnotation(ValueObject, frozen=True):
+    """A bare Python annotation where ``Attr[T]`` is the only spelling."""
+
+    class BadAnnotation(ValueObject):
         plain: int
 
     return BadAnnotation
+
+
+def build_entity_only_option_value_object() -> type[ValueObject]:
+    """A Value Object member reaching for an Entity-only option."""
+
+    class BadOption(ValueObject):
+        label: Attr[str] = attr(max_length=8)
+
+    return BadOption
+
+
+def build_header_bearing_value_object() -> type[ValueObject]:
+    """A Value Object class statement carrying a class-header keyword."""
+
+    class BadHeader(ValueObject, table="nope"):
+        label: Attr[str]
+
+    return BadHeader

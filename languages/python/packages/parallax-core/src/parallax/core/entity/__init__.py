@@ -1,140 +1,132 @@
-"""``parallax.core.entity`` enforcement scope (entity/statement frontend, support).
+"""``parallax.core.entity`` enforcement scope (the Python class frontend, support).
 
-The developer-facing class frontend: the frozen entity base and its metaclass,
-the ``Attr[T]`` / ``Rel[T]`` typed-access carriers, the ``Field`` /
-``Relationship`` declaration helpers, the statement surface (predicate /
-temporal-read / deep-fetch-include / subtype-narrowing building), the
-``ValueObject`` class frontend, and the closed-world
-relationship load-state vocabulary (``is_loaded`` / ``narrowed``,
-``UnloadedRelationshipError``) the frozen snapshot-node wrapper attaches. This
-support scope may import ``m-descriptor`` (the class-time record graph it still
-compiles), ``m-metamodel``, ``m-inheritance``, ``m-relationship``,
-``m-op-algebra``, ``m-temporal-read``, and the ``parallax.core._formation_profile``
-composition root that seals a record graph into an accepted Metamodel.
+The sole supported Python model-authoring surface: the frozen ``Entity`` and
+``ValueObject`` bases and their temporal framework siblings, the ``Attr[T]`` /
+``Rel[T]`` member annotations with the ``attr`` / ``rel`` / ``index`` / ``asc`` /
+``desc`` factories, the closed ``EntityDefinitionError`` code set, the statement
+surface, and the closed-world relationship load-state vocabulary. The underscored
+modules behind these names are implementation detail rather than caller seams.
+
+Entity Classes are their own formation input: the declaration engine builds each
+class's ``UnresolvedEntityDeclaration`` eagerly at class creation, so this scope
+imports no descriptor interchange code at all.
 """
 
 from __future__ import annotations
 
-from parallax.core.descriptor import OrderByTerm
-from parallax.core.entity.base import (
+from parallax.core.entity._declaration import EntityDeclaration, snake_to_camel
+from parallax.core.entity._entity import (
     Bitemporal,
-    Concrete,
     Entity,
-    EntityConfig,
     EntityMeta,
-    EntityRegistry,
-    FamilyRoot,
-    MetamodelSource,
-    ModelCopyError,
-    ProvenanceError,
     TxTemporal,
     WireNames,
-    accepted_metamodel,
-    camel_to_snake,
     canonical_row,
     changed_fields,
-    default_registry,
     effective_change_set,
-    entity_metadata_of,
-    entity_record_of,
-    entity_records,
-    entity_registry,
     full_row,
-    metamodel,
     primary_key_row,
-    registry_of,
-    resolve_entity_class,
-    resolve_entity_metadata,
-    snake_to_camel,
     wire_names_of,
 )
-from parallax.core.entity.errors import (
+from parallax.core.entity._errors import (
+    ENTITY_DEFINITION_CODES,
     EntityDefinitionError,
-    NameCollisionError,
-    RegistryCollisionError,
-    ReservedNameError,
+    FrameworkOwnedAxisError,
+    ModelCopyError,
+    ProvenanceError,
+    UnloadedRelationshipError,
 )
-from parallax.core.entity.expressions import (
+from parallax.core.entity._expressions import (
     UNLOADED,
-    Attr,
     AttributeExpr,
     AttributeRef,
     ElementAttributeExpr,
     Predicate,
-    Rel,
     RelationshipPath,
     RelationshipRef,
-    UnloadedRelationshipError,
 )
-from parallax.core.entity.fields import (
-    Field,
-    FieldSpec,
-    Relationship,
-    RelationshipSpec,
-    ReverseRelationship,
-    ReverseRelationshipSpec,
+from parallax.core.entity._members import (
+    MANY_TO_ONE,
+    ONE_TO_MANY,
+    ONE_TO_ONE,
+    READ_ONLY,
+    READ_WRITE,
+    TABLE_PER_CONCRETE_SUBTYPE,
+    AbstractRoot,
+    AbstractSubtype,
+    Attr,
+    AttrSpec,
+    ConcreteSubtype,
+    DefiningRelSpec,
+    IndexSpec,
+    OrderTerm,
+    Rel,
+    ReverseRelSpec,
+    TablePerHierarchy,
+    asc,
+    attr,
+    desc,
+    index,
+    rel,
 )
+from parallax.core.entity._value_object import ValueObject, ValueObjectMeta, to_document
 from parallax.core.entity.graph_state import is_loaded, narrowed
 from parallax.core.entity.statement import Statement, UnsupportedFeatureError
-from parallax.core.entity.value_object import ValueObject, VoField, VoFieldSpec
 
 __all__ = [
+    "ENTITY_DEFINITION_CODES",
+    "MANY_TO_ONE",
+    "ONE_TO_MANY",
+    "ONE_TO_ONE",
+    "READ_ONLY",
+    "READ_WRITE",
+    "TABLE_PER_CONCRETE_SUBTYPE",
     "UNLOADED",
+    "AbstractRoot",
+    "AbstractSubtype",
     "Attr",
+    "AttrSpec",
     "AttributeExpr",
     "AttributeRef",
     "Bitemporal",
-    "Concrete",
+    "ConcreteSubtype",
+    "DefiningRelSpec",
     "ElementAttributeExpr",
     "Entity",
-    "EntityConfig",
+    "EntityDeclaration",
     "EntityDefinitionError",
     "EntityMeta",
-    "EntityRegistry",
-    "FamilyRoot",
-    "Field",
-    "FieldSpec",
-    "MetamodelSource",
+    "FrameworkOwnedAxisError",
+    "IndexSpec",
     "ModelCopyError",
-    "NameCollisionError",
-    "OrderByTerm",
+    "OrderTerm",
     "Predicate",
     "ProvenanceError",
-    "RegistryCollisionError",
     "Rel",
-    "Relationship",
     "RelationshipPath",
     "RelationshipRef",
-    "RelationshipSpec",
-    "ReservedNameError",
-    "ReverseRelationship",
-    "ReverseRelationshipSpec",
+    "ReverseRelSpec",
     "Statement",
+    "TablePerHierarchy",
     "TxTemporal",
     "UnloadedRelationshipError",
     "UnsupportedFeatureError",
     "ValueObject",
-    "VoField",
-    "VoFieldSpec",
+    "ValueObjectMeta",
     "WireNames",
-    "accepted_metamodel",
-    "camel_to_snake",
+    "asc",
+    "attr",
     "canonical_row",
     "changed_fields",
-    "default_registry",
+    "desc",
     "effective_change_set",
-    "entity_metadata_of",
-    "entity_record_of",
-    "entity_records",
-    "entity_registry",
     "full_row",
+    "index",
     "is_loaded",
-    "metamodel",
     "narrowed",
     "primary_key_row",
-    "registry_of",
-    "resolve_entity_class",
-    "resolve_entity_metadata",
+    "rel",
     "snake_to_camel",
+    "to_document",
     "wire_names_of",
 ]

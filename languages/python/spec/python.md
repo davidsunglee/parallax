@@ -79,7 +79,7 @@ Attributes, Timestamp types, flags, interval semantics, or columns.
 | Python surface | Valid Time | Transaction Time |
 |---|---|---|
 | Framework base | supplied by `Bitemporal` | supplied by `TxTemporal` and `Bitemporal` |
-| Metadata dimension | `TemporalDimension.ValidTime` | `TemporalDimension.TransactionTime` |
+| Metadata dimension | `TemporalDimension.VALID_TIME` | `TemporalDimension.TRANSACTION_TIME` |
 | Query keyword | `valid_time` | `tx_time` |
 | `history` dimension constant | `VALID_TIME` | `TX_TIME` |
 | `Pin` accessor | `valid_time` | `tx_time` |
@@ -296,6 +296,33 @@ through its ingestion phases, Python through class creation — so a shape
 only one grammar can spell, or can reject before the shared seam, carries no
 equivalence obligation.
 
+#### Spelling the core algebra values
+
+Class headers and the `attr`/`rel`/`index` factories name the members of the
+closed core algebras directly rather than through string keywords, so an
+unspellable combination is a static error before it is a runtime one. Which
+Python spelling a member takes follows from the member itself, and the rule
+holds for every algebra value the grammar reaches, including ones added later:
+
+- A variant carrying no payload is a module-level SCREAMING_SNAKE constant —
+  `READ_ONLY`, `ONE_TO_ONE`, `MANY_TO_ONE`, `ONE_TO_MANY`,
+  `TABLE_PER_CONCRETE_SUBTYPE`, `MAX`. Enumerated algebras follow the same
+  spelling through their member access (`TemporalDimension.VALID_TIME`).
+- A variant carrying a payload is a CamelCase class instantiated at the call
+  site — `Sequence(...)`, `TablePerHierarchy(...)`, `AbstractRoot(...)`,
+  `ConcreteSubtype(...)`. Where every parameter of such a class is optional, the
+  bare class object reads as the empty instance: `inheritance=AbstractSubtype`
+  and `inheritance=AbstractSubtype()` are the same declaration.
+
+Neutral Types are a separate vocabulary and keep their CamelCase type names
+(`Int32`, `Float32`, `Int64`, `Decimal`), because `attr(type=)` names a type
+rather than an algebra member.
+
+The core specification names the same algebras and variants in CamelCase
+(`Cardinality`, `ManyToOne`, `Inheritance`, `TablePerConcreteSubtype`). Those
+are model vocabulary shared by every language target; the spellings above are
+the Python identifiers an author actually types.
+
 #### Class headers
 
 | Keyword | Value | Applies to | Meaning |
@@ -303,7 +330,7 @@ equivalence obligation.
 | `table=` | `str` | standalone entities, TPH roots, TPCS concrete subtypes | the physical `Table(name)` Storage Container — always explicit, never derived from a name; forbidden on TPH descendants and TPCS roots/abstract subtypes (formation-time family rules) |
 | `name=` | `str` | any Entity | canonical Entity-name override — any nonempty dot-free string; omission means the class `__name__` verbatim |
 | `namespace=` | `str` | any Entity | the Entity Identity namespace, declared per class and never inherited from a base class or module; omitted means unnamespaced |
-| `persistence=` | `ReadOnly` | standalone entities and family roots | the exceptional read-only mapping; omission means Read Write; any descendant declaration is a formation-time issue |
+| `persistence=` | `READ_ONLY` | standalone entities and family roots | the exceptional read-only mapping; omission means Read Write; any descendant declaration is a formation-time issue |
 | `inheritance=` | role value (below) | every family participant | the participant's inheritance role |
 | `indices=` | tuple of `index(...)` values | any Entity | the local physical indices |
 
@@ -327,10 +354,12 @@ Temporality is selected by the base class — `Entity`, `TxTemporal`, or
 read-only `tx_start`/`tx_end`
 attributes (physical `in_z`/`out_z`); `Bitemporal` additionally supplies
 `valid_start`/`valid_end` (`from_z`/`thru_z`). A descendant inherits its
-root's temporal base and cannot change shape; a member redeclaring a reserved
-temporal name is the formation-time `metamodel-temporal-member-reserved` issue. An
-unknown header keyword or ill-typed value fails at class creation
-(`EntityDefinitionError`, below).
+root's temporal base and cannot change shape. Redeclaring a reserved temporal
+name is the shared `metamodel-temporal-member-reserved` rule; the Python
+frontend enforces it earlier and more broadly, rejecting the redeclaration at
+class creation as `entity-reserved-member-name` (below) for all four names
+anywhere below a temporal base. An unknown header keyword or ill-typed value
+also fails at class creation (`EntityDefinitionError`, below).
 
 The `inheritance=` value mirrors the core `Inheritance` algebra with the
 parent supplied by Python subclassing:
@@ -338,7 +367,7 @@ parent supplied by Python subclassing:
 | Role value | Family position | Carries |
 |---|---|---|
 | `AbstractRoot(TablePerHierarchy(tag_column="..."))` | TPH family root | the strategy and shared-table tag column; the root declares `table=` |
-| `AbstractRoot(TablePerConcreteSubtype)` | TPCS family root | the strategy; no `table=` |
+| `AbstractRoot(TABLE_PER_CONCRETE_SUBTYPE)` | TPCS family root | the strategy; no `table=` |
 | `AbstractSubtype` (bare) | abstract interior node | nothing |
 | `ConcreteSubtype(tag_value="...")` | TPH concrete subtype | its tag value; no `table=` |
 | `ConcreteSubtype` (bare) | TPCS concrete subtype | nothing; declares its own `table=` |
@@ -374,7 +403,7 @@ bare value (`qty: Attr[int] = 5`) fails at class creation. The complete
 
 | Option | Value | Meaning |
 |---|---|---|
-| `primary_key=` | `False` (default), `True`, `Max`, or `Sequence(name=..., batch_size=..., initial_value=..., increment_size=...)` | the `NotPrimaryKey \| PrimaryKey(generation)` sum: `True` means `ApplicationAssigned`; a generation value implies primary key, so a generation without a key is unspellable; `Max`/`Sequence` require an `Int32`/`Int64` member (`m-pk-gen`) and fail at class creation on any other (`entity-option-context-invalid`), while `True` is unrestricted |
+| `primary_key=` | `False` (default), `True`, `MAX`, or `Sequence(name=..., batch_size=..., initial_value=..., increment_size=...)` | the `NotPrimaryKey \| PrimaryKey(generation)` sum: `True` means `ApplicationAssigned`; a generation value implies primary key, so a generation without a key is unspellable; `MAX`/`Sequence(...)` require an `Int32`/`Int64` member (`m-pk-gen`) and fail at class creation on any other (`entity-option-context-invalid`), while `True` is unrestricted |
 | `column=` | `str` | physical Storage Location override; omission normalizes to `Column(<canonical name>)` |
 | `name=` | `str` | canonical-name override (below) |
 | `max_length=` | `int` | bounded string length |
@@ -428,7 +457,7 @@ class Ticket(Entity, table="ticket"):
 
 
 class Widget(Entity, table="widget"):
-    id: Attr[int] = attr(primary_key=Max)
+    id: Attr[int] = attr(primary_key=MAX)
     label: Attr[str]
 ```
 
@@ -451,9 +480,24 @@ descriptor spelling); `column=` is where it is stored. The class-header
 `name=` is the same idea for the Entity itself — here the schema entity name
 `LEGACY_PART`, which the snake→camel member conversion never touches. Ingested descriptors
 keep canonical names; the ambiguous camel→snake direction is never needed
-because classes are not generated. Reserved class-level names (`where`,
-other query-root classmethods, the `model_*` Pydantic space) may not be
-member names; collisions fail at class creation.
+because classes are not generated.
+
+**Reserved member names.** A member name may not collide with a name the class
+object already carries, because class-level access is where the typed expression
+surface lives and the class-level name would win. Four families are reserved,
+and a collision fails at class creation (`entity-reserved-member-name`):
+
+- the query-root and introspection classmethods — `where`, `narrow`, `include`,
+  `as_of`, `as_of_range`, `history`, `meta`, `descriptor`;
+- the `model_*` namespace Pydantic reserves;
+- the framework temporal members `valid_start`, `valid_end`, `tx_start`, and
+  `tx_end`, on a class whose family extends `TxTemporal` or `Bitemporal` and is
+  therefore supplied them;
+- the nine declaration members `identity`, `container`, `persistence`,
+  `attributes`, `relationships`, `value_objects`, `as_of_axes`, `inheritance`,
+  and `indices`. An Entity Class *is* its own `UnresolvedEntityDeclaration`, so
+  the metaclass publishes that protocol's nine properties on the class object
+  itself, and a member reusing one would be shadowed by the property.
 
 #### Relationships — `Rel[T]` and `rel(...)`
 
@@ -467,7 +511,8 @@ rel(cardinality=..., join=(source_member, target_member),
 rel(reverse_of=target_relationship_name, order_by=(...), name=...)
 ```
 
-- The defining form owns cardinality (`OneToOne | ManyToOne | OneToMany`),
+- The defining form owns cardinality — the core `Cardinality` algebra, spelled
+  `ONE_TO_ONE`, `MANY_TO_ONE`, or `ONE_TO_MANY` —
   the join (source member of the declaring class, target-local member name),
   dependency, and its direction's ordering. The reverse form names only the
   target's defining relationship and optional ordering. Mixing the forms
@@ -513,12 +558,12 @@ class Order(Entity, table="orders"):
 
     customer_id: Attr[int]                      # 1..1: non-nullable FK
     customer: Rel[Customer] = rel(
-        cardinality=ManyToOne, join=("customer_id", "id"),
+        cardinality=MANY_TO_ONE, join=("customer_id", "id"),
     )
 
     coupon_id: Attr[int | None]                 # 0..1: nullable FK
     coupon: Rel["Coupon | None"] = rel(
-        cardinality=ManyToOne, join=("coupon_id", "id"),
+        cardinality=MANY_TO_ONE, join=("coupon_id", "id"),
     )
     # Spelling coupon as Rel["Coupon"], or customer as Rel[Customer | None],
     # fails hub construction with entity-relationship-annotation-mismatch.
@@ -537,7 +582,7 @@ class Account(Entity, table="account"):
     id: Attr[int] = attr(primary_key=True)
     profile_id: Attr[int]
     profile: Rel["Profile"] = rel(              # defining 1..1
-        cardinality=OneToOne, join=("profile_id", "id"),
+        cardinality=ONE_TO_ONE, join=("profile_id", "id"),
     )
 
 
@@ -593,8 +638,8 @@ set is:
 | `entity-annotation-invalid` | class creation | malformed `Attr`/`Rel` annotation: a bare un-aliased annotation, an unsupported inner type, or an optionality/multiplicity shape outside this grammar |
 | `entity-member-value-invalid` | class creation | the assignment slot holds a bare value, an `attr(...)` under `Rel[...]`, or a `rel(...)` under `Attr[...]` |
 | `entity-option-invalid-value` | factory call | an intrinsically invalid argument value: an ill-typed or out-of-range `attr(...)`, `rel(...)`, `index(...)`, or `Sequence(...)` argument |
-| `entity-option-context-invalid` | factory call / class creation | an option illegal in context: mixed defining/reverse `rel(...)` forms, Entity-only options on a Value Object member, an empty `index(...)` member list, a `Max`/`Sequence` generation on a non-integer member |
-| `entity-reserved-member-name` | class creation | a reserved query-root, `model_*`, or framework-temporal member name |
+| `entity-option-context-invalid` | factory call / class creation | an option illegal in context: mixed defining/reverse `rel(...)` forms, Entity-only options on a Value Object member, an empty `index(...)` member list, a `MAX`/`Sequence(...)` generation on a non-integer member |
+| `entity-reserved-member-name` | class creation | a reserved query-root or introspection name, a `model_*` name, a framework-temporal member name, or one of the nine declaration member names |
 | `entity-canonical-name-collision` | class creation | two members converting to one canonical name |
 | `entity-relationship-annotation-mismatch` | hub construction (realization) | a `Rel` annotation shape — multiplicity or optionality — disagreeing with the accepted model; all mismatches reported together in canonical order |
 
@@ -725,7 +770,7 @@ class Book(
     title: Attr[str]
     author_id: Attr[int]
     author: Rel[Author] = rel(
-        cardinality=ManyToOne, join=("author_id", "id"),
+        cardinality=MANY_TO_ONE, join=("author_id", "id"),
     )
 ```
 
@@ -764,7 +809,7 @@ every concrete declares its own table and no tag exists:
 ```python
 class Vehicle(
     Entity,
-    inheritance=AbstractRoot(TablePerConcreteSubtype),
+    inheritance=AbstractRoot(TABLE_PER_CONCRETE_SUBTYPE),
 ):
     id: Attr[int] = attr(primary_key=True)
     vin: Attr[str]
@@ -1638,7 +1683,7 @@ hatchling.
 
 | Artifact/package | Production or development-only | Included source scopes | External runtime dependencies | Depends on artifacts | Public exports/entry points |
 |---|---|---|---|---|---|
-| `parallax-core` (the common runtime) | production | all `parallax.core.*` scopes of §7 (behavioral modules, entity/statement frontend, driver-free postgres dialect strategy) | `pydantic` | (none) | `parallax.core`: the `Entity`/`TxTemporal`/`Bitemporal`/`ValueObject` bases, `Attr`, `Rel`, `attr`, `rel`, `index`, `desc`, `asc`, `Int32`, `Float32`, `Max`, `Sequence`, `Json`, `JsonObject`, the inheritance role and strategy values, `MetamodelHub`, statement API, `LATEST`, `VALID_TIME`, `TX_TIME`, `Pin`, `Edge`, `pin_of`, `edge_of`, `is_loaded`, `narrowed`, errors |
+| `parallax-core` (the common runtime) | production | all `parallax.core.*` scopes of §7 (behavioral modules, entity/statement frontend, driver-free postgres dialect strategy) | `pydantic` | (none) | `parallax.core`: the `Entity`/`TxTemporal`/`Bitemporal`/`ValueObject` bases, `Attr`, `Rel`, `attr`, `rel`, `index`, `desc`, `asc`, `Int32`, `Float32`, `MAX`, `Sequence`, `Json`, `JsonObject`, the cardinality, persistence, inheritance role, and strategy values, `MetamodelHub`, statement API, `LATEST`, `VALID_TIME`, `TX_TIME`, `Pin`, `Edge`, `pin_of`, `edge_of`, `is_loaded`, `narrowed`, errors |
 | `parallax-descriptor` (descriptor interchange) | production, optional | `parallax.descriptor` (`m-descriptor` plus its private Hub orchestration) | `pyyaml`, `jsonschema` | `parallax-core` | `parallax.descriptor`: `hub_from_document`, `hub_from_json`, `hub_from_yaml`, `export_document`, `export_json`, `export_yaml`, `DescriptorError`, `DescriptorSyntaxError`, `DescriptorSchemaError`, `DescriptorValueError`, `DescriptorSchemaViolation`, `DescriptorValueViolation`, `DescriptorExportError` |
 | `parallax-snapshot` (snapshot lifecycle extension) | production | `parallax.snapshot.*` (`materialize`, `handle`) | (none beyond core) | `parallax-core` | `parallax.snapshot`: `connect()`, `Snapshot[T]`, `Execution` |
 | `parallax-postgres` (Postgres database adapter) | production | `parallax.postgres.*` (concrete port over psycopg) | `psycopg[binary]` (sole declarer) | `parallax-core` | `parallax.postgres`: `PostgresAdapter` |

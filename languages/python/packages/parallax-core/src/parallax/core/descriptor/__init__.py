@@ -21,11 +21,6 @@ from parallax.core.descriptor.errors import (
 )
 from parallax.core.descriptor.export import DescriptorExportError, export_document
 from parallax.core.descriptor.ingest import ingest_document, parse_json, parse_yaml
-from parallax.core.descriptor.neutral_type import (
-    NEUTRAL_FROM_PY,
-    infer_neutral_type,
-    snake_to_camel,
-)
 from parallax.core.descriptor.records import (
     UNSET,
     AsOfAxisMetadata,
@@ -66,14 +61,8 @@ from parallax.core.descriptor.serde import (
 )
 from parallax.core.descriptor.type_spelling import parse_type_spelling
 from parallax.core.descriptor.unresolved import unresolved_metamodel
-from parallax.core.descriptor.validate import (
-    validate_entity,
-    validate_metamodel,
-    validate_optimistic_locking_root_owned,
-)
 
 __all__ = [
-    "NEUTRAL_FROM_PY",
     "UNSET",
     "AsOfAxisMetadata",
     "Attribute",
@@ -114,16 +103,11 @@ __all__ = [
     "effective_temporal",
     "export_document",
     "family_root_name",
-    "infer_neutral_type",
     "ingest_document",
     "parse_document",
     "parse_json",
     "parse_type_spelling",
     "parse_yaml",
     "serialize",
-    "snake_to_camel",
     "unresolved_metamodel",
-    "validate_entity",
-    "validate_metamodel",
-    "validate_optimistic_locking_root_owned",
 ]

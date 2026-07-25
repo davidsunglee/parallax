@@ -1,51 +1,48 @@
-"""Idiomatic ``ValueObject`` + entity classes mirroring ``models/customer.yaml``
-— the recursive
-``Address`` / ``Geo`` / ``Point`` / ``Phone`` composite, one nested VO
-(``geo`` -> ``point``) and one ``cardinality: many`` member (``phones``).
-This module deliberately avoids ``from __future__ import annotations`` so the
-metaclass reads the live ``Attr[T]`` objects directly.
+"""Idiomatic Value Object and Entity classes mirroring ``models/customer.yaml``.
 
-Lives at the top level of ``tests/`` rather than ``tests/unit/``: the unit
-lane and the API Conformance Suite's VO traversal examples share
-these SAME classes (a second copy would race the single process-wide entity
-registry), and only a module on ``pythonpath = ["tools", "tests"]`` resolves
+The recursive ``Address`` / ``Geo`` / ``Point`` / ``Phone`` composite, with one
+nested occurrence (``geo`` -> ``point``) and one Many occurrence (``phones``).
+This module deliberately omits ``from __future__ import annotations`` so the
+engine reads the live ``Attr[T]`` objects directly; the stringized path has its
+own probes.
+
+It lives at the top level of ``tests/`` rather than under ``tests/unit/`` because
+the unit lane and the API Conformance Suite's Value Object examples share these
+same classes, and only a module on the configured ``pythonpath`` resolves
 reliably regardless of collection order.
 """
 
-from parallax.core import Attr, Entity, EntityConfig, Field
-from parallax.core.entity.value_object import ValueObject, VoField
+from parallax.core import Attr, Entity, ValueObject, attr
 
 _NS = "parallax.compatibility"
 
 
-class Point(ValueObject, frozen=True):
-    lat: Attr[float | None] = VoField(type="float64", nullable=True, default=None)
-    lon: Attr[float | None] = VoField(type="float64", nullable=True, default=None)
+class Point(ValueObject):
+    lat: Attr[float | None]
+    lon: Attr[float | None]
 
 
-class Geo(ValueObject, frozen=True):
-    country: Attr[str] = VoField(type="string")
-    elevation: Attr[float | None] = VoField(type="float64", nullable=True, default=None)
-    point: Attr[Point | None] = VoField(nullable=True, default=None)
+class Geo(ValueObject):
+    country: Attr[str]
+    elevation: Attr[float | None]
+    point: Attr[Point | None]
 
 
-class Phone(ValueObject, frozen=True):
-    type: Attr[str | None] = VoField(type="string", nullable=True, default=None)
-    number: Attr[str | None] = VoField(type="string", nullable=True, default=None)
+class Phone(ValueObject):
+    type: Attr[str | None]
+    number: Attr[str | None]
 
 
-class Address(ValueObject, frozen=True):
-    street: Attr[str] = VoField(type="string")
-    city: Attr[str] = VoField(type="string")
-    geo: Attr[Geo | None] = VoField(nullable=True, default=None)
-    phones: Attr[tuple[Phone, ...]] = VoField(default=())
+class Address(ValueObject):
+    street: Attr[str]
+    city: Attr[str]
+    geo: Attr[Geo | None]
+    phones: Attr[tuple[Phone, ...]]
 
 
-class Customer(Entity, frozen=True):
-    """Mirror of ``models/customer.yaml``."""
+class Customer(Entity, table="customer", namespace=_NS):
+    """Mirror of ``models/customer.yaml``'s ``Customer``."""
 
-    __parallax__ = EntityConfig(table="customer", namespace=_NS, mutability="transactional")
-
-    id: Attr[int] = Field(primary_key=True, pk_generator="none", type="int64")
-    name: Attr[str] = Field(max_length=64)
-    address: Attr[Address | None] = Field(nullable=True, default=None)
+    id: Attr[int] = attr(primary_key=True)
+    name: Attr[str] = attr(max_length=64)
+    address: Attr[Address | None]

@@ -112,7 +112,7 @@ canonical_yaml = export_yaml(models)
   subclass always declares its `inheritance=` role explicitly; violations
   fail at class creation.
 - Persistence Mode is omitted for the ordinary Read Write mapping. A root uses
-  `persistence=ReadOnly` only for the exceptional mapping on which Parallax
+  `persistence=READ_ONLY` only for the exceptional mapping on which Parallax
   must reject persistence writes. Persistence Mode is family-wide and
   root-owned: every descendant inherits the root's value unchanged, and a
   descendant declaration is rejected even when it merely repeats that value.
@@ -224,7 +224,7 @@ only through Entity declarations and is not passed to the hub separately.
   direction-specific ordering. The reverse form gets its target scope from
   `Rel[Target]`, names only that target's defining relationship, and cannot
   repeat cardinality, join, or dependency. For example,
-  `Rel[Customer] = rel(cardinality=ManyToOne,
+  `Rel[Customer] = rel(cardinality=MANY_TO_ONE,
   join=("customer_id", "id"))` pairs with
   `Rel[tuple[Order, ...]] = rel(reverse_of="customer")`.
 - There is no public class-backed `add()` or `build()` path. Large applications
