@@ -278,7 +278,9 @@ mutations, exceptions, or exports.
 
 A model enters the runtime through exactly two fixed sources: Python Entity
 Classes composed into a `MetamodelHub(*classes)`, or a canonical descriptor
-through the hub's descriptor factories. Sources are never mixed. Entity
+through the optional `parallax.descriptor` Descriptor Frontend. That frontend
+creates a Hub through a private first-party source seam; descriptor ingestion
+and export are not `MetamodelHub` methods. Sources are never mixed. Entity
 Classes are implicitly frozen Pydantic classes built by the Parallax
 metaclass; `frozen=True`, `EntityConfig`, `__parallax__`, `Field`,
 `Relationship`, `VoField`, and every registry surface are removed, not
@@ -598,15 +600,24 @@ set is:
 
 #### Canonical descriptor input
 
-Descriptor-backed hubs come from three classmethod factories that mirror the
-three export methods; there is no format sniffing (JSON is a YAML subset, so
-sniffing is unsound) and no path I/O — reading files is the caller's:
+The optional `parallax-descriptor` distribution exposes three module-level
+functions that create descriptor-backed hubs. There is no format sniffing
+(JSON is a YAML subset, so sniffing is unsound) and no filesystem or stream
+I/O — acquisition and persistence belong to the caller:
 
-| Factory | Input | Syntax phase |
+| Function | Input | Syntax phase |
 |---|---|---|
-| `MetamodelHub.from_descriptor(document)` | an already-decoded mapping | none — schema validation is its first gate; it never raises `DescriptorSyntaxError` |
-| `MetamodelHub.from_json(text)` | `str \| bytes` (UTF-8) JSON | yes — parse failure is `DescriptorSyntaxError` with `format="json"`, line/column, and cause |
-| `MetamodelHub.from_yaml(text)` | `str \| bytes` (UTF-8) YAML | yes — as above with `format="yaml"` |
+| `hub_from_document(document)` | an already-decoded `Mapping[str, object]` | none — schema validation is its first gate; it never raises `DescriptorSyntaxError` |
+| `hub_from_json(text)` | `str \| bytes` (UTF-8) JSON | yes — malformed UTF-8 or JSON is `DescriptorSyntaxError` with `format="json"`, optional line/column, and cause |
+| `hub_from_yaml(text)` | `str \| bytes` (UTF-8) YAML | yes — as above with `format="yaml"` |
+
+After every ingestion phase succeeds, the Descriptor Frontend adapts its
+immutable records to `UnresolvedMetamodel` and calls the private, versioned
+first-party seam
+`MetamodelHub._from_unresolved(source: UnresolvedMetamodel)`. That seam creates
+a fixed-source hub with no Entity Class binding inputs. It is not exported as
+a supported third-party frontend extension point, and there is no registration,
+discovery, or lazy-import mechanism.
 
 All three yield the same `UNSEALED` fixed-source hub on success. The phase
 boundaries are exact: syntax failures raise
@@ -618,8 +629,10 @@ schema-valid but unconstructible `decimal(0,9)`) raise
 `DescriptorValueError(descriptor-value-invalid)` before a hub exists; every
 semantic model rule fails later, inside `seal()`, as
 `MetamodelValidationError`. A document uses the schema's two top-level forms:
-`entity:` for one Entity or `entities:` for several. The same model flows
-through any door:
+`entity:` for one Entity or `entities:` for several. Successful ingestion
+converts the accepted input into immutable descriptor-owned records and
+retains no caller-owned mutable document. The same model flows through any
+door:
 
 ```yaml
 entities:
@@ -659,10 +672,34 @@ entities:
 ```
 
 ```python
-models = MetamodelHub.from_yaml(yaml_text)        # or from_json(json_text)
-models = MetamodelHub.from_descriptor(document)   # e.g. json.loads(json_text)
+from parallax.descriptor import hub_from_document, hub_from_json, hub_from_yaml
+
+models = hub_from_yaml(yaml_text)       # or hub_from_json(json_text)
+models = hub_from_document(document)    # e.g. json.loads(json_text)
 models.seal()
 ```
+
+The same package exports a sealed class-backed or descriptor-backed hub
+through `export_document(hub) -> dict[str, object]`,
+`export_json(hub) -> str`, or `export_yaml(hub) -> str`.
+`export_document` returns a fresh tree of ordinary mappings, lists, and
+JSON-compatible scalar values. Export from `UNSEALED`, internal `SEALING`, or
+`REJECTED` propagates the Hub's `MetamodelStateError`; it is not wrapped as a
+descriptor error. Export from `SEALED` renews no validation, performs no state
+change, and retains no descriptor cache. Repeated document results are
+structurally equal and repeated text results byte-identical. Unexpected
+conversion or serialization defects raise
+`DescriptorExportError(code="descriptor-export-failed")` with target
+`document`, `json`, or `yaml` and the original cause, return no partial output,
+and leave the hub sealed.
+
+`parallax.descriptor` publicly exports the ingestion base
+`DescriptorError(ValueError)` and its `DescriptorSyntaxError`,
+`DescriptorSchemaError`, and `DescriptorValueError` subclasses; the frozen
+`DescriptorSchemaViolation` and `DescriptorValueViolation` records; and the
+separate `DescriptorExportError(RuntimeError)`. Export failure is an adapter
+defect rather than invalid descriptor input, so `DescriptorExportError` is not
+a `DescriptorError`. None of these names is re-exported from `parallax.core`.
 
 The equivalent class declaration — the two frontends converge on the same
 accepted Metamodel and canonical export:
@@ -747,9 +784,10 @@ class Truck(Vehicle, table="truck", inheritance=ConcreteSubtype):
   members and exposes no effective `table`, `temporal`, relationship-target,
   family, or similar convenience aliases. Owner-specific derived behavior is
   obtained from the hub's compiled facets. Canonical descriptor export is a
-  hub operation, not a method on an Entity metadata view. Class-backed and
-  descriptor-backed hubs return the same compiler-owned objects; there is no
-  package-global `meta(...)` registry lookup or parallel `EntityMeta` graph.
+  Descriptor Frontend operation over a sealed hub, not a hub or Entity
+  metadata method. Class-backed and descriptor-backed hubs return the same
+  compiler-owned objects; there is no package-global `meta(...)` registry
+  lookup or parallel `EntityMeta` graph.
 - **Neutral scalar type mapping.** No lossy coercions; validation at build
   time; the database never sees an invalid value.
 
@@ -767,13 +805,17 @@ class Truck(Vehicle, table="truck", inheritance=ConcreteSubtype):
   | `json` (value object) | nested frozen value-object class | the VO class instance; never a raw dict | structured column per dialect |
   | `json` (direct, `Attr[Json]`) | `Json` — `bool`/`int`/`float`/`str` leaves, `tuple[JsonNode, ...]` arrays, `JsonObject` objects | any `str`-keyed `Mapping`, any non-`str`/`bytes` `Sequence`, `bool`/`int`/`float`/`str` leaves, nested `None`; converted recursively to the immutable carriers; non-`str` keys, non-finite floats, a bare top-level `None`, and any other object rejected | structured column per dialect |
 
-- **Metamodel serde ownership.** Source owner `parallax.core.descriptor`
-  (enforcement scope of the same name), shipped in the `parallax-core`
-  artifact. JSON and YAML canonicalization tests run in the unit lane
+- **Metamodel serde ownership.** Source owner and enforcement scope
+  `parallax.descriptor`, shipped in the separately installable
+  `parallax-descriptor` artifact. Its complete public surface is
+  `hub_from_document`, `hub_from_json`, `hub_from_yaml`, `export_document`,
+  `export_json`, `export_yaml`, and the descriptor error/violation types listed
+  above; descriptor records, serde, schema machinery, and adapters are private.
+  JSON and YAML canonicalization tests run in the unit lane
   (`uv run pytest -m unit`), and every corpus descriptor must import, export
-  deterministically, and re-export structurally equal to its canonical
-  corpus spelling (`m-descriptor` "Metamodel serde": the canonicalization
-  law and its omission set).
+  deterministically, and re-export structurally equal to its canonical corpus
+  spelling (`m-descriptor` "Metamodel serde": the canonicalization law and its
+  omission set).
 
 ### Code generation or runtime realization
 
@@ -1345,13 +1387,17 @@ and `parallax.core.relationship` scopes.
 composition root; its declared grants are exactly the formation runner plus every
 module whose Formation Manifest row supplies a Rule Set or compiler, and
 `m-pk-gen` supplies neither and is not imported. Every behavioral scope reaches
-the metamodel it needs through `m-metamodel` and the typed owner facets; only
-the entity frontend below still reads descriptor records directly, through its
-one sanctioned support-scope grant. import-linter forbids every production
-scope-pair import the DAG does not permit — the generated forbidden-edge
-complement below, with the conformance-family scopes exempted as importers
-per `modules.md` — so illegal non-edges are rejected, not merely wrong
-directions; artifact co-location never legalizes a forbidden edge.
+the metamodel it needs through `m-metamodel` and the typed owner facets.
+`m-descriptor` maps to the separate `parallax.descriptor` scope and imports the
+common runtime only through its language-neutral `m-core` and `m-metamodel`
+edges. Its private child support scope `parallax.descriptor._hub` alone imports
+the Python-specific Hub-construction seam in `parallax.core.entity`; no
+common-runtime, Snapshot, or Postgres scope imports the descriptor package.
+import-linter forbids every production scope-pair import the DAG does not
+permit — the generated forbidden-edge complement below, with the
+conformance-family scopes exempted as importers per `modules.md` — so illegal
+non-edges are rejected, not merely wrong directions; artifact separation never
+legalizes a forbidden edge.
 
 | Behavioral/support module | Source owner/path | Enforcement scope | Allowed direct dependencies | Enforcement rule/config |
 |---|---|---|---|---|
@@ -1359,7 +1405,7 @@ directions; artifact co-location never legalizes a forbidden edge.
 | `m-metamodel` | `parallax.core.metamodel` | `parallax.core.metamodel` | `m-core` | generated forbidden contracts |
 | `m-model-formation` | `parallax.core.model_formation` | `parallax.core.model_formation` | `m-metamodel` | generated forbidden contracts |
 | Model formation composition root (support) | `parallax.core._formation_profile` | `parallax.core._formation_profile` | `m-metamodel`, `m-model-formation`, `m-inheritance`, `m-value-object`, `m-relationship`, `m-temporal-read`, `m-opt-lock` | generated forbidden contracts |
-| `m-descriptor` | `parallax.core.descriptor` | `parallax.core.descriptor` | `m-core`, `m-metamodel` | generated forbidden contracts |
+| `m-descriptor` | `parallax.descriptor` | `parallax.descriptor` | `m-core`, `m-metamodel` | generated forbidden contracts + cross-package contract |
 | `m-pk-gen` | `parallax.core.pk_gen` | `parallax.core.pk_gen` | `m-metamodel` | generated forbidden contracts |
 | `m-inheritance` | `parallax.core.inheritance` | `parallax.core.inheritance` | `m-metamodel`, `m-model-formation` | generated forbidden contracts |
 | `m-value-object` | `parallax.core.value_object` | `parallax.core.value_object` | `m-metamodel`, `m-model-formation` | generated forbidden contracts |
@@ -1386,16 +1432,23 @@ directions; artifact co-location never legalizes a forbidden edge.
 | `m-case-format` | `parallax.conformance.case_format` (dev-only) | `parallax.conformance.case_format` | `m-core` | generated forbidden contracts (dev tree) |
 | `m-conformance-adapter` | `parallax.conformance.cli` (dev-only) | `parallax.conformance.cli` | `m-case-format`, plus any claimed behavioral or support scope it harnesses — the core conformance-family exception | generated forbidden contracts (dev tree) |
 | `m-api-conformance` | `languages/python/tests/api_conformance` (dev-only) | `tests.api_conformance` | `m-case-format` (harnesses the public surface) | pytest collection boundary |
-| Entity and statement frontend (support) | `parallax.core.entity` | `parallax.core.entity` | `m-core`, `m-descriptor`, `m-metamodel`, `m-inheritance`, `m-relationship`, `m-op-algebra`, `m-temporal-read`, `parallax.core._formation_profile` | generated forbidden contracts |
+| Descriptor Hub orchestration (support, child of `parallax.descriptor`) | `parallax.descriptor._hub` | `parallax.descriptor._hub` | `parallax.core.entity` (private Hub-construction seam only) | generated forbidden contracts + cross-package contract |
+| Entity and statement frontend (support) | `parallax.core.entity` | `parallax.core.entity` | `m-core`, `m-metamodel`, `m-inheritance`, `m-relationship`, `m-op-algebra`, `m-temporal-read`, `parallax.core._formation_profile` | generated forbidden contracts |
 | Concrete Postgres adapter (support) | `parallax.postgres.adapter` | `parallax.postgres` | `m-core`, `m-db-port`, `m-db-error`, `m-dialect`, psycopg | generated forbidden contracts + cross-package contract |
 | Composition root (support) | application/test code calling `parallax.snapshot.connect` | (application-owned) | `parallax.snapshot`, `parallax.postgres` | only the root imports a concrete adapter |
 
 Behavioral modules carry a module tag, so their allowed direct dependencies are
 already machine-readable from the fenced `dependency-graph` block in
-`core/spec/modules.md`. Support scopes carry no tag, so their rows above are the
-only declaration of their edges. The fenced `support-scope-graph` block below is
-the machine-readable form of exactly those rows, written in the same
-`A --> B` grammar and naming enforcement scopes on both sides.
+`core/spec/modules.md`. Support scopes carry no tag, and a behavioral scope may
+also need a Python-only support edge that has no language-neutral module tag;
+their rows above are the only declaration of those edges. The fenced
+`support-scope-graph` block below is the machine-readable form of exactly those
+support edges, written in the same `A --> B` grammar and naming enforcement
+scopes on both sides.
+`parallax.descriptor._hub --> parallax.core.entity` is the descriptor
+distribution's sole Python-only edge; the parent `m-descriptor` scope's
+`m-core` and `m-metamodel` edges remain language-neutral and come from
+`core/spec/modules.md`.
 The prose rows and the block MUST agree. `tools/check_dag_sync.py` parses
 **both** — the rows' "Allowed direct dependencies" column and the block — and
 fails when they disagree with each other or when its own `SUPPORT_SCOPE_DEPS`
@@ -1412,8 +1465,8 @@ parallax.core._formation_profile --> parallax.core.value_object
 parallax.core._formation_profile --> parallax.core.relationship
 parallax.core._formation_profile --> parallax.core.temporal_read
 parallax.core._formation_profile --> parallax.core.opt_lock
+parallax.descriptor._hub --> parallax.core.entity
 parallax.core.entity --> parallax.core.base
-parallax.core.entity --> parallax.core.descriptor
 parallax.core.entity --> parallax.core.metamodel
 parallax.core.entity --> parallax.core.inheritance
 parallax.core.entity --> parallax.core.relationship
@@ -1532,18 +1585,19 @@ parallax.postgres --> parallax.core.dialect
   its own private implementation modules when the child's declared grants are
   materially narrower than the parent's closure. The two declared children of
   `parallax.snapshot.handle` are the wrapping leaf and the write-lowering
-  cluster; both are generated exactly like any other scope, and neither is a
-  new supported import path. Because import-linter's `forbidden` contracts are
-  package-scoped on both sides, a child is emitted only as a contract
-  **source**: naming it as a forbidden target of its own parent would overlap
-  the parent's source package and be skipped, and the parent's existing row
-  already forbids the same targets for every descendant. The handle scope
-  declares no `m-pk-gen` grant: nothing under `parallax.snapshot.handle`
-  imports primary-key generation, so the generated complement forbids it. The
-  unused direct `m-navigate` grant is retained on purpose — navigation stays
-  reachable through `m-snapshot-read` → `m-deep-fetch` → `m-navigate`, so
-  removing it would forbid nothing while contradicting the deliberate edge
-  described above.
+  cluster; `parallax.descriptor._hub` is likewise a private child whose sole
+  extra grant is the first-party Hub seam. All are generated exactly like any
+  other scope, and none is a new supported import path. Because
+  import-linter's `forbidden` contracts are package-scoped on both sides, a
+  child is emitted only as a contract **source**: naming it as a forbidden
+  target of its own parent would overlap the parent's source package and be
+  skipped, and the parent's existing row already forbids the same targets for
+  every descendant. The handle scope declares no `m-pk-gen` grant: nothing
+  under `parallax.snapshot.handle` imports primary-key generation, so the
+  generated complement forbids it. The unused direct `m-navigate` grant is
+  retained on purpose — navigation stays reachable through `m-snapshot-read`
+  → `m-deep-fetch` → `m-navigate`, so removing it would forbid nothing while
+  contradicting the deliberate edge described above.
 - **Filesystem ownership.** `languages/python/tools/check_scope_ownership.py`
   walks every `packages/*/src/**/*.py` file in the production distributions and
   proves it resolves to exactly one **most-specific** enforcement scope of this
@@ -1558,8 +1612,12 @@ parallax.postgres --> parallax.core.dialect
 - **Scopes sharing one artifact.** Every behavioral module in `parallax-core`
   is its own submodule; the generated forbidden contracts operate at
   submodule granularity, so co-location in one wheel cannot legalize a
-  forbidden edge. Cross-package contracts forbid `core → snapshot`,
-  `core → postgres`, and `snapshot → postgres` in both metadata and imports.
+  forbidden edge. Cross-package contracts permit the production artifact edges
+  `descriptor → core`, `snapshot → core`, and `postgres → core` only.
+  Consequently core cannot import descriptor, Snapshot, or Postgres;
+  descriptor cannot import Snapshot or Postgres; and Snapshot and Postgres
+  cannot import one another or descriptor. The development-only conformance
+  family may import every artifact it harnesses.
 - **Database seam scopes.** Pure dialect strategy in `parallax.core.dialect`
   (driver-free), abstract port in `parallax.core.db_port`, error
   classification in `parallax.core.db_error`, the concrete adapter in
@@ -1576,29 +1634,30 @@ hatchling.
 
 | Artifact/package | Production or development-only | Included source scopes | External runtime dependencies | Depends on artifacts | Public exports/entry points |
 |---|---|---|---|---|---|
-| `parallax-core` (the common runtime) | production | all `parallax.core.*` scopes of §7 (behavioral modules, entity/statement frontend, driver-free postgres dialect strategy) | `pydantic`, `pyyaml` | (none) | `parallax.core`: the `Entity`/`TxTemporal`/`Bitemporal`/`ValueObject` bases, `Attr`, `Rel`, `attr`, `rel`, `index`, `desc`, `asc`, `Int32`, `Float32`, `Max`, `Sequence`, `Json`, `JsonObject`, the inheritance role and strategy values, `MetamodelHub`, statement API, `LATEST`, `VALID_TIME`, `TX_TIME`, `Pin`, `Edge`, `pin_of`, `edge_of`, `is_loaded`, `narrowed`, errors |
+| `parallax-core` (the common runtime) | production | all `parallax.core.*` scopes of §7 (behavioral modules, entity/statement frontend, driver-free postgres dialect strategy) | `pydantic` | (none) | `parallax.core`: the `Entity`/`TxTemporal`/`Bitemporal`/`ValueObject` bases, `Attr`, `Rel`, `attr`, `rel`, `index`, `desc`, `asc`, `Int32`, `Float32`, `Max`, `Sequence`, `Json`, `JsonObject`, the inheritance role and strategy values, `MetamodelHub`, statement API, `LATEST`, `VALID_TIME`, `TX_TIME`, `Pin`, `Edge`, `pin_of`, `edge_of`, `is_loaded`, `narrowed`, errors |
+| `parallax-descriptor` (descriptor interchange) | production, optional | `parallax.descriptor` (`m-descriptor` plus its private Hub orchestration) | `pyyaml`, `jsonschema` | `parallax-core` | `parallax.descriptor`: `hub_from_document`, `hub_from_json`, `hub_from_yaml`, `export_document`, `export_json`, `export_yaml`, `DescriptorError`, `DescriptorSyntaxError`, `DescriptorSchemaError`, `DescriptorValueError`, `DescriptorSchemaViolation`, `DescriptorValueViolation`, `DescriptorExportError` |
 | `parallax-snapshot` (snapshot lifecycle extension) | production | `parallax.snapshot.*` (`materialize`, `handle`) | (none beyond core) | `parallax-core` | `parallax.snapshot`: `connect()`, `Snapshot[T]`, `Execution` |
 | `parallax-postgres` (Postgres database adapter) | production | `parallax.postgres.*` (concrete port over psycopg) | `psycopg[binary]` (sole declarer) | `parallax-core` | `parallax.postgres`: `PostgresAdapter` |
-| `parallax-conformance` | development-only | `parallax.conformance.*` (CLI, case format, corpus loading, provider harness) | `testcontainers`, `jsonschema` | `parallax-core`, `parallax-snapshot`, `parallax-postgres` | `parallax-conformance` console script (`describe` / `compile` / `run`) |
+| `parallax-conformance` | development-only | `parallax.conformance.*` (CLI, case format, corpus loading, provider harness) | `testcontainers`, `jsonschema` | `parallax-core`, `parallax-descriptor`, `parallax-snapshot`, `parallax-postgres` | `parallax-conformance` console script (`describe` / `compile` / `run`) |
 
 - **Common runtime manifest proof.** `parallax-core`'s manifest declares only
-  `pydantic` and `pyyaml`; the clean-install check installs it alone and
-  proves `psycopg`, `parallax.snapshot`, testcontainers, and conformance
-  modules are absent from both the installed distribution list and the import
-  space.
-- **Descriptor text-ingestion schema phase.** `parallax.core.descriptor`'s
-  schema-validation phase (`m-descriptor` ingestion phase 2) evaluates
-  `core/schemas/metamodel.schema.json` with `jsonschema`, imported lazily
-  (function-local) so `parallax-core`'s declared manifest stays `pydantic` and
-  `pyyaml` alone — the table row above is unchanged. Only `parallax-conformance`
-  (dev-only) declares `jsonschema`, and only it ingests descriptor text; the
-  native Entity-class frontend never ingests text, so common-runtime code never
-  exercises this import. A caller reaching the schema phase without
-  `jsonschema` installed gets a clear, actionable error naming the missing
-  dependency rather than a bare `ImportError`.
+  `pydantic`; the clean-install check installs it alone and proves
+  `parallax-descriptor`, `pyyaml`, `jsonschema`, `psycopg`,
+  `parallax.snapshot`, testcontainers, and conformance modules are absent from
+  both the installed distribution list and the import space.
+- **Descriptor manifest and schema-resource proof.** `parallax-descriptor`
+  directly declares `parallax-core`, `pyyaml`, and `jsonschema`, so every
+  installed Descriptor Frontend can execute all three ingestion phases without
+  an optional-import failure branch. The language-neutral
+  `core/schemas/metamodel.schema.json` remains authoritative; the wheel and
+  sdist embed a byte-for-byte package-data copy loaded through
+  `importlib.resources`. Build and artifact checks compare the packaged
+  resource with the authoritative source and fail on drift. Runtime code never
+  searches repository-relative paths.
 - **Lifecycle extension manifest proof.** `parallax-snapshot` depends only on
   `parallax-core`; the clean-install check proves no sibling lifecycle
-  artifact exists in the graph and no concrete driver is present.
+  artifact, Descriptor Frontend, descriptor parser, schema validator, or
+  concrete driver is present.
 - **Adapter manifest proof.** `parallax-postgres` alone declares the driver,
   and it declares `psycopg[binary]`: the `binary` extra bundles a self-contained
   `libpq` in the wheel, so the adapter — and the clean-install topology proof
@@ -1612,12 +1671,13 @@ hatchling.
 - **Composition root.** Application/test code constructs the adapter and calls
   `parallax.snapshot.connect(adapter=...)`; neither dependency leaks into
   common-runtime code, and no umbrella artifact exists.
-- **Clean-install and runtime-load checks.** Three uv-venv fixtures
-  (`uv run pytest -m clean_install`): core alone; core + snapshot; core +
-  snapshot + postgres. Each inspects installed distributions and import-probes
-  to prove unselected lifecycles, adapters, drivers, conformance harnesses,
-  benchmarks, and container tooling are absent from the installed and loaded
-  production graph.
+- **Clean-install and runtime-load checks.** Four uv-venv fixtures
+  (`uv run pytest -m clean_install`): core alone; core + descriptor; core +
+  snapshot; core + snapshot + postgres. Each inspects installed distributions
+  and import-probes to prove unselected interchange, lifecycle, adapter,
+  driver, conformance, benchmark, and container dependencies are absent from
+  the installed and loaded production graph. The descriptor fixture also
+  imports its packaged schema and exercises one JSON and one YAML round trip.
 
 ## 9. Conditional capability decisions
 
@@ -1638,8 +1698,8 @@ subsection of the template is deleted from this completed spec.
 | Strict static typing | Pyright, strict mode, pinned version | `languages/python/pyrightconfig.json` | `uv run pyright` | `python-static` job | strict across production and tests; zero suppressions at spec time — any future suppression is listed and justified here |
 | Import-cycle detection | import-linter generated forbidden contracts | `[tool.importlinter]` | `uv run lint-imports` | `python-static` job | covers all production source scopes; the permitted closure is acyclic, so any cycle necessarily crosses a forbidden edge and fails |
 | Dead code and unused exports | vulture + griffe public-API snapshot test | `[tool.vulture]`; `languages/python/tests/api_surface/` | `uv run vulture && uv run pytest -m api_surface` | `python-static` job | limitation recorded: Python tooling cannot prove an export unused; compensating check is the API-surface snapshot diff, making every public-surface change a reviewed diff |
-| Built-artifact and public-export health | `uv build` + twine check + wheel-content pytest | `languages/python/tests/artifact/` | `uv build && uv run twine check dist/* && uv run pytest -m artifact` | `python-static` job | wheels contain no tests/conformance modules, include `py.typed`, declare correct entry points |
-| Clean-install production smoke tests | uv-venv fixtures | `languages/python/tests/clean_install/` | `uv run pytest -m clean_install` | `python-static` job | exercises all three §8 selective topologies in clean environments; presence of any unselected artifact fails |
+| Built-artifact and public-export health | `uv build` + twine check + wheel-content pytest | `languages/python/tests/artifact/` | `uv build && uv run twine check dist/* && uv run pytest -m artifact` | `python-static` job | wheels contain no tests/conformance modules, include `py.typed`, declare correct entry points; `parallax-descriptor` contains the authoritative-schema copy and its bytes match `core/schemas/metamodel.schema.json` |
+| Clean-install production smoke tests | uv-venv fixtures | `languages/python/tests/clean_install/` | `uv run pytest -m clean_install` | `python-static` job | exercises all four §8 selective topologies in clean environments; presence of any unselected artifact fails |
 | Supported language/runtime versions | CPython; `requires-python >= 3.12` | each distribution's `pyproject.toml` | (local dev on any supported minor) | CI matrix 3.12 / 3.13 / 3.14 | support current + two prior minors; drop on upstream EOL; floor raises are reviewed spec changes |
 | Dependency and supply-chain audit | committed `uv.lock` + `uv lock --check` + pip-audit + scheduled `uv lock --upgrade` refresh | `languages/python/uv.lock` | `uv lock --check && uv run pip-audit` | `python-static` job on every PR, plus a monthly scheduled CI job opening a `uv lock --upgrade` refresh PR | high-severity findings block; exceptions carry owner + expiry inline; lockfile drift fails; freshness: the monthly upgrade PR is human-reviewed like any change and may not be merged red |
 | Compatibility Conformance Suite | pytest conformance runner + jsonschema envelope validation | `languages/python/tests/conformance/` | `uv run pytest -m compile_sweep` (Docker-free) and `uv run pytest -m conformance` (`pg-full`) | `python-static` (compile sweep) + `python-database` (run sweep) | selection = active slice ∩ capability tags; every envelope validates against `conformance-adapter.schema.json` |

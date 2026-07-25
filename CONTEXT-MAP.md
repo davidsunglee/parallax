@@ -7,4 +7,4 @@
 
 ## Relationships
 
-- **Parallax Python -> Parallax Core**: The Python implementation realizes the core contract's snapshot lifecycle with class-authored models over a metamodel hub; descriptors are derived output on the developer path and direct input on the conformance path.
+- **Parallax Python -> Parallax Core**: The Python implementation realizes the core contract's snapshot lifecycle with class-authored models over a Metamodel Hub; an optional Descriptor Frontend translates canonical descriptor input and output at the context boundary without making interchange a Hub responsibility.

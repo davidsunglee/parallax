@@ -52,8 +52,9 @@ during whole-model sealing. Descriptor-backed construction likewise rejects an
 empty Entity source during schema parsing, so every Unresolved Metamodel is
 nonempty before formation.
 
-Descriptor-backed construction separates representation failures from model
-semantics. Invalid JSON/YAML raises
+The separately installable Descriptor Frontend creates descriptor-backed hubs
+through the Hub's private first-party Unresolved-source seam and separates
+representation failures from model semantics. Invalid JSON/YAML raises
 `DescriptorSyntaxError(code="descriptor-invalid-syntax")` with format,
 optional one-based source coordinates, and parser cause. A decoded document
 outside the canonical schema raises
@@ -70,10 +71,11 @@ an `UNSEALED` hub;
 all reference and semantic failures then use `MetamodelValidationError` and
 semantic Model Locations during sealing.
 
-Every sealed hub supports pure canonical export without renewed validation.
-Repeated descriptor documents are structurally equal, and repeated JSON/YAML
-results are byte-identical. Sealing does not eagerly export or retain a mirrored
-descriptor graph. An unexpected conversion or serialization defect raises
+The Descriptor Frontend can canonically export every sealed hub without
+renewed validation. Repeated descriptor documents are structurally equal, and
+repeated JSON/YAML results are byte-identical. The Hub exposes no descriptor
+method, and sealing does not eagerly export or retain a mirrored descriptor
+graph. An unexpected conversion or serialization defect raises
 `DescriptorExportError(code="descriptor-export-failed")` with target
 `document`, `json`, or `yaml` and the original cause, returns no partial output,
 and leaves the hub `SEALED`; export from any other hub state raises
@@ -133,7 +135,7 @@ guarantee. Every claimed class points to this same Metamodel Binding, so no
 metadata is copied per class.
 
 Runtime consumers receive the Metamodel Binding, never hub construction,
-sealing, export, connection, or other lifecycle operations. An **Entity Class
+sealing, connection, or other lifecycle operations. An **Entity Class
 Binding** is only one class-to-Entity-Identity association within it, not a
 second metadata implementation or necessarily another concrete value type.
 Descriptor-backed hubs have neither kind of Python binding. Consequently
@@ -487,14 +489,15 @@ callers; top-level `parallax.core` does not. For a valid Snapshot node,
 `is_loaded` remains the nonthrowing preflight operation.
 
 Before sealing, ordinary frozen values may be constructed, but model-dependent
-operations such as queries, metadata lookup and export, and database-handle
+operations such as queries, metadata lookup, Descriptor Frontend export, and database-handle
 binding fail. An Entity Class belongs permanently to at most one sealed hub
 for that class object's lifetime. Each Find Query carries that hub's identity,
 every database handle is permanently paired with the same sealed hub, and
 cross-hub execution is rejected before adapter or SQL work. There is no
 default or parent registry, ambient lookup, class-list scope inference, public
-incremental registration API, or unbind/reset path; descriptor-backed hubs use
-a separate fixed-source factory and do not create Entity Class bindings.
+incremental registration API, or unbind/reset path; descriptor-backed hubs
+enter through the Descriptor Frontend's private fixed-source seam and do not
+create Entity Class bindings.
 
 Every Attribute Expression, Relationship Path including narrowing, Predicate,
 Assignment, Sort Key, and Find Query carries the opaque exact hub identity.

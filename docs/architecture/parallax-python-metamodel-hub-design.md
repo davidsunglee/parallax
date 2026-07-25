@@ -5,8 +5,9 @@
 **Accepted:** 2026-07-20
 
 **Scope:** Candidate 06 in the Python architecture review; the core metadata
-contract it revealed; and the Python `parallax.core.entity` frontend,
-introspection, query, row translation, provenance, and Snapshot-handle seams.
+contract it revealed; the Python `parallax.core.entity` frontend; the optional
+`parallax.descriptor` interchange boundary; introspection, query, row
+translation, provenance, and Snapshot-handle seams.
 
 ## Purpose
 
@@ -34,6 +35,8 @@ The relationship-ownership decision is recorded in
 [ADR 0032](../adr/0032-relationship-formation-belongs-to-m-relationship.md).
 The Python assembly decision is recorded in
 [Python ADR 0007](../../languages/python/docs/adr/0007-entity-classes-compose-into-explicit-sealed-metamodel-hubs.md).
+The descriptor-distribution boundary is recorded in
+[Python ADR 0008](../../languages/python/docs/adr/0008-descriptor-interchange-is-separate-from-the-metamodel-hub.md).
 
 ## Desired developer surface
 
@@ -73,6 +76,16 @@ Entity Classes are always frozen. Pydantic's `frozen=True`, `EntityConfig`,
 `__parallax__`, `registry=`, explicit registration calls, and default registry
 selection are not part of the target interface.
 
+Descriptor interchange is explicitly optional and external to the Hub API:
+
+```python
+from parallax.descriptor import export_yaml, hub_from_yaml
+
+models = hub_from_yaml(yaml_text)
+models.seal()
+canonical_yaml = export_yaml(models)
+```
+
 ## Settled design
 
 ### One explicit model scope
@@ -80,9 +93,11 @@ selection are not part of the target interface.
 - `MetamodelHub` is the sole Python model scope.
 - There is no process-global default, parent registry, `ScopedMetamodel`,
   ambient fallback, or inference of a scope from an arbitrary class list.
-- A hub has exactly one fixed source: Entity Classes or a canonical descriptor.
-  Sources cannot be mixed and classes cannot be late-bound into a
-  descriptor-backed hub.
+- A hub has exactly one fixed source: Entity Classes supplied to its public
+  constructor, or an Unresolved Metamodel supplied through a private,
+  first-party construction seam. The optional Descriptor Frontend owns the
+  latter call after accepting a canonical descriptor. Sources cannot be mixed
+  and classes cannot be late-bound into a descriptor-backed hub.
 - One Entity Class may be bound to only one successfully sealed hub.
 
 ### Class declaration and model composition are separate
@@ -235,14 +250,14 @@ only through Entity declarations and is not passed to the hub separately.
   errors expose the zero-based offending argument index. Distinct class
   objects that declare the same Entity Identity are valid constructor inputs
   and become an aggregated whole-model issue during `seal()`.
-- Canonical descriptor input uses three separate fixed-source classmethod
-  factories mirroring the three export methods:
-  `MetamodelHub.from_descriptor(document)` for an already-decoded mapping
-  (no syntax phase — schema validation is its first gate), and
-  `MetamodelHub.from_json(text)` / `MetamodelHub.from_yaml(text)` for
-  `str | bytes` UTF-8 text. There is no format sniffing — JSON is a YAML
-  subset, so sniffing is unsound — and no path I/O; reading files is the
-  caller's. Descriptor ingestion has three explicit phases. Invalid JSON/YAML text raises
+- Canonical descriptor input belongs to the separately installable
+  `parallax.descriptor` frontend. Its public `hub_from_document(document)`
+  accepts a decoded `Mapping[str, object]` with no syntax phase, while
+  `hub_from_json(text)` and `hub_from_yaml(text)` accept `str | bytes` UTF-8
+  content. There is no format sniffing — JSON is a YAML subset, so sniffing is
+  unsound — and no filesystem or stream I/O; acquisition belongs to the
+  caller. Malformed UTF-8 is a syntax failure for the selected format.
+  Descriptor ingestion has three explicit phases. Invalid JSON/YAML text raises
   `DescriptorSyntaxError(code="descriptor-invalid-syntax")` before a hub
   exists, carrying its format, optional one-based line/column, and parser
   cause. A decoded document that violates the canonical schema raises
@@ -256,6 +271,12 @@ only through Entity declarations and is not passed to the hub separately.
   Only a document every phase accepts creates an `UNSEALED` hub; missing
   references, invalid families, relationship incoherence, and all other model
   semantics then fail through `MetamodelValidationError` during `seal()`.
+  Successful ingestion converts caller input into immutable descriptor-owned
+  records, retains no caller-owned mutable document, adapts those records to
+  `UnresolvedMetamodel`, and calls the private, versioned first-party seam
+  `MetamodelHub._from_unresolved(source)`. That seam is not a supported
+  third-party extension point; no registration, discovery, callback, or lazy
+  import supplies it.
 - `DescriptorError(ValueError)` is the public descriptor-ingestion base.
   `DescriptorSchemaViolation` contains a structured document path of string
   keys and nonnegative array indices, a stable schema-rule name, and an
@@ -264,6 +285,9 @@ only through Entity declarations and is not passed to the hub separately.
   Violations sort by the typed path and then rule name;
   message and validator emission order do not participate. Descriptor document
   paths never enter `MetamodelIssue` or semantic `ModelLocation` values.
+  `DescriptorError`, its three ingestion subclasses, both frozen violation
+  records, and the separate `DescriptorExportError(RuntimeError)` are exported
+  only from `parallax.descriptor`; `parallax.core` re-exports none of them.
 
 ### Explicit sealing
 
@@ -779,16 +803,16 @@ only through Entity declarations and is not passed to the hub separately.
   `metamodel-duplicate-entity-class`. The latter two expose the zero-based
   offending argument index; `metamodel-empty` has no index. It never
   represents a duplicate Entity Identity across distinct valid classes.
-- `DescriptorError(ValueError)` is the base for descriptor ingestion before a
-  hub exists. `DescriptorSyntaxError` uses stable code
+- The optional Descriptor Frontend owns `DescriptorError(ValueError)`, the base
+  for descriptor ingestion before a hub exists. `DescriptorSyntaxError` uses stable code
   `descriptor-invalid-syntax`; `DescriptorSchemaError` uses
   `descriptor-schema-invalid` and exposes canonical structured violations;
   `DescriptorValueError` uses `descriptor-value-invalid` and exposes the same
   violation shape over `m-descriptor`'s value-rule vocabulary.
   None is a `MetamodelValidationError`, whose locations are semantic rather
   than document-relative.
-- `DescriptorExportError(RuntimeError)` is the descriptor adapter-defect
-  boundary after successful sealing. It has stable code
+- The Descriptor Frontend's separate `DescriptorExportError(RuntimeError)` is
+  the descriptor adapter-defect boundary after successful sealing. It has stable code
   `descriptor-export-failed`, identifies `document`, `json`, or `yaml`, and
   preserves the cause. It never rejects or mutates the sealed hub and never
   exposes partial output.
@@ -1253,8 +1277,11 @@ only through Entity declarations and is not passed to the hub separately.
   semantics remain
   owned by their existing modules. Stable effective metadata may be compiled
   once into those modules' immutable facets; `m-metamodel` does not absorb it.
-- `m-descriptor` continues to own the exact canonical JSON/YAML document,
-  schema, deterministic serde, corpus interchange, and export adapter.
+- `m-descriptor`, implemented by the optional `parallax.descriptor` scope,
+  continues to own the exact canonical JSON/YAML document, schema,
+  deterministic serde, corpus interchange, Unresolved Metamodel adapter, and
+  accepted-Metamodel export adapter. Descriptor records and conversion helpers
+  are private and no common-runtime source imports them.
 - Class and descriptor frontends each expose an Unresolved Metamodel input
   view. The shared compiler produces the one accepted Metamodel and lookup
   indexes. A class-backed hub delegates that object and adds Entity Class
@@ -1393,13 +1420,16 @@ only through Entity declarations and is not passed to the hub separately.
   such as `inheritance.view(models)`; callers do not enumerate facets or
   construct keys. The accepted Metamodel stores no contributor objects and the
   runner creates no ambient registry.
-- `models.to_descriptor()`, `models.to_json()`, and `models.to_yaml()` perform
-  explicit canonical representation conversion. Export is a method rather
-  than a `.descriptor` property because it may allocate a complete document.
-  An unsealed or rejected hub raises `MetamodelStateError`; every sealed
-  Metamodel is exportable by contract without renewed validation or state
-  change. Repeated document exports are structurally equal, and repeated JSON
-  or YAML exports are byte-identical.
+- The optional Descriptor Frontend's `export_document(models)`,
+  `export_json(models)`, and `export_yaml(models)` functions perform explicit
+  canonical representation conversion over a sealed Hub. `MetamodelHub`
+  exposes no descriptor export method or property. An unsealed, internally
+  sealing, or rejected hub propagates its `MetamodelStateError`; that lifecycle
+  failure is not wrapped as a descriptor error. Every sealed Metamodel is
+  exportable by contract without renewed validation or state change.
+  `export_document` returns a fresh tree of ordinary mappings, lists, and
+  JSON-compatible scalar values. Repeated document exports are structurally
+  equal, and repeated JSON or YAML exports are byte-identical `str` values.
 - Export is pure and returns its complete result or raises; it emits no partial
   output. An unexpected conversion or serialization defect raises
   `DescriptorExportError(code="descriptor-export-failed")`, carrying target
@@ -1761,6 +1791,18 @@ only through Entity declarations and is not passed to the hub separately.
 ## Target source topology
 
 ```text
+parallax/descriptor/
+  __init__.py
+  _errors.py
+  _records.py
+  _ingest.py
+  _serde.py
+  _adapter.py
+  _hub.py
+  _export.py
+  _schemas/
+    metamodel.schema.json
+
 parallax/core/
   _formation_profile.py
 
@@ -1773,9 +1815,6 @@ parallax/core/
 
   relationship/
     __init__.py
-
-  descriptor/
-    ...
 
   entity/
     __init__.py
@@ -1814,13 +1853,34 @@ does not own navigation execution. The private
 built-in Formation Manifest data and complete built-in contributor profile;
 the runner drift-checks the two and contract tooling checks manifest/catalog
 consistency.
-`parallax.core.descriptor` owns canonical document parsing, serde, and adapters
-to and from that interface. Its public seam exposes `DescriptorError`,
-`DescriptorSyntaxError`, `DescriptorSchemaError`,
-`DescriptorSchemaViolation`, and `DescriptorExportError`; these are not
-top-level `parallax.core` conveniences. `parallax.core.entity` is the sole supported Python
-Entity frontend; its underscored modules are implementation details rather than
+The separately installable `parallax.descriptor` scope owns canonical document
+parsing, schema validation, private records, serde, and adapters to and from
+that interface. Its complete public seam is the three `hub_from_*` functions,
+the three `export_*` functions, the `DescriptorError` ingestion hierarchy,
+both violation records, and `DescriptorExportError`; no record or conversion
+helper is public. `parallax.core.entity` is the sole supported Python Entity
+frontend; its underscored modules are implementation details rather than
 additional caller seams.
+
+### Descriptor artifact boundary
+
+- The `parallax-descriptor` distribution owns `parallax.descriptor`, depends on
+  `parallax-core`, and directly declares `pyyaml` and `jsonschema`.
+  `parallax-core` retains `pydantic` as its only external runtime dependency.
+- The language-neutral `core/schemas/metamodel.schema.json` file remains
+  authoritative. Descriptor wheels and source distributions embed a
+  byte-for-byte package-data copy loaded through `importlib.resources`; build
+  and artifact checks fail on drift, and runtime code never searches
+  repository-relative paths.
+- The production artifact graph permits `descriptor -> core` and never the
+  reverse. Snapshot and Postgres neither import nor depend on descriptor;
+  development-only conformance depends on it where descriptor interchange is
+  required.
+- Clean-install verification covers core alone, core plus descriptor, core
+  plus Snapshot, and core plus Snapshot plus Postgres. Core-alone and
+  Snapshot fixtures prove descriptor, YAML, and schema dependencies are
+  absent; the descriptor fixture imports the packaged schema and exercises
+  JSON and YAML round trips.
 
 ### Internal ownership
 
@@ -1831,9 +1891,13 @@ additional caller seams.
 | `model_formation._runner` | Deterministic resolve-validate-compile execution, issue aggregation, and immutable facet assembly; no contributor imports or semantic rules. |
 | `relationship.__init__` | Relationship formation rules and issue codes, symmetric Relationship Metadata compilation, typed Relationship Facet access, and no navigation execution. |
 | `_formation_profile` | Private composition root containing immutable built-in Formation Manifest data and the explicit, manifest-complete built-in Rule Set and compiler tuple. |
+| `descriptor.__init__` | The narrow public Descriptor Frontend: Hub ingestion/export functions and descriptor error/violation exports only. |
+| `descriptor._errors` | Descriptor ingestion and export errors plus immutable, canonically ordered schema/value violation records; no common-runtime implementation objects. |
+| `descriptor._hub` | Private public-function orchestration and the distribution's sole Python-specific support edge: it calls `MetamodelHub._from_unresolved` after successful ingestion and passes sealed Hubs to canonical export conversion. |
+| `descriptor` private conversion modules | Immutable descriptor records, JSON/YAML decoding and deterministic writing, packaged-schema validation, descriptor-to-Unresolved adaptation, and accepted-Metamodel canonical export. They expose no second public metadata API. |
 | `entity._binding` | Atomic class-claim synchronization and the one immutable Metamodel Binding per sealed class-backed hub: opaque hub identity, accepted-Metamodel reference, bidirectional Entity Identity/Class index, and private strong owner reference. It owns no model facts, exposes no hub lifecycle surface, and provides no unbind/reset path. |
 | `entity._declaration` | Shared lower-level Pydantic metaclass engine for Entity and Value Object classes, typed header/annotation parsing through `_members`, immutable declaration payloads and private kind markers, and immediate class-shape validation. It imports neither concrete frontend class nor expression behavior. |
-| `entity._hub` | `MetamodelHub`, fixed-source construction, seal state, delegation to the one accepted Metamodel, adapter selection, class binding, introspection, and export orchestration. It owns no accepted Metadata/facet copies or independent normalized accepted-metadata indexes. |
+| `entity._hub` | `MetamodelHub`, public fixed-class construction, private first-party Unresolved-source construction, seal state, delegation to the one accepted Metamodel, class binding when applicable, and introspection. It owns no descriptor behavior, accepted Metadata/facet copies, or independent normalized accepted-metadata indexes. |
 | `entity._entity` | The small frozen `Entity` façade built on `_declaration`, plus delegation to Find Query and Edited Copy behavior. |
 | `entity._expressions` | Pure immutable, hub-tagged operation nodes: Attribute Expressions, Relationship Paths including narrowing, Predicates, Assignments, and Sort Keys. Nodes receive hub identity and structured member identities explicitly, reject mixed-hub children, and perform no class lookup. |
 | `entity._query` | `FindQuery`, its chainable clauses, hub-identity checks, canonical operation construction, mutation-compatibility validation, and private ephemeral Predicate Selection normalization. |
@@ -1851,7 +1915,8 @@ additional caller seams.
 
 ```text
 behavioral modules ------------------------------> metamodel
-descriptor --------------------------------------> metamodel
+descriptor --------------------------------------> base + metamodel
+descriptor._hub ---------------------------------> entity._hub
 model_formation ---------------------------------> metamodel
 formation-contributing modules ------------------> model_formation
 _formation_profile ------------------------------> model_formation + contributors
@@ -1859,7 +1924,7 @@ entity._errors -------> metamodel
 entity._declaration --> entity._members + entity._errors + metamodel
 entity._value_object -> entity._declaration
 entity._hub ---------> entity._declaration + entity._binding
-entity._hub ---------> descriptor + metamodel + _formation_profile
+entity._hub ---------> metamodel + _formation_profile
 entity._hub ---------> entity._graph_construction + entity._rows
 entity._entity ------> entity._declaration + entity._binding
 entity._entity ------> entity._query + entity._rows
@@ -1879,7 +1944,13 @@ snapshot.handle._database -> snapshot._errors + metamodel
 - `metamodel` never imports `descriptor` or `entity`.
 - `model_formation` imports `metamodel` but never imports a contributing module;
   only `_formation_profile` knows the complete rule-set and compiler tuple.
-- `descriptor` never imports `entity`.
+- Only the descriptor façade/orchestration layer imports `MetamodelHub`, and
+  only to call `_from_unresolved` or read the sealed Metamodel interface.
+  Descriptor records, serde, schema validation, Unresolved adaptation, and
+  canonical conversion do not import Entity implementation modules.
+- No `parallax.core`, Snapshot, or Postgres source imports
+  `parallax.descriptor`; no compatibility module or lazy import hides a reverse
+  edge.
 - `_errors` imports only the standard library and class-free core
   identity/issue values. It imports no other `entity` implementation module,
   and its exceptions retain structured values rather than concrete hubs,
@@ -2385,9 +2456,12 @@ the corresponding `MODULE_SCOPE` entries in
 `languages/python/tools/check_dag_sync.py` are replaced in the same change:
 `m-metamodel`, `m-model-formation`, and `m-relationship` move to their own
 `parallax.core.metamodel`, `parallax.core.model_formation`, and
-`parallax.core.relationship` scopes, `parallax.core.descriptor` becomes the
-sole owner of its scope, and every behavioral row keeps mirroring the core
-DAG mechanically. The §7 table is normative.
+`parallax.core.relationship` scopes. COR-46 leaves the descriptor
+implementation temporarily in `parallax.core.descriptor`; COR-47 moves that
+whole source/enforcement scope to `parallax.descriptor`, removes the old scope,
+and adds the one Python-specific Descriptor-Frontend-to-Hub support edge.
+Every behavioral row otherwise keeps mirroring the core DAG mechanically. The
+§7 table is normative.
 
 **Composition root.** `parallax.core._formation_profile` becomes a declared
 §7 support scope. Its allowed direct dependencies are exactly the formation
@@ -2408,12 +2482,12 @@ the only honest declaration of its direct edges. (Behavioral scopes differ:
 behavioral module's reliance on a transitively reachable module remains
 by-design legal.) The §7 table is normative; the decisions behind it:
 
-- `parallax.core.entity` alone keeps `m-descriptor`: serialization is that
-  seam's concern — the temporary frontend adapter still reads the registry's
-  descriptor records, and the final hub owns descriptor ingestion and export.
-  Its row also declares the frontend's real direct imports that today ride
-  the closure undeclared: `m-core` (neutral values in `entity/statement.py`)
-  and `m-inheritance` (below).
+- During COR-46, `parallax.core.entity` alone keeps `m-descriptor` solely to
+  preserve the temporary registry frontend. COR-47 removes that grant:
+  `MetamodelHub` owns no descriptor ingestion or export, and
+  `parallax.descriptor` instead depends inward on the private Hub-construction
+  seam. The Entity row continues to declare its real direct `m-core` and
+  `m-inheritance` imports.
 - `parallax.snapshot.handle`'s row is completed the same way: its modules
   directly import `m-core`, `m-dialect`, `m-temporal-read`, `m-inheritance`,
   `m-op-algebra`, and `m-deep-fetch` today, and its descriptor-record reads
@@ -2450,16 +2524,14 @@ imports `parallax.core.inheritance` directly, which the closure-based
 generated complement permits (inheritance is transitively reachable through
 `m-op-algebra`) even though the current §7 row never declared it.
 
-**Enforcement effect.** After the flip, `parallax.core.descriptor` is
-reachable from no behavioral scope's transitive closure, so the regenerated
-forbidden-edge complement mechanically rejects a descriptor import from every
-behavioral scope — including `parallax.snapshot.materialize` — and from the
-write-lowering group. `parallax.snapshot.handle` and `._wrap` still reach the
-descriptor scope transitively through `parallax.core.entity`, so their
-descriptor-record independence is proven by the no-descriptor-record
-acceptance criteria and review rather than by the generated complement; the
-COR-51 legacy-surface deletion removes the record surface those paths could
-have reached.
+**Enforcement effect.** COR-46 makes `parallax.core.descriptor` unreachable
+from every behavioral scope except the temporary Entity frontend.
+COR-47 removes that last reverse edge and the old scope itself. The regenerated
+complement and cross-package contracts then reject `parallax.descriptor` from
+every common-runtime, Snapshot, Postgres, and write-lowering scope; only the
+development-only conformance family may import it. Descriptor records are
+private to their artifact, so no legacy public record surface remains for
+later slices to reach.
 
 Acceptance requires:
 
@@ -2559,8 +2631,10 @@ Acceptance requires:
   Formation Manifest data and the manifest-complete Rule Set/compiler profile;
   drift checks prove both manifest/profile and manifest/catalog consistency
   with no missing, duplicate, extra, or ambient contributors;
-- descriptor parsing and export implement that interface without importing the
-  Entity frontend;
+- descriptor parsing, schema, record, Unresolved-adapter, and export-conversion
+  layers implement that interface without importing the Entity frontend; only
+  the Descriptor Frontend orchestration layer imports `MetamodelHub` for its
+  private construction seam;
 - inheritance, temporal, navigation, SQL, read, and write behavior accepts any
   conforming Metamodel implementation, reads stable effective facts from its
   owner module's compiled facet — narrowed-position projection (the canonical
@@ -2579,9 +2653,11 @@ Acceptance requires:
   composition-root, and support-scope grants equal §7's normative tables
   ("Source-enforcement topology"), including the
   `parallax.core._formation_profile` row;
-- the regenerated import-linter complement forbids `parallax.core.descriptor`
-  imports from every behavioral scope and from the write-lowering scopes, and
-  no lazy import hides a cycle; and
+- the regenerated import-linter complement and artifact contracts forbid
+  `parallax.descriptor` imports from every common-runtime behavioral/support
+  scope and from Snapshot, Postgres, and the write-lowering scopes; no
+  `parallax.core.descriptor` compatibility scope or lazy import hides a cycle;
+  and
 - `just python-static` and `just python-verify` pass.
 
 ### COR-47 → COR-50 → COR-51 — Replace the Python Entity registry frontend
@@ -2594,7 +2670,8 @@ The complete frontend contract is delivered as three independently green
 slices:
 
 - COR-47 builds Entity and Value Object declarations, the sealed class-backed
-  Metamodel Hub, class binding, metadata lookup, and canonical export.
+  Metamodel Hub, class binding, metadata lookup, and the separately installable
+  Descriptor Frontend for descriptor-backed Hub creation and canonical export.
 - COR-50 adds hub-provenance operations and Find Queries, Database connection,
   exact-handle transaction nesting, and Snapshot graph materialization.
 - COR-51 completes Edited Copies, row translation, keyed and predicate-selected
@@ -2602,8 +2679,6 @@ slices:
 
 Temporary transition support between slices must remain private and is deleted
 by COR-51. Program-level acceptance requires:
-
-Acceptance requires:
 
 - Entity and Value Object declarations use the accepted class-header and
   `Attr`/`attr`/`Rel`/`rel` surface, explicit inheritance roles, the
@@ -2646,11 +2721,28 @@ Acceptance requires:
   (`DescriptorValueError(descriptor-value-invalid)`); none creates a hub or
   leaks document locations into semantic formation, and semantic model
   failures occur only during `seal()`;
+- `parallax-descriptor` owns `parallax.descriptor`, directly depends on
+  `parallax-core`, `pyyaml`, and `jsonschema`, and exposes exactly
+  `hub_from_document`, `hub_from_json`, `hub_from_yaml`, `export_document`,
+  `export_json`, `export_yaml`, the ingestion base and its three subclasses,
+  `DescriptorExportError`, and the two violation records; descriptor records,
+  serde, schema machinery, and adapters remain private;
+- the three ingestion functions accept the exact decoded-mapping or
+  `str | bytes` contracts, perform no filesystem/stream I/O, retain no
+  caller-owned mutable document, and create an unsealed Hub only through
+  `MetamodelHub._from_unresolved`; that private, versioned first-party seam has
+  no registration/discovery mechanism and promises no third-party frontend
+  compatibility;
+- `core/schemas/metamodel.schema.json` remains authoritative while descriptor
+  wheels and sdists embed an exact `importlib.resources`-loaded copy; artifact
+  verification fails on drift and installed runtime code never probes a
+  repository path;
 - canonical export is total and deterministic for a sealed hub, performs no
   renewed validation or state change, and constructs no descriptor cache at
   seal time; unexpected adapter defects raise
   `DescriptorExportError(descriptor-export-failed)` with target and cause while
-  leaving the hub sealed and returning no partial output;
+  leaving the hub sealed and returning no partial output, while unsealed or
+  rejected Hub errors propagate as `MetamodelStateError`;
 - the complete class set enters through `MetamodelHub(*classes)`, seal is an
   atomic single-flight `UNSEALED -> SEALED | REJECTED` transition, concurrent
   callers share one terminal outcome, re-entry fails without deadlock,
@@ -2683,6 +2775,10 @@ Acceptance requires:
   Metamodel, and descriptor-backed hubs create no such links;
 - class-backed and descriptor-backed hubs expose equivalent metadata and
   canonical exports without mirroring one another's record graph;
+- `MetamodelHub` exposes no descriptor factory or export method,
+  `parallax-core` contains no descriptor scope, record, re-export, YAML/schema
+  dependency, compatibility shim, registration hook, or reverse import, and
+  the §7/§8 enforcement and four clean-install topologies prove that boundary;
 - Find Queries, Predicates, direct class expressions, Edited Copies, and
   cross-hub rejection behave as specified;
 - intrinsically invalid operations raise `QueryDefinitionError`, while a valid

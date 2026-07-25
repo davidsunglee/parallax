@@ -52,13 +52,23 @@ related value.
 _Avoid_: navigation field, relationship property, foreign-key field
 
 **Metamodel Hub**:
-The explicit, self-contained model scope built by either frontend — Entity
-Classes on the developer path or canonical descriptors on the conformance
-path. The class-backed constructor receives the complete set of Entity Classes
-at once; importing or declaring a class never mutates a hub. The hub becomes
+The explicit, self-contained model scope owned by the common Python runtime.
+Its public constructor receives the complete set of Entity Classes at once;
+importing or declaring a class never mutates a hub. An optional Descriptor
+Frontend can produce the same model scope through a narrow source seam, but
+descriptor ingestion and export are not hub operations. The hub becomes
 authoritative when sealed, fixing its normalized declarations, compiled
-Metamodel Facets, Entity Class bindings, and model-relative name resolution.
-_Avoid_: schema registry, entity registry, ambient registry, dual model, class reflection cache
+Metamodel Facets, Entity Class bindings when applicable, and model-relative
+name resolution.
+_Avoid_: schema registry, entity registry, ambient registry, dual model, descriptor facade, class reflection cache
+
+**Descriptor Frontend**:
+The optional interchange boundary that translates canonical descriptor
+documents into unsealed Metamodel Hubs and sealed Metamodel Hubs back into
+canonical descriptor documents. It owns descriptor formats, parsing, schema
+checks, value conversion, serialization, and descriptor-specific errors while
+depending inward on the common Python runtime.
+_Avoid_: hub method, core descriptor module, serialization registry, runtime plugin
 
 **Metamodel Binding**:
 The one immutable Python realization of a successfully sealed class-backed
