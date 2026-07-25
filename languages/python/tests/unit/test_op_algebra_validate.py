@@ -170,9 +170,9 @@ _REJECTED_CASE_IDS = (
 
 
 def _rejected_target(meta: Metamodel) -> str:
-    from parallax.core import inheritance
+    from parallax.conformance._descriptor_family import family_of
 
-    root = inheritance.family_of(meta).root
+    root = family_of(meta).root
     return root.name if root is not None else meta.entities[0].name
 
 

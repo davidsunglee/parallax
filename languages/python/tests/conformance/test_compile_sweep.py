@@ -90,7 +90,7 @@ _INHERITANCE_TEMPORAL_READS: Final[frozenset[str]] = frozenset(
 # Transaction Time
 # through the TPCS concrete position, `m-inheritance-101` pins `Bond` Valid Time
 # through the TPH concrete position, tag predicate included). Both resolve the
-# inherited axis through `inheritance.declaring_entity` (the family root) exactly as
+# inherited axis through the family root (the descriptor's declaring entity) exactly as
 # `_INHERITANCE_TEMPORAL_READS`'s abstract-root reads do — a strategy/position
 # sibling, not a new lowering mechanism — so both compile byte-exact and join here.
 _INHERITANCE_CONCRETE_TARGET_TEMPORAL_READS: Final[frozenset[str]] = frozenset(

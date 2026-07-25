@@ -635,7 +635,7 @@ _INHERITANCE_SET_BASED_UNSUPPORTED_UNREACHABLE_REASON: Final[str] = (
 # root-ownership witnesses 098/099, plus the optimistic-
 # locking root-ownership witnesses 102/103): a DIFFERENT validation surface
 # than the operation-level rejected lane.
-# `parallax.core.inheritance.validate` classifies these exact rules, but the
+# `_descriptor_family.validate` classifies these exact rules, but the
 # class metaclass never calls it because hierarchy-derived
 # `parent`/`role` obsoletes most of what it checks. Most of these malformed
 # shapes have literally no idiomatic spelling (`parent`/`role` are DERIVED from
@@ -655,9 +655,9 @@ _INHERITANCE_SET_BASED_UNSUPPORTED_UNREACHABLE_REASON: Final[str] = (
 # "only the inheritance family root may declare"), joining the table-placement
 # rules in the same posture. No case in this group can reproduce
 # `then.rejectedRule` through the public class surface because the metaclass
-# does not call `inheritance.validate`.
+# does not call `_descriptor_family.validate`.
 _INHERITANCE_DESCRIPTOR_REJECT_UNREACHABLE_REASON: Final[str] = (
-    "a `when.model` raw-descriptor invariant `parallax.core.inheritance.validate` "
+    "a `when.model` raw-descriptor invariant `_descriptor_family.validate` "
     "classifies (parent/root/cycle/strategy/tag/temporal-axis-ownership/optimistic-"
     "locking-ownership shape) — the class metaclass never calls this validator (DQ2: "
     "`parent`/`role` are DERIVED from the live Python class hierarchy, never separately "

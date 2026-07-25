@@ -500,7 +500,7 @@ def test_narrowed_view_key_derives_from_the_paths_own_registry_not_types_own() -
     dog_cls, owner_cls = _build_narrow_pet_family()
 
     # The wire's own narrowed-view key, exactly as `m-deep-fetch`'s planning
-    # (`resolve_narrow_position` over the QUERY's own connected metamodel --
+    # (`_resolve_position` over the QUERY's own connected metamodel --
     # `registry_path`'s wide "Pet" family) would have baked into the neutral
     # graph: `pets[CustomDog,Dog]`, never `pets[Dog]`.
     dog_row = Node(fields={"id": 1, "owner_id": 10, "familyVariant": "Dog"}, pk_columns=("id",))

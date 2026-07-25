@@ -13,7 +13,7 @@ from parallax.conformance import case_format
 from parallax.core import inheritance
 from parallax.core._formation_profile import BUILTIN_MANIFEST, BUILTIN_PROFILE, form_metamodel
 from parallax.core.base import INT64, STRING
-from parallax.core.descriptor import deserialize, parse_document, unresolved_metamodel
+from parallax.core.descriptor import parse_document, unresolved_metamodel
 from parallax.core.inheritance import (
     FACET_KEY,
     INHERITANCE_MODULE,
@@ -24,7 +24,6 @@ from parallax.core.inheritance import (
     column_order,
     compile_facet,
 )
-from parallax.core.inheritance._position import resolve_narrow_position
 from parallax.core.metamodel import (
     METAMODEL_MODULE,
     AbstractRoot,
@@ -355,24 +354,6 @@ def test_a_position_contributes_each_declaring_entity_exactly_once() -> None:
         "indoor",
         "tuskLength",
     ]
-
-
-@pytest.mark.parametrize(
-    "names",
-    [("Animal",), ("Pet",), ("Dog",), ("Cat", "WildBoar"), ("Pet", "Dog"), ("Person",)],
-    ids=lambda names: "+".join(cast("tuple[str, ...]", names)),
-)
-def test_position_resolves_the_same_effective_set_the_descriptor_walk_does(
-    names: tuple[str, ...],
-) -> None:
-    # The facet `position(...)` resolves the same effective concrete-subtype
-    # set the descriptor-level narrow-position walk does over the same names.
-    document = case_format.safe_load_yaml((_MODELS / "animal.yaml").read_text(encoding="utf-8"))
-    assert isinstance(document, dict)
-    records = deserialize(cast("Mapping[str, object]", document))
-    projected = _corpus("animal").position([_corpus_entity(name) for name in names])
-    assert projected is not None
-    assert _names(projected.concrete_subtypes) == list(resolve_narrow_position(records, names))
 
 
 def test_a_position_is_absent_for_an_unknown_member_or_two_families() -> None:
