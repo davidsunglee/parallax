@@ -31,8 +31,11 @@ __all__ = [
 ]
 
 DESCRIPTOR_INVALID_SYNTAX: Literal["descriptor-invalid-syntax"] = "descriptor-invalid-syntax"
+"""Phase 1 (syntax) failure code: :class:`DescriptorSyntaxError`'s ``code``."""
 DESCRIPTOR_SCHEMA_INVALID: Literal["descriptor-schema-invalid"] = "descriptor-schema-invalid"
+"""Phase 2 (schema) failure code: :class:`DescriptorSchemaError`'s ``code``."""
 DESCRIPTOR_VALUE_INVALID: Literal["descriptor-value-invalid"] = "descriptor-value-invalid"
+"""Phase 3 (value) failure code: :class:`DescriptorValueError`'s ``code``."""
 
 DescriptorFormat = Literal["json", "yaml"]
 """The two concrete-syntax formats descriptor ingestion accepts."""
@@ -44,8 +47,19 @@ and array indices in authoring order. The empty path is the document root."""
 
 class DescriptorError(ValueError):
     """A descriptor document fails one phase of the three-phase ingestion
-    contract (syntax, schema, or value). Never raised directly — one of the
-    three concrete subtypes below always names the failing phase."""
+    contract (syntax, schema, or value), or a directly constructed record
+    graph (the class frontend's native assembly, outside text ingestion)
+    refuses to adapt into a declaration.
+
+    Within the three-phase text-ingestion pipeline (:mod:`parallax.core.
+    descriptor.ingest`), the base class is never raised directly — one of the
+    three concrete subtypes below always names the failing phase and carries
+    its ``code``. A direct-record caller outside that pipeline (for example
+    :func:`~parallax.core.entity._declaration.native_metamodel`) MAY raise
+    this base class directly for a record the declaration contract refuses;
+    no phase applies there, so ``code`` is unset rather than borrowing one of
+    the three reserved phase codes.
+    """
 
     code: str
 

@@ -1685,6 +1685,42 @@ def test_uniform_multi_row_update_collapses_to_one_in_list_statement() -> None:
     assert emissions[0].binds == (500.00, 10, 11)
 
 
+def test_a_collapsed_multi_row_insert_decodes_its_wire_floats_before_real_execution() -> None:
+    # m-batch-write-001's own insert shape, run for real (never through the
+    # separate pure re-lowering `test_uniform_multi_row_update_collapses_to_
+    # one_in_list_statement` grades): the case authors `decimal` balances as
+    # wire-spelled floats, and the collapsed multi-row instruction has no
+    # single-row `Transaction._buffer` route to decode through, so it must be
+    # decoded before it ever reaches the unit of work directly.
+    case = _synthetic_write(
+        "writeSequence",
+        {
+            "model": "models/wallet.yaml",
+            "when": {
+                "writeSequence": [
+                    {
+                        "mutation": "insert",
+                        "entity": "Wallet",
+                        "statements": 1,
+                        "rows": [
+                            {"id": 10, "owner": "Mira", "balance": 100.00},
+                            {"id": 11, "owner": "Omar", "balance": 20.00},
+                        ],
+                    }
+                ]
+            },
+        },
+    )
+    port = FakeWritePort()
+    _emissions, _table_state, round_trips = engine.run_write_sequence_case(case, "postgres", port)
+    assert round_trips == 1
+    assert len(port.writes) == 1
+    sql, binds = port.writes[0]
+    assert sql == "insert into wallet(id, owner, balance) values (%s, %s, %s), (%s, %s, %s)"
+    assert binds == [10, "Mira", decimal.Decimal("100.0"), 11, "Omar", decimal.Decimal("20.0")]
+    assert isinstance(binds[2], decimal.Decimal) and isinstance(binds[5], decimal.Decimal)
+
+
 def test_non_uniform_multi_row_update_decomposes_per_distinct_key() -> None:
     # m-batch-write-002's own shape: non-uniform per-key values decompose into
     # one UPDATE per distinct key — genuinely lowering end to end (neither

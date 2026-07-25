@@ -309,9 +309,21 @@ def coerce_neutral_input(value: object, declared: NeutralType) -> object:
         case Float32() if _is_integer(value):
             return _integer_as_float(value, binary32=True)
         case Uuid() if isinstance(value, str):
-            return _decoded(_uuid.UUID, value)
+            return _canonical_uuid_input(value)
         case _:
             return value
+
+
+def _canonical_uuid_input(value: str) -> object:
+    """``value`` as a :class:`~uuid.UUID`, only when it is ALREADY the
+    canonical lowercase-hyphenated spelling — the narrower str the input
+    policy admits, as opposed to :func:`decode_neutral_literal`'s permissive
+    serde parse (hyphenless, braced, uppercase, and URN forms all parse to the
+    same :class:`~uuid.UUID` but are not this spelling). A non-canonical
+    string is returned unchanged, so :func:`matches_neutral_type` rejects it.
+    """
+    decoded = _decoded(_uuid.UUID, value)
+    return decoded if isinstance(decoded, _uuid.UUID) and str(decoded) == value else value
 
 
 def _integer_as_float(value: int, *, binary32: bool) -> float | int:
