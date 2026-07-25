@@ -131,7 +131,6 @@ SUPPORT_SCOPE_DEPS: Mapping[str, frozenset[str]] = {
             "parallax.core.base",
             "parallax.core.descriptor",
             "parallax.core.metamodel",
-            "parallax.core.model_formation",
             "parallax.core.inheritance",
             "parallax.core.relationship",
             "parallax.core.op_algebra",
@@ -178,6 +177,7 @@ SUPPORT_SCOPE_DEPS: Mapping[str, frozenset[str]] = {
     "parallax.snapshot.handle._write_lowering": _LOWERING_GROUP_DEPS,
     "parallax.postgres": frozenset(
         {
+            "parallax.core.base",
             "parallax.core.db_port",
             "parallax.core.db_error",
             "parallax.core.dialect",

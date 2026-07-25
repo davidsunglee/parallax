@@ -10,7 +10,7 @@ DML (the ``max`` INSERT's ``coalesce(max(...), ?) + ?`` fragment, the registry
 neutral ``{computed: "maxPlusOne"}`` / ``{increment: n}`` DB-computed markers a
 write row carries; :func:`allocate_block` is the block arithmetic the
 ``sequence`` strategy's registry choreography derives its ids from.
-``m-pk-gen`` depends on ``m-descriptor`` and ``m-metamodel``.
+``m-pk-gen`` depends on ``m-metamodel``.
 
 Generation is reachable only through an Attribute's primary-key branch, and a
 :class:`~parallax.core.metamodel.Sequence` reaches this scope with every sizing

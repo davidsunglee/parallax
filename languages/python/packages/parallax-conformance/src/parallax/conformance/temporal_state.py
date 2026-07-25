@@ -104,8 +104,8 @@ class TemporalShadow:
         if len(candidates) > 1:
             raise AmbiguousObservationError(
                 f"{entity_name}: {len(candidates)} current milestones are tracked for "
-                f"{dict(zip(pk_names, key[1], strict=True))!r} — disambiguation is out of "
-                "scope this increment (COR-3 Phase 8 increment 4)"
+                f"{dict(zip(pk_names, key[1], strict=True))!r} — disambiguation between "
+                "them is not supported"
             )
         return candidates[0]
 

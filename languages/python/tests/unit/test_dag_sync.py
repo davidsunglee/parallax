@@ -55,9 +55,9 @@ def test_transitive_closure_follows_edges() -> None:
     adjacency = dag.build_adjacency(dag.parse_dependency_graph(dag.MODULES_MD.read_text()))
     closure = dag.transitive_closure(adjacency, "parallax.core.op_algebra")
     # op-algebra depends on metamodel + inheritance, inheritance reaches model
-    # formation and the co-located descriptor scope, and both reach core.
+    # formation, and both reach core. No path to the descriptor scope: no
+    # behavioral module depends on descriptor.
     assert closure == {
-        "parallax.core.descriptor",
         "parallax.core.inheritance",
         "parallax.core.metamodel",
         "parallax.core.model_formation",
@@ -70,10 +70,16 @@ def test_forbidden_respects_the_dag() -> None:
     adjacency = dag.build_adjacency(dag.parse_dependency_graph(dag.MODULES_MD.read_text()))
     forbidden = dag.compute_forbidden(adjacency)
     # A permitted dependency is never forbidden...
-    assert "parallax.core.descriptor" not in forbidden["parallax.core.op_algebra"]
     assert "parallax.core.base" not in forbidden["parallax.core.op_algebra"]
     # ...while a non-edge is.
     assert "parallax.core.sql_gen" in forbidden["parallax.core.op_algebra"]
+    # No behavioral module depends on descriptor, so every behavioral scope is
+    # forbidden from importing it — descriptor is entity's one sanctioned
+    # support-scope adapter, not a behavioral dependency.
+    assert "parallax.core.descriptor" in forbidden["parallax.core.op_algebra"]
+    assert "parallax.core.descriptor" in forbidden["parallax.core.inheritance"]
+    # The entity support scope keeps its one adapter grant.
+    assert "parallax.core.descriptor" not in forbidden["parallax.core.entity"]
     # The cross-package rule falls out of the complement.
     assert "parallax.postgres" in forbidden["parallax.snapshot.materialize"]
 
@@ -134,7 +140,12 @@ def test_parse_support_scope_graph_reads_the_spec_fence() -> None:
     declared = dag.parse_support_scope_graph(dag.PYTHON_MD.read_text())
     assert "parallax.snapshot.materialize" in declared["parallax.snapshot.handle"]
     assert declared["parallax.postgres"] == frozenset(
-        {"parallax.core.db_port", "parallax.core.db_error", "parallax.core.dialect"}
+        {
+            "parallax.core.base",
+            "parallax.core.db_port",
+            "parallax.core.db_error",
+            "parallax.core.dialect",
+        }
     )
 
 
@@ -220,7 +231,12 @@ def test_parse_support_scope_table_reads_the_prose_rows() -> None:
     # `psycopg` sits unbackticked in the Postgres row: a third-party
     # distribution, not an enforcement scope, and so not a grant.
     assert prose["parallax.postgres"] == frozenset(
-        {"parallax.core.db_port", "parallax.core.db_error", "parallax.core.dialect"}
+        {
+            "parallax.core.base",
+            "parallax.core.db_port",
+            "parallax.core.db_error",
+            "parallax.core.dialect",
+        }
     )
     # The composition-root row is application-owned and declares no scope.
     assert "parallax.snapshot" not in prose

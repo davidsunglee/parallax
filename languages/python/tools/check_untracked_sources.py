@@ -6,16 +6,16 @@ the filesystem. A production module that has never been ``git add``-ed therefore
 contributes no changed lines: coverage.xml measures it (``source_pkgs =
 ["parallax"]`` follows imports, not the index), but diff-cover sees no diff for
 it and silently omits it from the ratio. The gate then reports "100% diff-cover"
-over whatever *was* tracked — a vacuous pass. This was observed during COR-42
-Phase 2, where a new 448-line ``handle/_read.py`` was scored as 11 tracked lines
-at 100%; staging it revealed the real 163 changed lines.
+over whatever *was* tracked — a vacuous pass. This was observed once: a new
+448-line production file was scored as 11 tracked lines at 100%; staging it
+revealed the real 163 changed lines.
 
 The test tree has the mirror-image failure. Tests are not measured
 (``source_pkgs`` names only ``parallax``), but pytest collects from the
 filesystem, so an untracked test file *does* run and *does* produce the coverage
 that lets the gate pass — while being absent from the commit and therefore from
-CI. Both directions let a phase claim coverage it has not committed, so both
-roots are guarded.
+CI. Both directions let uncommitted work claim coverage it has not earned, so
+both roots are guarded.
 
 ``tools/`` is deliberately not guarded: ``python-static`` invokes each tool by
 path, so an untracked gate fails loudly in CI on its own.

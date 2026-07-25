@@ -107,7 +107,7 @@ def _refuse_unrecognized_marker(
     if kind is not None:
         raise WriteLoweringError(
             f"unsupported DB-computed marker on {entity.identity.name!r}.{column}: a {kind!r} "
-            f"marker is not recognized for {context} lowering (COR-3 Phase 8; m-pk-gen)"
+            f"marker is not recognized for {context} lowering"
         )
 
 

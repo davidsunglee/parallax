@@ -152,12 +152,9 @@ m-metamodel --> m-core
 m-model-formation --> m-metamodel
 m-descriptor --> m-core
 m-descriptor --> m-metamodel
-m-pk-gen --> m-descriptor
 m-pk-gen --> m-metamodel
-m-inheritance --> m-descriptor
 m-inheritance --> m-metamodel
 m-inheritance --> m-model-formation
-m-value-object --> m-descriptor
 m-value-object --> m-metamodel
 m-value-object --> m-model-formation
 m-relationship --> m-metamodel
@@ -167,6 +164,8 @@ m-op-algebra --> m-inheritance
 m-agg --> m-op-algebra
 m-sql --> m-op-algebra
 m-sql --> m-dialect
+m-sql --> m-metamodel
+m-sql --> m-inheritance
 m-sql-agg --> m-agg
 m-sql-agg --> m-sql
 m-dialect --> m-core
@@ -193,6 +192,7 @@ m-navigate --> m-temporal-read
 m-navigate --> m-inheritance
 m-navigate --> m-relationship
 m-deep-fetch --> m-navigate
+m-deep-fetch --> m-relationship
 m-op-list --> m-deep-fetch
 m-snapshot-read --> m-deep-fetch
 m-temporal-read --> m-op-algebra
@@ -237,9 +237,11 @@ construction it may reference any behavioral module it harnesses.
   polymorphic entity position to a subset of its subtypes, and its validity rule
   (the resolved `to` list must be a non-empty subset of the position's **effective
   concrete-subtype set**) is stated in `m-inheritance`'s vocabulary. The algebra
-  therefore references the inheritance family model, not the reverse — `m-sql`'s
-  tag/branch lowering of a narrow reaches `m-inheritance` transitively through this
-  edge and needs no separate `m-sql --> m-inheritance` declaration.
+  therefore references the inheritance family model, not the reverse.
+- **`m-sql --> m-metamodel`, `m-sql --> m-inheritance`.** SQL lowering reads
+  resolved model Identities directly and lowers a `narrow` node's tag/branch
+  predicate against the inheritance family model; both are declared directly
+  rather than left to the transitive closure through `m-op-algebra`.
 - **`m-op-list --> m-deep-fetch`.** A navigation filter is a *predicate*
   (semi-join) and yields no list; deep fetch is a pure per-level fetch
   algorithm. The lifecycle result surfaces — operation-backed lists for the
@@ -260,8 +262,10 @@ construction it may reference any behavioral module it harnesses.
   it. Navigation therefore references the inheritance family model directly.
   `m-deep-fetch` (which owns narrowed relationship views and their derived keys)
   reaches `m-inheritance` **transitively** through `m-navigate`, so it needs no
-  separate `m-deep-fetch --> m-inheritance` declaration — the same transitive
-  pattern `m-sql` uses to reach `m-inheritance` through `m-op-algebra`.
+  separate `m-deep-fetch --> m-inheritance` declaration.
+- **`m-deep-fetch --> m-relationship`.** Deep fetch resolves and lowers the
+  relationship facet it fetches through (join shape, symmetric reverse) directly,
+  rather than leaving that reach to the transitive closure through `m-navigate`.
 - **`m-navigate --> m-temporal-read`.** Navigation is temporal-aware: a pinned
   as-of value propagates per hop to every temporal entity in the path. As-of
   *reads* are algebra-level, so navigation references `m-temporal-read`, not the

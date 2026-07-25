@@ -475,13 +475,13 @@ def _skip_reason(case: case_format.Case, envelope: dict[str, Any]) -> str:
             return f"{case.shape} write refused by the keyed-write lowering: {message}"
         return (
             f"{case.shape} `{case.primary_module}` write outside the reviewed keyed "
-            "unit-of-work set (the 9 account/orders cases plus the COR-3 Phase 8 "
-            "increment 5 batch/predicate-write flips); not yet a reviewed exercised case"
+            "unit-of-work set (the 9 account/orders cases plus the batch/predicate-write "
+            "flips); not yet a reviewed exercised case"
         )
     if case.shape != "read":
-        return f"compile of {case.shape}-shape cases lands with the write path (COR-3 Phase 6/8)"
+        return f"compile of {case.shape}-shape cases lands with the write path"
     message = envelope.get("diagnostics", [{}])[0].get("message", "")
-    return f"read lowering deferred past the Phase-5 read path (ledger D-12): {message}"
+    return f"read lowering deferred past the read path: {message}"
 
 
 def _pointer_ok(shape: str, pointer: str) -> bool:
