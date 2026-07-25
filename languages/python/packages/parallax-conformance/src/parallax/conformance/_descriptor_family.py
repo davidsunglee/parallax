@@ -19,8 +19,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from parallax.core.descriptor import Attribute, Entity, Inheritance, Metamodel
-from parallax.core.descriptor import declaring_entity as _declaring_entity
+from parallax.core.descriptor import (
+    Attribute,
+    Entity,
+    Inheritance,
+    Metamodel,
+    family_root_name,
+)
 from parallax.core.inheritance import InheritanceError
 
 __all__ = ["Family", "family_attributes", "family_of", "family_primary_key", "validate"]
@@ -28,7 +33,10 @@ __all__ = ["Family", "family_attributes", "family_of", "family_primary_key", "va
 
 @dataclass(frozen=True, slots=True)
 class Family:
-    """The inheritance participants of one descriptor, indexed for traversal."""
+    """The inheritance participants of one descriptor, and its root if it has
+    exactly one. Structural traversal below a position belongs to the descriptor
+    scope (:func:`~parallax.core.descriptor.concrete_descendant_names`), not
+    here."""
 
     participants: tuple[Entity, ...]
     root: Entity | None
@@ -39,32 +47,6 @@ class Family:
         if self.root is None:
             return None
         return _inh(self.root).strategy
-
-    def _children(self) -> dict[str, list[Entity]]:
-        children: dict[str, list[Entity]] = {}
-        for entity in self.participants:
-            parent = _inh(entity).parent
-            if parent is not None:
-                children.setdefault(parent, []).append(entity)
-        return children
-
-    def concrete_descendants(self, name: str) -> frozenset[str]:
-        """Every concrete-subtype name at or under the position ``name``."""
-        children = self._children()
-        by_name = {entity.name: entity for entity in self.participants}
-        result: set[str] = set()
-        stack = [name]
-        seen: set[str] = set()
-        while stack:
-            current = stack.pop()
-            if current in seen:
-                continue
-            seen.add(current)
-            entity = by_name.get(current)
-            if entity is not None and _inh(entity).role == "concrete-subtype":
-                result.add(current)
-            stack.extend(child.name for child in children.get(current, []))
-        return frozenset(result)
 
 
 def _inh(entity: Entity) -> Inheritance:
@@ -96,12 +78,12 @@ def family_attributes(meta: Metamodel, entity: Entity) -> tuple[Attribute, ...]:
     Assumes attribute names are unique within one family (the shared-table /
     ancestry-derived column set is a disjoint union, m-inheritance).
     """
-    root_name = _root_name(meta, entity)
+    root_name = family_root_name(meta, entity)
     if root_name is None:
         return entity.attributes
     attrs: list[Attribute] = []
     for candidate in meta.entities:
-        if candidate.inheritance is not None and _root_name(meta, candidate) == root_name:
+        if candidate.inheritance is not None and family_root_name(meta, candidate) == root_name:
             attrs.extend(candidate.attributes)
     return tuple(attrs)
 
@@ -117,25 +99,6 @@ def family_primary_key(meta: Metamodel, entity: Entity) -> tuple[Attribute, ...]
     re-deriving the family walk.
     """
     return tuple(attr for attr in family_attributes(meta, entity) if attr.primary_key)
-
-
-def _root_name(meta: Metamodel, entity: Entity) -> str | None:
-    """The name of ``entity``'s family root, or ``None`` if unresolvable.
-
-    Composes with the shared descriptor-scope ancestry walk
-    (:func:`~parallax.core.descriptor.declaring_entity`) rather than
-    re-deriving it: the descriptor-level resolver already "resolves to what
-    it can reach" for a malformed (cyclic/unresolvable) ancestry, falling
-    back to ``entity`` itself, which is never a root — so this only needs to
-    check the resolved entity's own role, never re-walk ``parent`` links
-    itself.
-    """
-    if entity.inheritance is None:
-        return None
-    resolved = _declaring_entity(meta, entity)
-    if resolved.inheritance is None or resolved.inheritance.role != "root":
-        return None
-    return resolved.name
 
 
 def validate(metamodel: Metamodel) -> None:

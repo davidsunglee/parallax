@@ -2,12 +2,11 @@
 
 ``spec/python.md`` §7 maps every behavioral and support module onto a Python
 enforcement scope, and ``tools/check_dag_sync.py`` turns those scopes into
-import-linter ``forbidden`` contracts. Nothing proved the *converse*: that every
+import-linter ``forbidden`` contracts. Neither proves the *converse*: that every
 production source file actually falls inside one of them. A file outside every
-scope is governed by no contract at all — it may import anything, and no gate
-says so. That was not hypothetical: a production module once shipped owned by
-no scope, discovered only because a review-time inventory happened to go
-looking for it.
+scope is governed by no contract at all — it may import anything, and no other
+gate reports it, so an unowned module silently bypasses dependency enforcement
+entirely.
 
 This walks the filesystem instead. Every ``packages/*/src/**/*.py`` file in the
 production distributions must resolve to exactly one *most-specific*
