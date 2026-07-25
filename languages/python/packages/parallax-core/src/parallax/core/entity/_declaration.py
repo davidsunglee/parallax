@@ -86,6 +86,7 @@ from parallax.core.metamodel import AbstractSubtype as AcceptedAbstractSubtype
 from parallax.core.metamodel import ConcreteSubtype as AcceptedConcreteSubtype
 
 __all__ = [
+    "DECLARATION_MEMBER_NAMES",
     "FRAMEWORK_MINT",
     "RESERVED_MEMBER_NAMES",
     "STANDARD_TEMPORAL_NAMES",
@@ -93,11 +94,13 @@ __all__ = [
     "EntityDeclaration",
     "EntityHeader",
     "MemberNames",
+    "RelationshipAnnotation",
     "ValueObjectShape",
     "build_class",
     "declaration_of",
     "inherited_axes",
     "is_declared_class",
+    "is_entity_class",
     "members_of",
     "shape_of",
     "snake_to_camel",
@@ -131,10 +134,25 @@ _REL_TEXT = re.compile(r"^Rel\[(?P<inner>.+)\]$", re.DOTALL)
 _OPTIONAL_TEXT = re.compile(r"^Optional\[(?P<inner>.+)\]$", re.DOTALL)
 _TUPLE_TEXT = re.compile(r"^tuple\[(?P<inner>.+)\]$", re.DOTALL)
 
-# The reserved query-root and introspection spellings, plus the nine
-# ``UnresolvedEntityDeclaration`` members the Entity metaclass publishes on the
-# class object itself. A member reusing one would be shadowed by the metaclass
-# property at class level, so the collision is rejected where it is authored.
+DECLARATION_MEMBER_NAMES: Final[frozenset[str]] = frozenset(
+    {
+        "identity",
+        "container",
+        "persistence",
+        "attributes",
+        "relationships",
+        "value_objects",
+        "as_of_axes",
+        "inheritance",
+        "indices",
+    }
+)
+"""The ``UnresolvedEntityDeclaration`` members the Entity metaclass publishes on
+the class object itself."""
+
+# The reserved query-root and introspection spellings, plus the declaration
+# members above. A member reusing one would be shadowed by the metaclass
+# declaration at class level, so the collision is rejected where it is authored.
 RESERVED_MEMBER_NAMES: Final[frozenset[str]] = frozenset(
     {
         "where",
@@ -145,15 +163,7 @@ RESERVED_MEMBER_NAMES: Final[frozenset[str]] = frozenset(
         "history",
         "meta",
         "descriptor",
-        "identity",
-        "container",
-        "persistence",
-        "attributes",
-        "relationships",
-        "value_objects",
-        "as_of_axes",
-        "inheritance",
-        "indices",
+        *DECLARATION_MEMBER_NAMES,
     }
 )
 
@@ -210,18 +220,35 @@ class EntityDeclaration:
 
 
 @dataclass(frozen=True, slots=True)
-class MemberNames:
-    """One Entity Class's own Python-name to model-name correspondences.
+class RelationshipAnnotation:
+    """The shape one ``Rel[...]`` annotation spells, kept for realization.
 
-    Built from the same walk the declaration is built from, so a wire name can
-    never drift from the declared member it belongs to. Merging a family's maps
-    across the MRO belongs to the caller.
+    Multiplicity and optionality are Python facts the declaration itself does
+    not carry: the model derives a direction's multiplicity from cardinality and
+    its loaded-null answer from the join, so agreement between the two can only
+    be checked once an accepted model exists.
+    """
+
+    py_name: str
+    multiplicity: Multiplicity
+    nullable: bool
+
+
+@dataclass(frozen=True, slots=True)
+class MemberNames:
+    """One Entity Class's own Python-side member facts.
+
+    The name correspondences and the relationship annotation shapes are built
+    from the same walk the declaration is built from, so neither can drift from
+    the declared member it belongs to. Merging a family's maps across the MRO
+    belongs to the caller.
     """
 
     column_to_py: dict[str, str]
     name_to_py: dict[str, str]
     py_to_name: dict[str, str]
     relationship_py: dict[str, str]
+    relationship_shapes: dict[str, RelationshipAnnotation]
     pk_py: frozenset[str]
     framework_owned_py: frozenset[str]
     axis_governed_py: frozenset[str]
@@ -286,6 +313,18 @@ def shape_of(cls: type) -> ValueObjectShape:
 def is_declared_class(candidate: object, kind: DeclarationKind) -> bool:
     """Whether ``candidate`` is a class this engine built for ``kind``."""
     return isinstance(candidate, type) and getattr(candidate, _KIND, None) is kind
+
+
+def is_entity_class(candidate: object) -> bool:
+    """Whether ``candidate`` is a domain Entity Class — a hub candidate.
+
+    The total, nonthrowing counterpart of :func:`declaration_of`. A framework
+    root carries the Entity kind marker but no declaration, so it answers false
+    here exactly as it is refused as a hub argument.
+    """
+    return is_declared_class(candidate, DeclarationKind.ENTITY) and isinstance(
+        cast("type", candidate).__dict__.get(_DECLARATION), EntityDeclaration
+    )
 
 
 def inherited_axes(bases: tuple[type, ...]) -> tuple[TemporalDimension, ...]:
@@ -755,6 +794,7 @@ def _build_entity(
     name_to_py: dict[str, str] = {}
     py_to_name: dict[str, str] = {}
     relationship_py: dict[str, str] = {}
+    relationship_shapes: dict[str, RelationshipAnnotation] = {}
     pk_py: set[str] = set()
     framework_owned_py: set[str] = set()
     axis_governed_py: set[str] = set()
@@ -798,6 +838,9 @@ def _build_entity(
                 _relationship(identity, canonical, cast("RelSpec", spec), shape, where)
             )
             relationship_py[canonical] = py_name
+            relationship_shapes[canonical] = RelationshipAnnotation(
+                py_name=py_name, multiplicity=shape.multiplicity, nullable=shape.nullable
+            )
             continue
 
         attr_spec = cast("AttrSpec", spec)
@@ -860,6 +903,7 @@ def _build_entity(
         name_to_py=name_to_py,
         py_to_name=py_to_name,
         relationship_py=relationship_py,
+        relationship_shapes=relationship_shapes,
         pk_py=frozenset(pk_py),
         framework_owned_py=frozenset(framework_owned_py),
         axis_governed_py=frozenset(axis_governed_py),

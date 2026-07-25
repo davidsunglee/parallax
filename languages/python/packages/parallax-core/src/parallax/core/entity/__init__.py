@@ -3,9 +3,10 @@
 The sole supported Python model-authoring surface: the frozen ``Entity`` and
 ``ValueObject`` bases and their temporal framework siblings, the ``Attr[T]`` /
 ``Rel[T]`` member annotations with the ``attr`` / ``rel`` / ``index`` / ``asc`` /
-``desc`` factories, the closed ``EntityDefinitionError`` code set, the statement
-surface, and the closed-world relationship load-state vocabulary. The underscored
-modules behind these names are implementation detail rather than caller seams.
+``desc`` factories, the core-algebra spellings those take, ``MetamodelHub`` and
+its closed error-code sets, the statement surface, and the closed-world
+relationship load-state vocabulary. The underscored modules behind these names
+are implementation detail rather than caller seams.
 
 Entity Classes are their own formation input: the declaration engine builds each
 class's ``UnresolvedEntityDeclaration`` eagerly at class creation, so this scope
@@ -30,8 +31,14 @@ from parallax.core.entity._entity import (
 )
 from parallax.core.entity._errors import (
     ENTITY_DEFINITION_CODES,
+    METAMODEL_DEFINITION_CODES,
+    METAMODEL_LOOKUP_CODES,
+    METAMODEL_STATE_CODES,
     EntityDefinitionError,
     FrameworkOwnedAxisError,
+    MetamodelDefinitionError,
+    MetamodelLookupError,
+    MetamodelStateError,
     ModelCopyError,
     ProvenanceError,
     UnloadedRelationshipError,
@@ -45,8 +52,10 @@ from parallax.core.entity._expressions import (
     RelationshipPath,
     RelationshipRef,
 )
+from parallax.core.entity._hub import MetamodelHub
 from parallax.core.entity._members import (
     MANY_TO_ONE,
+    MAX,
     ONE_TO_MANY,
     ONE_TO_ONE,
     READ_ONLY,
@@ -58,10 +67,13 @@ from parallax.core.entity._members import (
     AttrSpec,
     ConcreteSubtype,
     DefiningRelSpec,
+    Float32,
     IndexSpec,
+    Int32,
     OrderTerm,
     Rel,
     ReverseRelSpec,
+    Sequence,
     TablePerHierarchy,
     asc,
     attr,
@@ -76,6 +88,10 @@ from parallax.core.entity.statement import Statement, UnsupportedFeatureError
 __all__ = [
     "ENTITY_DEFINITION_CODES",
     "MANY_TO_ONE",
+    "MAX",
+    "METAMODEL_DEFINITION_CODES",
+    "METAMODEL_LOOKUP_CODES",
+    "METAMODEL_STATE_CODES",
     "ONE_TO_MANY",
     "ONE_TO_ONE",
     "READ_ONLY",
@@ -96,8 +112,14 @@ __all__ = [
     "EntityDeclaration",
     "EntityDefinitionError",
     "EntityMeta",
+    "Float32",
     "FrameworkOwnedAxisError",
     "IndexSpec",
+    "Int32",
+    "MetamodelDefinitionError",
+    "MetamodelHub",
+    "MetamodelLookupError",
+    "MetamodelStateError",
     "ModelCopyError",
     "OrderTerm",
     "Predicate",
@@ -106,6 +128,7 @@ __all__ = [
     "RelationshipPath",
     "RelationshipRef",
     "ReverseRelSpec",
+    "Sequence",
     "Statement",
     "TablePerHierarchy",
     "TxTemporal",

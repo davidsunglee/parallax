@@ -29,6 +29,7 @@ from parallax.core.entity._expressions import (
 )
 from parallax.core.metamodel import (
     APPLICATION_ASSIGNED,
+    MAX,
     NOT_PRIMARY_KEY,
     TABLE_PER_CONCRETE_SUBTYPE,
     AbstractRoot,
@@ -45,6 +46,7 @@ from parallax.core.op_algebra import PathSegment
 
 __all__ = [
     "MANY_TO_ONE",
+    "MAX",
     "ONE_TO_MANY",
     "ONE_TO_ONE",
     "READ_ONLY",
@@ -57,12 +59,15 @@ __all__ = [
     "ConcreteSubtype",
     "DefiningRelSpec",
     "ElementAttr",
+    "Float32",
     "IndexSpec",
     "InheritanceRole",
+    "Int32",
     "OrderTerm",
     "Rel",
     "RelSpec",
     "ReverseRelSpec",
+    "Sequence",
     "TablePerHierarchy",
     "asc",
     "attr",
@@ -73,7 +78,11 @@ __all__ = [
 
 # The authoring spellings of the closed core algebras. A header or factory
 # argument names the algebra member directly rather than a string keyword, so an
-# unspellable combination is a static error before it is a runtime one.
+# unspellable combination is a static error before it is a runtime one. The
+# payload-free variants owned elsewhere (`MAX`, `TABLE_PER_CONCRETE_SUBTYPE`),
+# their payload-carrying siblings (`Sequence`, `TablePerHierarchy`,
+# `AbstractRoot`), and the two narrowable Neutral Types (`Int32`, `Float32`) are
+# re-exported from here for the same reason: the authoring surface is one import.
 ONE_TO_ONE: Final = Cardinality.ONE_TO_ONE
 MANY_TO_ONE: Final = Cardinality.MANY_TO_ONE
 ONE_TO_MANY: Final = Cardinality.ONE_TO_MANY
@@ -343,7 +352,7 @@ def rel(
         )
     if cardinality is None or join is None:
         raise _context("rel(...) declares either cardinality= with join=, or reverse_of=")
-    if not isinstance(cardinality, Cardinality):
+    if not isinstance(cardinality, Cardinality):  # pyright: ignore[reportUnnecessaryIsInstance]
         raise _invalid(
             f"cardinality= takes ONE_TO_ONE, MANY_TO_ONE, or ONE_TO_MANY, got {cardinality!r}"
         )
