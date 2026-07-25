@@ -1777,6 +1777,50 @@ def _seed_shadow_from_fixtures(
         )
 
 
+def _buffer_execution_instruction(
+    tx: handle.Transaction,
+    meta: Metamodel,
+    model: AcceptedMetamodel,
+    instruction: KeyedWrite,
+) -> None:
+    """Buffer one resolved keyed-write instruction for REAL execution, every row
+    decoded to native carriers first — the ONE entity-lookup/decode/buffer seam
+    every real-execution write path (an ungrouped unit, a `uow` group, an
+    interleaved group) shares.
+
+    A single-row instruction buffers through the neutral ``Transaction._buffer``
+    route (never the typed instance verbs, which this engine's case-driven
+    metamodel has no compiled Python classes for) — that developer verb is
+    coercion-only (`~parallax.core.base.coerce_neutral_input`) and stays
+    decode-free itself, so a case-authored wire spelling (a decimal literal
+    spelled as a float, `m-core-007`) is lowered to its native carrier HERE,
+    once, before the developer-facing boundary ever sees it; ``_buffer`` also
+    runs `validate_write`'s full value-space check. A COLLAPSED multi-row
+    instruction (`m-batch-write`) has no single-row document route to buffer
+    through (`Transaction._buffer` carries exactly one row), so its OWN rows
+    are each decoded and the whole decoded instruction buffers directly on the
+    unit of work, preserving the collapse `_build_instructions`'s "not
+    decomposes" branch already decided.
+
+    The caller's own ``instruction`` argument is left untouched: a separate
+    PURE re-lowering (`_lower_resolved`) grades a golden bind against that
+    ORIGINAL authored instruction, never this decoded copy, so decoding here
+    cannot drift a compile-time emission.
+    """
+    entity_metadata = case_entity(model, meta.entity(instruction.entity))
+    if len(instruction.rows) == 1:
+        tx._buffer(  # pyright: ignore[reportPrivateUsage]
+            instruction.mutation,
+            instruction.entity,
+            decode_write_row(entity_metadata, instruction.rows[0], model),
+            valid_from=instruction.valid_from,
+            until=instruction.until,
+        )
+        return
+    decoded_rows = tuple(decode_write_row(entity_metadata, row, model) for row in instruction.rows)
+    tx._uow.buffer(replace(instruction, rows=decoded_rows))  # pyright: ignore[reportPrivateUsage]
+
+
 def _execute_write_unit(
     port: DbPort,
     meta: Metamodel,
@@ -1791,28 +1835,13 @@ def _execute_write_unit(
     production ``db.transact`` entry point — ONE transaction,
     ``clock=FixedClock(tx_instant)``
     (ADR 0010: instants come from the Clock Strategy, never a per-operation
-    override). A single-row instruction buffers through the neutral
-    ``Transaction._buffer`` route + ``UnitOfWork.observe`` — never the typed
-    instance verbs (`insert` / `update` / `delete`), which this engine's
-    case-driven metamodel has no compiled Python classes for. A COLLAPSED
-    multi-row instruction (`m-batch-write`) buffers
-    directly on the unit of work instead (:func:`_build_instructions`'s "not
-    decomposes" branch already deserialized + `validate_instruction`-ed it, and
-    it carries no per-row observation by construction — `Transaction._buffer`'s
-    own single-row document route cannot carry more than one row). A
+    override). Each instruction buffers through :func:`_buffer_execution_instruction`
+    (a collapsed multi-row instruction carries no per-row observation by
+    construction — `_build_instructions`'s "not decomposes" branch already
+    deserialized + `validate_instruction`-ed it). A
     ``rollback: true`` step raises inside the callback (rollback-only,
     `m-unit-work` abort contract): the buffered DML still executes — and counts
     its round trips — before the provider rolls the transaction back.
-
-    A single-row instruction's row is decoded to native carriers
-    (:func:`decode_write_row`) before it reaches ``Transaction._buffer`` — that
-    developer verb is coercion-only (`~parallax.core.base.coerce_neutral_input`)
-    and stays decode-free itself, so a case-authored wire spelling (a decimal
-    literal spelled as a float, `m-core-007`) is lowered to its native carrier
-    HERE, once, before the developer-facing boundary ever sees it. This ``resolved``
-    buffer is never what a separate PURE re-lowering (`_lower_resolved`) grades
-    a golden bind against, so decoding it here cannot drift a compile-time
-    emission.
     """
     model = accepted_metamodel(meta)
     instant = normalize_instant(dt.datetime.fromisoformat(tx_instant))
@@ -1826,18 +1855,7 @@ def _execute_write_unit(
             if key is not None and observation is not None:
                 # The documented neutral seam (Transaction._buffer route + uow.observe).
                 tx._uow.observe(key, observation)  # pyright: ignore[reportPrivateUsage]
-            rows = instruction.rows
-            if len(rows) == 1:
-                target = case_entity(model, meta.entity(instruction.entity))
-                tx._buffer(  # pyright: ignore[reportPrivateUsage]
-                    instruction.mutation,
-                    instruction.entity,
-                    decode_write_row(target, rows[0], model),
-                    valid_from=instruction.valid_from,
-                    until=instruction.until,
-                )
-            else:
-                tx._uow.buffer(instruction)  # pyright: ignore[reportPrivateUsage]
+            _buffer_execution_instruction(tx, meta, model, instruction)
         if rollback:
             # Force the buffered DML to execute (and count its round trips)
             # INSIDE the still-open atomic scope before the intentional abort —
@@ -2187,13 +2205,12 @@ def _run_uow_group(
     and the closure raises — the `m-unit-work` abort contract applied to the
     group rather than one step.
 
-    Each buffered row is decoded to native carriers (:func:`decode_write_row`)
-    before it reaches ``tx._buffer`` — the SAME treatment
-    :func:`_execute_write_unit` applies to a single ungrouped step, so a
-    case-authored wire spelling still validates at the coercion-only
-    developer boundary; the SEPARATE pure ``statements`` re-lowering above
-    stays on the ORIGINAL, undecoded ``resolved`` buffer, so its golden-bind
-    comparison cannot drift.
+    Each buffered instruction is decoded via :func:`_buffer_execution_instruction`
+    — the SAME seam :func:`_execute_write_unit` uses for a single ungrouped
+    step, so a case-authored wire spelling still validates at the
+    coercion-only developer boundary; the SEPARATE pure ``statements``
+    re-lowering above stays on the ORIGINAL, undecoded ``resolved`` buffer, so
+    its golden-bind comparison cannot drift.
     """
     tx_instant = _group_tx_instant(steps, start, end)
     doomed = _group_is_doomed(steps, start, end)
@@ -2218,14 +2235,7 @@ def _run_uow_group(
                     )  # every resolved entry this lane buffers is keyed
                     if key is not None and observation is not None:
                         tx._uow.observe(key, observation)  # pyright: ignore[reportPrivateUsage]
-                    entity_metadata = case_entity(model, meta.entity(instruction.entity))
-                    tx._buffer(  # pyright: ignore[reportPrivateUsage]
-                        instruction.mutation,
-                        instruction.entity,
-                        decode_write_row(entity_metadata, instruction.rows[0], model),
-                        valid_from=instruction.valid_from,
-                        until=instruction.until,
-                    )
+                    _buffer_execution_instruction(tx, meta, model, instruction)
                 lowered.append(
                     _LoweredStep(
                         f"/scenario/{index}/write", statements, True, step.get("rollback") is True
@@ -2400,10 +2410,10 @@ def _run_interleaved_group(
     that left a doomed group's writes durable would report well-formed SQL
     and still pass.
 
-    Each buffered row is decoded to native carriers (:func:`decode_write_row`)
-    before it reaches ``tx._buffer`` — :func:`_run_uow_group`'s own treatment,
-    applied here; the SEPARATE pure ``statements`` re-lowering above stays on
-    the ORIGINAL, undecoded ``resolved`` buffer.
+    Each buffered instruction is decoded via :func:`_buffer_execution_instruction`
+    — :func:`_run_uow_group`'s own treatment, applied here; the SEPARATE pure
+    ``statements`` re-lowering above stays on the ORIGINAL, undecoded
+    ``resolved`` buffer.
     """
     lowered: dict[int, _LoweredStep] = {}
     group_observations: ScenarioObservations = {}
@@ -2428,14 +2438,7 @@ def _run_interleaved_group(
                     )  # every resolved entry this lane buffers is keyed
                     if key is not None and observation is not None:
                         tx._uow.observe(key, observation)  # pyright: ignore[reportPrivateUsage]
-                    entity_metadata = case_entity(model, meta.entity(instruction.entity))
-                    tx._buffer(  # pyright: ignore[reportPrivateUsage]
-                        instruction.mutation,
-                        instruction.entity,
-                        decode_write_row(entity_metadata, instruction.rows[0], model),
-                        valid_from=instruction.valid_from,
-                        until=instruction.until,
-                    )
+                    _buffer_execution_instruction(tx, meta, model, instruction)
                 lowered[index] = _LoweredStep(
                     f"/scenario/{index}/write", statements, True, step.get("rollback") is True
                 )

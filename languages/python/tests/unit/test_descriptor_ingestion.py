@@ -81,8 +81,9 @@ _FIXTURES = _discover()
 
 
 def test_the_corpus_has_the_documented_stem_count() -> None:
-    # Pinned so a silently added or removed fixture is a reviewed diff rather
-    # than a shrinking or growing parametrization nobody notices.
+    # Pinned to the corpus's exact stem count so an added or removed fixture
+    # must update this assertion explicitly, rather than silently shrinking
+    # or growing the parametrization unnoticed.
     assert len(_FIXTURES) == 26
 
 
