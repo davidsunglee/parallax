@@ -156,30 +156,30 @@ def test_unowned_production_file_fails(capsys: pytest.CaptureFixture[str]) -> No
 def test_undeclared_nested_scope_fails(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    # Declaring `parallax.core.entity.expressions` as a scope without registering
+    # Declaring `parallax.core.entity._expressions` as a scope without registering
     # it as a child of `parallax.core.entity` is precisely the state in which the
     # generator emits it into its parent's forbidden row and import-linter skips
     # it. The ownership check refuses it instead.
     tampered = dict(dag.SUPPORT_SCOPE_DEPS)
-    tampered["parallax.core.entity.expressions"] = frozenset({"parallax.core.descriptor"})
+    tampered["parallax.core.entity._expressions"] = frozenset({"parallax.core.descriptor"})
     monkeypatch.setattr(dag, "SUPPORT_SCOPE_DEPS", tampered)
 
     assert own.main([]) == 1
     err = capsys.readouterr().err
     assert "no declared nesting" in err
-    assert "expressions.py" in err
+    assert "_expressions.py" in err
 
 
 def test_a_declared_nested_scope_is_accepted(monkeypatch: pytest.MonkeyPatch) -> None:
     # The same nested scope, correctly registered, passes — so the failure above
     # is the missing declaration, not the nesting itself.
     tampered = dict(dag.SUPPORT_SCOPE_DEPS)
-    tampered["parallax.core.entity.expressions"] = frozenset({"parallax.core.descriptor"})
+    tampered["parallax.core.entity._expressions"] = frozenset({"parallax.core.descriptor"})
     monkeypatch.setattr(dag, "SUPPORT_SCOPE_DEPS", tampered)
     monkeypatch.setattr(
         dag,
         "CHILD_SCOPE_PARENT",
-        {**dag.CHILD_SCOPE_PARENT, "parallax.core.entity.expressions": "parallax.core.entity"},
+        {**dag.CHILD_SCOPE_PARENT, "parallax.core.entity._expressions": "parallax.core.entity"},
     )
     assert own.main([]) == 0
 

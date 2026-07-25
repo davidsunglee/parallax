@@ -15,6 +15,11 @@ no member carries a payload, and one frozen dataclass per variant behind a
 union's nullary members. Lookup-bearing aggregates are ``Protocol`` types so no
 frontend has to mirror a record graph, and every lookup returns ``None`` on a
 miss rather than raising.
+
+This is a supported public import path: an application annotating what
+``models.meta(...)`` returns, or naming an Entity by structured Identity, names
+those types from here. ``parallax.core`` re-exports none of them, so there is
+exactly one spelling for each.
 """
 
 from __future__ import annotations

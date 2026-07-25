@@ -21,6 +21,9 @@ from pydantic import BaseModel
 from pydantic._internal._model_construction import ModelMetaclass
 
 from parallax.core.entity._declaration import (
+    DECLARATION_MEMBER_NAMES as _DECLARATION_MEMBERS,
+)
+from parallax.core.entity._declaration import (
     FRAMEWORK_MINT,
     DeclarationKind,
     EntityHeader,
@@ -81,9 +84,46 @@ class EntityMeta(ModelMetaclass):
     header option rather than silently accepted; the engine sets ``frozen=True``
     itself.
 
-    The nine read-only properties below are the ``UnresolvedEntityDeclaration``
-    surface, published on the class object so an Entity Class needs no adapter.
+    The nine annotations below are the ``UnresolvedEntityDeclaration`` surface,
+    published on the class object so an Entity Class needs no adapter. They
+    declare types without binding values: the hidden ``__getattr__`` serves each
+    read from the class's own eagerly built declaration, and instances stay
+    unaffected because the members live on the metaclass. Declaring them rather
+    than writing nine properties is what makes ``type[SomeEntity]`` *statically*
+    satisfy the protocol — a type checker resolving a member through
+    ``type[...]`` reads the metaclass declaration itself and does not apply the
+    descriptor protocol to a metaclass ``property``.
     """
+
+    identity: EntityIdentity
+    """This Entity's canonical model-wide identity."""
+    container: StorageContainer | None
+    """This Entity's declared physical container, if it declares one."""
+    persistence: PersistenceMode | None
+    """The Persistence Mode this Entity itself declares, if any."""
+    attributes: Sequence[AttributeMetadata]
+    """This Entity's own scalar Attributes, in declaration order."""
+    relationships: Sequence[UnresolvedRelationshipDeclaration]
+    """This Entity's own relationship declarations, in declaration order."""
+    value_objects: Sequence[ValueObjectOccurrenceDeclaration]
+    """This Entity's own top-level Value Object occurrences."""
+    as_of_axes: Sequence[AsOfAxisMetadata]
+    """The temporal axes this Entity itself owns; empty below a family root."""
+    inheritance: UnresolvedInheritance | None
+    """This Entity's inheritance position, or ``None`` when standalone."""
+    indices: Sequence[IndexMetadata]
+    """This Entity's own local indices; indices are never inherited."""
+
+    if not TYPE_CHECKING:
+        # Hidden from type checkers on Pydantic's own reasoning for the same
+        # construct: a visible catch-all would legalize arbitrary attribute
+        # access on every Entity Class and silence real typos. A class carrying
+        # no declaration — a framework root — is refused by `declaration_of`.
+
+        def __getattr__(cls, name):
+            if name in _DECLARATION_MEMBERS:
+                return getattr(declaration_of(cls), name)
+            return super().__getattr__(name)
 
     def __new__(
         mcs,
@@ -119,51 +159,6 @@ class EntityMeta(ModelMetaclass):
             axes=_axes,
             header=EntityHeader(table, name, namespace, persistence, inheritance, indices),
         )
-
-    @property
-    def identity(cls) -> EntityIdentity:
-        """This Entity's canonical model-wide identity."""
-        return declaration_of(cls).identity
-
-    @property
-    def container(cls) -> StorageContainer | None:
-        """This Entity's declared physical container, if it declares one."""
-        return declaration_of(cls).container
-
-    @property
-    def persistence(cls) -> PersistenceMode | None:
-        """The Persistence Mode this Entity itself declares, if any."""
-        return declaration_of(cls).persistence
-
-    @property
-    def attributes(cls) -> Sequence[AttributeMetadata]:
-        """This Entity's own scalar Attributes, in declaration order."""
-        return declaration_of(cls).attributes
-
-    @property
-    def relationships(cls) -> Sequence[UnresolvedRelationshipDeclaration]:
-        """This Entity's own relationship declarations, in declaration order."""
-        return declaration_of(cls).relationships
-
-    @property
-    def value_objects(cls) -> Sequence[ValueObjectOccurrenceDeclaration]:
-        """This Entity's own top-level Value Object occurrences."""
-        return declaration_of(cls).value_objects
-
-    @property
-    def as_of_axes(cls) -> Sequence[AsOfAxisMetadata]:
-        """The temporal axes this Entity itself owns; empty below a family root."""
-        return declaration_of(cls).as_of_axes
-
-    @property
-    def inheritance(cls) -> UnresolvedInheritance | None:
-        """This Entity's inheritance position, or ``None`` when standalone."""
-        return declaration_of(cls).inheritance
-
-    @property
-    def indices(cls) -> Sequence[IndexMetadata]:
-        """This Entity's own local indices; indices are never inherited."""
-        return declaration_of(cls).indices
 
 
 @dataclass(frozen=True, slots=True)

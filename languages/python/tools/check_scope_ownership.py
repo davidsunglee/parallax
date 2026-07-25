@@ -74,8 +74,8 @@ PACKAGES = PY_ROOT / "packages"
 EXEMPTIONS: Mapping[str, str] = {
     "parallax-core/src/parallax/core/__init__.py": (
         "distribution package interface: re-exports the §8 `parallax.core` developer "
-        "surface across the descriptor, entity, op-algebra and temporal-read scopes, "
-        "so no single scope owns it"
+        "surface across the entity, op-algebra and temporal-read scopes, so no single "
+        "scope owns it"
     ),
     "parallax-snapshot/src/parallax/snapshot/__init__.py": (
         "distribution package interface: re-exports the §8 `parallax.snapshot` surface "

@@ -1,34 +1,33 @@
 """Parallax common runtime (``parallax-core``).
 
-The class-free engine spine: metamodel hub, op-algebra nodes, write
+The class-free engine spine: metamodel formation, op-algebra nodes, write
 instructions, SQL lowering, the pure dialect strategy, the unit of work,
 and the abstract database port.
 
 This surface publishes the model-definition and read surface: the frozen entity
 bases (``Entity`` and the temporal framework bases ``TxTemporal`` /
-``Bitemporal``), the ``Attr`` / ``Rel`` typed-access carriers, the ``Field`` /
-``Relationship`` declaration helpers, the ``ValueObject`` class frontend,
-the inheritance-family vocabulary (``FamilyRoot`` / ``Concrete``),
-the ``Statement`` query surface (predicate,
-result-shaping, deep-fetch ``.include``, subtype ``.narrow``, and the
-axis-keyed temporal-read clauses), the temporal as-of coordinate model
-(``LATEST`` / ``VALID_TIME`` / ``TX_TIME`` / ``Pin`` / ``Edge`` / ``pin_of``
-/ ``edge_of``), and the
-closed-world relationship load-state introspection (``is_loaded`` /
-``narrowed``) the frozen ``Snapshot[T]`` node surface uses. The transaction and
-snapshot surfaces land with ``parallax.snapshot``.
+``Bitemporal``), the ``ValueObject`` class frontend, the ``Attr`` / ``Rel``
+member annotations with the ``attr`` / ``rel`` / ``index`` / ``asc`` / ``desc``
+factories, the core-algebra values those take (cardinality, persistence,
+inheritance role and strategy, primary-key generation, and the two narrowable
+Neutral Types), ``MetamodelHub``, the ``Statement`` query surface (predicate,
+result-shaping, deep-fetch ``.include``, subtype ``.narrow``, and the axis-keyed
+temporal-read clauses), the temporal as-of coordinate model (``LATEST`` /
+``VALID_TIME`` / ``TX_TIME`` / ``Pin`` / ``Edge`` / ``pin_of`` / ``edge_of``),
+the closed-world relationship load-state introspection (``is_loaded`` /
+``narrowed``) the frozen ``Snapshot[T]`` node surface uses, and the errors all
+of these raise. Read-only metadata protocols and identity values are imported
+from ``parallax.core.metamodel`` rather than re-exported here, and canonical
+descriptor interchange belongs to the separately installable
+``parallax.descriptor``. The transaction and snapshot surfaces land with
+``parallax.snapshot``.
 """
 
 from __future__ import annotations
 
-from parallax.core.descriptor import (
-    AsOfAxisMetadata,
-    RelationshipJoin,
-    RelationshipTarget,
-    TemporalDimension,
-)
 from parallax.core.entity import (
     MANY_TO_ONE,
+    MAX,
     ONE_TO_MANY,
     ONE_TO_ONE,
     READ_ONLY,
@@ -42,11 +41,18 @@ from parallax.core.entity import (
     ConcreteSubtype,
     Entity,
     EntityDefinitionError,
+    Float32,
+    Int32,
+    MetamodelDefinitionError,
+    MetamodelHub,
+    MetamodelLookupError,
+    MetamodelStateError,
     ModelCopyError,
     Predicate,
     ProvenanceError,
     Rel,
     RelationshipPath,
+    Sequence,
     Statement,
     TablePerHierarchy,
     TxTemporal,
@@ -77,6 +83,7 @@ from parallax.core.temporal_read import (
 __all__ = [
     "LATEST",
     "MANY_TO_ONE",
+    "MAX",
     "ONE_TO_MANY",
     "ONE_TO_ONE",
     "READ_ONLY",
@@ -86,7 +93,6 @@ __all__ = [
     "VALID_TIME",
     "AbstractRoot",
     "AbstractSubtype",
-    "AsOfAxisMetadata",
     "Attr",
     "AttributeExpr",
     "Bitemporal",
@@ -94,18 +100,22 @@ __all__ = [
     "Edge",
     "Entity",
     "EntityDefinitionError",
+    "Float32",
+    "Int32",
+    "MetamodelDefinitionError",
+    "MetamodelHub",
+    "MetamodelLookupError",
+    "MetamodelStateError",
     "ModelCopyError",
     "OperationRejectedError",
     "Pin",
     "Predicate",
     "ProvenanceError",
     "Rel",
-    "RelationshipJoin",
     "RelationshipPath",
-    "RelationshipTarget",
+    "Sequence",
     "Statement",
     "TablePerHierarchy",
-    "TemporalDimension",
     "TemporalReadError",
     "TxTemporal",
     "UndeclaredAxisError",
