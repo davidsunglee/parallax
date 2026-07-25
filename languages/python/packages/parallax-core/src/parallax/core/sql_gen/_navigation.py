@@ -12,10 +12,9 @@ as-of predicate (if any) already rides inside the hop's `op` as a plain predicat
 node — `parallax.core.navigate.canonicalize` injected it upstream — so nothing
 here is temporal-aware.
 
-The join comes from the identity-resolved Relationship Declaration the target
-Entity's own Metadata carries, never from a paired relationship facet: a defining
-declaration owns the join outright, and a reverse declaration names its defining
-peer, whose join swaps sides. That is the whole of what a semi-join needs — a
+The join comes from the Relationship Facet's compiled direction, the one place a
+reverse direction's swapped join exists — so a reverse hop is never re-paired
+with its defining peer here. That is the whole of what a semi-join needs: a
 direction's cardinality decides nothing about an `EXISTS`.
 
 **This module returns PLANS and never lowers anything.** A plan carries the
@@ -64,17 +63,17 @@ from dataclasses import dataclass
 from parallax.core.inheritance import InheritanceFacet
 from parallax.core.metamodel import (
     AbstractRoot,
-    DefiningRelationshipDeclaration,
     EntityIdentity,
     EntityMetadata,
     Metamodel,
+    RelationshipIdentity,
     RelationshipJoin,
     RelativeEntityReference,
-    ReverseRelationshipDeclaration,
     TablePerHierarchy,
     resolve_entity_reference,
 )
 from parallax.core.op_algebra import Exists, Narrow, Navigate, NotExists, Operation
+from parallax.core.relationship import view as _relationship_view
 from parallax.core.sql_gen._context import PlanScope as _PlanScope
 from parallax.core.sql_gen._context import SqlGenError
 from parallax.core.sql_gen._context import declared_table as _table
@@ -175,10 +174,11 @@ def _resolve_join(rel_ref: str, scope: _PlanScope) -> RelationshipJoin:
     """The source-to-target Attribute equality one `Class.relationship` reference
     correlates on.
 
-    A defining declaration IS the join. A reverse declaration repeats none of its
-    peer's facts, so its own direction is the peer's join with the two sides
-    exchanged — which is exactly what a semi-join needs and all it needs, since
-    an `EXISTS` is insensitive to the direction's cardinality.
+    Read off the Relationship Facet's compiled direction, which already carries a
+    reverse direction's join with the two sides exchanged — so nothing here pairs
+    a reverse declaration with its defining peer or swaps the sides itself. The
+    join is the whole of what a semi-join needs: an `EXISTS` is insensitive to
+    the direction's cardinality.
 
     The reference's class name is bare, so it resolves in the active target's own
     namespace like any other relative model reference.
@@ -189,21 +189,12 @@ def _resolve_join(rel_ref: str, scope: _PlanScope) -> RelationshipJoin:
     owner_identity = resolve_entity_reference(
         scope.entity.identity, RelativeEntityReference(class_name)
     )
-    owner = scope.meta.entity(owner_identity)
-    declaration = None if owner is None else owner.relationship(member_name)
-    match declaration:
-        case DefiningRelationshipDeclaration(join=join):
-            return join
-        case ReverseRelationshipDeclaration(reverse_of=reverse_of):
-            peer_owner = _entity(scope.meta, reverse_of.source_entity)
-            peer = peer_owner.relationship(reverse_of.name)
-            if not isinstance(  # pragma: no cover - resolution pairs every reverse
-                peer, DefiningRelationshipDeclaration
-            ):
-                raise SqlGenError(f"{rel_ref!r} names no defining relationship to correlate on")
-            return RelationshipJoin(source=peer.join.target, target=peer.join.source)
-        case None:
-            raise SqlGenError(f"{rel_ref!r} names no declared relationship on {class_name}")
+    direction = _relationship_view(scope.meta).relationship(
+        RelationshipIdentity(source_entity=owner_identity, name=member_name)
+    )
+    if direction is None:
+        raise SqlGenError(f"{rel_ref!r} names no declared relationship on {class_name}")
+    return direction.join
 
 
 # --------------------------------------------------------------------------- #

@@ -166,6 +166,7 @@ m-sql --> m-op-algebra
 m-sql --> m-dialect
 m-sql --> m-metamodel
 m-sql --> m-inheritance
+m-sql --> m-relationship
 m-sql-agg --> m-agg
 m-sql-agg --> m-sql
 m-dialect --> m-core
@@ -242,6 +243,11 @@ construction it may reference any behavioral module it harnesses.
   resolved model Identities directly and lowers a `narrow` node's tag/branch
   predicate against the inheritance family model; both are declared directly
   rather than left to the transitive closure through `m-op-algebra`.
+- **`m-sql --> m-relationship`.** A navigation hop lowers to a correlated
+  semi-join whose columns come from the relationship's join predicate. The
+  Relationship Facet is the one place a reverse direction's swapped join exists,
+  so SQL lowering reads the compiled direction rather than re-pairing a reverse
+  declaration with its defining peer and exchanging the sides itself.
 - **`m-op-list --> m-deep-fetch`.** A navigation filter is a *predicate*
   (semi-join) and yields no list; deep fetch is a pure per-level fetch
   algorithm. The lifecycle result surfaces — operation-backed lists for the
