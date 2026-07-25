@@ -196,11 +196,6 @@ def test_family_attributes_falls_back_to_local_when_ancestry_is_malformed() -> N
     assert family_attributes(cyclic, entity) == entity.attributes
 
 
-def test_concrete_descendants_terminates_on_a_cyclic_family() -> None:
-    # A malformed (cyclic) family: `concrete_descendants` must still terminate.
-    assert family_of(_cyclic_pair()).concrete_descendants("A") == frozenset({"A", "B"})
-
-
 def _minimal_attrs() -> tuple[Attribute, ...]:
     return (Attribute(name="id", type="int64", column="id", primary_key=True),)
 

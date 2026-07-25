@@ -4,9 +4,12 @@ The neutral, frozen ``slots`` dataclasses that make up a parsed model
 descriptor — an in-memory instance of ``core/schemas/metamodel.schema.json``.
 Every record is immutable and shareable; derived facts (an entity's effective
 ``temporal`` classification, its physical ``column_order``) are computed
-accessors, never re-authored fields. The behavioural scopes (``m-pk-gen``,
-``m-inheritance``, ``m-value-object``) build on these records; the entity
-frontend exports them.
+accessors, never re-authored fields. No behavioural scope reads these records:
+they serve the entity frontend's own adapter and the conformance engine's
+raw-descriptor seams, which answer structural family questions here — through
+:func:`declaring_entity`, :func:`family_root_name`, and
+:func:`concrete_descendant_names` — for a document that has not formed, or
+never will.
 """
 
 from __future__ import annotations
@@ -44,9 +47,11 @@ __all__ = [
     "ValueObject",
     "ValueObjectAttribute",
     "column_order",
+    "concrete_descendant_names",
     "declaring_entity",
     "effective_as_of_axes",
     "effective_temporal",
+    "family_root_name",
 ]
 
 Persistence = Literal["read-write", "read-only"]
@@ -360,6 +365,62 @@ def declaring_entity(metamodel: Metamodel, entity: Entity) -> Entity:
             return entity
         seen.add(current.name)
         current = by_name[parent]
+
+
+def family_root_name(metamodel: Metamodel, entity: Entity) -> str | None:
+    """The name of ``entity``'s family root, or ``None`` if it has none.
+
+    ``None`` covers both a non-participant and a participant whose ancestry does
+    not resolve to a root: :func:`declaring_entity` already falls back to
+    ``entity`` itself for a malformed (cyclic or unresolvable) chain, and
+    ``entity`` is then never a root, so checking the resolved role alone
+    distinguishes the two without re-walking ``parent`` links.
+    """
+    if entity.inheritance is None:
+        return None
+    resolved = declaring_entity(metamodel, entity)
+    if resolved.inheritance is None or resolved.inheritance.role != "root":
+        return None
+    return resolved.name
+
+
+def _role_of(entity: Entity) -> InheritanceRole | None:
+    """``entity``'s inheritance role, or ``None`` if it does not participate."""
+    return None if entity.inheritance is None else entity.inheritance.role
+
+
+def concrete_descendant_names(metamodel: Metamodel, position: str) -> frozenset[str]:
+    """Every concrete-subtype name at or below the family position ``position``.
+
+    The record-level spelling of a position's effective concrete-subtype set
+    (`m-inheritance` "every concrete node at or below the position"), so a
+    concrete node that is itself a parent contributes both itself and its
+    concrete descendants. Walks the ``parent`` links a descriptor already
+    carries and terminates on a malformed (cyclic) family rather than raising —
+    rejecting one is the raw-descriptor validator's authority, not this walk's.
+    """
+    by_name: dict[str, Entity] = {}
+    children: dict[str, list[str]] = {}
+    for candidate in metamodel.entities:
+        inheritance = candidate.inheritance
+        if inheritance is None:
+            continue
+        by_name[candidate.name] = candidate
+        if inheritance.parent is not None:
+            children.setdefault(inheritance.parent, []).append(candidate.name)
+    found: set[str] = set()
+    seen: set[str] = set()
+    pending = [position]
+    while pending:
+        current = pending.pop()
+        if current in seen:
+            continue
+        seen.add(current)
+        candidate = by_name.get(current)
+        if candidate is not None and _role_of(candidate) == "concrete-subtype":
+            found.add(current)
+        pending.extend(children.get(current, ()))
+    return frozenset(found)
 
 
 def effective_as_of_axes(metamodel: Metamodel, entity: Entity) -> tuple[AsOfAxisMetadata, ...]:

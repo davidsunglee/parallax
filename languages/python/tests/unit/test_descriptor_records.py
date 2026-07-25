@@ -17,7 +17,9 @@ from parallax.core.descriptor import (
     PkGenerator,
     ValueObject,
     column_order,
+    concrete_descendant_names,
     declaring_entity,
+    family_root_name,
 )
 
 pytestmark = pytest.mark.unit
@@ -145,6 +147,74 @@ def _synthetic_temporal_family() -> Metamodel:
         attributes=(Attribute(name="x", type="int32", column="x"),),
     )
     return Metamodel(entities=(root, mid, leaf))
+
+
+def _cyclic_pair() -> Metamodel:
+    attrs = (Attribute(name="id", type="int64", column="id", primary_key=True),)
+    return Metamodel(
+        entities=(
+            Entity(
+                name="A",
+                table="a",
+                inheritance=Inheritance(role="concrete-subtype", parent="B"),
+                attributes=attrs,
+            ),
+            Entity(
+                name="B",
+                table="b",
+                inheritance=Inheritance(role="concrete-subtype", parent="A"),
+                attributes=attrs,
+            ),
+        )
+    )
+
+
+def test_family_root_name_resolves_a_root_and_reports_none_off_a_family() -> None:
+    meta = _synthetic_temporal_family()
+    for name in ("Root", "Mid", "Leaf"):
+        assert family_root_name(meta, meta.entity(name)) == "Root", name
+    plain = Entity(name="Solo", table="solo", attributes=())
+    assert family_root_name(Metamodel(entities=(plain,)), plain) is None
+
+
+def test_family_root_name_is_none_for_an_ancestry_that_reaches_no_root() -> None:
+    cyclic = _cyclic_pair()
+    assert family_root_name(cyclic, cyclic.entity("A")) is None
+
+
+def test_concrete_descendant_names_collects_every_concrete_at_or_below() -> None:
+    # A concrete node that is itself a parent contributes BOTH itself and its
+    # concrete descendants: the effective set is every concrete node at or below
+    # the position, so descent never stops at the first concrete one.
+    attrs = (Attribute(name="id", type="int64", column="id", primary_key=True),)
+    meta = Metamodel(
+        entities=(
+            Entity(
+                name="Root",
+                inheritance=Inheritance(role="root", strategy="table-per-concrete-subtype"),
+                attributes=attrs,
+            ),
+            Entity(
+                name="Middle",
+                table="middle",
+                inheritance=Inheritance(role="concrete-subtype", parent="Root"),
+                attributes=attrs,
+            ),
+            Entity(
+                name="Below",
+                table="below",
+                inheritance=Inheritance(role="concrete-subtype", parent="Middle"),
+                attributes=attrs,
+            ),
+        )
+    )
+    assert concrete_descendant_names(meta, "Root") == frozenset({"Middle", "Below"})
+    assert concrete_descendant_names(meta, "Middle") == frozenset({"Middle", "Below"})
+    assert concrete_descendant_names(meta, "Below") == frozenset({"Below"})
+
+
+def test_concrete_descendant_names_terminates_on_a_cyclic_family() -> None:
+    assert concrete_descendant_names(_cyclic_pair(), "A") == frozenset({"A", "B"})
 
 
 def test_declaring_entity_resolves_to_the_family_root_from_every_position() -> None:

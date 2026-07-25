@@ -61,6 +61,46 @@ def test_the_walk_resolves_the_same_effective_set_the_facet_does(
     )
 
 
+def test_the_walk_matches_the_facet_below_a_concrete_node_with_a_concrete_child() -> None:
+    # The shape no corpus family has: a concrete subtype that is itself a
+    # parent. Reading position `Middle` must include `Below`, since the
+    # effective set is every concrete node AT OR BELOW the position — stopping
+    # at the first concrete node would key a narrowed view `rel[Middle]` where
+    # the facet-resolved read keyed `rel[Below,Middle]`, silently reporting the
+    # relationship as unloaded. The two resolutions are compared directly here
+    # because the corpus cannot exercise this divergence.
+    attrs = (Attribute(name="id", type="int64", column="id", primary_key=True),)
+    records = Metamodel(
+        entities=(
+            Entity(
+                name="Root",
+                namespace=_CORPUS_NAMESPACE,
+                inheritance=Inheritance(role="root", strategy="table-per-concrete-subtype"),
+                attributes=attrs,
+            ),
+            Entity(
+                name="Middle",
+                namespace=_CORPUS_NAMESPACE,
+                table="middle",
+                inheritance=Inheritance(role="concrete-subtype", parent="Root"),
+            ),
+            Entity(
+                name="Below",
+                namespace=_CORPUS_NAMESPACE,
+                table="below",
+                inheritance=Inheritance(role="concrete-subtype", parent="Middle"),
+            ),
+        )
+    )
+    assert effective_concrete_subtypes(records, "Middle") == ("Below", "Middle")
+    facet = inheritance.view(form_metamodel(unresolved_metamodel(records)))
+    position = facet.position([EntityIdentity(_CORPUS_NAMESPACE, "Middle")])
+    assert position is not None
+    assert [member.name for member in position.concrete_subtypes] == list(
+        effective_concrete_subtypes(records, "Middle")
+    )
+
+
 def test_family_root_resolves_the_abstract_root() -> None:
     animal = _MODELS["animal"]
     assert family_root(animal, animal.entity("Dog")).name == "Animal"
