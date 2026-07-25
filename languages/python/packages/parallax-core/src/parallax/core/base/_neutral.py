@@ -52,6 +52,7 @@ __all__ = [
     "Time",
     "Timestamp",
     "Uuid",
+    "coerce_neutral_input",
     "decode_neutral_literal",
     "matches_neutral_type",
 ]
@@ -269,6 +270,44 @@ def decode_neutral_literal(value: object, declared: NeutralType) -> object:
             return _decoded_temporal(_dt.time.fromisoformat, value)
         case Timestamp() if isinstance(value, str):
             return _decoded_temporal(_dt.datetime.fromisoformat, value)
+        case Uuid() if isinstance(value, str):
+            return _decoded(_uuid.UUID, value)
+        case _:
+            return value
+
+
+def coerce_neutral_input(value: object, declared: NeutralType) -> object:
+    """``value`` widened by the exact/lossless adjacent forms the developer
+    input policy admits for ``declared`` (`python.md` "Neutral scalar type
+    mapping", the input-policy column), and otherwise returned unchanged.
+
+    This is the boundary the DEVELOPER-facing write validators call — a
+    runtime argument already carries a native Python value, never a wire
+    literal, so only the input policy's own narrow, exact/lossless typed
+    widenings apply: an :class:`int` for a :class:`Decimal` (exact — decimal
+    construction from an integer never rounds), an :class:`int` for a
+    :class:`Float32` / :class:`Float64` (lossless only, reusing
+    :func:`_integer_as_float`'s own exactness test), and a canonical UUID
+    string for :class:`Uuid`. Every other case — INCLUDING a :class:`float`
+    for a :class:`Decimal`, which the input policy explicitly rejects — is
+    returned unchanged. There is no ISO date/time/timestamp string decode and
+    no hex-string :class:`Bytes` decode here: those are wire spellings the
+    case-format / descriptor serde seam (:func:`decode_neutral_literal`)
+    decodes once at ingestion, never a form the developer input policy itself
+    admits at this boundary.
+
+    Total and nonthrowing, exactly like :func:`decode_neutral_literal`: a
+    value this function does not recognize as one of the three widenings
+    above passes through untouched, so :func:`matches_neutral_type` alone
+    decides membership.
+    """
+    match declared:
+        case Decimal() if _is_integer(value):
+            return _decimal.Decimal(value)
+        case Float64() if _is_integer(value):
+            return _integer_as_float(value, binary32=False)
+        case Float32() if _is_integer(value):
+            return _integer_as_float(value, binary32=True)
         case Uuid() if isinstance(value, str):
             return _decoded(_uuid.UUID, value)
         case _:

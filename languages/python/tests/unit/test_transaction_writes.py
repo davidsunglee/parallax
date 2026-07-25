@@ -247,7 +247,13 @@ def test_row_naming_an_undeclared_member_is_rejected_at_buffer_time() -> None:
             lambda tx: tx._buffer(  # pyright: ignore[reportPrivateUsage]
                 "insert",
                 "Account",
-                {"id": 1, "owner": "Newton", "balance": 5.00, "version": 1, "shoe_size": 9},
+                {
+                    "id": 1,
+                    "owner": "Newton",
+                    "balance": Decimal("5.00"),
+                    "version": 1,
+                    "shoe_size": 9,
+                },
             )
         )
     assert ("write", INSERT_SQL, (1, 9)) not in port.ops
@@ -399,7 +405,7 @@ def test_sparse_update_does_not_trip_required_attribute_missing_for_an_untouched
     def fn(tx: Transaction) -> None:
         tx.find(mm.Account.where(mm.Account.id == 1)).result()
         tx._buffer(  # pyright: ignore[reportPrivateUsage]
-            "update", "Account", {"id": 1, "balance": 175.00}
+            "update", "Account", {"id": 1, "balance": Decimal("175.00")}
         )
 
     account_db(port).transact(fn)

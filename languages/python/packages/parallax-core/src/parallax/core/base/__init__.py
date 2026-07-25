@@ -2,10 +2,12 @@
 
 The normative primitives the whole spine rests on: the structured
 :data:`~parallax.core.base.NeutralType` algebra, its value-space conformance
-check and the inverse of its portable literal encoding, the interchange
-neutral-type name vocabulary, global UTC / microsecond normalization for
-``timestamp`` instants, the native-infinity temporal upper bound, and the
-``json`` value-object document column type. ``m-core`` depends on nothing.
+check, the inverse of its portable literal encoding (the serde seam's own wire
+decode), the narrower developer input-policy widening the runtime write
+validators apply instead, the interchange neutral-type name vocabulary, global
+UTC / microsecond normalization for ``timestamp`` instants, the native-infinity
+temporal upper bound, and the ``json`` value-object document column type.
+``m-core`` depends on nothing.
 """
 
 from __future__ import annotations
@@ -42,6 +44,7 @@ from parallax.core.base._neutral import (
     Time,
     Timestamp,
     Uuid,
+    coerce_neutral_input,
     decode_neutral_literal,
     matches_neutral_type,
 )
@@ -79,6 +82,7 @@ __all__ = [
     "Time",
     "Timestamp",
     "Uuid",
+    "coerce_neutral_input",
     "decode_neutral_literal",
     "is_neutral_type",
     "matches_neutral_type",

@@ -369,3 +369,53 @@ def test_decoding_a_huge_integer_literal_does_not_raise(declared: base.NeutralTy
     decoded = base.decode_neutral_literal(10**1000, declared)
     assert decoded == 10**1000
     assert base.matches_neutral_type(decoded, declared) is False
+
+
+# The DEVELOPER-facing write validators call `coerce_neutral_input` rather than
+# the full wire decode above: only the input policy's own narrow,
+# exact/lossless widenings apply (`python.md` "Neutral scalar type mapping"),
+# so a `float` for a `decimal` is NEVER coerced (membership then rejects it),
+# while an `int` for a `decimal`/`float` and a canonical UUID string still
+# widen -- and there is no ISO date/time/timestamp or hex-`bytes` decode at
+# all, since those are wire spellings the case-format ingestion seam decodes,
+# never a form the input policy itself admits.
+def _coerced_member(value: object, declared: base.NeutralType) -> bool:
+    return base.matches_neutral_type(base.coerce_neutral_input(value, declared), declared)
+
+
+@pytest.mark.parametrize(
+    ("value", "declared", "expected"),
+    [
+        (3, base.Decimal(18, 2), True),
+        (1.5, base.Decimal(18, 2), False),
+        (3, base.FLOAT64, True),
+        (2**53 + 1, base.FLOAT64, False),
+        (3, base.FLOAT32, True),
+        (10**40, base.FLOAT32, False),
+        ("123e4567-e89b-12d3-a456-426614174000", base.UUID, True),
+        ("not-a-uuid", base.UUID, False),
+        (5, base.UUID, False),
+        ("deadbeef", base.BYTES, False),
+        ("2026-01-01", base.DATE, False),
+        ("2026-01-01T00:00:00+00:00", base.TIMESTAMP, False),
+    ],
+)
+def test_coerce_neutral_input_applies_only_the_narrow_input_policy_widenings(
+    value: object, declared: base.NeutralType, expected: bool
+) -> None:
+    assert _coerced_member(value, declared) is expected
+
+
+def test_coerce_neutral_input_leaves_an_already_native_value_unchanged() -> None:
+    native = decimal.Decimal("1.50")
+    assert base.coerce_neutral_input(native, base.Decimal(18, 2)) is native
+    stamp = dt.datetime(2026, 1, 1, tzinfo=dt.UTC)
+    assert base.coerce_neutral_input(stamp, base.TIMESTAMP) is stamp
+
+
+def test_coerce_neutral_input_is_total_and_nonthrowing_on_a_huge_integer() -> None:
+    # Mirrors `decode_neutral_literal`'s own overflow-safety proof above: a
+    # magnitude no float can carry is left unchanged rather than raising.
+    coerced = base.coerce_neutral_input(10**1000, base.FLOAT64)
+    assert coerced == 10**1000
+    assert base.matches_neutral_type(coerced, base.FLOAT64) is False

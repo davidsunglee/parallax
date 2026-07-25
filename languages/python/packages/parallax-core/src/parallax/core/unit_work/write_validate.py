@@ -68,7 +68,7 @@ from collections.abc import Mapping
 from typing import Final, cast
 
 from parallax.core import inheritance
-from parallax.core.base import decode_neutral_literal, matches_neutral_type
+from parallax.core.base import coerce_neutral_input, matches_neutral_type
 from parallax.core.metamodel import (
     AttributeMetadata,
     EntityMetadata,
@@ -181,7 +181,7 @@ def _check_entity_attribute(
         return
     if _is_scalar_write_marker(value):
         return
-    if not matches_neutral_type(decode_neutral_literal(value, attribute.type), attribute.type):
+    if not matches_neutral_type(coerce_neutral_input(value, attribute.type), attribute.type):
         raise WriteRejectedError(
             "write-value-type-mismatch",
             f"{owner}.{name}: value {value!r} does not match the declared type {attribute.type!r}",

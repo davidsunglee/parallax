@@ -23,20 +23,33 @@ import socket
 import threading
 import uuid
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Final, Literal, Protocol, cast, runtime_checkable
 
 from parallax.conformance import case_format, models, provision, temporal_state
 from parallax.conformance.temporal_state import TemporalShadow
 from parallax.core import batch_write, inheritance, navigate, opt_lock, read_lock
-from parallax.core.base import INFINITY_LITERAL, TemporalBound, normalize_instant
+from parallax.core.base import (
+    INFINITY_LITERAL,
+    TemporalBound,
+    decode_neutral_literal,
+    normalize_instant,
+)
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import DbPort, JsonDocument, Row
 from parallax.core.descriptor import Attribute, DescriptorError, Entity, Metamodel
 from parallax.core.descriptor import deserialize as deserialize_metamodel
 from parallax.core.dialect import Dialect, dialect_for
 from parallax.core.entity import accepted_metamodel
-from parallax.core.metamodel import EntityIdentity, EntityMetadata, PrimaryKey, TablePerHierarchy
+from parallax.core.metamodel import (
+    EntityIdentity,
+    EntityMetadata,
+    Multiplicity,
+    NestedValueObjectMetadata,
+    PrimaryKey,
+    TablePerHierarchy,
+    ValueObjectMetadata,
+)
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
 from parallax.core.op_algebra import Operation, OperationError, OperationRejectedError, deserialize
 from parallax.core.op_algebra import validate_operation as validate_op_algebra_operation
@@ -55,6 +68,7 @@ from parallax.core.unit_work import (
     ObjectKey,
     Observation,
     PredicateWrite,
+    WriteAssignment,
     WriteRejectedError,
     instructions,
     object_key,
@@ -80,6 +94,7 @@ __all__ = [
     "compile_read_case",
     "compile_scenario_case",
     "compile_write_sequence_case",
+    "decode_write_row",
     "eligibility",
     "load_case_metamodel",
     "read_table_state",
@@ -900,6 +915,138 @@ def _canonical_predicate_doc(raw_write: Mapping[str, object]) -> dict[str, objec
     return doc
 
 
+# --------------------------------------------------------------------------- #
+# Case-format ingestion decode (m-case-format / m-core): a case authors a      #
+# neutral write row in the SAME portable wire spellings a read golden does     #
+# (a decimal or a sub-microsecond-free timestamp as a bare number/ISO string,  #
+# bytes as lowercase hex, a uuid as a canonical string) — never the native     #
+# carrier the developer-facing write validators now require (they moved off   #
+# the full wire decode onto the narrower input-policy widening,               #
+# `~parallax.core.base.coerce_neutral_input`). This is the ONE seam that      #
+# lowers a case-authored row/assignment to native carriers before it ever     #
+# reaches `validate_write` / `validate_write_assignment` on the developer      #
+# verb's own path -- decoding a value already native, or one no branch        #
+# recognizes, is a no-op (`decode_neutral_literal` is total and idempotent),  #
+# so calling this twice, or on an already-native row, changes nothing.        #
+# --------------------------------------------------------------------------- #
+def decode_write_row(
+    entity: EntityMetadata, row: Mapping[str, object], model: AcceptedMetamodel
+) -> dict[str, object]:
+    """One case-authored neutral write row, its wire-spelled scalar leaves
+    decoded to native carriers.
+
+    Mirrors ``write_validate.validate_write``'s own structural walk --
+    ``entity``'s family-effective attributes and applicable value objects
+    (`m-inheritance` "Inherited members") -- but TRANSFORMS rather than
+    validates: each present, non-null scalar leaf decodes through
+    :func:`~parallax.core.base.decode_neutral_literal` against its declared
+    type, and a present value-object document (or each element of a `many`
+    occurrence) recurses the same way over its own declared composite
+    (:func:`_decoded_vo_value`). An absent field, an explicit null, a
+    DB-computed write marker, and every non-attribute control key are
+    returned exactly as authored.
+    """
+    view = inheritance.view(model).entity(entity.identity)
+    if view is None:  # pragma: no cover - the facet covers every accepted Entity
+        return dict(row)
+    decoded = dict(row)
+    for attribute in view.applicable_attributes:
+        name = attribute.identity.name
+        if name in decoded and decoded[name] is not None:
+            decoded[name] = decode_neutral_literal(decoded[name], attribute.type)
+    for value_object in view.applicable_value_objects:
+        name = value_object.identity.path[-1]
+        if name in decoded and decoded[name] is not None:
+            decoded[name] = _decoded_vo_value(value_object, decoded[name])
+    return decoded
+
+
+def _decoded_vo_value(
+    container: ValueObjectMetadata | NestedValueObjectMetadata, value: object
+) -> object:
+    """One present Value Object occurrence's own value, decoded leaf by leaf.
+
+    Mirrors ``parallax.core.metamodel.vo_document_violation``'s structural
+    walk: a `many` occurrence decodes each element, a to-one occurrence
+    decodes the one document. A value the walk cannot make sense of (not a
+    list, not a mapping) is left unchanged -- that reading is what classifies
+    it as a rejection; this function only ever transforms an otherwise
+    well-shaped document's own scalar leaves.
+    """
+    if container.multiplicity is Multiplicity.MANY:
+        if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
+            return value
+        return [
+            _decoded_vo_element(container, element) for element in cast("Sequence[object]", value)
+        ]
+    return _decoded_vo_element(container, value)
+
+
+def _decoded_vo_element(
+    container: ValueObjectMetadata | NestedValueObjectMetadata, value: object
+) -> object:
+    if not isinstance(value, Mapping):
+        return value
+    document = dict(cast("Mapping[str, object]", value))
+    for attribute in container.attributes:
+        name = attribute.identity.name
+        if name in document and document[name] is not None:
+            document[name] = decode_neutral_literal(document[name], attribute.type)
+    for nested in container.value_objects:
+        name = nested.identity.path[-1]
+        if name in document and document[name] is not None:
+            document[name] = _decoded_vo_value(nested, document[name])
+    return document
+
+
+def _decoded_assignment_value(
+    entity: EntityMetadata, member: str, value: object, model: AcceptedMetamodel
+) -> object:
+    """One predicate-write assignment's case-authored value, decoded against
+    ``member``'s declared type on ``entity`` -- :func:`decode_write_row`'s
+    per-leaf decode, applied to a single named member rather than a whole
+    row."""
+    position = inheritance.view(model).entity(entity.identity)
+    if position is None:  # pragma: no cover - the facet covers every accepted Entity
+        return value
+    for attribute in position.applicable_attributes:
+        if attribute.identity.name == member:
+            return decode_neutral_literal(value, attribute.type)
+    for value_object in position.applicable_value_objects:
+        if value_object.identity.path[-1] == member:
+            return _decoded_vo_value(value_object, value)
+    return value
+
+
+def _decoded_predicate_write(
+    instruction: PredicateWrite, meta: Metamodel, model: AcceptedMetamodel
+) -> PredicateWrite:
+    """``instruction``'s own assignment values, decoded
+    (:func:`_decoded_assignment_value`) against its target entity's declared
+    member types -- the predicate-write analogue of :func:`decode_write_row`,
+    one assignment at a time rather than one row.
+
+    Building a SEPARATE decoded instruction (rather than mutating
+    ``instruction`` in place) matters where a caller validates the decoded
+    copy but still lowers the ORIGINAL, case-authored one (`_lower_predicate_write_step`'s
+    own docstring): the compile lane's emitted bind must stay the EXACT value
+    the case authored, so decoding cannot be allowed to leak into it.
+    """
+    if not instruction.assignments:
+        return instruction
+    entity = case_entity(model, meta.entity(instruction.target.entity))
+    assignments = tuple(
+        WriteAssignment(
+            assignment.attr,
+            _decoded_assignment_value(
+                entity, assignment.attr.rpartition(".")[2], assignment.value, model
+            ),
+        )
+        for assignment in instruction.assignments
+    )
+    return replace(instruction, assignments=assignments)
+
+
 def _is_versioned_entity(meta: Metamodel, entity_name: str) -> bool:
     declaring = inheritance.declaring_entity(meta, meta.entity(entity_name))
     return any(attr.optimistic_locking for attr in declaring.attributes)
@@ -1198,6 +1345,15 @@ def _lower_predicate_write_step(
     (`collapse=batch_write.collapses` injected identically, though the
     collapse stage is a structural no-op for a lone predicate write).
 
+    Validation runs against a DECODED copy of the instruction
+    (:func:`_decoded_predicate_write`) — an assignment value may carry a case
+    wire spelling (`m-core-007`'s own decimal sibling) the coercion-only
+    developer-facing validator would otherwise reject — but ``instruction``
+    itself, the one this function actually lowers, stays exactly as authored:
+    this is a compile-time PURE re-lowering whose emitted bind is graded
+    byte-exact against the case's own golden, so decoding must never leak
+    into the value that reaches ``lower_write``.
+
     A MATERIALIZING predicate write never reaches here: its case carries
     ``compileEligibility: run-only``, which short-circuits at
     :func:`eligibility` before the compile lane ever calls this — reaching
@@ -1207,7 +1363,7 @@ def _lower_predicate_write_step(
     instruction = instructions.deserialize(_canonical_predicate_doc(raw_write))
     assert isinstance(instruction, PredicateWrite)  # a predicate-shaped step always builds this
     model = case_model(meta)
-    instructions.validate_instruction(instruction, model)
+    instructions.validate_instruction(_decoded_predicate_write(instruction, meta, model), model)
     plan = plan_flush([instruction], {}, None, model, collapse=batch_write.collapses)
     statements = [
         lowered.statement
@@ -1647,11 +1803,20 @@ def _execute_write_unit(
     ``rollback: true`` step raises inside the callback (rollback-only,
     `m-unit-work` abort contract): the buffered DML still executes — and counts
     its round trips — before the provider rolls the transaction back.
+
+    A single-row instruction's row is decoded to native carriers
+    (:func:`decode_write_row`) before it reaches ``Transaction._buffer`` — that
+    developer verb is coercion-only (`~parallax.core.base.coerce_neutral_input`)
+    and stays decode-free itself, so a case-authored wire spelling (a decimal
+    literal spelled as a float, `m-core-007`) is lowered to its native carrier
+    HERE, once, before the developer-facing boundary ever sees it. This ``resolved``
+    buffer is never what a separate PURE re-lowering (`_lower_resolved`) grades
+    a golden bind against, so decoding it here cannot drift a compile-time
+    emission.
     """
+    model = accepted_metamodel(meta)
     instant = normalize_instant(dt.datetime.fromisoformat(tx_instant))
-    database = handle.Database(
-        port, accepted_metamodel(meta), dialect=dialect, clock=FixedClock(instant)
-    )
+    database = handle.Database(port, model, dialect=dialect, clock=FixedClock(instant))
 
     def body(tx: handle.Transaction) -> None:
         for instruction, key, observation in resolved:
@@ -1663,10 +1828,11 @@ def _execute_write_unit(
                 tx._uow.observe(key, observation)  # pyright: ignore[reportPrivateUsage]
             rows = instruction.rows
             if len(rows) == 1:
+                target = case_entity(model, meta.entity(instruction.entity))
                 tx._buffer(  # pyright: ignore[reportPrivateUsage]
                     instruction.mutation,
                     instruction.entity,
-                    dict(rows[0]),
+                    decode_write_row(target, rows[0], model),
                     valid_from=instruction.valid_from,
                     until=instruction.until,
                 )
@@ -1703,16 +1869,24 @@ def _run_readless_predicate_write(
     ``Transaction._buffer_predicate_instruction`` (the neutral seam the typed
     ``_where`` verbs and this engine translation share, `m-case-format`
     "predicate-shaped case entries ... buffer through Transaction's own seam,
-    materialization then happens exactly where production does it")."""
+    materialization then happens exactly where production does it").
+
+    Decodes ``raw_write``'s own assignment values to native carriers
+    (:func:`_decoded_predicate_write`) once, here — this instruction is never
+    separately re-lowered for a golden-bind comparison (that reporting oracle
+    is `_lower_predicate_write_step`'s OWN independent parse of the same raw
+    document), so the SAME decoded instruction both validates and executes.
+    """
     instruction = instructions.deserialize(_canonical_predicate_doc(raw_write))
     assert isinstance(instruction, PredicateWrite)
     model = accepted_metamodel(meta)
-    instructions.validate_instruction(instruction, model)
+    decoded = _decoded_predicate_write(instruction, meta, model)
+    instructions.validate_instruction(decoded, model)
     instant = normalize_instant(dt.datetime.fromisoformat(tx_instant))
     database = handle.Database(port, model, dialect=dialect, clock=FixedClock(instant))
 
     def body(tx: handle.Transaction) -> None:
-        tx._buffer_predicate_instruction(instruction)  # pyright: ignore[reportPrivateUsage]
+        tx._buffer_predicate_instruction(decoded)  # pyright: ignore[reportPrivateUsage]
         if rollback:
             tx._uow.flush()  # pyright: ignore[reportPrivateUsage]
             raise _RollbackStep
@@ -1768,7 +1942,14 @@ def _is_materializing_write_step(
     observations are needed", ADR 0014), its deserialized + validated
     :class:`~parallax.core.unit_work.PredicateWrite` — ``None`` for a keyed
     write step, a READLESS predicate write, a find step, or ``None`` itself
-    (no such step, e.g. the scenario's last step)."""
+    (no such step, e.g. the scenario's last step).
+
+    The returned instruction's own assignment values are DECODED to native
+    carriers (:func:`_decoded_predicate_write`): a materializing write has no
+    separate PURE re-lowering oracle (its own golden bind is graded against
+    the ACTUAL executed SQL, `_run_materializing_pair`'s own capturing port),
+    so there is nothing for a decoded value to drift away from here.
+    """
     if step is None or "write" not in step:
         return None
     raw_write = step["write"]
@@ -1779,11 +1960,13 @@ def _is_materializing_write_step(
     )
     if not isinstance(instruction, PredicateWrite):
         return None
-    instructions.validate_instruction(instruction, case_model(meta))
+    model = case_model(meta)
+    decoded = _decoded_predicate_write(instruction, meta, model)
+    instructions.validate_instruction(decoded, model)
     entity = meta.entity(instruction.target.entity)
     declaring = inheritance.declaring_entity(meta, entity)
     if declaring.is_temporal or _is_versioned_entity(meta, instruction.target.entity):
-        return instruction
+        return decoded
     return None
 
 
@@ -2003,6 +2186,14 @@ def _run_uow_group(
     (a no-op if a trailing find already forced it via read-your-own-writes)
     and the closure raises — the `m-unit-work` abort contract applied to the
     group rather than one step.
+
+    Each buffered row is decoded to native carriers (:func:`decode_write_row`)
+    before it reaches ``tx._buffer`` — the SAME treatment
+    :func:`_execute_write_unit` applies to a single ungrouped step, so a
+    case-authored wire spelling still validates at the coercion-only
+    developer boundary; the SEPARATE pure ``statements`` re-lowering above
+    stays on the ORIGINAL, undecoded ``resolved`` buffer, so its golden-bind
+    comparison cannot drift.
     """
     tx_instant = _group_tx_instant(steps, start, end)
     doomed = _group_is_doomed(steps, start, end)
@@ -2027,10 +2218,11 @@ def _run_uow_group(
                     )  # every resolved entry this lane buffers is keyed
                     if key is not None and observation is not None:
                         tx._uow.observe(key, observation)  # pyright: ignore[reportPrivateUsage]
+                    entity_metadata = case_entity(model, meta.entity(instruction.entity))
                     tx._buffer(  # pyright: ignore[reportPrivateUsage]
                         instruction.mutation,
                         instruction.entity,
-                        dict(instruction.rows[0]),
+                        decode_write_row(entity_metadata, instruction.rows[0], model),
                         valid_from=instruction.valid_from,
                         until=instruction.until,
                     )
@@ -2207,6 +2399,11 @@ def _run_interleaved_group(
     find's own DML is graded but its OBSERVATION never is, so a broken abort
     that left a doomed group's writes durable would report well-formed SQL
     and still pass.
+
+    Each buffered row is decoded to native carriers (:func:`decode_write_row`)
+    before it reaches ``tx._buffer`` — :func:`_run_uow_group`'s own treatment,
+    applied here; the SEPARATE pure ``statements`` re-lowering above stays on
+    the ORIGINAL, undecoded ``resolved`` buffer.
     """
     lowered: dict[int, _LoweredStep] = {}
     group_observations: ScenarioObservations = {}
@@ -2231,10 +2428,11 @@ def _run_interleaved_group(
                     )  # every resolved entry this lane buffers is keyed
                     if key is not None and observation is not None:
                         tx._uow.observe(key, observation)  # pyright: ignore[reportPrivateUsage]
+                    entity_metadata = case_entity(model, meta.entity(instruction.entity))
                     tx._buffer(  # pyright: ignore[reportPrivateUsage]
                         instruction.mutation,
                         instruction.entity,
-                        dict(instruction.rows[0]),
+                        decode_write_row(entity_metadata, instruction.rows[0], model),
                         valid_from=instruction.valid_from,
                         until=instruction.until,
                     )
@@ -3213,13 +3411,23 @@ def _run_conflict_write(
     ``expected_affected`` check raises :class:`~parallax.core.opt_lock.
     OptimisticLockConflictError` on a mismatch,
     which this lane catches and renders as the ``0`` ``affectedRows``
-    observation."""
+    observation.
+
+    ``statements`` (the reported golden-comparable emission) is
+    :func:`_lower_conflict_write`'s own SEPARATE, PURE re-lowering of the
+    ORIGINAL, undecoded ``write_row`` — the row this function actually
+    buffers is decoded to native carriers (:func:`decode_write_row`) only for
+    THIS real execution, so a case-authored wire spelling (`m-opt-lock-013`'s
+    own decimal `balance`) validates at the coercion-only developer boundary
+    without the reported emission's bind ever drifting from the case-authored
+    literal.
+    """
     statements = _lower_conflict_write(meta, dialect, target, concurrency, write_row)
     clean_row, observation = _strip_observation(write_row)
+    model = accepted_metamodel(meta)
     instant = normalize_instant(dt.datetime.fromisoformat(_INERT_CLOCK_INSTANT))
-    database = handle.Database(
-        port, accepted_metamodel(meta), dialect=dialect, clock=FixedClock(instant)
-    )
+    database = handle.Database(port, model, dialect=dialect, clock=FixedClock(instant))
+    target_metadata = case_entity(model, meta.entity(target))
 
     def body(tx: handle.Transaction) -> int:
         instruction = instructions.deserialize(
@@ -3230,7 +3438,9 @@ def _run_conflict_write(
             if key is not None:
                 # The documented neutral seam (Transaction._buffer route + uow.observe).
                 tx._uow.observe(key, observation)  # pyright: ignore[reportPrivateUsage]
-        tx._buffer("update", target, clean_row)  # pyright: ignore[reportPrivateUsage]
+        tx._buffer(  # pyright: ignore[reportPrivateUsage]
+            "update", target, decode_write_row(target_metadata, clean_row, model)
+        )
         return 1  # the expectation machinery already verified this on success (m-opt-lock)
 
     try:
@@ -3509,7 +3719,10 @@ def run_rejected_case(case: case_format.Case) -> str:
     resolved against the model's default entity (`_rejected_target`'s own
     convention, reused here — the family root when the model declares one,
     else the model's single entity, since a rejected `when.write` carries no
-    explicit handle) and checked by the shared `validate_write`
+    explicit handle), DECODED to native carriers (:func:`decode_write_row` —
+    the case authors this row in the SAME wire spellings a read golden uses,
+    never the native form the developer-facing validator now requires), and
+    checked by the shared `validate_write`
     (`m-value-object` write validation x `m-inheritance` concrete-subtype
     write protocol) — the SAME validator the developer transaction verbs call
     at buffer time (`Transaction._buffer`), so the two paths cannot drift.
@@ -3553,7 +3766,7 @@ def run_rejected_case(case: case_format.Case) -> str:
     model = case_model(meta)
     target = case_entity(model, meta.entity(_rejected_target(meta)))
     try:
-        validate_write(target, row, model)
+        validate_write(target, decode_write_row(target, row, model), model)
     except WriteRejectedError as exc:
         return exc.rule
     raise EngineError(

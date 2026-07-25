@@ -419,7 +419,7 @@ def test_member_name_honesty_accepts_declared_members() -> None:
         {
             "mutation": "update",
             "target": {"entity": "Account", "predicate": {"all": {}}},
-            "assignments": [{"attr": "Account.balance", "value": 0.00}],
+            "assignments": [{"attr": "Account.balance", "value": 0}],
         }
     )
     wi.validate_instruction(predicate, _ACCOUNT)
@@ -486,8 +486,8 @@ def test_member_name_honesty_rejects_a_duplicate_assignment() -> None:
             "mutation": "update",
             "target": {"entity": "Account", "predicate": {"all": {}}},
             "assignments": [
-                {"attr": "Account.balance", "value": 1.00},
-                {"attr": "Account.balance", "value": 2.00},
+                {"attr": "Account.balance", "value": 1},
+                {"attr": "Account.balance", "value": 2},
             ],
         }
     )
