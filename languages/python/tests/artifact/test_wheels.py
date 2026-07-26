@@ -14,7 +14,7 @@ from conftest import PRODUCTION_PACKAGES, PY_ROOT, REPO_ROOT, Wheelhouse
 pytestmark = pytest.mark.artifact
 
 # Each distribution's top regular package under the shared PEP 420 namespace.
-_TOP_PACKAGE_DIR: dict[str, str] = {
+TOP_PACKAGE_DIR: dict[str, str] = {
     "parallax-core": "parallax/core",
     "parallax-descriptor": "parallax/descriptor",
     "parallax-snapshot": "parallax/snapshot",
@@ -37,7 +37,7 @@ def test_no_namespace_root_init_in_any_wheel(wheelhouse: Wheelhouse) -> None:
 
 
 def test_each_wheel_ships_py_typed(wheelhouse: Wheelhouse) -> None:
-    for package, top in _TOP_PACKAGE_DIR.items():
+    for package, top in TOP_PACKAGE_DIR.items():
         assert f"{top}/py.typed" in _names(wheelhouse, package)
 
 
@@ -47,7 +47,7 @@ def test_production_wheels_exclude_conformance_and_tests(wheelhouse: Wheelhouse)
         assert not any(n.startswith("parallax/conformance/") for n in names), package
         assert not any(n.startswith("tests/") or "/tests/" in n for n in names), package
         # No stray sibling namespaces leak into a production wheel.
-        own = _TOP_PACKAGE_DIR[package]
+        own = TOP_PACKAGE_DIR[package]
         code = [n for n in names if n.startswith("parallax/") and n.endswith(".py")]
         assert code, package
         assert all(n.startswith(f"{own}/") for n in code), package
