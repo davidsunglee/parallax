@@ -504,7 +504,7 @@ class Rel[T]:
         value = obj.__dict__[self._py_name]
         if value is UNLOADED:
             raise UnloadedRelationshipError(self._ref.relationship)
-        return value  # pyright: ignore[reportReturnType]
+        return value
 
     def __set__(self, obj: object, value: object) -> None:
         obj.__dict__[self._py_name] = value

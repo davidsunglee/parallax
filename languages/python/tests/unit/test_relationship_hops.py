@@ -172,13 +172,13 @@ def test_a_first_hop_reference_names_its_owner_locally_and_its_declared_member()
 
 def test_a_hop_naming_no_relationship_of_the_target_is_refused() -> None:
     with pytest.raises(AttributeError, match="declares no relationship"):
-        _ = Root.branches.missing  # pyright: ignore[reportAttributeAccessIssue]
+        _ = Root.branches.missing
 
 
 def test_a_hop_naming_an_attribute_of_the_target_is_refused() -> None:
     # `root_id` is a declared member of the hop's target, but not a relationship.
     with pytest.raises(AttributeError, match="declares no relationship"):
-        _ = Root.branches.root_id  # pyright: ignore[reportAttributeAccessIssue]
+        _ = Root.branches.root_id
 
 
 def test_a_hop_narrowed_to_one_class_targets_it_canonically() -> None:
@@ -210,11 +210,11 @@ def test_a_path_carrying_a_model_but_no_resolver_cannot_continue() -> None:
         segments=seeded.segments, target=seeded.target, binding=seeded.binding
     )
     with pytest.raises(AttributeError, match="resolves against the composed model"):
-        _ = without_resolver.leaves  # pyright: ignore[reportAttributeAccessIssue]
+        _ = without_resolver.leaves
 
 
 def test_a_hop_past_a_narrow_to_a_class_outside_the_model_is_refused() -> None:
     # A narrow takes any class, so a path can be pointed at an Entity another
     # hub owns; continuing from there has no model to resolve in.
     with pytest.raises(AttributeError, match="is not an Entity Class of the model"):
-        _ = Root.branches.narrow(SalesCustomer).notes  # pyright: ignore[reportAttributeAccessIssue]
+        _ = Root.branches.narrow(SalesCustomer).notes

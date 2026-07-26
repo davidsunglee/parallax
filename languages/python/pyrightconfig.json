@@ -19,5 +19,6 @@
     "dist",
     "build"
   ],
-  "reportMissingTypeStubs": "error"
+  "reportMissingTypeStubs": "error",
+  "reportUnnecessaryTypeIgnoreComment": "error"
 }

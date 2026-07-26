@@ -194,14 +194,14 @@ def test_the_document_renders_nested_occurrences_recursively() -> None:
 
 def test_a_value_object_member_takes_instances_only() -> None:
     with pytest.raises(TypeError, match="never a raw mapping"):
-        vm.Address(street="a", city="b", geo={"country": "DE"})  # pyright: ignore[reportArgumentType]
+        vm.Address(street="a", city="b", geo={"country": "DE"})
     with pytest.raises(TypeError, match="never a raw mapping"):
-        vm.Address(street="a", city="b", phones=({"type": "home"},))  # pyright: ignore[reportArgumentType]
+        vm.Address(street="a", city="b", phones=({"type": "home"},))
 
 
 def test_a_many_occurrence_requires_a_tuple() -> None:
     with pytest.raises(TypeError, match="requires a tuple"):
-        vm.Address(street="a", city="b", phones=[vm.Phone(type="home")])  # pyright: ignore[reportArgumentType]
+        vm.Address(street="a", city="b", phones=[vm.Phone(type="home")])
 
 
 def test_one_shape_is_minted_per_class_and_shared_by_every_occurrence() -> None:
