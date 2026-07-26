@@ -80,7 +80,7 @@ core-language-spec-check language_spec:
 # deny-list over the whole active tree, and the case comment-placement gate
 # (header-comment-only compatibility cases).
 core-contract-tools:
-    cd {{harness}} && uv run pytest tests/test_slice_inspect.py tests/test_language_spec_validate.py tests/test_case_format_vocab_check.py tests/test_neutral_type_vocab_check.py tests/test_descriptor_contract_check.py tests/test_retired_vocab_check.py tests/test_case_comment_check.py
+    cd {{harness}} && uv run pytest tests/test_naming.py tests/test_slice_inspect.py tests/test_language_spec_validate.py tests/test_case_format_vocab_check.py tests/test_neutral_type_vocab_check.py tests/test_descriptor_contract_check.py tests/test_retired_vocab_check.py tests/test_case_comment_check.py
     cd {{harness}} && uv run python -m reference_harness.slice_inspect --check-all ../core/spec ../core/compatibility
     cd {{harness}} && uv run python -m reference_harness.case_format_vocab_check ../core/spec
     cd {{harness}} && uv run python -m reference_harness.neutral_type_vocab_check ../core/spec

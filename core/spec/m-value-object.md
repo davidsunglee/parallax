@@ -40,7 +40,7 @@ ancestor's column; see below).
 | Property | Values / meaning |
 |---|---|
 | `name` | value-object element name (REQUIRED) |
-| `column` | optional structured-document column override; omission means `name` (**top-level only**) |
+| `column` | optional structured-document column override; omission means `m-descriptor`'s `defaultColumn(name)` (**top-level only**) |
 | `multiplicity` | `one` — a single embedded document (the default) — or `many` — an ordered JSON array of documents in the same column |
 | `nullable` | bool, default `false`; valid only with `one` |
 | `attributes` | this value object's typed inner fields (each a `valueObjectAttribute`); no per-field column |
@@ -68,8 +68,8 @@ carrying `column`. An entity MAY declare zero or more top-level
 ## One column — never extra columns, rows, or joins
 
 The recursive shape does **not** change storage: there is **exactly one
-structured-document column per top-level value object**. Its name selects the
-column by convention unless it declares a `column` override; every nested value object and every inner
+structured-document column per top-level value object**. Its canonical name
+selects `defaultColumn(name)` unless it declares a `column` override; every nested value object and every inner
 attribute, at any depth, lives **inside that same column**. Nested definitions
 MUST NOT carry a `column`, and MUST NOT introduce extra columns,
 extra rows, joins, or identity-bearing objects. A `one` member is a single

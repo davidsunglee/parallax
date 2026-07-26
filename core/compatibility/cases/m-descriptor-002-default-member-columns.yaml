@@ -1,0 +1,29 @@
+# Derived member columns — omitted scalar and top-level Value Object columns use
+# m-descriptor's deterministic ASCII default after canonical identity resolution.
+# The projection pins ordinary camelCase, consecutive uppercase letters, digits,
+# a preserved underscore, underscore-plus-uppercase, and a multiword document
+# occurrence to one cross-language physical spelling; nested Value Object fields
+# remain inside that one document column and acquire no relational storage.
+model: models/member-column-defaults.yaml
+tags: [m-descriptor, m-metamodel, m-value-object, m-sql, default-column, snake-case, slice-snapshot-1, slice-managed-1]
+shape: read
+when:
+  targetEntity: MemberColumnDefaults
+  operation:
+    all: {}
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.person_id, t0.tax_i_d, t0.line2_item, t0.already_snake, t0.legacy__i_d, t0.mailing_address from member_column_defaults t0
+        mariadb: select t0.id, t0.person_id, t0.tax_i_d, t0.line2_item, t0.already_snake, t0.legacy__i_d, t0.mailing_address from member_column_defaults t0
+  graph:
+    MemberColumnDefaults:
+      - id: 1
+        person_id: person-1
+        tax_i_d: TAX-1
+        line2_item: 2
+        already_snake: ready
+        legacy__i_d: legacy
+        mailingAddress:
+          city: Oslo
+  roundTrips: 1

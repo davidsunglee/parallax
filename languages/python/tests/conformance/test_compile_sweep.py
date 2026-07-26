@@ -168,6 +168,10 @@ _INHERITANCE_INSTANCE_FORM_GRAPH_READS: Final[frozenset[str]] = frozenset(
 _READ_LOCK_READS: Final[frozenset[str]] = frozenset(
     {"m-read-lock-001", "m-read-lock-002", "m-read-lock-003", "m-read-lock-005"}
 )
+# The descriptor default-column witness is a compile-eligible instance-form read:
+# descriptor ingestion resolves every omitted scalar/document column before SQL
+# lowering, which must project the derived physical names byte-exactly.
+_DESCRIPTOR_DEFAULT_COLUMN_READS: Final[frozenset[str]] = frozenset({"m-descriptor-002"})
 COMPILE_EXERCISED: Final[frozenset[str]] = (
     _SCALAR_READS
     | _VALUE_OBJECT_PREDICATE_READS
@@ -184,6 +188,7 @@ COMPILE_EXERCISED: Final[frozenset[str]] = (
     | _SNAPSHOT_READ_MILESTONE_SET_READS
     | _INHERITANCE_INSTANCE_FORM_GRAPH_READS
     | _READ_LOCK_READS
+    | _DESCRIPTOR_DEFAULT_COLUMN_READS
 )
 
 # Keyed, non-temporal unit-of-work writes graded byte-exact across `m-unit-work`,

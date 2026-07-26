@@ -25,6 +25,38 @@ specified in those modules.
   `read-only`, `table-per-hierarchy`).
 - Booleans are `true` / `false`.
 
+An Attribute name or Value Object occurrence name is a schema-valid canonical
+member identifier: it begins with a lowercase ASCII letter and continues with
+ASCII lowercase letters, uppercase letters, digits, or underscores. The
+portable default for an entity-level member's physical column is the following
+operation over those code points:
+
+```text
+defaultColumn(name)
+  = replace each ASCII uppercase letter C with "_" + lowercase(C)
+    and preserve every other code point unchanged
+
+effectiveColumn(name, suppliedColumn)
+  = suppliedColumn when present
+  = defaultColumn(name) otherwise
+```
+
+The operation does not group uppercase runs or infer acronym boundaries. Its
+authoritative vectors are:
+
+| Canonical member name | `defaultColumn(name)` |
+|---|---|
+| `id` | `id` |
+| `personId` | `person_id` |
+| `taxID` | `tax_i_d` |
+| `line2Item` | `line2_item` |
+| `already_snake` | `already_snake` |
+| `legacy_ID` | `legacy__i_d` |
+
+An explicit column always wins. A model that intends acronym-friendly storage
+such as `taxID -> tax_id`, or that intends to retain the former camelCase
+storage `personId -> personId`, declares that column explicitly.
+
 The base elements for a single non-temporal entity are `entity`, `attribute`,
 and `pkGeneration`. A descriptor may declare **multiple entities** so relationships
 can name sibling entities, plus **`asOfAxes`** (temporal dimensions), and
@@ -156,7 +188,7 @@ ancestor through its ancestry chain (`m-inheritance`).
 |---|---|
 | `name` | attribute name (REQUIRED) |
 | `type` | neutral **scalar** type spelling (REQUIRED; see "Type spellings" — every spelling except `json`); `decimal(p,s)` carries precision/scale |
-| `column` | optional DB column override; omission means the Attribute `name` |
+| `column` | optional DB column override; omission means `defaultColumn(name)` |
 | `primaryKey` | bool, default `false` |
 | `nullable` | bool, default `false` |
 | `maxLength` | for `string` (⇒ `varchar(n)`) |
@@ -265,7 +297,7 @@ A top-level Value Object occurrence has this exact authoring shape:
 | Property | Values / meaning |
 |---|---|
 | `name` | local occurrence name (REQUIRED) |
-| `column` | optional structured-document column override; omission means `name` |
+| `column` | optional structured-document column override; omission means `defaultColumn(name)` |
 | `multiplicity` | `one` (default) \| `many` |
 | `nullable` | bool, default `false`; valid only with `one` |
 | `attributes` | ordered typed scalar members |
@@ -367,7 +399,7 @@ import, so its explicit spelling carries no information:
 
 | Omitted property | When |
 |---|---|
-| `column` | equal to the member name (an Attribute or a top-level Value Object occurrence) |
+| `column` | equal to `defaultColumn(name)` (an Attribute or a top-level Value Object occurrence) |
 | `persistence` | on a standalone Entity or family root whose normalized mode is Read Write (a descendant never spells `persistence` at all) |
 | `pkGeneration` | on a `primaryKey: true` Attribute whose normalized generation is Application Assigned |
 | Sequence `batchSize` / `initialValue` / `incrementSize` | equal to the semantic defaults (`1` / `1` / `1`) |
@@ -466,7 +498,7 @@ fixtures below.
 **Phase 3 — value.** Only a schema-valid document reaches the value phase,
 where the adapter — not the schema, and not the fixed resolver — normalizes
 it to the `m-metamodel` Unresolved Metamodel seam: it expands every omitted
-`column` to its conventional member name and populates omitted Sequence
+`column` to `defaultColumn(name)` and populates omitted Sequence
 defaults, so candidate and accepted Metadata never expose an absent Storage
 Location or a partially configured Sequence. The same phase owns the
 representation-bound semantic rejections this specification names under
@@ -557,3 +589,6 @@ compatibility models/cases, generated artifacts, reference tooling, and active
 language descriptor consumers MUST switch to these spellings together and be
 green before runtime consumers migrate to `m-metamodel`. No dual-read input,
 compatibility alias, or temporary semantic translation is part of the contract.
+In particular, an existing descriptor that omitted `column` for a multiword
+member changes physical storage immediately; preserving its former camelCase
+column requires adding an explicit override before activation.

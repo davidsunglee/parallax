@@ -10,7 +10,7 @@ implementation defect, which surfaces as :class:`DescriptorExportError` rather
 than a :class:`DescriptorError`.
 
 Every optional key whose value equals the fact ingestion re-derives is dropped —
-a column that matches its member name, a Read Write persistence mode, an
+a column that matches its member's portable derived default, a Read Write persistence mode, an
 application-assigned generation, and the other members of the omission set — and
 the single-versus-multi ``entity``/``entities`` form is chosen by entity count.
 """
@@ -48,6 +48,7 @@ from parallax.core.metamodel import (
     TemporalDimension,
     ValueObjectAttributeMetadata,
     ValueObjectMetadata,
+    default_column_name,
 )
 from parallax.descriptor._type_spelling import format_type_spelling
 
@@ -159,7 +160,7 @@ def _attribute(attribute: AttributeMetadata) -> dict[str, object]:
         "name": attribute.identity.name,
         "type": format_type_spelling(attribute.type),
     }
-    if attribute.storage.name != attribute.identity.name:
+    if attribute.storage.name != default_column_name(attribute.identity.name):
         out["column"] = attribute.storage.name
     if isinstance(attribute.primary_key, PrimaryKey):
         out["primaryKey"] = True
@@ -281,7 +282,7 @@ def _parent(parent: EntityIdentity, child: EntityIdentity) -> str:
 def _value_object(occurrence: ValueObjectMetadata) -> dict[str, object]:
     name = occurrence.identity.path[-1]
     out: dict[str, object] = {"name": name}
-    if occurrence.storage.name != name:
+    if occurrence.storage.name != default_column_name(name):
         out["column"] = occurrence.storage.name
     if occurrence.nullable:
         out["nullable"] = True

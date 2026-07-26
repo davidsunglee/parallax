@@ -22,7 +22,7 @@ from value_object_bad_models import (
 
 import value_object_models as vm
 from parallax.conformance import case_format
-from parallax.core import Attr, ValueObject, attr
+from parallax.core import Attr, Entity, ValueObject, attr
 from parallax.core.base import Decimal as NeutralDecimal
 from parallax.core.base import Float64, NeutralType, String
 from parallax.core.entity import ElementAttributeExpr, EntityDefinitionError, Predicate, to_document
@@ -90,11 +90,18 @@ def test_the_declared_composite_has_no_drift_from_the_corpus_customer_model() ->
         _assert_shape_matches(occurrence.shape, member)
 
 
-def test_a_value_object_occurrence_owns_its_storage_and_nested_ones_do_not() -> None:
-    (address,) = vm.Customer.value_objects
-    assert address.storage == Column("address")
-    geo = address.shape.value_objects[0]
+def test_a_top_level_occurrence_derives_storage_while_nested_members_remain_columnless() -> None:
+    class Recipient(Entity, table="recipient"):
+        id: Attr[int] = attr(primary_key=True)
+        mailing_address: Attr[vm.Address]
+
+    (mailing_address,) = Recipient.value_objects
+    assert mailing_address.storage == Column("mailing_address")
+    geo = next(
+        occurrence for occurrence in mailing_address.shape.value_objects if occurrence.name == "geo"
+    )
     assert not hasattr(geo, "storage")
+    assert all(not hasattr(attribute, "storage") for attribute in mailing_address.shape.attributes)
 
 
 def _element(expression: object) -> ElementAttributeExpr:

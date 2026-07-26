@@ -81,6 +81,7 @@ from parallax.core.metamodel import (
     ValueObjectOccurrenceDeclaration,
     ValueObjectShapeDeclaration,
     ValueObjectShapeKey,
+    default_column_name,
     resolve_entity_reference,
 )
 from parallax.core.metamodel import AbstractSubtype as AcceptedAbstractSubtype
@@ -905,7 +906,9 @@ def _build_entity(
         py_to_name[py_name] = canonical
         name_to_py[canonical] = py_name
         shapes[py_name] = shape
-        column = attr_spec.column if attr_spec.column is not None else canonical
+        column = (
+            attr_spec.column if attr_spec.column is not None else default_column_name(canonical)
+        )
         column_to_py[column] = py_name
 
         if is_declared_class(shape.base, DeclarationKind.VALUE_OBJECT):

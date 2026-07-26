@@ -93,12 +93,76 @@ def test_export_applies_the_omission_set() -> None:
     assert ledger_attributes["id"]["primaryKey"] is True
     assert "pkGeneration" not in ledger_attributes["id"]
     assert account_attributes["id"]["pkGeneration"] == "max"
-    # A column equal to the member name is omitted; a diverging one is written.
+    # A column equal to the portable derived default is omitted; an override is written.
     assert "column" not in account_attributes["balance"]
-    assert account_attributes["ledgerLabel"]["column"] == "ledger_label"
+    assert "column" not in account_attributes["ledgerLabel"]
+    value_objects = {
+        value_object["name"]: value_object
+        for value_object in cast("list[dict[str, object]]", account["valueObjects"])
+    }
+    assert value_objects["contact"]["column"] == "contact_doc"
     # Read Write is the default, so only the read-only Audit spells persistence.
     assert "persistence" not in account
     assert exported[("parallax.fake", "Audit")]["persistence"] == "read-only"
+
+
+def test_export_retains_acronym_domain_and_old_camel_case_overrides() -> None:
+    identity = EntityIdentity(None, "Contact")
+    postal = ValueObjectIdentity(identity, ("postalAddress",))
+    legacy = ValueObjectIdentity(identity, ("legacyAddress",))
+    entity = fake_metamodel.FakeEntity(
+        identity,
+        declared_container=Table("contact"),
+        declared_attributes=(
+            AttributeMetadata(AttributeIdentity(identity, "personId"), STRING, Column("person_id")),
+            AttributeMetadata(AttributeIdentity(identity, "taxID"), STRING, Column("tax_id")),
+            AttributeMetadata(
+                AttributeIdentity(identity, "legacyName"), STRING, Column("legacyName")
+            ),
+            AttributeMetadata(
+                AttributeIdentity(identity, "displayName"), STRING, Column("display_label")
+            ),
+        ),
+        declared_value_objects=(
+            fake_metamodel.FakeValueObject(
+                postal,
+                Column("postal_address"),
+                attributes=(
+                    fake_metamodel.FakeValueObjectAttribute(
+                        ValueObjectAttributeIdentity(postal, "city"), STRING
+                    ),
+                ),
+            ),
+            fake_metamodel.FakeValueObject(
+                legacy,
+                Column("legacyAddress"),
+                attributes=(
+                    fake_metamodel.FakeValueObjectAttribute(
+                        ValueObjectAttributeIdentity(legacy, "city"), STRING
+                    ),
+                ),
+            ),
+        ),
+    )
+
+    exported = cast(
+        "dict[str, object]",
+        export_document(fake_metamodel.FakeMetamodel((entity,)))["entity"],
+    )
+    attributes = {
+        attribute["name"]: attribute
+        for attribute in cast("list[dict[str, object]]", exported["attributes"])
+    }
+    assert "column" not in attributes["personId"]
+    assert attributes["taxID"]["column"] == "tax_id"
+    assert attributes["legacyName"]["column"] == "legacyName"
+    assert attributes["displayName"]["column"] == "display_label"
+    value_objects = {
+        value_object["name"]: value_object
+        for value_object in cast("list[dict[str, object]]", exported["valueObjects"])
+    }
+    assert "column" not in value_objects["postalAddress"]
+    assert value_objects["legacyAddress"]["column"] == "legacyAddress"
 
 
 def test_export_spells_read_only_cross_namespace_parent_and_a_many_value_object() -> None:

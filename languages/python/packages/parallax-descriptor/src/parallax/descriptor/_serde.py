@@ -25,6 +25,7 @@ from collections.abc import Mapping
 from dataclasses import replace
 from typing import Literal, cast
 
+from parallax.core.metamodel import default_column_name
 from parallax.descriptor._errors import DescriptorError
 from parallax.descriptor._records import (
     AsOfAxisMetadata,
@@ -181,7 +182,7 @@ def _attribute_from(value: object, where: str) -> Attribute:
     return Attribute(
         name=name,
         type=_str(m, "type", f"{where}.{name}"),
-        column=name if column is None else column,
+        column=default_column_name(name) if column is None else column,
         primary_key=primary_key,
         nullable=_bool(m, "nullable", default=False, where=f"{where}.{name}"),
         max_length=_opt_int(m, "maxLength", f"{where}.{name}"),
@@ -385,9 +386,10 @@ def _value_object_from(value: object, where: str) -> ValueObject:
     name = _str(m, "name", where)
     attrs, nested = _vo_children(m, f"{where}.{name}")
     column = _opt_str(m, "column", f"{where}.{name}")
+    default_column = default_column_name(name)
     return ValueObject(
         name=name,
-        column=None if column in (None, name) else column,
+        column=None if column in (None, default_column) else column,
         nullable=_bool(m, "nullable", default=False, where=f"{where}.{name}"),
         multiplicity=_vo_multiplicity(m, f"{where}.{name}"),
         attributes=attrs,
@@ -620,7 +622,7 @@ def _pk_to_json(pk: PkGenerator) -> object:
 
 def _attribute_to_json(attr: Attribute) -> dict[str, object]:
     out: dict[str, object] = {"name": attr.name, "type": attr.type}
-    if attr.column != attr.name:
+    if attr.column != default_column_name(attr.name):
         out["column"] = attr.column
     if attr.primary_key:
         out["primaryKey"] = True

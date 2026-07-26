@@ -24,6 +24,8 @@ from typing import Any, NoReturn
 
 import yaml
 
+from .naming import default_column_name
+
 
 def _entity_identity(definition: dict[str, Any]) -> str:
     """Return one definition's canonical Entity spelling."""
@@ -64,14 +66,14 @@ def _resolve_definition(
 def _attribute_column(definition: dict[str, Any], attribute_name: str) -> str:
     for attribute in definition.get("attributes", []):
         if attribute.get("name") == attribute_name:
-            return str(attribute.get("column", attribute_name))
-    return attribute_name
+            return str(attribute.get("column", default_column_name(attribute_name)))
+    return default_column_name(attribute_name)
 
 
 def _compile_attribute(attribute: dict[str, Any]) -> dict[str, Any]:
     """Compile one authored Attribute while preserving canonical metadata facts."""
     compiled = copy.deepcopy(attribute)
-    compiled.setdefault("column", compiled["name"])
+    compiled.setdefault("column", default_column_name(compiled["name"]))
     return compiled
 
 
@@ -79,7 +81,7 @@ def _compile_value_object(value_object: dict[str, Any], *, top_level: bool) -> d
     """Compile conventional storage defaults without changing the Value Object algebra."""
     compiled = copy.deepcopy(value_object)
     if top_level:
-        compiled.setdefault("column", compiled["name"])
+        compiled.setdefault("column", default_column_name(compiled["name"]))
     compiled.setdefault("multiplicity", "one")
     compiled["attributes"] = [copy.deepcopy(item) for item in compiled.get("attributes", [])]
     compiled["valueObjects"] = [

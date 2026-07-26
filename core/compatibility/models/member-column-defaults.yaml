@@ -1,0 +1,23 @@
+entity:
+  name: MemberColumnDefaults
+  namespace: parallax.compatibility
+  table: member_column_defaults
+  attributes:
+    - name: id
+      type: int64
+      primaryKey: true
+    - name: personId
+      type: string
+    - name: taxID
+      type: string
+    - name: line2Item
+      type: int64
+    - name: already_snake
+      type: string
+    - name: legacy_ID
+      type: string
+  valueObjects:
+    - name: mailingAddress
+      attributes:
+        - name: city
+          type: string

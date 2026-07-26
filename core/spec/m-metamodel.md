@@ -32,6 +32,16 @@ Neither formation input is behavioral authority. A frontend MAY expose native
 read-only objects at the Unresolved boundary, but MUST NOT bypass formation or
 present those objects as an accepted Metamodel.
 
+Every frontend resolves member storage before this boundary. A descriptor
+frontend applies `m-descriptor`'s `effectiveColumn(name, suppliedColumn)` after
+reading the canonical member name; a native frontend first resolves its own
+source spelling to a canonical member name and then applies the same portable
+default unless its language surface supplies an explicit override. Therefore
+every `AttributeMetadata.storage` and top-level
+`ValueObjectOccurrenceDeclaration.storage` entering an Unresolved Metamodel is
+a concrete `Column`. Nested Value Object occurrences and fields remain
+storage-neutral and acquire no column during formation.
+
 ## Sole accepted metadata ownership
 
 The mandatory Metadata Compiler produces exactly one immutable

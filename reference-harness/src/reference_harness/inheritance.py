@@ -38,6 +38,7 @@ from __future__ import annotations
 import copy
 from typing import TYPE_CHECKING, Any
 
+from .naming import default_column_name
 from .operation_references import ATTRIBUTE_REFERENCE_TAGS
 from .value_object_resolve import RejectionError
 
@@ -62,13 +63,13 @@ def _short_entity_name(reference: str) -> str:
 def effective_column(attribute: dict[str, Any]) -> str:
     """The storage column a raw declared Attribute binds to.
 
-    A canonical descriptor omits ``column`` when it equals the attribute name
-    (m-descriptor), so the effective location is the explicit ``column`` when
-    present, else the conventional one — the attribute ``name``. Use this for any
-    raw (uncompiled) attribute dict; compiled ``Entity.attributes`` already carry
-    the resolved ``column``.
+    A canonical descriptor omits ``column`` when it equals the portable derived
+    default (m-descriptor), so the effective location is the explicit ``column``
+    when present, else ``defaultColumn(attribute.name)``. Use this for any raw
+    (uncompiled) attribute dict; compiled ``Entity.attributes`` already carry the
+    resolved ``column``.
     """
-    return attribute.get("column", attribute["name"])
+    return attribute.get("column", default_column_name(attribute["name"]))
 
 
 # The synthesized tag column carries short discriminator literals; a bounded
@@ -403,8 +404,8 @@ def _entity_defs(descriptor: dict[str, Any]) -> list[dict[str, Any]]:
 
 def _merge_ancestry_attributes(family: Family, name: str) -> list[dict[str, Any]]:
     """Attributes of *name*'s ancestry (root -> ... -> self), deduplicated by their
-    effective storage column — the explicit ``column`` or, when omitted, the
-    conventional location equal to the attribute name (m-descriptor)."""
+    effective storage column — the explicit ``column`` or the portable derived
+    default when omitted (m-descriptor)."""
     merged: list[dict[str, Any]] = []
     seen: set[str] = set()
     for ancestor in family.ancestry(name):

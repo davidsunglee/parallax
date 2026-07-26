@@ -179,6 +179,7 @@
     "canonical_issue_key",
     "canonical_location_key",
     "compile_metadata",
+    "default_column_name",
     "entity_by_name",
     "inheritance_parent",
     "is_candidate_metamodel",

@@ -139,12 +139,19 @@ def test_attribute_facts_come_from_the_annotation_and_the_factory_together() -> 
     assert code.nullable is False
 
 
-def test_a_column_defaults_to_the_canonical_member_name() -> None:
+def test_storage_defaults_after_canonical_identity_and_explicit_columns_win() -> None:
     class Shipment(Entity, table="shipment"):
         id: Attr[int] = attr(primary_key=True)
         tracking_code: Attr[str]
+        tax_id: Attr[str] = attr(name="taxID")
+        legacy_code: Attr[str] = attr(name="legacyCode", column="legacyCode")
+        bin_no: Attr[str] = attr(column="BIN_NO")
 
-    assert Shipment.attributes[1].storage == Column("trackingCode")
+    by_name = {member.identity.name: member for member in Shipment.attributes}
+    assert by_name["trackingCode"].storage == Column("tracking_code")
+    assert by_name["taxID"].storage == Column("tax_i_d")
+    assert by_name["legacyCode"].storage == Column("legacyCode")
+    assert by_name["binNo"].storage == Column("BIN_NO")
 
 
 def test_nullability_comes_from_the_annotation_alone() -> None:

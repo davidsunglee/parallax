@@ -253,11 +253,10 @@ def test_intermediate_abstract_subtype_inheritance_chain() -> None:
 
 
 def test_inherited_attributes_with_omitted_conventional_columns_all_survive_flattening() -> None:
-    # A canonical descriptor omits `column` when it equals the attribute name
-    # (m-descriptor), so several inherited attributes may all carry no explicit
-    # column. The ancestry merge must deduplicate on the EFFECTIVE storage
-    # location (explicit column, else the attribute name) — the omitted spellings
-    # are distinct columns, not duplicates of one another.
+    # Multiword defaults derive after canonical identity resolution at every
+    # ancestry level. Explicit old-camelCase and acronym-friendly overrides stay
+    # distinct from those defaults while the merge deduplicates on effective
+    # physical storage rather than source spelling.
     descriptor = {
         "entities": [
             {
@@ -270,15 +269,25 @@ def test_inherited_attributes_with_omitted_conventional_columns_all_survive_flat
                 },
                 "attributes": [
                     {"name": "id", "type": "int64", "primaryKey": True},
-                    {"name": "title", "type": "string", "maxLength": 64},
-                    {"name": "currency", "type": "string", "maxLength": 3},
+                    {"name": "displayName", "type": "string", "maxLength": 64},
+                    {
+                        "name": "legacyName",
+                        "type": "string",
+                        "column": "legacyName",
+                    },
+                    {"name": "taxID", "type": "string", "column": "tax_id"},
                 ],
             },
             {
                 "name": "Book",
                 "inheritance": {"role": "abstract-subtype", "parent": "Item"},
                 "attributes": [
-                    {"name": "author", "type": "string", "maxLength": 64, "nullable": True}
+                    {
+                        "name": "authorName",
+                        "type": "string",
+                        "maxLength": 64,
+                        "nullable": True,
+                    }
                 ],
             },
             {
@@ -288,7 +297,7 @@ def test_inherited_attributes_with_omitted_conventional_columns_all_survive_flat
                     "parent": "Book",
                     "tagValue": "hardcover",
                 },
-                "attributes": [{"name": "weight", "type": "int32", "nullable": True}],
+                "attributes": [{"name": "shippingWeight", "type": "int32", "nullable": True}],
             },
         ]
     }
@@ -297,27 +306,69 @@ def test_inherited_attributes_with_omitted_conventional_columns_all_survive_flat
     assert list(column_order(model.entity("Hardcover"))) == [
         "id",
         "kind",
-        "title",
-        "currency",
-        "author",
-        "weight",
+        "display_name",
+        "legacyName",
+        "tax_id",
+        "author_name",
+        "shipping_weight",
     ]
 
 
-def test_value_object_model_validates_and_maps_to_dialect_json() -> None:
-    model = load_model(COMPATIBILITY_ROOT, "models/customer.yaml")
+def test_multiword_value_object_uses_the_derived_document_column() -> None:
+    model = load_model(COMPATIBILITY_ROOT, "models/member-column-defaults.yaml")
     assert _is_valid(model.descriptor)
     (value_object,) = model.root_entity.value_objects
     assert "mapping" not in value_object
     assert value_object["multiplicity"] == "one"
-    # The recursive shape does not change column order: scalar attributes first,
-    # then the ONE structured-document column per top-level value object.
-    assert list(column_order(model.root_entity)) == ["id", "name", "address"]
+    assert value_object["column"] == "mailing_address"
+    assert list(column_order(model.root_entity)) == [
+        "id",
+        "person_id",
+        "tax_i_d",
+        "line2_item",
+        "already_snake",
+        "legacy__i_d",
+        "mailing_address",
+    ]
     assert value_object["column"] in column_order(model.root_entity)
-    # customer.yaml gained a VO-bearing sibling `Location` table in COR-3 Phase 5b, so
-    # `ddl_for` now returns one CREATE per table; select the root Customer's.
-    (create,) = [c for c in ddl_for(model, "postgres") if "create table customer (" in c]
+    (create,) = ddl_for(model, "postgres")
     assert f"{value_object['column']} jsonb" in create
+
+
+def test_temporal_axis_lookup_uses_derived_and_explicit_override_columns() -> None:
+    descriptor = {
+        "entity": {
+            "name": "Timeline",
+            "table": "timeline",
+            "attributes": [
+                {"name": "id", "type": "int64", "primaryKey": True},
+                {"name": "effectiveFrom", "type": "timestamp"},
+                {"name": "effectiveTo", "type": "timestamp"},
+                {"name": "legacyName", "type": "string", "column": "legacyName"},
+                {"name": "taxID", "type": "string", "column": "tax_id"},
+            ],
+            "asOfAxes": [
+                {
+                    "dimension": "transactionTime",
+                    "startAttribute": "effectiveFrom",
+                    "endAttribute": "effectiveTo",
+                }
+            ],
+        }
+    }
+    assert _is_valid(descriptor)
+    entity = Model(Path("timeline.yaml"), descriptor).root_entity
+
+    assert entity.temporal_runtime_axes == [
+        {
+            "dimension": "transactionTime",
+            "start_column": "effective_from",
+            "end_column": "effective_to",
+            "infinity": "infinity",
+        }
+    ]
+    assert entity.attribute_by_name("legacyName")["column"] == "legacyName"
+    assert entity.attribute_by_name("taxID")["column"] == "tax_id"
 
 
 def test_value_object_declares_recursive_typed_structure() -> None:
