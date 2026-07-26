@@ -2,11 +2,12 @@
 
 The inverse of ingestion: an accepted :class:`~parallax.core.metamodel.Metamodel`
 becomes the canonical minimal descriptor document — the same byte-for-byte form
-``serde.canonicalize`` produces from a parsed document. Export reads only the
-representation-independent Metadata (identities, closed value vocabularies,
-storage locations) and renews no validation: an accepted model is exportable by
-contract, so the only way export fails is an implementation defect, which surfaces
-as :class:`DescriptorExportError` rather than a :class:`DescriptorError`.
+:func:`~parallax.descriptor._serde.canonicalize` produces from a parsed
+document. Export reads only the representation-independent Metadata (identities,
+closed value vocabularies, storage locations) and renews no validation: an
+accepted model is exportable by contract, so the only way export fails is an
+implementation defect, which surfaces as :class:`DescriptorExportError` rather
+than a :class:`DescriptorError`.
 
 Every optional key whose value equals the fact ingestion re-derives is dropped —
 a column that matches its member name, a Read Write persistence mode, an
@@ -86,10 +87,10 @@ class DescriptorExportError(RuntimeError):
 def export_document(metamodel: Metamodel) -> dict[str, object]:
     """The canonical minimal descriptor document for an accepted ``metamodel``.
 
-    Structurally equal to ``serde.canonicalize`` over the same logical model, and
-    deterministic: repeated exports of one accepted Metamodel are equal. Returns
-    the complete document or, on an implementation defect, raises
-    :class:`DescriptorExportError` with no partial output.
+    Structurally equal to :func:`~parallax.descriptor._serde.canonicalize` over
+    the same logical model, and deterministic: repeated exports of one accepted
+    Metamodel are equal. Returns the complete document or, on an implementation
+    defect, raises :class:`DescriptorExportError` with no partial output.
     """
     try:
         entities = tuple(metamodel.entities)

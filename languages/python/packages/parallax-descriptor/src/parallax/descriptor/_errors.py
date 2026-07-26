@@ -47,18 +47,19 @@ and array indices in authoring order. The empty path is the document root."""
 
 class DescriptorError(ValueError):
     """A descriptor document fails one phase of the three-phase ingestion
-    contract (syntax, schema, or value), or a directly constructed record
-    graph (the class frontend's native assembly, outside text ingestion)
-    refuses to adapt into a declaration.
+    contract (syntax, schema, or value), or a record graph assembled in memory
+    rather than parsed from text refuses to adapt into a declaration.
 
-    Within the three-phase text-ingestion pipeline (:mod:`parallax.core.
-    descriptor.ingest`), the base class is never raised directly — one of the
-    three concrete subtypes below always names the failing phase and carries
-    its ``code``. A direct-record caller outside that pipeline (for example
-    :func:`~parallax.core.entity._declaration.native_metamodel`) MAY raise
-    this base class directly for a record the declaration contract refuses;
-    no phase applies there, so ``code`` is unset rather than borrowing one of
-    the three reserved phase codes.
+    Within the three-phase text-ingestion pipeline
+    (:mod:`parallax.descriptor._ingest`), the base class is never raised
+    directly — one of the three concrete subtypes below always names the
+    failing phase and carries its ``code``. Past ingestion, adapting records
+    into declarations
+    (:func:`~parallax.descriptor._adapter.unresolved_metamodel`) MAY raise this
+    base class directly for a record the declaration contract refuses, whether
+    those records were parsed or assembled by the caller; no phase applies
+    there, so ``code`` is unset rather than borrowing one of the three reserved
+    phase codes.
     """
 
     code: str
