@@ -495,9 +495,19 @@ and a collision fails at class creation (`entity-reserved-member-name`):
   therefore supplied them;
 - the nine declaration members `identity`, `container`, `persistence`,
   `attributes`, `relationships`, `value_objects`, `as_of_axes`, `inheritance`,
-  and `indices`. An Entity Class *is* its own `UnresolvedEntityDeclaration`, so
-  the metaclass publishes that protocol's nine properties on the class object
-  itself, and a member reusing one would be shadowed by the property.
+  and `indices`. An Entity Class *is* its own `UnresolvedEntityDeclaration`: the
+  metaclass declares those nine names on the class object without binding
+  values and answers each read from the class's own declaration through an
+  attribute fallback, which is what lets `type[SomeEntity]` satisfy the protocol
+  statically as well as at runtime.
+
+An attribute fallback answers only names the class object does not otherwise
+carry, so this last family is what keeps the declaration surface reachable at
+all: any class-body name taking one of the nine — a declared member, a class
+variable, or a method — wins the lookup, and the class then presents something
+other than its declaration to every reader, including hub construction. The
+rejection therefore covers every binding a class body makes, not only declared
+members.
 
 #### Relationships — `Rel[T]` and `rel(...)`
 

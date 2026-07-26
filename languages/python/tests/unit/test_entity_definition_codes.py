@@ -55,6 +55,11 @@ _PROBES: dict[str, str] = {
     "define_narrowing_on_wrong_family": "entity-option-context-invalid",
     "define_reserved_member_name": "entity-reserved-member-name",
     "define_reserved_temporal_name": "entity-reserved-member-name",
+    "define_class_var_reserved_name": "entity-reserved-member-name",
+    "define_shadowed_declaration_member": "entity-reserved-member-name",
+    "define_nullable_many_relationship": "entity-annotation-invalid",
+    "define_wide_union_annotation": "entity-annotation-invalid",
+    "define_wide_union_relationship_target": "entity-annotation-invalid",
     "define_canonical_name_collision": "entity-canonical-name-collision",
 }
 

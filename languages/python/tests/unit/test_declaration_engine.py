@@ -5,12 +5,20 @@ read off the MRO, the eagerly built declaration payload, and annotation
 resolution against the class body before module globals. This module declares
 under ``from __future__ import annotations`` deliberately: the stringized path is
 the one where class-body resolution matters.
+
+The closing section drives the two ``frontend_probes`` modules together, because
+the live and stringized paths are separate code and one authored spelling has to
+compile to one declaration on both.
 """
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import pytest
 
+import frontend_probes
+import frontend_probes_stringized
 from parallax.core import (
     MANY_TO_ONE,
     ONE_TO_MANY,
@@ -47,6 +55,7 @@ from parallax.core.metamodel import (
     AttributeIdentity,
     Column,
     EntityIdentity,
+    EntityReference,
     ExactEntityReference,
     IndexIdentity,
     IndexMetadata,
@@ -60,6 +69,7 @@ from parallax.core.metamodel import (
     TemporalDimension,
     UnresolvedDefiningRelationshipDeclaration,
     UnresolvedEntityDeclaration,
+    UnresolvedRelationshipDeclaration,
     UnresolvedReverseRelationshipDeclaration,
 )
 from parallax.core.metamodel import AbstractSubtype as AcceptedAbstractSubtype
@@ -146,13 +156,17 @@ def test_nullability_comes_from_the_annotation_alone() -> None:
     assert Coupon(id=1).label is None
 
 
-def test_a_class_target_is_exact_and_a_bare_string_target_is_relative() -> None:
+def test_a_stringized_target_is_relative_however_its_source_spelled_it() -> None:
+    # `Crate.warehouse` names the class object, but under stringized annotations
+    # the engine only ever sees the name `Warehouse` — indistinguishable from a
+    # bare `Rel["Warehouse"]` — so both read as Relative to the declaring
+    # namespace. `test_entity_frontend` holds the live class-object twin.
     defining = Crate.relationships[0]
     assert isinstance(defining, UnresolvedDefiningRelationshipDeclaration)
     assert defining.identity == RelationshipIdentity(Crate.identity, "warehouse")
     assert defining.cardinality is MANY_TO_ONE
     assert defining.join.source == AttributeIdentity(Crate.identity, "warehouseId")
-    assert defining.join.target.entity == ExactEntityReference(Warehouse.identity)
+    assert defining.join.target.entity == RelativeEntityReference("Warehouse")
     assert defining.join.target.name == "id"
 
     reverse = Warehouse.relationships[0]
@@ -306,3 +320,72 @@ def test_member_correspondences_are_built_from_the_same_walk_as_the_declaration(
     assert names.column_to_py == {"id": "id", "wh_code": "code"}
     assert names.relationship_py == {"crates": "crates"}
     assert names.pk_py == frozenset({"id"})
+
+
+def _target_of(declaration: UnresolvedRelationshipDeclaration) -> EntityReference:
+    if isinstance(declaration, UnresolvedDefiningRelationshipDeclaration):
+        return declaration.join.target.entity
+    return declaration.reverse_of.entity
+
+
+def _occurrences(cls: type) -> list[tuple[str, Multiplicity, bool, list[str]]]:
+    return [
+        (
+            occurrence.name,
+            occurrence.multiplicity,
+            occurrence.nullable,
+            [leaf.name for leaf in occurrence.shape.attributes],
+        )
+        for occurrence in declaration_of(cls).value_objects
+    ]
+
+
+def test_both_annotation_paths_read_one_relationship_spelling_the_same_way() -> None:
+    live = declaration_of(frontend_probes.accepted_relationship_targets())
+    stringized = declaration_of(frontend_probes_stringized.accepted_relationship_targets())
+    assert live.relationships == stringized.relationships
+    assert {member.identity.name: _target_of(member) for member in live.relationships} == {
+        "bare": RelativeEntityReference("Peer"),
+        "qualified": ExactEntityReference(EntityIdentity("ops", "Peer")),
+        "unionOptional": RelativeEntityReference("Peer"),
+        "aliasOptional": RelativeEntityReference("Peer"),
+        "many": RelativeEntityReference("Peer"),
+    }
+
+
+def test_both_annotation_paths_read_one_relationship_shape_the_same_way() -> None:
+    live = members_of(frontend_probes.accepted_relationship_targets()).relationship_shapes
+    stringized = members_of(
+        frontend_probes_stringized.accepted_relationship_targets()
+    ).relationship_shapes
+    assert live == stringized
+    assert {name: (shape.multiplicity, shape.nullable) for name, shape in live.items()} == {
+        "bare": (Multiplicity.ONE, False),
+        "qualified": (Multiplicity.ONE, False),
+        "unionOptional": (Multiplicity.ONE, True),
+        "aliasOptional": (Multiplicity.ONE, True),
+        "many": (Multiplicity.MANY, False),
+    }
+
+
+def test_both_annotation_paths_resolve_one_quoted_value_object_spelling() -> None:
+    live = _occurrences(frontend_probes.accepted_value_object_spellings())
+    stringized = _occurrences(frontend_probes_stringized.accepted_value_object_spellings())
+    assert live == stringized
+    assert live == [
+        ("home", Multiplicity.ONE, True, ["city"]),
+        ("tags", Multiplicity.MANY, False, ["label"]),
+    ]
+
+
+@pytest.mark.parametrize(
+    "build",
+    [frontend_probes.accepted_class_var, frontend_probes_stringized.accepted_class_var],
+    ids=["live", "stringized"],
+)
+def test_a_class_variable_is_passed_over_on_both_annotation_paths(
+    build: Callable[[], type],
+) -> None:
+    marked = build()
+    assert [member.identity.name for member in declaration_of(marked).attributes] == ["id"]
+    assert getattr(marked, "kind", None) == "marked"

@@ -52,13 +52,16 @@ from parallax.core.metamodel import (
     MAX,
     Column,
     EntityIdentity,
+    ExactEntityReference,
     Max,
     PrimaryKey,
+    RelativeEntityReference,
     Sequence,
     SortDirection,
     Table,
     UnresolvedDefiningRelationshipDeclaration,
     UnresolvedRelationshipOrder,
+    UnresolvedReverseRelationshipDeclaration,
 )
 from parallax.core.op_algebra import Comparison, serialize
 
@@ -202,6 +205,20 @@ def test_relationship_facts_split_between_the_annotation_and_the_factory() -> No
     assert defining.cardinality is MANY_TO_ONE
     assert defining.dependent is False
     assert defining.join.source.name == "customerId"
+
+
+def test_a_class_object_target_is_exact_and_carries_the_targets_own_namespace() -> None:
+    # The live twin of `test_declaration_engine`'s stringized case: only here is
+    # the target a class object, so only here does the reference carry an
+    # identity the annotation text never spelled.
+    defining = next(m for m in Order.relationships if m.identity.name == "customer")
+    assert isinstance(defining, UnresolvedDefiningRelationshipDeclaration)
+    assert defining.join.target.entity == ExactEntityReference(Customer.identity)
+    assert Customer.identity == EntityIdentity("sales", "Customer")
+
+    reverse = Customer.relationships[0]
+    assert isinstance(reverse, UnresolvedReverseRelationshipDeclaration)
+    assert reverse.reverse_of.entity == RelativeEntityReference("Order")
 
 
 def test_a_dependent_ordered_defining_relationship_records_both_facts() -> None:
