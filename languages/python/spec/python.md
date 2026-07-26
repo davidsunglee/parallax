@@ -594,9 +594,10 @@ or requires registration — occurrences are reached only through Entity
 declarations. `Attr[Address]` is a One occurrence, `Attr[Address | None]` is
 One-nullable, `Attr[tuple[Address, ...]]` is Many (never nullable; a
 `| None` Many surfaces during formation as `value-object-many-nullable`). A Value
-Object scalar carries the full Neutral Type algebra (the schema admits any
-`type` spelling on a Value Object attribute; the corpus `float64` Value
-Object members exercise a non-string scalar), so on Value Object scalar
+Object scalar carries the scalar Neutral Type algebra — every neutral type
+except `Json` (the schema draws a Value Object attribute `type` from
+`scalarType`; the corpus `float64` Value Object members exercise a non-string
+scalar), so on Value Object scalar
 members `attr(...)` admits the naming and type-shaping options — `name=`,
 `type=` (`Int32`/`Float32` narrowing), and `precision=`/`scale=` (mandatory
 together on a `decimal.Decimal` member). Entity-only options fail at class
