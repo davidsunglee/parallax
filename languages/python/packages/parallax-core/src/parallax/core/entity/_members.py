@@ -388,9 +388,10 @@ class Attr[T]:
     """The scalar and Value Object member annotation, and the descriptor it installs.
 
     Class access yields an :class:`~parallax.core.entity._expressions.AttributeExpr`
-    predicate seed; instance access yields the member value. A non-data
-    descriptor, so Pydantic's instance ``__dict__`` legitimately shadows the
-    instance branch.
+    predicate seed carrying the accessed class's own Metamodel Binding, so an
+    assignment built from it is validated against that hub's model; instance
+    access yields the member value. A non-data descriptor, so Pydantic's instance
+    ``__dict__`` legitimately shadows the instance branch.
     """
 
     __slots__ = ("_py_name", "_ref")
@@ -405,7 +406,11 @@ class Attr[T]:
     def __get__(self, obj: object, _owner: type | None = None, /) -> T: ...
     def __get__(self, obj: object | None, _owner: type | None = None) -> AttributeExpr | T:
         if obj is None:
-            return AttributeExpr(self._ref.entity, self._ref.attribute)
+            return AttributeExpr(
+                self._ref.entity,
+                self._ref.attribute,
+                binding=None if _owner is None else binding_of(_owner),
+            )
         value: T = obj.__dict__[self._py_name]
         return value
 
@@ -442,6 +447,9 @@ class Rel[T]:
     produced the node did not include it. A data descriptor, so the ``UNLOADED``
     sentinel written through ``object.__setattr__`` still routes through
     :meth:`__get__`.
+
+    ``target`` is the canonical spelling of the Entity this relationship points
+    at, so a continuing hop keeps the namespace a local name would drop.
     """
 
     __slots__ = ("_py_name", "_ref", "_target")

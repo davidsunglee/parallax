@@ -81,6 +81,7 @@ from parallax.core.metamodel import (
     ValueObjectOccurrenceDeclaration,
     ValueObjectShapeDeclaration,
     ValueObjectShapeKey,
+    resolve_entity_reference,
 )
 from parallax.core.metamodel import AbstractSubtype as AcceptedAbstractSubtype
 from parallax.core.metamodel import ConcreteSubtype as AcceptedConcreteSubtype
@@ -969,7 +970,7 @@ def _build_entity(
             Rel(
                 RelationshipRef(identity.name, canonical),
                 py_name,
-                _target_name(tuple(relationships), canonical),
+                _target_spelling(identity, tuple(relationships), canonical),
             ),
         )
     return cls
@@ -1360,10 +1361,18 @@ def _entity_reference(shape: _Shape, where: str) -> EntityReference:
     return ExactEntityReference(EntityIdentity(namespace, name))
 
 
-def _target_name(
-    relationships: tuple[UnresolvedRelationshipDeclaration, ...], canonical: str
+def _target_spelling(
+    identity: EntityIdentity,
+    relationships: tuple[UnresolvedRelationshipDeclaration, ...],
+    canonical: str,
 ) -> str:
-    """The canonical Entity name a declared relationship points at."""
+    """The canonical spelling of the Entity a declared relationship points at.
+
+    Purely lexical, exactly as reference resolution is: a relative target adopts
+    the declaring Entity's namespace and an exact one passes through. Keeping the
+    namespace is what lets a path continuing past this hop name its target
+    unambiguously when a second namespace declares the same local name.
+    """
     for member in relationships:
         if member.identity.name != canonical:
             continue
@@ -1372,11 +1381,7 @@ def _target_name(
             if isinstance(member, UnresolvedDefiningRelationshipDeclaration)
             else member.reverse_of.entity
         )
-        match reference:
-            case ExactEntityReference(target):
-                return target.name
-            case RelativeEntityReference(name):
-                return name
+        return resolve_entity_reference(identity, reference).canonical
     return canonical  # pragma: no cover - every installed descriptor has its declaration
 
 

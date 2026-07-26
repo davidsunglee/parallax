@@ -64,7 +64,7 @@ from parallax.core.metamodel import (
     UnresolvedRelationshipOrder,
     UnresolvedReverseRelationshipDeclaration,
 )
-from parallax.core.op_algebra import Comparison, serialize
+from parallax.core.op_algebra import Comparison, PathSegment, serialize
 
 pytestmark = pytest.mark.unit
 
@@ -267,7 +267,10 @@ def test_class_level_member_access_seeds_operation_nodes() -> None:
     assert serialize(predicate.op) == {"eq": {"attr": "Order.id", "value": 1}}
     path = Order.customer
     assert isinstance(path, RelationshipPath)
-    assert path.target == "Customer"
+    # A relationship reference names its owner locally, as the wire does; the
+    # path's own target keeps the namespace a continuing hop resolves in.
+    assert path.segments == (PathSegment(rel="Order.customer"),)
+    assert path.target == "sales.Customer"
 
 
 def test_instance_access_returns_the_member_value_and_relationships_stay_closed_world() -> None:

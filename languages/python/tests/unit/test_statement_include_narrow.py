@@ -5,9 +5,10 @@
 clause. Every example is validated immediately at build, against the model the
 target's own hub sealed, never deferred to execution.
 
-A deeper relationship hop is the one thing a path cannot answer for itself: it
-is a model question and a Relationship Path performs no class lookup, so a
-multi-hop include names its segments directly.
+A deeper relationship hop is the one thing a path cannot answer for itself: it is
+a model question, so it resolves through the Metamodel Binding the seeding class
+access supplied. ``test_relationship_hops`` pins that resolution; here it is
+exercised only as far as a multi-hop include needs it.
 """
 
 from __future__ import annotations
