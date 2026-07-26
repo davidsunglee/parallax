@@ -412,11 +412,12 @@ class Attr[T]:
                 self._ref.attribute,
                 binding=None if _owner is None else binding_of(_owner),
             )
-        # As with `ElementAttr` below, Pydantic's own instance `__dict__` always
-        # shadows this branch for an ordinary field read; it is the documented
-        # instance-access contract rather than a reachable path.
-        value: T = obj.__dict__[self._py_name]  # pragma: no cover - shadowed by __dict__
-        return value  # pragma: no cover
+        # As with `ElementAttr` below, Pydantic's own instance `__dict__`
+        # shadows this branch under ordinary attribute access; it is reached only
+        # by invoking the descriptor directly, the documented instance-access
+        # contract.
+        value: T = obj.__dict__[self._py_name]
+        return value
 
 
 class ElementAttr[T]:
@@ -436,11 +437,11 @@ class ElementAttr[T]:
     def __get__(self, obj: object | None, _owner: type | None = None) -> ElementAttributeExpr | T:
         if obj is None:
             return ElementAttributeExpr((self._canonical,))
-        # A non-data descriptor, so Pydantic's own instance `__dict__` always
-        # shadows this branch for an ordinary field read; it is the documented
-        # instance-access contract rather than a reachable path.
-        value: T = obj.__dict__[self._py_name]  # pragma: no cover - shadowed by __dict__
-        return value  # pragma: no cover
+        # A non-data descriptor, so Pydantic's own instance `__dict__` shadows
+        # this branch under ordinary attribute access; it is reached only by
+        # invoking the descriptor directly.
+        value: T = obj.__dict__[self._py_name]
+        return value
 
 
 def _hop(binding: MetamodelBinding, target: str, name: str) -> RelationshipPath:

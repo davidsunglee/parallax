@@ -402,22 +402,28 @@ def _class_body_annotations(ns: dict[str, object]) -> dict[str, object]:
     annotate = ns.pop("__annotate_func__", None)
     if annotate is None:
         return {}
-    return _resolve_deferred(annotate)  # pragma: no cover - only a 3.14 namespace defers
+    return _resolve_deferred(annotate)  # pragma: no cover - deferred namespace only on 3.14+
 
 
-def _resolve_deferred(annotate: object) -> dict[str, object]:  # pragma: no cover - 3.14-only
+def _resolve_deferred(annotate: object) -> dict[str, object]:
     """Recover deferred (PEP 649 / PEP 749) class-body annotations.
 
-    Evaluated in ``VALUE`` format to recover the same live objects the eager path
-    returns. The version guard also keeps the 3.14-only import off the
-    type-checked path, which is pinned to 3.12 — the same pin that puts this
-    recovery beyond the reach of any interpreter the workspace runs on.
+    Reached only on Python 3.14+, where a class declared without
+    ``from __future__ import annotations`` carries an ``__annotate_func__``
+    instead of an eager ``__annotations__`` mapping; 3.12 and 3.13 always take
+    the eager path. Evaluated in ``VALUE`` format to recover the same live
+    objects the eager path returns. The ``sys.version_info`` guard is a
+    static-typing shim that keeps the 3.14-only ``annotationlib`` import off
+    Pyright's 3.12 path; it is never taken at runtime because this function runs
+    only on 3.14+.
     """
-    if sys.version_info < (3, 14):
+    if sys.version_info < (3, 14):  # pragma: no cover - typing shim; runs only on 3.14+
         return {}
-    import annotationlib  # 3.14 stdlib (PEP 649 / PEP 749)
+    import annotationlib  # pragma: no cover - Python 3.14+ only (PEP 649 / PEP 749)
 
-    return dict(annotationlib.call_annotate_function(annotate, annotationlib.Format.VALUE))
+    return dict(  # pragma: no cover - Python 3.14+ only (PEP 649 / PEP 749)
+        annotationlib.call_annotate_function(annotate, annotationlib.Format.VALUE)
+    )
 
 
 def _module_globals(ns: dict[str, object]) -> dict[str, Any]:
