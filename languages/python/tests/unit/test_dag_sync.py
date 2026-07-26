@@ -15,8 +15,8 @@ importer exemption), and the support-scope additions:
 * child scopes are emitted as contract *sources* only, with a ``lint-imports``
   canary proving a child contract blocks an import its parent's row permits, and
   a second canary proving the one asymmetric child grant — the descriptor
-  package's Hub-construction seam, which relaxes its parent's generated row —
-  stays confined by the hand-written contract that guards it.
+  package's Hub-construction seam — is admitted for that child alone and stays
+  forbidden to every other module its parent's row governs.
 """
 
 from __future__ import annotations
@@ -530,21 +530,25 @@ def test_scope_descendants_inverts_the_child_chain() -> None:
     assert dag.scope_descendants("parallax.core.base") == frozenset()
 
 
-def test_an_asymmetric_child_grant_relaxes_its_parents_row() -> None:
-    # `parallax.descriptor._hub` holds a grant its parent lacks, and a package
-    # scoped `forbidden` source governs the child too, so the parent's row cannot
-    # forbid what the child legitimately imports. The generated rows therefore
-    # coincide, and the hand-written confinement contract in `pyproject.toml`
-    # ("only parallax.descriptor._hub reaches the Hub-construction seam") is what
-    # keeps the grant inside the child.
+def test_an_asymmetric_child_grant_becomes_one_named_exception() -> None:
+    # `parallax.descriptor._hub` holds a grant its parent lacks. A package-scoped
+    # `forbidden` source governs the child too, so the parent's row would break on
+    # the seam the child legitimately imports; naming that one edge as an
+    # exception keeps the row tight for every other descriptor module instead.
     adjacency = dag.build_adjacency(dag.parse_dependency_graph(dag.MODULES_MD.read_text()))
     forbidden = dag.compute_forbidden(adjacency)
     assert dag.SUPPORT_SCOPE_DEPS["parallax.descriptor._hub"] == frozenset({"parallax.core.entity"})
     assert "parallax.core.entity" not in adjacency["parallax.descriptor"]
-    assert forbidden["parallax.descriptor"] == forbidden["parallax.descriptor._hub"]
-    # Without the relaxation the parent's row would forbid the seam the child
-    # imports, so `lint-imports` could never pass on the committed tree.
-    assert "parallax.core.entity" not in forbidden["parallax.descriptor"]
+    assert "parallax.core.entity" in forbidden["parallax.descriptor"]
+    assert "parallax.core.entity" not in forbidden["parallax.descriptor._hub"]
+    assert dag.child_grant_exceptions(adjacency, "parallax.descriptor") == [
+        "parallax.descriptor._hub -> parallax.core.entity.**"
+    ]
+    # Only the *direct* extra grant needs naming: ignoring the first hop also
+    # withdraws every indirect chain that reaches further through it.
+    assert "parallax.core.op_algebra" in forbidden["parallax.descriptor"]
+    # A symmetric child chain — every handle child is narrower — needs none.
+    assert dag.child_grant_exceptions(adjacency, "parallax.snapshot.handle") == []
 
 
 # --------------------------------------------------------------------------
@@ -578,8 +582,7 @@ def test_child_scope_contract_blocks_an_import_the_parent_permits() -> None:
 
 
 # --------------------------------------------------------------------------
-# Canary 4: the hand-written confinement contract keeps an asymmetric child
-# grant inside its child scope, which no generated row can do.
+# Canary 4: the named exception admits one edge, not the whole child grant.
 # --------------------------------------------------------------------------
 def test_the_hub_seam_stays_confined_to_the_descriptor_child_scope() -> None:
     lint_imports = shutil.which("lint-imports")
@@ -593,7 +596,7 @@ def test_the_hub_seam_stays_confined_to_the_descriptor_child_scope() -> None:
         canary.unlink()
 
     assert result.returncode != 0, result.stdout
-    assert "only parallax.descriptor._hub reaches the Hub-construction seam" in result.stdout
+    assert "parallax.descriptor may import only its permitted dependencies BROKEN" in result.stdout
     assert "not allowed to import parallax.core.entity" in result.stdout
 
 
