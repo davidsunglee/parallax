@@ -288,6 +288,11 @@ UNMIRRORED: Mapping[str, str] = MappingProxyType(
             "no mirror authored; it is the mirrored `balance`'s declaration shape -- a "
             "transaction-time-only entity with column overrides -- with different names"
         ),
+        "member-column-defaults": (
+            "no mirror authored; its ASCII default-column vectors are covered directly by "
+            "the metamodel naming, declaration frontend, descriptor serde/export, and "
+            "compile-sweep contract tests"
+        ),
         "pk-audit": (
             "no mirror authored; it composes the `sequence` generation `pk-sequence` proves with "
             "the transaction-time-only axis `balance` proves"
@@ -322,7 +327,7 @@ UNMIRRORED: Mapping[str, str] = MappingProxyType(
 """Corpus model stem -> why the class frontend does not mirror it.
 
 Every reason here is either a redundant declaration shape or an unwritten
-mirror. **No corpus model is unmirrorable:** the class grammar can author all 35,
+mirror. **No corpus model is unmirrorable:** the class grammar can author all 36,
 so this mapping records the guard's chosen breadth, not a grammar limit. A reason
 that ever becomes a real limit belongs in the grammar's own specification instead.
 """

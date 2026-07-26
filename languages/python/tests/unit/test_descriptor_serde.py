@@ -114,6 +114,111 @@ def test_pk_generation_sequence_object_is_preserved() -> None:
     assert canonicalize(document) == document
 
 
+def test_member_columns_normalize_and_serialize_against_the_derived_default() -> None:
+    document = {
+        "entity": {
+            "name": "Contact",
+            "table": "contact",
+            "attributes": [
+                {"name": "id", "type": "int64", "primaryKey": True},
+                {"name": "personId", "type": "string"},
+                {"name": "lineItem", "type": "string", "column": "line_item"},
+                {"name": "taxID", "type": "string", "column": "tax_id"},
+                {"name": "legacyName", "type": "string", "column": "legacyName"},
+            ],
+            "valueObjects": [
+                {
+                    "name": "postalAddress",
+                    "attributes": [{"name": "city", "type": "string"}],
+                },
+                {
+                    "name": "billingAddress",
+                    "column": "billing_address",
+                    "attributes": [{"name": "city", "type": "string"}],
+                },
+                {
+                    "name": "legacyAddress",
+                    "column": "legacyAddress",
+                    "attributes": [{"name": "city", "type": "string"}],
+                },
+            ],
+        }
+    }
+
+    entity = deserialize(document).entity("Contact")
+    assert {attribute.name: attribute.column for attribute in entity.attributes} == {
+        "id": "id",
+        "personId": "person_id",
+        "lineItem": "line_item",
+        "taxID": "tax_id",
+        "legacyName": "legacyName",
+    }
+    assert [
+        (value_object.name, value_object.column, value_object.storage_column)
+        for value_object in entity.value_objects
+    ] == [
+        ("postalAddress", None, "postal_address"),
+        ("billingAddress", None, "billing_address"),
+        ("legacyAddress", "legacyAddress", "legacyAddress"),
+    ]
+
+    canonical = canonicalize(document)
+    canonical_entity = cast("dict[str, Any]", canonical["entity"])
+    attributes = {
+        attribute["name"]: attribute
+        for attribute in cast("list[dict[str, Any]]", canonical_entity["attributes"])
+    }
+    assert "column" not in attributes["personId"]
+    assert "column" not in attributes["lineItem"]
+    assert attributes["taxID"]["column"] == "tax_id"
+    assert attributes["legacyName"]["column"] == "legacyName"
+    value_objects = {
+        value_object["name"]: value_object
+        for value_object in cast("list[dict[str, Any]]", canonical_entity["valueObjects"])
+    }
+    assert "column" not in value_objects["postalAddress"]
+    assert "column" not in value_objects["billingAddress"]
+    assert value_objects["legacyAddress"]["column"] == "legacyAddress"
+
+
+@pytest.mark.parametrize("member_kind", ["attribute", "valueObject"])
+def test_person_id_old_camel_case_override_survives_round_trip(member_kind: str) -> None:
+    entity_document: dict[str, Any] = {
+        "name": "Legacy",
+        "table": "legacy",
+        "attributes": [{"name": "id", "type": "int64", "primaryKey": True}],
+    }
+    if member_kind == "attribute":
+        cast("list[dict[str, Any]]", entity_document["attributes"]).append(
+            {"name": "personId", "type": "string", "column": "personId"}
+        )
+    else:
+        entity_document["valueObjects"] = [
+            {
+                "name": "personId",
+                "column": "personId",
+                "attributes": [{"name": "value", "type": "string"}],
+            }
+        ]
+    document: dict[str, object] = {"entity": entity_document}
+
+    canonical = canonicalize(document)
+    canonical_entity = cast("dict[str, Any]", canonical["entity"])
+    members = cast(
+        "list[dict[str, Any]]",
+        canonical_entity["valueObjects" if member_kind == "valueObject" else "attributes"],
+    )
+    exported = members[0] if member_kind == "valueObject" else members[1]
+    assert exported["column"] == "personId"
+
+    entity = deserialize(document).entity("Legacy")
+    if member_kind == "attribute":
+        assert entity.attributes[1].column == "personId"
+    else:
+        assert entity.value_objects[0].column == "personId"
+        assert entity.value_objects[0].storage_column == "personId"
+
+
 def test_pk_generation_object_requires_sequence_strategy() -> None:
     document = {
         "entity": {

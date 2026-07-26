@@ -75,7 +75,8 @@ pytestmark = pytest.mark.unit
 
 class Customer(Entity, table="customer", namespace="sales"):
     id: Attr[int] = attr(primary_key=True)
-    tax_id: Attr[str] = attr(name="taxID")
+    tax_id: Attr[str] = attr(name="taxID", column="tax_id")
+    legacy_id: Attr[str] = attr(name="legacyID")
     bin_no: Attr[str] = attr(column="BIN_NO")
     orders: Rel[tuple["Order", ...]] = rel(
         reverse_of="customer", order_by=("placed_at", desc("id"))
@@ -172,8 +173,9 @@ def test_the_scalar_families_narrow_only_through_the_type_option() -> None:
 
 def test_name_overrides_the_canonical_member_and_column_overrides_its_storage() -> None:
     by_name = {member.identity.name: member for member in Customer.attributes}
-    assert set(by_name) == {"id", "taxID", "binNo"}
-    assert by_name["taxID"].storage == Column("taxID")
+    assert set(by_name) == {"id", "taxID", "legacyID", "binNo"}
+    assert by_name["taxID"].storage == Column("tax_id")
+    assert by_name["legacyID"].storage == Column("legacy_i_d")
     assert by_name["binNo"].storage == Column("BIN_NO")
 
 

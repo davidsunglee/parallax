@@ -310,6 +310,21 @@
       "valueObject": {}
     }
   },
+  "models/member-column-defaults.yaml": {
+    "parallax.compatibility.MemberColumnDefaults": {
+      "attribute": {
+        "already_snake": "already_snake",
+        "id": "id",
+        "legacy_ID": "legacy__i_d",
+        "line2Item": "line2_item",
+        "personId": "person_id",
+        "taxID": "tax_i_d"
+      },
+      "valueObject": {
+        "mailingAddress": "mailing_address"
+      }
+    }
+  },
   "models/orders.yaml": {
     "parallax.compatibility.Order": {
       "attribute": {

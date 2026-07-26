@@ -462,8 +462,10 @@ def test_attributes_carry_structured_types_storage_and_generation() -> None:
           optimisticLocking: true
         - name: openedOn
           type: date
-          column: opened_on
           nullable: true
+        - name: legacyName
+          type: string
+          column: legacyName
       indices:
         - name: account_pk
           attributes: [id]
@@ -474,7 +476,7 @@ def test_attributes_carry_structured_types_storage_and_generation() -> None:
     assert declaration.container == Table("account")
     assert declaration.persistence is PersistenceMode.READ_ONLY
 
-    identifier, label, balance, opened = declaration.attributes
+    identifier, label, balance, opened, legacy = declaration.attributes
     assert identifier.identity == AttributeIdentity(declaration.identity, "id")
     assert identifier.type == INT64
     assert identifier.storage == Column("id")
@@ -490,6 +492,7 @@ def test_attributes_carry_structured_types_storage_and_generation() -> None:
     assert opened.type == DATE
     assert opened.storage == Column("opened_on")
     assert opened.nullable
+    assert legacy.storage == Column("legacyName")
 
     (index,) = declaration.indices
     assert index.identity == IndexIdentity(declaration.identity, "account_pk")
@@ -658,7 +661,7 @@ def test_value_object_occurrences_keep_shape_storage_and_multiplicity() -> None:
     assert phones.shape.attributes[0].type == STRING
 
 
-def test_an_omitted_value_object_column_is_the_occurrence_name() -> None:
+def test_an_omitted_value_object_column_uses_the_portable_derived_default() -> None:
     text = """
     entity:
       name: Customer
@@ -669,13 +672,13 @@ def test_an_omitted_value_object_column_is_the_occurrence_name() -> None:
           type: int64
           primaryKey: true
       valueObjects:
-        - name: contact
+        - name: contactDetails
           attributes:
             - name: email
               type: string
     """
     (contact,) = _only(text).value_objects
-    assert contact.storage == Column("contact")
+    assert contact.storage == Column("contact_details")
 
 
 def test_every_shape_declaration_carries_its_own_key() -> None:

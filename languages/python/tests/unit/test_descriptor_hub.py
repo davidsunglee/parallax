@@ -75,6 +75,7 @@ entities:
         type: string
       - name: authorId
         type: int64
+        column: authorId
     relationships:
       - name: author
         cardinality: many-to-one
@@ -219,7 +220,13 @@ def test_a_semantic_model_rule_fails_last_and_is_not_a_descriptor_error() -> Non
 # --------------------------------------------------------------------------- #
 def test_both_frontends_export_the_same_canonical_document() -> None:
     class_backed, _ = _class_backed()
-    assert export_document(class_backed) == export_document(hub_from_yaml(_YAML))
+    exported = export_document(class_backed)
+    assert exported == export_document(hub_from_yaml(_YAML))
+    entities = cast("list[dict[str, object]]", exported["entities"])
+    book = next(entity for entity in entities if entity["name"] == "Book")
+    attributes = cast("list[dict[str, object]]", book["attributes"])
+    author_id = next(attribute for attribute in attributes if attribute["name"] == "authorId")
+    assert author_id["column"] == "authorId"
 
 
 def test_exported_text_is_byte_identical_on_repeat_and_re_ingests() -> None:

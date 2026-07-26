@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://parallax.dev/schemas/metamodel.schema.json",
   "title": "Parallax Model Descriptor (m-descriptor)",
-  "description": "Canonical serialized m-descriptor input to m-metamodel. This revision covers persistence, optional conventional column mappings, pkGeneration, the defining/reverse relationship union, indices, asOfAxes, closed-tree inheritance, and recursively typed value objects with One/Many multiplicity.",
+  "description": "Canonical serialized m-descriptor input to m-metamodel. An omitted entity-member column derives from the canonical member name through m-descriptor's normative defaultColumn operation; an explicit column always overrides it. This revision covers persistence, pkGeneration, the defining/reverse relationship union, indices, asOfAxes, closed-tree inheritance, and recursively typed value objects with One/Many multiplicity.",
   "type": "object",
   "additionalProperties": false,
   "oneOf": [
@@ -219,7 +219,11 @@
       "properties": {
         "name": { "$ref": "#/$defs/identifier" },
         "type": { "$ref": "#/$defs/scalarType" },
-        "column": { "type": "string", "minLength": 1 },
+        "column": {
+          "description": "Optional physical column override. When absent, m-descriptor derives defaultColumn(name); when present, this value always wins. JSON Schema cannot express this sibling-name-dependent default.",
+          "type": "string",
+          "minLength": 1
+        },
         "primaryKey": { "type": "boolean", "default": false },
         "nullable": { "type": "boolean", "default": false },
         "maxLength": { "type": "integer", "minimum": 1 },
@@ -370,14 +374,14 @@
       }
     },
     "valueObject": {
-      "description": "A top-level embedded composite stored in one structured-document column. Omitted column uses the occurrence name.",
+      "description": "A top-level embedded composite stored in one structured-document column. An omitted column derives through m-descriptor's defaultColumn(name); an explicit column always overrides it.",
       "type": "object",
       "additionalProperties": false,
       "required": ["name"],
       "properties": {
         "name": { "$ref": "#/$defs/identifier" },
         "column": {
-          "description": "The single structured-document column the whole value object (attributes + nested value objects) is stored in. Top-level only — a nested value object never declares a column.",
+          "description": "Optional override for the single structured-document column that stores the whole value object (attributes + nested value objects). When absent, m-descriptor derives defaultColumn(name); when present, this value always wins. Top-level only — a nested value object never declares a column, and JSON Schema cannot express the sibling-name-dependent default.",
           "type": "string",
           "minLength": 1
         },

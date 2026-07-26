@@ -40,6 +40,7 @@ from parallax.core.metamodel import (
     UnresolvedInheritance,
     UnresolvedRelationshipDeclaration,
     ValueObjectOccurrenceDeclaration,
+    default_column_name,
     resolve,
 )
 
@@ -81,11 +82,11 @@ def attribute(
     primary_key: AttributePrimaryKey = NOT_PRIMARY_KEY,
     column: str | None = None,
 ) -> AttributeMetadata:
-    """An Attribute of ``entity`` whose column defaults to its own name."""
+    """An Attribute of ``entity`` whose column uses the portable default."""
     return AttributeMetadata(
         identity=AttributeIdentity(entity, name),
         type=type,
-        storage=Column(name if column is None else column),
+        storage=Column(default_column_name(name) if column is None else column),
         primary_key=primary_key,
     )
 

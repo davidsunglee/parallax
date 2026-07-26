@@ -65,6 +65,7 @@ from parallax.core.metamodel import (
     ValueObjectAttributeMetadata,
     ValueObjectIdentity,
     ValueObjectMetadata,
+    default_column_name,
 )
 
 
@@ -328,11 +329,11 @@ def _attribute(
     nullable: bool = False,
     max_length: int | None = None,
 ) -> AttributeMetadata:
-    """One Attribute whose column defaults to its own name."""
+    """One Attribute whose column defaults from its canonical name."""
     return AttributeMetadata(
         identity=AttributeIdentity(entity, name),
         type=type,
-        storage=Column(name if column is None else column),
+        storage=Column(default_column_name(name) if column is None else column),
         primary_key=PrimaryKey(generation) if key else NOT_PRIMARY_KEY,
         nullable=nullable,
         max_length=max_length,

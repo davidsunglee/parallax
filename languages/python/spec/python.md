@@ -404,7 +404,7 @@ bare value (`qty: Attr[int] = 5`) fails at class creation. The complete
 | Option | Value | Meaning |
 |---|---|---|
 | `primary_key=` | `False` (default), `True`, `MAX`, or `Sequence(name=..., batch_size=..., initial_value=..., increment_size=...)` | the `NotPrimaryKey \| PrimaryKey(generation)` sum: `True` means `ApplicationAssigned`; a generation value implies primary key, so a generation without a key is unspellable; `MAX`/`Sequence(...)` require an `Int32`/`Int64` member (`m-pk-gen`) and fail at class creation on any other (`entity-option-context-invalid`), while `True` is unrestricted |
-| `column=` | `str` | physical Storage Location override; omission normalizes to `Column(<canonical name>)` |
+| `column=` | `str` | physical Storage Location override; after canonical identity resolution, omission normalizes through `parallax.core.metamodel.default_column_name(<canonical name>)` |
 | `name=` | `str` | canonical-name override (below) |
 | `max_length=` | `int` | bounded string length |
 | `type=` | `Int32` or `Float32` | narrows the two-variant annotation families; `Attr[int]` alone is `Int64` and `Attr[float]` alone is `Float64`, and a narrowing value under any other annotation is a context error |
@@ -454,7 +454,7 @@ vocabularies and acronym spellings the conversion cannot produce:
 ```python
 class LegacyPart(Entity, table="legacy_part", name="LEGACY_PART"):
     id: Attr[int] = attr(primary_key=True)
-    tax_id: Attr[str] = attr(name="taxID")     # canonical name: taxID
+    tax_id: Attr[str] = attr(name="taxID", column="tax_id")
     bin_no: Attr[str] = attr(column="BIN_NO")  # canonical binNo, legacy column
 ```
 
@@ -464,6 +464,19 @@ descriptor spelling); `column=` is where it is stored. The class-header
 `LEGACY_PART`, which the snake→camel member conversion never touches. Ingested descriptors
 keep canonical names; the ambiguous camel→snake direction is never needed
 because classes are not generated.
+
+Identity selection always precedes storage selection. `attr(name=...)` wins
+over Python's snake-to-camel conversion, then an explicit `attr(column=...)`
+wins over the portable default. Without an explicit column, the supported
+`parallax.core.metamodel.default_column_name()` operation inserts an underscore
+before each ASCII uppercase letter, lowercases it, and preserves every other
+character: `personId -> person_id`, `taxID -> tax_i_d`, and
+`legacy_ID -> legacy__i_d`. Consequently `attr(name="taxID")` alone stores in
+`tax_i_d`; the example declares `column="tax_id"` because acronym-friendly
+storage is an explicit override. `attr(name="personId", column="personId")`
+likewise preserves a deliberate camelCase physical column. The operation is
+not re-exported from `parallax.core`; `parallax.core.metamodel` is its sole
+supported import path.
 
 **Reserved member names.** A member name may not collide with a name the class
 object already carries, because class-level access is where the typed expression
@@ -604,7 +617,10 @@ together on a `decimal.Decimal` member). Entity-only options fail at class
 creation: storage, keys, generation, locking, and `max_length=` (the schema
 gives a Value Object attribute no length bound). An
 Entity-level occurrence member additionally admits `column=`, the occurrence's
-Structured Column override. Containment cycles and empty composites are the
+Structured Column override. When it is omitted, the already-resolved canonical
+occurrence name flows through `default_column_name()` exactly like a scalar
+Attribute; nested occurrences and fields remain columnless. Containment cycles
+and empty composites are the
 formation-time `value-object-*` issues shared with the descriptor frontend.
 
 #### Class creation versus hub construction

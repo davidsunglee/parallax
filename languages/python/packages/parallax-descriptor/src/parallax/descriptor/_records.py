@@ -18,6 +18,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Final, Literal
 
+from parallax.core.metamodel import default_column_name
 from parallax.descriptor._errors import DescriptorError
 
 __all__ = [
@@ -252,8 +253,8 @@ class ValueObject:
 
     @property
     def storage_column(self) -> str:
-        """The explicit column override or conventional occurrence name."""
-        return self.name if self.column is None else self.column
+        """The explicit column override or portable default for this occurrence."""
+        return default_column_name(self.name) if self.column is None else self.column
 
 
 @dataclass(frozen=True, slots=True)

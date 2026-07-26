@@ -64,6 +64,7 @@ from parallax.core.metamodel._issues import (
     canonical_location_key,
     sort_issues,
 )
+from parallax.core.metamodel._naming import default_column_name
 from parallax.core.metamodel._resolve import (
     AS_OF_ATTRIBUTE_DUPLICATE,
     AS_OF_ATTRIBUTE_MISSING,
@@ -269,6 +270,7 @@ __all__ = [
     "canonical_issue_key",
     "canonical_location_key",
     "compile_metadata",
+    "default_column_name",
     "entity_by_name",
     "inheritance_parent",
     "is_candidate_metamodel",
