@@ -97,12 +97,66 @@ def test_a_value_object_occurrence_owns_its_storage_and_nested_ones_do_not() -> 
     assert not hasattr(geo, "storage")
 
 
+def _element(expression: object) -> ElementAttributeExpr:
+    """The element-scoped carrier a Value Object's class access yields.
+
+    Statically the descriptor is typed by its ``Attr[T]`` annotation, so the
+    element-scoped runtime carrier is narrowed once here.
+    """
+    assert isinstance(expression, ElementAttributeExpr)
+    return expression
+
+
 def test_element_scoped_access_builds_paths_with_no_entity_prefix() -> None:
     expression = vm.Phone.type
     assert isinstance(expression, ElementAttributeExpr)
     predicate = expression == "home"
     assert isinstance(predicate, Predicate)
     assert serialize(predicate.op) == {"nestedEq": {"path": "type", "value": "home"}}
+
+
+def test_every_element_scoped_operator_builds_its_own_nested_node() -> None:
+    # The element-relative spelling of the whole predicate surface: one
+    # `nested*` node per operator, each path element-rooted with no entity
+    # prefix, as a quantifier's interior requires.
+    phone_type = _element(vm.Phone.type)
+    assert serialize((phone_type != "home").op) == {
+        "nestedNotEq": {"path": "type", "value": "home"}
+    }
+    assert serialize((phone_type > "a").op) == {"nestedGt": {"path": "type", "value": "a"}}
+    assert serialize((phone_type >= "a").op) == {"nestedGte": {"path": "type", "value": "a"}}
+    assert serialize((phone_type < "z").op) == {"nestedLt": {"path": "type", "value": "z"}}
+    assert serialize((phone_type <= "z").op) == {"nestedLte": {"path": "type", "value": "z"}}
+    assert serialize(phone_type.in_(["home", "work"]).op) == {
+        "nestedIn": {"path": "type", "values": ["home", "work"]}
+    }
+    assert serialize(phone_type.is_null().op) == {"nestedIsNull": {"path": "type"}}
+    assert serialize(phone_type.is_not_null().op) == {"nestedIsNotNull": {"path": "type"}}
+
+
+def test_a_boolean_element_reads_as_an_explicit_nested_equality() -> None:
+    class Toggle(ValueObject):
+        enabled: Attr[bool | None]
+
+    predicate = _element(Toggle.enabled).is_(True)
+    assert serialize(predicate.op) == {"nestedEq": {"path": "enabled", "value": True}}
+
+
+def test_an_element_scoped_hop_stays_element_relative_however_deep_it_goes() -> None:
+    # A nested occurrence continues the element path rather than restarting it,
+    # so an interior predicate over a nested leaf never grows an entity prefix.
+    predicate = _element(vm.Address.geo).country == "DE"
+    assert serialize(predicate.op) == {"nestedEq": {"path": "geo.country", "value": "DE"}}
+
+
+def test_an_element_expression_answers_no_private_name_and_has_no_truth_value() -> None:
+    # The hop resolves any public name dynamically, so the private-name guard is
+    # what keeps a dunder probe (copy, pickle) from being read as a member.
+    element = _element(vm.Phone.number)
+    with pytest.raises(AttributeError, match="_missing"):
+        _ = element._missing
+    with pytest.raises(TypeError, match="has no truth value"):
+        bool(element)
 
 
 def test_an_entity_rooted_nested_predicate_carries_the_dotted_canonical_path() -> None:
