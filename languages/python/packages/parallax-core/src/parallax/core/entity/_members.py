@@ -412,8 +412,11 @@ class Attr[T]:
                 self._ref.attribute,
                 binding=None if _owner is None else binding_of(_owner),
             )
-        value: T = obj.__dict__[self._py_name]
-        return value
+        # As with `ElementAttr` below, Pydantic's own instance `__dict__` always
+        # shadows this branch for an ordinary field read; it is the documented
+        # instance-access contract rather than a reachable path.
+        value: T = obj.__dict__[self._py_name]  # pragma: no cover - shadowed by __dict__
+        return value  # pragma: no cover
 
 
 class ElementAttr[T]:
