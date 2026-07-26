@@ -60,7 +60,7 @@ MODULE_SCOPE: Mapping[str, str] = {
     "m-core": "parallax.core.base",
     "m-metamodel": "parallax.core.metamodel",
     "m-model-formation": "parallax.core.model_formation",
-    "m-descriptor": "parallax.core.descriptor",
+    "m-descriptor": "parallax.descriptor",
     "m-pk-gen": "parallax.core.pk_gen",
     "m-inheritance": "parallax.core.inheritance",
     "m-value-object": "parallax.core.value_object",
@@ -126,10 +126,10 @@ SUPPORT_SCOPE_DEPS: Mapping[str, frozenset[str]] = {
             "parallax.core.opt_lock",
         }
     ),
+    "parallax.descriptor._hub": frozenset({"parallax.core.entity"}),
     "parallax.core.entity": frozenset(
         {
             "parallax.core.base",
-            "parallax.core.descriptor",
             "parallax.core.metamodel",
             "parallax.core.inheritance",
             "parallax.core.relationship",
@@ -198,6 +198,7 @@ SUPPORT_SCOPE_DEPS: Mapping[str, frozenset[str]] = {
 #   to :data:`SUPPORT_SCOPE_DEPS` but not registered here therefore fails the
 #   ownership check instead of silently producing that skipped contract.
 CHILD_SCOPE_PARENT: Mapping[str, str] = {
+    "parallax.descriptor._hub": "parallax.descriptor",
     "parallax.snapshot.handle._wrap": "parallax.snapshot.handle",
     "parallax.snapshot.handle._family": "parallax.snapshot.handle",
     "parallax.snapshot.handle._write_types": "parallax.snapshot.handle",
@@ -222,6 +223,7 @@ CONFORMANCE_ROOT: str = "parallax.conformance"
 ROOT_PACKAGES: tuple[str, ...] = (
     "parallax.conformance",
     "parallax.core",
+    "parallax.descriptor",
     "parallax.postgres",
     "parallax.snapshot",
 )
@@ -450,6 +452,11 @@ def scope_ancestors(scope: str) -> frozenset[str]:
     return frozenset(seen)
 
 
+def scope_descendants(scope: str) -> frozenset[str]:
+    """Every declared scope nested inside ``scope``, at any depth."""
+    return frozenset(child for child in CHILD_SCOPE_PARENT if scope in scope_ancestors(child))
+
+
 def build_adjacency(edges: Iterable[tuple[str, str]]) -> dict[str, frozenset[str]]:
     """Map every scope to the set of scopes it may *directly* depend on.
 
@@ -511,13 +518,22 @@ def compute_forbidden(adjacency: Mapping[str, frozenset[str]]) -> dict[str, list
     scope's row would only restate what the parent's own entry already forbids
     for every descendant. For the same overlap reason a child's own row omits
     its ancestors.
+
+    Package-scoped sources also bound how tight a parent's row can be: it governs
+    every module beneath it, including its declared children, so it can forbid
+    only what the whole subtree is forbidden. A child holding a grant its parent
+    lacks — ``parallax.descriptor._hub``'s Hub-construction seam is the one such
+    asymmetric grant — therefore relaxes the parent's row by exactly that grant's
+    closure, and the child's own row is what keeps the grant narrow.
     """
     production_sources = sorted(node for node in adjacency if node not in CONFORMANCE_SCOPES)
     production_targets = set(adjacency) - CONFORMANCE_SCOPES - set(CHILD_SCOPE_PARENT)
     all_targets = production_targets | {CONFORMANCE_ROOT}
     forbidden: dict[str, list[str]] = {}
     for scope in production_sources:
-        allowed = transitive_closure(adjacency, scope)
+        allowed = transitive_closure(adjacency, scope).union(
+            *(transitive_closure(adjacency, child) for child in scope_descendants(scope)),
+        )
         blocked = all_targets - allowed - {scope} - scope_ancestors(scope)
         forbidden[scope] = sorted(blocked)
     return forbidden

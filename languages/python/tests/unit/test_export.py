@@ -18,12 +18,6 @@ import pytest
 import fake_metamodel
 from parallax.conformance import case_format, models
 from parallax.core.base import STRING
-from parallax.core.descriptor import (
-    DescriptorError,
-    DescriptorExportError,
-    canonicalize,
-    export_document,
-)
 from parallax.core.metamodel import (
     AbstractSubtype,
     AttributeIdentity,
@@ -37,6 +31,9 @@ from parallax.core.metamodel import (
     ValueObjectAttributeIdentity,
     ValueObjectIdentity,
 )
+from parallax.descriptor._errors import DescriptorError
+from parallax.descriptor._export import DescriptorExportError, export_document
+from parallax.descriptor._serde import canonicalize
 
 pytestmark = pytest.mark.unit
 

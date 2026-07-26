@@ -14,7 +14,7 @@ exactly the state in which ``check_dag_sync`` would emit it into its own
 parent's forbidden row, where import-linter silently skips it.
 
 The guarantee under test is **one most-specific owner plus any declared
-ancestor scopes**, not one owner outright: five committed files legitimately
+ancestor scopes**, not one owner outright: six committed files legitimately
 match both a child scope and its parent, which is what child scopes are for.
 ``test_declared_child_scope_files_are_owned_twice`` pins that, so the
 documented claim and the implemented behaviour cannot drift apart again.
@@ -70,6 +70,7 @@ def test_the_conformance_tree_is_out_of_scope() -> None:
     # Production distributions are all present.
     assert {p.split("/")[0] for p in walked} == {
         "parallax-core",
+        "parallax-descriptor",
         "parallax-postgres",
         "parallax-snapshot",
     }
@@ -83,7 +84,7 @@ def test_every_exemption_is_genuinely_unowned_today() -> None:
 
 def test_declared_child_scope_files_are_owned_twice() -> None:
     # The check does NOT promise one owner per file. It promises one
-    # most-specific owner plus declared ancestors, and these five files are the
+    # most-specific owner plus declared ancestors, and these six files are the
     # intended two-owner state child scopes exist to create — not a defect and
     # not something to weaken the check into forbidding.
     scopes = own.declared_scopes()
@@ -94,6 +95,7 @@ def test_declared_child_scope_files_are_owned_twice() -> None:
     }
     assert sorted(Path(path).name for path in doubled) == [
         "_family.py",
+        "_hub.py",
         "_keyed_sql.py",
         "_wrap.py",
         "_write_lowering.py",
@@ -101,8 +103,8 @@ def test_declared_child_scope_files_are_owned_twice() -> None:
     ]
     for path, owners in doubled.items():
         assert own.is_declared_chain(owners, dag.CHILD_SCOPE_PARENT), path
-        assert owners[0] == "parallax.snapshot.handle", path
-        assert owners[-1].startswith("parallax.snapshot.handle."), path
+        parent = dag.CHILD_SCOPE_PARENT[owners[-1]]
+        assert owners == [parent, owners[-1]], path
     # ...and the tree is clean regardless: declared overlap never fails.
     assert own.main([]) == 0
 
@@ -161,7 +163,7 @@ def test_undeclared_nested_scope_fails(
     # generator emits it into its parent's forbidden row and import-linter skips
     # it. The ownership check refuses it instead.
     tampered = dict(dag.SUPPORT_SCOPE_DEPS)
-    tampered["parallax.core.entity._expressions"] = frozenset({"parallax.core.descriptor"})
+    tampered["parallax.core.entity._expressions"] = frozenset({"parallax.core.base"})
     monkeypatch.setattr(dag, "SUPPORT_SCOPE_DEPS", tampered)
 
     assert own.main([]) == 1
@@ -174,7 +176,7 @@ def test_a_declared_nested_scope_is_accepted(monkeypatch: pytest.MonkeyPatch) ->
     # The same nested scope, correctly registered, passes — so the failure above
     # is the missing declaration, not the nesting itself.
     tampered = dict(dag.SUPPORT_SCOPE_DEPS)
-    tampered["parallax.core.entity._expressions"] = frozenset({"parallax.core.descriptor"})
+    tampered["parallax.core.entity._expressions"] = frozenset({"parallax.core.base"})
     monkeypatch.setattr(dag, "SUPPORT_SCOPE_DEPS", tampered)
     monkeypatch.setattr(
         dag,

@@ -37,8 +37,6 @@ from parallax.core.base import (
 )
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import DbPort, JsonDocument, Row
-from parallax.core.descriptor import Attribute, DescriptorError, Entity, Metamodel, declaring_entity
-from parallax.core.descriptor import deserialize as deserialize_metamodel
 from parallax.core.dialect import Dialect, dialect_for
 from parallax.core.metamodel import (
     EntityIdentity,
@@ -75,6 +73,9 @@ from parallax.core.unit_work import (
     validate_write,
 )
 from parallax.core.unit_work.instructions import WriteInstruction
+from parallax.descriptor._errors import DescriptorError
+from parallax.descriptor._records import Attribute, Entity, Metamodel, declaring_entity
+from parallax.descriptor._serde import deserialize as deserialize_metamodel
 from parallax.snapshot import handle, materialize
 from parallax.snapshot.handle import (
     TransactionTimePinReadOnlyError,

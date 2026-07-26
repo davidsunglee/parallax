@@ -19,14 +19,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from parallax.core.descriptor import (
-    Attribute,
-    Entity,
-    Inheritance,
-    Metamodel,
-    family_root_name,
-)
 from parallax.core.inheritance import InheritanceError
+from parallax.descriptor._records import Attribute, Entity, Inheritance, Metamodel, family_root_name
 
 __all__ = ["Family", "family_attributes", "family_of", "family_primary_key", "validate"]
 
@@ -35,7 +29,7 @@ __all__ = ["Family", "family_attributes", "family_of", "family_primary_key", "va
 class Family:
     """The inheritance participants of one descriptor, and its root if it has
     exactly one. Structural traversal below a position belongs to the descriptor
-    scope (:func:`~parallax.core.descriptor.concrete_descendant_names`), not
+    scope (:func:`~parallax.descriptor._records.concrete_descendant_names`), not
     here."""
 
     participants: tuple[Entity, ...]

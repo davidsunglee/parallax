@@ -257,7 +257,7 @@ def test_tpcs_union_restarts_aliases_per_branch_and_concatenates_binds() -> None
     # this synthetic family is the general witness. (The corpus case above proves
     # only the `t0` base-alias restart, which cannot distinguish a per-branch
     # context from a per-branch alias reset.)
-    from parallax.core.descriptor import (
+    from parallax.descriptor._records import (
         Attribute,
         DefiningRelationship,
         Entity,
@@ -386,7 +386,7 @@ def test_tph_abstract_instance_form_projects_the_value_object_document_last() ->
     # No corpus inheritance family combines with a value object; a synthetic family
     # proves the slot ordering: tag column (m-sql), THEN the value-object
     # document (m-sql *Read projection*: it rides last among ALL columns).
-    from parallax.core.descriptor import (
+    from parallax.descriptor._records import (
         Attribute,
         Entity,
         Inheritance,
@@ -555,7 +555,7 @@ def test_a_mid_predicate_narrow_is_not_the_reads_own_narrow() -> None:
 # two are different facts, and for this shape they disagree.                    #
 # --------------------------------------------------------------------------- #
 def test_a_concrete_position_with_a_concrete_descendant_unions_both_own_tables() -> None:
-    from parallax.core.descriptor import Attribute, Entity, Inheritance, Metamodel
+    from parallax.descriptor._records import Attribute, Entity, Inheritance, Metamodel
 
     root = Entity(
         name="Doc",
@@ -600,7 +600,7 @@ def test_family_attribute_resolution_spans_the_roots_projection_superset() -> No
     # contributes to no such block, so its own attributes are unreachable — a
     # position no valid read can name, since narrowing to it resolves to the
     # empty set.
-    from parallax.core.descriptor import Attribute, Entity, Inheritance, Metamodel
+    from parallax.descriptor._records import Attribute, Entity, Inheritance, Metamodel
 
     root = Entity(
         name="Root",

@@ -25,8 +25,8 @@ from collections.abc import Mapping
 from dataclasses import replace
 from typing import Literal, cast
 
-from parallax.core.descriptor.errors import DescriptorError
-from parallax.core.descriptor.records import (
+from parallax.descriptor._errors import DescriptorError
+from parallax.descriptor._records import (
     AsOfAxisMetadata,
     Attribute,
     DefiningRelationship,

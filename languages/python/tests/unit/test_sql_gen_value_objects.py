@@ -95,7 +95,7 @@ def test_top_level_many_value_object_any_element_needs_no_path_descent() -> None
     # not corpus-covered — customer.yaml's `phones` nests one level under `address`
     # — so this proves the degenerate zero-pre-segment guard: `array_guard` probes
     # the plain column reference directly, no `jsonb_extract_path` call at all.
-    from parallax.core.descriptor import (
+    from parallax.descriptor._records import (
         Attribute,
         Entity,
         Metamodel,
@@ -428,7 +428,7 @@ def test_many_member_nested_two_levels_deep_binds_every_path_segment_twice() -> 
     # object — composes correctly with the existing extraction machinery: every
     # segment on the path from the document column to the array binds TWICE in
     # the guard, and the field-within-the-element binds once more, after.
-    from parallax.core.descriptor import (
+    from parallax.descriptor._records import (
         Attribute,
         Entity,
         Metamodel,

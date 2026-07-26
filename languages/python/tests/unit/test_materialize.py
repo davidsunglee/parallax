@@ -17,14 +17,14 @@ import pytest
 
 from parallax.conformance import models
 from parallax.core.deep_fetch import FetchLevel, LevelRef, RootRef
-from parallax.core.descriptor import (
+from parallax.core.model_formation import MetamodelValidationError
+from parallax.descriptor._records import (
     Attribute,
     Entity,
     Metamodel,
     ValueObject,
     ValueObjectAttribute,
 )
-from parallax.core.model_formation import MetamodelValidationError
 from parallax.snapshot.materialize import (
     Assembler,
     MaterializeError,

@@ -13,7 +13,6 @@ from parallax.conformance import case_format
 from parallax.core import inheritance
 from parallax.core._formation_profile import BUILTIN_MANIFEST, BUILTIN_PROFILE, form_metamodel
 from parallax.core.base import INT64, STRING
-from parallax.core.descriptor import parse_document, unresolved_metamodel
 from parallax.core.inheritance import (
     FACET_KEY,
     INHERITANCE_MODULE,
@@ -53,6 +52,8 @@ from parallax.core.model_formation import (
     ModelCompilerRequirement,
     RequiredRuleSet,
 )
+from parallax.descriptor._adapter import unresolved_metamodel
+from parallax.descriptor._serde import parse_document
 
 pytestmark = pytest.mark.unit
 

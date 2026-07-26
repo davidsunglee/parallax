@@ -8,6 +8,7 @@ license = "Apache-2.0"
 authors = [{ name = "Parallax" }]
 dependencies = [
     "parallax-core",
+    "parallax-descriptor",
     "parallax-snapshot",
     "parallax-postgres",
     "testcontainers>=4.0",

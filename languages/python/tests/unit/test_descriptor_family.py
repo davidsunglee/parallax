@@ -12,15 +12,9 @@ import pytest
 from parallax.conformance import case_format
 from parallax.conformance import models as corpus_models
 from parallax.conformance._descriptor_family import family_attributes, family_of, validate
-from parallax.core.descriptor import (
-    AsOfAxisMetadata,
-    Attribute,
-    Entity,
-    Inheritance,
-    Metamodel,
-    deserialize,
-)
 from parallax.core.inheritance import InheritanceError
+from parallax.descriptor._records import AsOfAxisMetadata, Attribute, Entity, Inheritance, Metamodel
+from parallax.descriptor._serde import deserialize
 
 pytestmark = pytest.mark.unit
 

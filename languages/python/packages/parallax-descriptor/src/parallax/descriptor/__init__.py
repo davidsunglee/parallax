@@ -1,0 +1,50 @@
+"""``parallax.descriptor`` — the optional Descriptor Frontend (m-descriptor).
+
+Three doors create a descriptor-backed :class:`~parallax.core.MetamodelHub` from
+a canonical model descriptor — an already-decoded document, JSON text, or YAML
+text — and three export a class-backed or descriptor-backed hub back to that
+canonical form. The record vocabulary, the canonical-schema machinery, serde,
+type-spelling conversion, and the Unresolved Metamodel adaptation stay private: a
+descriptor document is the interchange surface, not the records behind it.
+
+The seven error types below are the frontend's whole failure vocabulary, none of
+them re-exported from ``parallax.core``. ``m-descriptor`` reaches the common
+runtime only through ``m-core`` and ``m-metamodel``; the private
+``parallax.descriptor._hub`` child scope alone reaches the Hub-construction seam.
+"""
+
+from __future__ import annotations
+
+from parallax.descriptor._errors import (
+    DescriptorError,
+    DescriptorSchemaError,
+    DescriptorSchemaViolation,
+    DescriptorSyntaxError,
+    DescriptorValueError,
+    DescriptorValueViolation,
+)
+from parallax.descriptor._export import DescriptorExportError
+from parallax.descriptor._hub import (
+    export_document,
+    export_json,
+    export_yaml,
+    hub_from_document,
+    hub_from_json,
+    hub_from_yaml,
+)
+
+__all__ = [
+    "DescriptorError",
+    "DescriptorExportError",
+    "DescriptorSchemaError",
+    "DescriptorSchemaViolation",
+    "DescriptorSyntaxError",
+    "DescriptorValueError",
+    "DescriptorValueViolation",
+    "export_document",
+    "export_json",
+    "export_yaml",
+    "hub_from_document",
+    "hub_from_json",
+    "hub_from_yaml",
+]

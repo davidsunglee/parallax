@@ -20,14 +20,6 @@ import pytest
 
 from parallax.conformance import case_format
 from parallax.conformance import models as corpus_models
-from parallax.core.descriptor import (
-    Attribute,
-    Entity,
-    Inheritance,
-    Metamodel,
-    ValueObject,
-    ValueObjectAttribute,
-)
 from parallax.core.op_algebra import (
     All,
     And,
@@ -64,6 +56,14 @@ from parallax.core.op_algebra import (
     deserialize,
     referenced_entities,
     validate_operation,
+)
+from parallax.descriptor._records import (
+    Attribute,
+    Entity,
+    Inheritance,
+    Metamodel,
+    ValueObject,
+    ValueObjectAttribute,
 )
 
 pytestmark = pytest.mark.unit
