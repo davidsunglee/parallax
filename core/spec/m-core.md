@@ -50,7 +50,7 @@ variant to an equivalent concrete column type through the dialect seam
 | `Time` | time of day, no date | `time` | timezone-naive (wall-clock) |
 | `Timestamp` | absolute instant | `timestamptz` | UTC-normalized, microsecond precision (see below) |
 | `Uuid` | 128-bit UUID | `uuid` | in core (Postgres-native) |
-| `Json` | embedded composite value | `jsonb` | the `m-value-object` storage type; dialects map it to their native structured-document type |
+| `Json` | embedded composite value | `jsonb` | not declarable on a member — the `m-value-object` storage type only (see below); dialects map it to their native structured-document type |
 
 **Deferred (optional / extension, not in the core algebra yet):** `Int16`,
 `Int8`, `Char`.
@@ -82,7 +82,10 @@ never to a behavioral algorithm.
 | `Json` | structured content: any value of the JSON data model (boolean, number, string, array, object) except a bare top-level `null`; JSON `null` may appear only *inside* a value, as an array element or object member | structural equality |
 
 `Json` is the only type whose value space admits structured (non-scalar)
-content; a self-describing payload is that type's job, never a tagged scalar.
+content, and a member reaches that space only by declaring a `valueObject`
+(see "The `Json` embedded-value type"), never by declaring `Json` itself and
+never by packing a composite into a tagged scalar. Every other value space is
+scalar.
 
 The float value spaces are deliberately finite. NaN admits no total equality
 law and the non-finite values have no portable serialized encoding
@@ -107,6 +110,16 @@ column-flattened into the owning table. This is a **deliberate deviation from
 Reladomo**, which flattens an embedded value object into individual columns; a
 single document column keeps the composite atomic, schema-flexible, and directly
 queryable.
+
+`Json` is **not a declarable attribute type**. It is the one variant no member
+names: an entity attribute **MUST NOT** declare it, and neither **MUST** a value
+object's inner field, so its only occurrence is the storage type core derives
+for a whole value object. Structured content therefore always has a declared
+shape — a composite is modeled as a `valueObject` with typed fields, nested
+to any depth, and free-form structured content is not modelable at all. The
+value space above exists to give that derived storage type its meaning:
+structural equality, the literal typing of nested predicates, and the dialect
+column mapping are all defined over it.
 
 The dialect seam (`m-dialect`) owns the concrete storage type and extraction
 functions. Examples include Postgres `jsonb`, MariaDB `json`, and Snowflake
