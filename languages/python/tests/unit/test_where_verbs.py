@@ -1,6 +1,6 @@
 """Unit pins for the ``_where`` verb family's own build-time surface
 (python.md §5): the ``.set(...)`` assignment DSL
-(``entity/expressions.py``) and the bare-statement guard
+(``entity/_expressions.py``) and the bare-statement guard
 (``entity/statement.py``). The materializing/readless DISPATCH and the
 rendered SQL are pinned in ``test_transaction_predicate_writes.py`` /
 ``test_write_lowering.py`` /
@@ -15,9 +15,10 @@ from decimal import Decimal
 
 import pytest
 
+import mirrored_models as mm
 import snapshot_models as sm
 import value_object_models as vom
-from parallax.core import Attr, Entity, MetamodelHub, TxTemporal, ValueObject, attr
+from parallax.core import Attr, Entity, MetamodelHub, ModelCopyError, TxTemporal, ValueObject, attr
 from parallax.core.entity import AttributeAssignment
 from parallax.core.temporal_read import LATEST, TX_TIME
 
@@ -108,13 +109,50 @@ def test_set_on_a_scalar_passes_a_plain_literal_through_unchanged() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# A VALUE-OBJECT-targeted `.set(...)` renders its own value to a document and  #
-# nothing more. Assignability, declared-type agreement, and required-member    #
-# presence are model facts, and an Attribute Expression reaches no model: it   #
-# carries structured member identities and performs no class lookup, so those  #
-# rules are enforced where the model is, on the write path                     #
-# (`test_write_instructions.py`).                                              #
+# Assignability and declared-type agreement are model facts, and an Attribute   #
+# Expression built from a bound class carries its hub's Metamodel Binding, so   #
+# `.set(...)` applies the SAME shared rule the engine/serialized path applies   #
+# to a case-authored predicate-write assignment                                 #
+# (`~parallax.core.inheritance.validate_write_assignment`, the "one validator,  #
+# two callers" pattern; `test_write_instructions.py` is the other caller).      #
+# The rejection is spelled `ModelCopyError` because §5's assignment rules are   #
+# one family with `model_copy`'s own `update=` rules (§3), which raise it.      #
 # --------------------------------------------------------------------------- #
+def test_set_on_a_primary_key_attribute_raises() -> None:
+    with pytest.raises(ModelCopyError, match="primary-key fields may not be assigned"):
+        mm.Person.id.set(2)
+
+
+def test_set_on_a_framework_owned_version_attribute_raises() -> None:
+    with pytest.raises(ModelCopyError, match="framework-owned fields"):
+        mm.Account.version.set(5)
+
+
+def test_set_on_a_scalar_with_a_mismatched_type_raises() -> None:
+    with pytest.raises(ModelCopyError, match="does not match the declared type"):
+        mm.Person.name.set(42)
+
+
+def test_set_on_an_attribute_of_an_unclaimed_class_stays_permissive() -> None:
+    # A class no hub composed reaches no model, so there is no rule to state:
+    # the assignment builds and the write path rejects it.
+    class _Unclaimed(Entity, table="unclaimed", namespace="parallax.compatibility"):
+        id: Attr[int] = attr(primary_key=True)
+
+    assert _Unclaimed.id.set(2).value == 2
+
+
+# --------------------------------------------------------------------------- #
+# A VALUE-OBJECT-targeted `.set(...)`'s value is validated against its declared #
+# composite too: a non-document value is rejected with the scalar branch's own  #
+# wording, while a well-formed document stays structurally accepted (assigning  #
+# a value object is not itself a rejection).                                    #
+# --------------------------------------------------------------------------- #
+def test_set_on_a_value_object_with_a_non_document_value_raises() -> None:
+    with pytest.raises(ModelCopyError, match="does not match the declared type"):
+        vom.Customer.address.set(42)
+
+
 def test_set_on_a_value_object_with_a_well_formed_document_is_accepted() -> None:
     assignment = vom.Customer.address.set(
         {"street": "1 Aurora Ave", "city": "Oslo", "geo": None, "phones": []}
@@ -127,11 +165,26 @@ def test_set_on_a_value_object_with_a_well_formed_document_is_accepted() -> None
     }
 
 
+# --------------------------------------------------------------------------- #
+# A `None` assignment is nullability-gated on both branches: it clears a        #
+# nullable member and is refused for a required one, so neither branch lets a   #
+# `None` bypass validation.                                                     #
+# --------------------------------------------------------------------------- #
+def test_set_on_a_non_nullable_value_object_with_none_raises() -> None:
+    with pytest.raises(ModelCopyError, match="required value object is absent"):
+        _WhereShipment.destination.set(None)
+
+
 def test_set_on_a_nullable_value_object_with_none_is_accepted() -> None:
     # `vom.Customer.address` is `nullable: true` -- an explicit `None` stays
     # a legal clearing assignment.
     assignment = vom.Customer.address.set(None)
     assert assignment.value is None
+
+
+def test_set_on_a_non_nullable_scalar_with_none_raises() -> None:
+    with pytest.raises(ModelCopyError, match="required attribute is absent"):
+        _WhereShipment.name.set(None)
 
 
 def test_set_on_a_nullable_scalar_with_none_is_accepted() -> None:
