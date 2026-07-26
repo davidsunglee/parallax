@@ -36,8 +36,8 @@ from collections.abc import Sequence
 from parallax.core import deep_fetch, inheritance, op_algebra, read_lock
 from parallax.core.db_port import DbPort, Row
 from parallax.core.dialect import Dialect, LockMode
+from parallax.core.entity import AttributeAssignment
 from parallax.core.entity import Statement as EntityStatement
-from parallax.core.entity.expressions import AttributeAssignment
 from parallax.core.metamodel import (
     AttributeMetadata,
     EntityMetadata,

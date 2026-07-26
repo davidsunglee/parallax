@@ -1,94 +1,64 @@
-"""Idiomatic entity classes mirroring corpus model families.
+"""The corpus models the class frontend mirrors, each as one sealed hub.
 
-These are the API Conformance Suite's hand-authored classes; their exported
-descriptors must be structurally equal to the corpus YAML (the descriptor
-no-drift guard). The unit lane imports this module too, so the class frontend is
-exercised under coverage. Physical ``indices`` are a storage concern the class
-frontend does not express, so the guard compares the logical model (see
-``drop_indices``).
+Every hub here composes exactly the classes of one corpus model, so the
+descriptor no-drift guard can compare the accepted Metamodel a class family
+forms against the one that model's YAML forms. All but ``pk-max`` are
+**re-exported** from the installed ``parallax.conformance`` package: an Entity
+Class belongs to exactly one hub for its lifetime, so the API-suite's own
+execution and this proof compose the same hub rather than a second one over a
+second copy of the same classes.
 
 This module deliberately does **not** use ``from __future__ import annotations``:
-the metaclass reads the live ``Attr[T]`` / ``Rel[T]`` annotation objects, so the
-neutral type of a scalar attribute can be inferred from ``T`` and relationship
-targets use string forward references (``Rel["Passport"]``).
+the engine reads the live ``Attr[T]`` / ``Rel[T]`` annotation objects, so a
+scalar attribute's neutral type is inferred from ``T``.
 """
 
-import copy
-from typing import Any
-
-import inheritance_models as _im
-from parallax.conformance.animal_owner import Person as AnimalOwnerPerson
-from parallax.conformance.read_models import Animal as AnimalRoot
-from parallax.conformance.read_models import Balance, Cat, Dog, Passport, Person, Pet
-from parallax.conformance.read_models import WildBoar as AnimalWildBoar
-from parallax.conformance.story_models import Account
-from parallax.conformance.vo_models import (
-    Branch,
-    Contact,
-    Customer,
-    Depot,
-    Location,
-    Shipment,
-    Supplier,
+from parallax.conformance.animal_owner import ANIMAL_MODEL
+from parallax.conformance.read_models import (
+    BALANCE_MODEL,
+    DOCUMENT_MODEL,
+    PAYMENT_MODEL,
+    PERSON_MODEL,
 )
-from parallax.core import Attr, Entity, EntityConfig, Field
+from parallax.conformance.story_models import ACCOUNT_MODEL
+from parallax.conformance.vo_models import (
+    BRANCH_MODEL,
+    CONTACT_MODEL,
+    CUSTOMER_MODEL,
+    SHIPMENT_MODEL,
+    SUPPLIER_MODEL,
+)
+from parallax.core import MAX, Attr, Entity, MetamodelHub, attr, index
 
 _NS = "parallax.compatibility"
 
-# ``Account`` / ``Person`` / ``Passport`` / ``Balance`` / the whole ``Animal``
-# family are all **re-exported** from the installed ``parallax.conformance``
-# package (the API Conformance Suite's own write/read/graph stories execute
-# the SAME classes against `db.find`/`db.transact`) rather than redeclared
-# here — the discipline every installed mirror follows so this module's own
-# no-drift proof and the API-suite's execution resolve the exact SAME
-# registered class, never a second, differently-scoped copy racing it in the
-# same registry. `animal_owner.Person` (the animal family's REAL owner) lives
-# in its OWN `EntityRegistry`: a DIFFERENT class than THIS
-# module's own `Person` (`models/person.yaml`) despite sharing the identical
-# canonical name — the descriptor no-drift proof below is purely class-list-
-# based (`export_document(metamodel(classes))`), so combining classes from two different
-# registries into one "animal" entry is exactly as sound as any other.
+
+class Attendee(
+    Entity,
+    table="attendee",
+    namespace=_NS,
+    indices=(index("attendee_pk", "id", unique=True),),
+):
+    """Mirror of ``models/pk-max.yaml`` (the ``max`` primary-key generation)."""
+
+    id: Attr[int] = attr(primary_key=MAX)
+    name: Attr[str] = attr(max_length=64)
 
 
-class Attendee(Entity, frozen=True):
-    """Mirror of ``models/pk-max.yaml`` (the ``max`` pk-generator strategy)."""
+PK_MAX_MODEL = MetamodelHub(Attendee)
 
-    __parallax__ = EntityConfig(table="attendee", namespace=_NS, mutability="transactional")
-
-    id: Attr[int] = Field(primary_key=True, pk_generator="max")
-    name: Attr[str] = Field(max_length=64)
-
-
-# corpus model stem -> the idiomatic classes assembled into that descriptor.
-#
-# "customer" spans THREE entities (customer.yaml's own descriptor): the
-# non-temporal `Customer` root plus its two VO-bearing to-many children,
-# `Location` (reusing Customer's own recursive `address` composite verbatim)
-# and `Depot` (a deliberately DIVERGENT flat `address` composite in the same
-# column) — all installed together in `parallax.conformance.vo_models`.
-MIRRORED: list[tuple[str, list[type]]] = [
-    ("account", [Account]),
-    ("pk-max", [Attendee]),
-    ("person", [Person, Passport]),
-    ("balance", [Balance]),
-    ("payment", [_im.Payment, _im.CardPayment, _im.CashPayment]),
-    (
-        "document",
-        [_im.Document, _im.FinancialDocument, _im.Invoice, _im.Receipt, _im.Memo, _im.Folder],
-    ),
-    ("animal", [AnimalRoot, Pet, Dog, Cat, AnimalWildBoar, AnimalOwnerPerson]),
-    ("supplier", [Supplier]),
-    ("branch", [Branch]),
-    ("contact", [Contact]),
-    ("shipment", [Shipment]),
-    ("customer", [Customer, Location, Depot]),
+MIRRORED: list[tuple[str, MetamodelHub]] = [
+    ("account", ACCOUNT_MODEL),
+    ("pk-max", PK_MAX_MODEL),
+    ("person", PERSON_MODEL),
+    ("balance", BALANCE_MODEL),
+    ("payment", PAYMENT_MODEL),
+    ("document", DOCUMENT_MODEL),
+    ("animal", ANIMAL_MODEL),
+    ("supplier", SUPPLIER_MODEL),
+    ("branch", BRANCH_MODEL),
+    ("contact", CONTACT_MODEL),
+    ("shipment", SHIPMENT_MODEL),
+    ("customer", CUSTOMER_MODEL),
 ]
-
-
-def drop_indices(document: dict[str, Any]) -> dict[str, Any]:
-    """A descriptor document with the physical ``indices`` array removed."""
-    clone = copy.deepcopy(document)
-    entities = [clone["entity"]] if "entity" in clone else clone["entities"]
-    for entity in entities:
-        entity.pop("indices", None)
-    return clone
+"""Corpus model stem -> the hub the idiomatic classes for it compose into."""

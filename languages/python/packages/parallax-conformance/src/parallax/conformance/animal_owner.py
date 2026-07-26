@@ -1,93 +1,43 @@
-"""``models/animal.yaml``'s own polymorphic owner (``Person``), installed for
-real.
+"""``models/animal.yaml``'s own polymorphic owner, and the family's hub.
 
-``models/animal.yaml``'s owner entity is ALSO named ``Person`` — the same
-literal canonical name ``read_models.Person`` (``models/person.yaml``)
-already claims in the process :func:`~parallax.core.entity.base.default_registry`.
-Without per-registry scoping this would be a structural, unliftable collision
-(a single, flat, process-wide class registry); the fix is an explicit
-:class:`~parallax.core.entity.base.EntityRegistry` scope: ``ANIMAL_OWNER_REGISTRY``
-here is a SEPARATE registry (its ``parent`` defaults to the process
-:func:`~parallax.core.entity.base.default_registry`, so it still resolves
-``Animal`` / ``Pet`` / ``Dog`` / ``Cat`` from ``read_models.py`` without
-redeclaring them) that shadows the default registry's own ``Person`` with
-THIS family's real owner, never colliding with it.
+``models/animal.yaml`` declares an owner entity also named ``Person`` — the same
+canonical name ``read_models.Person`` (``models/person.yaml``) carries. Two
+models each naming a ``Person`` is unremarkable once a model is an explicit
+class set: this owner and that one are different classes in different hubs, and
+neither can see the other.
 
-A ``Database`` exercising the animal-owner relationship connects with
-:data:`MODEL_CLASSES` (never an ingested corpus descriptor) so ``db.find``
-resolves ``Person`` through THIS scope specifically
-(`parallax.snapshot.handle`'s bridge, ``registry_of`` /
-``resolve_entity_class``) — the SAME real ``rel: Person.pets`` /
-``Person.animals`` operation text the corpus's own ``models/animal.yaml``
-authors, at last reproducible from a production-reachable mirror
-(`m-inheritance-064..067`/`-072`, `m-snapshot-read-012`).
+The hub below is the whole of ``models/animal.yaml``: the owner plus the family
+it names. It lives here rather than beside the family in
+:mod:`parallax.conformance.read_models` because a hub composes the complete
+class set, and the owner is declared here.
 
-The class list is the model, not the whole registry chain: this scope shadows
-the default registry's own ``Person``, which leaves that registry's
-``Passport`` — whose reverse relationship names ``Person.passport`` — pointing
-at THIS family's owner instead, a combination no single model can satisfy.
-The classes below are exactly ``models/animal.yaml``, so they name one
-coherent model.
-
-Owned by ``parallax.conformance`` for the same package-boundary reason
-``read_models``/``story_models``/``graph_models`` are (spec §7/§8): a
-dev-only package module resolvable at ordinary import time. This module
-deliberately avoids ``from __future__ import annotations`` so the metaclass
-reads the live ``Attr[T]`` / ``Rel[T]`` objects directly.
+This module deliberately avoids ``from __future__ import annotations`` so the
+engine reads the live ``Attr[T]`` / ``Rel[T]`` objects directly.
 """
 
 from parallax.conformance.read_models import Animal, Cat, Dog, Pet, WildBoar
-from parallax.core import (
-    Attr,
-    Entity,
-    EntityConfig,
-    Field,
-    Rel,
-    Relationship,
-    RelationshipJoin,
-    RelationshipTarget,
-)
-from parallax.core.entity.base import EntityRegistry
+from parallax.core import ONE_TO_MANY, Attr, Entity, MetamodelHub, Rel, attr, index, rel
 
 _NS = "parallax.compatibility"
 
-__all__ = ["ANIMAL_OWNER_REGISTRY", "MODEL_CLASSES", "Person"]
-
-# Parent defaults to the process `default_registry()` -- `Animal`/`Pet`/`Dog`/
-# `Cat` (registered there by `read_models.py`) resolve through this registry's
-# own parent-chain delegation, so this scope needs to declare only the ONE
-# name that actually collides.
-ANIMAL_OWNER_REGISTRY = EntityRegistry()
+__all__ = ["ANIMAL_MODEL", "Person"]
 
 
-class Person(Entity, frozen=True, registry=ANIMAL_OWNER_REGISTRY):
-    """Mirror of ``models/animal.yaml``'s own polymorphic owner ``Person`` —
-    NOT ``read_models.Person`` (``models/person.yaml``'s unrelated one-to-one
-    Passport owner): the two share a canonical name but live in separate
-    registries."""
+class Person(
+    Entity,
+    table="person",
+    namespace=_NS,
+    indices=(index("person_pk", "id", unique=True),),
+):
+    """``models/animal.yaml``'s polymorphic owner — NOT ``read_models.Person``
+    (``models/person.yaml``'s unrelated one-to-one Passport owner)."""
 
-    __parallax__ = EntityConfig(table="person", namespace=_NS, mutability="transactional")
-
-    id: Attr[int] = Field(primary_key=True, pk_generator="none", type="int64")
-    name: Attr[str] = Field(max_length=32)
-    animals: Rel[tuple[Animal, ...]] = Relationship(
-        cardinality="one-to-many",
-        join=RelationshipJoin(
-            source="id", target=RelationshipTarget(entity="Animal", attribute="ownerId")
-        ),
-    )
-    pets: Rel[tuple[Pet, ...]] = Relationship(
-        cardinality="one-to-many",
-        join=RelationshipJoin(
-            source="id", target=RelationshipTarget(entity="Pet", attribute="ownerId")
-        ),
-    )
+    id: Attr[int] = attr(primary_key=True)
+    name: Attr[str] = attr(max_length=32)
+    animals: Rel[tuple[Animal, ...]] = rel(cardinality=ONE_TO_MANY, join=("id", "owner_id"))
+    pets: Rel[tuple[Pet, ...]] = rel(cardinality=ONE_TO_MANY, join=("id", "owner_id"))
 
 
-MODEL_CLASSES: tuple[type, ...] = (Person, Animal, Pet, Dog, Cat, WildBoar)
-"""``models/animal.yaml`` as classes: the owner plus the whole family it names.
-
-The one supply a ``Database`` exercising this family connects with, so the
-assembled model is scoped to :data:`ANIMAL_OWNER_REGISTRY` and carries no
-sibling entity of the default registry that this scope's shadowed ``Person``
-would leave dangling."""
+ANIMAL_MODEL = MetamodelHub(Person, Animal, Pet, Dog, Cat, WildBoar)
+"""``models/animal.yaml`` as one sealed model: the owner plus the whole family
+it names, which is what a ``Database`` exercising this family connects with."""

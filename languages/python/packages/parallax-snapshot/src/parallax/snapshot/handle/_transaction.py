@@ -32,11 +32,10 @@ from typing import Any
 from parallax.core import opt_lock, read_lock
 from parallax.core.db_port import DbPort
 from parallax.core.dialect import Dialect
+from parallax.core.entity import AttributeAssignment, MetamodelBinding, full_row, primary_key_row
 from parallax.core.entity import Entity as EntityBase
 from parallax.core.entity import Statement as EntityStatement
-from parallax.core.entity import full_row, primary_key_row, resolve_entity_metadata
-from parallax.core.entity.expressions import AttributeAssignment
-from parallax.core.metamodel import EntityMetadata, Metamodel
+from parallax.core.metamodel import EntityMetadata, Metamodel, entity_by_name
 from parallax.core.unit_work import (
     KeyedMutation,
     ObjectKey,
@@ -101,7 +100,7 @@ class Transaction:
     delegates to the unit of work, which fences use-after-scope).
     """
 
-    __slots__ = ("_conn", "_dialect", "_inserted_keys", "_meta", "_uow")
+    __slots__ = ("_binding", "_conn", "_dialect", "_inserted_keys", "_meta", "_uow")
 
     def __init__(
         self,
@@ -109,11 +108,13 @@ class Transaction:
         conn: DbPort,
         meta: Metamodel,
         dialect: Dialect,
+        binding: MetamodelBinding | None,
     ) -> None:
         self._uow = uow
         self._conn = conn
         self._meta = meta
         self._dialect = dialect
+        self._binding = binding
         # The object keys THIS transaction buffered an insert for — the
         # read-your-own-writes exemption from the §5 prior-observation license
         # (`_require_observed_milestone`): a same-transaction insert IS the
@@ -381,7 +382,7 @@ class Transaction:
         """
         target = statement.target
         op = statement.operation()
-        read_target = resolve_entity_metadata(self._meta, target)
+        read_target = entity_by_name(self._meta, target)
         assert read_target is not None  # a statement's target is always declared
         pin = deep_fetch_statement_pin(op, declaring_metadata(self._meta, read_target))
         lock = read_lock.mode_for(self._uow.settings.concurrency)
@@ -389,12 +390,12 @@ class Transaction:
             history_result = self._uow.read(
                 lambda: find_history(op, self._meta, self._dialect, target, self._conn)
             )
-            return snapshot_from_history_result(history_result, target, self._meta)
+            return snapshot_from_history_result(history_result, target, self._meta, self._binding)
         find_result = self._uow.read(
             lambda: find(op, self._meta, self._dialect, target, self._conn, lock=lock)
         )
         record_observations(self._uow, self._meta, find_result, pin)
-        return snapshot_from_find_result(find_result, target, self._meta, pin)
+        return snapshot_from_find_result(find_result, target, self._meta, pin, self._binding)
 
     def _buffer(
         self,
@@ -433,7 +434,7 @@ class Transaction:
         if until is not None:
             doc["until"] = until
         instruction = instructions.deserialize(doc)
-        metadata = resolve_entity_metadata(self._meta, entity)
+        metadata = entity_by_name(self._meta, entity)
         assert metadata is not None  # `entity` names the written instance's own compiled class
         validate_write(metadata, row, self._meta, mutation=mutation)
         instructions.validate_instruction(instruction, self._meta)

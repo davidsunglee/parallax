@@ -50,7 +50,7 @@ from parallax.core.metamodel import (
 )
 from parallax.core.relationship import view as relationship_view
 
-__all__ = ["MetamodelHub"]
+__all__ = ["MetamodelHub", "SealedModel", "sealed_model"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -169,6 +169,29 @@ class MetamodelHub:
                 ),
             )
         return identity
+
+
+@dataclass(frozen=True, slots=True)
+class SealedModel:
+    """What one sealed hub holds, for a first-party runtime that is not the hub.
+
+    Temporary support for the Snapshot composition root, which still connects to
+    an accepted ``Metamodel`` rather than to the hub itself; ``binding`` is
+    absent exactly for a descriptor-backed hub, whose model names no class.
+    """
+
+    model: Metamodel
+    binding: MetamodelBinding | None
+
+
+def sealed_model(hub: MetamodelHub) -> SealedModel:
+    """The accepted Metamodel and Metamodel Binding ``hub`` sealed.
+
+    A free function rather than a method: reading a hub's own model is a
+    first-party runtime seam, not part of the developer surface, which is
+    ``meta(...)`` and ``entities`` alone.
+    """
+    return SealedModel(hub._model, hub._binding)  # pyright: ignore[reportPrivateUsage]
 
 
 def _validated(classes: tuple[UnresolvedEntityDeclaration, ...]) -> tuple[type, ...]:
