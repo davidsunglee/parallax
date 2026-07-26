@@ -96,9 +96,10 @@ def export_json(hub: MetamodelHub) -> str:
 
     Deterministic: repeated results are byte-identical, and key order is the
     canonical document's own authoring order rather than a sorted rewrite. Adds
-    the serialization step to :func:`export_document`'s contract, so a defect in
-    either raises :class:`~parallax.descriptor.DescriptorExportError` with
-    target ``json``.
+    the serialization step to :func:`export_document`'s contract; a defect in
+    that step raises :class:`~parallax.descriptor.DescriptorExportError` with
+    target ``json``, while a conversion defect keeps the target
+    :func:`export_document` reported.
     """
     return _text(hub, "json")
 
