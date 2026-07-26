@@ -20,10 +20,12 @@ import snapshot_models as sm
 from parallax.conformance.graph_models import Policy
 from parallax.core import TX_TIME, UnsupportedFeatureError
 from parallax.core.entity import RelationshipPath
+from parallax.core.entity.statement import build_statement
 from parallax.core.op_algebra import (
     All,
     DeepFetch,
     Exists,
+    Limit,
     Narrow,
     NotExists,
     OperationRejectedError,
@@ -202,6 +204,18 @@ def test_subtype_attribute_outside_narrow_scope_is_rejected_at_where_build_time(
     with pytest.raises(OperationRejectedError) as caught:
         im.Document.where(im.Invoice.amount_due > 3)
     assert caught.value.rule == "subtype-attribute-outside-narrow-scope"
+
+
+def test_a_statement_built_with_no_binding_states_no_model_rule_at_all() -> None:
+    # The Binding is the model a build-time rule is stated over, so a statement
+    # built without one carries the very predicate the bound `Document.where(...)`
+    # above refuses. That is what lets the operation-shaping clauses be exercised
+    # with no whole model behind them.
+    out_of_scope = im.Invoice.amount_due > 3
+    statement = build_statement("Document", (out_of_scope,))
+    assert statement.binding is None
+    assert statement.operation() == out_of_scope.op
+    assert statement.limit(2).operation() == Limit(operand=out_of_scope.op, count=2)
 
 
 def test_narrow_clause_after_an_out_of_scope_where_predicate_never_legalizes_it() -> None:
