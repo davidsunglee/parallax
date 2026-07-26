@@ -175,13 +175,13 @@ class MetamodelHub:
 class SealedModel:
     """What one sealed hub holds, for a first-party runtime that is not the hub.
 
-    Temporary support for the Snapshot composition root, which still connects to
-    an accepted ``Metamodel`` rather than to the hub itself; ``binding`` is
+    The Snapshot composition root connects to an accepted ``Metamodel`` rather
+    than to the hub itself, so it needs both facts out of one; ``binding`` is
     absent exactly for a descriptor-backed hub, whose model names no class.
 
     Reachable only through this private module — ``parallax.core.entity`` exports
-    neither this class nor :func:`sealed_model` — so the pair advertises nothing
-    and its planned removal breaks no supported import.
+    neither this class nor :func:`sealed_model` — so the pair is first-party
+    support rather than developer surface.
     """
 
     model: Metamodel

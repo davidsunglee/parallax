@@ -44,9 +44,9 @@ from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.entity import MetamodelBinding, MetamodelHub
 from parallax.core.entity import Statement as EntityStatement
 
-# Temporary first-party support, deliberately absent from `parallax.core.entity`'s
-# exports and listed for deletion: this composition root still connects to an
-# accepted `Metamodel`, so it needs both facts out of a hub.
+# First-party support, deliberately absent from `parallax.core.entity`'s exports:
+# this composition root connects to an accepted `Metamodel`, so it needs both
+# facts out of a hub.
 from parallax.core.entity._hub import sealed_model
 from parallax.core.metamodel import Metamodel, entity_by_name
 from parallax.core.unit_work import (
