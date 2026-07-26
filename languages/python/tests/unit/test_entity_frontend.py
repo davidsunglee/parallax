@@ -8,6 +8,7 @@ annotation objects; ``test_declaration_engine`` covers the stringized path and
 import ast
 import datetime as dt
 import inspect
+from collections.abc import Callable
 from decimal import Decimal
 
 import pytest
@@ -19,8 +20,10 @@ from parallax.core import (
     READ_ONLY,
     Attr,
     Bitemporal,
+    ConcreteSubtype,
     Entity,
     EntityDefinitionError,
+    MetamodelStateError,
     Rel,
     TxTemporal,
     asc,
@@ -187,6 +190,207 @@ def test_a_generation_is_spelled_as_its_value_and_never_as_its_type() -> None:
     assert caught.value.code == "entity-option-invalid-value"
 
 
+@pytest.mark.parametrize(
+    ("call", "code", "message"),
+    [
+        (
+            lambda: ConcreteSubtype(""),
+            "entity-option-invalid-value",
+            "a concrete-subtype tag value is either absent or nonempty",
+        ),
+        (
+            lambda: attr(column=""),
+            "entity-option-invalid-value",
+            "column= takes a nonempty string, got ''",
+        ),
+        (
+            lambda: attr(type=str),
+            "entity-option-invalid-value",
+            "type= takes Int32 or Float32, got <class 'str'>",
+        ),
+        (
+            lambda: attr(precision=-1, scale=0),
+            "entity-option-invalid-value",
+            "precision= takes a non-negative integer, got -1",
+        ),
+        (
+            lambda: attr(read_only=1),  # pyright: ignore[reportArgumentType]
+            "entity-option-invalid-value",
+            "read_only= takes a bool, got 1",
+        ),
+        (
+            lambda: asc(""),
+            "entity-option-invalid-value",
+            "asc() takes a nonempty member name, got ''",
+        ),
+        (
+            lambda: rel(cardinality="MANY_TO_ONE", join=("customer_id", "id")),  # pyright: ignore[reportArgumentType]
+            "entity-option-invalid-value",
+            "cardinality= takes ONE_TO_ONE, MANY_TO_ONE, or ONE_TO_MANY, got 'MANY_TO_ONE'",
+        ),
+        (
+            lambda: rel(cardinality=MANY_TO_ONE, join=("customer_id",)),  # pyright: ignore[reportArgumentType]
+            "entity-option-invalid-value",
+            "join= takes a (source_member, target_member) pair, got ('customer_id',)",
+        ),
+        (
+            lambda: attr(precision=4),
+            "entity-option-context-invalid",
+            "precision= and scale= are declared together or not at all",
+        ),
+    ],
+    ids=[
+        "blank-tag-value",
+        "blank-column",
+        "unnarrowable-type",
+        "negative-precision",
+        "non-bool-flag",
+        "blank-order-term",
+        "unspellable-cardinality",
+        "one-sided-join",
+        "half-declared-decimal",
+    ],
+)
+def test_an_intrinsically_invalid_factory_argument_is_refused_at_the_call(
+    call: Callable[[], object], code: str, message: str
+) -> None:
+    # A factory validates its own arguments, so a malformed option never reaches
+    # class creation and the rejection points at the call the developer wrote.
+    with pytest.raises(EntityDefinitionError) as caught:
+        call()
+    assert caught.value.code == code
+    assert caught.value.message == message
+
+
+def _blank_table() -> type:
+    """A ``table=`` present but empty, which no container name can be."""
+
+    class BlankTable(Entity, table=""):
+        id: Attr[int] = attr(primary_key=True)
+
+    return BlankTable
+
+
+def _unspellable_persistence() -> type:
+    """A ``persistence=`` outside the Persistence Mode algebra."""
+
+    class LooseMode(Entity, table="loose_mode", persistence="READ_ONLY"):  # pyright: ignore[reportArgumentType]
+        id: Attr[int] = attr(primary_key=True)
+
+    return LooseMode
+
+
+def _blank_namespace() -> type:
+    """A ``namespace=`` present but empty, which no namespace can be."""
+
+    class BlankNamespace(Entity, table="blank_namespace", namespace=""):
+        id: Attr[int] = attr(primary_key=True)
+
+    return BlankNamespace
+
+
+def _decimal_scale_past_its_precision() -> type:
+    """Decimal parameters the Neutral Type itself refuses."""
+
+    class WideScale(Entity, table="wide_scale"):
+        id: Attr[int] = attr(primary_key=True)
+        amount: Attr[Decimal] = attr(precision=2, scale=5)
+
+    return WideScale
+
+
+def _decimal_parameters_on_a_non_decimal() -> type:
+    """``precision=``/``scale=`` where the annotation names no decimal."""
+
+    class CountedPrecision(Entity, table="counted_precision"):
+        id: Attr[int] = attr(primary_key=True)
+        qty: Attr[int] = attr(precision=4, scale=2)
+
+    return CountedPrecision
+
+
+def _bounded_length_on_a_non_text_member() -> type:
+    """A maximum length on a member with no text width to bound."""
+
+    class BoundedCount(Entity, table="bounded_count"):
+        id: Attr[int] = attr(primary_key=True)
+        qty: Attr[int] = attr(max_length=8)
+
+    return BoundedCount
+
+
+def _relationship_target_that_is_not_an_entity() -> type:
+    """A live ``Rel[T]`` inner type that is no Entity Class."""
+
+    class ScalarTarget(Entity, table="scalar_target"):
+        id: Attr[int] = attr(primary_key=True)
+        peer_id: Attr[int]
+        peer: Rel[int] = rel(cardinality=MANY_TO_ONE, join=("peer_id", "id"))
+
+    return ScalarTarget
+
+
+@pytest.mark.parametrize(
+    ("declare", "code", "message"),
+    [
+        (
+            _blank_table,
+            "entity-header-invalid-value",
+            "BlankTable: table= takes a nonempty string, got ''",
+        ),
+        (
+            _unspellable_persistence,
+            "entity-header-invalid-value",
+            "LooseMode: persistence= takes READ_ONLY, got 'READ_ONLY'",
+        ),
+        (
+            _blank_namespace,
+            "entity-header-invalid-value",
+            "BlankNamespace: namespace= takes a nonempty string, got ''",
+        ),
+        (
+            _decimal_scale_past_its_precision,
+            "entity-option-invalid-value",
+            "WideScale.amount: decimal scale must be between 0 and the precision 2, got 5",
+        ),
+        (
+            _decimal_parameters_on_a_non_decimal,
+            "entity-option-context-invalid",
+            "CountedPrecision.qty: precision= and scale= apply only to a decimal member",
+        ),
+        (
+            _bounded_length_on_a_non_text_member,
+            "entity-option-context-invalid",
+            "BoundedCount.qty: only a String Attribute bounds its length, not Int64()",
+        ),
+        (
+            _relationship_target_that_is_not_an_entity,
+            "entity-annotation-invalid",
+            "ScalarTarget.peer: a relationship target is an Entity Class or its name",
+        ),
+    ],
+    ids=[
+        "blank-table",
+        "unspellable-persistence",
+        "blank-namespace",
+        "decimal-scale-past-precision",
+        "decimal-parameters-without-a-decimal",
+        "bounded-length-without-text",
+        "non-entity-relationship-target",
+    ],
+)
+def test_an_option_the_declaration_context_refuses_names_the_member_it_came_from(
+    declare: Callable[[], type], code: str, message: str
+) -> None:
+    # These rules need the whole declaration rather than the factory call alone:
+    # the header's own values, the annotation an option is read against, and the
+    # value layer's refusals reclassified as declaration-context defects.
+    with pytest.raises(EntityDefinitionError) as caught:
+        declare()
+    assert caught.value.code == code
+    assert caught.value.message == message
+
+
 def test_the_remaining_attribute_options_reach_the_declaration() -> None:
     label = Ticket.attributes[1]
     assert label.max_length == 32
@@ -271,6 +475,19 @@ def test_class_level_member_access_seeds_operation_nodes() -> None:
     # path's own target keeps the namespace a continuing hop resolves in.
     assert path.segments == (PathSegment(rel="Order.customer"),)
     assert path.target == "sales.Customer"
+
+
+def test_a_statement_over_a_class_no_hub_claimed_names_the_missing_binding() -> None:
+    # Every predicate is validated against the class's own hub as the statement
+    # is built, so a class no hub has claimed — every class in this module — has
+    # no model to state a rule over and says so instead of building.
+    with pytest.raises(MetamodelStateError) as caught:
+        Order.where(Order.id == 1)
+    assert caught.value.code == "metamodel-class-not-bound"
+    assert caught.value.message == (
+        "Order belongs to no hub; compose it into a MetamodelHub before querying it"
+    )
+    assert caught.value.entities == ()
 
 
 def test_instance_access_returns_the_member_value_and_relationships_stay_closed_world() -> None:
