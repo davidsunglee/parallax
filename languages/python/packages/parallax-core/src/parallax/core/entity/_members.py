@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from typing import Any, Final, overload
 
 from parallax.core.base import FLOAT32, INT32, Float32, Int32, NeutralType
+from parallax.core.entity._binding import binding_of
 from parallax.core.entity._errors import EntityDefinitionError, UnloadedRelationshipError
 from parallax.core.entity._expressions import (
     UNLOADED,
@@ -457,7 +458,9 @@ class Rel[T]:
     def __get__(self, obj: object | None, _owner: type | None = None) -> RelationshipPath | T:
         if obj is None:
             return RelationshipPath(
-                segments=(PathSegment(rel=str(self._ref)),), target=self._target
+                segments=(PathSegment(rel=str(self._ref)),),
+                target=self._target,
+                binding=None if _owner is None else binding_of(_owner),
             )
         value = obj.__dict__[self._py_name]
         if value is UNLOADED:

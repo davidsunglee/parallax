@@ -19,13 +19,11 @@ from decimal import Decimal
 from typing import Final, cast
 
 import mirrored_models as mm
-from parallax.conformance import models
-from parallax.core import Attr, Bitemporal, EntityConfig, Field
+from parallax.conformance.class_models import MODELS
+from parallax.core import Attr, Bitemporal, MetamodelHub, attr
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import Bind, DbPort, Row
-from parallax.core.descriptor import Metamodel
 from parallax.core.dialect import POSTGRES
-from parallax.core.entity import metamodel
 from parallax.core.unit_work import FixedClock
 from parallax.snapshot import connect
 from parallax.snapshot.handle import Database
@@ -43,7 +41,6 @@ __all__ = [
     "ORDERS",
     "PAYMENT",
     "PERSON",
-    "PERSON_MIRROR_META",
     "SHIPMENT",
     "WHERE_POSITION_META",
     "NoIoPort",
@@ -58,14 +55,13 @@ __all__ = [
 ]
 
 
-_MODELS = models.load_models()
-ACCOUNT = _MODELS["account"]
-BALANCE = _MODELS["balance"]
-CONTACT = _MODELS["contact"]
-SHIPMENT = _MODELS["shipment"]
-PAYMENT = _MODELS["payment"]
-PERSON = _MODELS["person"]
-ORDERS = _MODELS["orders"]
+ACCOUNT = MODELS["account"]
+BALANCE = MODELS["balance"]
+CONTACT = MODELS["contact"]
+SHIPMENT = MODELS["shipment"]
+PAYMENT = MODELS["payment"]
+PERSON = MODELS["person"]
+ORDERS = MODELS["orders"]
 
 
 FIXED = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
@@ -78,19 +74,13 @@ FIXED = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
 # `pos_id`/`val`, while the assertions below pin emitted SQL against
 # `where_position`/`id`/`value`. Swapping would rewrite every one of them for no
 # gain, so the local fixture stays.
-class WherePosition(Bitemporal, frozen=True):
-    __parallax__ = EntityConfig(
-        table="where_position",
-        namespace="parallax.compatibility",
-        mutability="transactional",
-    )
-
-    id: Attr[int] = Field(primary_key=True, pk_generator="none", type="int64")
-    acct_num: Attr[str] = Field(max_length=32)
-    value: Attr[Decimal] = Field(type="decimal(18,2)")
+class WherePosition(Bitemporal, table="where_position", namespace="parallax.compatibility"):
+    id: Attr[int] = attr(primary_key=True)
+    acct_num: Attr[str] = attr(column="acct_num", max_length=32)
+    value: Attr[Decimal] = attr(precision=18, scale=2)
 
 
-WHERE_POSITION_META = metamodel([WherePosition])
+WHERE_POSITION_META = MetamodelHub(WherePosition)
 
 
 NEW_ROW: Row = {"id": 7, "owner": "Newton", "balance": 5.00, "version": 1}
@@ -183,7 +173,7 @@ def account_db(port: RecordingPort) -> Database:
     return connect(port, ACCOUNT, clock=FixedClock(FIXED))
 
 
-def db_for(meta: Metamodel, port: RecordingPort) -> Database:
+def db_for(meta: MetamodelHub, port: RecordingPort) -> Database:
     return Database.connect(port, meta, clock=FixedClock(FIXED))
 
 
@@ -221,8 +211,3 @@ class NoIoPort:
 
     def transaction[T](self, body: Callable[[DbPort], T]) -> T:
         return body(cast("DbPort", self))
-
-
-# The mirrored-model metamodel those guard pins target — distinct from `PERSON`
-# above, which is the corpus `models/person.yaml` handle.
-PERSON_MIRROR_META = metamodel([mm.Person, mm.Passport])

@@ -19,8 +19,9 @@ from typing import Any
 
 import pytest
 
-from parallax.conformance import boundary_runner, case_format, models
+from parallax.conformance import boundary_runner, case_format
 from parallax.conformance.boundary_runner import FaultInjectingPort
+from parallax.conformance.class_models import MODELS
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import Bind, DbPort, Row
 from parallax.core.unit_work import FixedClock
@@ -28,7 +29,7 @@ from parallax.snapshot.handle import Database, Transaction
 
 pytestmark = pytest.mark.unit
 
-_ACCOUNT = models.load_models()["account"]
+_ACCOUNT = MODELS["account"]
 _FIXED = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
 
 

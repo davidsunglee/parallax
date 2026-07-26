@@ -17,14 +17,20 @@ Value Object element-scoped carrier, always building element-relative ``nested*`
 nodes for use inside a quantifier's ``where=`` scope.
 
 Nodes here receive every model fact explicitly and look nothing up: this module
-imports no owner class, no declaration engine, and no hub.
+imports no owner class, no declaration engine, and no hub. A Relationship Path
+does carry the Metamodel Binding its seeding class access supplied, which is how
+a deeper hop is a model lookup rather than a class lookup.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Protocol, cast, runtime_checkable
 
+from parallax.core.metamodel import (
+    DefiningRelationshipDeclaration,
+    entity_by_name,
+)
 from parallax.core.op_algebra import (
     And,
     Between,
@@ -53,6 +59,8 @@ from parallax.core.op_algebra import (
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
+
+    from parallax.core.entity._binding import MetamodelBinding
 
 __all__ = [
     "UNLOADED",
@@ -445,6 +453,17 @@ def _target_entity_name(subtype: type) -> str:
     return name if isinstance(name, str) else subtype.__name__
 
 
+def _canonical_member(py_name: str) -> str:
+    """The canonical member name a Python declaration name denotes.
+
+    The same deterministic snake-to-camel conversion the declaration engine
+    applies, repeated here rather than imported so this module keeps no edge
+    into the engine.
+    """
+    head, *tail = py_name.split("_")
+    return head + "".join(part[:1].upper() + part[1:] for part in tail)
+
+
 @dataclass(frozen=True, slots=True)
 class RelationshipPath:
     """A chained class-level relationship reference (``Order.items``,
@@ -455,12 +474,16 @@ class RelationshipPath:
     ``segments`` is the traversal so far in ``m-deep-fetch``'s own
     ``PathSegment`` shape; ``target`` is the canonical Entity name the path
     currently points at. The first hop is statically typed through the
-    relationship descriptor's overload; a deeper hop resolves against the
-    model, which needs the hub the path was seeded from.
+    relationship descriptor's overload; a deeper hop is a model question, so it
+    resolves against the Metamodel Binding the seeding class access supplied.
     """
 
     segments: tuple[PathSegment, ...]
     target: str
+    # The Binding of the hub the seeding class belongs to, carried so a deeper
+    # hop resolves in exactly that model. Absent only for a path built directly,
+    # which cannot continue.
+    binding: MetamodelBinding | None = field(default=None, repr=False, compare=False)
 
     @property
     def ref(self) -> RelationshipRef:
@@ -469,11 +492,34 @@ class RelationshipPath:
         return RelationshipRef(owner, relationship)
 
     def __getattr__(self, name: str) -> RelationshipPath:
+        """The next hop, resolved against this path's own model.
+
+        The hop names a Python member of the current target, lowered to its
+        canonical name exactly as a declaration is; the model answers which
+        Entity it points at.
+        """
         if name.startswith("_"):
             raise AttributeError(name)
-        raise AttributeError(
-            f"{self.target}.{name}: a deeper relationship hop resolves against the "
-            "composed model, which this path does not carry"
+        if self.binding is None:
+            raise AttributeError(
+                f"{self.target}.{name}: a deeper relationship hop resolves against the "
+                "composed model, which this path does not carry"
+            )
+        entity = entity_by_name(self.binding.model, self.target)
+        if entity is None:  # pragma: no cover - a path's target is an Entity of its hub
+            raise AttributeError(f"{self.target}.{name}: {self.target!r} names no Entity here")
+        canonical = _canonical_member(name)
+        declared = entity.relationship(canonical)
+        if declared is None:
+            raise AttributeError(f"{self.target}.{name}: {self.target} declares no relationship")
+        target = (
+            declared.join.target.entity
+            if isinstance(declared, DefiningRelationshipDeclaration)
+            else declared.reverse_of.source_entity
+        )
+        segment = PathSegment(rel=f"{self.target}.{canonical}")
+        return RelationshipPath(
+            segments=(*self.segments, segment), target=target.name, binding=self.binding
         )
 
     def narrow(self, *subtypes: type) -> RelationshipPath:
@@ -484,7 +530,7 @@ class RelationshipPath:
         *head, last = self.segments
         new_last = PathSegment(rel=last.rel, narrow=names)
         new_target = names[0] if len(names) == 1 else self.target
-        return RelationshipPath(segments=(*head, new_last), target=new_target)
+        return RelationshipPath(segments=(*head, new_last), target=new_target, binding=self.binding)
 
     def any(self, *predicates: Predicate) -> Predicate:
         """The single-hop relationship quantifier: ``>= 1`` related row

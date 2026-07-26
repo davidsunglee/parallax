@@ -32,7 +32,8 @@ from _transact_support import (
 
 import inheritance_models as im
 import mirrored_models as mm
-from parallax.conformance import models, stale_web_edit
+from parallax.conformance import stale_web_edit
+from parallax.conformance.class_models import MODELS
 from parallax.core import TX_TIME, opt_lock
 from parallax.core.db_port import JsonDocument, Row
 from parallax.core.dialect import POSTGRES
@@ -139,7 +140,7 @@ def test_db_find_resolves_a_concrete_inheritance_targets_inherited_pin_and_edge(
             }
         ]
     )
-    rate = models.load_models()["rate"]
+    rate = MODELS["rate"]
     db = Database.connect(port, rate, clock=FixedClock(FIXED))
     statement = im.DepositRate.where().as_of(tx_time=LATEST)
     snapshot = db.find(statement)
@@ -262,7 +263,7 @@ def test_bitemporal_update_after_a_find_carries_observed_valid_time_bounds() -> 
     # Rectangle splitting consumes the observed Valid-Time bounds and full payload.
     # A real find-then-update makes both facts observable in the emitted DML.
     port = RecordingPort(rows=[_branch_row(address=None)])
-    db = db_for(models.load_models()["branch"], port)
+    db = db_for(MODELS["branch"], port)
 
     def fn(tx: Transaction) -> None:
         fetched = tx.find(mm.Branch.where(mm.Branch.id == 1)).result()
@@ -302,7 +303,7 @@ def test_bitemporal_update_after_a_find_keeps_the_observed_value_object_document
         "phones": [],
     }
     port = RecordingPort(rows=[_branch_row(address=address)])
-    db = db_for(models.load_models()["branch"], port)
+    db = db_for(MODELS["branch"], port)
 
     def fn(tx: Transaction) -> None:
         fetched = tx.find(mm.Branch.where(mm.Branch.id == 1)).result()
@@ -426,7 +427,7 @@ def test_stale_web_edit_branch_render_then_submit_pins_both_axes() -> None:
         "address": None,
     }
     port = RecordingPort(rows=[branch_row])
-    db = db_for(models.load_models()["branch"], port)
+    db = db_for(MODELS["branch"], port)
 
     node, edge = stale_web_edit.render_branch_milestone(db, id=1)
     assert node.name == "Old Name"
@@ -454,9 +455,7 @@ def test_pin_from_milestone_skips_an_axis_absent_from_the_milestone_pin() -> Non
     # `_edge_pin` always populates every declared axis in practice) — a
     # bitemporal entity's OWN as-of-attribute loop must skip an axis absent
     # from a given milestone's pin, not KeyError.
-    model = models.accepted_model(models.load_models()["position"])
-    position = model.entity(EntityIdentity("parallax.compatibility", "Position"))
-    assert position is not None
+    position = MODELS["position"].meta(EntityIdentity("parallax.compatibility", "Position"))
     pin = _pin_from_milestone(position, {"transactionTime": _MILESTONE_INSTANT})
     assert pin.tx_time == _MILESTONE_INSTANT
     assert pin.valid_time is None

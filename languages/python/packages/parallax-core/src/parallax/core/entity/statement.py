@@ -13,13 +13,14 @@ operation the corpus authors (the operation no-drift guard).
 from __future__ import annotations
 
 import datetime as dt
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from typing import Literal
 
 from parallax.core.base import normalize_instant
+from parallax.core.entity._binding import MetamodelBinding
 from parallax.core.entity._declaration import declaration_of
 from parallax.core.entity._expressions import Predicate, RelationshipPath, and_terms
-from parallax.core.metamodel import AsOfAxisMetadata, TemporalDimension
+from parallax.core.metamodel import AsOfAxisMetadata, TemporalDimension, entity_by_name
 from parallax.core.op_algebra import (
     All,
     And,
@@ -35,6 +36,7 @@ from parallax.core.op_algebra import (
     OrderKey,
     PathSegment,
     serialize,
+    validate_operation,
 )
 from parallax.core.op_algebra.nodes import TemporalDimension as WireDimension
 from parallax.core.temporal_read import TX_TIME, VALID_TIME, Latest, TemporalDimensionConstant
@@ -85,6 +87,11 @@ class Statement:
     # Whether the statement-level ``.narrow(...)`` clause already wrapped the
     # predicate (single-shot, like ``as_of``).
     is_narrowed: bool = False
+    # The Metamodel Binding of the target's own hub, captured at ``Entity.where``:
+    # the model every predicate is validated against, so a rule stated over the
+    # model fires as the statement is built rather than at execution. Absent only
+    # for a Statement built directly, which validates nothing.
+    binding: MetamodelBinding | None = field(default=None, repr=False, compare=False)
 
     def order_by(self, *keys: OrderKey) -> Statement:
         """Order the result by one or more keys (``Attr.asc()`` / ``Attr.desc()``)."""
@@ -199,6 +206,7 @@ class Statement:
                 "(snapshot-history-includes, spec §3)"
             )
         new_paths = self.include_paths + tuple(path.segments for path in paths)
+        _validate(self.binding, self.target, DeepFetch(operand=self.predicate, paths=new_paths))
         return replace(self, include_paths=new_paths)
 
     def narrow(self, *subtypes: type) -> Statement:
@@ -216,6 +224,7 @@ class Statement:
             raise ValueError("a narrow clause is single-shot; derive from the un-narrowed base")
         to = tuple(declaration_of(subtype).identity.name for subtype in subtypes)
         node = Narrow(entity=self.target, to=to, operand=self.predicate)
+        _validate(self.binding, self.target, node)
         return replace(self, predicate=node, is_narrowed=True)
 
     def operation(self) -> Operation:
@@ -311,13 +320,40 @@ def build_statement(
     predicates: tuple[Predicate, ...],
     *,
     as_of_axes: tuple[AsOfAxisMetadata, ...] = (),
+    binding: MetamodelBinding | None = None,
 ) -> Statement:
-    """Build a :class:`Statement` conjoining ``predicates`` (empty is find-all)."""
+    """Build a :class:`Statement` conjoining ``predicates`` (empty is find-all).
+
+    The conjoined predicate is validated against ``binding``'s model as it is
+    built, so a subtype attribute reached outside a narrow scope is refused
+    here rather than at execution.
+    """
+    predicate = _conjoined(predicates)
+    _validate(binding, target, predicate)
+    return Statement(target=target, predicate=predicate, as_of_axes=as_of_axes, binding=binding)
+
+
+def _validate(binding: MetamodelBinding | None, target: str, node: Operation) -> None:
+    """Validate ``node`` against the model ``binding``'s hub sealed.
+
+    A Statement built directly carries no Binding and validates nothing, which
+    is what lets the operation-shaping clauses be exercised without a whole
+    model behind them.
+    """
+    if binding is None:
+        return
+    root = entity_by_name(binding.model, target)
+    if root is None:  # pragma: no cover - the target is an Entity of its own hub
+        return
+    validate_operation(root, node, binding.model)
+
+
+def _conjoined(predicates: tuple[Predicate, ...]) -> Operation:
     if not predicates:
-        return Statement(target=target, predicate=All(), as_of_axes=as_of_axes)
+        return All()
     if len(predicates) == 1:
-        return Statement(target=target, predicate=predicates[0].op, as_of_axes=as_of_axes)
+        return predicates[0].op
     operands: list[Operation] = []
     for predicate in predicates:
         operands.extend(and_terms(predicate))
-    return Statement(target=target, predicate=And(operands=tuple(operands)), as_of_axes=as_of_axes)
+    return And(operands=tuple(operands))

@@ -10,6 +10,10 @@ class grammar expresses local indices.
 The metadata protocols prescribe no concrete class, so two implementations of one
 member are never equal *values* where the protocol is what they satisfy — Value
 Object occurrences and leaves are therefore compared by what they answer.
+
+Marked ``unit`` as well as ``api_conformance`` (the write-no-drift precedent): it
+is pure, Docker-free, in-process behaviour, so the class frontend's corpus proof
+contributes to the unit-lane branch-coverage gate.
 """
 
 from __future__ import annotations
@@ -32,7 +36,7 @@ if TYPE_CHECKING:
         ValueObjectMetadata,
     )
 
-pytestmark = pytest.mark.api_conformance
+pytestmark = [pytest.mark.unit, pytest.mark.api_conformance]
 
 _MODELS = case_format.find_repo_root() / "core" / "compatibility" / "models"
 

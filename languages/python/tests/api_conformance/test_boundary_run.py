@@ -12,6 +12,7 @@ database through `parallax.conformance.boundary_runner.FaultInjectingPort`
 from __future__ import annotations
 
 from decimal import Decimal
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -19,6 +20,7 @@ import pytest
 from conftest import case_fixtures
 from parallax.conformance import boundary_runner, case_format, engine
 from parallax.conformance.boundary_runner import BoundaryAbort, FaultInjectingPort
+from parallax.conformance.class_models import MODELS
 from parallax.conformance.story_models import Account
 from parallax.core import opt_lock
 from parallax.core.db_error import DatabaseError
@@ -55,8 +57,8 @@ def _make_body(
 def test_boundary_case_runs_through_the_shipped_surface(
     case: case_format.Case, provisioner: Any
 ) -> None:
-    meta = engine.load_case_metamodel(case)
-    provisioner.reset(meta, case_fixtures(case))
+    provisioner.reset(engine.load_case_metamodel(case), case_fixtures(case))
+    meta = MODELS[Path(case.model).stem]
 
     uow = boundary_runner.boundary_uow(case)
     actions = boundary_runner.boundary_actions(case)

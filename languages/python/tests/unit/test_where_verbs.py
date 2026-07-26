@@ -15,13 +15,10 @@ from decimal import Decimal
 
 import pytest
 
-import mirrored_models as mm
 import snapshot_models as sm
 import value_object_models as vom
-from parallax.core import Attr, Entity, EntityConfig, Field, TxTemporal
-from parallax.core.entity import ModelCopyError
-from parallax.core.entity.expressions import AttributeAssignment
-from parallax.core.entity.value_object import ValueObject, VoField
+from parallax.core import Attr, Entity, MetamodelHub, TxTemporal, ValueObject, attr
+from parallax.core.entity import AttributeAssignment
 from parallax.core.temporal_read import LATEST, TX_TIME
 
 pytestmark = pytest.mark.unit
@@ -34,15 +31,11 @@ _FIXED = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
 # class, and no shared test-fixture entity mirror declares one (mirroring the
 # same local-class pattern `test_snapshot_wrap_values.py`'s own `_WrapTemporalRoot`
 # uses).
-class _WhereTemporalLedger(TxTemporal, frozen=True):
-    __parallax__ = EntityConfig(
-        table="where_temporal_ledger",
-        namespace="parallax.compatibility",
-        mutability="transactional",
-    )
-
-    id: Attr[int] = Field(primary_key=True, pk_generator="none", type="int64")
-    amount: Attr[Decimal] = Field(type="decimal(18,2)")
+class _WhereTemporalLedger(
+    TxTemporal, table="where_temporal_ledger", namespace="parallax.compatibility"
+):
+    id: Attr[int] = attr(primary_key=True)
+    amount: Attr[Decimal] = attr(precision=18, scale=2)
 
 
 # A small LOCAL non-temporal entity mirroring `models/shipment.yaml`'s own
@@ -53,20 +46,20 @@ class _WhereTemporalLedger(TxTemporal, frozen=True):
 # `destination`; this
 # fixture stays local because it ALSO pairs it with the nullable scalar `note`,
 # giving one fixture both the refusal and the scalar-None accept counterpart.
-class _WhereShipmentDestination(ValueObject, frozen=True):
-    street: Attr[str] = VoField(type="string")
-    city: Attr[str] = VoField(type="string")
+class _WhereShipmentDestination(ValueObject):
+    street: Attr[str]
+    city: Attr[str]
 
 
-class _WhereShipment(Entity, frozen=True):
-    __parallax__ = EntityConfig(
-        table="where_shipment", namespace="parallax.compatibility", mutability="transactional"
-    )
+class _WhereShipment(Entity, table="where_shipment", namespace="parallax.compatibility"):
+    id: Attr[int] = attr(primary_key=True)
+    name: Attr[str] = attr(max_length=64)
+    note: Attr[str | None] = attr(max_length=64)
+    destination: Attr[_WhereShipmentDestination]
 
-    id: Attr[int] = Field(primary_key=True, pk_generator="none", type="int64")
-    name: Attr[str] = Field(max_length=64)
-    note: Attr[str | None] = Field(type="string", max_length=64, nullable=True, default=None)
-    destination: Attr[_WhereShipmentDestination] = Field()
+
+_WHERE_LEDGER = MetamodelHub(_WhereTemporalLedger)
+_WHERE_SHIPMENT = MetamodelHub(_WhereShipment)
 
 
 # --------------------------------------------------------------------------- #
@@ -114,42 +107,14 @@ def test_set_on_a_scalar_passes_a_plain_literal_through_unchanged() -> None:
     assert assignment.value == "X-1"
 
 
-def test_set_on_a_primary_key_attribute_raises() -> None:
-    # `Person.id.set(2)` must be rejected at `.set()`
-    # BUILD time (`python.md:667-676`), the SAME classification `model_copy`'s
-    # own assignability guard raises for a primary-key `update=` key.
-    with pytest.raises(ModelCopyError, match="primary-key fields may not be assigned"):
-        mm.Person.id.set(2)
-
-
-def test_set_on_a_framework_owned_version_attribute_raises() -> None:
-    with pytest.raises(ModelCopyError, match="framework-owned fields"):
-        mm.Account.version.set(5)
-
-
-def test_set_on_a_scalar_with_a_mismatched_type_raises() -> None:
-    with pytest.raises(ModelCopyError, match="does not match the declared type"):
-        mm.Person.name.set(42)
-
-
 # --------------------------------------------------------------------------- #
-# A VALUE-OBJECT-targeted `.set(...)`'s VALUE                                  #
-# is validated against its declared composite too (a scalar-only check would   #
-# silently accept `Customer.address.set(42)`                                   #
-# and bind `42` as the document): a non-document value is rejected with the    #
-# SAME wording style the scalar branch above uses; a well-formed document      #
-# stays structurally accepted (a value-object target is not itself             #
-# rejected; `test_set_on_a_top_level_value_object_serializes_to_its_document`  #
-# above already pins the well-formed-`ValueObject`-instance shape of this SAME #
-# accept branch). `test_write_instructions.py`'s own `test_member_name_       #
-# honesty_...value_object_assignment` pins are the serialized/engine-path      #
-# half of this SAME shared check.                                              #
+# A VALUE-OBJECT-targeted `.set(...)` renders its own value to a document and  #
+# nothing more. Assignability, declared-type agreement, and required-member    #
+# presence are model facts, and an Attribute Expression reaches no model: it   #
+# carries structured member identities and performs no class lookup, so those  #
+# rules are enforced where the model is, on the write path                     #
+# (`test_write_instructions.py`).                                              #
 # --------------------------------------------------------------------------- #
-def test_set_on_a_value_object_with_a_non_document_value_raises() -> None:
-    with pytest.raises(ModelCopyError, match="does not match the declared type"):
-        vom.Customer.address.set(42)  # type: ignore[arg-type]
-
-
 def test_set_on_a_value_object_with_a_well_formed_document_is_accepted() -> None:
     assignment = vom.Customer.address.set(
         {"street": "1 Aurora Ave", "city": "Oslo", "geo": None, "phones": []}
@@ -162,37 +127,11 @@ def test_set_on_a_value_object_with_a_well_formed_document_is_accepted() -> None
     }
 
 
-# --------------------------------------------------------------------------- #
-# The nullable-gated `None`-assignment refusal: a                              #
-# `None` assignment's nullability-aware handling through the TYPED `.set(...)` #
-# path -- `test_write_instructions.py`'s own `test_member_name_honesty_       #
-# ..._of_none` pins are the serialized/engine-path half of this SAME shared    #
-# check.                                                                       #
-# --------------------------------------------------------------------------- #
-def test_set_on_a_non_nullable_value_object_with_none_raises() -> None:
-    # `_WhereShipment.destination` is `nullable: false` (`models/
-    # shipment.yaml`'s own "required top-level value object missing"
-    # exemplar) -- before the fix, the VO branch's `if value is not None:`
-    # guard skipped validation entirely for a `None` assignment, regardless
-    # of nullability.
-    with pytest.raises(ModelCopyError, match="required value object is absent"):
-        _WhereShipment.destination.set(None)
-
-
 def test_set_on_a_nullable_value_object_with_none_is_accepted() -> None:
     # `vom.Customer.address` is `nullable: true` -- an explicit `None` stays
     # a legal clearing assignment.
     assignment = vom.Customer.address.set(None)
     assert assignment.value is None
-
-
-def test_set_on_a_non_nullable_scalar_with_none_raises() -> None:
-    # The scalar branch's own analogue: a non-nullable
-    # scalar assigned `None` must be rejected too. A guard of
-    # `value is not None and not _type_matches(...)` would let a `None` value
-    # bypass validation entirely, the SAME class of bug as the VO branch.
-    with pytest.raises(ModelCopyError, match="required attribute is absent"):
-        _WhereShipment.name.set(None)
 
 
 def test_set_on_a_nullable_scalar_with_none_is_accepted() -> None:

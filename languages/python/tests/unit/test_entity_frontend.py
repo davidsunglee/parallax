@@ -59,6 +59,7 @@ from parallax.core.metamodel import (
     Sequence,
     SortDirection,
     Table,
+    TemporalDimension,
     UnresolvedDefiningRelationshipDeclaration,
     UnresolvedRelationshipOrder,
     UnresolvedReverseRelationshipDeclaration,
@@ -309,8 +310,8 @@ def test_the_type_checking_mirror_matches_the_engine_injection_table() -> None:
                 entries.append((decl.target.id, ast.unparse(decl.annotation)))
             mirrors[node.name] = entries
     injection = engine._TEMPORAL_MEMBERS  # pyright: ignore[reportPrivateUsage]
-    valid_time = engine.TemporalDimension.VALID_TIME
-    transaction_time = engine.TemporalDimension.TRANSACTION_TIME
+    valid_time = TemporalDimension.VALID_TIME
+    transaction_time = TemporalDimension.TRANSACTION_TIME
     expected = {
         "TxTemporal": [
             (py_name, "Attr[_dt.datetime]") for py_name, _ in injection[transaction_time]

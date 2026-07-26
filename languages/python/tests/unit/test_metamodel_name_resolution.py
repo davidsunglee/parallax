@@ -1,10 +1,10 @@
 """Bare-or-canonical Entity name resolution over a bare accepted model.
 
 Pins the ambiguity-rejecting contract shared by every frontend seam that
-resolves an authored Entity spelling against an accepted ``Metamodel`` with no
-scoped record graph: an exact canonical spelling matches, a bare name matches
-only when a single Entity carries it, and a bare name two namespaces share is a
-miss rather than a silent first match. The ``op_algebra.validate``, snapshot
+resolves an authored Entity spelling against an accepted ``Metamodel``: an exact
+canonical spelling matches, a bare name matches only when a single Entity
+carries it, and a bare name two namespaces share is a miss rather than a silent
+first match. The ``op_algebra.validate``, snapshot
 materialize, unit-of-work, and write-lowering seams all resolve through the same
 ``entity_by_name`` helper, so its rule governs each of them.
 """
@@ -15,7 +15,6 @@ import pytest
 
 from parallax.core._formation_profile import form_metamodel
 from parallax.core.descriptor import records, unresolved_metamodel
-from parallax.core.entity.base import resolve_entity_metadata
 from parallax.core.metamodel import Metamodel, entity_by_name
 from parallax.core.op_algebra import All, Narrow, OperationRejectedError, validate_operation
 
@@ -53,15 +52,6 @@ def test_shared_helper_rejects_an_ambiguous_bare_name() -> None:
     assert account is not None
     assert account.identity.canonical == "c.Account"
     assert entity_by_name(model, "Nope") is None
-
-
-def test_resolve_entity_metadata_rejects_an_ambiguous_bare_name() -> None:
-    model = _model()
-    assert resolve_entity_metadata(model, "Person") is None
-    resolved = resolve_entity_metadata(model, "b.Person")
-    assert resolved is not None
-    assert resolved.identity.canonical == "b.Person"
-    assert resolve_entity_metadata(model, "Account") is not None
 
 
 def test_op_algebra_resolver_rejects_an_ambiguous_bare_name() -> None:

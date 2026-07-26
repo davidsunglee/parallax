@@ -16,20 +16,19 @@ import mirrored_models as mm
 import snapshot_models as sm
 import value_object_models as vm
 from parallax.core.base import INFINITY
-from parallax.core.descriptor import UNSET
 from parallax.core.entity import (
     EntityDefinitionError,
+    FrameworkOwnedAxisError,
     ModelCopyError,
     ProvenanceError,
     canonical_row,
     changed_fields,
     effective_change_set,
-    entity_record_of,
     full_row,
     primary_key_row,
     wire_names_of,
 )
-from parallax.core.entity.base import FrameworkOwnedAxisError
+from parallax.core.metamodel import Column
 
 pytestmark = pytest.mark.unit
 
@@ -97,7 +96,7 @@ def test_effective_change_set_raises_provenance_error_for_a_fresh_instance() -> 
 # model_copy validation: unknown / primary-key / framework-owned / relationship. #
 # --------------------------------------------------------------------------- #
 def test_unknown_field_is_rejected() -> None:
-    with pytest.raises(ModelCopyError, match="unknown field"):
+    with pytest.raises(ModelCopyError, match="unknown member name"):
         _account().model_copy(update={"shoe_size": 9})
 
 
@@ -167,8 +166,8 @@ def test_full_row_serializes_a_cardinality_many_value_object_member_to_a_list_of
     assert row["tags"] == [{"label": "a", "detail": None, "details": []}]
 
 
-def test_wire_names_of_rejects_a_non_compiled_entity_class() -> None:
-    with pytest.raises(EntityDefinitionError, match="not a compiled Parallax entity class"):
+def test_wire_names_of_rejects_a_class_that_declares_nothing() -> None:
+    with pytest.raises(EntityDefinitionError, match="not a Parallax Entity Class"):
         wire_names_of(int)
 
 
@@ -217,15 +216,13 @@ def test_a_non_temporal_class_declares_no_axis_governed_fields() -> None:
     assert wire_names_of(mm.Account).axis_governed_py == frozenset()
 
 
-def test_the_exported_descriptor_carries_no_default_for_an_axis_attribute() -> None:
-    # The Pydantic-level `None` default is a frontend construction
-    # affordance ONLY — the compiled descriptor stays byte-identical (the
-    # descriptor no-drift guard is the proof; this pin is the unit-level
-    # half of it).
-    record = entity_record_of(mm.Balance)
-    assert record is not None
-    tx_start = next(a for a in record.attributes if a.name == "tx_start")
-    assert tx_start.default is UNSET
+def test_the_declaration_carries_no_default_for_an_axis_attribute() -> None:
+    # The Pydantic-level `None` default is a construction affordance ONLY — the
+    # declared Attribute Metadata is exactly what the corpus model declares (the
+    # no-drift guard is the proof; this pin is the unit-level half of it).
+    tx_start = next(a for a in mm.Balance.attributes if a.identity.name == "tx_start")
+    assert tx_start.storage == Column("in_z")
+    assert tx_start.nullable is False
 
 
 # --------------------------------------------------------------------------- #

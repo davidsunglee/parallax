@@ -614,7 +614,7 @@ _INHERITANCE_SIBLING_ATTRIBUTE_UNREACHABLE_REASON: Final[str] = (
 _INHERITANCE_METADATA_FIELD_UNREACHABLE_REASON: Final[str] = (
     "an authored `tagValue` has no idiomatic spelling: it is framework-owned metadata "
     '(m-inheritance "Metadata is framework-owned, never authored"), derived from '
-    "`EntityConfig(inheritance=Concrete(tag_value=...))` at CLASS-DEFINITION time, never a "
+    "`inheritance=ConcreteSubtype(tag_value=...)` at CLASS-DEFINITION time, never a "
     "per-instance Pydantic field a caller can pass to `tx.insert`/`tx.update` — "
     "`test_transaction_writes.py` exercises the classified rule directly at the neutral "
     "seam (`Transaction._buffer`) instead"
@@ -635,27 +635,20 @@ _INHERITANCE_SET_BASED_UNSUPPORTED_UNREACHABLE_REASON: Final[str] = (
 # root-ownership witnesses 098/099, plus the optimistic-
 # locking root-ownership witnesses 102/103): a DIFFERENT validation surface
 # than the operation-level rejected lane.
-# `_descriptor_family.validate` classifies these exact rules, but the
-# class metaclass never calls it because hierarchy-derived
-# `parent`/`role` obsoletes most of what it checks. Most of these malformed
-# shapes have literally no idiomatic spelling (`parent`/`role` are DERIVED from
-# the live Python class hierarchy, never separately authored; Python's own
-# class system additionally forbids a literal inheritance cycle), and the two
-# table-placement rules that ARE independently authorable (`EntityConfig
-# (table=...)` on an abstract node) are already rejected by the class
-# frontend's own, DIFFERENT, unclassified error (`test_inheritance_frontend.py`
-# "tableless and rowless"), not by `InheritanceError.rule`. A descendant
-# extending a temporal base of its own (`TxTemporal`/`Bitemporal`; 098/099's
-# own rule, `inheritance-temporal-axes-not-root-owned`) or declaring its own
-# `optimisticLocking` attribute (102/103's own rule,
-# `inheritance-optimistic-locking-not-root-owned`, ADR 0027) is ALSO
-# independently authorable, and likewise rejected by the class frontend's own,
-# DIFFERENT, unclassified error (`test_inheritance_frontend.py`
-# "family SUBCLASS cannot extend the temporal base" /
-# "only the inheritance family root may declare"), joining the table-placement
-# rules in the same posture. No case in this group can reproduce
-# `then.rejectedRule` through the public class surface because the metaclass
-# does not call `_descriptor_family.validate`.
+# `_descriptor_family.validate` classifies these exact rules for a raw
+# descriptor, and the class grammar reaches most of them through a different
+# surface: hierarchy-derived `parent`/`role` makes most of these shapes
+# unspellable at all (Python's own class system additionally forbids a literal
+# inheritance cycle), while the ones that stay spellable — a table on an
+# abstract node, a descendant extending a temporal base of its own
+# (098/099, `inheritance-temporal-axes-not-root-owned`), a descendant declaring
+# its own `optimisticLocking` attribute (102/103,
+# `inheritance-optimistic-locking-not-root-owned`, ADR 0027) — are rejected
+# either at class creation as an `EntityDefinitionError` or at hub construction
+# as the shared formation-time `inheritance-*` issue
+# (`test_inheritance_frontend.py`), never as `InheritanceError.rule`. No case in
+# this group can therefore reproduce `then.rejectedRule` through the public
+# class surface.
 _INHERITANCE_DESCRIPTOR_REJECT_UNREACHABLE_REASON: Final[str] = (
     "a `when.model` raw-descriptor invariant `_descriptor_family.validate` "
     "classifies (parent/root/cycle/strategy/tag/temporal-axis-ownership/optimistic-"
@@ -705,15 +698,11 @@ _ORDERS_GRAPH_SIBLING_REASON: Final[str] = (
 )
 
 # `models/person.yaml`'s own Person/Passport pair and `models/animal.yaml`'s
-# own polymorphic owner (ALSO named `Person`) were both unreachable through a
-# single, global, process-wide entity registry sharing one flat namespace
-# (`mirrored_models.Person` claimed the name first). Explicit, scoped
-# `EntityRegistry` instances avoid that collision:
-# `read_models.Person`/`.Passport` are installed in the default
-# registry), and `animal_owner.Person` (the animal family's REAL owner) is
-# installed in its OWN registry (parent-chained to the default, so it also
-# resolves `Animal`/`Pet`/`Dog`/`Cat`/`WildBoar`) — both flip to executable
-# graph stories (`graph_stories.py`); no case-scoped reason remains for either.
+# own polymorphic owner (ALSO named `Person`) both name one canonical Entity,
+# which is unremarkable once a model is an explicit class set: they are
+# different classes in different hubs (`read_models.PERSON_MODEL` and
+# `animal_owner.ANIMAL_MODEL`), so both flip to executable graph stories
+# (`graph_stories.py`) and no case-scoped reason remains for either.
 #
 # `.history()`/`.as_of_range()` combined with `.include(...)` is an EXPLICIT,
 # documented deferral (spec §3 `snapshot-history-includes`): `Statement`
