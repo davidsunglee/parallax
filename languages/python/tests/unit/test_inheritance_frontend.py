@@ -111,7 +111,7 @@ def test_a_temporal_base_on_a_family_root_supplies_the_axes_on_the_root_alone() 
 def test_a_domain_subclass_declaring_no_role_is_rejected() -> None:
     with pytest.raises(EntityDefinitionError) as caught:
 
-        class NoRole(im.Payment, namespace=_NS):  # pyright: ignore[reportUnusedClass]
+        class NoRole(im.Payment, namespace=_NS):  # pyright: ignore[reportUnusedClass] - class body must run to trigger the declaration-time rejection
             reference: Attr[str | None] = attr(max_length=32)
 
     assert caught.value.code == "entity-base-invalid"
@@ -122,7 +122,7 @@ def test_a_subclass_extending_a_temporal_base_beside_its_parent_is_rejected() ->
     # names a second Parallax base — the grammar allows exactly one.
     with pytest.raises(EntityDefinitionError) as caught:
 
-        class TwoBases(  # pyright: ignore[reportUnusedClass]
+        class TwoBases(  # pyright: ignore[reportUnusedClass] - class body must run to trigger the declaration-time rejection
             im.Rate, Bitemporal, namespace=_NS, inheritance=ConcreteSubtype
         ):
             extra: Attr[str | None]
@@ -133,7 +133,7 @@ def test_a_subclass_extending_a_temporal_base_beside_its_parent_is_rejected() ->
 def test_a_subtype_role_without_a_domain_parent_is_rejected() -> None:
     with pytest.raises(EntityDefinitionError) as caught:
 
-        class Orphan(  # pyright: ignore[reportUnusedClass]
+        class Orphan(  # pyright: ignore[reportUnusedClass] - class body must run to trigger the declaration-time rejection
             Entity, table="orphan", namespace=_NS, inheritance=ConcreteSubtype
         ):
             id: Attr[int] = attr(primary_key=True)

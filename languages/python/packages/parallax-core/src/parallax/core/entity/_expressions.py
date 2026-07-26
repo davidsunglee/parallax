@@ -257,10 +257,10 @@ class AttributeExpr:
             )
         return Predicate(Comparison(op=_SCALAR_CMP[kind], attr=str(self.ref), value=value))
 
-    def __eq__(self, other: object) -> Predicate:  # type: ignore[override]
+    def __eq__(self, other: object) -> Predicate:  # type: ignore[override] - DSL comparison builds a Predicate, not object's bool
         return self._cmp("eq", _as_scalar(other))
 
-    def __ne__(self, other: object) -> Predicate:  # type: ignore[override]
+    def __ne__(self, other: object) -> Predicate:  # type: ignore[override] - DSL comparison builds a Predicate, not object's bool
         return self._cmp("ne", _as_scalar(other))
 
     def __gt__(self, other: Scalar) -> Predicate:
@@ -449,10 +449,10 @@ class ElementAttributeExpr:
     def _cmp(self, kind: str, value: Scalar) -> Predicate:
         return Predicate(NestedComparison(op=_NESTED_CMP[kind], path=self._dotted(), value=value))
 
-    def __eq__(self, other: object) -> Predicate:  # type: ignore[override]
+    def __eq__(self, other: object) -> Predicate:  # type: ignore[override] - DSL comparison builds a Predicate, not object's bool
         return self._cmp("eq", _as_scalar(other))
 
-    def __ne__(self, other: object) -> Predicate:  # type: ignore[override]
+    def __ne__(self, other: object) -> Predicate:  # type: ignore[override] - DSL comparison builds a Predicate, not object's bool
         return self._cmp("ne", _as_scalar(other))
 
     def __gt__(self, other: Scalar) -> Predicate:

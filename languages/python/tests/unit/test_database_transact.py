@@ -219,7 +219,7 @@ def test_the_default_bound_is_ten_reexecutions() -> None:
 )
 def test_non_retriable_categories_surface_after_one_attempt(category: str, native: str) -> None:
     port = RecordingPort()
-    port.txn_faults = [DatabaseError(category=category, native_code=native, message=category)]  # type: ignore[arg-type]
+    port.txn_faults = [DatabaseError(category=category, native_code=native, message=category)]  # type: ignore[arg-type] - parametrized str widens the DatabaseError category Literal
     with pytest.raises(DatabaseError):
         account_db(port).transact(lambda _tx: "ok")
     assert port.begins == 1

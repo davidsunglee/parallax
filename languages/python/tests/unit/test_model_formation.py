@@ -908,7 +908,7 @@ def _returns_an_empty_rejection(unresolved: UnresolvedMetamodel) -> object:
 
 
 def _returns_a_mutable_rejection(unresolved: UnresolvedMetamodel) -> object:
-    return Rejected([_issue(PRIMARY_KEY_MISSING)])  # pyright: ignore[reportArgumentType]
+    return Rejected([_issue(PRIMARY_KEY_MISSING)])  # pyright: ignore[reportArgumentType] - deliberate mutable-list payload probes Rejected's tuple contract
 
 
 def _resolves_to_a_foreign_candidate(unresolved: UnresolvedMetamodel) -> object:

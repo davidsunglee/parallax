@@ -84,7 +84,7 @@ def test_membership_between_null_and_string_operators() -> None:
     assert _op(Widget.sku.ends_with("Z")) == {"endsWith": {"attr": "Widget.sku", "value": "Z"}}
     assert _op(Widget.sku.contains("m")) == {"contains": {"attr": "Widget.sku", "value": "m"}}
     ci = _op(Widget.name.like("a", case_insensitive=True))
-    assert ci["like"]["caseInsensitive"] is True  # type: ignore[index]
+    assert ci["like"]["caseInsensitive"] is True  # type: ignore[index] - indexes the JSON-union operand at its known serialized shape
 
 
 def test_boolean_combinators_and_grouping() -> None:
@@ -104,7 +104,7 @@ def test_boolean_combinators_and_grouping() -> None:
     # An `or` under an `and` is wrapped in a canonical `group`; an `and` under an
     # `or` is not.
     grouped = _op(((Widget.qty >= 9) | (Widget.qty <= 1)) & Widget.active.is_(True))
-    assert grouped["and"]["operands"][0] == {  # type: ignore[index]
+    assert grouped["and"]["operands"][0] == {  # type: ignore[index] - indexes the JSON-union operand at its known serialized shape
         "group": {
             "operand": {
                 "or": {
@@ -310,7 +310,7 @@ def test_history_on_valid_time() -> None:
 
 def test_history_rejects_a_string_dimension() -> None:
     with pytest.raises(ValueError, match="VALID_TIME / TX_TIME"):
-        _balance_stmt().history("tx_time")  # type: ignore[arg-type]
+        _balance_stmt().history("tx_time")  # type: ignore[arg-type] - deliberate string dimension drives history's constant-only validation
 
 
 def test_dimension_constants_are_frozen() -> None:
@@ -320,9 +320,9 @@ def test_dimension_constants_are_frozen() -> None:
     # lowering stays pinned afterwards.
     for constant in (TX_TIME, VALID_TIME):
         with pytest.raises(AttributeError, match="frozen"):
-            constant._dimension = "validTime"  # pyright: ignore[reportPrivateUsage]
+            constant._dimension = "validTime"  # pyright: ignore[reportPrivateUsage] - frozen dimension constant: reassignment must raise
         with pytest.raises(AttributeError, match="frozen"):
-            del constant._dimension  # pyright: ignore[reportPrivateUsage]
+            del constant._dimension  # pyright: ignore[reportPrivateUsage] - frozen dimension constant: deletion must raise
     assert _balance_stmt().history(TX_TIME).serialize() == {
         "history": {"operand": {"all": {}}, "dimension": "transactionTime"}
     }

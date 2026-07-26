@@ -795,7 +795,7 @@ def _observe_group_find(
             continue
         observation = Observation(version=cast("int", row[version_attr.column]))
         observations[key] = observation
-        tx._uow.observe(key, observation)  # pyright: ignore[reportPrivateUsage]
+        tx._uow.observe(key, observation)  # pyright: ignore[reportPrivateUsage] - conformance harness drives the transaction's private unit-of-work seam
 
 
 def _entry_instant(entry: Mapping[str, object]) -> str:
@@ -1809,7 +1809,7 @@ def _buffer_execution_instruction(
     """
     entity_metadata = case_entity(model, meta.entity(instruction.entity))
     if len(instruction.rows) == 1:
-        tx._buffer(  # pyright: ignore[reportPrivateUsage]
+        tx._buffer(  # pyright: ignore[reportPrivateUsage] - conformance harness drives the transaction's private unit-of-work seam
             instruction.mutation,
             instruction.entity,
             decode_write_row(entity_metadata, instruction.rows[0], model),
@@ -1818,7 +1818,7 @@ def _buffer_execution_instruction(
         )
         return
     decoded_rows = tuple(decode_write_row(entity_metadata, row, model) for row in instruction.rows)
-    tx._uow.buffer(replace(instruction, rows=decoded_rows))  # pyright: ignore[reportPrivateUsage]
+    tx._uow.buffer(replace(instruction, rows=decoded_rows))  # pyright: ignore[reportPrivateUsage] - conformance harness drives the transaction's private unit-of-work seam
 
 
 def _execute_write_unit(
@@ -1854,7 +1854,7 @@ def _execute_write_unit(
             )  # every resolved entry this lane buffers is keyed
             if key is not None and observation is not None:
                 # The documented neutral seam (Transaction._buffer route + uow.observe).
-                tx._uow.observe(key, observation)  # pyright: ignore[reportPrivateUsage]
+                tx._uow.observe(key, observation)  # pyright: ignore[reportPrivateUsage] - conformance harness drives the transaction's private unit-of-work seam
             _buffer_execution_instruction(tx, meta, model, instruction)
         if rollback:
             # Force the buffered DML to execute (and count its round trips)
@@ -1864,7 +1864,7 @@ def _execute_write_unit(
             # exception), so this scope must flush itself first (`m-unit-work`
             # abort contract: "the forced flush is safe precisely because it
             # lands inside the still-open atomic scope the abort discards").
-            tx._uow.flush()  # pyright: ignore[reportPrivateUsage]
+            tx._uow.flush()  # pyright: ignore[reportPrivateUsage] - conformance harness drives the transaction's private unit-of-work seam
             raise _RollbackStep
 
     with contextlib.suppress(_RollbackStep):
@@ -1904,9 +1904,9 @@ def _run_readless_predicate_write(
     database = handle.Database(port, model, dialect=dialect, clock=FixedClock(instant))
 
     def body(tx: handle.Transaction) -> None:
-        tx._buffer_predicate_instruction(decoded)  # pyright: ignore[reportPrivateUsage]
+        tx._buffer_predicate_instruction(decoded)  # pyright: ignore[reportPrivateUsage] - conformance harness drives the transaction's private unit-of-work seam
         if rollback:
-            tx._uow.flush()  # pyright: ignore[reportPrivateUsage]
+            tx._uow.flush()  # pyright: ignore[reportPrivateUsage] - conformance harness drives the transaction's private unit-of-work seam
             raise _RollbackStep
 
     with contextlib.suppress(_RollbackStep):
@@ -2058,9 +2058,9 @@ def _run_materializing_pair(
     rollback = write_step.get("rollback") is True
 
     def body(tx: handle.Transaction) -> None:
-        tx._buffer_predicate_instruction(instruction)  # pyright: ignore[reportPrivateUsage]
+        tx._buffer_predicate_instruction(instruction)  # pyright: ignore[reportPrivateUsage] - conformance harness drives the transaction's private unit-of-work seam
         if rollback:
-            tx._uow.flush()  # pyright: ignore[reportPrivateUsage]
+            tx._uow.flush()  # pyright: ignore[reportPrivateUsage] - conformance harness drives the transaction's private unit-of-work seam
             raise _RollbackStep
 
     with contextlib.suppress(_RollbackStep):
@@ -2232,7 +2232,7 @@ def _run_uow_group(
                         instruction, KeyedWrite
                     )  # every resolved entry this lane buffers is keyed
                     if key is not None and observation is not None:
-                        tx._uow.observe(key, observation)  # pyright: ignore[reportPrivateUsage]
+                        tx._uow.observe(key, observation)  # pyright: ignore[reportPrivateUsage] - conformance harness drives the transaction's private unit-of-work seam
                     _buffer_execution_instruction(tx, meta, model, instruction)
                 lowered.append(
                     _LoweredStep(
@@ -2242,8 +2242,8 @@ def _run_uow_group(
             else:
                 statement = _lower_find(step, meta, model, dialect, concurrency)
                 target = cast("str", step["targetEntity"])
-                conn = tx._conn  # pyright: ignore[reportPrivateUsage]
-                rows = tx._uow.read(  # pyright: ignore[reportPrivateUsage]
+                conn = tx._conn  # pyright: ignore[reportPrivateUsage] - conformance harness drives the transaction's private connection seam
+                rows = tx._uow.read(  # pyright: ignore[reportPrivateUsage] - conformance harness drives the transaction's private unit-of-work seam
                     lambda st=statement, c=conn: _execute_reads(c, dialect, (st,))
                 )
                 _observe_group_find(tx, group_observations, meta, target, rows)
@@ -2256,7 +2256,7 @@ def _run_uow_group(
             # otherwise (the group's last step is itself the doomed write, no
             # find after it) this is what puts the DML on the wire at all
             # (`m-unit-work` abort contract, mirroring `_execute_write_unit`).
-            tx._uow.flush()  # pyright: ignore[reportPrivateUsage]
+            tx._uow.flush()  # pyright: ignore[reportPrivateUsage] - conformance harness drives the transaction's private unit-of-work seam
             raise _RollbackStep
 
     with contextlib.suppress(_RollbackStep):
@@ -2435,18 +2435,18 @@ def _run_interleaved_group(
                         instruction, KeyedWrite
                     )  # every resolved entry this lane buffers is keyed
                     if key is not None and observation is not None:
-                        tx._uow.observe(key, observation)  # pyright: ignore[reportPrivateUsage]
+                        tx._uow.observe(key, observation)  # pyright: ignore[reportPrivateUsage] - conformance harness drives the transaction's private unit-of-work seam
                     _buffer_execution_instruction(tx, meta, model, instruction)
                 lowered[index] = _LoweredStep(
                     f"/scenario/{index}/write", statements, True, step.get("rollback") is True
                 )
                 if is_last:
-                    tx._uow.flush()  # pyright: ignore[reportPrivateUsage]
+                    tx._uow.flush()  # pyright: ignore[reportPrivateUsage] - conformance harness drives the transaction's private unit-of-work seam
             else:
                 statement = _lower_find(step, meta, model, dialect, concurrency)
                 target = cast("str", step["targetEntity"])
-                conn = tx._conn  # pyright: ignore[reportPrivateUsage]
-                rows = tx._uow.read(  # pyright: ignore[reportPrivateUsage]
+                conn = tx._conn  # pyright: ignore[reportPrivateUsage] - conformance harness drives the transaction's private connection seam
+                rows = tx._uow.read(  # pyright: ignore[reportPrivateUsage] - conformance harness drives the transaction's private unit-of-work seam
                     lambda st=statement, c=conn: _execute_reads(c, dialect, (st,))
                 )
                 _observe_group_find(tx, group_observations, meta, target, rows)
@@ -3436,8 +3436,8 @@ def _run_conflict_write(
             key = object_key(instruction, case_model(meta))
             if key is not None:
                 # The documented neutral seam (Transaction._buffer route + uow.observe).
-                tx._uow.observe(key, observation)  # pyright: ignore[reportPrivateUsage]
-        tx._buffer(  # pyright: ignore[reportPrivateUsage]
+                tx._uow.observe(key, observation)  # pyright: ignore[reportPrivateUsage] - conformance harness drives the transaction's private unit-of-work seam
+        tx._buffer(  # pyright: ignore[reportPrivateUsage] - conformance harness drives the transaction's private unit-of-work seam
             "update", target, decode_write_row(target_metadata, clean_row, model)
         )
         return 1  # the expectation machinery already verified this on success (m-opt-lock)
@@ -3482,7 +3482,7 @@ def _run_conflict_close(
 
     def body(tx: handle.Transaction) -> int:
         # The neutral connection seam.
-        affected = tx._conn.execute_write(  # pyright: ignore[reportPrivateUsage]
+        affected = tx._conn.execute_write(  # pyright: ignore[reportPrivateUsage] - conformance harness drives the transaction's private connection seam
             dialect.to_driver_sql(lowered.statement.sql), list(lowered.statement.binds)
         )
         if lowered.expected_affected is not None and affected != lowered.expected_affected:

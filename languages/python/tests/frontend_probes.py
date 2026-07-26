@@ -63,7 +63,7 @@ def define_inheritance_invalid_strategy() -> type:
     class Bad(
         Entity,
         table="bad",
-        inheritance=AbstractRoot(TablePerConcreteSubtype),  # pyright: ignore[reportArgumentType]
+        inheritance=AbstractRoot(TablePerConcreteSubtype),  # pyright: ignore[reportArgumentType] - probe passes a deliberately wrong inheritance argument type
     ):
         id: Attr[int] = attr(primary_key=True)
 
@@ -116,7 +116,7 @@ def define_member_value_invalid() -> type:
 
     class Bad(Entity, table="bad"):
         id: Attr[int] = attr(primary_key=True)
-        qty: Attr[int] = 5  # pyright: ignore[reportAssignmentType]
+        qty: Attr[int] = 5  # pyright: ignore[reportAssignmentType] - probe assigns a bare value into an Attr[T] slot
 
     return Bad
 
@@ -193,7 +193,7 @@ def define_reserved_member_name() -> type:
     """A member reusing a reserved introspection name."""
 
     class Bad(Entity, table="bad"):
-        identity: Attr[int] = attr(  # pyright: ignore[reportIncompatibleVariableOverride]
+        identity: Attr[int] = attr(  # pyright: ignore[reportIncompatibleVariableOverride] - probe reuses the reserved base member name `identity`
             primary_key=True
         )
 
@@ -207,7 +207,7 @@ def define_reserved_temporal_name() -> type:
 
     class Bad(TxTemporal, table="bad"):
         id: Attr[int] = attr(primary_key=True)
-        tx_start: Attr[int]  # pyright: ignore[reportIncompatibleVariableOverride]
+        tx_start: Attr[int]  # pyright: ignore[reportIncompatibleVariableOverride] - probe redeclares the framework temporal member `tx_start`
 
     return Bad
 
@@ -226,7 +226,7 @@ def define_class_var_reserved_name() -> type:
     """A class variable taking one of the nine declaration member names."""
 
     class Bad(Entity, table="bad"):
-        identity: ClassVar[str] = "shadow"  # pyright: ignore[reportIncompatibleVariableOverride]
+        identity: ClassVar[str] = "shadow"  # pyright: ignore[reportIncompatibleVariableOverride] - probe shadows the reserved member name `identity` with a ClassVar
         id: Attr[int] = attr(primary_key=True)
 
     return Bad
@@ -238,7 +238,7 @@ def define_shadowed_declaration_member() -> type:
     class Bad(Entity, table="bad"):
         id: Attr[int] = attr(primary_key=True)
 
-        def indices(self) -> tuple[()]:  # pyright: ignore[reportIncompatibleVariableOverride]
+        def indices(self) -> tuple[()]:  # pyright: ignore[reportIncompatibleVariableOverride] - probe shadows the reserved member name `indices` with a method
             return ()
 
     return Bad

@@ -195,7 +195,7 @@ def sealed_model(hub: MetamodelHub) -> SealedModel:
     first-party runtime seam, not part of the developer surface, which is
     ``meta(...)`` and ``entities`` alone.
     """
-    return SealedModel(hub._model, hub._binding)  # pyright: ignore[reportPrivateUsage]
+    return SealedModel(hub._model, hub._binding)  # pyright: ignore[reportPrivateUsage] - first-party seam reads the hub's own sealed model/binding pair
 
 
 def _validated(classes: tuple[UnresolvedEntityDeclaration, ...]) -> tuple[type, ...]:

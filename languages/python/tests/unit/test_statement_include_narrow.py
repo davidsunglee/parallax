@@ -80,7 +80,7 @@ def test_include_with_no_paths_raises() -> None:
 
 def test_include_of_an_undeclared_relationship_raises_at_build() -> None:
     with pytest.raises(AttributeError, match="statuses"):
-        sm.SnapOrderStatus.where().include(sm.SnapOrderStatus.statuses)  # type: ignore[attr-defined]
+        sm.SnapOrderStatus.where().include(sm.SnapOrderStatus.statuses)  # type: ignore[attr-defined] - deliberate reference to an undeclared member to drive the error
 
 
 def test_relationship_path_dynamic_hop_rejects_a_private_name() -> None:

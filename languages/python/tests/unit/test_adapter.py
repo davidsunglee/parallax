@@ -140,7 +140,7 @@ def test_compile_case_unsupported_for_an_out_of_claim_dialect() -> None:
 
 
 def test_run_case_unsupported_for_an_out_of_claim_dialect() -> None:
-    envelope = adapter.run_case(_READ_CASE, "mariadb", port=None)  # type: ignore[arg-type]
+    envelope = adapter.run_case(_READ_CASE, "mariadb", port=None)  # type: ignore[arg-type] - case is rejected before the port is used, so None is passed
     jsonschema.validate(envelope, _SCHEMA)
     assert envelope["status"] == "unsupported"
 
@@ -161,7 +161,7 @@ def test_compile_dispatch_refuses_a_conflict_case_missing_its_run_only_declarati
     # branch, never silently falling through to the read compiler.
     case = _case(shape="conflict", tags=("m-opt-lock", "slice-snapshot-1"))
     with pytest.raises(engine.EngineError, match="always declared"):
-        adapter._compile(case, "postgres")  # pyright: ignore[reportPrivateUsage]
+        adapter._compile(case, "postgres")  # pyright: ignore[reportPrivateUsage] - unit test drives the adapter's private compile helper
 
 
 def test_run_case_ok_through_a_fake_port() -> None:
@@ -430,7 +430,7 @@ def test_scenario_lane_without_expect_error_is_still_dispatched_out() -> None:
     compile_envelope = adapter.compile_case(_ACCESS_WITNESS_CASE, "postgres")
     assert compile_envelope["status"] == "error"
     assert "api-conformance" in compile_envelope["diagnostics"][0]["message"]
-    run_envelope = adapter.run_case(_ACCESS_WITNESS_CASE, "postgres", port=None)  # type: ignore[arg-type]
+    run_envelope = adapter.run_case(_ACCESS_WITNESS_CASE, "postgres", port=None)  # type: ignore[arg-type] - case is rejected before the port is used, so None is passed
     assert run_envelope["status"] == "error"
     assert "api-conformance" in run_envelope["diagnostics"][0]["message"]
 
@@ -456,7 +456,7 @@ def test_scenario_actions_all_mutate_guards_malformed_and_action_free_documents(
         ({"when": {"scenario": [{"action": "mutate", "on": 0}]}}, True),
     ]
     for document, expected in checks:
-        observed = adapter._scenario_actions_all_mutate(  # pyright: ignore[reportPrivateUsage]
+        observed = adapter._scenario_actions_all_mutate(  # pyright: ignore[reportPrivateUsage] - unit test drives the adapter's private scenario helper
             scenario_case(document)
         )
         assert observed is expected, document

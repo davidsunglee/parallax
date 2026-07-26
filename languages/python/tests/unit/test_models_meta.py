@@ -134,7 +134,7 @@ def test_a_class_this_hub_did_not_claim_is_not_bound() -> None:
 
 
 def test_a_descriptor_backed_hub_serves_the_same_metadata_and_claims_no_class() -> None:
-    fixed = _Hub._from_unresolved(_Source())  # pyright: ignore[reportPrivateUsage]
+    fixed = _Hub._from_unresolved(_Source())  # pyright: ignore[reportPrivateUsage] - unit test drives the hub's private constructor
     assert [entity.identity.canonical for entity in fixed.entities] == ["ops.Depot", "ops.Zone"]
     assert fixed.meta("ops.Depot").identity == EntityIdentity("ops", "Depot")
     with pytest.raises(MetamodelLookupError) as caught:

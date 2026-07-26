@@ -432,4 +432,4 @@ def test_diamond_positions_are_independently_rendered_but_share_identity() -> No
     key = identity_key(ORDERS, "OrderItem", shared_rows[0])
     assert key is not None
     # White-box identity proof: reaches the assembler's own internal registry.
-    assert asm._identity[key] is nodes_a[0]  # pyright: ignore[reportPrivateUsage]
+    assert asm._identity[key] is nodes_a[0]  # pyright: ignore[reportPrivateUsage] - unit test reads the assembler's private identity map
