@@ -1,0 +1,719 @@
+{
+  "models/account.yaml": {
+    "parallax.compatibility.Account": {
+      "attribute": {
+        "balance": "balance",
+        "id": "id",
+        "owner": "owner",
+        "version": "version"
+      },
+      "valueObject": {}
+    }
+  },
+  "models/animal.yaml": {
+    "parallax.compatibility.Animal": {
+      "attribute": {
+        "id": "id",
+        "name": "name",
+        "ownerId": "owner_id"
+      },
+      "valueObject": {}
+    },
+    "parallax.compatibility.Cat": {
+      "attribute": {
+        "indoor": "indoor"
+      },
+      "valueObject": {}
+    },
+    "parallax.compatibility.Dog": {
+      "attribute": {
+        "barkVolume": "bark_volume"
+      },
+      "valueObject": {}
+    },
+    "parallax.compatibility.Person": {
+      "attribute": {
+        "id": "id",
+        "name": "name"
+      },
+      "valueObject": {}
+    },
+    "parallax.compatibility.Pet": {
+      "attribute": {
+        "licenseId": "license_id"
+      },
+      "valueObject": {}
+    },
+    "parallax.compatibility.WildBoar": {
+      "attribute": {
+        "tuskLength": "tusk_length"
+      },
+      "valueObject": {}
+    }
+  },
+  "models/appliance.yaml": {
+    "parallax.compatibility.Appliance": {
+      "attribute": {
+        "id": "id",
+        "name": "name",
+        "version": "version"
+      },
+      "valueObject": {}
+    },
+    "parallax.compatibility.Fridge": {
+      "attribute": {
+        "capacityLiters": "capacity_liters"
+      },
+      "valueObject": {}
+    },
+    "parallax.compatibility.Oven": {
+      "attribute": {
+        "wattage": "wattage"
+      },
+      "valueObject": {}
+    }
+  },
+  "models/balance.yaml": {
+    "parallax.compatibility.Balance": {
+      "attribute": {
+        "acctNum": "acct_num",
+        "id": "bal_id",
+        "tx_end": "out_z",
+        "tx_start": "in_z",
+        "value": "val"
+      },
+      "valueObject": {}
+    }
+  },
+  "models/branch.yaml": {
+    "parallax.compatibility.Branch": {
+      "attribute": {
+        "id": "br_id",
+        "name": "name",
+        "tx_end": "out_z",
+        "tx_start": "in_z",
+        "valid_end": "thru_z",
+        "valid_start": "from_z"
+      },
+      "valueObject": {
+        "address": "address"
+      }
+    }
+  },
+  "models/contact.yaml": {
+    "parallax.compatibility.Contact": {
+      "attribute": {
+        "id": "id",
+        "name": "name"
+      },
+      "valueObject": {
+        "address": "address"
+      }
+    }
+  },
+  "models/customer.yaml": {
+    "parallax.compatibility.Customer": {
+      "attribute": {
+        "id": "id",
+        "name": "name"
+      },
+      "valueObject": {
+        "address": "address"
+      }
+    },
+    "parallax.compatibility.Depot": {
+      "attribute": {
+        "customerId": "customer_id",
+        "id": "id",
+        "label": "label"
+      },
+      "valueObject": {
+        "address": "address"
+      }
+    },
+    "parallax.compatibility.Location": {
+      "attribute": {
+        "customerId": "customer_id",
+        "id": "id",
+        "label": "label"
+      },
+      "valueObject": {
+        "address": "address"
+      }
+    }
+  },
+  "models/document.yaml": {
+    "parallax.compatibility.Document": {
+      "attribute": {
+        "folderId": "folder_id",
+        "id": "id",
+        "title": "title"
+      },
+      "valueObject": {}
+    },
+    "parallax.compatibility.FinancialDocument": {
+      "attribute": {
+        "currency": "currency"
+      },
+      "valueObject": {}
+    },
+    "parallax.compatibility.Folder": {
+      "attribute": {
+        "id": "id",
+        "name": "name"
+      },
+      "valueObject": {}
+    },
+    "parallax.compatibility.Invoice": {
+      "attribute": {
+        "amountDue": "amount_due"
+      },
+      "valueObject": {}
+    },
+    "parallax.compatibility.Memo": {
+      "attribute": {
+        "body": "body"
+      },
+      "valueObject": {}
+    },
+    "parallax.compatibility.Receipt": {
+      "attribute": {
+        "paidAmount": "paid_amount"
+      },
+      "valueObject": {}
+    }
+  },
+  "models/error-cases.yaml": {
+    "parallax.compatibility.Gauge": {
+      "attribute": {
+        "id": "id",
+        "v": "v"
+      },
+      "valueObject": {}
+    },
+    "parallax.compatibility.Tag": {
+      "attribute": {
+        "id": "id",
+        "name": "name"
+      },
+      "valueObject": {}
+    },
+    "parallax.compatibility.Widget": {
+      "attribute": {
+        "id": "id",
+        "label": "label"
+      },
+      "valueObject": {}
+    }
+  },
+  "models/event.yaml": {
+    "parallax.compatibility.Event": {
+      "attribute": {
+        "id": "id",
+        "occurredAt": "occurred_at"
+      },
+      "valueObject": {}
+    }
+  },
+  "models/grade.yaml": {
+    "parallax.compatibility.Grade": {
+      "attribute": {
+        "id": "id",
+        "label": "label",
+        "ordinal": "order"
+      },
+      "valueObject": {}
+    }
+  },
+  "models/instrument.yaml": {
+    "parallax.compatibility.Bond": {
+      "attribute": {
+        "coupon": "coupon"
+      },
+      "valueObject": {}
+    },
+    "parallax.compatibility.Instrument": {
+      "attribute": {
+        "id": "id",
+        "price": "price",
+        "tx_end": "out_z",
+        "tx_start": "in_z",
+        "valid_end": "thru_z",
+        "valid_start": "from_z"
+      },
+      "valueObject": {}
+    },
+    "parallax.compatibility.Stock": {
+      "attribute": {
+        "ticker": "ticker"
+      },
+      "valueObject": {}
+    }
+  },
+  "models/invoice.yaml": {
+    "parallax.compatibility.Invoice": {
+      "attribute": {
+        "id": "id",
+        "name": "name",
+        "tx_end": "out_z",
+        "tx_start": "in_z"
+      },
+      "valueObject": {}
+    },
+    "parallax.compatibility.InvoiceLine": {
+      "attribute": {
+        "amount": "amount",
+        "id": "id",
+        "invoiceId": "invoice_id",
+        "tx_end": "out_z",
+        "tx_start": "in_z"
+      },
+      "valueObject": {}
+    }
+  },
+  "models/lease.yaml": {
+    "parallax.compatibility.Lease": {
+      "attribute": {
+        "id": "id",
+        "tenantId": "tenant_id",
+        "term": "term",
+        "tx_end": "out_z",
+        "tx_start": "in_z"
+      },
+      "valueObject": {}
+    },
+    "parallax.compatibility.LeaseNote": {
+      "attribute": {
+        "id": "id",
+        "leaseId": "lease_id",
+        "text": "note_text"
+      },
+      "valueObject": {}
+    },
+    "parallax.compatibility.Tenant": {
+      "attribute": {
+        "id": "id",
+        "name": "name"
+      },
+      "valueObject": {}
+    }
+  },
+  "models/ledger.yaml": {
+    "parallax.compatibility.Ledger": {
+      "attribute": {
+        "acctNum": "acct_num",
+        "id": "led_id",
+        "tx_end": "out_z",
+        "tx_start": "in_z",
+        "value": "val"
+      },
+      "valueObject": {}
+    }
+  },
+  "models/orders.yaml": {
+    "parallax.compatibility.Order": {
+      "attribute": {
+        "active": "active",
+        "id": "id",
+        "name": "name",
+        "orderedOn": "ordered_on",
+        "price": "price",
+        "qty": "qty",
+        "sku": "sku"
+      },
+      "valueObject": {}
+    },
+    "parallax.compatibility.OrderItem": {
+      "attribute": {
+        "id": "id",
+        "orderId": "order_id",
+        "quantity": "quantity",
+        "shippedOn": "shipped_on",
+        "sku": "sku"
+      },
+      "valueObject": {}
+    },
+    "parallax.compatibility.OrderStatus": {
+      "attribute": {
+        "code": "code",
+        "id": "id",
+        "orderId": "order_id",
+        "orderItemId": "order_item_id"
+      },
+      "valueObject": {}
+    },
+    "parallax.compatibility.OrderTag": {
+      "attribute": {
+        "id": "id",
+        "label": "label",
+        "orderId": "order_id",
+        "priority": "priority"
+      },
+      "valueObject": {}
+    }
+  },
+  "models/payment.yaml": {
+    "parallax.compatibility.CardPayment": {
+      "attribute": {
+        "cardNetwork": "card_network"
+      },
+      "valueObject": {}
+    },
+    "parallax.compatibility.CashPayment": {
+      "attribute": {
+        "tendered": "tendered"
+      },
+      "valueObject": {}
+    },
+    "parallax.compatibility.Payment": {
+      "attribute": {
+        "amount": "amount",
+        "id": "id"
+      },
+      "valueObject": {}
+    }
+  },
+  "models/person.yaml": {
+    "parallax.compatibility.Passport": {
+      "attribute": {
+        "id": "id",
+        "number": "number",
+        "personId": "person_id"
+      },
+      "valueObject": {}
+    },
+    "parallax.compatibility.Person": {
+      "attribute": {
+        "id": "id",
+        "name": "name"
+      },
+      "valueObject": {}
+    }
+  },
+  "models/pk-audit.yaml": {
+    "parallax.compatibility.AuditEntry": {
+      "attribute": {
+        "id": "id",
+        "note": "note",
+        "tx_end": "out_z",
+        "tx_start": "in_z"
+      },
+      "valueObject": {}
+    },
+    "parallax.compatibility.AuditSeq": {
+      "attribute": {
+        "name": "name",
+        "nextVal": "next_val"
+      },
+      "valueObject": {}
+    }
+  },
+  "models/pk-max.yaml": {
+    "parallax.compatibility.Attendee": {
+      "attribute": {
+        "id": "id",
+        "name": "name"
+      },
+      "valueObject": {}
+    }
+  },
+  "models/pk-sequence.yaml": {
+    "parallax.compatibility.Badge": {
+      "attribute": {
+        "holder": "holder",
+        "id": "id"
+      },
+      "valueObject": {}
+    },
+    "parallax.compatibility.Pass": {
+      "attribute": {
+        "id": "id",
+        "zone": "zone"
+      },
+      "valueObject": {}
+    },
+    "parallax.compatibility.PkSequence": {
+      "attribute": {
+        "name": "name",
+        "nextVal": "next_val"
+      },
+      "valueObject": {}
+    },
+    "parallax.compatibility.Ticket": {
+      "attribute": {
+        "id": "id",
+        "tier": "tier"
+      },
+      "valueObject": {}
+    },
+    "parallax.compatibility.Voucher": {
+      "attribute": {
+        "id": "id",
+        "label": "label"
+      },
+      "valueObject": {}
+    }
+  },
+  "models/policy.yaml": {
+    "parallax.compatibility.Claim": {
+      "attribute": {
+        "coverageId": "coverage_id",
+        "id": "id",
+        "reserve": "reserve",
+        "tx_end": "out_z",
+        "tx_start": "in_z",
+        "valid_end": "thru_z",
+        "valid_start": "from_z"
+      },
+      "valueObject": {}
+    },
+    "parallax.compatibility.Coverage": {
+      "attribute": {
+        "amount": "amount",
+        "id": "id",
+        "policyId": "policy_id",
+        "tx_end": "out_z",
+        "tx_start": "in_z",
+        "valid_end": "thru_z",
+        "valid_start": "from_z"
+      },
+      "valueObject": {}
+    },
+    "parallax.compatibility.Policy": {
+      "attribute": {
+        "id": "id",
+        "name": "name",
+        "tx_end": "out_z",
+        "tx_start": "in_z",
+        "valid_end": "thru_z",
+        "valid_start": "from_z"
+      },
+      "valueObject": {}
+    }
+  },
+  "models/position.yaml": {
+    "parallax.compatibility.Position": {
+      "attribute": {
+        "acctNum": "acct_num",
+        "id": "pos_id",
+        "tx_end": "out_z",
+        "tx_start": "in_z",
+        "valid_end": "thru_z",
+        "valid_start": "from_z",
+        "value": "val"
+      },
+      "valueObject": {}
+    }
+  },
+  "models/quote.yaml": {
+    "parallax.compatibility.Quote": {
+      "attribute": {
+        "id": "id",
+        "price": "price",
+        "tx_end": "out_z",
+        "tx_start": "in_z"
+      },
+      "valueObject": {}
+    },
+    "parallax.compatibility.SpotQuote": {
+      "attribute": {
+        "symbol": "symbol"
+      },
+      "valueObject": {}
+    }
+  },
+  "models/rate.yaml": {
+    "parallax.compatibility.DepositRate": {
+      "attribute": {
+        "grade": "grade"
+      },
+      "valueObject": {}
+    },
+    "parallax.compatibility.LoanRate": {
+      "attribute": {
+        "spread": "spread"
+      },
+      "valueObject": {}
+    },
+    "parallax.compatibility.Rate": {
+      "attribute": {
+        "amount": "amount",
+        "id": "id",
+        "tx_end": "out_z",
+        "tx_start": "in_z",
+        "valid_end": "thru_z",
+        "valid_start": "from_z"
+      },
+      "valueObject": {}
+    }
+  },
+  "models/reading.yaml": {
+    "parallax.compatibility.MeterReading": {
+      "attribute": {},
+      "valueObject": {}
+    },
+    "parallax.compatibility.Reading": {
+      "attribute": {
+        "celsius": "celsius",
+        "id": "id",
+        "tx_end": "out_z",
+        "tx_start": "in_z"
+      },
+      "valueObject": {}
+    }
+  },
+  "models/scalars.yaml": {
+    "parallax.compatibility.ScalarThing": {
+      "attribute": {
+        "externalId": "external_id",
+        "f32": "f32",
+        "f64": "f64",
+        "id": "id",
+        "localTime": "local_time",
+        "payload": "payload"
+      },
+      "valueObject": {}
+    }
+  },
+  "models/shipment.yaml": {
+    "parallax.compatibility.Shipment": {
+      "attribute": {
+        "id": "id",
+        "name": "name"
+      },
+      "valueObject": {
+        "destination": "destination"
+      }
+    }
+  },
+  "models/subscriber.yaml": {
+    "parallax.compatibility.Subscriber": {
+      "attribute": {
+        "id": "id",
+        "version": "version"
+      },
+      "valueObject": {
+        "address": "address"
+      }
+    }
+  },
+  "models/supplier.yaml": {
+    "parallax.compatibility.Supplier": {
+      "attribute": {
+        "id": "sup_id",
+        "name": "name",
+        "tx_end": "out_z",
+        "tx_start": "in_z"
+      },
+      "valueObject": {
+        "address": "address"
+      }
+    }
+  },
+  "models/taxpayer.yaml": {
+    "parallax.compatibility.Taxpayer": {
+      "attribute": {
+        "id": "id",
+        "name": "name",
+        "taxID": "tax_id"
+      },
+      "valueObject": {}
+    }
+  },
+  "models/vehicle.yaml": {
+    "parallax.compatibility.Car": {
+      "attribute": {
+        "doors": "doors"
+      },
+      "valueObject": {}
+    },
+    "parallax.compatibility.Truck": {
+      "attribute": {
+        "axles": "axles"
+      },
+      "valueObject": {}
+    },
+    "parallax.compatibility.Vehicle": {
+      "attribute": {
+        "id": "id",
+        "name": "name",
+        "version": "version"
+      },
+      "valueObject": {}
+    }
+  },
+  "models/wallet.yaml": {
+    "parallax.compatibility.Wallet": {
+      "attribute": {
+        "balance": "balance",
+        "id": "id",
+        "owner": "owner"
+      },
+      "valueObject": {}
+    }
+  },
+  "models/workshop.yaml": {
+    "parallax.compatibility.HandTool": {
+      "attribute": {
+        "gripSize": "grip_size"
+      },
+      "valueObject": {}
+    },
+    "parallax.compatibility.Material": {
+      "attribute": {
+        "id": "id",
+        "name": "name",
+        "workshopId": "workshop_id"
+      },
+      "valueObject": {}
+    },
+    "parallax.compatibility.PowerTool": {
+      "attribute": {
+        "wattage": "wattage"
+      },
+      "valueObject": {}
+    },
+    "parallax.compatibility.Steel": {
+      "attribute": {
+        "alloy": "alloy"
+      },
+      "valueObject": {}
+    },
+    "parallax.compatibility.Timber": {
+      "attribute": {
+        "grade": "grade"
+      },
+      "valueObject": {}
+    },
+    "parallax.compatibility.Tool": {
+      "attribute": {
+        "id": "id",
+        "name": "name",
+        "workshopId": "workshop_id"
+      },
+      "valueObject": {}
+    },
+    "parallax.compatibility.Workshop": {
+      "attribute": {
+        "id": "id",
+        "name": "name"
+      },
+      "valueObject": {}
+    }
+  },
+  "models/writable-scalars.yaml": {
+    "parallax.compatibility.WritableScalar": {
+      "attribute": {
+        "amount": "amount",
+        "externalId": "external_id",
+        "f32": "f32",
+        "f64": "f64",
+        "id": "id",
+        "label": "label",
+        "localTime": "local_time",
+        "payload": "payload"
+      },
+      "valueObject": {}
+    }
+  }
+}
