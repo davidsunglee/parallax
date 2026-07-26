@@ -3,7 +3,7 @@
 The adapter path builds the metamodel by **direct ingestion** of canonical YAML
 descriptors from ``core/compatibility/models/*.yaml`` — corpus cases never
 require Python entity classes. Each model file runs the descriptor schema and
-value ingestion phases into a :class:`~parallax.core.descriptor.Metamodel`
+value ingestion phases into a :class:`~parallax.descriptor._records.Metamodel`
 record graph, and is formed through the built-in Formation Profile into the
 accepted :class:`~parallax.core.metamodel.Metamodel` behavioral modules
 consume.
@@ -20,9 +20,10 @@ from typing import cast
 
 from parallax.conformance import case_format
 from parallax.core._formation_profile import form_metamodel
-from parallax.core.descriptor import Metamodel, ingest_document
-from parallax.core.descriptor.unresolved import unresolved_metamodel
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
+from parallax.descriptor._adapter import unresolved_metamodel
+from parallax.descriptor._ingest import ingest_document
+from parallax.descriptor._records import Metamodel
 
 __all__ = ["accepted_model", "default_models_dir", "load_model", "load_models"]
 
@@ -37,8 +38,8 @@ def load_model(path: Path) -> Metamodel:
 
     Runs the descriptor schema (phase 2) and value (phase 3) ingestion phases
     over the decoded document: a schema or value violation raises
-    :class:`~parallax.core.descriptor.DescriptorSchemaError` /
-    :class:`~parallax.core.descriptor.DescriptorValueError` here, exactly as
+    :class:`~parallax.descriptor.DescriptorSchemaError` /
+    :class:`~parallax.descriptor.DescriptorValueError` here, exactly as
     text ingestion does. Relationship, inheritance, and every other reference
     stays unresolved (authored spelling, unpaired) until :func:`accepted_model`
     forms the result, so a bad reference surfaces only there, as

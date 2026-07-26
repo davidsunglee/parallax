@@ -13,7 +13,6 @@ import fake_metamodel as fake
 from parallax.conformance import case_format
 from parallax.core import inheritance, opt_lock, relationship, temporal_read
 from parallax.core._formation_profile import BUILTIN_MANIFEST, BUILTIN_PROFILE, form_metamodel
-from parallax.core.descriptor import parse_document, unresolved_metamodel
 from parallax.core.inheritance import FACET_KEY as INHERITANCE_FACET_KEY
 from parallax.core.inheritance import INHERITANCE_MODULE
 from parallax.core.inheritance import MODEL_COMPILER as INHERITANCE_COMPILER
@@ -53,6 +52,8 @@ from parallax.core.temporal_read import (
     TransactionTimeOnly,
     compile_facet,
 )
+from parallax.descriptor._adapter import unresolved_metamodel
+from parallax.descriptor._serde import parse_document
 
 pytestmark = pytest.mark.unit
 

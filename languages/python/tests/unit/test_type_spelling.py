@@ -12,7 +12,7 @@ from __future__ import annotations
 import pytest
 
 from parallax.core.base import Decimal
-from parallax.core.descriptor.type_spelling import format_type_spelling, parse_type_spelling
+from parallax.descriptor._type_spelling import format_type_spelling, parse_type_spelling
 
 pytestmark = pytest.mark.unit
 

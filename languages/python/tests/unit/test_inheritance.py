@@ -17,16 +17,6 @@ from parallax.core import inheritance
 from parallax.core._formation_profile import form_metamodel
 from parallax.core.base import STRING
 from parallax.core.base import Decimal as DecimalType
-from parallax.core.descriptor import (
-    Attribute,
-    Entity,
-    Metamodel,
-    NestedValueObject,
-    ValueObject,
-    ValueObjectAttribute,
-    parse_document,
-    unresolved_metamodel,
-)
 from parallax.core.metamodel import (
     UNRESOLVED_ENTITY_REFERENCE,
     AbstractRoot,
@@ -57,6 +47,16 @@ from parallax.core.metamodel import AsOfAxisLocation as AxisLocation
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
 from parallax.core.model_formation import MetamodelValidationError
 from parallax.core.unit_work import WriteRejectedError, validate_write
+from parallax.descriptor._adapter import unresolved_metamodel
+from parallax.descriptor._records import (
+    Attribute,
+    Entity,
+    Metamodel,
+    NestedValueObject,
+    ValueObject,
+    ValueObjectAttribute,
+)
+from parallax.descriptor._serde import parse_document
 
 pytestmark = pytest.mark.unit
 

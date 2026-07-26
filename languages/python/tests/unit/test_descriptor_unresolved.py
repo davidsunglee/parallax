@@ -12,14 +12,6 @@ import pytest
 from parallax.conformance import case_format
 from parallax.core._formation_profile import form_metamodel
 from parallax.core.base import DATE, INT64, STRING, TIMESTAMP, Decimal
-from parallax.core.descriptor import (
-    DescriptorError,
-    deserialize,
-    parse_document,
-    parse_type_spelling,
-    records,
-    unresolved_metamodel,
-)
 from parallax.core.metamodel import (
     APPLICATION_ASSIGNED,
     MAX,
@@ -51,6 +43,11 @@ from parallax.core.metamodel import (
     UnresolvedReverseRelationshipDeclaration,
 )
 from parallax.core.model_formation import MetamodelValidationError
+from parallax.descriptor import _records as records
+from parallax.descriptor._adapter import unresolved_metamodel
+from parallax.descriptor._errors import DescriptorError
+from parallax.descriptor._serde import deserialize, parse_document
+from parallax.descriptor._type_spelling import parse_type_spelling
 
 pytestmark = pytest.mark.unit
 

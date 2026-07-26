@@ -22,7 +22,6 @@ from parallax.conformance import case_format, models
 from parallax.core import inheritance
 from parallax.core.base import STRING
 from parallax.core.db_port import DbPort, JsonDocument
-from parallax.core.descriptor import Metamodel as DescriptorMetamodel
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.inheritance import InheritanceEntityView, InheritanceFacet, column_order
 from parallax.core.metamodel import (
@@ -32,6 +31,7 @@ from parallax.core.metamodel import (
     Metamodel,
     PrimaryKey,
 )
+from parallax.descriptor._records import Metamodel as DescriptorMetamodel
 
 if TYPE_CHECKING:
     from parallax.postgres import PostgresAdapter

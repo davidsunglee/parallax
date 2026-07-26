@@ -13,7 +13,9 @@ import pytest
 
 from parallax.conformance import models, provision
 from parallax.core.db_port import JsonDocument
-from parallax.core.descriptor import (
+from parallax.core.metamodel import Metamodel as AcceptedMetamodel
+from parallax.core.model_formation import MetamodelValidationError
+from parallax.descriptor._records import (
     AsOfAxisMetadata,
     Attribute,
     Entity,
@@ -23,8 +25,6 @@ from parallax.core.descriptor import (
     ValueObject,
     ValueObjectAttribute,
 )
-from parallax.core.metamodel import Metamodel as AcceptedMetamodel
-from parallax.core.model_formation import MetamodelValidationError
 
 pytestmark = pytest.mark.unit
 

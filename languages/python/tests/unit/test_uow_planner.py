@@ -15,7 +15,6 @@ from _metamodel_support import Declaration, attribute, identity, key, source
 from parallax.conformance import models
 from parallax.core import batch_write, op_algebra
 from parallax.core._formation_profile import form_metamodel
-from parallax.core.descriptor import Metamodel as DescriptorMetamodel
 from parallax.core.metamodel import (
     AttributeIdentity,
     AttributeReference,
@@ -36,6 +35,7 @@ from parallax.core.unit_work import (
     object_key,
     plan_flush,
 )
+from parallax.descriptor._records import Metamodel as DescriptorMetamodel
 
 pytestmark = pytest.mark.unit
 

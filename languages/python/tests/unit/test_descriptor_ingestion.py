@@ -10,10 +10,8 @@ must report.
 from __future__ import annotations
 
 import json
-import sys
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Literal, cast
 
 import jsonschema
@@ -22,17 +20,16 @@ import yaml
 from jsonschema.protocols import Validator
 
 from parallax.conformance import case_format
-from parallax.core.descriptor import (
+from parallax.descriptor import _ingest
+from parallax.descriptor._errors import (
     DescriptorError,
     DescriptorSchemaError,
     DescriptorSchemaViolation,
     DescriptorSyntaxError,
     DescriptorValueError,
     DescriptorValueViolation,
-    parse_json,
-    parse_yaml,
 )
-from parallax.core.descriptor import ingest as _ingest
+from parallax.descriptor._ingest import parse_json, parse_yaml
 
 pytestmark = pytest.mark.unit
 
@@ -167,24 +164,14 @@ def test_a_value_error_naming_no_violation_is_not_a_report() -> None:
         DescriptorValueError([])
 
 
-def test_the_schema_phase_reports_a_missing_schema_file_clearly(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    # `_schema_path` walks up from its OWN source location; relocating that
-    # location to a bare temp directory (no `core/schemas` above it) exercises
-    # the not-a-checkout diagnostic directly.
-    monkeypatch.setattr(_ingest, "__file__", str(tmp_path / "ingest.py"))
-    with pytest.raises(FileNotFoundError, match=r"metamodel\.schema\.json"):
-        _ingest._schema_path()  # pyright: ignore[reportPrivateUsage]
-
-
-def test_a_missing_jsonschema_dependency_raises_a_clear_actionable_error(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setitem(sys.modules, "jsonschema", None)
-    _ingest._validator.cache_clear()  # pyright: ignore[reportPrivateUsage]
-    try:
-        with pytest.raises(RuntimeError, match="jsonschema"):
-            _ingest._validator()  # pyright: ignore[reportPrivateUsage]
-    finally:
-        _ingest._validator.cache_clear()  # pyright: ignore[reportPrivateUsage]
+def test_the_schema_phase_validates_against_the_packaged_authoritative_schema() -> None:
+    # The distribution embeds its own copy and reads it through
+    # `importlib.resources`, never a repository-relative path — so the check that
+    # matters is that the packaged bytes ARE the authoritative bytes. The artifact
+    # lane proves the same for the built wheel; this proves it for the source tree
+    # every other test in this module validates through.
+    authoritative = (_REPO / "core" / "schemas" / "metamodel.schema.json").read_text(
+        encoding="utf-8"
+    )
+    assert _ingest.schema_text() == authoritative
+    assert _ingest.SCHEMA_RESOURCE == "_schemas/metamodel.schema.json"

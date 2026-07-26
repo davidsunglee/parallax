@@ -15,8 +15,8 @@ from __future__ import annotations
 from functools import cache
 
 from parallax.conformance import models
-from parallax.core.descriptor import Metamodel as DescriptorMetamodel
 from parallax.core.metamodel import EntityMetadata, Metamodel
+from parallax.descriptor._records import Metamodel as DescriptorMetamodel
 
 
 @cache

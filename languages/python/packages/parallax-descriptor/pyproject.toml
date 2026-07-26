@@ -1,21 +1,21 @@
 [project]
-name = "parallax-core"
+name = "parallax-descriptor"
 version = "0.1.0"
-description = "Parallax common runtime: the class-free engine spine (metamodel hub, op-algebra, SQL lowering, unit of work, abstract database port)."
+description = "Parallax descriptor interchange: canonical model-descriptor ingestion and export over the parallax-core spine."
 readme = "README.md"
 requires-python = ">=3.12"
 license = "Apache-2.0"
 authors = [{ name = "Parallax" }]
 dependencies = [
-    "pydantic>=2.7",
+    "parallax-core",
+    "pyyaml>=6.0",
+    "jsonschema>=4.21",
 ]
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
-# PEP 420 namespace package: the wheel ships `parallax.core.*` only, with no
-# `parallax/__init__.py` at the shared namespace root.
 [tool.hatch.build.targets.wheel]
 packages = ["src/parallax"]
 

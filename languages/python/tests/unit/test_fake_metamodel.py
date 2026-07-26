@@ -10,7 +10,6 @@ import pytest
 import fake_metamodel as fake
 from parallax.conformance import case_format
 from parallax.core._formation_profile import form_metamodel
-from parallax.core.descriptor import parse_document, records, unresolved_metamodel
 from parallax.core.metamodel import (
     EntityIdentity,
     EntityMetadata,
@@ -22,6 +21,9 @@ from parallax.core.metamodel import (
     ValueObjectAttributeMetadata,
     ValueObjectMetadata,
 )
+from parallax.descriptor import _records as records
+from parallax.descriptor._adapter import unresolved_metamodel
+from parallax.descriptor._serde import parse_document
 
 pytestmark = pytest.mark.unit
 

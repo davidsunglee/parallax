@@ -14,9 +14,10 @@ from __future__ import annotations
 import pytest
 
 from parallax.core._formation_profile import form_metamodel
-from parallax.core.descriptor import records, unresolved_metamodel
 from parallax.core.metamodel import Metamodel, entity_by_name
 from parallax.core.op_algebra import All, Narrow, OperationRejectedError, validate_operation
+from parallax.descriptor import _records as records
+from parallax.descriptor._adapter import unresolved_metamodel
 
 pytestmark = pytest.mark.unit
 

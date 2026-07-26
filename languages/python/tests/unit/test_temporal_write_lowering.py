@@ -20,11 +20,11 @@ import pytest
 
 from parallax.conformance import models
 from parallax.core.db_port import JsonDocument
-from parallax.core.descriptor import Metamodel
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.metamodel import EntityIdentity, EntityMetadata, TemporalDimension
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
 from parallax.core.unit_work import Concurrency, KeyedWrite, Observation, PlannedWrite
+from parallax.descriptor._records import Metamodel
 from parallax.snapshot.handle import (
     LoweredStatement,
     WriteLoweringError,

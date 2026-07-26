@@ -13,7 +13,10 @@ importer exemption), and the support-scope additions:
   fence — with a drift canary per representation, including the state in which
   two of the three are edited consistently and the third is left stale; and
 * child scopes are emitted as contract *sources* only, with a ``lint-imports``
-  canary proving a child contract blocks an import its parent's row permits.
+  canary proving a child contract blocks an import its parent's row permits, and
+  a second canary proving the one asymmetric child grant — the descriptor
+  package's Hub-construction seam, which relaxes its parent's generated row —
+  stays confined by the hand-written contract that guards it.
 """
 
 from __future__ import annotations
@@ -73,13 +76,14 @@ def test_forbidden_respects_the_dag() -> None:
     assert "parallax.core.base" not in forbidden["parallax.core.op_algebra"]
     # ...while a non-edge is.
     assert "parallax.core.sql_gen" in forbidden["parallax.core.op_algebra"]
-    # No behavioral module depends on descriptor, so every behavioral scope is
-    # forbidden from importing it — descriptor is entity's one sanctioned
-    # support-scope adapter, not a behavioral dependency.
-    assert "parallax.core.descriptor" in forbidden["parallax.core.op_algebra"]
-    assert "parallax.core.descriptor" in forbidden["parallax.core.inheritance"]
-    # The entity support scope keeps its one adapter grant.
-    assert "parallax.core.descriptor" not in forbidden["parallax.core.entity"]
+    # Nothing in the common runtime depends on the descriptor distribution, so
+    # every core scope — behavioral scopes and the entity frontend alike — is
+    # forbidden from importing it. The one descriptor/runtime edge runs the other
+    # way, and only from the descriptor package's private hub child scope.
+    assert "parallax.descriptor" in forbidden["parallax.core.op_algebra"]
+    assert "parallax.descriptor" in forbidden["parallax.core.inheritance"]
+    assert "parallax.descriptor" in forbidden["parallax.core.entity"]
+    assert "parallax.core.entity" not in forbidden["parallax.descriptor._hub"]
     # The cross-package rule falls out of the complement.
     assert "parallax.postgres" in forbidden["parallax.snapshot.materialize"]
 
@@ -496,18 +500,51 @@ def test_a_child_row_omits_its_own_ancestors() -> None:
     assert dag.scope_ancestors("parallax.snapshot.handle") == frozenset()
 
 
-def test_child_rows_are_narrower_than_the_parent_row() -> None:
-    # The whole point of the audit: each child forbids strictly more than the
-    # broad parent scope does.
+def test_handle_child_rows_are_narrower_than_the_parent_row() -> None:
+    # The whole point of the audit: each handle child forbids strictly more than
+    # the broad parent scope does.
     adjacency = dag.build_adjacency(dag.parse_dependency_graph(dag.MODULES_MD.read_text()))
     forbidden = dag.compute_forbidden(adjacency)
     parent = set(forbidden["parallax.snapshot.handle"])
-    for child in dag.CHILD_SCOPE_PARENT:
+    for child, declared_parent in dag.CHILD_SCOPE_PARENT.items():
+        if declared_parent != "parallax.snapshot.handle":
+            continue
         assert parent < set(forbidden[child]), child
     # `_wrap` may not reach SQL generation; the lowering cluster may not reach
     # the read side. Neither restriction exists on the parent.
     assert "parallax.core.sql_gen" in forbidden["parallax.snapshot.handle._wrap"]
     assert "parallax.snapshot.materialize" in forbidden["parallax.snapshot.handle._keyed_sql"]
+
+
+def test_scope_descendants_inverts_the_child_chain() -> None:
+    assert dag.scope_descendants("parallax.descriptor") == frozenset({"parallax.descriptor._hub"})
+    assert dag.scope_descendants("parallax.snapshot.handle") == frozenset(
+        {
+            "parallax.snapshot.handle._wrap",
+            "parallax.snapshot.handle._family",
+            "parallax.snapshot.handle._write_types",
+            "parallax.snapshot.handle._keyed_sql",
+            "parallax.snapshot.handle._write_lowering",
+        }
+    )
+    assert dag.scope_descendants("parallax.core.base") == frozenset()
+
+
+def test_an_asymmetric_child_grant_relaxes_its_parents_row() -> None:
+    # `parallax.descriptor._hub` holds a grant its parent lacks, and a package
+    # scoped `forbidden` source governs the child too, so the parent's row cannot
+    # forbid what the child legitimately imports. The generated rows therefore
+    # coincide, and the hand-written confinement contract in `pyproject.toml`
+    # ("only parallax.descriptor._hub reaches the Hub-construction seam") is what
+    # keeps the grant inside the child.
+    adjacency = dag.build_adjacency(dag.parse_dependency_graph(dag.MODULES_MD.read_text()))
+    forbidden = dag.compute_forbidden(adjacency)
+    assert dag.SUPPORT_SCOPE_DEPS["parallax.descriptor._hub"] == frozenset({"parallax.core.entity"})
+    assert "parallax.core.entity" not in adjacency["parallax.descriptor"]
+    assert forbidden["parallax.descriptor"] == forbidden["parallax.descriptor._hub"]
+    # Without the relaxation the parent's row would forbid the seam the child
+    # imports, so `lint-imports` could never pass on the committed tree.
+    assert "parallax.core.entity" not in forbidden["parallax.descriptor"]
 
 
 # --------------------------------------------------------------------------
@@ -538,6 +575,26 @@ def test_child_scope_contract_blocks_an_import_the_parent_permits() -> None:
     assert result.returncode != 0, result.stdout
     assert "parallax.snapshot.handle._wrap" in result.stdout
     assert "not allowed to import parallax.core.sql_gen" in result.stdout
+
+
+# --------------------------------------------------------------------------
+# Canary 4: the hand-written confinement contract keeps an asymmetric child
+# grant inside its child scope, which no generated row can do.
+# --------------------------------------------------------------------------
+def test_the_hub_seam_stays_confined_to_the_descriptor_child_scope() -> None:
+    lint_imports = shutil.which("lint-imports")
+    assert lint_imports is not None, "lint-imports must be installed in the dev env"
+
+    canary = PY_ROOT / "packages/parallax-descriptor/src/parallax/descriptor/_canary_seam.py"
+    canary.write_text("import parallax.core.entity._hub  # deliberate seam violation\n")
+    try:
+        result = subprocess.run([lint_imports], cwd=PY_ROOT, capture_output=True, text=True)
+    finally:
+        canary.unlink()
+
+    assert result.returncode != 0, result.stdout
+    assert "only parallax.descriptor._hub reaches the Hub-construction seam" in result.stdout
+    assert "not allowed to import parallax.core.entity" in result.stdout
 
 
 # --------------------------------------------------------------------------

@@ -18,7 +18,6 @@ from __future__ import annotations
 
 from typing import Final, Literal
 
-from parallax.core.descriptor.type_spelling import format_type_spelling
 from parallax.core.metamodel import (
     AbstractRoot,
     AbstractSubtype,
@@ -49,6 +48,7 @@ from parallax.core.metamodel import (
     ValueObjectAttributeMetadata,
     ValueObjectMetadata,
 )
+from parallax.descriptor._type_spelling import format_type_spelling
 
 __all__ = ["DESCRIPTOR_EXPORT_FAILED", "DescriptorExportError", "export_document"]
 
@@ -67,7 +67,7 @@ class DescriptorExportError(RuntimeError):
     ``target`` names the form under production and ``cause`` retains the original
     defect, also chained natively. Like ``FormationContractError`` it is an
     adapter-defect boundary; it is never raised as, or translated to, a
-    :class:`~parallax.core.descriptor.errors.DescriptorError`, whose subtypes are
+    :class:`~parallax.descriptor._errors.DescriptorError`, whose subtypes are
     ingestion failures over documents. No partial output escapes, and the model
     is left unchanged.
     """

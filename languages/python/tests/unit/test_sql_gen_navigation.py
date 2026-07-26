@@ -246,7 +246,7 @@ def test_tpcs_branches_take_their_aliases_as_each_branch_opens() -> None:
     # whose concretes are themselves navigable, and `document`'s are not — so this
     # synthetic family is the witness, in the idiom of the TPCS branch-context pin
     # in `test_sql_gen_inheritance.py`.
-    from parallax.core.descriptor import (
+    from parallax.descriptor._records import (
         Attribute,
         DefiningRelationship,
         Entity,

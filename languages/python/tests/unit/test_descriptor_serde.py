@@ -13,12 +13,12 @@ import pytest
 import yaml
 
 from parallax.conformance import case_format
-from parallax.core.descriptor import (
+from parallax.descriptor._errors import DescriptorError
+from parallax.descriptor._records import (
     UNSET,
     AsOfAxisMetadata,
     Attribute,
     DefiningRelationship,
-    DescriptorError,
     Entity,
     Metamodel,
     NestedValueObject,
@@ -28,10 +28,8 @@ from parallax.core.descriptor import (
     RelationshipTarget,
     ValueObject,
     ValueObjectAttribute,
-    canonicalize,
-    deserialize,
-    serialize,
 )
+from parallax.descriptor._serde import canonicalize, deserialize, serialize
 
 pytestmark = pytest.mark.unit
 

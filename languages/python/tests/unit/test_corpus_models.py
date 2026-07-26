@@ -9,7 +9,7 @@ import pytest
 
 from parallax.conformance import case_format
 from parallax.conformance import models as corpus_models
-from parallax.core.descriptor import canonicalize, serialize
+from parallax.descriptor._serde import canonicalize, serialize
 
 pytestmark = pytest.mark.unit
 

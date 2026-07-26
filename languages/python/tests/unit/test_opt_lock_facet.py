@@ -13,7 +13,6 @@ from parallax.conformance import case_format
 from parallax.core import inheritance, opt_lock, temporal_read
 from parallax.core._formation_profile import BUILTIN_MANIFEST, BUILTIN_PROFILE, form_metamodel
 from parallax.core.base import INT64
-from parallax.core.descriptor import parse_document, unresolved_metamodel
 from parallax.core.inheritance import FACET_KEY as INHERITANCE_FACET_KEY
 from parallax.core.inheritance import INHERITANCE_MODULE
 from parallax.core.metamodel import (
@@ -59,6 +58,8 @@ from parallax.core.opt_lock import (
 )
 from parallax.core.temporal_read import FACET_KEY as TEMPORAL_FACET_KEY
 from parallax.core.temporal_read import TEMPORAL_READ_MODULE
+from parallax.descriptor._adapter import unresolved_metamodel
+from parallax.descriptor._serde import parse_document
 
 pytestmark = pytest.mark.unit
 

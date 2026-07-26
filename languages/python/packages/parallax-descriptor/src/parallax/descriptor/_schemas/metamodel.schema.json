@@ -1,0 +1,546 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://parallax.dev/schemas/metamodel.schema.json",
+  "title": "Parallax Model Descriptor (m-descriptor)",
+  "description": "Canonical serialized m-descriptor input to m-metamodel. This revision covers persistence, optional conventional column mappings, pkGeneration, the defining/reverse relationship union, indices, asOfAxes, closed-tree inheritance, and recursively typed value objects with One/Many multiplicity.",
+  "type": "object",
+  "additionalProperties": false,
+  "oneOf": [
+    { "required": ["entity"] },
+    { "required": ["entities"] }
+  ],
+  "properties": {
+    "entity": { "$ref": "#/$defs/entity" },
+    "entities": {
+      "description": "Two or more entities mapped in one descriptor (so relationships can name sibling entities). Mutually exclusive with the single `entity` form.",
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/entity" }
+    }
+  },
+  "$defs": {
+    "neutralType": {
+      "description": "Canonical m-descriptor spelling of an m-core NeutralType variant (m-descriptor \"Type spellings\"). The decimal spelling carries precision/scale, e.g. decimal(18,2). The `json` type is the embedded-value type a valueObject element maps to; m-dialect maps it to each dialect's structured-document column type.",
+      "type": "string",
+      "pattern": "^(boolean|int32|int64|float32|float64|string|bytes|date|time|timestamp|uuid|json|decimal\\([0-9]+,[0-9]+\\))$"
+    },
+    "identifier": {
+      "description": "camelCase element/property name.",
+      "type": "string",
+      "pattern": "^[a-z][a-zA-Z0-9_]*$"
+    },
+    "entity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "namespace": { "type": "string", "minLength": 1 },
+        "table": { "type": "string", "minLength": 1 },
+        "persistence": {
+          "enum": ["read-write", "read-only"],
+          "default": "read-write"
+        },
+        "attributes": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/attribute" }
+        },
+        "asOfAxes": {
+          "description": "The supported temporal shapes are one transactionTime axis or validTime followed by transactionTime. A lone validTime axis belongs to the separately catalogued m-validtime-only formation and is not accepted by this active descriptor contract.",
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 2,
+          "items": { "$ref": "#/$defs/asOfAxis" },
+          "oneOf": [
+            {
+              "minItems": 1,
+              "maxItems": 1,
+              "prefixItems": [
+                {
+                  "properties": {
+                    "dimension": { "const": "transactionTime" }
+                  }
+                }
+              ]
+            },
+            {
+              "minItems": 2,
+              "maxItems": 2,
+              "prefixItems": [
+                {
+                  "properties": {
+                    "dimension": { "const": "validTime" }
+                  }
+                },
+                {
+                  "properties": {
+                    "dimension": { "const": "transactionTime" }
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        "relationships": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/relationship" }
+        },
+        "indices": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/index" }
+        },
+        "valueObjects": {
+          "description": "Embedded composite elements mapped to dialect-native structured-document columns via the m-core `json` neutral type (m-value-object/m-core; a deliberate deviation from Reladomo's column-flattening).",
+          "type": "array",
+          "items": { "$ref": "#/$defs/valueObject" }
+        },
+        "inheritance": { "$ref": "#/$defs/inheritance" }
+      },
+      "allOf": [
+        {
+          "$comment": "Optimistic-lock composition: a Transaction-Time Entity derives its optimistic key from its transactionTime start Attribute and must not declare an explicit optimisticLocking version Attribute.",
+          "if": {
+            "required": ["asOfAxes"],
+            "properties": {
+              "asOfAxes": {
+                "contains": {
+                  "required": ["dimension"],
+                  "properties": { "dimension": { "const": "transactionTime" } }
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "attributes": {
+                "not": {
+                  "contains": {
+                    "required": ["optimisticLocking"],
+                    "properties": { "optimisticLocking": { "const": true } }
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "$comment": "A standalone Entity and a TPH root structurally own a table. Concrete-subtype table ownership depends on the root strategy and is enforced by whole-model formation.",
+          "if": {
+            "anyOf": [
+              { "not": { "required": ["inheritance"] } },
+              {
+                "required": ["inheritance"],
+                "properties": {
+                  "inheritance": {
+                    "required": ["role", "strategy"],
+                    "properties": {
+                      "role": { "const": "root" },
+                      "strategy": { "const": "table-per-hierarchy" }
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "then": { "required": ["table"] }
+        },
+        {
+          "$comment": "Every abstract subtype and a TPCS root are tableless. A TPH root is the sole owner of the shared table.",
+          "if": {
+            "required": ["inheritance"],
+            "properties": {
+              "inheritance": {
+                "anyOf": [
+                  {
+                    "required": ["role"],
+                    "properties": { "role": { "const": "abstract-subtype" } }
+                  },
+                  {
+                    "required": ["role", "strategy"],
+                    "properties": {
+                      "role": { "const": "root" },
+                      "strategy": { "const": "table-per-concrete-subtype" }
+                    }
+                  }
+                ]
+              }
+            }
+          },
+          "then": { "not": { "required": ["table"] } }
+        },
+        {
+          "$comment": "Persistence is family-wide and root-owned; descendants inherit and cannot repeat it.",
+          "if": {
+            "required": ["inheritance"],
+            "properties": {
+              "inheritance": {
+                "required": ["role"],
+                "properties": { "role": { "enum": ["abstract-subtype", "concrete-subtype"] } }
+              }
+            }
+          },
+          "then": { "not": { "required": ["persistence"] } }
+        },
+        {
+          "$comment": "Conditional `attributes` requirement (m-inheritance / m-descriptor, resolved Q5): a non-inheritance entity MUST declare its own `attributes`. An inheritance participant MAY omit `attributes` — a concrete subtype that declares only inherited attributes has none of its own, and validation/lowering derives the full inherited chain from the ancestry. When `attributes` IS present it is still non-empty (the array schema).",
+          "if": { "not": { "required": ["inheritance"] } },
+          "then": { "required": ["attributes"] }
+        },
+        {
+          "$comment": "At most one optimisticLocking attribute per entity (m-descriptor `attribute` / m-opt-lock \"The version column\"): the entity's OWN `attributes` array may CONTAIN at most one item with `optimisticLocking: true` (2020-12 `contains`/`minContains`/`maxContains`). `minContains: 0` is REQUIRED alongside `maxContains` — `contains` alone implies at least one match, which would wrongly force every entity to declare a version attribute; `minContains: 0` restores the flag's true optionality, so 0 or 1 both satisfy this, never more. This is a PER-ENTITY structural rule; the family-wide root-ownership rule (at most one across an inheritance family, declared only at the root) is the semantic `inheritance-optimistic-locking-not-root-owned` invariant a model-aware validator enforces (m-inheritance), not expressible here.",
+          "properties": {
+            "attributes": {
+              "contains": {
+                "required": ["optimisticLocking"],
+                "properties": { "optimisticLocking": { "const": true } }
+              },
+              "minContains": 0,
+              "maxContains": 1
+            }
+          }
+        }
+      ]
+    },
+    "attribute": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "type"],
+      "properties": {
+        "name": { "$ref": "#/$defs/identifier" },
+        "type": { "$ref": "#/$defs/neutralType" },
+        "column": { "type": "string", "minLength": 1 },
+        "primaryKey": { "type": "boolean", "default": false },
+        "nullable": { "type": "boolean", "default": false },
+        "maxLength": { "type": "integer", "minimum": 1 },
+        "readOnly": { "type": "boolean", "default": false },
+        "optimisticLocking": { "type": "boolean", "default": false },
+        "pkGeneration": { "$ref": "#/$defs/pkGeneration" }
+      },
+      "allOf": [
+        {
+          "$comment": "Primary-key generation is meaningful only for a primary-key Attribute. The normalized PrimaryKey sum type makes every non-key generation state unconstructible.",
+          "if": { "required": ["pkGeneration"] },
+          "then": {
+            "required": ["primaryKey"],
+            "properties": { "primaryKey": { "const": true } }
+          }
+        },
+        {
+          "$comment": "Explicit optimistic-lock version (m-opt-lock / DQ8b): an attribute-level `optimisticLocking: true` version is derived — initialized to `1` on insert and advanced to `observed + 1` on every update, gated in optimistic mode with `and <col> = ?` — so it MUST be an integral type (`int32`/`int64`). A temporal Entity locks via its Transaction-Time start (`tx_start`, physically `in_z`) instead and declares no explicit version Attribute (the Entity-level composition rule above forbids the combination), so this restriction never lands on a timestamp column.",
+          "if": {
+            "required": ["optimisticLocking"],
+            "properties": { "optimisticLocking": { "const": true } }
+          },
+          "then": {
+            "properties": { "type": { "enum": ["int32", "int64"] } }
+          }
+        },
+        {
+          "$comment": "Generated primary keys are integral (m-pk-gen): `max` allocates max(col)+1 and `sequence` advances an integer registry counter, so both are legal only on an `int32`/`int64` attribute. `application-assigned` stays unrestricted — the application may supply keys of any declared type.",
+          "if": {
+            "required": ["pkGeneration"],
+            "properties": {
+              "pkGeneration": {
+                "anyOf": [{ "const": "max" }, { "type": "object" }]
+              }
+            }
+          },
+          "then": {
+            "properties": { "type": { "enum": ["int32", "int64"] } }
+          }
+        },
+        {
+          "$comment": "`maxLength` bounds text width and lowers to `varchar(n)` (m-core `String`; m-descriptor `attribute`), so it is meaningful only on a `string` Attribute. Every other variant has a fixed width or its own parameters, and `decimal` carries precision/scale in its own spelling.",
+          "if": { "required": ["maxLength"] },
+          "then": {
+            "properties": { "type": { "const": "string" } }
+          }
+        }
+      ]
+    },
+    "relationship": {
+      "description": "One branch of the closed defining/reverse relationship declaration union.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name"],
+      "properties": {
+        "name": { "$ref": "#/$defs/identifier" },
+        "cardinality": {
+          "enum": ["one-to-one", "many-to-one", "one-to-many"]
+        },
+        "join": { "$ref": "#/$defs/relationshipJoin" },
+        "reverseOf": {
+          "description": "Entity reference plus defining relationship name, split at the final dot.",
+          "type": "string",
+          "pattern": "^[^.\\s]+(?:\\.[^.\\s]+)+$"
+        },
+        "dependent": {
+          "description": "True when the target is owned by this entity (participates in cascade, m-cascade-delete).",
+          "type": "boolean",
+          "default": false
+        },
+        "orderBy": {
+          "description": "Optional ordering for a to-many relationship.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["attribute"],
+            "properties": {
+              "attribute": { "$ref": "#/$defs/identifier" },
+              "direction": { "enum": ["asc", "desc"], "default": "asc" }
+            }
+          }
+        }
+      },
+      "oneOf": [
+        {
+          "required": ["cardinality", "join"],
+          "not": { "required": ["reverseOf"] }
+        },
+        {
+          "required": ["reverseOf"],
+          "not": {
+            "anyOf": [
+              { "required": ["cardinality"] },
+              { "required": ["join"] },
+              { "required": ["dependent"] }
+            ]
+          }
+        }
+      ]
+    },
+    "relationshipJoin": {
+      "description": "Structured mapping equality. Source is local; target carries the sole target Entity reference.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source", "target"],
+      "properties": {
+        "source": { "$ref": "#/$defs/identifier" },
+        "target": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["entity", "attribute"],
+          "properties": {
+            "entity": { "type": "string", "minLength": 1 },
+            "attribute": { "$ref": "#/$defs/identifier" }
+          }
+        }
+      }
+    },
+    "index": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "attributes"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "attributes": {
+          "description": "Ordered list of attribute names participating in the index.",
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/identifier" }
+        },
+        "unique": {
+          "description": "True for a unique index (enables the cache fast-path).",
+          "type": "boolean",
+          "default": false
+        }
+      }
+    },
+    "asOfAxis": {
+      "description": "One valid-time or transaction-time half-open interval over two local Timestamp Attributes.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["dimension", "startAttribute", "endAttribute"],
+      "properties": {
+        "dimension": { "enum": ["validTime", "transactionTime"] },
+        "startAttribute": { "$ref": "#/$defs/identifier" },
+        "endAttribute": { "$ref": "#/$defs/identifier" }
+      }
+    },
+    "valueObject": {
+      "description": "A top-level embedded composite stored in one structured-document column. Omitted column uses the occurrence name.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name"],
+      "properties": {
+        "name": { "$ref": "#/$defs/identifier" },
+        "column": {
+          "description": "The single structured-document column the whole value object (attributes + nested value objects) is stored in. Top-level only — a nested value object never declares a column.",
+          "type": "string",
+          "minLength": 1
+        },
+        "nullable": { "type": "boolean", "default": false },
+        "multiplicity": {
+          "description": "One composite or an ordered non-null collection in the same column.",
+          "enum": ["one", "many"],
+          "default": "one"
+        },
+        "attributes": {
+          "description": "Typed fields of this value object. Unlike entity attributes they carry no per-field column: every attribute lives inside the one structured-document column.",
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/valueObjectAttribute" }
+        },
+        "valueObjects": {
+          "description": "Value objects nested inside this one, to arbitrary depth. Stored in the SAME structured-document column — never extra columns, rows, or joins.",
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/nestedValueObject" }
+        }
+      },
+      "allOf": [
+        { "anyOf": [{ "required": ["attributes"] }, { "required": ["valueObjects"] }] },
+        {
+          "if": {
+            "required": ["multiplicity"],
+            "properties": { "multiplicity": { "const": "many" } }
+          },
+          "then": {
+            "not": {
+              "required": ["nullable"],
+              "properties": { "nullable": { "const": true } }
+            }
+          }
+        }
+      ]
+    },
+    "nestedValueObject": {
+      "description": "A storage-neutral nested occurrence inside its top-level ancestor's structured-document column.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name"],
+      "properties": {
+        "name": { "$ref": "#/$defs/identifier" },
+        "nullable": { "type": "boolean", "default": false },
+        "multiplicity": {
+          "description": "One composite or an ordered non-null collection.",
+          "enum": ["one", "many"],
+          "default": "one"
+        },
+        "attributes": {
+          "description": "Typed fields of this nested value object; no per-field column.",
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/valueObjectAttribute" }
+        },
+        "valueObjects": {
+          "description": "Further-nested value objects, to arbitrary depth, in the same column.",
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/nestedValueObject" }
+        }
+      },
+      "allOf": [
+        { "anyOf": [{ "required": ["attributes"] }, { "required": ["valueObjects"] }] },
+        {
+          "if": {
+            "required": ["multiplicity"],
+            "properties": { "multiplicity": { "const": "many" } }
+          },
+          "then": {
+            "not": {
+              "required": ["nullable"],
+              "properties": { "nullable": { "const": true } }
+            }
+          }
+        }
+      ]
+    },
+    "valueObjectAttribute": {
+      "description": "A typed field of a value object. Unlike an entity `attribute` it carries NO per-field `column`: the whole value object (all attributes plus nested value objects) is stored in one structured-document column, so an inner field has no column of its own. Its declared m-core neutral type is normative for nested-predicate literal typing and casting (m-op-algebra/m-sql).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "type"],
+      "properties": {
+        "name": { "$ref": "#/$defs/identifier" },
+        "type": { "$ref": "#/$defs/neutralType" },
+        "nullable": { "type": "boolean", "default": false }
+      }
+    },
+    "inheritance": {
+      "description": "Closed-tree inheritance. The root alone declares strategy, persistence, and asOfAxes. Under table-per-hierarchy the root owns the one shared table and tag column; descendants own no table. Under table-per-concrete-subtype abstract nodes are tableless and every concrete subtype owns a table.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["role"],
+      "properties": {
+        "strategy": {
+          "description": "The family mapping strategy, declared ONLY by the `root` (descendants inherit it). table-per-leaf and table-per-class are intentionally absent: the enum rejects them.",
+          "enum": ["table-per-hierarchy", "table-per-concrete-subtype"]
+        },
+        "role": {
+          "description": "This entity's position in the closed tree: the abstract `root` that names the family and declares its strategy; an `abstract-subtype` interior node (tableless, rowless, addressable as a polymorphic position); or a `concrete-subtype`, the only instantiable, row-owning participant.",
+          "enum": ["root", "abstract-subtype", "concrete-subtype"]
+        },
+        "parent": {
+          "description": "For a non-root participant (`abstract-subtype` / `concrete-subtype`), the name of the entity it directly extends. REQUIRED for a non-root, FORBIDDEN for a root.",
+          "type": "string",
+          "minLength": 1
+        },
+        "tag": {
+          "description": "table-per-hierarchy ROOT only: the discriminator column in the shared table distinguishing concrete subtypes. Declared once on the root (not repeated on descendants) and FORBIDDEN under table-per-concrete-subtype (no shared table). It is a framework-owned metadata column, NOT a declared entity attribute — abstract-target reads project it raw and materialize `familyVariant` from it (m-sql / m-case-format, resolved Q6).",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["column"],
+          "properties": {
+            "column": {
+              "description": "The tag (discriminator) column name in the shared table.",
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "tagValue": {
+          "description": "table-per-hierarchy CONCRETE-SUBTYPE only: the value the root's tag column carries for THIS concrete subtype's rows. Declared only on a `concrete-subtype`; whether it is REQUIRED depends on the family strategy (a cross-entity rule the root owns), so this per-entity schema leaves it optional and the semantic validator enforces its presence under table-per-hierarchy and its absence under table-per-concrete-subtype.",
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "allOf": [
+        {
+          "description": "The `root` declares the family strategy and has NO parent; every non-root participant names its `parent` and does NOT redeclare the strategy.",
+          "if": { "required": ["role"], "properties": { "role": { "const": "root" } } },
+          "then": { "required": ["strategy"], "not": { "required": ["parent"] } },
+          "else": { "required": ["parent"], "not": { "required": ["strategy"] } }
+        },
+        {
+          "description": "The `tag` column lives on the table-per-hierarchy ROOT and nowhere else: REQUIRED on a `root` declaring `strategy: table-per-hierarchy`, FORBIDDEN otherwise (a table-per-concrete-subtype root, an abstract subtype, or a concrete subtype).",
+          "if": {
+            "required": ["role", "strategy"],
+            "properties": {
+              "role": { "const": "root" },
+              "strategy": { "const": "table-per-hierarchy" }
+            }
+          },
+          "then": { "required": ["tag"] },
+          "else": { "not": { "required": ["tag"] } }
+        },
+        {
+          "description": "`tagValue` is a concrete subtype's discriminated value: only a `concrete-subtype` may declare it (a `root` / `abstract-subtype` MUST NOT).",
+          "if": { "required": ["role"], "properties": { "role": { "const": "concrete-subtype" } } },
+          "then": {},
+          "else": { "not": { "required": ["tagValue"] } }
+        }
+      ]
+    },
+    "pkGeneration": {
+      "description": "Primary-key generation strategy. Only the strategy keyword is required; sequence carries extra fields.",
+      "oneOf": [
+        { "enum": ["application-assigned", "max"] },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["strategy", "name"],
+          "properties": {
+            "strategy": { "const": "sequence" },
+            "name": { "type": "string", "minLength": 1 },
+            "batchSize": { "type": "integer", "minimum": 1, "default": 1 },
+            "initialValue": { "type": "integer", "default": 1 },
+            "incrementSize": { "type": "integer", "minimum": 1, "default": 1 }
+          }
+        }
+      ]
+    }
+  }
+}

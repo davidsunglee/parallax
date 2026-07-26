@@ -17,9 +17,6 @@ from dataclasses import dataclass
 from typing import Final
 
 from parallax.core.base import NeutralType
-from parallax.core.descriptor import records
-from parallax.core.descriptor.errors import DescriptorError
-from parallax.core.descriptor.type_spelling import parse_type_spelling
 from parallax.core.metamodel import (
     APPLICATION_ASSIGNED,
     MAX,
@@ -68,10 +65,13 @@ from parallax.core.metamodel import (
     ValueObjectShapeKey,
 )
 from parallax.core.metamodel import Sequence as SequenceGeneration
+from parallax.descriptor import _records
+from parallax.descriptor._errors import DescriptorError
+from parallax.descriptor._type_spelling import parse_type_spelling
 
 __all__ = ["unresolved_metamodel"]
 
-_CARDINALITIES: Final[Mapping[records.RelationshipCardinality, Cardinality]] = {
+_CARDINALITIES: Final[Mapping[_records.RelationshipCardinality, Cardinality]] = {
     "one-to-one": Cardinality.ONE_TO_ONE,
     "many-to-one": Cardinality.MANY_TO_ONE,
     "one-to-many": Cardinality.ONE_TO_MANY,
@@ -82,12 +82,12 @@ _DIRECTIONS: Final[Mapping[str, SortDirection]] = {
     "desc": SortDirection.DESCENDING,
 }
 
-_MULTIPLICITIES: Final[Mapping[records.Multiplicity, Multiplicity]] = {
+_MULTIPLICITIES: Final[Mapping[_records.Multiplicity, Multiplicity]] = {
     "one": Multiplicity.ONE,
     "many": Multiplicity.MANY,
 }
 
-_DIMENSIONS: Final[Mapping[records.TemporalDimension, TemporalDimension]] = {
+_DIMENSIONS: Final[Mapping[_records.TemporalDimension, TemporalDimension]] = {
     "validTime": TemporalDimension.VALID_TIME,
     "transactionTime": TemporalDimension.TRANSACTION_TIME,
 }
@@ -120,7 +120,7 @@ class _UnresolvedMetamodel:
     entities: tuple[UnresolvedEntityDeclaration, ...]
 
 
-def unresolved_metamodel(metamodel: records.Metamodel) -> UnresolvedMetamodel:
+def unresolved_metamodel(metamodel: _records.Metamodel) -> UnresolvedMetamodel:
     """Adapt parsed descriptor records into formation's Unresolved Metamodel.
 
     Raises :class:`DescriptorError` when a record carries a value the model
@@ -135,7 +135,7 @@ def unresolved_metamodel(metamodel: records.Metamodel) -> UnresolvedMetamodel:
     return _UnresolvedMetamodel(tuple(_adapted(entity) for entity in metamodel.entities))
 
 
-def _adapted(entity: records.Entity) -> UnresolvedEntityDeclaration:
+def _adapted(entity: _records.Entity) -> UnresolvedEntityDeclaration:
     """One Entity record as a declaration, with model-value rejections classified.
 
     Model values enforce their own invariants by refusing construction, and this
@@ -151,7 +151,7 @@ def _adapted(entity: records.Entity) -> UnresolvedEntityDeclaration:
         raise DescriptorError(f"entity {entity.canonical_name!r}: {error}") from error
 
 
-def _declaration(entity: records.Entity) -> UnresolvedEntityDeclaration:
+def _declaration(entity: _records.Entity) -> UnresolvedEntityDeclaration:
     identity = EntityIdentity(entity.namespace, entity.name)
     where = f"entity {identity.canonical!r}"
     return _EntityDeclaration(
@@ -167,7 +167,7 @@ def _declaration(entity: records.Entity) -> UnresolvedEntityDeclaration:
     )
 
 
-def _persistence(entity: records.Entity) -> PersistenceMode | None:
+def _persistence(entity: _records.Entity) -> PersistenceMode | None:
     """The Persistence Mode this Entity itself declares, if any.
 
     Absence is a declaration fact, not the Read Write default: on a standalone
@@ -185,7 +185,7 @@ def _persistence(entity: records.Entity) -> PersistenceMode | None:
 
 
 def _attribute(
-    entity: EntityIdentity, attribute: records.Attribute, where: str
+    entity: EntityIdentity, attribute: _records.Attribute, where: str
 ) -> AttributeMetadata:
     return AttributeMetadata(
         identity=AttributeIdentity(entity, attribute.name),
@@ -199,7 +199,7 @@ def _attribute(
     )
 
 
-def _primary_key(attribute: records.Attribute, where: str) -> AttributePrimaryKey:
+def _primary_key(attribute: _records.Attribute, where: str) -> AttributePrimaryKey:
     """The Attribute's primary-key state, generation included on the key branch.
 
     An omitted generator on a declared key normalizes to Application Assigned,
@@ -213,7 +213,7 @@ def _primary_key(attribute: records.Attribute, where: str) -> AttributePrimaryKe
     return PrimaryKey(_generation(generator, f"{where} attribute {attribute.name!r}"))
 
 
-def _generation(generator: records.PkGenerator, where: str) -> PkGeneration:
+def _generation(generator: _records.PkGenerator, where: str) -> PkGeneration:
     """The generation a record's strategy denotes, fully parameterized.
 
     An omitted Sequence sizing parameter takes its semantic default, so an
@@ -243,7 +243,7 @@ def _neutral_type(spelling: str, where: str) -> NeutralType:
     return resolved
 
 
-def _axis(entity: EntityIdentity, axis: records.AsOfAxisMetadata) -> AsOfAxisMetadata:
+def _axis(entity: EntityIdentity, axis: _records.AsOfAxisMetadata) -> AsOfAxisMetadata:
     return AsOfAxisMetadata(
         dimension=_DIMENSIONS[axis.dimension],
         start_attribute=AttributeIdentity(entity, axis.start_attribute),
@@ -251,7 +251,7 @@ def _axis(entity: EntityIdentity, axis: records.AsOfAxisMetadata) -> AsOfAxisMet
     )
 
 
-def _index(entity: EntityIdentity, index: records.Index) -> IndexMetadata:
+def _index(entity: EntityIdentity, index: _records.Index) -> IndexMetadata:
     return IndexMetadata(
         identity=IndexIdentity(entity, index.name),
         attributes=tuple(AttributeIdentity(entity, name) for name in index.attributes),
@@ -260,11 +260,11 @@ def _index(entity: EntityIdentity, index: records.Index) -> IndexMetadata:
 
 
 def _relationship(
-    entity: EntityIdentity, declaration: records.RelationshipDeclaration
+    entity: EntityIdentity, declaration: _records.RelationshipDeclaration
 ) -> UnresolvedRelationshipDeclaration:
     identity = RelationshipIdentity(entity, declaration.name)
     match declaration:
-        case records.DefiningRelationship():
+        case _records.DefiningRelationship():
             return UnresolvedDefiningRelationshipDeclaration(
                 identity=identity,
                 cardinality=_CARDINALITIES[declaration.cardinality],
@@ -278,7 +278,7 @@ def _relationship(
                 dependent=declaration.dependent,
                 order_by=_order_by(declaration.order_by),
             )
-        case records.ReverseRelationship():
+        case _records.ReverseRelationship():
             owner, _, peer = declaration.reverse_of.rpartition(".")
             return UnresolvedReverseRelationshipDeclaration(
                 identity=identity,
@@ -288,7 +288,7 @@ def _relationship(
 
 
 def _order_by(
-    terms: tuple[records.OrderByTerm, ...],
+    terms: tuple[_records.OrderByTerm, ...],
 ) -> tuple[UnresolvedRelationshipOrder, ...]:
     return tuple(
         UnresolvedRelationshipOrder(term.attr, _DIRECTIONS[term.direction]) for term in terms
@@ -309,7 +309,7 @@ def _entity_reference(spelling: str) -> EntityReference:
     return ExactEntityReference(EntityIdentity(namespace, name))
 
 
-def _inheritance(inheritance: records.Inheritance, where: str) -> UnresolvedInheritance:
+def _inheritance(inheritance: _records.Inheritance, where: str) -> UnresolvedInheritance:
     match inheritance.role:
         case "root":
             return AbstractRoot(_strategy(inheritance, where))
@@ -319,7 +319,7 @@ def _inheritance(inheritance: records.Inheritance, where: str) -> UnresolvedInhe
             return ConcreteSubtype(_parent(inheritance, where), inheritance.tag_value)
 
 
-def _strategy(inheritance: records.Inheritance, where: str) -> InheritanceStrategy:
+def _strategy(inheritance: _records.Inheritance, where: str) -> InheritanceStrategy:
     match inheritance.strategy:
         case "table-per-hierarchy":
             tag_column = inheritance.tag_column
@@ -332,14 +332,14 @@ def _strategy(inheritance: records.Inheritance, where: str) -> InheritanceStrate
             raise DescriptorError(f"{where}: an inheritance root declares a strategy")
 
 
-def _parent(inheritance: records.Inheritance, where: str) -> EntityReference:
+def _parent(inheritance: _records.Inheritance, where: str) -> EntityReference:
     parent = inheritance.parent
     if parent is None:
         raise DescriptorError(f"{where}: an inheritance descendant names its parent")
     return _entity_reference(parent)
 
 
-def _value_object(occurrence: records.ValueObject, where: str) -> ValueObjectOccurrenceDeclaration:
+def _value_object(occurrence: _records.ValueObject, where: str) -> ValueObjectOccurrenceDeclaration:
     return ValueObjectOccurrenceDeclaration(
         name=occurrence.name,
         storage=Column(occurrence.storage_column),
@@ -350,7 +350,7 @@ def _value_object(occurrence: records.ValueObject, where: str) -> ValueObjectOcc
 
 
 def _nested_value_object(
-    occurrence: records.NestedValueObject, where: str
+    occurrence: _records.NestedValueObject, where: str
 ) -> NestedValueObjectOccurrenceDeclaration:
     return NestedValueObjectOccurrenceDeclaration(
         name=occurrence.name,
@@ -361,8 +361,8 @@ def _nested_value_object(
 
 
 def _shape(
-    attributes: tuple[records.ValueObjectAttribute, ...],
-    value_objects: tuple[records.NestedValueObject, ...],
+    attributes: tuple[_records.ValueObjectAttribute, ...],
+    value_objects: tuple[_records.NestedValueObject, ...],
     where: str,
 ) -> ValueObjectShapeDeclaration:
     """One occurrence's shape, with a Shape Key minted for this declaration.

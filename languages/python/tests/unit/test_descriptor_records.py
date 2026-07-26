@@ -7,10 +7,10 @@ import pytest
 
 from parallax.conformance import case_format
 from parallax.conformance import models as corpus_models
-from parallax.core.descriptor import (
+from parallax.descriptor._errors import DescriptorError
+from parallax.descriptor._records import (
     AsOfAxisMetadata,
     Attribute,
-    DescriptorError,
     Entity,
     Inheritance,
     Metamodel,

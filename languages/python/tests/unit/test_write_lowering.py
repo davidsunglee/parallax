@@ -29,10 +29,9 @@ from collections.abc import Mapping
 import pytest
 
 from parallax.conformance import models
-from parallax.core import descriptor, inheritance, opt_lock
+from parallax.core import inheritance, opt_lock
 from parallax.core import op_algebra as oa
 from parallax.core.db_port import JsonDocument
-from parallax.core.descriptor import Metamodel
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.model_formation import MetamodelValidationError
 from parallax.core.sql_gen import Statement
@@ -48,6 +47,8 @@ from parallax.core.unit_work import (
     WriteTarget,
     plan_flush,
 )
+from parallax.descriptor import _records
+from parallax.descriptor._records import Metamodel
 from parallax.snapshot.handle import WriteLoweringError, lower_write
 
 pytestmark = pytest.mark.unit
@@ -652,19 +653,15 @@ def test_batched_writes_on_an_inheritance_participant_carry_the_family_tag_guard
 # A COMPOSITE-key entity: the corpus declares none, but a composite primary key
 # is an ordinary well-formed model, and `_keys_in_list` renders it as a row-
 # constructor IN-list rather than the single-column form.
-_LEDGER = descriptor.Metamodel(
+_LEDGER = _records.Metamodel(
     entities=(
-        descriptor.Entity(
+        _records.Entity(
             name="LedgerEntry",
             table="ledger_entry",
             attributes=(
-                descriptor.Attribute(
-                    name="bookId", type="int64", column="book_id", primary_key=True
-                ),
-                descriptor.Attribute(
-                    name="lineNo", type="int64", column="line_no", primary_key=True
-                ),
-                descriptor.Attribute(name="amount", type="decimal(18,2)", column="amount"),
+                _records.Attribute(name="bookId", type="int64", column="book_id", primary_key=True),
+                _records.Attribute(name="lineNo", type="int64", column="line_no", primary_key=True),
+                _records.Attribute(name="amount", type="decimal(18,2)", column="amount"),
             ),
         ),
     )

@@ -18,7 +18,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Final, Literal
 
-from parallax.core.descriptor.errors import DescriptorError
+from parallax.descriptor._errors import DescriptorError
 
 __all__ = [
     "UNSET",
@@ -461,7 +461,7 @@ class Metamodel:
 
     def relationships_for(self, entity: str | Entity) -> tuple[Relationship, ...]:
         """The compiled directional relationship values for one Entity."""
-        from parallax.core.descriptor.relationship import relationships_for
+        from parallax.descriptor._relationship import relationships_for
 
         return relationships_for(self, entity)
 

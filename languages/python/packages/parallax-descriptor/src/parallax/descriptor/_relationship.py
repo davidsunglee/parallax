@@ -8,8 +8,8 @@ canonical target Entity spellings, and an optional peer name.
 
 from __future__ import annotations
 
-from parallax.core.descriptor.errors import DescriptorError
-from parallax.core.descriptor.records import (
+from parallax.descriptor._errors import DescriptorError
+from parallax.descriptor._records import (
     DefiningRelationship,
     Entity,
     Metamodel,

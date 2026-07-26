@@ -18,11 +18,11 @@ from _sql_gen_support import formed, target
 from _sql_gen_support import model as accepted_model
 
 from parallax.core import op_algebra as oa
-from parallax.core.descriptor import deserialize
 from parallax.core.dialect import POSTGRES
 from parallax.core.metamodel import AttributeIdentity, Cardinality, Metamodel, TemporalDimension
 from parallax.core.navigate import canonicalize, resolve_relationship
 from parallax.core.sql_gen import compile_read
+from parallax.descriptor._serde import deserialize
 
 pytestmark = pytest.mark.unit
 

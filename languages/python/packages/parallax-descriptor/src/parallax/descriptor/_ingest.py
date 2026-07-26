@@ -4,16 +4,16 @@ Ingestion is a fixed three-phase contract: syntax, then schema, then value.
 Each phase either passes the document forward or fails with that phase's own
 error; no phase reports another phase's failures, no failing phase produces an
 Unresolved Metamodel, and only a document every phase accepts reaches the
-adapter (:func:`~parallax.core.descriptor.unresolved.unresolved_metamodel`) for
+adapter (:func:`~parallax.descriptor._adapter.unresolved_metamodel`) for
 semantic formation.
 
-The schema phase (phase 2) evaluates the whole document against
-``core/schemas/metamodel.schema.json`` (JSON Schema Draft 2020-12) with
-``jsonschema``. That dependency is imported lazily, function-local: the
-descriptor scope ships inside ``parallax-core``, whose declared runtime
-manifest is ``pydantic`` and ``pyyaml`` alone (`spec/python.md` §8) — text
-ingestion (this module) runs only in the development-only conformance harness,
-which declares ``jsonschema`` for itself.
+The schema phase (phase 2) evaluates the whole document against the canonical
+``metamodel.schema.json`` (JSON Schema Draft 2020-12) with ``jsonschema``, which
+``parallax-descriptor`` declares directly alongside ``pyyaml``, so every
+installed Descriptor Frontend can execute all three phases and neither
+dependency has an optional-import failure branch. The schema itself is read from
+this distribution's own packaged copy through :mod:`importlib.resources`;
+installed runtime code never searches repository-relative paths.
 """
 
 from __future__ import annotations
@@ -21,15 +21,17 @@ from __future__ import annotations
 import functools
 import json
 from collections.abc import Mapping
-from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from importlib import resources
+from typing import Any, cast
 
+import jsonschema
 import yaml
+from jsonschema.protocols import Validator
 
-if TYPE_CHECKING:
-    from jsonschema.protocols import Validator
-
-from parallax.core.descriptor.errors import (
+from parallax.core.metamodel import UnresolvedMetamodel
+from parallax.descriptor._adapter import unresolved_metamodel
+from parallax.descriptor._errors import (
+    DescriptorFormat,
     DescriptorSchemaError,
     DescriptorSchemaViolation,
     DescriptorSyntaxError,
@@ -38,32 +40,45 @@ from parallax.core.descriptor.errors import (
     canonical_schema_violations,
     canonical_value_violations,
 )
-from parallax.core.descriptor.records import Metamodel
-from parallax.core.descriptor.serde import parse_document
-from parallax.core.descriptor.type_spelling import parse_type_spelling
-from parallax.core.descriptor.unresolved import unresolved_metamodel
-from parallax.core.metamodel import UnresolvedMetamodel
+from parallax.descriptor._records import Metamodel
+from parallax.descriptor._serde import parse_document
+from parallax.descriptor._type_spelling import parse_type_spelling
 
-__all__ = ["ingest_document", "parse_json", "parse_yaml"]
+__all__ = ["SCHEMA_RESOURCE", "ingest_document", "parse_json", "parse_yaml", "schema_text"]
+
+SCHEMA_RESOURCE: str = "_schemas/metamodel.schema.json"
+"""This distribution's packaged copy of the canonical metamodel schema.
+
+A path relative to the ``parallax.descriptor`` package. The language-neutral
+``core/schemas/metamodel.schema.json`` remains authoritative; the packaged copy
+is byte-for-byte identical and is what an installed frontend validates against.
+"""
 
 
-def parse_json(text: str) -> UnresolvedMetamodel:
+def schema_text() -> str:
+    """The packaged canonical metamodel schema, read as UTF-8 text."""
+    return resources.files("parallax.descriptor").joinpath(SCHEMA_RESOURCE).read_text("utf-8")
+
+
+def parse_json(text: str | bytes) -> UnresolvedMetamodel:
     """Ingest a JSON descriptor document through every ingestion phase.
 
-    Raises :class:`~parallax.core.descriptor.errors.DescriptorSyntaxError` on
-    malformed JSON, :class:`~parallax.core.descriptor.errors.DescriptorSchemaError`
-    on a canonical-schema violation, and
-    :class:`~parallax.core.descriptor.errors.DescriptorValueError` on a
+    ``text`` is JSON source, decoded as UTF-8 when supplied as bytes. Raises
+    :class:`~parallax.descriptor._errors.DescriptorSyntaxError` on undecodable
+    bytes or malformed JSON,
+    :class:`~parallax.descriptor._errors.DescriptorSchemaError` on a
+    canonical-schema violation, and
+    :class:`~parallax.descriptor._errors.DescriptorValueError` on a
     schema-valid but unconstructible value. No model forms before every phase
     succeeds.
     """
-    return unresolved_metamodel(ingest_document(_decode_json(text)))
+    return unresolved_metamodel(ingest_document(_decode_json(_utf8(text, "json"))))
 
 
-def parse_yaml(text: str) -> UnresolvedMetamodel:
+def parse_yaml(text: str | bytes) -> UnresolvedMetamodel:
     """Ingest a YAML descriptor document through every ingestion phase — the
     YAML sibling of :func:`parse_json`."""
-    return unresolved_metamodel(ingest_document(_decode_yaml(text)))
+    return unresolved_metamodel(ingest_document(_decode_yaml(_utf8(text, "yaml"))))
 
 
 def ingest_document(document: object) -> Metamodel:
@@ -77,7 +92,7 @@ def ingest_document(document: object) -> Metamodel:
     ``type`` spelling. Reference resolution, relationship pairing, and every
     other semantic question belong to Model Formation, reached later by
     passing this function's result to
-    :func:`~parallax.core.descriptor.unresolved.unresolved_metamodel` and the
+    :func:`~parallax.descriptor._adapter.unresolved_metamodel` and the
     foundational resolver.
     """
     _validate_schema(document)
@@ -91,6 +106,21 @@ def ingest_document(document: object) -> Metamodel:
 # --------------------------------------------------------------------------- #
 # Phase 1 — syntax.                                                           #
 # --------------------------------------------------------------------------- #
+def _utf8(text: str | bytes, format: DescriptorFormat) -> str:
+    """``text`` as source text, decoding bytes as UTF-8.
+
+    Undecodable bytes are a syntax failure of the declared format, not a
+    separate error family: the caller handed over source it called JSON or YAML,
+    and it is not well-formed in that format's encoding.
+    """
+    if isinstance(text, str):
+        return text
+    try:
+        return text.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise DescriptorSyntaxError(format, cause=exc) from exc
+
+
 def _decode_json(text: str) -> object:
     try:
         return json.loads(text)
@@ -111,31 +141,9 @@ def _decode_yaml(text: str) -> object:
 # --------------------------------------------------------------------------- #
 # Phase 2 — schema.                                                           #
 # --------------------------------------------------------------------------- #
-def _schema_path() -> Path:
-    here = Path(__file__).resolve()
-    for candidate in here.parents:
-        schema = candidate / "core" / "schemas" / "metamodel.schema.json"
-        if schema.is_file():
-            return schema
-    raise FileNotFoundError(
-        f"core/schemas/metamodel.schema.json not found above {here}; descriptor "
-        "schema validation requires a Parallax repository checkout"
-    )
-
-
 @functools.cache
 def _validator() -> Validator:
-    try:
-        import jsonschema
-    except ImportError as exc:
-        raise RuntimeError(
-            "descriptor schema validation (m-descriptor ingestion phase 2) requires "
-            "the optional `jsonschema` dependency, which `parallax-core` does not "
-            "declare (spec/python.md §8); install it directly, or install "
-            "`parallax-conformance`, which declares it, to ingest descriptor text"
-        ) from exc
-    schema = json.loads(_schema_path().read_text(encoding="utf-8"))
-    return jsonschema.Draft202012Validator(schema)
+    return jsonschema.Draft202012Validator(json.loads(schema_text()))
 
 
 def _validate_schema(document: object) -> None:
