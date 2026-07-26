@@ -111,7 +111,7 @@ def export_yaml(hub: MetamodelHub) -> str:
 
 
 def _sealed(source: UnresolvedMetamodel) -> MetamodelHub:
-    return MetamodelHub._from_unresolved(source)  # pyright: ignore[reportPrivateUsage]
+    return MetamodelHub._from_unresolved(source)  # pyright: ignore[reportPrivateUsage] - first-party seam calls the hub's own private constructor
 
 
 def _text(hub: MetamodelHub, target: ExportTarget) -> str:

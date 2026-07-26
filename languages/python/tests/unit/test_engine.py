@@ -424,7 +424,7 @@ def test_scenario_uow_spans_signals_the_two_group_interleave_with_none() -> None
     # second, peer-backed connection this
     # function does not construct.
     assert (
-        engine._scenario_uow_spans(  # pyright: ignore[reportPrivateUsage]
+        engine._scenario_uow_spans(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
             "m-unit-work-999-synthetic.yaml", _two_group_interleave_steps()
         )
         is None
@@ -465,7 +465,7 @@ def test_scenario_uow_spans_rejects_interleaving_beyond_the_two_group_shape() ->
         },
     ]
     with pytest.raises(engine.EngineError, match="interleave beyond the one witnessed"):
-        engine._scenario_uow_spans(  # pyright: ignore[reportPrivateUsage]
+        engine._scenario_uow_spans(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
             "m-unit-work-999-synthetic.yaml", steps
         )
 
@@ -528,7 +528,7 @@ class _ScriptedPort:
 # attribute name as a string literal here.
 setattr(
     _ScriptedPort,
-    engine._TERMINATION_LADDER_TRUST_ATTR,  # pyright: ignore[reportPrivateUsage]
+    engine._TERMINATION_LADDER_TRUST_ATTR,  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
     True,
 )
 
@@ -732,7 +732,7 @@ def test_await_interleaved_workers_unsticks_both_on_timeout_then_joins_before_ra
     # keeps this deterministic and fast. Neither worker's own connection ever
     # needs cancelling here (both wake on `release_all`), so a plain
     # `_ScriptedPort` stands in for `main_connection` too.
-    turnstile = engine._Turnstile()  # pyright: ignore[reportPrivateUsage]
+    turnstile = engine._Turnstile()  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
     main_connection = _ScriptedPort()
     peer = _ScriptedPort()
 
@@ -748,7 +748,7 @@ def test_await_interleaved_workers_unsticks_both_on_timeout_then_joins_before_ra
     thread_b.start()
 
     with pytest.raises(engine.EngineError, match="turnstile hand-off is missing"):
-        engine._await_interleaved_workers(  # pyright: ignore[reportPrivateUsage]
+        engine._await_interleaved_workers(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
             thread_a,
             thread_b,
             turnstile,
@@ -805,7 +805,7 @@ def test_await_interleaved_workers_cancels_a_survivor_blocked_in_real_io_then_jo
     # (now) actually joined — raise the SAME ordinary timeout error this
     # function has always raised, with `is_alive()` false for every worker
     # before it does.
-    turnstile = engine._Turnstile()  # pyright: ignore[reportPrivateUsage]
+    turnstile = engine._Turnstile()  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
     main_connection = _CancellableBlockingConnection()
     peer = _ScriptedPort()
 
@@ -821,7 +821,7 @@ def test_await_interleaved_workers_cancels_a_survivor_blocked_in_real_io_then_jo
     thread_b.start()
 
     with pytest.raises(engine.EngineError, match="turnstile hand-off is missing"):
-        engine._await_interleaved_workers(  # pyright: ignore[reportPrivateUsage]
+        engine._await_interleaved_workers(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
             thread_a,
             thread_b,
             turnstile,
@@ -886,7 +886,7 @@ def test_await_interleaved_workers_terminates_a_survivor_with_no_cancel_capabili
     # close semantics closely enough to prove it: its blocked `execute`
     # wakes and raises once closed, and a later call raises too (as far as
     # the fake allows) rather than executing.
-    turnstile = engine._Turnstile()  # pyright: ignore[reportPrivateUsage]
+    turnstile = engine._Turnstile()  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
     main_connection = _TerminableBlockingConnection()
     peer = _ScriptedPort()
 
@@ -904,7 +904,7 @@ def test_await_interleaved_workers_terminates_a_survivor_with_no_cancel_capabili
     thread_b.start()
 
     with pytest.raises(engine.EngineError, match=r"terminated \(closed\).*unsafe to reuse"):
-        engine._await_interleaved_workers(  # pyright: ignore[reportPrivateUsage]
+        engine._await_interleaved_workers(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
             thread_a,
             thread_b,
             turnstile,
@@ -983,7 +983,7 @@ def test_await_interleaved_workers_escalates_past_a_failing_close_to_the_underly
     # pin above raises — never a live worker at the raise, and the failing
     # outer `close()` itself must never be silently swallowed: it must
     # surface as recorded context on the raised error rather than masked.
-    turnstile = engine._Turnstile()  # pyright: ignore[reportPrivateUsage]
+    turnstile = engine._Turnstile()  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
     main_connection = _TerminableOnlyViaUnderlyingSeamConnection()
     peer = _ScriptedPort()
 
@@ -1003,7 +1003,7 @@ def test_await_interleaved_workers_escalates_past_a_failing_close_to_the_underly
     with pytest.raises(
         engine.EngineError, match=r"terminated \(closed\).*unsafe to reuse"
     ) as exc_info:
-        engine._await_interleaved_workers(  # pyright: ignore[reportPrivateUsage]
+        engine._await_interleaved_workers(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
             thread_a,
             thread_b,
             turnstile,
@@ -1043,7 +1043,7 @@ def test_terminate_connection_records_every_missing_capability() -> None:
     # silently doing nothing, matching the ladder's own "every failure is
     # recorded" contract) rather than raising or hanging. See
     # `_NoCloseNoUnderlyingConnection` for why this calls the rung directly.
-    failures = engine._terminate_connection(  # pyright: ignore[reportPrivateUsage]
+    failures = engine._terminate_connection(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
         _NoCloseNoUnderlyingConnection(), "uow-ours"
     )
     assert len(failures) == 2
@@ -1085,7 +1085,7 @@ def test_terminate_connection_escalates_through_every_rung_when_all_fail() -> No
     # outer `close()`, the underlying seam's own `close()`, and rung
     # three's own `fileno()` probe (real-transport only) all miss or raise —
     # every one of them recorded, never silently dropped.
-    failures = engine._terminate_connection(  # pyright: ignore[reportPrivateUsage]
+    failures = engine._terminate_connection(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
         _FailingOuterCloseWithFailingUnderlyingSeam(), "uow-ours"
     )
     assert len(failures) == 3
@@ -1330,7 +1330,7 @@ def test_validate_termination_trust_refuses_an_undeclared_but_healthy_shape(
     # nothing DECLARES the trust contract. Trust is never inferred from
     # shape or behavior, only granted by `PostgresAdapter`'s own
     # known-deterministic type or an explicit marker.
-    defects = engine._validate_termination_trust(  # pyright: ignore[reportPrivateUsage]
+    defects = engine._validate_termination_trust(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
         connection, "main connection"
     )
     assert len(defects) == 1
@@ -1343,7 +1343,7 @@ def test_terminate_connection_succeeds_on_the_rung_one_only_shape() -> None:
     # `_await_interleaved_workers`'s own direct pins above) and exercises
     # rung one (outer `close()`) directly.
     connection = _RungOneOnlyConnection()
-    failures = engine._terminate_connection(  # pyright: ignore[reportPrivateUsage]
+    failures = engine._terminate_connection(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
         connection, "main connection"
     )
     assert failures == []
@@ -1360,7 +1360,7 @@ def test_terminate_connection_succeeds_on_the_rung_two_only_shape() -> None:
     # on this shape is the underlying seam's own `close()` firing, not an
     # empty trail.
     connection = _RungTwoOnlyConnection()
-    failures = engine._terminate_connection(  # pyright: ignore[reportPrivateUsage]
+    failures = engine._terminate_connection(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
         connection, "main connection"
     )
     assert failures == ["main connection: connection exposes no close() capability"]
@@ -1397,7 +1397,7 @@ def test_validate_termination_trust_accepts_the_postgres_adapter_shape() -> None
 
     adapter = PostgresAdapter(cast("Any", _FakePsycopgConnection()))
     assert (
-        engine._validate_termination_trust(  # pyright: ignore[reportPrivateUsage]
+        engine._validate_termination_trust(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
             adapter, "main connection"
         )
         == []
@@ -1413,7 +1413,7 @@ def test_require_interleaved_termination_capability_trusts_the_postgres_adapter_
 
     main_connection = PostgresAdapter(cast("Any", _FakePsycopgConnection()))
     peer_connection = PostgresAdapter(cast("Any", _FakePsycopgConnection()))
-    engine._require_interleaved_termination_capability(  # pyright: ignore[reportPrivateUsage]
+    engine._require_interleaved_termination_capability(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
         main_connection, peer_connection, "m-unit-work-999-synthetic.yaml"
     )
 
@@ -1426,7 +1426,7 @@ def test_require_interleaved_termination_capability_accepts_a_marked_fake() -> N
     # `run_interleaved_scenario_case`'s own entry-point pins above already
     # exercise the full helper path past this preflight; this pin isolates
     # the marker's own acceptance at the entry point itself.
-    engine._require_interleaved_termination_capability(  # pyright: ignore[reportPrivateUsage]
+    engine._require_interleaved_termination_capability(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
         cast("Any", _ScriptedPort()), cast("Any", _ScriptedPort()), "m-unit-work-999-synthetic.yaml"
     )
 
@@ -1441,8 +1441,8 @@ def test_group_tx_instant_falls_back_to_inert_when_the_group_has_no_write() -> N
         {"uow": "a", "targetEntity": "Account", "find": {"eq": {"attr": "Account.id", "value": 1}}},
     ]
     assert (
-        engine._group_tx_instant(steps, 0, 1)  # pyright: ignore[reportPrivateUsage]
-        == engine._INERT_CLOCK_INSTANT  # pyright: ignore[reportPrivateUsage]
+        engine._group_tx_instant(steps, 0, 1)  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
+        == engine._INERT_CLOCK_INSTANT  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
     )
 
 
@@ -1451,7 +1451,7 @@ def test_versioned_non_temporal_version_attribute_is_none_for_a_temporal_entity(
     # this map — `m-opt-lock`'s version column is a non-temporal-only concept.
     meta = engine.load_case_metamodel(_load_case("m-navigate-012"))
     assert (
-        engine._versioned_non_temporal_version_attribute(  # pyright: ignore[reportPrivateUsage]
+        engine._versioned_non_temporal_version_attribute(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
             meta, "Policy"
         )
         is None
@@ -1463,7 +1463,7 @@ def test_observe_group_find_is_a_no_op_for_a_temporal_target() -> None:
     # (or unversioned) target, so passing no real transaction is safe here.
     meta = engine.load_case_metamodel(_load_case("m-navigate-012"))
     observations: engine.ScenarioObservations = {}
-    engine._observe_group_find(  # pyright: ignore[reportPrivateUsage]
+    engine._observe_group_find(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
         cast("Any", None), observations, meta, "Policy", [{"id": 1}]
     )
     assert observations == {}
@@ -1475,7 +1475,7 @@ def test_observe_group_find_skips_a_row_missing_its_version_field() -> None:
     # takes no data on faith.
     meta = engine.load_case_metamodel(_case("m-unit-work-001"))
     observations: engine.ScenarioObservations = {}
-    engine._observe_group_find(  # pyright: ignore[reportPrivateUsage]
+    engine._observe_group_find(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
         cast("Any", None), observations, meta, "Account", [{"id": 1}]
     )
     assert observations == {}
@@ -1875,7 +1875,7 @@ def test_predicate_shaped_write_sequence_entry_refuses_loudly() -> None:
 def test_canonical_predicate_doc_preserves_valid_time_bounds_and_drops_at() -> None:
     # `at` is Clock context, never an instruction field. Valid-Time bounds
     # already use their canonical instruction spelling.
-    doc = engine._canonical_predicate_doc(  # pyright: ignore[reportPrivateUsage]
+    doc = engine._canonical_predicate_doc(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
         {
             "mutation": "terminateUntil",
             "target": {
@@ -2054,7 +2054,7 @@ def test_is_materializing_write_step_returns_none_for_a_keyed_write_shape() -> N
         "write": [{"mutation": "insert", "entity": "Account", "rows": [{"id": 1}]}]
     }
     assert (
-        engine._is_materializing_write_step(step, meta)  # pyright: ignore[reportPrivateUsage]
+        engine._is_materializing_write_step(step, meta)  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
         is None
     )
 
@@ -2069,7 +2069,7 @@ def test_is_materializing_write_step_returns_none_for_a_non_predicate_mapping() 
         "write": {"mutation": "update", "entity": "Account", "rows": [{"id": 1, "balance": 1.0}]}
     }
     assert (
-        engine._is_materializing_write_step(step, meta)  # pyright: ignore[reportPrivateUsage]
+        engine._is_materializing_write_step(step, meta)  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
         is None
     )
 
@@ -2097,7 +2097,7 @@ def test_run_materializing_pair_rejects_a_mismatched_preceding_find_target() -> 
         },
     ]
     with pytest.raises(engine.EngineError, match="not preceded by"):
-        engine._run_materializing_pair(  # pyright: ignore[reportPrivateUsage]
+        engine._run_materializing_pair(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
             FakeWritePort(), meta, POSTGRES, "locking", steps, 0
         )
 
@@ -2209,7 +2209,7 @@ def test_apply_given_apply_is_a_no_op_when_given_carries_no_apply_list() -> None
 
     case = _synthetic_write("conflict", {"given": {"fixtures": True}})
     port = FakeWritePort()
-    engine._apply_given_apply(case, POSTGRES, port)  # pyright: ignore[reportPrivateUsage]
+    engine._apply_given_apply(case, POSTGRES, port)  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
     assert port.writes == []
 
 
@@ -2599,7 +2599,7 @@ def test_render_node_does_not_stub_a_diamond_at_a_non_cyclic_position() -> None:
 
     child = materialize.Node(fields={"id": 11, "name": "child"}, pk_columns=("id",))
     root = materialize.Node(fields={"id": 1, "a": child, "b": child}, pk_columns=("id",))
-    rendered = engine._render_node(root, frozenset())  # pyright: ignore[reportPrivateUsage]
+    rendered = engine._render_node(root, frozenset())  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
     assert rendered["a"] == {"id": 11, "name": "child"}
     assert rendered["b"] == {"id": 11, "name": "child"}
 
@@ -2609,7 +2609,7 @@ def test_render_node_truncates_a_true_ancestor_cycle_to_a_pk_only_stub() -> None
 
     root = materialize.Node(fields={"id": 1, "name": "Ada"}, pk_columns=("id",))
     root.fields["self"] = root
-    rendered = engine._render_node(root, frozenset())  # pyright: ignore[reportPrivateUsage]
+    rendered = engine._render_node(root, frozenset())  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
     assert rendered["self"] == {"id": 1}
 
 
@@ -2618,7 +2618,7 @@ def test_resolve_graph_pointer_rejects_a_malformed_pointer() -> None:
 
     node = materialize.Node(fields={"id": 1}, pk_columns=("id",))
     with pytest.raises(engine.EngineError, match="malformed"):
-        engine._resolve_graph_pointer(  # pyright: ignore[reportPrivateUsage]
+        engine._resolve_graph_pointer(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
             _case("m-snapshot-read-011"), {"Order": [node]}, "/nonsense"
         )
 
@@ -2628,7 +2628,7 @@ def test_apply_mutate_step_updates_the_targeted_nodes_fields_in_place() -> None:
 
     node = materialize.Node(fields={"id": 1, "name": "Ada"}, pk_columns=("id",))
     step = {"action": "mutate", "on": 0, "set": {"name": "Mutant"}}
-    engine._apply_mutate_step(  # pyright: ignore[reportPrivateUsage]
+    engine._apply_mutate_step(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
         _case("m-snapshot-read-010"), step, [[node]]
     )
     assert node.fields["name"] == "Mutant"
@@ -2637,7 +2637,7 @@ def test_apply_mutate_step_updates_the_targeted_nodes_fields_in_place() -> None:
 def test_apply_mutate_step_raises_when_the_target_step_materialized_zero_nodes() -> None:
     step = {"action": "mutate", "on": 0, "set": {"name": "Mutant"}}
     with pytest.raises(engine.EngineError, match="expected exactly one"):
-        engine._apply_mutate_step(  # pyright: ignore[reportPrivateUsage]
+        engine._apply_mutate_step(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
             _case("m-snapshot-read-010"), step, [[]]
         )
 
@@ -2648,7 +2648,7 @@ def test_apply_mutate_step_raises_when_the_target_step_materialized_many_nodes()
     nodes = [materialize.Node(fields={}, pk_columns=()), materialize.Node(fields={}, pk_columns=())]
     step = {"action": "mutate", "on": 0, "set": {"name": "Mutant"}}
     with pytest.raises(engine.EngineError, match="expected exactly one"):
-        engine._apply_mutate_step(  # pyright: ignore[reportPrivateUsage]
+        engine._apply_mutate_step(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
             _case("m-snapshot-read-010"), step, [nodes]
         )
 
@@ -2659,7 +2659,7 @@ def test_apply_mutate_step_raises_when_set_is_not_a_mapping() -> None:
     node = materialize.Node(fields={"id": 1, "name": "Ada"}, pk_columns=("id",))
     step = {"action": "mutate", "on": 0, "set": "not-a-mapping"}
     with pytest.raises(engine.EngineError, match="needs a `set` mapping"):
-        engine._apply_mutate_step(  # pyright: ignore[reportPrivateUsage]
+        engine._apply_mutate_step(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
             _case("m-snapshot-read-010"), step, [[node]]
         )
 
@@ -2667,7 +2667,7 @@ def test_apply_mutate_step_raises_when_set_is_not_a_mapping() -> None:
 def test_apply_mutate_step_raises_on_an_out_of_range_on_index() -> None:
     step = {"action": "mutate", "on": 5, "set": {"name": "Mutant"}}
     with pytest.raises(engine.EngineError, match="invalid `on`"):
-        engine._apply_mutate_step(  # pyright: ignore[reportPrivateUsage]
+        engine._apply_mutate_step(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
             _case("m-snapshot-read-010"), step, [[]]
         )
 
@@ -2773,7 +2773,7 @@ def test_render_value_recurses_into_a_nested_value_object_document() -> None:
         fields={"id": 1, "address": {"street": "x", "geo": {"country": "NO"}}},
         pk_columns=("id",),
     )
-    rendered = engine._render_node(node, frozenset())  # pyright: ignore[reportPrivateUsage]
+    rendered = engine._render_node(node, frozenset())  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
     assert rendered["address"] == {"street": "x", "geo": {"country": "NO"}}
 
 
@@ -2782,7 +2782,7 @@ def test_resolve_graph_pointer_rejects_a_path_continuing_past_a_scalar() -> None
 
     node = materialize.Node(fields={"id": 1, "name": "Ada"}, pk_columns=("id",))
     with pytest.raises(engine.EngineError, match="does not resolve"):
-        engine._resolve_graph_pointer(  # pyright: ignore[reportPrivateUsage]
+        engine._resolve_graph_pointer(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
             _case("m-snapshot-read-011"), {"Order": [node]}, "/then/graph/Order/0/name/x"
         )
 
@@ -2792,14 +2792,14 @@ def test_resolve_graph_pointer_rejects_a_pointer_resolving_to_a_non_node() -> No
 
     node = materialize.Node(fields={"id": 1, "name": "Ada"}, pk_columns=("id",))
     with pytest.raises(engine.EngineError, match="does not name a graph node"):
-        engine._resolve_graph_pointer(  # pyright: ignore[reportPrivateUsage]
+        engine._resolve_graph_pointer(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
             _case("m-snapshot-read-011"), {"Order": [node]}, "/then/graph/Order/0/name"
         )
 
 
 def test_check_action_step_rejects_a_non_mutate_verb() -> None:
     with pytest.raises(engine.EngineError, match="graded by the API"):
-        engine._check_action_step(  # pyright: ignore[reportPrivateUsage]
+        engine._check_action_step(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
             _case("m-snapshot-read-010"), {"action": "access"}
         )
 
@@ -3057,7 +3057,7 @@ def test_decoded_assignment_value_decodes_a_value_object_assignment() -> None:
         "city": "c",
         "geo": {"country": "US", "elevation": 5},
     }
-    decoded = engine._decoded_assignment_value(  # pyright: ignore[reportPrivateUsage]
+    decoded = engine._decoded_assignment_value(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
         customer, "address", value, model
     )
     geo = cast("dict[str, object]", cast("dict[str, object]", decoded)["geo"])
@@ -3070,7 +3070,7 @@ def test_decoded_assignment_value_leaves_an_undeclared_member_unchanged() -> Non
     # the member-name honesty check classifies THAT defect, not this decode.
     model, customer = _accepted_entity("customer", "Customer")
     assert (
-        engine._decoded_assignment_value(  # pyright: ignore[reportPrivateUsage]
+        engine._decoded_assignment_value(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
             customer, "nonsense", 42, model
         )
         == 42

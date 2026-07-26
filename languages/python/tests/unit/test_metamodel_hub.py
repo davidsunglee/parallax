@@ -71,7 +71,7 @@ def test_an_argument_that_is_not_a_domain_entity_class_is_rejected_by_position(
         id: Attr[int] = attr(primary_key=True)
 
     with pytest.raises(MetamodelDefinitionError) as caught:
-        MetamodelHub(Widget, make_argument())  # pyright: ignore[reportArgumentType]
+        MetamodelHub(Widget, make_argument())  # pyright: ignore[reportArgumentType] - deliberate non-Entity-Class argument drives constructor validation
     assert caught.value.code == "metamodel-invalid-entity-class"
     assert caught.value.index == 1
 
@@ -96,7 +96,7 @@ def test_arguments_are_checked_left_to_right() -> None:
     # Argument 1 is invalid and argument 2 repeats argument 0; the leftmost
     # defect is the one reported.
     with pytest.raises(MetamodelDefinitionError) as caught:
-        MetamodelHub(Sprocket, object(), Sprocket)  # pyright: ignore[reportArgumentType]
+        MetamodelHub(Sprocket, object(), Sprocket)  # pyright: ignore[reportArgumentType] - deliberate non-Entity-Class argument drives constructor validation
     assert (caught.value.code, caught.value.index) == ("metamodel-invalid-entity-class", 1)
 
 

@@ -242,4 +242,4 @@ def test_shape_lookup_rejects_a_class_the_engine_never_built() -> None:
 def test_a_value_object_is_frozen_without_declaring_it() -> None:
     phone = vm.Phone(type="home", number="1")
     with pytest.raises(ValueError, match="frozen"):
-        phone.number = "2"  # pyright: ignore[reportAttributeAccessIssue]
+        phone.number = "2"  # pyright: ignore[reportAttributeAccessIssue] - frozen value object: the write must raise

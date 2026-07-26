@@ -46,7 +46,7 @@ from parallax.snapshot.handle import Database, Transaction
 # `_pin_from_milestone` stays private because production callers are confined to
 # `_read`; this test import exercises its defensive missing-axis branch directly.
 from parallax.snapshot.handle._read import (
-    _pin_from_milestone,  # pyright: ignore[reportPrivateUsage]
+    _pin_from_milestone,  # pyright: ignore[reportPrivateUsage] - unit test imports a private helper to exercise directly
 )
 
 pytestmark = pytest.mark.unit

@@ -299,7 +299,7 @@ def _order_by(terms: object) -> tuple[OrderTerm, ...]:
     if isinstance(terms, str) or not isinstance(terms, _Sequence):
         raise _invalid(f"order_by= takes a sequence of member names, got {terms!r}")
     resolved: list[OrderTerm] = []
-    for term in terms:  # pyright: ignore[reportUnknownVariableType]
+    for term in terms:  # pyright: ignore[reportUnknownVariableType] - order_by= elements are untyped developer input, validated per iteration below
         if isinstance(term, OrderTerm):
             resolved.append(term)
         elif isinstance(term, str) and term:
@@ -354,11 +354,11 @@ def rel(
         )
     if cardinality is None or join is None:
         raise _context("rel(...) declares either cardinality= with join=, or reverse_of=")
-    if not isinstance(cardinality, Cardinality):  # pyright: ignore[reportUnnecessaryIsInstance]
+    if not isinstance(cardinality, Cardinality):  # pyright: ignore[reportUnnecessaryIsInstance] - build-time guard against a mistyped developer value the annotation cannot enforce
         raise _invalid(
             f"cardinality= takes ONE_TO_ONE, MANY_TO_ONE, or ONE_TO_MANY, got {cardinality!r}"
         )
-    if not isinstance(join, tuple) or len(join) != 2:  # pyright: ignore[reportUnnecessaryIsInstance]
+    if not isinstance(join, tuple) or len(join) != 2:  # pyright: ignore[reportUnnecessaryIsInstance] - build-time guard against a mistyped developer value the annotation cannot enforce
         raise _invalid(f"join= takes a (source_member, target_member) pair, got {join!r}")
     return DefiningRelSpec(
         cardinality=cardinality,

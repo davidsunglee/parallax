@@ -49,10 +49,10 @@ class _InfinityTimestamptzLoader(TimestamptzLoader):  # pragma: no cover - Docke
     literal. A finite instant delegates to the default loader.
     """
 
-    def load(self, data: object) -> object:  # type: ignore[override]
-        if bytes(data) == b"infinity":  # type: ignore[arg-type]
+    def load(self, data: object) -> object:  # type: ignore[override] - psycopg loader hook is typed Buffer; the port widens to object
+        if bytes(data) == b"infinity":  # type: ignore[arg-type] - psycopg hands the loader a raw buffer at runtime
             return INFINITY
-        return super().load(data)  # type: ignore[arg-type]
+        return super().load(data)  # type: ignore[arg-type] - psycopg hands the loader a raw buffer at runtime
 
 
 def translate_driver_error(exc: psycopg.Error) -> DatabaseError:

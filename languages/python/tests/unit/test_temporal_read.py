@@ -346,6 +346,6 @@ def test_edge_is_frozen() -> None:
     # axis after construction would silently invalidate any dict/set holding it.
     edge = Edge(tx_time=dt.datetime(2024, 1, 1, tzinfo=dt.UTC))
     with pytest.raises(AttributeError, match="frozen"):
-        edge._tx_time = dt.datetime(2025, 1, 1, tzinfo=dt.UTC)  # type: ignore[misc]
+        edge._tx_time = dt.datetime(2025, 1, 1, tzinfo=dt.UTC)  # type: ignore[misc] - frozen Edge: reassigning an axis must raise
     with pytest.raises(AttributeError, match="frozen"):
-        del edge._valid_time  # type: ignore[misc]
+        del edge._valid_time  # type: ignore[misc] - frozen Edge: deleting an axis must raise

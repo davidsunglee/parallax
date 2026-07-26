@@ -32,7 +32,7 @@ def _claimed_hub_state(binding: MetamodelBinding) -> str:
     is the only route from there back to the hub — so it is the one place an
     unfinished hub could be observed.
     """
-    owner = binding._owner  # pyright: ignore[reportPrivateUsage]
+    owner = binding._owner  # pyright: ignore[reportPrivateUsage] - unit test reads the binding's private owner field
     if not isinstance(owner, MetamodelHub):
         return f"not a hub: {owner!r}"
     try:
