@@ -80,7 +80,9 @@ Reladomo's per-attribute `timezoneConversion` is intentionally absent
 
 The descriptor carries no serialized `NeutralValue`: no descriptor position
 holds a typed domain value, so these type spellings are the module's entire
-wire vocabulary for the `m-core` scalar algebra.
+wire vocabulary for the full `m-core` `NeutralType` algebra — every variant,
+including the `json` storage spelling, not just the scalar subset a member may
+declare.
 
 ## One or many entities per descriptor
 
