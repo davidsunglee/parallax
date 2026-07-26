@@ -268,10 +268,10 @@ self-contained without a system `libpq`.
   classified from an inheritance participant's LOCAL `as_of_axes`
   instead of the family-effective one (the legacy flattened metadata view, the
   `optimisticLocking` composition check, `lower_write`'s temporal-write
-  refusal, plus the completed `m-descriptor`-scope resolver
-  `parallax.core.descriptor.declaring_entity` this round's records.py change
-  started); `parallax.core.inheritance.declaring_entity`/`family_root` now
-  compose with it instead of duplicating the ancestry walk; the class
+  refusal, plus the completed `m-descriptor`-scope resolver this round's
+  descriptor-records change started); the `m-inheritance`-scope
+  declaring-entity and family-root resolvers now compose with it instead of
+  duplicating the ancestry walk; the class
   frontend (`EntityMeta.__new__`) gained the same family-effective
   `optimisticLocking` composition gate the descriptor-level validator did.
   `m-inheritance-100`'s graph story ran `.history()` instead of the case's own

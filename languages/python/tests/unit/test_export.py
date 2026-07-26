@@ -1,7 +1,7 @@
 """Canonical export over the accepted Metamodel (m-descriptor).
 
 Export is the inverse adapter: an accepted Metamodel becomes the canonical
-minimal descriptor document ``serde.canonicalize`` produces from a parsed one.
+minimal descriptor document ``_serde.canonicalize`` produces from a parsed one.
 These pin the canonicalization law (export equals canonicalize, the omission set,
 idempotence, a canonical fixpoint) over the corpus and over an alternate model
 implementation, and the error path (an induced defect surfaces as
