@@ -11,6 +11,7 @@ import datetime as dt
 from decimal import Decimal
 
 import pytest
+from _snapshot_wrap_support import wrap
 
 import snapshot_models as sm
 from parallax.conformance.read_models import BALANCE_MODEL
@@ -25,35 +26,14 @@ from parallax.core import (
     ValueObject,
     attr,
 )
-from parallax.core.entity import sealed_model
-from parallax.core.metamodel import Metamodel
+from parallax.core.entity._hub import sealed_model
 from parallax.core.temporal_read import Pin, edge_of, pin_of
 from parallax.snapshot.handle import Execution, NoResultFound, Snapshot, TooManyResultsFound
-from parallax.snapshot.handle._wrap import wrap_graph
 from parallax.snapshot.materialize import Node
 
 pytestmark = pytest.mark.unit
 
 _ORDERS = sm.SNAP_ORDERS_MODEL
-_NO_PIN = Pin()
-
-
-def _wrap(
-    nodes: tuple[Node, ...],
-    target: str,
-    hub: MetamodelHub,
-    pin: Pin = _NO_PIN,
-    model: Metamodel | None = None,
-) -> tuple[object, ...]:
-    """Wrap ``nodes`` through ``hub``'s own binding.
-
-    ``model`` overrides the model wrapping reads without changing the binding,
-    which is how a descriptor that disagrees with its classes is exercised.
-    """
-    sealed = sealed_model(hub)
-    return wrap_graph(
-        nodes, target, model if model is not None else sealed.model, pin, sealed.binding
-    )
 
 
 # --------------------------------------------------------------------------- #
@@ -79,7 +59,7 @@ def test_entity_level_value_object_members_wrap_into_their_declared_classes() ->
         },
         pk_columns=("id",),
     )
-    (root,) = _wrap((status,), "SnapOrderStatus", _ORDERS)
+    (root,) = wrap((status,), "SnapOrderStatus", _ORDERS)
     assert isinstance(root, sm.SnapOrderStatus)
     assert root.primary_tag is None
     assert len(root.tags) == 2
@@ -105,7 +85,7 @@ def test_a_null_cardinality_many_value_object_column_wraps_to_an_empty_tuple() -
         },
         pk_columns=("id",),
     )
-    (root,) = _wrap((empty_status,), "SnapOrderStatus", _ORDERS)
+    (root,) = wrap((empty_status,), "SnapOrderStatus", _ORDERS)
     assert isinstance(root, sm.SnapOrderStatus)
     assert root.tags == ()
 
@@ -158,7 +138,7 @@ def test_a_value_object_member_with_no_bound_class_is_refused() -> None:
     node = Node(fields={"id": 1, "profile": {"note": "x"}}, pk_columns=("id",))
     match = r"_WrapScalarProfile\.profile: the bound Entity Class declares no"
     with pytest.raises(LookupError, match=match):
-        _wrap((node,), "_WrapScalarProfile", _SCALAR_PROFILE, model=_PROFILE_AS_VALUE_OBJECT)
+        wrap((node,), "_WrapScalarProfile", _SCALAR_PROFILE, model=_PROFILE_AS_VALUE_OBJECT)
 
 
 # --------------------------------------------------------------------------- #
@@ -177,7 +157,7 @@ def test_temporal_node_carries_the_whole_graph_pin_and_its_own_edge() -> None:
         pk_columns=("bal_id",),
     )
     pin = Pin(tx_time=dt.datetime(2024, 2, 1, tzinfo=dt.UTC))
-    (root,) = _wrap((row,), "Balance", BALANCE_MODEL, pin)
+    (root,) = wrap((row,), "Balance", BALANCE_MODEL, pin)
     assert pin_of(root) is pin
     assert edge_of(root).tx_time == dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
 
@@ -229,7 +209,7 @@ def test_temporal_tpcs_concrete_node_carries_pin_and_edge() -> None:
         valid_time=dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
         tx_time=dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
     )
-    (root,) = _wrap((row,), "_WrapTemporalLeaf", _TEMPORAL_TPCS, pin)
+    (root,) = wrap((row,), "_WrapTemporalLeaf", _TEMPORAL_TPCS, pin)
     assert isinstance(root, _WrapTemporalLeaf)
     assert pin_of(root) is pin
     assert edge_of(root).valid_time == dt.datetime(2024, 1, 1, tzinfo=dt.UTC)

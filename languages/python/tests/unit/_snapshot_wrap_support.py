@@ -20,16 +20,16 @@ from parallax.core.temporal_read import Pin
 from parallax.snapshot.handle._wrap import wrap_graph
 from parallax.snapshot.materialize import Node
 
-__all__ = ["NO_PIN", "wrap"]
+__all__ = ["wrap"]
 
-NO_PIN = Pin()
+_NO_PIN = Pin()
 
 
 def wrap(
     nodes: tuple[Node, ...],
     target: str,
     hub: MetamodelHub,
-    pin: Pin = NO_PIN,
+    pin: Pin = _NO_PIN,
     model: Metamodel | None = None,
 ) -> tuple[object, ...]:
     """Wrap ``nodes`` through ``hub``'s own accepted model and binding.

@@ -52,7 +52,8 @@ from parallax.conformance.read_stories import READ_STORIES, ReadStory
 from parallax.conformance.stories import WRITE_STORIES, WriteStory
 from parallax.core import LATEST, MetamodelHub, edge_of, is_loaded, narrowed, pin_of
 from parallax.core.dialect import POSTGRES
-from parallax.core.entity import UnloadedRelationshipError, sealed_model, to_document
+from parallax.core.entity import UnloadedRelationshipError, to_document
+from parallax.core.entity._hub import sealed_model
 from parallax.snapshot import connect
 
 pytestmark = pytest.mark.api_conformance

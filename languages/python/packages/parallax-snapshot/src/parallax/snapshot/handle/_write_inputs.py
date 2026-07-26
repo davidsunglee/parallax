@@ -560,14 +560,18 @@ def _apply_assignments(
 
 def metadata_of_instance(meta: Metamodel, instance: EntityBase) -> EntityMetadata:
     """``instance``'s accepted Entity Metadata within ``meta``, or a loud
-    ``TypeError`` when its class belongs to no hub or to a different model.
+    ``TypeError`` when its class belongs to no hub or to a different one.
 
-    The class's own Metamodel Binding names its Entity Identity; ``meta`` then
-    answers whether this model is the one that identity was accepted into.
+    Membership is decided by the Metamodel Binding the class was claimed by, and
+    that Binding must be the one that sealed ``meta`` itself — never by the
+    Entity Identity it names. Identity is not unique across hubs: two distinct
+    classes in two separate models may declare the same one, so resolving an
+    identity out of one hub and looking it up in another would silently accept a
+    foreign instance and key its write against the wrong model.
     """
     cls = type(instance)
     binding = binding_of(cls)
-    identity = None if binding is None else binding.identity_of(cls)
+    identity = None if binding is None or binding.model is not meta else binding.identity_of(cls)
     metadata = None if identity is None else meta.entity(identity)
     if metadata is None:
         raise TypeError(f"{cls.__name__} is not an Entity Class of this model")

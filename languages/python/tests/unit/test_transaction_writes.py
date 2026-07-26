@@ -39,7 +39,7 @@ from _transact_support import (
 
 import mirrored_models as mm
 from parallax.conformance.class_models import MODELS
-from parallax.core import LATEST, Entity, opt_lock
+from parallax.core import LATEST, Attr, Entity, MetamodelHub, attr, opt_lock
 from parallax.core.db_port import Row
 from parallax.core.dialect import POSTGRES
 from parallax.core.unit_work import (
@@ -853,3 +853,42 @@ def test_a_keyed_verb_refuses_an_instance_of_an_uncompiled_class() -> None:
 
     with pytest.raises(TypeError, match="Entity is not an Entity Class of this model"):
         Database.connect(NoIoPort(), PERSON, clock=FixedClock(FIXED)).transact(fn)
+
+
+# Two DISTINCT classes in two SEPARATE hubs may legitimately declare the same
+# Entity Identity — nothing forbids it, since a class belongs to exactly one hub
+# and the claim rule is per class object, not per identity. The guard must
+# therefore key on the hub a class actually belongs to and not on the identity it
+# happens to name: an instance of `_TwinLeft` handed to a database connected to
+# `_TwinRight`'s hub is a foreign object, and accepting it would let a keyed
+# write resolve its columns against the wrong model entirely.
+class _TwinLeft(Entity, table="twin", name="Twin", namespace="parallax.compatibility"):
+    id: Attr[int] = attr(primary_key=True)
+    left_only: Attr[str] = attr(max_length=8)
+
+
+class _TwinRight(Entity, table="twin", name="Twin", namespace="parallax.compatibility"):
+    id: Attr[int] = attr(primary_key=True)
+    right_only: Attr[str] = attr(max_length=8)
+
+
+_TWIN_LEFT = MetamodelHub(_TwinLeft)
+_TWIN_RIGHT = MetamodelHub(_TwinRight)
+
+
+def test_a_keyed_verb_refuses_an_instance_bound_to_another_hub() -> None:
+    def fn(tx: Transaction) -> None:
+        tx.delete(_TwinLeft(id=1, left_only="x"))
+
+    with pytest.raises(TypeError, match="_TwinLeft is not an Entity Class of this model"):
+        Database.connect(NoIoPort(), _TWIN_RIGHT, clock=FixedClock(FIXED)).transact(fn)
+
+
+def test_the_keyed_entity_class_guard_still_accepts_its_own_hubs_instance() -> None:
+    port = RecordingPort()
+
+    def fn(tx: Transaction) -> None:
+        tx.delete(_TwinLeft(id=1, left_only="x"))
+
+    db_for(_TWIN_LEFT, port).transact(fn)
+    assert [op[0] for op in port.ops] == ["begin", "write", "commit"]
