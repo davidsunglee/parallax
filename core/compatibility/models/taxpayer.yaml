@@ -1,0 +1,38 @@
+# Taxpayer: the corpus witness for a canonical member name no naming convention
+# can derive (m-descriptor "Attribute", m-metamodel Attribute Identity).
+#
+# Every other corpus attribute name is reachable from a conventional identifier by
+# a deterministic transformation — `nextVal` from `next_val`, `acctNum` from
+# `acct_num`. `taxID` is not: the acronym keeps both letters capitalized, so a
+# frontend that derives canonical names from its own declaration names MUST offer
+# an explicit override to author it, and the override MUST land in the model
+# rather than in the physical column. `taxID` therefore also carries an explicit
+# `column: tax_id`, so the two spellings differ and a frontend that conflated the
+# canonical name with the storage location would fail rather than pass by
+# coincidence.
+#
+# The model is deliberately formation-only: one flat non-temporal entity, no
+# relationships and no fixtures. The name override is the whole subject, so
+# nothing else about the entity should be able to explain a difference.
+entity:
+  name: Taxpayer
+  namespace: parallax.compatibility
+  table: taxpayer
+  attributes:
+    - name: id
+      type: int64
+      primaryKey: true
+    - name: taxID
+      type: string
+      column: tax_id
+      maxLength: 32
+    - name: name
+      type: string
+      maxLength: 64
+  indices:
+    - name: taxpayer_pk
+      attributes: [id]
+      unique: true
+    - name: taxpayer_tax_id
+      attributes: [taxID]
+      unique: true
