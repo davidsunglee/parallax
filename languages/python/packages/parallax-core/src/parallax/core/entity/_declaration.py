@@ -402,15 +402,16 @@ def _class_body_annotations(ns: dict[str, object]) -> dict[str, object]:
     annotate = ns.pop("__annotate_func__", None)
     if annotate is None:
         return {}
-    return _resolve_deferred(annotate)
+    return _resolve_deferred(annotate)  # pragma: no cover - only a 3.14 namespace defers
 
 
-def _resolve_deferred(annotate: object) -> dict[str, object]:
+def _resolve_deferred(annotate: object) -> dict[str, object]:  # pragma: no cover - 3.14-only
     """Recover deferred (PEP 649 / PEP 749) class-body annotations.
 
     Evaluated in ``VALUE`` format to recover the same live objects the eager path
     returns. The version guard also keeps the 3.14-only import off the
-    type-checked path, which is pinned to 3.12.
+    type-checked path, which is pinned to 3.12 — the same pin that puts this
+    recovery beyond the reach of any interpreter the workspace runs on.
     """
     if sys.version_info < (3, 14):
         return {}
