@@ -2027,7 +2027,6 @@ ReadOnly, ReadWrite
 AbstractRoot, AbstractSubtype, ConcreteSubtype
 TablePerHierarchy, TablePerConcreteSubtype
 Int32, Float32, Max, Sequence
-Json, JsonObject
 MetamodelHub
 FindQuery, Predicate
 EntityIdentity, EntityMetadata, MetamodelIssue
