@@ -282,6 +282,21 @@ def test_one_shape_key_is_minted_per_value_object_class_and_reused_by_occurrence
     assert shape_of(Tag).shape.key is Left.value_objects[0].shape.key
 
 
+def test_the_attribute_descriptor_returns_the_instance_value_on_direct_invocation() -> None:
+    # Pydantic's instance ``__dict__`` shadows the descriptor under ordinary
+    # attribute access, so the instance branch of ``Attr.__get__`` is reached
+    # only by invoking the descriptor directly.
+    warehouse = Warehouse(id=7, code="WH")
+    descriptor = vars(Warehouse)["id"]
+    assert descriptor.__get__(warehouse, Warehouse) == 7
+
+
+def test_the_element_descriptor_returns_the_instance_value_on_direct_invocation() -> None:
+    tag = Tag(label="priority")
+    descriptor = vars(Tag)["label"]
+    assert descriptor.__get__(tag, Tag) == "priority"
+
+
 def test_a_many_value_object_occurrence_defaults_to_the_empty_tuple() -> None:
     class Ledger(Entity, table="ledger"):
         id: Attr[int] = attr(primary_key=True)
@@ -333,7 +348,7 @@ def test_a_relationship_target_spelled_as_nothing_at_all_is_refused() -> None:
         class Blank(Entity, table="blank"):
             id: Attr[int] = attr(primary_key=True)
             peer_id: Attr[int]
-            peer: Rel[""] = rel(  # type: ignore[valid-type]  # noqa: F722
+            peer: Rel[""] = rel(  # type: ignore[valid-type]  # noqa: F722 - empty forward ref
                 cardinality=MANY_TO_ONE, join=("peer_id", "id")
             )
 
