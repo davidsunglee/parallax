@@ -121,7 +121,7 @@ def test_the_success_message_states_the_guarantee_it_actually_proves(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     # The message is the only thing most readers of this gate ever see, so it
-    # must not promise one owner per file when five files have two.
+    # must not promise one owner per file when six files have two.
     scopes = own.declared_scopes()
     nested = sum(
         1
