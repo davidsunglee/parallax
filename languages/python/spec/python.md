@@ -420,27 +420,10 @@ Python type inside `Attr[...]` maps to the Neutral Type per the scalar table
 below; a `decimal.Decimal` member requires `attr(precision=..., scale=...)`
 because the core `Decimal` variant has no default parameters, a Value Object
 class reference declares an embedded composite, and `tuple[VO, ...]` declares
-a Many occurrence. The exported `Json` alias declares a **direct** `json`
-attribute — `Attr[Json]` — for a structured document that is not a modeled
-Value Object; its carriers are defined below.
-
-**Direct JSON carriers.** The exported typing alias `Json` names the value
-space of a direct `json` attribute: `bool | int | float | str |
-tuple[JsonNode, ...] | JsonObject`, where `JsonNode = Json | None` — JSON
-null appears only *inside* arrays and objects and is spelled `None`. A bare
-top-level `None` is not a `Json` value; nullability stays annotation-only
-via `Attr[Json | None]`. The exported `JsonObject` is the immutable object
-carrier: a read-only `Mapping[str, JsonNode]` with structural equality and
-preserved insertion order, exposing no mutation surface (hashability is not
-part of the contract). Arrays are plain `tuple[JsonNode, ...]`. Build-time
-input conversion accepts any `Mapping` with `str` keys, any
-non-`str`/`bytes` `Sequence`, and the leaves `bool`/`int`/`float`/`str`,
-plus nested `None`, and converts recursively to the carriers; it rejects
-non-`str` mapping keys, non-finite floats, a bare top-level `None`, and any
-other object — no lossy coercions, per the scalar table's input policy.
-Instance reads always return the immutable carriers, never the caller's
-original containers; equality is structural, per the `m-core` `Json` value
-space.
+a Many occurrence. There is **no direct `json` attribute**: `m-core` reserves
+`Json` for the storage type a whole Value Object maps to and makes it
+undeclarable on a member, so structured content is always reached through a
+Value Object class reference and never through a free-form document annotation.
 
 Generation values and structured narrowing use the same option surface — the
 corpus `max` and `sequence` spellings and the two-variant scalar families
@@ -861,8 +844,7 @@ class Truck(Vehicle, table="truck", inheritance=ConcreteSubtype):
   | `date` / `time` | `datetime.date` / `datetime.time` | wall-clock; `time` with `tzinfo` rejected | driver date/time, no instant semantics |
   | `timestamp` | tz-aware `datetime` | naive rejected; normalized UTC; microseconds | `timestamptz`; aware UTC on read |
   | `uuid` | `uuid.UUID` | `UUID` or canonical string | driver uuid |
-  | `json` (value object) | nested frozen value-object class | the VO class instance; never a raw dict | structured column per dialect |
-  | `json` (direct, `Attr[Json]`) | `Json` — `bool`/`int`/`float`/`str` leaves, `tuple[JsonNode, ...]` arrays, `JsonObject` objects | any `str`-keyed `Mapping`, any non-`str`/`bytes` `Sequence`, `bool`/`int`/`float`/`str` leaves, nested `None`; converted recursively to the immutable carriers; non-`str` keys, non-finite floats, a bare top-level `None`, and any other object rejected | structured column per dialect |
+  | `json` (value object only — `m-core` admits no direct `json` member) | nested frozen value-object class | the VO class instance; never a raw dict | structured column per dialect |
 
 - **Metamodel serde ownership.** Source owner and enforcement scope
   `parallax.descriptor`, shipped in the separately installable
@@ -1693,7 +1675,7 @@ hatchling.
 
 | Artifact/package | Production or development-only | Included source scopes | External runtime dependencies | Depends on artifacts | Public exports/entry points |
 |---|---|---|---|---|---|
-| `parallax-core` (the common runtime) | production | all `parallax.core.*` scopes of §7 (behavioral modules, entity/statement frontend, driver-free postgres dialect strategy) | `pydantic` | (none) | `parallax.core`: the `Entity`/`TxTemporal`/`Bitemporal`/`ValueObject` bases, `Attr`, `Rel`, `attr`, `rel`, `index`, `desc`, `asc`, `Int32`, `Float32`, `MAX`, `Sequence`, `Json`, `JsonObject`, the cardinality, persistence, inheritance role, and strategy values, `MetamodelHub`, statement API, `LATEST`, `VALID_TIME`, `TX_TIME`, `Pin`, `Edge`, `pin_of`, `edge_of`, `is_loaded`, `narrowed`, errors |
+| `parallax-core` (the common runtime) | production | all `parallax.core.*` scopes of §7 (behavioral modules, entity/statement frontend, driver-free postgres dialect strategy) | `pydantic` | (none) | `parallax.core`: the `Entity`/`TxTemporal`/`Bitemporal`/`ValueObject` bases, `Attr`, `Rel`, `attr`, `rel`, `index`, `desc`, `asc`, `Int32`, `Float32`, `MAX`, `Sequence`, the cardinality, persistence, inheritance role, and strategy values, `MetamodelHub`, statement API, `LATEST`, `VALID_TIME`, `TX_TIME`, `Pin`, `Edge`, `pin_of`, `edge_of`, `is_loaded`, `narrowed`, errors |
 | `parallax-descriptor` (descriptor interchange) | production, optional | `parallax.descriptor` (`m-descriptor` plus its private Hub orchestration) | `pyyaml`, `jsonschema` | `parallax-core` | `parallax.descriptor`: `hub_from_document`, `hub_from_json`, `hub_from_yaml`, `export_document`, `export_json`, `export_yaml`, `DescriptorError`, `DescriptorSyntaxError`, `DescriptorSchemaError`, `DescriptorValueError`, `DescriptorSchemaViolation`, `DescriptorValueViolation`, `DescriptorExportError` |
 | `parallax-snapshot` (snapshot lifecycle extension) | production | `parallax.snapshot.*` (`materialize`, `handle`) | (none beyond core) | `parallax-core` | `parallax.snapshot`: `connect()`, `Snapshot[T]`, `Execution` |
 | `parallax-postgres` (Postgres database adapter) | production | `parallax.postgres.*` (concrete port over psycopg) | `psycopg[binary]` (sole declarer) | `parallax-core` | `parallax.postgres`: `PostgresAdapter` |
