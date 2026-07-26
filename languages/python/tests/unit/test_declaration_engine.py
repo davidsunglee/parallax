@@ -314,6 +314,37 @@ def test_a_framework_root_declares_nothing_and_is_never_a_candidate() -> None:
     assert caught.value.code == "entity-base-invalid"
 
 
+def test_both_declaration_lookups_refuse_a_class_the_engine_never_built() -> None:
+    # The two lookups answer for one class fact, so they refuse together: an
+    # ordinary Python class carries neither payload.
+    with pytest.raises(EntityDefinitionError) as declaration:
+        declaration_of(int)
+    with pytest.raises(EntityDefinitionError) as names:
+        members_of(int)
+    assert declaration.value.code == names.value.code == "entity-base-invalid"
+    assert names.value.message == "int is not a Parallax Entity Class"
+
+
+def test_a_relationship_target_spelled_as_nothing_at_all_is_refused() -> None:
+    # A target spelling is never evaluated, so an empty one reaches the
+    # reference reader as text and is refused there rather than resolving to the
+    # declaring namespace.
+    def declare() -> type:
+        class Blank(Entity, table="blank"):
+            id: Attr[int] = attr(primary_key=True)
+            peer_id: Attr[int]
+            peer: Rel[""] = rel(  # type: ignore[valid-type]  # noqa: F722
+                cardinality=MANY_TO_ONE, join=("peer_id", "id")
+            )
+
+        return Blank
+
+    with pytest.raises(EntityDefinitionError) as caught:
+        declare()
+    assert caught.value.code == "entity-annotation-invalid"
+    assert caught.value.message == "Blank.peer: a relationship target names a nonempty Entity"
+
+
 def test_member_correspondences_are_built_from_the_same_walk_as_the_declaration() -> None:
     names = members_of(Warehouse)
     assert names.py_to_name == {"id": "id", "code": "code"}

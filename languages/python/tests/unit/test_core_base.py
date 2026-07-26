@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import decimal
 
 import pytest
 
@@ -40,6 +41,28 @@ def test_is_neutral_type_accepts_base_and_parametric_decimal(name: str) -> None:
 @pytest.mark.parametrize("name", ["Int64", "decimal()", "decimal(2)", "widget", "int"])
 def test_is_neutral_type_rejects_unknown_and_malformed(name: str) -> None:
     assert not base.is_neutral_type(name)
+
+
+def test_a_native_carrier_infers_the_widest_neutral_type_of_its_exact_type() -> None:
+    assert base.infer_neutral_type(int) == base.Int64()
+    assert base.infer_neutral_type(dt.date) == base.Date()
+    # A `datetime` is a `date` subclass but a distinct value space, so the
+    # mapping is read by exact type rather than by subclass.
+    assert base.infer_neutral_type(dt.datetime) == base.Timestamp()
+
+
+@pytest.mark.parametrize(
+    "annotation",
+    [decimal.Decimal, dict[str, int], tuple[int, ...], "int", None],
+    ids=["decimal", "generic-mapping", "generic-tuple", "text", "none"],
+)
+def test_inference_answers_absence_for_anything_outside_the_carrier_mapping(
+    annotation: object,
+) -> None:
+    # Error-neutral by design, whether the argument is an unmapped type
+    # (`Decimal`, whose parameters are a declaration fact) or no type at all: a
+    # parameterized generic is not a `type`, and neither is a name or `None`.
+    assert base.infer_neutral_type(annotation) is None
 
 
 def test_infinity_is_the_native_upper_bound_sentinel() -> None:
