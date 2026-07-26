@@ -2,8 +2,12 @@
 ``.include(*paths)`` (deep-fetch, chained ``Rel[T]`` class access, hop-level
 ``.narrow()``), relationship ``.any()`` / ``.none()`` quantifiers, the
 ``Entity.narrow(...)`` constructor, and the statement-level ``.narrow(...)``
-clause. Every example is validated immediately at build (`validate_operation`),
-never deferred to execution.
+clause. Every example is validated immediately at build, against the model the
+target's own hub sealed, never deferred to execution.
+
+A deeper relationship hop is the one thing a path cannot answer for itself: it
+is a model question and a Relationship Path performs no class lookup, so a
+multi-hop include names its segments directly.
 """
 
 from __future__ import annotations
@@ -11,10 +15,10 @@ from __future__ import annotations
 import pytest
 
 import inheritance_models as im
-import mirrored_models as mm
 import snapshot_models as sm
-from parallax.core import TX_TIME
-from parallax.core.entity.statement import UnsupportedFeatureError
+from parallax.conformance.graph_models import Policy
+from parallax.core import TX_TIME, UnsupportedFeatureError
+from parallax.core.entity import RelationshipPath
 from parallax.core.op_algebra import (
     All,
     DeepFetch,
@@ -38,13 +42,25 @@ def test_single_hop_include_builds_a_deep_fetch_node() -> None:
     assert op.paths == ((PathSegment(rel="SnapOrder.items"),),)
 
 
-def test_multi_hop_include_resolves_the_deeper_hop_dynamically() -> None:
+def test_multi_hop_include_resolves_the_deeper_hop_against_the_model() -> None:
     statement = sm.SnapOrder.where().include(sm.SnapOrder.items.statuses)
     op = statement.operation()
     assert isinstance(op, DeepFetch)
     assert op.paths == (
         (PathSegment(rel="SnapOrder.items"), PathSegment(rel="SnapOrderItem.statuses")),
     )
+
+
+def test_a_deeper_hop_on_a_path_that_carries_no_model_is_refused() -> None:
+    # A second hop is a model question, so a path built directly cannot answer it.
+    bare = RelationshipPath(segments=(PathSegment(rel="SnapOrder.items"),), target="SnapOrderItem")
+    with pytest.raises(AttributeError, match="resolves against the composed model"):
+        _ = bare.statuses  # pyright: ignore[reportAttributeAccessIssue]
+
+
+def test_a_deeper_hop_naming_no_declared_relationship_is_refused() -> None:
+    with pytest.raises(AttributeError, match="declares no relationship"):
+        _ = sm.SnapOrder.items.bogus_relationship  # pyright: ignore[reportAttributeAccessIssue]
 
 
 def test_include_accumulates_across_calls() -> None:
@@ -67,20 +83,6 @@ def test_include_of_an_undeclared_relationship_raises_at_build() -> None:
 def test_relationship_path_dynamic_hop_rejects_a_private_name() -> None:
     with pytest.raises(AttributeError):
         sm.SnapOrder.items.__getattr__("_hidden")
-
-
-def test_relationship_path_dynamic_hop_on_an_undeclared_relationship_raises() -> None:
-    # `SnapOrder.items` targets `SnapOrderItem`, which declares no such hop.
-    with pytest.raises(AttributeError, match="declares no relationship"):
-        _ = sm.SnapOrder.items.bogus_relationship  # type: ignore[attr-defined]
-
-
-def test_relationship_path_dynamic_hop_on_an_unregistered_target_raises() -> None:
-    from parallax.core.entity.expressions import RelationshipPath
-
-    bogus = RelationshipPath(segments=(PathSegment(rel="X.y"),), target="NotRegisteredXyz")
-    with pytest.raises(AttributeError, match="not a registered Parallax entity class"):
-        _ = bogus.anything  # type: ignore[attr-defined]
 
 
 def test_hop_narrow_derives_the_narrowed_view_path_segment() -> None:
@@ -162,9 +164,9 @@ def test_narrow_or_composition_of_two_branches_validates_at_where_build() -> Non
 def test_narrow_broadening_outside_the_threaded_position_is_rejected() -> None:
     # FinancialDocument's effective set is {Invoice, Receipt}; nesting a
     # same-position narrow to Memo (outside it) must be rejected.
-    with pytest.raises(OperationRejectedError) as excinfo:
+    with pytest.raises(OperationRejectedError) as caught:
         im.FinancialDocument.where(im.FinancialDocument.narrow(im.Memo))
-    assert excinfo.value.rule == "narrow-outside-position"
+    assert caught.value.rule == "narrow-outside-position"
 
 
 # --------------------------------------------------------------------------- #
@@ -196,17 +198,17 @@ def test_clause_and_constructor_forms_converge_on_the_identical_node() -> None:
 def test_subtype_attribute_outside_narrow_scope_is_rejected_at_where_build_time() -> None:
     # The where() call itself validates immediately with the UNCONSTRAINED
     # position — a later `.narrow(...)` clause grants no retroactive scope.
-    with pytest.raises(OperationRejectedError) as excinfo:
+    with pytest.raises(OperationRejectedError) as caught:
         im.Document.where(im.Invoice.amount_due > 3)
-    assert excinfo.value.rule == "subtype-attribute-outside-narrow-scope"
+    assert caught.value.rule == "subtype-attribute-outside-narrow-scope"
 
 
 def test_narrow_clause_after_an_out_of_scope_where_predicate_never_legalizes_it() -> None:
     # `.where(Invoice.amount_due > 3)` ALREADY raises before `.narrow(...)` is
     # even reached — the statement-level clause grants no retroactive scope.
-    with pytest.raises(OperationRejectedError) as excinfo:
+    with pytest.raises(OperationRejectedError) as caught:
         im.Document.where(im.Invoice.amount_due > 3).narrow(im.Invoice)
-    assert excinfo.value.rule == "subtype-attribute-outside-narrow-scope"
+    assert caught.value.rule == "subtype-attribute-outside-narrow-scope"
 
 
 # --------------------------------------------------------------------------- #
@@ -216,9 +218,9 @@ def test_narrow_clause_after_an_out_of_scope_where_predicate_never_legalizes_it(
 # --------------------------------------------------------------------------- #
 def test_history_then_include_is_deferred() -> None:
     with pytest.raises(UnsupportedFeatureError, match="snapshot-history-includes"):
-        mm.Balance.where().history(TX_TIME).include(sm.SnapOrder.items)
+        Policy.where().history(TX_TIME).include(Policy.coverages)
 
 
 def test_include_then_history_is_deferred() -> None:
     with pytest.raises(UnsupportedFeatureError, match="snapshot-history-includes"):
-        mm.Balance.where().include(sm.SnapOrder.items).history(TX_TIME)
+        Policy.where().include(Policy.coverages).history(TX_TIME)

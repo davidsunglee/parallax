@@ -16,32 +16,25 @@ from decimal import Decimal
 from typing import cast
 
 import pytest
+from _metamodel_support import Declaration, source
 
-import mirrored_models  # noqa: F401  # pyright: ignore[reportUnusedImport] - registers Balance
 import snapshot_models as sm
 from parallax.conformance import read_models
+from parallax.conformance.story_models import ORDERS_MODEL
 from parallax.conformance.story_models import Order as _soOrder
-from parallax.conformance.story_models import OrderItem as _soOrderItem
-from parallax.conformance.story_models import OrderStatus as _soOrderStatus
-from parallax.conformance.story_models import OrderTag as _soOrderTag
-from parallax.core import (
-    Attr,
-    Entity,
-    EntityConfig,
-    Field,
-    Rel,
-    Relationship,
-    RelationshipJoin,
-    RelationshipTarget,
-    is_loaded,
-    narrowed,
+from parallax.core import MetamodelHub, is_loaded, narrowed
+from parallax.core._formation_profile import form_metamodel
+from parallax.core.entity import (
+    RelationshipPath,
+    UnloadedRelationshipError,
+    sealed_model,
 )
-from parallax.core.descriptor import Entity as EntityDescriptor
-from parallax.core.descriptor import Inheritance
-from parallax.core.descriptor import Metamodel as MetamodelRecord
-from parallax.core.entity import accepted_metamodel, entity_record_of, metamodel
-from parallax.core.entity.base import Concrete, EntityRegistry, FamilyRoot
-from parallax.core.entity.expressions import RelationshipPath, UnloadedRelationshipError
+from parallax.core.metamodel import (
+    ConcreteSubtype,
+    EntityIdentity,
+    ExactEntityReference,
+    Metamodel,
+)
 from parallax.core.op_algebra import PathSegment
 from parallax.core.temporal_read import Pin
 from parallax.snapshot.handle._wrap import wrap_graph
@@ -49,40 +42,45 @@ from parallax.snapshot.materialize import Node
 
 pytestmark = pytest.mark.unit
 
-_ORDERS = metamodel([sm.SnapOrder, sm.SnapOrderItem, sm.SnapOrderStatus])
-_ANIMAL_CLASSES = [sm.Animal, sm.Pet, sm.Dog, sm.Cat, sm.WildBoar, sm.AnimalOwner]
-_ANIMAL = metamodel(_ANIMAL_CLASSES)
-# A metamodel the corpus/database DOES declare a concrete "Iguana" family member
-# for (a legitimate entity, resolvable through the Inheritance Facet), but for
-# which no Python class was ever registered — the exact defensive scenario
-# `_wrap._wrap`'s own `LookupError` guards, distinct from `identity_key`'s
-# unrelated `KeyError` for a name the METAMODEL itself does not know at all. The
-# extra concrete is added to the descriptor record graph and formed into an
-# accepted model like any other.
-_ANIMAL_RECORDS = tuple(
-    record for cls in _ANIMAL_CLASSES if (record := entity_record_of(cls)) is not None
-)
-_ANIMAL_WITH_UNREGISTERED_CONCRETE = accepted_metamodel(
-    MetamodelRecord(
-        entities=(
-            *_ANIMAL_RECORDS,
-            EntityDescriptor(
-                name="Iguana",
-                namespace="parallax.compatibility",
-                inheritance=Inheritance(role="concrete-subtype", parent="Pet", tag_value="iguana"),
-            ),
-        )
+_NO_PIN = Pin()
+
+
+def _wrap(
+    nodes: tuple[Node, ...],
+    target: str,
+    hub: MetamodelHub,
+    pin: Pin = _NO_PIN,
+    model: Metamodel | None = None,
+) -> tuple[object, ...]:
+    """Wrap ``nodes`` through ``hub``'s own binding.
+
+    ``model`` overrides the model wrapping reads without changing the binding,
+    which is how an Entity no class is bound to is exercised.
+    """
+    sealed = sealed_model(hub)
+    return wrap_graph(
+        nodes, target, model if model is not None else sealed.model, pin, sealed.binding
     )
+
+
+_ORDERS = sm.SNAP_ORDERS_MODEL
+_ANIMAL = sm.ANIMAL_MODEL
+# A model the database DOES declare a concrete "Iguana" family member for (a
+# legitimate Entity, resolvable through the Inheritance Facet) but which the
+# hub's binding names no class for — the exact scenario `_wrap`'s own
+# `LookupError` guards, distinct from `identity_key`'s unrelated `KeyError` for
+# a name the model itself does not know at all. The extra concrete is a
+# hand-built declaration composed beside the classes, which are their own.
+_IGUANA = Declaration(
+    identity=EntityIdentity("parallax.compatibility", "Iguana"),
+    inheritance=ConcreteSubtype(
+        ExactEntityReference(EntityIdentity("parallax.compatibility", "Pet")), "iguana"
+    ),
 )
-_DOCUMENT = metamodel(
-    [
-        read_models.Document,
-        read_models.FinancialDocument,
-        read_models.Invoice,
-        read_models.Receipt,
-        read_models.Memo,
-    ]
+_ANIMAL_WITH_UNBOUND_CONCRETE = form_metamodel(
+    source(sm.Animal, sm.Pet, sm.Dog, sm.Cat, sm.WildBoar, sm.AnimalOwner, _IGUANA)
 )
+_DOCUMENT = read_models.DOCUMENT_MODEL
 
 
 def _order_root() -> Node:
@@ -108,7 +106,7 @@ def _order_root() -> Node:
 
 
 def test_wrap_graph_produces_a_frozen_instance_of_the_registered_class() -> None:
-    (root,) = wrap_graph((_order_root(),), "SnapOrder", accepted_metamodel(_ORDERS), Pin())
+    (root,) = _wrap((_order_root(),), "SnapOrder", _ORDERS)
     assert isinstance(root, sm.SnapOrder)
     assert root.id == 1
     assert root.name == "Ada"
@@ -116,7 +114,7 @@ def test_wrap_graph_produces_a_frozen_instance_of_the_registered_class() -> None
 
 
 def test_included_to_many_relationship_is_a_tuple_of_wrapped_instances() -> None:
-    (root,) = wrap_graph((_order_root(),), "SnapOrder", accepted_metamodel(_ORDERS), Pin())
+    (root,) = _wrap((_order_root(),), "SnapOrder", _ORDERS)
     assert isinstance(root, sm.SnapOrder)
     assert isinstance(root.items, tuple)
     assert len(root.items) == 1
@@ -125,7 +123,7 @@ def test_included_to_many_relationship_is_a_tuple_of_wrapped_instances() -> None
 
 
 def test_back_reference_cycle_closes_on_the_same_wrapped_instance() -> None:
-    (root,) = wrap_graph((_order_root(),), "SnapOrder", accepted_metamodel(_ORDERS), Pin())
+    (root,) = _wrap((_order_root(),), "SnapOrder", _ORDERS)
     assert isinstance(root, sm.SnapOrder)
     assert root.items[0].order is root  # graph-local identity, hard pointer
 
@@ -140,7 +138,7 @@ def test_back_reference_cycle_closes_on_the_same_wrapped_instance() -> None:
 # over the same join (``items`` / ``itemsByShipDate``), the shape             #
 # m-snapshot-read-001 itself exercises.                                        #
 # --------------------------------------------------------------------------- #
-_STORY_ORDERS = metamodel([_soOrder, _soOrderItem, _soOrderStatus, _soOrderTag])
+_STORY_ORDERS = ORDERS_MODEL
 
 
 def _diamond_order_asymmetric_include() -> Node:
@@ -174,12 +172,7 @@ def _diamond_order_asymmetric_include() -> Node:
 
 
 def test_diamond_projection_merges_a_relationship_loaded_on_only_one_sibling_path() -> None:
-    (root,) = wrap_graph(
-        (_diamond_order_asymmetric_include(),),
-        "Order",
-        accepted_metamodel(_STORY_ORDERS),
-        Pin(),
-    )
+    (root,) = _wrap((_diamond_order_asymmetric_include(),), "Order", _STORY_ORDERS)
     assert isinstance(root, _soOrder)
     # Both positions wrap to the SAME node (graph-local identity)…
     assert root.items[0] is root.items_by_ship_date[0]
@@ -223,12 +216,7 @@ def _diamond_order_conflicting_include() -> Node:
 
 
 def test_diamond_projection_does_not_double_wire_a_relationship_loaded_on_both_paths() -> None:
-    (root,) = wrap_graph(
-        (_diamond_order_conflicting_include(),),
-        "Order",
-        accepted_metamodel(_STORY_ORDERS),
-        Pin(),
-    )
+    (root,) = _wrap((_diamond_order_conflicting_include(),), "Order", _STORY_ORDERS)
     assert isinstance(root, _soOrder)
     assert root.items[0] is root.items_by_ship_date[0]
     assert is_loaded(root.items[0], "order") is True
@@ -248,7 +236,7 @@ def test_unloaded_relationship_access_raises_naming_the_path() -> None:
         },
         pk_columns=("id",),
     )
-    (root,) = wrap_graph((bare,), "SnapOrder", accepted_metamodel(_ORDERS), Pin())
+    (root,) = _wrap((bare,), "SnapOrder", _ORDERS)
     assert isinstance(root, sm.SnapOrder)
     assert is_loaded(root, "items") is False
     with pytest.raises(UnloadedRelationshipError, match="items"):
@@ -256,7 +244,7 @@ def test_unloaded_relationship_access_raises_naming_the_path() -> None:
 
 
 def test_loaded_to_one_relationship_is_the_node_or_none() -> None:
-    (root,) = wrap_graph((_order_root(),), "SnapOrder", accepted_metamodel(_ORDERS), Pin())
+    (root,) = _wrap((_order_root(),), "SnapOrder", _ORDERS)
     assert isinstance(root, sm.SnapOrder)
     item = root.items[0]
     assert is_loaded(item, "order") is True
@@ -275,7 +263,7 @@ def test_loaded_to_one_relationship_attached_as_none_wraps_to_none() -> None:
         },
         pk_columns=("id",),
     )
-    (root,) = wrap_graph((orphan,), "SnapOrderItem", accepted_metamodel(_ORDERS), Pin())
+    (root,) = _wrap((orphan,), "SnapOrderItem", _ORDERS)
     assert isinstance(root, sm.SnapOrderItem)
     assert is_loaded(root, "order") is True
     assert root.order is None
@@ -295,7 +283,7 @@ def test_loaded_empty_to_many_is_an_empty_tuple() -> None:
         },
         pk_columns=("id",),
     )
-    (root,) = wrap_graph((parent,), "SnapOrder", accepted_metamodel(_ORDERS), Pin())
+    (root,) = _wrap((parent,), "SnapOrder", _ORDERS)
     assert isinstance(root, sm.SnapOrder)
     assert root.items == ()
     assert is_loaded(root, "items") is True
@@ -337,7 +325,7 @@ def test_polymorphic_children_materialize_as_their_concrete_classes() -> None:
         fields={"id": 10, "name": "Alice", "animals": [_dog(), _cat()]},
         pk_columns=("id",),
     )
-    (root,) = wrap_graph((owner,), "AnimalOwner", accepted_metamodel(_ANIMAL), Pin())
+    (root,) = _wrap((owner,), "AnimalOwner", _ANIMAL)
     assert isinstance(root, sm.AnimalOwner)
     dog, cat = root.animals
     assert type(dog) is sm.Dog
@@ -351,7 +339,7 @@ def test_narrowed_view_is_independent_of_the_broad_relationship() -> None:
         fields={"id": 10, "name": "Alice", "pets[Dog]": [_dog()]},
         pk_columns=("id",),
     )
-    (root,) = wrap_graph((owner,), "AnimalOwner", accepted_metamodel(_ANIMAL), Pin())
+    (root,) = _wrap((owner,), "AnimalOwner", _ANIMAL)
     assert isinstance(root, sm.AnimalOwner)
     path = sm.AnimalOwner.pets.narrow(sm.Dog)
     assert is_loaded(root, "pets") is False
@@ -372,7 +360,7 @@ def test_two_narrowed_views_coexist_independently_on_one_node() -> None:
         fields={"id": 10, "name": "Alice", "pets[Dog]": [_dog()], "pets[Cat]": [_cat()]},
         pk_columns=("id",),
     )
-    (root,) = wrap_graph((owner,), "AnimalOwner", accepted_metamodel(_ANIMAL), Pin())
+    (root,) = _wrap((owner,), "AnimalOwner", _ANIMAL)
     assert isinstance(root, sm.AnimalOwner)
     dogs = cast("tuple[object, ...]", narrowed(root, sm.AnimalOwner.pets.narrow(sm.Dog)))
     cats = cast("tuple[object, ...]", narrowed(root, sm.AnimalOwner.pets.narrow(sm.Cat)))
@@ -381,237 +369,19 @@ def test_two_narrowed_views_coexist_independently_on_one_node() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# The PATH's own captured                                                     #
-# registration scope is AUTHORITATIVE for a narrowed view's key derivation,   #
-# never `type(node)`'s own. A multi-hop path (`Kennel.owners.pets`) carries   #
-# its FIRST hop's own registry through the SECOND hop unchanged               #
-# (`RelationshipPath.__getattr__` / `.narrow()` both propagate `_registry`,   #
-# never re-derive it from the second hop's own owning entity) -- a registry  #
-# whose "Pet" family is WIDER (`CustomDog` beside `Dog`) than the WRAPPED     #
-# `Owner` node's OWN, entirely separate registration registry (`Dog` alone).  #
-# Single-hop can never exhibit this: a single hop's `_registry` is always     #
-# the immediate owner's OWN registration registry, the SAME class `type(node)`#
-# resolves to when `node` is that same owner -- provably identical by        #
-# construction, never just "untested".                                       #
+# A narrowed view is keyed by the path's own segments, and a `RelationshipPath`
+# is a frozen value: a `copy` or `deepcopy` — each reconstructing the path from
+# its own stored state rather than through `__init__` — keys the same view, and
+# a deep copy shares the one Binding rather than minting a second identity for
+# one hub. Pickling refuses, because hub identity deliberately cannot cross a
+# wire.
 # --------------------------------------------------------------------------- #
-def test_narrowed_view_key_derives_from_the_paths_own_registry_not_types_own() -> None:
-    registry_path = EntityRegistry(parent=None)
-    registry_actual = EntityRegistry(parent=None)
-
-    def _build_wide_pet_family() -> tuple[RelationshipPath, type, type]:
-        """`registry_path`'s own "Pet"/"Owner"/"Kennel" family: a "Pet" family
-        WIDER (`CustomDog` beside `Dog`) than `registry_actual`'s own,
-        entirely separate family below -- what the multi-hop `path` returned
-        here is built through. A NESTED scope (never the enclosing test
-        function's own): each class's canonical name ("Pet"/"Dog"/"Owner")
-        is declared exactly ONCE per scope, the SAME canonical name
-        `_build_narrow_pet_family` below ALSO declares in its own, separate
-        scope (the SAME canonical name coexists across two registries)
-        -- a distinct SCOPE per family avoids Pyright's redeclaration check,
-        never a distinct NAME, which would defeat the very coexistence
-        this test proves."""
-
-        class Pet(Entity, frozen=True, registry=registry_path):
-            __parallax__ = EntityConfig(
-                mutability="transactional",
-                inheritance=FamilyRoot(strategy="table-per-concrete-subtype"),
-            )
-
-            id: Attr[int] = Field(primary_key=True, pk_generator="none")
-            owner_id: Attr[int] = Field(type="int64")
-
-        class Dog(Pet, frozen=True):
-            __parallax__ = EntityConfig(table="dog_path", inheritance=Concrete())
-
-        class CustomDog(Pet, frozen=True):
-            __parallax__ = EntityConfig(table="custom_dog_path", inheritance=Concrete())
-
-        # Registered by the class statement's own side effect (widens this
-        # scope's "Pet" family beyond `registry_actual`'s, below): referenced
-        # here as proof of ITS OWN registry membership, never a dangling
-        # local.
-        assert registry_path.resolve("CustomDog") is CustomDog
-
-        class Owner(Entity, frozen=True, registry=registry_path):
-            __parallax__ = EntityConfig(table="owner_path", mutability="transactional")
-
-            id: Attr[int] = Field(primary_key=True, pk_generator="none")
-            kennel_id: Attr[int] = Field(type="int64")
-            pets: Rel[tuple[Pet, ...]] = Relationship(
-                cardinality="one-to-many",
-                join=RelationshipJoin(
-                    source="id", target=RelationshipTarget(entity="Pet", attribute="ownerId")
-                ),
-            )
-
-        class Kennel(Entity, frozen=True, registry=registry_path):
-            __parallax__ = EntityConfig(table="kennel_path", mutability="transactional")
-
-            id: Attr[int] = Field(primary_key=True, pk_generator="none")
-            owners: Rel[tuple[Owner, ...]] = Relationship(
-                cardinality="one-to-many",
-                join=RelationshipJoin(
-                    source="id",
-                    target=RelationshipTarget(entity="Owner", attribute="kennelId"),
-                ),
-            )
-
-        # A genuine multi-hop path: `.pets` (a DYNAMIC second hop, `__getattr__`)
-        # and `.narrow(Pet)` both propagate the FIRST hop's own `registry_path`
-        # unchanged -- never re-derived from `Owner`'s own registration registry
-        # (which happens to be the SAME one here; the wrapped node below is
-        # deliberately registered in a DIFFERENT one instead).
-        path = Kennel.owners.pets.narrow(Pet)
-        return path, Dog, Owner
-
-    def _build_narrow_pet_family() -> tuple[type, type]:
-        """`Owner`'s (and its "Pet" family's) OWN, entirely separate
-        registration registry -- this is what a wrapped `Owner` node's
-        `type(node)` actually resolves through; its "Pet" family is NARROWER
-        (`Dog` alone, no `CustomDog`) than `registry_path`'s own above."""
-
-        class Pet(Entity, frozen=True, registry=registry_actual):
-            __parallax__ = EntityConfig(
-                mutability="transactional",
-                inheritance=FamilyRoot(strategy="table-per-concrete-subtype"),
-            )
-
-            id: Attr[int] = Field(primary_key=True, pk_generator="none")
-            owner_id: Attr[int] = Field(type="int64")
-
-        class Dog(Pet, frozen=True):
-            __parallax__ = EntityConfig(table="dog_actual", inheritance=Concrete())
-
-        class Owner(Entity, frozen=True, registry=registry_actual):
-            __parallax__ = EntityConfig(table="owner_actual", mutability="transactional")
-
-            id: Attr[int] = Field(primary_key=True, pk_generator="none")
-            kennel_id: Attr[int] = Field(type="int64")
-            pets: Rel[tuple[Pet, ...]] = Relationship(
-                cardinality="one-to-many",
-                join=RelationshipJoin(
-                    source="id", target=RelationshipTarget(entity="Pet", attribute="ownerId")
-                ),
-            )
-
-        return Dog, Owner
-
-    path, path_dog, path_owner = _build_wide_pet_family()
-    dog_cls, owner_cls = _build_narrow_pet_family()
-
-    # The wire's own narrowed-view key, exactly as `m-deep-fetch`'s planning
-    # (`_resolve_position` over the QUERY's own connected metamodel --
-    # `registry_path`'s wide "Pet" family) would have baked into the neutral
-    # graph: `pets[CustomDog,Dog]`, never `pets[Dog]`.
-    dog_row = Node(fields={"id": 1, "owner_id": 10, "familyVariant": "Dog"}, pk_columns=("id",))
-    owner_node = Node(fields={"id": 10, "pets[CustomDog,Dog]": [dog_row]}, pk_columns=("id",))
-    actual_meta = registry_actual.metamodel()
-    (root,) = wrap_graph((owner_node,), "Owner", accepted_metamodel(actual_meta), Pin())
-    # `registry_actual`'s OWN classes -- distinct objects from `registry_path`'s
-    # same-named "Owner"/"Dog", never the ones the multi-hop `path` was built
-    # through (the SAME canonical name coexists across two registries).
-    assert type(root) is owner_cls
-    assert owner_cls is not path_owner
-
-    assert is_loaded(root, path) is True
-    view = cast("tuple[object, ...]", narrowed(root, path))
-    assert len(view) == 1
-    assert type(view[0]) is dog_cls
-    assert dog_cls is not path_dog
-
-
-# --------------------------------------------------------------------------- #
-# `RelationshipPath`'s captured                                              #
-# registration scope is an INTRINSIC dataclass field                         #
-# (`__parallax_registry__`), never a side table keyed by `id(path)` -- so    #
-# `copy.copy` / `copy.deepcopy` / pickling a path (each reconstructs a       #
-# `RelationshipPath` straight from its own stored state, never through       #
-# `__init__`/`__post_init__`) can never lose the captured scope the way an   #
-# identity-keyed side table silently did: a `copy.copy` of a path built      #
-# under a registry OTHER than the process default used to fall back to the  #
-# default registry instead, and `is_loaded`/`narrowed` raised looking up a   #
-# canonical name the default registry never heard of.                       #
-# --------------------------------------------------------------------------- #
-_COPY_SURVIVAL_REGISTRY = EntityRegistry(parent=None)
-
-
-class _CopySurvivalPet(Entity, frozen=True, registry=_COPY_SURVIVAL_REGISTRY):
-    __parallax__ = EntityConfig(
-        mutability="transactional",
-        inheritance=FamilyRoot(strategy="table-per-concrete-subtype"),
-    )
-
-    id: Attr[int] = Field(primary_key=True, pk_generator="none")
-    owner_id: Attr[int] = Field(type="int64")
-
-
-class _CopySurvivalDog(_CopySurvivalPet, frozen=True):
-    __parallax__ = EntityConfig(table="copy_survival_dog", inheritance=Concrete())
-
-
-class _CopySurvivalOwner(Entity, frozen=True, registry=_COPY_SURVIVAL_REGISTRY):
-    __parallax__ = EntityConfig(table="copy_survival_owner", mutability="transactional")
-
-    id: Attr[int] = Field(primary_key=True, pk_generator="none")
-    pets: Rel[tuple[_CopySurvivalPet, ...]] = Relationship(
-        cardinality="one-to-many",
-        join=RelationshipJoin(
-            source="id",
-            target=RelationshipTarget(entity="_CopySurvivalPet", attribute="ownerId"),
-        ),
-    )
-
-
-def test_narrowed_view_key_survives_copy_deepcopy_and_pickle_of_the_path() -> None:
-    """The captured registry travels WITH the path through every reconstruction
-    route that bypasses ``__init__``/``__post_init__`` -- proof the intrinsic
-    dunder field (never a side table) cannot diverge from the object it
-    describes."""
-    path = _CopySurvivalOwner.pets.narrow(_CopySurvivalDog)
-    assert path.__parallax_registry__ is _COPY_SURVIVAL_REGISTRY
-
-    owner_node = Node(
-        fields={
-            "id": 10,
-            "pets[_CopySurvivalDog]": [
-                Node(
-                    fields={"id": 1, "owner_id": 10, "familyVariant": "_CopySurvivalDog"},
-                    pk_columns=("id",),
-                ),
-            ],
-        },
-        pk_columns=("id",),
-    )
-    survival_meta = _COPY_SURVIVAL_REGISTRY.metamodel()
-    (root,) = wrap_graph(
-        (owner_node,),
-        "_CopySurvivalOwner",
-        accepted_metamodel(survival_meta),
-        Pin(),
-    )
-
-    for reconstructed in (
-        copy.copy(path),
-        copy.deepcopy(path),
-        pickle.loads(pickle.dumps(path)),
-    ):
-        assert reconstructed == path  # equality/hash/repr are untouched by this fix
-        assert is_loaded(root, reconstructed) is True
-        view = cast("tuple[object, ...]", narrowed(root, reconstructed))
-        assert len(view) == 1
-        assert type(view[0]) is _CopySurvivalDog
-
-
-def test_narrowed_view_key_falls_back_to_the_default_registry_when_the_path_captures_none() -> None:
-    """A ``RelationshipPath`` built outside ``Rel.__get__`` (test-only direct
-    construction, ``_registry`` omitted) falls back to the process default
-    registry for narrow-position resolution -- mirroring ``RelationshipPath``'s
-    own documented fallback."""
+def test_a_directly_built_relationship_path_keys_the_same_narrowed_view() -> None:
     owner = Node(
         fields={"id": 10, "name": "Alice", "pets[Dog]": [_dog()]},
         pk_columns=("id",),
     )
-    (root,) = wrap_graph((owner,), "AnimalOwner", accepted_metamodel(_ANIMAL), Pin())
+    (root,) = _wrap((owner,), "AnimalOwner", _ANIMAL)
     path = RelationshipPath(
         segments=(PathSegment(rel="AnimalOwner.pets", narrow=("Dog",)),), target="Dog"
     )
@@ -620,18 +390,34 @@ def test_narrowed_view_key_falls_back_to_the_default_registry_when_the_path_capt
     assert type(view[0]) is sm.Dog
 
 
-def test_wrap_raises_lookup_error_for_an_unregistered_concrete_class() -> None:
+def test_narrowed_view_key_survives_copy_and_deepcopy_of_the_path() -> None:
+    owner = Node(
+        fields={"id": 10, "name": "Alice", "pets[Dog]": [_dog()]},
+        pk_columns=("id",),
+    )
+    (root,) = _wrap((owner,), "AnimalOwner", _ANIMAL)
+    path = sm.AnimalOwner.pets.narrow(sm.Dog)
+    for reconstructed in (copy.copy(path), copy.deepcopy(path)):
+        assert reconstructed == path
+        assert reconstructed.binding is path.binding
+        assert is_loaded(root, reconstructed) is True
+        view = cast("tuple[object, ...]", narrowed(root, reconstructed))
+        assert len(view) == 1
+        assert type(view[0]) is sm.Dog
+
+
+def test_a_bound_relationship_path_cannot_be_pickled() -> None:
+    with pytest.raises(TypeError):
+        pickle.dumps(sm.AnimalOwner.pets.narrow(sm.Dog))
+
+
+def test_wrap_raises_lookup_error_for_an_entity_no_class_is_bound_to() -> None:
     owner = Node(
         fields={"id": 10, "name": "Alice", "animals": [_dog(), _iguana()]},
         pk_columns=("id",),
     )
     with pytest.raises(LookupError, match="Iguana"):
-        wrap_graph(
-            (owner,),
-            "AnimalOwner",
-            accepted_metamodel(_ANIMAL_WITH_UNREGISTERED_CONCRETE),
-            Pin(),
-        )
+        _wrap((owner,), "AnimalOwner", _ANIMAL, model=_ANIMAL_WITH_UNBOUND_CONCRETE)
 
 
 def _iguana() -> Node:
@@ -663,7 +449,7 @@ def test_wrap_a_single_resolved_position_node_instantiates_the_concrete_class() 
         pk_columns=("id",),
         resolved_entity="Invoice",
     )
-    (root,) = wrap_graph((node,), "FinancialDocument", accepted_metamodel(_DOCUMENT), Pin())
+    (root,) = _wrap((node,), "FinancialDocument", _DOCUMENT)
     assert type(root) is read_models.Invoice
     assert root.amount_due == Decimal("120.00")
 
@@ -683,5 +469,5 @@ def test_wrap_without_resolved_entity_falls_back_to_the_declared_default() -> No
         },
         pk_columns=("id",),
     )
-    (root,) = wrap_graph((node,), "Invoice", accepted_metamodel(_DOCUMENT), Pin())
+    (root,) = _wrap((node,), "Invoice", _DOCUMENT)
     assert type(root) is read_models.Invoice

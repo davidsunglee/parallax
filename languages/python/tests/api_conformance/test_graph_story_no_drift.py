@@ -21,13 +21,13 @@ from typing import Any
 
 import pytest
 
-from parallax.conformance import graph_stories, models
+from parallax.conformance import graph_stories
+from parallax.conformance.class_models import MODELS
 from parallax.core.db_port import Bind, DbPort, Row
 from parallax.snapshot.handle import Database
 
 pytestmark = [pytest.mark.unit, pytest.mark.api_conformance]
 
-_MODELS = models.load_models()
 
 _ORDER_ROW: Row = {
     "id": 1,
@@ -59,7 +59,7 @@ class _CannedPort:
 
 
 def _db(story: graph_stories.GraphStory, responses: Sequence[list[Row]] = ()) -> Database:
-    return Database.connect(_CannedPort(responses), _MODELS[story.model])
+    return Database.connect(_CannedPort(responses), MODELS[story.model])
 
 
 def _responses_for(run: Callable[[Database], Any]) -> list[list[Row]]:
@@ -94,5 +94,5 @@ def test_the_supplemental_history_story_runs_through_the_shipped_surface() -> No
     # counted toward any case's exercised status — see `graph_stories`'s own
     # module docstring), but its body still needs a unit-lane, Docker-free
     # driver exactly like every registered story.
-    db = Database.connect(_CannedPort(), _MODELS["rate"])
+    db = Database.connect(_CannedPort(), MODELS["rate"])
     graph_stories.history_of_a_concrete_temporal_node_distinguishes_milestones(db)

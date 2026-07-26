@@ -13,10 +13,20 @@ from decimal import Decimal
 import pytest
 
 import snapshot_models as sm
-from parallax.conformance import models
-from parallax.core import Attr, Bitemporal, Entity, EntityConfig, Field, descriptor
-from parallax.core.entity import accepted_metamodel, entity_record_of, metamodel
-from parallax.core.entity.base import Concrete, FamilyRoot
+from parallax.conformance.read_models import BALANCE_MODEL
+from parallax.core import (
+    TABLE_PER_CONCRETE_SUBTYPE,
+    AbstractRoot,
+    Attr,
+    Bitemporal,
+    ConcreteSubtype,
+    Entity,
+    MetamodelHub,
+    ValueObject,
+    attr,
+)
+from parallax.core.entity import sealed_model
+from parallax.core.metamodel import Metamodel
 from parallax.core.temporal_read import Pin, edge_of, pin_of
 from parallax.snapshot.handle import Execution, NoResultFound, Snapshot, TooManyResultsFound
 from parallax.snapshot.handle._wrap import wrap_graph
@@ -24,8 +34,26 @@ from parallax.snapshot.materialize import Node
 
 pytestmark = pytest.mark.unit
 
-_ORDERS = metamodel([sm.SnapOrder, sm.SnapOrderItem, sm.SnapOrderStatus])
-_BALANCE = models.load_models()["balance"]
+_ORDERS = sm.SNAP_ORDERS_MODEL
+_NO_PIN = Pin()
+
+
+def _wrap(
+    nodes: tuple[Node, ...],
+    target: str,
+    hub: MetamodelHub,
+    pin: Pin = _NO_PIN,
+    model: Metamodel | None = None,
+) -> tuple[object, ...]:
+    """Wrap ``nodes`` through ``hub``'s own binding.
+
+    ``model`` overrides the model wrapping reads without changing the binding,
+    which is how a descriptor that disagrees with its classes is exercised.
+    """
+    sealed = sealed_model(hub)
+    return wrap_graph(
+        nodes, target, model if model is not None else sealed.model, pin, sealed.binding
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -51,7 +79,7 @@ def test_entity_level_value_object_members_wrap_into_their_declared_classes() ->
         },
         pk_columns=("id",),
     )
-    (root,) = wrap_graph((status,), "SnapOrderStatus", accepted_metamodel(_ORDERS), Pin())
+    (root,) = _wrap((status,), "SnapOrderStatus", _ORDERS)
     assert isinstance(root, sm.SnapOrderStatus)
     assert root.primary_tag is None
     assert len(root.tags) == 2
@@ -77,74 +105,60 @@ def test_a_null_cardinality_many_value_object_column_wraps_to_an_empty_tuple() -
         },
         pk_columns=("id",),
     )
-    (root,) = wrap_graph((empty_status,), "SnapOrderStatus", accepted_metamodel(_ORDERS), Pin())
+    (root,) = _wrap((empty_status,), "SnapOrderStatus", _ORDERS)
     assert isinstance(root, sm.SnapOrderStatus)
     assert root.tags == ()
 
 
 # --------------------------------------------------------------------------- #
-# A metamodel / registry disagreement about a member's SHAPE.                   #
-#                                                                               #
-# `metamodel([...])` compiles the descriptor FROM the classes, so the two agree #
-# by construction there — but they are two independent sources in the           #
-# conformance lane, where the descriptor is authored YAML and the class is a    #
-# hand-written Python mirror. A descriptor that calls a member a value object   #
-# while the registered class maps it as a scalar has no ValueObject class to    #
-# construct, and `_wrap_member` must say so rather than hand back the raw       #
-# decoded dict typed as the declared VO (spec §3's instances-only contract).    #
+# A model / class disagreement about a member's SHAPE.                         #
+#                                                                              #
+# A class-backed hub compiles its model FROM the classes, so the two agree by  #
+# construction there — but they are two independent sources in the conformance #
+# lane, where the model is authored YAML and the class is a hand-written       #
+# mirror. A model that calls a member a value object while the bound class     #
+# maps it as a scalar has no ValueObject class to construct, and               #
+# `_wrap_member` must say so rather than hand back the raw decoded dict typed  #
+# as the declared VO (spec §3's instances-only contract).                      #
 # --------------------------------------------------------------------------- #
-class _WrapScalarProfile(Entity, frozen=True):
-    __parallax__ = EntityConfig(
-        table="wrap_scalar_profile",
-        namespace="parallax.compatibility",
-        mutability="transactional",
-    )
+class _WrapScalarProfile(Entity, table="wrap_scalar_profile", namespace="parallax.compatibility"):
+    id: Attr[int] = attr(primary_key=True)
+    profile: Attr[str] = attr(max_length=32)
 
-    id: Attr[int] = Field(primary_key=True, pk_generator="none", type="int64")
-    profile: Attr[str] = Field(type="string", max_length=32)
+
+_SCALAR_PROFILE = MetamodelHub(_WrapScalarProfile)
 
 
 # The SAME entity as the class above, except `profile` is declared a value
-# object rather than the scalar attribute the class registers.
-_PROFILE_AS_VALUE_OBJECT = descriptor.Metamodel(
-    entities=(
-        descriptor.Entity(
-            name="_WrapScalarProfile",
-            table="wrap_scalar_profile",
-            namespace="parallax.compatibility",
-            attributes=(
-                descriptor.Attribute(name="id", type="int64", column="id", primary_key=True),
-            ),
-            value_objects=(
-                descriptor.ValueObject(
-                    name="profile",
-                    column="profile",
-                    attributes=(descriptor.ValueObjectAttribute(name="note", type="string"),),
-                ),
-            ),
-        ),
-    )
-)
+# object rather than the scalar attribute the class maps.
+class _WrapDocumentProfile(ValueObject):
+    note: Attr[str]
 
 
-def test_a_value_object_member_with_no_registered_class_is_refused() -> None:
-    # The premise: the CLASS really does map `profile` as a scalar, so the
-    # refusal below comes from the disagreement with the descriptor above and
-    # not from a malformed class declaration.
-    compiled = entity_record_of(_WrapScalarProfile)
-    assert compiled is not None
-    assert [attr.name for attr in compiled.attributes] == ["id", "profile"]
-    assert compiled.value_objects == ()
+class _WrapVoProfile(
+    Entity,
+    table="wrap_scalar_profile",
+    name="_WrapScalarProfile",
+    namespace="parallax.compatibility",
+):
+    id: Attr[int] = attr(primary_key=True)
+    profile: Attr[_WrapDocumentProfile]
+
+
+_PROFILE_AS_VALUE_OBJECT = sealed_model(MetamodelHub(_WrapVoProfile)).model
+
+
+def test_a_value_object_member_with_no_bound_class_is_refused() -> None:
+    # The premise: the bound CLASS really does map `profile` as a scalar, so the
+    # refusal below comes from the disagreement with the model above and not
+    # from a malformed class declaration.
+    assert [a.identity.name for a in _WrapScalarProfile.attributes] == ["id", "profile"]
+    assert _WrapScalarProfile.value_objects == ()
 
     node = Node(fields={"id": 1, "profile": {"note": "x"}}, pk_columns=("id",))
-    match = r"_WrapScalarProfile\.profile: no registered ValueObject"
+    match = r"_WrapScalarProfile\.profile: the bound Entity Class declares no"
     with pytest.raises(LookupError, match=match):
-        wrap_graph(
-            (node,),
-            "_WrapScalarProfile",
-            accepted_metamodel(_PROFILE_AS_VALUE_OBJECT),
-            Pin(),
-        )
+        _wrap((node,), "_WrapScalarProfile", _SCALAR_PROFILE, model=_PROFILE_AS_VALUE_OBJECT)
 
 
 # --------------------------------------------------------------------------- #
@@ -163,7 +177,7 @@ def test_temporal_node_carries_the_whole_graph_pin_and_its_own_edge() -> None:
         pk_columns=("bal_id",),
     )
     pin = Pin(tx_time=dt.datetime(2024, 2, 1, tzinfo=dt.UTC))
-    (root,) = wrap_graph((row,), "Balance", accepted_metamodel(_BALANCE), pin)
+    (root,) = _wrap((row,), "Balance", BALANCE_MODEL, pin)
     assert pin_of(root) is pin
     assert edge_of(root).tx_time == dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
 
@@ -177,28 +191,25 @@ def test_temporal_node_carries_the_whole_graph_pin_and_its_own_edge() -> None:
 # the concrete descriptor's own (empty) `as_of_axes`, so a temporal            #
 # inheritance node never got `pin_of`/`edge_of` attached at all.               #
 # --------------------------------------------------------------------------- #
-class _WrapTemporalRoot(Bitemporal, frozen=True):
-    __parallax__ = EntityConfig(
-        namespace="parallax.compatibility",
-        mutability="transactional",
-        inheritance=FamilyRoot(strategy="table-per-concrete-subtype"),
-    )
-
-    id: Attr[int] = Field(primary_key=True, pk_generator="none", type="int64")
-    amount: Attr[Decimal] = Field(type="decimal(18,2)")
+class _WrapTemporalRoot(
+    Bitemporal,
+    namespace="parallax.compatibility",
+    inheritance=AbstractRoot(TABLE_PER_CONCRETE_SUBTYPE),
+):
+    id: Attr[int] = attr(primary_key=True)
+    amount: Attr[Decimal] = attr(precision=18, scale=2)
 
 
-class _WrapTemporalLeaf(_WrapTemporalRoot, frozen=True):
-    __parallax__ = EntityConfig(
-        table="wrap_temporal_leaf",
-        namespace="parallax.compatibility",
-        inheritance=Concrete(),
-    )
+class _WrapTemporalLeaf(
+    _WrapTemporalRoot,
+    table="wrap_temporal_leaf",
+    namespace="parallax.compatibility",
+    inheritance=ConcreteSubtype,
+):
+    grade: Attr[str | None] = attr(max_length=8)
 
-    grade: Attr[str | None] = Field(type="string", max_length=8, nullable=True)
 
-
-_TEMPORAL_TPCS = metamodel([_WrapTemporalRoot, _WrapTemporalLeaf])
+_TEMPORAL_TPCS = MetamodelHub(_WrapTemporalRoot, _WrapTemporalLeaf)
 
 
 def test_temporal_tpcs_concrete_node_carries_pin_and_edge() -> None:
@@ -218,7 +229,7 @@ def test_temporal_tpcs_concrete_node_carries_pin_and_edge() -> None:
         valid_time=dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
         tx_time=dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
     )
-    (root,) = wrap_graph((row,), "_WrapTemporalLeaf", accepted_metamodel(_TEMPORAL_TPCS), pin)
+    (root,) = _wrap((row,), "_WrapTemporalLeaf", _TEMPORAL_TPCS, pin)
     assert isinstance(root, _WrapTemporalLeaf)
     assert pin_of(root) is pin
     assert edge_of(root).valid_time == dt.datetime(2024, 1, 1, tzinfo=dt.UTC)

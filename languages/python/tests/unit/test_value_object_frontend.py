@@ -173,10 +173,9 @@ def test_a_value_object_scalar_admits_the_naming_and_type_shaping_options() -> N
     ],
 )
 def test_a_value_object_body_outside_the_grammar_is_rejected(build: object, code: str) -> None:
-    builder = cast("object", build)
-    assert callable(builder)
+    assert callable(build)
     with pytest.raises(EntityDefinitionError) as caught:
-        builder()
+        build()
     assert caught.value.code == code
 
 

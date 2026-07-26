@@ -19,18 +19,41 @@ from parallax.conformance.read_models import (
     DOCUMENT_MODEL,
     PAYMENT_MODEL,
     PERSON_MODEL,
+    Balance,
+    Passport,
+    Payment,
+    Person,
 )
-from parallax.conformance.story_models import ACCOUNT_MODEL
+from parallax.conformance.story_models import ACCOUNT_MODEL, Account
 from parallax.conformance.vo_models import (
     BRANCH_MODEL,
     CONTACT_MODEL,
     CUSTOMER_MODEL,
     SHIPMENT_MODEL,
     SUPPLIER_MODEL,
+    Branch,
+    Contact,
+    Shipment,
+    Supplier,
 )
 from parallax.core import MAX, Attr, Entity, MetamodelHub, attr, index
 
 _NS = "parallax.compatibility"
+
+__all__ = [
+    "MIRRORED",
+    "PK_MAX_MODEL",
+    "Account",
+    "Attendee",
+    "Balance",
+    "Branch",
+    "Contact",
+    "Passport",
+    "Payment",
+    "Person",
+    "Shipment",
+    "Supplier",
+]
 
 
 class Attendee(

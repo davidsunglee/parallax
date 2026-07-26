@@ -20,12 +20,18 @@ from parallax.core import (
     Attr,
     AttributeExpr,
     Entity,
-    EntityConfig,
-    Field,
+    Int32,
+    MetamodelHub,
     Predicate,
     Statement,
+    attr,
 )
-from parallax.core.descriptor import AsOfAxisMetadata
+from parallax.core.metamodel import (
+    AsOfAxisMetadata,
+    AttributeIdentity,
+    EntityIdentity,
+    TemporalDimension,
+)
 from parallax.core.op_algebra import All
 
 pytestmark = pytest.mark.unit
@@ -33,18 +39,19 @@ pytestmark = pytest.mark.unit
 _NS = "parallax.compatibility"
 
 
-class Widget(Entity, frozen=True):
+class Widget(Entity, table="widget", namespace=_NS):
     """A local scalar entity for exercising the statement surface."""
 
-    __parallax__ = EntityConfig(table="widget", namespace=_NS, mutability="transactional")
-
-    id: Attr[int] = Field(primary_key=True, pk_generator="none", type="int64")
-    name: Attr[str] = Field(max_length=64)
-    qty: Attr[int] = Field(type="int32")
-    price: Attr[Decimal] = Field(type="decimal(18,2)")
+    id: Attr[int] = attr(primary_key=True)
+    name: Attr[str] = attr(max_length=64)
+    qty: Attr[int] = attr(type=Int32)
+    price: Attr[Decimal] = attr(precision=18, scale=2)
     active: Attr[bool]
-    sku: Attr[str] = Field(max_length=32, nullable=True)
-    made_on: Attr[dt.date] = Field(column="made_on")
+    sku: Attr[str | None] = attr(max_length=32)
+    made_on: Attr[dt.date] = attr(column="made_on")
+
+
+_WIDGETS = MetamodelHub(Widget)
 
 
 def _op(pred: Predicate) -> dict[str, object]:
@@ -200,18 +207,23 @@ def test_statement_is_a_frozen_value() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Axis-keyed temporal-read clauses (m-temporal-read). The idiomatic entity     #
-# class cannot yet DECLARE as-of dimensions (deferred), so the                 #
-# statement's temporal builders are exercised over a Statement carrying the    #
-# corpus-ingested dimensions directly — proving the wrapper-node construction  #
-# (Valid-Time outer/Transaction-Time inner, LATEST -> latest, single-shot).    #
+# Axis-keyed temporal-read clauses (m-temporal-read), exercised over a         #
+# Statement carrying its axes directly — proving the wrapper-node construction #
+# (Valid-Time outer/Transaction-Time inner, LATEST -> latest, single-shot)     #
+# without a whole model behind it.                                             #
 # --------------------------------------------------------------------------- #
-_TRANSACTION_TIME = AsOfAxisMetadata(
-    dimension="transactionTime", start_attribute="tx_start", end_attribute="tx_end"
-)
-_VALID_TIME = AsOfAxisMetadata(
-    dimension="validTime", start_attribute="valid_start", end_attribute="valid_end"
-)
+def _axis(entity: str, dimension: TemporalDimension, start: str, end: str) -> AsOfAxisMetadata:
+    identity = EntityIdentity(_NS, entity)
+    return AsOfAxisMetadata(
+        dimension=dimension,
+        start_attribute=AttributeIdentity(identity, start),
+        end_attribute=AttributeIdentity(identity, end),
+    )
+
+
+_TRANSACTION_TIME = _axis("Balance", TemporalDimension.TRANSACTION_TIME, "tx_start", "tx_end")
+_VALID_TIME = _axis("Position", TemporalDimension.VALID_TIME, "valid_start", "valid_end")
+_POSITION_TX_TIME = _axis("Position", TemporalDimension.TRANSACTION_TIME, "tx_start", "tx_end")
 
 
 def _balance_stmt() -> Statement:
@@ -220,7 +232,7 @@ def _balance_stmt() -> Statement:
 
 def _position_stmt() -> Statement:
     return Statement(
-        target="Position", predicate=All(), as_of_axes=(_VALID_TIME, _TRANSACTION_TIME)
+        target="Position", predicate=All(), as_of_axes=(_VALID_TIME, _POSITION_TX_TIME)
     )
 
 

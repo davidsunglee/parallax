@@ -24,7 +24,7 @@ from _transact_support import (
     INFINITY_INSTANT,
     INSERT_SQL,
     PAYMENT,
-    PERSON_MIRROR_META,
+    PERSON,
     SHIPMENT,
     WHERE_POSITION_META,
     NoIoPort,
@@ -38,7 +38,7 @@ from _transact_support import (
 )
 
 import mirrored_models as mm
-from parallax.conformance import models
+from parallax.conformance.class_models import MODELS
 from parallax.core import LATEST, Entity, opt_lock
 from parallax.core.db_port import Row
 from parallax.core.dialect import POSTGRES
@@ -167,7 +167,7 @@ def test_versioned_update_conflict_aborts_the_whole_unit_of_work() -> None:
 def test_bitemporal_insert_constructs_cleanly_and_stamps_the_valid_from() -> None:
     branch = mm.Branch(id=1, name="Central", address=None)  # no placeholder axis values
     port = RecordingPort()
-    db = db_for(models.load_models()["branch"], port)
+    db = db_for(MODELS["branch"], port)
 
     db.transact(lambda tx: tx.insert(branch, valid_from=dt.datetime(2024, 1, 1, tzinfo=dt.UTC)))
     write_ops = [op for op in port.ops if op[0] == "write"]
@@ -189,7 +189,7 @@ def test_bitemporal_insert_constructs_cleanly_and_stamps_the_valid_from() -> Non
 def test_bitemporal_insert_until_opens_a_single_bounded_rectangle() -> None:
     branch = mm.Branch(id=1, name="Central", address=None)
     port = RecordingPort()
-    db = db_for(models.load_models()["branch"], port)
+    db = db_for(MODELS["branch"], port)
 
     db.transact(
         lambda tx: tx.insert_until(
@@ -212,7 +212,7 @@ def test_bitemporal_insert_until_opens_a_single_bounded_rectangle() -> None:
 def test_insert_until_rejects_an_equal_or_reversed_window() -> None:
     branch = mm.Branch(id=1, name="Central", address=None)
     port = RecordingPort()
-    db = db_for(models.load_models()["branch"], port)
+    db = db_for(MODELS["branch"], port)
     same_instant = dt.datetime(2024, 3, 1, tzinfo=dt.UTC)
     with pytest.raises(ValueError, match="valid_from < until"):
         db.transact(lambda tx: tx.insert_until(branch, valid_from=same_instant, until=same_instant))
@@ -838,19 +838,18 @@ def test_an_edited_copy_of_a_finite_transaction_time_pinned_node_stays_writable(
 
 # --------------------------------------------------------------------------- #
 # The KEYED verbs' own entity-class guard (`_write_inputs.                     #
-# entity_record_of_instance`). Placed beside the `NoIoPort` harness above,     #
+# metadata_of_instance`). Placed beside the `NoIoPort` harness above,          #
 # which is the only fixture it needs — it lives here with the rest of the      #
 # keyed-verb region.                                                           #
 # --------------------------------------------------------------------------- #
 def test_a_keyed_verb_refuses_an_instance_of_an_uncompiled_class() -> None:
-    # `Entity` (the frontend BASE) is never itself compiled into a metamodel
-    # record — `EntityMeta.__new__` short-circuits for a class with no
-    # Parallax-entity base — so an instance of it is a registered-class lookup
-    # miss while still satisfying every caller's `EntityBase` annotation. The
-    # keyed verbs must name that as a TypeError rather than fail later on a
-    # `None` record; the raising port proves the guard runs before any I/O.
+    # `Entity` (the framework root) declares nothing and is never a hub
+    # candidate, so an instance of it is a binding lookup miss while still
+    # satisfying every caller's `EntityBase` annotation. The keyed verbs must
+    # name that as a TypeError rather than fail later on a missing declaration;
+    # the raising port proves the guard runs before any I/O.
     def fn(tx: Transaction) -> None:
         tx.delete(Entity())
 
-    with pytest.raises(TypeError, match="Entity is not a registered Parallax entity class"):
-        Database.connect(NoIoPort(), PERSON_MIRROR_META, clock=FixedClock(FIXED)).transact(fn)
+    with pytest.raises(TypeError, match="Entity is not an Entity Class of this model"):
+        Database.connect(NoIoPort(), PERSON, clock=FixedClock(FIXED)).transact(fn)

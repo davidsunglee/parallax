@@ -14,7 +14,7 @@ from decimal import Decimal
 
 import pytest
 
-from parallax.conformance import models
+from parallax.conformance.class_models import MODELS
 from parallax.conformance.scripted_clock import ClockExhaustedError, ScriptedClock
 from parallax.conformance.story_models import Account
 from parallax.core.db_port import Bind, DbPort, Row
@@ -23,7 +23,7 @@ from parallax.snapshot.handle import Database, Transaction
 
 pytestmark = pytest.mark.unit
 
-_ACCOUNT = models.load_models()["account"]
+_ACCOUNT = MODELS["account"]
 _I1 = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
 _I2 = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
 

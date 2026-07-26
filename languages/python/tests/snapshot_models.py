@@ -1,60 +1,46 @@
-"""Idiomatic entity classes for the frozen-node wrapping / statement-include /
+"""Idiomatic Entity Classes for the frozen-node wrapping / statement-include /
 narrowed-view unit tests.
 
 Shaped after ``models/orders.yaml`` (relationships, deep-fetch paths) and
 ``models/animal.yaml`` (table-per-hierarchy inheritance, a polymorphic owner,
-narrowed views) closely enough to drive ``parallax.snapshot.handle._wrap`` against
-corpus-shaped rows, but ``SnapOrder``/``SnapOrderItem``/``SnapOrderStatus``
-stay under class names distinct from the corpus's own ``Order``/``OrderItem``/
-``OrderStatus`` (``parallax.conformance.story_models`` already claims those
-names for its own no-drift guard). Assembled into a self-contained
-:class:`~parallax.core.descriptor.Metamodel` via
-``parallax.core.entity.metamodel(...)`` rather than corpus YAML ingestion.
+narrowed views) closely enough to drive ``parallax.snapshot.handle._wrap``
+against corpus-shaped rows, and composed into the two sealed hubs those tests
+connect with.
+
+Both families are declared here rather than borrowed from
+``parallax.conformance``: an Entity Class belongs to exactly one hub for its
+lifetime, and the installed mirrors are already composed into the hubs that prove
+them against the corpus. These are structural fixtures for the wrap mechanics, so
+they carry the shapes without the corpus's own indices, and ``SnapOrder`` and its
+siblings keep names distinct from the mirrors to make the two easy to tell apart
+in a failure.
+
 This module deliberately avoids ``from __future__ import annotations`` so the
-metaclass reads the live ``Attr[T]`` / ``Rel[T]`` objects directly.
-
-Lives at the top level of ``tests/`` (moved from ``tests/unit/`` in increment
-6b): ``Animal``/``Pet``/``Dog``/``Cat``/``WildBoar`` (declared with their real
-corpus names) are **re-exported** from ``parallax.conformance.read_models``
-(the installed package's own mirror, which the API Conformance Suite's
-real-database read stories execute against `db.find`), so the unit lane's
-frontend/wrap tests here and the API-suite's execution both resolve the exact
-SAME registered class rather than a second, differently-scoped copy racing it
-in the same registry.
-
-``AnimalOwner`` stays LOCAL and distinctly named — deliberately, not out of
-necessity: before per-registry scoping the animal family's
-real owner (``models/animal.yaml``'s own ``Person``) could not coexist with
-``read_models.Person`` (``models/person.yaml``) in the single, global,
-process-wide entity registry, so this module renamed its OWN owner fixture to
-sidestep the collision entirely. Explicit
-:class:`~parallax.core.entity.base.EntityRegistry` scoping now lets the two
-coexist (the REAL, production-reachable animal-family owner is installed as
-`parallax.conformance.animal_owner.Person`, scoped to its own registry, and
-drives the owner-relationship stories for real) — but ``AnimalOwner`` here
-tests `parallax.snapshot.handle._wrap`'s narrowed-view / closed-world MECHANICS in the
-unit lane and needs no corpus-exact name to do that, so it stays as its own
-structural fixture rather than becoming a third alias for the same class.
+engine reads the live ``Attr[T]`` / ``Rel[T]`` objects directly.
 """
 
 import datetime as dt
 from decimal import Decimal
 
-from parallax.conformance.read_models import Animal, Cat, Dog, Pet, WildBoar
 from parallax.core import (
+    ONE_TO_MANY,
+    AbstractRoot,
+    AbstractSubtype,
     Attr,
+    ConcreteSubtype,
     Entity,
-    EntityConfig,
-    Field,
+    Int32,
+    MetamodelHub,
     Rel,
-    Relationship,
-    RelationshipJoin,
-    RelationshipTarget,
-    ReverseRelationship,
+    TablePerHierarchy,
+    ValueObject,
+    attr,
+    rel,
 )
-from parallax.core.entity.value_object import ValueObject, VoField
 
 __all__ = [
+    "ANIMAL_MODEL",
+    "SNAP_ORDERS_MODEL",
     "Animal",
     "AnimalOwner",
     "Cat",
@@ -71,102 +57,94 @@ __all__ = [
 _NS = "parallax.compatibility"
 
 
-class Detail(ValueObject, frozen=True):
-    note: Attr[str] = VoField(type="string")
+class Detail(ValueObject):
+    note: Attr[str]
 
 
-class Tag(ValueObject, frozen=True):
-    label: Attr[str] = VoField(type="string")
-    detail: Attr[Detail | None] = VoField(nullable=True, default=None)
-    details: Attr[tuple[Detail, ...]] = VoField(default=())
+class Tag(ValueObject):
+    label: Attr[str]
+    detail: Attr[Detail | None]
+    details: Attr[tuple[Detail, ...]]
 
 
-class SnapOrder(Entity, frozen=True):
-    __parallax__ = EntityConfig(table="snap_orders", namespace=_NS, mutability="transactional")
-
-    id: Attr[int] = Field(primary_key=True, pk_generator="none", type="int64")
-    name: Attr[str] = Field(max_length=255)
-    sku: Attr[str | None] = Field(type="string", max_length=32, nullable=True, default=None)
-    qty: Attr[int] = Field(type="int32")
-    price: Attr[Decimal] = Field(type="decimal(18,2)")
-    active: Attr[bool] = Field(default=False)
-    ordered_on: Attr[dt.date] = Field(column="ordered_on")
-    items: Rel[tuple["SnapOrderItem", ...]] = Relationship(
-        cardinality="one-to-many",
-        join=RelationshipJoin(
-            source="id",
-            target=RelationshipTarget(entity="SnapOrderItem", attribute="orderId"),
-        ),
-        dependent=True,
+class SnapOrder(Entity, table="snap_orders", namespace=_NS):
+    id: Attr[int] = attr(primary_key=True)
+    name: Attr[str] = attr(max_length=255)
+    sku: Attr[str | None] = attr(max_length=32)
+    qty: Attr[int] = attr(type=Int32)
+    price: Attr[Decimal] = attr(precision=18, scale=2)
+    active: Attr[bool]
+    ordered_on: Attr[dt.date] = attr(column="ordered_on")
+    items: Rel[tuple["SnapOrderItem", ...]] = rel(
+        cardinality=ONE_TO_MANY, join=("id", "order_id"), dependent=True
     )
-    statuses: Rel[tuple["SnapOrderStatus", ...]] = Relationship(
-        cardinality="one-to-many",
-        join=RelationshipJoin(
-            source="id",
-            target=RelationshipTarget(entity="SnapOrderStatus", attribute="orderId"),
-        ),
-        dependent=True,
+    statuses: Rel[tuple["SnapOrderStatus", ...]] = rel(
+        cardinality=ONE_TO_MANY, join=("id", "order_id"), dependent=True
     )
 
 
-class SnapOrderItem(Entity, frozen=True):
-    __parallax__ = EntityConfig(table="snap_order_item", namespace=_NS, mutability="transactional")
-
-    id: Attr[int] = Field(primary_key=True, pk_generator="none", type="int64")
-    order_id: Attr[int] = Field(column="order_id", type="int64")
-    sku: Attr[str] = Field(max_length=32)
-    quantity: Attr[int] = Field(type="int32")
-    shipped_on: Attr[dt.date | None] = Field(
-        type="date", column="shipped_on", nullable=True, default=None
-    )
-    order: Rel["SnapOrder"] = ReverseRelationship(reverse_of="SnapOrder.items")
-    statuses: Rel[tuple["SnapOrderStatus", ...]] = Relationship(
-        cardinality="one-to-many",
-        join=RelationshipJoin(
-            source="id",
-            target=RelationshipTarget(entity="SnapOrderStatus", attribute="orderItemId"),
-        ),
-        dependent=True,
+class SnapOrderItem(Entity, table="snap_order_item", namespace=_NS):
+    id: Attr[int] = attr(primary_key=True)
+    order_id: Attr[int] = attr(column="order_id")
+    sku: Attr[str] = attr(max_length=32)
+    quantity: Attr[int] = attr(type=Int32)
+    shipped_on: Attr[dt.date | None] = attr(column="shipped_on")
+    order: Rel[SnapOrder | None] = rel(reverse_of="items")
+    statuses: Rel[tuple["SnapOrderStatus", ...]] = rel(
+        cardinality=ONE_TO_MANY, join=("id", "order_item_id"), dependent=True
     )
 
 
-class SnapOrderStatus(Entity, frozen=True):
-    __parallax__ = EntityConfig(
-        table="snap_order_status", namespace=_NS, mutability="transactional"
-    )
-
-    id: Attr[int] = Field(primary_key=True, pk_generator="none", type="int64")
-    order_id: Attr[int] = Field(column="order_id", type="int64")
-    order_item_id: Attr[int | None] = Field(
-        type="int64", column="order_item_id", nullable=True, default=None
-    )
-    code: Attr[str] = Field(max_length=16)
-    primary_tag: Attr[Tag | None] = Field(nullable=True, default=None)
+class SnapOrderStatus(Entity, table="snap_order_status", namespace=_NS):
+    id: Attr[int] = attr(primary_key=True)
+    order_id: Attr[int] = attr(column="order_id")
+    order_item_id: Attr[int | None] = attr(column="order_item_id")
+    code: Attr[str] = attr(max_length=16)
+    primary_tag: Attr[Tag | None]
     # A `many` occurrence is a possibly-empty collection and is never nullable
     # (m-value-object); a NULL document column still wraps to an empty tuple.
-    tags: Attr[tuple[Tag, ...]] = Field(default=())
+    tags: Attr[tuple[Tag, ...]]
 
 
-class AnimalOwner(Entity, frozen=True):
-    """A LOCAL structural fixture for ``parallax.snapshot.handle._wrap``'s narrowed-
-    view / closed-world unit tests: the animal family's polymorphic-owner
-    SHAPE (``models/animal.yaml``'s own ``Person`` entity), under a distinct
-    name by choice, not necessity (see module docstring) — the REAL,
-    production-reachable owner is `parallax.conformance.animal_owner.Person`."""
+SNAP_ORDERS_MODEL = MetamodelHub(SnapOrder, SnapOrderItem, SnapOrderStatus)
 
-    __parallax__ = EntityConfig(table="person", namespace=_NS, mutability="transactional")
 
-    id: Attr[int] = Field(primary_key=True, pk_generator="none", type="int64")
-    name: Attr[str] = Field(max_length=32)
-    animals: Rel[tuple["Animal", ...]] = Relationship(
-        cardinality="one-to-many",
-        join=RelationshipJoin(
-            source="id", target=RelationshipTarget(entity="Animal", attribute="ownerId")
-        ),
-    )
-    pets: Rel[tuple["Pet", ...]] = Relationship(
-        cardinality="one-to-many",
-        join=RelationshipJoin(
-            source="id", target=RelationshipTarget(entity="Pet", attribute="ownerId")
-        ),
-    )
+class Animal(
+    Entity,
+    table="animal",
+    namespace=_NS,
+    inheritance=AbstractRoot(TablePerHierarchy(tag_column="kind")),
+):
+    id: Attr[int] = attr(primary_key=True)
+    name: Attr[str] = attr(max_length=32)
+    owner_id: Attr[int | None] = attr(column="owner_id")
+
+
+class Pet(Animal, namespace=_NS, inheritance=AbstractSubtype):
+    license_id: Attr[str | None] = attr(column="license_id", max_length=16)
+
+
+class Dog(Pet, namespace=_NS, inheritance=ConcreteSubtype(tag_value="dog")):
+    bark_volume: Attr[int | None] = attr(column="bark_volume", type=Int32)
+
+
+class Cat(Pet, namespace=_NS, inheritance=ConcreteSubtype(tag_value="cat")):
+    indoor: Attr[bool | None]
+
+
+class WildBoar(Animal, namespace=_NS, inheritance=ConcreteSubtype(tag_value="boar")):
+    tusk_length: Attr[Decimal | None] = attr(column="tusk_length", precision=18, scale=2)
+
+
+class AnimalOwner(Entity, table="person", namespace=_NS):
+    """The animal family's polymorphic-owner SHAPE (``models/animal.yaml``'s own
+    ``Person`` entity) under a distinct name, so a wrap failure names the
+    fixture rather than the installed mirror."""
+
+    id: Attr[int] = attr(primary_key=True)
+    name: Attr[str] = attr(max_length=32)
+    animals: Rel[tuple[Animal, ...]] = rel(cardinality=ONE_TO_MANY, join=("id", "owner_id"))
+    pets: Rel[tuple[Pet, ...]] = rel(cardinality=ONE_TO_MANY, join=("id", "owner_id"))
+
+
+ANIMAL_MODEL = MetamodelHub(Animal, Pet, Dog, Cat, WildBoar, AnimalOwner)

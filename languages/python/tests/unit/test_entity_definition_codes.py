@@ -8,7 +8,7 @@ declaring a code no rule raises, fails one of the two.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from typing import cast
 
 import pytest
 
@@ -79,11 +79,10 @@ def test_a_code_outside_the_closed_set_cannot_be_raised() -> None:
 @pytest.mark.parametrize("path", sorted(_MODULES))
 @pytest.mark.parametrize("probe", sorted(_PROBES))
 def test_every_probe_raises_its_declared_code(path: str, probe: str) -> None:
-    define = getattr(_MODULES[path], probe)
+    define = cast("object", getattr(_MODULES[path], probe))
     assert callable(define)
     with pytest.raises(EntityDefinitionError) as caught:
-        cast_define: Callable[[], type] = define
-        cast_define()
+        define()
     assert caught.value.code == _PROBES[probe]
     assert caught.value.code in ENTITY_DEFINITION_CODES
 

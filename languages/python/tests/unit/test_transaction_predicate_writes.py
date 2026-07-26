@@ -21,7 +21,6 @@ from _transact_support import (
     ORDERS,
     PAYMENT,
     PERSON,
-    PERSON_MIRROR_META,
     WHERE_POSITION_META,
     NoIoPort,
     RecordingPort,
@@ -32,11 +31,19 @@ from _transact_support import (
 import inheritance_models as im
 import mirrored_models as mm
 from parallax.conformance.story_models import Order
-from parallax.core import Attr, Bitemporal, Entity, EntityConfig, Field, TxTemporal, inheritance
+from parallax.core import (
+    Attr,
+    Bitemporal,
+    Entity,
+    Int32,
+    MetamodelHub,
+    TxTemporal,
+    ValueObject,
+    attr,
+    inheritance,
+)
 from parallax.core.db_port import JsonDocument, Row
 from parallax.core.dialect import POSTGRES
-from parallax.core.entity import metamodel
-from parallax.core.entity.value_object import ValueObject, VoField
 from parallax.core.unit_work import (
     FixedClock,
 )
@@ -49,72 +56,56 @@ pytestmark = pytest.mark.unit
 # `supplier.yaml` shape from `m-value-object-047`. The minimal self-contained
 # fixture keeps this predicate-write test independent of the broader model
 # mirror.
-class WhereLedgerAddress(ValueObject, frozen=True):
-    city: Attr[str] = VoField(type="string")
+class WhereLedgerAddress(ValueObject):
+    city: Attr[str]
 
 
-class WhereLedger(TxTemporal, frozen=True):
-    __parallax__ = EntityConfig(
-        table="where_ledger",
-        namespace="parallax.compatibility",
-        mutability="transactional",
-    )
-
-    id: Attr[int] = Field(primary_key=True, pk_generator="none", type="int64")
-    name: Attr[str] = Field(max_length=64)
-    address: Attr[WhereLedgerAddress | None] = Field(nullable=True, default=None)
+class WhereLedger(TxTemporal, table="where_ledger", namespace="parallax.compatibility"):
+    id: Attr[int] = attr(primary_key=True)
+    name: Attr[str] = attr(max_length=64)
+    address: Attr[WhereLedgerAddress | None]
 
 
-_WHERE_LEDGER_META = metamodel([WhereLedger])
+_WHERE_LEDGER_META = MetamodelHub(WhereLedger)
 
 
 # A local bitemporal, value-object-bearing entity combines `WherePosition`'s
 # two axes with `WhereLedger`'s value-object shape. No corpus case exercises
 # this predicate-update combination (`m-case-format.md:727`).
-class WhereRectangleAddress(ValueObject, frozen=True):
-    city: Attr[str] = VoField(type="string")
+class WhereRectangleAddress(ValueObject):
+    city: Attr[str]
 
 
-class WhereRectangle(Bitemporal, frozen=True):
-    __parallax__ = EntityConfig(
-        table="where_rectangle",
-        namespace="parallax.compatibility",
-        mutability="transactional",
-    )
-
-    id: Attr[int] = Field(primary_key=True, pk_generator="none", type="int64")
-    acct_num: Attr[str] = Field(max_length=32)
-    value: Attr[Decimal] = Field(type="decimal(18,2)")
-    address: Attr[WhereRectangleAddress | None] = Field(nullable=True, default=None)
+class WhereRectangle(Bitemporal, table="where_rectangle", namespace="parallax.compatibility"):
+    id: Attr[int] = attr(primary_key=True)
+    acct_num: Attr[str] = attr(column="acct_num", max_length=32)
+    value: Attr[Decimal] = attr(precision=18, scale=2)
+    address: Attr[WhereRectangleAddress | None]
 
 
-_WHERE_RECTANGLE_META = metamodel([WhereRectangle])
+_WHERE_RECTANGLE_META = MetamodelHub(WhereRectangle)
 
 
 # A local versioned non-temporal, value-object-bearing entity mirrors
 # `models/subscriber.yaml`. Its two value objects prove minimal-read discipline:
 # the resolving read projects only the assigned document, never every declared
 # document.
-class WhereSubscriberAddress(ValueObject, frozen=True):
-    city: Attr[str] = VoField(type="string")
+class WhereSubscriberAddress(ValueObject):
+    city: Attr[str]
 
 
-class WhereSubscriberProfile(ValueObject, frozen=True):
-    bio: Attr[str] = VoField(type="string")
+class WhereSubscriberProfile(ValueObject):
+    bio: Attr[str]
 
 
-class WhereSubscriber(Entity, frozen=True):
-    __parallax__ = EntityConfig(
-        table="where_subscriber", namespace="parallax.compatibility", mutability="transactional"
-    )
-
-    id: Attr[int] = Field(primary_key=True, pk_generator="none", type="int64")
-    version: Attr[int] = Field(type="int32", optimistic_locking=True)
-    address: Attr[WhereSubscriberAddress | None] = Field(nullable=True, default=None)
-    profile: Attr[WhereSubscriberProfile | None] = Field(nullable=True, default=None)
+class WhereSubscriber(Entity, table="where_subscriber", namespace="parallax.compatibility"):
+    id: Attr[int] = attr(primary_key=True)
+    version: Attr[int] = attr(type=Int32, optimistic_locking=True)
+    address: Attr[WhereSubscriberAddress | None]
+    profile: Attr[WhereSubscriberProfile | None]
 
 
-_WHERE_SUBSCRIBER_META = metamodel([WhereSubscriber])
+_WHERE_SUBSCRIBER_META = MetamodelHub(WhereSubscriber)
 
 
 # --------------------------------------------------------------------------- #
@@ -847,7 +838,7 @@ def test_update_where_rejects_a_distinct_statement_end_to_end() -> None:
         tx.update_where(statement, mm.Person.name.set("Ada"))
 
     with pytest.raises(ValueError, match="bare statement"):
-        Database.connect(NoIoPort(), PERSON_MIRROR_META, clock=FixedClock(FIXED)).transact(fn)
+        Database.connect(NoIoPort(), PERSON, clock=FixedClock(FIXED)).transact(fn)
 
 
 def test_delete_where_rejects_a_distinct_statement_end_to_end() -> None:
@@ -857,4 +848,4 @@ def test_delete_where_rejects_a_distinct_statement_end_to_end() -> None:
         tx.delete_where(statement)
 
     with pytest.raises(ValueError, match="bare statement"):
-        Database.connect(NoIoPort(), PERSON_MIRROR_META, clock=FixedClock(FIXED)).transact(fn)
+        Database.connect(NoIoPort(), PERSON, clock=FixedClock(FIXED)).transact(fn)

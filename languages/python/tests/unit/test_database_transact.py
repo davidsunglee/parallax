@@ -33,9 +33,9 @@ from _transact_support import (
 )
 
 import mirrored_models as mm
-from parallax.conformance import models
 from parallax.core import opt_lock
 from parallax.core.db_error import DatabaseError
+from parallax.core.entity import sealed_model
 from parallax.core.unit_work import (
     EscapedTransactionError,
     FixedClock,
@@ -179,7 +179,7 @@ def test_bare_unit_of_work_on_the_thread_is_refused() -> None:
         body,
         settings=TransactionSettings(),
         clock=FixedClock(FIXED),
-        meta=models.accepted_model(ACCOUNT),
+        meta=sealed_model(ACCOUNT).model,
         flush_executor=executor,
     )
 

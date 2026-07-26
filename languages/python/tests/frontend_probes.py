@@ -116,7 +116,7 @@ def define_member_value_invalid() -> type:
 
     class Bad(Entity, table="bad"):
         id: Attr[int] = attr(primary_key=True)
-        qty: Attr[int] = 5
+        qty: Attr[int] = 5  # pyright: ignore[reportAssignmentType]
 
     return Bad
 
@@ -193,7 +193,9 @@ def define_reserved_member_name() -> type:
     """A member reusing a reserved introspection name."""
 
     class Bad(Entity, table="bad"):
-        identity: Attr[int] = attr(primary_key=True)
+        identity: Attr[int] = attr(  # pyright: ignore[reportIncompatibleVariableOverride]
+            primary_key=True
+        )
 
     return Bad
 
@@ -205,7 +207,7 @@ def define_reserved_temporal_name() -> type:
 
     class Bad(TxTemporal, table="bad"):
         id: Attr[int] = attr(primary_key=True)
-        tx_start: Attr[int]
+        tx_start: Attr[int]  # pyright: ignore[reportIncompatibleVariableOverride]
 
     return Bad
 
@@ -224,7 +226,7 @@ def define_class_var_reserved_name() -> type:
     """A class variable taking one of the nine declaration member names."""
 
     class Bad(Entity, table="bad"):
-        identity: ClassVar[str] = "shadow"
+        identity: ClassVar[str] = "shadow"  # pyright: ignore[reportIncompatibleVariableOverride]
         id: Attr[int] = attr(primary_key=True)
 
     return Bad
@@ -236,7 +238,7 @@ def define_shadowed_declaration_member() -> type:
     class Bad(Entity, table="bad"):
         id: Attr[int] = attr(primary_key=True)
 
-        def indices(self) -> tuple[()]:
+        def indices(self) -> tuple[()]:  # pyright: ignore[reportIncompatibleVariableOverride]
             return ()
 
     return Bad

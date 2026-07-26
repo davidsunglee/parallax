@@ -75,6 +75,15 @@ class MetamodelBinding:
         """The one accepted Metamodel this hub sealed."""
         return self._model
 
+    def __deepcopy__(self, _memo: dict[int, object]) -> MetamodelBinding:
+        """A Binding is a process-local identity, so a deep copy of one is itself.
+
+        An operation node carrying a Binding is copied all the time — a path, a
+        statement — and a copy of the Binding would be a second identity for one
+        hub, which is exactly what the claim rule forbids.
+        """
+        return self
+
     def identity_of(self, cls: type) -> EntityIdentity | None:
         """The Entity Identity ``cls`` is bound to here, or ``None``."""
         return self._by_class.get(cls)

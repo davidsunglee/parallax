@@ -25,16 +25,18 @@ from decimal import Decimal
 from typing import Any, Final, cast
 
 import pytest
+from pydantic import ValidationError
 
 from conftest import case_document, compare_binds
-from parallax.conformance import case_format, models
+from parallax.conformance import case_format
+from parallax.conformance.class_models import MODELS
 from parallax.conformance.read_models import Payment
 from parallax.conformance.stories import WRITE_STORIES, WriteStory
 from parallax.conformance.vo_models import (
-    Contact,
     ContactAddress,
     ContactGeo,
     ContactPoint,
+    Destination,
     Shipment,
 )
 from parallax.core.base import INFINITY, TemporalBound
@@ -45,7 +47,6 @@ from parallax.snapshot.handle import Database, Transaction
 
 pytestmark = [pytest.mark.unit, pytest.mark.api_conformance]
 
-_MODELS = models.load_models()
 _CASES = {c.case_id: c for c in case_format.load_cases()}
 _STORIES = {story.case_id: story for story in WRITE_STORIES}
 
@@ -326,13 +327,7 @@ def _db(port: _RecordingPort, story: WriteStory) -> Database:
     # A story's own scripted-clock FACTORY (never a shared instance) —
     # this consumer's fresh clock, independent of `test_story_run.py`'s own.
     clock = story.clock() if story.clock is not None else None
-    # A story compiled under its OWN `registry` (the Customer/Location/
-    # Depot mirror's `CUSTOMER_REGISTRY`) connects through THAT
-    # registry's metamodel, never the bare ingested corpus descriptor
-    # (`_MODELS`) — the same `resolve_entity_class` scoping
-    # `test_story_run.py`'s own `_reset_for_registry` observes.
-    meta = story.registry.metamodel() if story.registry is not None else _MODELS[story.model]
-    return Database.connect(port, meta, clock=clock)
+    return Database.connect(port, MODELS[story.model], clock=clock)
 
 
 # The no-drift guard grades every EXERCISED story (`m-api-conformance.md`);
@@ -431,62 +426,58 @@ def test_every_write_story_mirrors_an_active_case_exactly_once() -> None:
 # lane grades (`engine.run_rejected_case`), through the SAME model-aware      #
 # `validate_write` (`Transaction._buffer`), naming the SAME classified rule.  #
 # No golden DML: a rejected write never reaches the port (`api_suite.EXAMPLES`'#
-# own entries are these exact snippets). The Contact/Shipment value-object    #
-# write-input rejects (`m-value-object-039..042/044`) construct a            #
-# STRUCTURALLY-incomplete instance directly (every inner VO field stays      #
-# Python-optional even though its DECLARED descriptor is non-nullable, see   #
-# `vo_models.ContactPoint`'s own docstring) — `validate_write`, never         #
-# Pydantic's own required-field enforcement, is what refuses it.             #
+# own entries are these exact snippets).                                      #
 # --------------------------------------------------------------------------- #
 REJECTED_WRITE_BUILDERS: dict[str, Callable[[Transaction], None]] = {
     "m-inheritance-088": lambda tx: tx.insert(Payment(id=10, amount=Decimal("200.00"))),
-    "m-value-object-039": lambda tx: tx.insert(
-        Contact(
-            id=1,
-            name="Acme",
-            address=ContactAddress(
-                city="Oslo",
-                geo=ContactGeo(country="NO", point=ContactPoint(lat=59.9, lon=10.7)),
-            ),
-        )
-    ),
-    "m-value-object-040": lambda tx: tx.insert(
-        Contact(
-            id=2,
-            name="Beacon",
-            address=ContactAddress(
-                street="1 Main St",
-                city="Oslo",
-                geo=ContactGeo(point=ContactPoint(lat=59.9, lon=10.7)),
-            ),
-        )
-    ),
-    "m-value-object-041": lambda tx: tx.insert(
-        Contact(
-            id=3,
-            name="Cairn",
-            address=ContactAddress(
-                street="2 Fjord Vei",
-                city="Bergen",
-                geo=ContactGeo(country="NO", point=ContactPoint(lon=5.3)),
-            ),
-        )
-    ),
-    "m-value-object-042": lambda tx: tx.insert(
-        Contact(id=4, name="Delta", address=ContactAddress(street="3 Harbour Rd", city="Oslo"))
-    ),
-    "m-value-object-044": lambda tx: tx.insert(Shipment(id=5, name="Express")),
 }
 
 # case id -> the model `_RecordingPort` connects against.
-REJECTED_WRITE_MODELS: dict[str, str] = {
-    "m-inheritance-088": "payment",
-    "m-value-object-039": "contact",
-    "m-value-object-040": "contact",
-    "m-value-object-041": "contact",
-    "m-value-object-042": "contact",
-    "m-value-object-044": "shipment",
+REJECTED_WRITE_MODELS: dict[str, str] = {"m-inheritance-088": "payment"}
+
+# The Contact/Shipment value-object write-input rejects the corpus grades
+# through `validate_write` over a raw document. The class grammar carries
+# nullability on the annotation alone, so a declared-non-nullable member is a
+# required Python field and the same defect is refused one step earlier, at
+# construction — the representation-specific rejection spec §2 sanctions for a
+# shape only one grammar can spell. Each entry names the member the corpus case
+# omits, so the two stay pinned to the same defect.
+INCOMPLETE_DOCUMENT_BUILDERS: dict[str, tuple[str, Callable[[], object]]] = {
+    "m-value-object-039": (
+        "street",
+        lambda: ContactAddress(
+            city="Oslo", geo=ContactGeo(country="NO", point=ContactPoint(lat=59.9, lon=10.7))
+        ),
+    ),
+    "m-value-object-040": ("country", lambda: ContactGeo(point=ContactPoint(lat=59.9, lon=10.7))),
+    "m-value-object-041": ("lat", lambda: ContactPoint(lon=5.3)),
+    "m-value-object-042": (
+        "geo",
+        lambda: ContactAddress(street="3 Harbour Rd", city="Oslo"),
+    ),
+    "m-value-object-044": ("destination", lambda: Shipment(id=5, name="Express")),
 }
+
+
+@pytest.mark.parametrize(
+    "case_id", sorted(INCOMPLETE_DOCUMENT_BUILDERS), ids=sorted(INCOMPLETE_DOCUMENT_BUILDERS)
+)
+def test_the_class_grammar_refuses_the_corpus_incomplete_document(case_id: str) -> None:
+    assert case_document(_CASES[case_id])["then"]["rejectedRule"]
+    member, build = INCOMPLETE_DOCUMENT_BUILDERS[case_id]
+    with pytest.raises(ValidationError, match=member):
+        build()
+
+
+def test_a_complete_document_still_constructs() -> None:
+    # The counterpart of the refusals above: every required member supplied is
+    # accepted, so the rejections are about absence and nothing else.
+    assert (
+        Shipment(
+            id=5, name="Express", destination=Destination(street="1 Main St", city="Oslo")
+        ).destination.city
+        == "Oslo"
+    )
 
 
 @pytest.mark.parametrize(
@@ -496,7 +487,7 @@ def test_idiomatic_write_build_rejects_the_corpus_rule(case_id: str) -> None:
     case = _CASES[case_id]
     expected_rule = case_document(case)["then"]["rejectedRule"]
     port = _RecordingPort()
-    db = Database.connect(port, _MODELS[REJECTED_WRITE_MODELS[case_id]])
+    db = Database.connect(port, MODELS[REJECTED_WRITE_MODELS[case_id]])
     with pytest.raises(WriteRejectedError) as exc_info:
         db.transact(REJECTED_WRITE_BUILDERS[case_id])
     assert exc_info.value.rule == expected_rule

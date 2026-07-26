@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import datetime as dt
 from decimal import Decimal
+from pathlib import Path
 from typing import Any, cast
 
 import pytest
@@ -39,8 +40,9 @@ from conftest import (
     compare_rows,
     instance_row,
 )
-from parallax.conformance import animal_owner, case_format, engine
+from parallax.conformance import case_format, engine
 from parallax.conformance.animal_owner import Person as AnimalOwnerPerson
+from parallax.conformance.class_models import MODELS
 from parallax.conformance.graph_stories import (
     GRAPH_STORIES,
     history_of_a_concrete_temporal_node_distinguishes_milestones,
@@ -48,13 +50,9 @@ from parallax.conformance.graph_stories import (
 from parallax.conformance.read_models import Cat, Dog
 from parallax.conformance.read_stories import READ_STORIES, ReadStory
 from parallax.conformance.stories import WRITE_STORIES, WriteStory
-from parallax.conformance.vo_models import CUSTOMER_REGISTRY
-from parallax.core import LATEST, edge_of, is_loaded, narrowed, pin_of
+from parallax.core import LATEST, MetamodelHub, edge_of, is_loaded, narrowed, pin_of
 from parallax.core.dialect import POSTGRES
-from parallax.core.entity import MetamodelSource, metamodel
-from parallax.core.entity.base import EntityRegistry
-from parallax.core.entity.expressions import UnloadedRelationshipError
-from parallax.core.entity.value_object import to_document
+from parallax.core.entity import UnloadedRelationshipError, sealed_model, to_document
 from parallax.snapshot import connect
 
 pytestmark = pytest.mark.api_conformance
@@ -70,40 +68,18 @@ def _final_find_expect_rows(case_id: str) -> list[dict[str, Any]]:
     return cast("list[dict[str, Any]]", finds[-1]["expectRows"])
 
 
-def _reset_for(case_id: str, provisioner: Any) -> Any:
-    case = _CASES[case_id]
-    meta = engine.load_case_metamodel(case)
-    provisioner.reset(meta, case_fixtures(case))
-    return meta
+def _reset_for(case_id: str, provisioner: Any) -> MetamodelHub:
+    """Provision one case's schema and fixtures, and answer the hub to connect with.
 
-
-def _reset_for_model(case_id: str, provisioner: Any, meta: MetamodelSource) -> MetamodelSource:
-    """Provision one case's fixtures against an already-assembled ``meta``.
-
-    The supply is a class list rather than a whole registry wherever a scope
-    SHADOWS a name the parent chain also declares: the merged chain then carries
-    a sibling entity whose reference resolves to the shadowing class, which no
-    single model can satisfy.
+    The schema comes from the case's own corpus model and the hub from the class
+    family mirroring it: the two are structurally identical (the descriptor
+    no-drift guard is the proof), and only the class-backed hub carries the
+    Metamodel Binding a story's own observing find needs to materialize typed
+    instances.
     """
-    provisioner.reset(meta, case_fixtures(_CASES[case_id]))
-    return meta
-
-
-def _reset_for_registry(
-    case_id: str, provisioner: Any, registry: EntityRegistry
-) -> MetamodelSource:
-    """Like :func:`_reset_for`, but provisions from ``registry``'s OWN
-    :meth:`~parallax.core.entity.base.EntityRegistry.metamodel` rather than
-    the ingested corpus descriptor. This is needed whenever `db.find`'s
-    wrap must resolve through a registry OTHER than the process default (the
-    animal family's REAL owner, scoped to
-    `animal_owner.ANIMAL_OWNER_REGISTRY`) — structurally equivalent to the
-    ingested descriptor (proven by the descriptor no-drift guard), so
-    provisioning from it is exactly as sound."""
     case = _CASES[case_id]
-    meta = registry.metamodel()
-    provisioner.reset(meta, case_fixtures(case))
-    return meta
+    provisioner.reset(engine.load_case_metamodel(case), case_fixtures(case))
+    return MODELS[Path(case.model).stem]
 
 
 # `kind == "boundary"` (m-unit-work-004) is excluded from execution here because
@@ -121,16 +97,7 @@ _STORY_IDS = [story.case_id for story in _EXECUTED_STORIES]
 
 @pytest.mark.parametrize("story", _EXECUTED_STORIES, ids=_STORY_IDS)
 def test_story_runs_through_the_shipped_surface(story: WriteStory, provisioner: Any) -> None:
-    # A story compiled under its own registry (the Customer/Location/Depot
-    # mirror's `CUSTOMER_REGISTRY`) provisions and connects
-    # through THAT registry's own metamodel, the SAME `_reset_for_registry`
-    # scoping the graph stories below already use — never the bare ingested
-    # corpus descriptor `_reset_for` resolves every other story through.
-    meta = (
-        _reset_for_registry(story.case_id, provisioner, story.registry)
-        if story.registry is not None
-        else _reset_for(story.case_id, provisioner)
-    )
+    meta = _reset_for(story.case_id, provisioner)
     # A story's scripted-clock factory supplies this consumer with a fresh
     # clock independent of `test_write_no_drift.py`.
     clock = story.clock() if story.clock is not None else None
@@ -152,7 +119,7 @@ def test_story_runs_through_the_shipped_surface(story: WriteStory, provisioner: 
         "dict[str, list[dict[str, Any]]]",
         case_document(_CASES[story.case_id])["then"]["tableState"],
     )
-    observed_state = engine.read_table_state(provisioner.port, meta, POSTGRES)
+    observed_state = engine.read_table_state(provisioner.port, sealed_model(meta).model, POSTGRES)
     assert set(observed_state) >= set(expected_state), (story.case_id, observed_state)
     for table, expected_rows in expected_state.items():
         compare_rows(observed_state[table], expected_rows)
@@ -308,10 +275,8 @@ def test_one_to_one_peer_attaches_as_a_single_object(provisioner: Any) -> None:
 
 
 def test_animal_owner_reaches_root_and_narrowed_subtype_view(provisioner: Any) -> None:
-    # The animal family is provisioned from its own scoped registry, never the
-    # ingested descriptor (`_reset_for_registry`).
     story = _GRAPH_STORIES_BY_ID["m-snapshot-read-012"]
-    meta = _reset_for_model(story.case_id, provisioner, metamodel(animal_owner.MODEL_CLASSES))
+    meta = _reset_for(story.case_id, provisioner)
     db = connect(provisioner.port, meta)
     snapshot = story.run(db)
     alice = snapshot.result()
@@ -325,7 +290,7 @@ def test_animal_owner_reaches_root_and_narrowed_subtype_view(provisioner: Any) -
 
 def test_narrowed_pets_view_populates_per_owner(provisioner: Any) -> None:
     story = _GRAPH_STORIES_BY_ID["m-inheritance-065"]
-    meta = _reset_for_model(story.case_id, provisioner, metamodel(animal_owner.MODEL_CLASSES))
+    meta = _reset_for(story.case_id, provisioner)
     db = connect(provisioner.port, meta)
     snapshot = story.run(db)
     by_name = {person.name: person for person in snapshot.results()}
@@ -340,7 +305,7 @@ def test_narrowed_pets_view_populates_per_owner(provisioner: Any) -> None:
 
 def test_equivalent_narrow_spellings_dedupe_to_one_view(provisioner: Any) -> None:
     story = _GRAPH_STORIES_BY_ID["m-inheritance-066"]
-    meta = _reset_for_model(story.case_id, provisioner, metamodel(animal_owner.MODEL_CLASSES))
+    meta = _reset_for(story.case_id, provisioner)
     db = connect(provisioner.port, meta)
     snapshot = story.run(db)
     by_name = {person.name: person for person in snapshot.results()}
@@ -351,7 +316,7 @@ def test_equivalent_narrow_spellings_dedupe_to_one_view(provisioner: Any) -> Non
 
 def test_distinct_narrowed_views_populate_independently(provisioner: Any) -> None:
     story = _GRAPH_STORIES_BY_ID["m-inheritance-067"]
-    meta = _reset_for_model(story.case_id, provisioner, metamodel(animal_owner.MODEL_CLASSES))
+    meta = _reset_for(story.case_id, provisioner)
     db = connect(provisioner.port, meta)
     snapshot = story.run(db)
     alice = next(person for person in snapshot.results() if person.name == "Alice")
@@ -512,7 +477,7 @@ def test_customer_nested_predicate_story_selects_the_golden_owners(
     case_id: str, provisioner: Any
 ) -> None:
     story = _GRAPH_STORIES_BY_ID[case_id]
-    meta = _reset_for_registry(story.case_id, provisioner, CUSTOMER_REGISTRY)
+    meta = _reset_for(story.case_id, provisioner)
     db = connect(provisioner.port, meta)
     snapshot = story.run(db)
     _assert_customer_predicate_rows(story.case_id, snapshot)
@@ -528,7 +493,7 @@ def test_customer_nested_predicate_story_selects_the_golden_owners(
 )
 def test_customer_owner_materializes_its_composite(case_id: str, provisioner: Any) -> None:
     story = _GRAPH_STORIES_BY_ID[case_id]
-    meta = _reset_for_registry(story.case_id, provisioner, CUSTOMER_REGISTRY)
+    meta = _reset_for(story.case_id, provisioner)
     db = connect(provisioner.port, meta)
     snapshot = story.run(db)
     _assert_vo_owner_graph(story.case_id, snapshot, "Customer", "id")
@@ -554,7 +519,7 @@ def test_customer_locations_deep_fetch_materializes_the_child_document_too(
     provisioner: Any,
 ) -> None:
     story = _GRAPH_STORIES_BY_ID["m-deep-fetch-018"]
-    meta = _reset_for_registry(story.case_id, provisioner, CUSTOMER_REGISTRY)
+    meta = _reset_for(story.case_id, provisioner)
     db = connect(provisioner.port, meta)
     snapshot = story.run(db)
     _assert_customer_locations_graph(story.case_id, snapshot)
