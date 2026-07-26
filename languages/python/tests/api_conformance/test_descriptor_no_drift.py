@@ -80,6 +80,14 @@ def _entity(left: EntityMetadata, right: EntityMetadata) -> None:
         _occurrence(occurrence, other)
 
 
+def test_mirrored_and_reasoned_models_partition_the_corpus() -> None:
+    stems = {path.stem for path in _MODELS.glob("*.yaml")}
+    mirrored = {stem for stem, _ in mm.MIRRORED}
+    assert mirrored.isdisjoint(mm.UNMIRRORED)
+    assert mirrored | set(mm.UNMIRRORED) == stems
+    assert [stem for stem in mm.UNMIRRORED if not mm.UNMIRRORED[stem].strip()] == []
+
+
 @pytest.mark.parametrize("stem, hub", mm.MIRRORED, ids=[stem for stem, _ in mm.MIRRORED])
 def test_idiomatic_classes_form_the_corpus_model(stem: str, hub: MetamodelHub) -> None:
     corpus = _corpus(stem)
