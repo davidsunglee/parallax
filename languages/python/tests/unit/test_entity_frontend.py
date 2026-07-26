@@ -8,6 +8,7 @@ annotation objects; ``test_declaration_engine`` covers the stringized path and
 import ast
 import datetime as dt
 import inspect
+import sys
 from collections.abc import Callable
 from decimal import Decimal
 
@@ -214,7 +215,7 @@ def test_a_generation_is_spelled_as_its_value_and_never_as_its_type() -> None:
             "precision= takes a non-negative integer, got -1",
         ),
         (
-            lambda: attr(read_only=1),  # pyright: ignore[reportArgumentType]
+            lambda: attr(read_only=1),  # pyright: ignore[reportArgumentType] - deliberate bad type
             "entity-option-invalid-value",
             "read_only= takes a bool, got 1",
         ),
@@ -224,12 +225,12 @@ def test_a_generation_is_spelled_as_its_value_and_never_as_its_type() -> None:
             "asc() takes a nonempty member name, got ''",
         ),
         (
-            lambda: rel(cardinality="MANY_TO_ONE", join=("customer_id", "id")),  # pyright: ignore[reportArgumentType]
+            lambda: rel(cardinality="MANY_TO_ONE", join=("customer_id", "id")),  # pyright: ignore[reportArgumentType] - deliberate bad type
             "entity-option-invalid-value",
             "cardinality= takes ONE_TO_ONE, MANY_TO_ONE, or ONE_TO_MANY, got 'MANY_TO_ONE'",
         ),
         (
-            lambda: rel(cardinality=MANY_TO_ONE, join=("customer_id",)),  # pyright: ignore[reportArgumentType]
+            lambda: rel(cardinality=MANY_TO_ONE, join=("customer_id",)),  # pyright: ignore[reportArgumentType] - deliberate bad shape
             "entity-option-invalid-value",
             "join= takes a (source_member, target_member) pair, got ('customer_id',)",
         ),
@@ -274,7 +275,7 @@ def _blank_table() -> type:
 def _unspellable_persistence() -> type:
     """A ``persistence=`` outside the Persistence Mode algebra."""
 
-    class LooseMode(Entity, table="loose_mode", persistence="READ_ONLY"):  # pyright: ignore[reportArgumentType]
+    class LooseMode(Entity, table="loose_mode", persistence="READ_ONLY"):  # pyright: ignore[reportArgumentType] - deliberate bad type
         id: Attr[int] = attr(primary_key=True)
 
     return LooseMode
@@ -529,7 +530,7 @@ def test_the_type_checking_mirror_matches_the_engine_injection_table() -> None:
                 assert isinstance(decl.target, ast.Name)
                 entries.append((decl.target.id, ast.unparse(decl.annotation)))
             mirrors[node.name] = entries
-    injection = engine._TEMPORAL_MEMBERS  # pyright: ignore[reportPrivateUsage]
+    injection = engine._TEMPORAL_MEMBERS  # pyright: ignore[reportPrivateUsage] - reads an engine internal
     valid_time = TemporalDimension.VALID_TIME
     transaction_time = TemporalDimension.TRANSACTION_TIME
     expected = {
@@ -554,6 +555,32 @@ def test_wire_names_expose_the_member_roles_the_write_path_needs() -> None:
     assert names.relationship_py == {"customer": "customer", "coupon": "coupon"}
     assert "id" not in names.assignable_py
     assert "version" not in names.assignable_py
+
+
+@pytest.mark.skipif(
+    sys.version_info < (3, 14),
+    reason="PEP 649 / PEP 749 defer class-body annotations only on Python 3.14+",
+)
+def test_deferred_annotations_are_recovered_without_the_future_import() -> None:
+    # This module omits ``from __future__ import annotations``, so on Python
+    # 3.14+ a class body carries a deferred ``__annotate_func__`` the engine
+    # must evaluate to see the live member types. The eager 3.12/3.13 path is
+    # exercised throughout this module; this pins the deferred recovery on its
+    # own runtime, so a broken ``annotationlib`` recovery fails here rather than
+    # silently yielding a memberless declaration.
+    class Deferred(Entity, table="deferred"):
+        id: Attr[int] = attr(primary_key=True)
+        label: Attr[str]
+        customer_id: Attr[int]
+        customer: Rel[Customer] = rel(cardinality=MANY_TO_ONE, join=("customer_id", "id"))
+
+    declaration = engine.declaration_of(Deferred)
+    assert [member.identity.name for member in declaration.attributes] == [
+        "id",
+        "label",
+        "customerId",
+    ]
+    assert [member.identity.name for member in declaration.relationships] == ["customer"]
 
 
 def test_a_write_row_carries_only_the_members_the_caller_set() -> None:
@@ -593,4 +620,4 @@ def test_an_unassignable_copy_target_is_rejected(member: str) -> None:
 def test_every_entity_class_is_frozen_without_declaring_it() -> None:
     order = _order()
     with pytest.raises(ValueError, match="frozen"):
-        order.qty = 3  # pyright: ignore[reportAttributeAccessIssue]
+        order.qty = 3  # pyright: ignore[reportAttributeAccessIssue] - frozen: the write must raise
