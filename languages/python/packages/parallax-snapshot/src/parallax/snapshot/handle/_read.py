@@ -30,9 +30,9 @@ from typing import Any, Final, cast
 from parallax.core import deep_fetch, inheritance, op_algebra
 from parallax.core.db_port import DbPort, Row
 from parallax.core.dialect import Dialect, LockMode
-from parallax.core.entity import resolve_entity_metadata
+from parallax.core.entity import MetamodelBinding
 from parallax.core.metamodel import AsOfAxisMetadata as AcceptedAsOfAxis
-from parallax.core.metamodel import EntityMetadata, Metamodel, TemporalDimension
+from parallax.core.metamodel import EntityMetadata, Metamodel, TemporalDimension, entity_by_name
 from parallax.core.sql_gen import CompiledRead, Statement, compile_read
 from parallax.core.temporal_read import Edge, Pin, milestone_edge, statement_pin
 from parallax.snapshot import materialize
@@ -403,10 +403,9 @@ _DIMENSION_NAMES: Final[Mapping[TemporalDimension, str]] = {
 
 
 def _metadata(meta: Metamodel, name: str) -> EntityMetadata:
-    """``name``'s accepted Metadata within ``meta``'s scope, raising when the
-    model declares no such Entity — the same failure the record graph's own
-    lookup produced before the frontend returned accepted models."""
-    metadata = resolve_entity_metadata(meta, name)
+    """``name``'s accepted Metadata within ``meta``, raising when the model
+    declares no such Entity."""
+    metadata = entity_by_name(meta, name)
     if metadata is None:  # pragma: no cover - a queried target is always declared
         raise KeyError(name)
     return metadata
@@ -496,18 +495,18 @@ def _pin_from_milestone(entity: EntityMetadata, milestone_pin: Mapping[str, obje
 
 
 def snapshot_from_find_result(
-    result: FindResult, target: str, meta: Metamodel, pin: Pin
+    result: FindResult, target: str, meta: Metamodel, pin: Pin, binding: MetamodelBinding | None
 ) -> Snapshot[Any]:
-    roots = wrap_graph(result.nodes, target, meta, pin)
+    roots = wrap_graph(result.nodes, target, meta, pin, binding)
     return Snapshot(roots, pin, result.execution)
 
 
 def snapshot_from_history_result(
-    result: HistoryFindResult, target: str, meta: Metamodel
+    result: HistoryFindResult, target: str, meta: Metamodel, binding: MetamodelBinding | None
 ) -> Snapshot[Any]:
     entity = declaring_metadata(meta, _metadata(meta, target))
     roots: list[Any] = []
     for graph in result.graphs:
         milestone_pin = _pin_from_milestone(entity, graph.pin)
-        roots.extend(wrap_graph(graph.nodes, target, meta, milestone_pin))
+        roots.extend(wrap_graph(graph.nodes, target, meta, milestone_pin, binding))
     return Snapshot(tuple(roots), Pin(), result.execution)

@@ -1,75 +1,86 @@
-"""Idiomatic entity classes the API-suite graph stories construct statements
-over: a mirror of ``models/policy.yaml`` (``Policy`` / ``Coverage`` / ``Claim``,
-bitemporal entities that also relate). Owned by
-``parallax.conformance`` for the same reason ``story_models`` is: ``graph_stories.py``
-is a real dev-only package module (its snippets render into the Usage Guide via
-``gen-usage-guide``, which runs outside pytest entirely), so it needs classes
-resolvable at ordinary import time, not only under pytest's test-path magic.
+"""Idiomatic Entity Classes the API-suite graph stories build statements over.
+
+A mirror of ``models/policy.yaml`` (``Policy`` / ``Coverage`` / ``Claim``,
+bitemporal entities that also relate), composed into the one sealed hub named for
+that model. Owned by ``parallax.conformance`` for the same reason
+``story_models`` is: ``graph_stories.py`` is a real dev-only package module (its
+snippets render into the Usage Guide via ``gen-usage-guide``, which runs outside
+pytest entirely), so it needs classes resolvable at ordinary import time.
+
 This module deliberately avoids ``from __future__ import annotations`` so the
-metaclass reads the live ``Attr[T]`` / ``Rel[T]`` objects directly.
+engine reads the live ``Attr[T]`` / ``Rel[T]`` objects directly.
 """
 
 from decimal import Decimal
 
 from parallax.core import (
+    ONE_TO_MANY,
     Attr,
     Bitemporal,
-    EntityConfig,
-    Field,
+    MetamodelHub,
     Rel,
-    Relationship,
-    RelationshipJoin,
-    RelationshipTarget,
-    ReverseRelationship,
+    attr,
+    index,
+    rel,
 )
 
 _NS = "parallax.compatibility"
 
-__all__ = ["Claim", "Coverage", "Policy"]
+__all__ = ["POLICY_MODEL", "Claim", "Coverage", "Policy"]
 
 
-class Policy(Bitemporal, frozen=True):
+class Policy(
+    Bitemporal,
+    table="policy",
+    namespace=_NS,
+    indices=(index("policy_pk", "id", "valid_start", "tx_start", unique=True),),
+):
     """Mirror of ``models/policy.yaml`` ``Policy`` (bitemporal, root of the
     ``coverages`` to-many relationship)."""
 
-    __parallax__ = EntityConfig(table="policy", namespace=_NS, mutability="transactional")
-
-    id: Attr[int] = Field(primary_key=True, pk_generator="none", type="int64")
-    name: Attr[str] = Field(max_length=64)
-    coverages: Rel[tuple["Coverage", ...]] = Relationship(
-        cardinality="one-to-many",
-        join=RelationshipJoin(
-            source="id", target=RelationshipTarget(entity="Coverage", attribute="policyId")
-        ),
-        dependent=True,
+    id: Attr[int] = attr(primary_key=True)
+    name: Attr[str] = attr(max_length=64)
+    coverages: Rel[tuple["Coverage", ...]] = rel(
+        cardinality=ONE_TO_MANY, join=("id", "policy_id"), dependent=True
     )
 
 
-class Coverage(Bitemporal, frozen=True):
-    """Mirror of ``models/policy.yaml`` ``Coverage`` (bitemporal; the
-    temporal navigate hop ``Policy.coverages`` reaches)."""
+class Coverage(
+    Bitemporal,
+    table="coverage",
+    namespace=_NS,
+    indices=(
+        index("coverage_pk", "id", "valid_start", "tx_start", unique=True),
+        index("coverage_policy", "policy_id"),
+    ),
+):
+    """Mirror of ``models/policy.yaml`` ``Coverage`` (bitemporal; the temporal
+    navigate hop ``Policy.coverages`` reaches)."""
 
-    __parallax__ = EntityConfig(table="coverage", namespace=_NS, mutability="transactional")
-
-    id: Attr[int] = Field(primary_key=True, pk_generator="none", type="int64")
-    policy_id: Attr[int] = Field(column="policy_id", type="int64")
-    amount: Attr[Decimal] = Field(type="decimal(18,2)")
-    claims: Rel[tuple["Claim", ...]] = Relationship(
-        cardinality="one-to-many",
-        join=RelationshipJoin(
-            source="id", target=RelationshipTarget(entity="Claim", attribute="coverageId")
-        ),
-        dependent=True,
+    id: Attr[int] = attr(primary_key=True)
+    policy_id: Attr[int] = attr(column="policy_id")
+    amount: Attr[Decimal] = attr(precision=18, scale=2)
+    claims: Rel[tuple["Claim", ...]] = rel(
+        cardinality=ONE_TO_MANY, join=("id", "coverage_id"), dependent=True
     )
-    policy: Rel["Policy"] = ReverseRelationship(reverse_of="Policy.coverages")
+    policy: Rel[Policy | None] = rel(reverse_of="coverages")
 
 
-class Claim(Bitemporal, frozen=True):
+class Claim(
+    Bitemporal,
+    table="claim",
+    namespace=_NS,
+    indices=(
+        index("claim_pk", "id", "valid_start", "tx_start", unique=True),
+        index("claim_coverage", "coverage_id"),
+    ),
+):
     """Mirror of ``models/policy.yaml`` ``Claim`` (bitemporal leaf, no
     relationships of its own)."""
 
-    __parallax__ = EntityConfig(table="claim", namespace=_NS, mutability="transactional")
+    id: Attr[int] = attr(primary_key=True)
+    coverage_id: Attr[int] = attr(column="coverage_id")
+    reserve: Attr[Decimal] = attr(precision=18, scale=2)
 
-    id: Attr[int] = Field(primary_key=True, pk_generator="none", type="int64")
-    coverage_id: Attr[int] = Field(column="coverage_id", type="int64")
-    reserve: Attr[Decimal] = Field(type="decimal(18,2)")
+
+POLICY_MODEL = MetamodelHub(Policy, Coverage, Claim)

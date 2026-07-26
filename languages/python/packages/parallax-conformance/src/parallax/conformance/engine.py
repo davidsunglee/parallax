@@ -40,7 +40,6 @@ from parallax.core.db_port import DbPort, JsonDocument, Row
 from parallax.core.descriptor import Attribute, DescriptorError, Entity, Metamodel, declaring_entity
 from parallax.core.descriptor import deserialize as deserialize_metamodel
 from parallax.core.dialect import Dialect, dialect_for
-from parallax.core.entity import accepted_metamodel
 from parallax.core.metamodel import (
     EntityIdentity,
     EntityMetadata,
@@ -411,7 +410,7 @@ def run_graph_case(
     dialect = dialect_for(dialect_name)
     try:
         raw_op = deserialize(operation_doc)
-        result = find(raw_op, accepted_metamodel(meta), dialect, target, port)
+        result = find(raw_op, case_model(meta), dialect, target, port)
     except (
         OperationError,
         SqlGenError,
@@ -441,7 +440,7 @@ def run_graphs_case(
     dialect = dialect_for(dialect_name)
     try:
         raw_op = deserialize(operation_doc)
-        result = find_history(raw_op, accepted_metamodel(meta), dialect, target, port)
+        result = find_history(raw_op, case_model(meta), dialect, target, port)
     except (OperationError, SqlGenError, TemporalReadError, KeyError) as exc:
         raise EngineError(f"{case.path.name}: {exc}") from exc
     emissions = [
@@ -1649,7 +1648,7 @@ def _run_snapshot_scenario(
             )
         try:
             raw_op = deserialize(find_doc)
-            result = find(raw_op, accepted_metamodel(meta), dialect, target, port)
+            result = find(raw_op, case_model(meta), dialect, target, port)
             pin = _find_step_pin(meta, target, raw_op)
         except (OperationError, SqlGenError, TemporalReadError, KeyError) as exc:
             raise EngineError(f"{case.path.name}: {exc}") from exc
@@ -1843,7 +1842,7 @@ def _execute_write_unit(
     `m-unit-work` abort contract): the buffered DML still executes — and counts
     its round trips — before the provider rolls the transaction back.
     """
-    model = accepted_metamodel(meta)
+    model = case_model(meta)
     instant = normalize_instant(dt.datetime.fromisoformat(tx_instant))
     database = handle.Database(port, model, dialect=dialect, clock=FixedClock(instant))
 
@@ -1897,7 +1896,7 @@ def _run_readless_predicate_write(
     """
     instruction = instructions.deserialize(_canonical_predicate_doc(raw_write))
     assert isinstance(instruction, PredicateWrite)
-    model = accepted_metamodel(meta)
+    model = case_model(meta)
     decoded = _decoded_predicate_write(instruction, meta, model)
     instructions.validate_instruction(decoded, model)
     instant = normalize_instant(dt.datetime.fromisoformat(tx_instant))
@@ -2053,7 +2052,7 @@ def _run_materializing_pair(
     instant = normalize_instant(dt.datetime.fromisoformat(tx_instant))
     capture = _CapturingPort(port)
     database = handle.Database(
-        capture, accepted_metamodel(meta), dialect=dialect, clock=FixedClock(instant)
+        capture, case_model(meta), dialect=dialect, clock=FixedClock(instant)
     )
     rollback = write_step.get("rollback") is True
 
@@ -2216,9 +2215,7 @@ def _run_uow_group(
     doomed = _group_is_doomed(steps, start, end)
     group_observations: ScenarioObservations = {}
     instant = normalize_instant(dt.datetime.fromisoformat(tx_instant))
-    database = handle.Database(
-        port, accepted_metamodel(meta), dialect=dialect, clock=FixedClock(instant)
-    )
+    database = handle.Database(port, case_model(meta), dialect=dialect, clock=FixedClock(instant))
     model = case_model(meta)
     lowered: list[_LoweredStep] = []
 
@@ -2991,9 +2988,7 @@ def run_interleaved_scenario_case(
     shadow = TemporalShadow()
     _seed_shadow_from_fixtures(case, meta, shadow)
     instant = normalize_instant(dt.datetime.fromisoformat(_INERT_CLOCK_INSTANT))
-    main_db = handle.Database(
-        port, accepted_metamodel(meta), dialect=dialect, clock=FixedClock(instant)
-    )
+    main_db = handle.Database(port, case_model(meta), dialect=dialect, clock=FixedClock(instant))
     peer_connection = peer_factory()
     try:
         _require_interleaved_termination_capability(port, peer_connection, case.path.name)
@@ -3008,7 +3003,7 @@ def run_interleaved_scenario_case(
             peer_connection.close()
         raise
     peer_db = handle.Database(
-        peer_connection, accepted_metamodel(meta), dialect=dialect, clock=FixedClock(instant)
+        peer_connection, case_model(meta), dialect=dialect, clock=FixedClock(instant)
     )
     turnstile = _Turnstile()
     result_a = _InterleavedGroupResult(lowered={})
@@ -3207,9 +3202,9 @@ def read_table_state(
     columnOrder (`_table_column_order` — a shared table is read once), so the
     observation reports exactly the state ``then.tableState`` asserts — derived
     from the metamodel, never from the case's expectations. Takes either the
-    corpus descriptor record graph or an already-accepted (scoped) model.
+    corpus descriptor record graph or an already-accepted model.
     """
-    model = accepted_metamodel(meta)
+    model = case_model(meta) if isinstance(meta, Metamodel) else meta
     facet = inheritance.view(model)
     state: dict[str, list[Row]] = {}
     for entity in model.entities:
@@ -3427,7 +3422,7 @@ def _run_conflict_write(
     """
     statements = _lower_conflict_write(meta, dialect, target, concurrency, write_row)
     clean_row, observation = _strip_observation(write_row)
-    model = accepted_metamodel(meta)
+    model = case_model(meta)
     instant = normalize_instant(dt.datetime.fromisoformat(_INERT_CLOCK_INSTANT))
     database = handle.Database(port, model, dialect=dialect, clock=FixedClock(instant))
     target_metadata = case_entity(model, meta.entity(target))
@@ -3477,7 +3472,7 @@ def _run_conflict_close(
     """
     row = dict(write_row)
     observed_valid_start = cast("str | None", row.pop("valid_start", None))
-    model = accepted_metamodel(meta)
+    model = case_model(meta)
     lowered = handle.lower_temporal_close(
         row, target, model, dialect, concurrency, at, observed_tx_start, observed_valid_start
     )

@@ -75,7 +75,6 @@ from parallax.conformance.read_models import Balance
 from parallax.conformance.scripted_clock import ScriptedClock
 from parallax.conformance.story_models import Account, Order, OrderItem, Position, Wallet
 from parallax.conformance.vo_models import (
-    CUSTOMER_REGISTRY,
     Address,
     Branch,
     Customer,
@@ -86,7 +85,7 @@ from parallax.conformance.vo_models import (
     Phone,
     Supplier,
 )
-from parallax.core.entity import Entity, EntityRegistry
+from parallax.core.entity import Entity
 from parallax.core.unit_work import Clock
 from parallax.snapshot.handle import Database, Transaction
 
@@ -122,15 +121,11 @@ class WriteStory:
     connects with no explicit clock at all —
     the system clock (`Database.connect`'s own default).
 
-    ``registry`` is the optional
-    :class:`~parallax.core.entity.base.EntityRegistry` a story's own entity
-    classes are compiled under, needed only when that differs from the
-    process default. The Customer/Location/Depot mirror
-    lives in its OWN `vo_models.CUSTOMER_REGISTRY`, exactly like the graph
-    stories' `_reset_for_registry` precedent in `test_story_run.py`. `None`
-    connects through the ingested
-    corpus descriptor, the process-default-registry `resolve_entity_class`
-    seam finds every other story's classes through."""
+    ``model`` names the corpus model the story mirrors, which is also how a
+    consumer reaches the sealed hub of Entity Classes to connect with
+    (:data:`~parallax.conformance.class_models.MODELS`) — a story's own
+    observing find materializes typed instances, so it needs the class-backed
+    hub rather than the ingested corpus descriptor."""
 
     case_id: str
     title: str
@@ -138,7 +133,6 @@ class WriteStory:
     model: str
     run: Callable[[Database], list[Entity] | None]
     clock: Callable[[], Clock] | None = None
-    registry: EntityRegistry | None = None
 
 
 def story_snippet(story: WriteStory) -> str:
@@ -546,9 +540,6 @@ def branch_bitemporal_rectangle_split_carries_the_document(db: Database) -> None
 # The recursive `address` composite (`CustomerGeo`                            #
 # declares OPTIONAL `elevation`/`point`, unlike Supplier/Branch's own `Geo`),  #
 # so these exercise `to_document`'s omission of unset optional inner members.#
-# They compile under the Customer/Location/Depot family's own                 #
-# `CUSTOMER_REGISTRY`, never the                                               #
-# process default — see `WriteStory.registry`'s own docstring.               #
 # --------------------------------------------------------------------------- #
 def customer_insert_carries_the_whole_address_document(db: Database) -> None:
     def fn(tx: Transaction) -> None:
@@ -863,7 +854,6 @@ WRITE_STORIES: Final[tuple[WriteStory, ...]] = (
         "commit",
         "customer",
         customer_insert_carries_the_whole_address_document,
-        registry=CUSTOMER_REGISTRY,
     ),
     WriteStory(
         "m-value-object-026",
@@ -871,7 +861,6 @@ WRITE_STORIES: Final[tuple[WriteStory, ...]] = (
         "commit",
         "customer",
         customer_update_replaces_the_whole_address_document,
-        registry=CUSTOMER_REGISTRY,
     ),
     WriteStory(
         "m-value-object-027",
@@ -879,6 +868,5 @@ WRITE_STORIES: Final[tuple[WriteStory, ...]] = (
         "commit",
         "customer",
         customer_update_nulls_the_address_document_out,
-        registry=CUSTOMER_REGISTRY,
     ),
 )

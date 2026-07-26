@@ -15,7 +15,8 @@ imports no descriptor interchange code at all.
 
 from __future__ import annotations
 
-from parallax.core.entity._declaration import EntityDeclaration, snake_to_camel
+from parallax.core.entity._binding import MetamodelBinding, binding_of
+from parallax.core.entity._declaration import EntityDeclaration, shape_of, snake_to_camel
 from parallax.core.entity._entity import (
     Bitemporal,
     Entity,
@@ -45,6 +46,7 @@ from parallax.core.entity._errors import (
 )
 from parallax.core.entity._expressions import (
     UNLOADED,
+    AttributeAssignment,
     AttributeExpr,
     AttributeRef,
     ElementAttributeExpr,
@@ -52,7 +54,7 @@ from parallax.core.entity._expressions import (
     RelationshipPath,
     RelationshipRef,
 )
-from parallax.core.entity._hub import MetamodelHub
+from parallax.core.entity._hub import MetamodelHub, SealedModel, sealed_model
 from parallax.core.entity._members import (
     MANY_TO_ONE,
     MAX,
@@ -102,6 +104,7 @@ __all__ = [
     "AbstractSubtype",
     "Attr",
     "AttrSpec",
+    "AttributeAssignment",
     "AttributeExpr",
     "AttributeRef",
     "Bitemporal",
@@ -116,6 +119,7 @@ __all__ = [
     "FrameworkOwnedAxisError",
     "IndexSpec",
     "Int32",
+    "MetamodelBinding",
     "MetamodelDefinitionError",
     "MetamodelHub",
     "MetamodelLookupError",
@@ -128,6 +132,7 @@ __all__ = [
     "RelationshipPath",
     "RelationshipRef",
     "ReverseRelSpec",
+    "SealedModel",
     "Sequence",
     "Statement",
     "TablePerHierarchy",
@@ -139,6 +144,7 @@ __all__ = [
     "WireNames",
     "asc",
     "attr",
+    "binding_of",
     "canonical_row",
     "changed_fields",
     "desc",
@@ -149,6 +155,8 @@ __all__ = [
     "narrowed",
     "primary_key_row",
     "rel",
+    "sealed_model",
+    "shape_of",
     "snake_to_camel",
     "to_document",
     "wire_names_of",

@@ -43,9 +43,9 @@ from parallax.core.base import normalize_instant
 from parallax.core.db_port import Row
 from parallax.core.entity import Entity as EntityBase
 from parallax.core.entity import (
+    binding_of,
     canonical_row,
     effective_change_set,
-    entity_metadata_of,
     primary_key_row,
 )
 from parallax.core.metamodel import (
@@ -560,8 +560,15 @@ def _apply_assignments(
 
 def metadata_of_instance(meta: Metamodel, instance: EntityBase) -> EntityMetadata:
     """``instance``'s accepted Entity Metadata within ``meta``, or a loud
-    ``TypeError`` for a class this metamodel does not declare."""
-    metadata = entity_metadata_of(meta, type(instance))
+    ``TypeError`` when its class belongs to no hub or to a different model.
+
+    The class's own Metamodel Binding names its Entity Identity; ``meta`` then
+    answers whether this model is the one that identity was accepted into.
+    """
+    cls = type(instance)
+    binding = binding_of(cls)
+    identity = None if binding is None else binding.identity_of(cls)
+    metadata = None if identity is None else meta.entity(identity)
     if metadata is None:
-        raise TypeError(f"{type(instance).__name__} is not a registered Parallax entity class")
+        raise TypeError(f"{cls.__name__} is not an Entity Class of this model")
     return metadata

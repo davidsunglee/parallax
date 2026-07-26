@@ -1,65 +1,63 @@
-"""Idiomatic entity classes the API-suite read stories (`read_stories.py`)
-build statements over: real-named mirrors of ``models/balance.yaml`` (a plain
-Transaction-Time-Only temporal entity), ``models/payment.yaml`` (table-per-hierarchy:
-``Payment`` / ``CardPayment`` / ``CashPayment``), ``models/document.yaml``
-(table-per-concrete-subtype: ``Document`` / ``FinancialDocument`` / ``Invoice``
-/ ``Receipt`` / ``Memo`` / ``Folder``), the NON-owner portion of
-``models/animal.yaml`` (table-per-hierarchy: ``Animal`` / ``Pet`` / ``Dog`` /
-``Cat``), ``models/rate.yaml`` (table-per-concrete-subtype BITEMPORAL:
-``Rate`` / ``DepositRate`` / ``LoanRate`` — the root ALONE selects the
-family's ``Bitemporal`` base; the concrete subtypes declare no temporal shape
-of their own, per the binding root-ownership decision, m-inheritance
-"Inherited members"), and
-``models/person.yaml`` (``Person`` / ``Passport``, a one-to-one dependent
-relationship).
+"""Idiomatic Entity Classes mirroring the corpus read and inheritance families.
 
-Owned by ``parallax.conformance`` for the same reason ``story_models`` /
-``graph_models`` are: ``read_stories.py`` is a real dev-only package module
-whose snippets render into the Usage Guide via ``gen-usage-guide`` (which runs
-outside pytest entirely) and whose statements execute through the shipped
-``db.find`` against real Postgres, so it needs classes resolvable at ordinary
-import time, not only under pytest's test-path magic — `tests/mirrored_models.py`
-/ `tests/inheritance_models.py` / `tests/snapshot_models.py` (test-only, moved
-there for exactly this package-boundary reason) cannot be imported from here.
-`tests/mirrored_models.py` RE-EXPORTS ``Person``/``Passport`` from here (the
-``Balance`` discipline), rather than redeclaring them.
+One class family per corpus model: ``models/balance.yaml`` (a plain
+Transaction-Time-Only entity), ``models/payment.yaml`` (table-per-hierarchy),
+``models/document.yaml`` (table-per-concrete-subtype with an intermediate
+abstract subtype and a polymorphic owner), the non-owner portion of
+``models/animal.yaml`` (table-per-hierarchy), ``models/rate.yaml``
+(table-per-concrete-subtype bitemporal, the root alone selecting the
+``Bitemporal`` base because temporal shape is family-wide and root-owned), and
+``models/person.yaml`` (a one-to-one dependent relationship).
 
-``models/animal.yaml``'s own polymorphic owner is ALSO named ``Person`` — a
-literal canonical-name collision with THIS module's ``Person``
-(``models/person.yaml``). Per-registry scoping resolves the
-structural constraint that would otherwise make this collision fatal: an explicit,
-independently-collision-checked :class:`~parallax.core.entity.base.EntityRegistry`
-scope now lets the SAME canonical name coexist across two registries. The
-animal family's own owner accordingly lives in a SEPARATE installed module,
-`parallax.conformance.animal_owner`, scoped to its own registry (whose parent
-is this module's own DEFAULT registry, so it still resolves ``Animal`` /
-``Pet`` / ``Dog`` / ``Cat`` below without redeclaring them) — never here,
-where it would immediately collide with this module's OWN ``Person``.
+Each family is composed into its own sealed hub here, named for the corpus model
+it mirrors, because an Entity Class belongs to exactly one hub for its lifetime:
+the descriptor no-drift guard, the API-suite read stories, and the unit lane all
+compose the same hub rather than a second one over the same classes. The animal
+family is the one exception — ``models/animal.yaml`` also declares the
+polymorphic owner ``Person``, whose canonical name collides with this module's
+own ``Person`` (``models/person.yaml``), so the owner and the family's hub live
+together in :mod:`parallax.conformance.animal_owner`.
+
+Owned by ``parallax.conformance`` rather than by the test suite because
+``read_stories.py`` is a real dev-only package module whose snippets render into
+the Usage Guide via ``gen-usage-guide`` (which runs outside pytest entirely) and
+whose statements execute through the shipped ``db.find`` against real Postgres,
+so it needs classes resolvable at ordinary import time.
 
 This module deliberately avoids ``from __future__ import annotations`` so the
-metaclass reads the live ``Attr[T]`` / ``Rel[T]`` objects directly.
+engine reads the live ``Attr[T]`` / ``Rel[T]`` objects directly.
 """
 
 from decimal import Decimal
 
 from parallax.core import (
+    ONE_TO_MANY,
+    ONE_TO_ONE,
+    TABLE_PER_CONCRETE_SUBTYPE,
+    AbstractRoot,
+    AbstractSubtype,
     Attr,
     Bitemporal,
+    ConcreteSubtype,
     Entity,
-    EntityConfig,
-    Field,
+    Int32,
+    MetamodelHub,
     Rel,
-    Relationship,
-    RelationshipJoin,
-    RelationshipTarget,
-    ReverseRelationship,
+    TablePerHierarchy,
     TxTemporal,
+    attr,
+    index,
+    rel,
 )
-from parallax.core.entity.base import Concrete, FamilyRoot
 
 _NS = "parallax.compatibility"
 
 __all__ = [
+    "BALANCE_MODEL",
+    "DOCUMENT_MODEL",
+    "PAYMENT_MODEL",
+    "PERSON_MODEL",
+    "RATE_MODEL",
     "Balance",
     "CardPayment",
     "CashPayment",
@@ -83,201 +81,181 @@ __all__ = [
 
 
 # --------------------------------------------------------------------------- #
-# Balance: Transaction-Time-Only (the TxTemporal base), mirrors               #
-# models/balance.yaml.                                                        #
+# Balance: Transaction-Time-Only (the TxTemporal base), models/balance.yaml.   #
 # --------------------------------------------------------------------------- #
-class Balance(TxTemporal, frozen=True):
-    __parallax__ = EntityConfig(table="balance", namespace=_NS, mutability="transactional")
-
-    id: Attr[int] = Field(primary_key=True, pk_generator="none", column="bal_id")
-    acct_num: Attr[str] = Field(max_length=32)
-    value: Attr[Decimal] = Field(type="decimal(18,2)", column="val")
-
-
-# --------------------------------------------------------------------------- #
-# Payment: table-per-hierarchy (models/payment.yaml).                         #
-# --------------------------------------------------------------------------- #
-class Payment(Entity, frozen=True):
-    __parallax__ = EntityConfig(
-        table="payment",
-        namespace=_NS,
-        mutability="transactional",
-        inheritance=FamilyRoot(strategy="table-per-hierarchy", tag="kind"),
-    )
-
-    id: Attr[int] = Field(primary_key=True, pk_generator="none", type="int64")
-    amount: Attr[Decimal] = Field(type="decimal(18,2)")
+class Balance(
+    TxTemporal,
+    table="balance",
+    namespace=_NS,
+    indices=(
+        index("balance_pk", "id", "tx_start", unique=True),
+        index("balance_acct", "acct_num"),
+    ),
+):
+    id: Attr[int] = attr(primary_key=True, column="bal_id")
+    acct_num: Attr[str] = attr(column="acct_num", max_length=32)
+    value: Attr[Decimal] = attr(column="val", precision=18, scale=2)
 
 
-class CardPayment(Payment, frozen=True):
-    __parallax__ = EntityConfig(namespace=_NS, inheritance=Concrete(tag_value="card"))
-
-    card_network: Attr[str | None] = Field(
-        type="string", column="card_network", max_length=16, nullable=True
-    )
-
-
-class CashPayment(Payment, frozen=True):
-    __parallax__ = EntityConfig(namespace=_NS, inheritance=Concrete(tag_value="cash"))
-
-    tendered: Attr[Decimal | None] = Field(type="decimal(18,2)", nullable=True)
+BALANCE_MODEL = MetamodelHub(Balance)
 
 
 # --------------------------------------------------------------------------- #
-# Document: table-per-concrete-subtype (models/document.yaml).                #
+# Payment: table-per-hierarchy (models/payment.yaml).                          #
 # --------------------------------------------------------------------------- #
-class Document(Entity, frozen=True):
-    __parallax__ = EntityConfig(
-        namespace=_NS,
-        mutability="transactional",
-        inheritance=FamilyRoot(strategy="table-per-concrete-subtype"),
-    )
-
-    id: Attr[int] = Field(primary_key=True, pk_generator="none", type="int64")
-    title: Attr[str] = Field(max_length=64)
-    folder_id: Attr[int | None] = Field(type="int64", column="folder_id", nullable=True)
+class Payment(
+    Entity,
+    table="payment",
+    namespace=_NS,
+    inheritance=AbstractRoot(TablePerHierarchy(tag_column="kind")),
+):
+    id: Attr[int] = attr(primary_key=True)
+    amount: Attr[Decimal] = attr(precision=18, scale=2)
 
 
-class FinancialDocument(Document, frozen=True):
-    __parallax__ = EntityConfig(namespace=_NS)
-
-    currency: Attr[str] = Field(max_length=3)
+class CardPayment(Payment, namespace=_NS, inheritance=ConcreteSubtype(tag_value="card")):
+    card_network: Attr[str | None] = attr(column="card_network", max_length=16)
 
 
-class Invoice(FinancialDocument, frozen=True):
-    __parallax__ = EntityConfig(namespace=_NS, inheritance=Concrete())
-
-    amount_due: Attr[Decimal] = Field(type="decimal(18,2)", column="amount_due")
+class CashPayment(Payment, namespace=_NS, inheritance=ConcreteSubtype(tag_value="cash")):
+    tendered: Attr[Decimal | None] = attr(precision=18, scale=2)
 
 
-class Receipt(FinancialDocument, frozen=True):
-    __parallax__ = EntityConfig(namespace=_NS, inheritance=Concrete())
-
-    paid_amount: Attr[Decimal] = Field(type="decimal(18,2)", column="paid_amount")
-
-
-class Memo(Document, frozen=True):
-    __parallax__ = EntityConfig(namespace=_NS, inheritance=Concrete())
-
-    body: Attr[str] = Field(max_length=64)
-
-
-class Folder(Entity, frozen=True):
-    __parallax__ = EntityConfig(table="folder", namespace=_NS, mutability="transactional")
-
-    id: Attr[int] = Field(primary_key=True, pk_generator="none", type="int64")
-    name: Attr[str] = Field(max_length=32)
-    documents: Rel[tuple["Document", ...]] = Relationship(
-        cardinality="one-to-many",
-        join=RelationshipJoin(
-            source="id", target=RelationshipTarget(entity="Document", attribute="folderId")
-        ),
-    )
+PAYMENT_MODEL = MetamodelHub(Payment, CardPayment, CashPayment)
 
 
 # --------------------------------------------------------------------------- #
-# Animal: table-per-hierarchy (models/animal.yaml), owner side DELIBERATELY   #
-# omitted (module docstring: the Person registry collision).                  #
+# Document: table-per-concrete-subtype (models/document.yaml).                 #
 # --------------------------------------------------------------------------- #
-class Animal(Entity, frozen=True):
-    __parallax__ = EntityConfig(
-        namespace=_NS,
-        mutability="transactional",
-        inheritance=FamilyRoot(strategy="table-per-hierarchy", tag="kind"),
-    )
-
-    id: Attr[int] = Field(primary_key=True, pk_generator="none", type="int64")
-    name: Attr[str] = Field(max_length=32)
-    owner_id: Attr[int | None] = Field(type="int64", column="owner_id", nullable=True)
+class Document(Entity, namespace=_NS, inheritance=AbstractRoot(TABLE_PER_CONCRETE_SUBTYPE)):
+    id: Attr[int] = attr(primary_key=True)
+    title: Attr[str] = attr(max_length=64)
+    folder_id: Attr[int | None] = attr(column="folder_id")
 
 
-class Pet(Animal, frozen=True):
-    __parallax__ = EntityConfig(namespace=_NS)
-
-    license_id: Attr[str | None] = Field(
-        type="string", max_length=16, column="license_id", nullable=True
-    )
+class FinancialDocument(Document, namespace=_NS, inheritance=AbstractSubtype):
+    currency: Attr[str] = attr(max_length=3)
 
 
-class Dog(Pet, frozen=True):
-    __parallax__ = EntityConfig(namespace=_NS, inheritance=Concrete(tag_value="dog"))
-
-    bark_volume: Attr[int | None] = Field(type="int32", column="bark_volume", nullable=True)
+class Invoice(FinancialDocument, table="invoice", namespace=_NS, inheritance=ConcreteSubtype):
+    amount_due: Attr[Decimal] = attr(column="amount_due", precision=18, scale=2)
 
 
-class Cat(Pet, frozen=True):
-    __parallax__ = EntityConfig(namespace=_NS, inheritance=Concrete(tag_value="cat"))
-
-    indoor: Attr[bool | None] = Field(type="boolean", column="indoor", nullable=True)
+class Receipt(FinancialDocument, table="receipt", namespace=_NS, inheritance=ConcreteSubtype):
+    paid_amount: Attr[Decimal] = attr(column="paid_amount", precision=18, scale=2)
 
 
-class WildBoar(Animal, frozen=True):
+class Memo(Document, table="memo", namespace=_NS, inheritance=ConcreteSubtype):
+    body: Attr[str] = attr(max_length=64)
+
+
+class Folder(
+    Entity,
+    table="folder",
+    namespace=_NS,
+    indices=(index("folder_pk", "id", unique=True),),
+):
+    id: Attr[int] = attr(primary_key=True)
+    name: Attr[str] = attr(max_length=32)
+    documents: Rel[tuple[Document, ...]] = rel(cardinality=ONE_TO_MANY, join=("id", "folder_id"))
+
+
+DOCUMENT_MODEL = MetamodelHub(Document, FinancialDocument, Invoice, Receipt, Memo, Folder)
+
+
+# --------------------------------------------------------------------------- #
+# Animal: table-per-hierarchy (models/animal.yaml). The family's polymorphic   #
+# owner and the hub composing them both live in `animal_owner` (this module's  #
+# own docstring).                                                              #
+# --------------------------------------------------------------------------- #
+class Animal(
+    Entity,
+    table="animal",
+    namespace=_NS,
+    inheritance=AbstractRoot(TablePerHierarchy(tag_column="kind")),
+):
+    id: Attr[int] = attr(primary_key=True)
+    name: Attr[str] = attr(max_length=32)
+    owner_id: Attr[int | None] = attr(column="owner_id")
+
+
+class Pet(Animal, namespace=_NS, inheritance=AbstractSubtype):
+    license_id: Attr[str | None] = attr(column="license_id", max_length=16)
+
+
+class Dog(Pet, namespace=_NS, inheritance=ConcreteSubtype(tag_value="dog")):
+    bark_volume: Attr[int | None] = attr(column="bark_volume", type=Int32)
+
+
+class Cat(Pet, namespace=_NS, inheritance=ConcreteSubtype(tag_value="cat")):
+    indoor: Attr[bool | None]
+
+
+class WildBoar(Animal, namespace=_NS, inheritance=ConcreteSubtype(tag_value="boar")):
     """A concrete SIBLING branch directly under ``Animal`` (not a ``Pet``):
     proves narrowing a read of ``Animal`` to ``Pet`` cannot broaden back out
     to ``WildBoar`` — its effective concrete set is ``[Dog, Cat]``, never
     ``WildBoar`` (``m-inheritance-064``/``-072``'s own rejected narrows)."""
 
-    __parallax__ = EntityConfig(namespace=_NS, inheritance=Concrete(tag_value="boar"))
-
-    tusk_length: Attr[Decimal | None] = Field(
-        type="decimal(18,2)", column="tusk_length", nullable=True
-    )
+    tusk_length: Attr[Decimal | None] = attr(column="tusk_length", precision=18, scale=2)
 
 
 # --------------------------------------------------------------------------- #
 # Rate: table-per-concrete-subtype BITEMPORAL family (models/rate.yaml). The   #
-# root ALONE selects the Bitemporal base (m-inheritance "Inherited members",  #
-# the binding root-ownership decision); DepositRate/LoanRate inherit the      #
-# family's temporal shape and declare NONE of their own.                      #
+# root ALONE selects the Bitemporal base (m-inheritance "Inherited members",   #
+# the binding root-ownership decision); DepositRate/LoanRate inherit the       #
+# family's temporal shape and declare NONE of their own.                       #
 # --------------------------------------------------------------------------- #
-class Rate(Bitemporal, frozen=True):
-    __parallax__ = EntityConfig(
-        namespace=_NS,
-        mutability="transactional",
-        inheritance=FamilyRoot(strategy="table-per-concrete-subtype"),
-    )
-
-    id: Attr[int] = Field(primary_key=True, pk_generator="none", type="int64")
-    amount: Attr[Decimal] = Field(type="decimal(18,2)")
-
-
-class DepositRate(Rate, frozen=True):
-    __parallax__ = EntityConfig(namespace=_NS, inheritance=Concrete())
-
-    grade: Attr[str | None] = Field(type="string", max_length=8, nullable=True)
+class Rate(
+    Bitemporal,
+    namespace=_NS,
+    inheritance=AbstractRoot(TABLE_PER_CONCRETE_SUBTYPE),
+    indices=(index("rate_pk", "id", "valid_start", "tx_start", unique=True),),
+):
+    id: Attr[int] = attr(primary_key=True)
+    amount: Attr[Decimal] = attr(precision=18, scale=2)
 
 
-class LoanRate(Rate, frozen=True):
-    __parallax__ = EntityConfig(namespace=_NS, inheritance=Concrete())
+class DepositRate(Rate, table="deposit_rate", namespace=_NS, inheritance=ConcreteSubtype):
+    grade: Attr[str | None] = attr(max_length=8)
 
-    spread: Attr[Decimal | None] = Field(type="decimal(18,2)", nullable=True)
+
+class LoanRate(Rate, table="loan_rate", namespace=_NS, inheritance=ConcreteSubtype):
+    spread: Attr[Decimal | None] = attr(precision=18, scale=2)
+
+
+RATE_MODEL = MetamodelHub(Rate, DepositRate, LoanRate)
 
 
 # --------------------------------------------------------------------------- #
 # Person/Passport: a one-to-one dependent relationship (models/person.yaml).   #
-# Installed here: the FIRST                                                   #
-# production-reachable mirror of this model (`m-snapshot-read-007`).          #
-# `mirrored_models.Person`/`.Passport` RE-EXPORT these (the `Balance`          #
-# discipline) rather than redeclaring them.                                   #
 # --------------------------------------------------------------------------- #
-class Person(Entity, frozen=True):
-    __parallax__ = EntityConfig(table="person", namespace=_NS, mutability="transactional")
-
-    id: Attr[int] = Field(primary_key=True, pk_generator="none")
-    name: Attr[str] = Field(max_length=64)
-    passport: Rel["Passport"] = Relationship(
-        cardinality="one-to-one",
-        join=RelationshipJoin(
-            source="id", target=RelationshipTarget(entity="Passport", attribute="personId")
-        ),
-        dependent=True,
+class Person(
+    Entity,
+    table="person",
+    namespace=_NS,
+    indices=(index("person_pk", "id", unique=True),),
+):
+    id: Attr[int] = attr(primary_key=True)
+    name: Attr[str] = attr(max_length=64)
+    passport: Rel["Passport"] = rel(
+        cardinality=ONE_TO_ONE, join=("id", "person_id"), dependent=True
     )
 
 
-class Passport(Entity, frozen=True):
-    __parallax__ = EntityConfig(table="passport", namespace=_NS, mutability="transactional")
+class Passport(
+    Entity,
+    table="passport",
+    namespace=_NS,
+    indices=(
+        index("passport_pk", "id", unique=True),
+        index("passport_person", "person_id", unique=True),
+    ),
+):
+    id: Attr[int] = attr(primary_key=True)
+    person_id: Attr[int] = attr(column="person_id")
+    number: Attr[str] = attr(max_length=32)
+    holder: Rel[Person | None] = rel(reverse_of="passport")
 
-    id: Attr[int] = Field(primary_key=True, pk_generator="none")
-    person_id: Attr[int]
-    number: Attr[str] = Field(max_length=32)
-    holder: Rel["Person"] = ReverseRelationship(reverse_of="Person.passport")
+
+PERSON_MODEL = MetamodelHub(Person, Passport)

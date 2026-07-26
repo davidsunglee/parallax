@@ -20,13 +20,12 @@ from pydantic._internal._model_construction import ModelMetaclass
 from parallax.core.entity._declaration import (
     FRAMEWORK_MINT,
     DeclarationKind,
-    ValueObjectShape,
     build_class,
     shape_of,
 )
 from parallax.core.entity._errors import EntityDefinitionError
 
-__all__ = ["ValueObject", "ValueObjectMeta", "shape_of", "to_document", "wire_names_of"]
+__all__ = ["ValueObject", "ValueObjectMeta", "shape_of", "to_document"]
 
 
 class ValueObjectMeta(ModelMetaclass):
@@ -119,8 +118,3 @@ def _document(value: ValueObject) -> dict[str, object]:
         else:
             document[canonical] = raw
     return document
-
-
-def wire_names_of(cls: type) -> ValueObjectShape:
-    """``cls``'s member correspondences — what the frozen-node wrapper reads."""
-    return shape_of(cls)

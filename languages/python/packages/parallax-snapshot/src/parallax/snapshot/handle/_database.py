@@ -41,9 +41,9 @@ from parallax.core.dialect import POSTGRES, Dialect
 # by the private MODULE names and by the package's frozen `__all__`, not by
 # per-name underscores, which under pyright strict would make every intra-package
 # import a reportPrivateUsage error.
-from parallax.core.entity import MetamodelSource, accepted_metamodel, resolve_entity_metadata
+from parallax.core.entity import MetamodelBinding, MetamodelHub, sealed_model
 from parallax.core.entity import Statement as EntityStatement
-from parallax.core.metamodel import Metamodel
+from parallax.core.metamodel import Metamodel, entity_by_name
 from parallax.core.unit_work import (
     Clock,
     Concurrency,
@@ -123,21 +123,24 @@ class _Demarcation:
 class Database:
     """A connected Parallax database handle: one adapter, one metamodel (spec §5)."""
 
-    __slots__ = ("_clock", "_dialect", "_meta", "_port")
+    __slots__ = ("_binding", "_clock", "_dialect", "_meta", "_port")
 
     def __init__(
         self,
         port: DbPort,
-        meta: MetamodelSource,
+        meta: MetamodelHub | Metamodel,
         *,
         dialect: Dialect = POSTGRES,
         clock: Clock | None = None,
     ) -> None:
         self._port = port
-        # Normalize whatever the composition root handed us to an accepted model:
-        # a class-authored `metamodel(...)` result passes through, a bare
-        # descriptor-ingested record graph is formed and wrapped here.
-        self._meta = accepted_metamodel(meta)
+        self._meta: Metamodel
+        self._binding: MetamodelBinding | None
+        if isinstance(meta, MetamodelHub):
+            sealed = sealed_model(meta)
+            self._meta, self._binding = sealed.model, sealed.binding
+        else:
+            self._meta, self._binding = meta, None
         self._dialect = dialect
         self._clock: Clock = clock if clock is not None else SystemClock()
 
@@ -145,7 +148,7 @@ class Database:
     def connect(
         cls,
         adapter: DbPort,
-        meta: MetamodelSource,
+        meta: MetamodelHub | Metamodel,
         *,
         dialect: Dialect = POSTGRES,
         clock: Clock | None = None,
@@ -156,6 +159,11 @@ class Database:
         concrete adapter; everything above works against the port. ``dialect``
         defaults to the sole adapter's; ``clock`` defaults to the system clock
         (inject a fixed clock in tests).
+
+        A class-backed hub additionally carries the Metamodel Binding every
+        class-requiring capability needs — ``Snapshot[T]`` wrapping above all.
+        A bare accepted Metamodel connects just as well and serves the whole
+        neutral-row read path; only wrapping refuses.
         """
         return cls(adapter, meta, dialect=dialect, clock=clock)
 
@@ -171,14 +179,14 @@ class Database:
         """
         target = statement.target
         op = statement.operation()
-        read_target = resolve_entity_metadata(self._meta, target)
+        read_target = entity_by_name(self._meta, target)
         assert read_target is not None  # a statement's target is always declared
         pin = deep_fetch_statement_pin(op, declaring_metadata(self._meta, read_target))
         if is_milestone_set_op(op):
             history_result = find_history(op, self._meta, self._dialect, target, self._port)
-            return snapshot_from_history_result(history_result, target, self._meta)
+            return snapshot_from_history_result(history_result, target, self._meta, self._binding)
         find_result = find(op, self._meta, self._dialect, target, self._port)
-        return snapshot_from_find_result(find_result, target, self._meta, pin)
+        return snapshot_from_find_result(find_result, target, self._meta, pin, self._binding)
 
     def transact[T](
         self,
@@ -241,7 +249,7 @@ class Database:
         def attempt() -> T:
             def in_txn(conn: DbPort) -> T:
                 def body(uow: UnitOfWork) -> T:
-                    tx = Transaction(uow, conn, self._meta, self._dialect)
+                    tx = Transaction(uow, conn, self._meta, self._dialect, self._binding)
                     # Published for joining calls; visible only while core's
                     # active-transaction binding is, so it needs no cleanup.
                     uow.companion = _Demarcation(tx=tx, options=options)

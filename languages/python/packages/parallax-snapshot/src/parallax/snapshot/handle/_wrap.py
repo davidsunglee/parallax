@@ -7,7 +7,7 @@ caller, and the frozen graphs it builds reach callers as ``Snapshot`` roots.
 
 Converts one materialized neutral graph
 (:class:`~parallax.snapshot.materialize.Node`) into frozen instances of the
-caller's own REGISTERED entity classes — the ``Snapshot[T]`` node vocabulary.
+Entity Classes the caller's own hub bound — the ``Snapshot[T]`` node vocabulary.
 Construction goes through Pydantic's ``model_construct`` (skips validation —
 the rows already passed through the database) plus the implementation-private
 ``object.__setattr__`` backdoor (spec §3's own wording) so:
@@ -27,7 +27,7 @@ the rows already passed through the database) plus the implementation-private
   byte-identical;
 - a relationship outside the include set is set to the private ``UNLOADED``
   sentinel, which the ``Rel`` descriptor's instance access translates into
-  :class:`~parallax.core.entity.expressions.UnloadedRelationshipError`;
+  :class:`~parallax.core.entity.UnloadedRelationshipError`;
 - a narrowed include's view lives in a private per-node mapping
   (``__parallax_narrowed__``), read by ``parallax.core.narrowed`` — never a
   regular field, since it never marks the broad relationship loaded;
@@ -40,7 +40,7 @@ Physical and relationship facts come from the accepted Metamodel and its facets:
 each row's own concrete Entity resolves through ``m-metamodel`` name lookup, its
 navigable relationships through the Relationship Facet, its family-effective
 value objects and declaring root through the Inheritance Facet, and its concrete
-Python class through the Entity frontend's own registry seam.
+Python class through the Metamodel Binding's Identity-to-Class index.
 
 Polymorphic children materialize as their CONCRETE classes: ``familyVariant``,
 when the neutral row carries it, names the concrete entity directly; a
@@ -63,11 +63,16 @@ from collections.abc import Mapping, Sequence
 from typing import cast
 
 from parallax.core import inheritance, relationship
-from parallax.core.entity import resolve_entity_class, resolve_entity_metadata, wire_names_of
-from parallax.core.entity.expressions import UNLOADED
-from parallax.core.entity.value_object import ValueObject as ValueObjectBase
-from parallax.core.entity.value_object import wire_names_of as vo_wire_names_of
-from parallax.core.metamodel import EntityMetadata, Metamodel, Multiplicity, ValueObjectMetadata
+from parallax.core.entity import UNLOADED, MetamodelBinding, shape_of, wire_names_of
+from parallax.core.entity import Entity as EntityBase
+from parallax.core.entity import ValueObject as ValueObjectBase
+from parallax.core.metamodel import (
+    EntityMetadata,
+    Metamodel,
+    Multiplicity,
+    ValueObjectMetadata,
+    entity_by_name,
+)
 from parallax.core.relationship import RelationshipMetadata
 from parallax.core.temporal_read import Pin, milestone_edge
 from parallax.snapshot import materialize
@@ -84,11 +89,16 @@ def wrap_graph(
     root_entity: str,
     model: Metamodel,
     pin: Pin,
+    binding: MetamodelBinding | None,
 ) -> tuple[object, ...]:
     """Wrap one materialized graph's root nodes (and, transitively, everything
-    reachable through them) into frozen instances of the caller's registered
-    entity classes, attaching the SAME whole-graph ``pin`` to every temporal
+    reachable through them) into frozen instances of the Entity Classes
+    ``binding`` claimed, attaching the SAME whole-graph ``pin`` to every temporal
     node reached.
+
+    ``binding`` is absent for a descriptor-backed model, which names no class at
+    all; every node then fails the class lookup, because wrapping is exactly the
+    capability that requires one.
 
     Two passes: :func:`_discover` walks the whole per-view forest once,
     grouping every distinct ``Node`` object by its logical identity key, then
@@ -101,7 +111,7 @@ def wrap_graph(
         _discover(node, root_entity, model, visited, groups)
     merged = _merged_fields(groups)
     cache: dict[object, object] = {}
-    return tuple(_wrap(node, root_entity, model, pin, cache, merged) for node in nodes)
+    return tuple(_wrap(node, root_entity, model, pin, cache, merged, binding) for node in nodes)
 
 
 def _concrete_entity_name(node: materialize.Node, default_entity: str) -> str:
@@ -119,13 +129,26 @@ def _concrete_entity_name(node: materialize.Node, default_entity: str) -> str:
 
 
 def _entity(model: Metamodel, name: str) -> EntityMetadata:
-    metadata = resolve_entity_metadata(model, name)
+    metadata = entity_by_name(model, name)
     if metadata is None:  # pragma: no cover - a materialized row's concrete is always declared
-        raise LookupError(
-            f"{name!r} has no registered Parallax entity class; import it before "
-            "wrapping a Snapshot[T] result"
-        )
+        raise LookupError(f"{name!r} names no Entity of this model")
     return metadata
+
+
+def _class_of(binding: MetamodelBinding | None, entity: EntityMetadata) -> type:
+    """The Entity Class this hub bound ``entity`` to.
+
+    Wrapping is a class-requiring capability, so a model whose hub claimed no
+    class — every descriptor-backed hub — refuses here rather than earlier: the
+    neutral-row read path itself needs no class.
+    """
+    cls = None if binding is None else binding.class_of(entity.identity)
+    if cls is None:
+        raise LookupError(
+            f"{entity.identity.canonical!r} is bound to no Entity Class; compose a "
+            "class-backed hub before wrapping a Snapshot[T] result"
+        )
+    return cls
 
 
 def _relationships(model: Metamodel, entity: EntityMetadata) -> tuple[RelationshipMetadata, ...]:
@@ -225,6 +248,7 @@ def _wrap(
     pin: Pin,
     cache: dict[object, object],
     merged: Mapping[object, Mapping[str, object]],
+    binding: MetamodelBinding | None,
 ) -> object:
     concrete_name = _concrete_entity_name(node, default_entity)
     key = _identity_cache_key(node, concrete_name, model)
@@ -232,13 +256,8 @@ def _wrap(
     if cached is not None:
         return cached
 
-    cls = resolve_entity_class(model, concrete_name)
-    if cls is None:
-        raise LookupError(
-            f"{concrete_name!r} has no registered Parallax entity class; import it before "
-            "wrapping a Snapshot[T] result"
-        )
     entity = _entity(model, concrete_name)
+    cls = cast("type[EntityBase]", _class_of(binding, entity))
     instance = cls.model_construct()
     cache[key] = instance
 
@@ -254,7 +273,7 @@ def _wrap(
         py_name = names.column_to_py.get(column)
         if py_name is None:
             continue  # a relationship attach key, handled below
-        object.__setattr__(instance, py_name, _wrap_member(value, entity, column, model))
+        object.__setattr__(instance, py_name, _wrap_member(value, entity, column, model, binding))
 
     directions = _relationships(model, entity)
     narrowed_views: dict[str, object] = {}
@@ -267,7 +286,9 @@ def _wrap(
         # declares one); the narrowed-view scan below still applies to it.
         if py_name is not None:  # pragma: no branch
             if rel_name in fields:
-                loaded = _wrap_related(fields[rel_name], target_name, model, pin, cache, merged)
+                loaded = _wrap_related(
+                    fields[rel_name], target_name, model, pin, cache, merged, binding
+                )
                 object.__setattr__(instance, py_name, loaded)
             else:
                 object.__setattr__(instance, py_name, UNLOADED)
@@ -275,7 +296,7 @@ def _wrap(
         for field_key, field_value in fields.items():
             if field_key.startswith(prefix):
                 narrowed_views[field_key] = _wrap_related(
-                    field_value, target_name, model, pin, cache, merged
+                    field_value, target_name, model, pin, cache, merged, binding
                 )
 
     if narrowed_views:
@@ -309,19 +330,30 @@ def _wrap_related(
     pin: Pin,
     cache: dict[object, object],
     merged: Mapping[object, Mapping[str, object]],
+    binding: MetamodelBinding | None,
 ) -> object:
     if value is None:
         return None
     if isinstance(value, list):
         items = cast("list[object]", value)
         return tuple(
-            _wrap(cast("materialize.Node", item), default_entity, model, pin, cache, merged)
+            _wrap(
+                cast("materialize.Node", item), default_entity, model, pin, cache, merged, binding
+            )
             for item in items
         )
-    return _wrap(cast("materialize.Node", value), default_entity, model, pin, cache, merged)
+    return _wrap(
+        cast("materialize.Node", value), default_entity, model, pin, cache, merged, binding
+    )
 
 
-def _wrap_member(value: object, entity: EntityMetadata, column: str, model: Metamodel) -> object:
+def _wrap_member(
+    value: object,
+    entity: EntityMetadata,
+    column: str,
+    model: Metamodel,
+    binding: MetamodelBinding | None,
+) -> object:
     """A scalar member passes through; a value-object member's decoded nested
     dict wraps into its declared ``ValueObject`` subclass (or a tuple of them,
     ``multiplicity: many``) — the SAME instances-only contract the write side
@@ -329,7 +361,7 @@ def _wrap_member(value: object, entity: EntityMetadata, column: str, model: Meta
     vo = next((v for v in _family_value_objects(model, entity) if v.storage.name == column), None)
     if vo is None:
         return value
-    vo_class = _vo_class_for(entity, vo.identity.path[-1], model)
+    vo_class = _vo_class_for(entity, vo.identity.path[-1], binding)
     if vo.multiplicity is Multiplicity.MANY:
         items = cast("list[Mapping[str, object] | None]", value) if isinstance(value, list) else []
         return tuple(_wrap_vo(item, vo_class) for item in items if item is not None)
@@ -343,41 +375,54 @@ def _family_value_objects(
     return () if view is None else tuple(view.applicable_value_objects)
 
 
-def _vo_class_for(entity: EntityMetadata, vo_name: str, model: Metamodel) -> type[ValueObjectBase]:
-    cls = resolve_entity_class(model, entity.identity.name)
-    if cls is not None:
-        names = wire_names_of(cls)
-        py_name = names.name_to_py.get(vo_name)
-        if py_name is not None:
-            vo_class = names.vo_classes.get(py_name)
-            if vo_class is not None:
-                return cast("type[ValueObjectBase]", vo_class)
-    raise LookupError(
-        f"{entity.identity.name}.{vo_name}: no registered ValueObject class for this "
-        "value-object member"
-    )
+def _vo_class_for(
+    entity: EntityMetadata, vo_name: str, binding: MetamodelBinding | None
+) -> type[ValueObjectBase]:
+    names = wire_names_of(_class_of(binding, entity))
+    py_name = names.name_to_py.get(vo_name)
+    vo_class = None if py_name is None else names.vo_classes.get(py_name)
+    if vo_class is None:
+        raise LookupError(
+            f"{entity.identity.name}.{vo_name}: the bound Entity Class declares no "
+            "Value Object member here"
+        )
+    return cast("type[ValueObjectBase]", vo_class)
 
 
 def _wrap_vo(document: Mapping[str, object] | None, vo_class: type[ValueObjectBase]) -> object:
+    """One stored document as a frozen Value Object instance.
+
+    Built through ``model_construct``, exactly as an Entity node is: a stored
+    document is what the database holds rather than authored input, so a member
+    the row omits, nulls, or stores in the wrong shape materializes as absent
+    instead of failing validation — the same absence collapse every nested read
+    applies. Every declared member is therefore supplied (a Many occurrence's
+    non-array storage included, as the empty tuple), while ``model_fields_set``
+    names only the members the document actually carried, so the omission policy
+    :func:`~parallax.core.entity.to_document` applies is preserved.
+    """
     if document is None:
         return None
-    names = vo_wire_names_of(vo_class)
-    kwargs: dict[str, object] = {}
-    for canonical, py_name in names.name_to_py.items():
+    shape = shape_of(vo_class)
+    values: dict[str, object] = {}
+    present: set[str] = set()
+    for canonical, py_name in shape.name_to_py.items():
+        many = py_name in shape.many_py
         if canonical not in document:
+            values[py_name] = () if many else None
             continue
+        present.add(py_name)
         raw = document[canonical]
-        nested_cls = names.nested_classes.get(py_name)
-        if nested_cls is not None:
-            if isinstance(raw, list):
-                raw_items = cast("list[object]", raw)
-                kwargs[py_name] = tuple(
-                    _wrap_vo(cast("Mapping[str, object] | None", item), nested_cls)
-                    for item in raw_items
-                    if item is not None
-                )
-            else:
-                kwargs[py_name] = _wrap_vo(cast("Mapping[str, object] | None", raw), nested_cls)
+        nested_cls = shape.nested_classes.get(py_name)
+        if nested_cls is None:
+            values[py_name] = raw
+        elif many:
+            items = cast("list[object]", raw) if isinstance(raw, list) else []
+            values[py_name] = tuple(
+                _wrap_vo(cast("Mapping[str, object] | None", item), nested_cls)
+                for item in items
+                if item is not None
+            )
         else:
-            kwargs[py_name] = raw
-    return vo_class(**kwargs)
+            values[py_name] = _wrap_vo(cast("Mapping[str, object] | None", raw), nested_cls)
+    return vo_class.model_construct(present, **values)
