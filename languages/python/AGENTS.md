@@ -28,12 +28,17 @@ Do not record design decisions here or in `GUIDE.md`. They belong in
 are limited to milestones, executable commands, database setup, current status,
 and blockers.
 
-## COR-3 deferred-work ledger
+## Deferred-work ledger
 
 While the initial build (`slice-snapshot-1`) is in flight, the deferred-work
-ledger at `.humanlayer/tasks/cor-3-build-python-slice/05-deferred-ledger.md`
+ledger at `.humanlayer/tasks/cor-47-build-python-declarations/09-deferred-ledger.md`
 binds every session: read it at session start, add an entry in the same session
 any deferral happens, and sweep it at claim closure.
+
+It succeeds the closed COR-3 ledger
+(`.humanlayer/tasks/cor-3-build-python-slice/05-deferred-ledger.md`), which holds the
+history behind D-1 … D-37 and takes no new entries. Entry numbering is continuous across
+the two, so a D-number identifies one item.
 
 ## Key commands
 
