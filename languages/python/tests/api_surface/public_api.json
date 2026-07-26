@@ -51,6 +51,21 @@
     "pin_of",
     "rel"
   ],
+  "parallax.descriptor": [
+    "DescriptorError",
+    "DescriptorExportError",
+    "DescriptorSchemaError",
+    "DescriptorSchemaViolation",
+    "DescriptorSyntaxError",
+    "DescriptorValueError",
+    "DescriptorValueViolation",
+    "export_document",
+    "export_json",
+    "export_yaml",
+    "hub_from_document",
+    "hub_from_json",
+    "hub_from_yaml"
+  ],
   "parallax.core.metamodel": [
     "APPLICATION_ASSIGNED",
     "AS_OF_ATTRIBUTE_DUPLICATE",

@@ -2,21 +2,27 @@
 
 from __future__ import annotations
 
+import subprocess
+import tarfile
 import zipfile
+from pathlib import Path
 
 import pytest
 
-from conftest import PRODUCTION_PACKAGES, Wheelhouse
+from conftest import PRODUCTION_PACKAGES, PY_ROOT, REPO_ROOT, Wheelhouse
 
 pytestmark = pytest.mark.artifact
 
 # Each distribution's top regular package under the shared PEP 420 namespace.
 _TOP_PACKAGE_DIR: dict[str, str] = {
     "parallax-core": "parallax/core",
+    "parallax-descriptor": "parallax/descriptor",
     "parallax-snapshot": "parallax/snapshot",
     "parallax-postgres": "parallax/postgres",
     "parallax-conformance": "parallax/conformance",
 }
+
+_PACKAGED_SCHEMA = "parallax/descriptor/_schemas/metamodel.schema.json"
 
 
 def _names(wheelhouse: Wheelhouse, package: str) -> list[str]:
@@ -95,6 +101,69 @@ def test_snapshot_wheel_ships_handle_package(wheelhouse: Wheelhouse) -> None:
     # `wrap.py` moved INTO the package rather than being copied; a wheel carrying
     # both would mean two live copies of `wrap_graph`.
     assert "parallax/snapshot/wrap.py" not in names
+
+
+def test_descriptor_wheel_ships_the_privatized_frontend(wheelhouse: Wheelhouse) -> None:
+    # Same idiom, same reasoning as the two package checks above: Hatch discovers
+    # the tree, so the ABSENT public module names are the load-bearing half — a
+    # wheel still carrying `records.py` beside `_records.py` is what a stale build
+    # or a half-applied move looks like, and it would also re-expose the record
+    # vocabulary §8 keeps private.
+    names = _names(wheelhouse, "parallax-descriptor")
+    assert "parallax/descriptor/__init__.py" in names
+    assert "parallax/descriptor/_adapter.py" in names
+    assert "parallax/descriptor/_errors.py" in names
+    assert "parallax/descriptor/_export.py" in names
+    assert "parallax/descriptor/_hub.py" in names
+    assert "parallax/descriptor/_ingest.py" in names
+    assert "parallax/descriptor/_records.py" in names
+    assert "parallax/descriptor/_relationship.py" in names
+    assert "parallax/descriptor/_serde.py" in names
+    assert "parallax/descriptor/_type_spelling.py" in names
+    for retired in ("records", "serde", "ingest", "export", "unresolved", "errors", "relationship"):
+        assert f"parallax/descriptor/{retired}.py" not in names
+
+
+def test_descriptor_wheel_schema_matches_the_authoritative_source(wheelhouse: Wheelhouse) -> None:
+    # `core/schemas/metamodel.schema.json` stays authoritative and the wheel
+    # embeds a byte-for-byte copy, so drift between them is the only failure this
+    # can report — and an installed frontend loads the copy, never a
+    # repository-relative path.
+    authoritative = (REPO_ROOT / "core" / "schemas" / "metamodel.schema.json").read_bytes()
+    with zipfile.ZipFile(wheelhouse.wheels["parallax-descriptor"]) as archive:
+        assert _PACKAGED_SCHEMA in archive.namelist()
+        assert archive.read(_PACKAGED_SCHEMA) == authoritative
+
+
+def test_no_other_wheel_ships_the_descriptor_schema(wheelhouse: Wheelhouse) -> None:
+    for package in wheelhouse.wheels:
+        if package == "parallax-descriptor":
+            continue
+        assert _PACKAGED_SCHEMA not in _names(wheelhouse, package), package
+
+
+def test_descriptor_sdist_schema_matches_the_authoritative_source(tmp_path: Path) -> None:
+    # §8 embeds the copy in the sdist too, and hatchling selects sdist and wheel
+    # files independently: the wheel check above cannot speak for the sdist.
+    subprocess.run(
+        ["uv", "build", "--package", "parallax-descriptor", "--sdist", "--out-dir", str(tmp_path)],
+        cwd=PY_ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    sdists = sorted(tmp_path.glob("parallax_descriptor-*.tar.gz"))
+    assert len(sdists) == 1, sdists
+    authoritative = (REPO_ROOT / "core" / "schemas" / "metamodel.schema.json").read_bytes()
+    with tarfile.open(sdists[0]) as archive:
+        member = next(
+            (n for n in archive.getnames() if n.endswith(f"src/{_PACKAGED_SCHEMA}")),
+            None,
+        )
+        assert member is not None, archive.getnames()
+        packaged = archive.extractfile(member)
+        assert packaged is not None
+        assert packaged.read() == authoritative
 
 
 def test_conformance_wheel_declares_console_script(wheelhouse: Wheelhouse) -> None:

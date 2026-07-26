@@ -1,19 +1,20 @@
 """Clean-install production topology proofs (§8 / §10 `clean_install` marker).
 
-Each of the three §8 selective topologies is installed into a fresh uv venv
+Each of the four §8 selective topologies is installed into a fresh uv venv
 from the locally built wheels, and the installed distribution list + import
-space are probed to prove that unselected lifecycles, the driver, and the
-dev-only conformance tooling are all absent.
+space are probed to prove that unselected interchange, lifecycles, the driver,
+and the dev-only conformance tooling are all absent.
 """
 
 from __future__ import annotations
 
+import json
 import subprocess
 from pathlib import Path
 
 import pytest
 
-from conftest import Wheelhouse
+from conftest import REPO_ROOT, Wheelhouse
 
 pytestmark = pytest.mark.clean_install
 
@@ -57,6 +58,12 @@ def _dist_installed(python: Path, distribution: str) -> bool:
     return result.returncode == 0
 
 
+def _run(python: Path, source: str) -> str:
+    result = subprocess.run([str(python), "-c", source], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    return result.stdout
+
+
 def test_core_alone(tmp_path: Path, wheelhouse: Wheelhouse) -> None:
     python = _make_venv(tmp_path / "venv")
     _install(python, wheelhouse, "parallax-core")
@@ -68,7 +75,68 @@ def test_core_alone(tmp_path: Path, wheelhouse: Wheelhouse) -> None:
     # import of the retired `compile`, or an import cycle among the five private
     # modules fails here and nowhere else in the clean-install lane.
     assert _import_ok(python, "parallax.core.sql_gen")
-    # Unselected lifecycle, adapter, driver, and dev tooling are all absent.
+    # Unselected interchange, lifecycle, adapter, driver, and dev tooling are all
+    # absent — the Descriptor Frontend and both of the dependencies it alone
+    # declares included, so `parallax-core`'s manifest really is `pydantic` only.
+    assert not _import_ok(python, "parallax.descriptor")
+    assert not _import_ok(python, "parallax.snapshot")
+    assert not _import_ok(python, "parallax.postgres")
+    assert not _import_ok(python, "parallax.conformance")
+    assert not _import_ok(python, "yaml")
+    assert not _import_ok(python, "jsonschema")
+    assert not _dist_installed(python, "parallax-descriptor")
+    assert not _dist_installed(python, "pyyaml")
+    assert not _dist_installed(python, "jsonschema")
+    assert not _dist_installed(python, "psycopg")
+    assert not _dist_installed(python, "testcontainers")
+    assert not _dist_installed(python, "parallax-conformance")
+
+
+def test_core_and_descriptor(tmp_path: Path, wheelhouse: Wheelhouse) -> None:
+    python = _make_venv(tmp_path / "venv")
+    _install(python, wheelhouse, "parallax-descriptor")
+
+    assert _import_ok(python, "parallax.core")
+    assert _import_ok(python, "parallax.descriptor")
+    # Both ingestion dependencies arrive with the frontend that declares them, so
+    # no phase has an optional-import failure branch.
+    assert _dist_installed(python, "pyyaml")
+    assert _dist_installed(python, "jsonschema")
+    # The packaged schema loads through `importlib.resources` out of the installed
+    # wheel — no repository checkout in sight — and both text doors round-trip
+    # through it. Reading the schema from the source tree would still pass a
+    # bytes-comparison test; only running the doors in a venv proves the resource
+    # resolves where an installed frontend actually looks.
+    authoritative = (REPO_ROOT / "core" / "schemas" / "metamodel.schema.json").read_text(
+        encoding="utf-8"
+    )
+    document = {
+        "entity": {
+            "name": "Author",
+            "table": "author",
+            "attributes": [{"name": "id", "type": "int64", "primaryKey": True}],
+        }
+    }
+    probe = f"""
+import json
+from importlib import resources
+
+from parallax.descriptor import export_json, export_yaml, hub_from_json, hub_from_yaml
+
+schema = resources.files("parallax.descriptor").joinpath(
+    "_schemas/metamodel.schema.json"
+).read_text("utf-8")
+document = json.loads({json.dumps(json.dumps(document))})
+from_json = hub_from_json(json.dumps(document))
+from_yaml = hub_from_yaml(export_yaml(from_json))
+assert export_json(from_yaml) == export_json(from_json)
+print(json.dumps({{"schema": schema, "document": export_json(from_yaml)}}))
+"""
+    answered = json.loads(_run(python, probe))
+    assert answered["schema"] == authoritative
+    assert json.loads(answered["document"]) == document
+
+    # No sibling lifecycle, adapter, driver, or conformance harness.
     assert not _import_ok(python, "parallax.snapshot")
     assert not _import_ok(python, "parallax.postgres")
     assert not _import_ok(python, "parallax.conformance")
@@ -83,9 +151,14 @@ def test_core_and_snapshot(tmp_path: Path, wheelhouse: Wheelhouse) -> None:
 
     assert _import_ok(python, "parallax.core")
     assert _import_ok(python, "parallax.snapshot")
-    # No sibling adapter/driver and no conformance harness.
+    # No Descriptor Frontend, descriptor parser, schema validator, sibling
+    # adapter/driver, or conformance harness.
+    assert not _import_ok(python, "parallax.descriptor")
     assert not _import_ok(python, "parallax.postgres")
     assert not _import_ok(python, "parallax.conformance")
+    assert not _dist_installed(python, "parallax-descriptor")
+    assert not _dist_installed(python, "pyyaml")
+    assert not _dist_installed(python, "jsonschema")
     assert not _dist_installed(python, "psycopg")
 
 
@@ -97,7 +170,10 @@ def test_core_snapshot_and_postgres(tmp_path: Path, wheelhouse: Wheelhouse) -> N
     assert _import_ok(python, "parallax.snapshot")
     assert _import_ok(python, "parallax.postgres")
     assert _dist_installed(python, "psycopg")
-    # The dev-only conformance tooling and container tooling stay out.
+    # The optional Descriptor Frontend, the dev-only conformance tooling, and the
+    # container tooling all stay out.
+    assert not _import_ok(python, "parallax.descriptor")
     assert not _import_ok(python, "parallax.conformance")
+    assert not _dist_installed(python, "parallax-descriptor")
     assert not _dist_installed(python, "testcontainers")
     assert not _dist_installed(python, "parallax-conformance")
