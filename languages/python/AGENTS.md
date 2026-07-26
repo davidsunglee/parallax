@@ -39,7 +39,7 @@ any deferral happens, and sweep it at claim closure.
 
 All commands run against the uv workspace rooted at this directory.
 
-- `uv sync` — install the dev environment (all four workspace distributions
+- `uv sync` — install the dev environment (all five workspace distributions
   editable, plus the toolchain).
 - `just python-static` — every database-free gate (§10).
 - `just python-verify` — static plus the Docker-backed database lanes.
