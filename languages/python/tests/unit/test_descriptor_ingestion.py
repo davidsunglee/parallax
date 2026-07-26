@@ -81,7 +81,7 @@ def test_the_corpus_has_the_documented_stem_count() -> None:
     # Pinned to the corpus's exact stem count so an added or removed fixture
     # must update this assertion explicitly, rather than silently shrinking
     # or growing the parametrization unnoticed.
-    assert len(_FIXTURES) == 26
+    assert len(_FIXTURES) == 28
 
 
 def test_the_corpus_exercises_both_concrete_syntax_formats() -> None:
