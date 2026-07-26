@@ -1,10 +1,12 @@
 """How a Relationship Path resolves the hop after its first (python.md §2).
 
-The first hop is the relationship descriptor's own; every hop past it is a model
-question the path answers through the Metamodel Binding it carries. These
-fixtures pin the two authoring facts a bare canonical name loses — a ``name=``
-override on the hop's own member, and a namespaced target whose bare name a
-second namespace also carries.
+The first hop is the relationship descriptor's own; every hop past it is a
+declaration question, answered by the class-aware resolver that descriptor hands
+the path alongside its Metamodel Binding. These fixtures pin the three authoring
+facts a canonical name re-derived from the Python spelling loses — a ``name=``
+override on the hop's own member, a member the target inherits rather than
+declares, and a namespaced target whose bare name a second namespace also
+carries — and that the path itself reaches no class without the resolver.
 
 This module omits ``from __future__ import annotations`` so a relationship target
 spelled as a class object reaches the engine live, which is what lets one module
@@ -16,13 +18,17 @@ import pytest
 from parallax.core import (
     MANY_TO_ONE,
     ONE_TO_MANY,
+    AbstractRoot,
     Attr,
+    ConcreteSubtype,
     Entity,
     MetamodelHub,
     Rel,
+    TablePerHierarchy,
     attr,
     rel,
 )
+from parallax.core.entity import RelationshipPath
 from parallax.core.op_algebra import DeepFetch, PathSegment
 
 pytestmark = pytest.mark.unit
@@ -72,11 +78,58 @@ class SalesOrder(Entity, table="sales_order", name="Order", namespace="sales"):
 LEDGER = MetamodelHub(SalesOrder, SalesCustomer, SalesNote, CrmCustomer)
 
 
+class Toy(Entity, table="toy", namespace="pets"):
+    id: Attr[int] = attr(primary_key=True)
+    animal_id: Attr[int]
+
+
+class Animal(
+    Entity,
+    table="animal",
+    namespace="pets",
+    inheritance=AbstractRoot(TablePerHierarchy("kind")),
+):
+    id: Attr[int] = attr(primary_key=True)
+    owner_id: Attr[int]
+    toys: Rel[tuple[Toy, ...]] = rel(
+        cardinality=ONE_TO_MANY, join=("id", "animal_id"), name="playthings"
+    )
+
+
+class Dog(Animal, inheritance=ConcreteSubtype("dog")):
+    pass
+
+
+class Owner(Entity, table="owner", namespace="pets"):
+    id: Attr[int] = attr(primary_key=True)
+    dogs: Rel[tuple[Dog, ...]] = rel(cardinality=ONE_TO_MANY, join=("id", "owner_id"))
+
+
+PETS = MetamodelHub(Owner, Animal, Dog, Toy)
+
+
 def test_a_deeper_hop_reads_the_python_member_off_the_bound_class() -> None:
     # `Branch.leaves` declares the canonical name `canopy`, so re-deriving a
     # canonical name from the Python spelling would miss the declaration.
     path = Root.branches.leaves
     assert [segment.rel for segment in path.segments] == ["Root.branches", "Branch.canopy"]
+
+
+def test_a_deeper_hop_reads_a_member_the_target_inherits() -> None:
+    # `Dog` declares no relationship of its own; `toys` is its family's, and the
+    # hop names it exactly as the class does.
+    path = Owner.dogs.toys
+    assert [segment.rel for segment in path.segments] == ["Owner.dogs", "Animal.playthings"]
+    assert path.target == "pets.Toy"
+
+
+def test_an_inherited_deeper_hop_validates_as_an_include_path() -> None:
+    statement = Owner.where().include(Owner.dogs.toys)
+    operation = statement.operation()
+    assert isinstance(operation, DeepFetch)
+    assert operation.paths == (
+        (PathSegment(rel="Owner.dogs"), PathSegment(rel="Animal.playthings")),
+    )
 
 
 def test_a_deeper_hop_keeps_the_target_namespace() -> None:
@@ -137,6 +190,18 @@ def test_a_hop_narrowed_to_a_class_declaring_no_identity_names_it_pythonically()
     path = Root.branches.narrow(Bare)
     assert path.segments[-1].narrow == ("Bare",)
     assert path.target == "Bare"
+
+
+def test_a_path_carrying_a_model_but_no_resolver_cannot_continue() -> None:
+    # Class awareness is handed to a path, never reached for: with the Binding
+    # kept and only the resolver withheld, the hop that resolves off a seeded
+    # path has nothing left to ask.
+    seeded = Root.branches
+    without_resolver = RelationshipPath(
+        segments=seeded.segments, target=seeded.target, binding=seeded.binding
+    )
+    with pytest.raises(AttributeError, match="resolves against the composed model"):
+        _ = without_resolver.leaves  # pyright: ignore[reportAttributeAccessIssue]
 
 
 def test_a_hop_past_a_narrow_to_a_class_outside_the_model_is_refused() -> None:

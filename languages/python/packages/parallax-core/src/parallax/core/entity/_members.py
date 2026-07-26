@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from typing import Any, Final, overload
 
 from parallax.core.base import FLOAT32, INT32, Float32, Int32, NeutralType
-from parallax.core.entity._binding import binding_of
+from parallax.core.entity._binding import MetamodelBinding, binding_of
 from parallax.core.entity._errors import EntityDefinitionError, UnloadedRelationshipError
 from parallax.core.entity._expressions import (
     UNLOADED,
@@ -42,6 +42,7 @@ from parallax.core.metamodel import (
     Sequence,
     SortDirection,
     TablePerHierarchy,
+    entity_by_name,
 )
 from parallax.core.op_algebra import PathSegment
 
@@ -439,6 +440,31 @@ class ElementAttr[T]:
         return value  # pragma: no cover
 
 
+def _hop(binding: MetamodelBinding, target: str, name: str) -> RelationshipPath:
+    """The single-hop path the Python member ``name`` names on ``target``.
+
+    How a Relationship Path continues past its first hop, handed to every path
+    this module seeds. The hop names a *Python* member, and only the target's own
+    Entity Class answers which declaration that is: a member may override its
+    canonical name or inherit its declaration, so a canonical name re-derived
+    from the Python spelling would miss either. Asking the class is a class
+    lookup, which belongs here — the path itself reaches no class.
+
+    Raises ``AttributeError`` when ``target`` names no Entity Class of the
+    Binding's model, or when that class declares no such relationship.
+    """
+    entity = entity_by_name(binding.model, target)
+    owner = None if entity is None else binding.class_of(entity.identity)
+    if owner is None:
+        raise AttributeError(
+            f"{target}.{name}: {target!r} is not an Entity Class of the model this path resolves in"
+        )
+    hop = getattr(owner, name, None)
+    if not isinstance(hop, RelationshipPath):
+        raise AttributeError(f"{target}.{name}: {target} declares no relationship")
+    return hop
+
+
 class Rel[T]:
     """The relationship annotation, and the descriptor it installs.
 
@@ -469,6 +495,7 @@ class Rel[T]:
                 segments=(PathSegment(rel=str(self._ref)),),
                 target=self._target,
                 binding=None if _owner is None else binding_of(_owner),
+                resolve_hop=_hop,
             )
         value = obj.__dict__[self._py_name]
         if value is UNLOADED:

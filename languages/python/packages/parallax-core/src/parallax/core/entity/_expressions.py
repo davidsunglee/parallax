@@ -17,11 +17,12 @@ Value Object element-scoped carrier, always building element-relative ``nested*`
 nodes for use inside a quantifier's ``where=`` scope.
 
 Nodes here name no declaration and import no frontend: this module reaches no
-owner class, no declaration engine, and no hub. What a node does carry is the
-Metamodel Binding its seeding class access supplied, which is how a model-stated
-rule fires as the node is built — an assignment's assignability and declared-type
-agreement, and a deeper relationship hop's own resolution. A node built directly
-carries no Binding and states no such rule.
+owner class, no declaration engine, and no hub. What a node does carry is what
+its seeding class access handed it — the Metamodel Binding of the hub that class
+belongs to, and, for a Relationship Path, the class-aware resolver that answers a
+deeper hop. That is how a model-stated rule fires as the node is built: an
+assignment's assignability and declared-type agreement, and a deeper hop's own
+resolution. A node built directly carries neither and states no such rule.
 """
 
 from __future__ import annotations
@@ -502,6 +503,21 @@ def _subtype_names(subtype: type) -> tuple[str, str]:
     return subtype.__name__, subtype.__name__
 
 
+class _HopResolver(Protocol):
+    """How a Relationship Path continues past the hop it was seeded with.
+
+    A deeper hop names a Python member of the path's current target, and only
+    that Entity's own class answers which declaration that is. The class-aware
+    member module supplies one of these when it seeds a path, so continuing is a
+    call to what the path was handed rather than a class this module reached for:
+    given the path's Binding, its canonical target spelling, and the member name,
+    it answers that member's own single-hop path, or raises ``AttributeError``
+    when the target or the member resolves to none.
+    """
+
+    def __call__(self, binding: MetamodelBinding, target: str, name: str) -> RelationshipPath: ...
+
+
 @dataclass(frozen=True, slots=True)
 class RelationshipPath:
     """A chained class-level relationship reference (``Order.items``,
@@ -514,8 +530,8 @@ class RelationshipPath:
     as the wire does; ``target`` is the canonical Entity spelling the path
     currently points at, namespace included, so two namespaces sharing a local
     Entity name stay distinguishable. The first hop is statically typed through
-    the relationship descriptor's overload; a deeper hop is a model question, so
-    it resolves against the Metamodel Binding the seeding class access supplied.
+    the relationship descriptor's overload; a deeper hop is a declaration
+    question, so it is answered by the resolver the seeding class access supplied.
     """
 
     segments: tuple[PathSegment, ...]
@@ -524,6 +540,9 @@ class RelationshipPath:
     # hop resolves in exactly that model. Absent only for a path built directly,
     # which cannot continue.
     binding: MetamodelBinding | None = field(default=None, repr=False, compare=False)
+    # The resolver the seeding relationship descriptor handed over, absent for
+    # that same directly built path.
+    resolve_hop: _HopResolver | None = field(default=None, repr=False, compare=False)
 
     @property
     def ref(self) -> RelationshipRef:
@@ -532,35 +551,29 @@ class RelationshipPath:
         return RelationshipRef(owner, relationship)
 
     def __getattr__(self, name: str) -> RelationshipPath:
-        """The next hop, resolved through the Entity Class the Binding holds for
-        this path's target.
+        """The next hop, answered by the resolver this path carries.
 
-        The hop names a *Python* member, and only the target class knows which
-        declaration that is: a member may override its canonical name, so a
-        canonical name re-derived from the Python spelling would miss it. The
-        target class's own relationship descriptor answers the whole hop — the
-        declared member, the segment it seeds, and the Entity it points at — so
-        one hop reads exactly as the first hop it continues.
+        The hop names a *Python* member of the current target, and only that
+        Entity's own declaration knows which member that is: a member may
+        override its canonical name or inherit its declaration, so a canonical
+        name re-derived from the Python spelling would miss either. The resolver
+        answers the whole hop — the declared member, the segment it seeds, and
+        the Entity it points at — and this path only appends it, so one hop reads
+        exactly as the first hop it continues.
         """
         if name.startswith("_"):
             raise AttributeError(name)
-        if self.binding is None:
+        if self.binding is None or self.resolve_hop is None:
             raise AttributeError(
                 f"{self.target}.{name}: a deeper relationship hop resolves against the "
                 "composed model, which this path does not carry"
             )
-        entity = entity_by_name(self.binding.model, self.target)
-        owner = None if entity is None else self.binding.class_of(entity.identity)
-        if owner is None:
-            raise AttributeError(
-                f"{self.target}.{name}: {self.target!r} is not an Entity Class of the model "
-                "this path resolves in"
-            )
-        hop = getattr(owner, name, None)
-        if not isinstance(hop, RelationshipPath):
-            raise AttributeError(f"{self.target}.{name}: {self.target} declares no relationship")
+        hop = self.resolve_hop(self.binding, self.target, name)
         return RelationshipPath(
-            segments=(*self.segments, *hop.segments), target=hop.target, binding=self.binding
+            segments=(*self.segments, *hop.segments),
+            target=hop.target,
+            binding=self.binding,
+            resolve_hop=self.resolve_hop,
         )
 
     def narrow(self, *subtypes: type) -> RelationshipPath:
@@ -573,7 +586,12 @@ class RelationshipPath:
         new_target = self.target
         if len(narrowed) == 1:  # a hop narrowed to one subtype points at that subtype
             _, new_target = narrowed[0]
-        return RelationshipPath(segments=(*head, new_last), target=new_target, binding=self.binding)
+        return RelationshipPath(
+            segments=(*head, new_last),
+            target=new_target,
+            binding=self.binding,
+            resolve_hop=self.resolve_hop,
+        )
 
     def any(self, *predicates: Predicate) -> Predicate:
         """The single-hop relationship quantifier: ``>= 1`` related row
