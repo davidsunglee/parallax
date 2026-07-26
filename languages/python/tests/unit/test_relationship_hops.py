@@ -28,7 +28,7 @@ from parallax.core import (
     attr,
     rel,
 )
-from parallax.core.entity import RelationshipPath
+from parallax.core.entity import RelationshipPath, RelationshipRef
 from parallax.core.op_algebra import DeepFetch, PathSegment
 
 pytestmark = pytest.mark.unit
@@ -159,6 +159,15 @@ def test_a_renamed_deeper_hop_validates_as_an_include_path() -> None:
 def test_a_first_hop_target_is_the_canonical_entity_spelling() -> None:
     assert SalesOrder.customer.target == "sales.Customer"
     assert Root.branches.target == "orchard.Branch"
+
+
+def test_a_first_hop_reference_names_its_owner_locally_and_its_declared_member() -> None:
+    # The reference splits the first segment the way the wire spells it: the
+    # owner's local Entity name — `Order`, not `sales.Order` — and the
+    # relationship's own declared name, not the Python member it was authored as.
+    assert Root.branches.ref == RelationshipRef("Root", "branches")
+    assert Branch.leaves.ref == RelationshipRef("Branch", "canopy")
+    assert SalesOrder.customer.ref == RelationshipRef("Order", "customer")
 
 
 def test_a_hop_naming_no_relationship_of_the_target_is_refused() -> None:
