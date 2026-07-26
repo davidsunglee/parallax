@@ -17,51 +17,20 @@ from typing import cast
 
 import pytest
 from _metamodel_support import Declaration, source
+from _snapshot_wrap_support import wrap
 
 import snapshot_models as sm
 from parallax.conformance import read_models
 from parallax.conformance.story_models import ORDERS_MODEL
 from parallax.conformance.story_models import Order as _soOrder
-from parallax.core import MetamodelHub, is_loaded, narrowed
+from parallax.core import is_loaded, narrowed
 from parallax.core._formation_profile import form_metamodel
-from parallax.core.entity import (
-    RelationshipPath,
-    UnloadedRelationshipError,
-    sealed_model,
-)
-from parallax.core.metamodel import (
-    ConcreteSubtype,
-    EntityIdentity,
-    ExactEntityReference,
-    Metamodel,
-)
+from parallax.core.entity import RelationshipPath, UnloadedRelationshipError
+from parallax.core.metamodel import ConcreteSubtype, EntityIdentity, ExactEntityReference
 from parallax.core.op_algebra import PathSegment
-from parallax.core.temporal_read import Pin
-from parallax.snapshot.handle._wrap import wrap_graph
 from parallax.snapshot.materialize import Node
 
 pytestmark = pytest.mark.unit
-
-_NO_PIN = Pin()
-
-
-def _wrap(
-    nodes: tuple[Node, ...],
-    target: str,
-    hub: MetamodelHub,
-    pin: Pin = _NO_PIN,
-    model: Metamodel | None = None,
-) -> tuple[object, ...]:
-    """Wrap ``nodes`` through ``hub``'s own binding.
-
-    ``model`` overrides the model wrapping reads without changing the binding,
-    which is how an Entity no class is bound to is exercised.
-    """
-    sealed = sealed_model(hub)
-    return wrap_graph(
-        nodes, target, model if model is not None else sealed.model, pin, sealed.binding
-    )
-
 
 _ORDERS = sm.SNAP_ORDERS_MODEL
 _ANIMAL = sm.ANIMAL_MODEL
@@ -106,7 +75,7 @@ def _order_root() -> Node:
 
 
 def test_wrap_graph_produces_a_frozen_instance_of_the_registered_class() -> None:
-    (root,) = _wrap((_order_root(),), "SnapOrder", _ORDERS)
+    (root,) = wrap((_order_root(),), "SnapOrder", _ORDERS)
     assert isinstance(root, sm.SnapOrder)
     assert root.id == 1
     assert root.name == "Ada"
@@ -114,7 +83,7 @@ def test_wrap_graph_produces_a_frozen_instance_of_the_registered_class() -> None
 
 
 def test_included_to_many_relationship_is_a_tuple_of_wrapped_instances() -> None:
-    (root,) = _wrap((_order_root(),), "SnapOrder", _ORDERS)
+    (root,) = wrap((_order_root(),), "SnapOrder", _ORDERS)
     assert isinstance(root, sm.SnapOrder)
     assert isinstance(root.items, tuple)
     assert len(root.items) == 1
@@ -123,7 +92,7 @@ def test_included_to_many_relationship_is_a_tuple_of_wrapped_instances() -> None
 
 
 def test_back_reference_cycle_closes_on_the_same_wrapped_instance() -> None:
-    (root,) = _wrap((_order_root(),), "SnapOrder", _ORDERS)
+    (root,) = wrap((_order_root(),), "SnapOrder", _ORDERS)
     assert isinstance(root, sm.SnapOrder)
     assert root.items[0].order is root  # graph-local identity, hard pointer
 
@@ -172,7 +141,7 @@ def _diamond_order_asymmetric_include() -> Node:
 
 
 def test_diamond_projection_merges_a_relationship_loaded_on_only_one_sibling_path() -> None:
-    (root,) = _wrap((_diamond_order_asymmetric_include(),), "Order", _STORY_ORDERS)
+    (root,) = wrap((_diamond_order_asymmetric_include(),), "Order", _STORY_ORDERS)
     assert isinstance(root, _soOrder)
     # Both positions wrap to the SAME node (graph-local identity)…
     assert root.items[0] is root.items_by_ship_date[0]
@@ -216,7 +185,7 @@ def _diamond_order_conflicting_include() -> Node:
 
 
 def test_diamond_projection_does_not_double_wire_a_relationship_loaded_on_both_paths() -> None:
-    (root,) = _wrap((_diamond_order_conflicting_include(),), "Order", _STORY_ORDERS)
+    (root,) = wrap((_diamond_order_conflicting_include(),), "Order", _STORY_ORDERS)
     assert isinstance(root, _soOrder)
     assert root.items[0] is root.items_by_ship_date[0]
     assert is_loaded(root.items[0], "order") is True
@@ -236,7 +205,7 @@ def test_unloaded_relationship_access_raises_naming_the_path() -> None:
         },
         pk_columns=("id",),
     )
-    (root,) = _wrap((bare,), "SnapOrder", _ORDERS)
+    (root,) = wrap((bare,), "SnapOrder", _ORDERS)
     assert isinstance(root, sm.SnapOrder)
     assert is_loaded(root, "items") is False
     with pytest.raises(UnloadedRelationshipError, match="items"):
@@ -244,7 +213,7 @@ def test_unloaded_relationship_access_raises_naming_the_path() -> None:
 
 
 def test_loaded_to_one_relationship_is_the_node_or_none() -> None:
-    (root,) = _wrap((_order_root(),), "SnapOrder", _ORDERS)
+    (root,) = wrap((_order_root(),), "SnapOrder", _ORDERS)
     assert isinstance(root, sm.SnapOrder)
     item = root.items[0]
     assert is_loaded(item, "order") is True
@@ -263,7 +232,7 @@ def test_loaded_to_one_relationship_attached_as_none_wraps_to_none() -> None:
         },
         pk_columns=("id",),
     )
-    (root,) = _wrap((orphan,), "SnapOrderItem", _ORDERS)
+    (root,) = wrap((orphan,), "SnapOrderItem", _ORDERS)
     assert isinstance(root, sm.SnapOrderItem)
     assert is_loaded(root, "order") is True
     assert root.order is None
@@ -283,7 +252,7 @@ def test_loaded_empty_to_many_is_an_empty_tuple() -> None:
         },
         pk_columns=("id",),
     )
-    (root,) = _wrap((parent,), "SnapOrder", _ORDERS)
+    (root,) = wrap((parent,), "SnapOrder", _ORDERS)
     assert isinstance(root, sm.SnapOrder)
     assert root.items == ()
     assert is_loaded(root, "items") is True
@@ -325,7 +294,7 @@ def test_polymorphic_children_materialize_as_their_concrete_classes() -> None:
         fields={"id": 10, "name": "Alice", "animals": [_dog(), _cat()]},
         pk_columns=("id",),
     )
-    (root,) = _wrap((owner,), "AnimalOwner", _ANIMAL)
+    (root,) = wrap((owner,), "AnimalOwner", _ANIMAL)
     assert isinstance(root, sm.AnimalOwner)
     dog, cat = root.animals
     assert type(dog) is sm.Dog
@@ -339,7 +308,7 @@ def test_narrowed_view_is_independent_of_the_broad_relationship() -> None:
         fields={"id": 10, "name": "Alice", "pets[Dog]": [_dog()]},
         pk_columns=("id",),
     )
-    (root,) = _wrap((owner,), "AnimalOwner", _ANIMAL)
+    (root,) = wrap((owner,), "AnimalOwner", _ANIMAL)
     assert isinstance(root, sm.AnimalOwner)
     path = sm.AnimalOwner.pets.narrow(sm.Dog)
     assert is_loaded(root, "pets") is False
@@ -360,7 +329,7 @@ def test_two_narrowed_views_coexist_independently_on_one_node() -> None:
         fields={"id": 10, "name": "Alice", "pets[Dog]": [_dog()], "pets[Cat]": [_cat()]},
         pk_columns=("id",),
     )
-    (root,) = _wrap((owner,), "AnimalOwner", _ANIMAL)
+    (root,) = wrap((owner,), "AnimalOwner", _ANIMAL)
     assert isinstance(root, sm.AnimalOwner)
     dogs = cast("tuple[object, ...]", narrowed(root, sm.AnimalOwner.pets.narrow(sm.Dog)))
     cats = cast("tuple[object, ...]", narrowed(root, sm.AnimalOwner.pets.narrow(sm.Cat)))
@@ -381,7 +350,7 @@ def test_a_directly_built_relationship_path_keys_the_same_narrowed_view() -> Non
         fields={"id": 10, "name": "Alice", "pets[Dog]": [_dog()]},
         pk_columns=("id",),
     )
-    (root,) = _wrap((owner,), "AnimalOwner", _ANIMAL)
+    (root,) = wrap((owner,), "AnimalOwner", _ANIMAL)
     path = RelationshipPath(
         segments=(PathSegment(rel="AnimalOwner.pets", narrow=("Dog",)),), target="Dog"
     )
@@ -395,7 +364,7 @@ def test_narrowed_view_key_survives_copy_and_deepcopy_of_the_path() -> None:
         fields={"id": 10, "name": "Alice", "pets[Dog]": [_dog()]},
         pk_columns=("id",),
     )
-    (root,) = _wrap((owner,), "AnimalOwner", _ANIMAL)
+    (root,) = wrap((owner,), "AnimalOwner", _ANIMAL)
     path = sm.AnimalOwner.pets.narrow(sm.Dog)
     for reconstructed in (copy.copy(path), copy.deepcopy(path)):
         assert reconstructed == path
@@ -417,7 +386,7 @@ def test_wrap_raises_lookup_error_for_an_entity_no_class_is_bound_to() -> None:
         pk_columns=("id",),
     )
     with pytest.raises(LookupError, match="Iguana"):
-        _wrap((owner,), "AnimalOwner", _ANIMAL, model=_ANIMAL_WITH_UNBOUND_CONCRETE)
+        wrap((owner,), "AnimalOwner", _ANIMAL, model=_ANIMAL_WITH_UNBOUND_CONCRETE)
 
 
 def _iguana() -> Node:
@@ -449,7 +418,7 @@ def test_wrap_a_single_resolved_position_node_instantiates_the_concrete_class() 
         pk_columns=("id",),
         resolved_entity="Invoice",
     )
-    (root,) = _wrap((node,), "FinancialDocument", _DOCUMENT)
+    (root,) = wrap((node,), "FinancialDocument", _DOCUMENT)
     assert type(root) is read_models.Invoice
     assert root.amount_due == Decimal("120.00")
 
@@ -469,5 +438,5 @@ def test_wrap_without_resolved_entity_falls_back_to_the_declared_default() -> No
         },
         pk_columns=("id",),
     )
-    (root,) = _wrap((node,), "Invoice", _DOCUMENT)
+    (root,) = wrap((node,), "Invoice", _DOCUMENT)
     assert type(root) is read_models.Invoice

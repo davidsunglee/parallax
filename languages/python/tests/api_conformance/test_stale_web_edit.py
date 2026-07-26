@@ -42,7 +42,7 @@ from parallax.conformance.stale_web_edit import (
 )
 from parallax.conformance.vo_models import Address, Branch, Geo
 from parallax.core import opt_lock
-from parallax.core.entity import sealed_model
+from parallax.core.entity._hub import sealed_model
 from parallax.snapshot import connect
 from parallax.snapshot.handle import Database, Transaction
 

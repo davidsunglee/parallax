@@ -54,7 +54,7 @@ from parallax.core.entity._expressions import (
     RelationshipPath,
     RelationshipRef,
 )
-from parallax.core.entity._hub import MetamodelHub, SealedModel, sealed_model
+from parallax.core.entity._hub import MetamodelHub
 from parallax.core.entity._members import (
     MANY_TO_ONE,
     MAX,
@@ -132,7 +132,6 @@ __all__ = [
     "RelationshipPath",
     "RelationshipRef",
     "ReverseRelSpec",
-    "SealedModel",
     "Sequence",
     "Statement",
     "TablePerHierarchy",
@@ -155,7 +154,6 @@ __all__ = [
     "narrowed",
     "primary_key_row",
     "rel",
-    "sealed_model",
     "shape_of",
     "snake_to_camel",
     "to_document",

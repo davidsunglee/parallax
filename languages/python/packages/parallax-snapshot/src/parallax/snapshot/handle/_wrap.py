@@ -60,6 +60,7 @@ here would contradict the documented contract.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from typing import cast
 
 from parallax.core import inheritance, relationship
@@ -84,6 +85,42 @@ _PIN_ATTR = "__parallax_pin__"
 _EDGE_ATTR = "__parallax_edge__"
 
 
+@dataclass(frozen=True, slots=True)
+class _Wrapping:
+    """Everything one :func:`wrap_graph` call holds constant across its recursion.
+
+    ``model`` and ``binding`` are one hub's two faces — the accepted metadata and
+    the Identity-to-Class index it published — and only the composition root ever
+    pairs them, so carrying them together is what keeps one hub's index from
+    resolving classes for another hub's model. ``pin`` is the whole-graph as-of
+    coordinate every temporal node reached receives; ``merged`` is the finished
+    discovery pass; and ``cache`` is the graph-local identity map the recursion
+    itself fills, so a logical row wraps to exactly one instance however many
+    paths reach it.
+    """
+
+    model: Metamodel
+    binding: MetamodelBinding | None
+    pin: Pin
+    merged: Mapping[object, Mapping[str, object]]
+    cache: dict[object, object]
+
+    def class_of(self, entity: EntityMetadata) -> type:
+        """The Entity Class this hub bound ``entity`` to.
+
+        Wrapping is a class-requiring capability, so a model whose hub claimed no
+        class — every descriptor-backed hub — refuses here rather than earlier:
+        the neutral-row read path itself needs no class.
+        """
+        cls = None if self.binding is None else self.binding.class_of(entity.identity)
+        if cls is None:
+            raise LookupError(
+                f"{entity.identity.canonical!r} is bound to no Entity Class; compose a "
+                "class-backed hub before wrapping a Snapshot[T] result"
+            )
+        return cls
+
+
 def wrap_graph(
     nodes: Sequence[materialize.Node],
     root_entity: str,
@@ -103,15 +140,17 @@ def wrap_graph(
     Two passes: :func:`_discover` walks the whole per-view forest once,
     grouping every distinct ``Node`` object by its logical identity key, then
     :func:`_merged_fields` unions each group's fields into the one logical view
-    :func:`_wrap` actually builds a frozen instance from.
+    :func:`_wrap` actually builds a frozen instance from. The second pass carries
+    its whole coordinated state in one :class:`_Wrapping`.
     """
     groups: dict[object, list[materialize.Node]] = {}
     visited: set[int] = set()
     for node in nodes:
         _discover(node, root_entity, model, visited, groups)
-    merged = _merged_fields(groups)
-    cache: dict[object, object] = {}
-    return tuple(_wrap(node, root_entity, model, pin, cache, merged, binding) for node in nodes)
+    wrapping = _Wrapping(
+        model=model, binding=binding, pin=pin, merged=_merged_fields(groups), cache={}
+    )
+    return tuple(_wrap(node, root_entity, wrapping) for node in nodes)
 
 
 def _concrete_entity_name(node: materialize.Node, default_entity: str) -> str:
@@ -133,22 +172,6 @@ def _entity(model: Metamodel, name: str) -> EntityMetadata:
     if metadata is None:  # pragma: no cover - a materialized row's concrete is always declared
         raise LookupError(f"{name!r} names no Entity of this model")
     return metadata
-
-
-def _class_of(binding: MetamodelBinding | None, entity: EntityMetadata) -> type:
-    """The Entity Class this hub bound ``entity`` to.
-
-    Wrapping is a class-requiring capability, so a model whose hub claimed no
-    class — every descriptor-backed hub — refuses here rather than earlier: the
-    neutral-row read path itself needs no class.
-    """
-    cls = None if binding is None else binding.class_of(entity.identity)
-    if cls is None:
-        raise LookupError(
-            f"{entity.identity.canonical!r} is bound to no Entity Class; compose a "
-            "class-backed hub before wrapping a Snapshot[T] result"
-        )
-    return cls
 
 
 def _relationships(model: Metamodel, entity: EntityMetadata) -> tuple[RelationshipMetadata, ...]:
@@ -241,30 +264,23 @@ def _merged_fields(
     return merged
 
 
-def _wrap(
-    node: materialize.Node,
-    default_entity: str,
-    model: Metamodel,
-    pin: Pin,
-    cache: dict[object, object],
-    merged: Mapping[object, Mapping[str, object]],
-    binding: MetamodelBinding | None,
-) -> object:
+def _wrap(node: materialize.Node, default_entity: str, wrapping: _Wrapping) -> object:
+    model = wrapping.model
     concrete_name = _concrete_entity_name(node, default_entity)
     key = _identity_cache_key(node, concrete_name, model)
-    cached = cache.get(key)
+    cached = wrapping.cache.get(key)
     if cached is not None:
         return cached
 
     entity = _entity(model, concrete_name)
-    cls = cast("type[EntityBase]", _class_of(binding, entity))
+    cls = cast("type[EntityBase]", wrapping.class_of(entity))
     instance = cls.model_construct()
-    cache[key] = instance
+    wrapping.cache[key] = instance
 
     # The merged (logical, union) view for this key — computed once by the
     # discovery pass before any instance existed — never this node's OWN
     # (possibly narrower) per-view fields directly.
-    fields = merged.get(key, node.fields)
+    fields = wrapping.merged.get(key, node.fields)
 
     names = wire_names_of(cls)
     for column, value in fields.items():
@@ -273,7 +289,7 @@ def _wrap(
         py_name = names.column_to_py.get(column)
         if py_name is None:
             continue  # a relationship attach key, handled below
-        object.__setattr__(instance, py_name, _wrap_member(value, entity, column, model, binding))
+        object.__setattr__(instance, py_name, _wrap_member(value, entity, column, wrapping))
 
     directions = _relationships(model, entity)
     narrowed_views: dict[str, object] = {}
@@ -286,18 +302,14 @@ def _wrap(
         # declares one); the narrowed-view scan below still applies to it.
         if py_name is not None:  # pragma: no branch
             if rel_name in fields:
-                loaded = _wrap_related(
-                    fields[rel_name], target_name, model, pin, cache, merged, binding
-                )
+                loaded = _wrap_related(fields[rel_name], target_name, wrapping)
                 object.__setattr__(instance, py_name, loaded)
             else:
                 object.__setattr__(instance, py_name, UNLOADED)
         prefix = f"{rel_name}["
         for field_key, field_value in fields.items():
             if field_key.startswith(prefix):
-                narrowed_views[field_key] = _wrap_related(
-                    field_value, target_name, model, pin, cache, merged, binding
-                )
+                narrowed_views[field_key] = _wrap_related(field_value, target_name, wrapping)
 
     if narrowed_views:
         object.__setattr__(instance, _NARROWED_ATTR, narrowed_views)
@@ -309,7 +321,7 @@ def _wrap(
     # from the root's axes).
     declaring = _declaring(model, entity)
     if declaring.declared_as_of_axes:
-        object.__setattr__(instance, _PIN_ATTR, pin)
+        object.__setattr__(instance, _PIN_ATTR, wrapping.pin)
         object.__setattr__(instance, _EDGE_ATTR, milestone_edge(declaring, fields))
 
     return instance
@@ -323,45 +335,28 @@ def _declaring(model: Metamodel, entity: EntityMetadata) -> EntityMetadata:
     return entity if root is None else root
 
 
-def _wrap_related(
-    value: object,
-    default_entity: str,
-    model: Metamodel,
-    pin: Pin,
-    cache: dict[object, object],
-    merged: Mapping[object, Mapping[str, object]],
-    binding: MetamodelBinding | None,
-) -> object:
+def _wrap_related(value: object, default_entity: str, wrapping: _Wrapping) -> object:
     if value is None:
         return None
     if isinstance(value, list):
         items = cast("list[object]", value)
         return tuple(
-            _wrap(
-                cast("materialize.Node", item), default_entity, model, pin, cache, merged, binding
-            )
-            for item in items
+            _wrap(cast("materialize.Node", item), default_entity, wrapping) for item in items
         )
-    return _wrap(
-        cast("materialize.Node", value), default_entity, model, pin, cache, merged, binding
-    )
+    return _wrap(cast("materialize.Node", value), default_entity, wrapping)
 
 
-def _wrap_member(
-    value: object,
-    entity: EntityMetadata,
-    column: str,
-    model: Metamodel,
-    binding: MetamodelBinding | None,
-) -> object:
+def _wrap_member(value: object, entity: EntityMetadata, column: str, wrapping: _Wrapping) -> object:
     """A scalar member passes through; a value-object member's decoded nested
     dict wraps into its declared ``ValueObject`` subclass (or a tuple of them,
     ``multiplicity: many``) — the SAME instances-only contract the write side
     enforces (spec §2)."""
-    vo = next((v for v in _family_value_objects(model, entity) if v.storage.name == column), None)
+    vo = next(
+        (v for v in _family_value_objects(wrapping.model, entity) if v.storage.name == column), None
+    )
     if vo is None:
         return value
-    vo_class = _vo_class_for(entity, vo.identity.path[-1], binding)
+    vo_class = _vo_class_for(entity, vo.identity.path[-1], wrapping)
     if vo.multiplicity is Multiplicity.MANY:
         items = cast("list[Mapping[str, object] | None]", value) if isinstance(value, list) else []
         return tuple(_wrap_vo(item, vo_class) for item in items if item is not None)
@@ -376,9 +371,9 @@ def _family_value_objects(
 
 
 def _vo_class_for(
-    entity: EntityMetadata, vo_name: str, binding: MetamodelBinding | None
+    entity: EntityMetadata, vo_name: str, wrapping: _Wrapping
 ) -> type[ValueObjectBase]:
-    names = wire_names_of(_class_of(binding, entity))
+    names = wire_names_of(wrapping.class_of(entity))
     py_name = names.name_to_py.get(vo_name)
     vo_class = None if py_name is None else names.vo_classes.get(py_name)
     if vo_class is None:

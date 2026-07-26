@@ -35,7 +35,7 @@ from _transact_support import (
 import mirrored_models as mm
 from parallax.core import opt_lock
 from parallax.core.db_error import DatabaseError
-from parallax.core.entity import sealed_model
+from parallax.core.entity._hub import sealed_model
 from parallax.core.unit_work import (
     EscapedTransactionError,
     FixedClock,

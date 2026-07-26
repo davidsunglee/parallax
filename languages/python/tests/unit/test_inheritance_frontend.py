@@ -30,7 +30,7 @@ from parallax.core import (
     attr,
     inheritance,
 )
-from parallax.core.entity import sealed_model
+from parallax.core.entity._hub import sealed_model
 from parallax.core.metamodel import (
     AbstractSubtype,
     Column,
