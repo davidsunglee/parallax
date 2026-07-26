@@ -14,7 +14,8 @@ forces to agree:
 2. the "Type spellings" table in ``core/spec/m-descriptor.md`` (the canonical
    lowercase wire spelling per variant, bound to the "Type spellings" section);
 3. the ``neutralType`` ``pattern`` regex in ``core/schemas/metamodel.schema.json``
-   (the alternation the schema phase accepts).
+   (the canonical full-variant vocabulary; ``scalarType`` composes it minus
+   ``json`` for the narrower alternation a member ``type`` position accepts).
 
 A variant added, removed, or renamed in one home but not the others would let
 the algebra, the wire grammar, and the schema silently diverge — a model could
