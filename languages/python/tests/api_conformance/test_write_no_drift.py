@@ -20,7 +20,7 @@ to the unit-lane branch-coverage gate — the story bodies' only DB-free driver.
 from __future__ import annotations
 
 import datetime as dt
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from decimal import Decimal
 from typing import Any, Final, cast
 
@@ -30,6 +30,7 @@ from pydantic import ValidationError
 from conftest import case_document, compare_binds
 from parallax.conformance import case_format
 from parallax.conformance.class_models import MODELS
+from parallax.conformance.engine import decode_write_row
 from parallax.conformance.read_models import Payment
 from parallax.conformance.stories import WRITE_STORIES, WriteStory
 from parallax.conformance.vo_models import (
@@ -42,7 +43,10 @@ from parallax.conformance.vo_models import (
 from parallax.core.base import INFINITY, TemporalBound
 from parallax.core.db_port import Bind, DbPort, Row
 from parallax.core.dialect import POSTGRES
-from parallax.core.unit_work import WriteRejectedError
+from parallax.core.entity import MetamodelHub
+from parallax.core.entity._hub import sealed_model
+from parallax.core.metamodel import EntityMetadata
+from parallax.core.unit_work import WriteRejectedError, validate_write
 from parallax.snapshot.handle import Database, Transaction
 
 pytestmark = [pytest.mark.unit, pytest.mark.api_conformance]
@@ -408,14 +412,19 @@ def test_boundary_story_withholds_the_callback_value() -> None:
     assert kinds == ["begin", "read", "write", "read", "rollback"], port.ops
 
 
+def _case_model_stem(case_id: str) -> str:
+    """The `MODELS` key the case's own `model` reference names."""
+    model_ref = str(case_document(_CASES[case_id])["model"])
+    return model_ref.removeprefix("models/").removesuffix(".yaml")
+
+
 def test_every_write_story_mirrors_an_active_case_exactly_once() -> None:
     # The registry is reconciled against the corpus: one story per mirrored
     # case, every mirrored case real, and each story's model is its case's.
     assert len(_STORIES) == len(WRITE_STORIES)
     for story in WRITE_STORIES:
         assert story.case_id in _CASES, story.case_id
-        model_ref = str(case_document(_CASES[story.case_id])["model"])
-        assert story.model == model_ref.removeprefix("models/").removesuffix(".yaml"), story.case_id
+        assert story.model == _case_model_stem(story.case_id), story.case_id
 
 
 # --------------------------------------------------------------------------- #
@@ -442,6 +451,29 @@ REJECTED_WRITE_MODELS: dict[str, str] = {"m-inheritance-088": "payment"}
 # construction — the representation-specific rejection spec §2 sanctions for a
 # shape only one grammar can spell. Each entry names the member the corpus case
 # omits, so the two stay pinned to the same defect.
+#
+# Both halves of that sentence are graded, because they discharge DIFFERENT
+# obligations and a regression in either must fail:
+#
+#   `test_the_class_grammar_refuses_the_corpus_incomplete_document` discharges
+#   python.md §2's "grammar-level failures stay representation-specific — the
+#   descriptor rejects through its ingestion phases, Python through class
+#   creation — so a shape only one grammar can spell, or can reject before the
+#   shared seam, carries no equivalence obligation": it pins WHERE the Python
+#   representation refuses (class creation) and that the refusal names the very
+#   member the corpus omits, which is the only reason this file may stop short
+#   of driving `tx.insert` for these five.
+#
+#   `test_the_declared_structure_classifies_the_corpus_rule` discharges
+#   m-case-format.md "Rejected cases": "The harness (and every language
+#   implementation) resolves the input against the queried entity's DECLARED
+#   value-object structure and asserts the refusal happens pre-SQL with EXACTLY
+#   the named rule; a run that accepts the input, or rejects it with a different
+#   rule, fails." Reaching that seam needs a raw document, which is what the
+#   corpus's own `when.write` is — so the case's document is walked against the
+#   declared structure the ENTITY CLASSES compose (never the corpus descriptor,
+#   whose own walk `tests/conformance/test_rejected_sweep.py` already grades),
+#   and the classified rule is compared to `then.rejectedRule` exactly.
 INCOMPLETE_DOCUMENT_BUILDERS: dict[str, tuple[str, Callable[[], object]]] = {
     "m-value-object-039": (
         "street",
@@ -459,14 +491,40 @@ INCOMPLETE_DOCUMENT_BUILDERS: dict[str, tuple[str, Callable[[], object]]] = {
 }
 
 
+def _rejected_write_target(hub: MetamodelHub) -> EntityMetadata:
+    """The Entity a rejected `when.write` resolves against (`engine._rejected_target`'s
+    own convention): these models declare no family, so it is the model's one Entity —
+    unpacking fails loudly if that ever stops holding."""
+    (entity,) = hub.entities
+    return entity
+
+
 @pytest.mark.parametrize(
     "case_id", sorted(INCOMPLETE_DOCUMENT_BUILDERS), ids=sorted(INCOMPLETE_DOCUMENT_BUILDERS)
 )
 def test_the_class_grammar_refuses_the_corpus_incomplete_document(case_id: str) -> None:
-    assert case_document(_CASES[case_id])["then"]["rejectedRule"]
     member, build = INCOMPLETE_DOCUMENT_BUILDERS[case_id]
     with pytest.raises(ValidationError, match=member):
         build()
+
+
+@pytest.mark.parametrize(
+    "case_id", sorted(INCOMPLETE_DOCUMENT_BUILDERS), ids=sorted(INCOMPLETE_DOCUMENT_BUILDERS)
+)
+def test_the_declared_structure_classifies_the_corpus_rule(case_id: str) -> None:
+    case = _CASES[case_id]
+    expected_rule = case_document(case)["then"]["rejectedRule"]
+    hub = MODELS[_case_model_stem(case_id)]
+    model = sealed_model(hub).model
+    target = _rejected_write_target(hub)
+    # The case authors its row in the wire spellings a read golden uses, so it
+    # decodes to native carriers first — exactly as `engine.run_rejected_case`
+    # does — or a type mismatch, not the omission, would be what gets classified.
+    authored = cast("Mapping[str, object]", case_document(case)["when"]["write"])
+    row = decode_write_row(target, authored, model)
+    with pytest.raises(WriteRejectedError) as exc_info:
+        validate_write(target, row, model)
+    assert exc_info.value.rule == expected_rule
 
 
 def test_a_complete_document_still_constructs() -> None:
