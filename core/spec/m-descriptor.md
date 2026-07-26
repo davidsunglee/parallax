@@ -37,8 +37,15 @@ structured-document column).
 ## Type spellings
 
 `m-descriptor` alone owns the serialized spelling of the `m-core` `NeutralType`
-algebra: an `attribute.type` or Value Object Attribute `type` carries exactly
-one of the spellings below. The structured variant a spelling denotes never
+algebra. The table below is the whole spelling vocabulary — one spelling per
+`NeutralType` variant — not the set a member may declare. An `attribute.type`
+or Value Object Attribute `type` carries a **scalar** spelling: every spelling
+below EXCEPT `json`. `json` is the value-object storage spelling — the type
+`m-core` maps a whole `valueObject` element to (`m-core` "The `Json`
+embedded-value type") — so it is reachable only as that derived storage type
+and is never declarable at either `type` position. The schema enforces this by
+drawing both `type` positions from `$defs/scalarType` (the `neutralType`
+vocabulary minus `json`). The structured variant a spelling denotes never
 crosses the `m-metamodel` interface as text, and no behavioral module parses a
 type string.
 
@@ -146,7 +153,7 @@ ancestor through its ancestry chain (`m-inheritance`).
 | Property | Values / meaning |
 |---|---|
 | `name` | attribute name (REQUIRED) |
-| `type` | neutral type spelling (REQUIRED; see "Type spellings"); `decimal(p,s)` carries precision/scale |
+| `type` | neutral **scalar** type spelling (REQUIRED; see "Type spellings" — every spelling except `json`); `decimal(p,s)` carries precision/scale |
 | `column` | optional DB column override; omission means the Attribute `name` |
 | `primaryKey` | bool, default `false` |
 | `nullable` | bool, default `false` |
