@@ -91,13 +91,14 @@ Metamodel, or installs an Entity Class binding.
 
 Sealing happens in the constructor. `MetamodelHub(*classes)` and the private
 `_from_unresolved(source)` seam each return a fully sealed hub or raise, so
-there is no `seal()` operation and no unsealed, sealing, or rejected state. The
-accepted Metamodel, complete facet set, and all Entity Class bindings are held
-in locals until every step succeeds and are then published in one final
-assignment; a failure anywhere raises out of the constructor, letting no hub
-object escape and leaving no published facet, binding, or orphaned class claim.
-A corrected model is a new constructor call, so nothing is retried, resealed, or
-interrogated for a stored terminal cause.
+there is no `seal()` operation and no unsealed, sealing, or rejected state.
+Nothing a construction builds is reachable while it runs — a class-backed hub
+becomes observable when its atomic Entity Class claim publishes the binding
+that retains it, and that claim is the last step that can fail; a failure
+anywhere raises out of the constructor, letting no hub object escape and
+leaving no published facet, binding, or orphaned class claim. A corrected model
+is a new constructor call, so nothing is retried, resealed, or interrogated for
+a stored terminal cause.
 
 Because a hub exists only sealed, every model-dependent operation — Entity
 enumeration, metadata/export, facet access, query/path construction,

@@ -8,10 +8,12 @@ lifecycle check.
 Construction runs one fixed sequence: left-to-right argument validation, whole-
 model formation, and — for a class-backed hub — the Python realization phase,
 which checks relationship annotation agreement and then claims the complete
-class set atomically. The accepted Metamodel and the Metamodel Binding stay in
-locals until the last step succeeds and are published in one final assignment,
-so a failure anywhere leaves no half-built hub and, because the claim is the
-last step and happens under the binding lock, no orphaned class claim.
+class set atomically. A hub under construction belongs to the thread building
+it: nothing else can name it until the claim publishes the Metamodel Binding
+that retains it. So the hub assigns its own state before claiming, and the
+atomic claim is at once the last step that can fail and the only step that
+makes anything observable — a failure anywhere leaves neither a half-built hub
+nor an orphaned class claim.
 """
 
 from __future__ import annotations
@@ -103,8 +105,8 @@ class MetamodelHub:
             classes={cls: declaration_of(cls).identity for cls in entity_classes},
             owner=self,
         )
-        claim(binding)
         self._publish(model, binding)
+        claim(binding)
 
     @classmethod
     def _from_unresolved(cls, source: UnresolvedMetamodel) -> MetamodelHub:
@@ -121,7 +123,7 @@ class MetamodelHub:
         return hub
 
     def _publish(self, model: Metamodel, binding: MetamodelBinding | None) -> None:
-        """The single assignment that makes a hub observable."""
+        """Complete the hub's own state while it is still private to its builder."""
         self._model = model
         self._binding = binding
 

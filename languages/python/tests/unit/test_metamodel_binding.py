@@ -2,23 +2,43 @@
 
 The claim is the only synchronization primitive in the hub, so the race here is
 not optional: it is the direct proof that overlapping constructions have exactly
-one winner and that the loser publishes nothing.
+one winner, that the loser publishes nothing, and that the winner has nothing
+half-built to observe the instant its claim becomes visible.
 """
 
 from __future__ import annotations
 
 import threading
+from typing import Final
 
 import pytest
 
 from parallax.core import Attr, Entity, MetamodelHub, MetamodelStateError, attr
 from parallax.core.entity import METAMODEL_STATE_CODES
-from parallax.core.entity._binding import MetamodelBinding, binding_of
+from parallax.core.entity._binding import MetamodelBinding, binding_of, claim
 from parallax.core.metamodel import EntityIdentity
 
 pytestmark = pytest.mark.unit
 
 _SPEC_CODES = frozenset({"metamodel-class-not-bound", "metamodel-class-already-bound"})
+_HANDOFF_TIMEOUT: Final = 10.0
+
+
+def _claimed_hub_state(binding: MetamodelBinding) -> str:
+    """What the hub behind a freshly published claim can say about itself.
+
+    The claim is the moment a construction becomes reachable from outside the
+    thread running it, and the owner reference the Binding retains for lifetime
+    is the only route from there back to the hub — so it is the one place an
+    unfinished hub could be observed.
+    """
+    owner = binding._owner  # pyright: ignore[reportPrivateUsage]
+    if not isinstance(owner, MetamodelHub):
+        return f"not a hub: {owner!r}"
+    try:
+        return ", ".join(entity.identity.canonical for entity in owner.entities)
+    except AttributeError as error:
+        return f"unpublished hub: {error}"
 
 
 def test_a_sealed_hub_binds_every_class_to_one_binding() -> None:
@@ -115,14 +135,39 @@ def test_an_unclaimed_class_has_no_binding() -> None:
     assert binding_of(int) is None
 
 
-def test_racing_constructions_over_one_class_have_exactly_one_winner() -> None:
+def test_racing_constructions_over_one_class_have_exactly_one_winner(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     class Shared(Entity, table="shared", namespace="race"):
         id: Attr[int] = attr(primary_key=True)
 
     racers = 8
     start = threading.Barrier(racers)
+    claimed = threading.Event()
+    inspected = threading.Event()
     outcomes: list[MetamodelHub | MetamodelStateError] = []
+    observed: list[str] = []
     guard = threading.Lock()
+
+    def held_open_after_claiming(binding: MetamodelBinding) -> None:
+        """Freeze the winner where its claim is published but its own
+        construction has not returned, so the observer thread looks at exactly
+        the interleaving a natural race would only occasionally reach."""
+        claim(binding)
+        claimed.set()
+        inspected.wait(timeout=_HANDOFF_TIMEOUT)
+
+    monkeypatch.setattr("parallax.core.entity._hub.claim", held_open_after_claiming)
+
+    def observe() -> None:
+        try:
+            if not claimed.wait(timeout=_HANDOFF_TIMEOUT):
+                observed.append("no claim became visible")
+                return
+            binding = binding_of(Shared)
+            observed.append("no binding" if binding is None else _claimed_hub_state(binding))
+        finally:
+            inspected.set()
 
     def construct() -> None:
         start.wait()
@@ -133,12 +178,18 @@ def test_racing_constructions_over_one_class_have_exactly_one_winner() -> None:
         with guard:
             outcomes.append(result)
 
+    observer = threading.Thread(target=observe)
     threads = [threading.Thread(target=construct) for _ in range(racers)]
+    observer.start()
     for thread in threads:
         thread.start()
-    for thread in threads:
-        thread.join()
+    for thread in [*threads, observer]:
+        thread.join(timeout=_HANDOFF_TIMEOUT)
+        assert not thread.is_alive()
 
+    # A claimed class always names a hub that already answers for it: the claim
+    # publishes a complete construction or nothing at all.
+    assert observed == ["race.Shared"]
     winners = [outcome for outcome in outcomes if isinstance(outcome, MetamodelHub)]
     losers = [outcome for outcome in outcomes if isinstance(outcome, MetamodelStateError)]
     assert len(winners) == 1
