@@ -290,6 +290,7 @@ def canonical_snapshot_claim() -> dict[str, Any]:
 # Production distributions first, then the dev-only conformance tooling.
 PRODUCTION_PACKAGES: tuple[str, ...] = (
     "parallax-core",
+    "parallax-descriptor",
     "parallax-snapshot",
     "parallax-postgres",
 )
