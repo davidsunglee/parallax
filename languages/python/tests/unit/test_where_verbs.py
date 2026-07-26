@@ -82,7 +82,7 @@ def test_set_on_a_nested_value_object_path_raises() -> None:
     # Only a TOP-LEVEL attribute or value-object member is assignable — a
     # value object always binds its WHOLE document, never a nested path.
     with pytest.raises(TypeError, match="top-level attribute or value-object member"):
-        vom.Customer.address.city.set("Oslo")  # type: ignore[attr-defined]
+        vom.Customer.address.city.set("Oslo")
 
 
 def test_set_on_a_top_level_value_object_serializes_to_its_document() -> None:

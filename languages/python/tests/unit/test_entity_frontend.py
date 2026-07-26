@@ -275,7 +275,7 @@ def _blank_table() -> type:
 def _unspellable_persistence() -> type:
     """A ``persistence=`` outside the Persistence Mode algebra."""
 
-    class LooseMode(Entity, table="loose_mode", persistence="READ_ONLY"):  # pyright: ignore[reportArgumentType] - deliberate bad type
+    class LooseMode(Entity, table="loose_mode", persistence="READ_ONLY"):
         id: Attr[int] = attr(primary_key=True)
 
     return LooseMode

@@ -58,12 +58,12 @@ def test_a_deeper_hop_on_a_path_that_carries_no_model_is_refused() -> None:
     # A second hop is a model question, so a path built directly cannot answer it.
     bare = RelationshipPath(segments=(PathSegment(rel="SnapOrder.items"),), target="SnapOrderItem")
     with pytest.raises(AttributeError, match="resolves against the composed model"):
-        _ = bare.statuses  # pyright: ignore[reportAttributeAccessIssue]
+        _ = bare.statuses
 
 
 def test_a_deeper_hop_naming_no_declared_relationship_is_refused() -> None:
     with pytest.raises(AttributeError, match="declares no relationship"):
-        _ = sm.SnapOrder.items.bogus_relationship  # pyright: ignore[reportAttributeAccessIssue]
+        _ = sm.SnapOrder.items.bogus_relationship
 
 
 def test_include_accumulates_across_calls() -> None:
