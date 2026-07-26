@@ -1,9 +1,10 @@
-"""Smoke tests: the four namespace distributions import cleanly."""
+"""Smoke tests: the five namespace distributions import cleanly."""
 
 from __future__ import annotations
 
 import importlib
 import importlib.util
+import json
 import pkgutil
 import subprocess
 import sys
@@ -12,18 +13,23 @@ import pytest
 
 import parallax.conformance
 import parallax.core
+import parallax.descriptor
 import parallax.postgres
 import parallax.snapshot
+from conftest import PY_ROOT
 from parallax.conformance import cli
 
 pytestmark = pytest.mark.unit
 
-_TOP_PACKAGE_NAMES: tuple[str, ...] = (
+TOP_PACKAGE_NAMES: tuple[str, ...] = (
     "parallax.core",
+    "parallax.descriptor",
     "parallax.snapshot",
     "parallax.postgres",
     "parallax.conformance",
 )
+
+_PUBLIC_API_SNAPSHOT = PY_ROOT / "tests" / "api_surface" / "public_api.json"
 
 
 def test_top_package_public_surfaces() -> None:
@@ -44,13 +50,17 @@ def test_top_package_public_surfaces() -> None:
     # §8 topology fixes the adapter's public export as PostgresAdapter alone;
     # psycopg bind mechanics (Jsonb) stay internal to the adapter.
     assert set(parallax.postgres.__all__) == {"PostgresAdapter"}
+    # §8 pins the Descriptor Frontend's surface closed, so the committed
+    # api_surface snapshot is the authority for it rather than a second list.
+    descriptor_surface = json.loads(_PUBLIC_API_SNAPSHOT.read_text())["parallax.descriptor"]
+    assert set(parallax.descriptor.__all__) == set(descriptor_surface)
     assert parallax.conformance.__all__ == []
 
 
 def test_every_scope_submodule_imports() -> None:
-    """Every enforcement-scope skeleton under the four packages imports cleanly."""
+    """Every enforcement-scope skeleton under the five packages imports cleanly."""
     imported: list[str] = []
-    for name in _TOP_PACKAGE_NAMES:
+    for name in TOP_PACKAGE_NAMES:
         spec = importlib.util.find_spec(name)
         assert spec is not None
         assert spec.submodule_search_locations is not None
@@ -61,6 +71,7 @@ def test_every_scope_submodule_imports() -> None:
     # Sanity: the core spine skeleton alone contributes many scopes.
     assert "parallax.core.base" in imported
     assert "parallax.core.op_algebra" in imported
+    assert "parallax.descriptor._ingest" in imported
     assert "parallax.snapshot.materialize" in imported
     assert "parallax.postgres.adapter" in imported
     assert "parallax.conformance.cli" in imported
