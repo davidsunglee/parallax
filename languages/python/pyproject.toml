@@ -839,19 +839,33 @@ forbidden_modules = [
 name = "parallax.descriptor may import only its permitted dependencies"
 type = "forbidden"
 source_modules = ["parallax.descriptor"]
+ignore_imports = [
+    "parallax.descriptor._hub -> parallax.core.entity.**",
+]
 forbidden_modules = [
     "parallax.conformance",
+    "parallax.core._formation_profile",
     "parallax.core.auto_retry",
     "parallax.core.batch_write",
     "parallax.core.bitemp_write",
     "parallax.core.db_error",
+    "parallax.core.db_port",
     "parallax.core.deep_fetch",
     "parallax.core.dialect",
+    "parallax.core.entity",
+    "parallax.core.inheritance",
+    "parallax.core.model_formation",
     "parallax.core.navigate",
+    "parallax.core.op_algebra",
+    "parallax.core.opt_lock",
     "parallax.core.pk_gen",
     "parallax.core.read_lock",
+    "parallax.core.relationship",
     "parallax.core.sql_gen",
+    "parallax.core.temporal_read",
     "parallax.core.txtime_write",
+    "parallax.core.unit_work",
+    "parallax.core.value_object",
     "parallax.postgres",
     "parallax.snapshot.handle",
     "parallax.snapshot.materialize",
@@ -1073,18 +1087,3 @@ source_modules = [
 ]
 forbidden_modules = ["parallax.core.sql_gen"]
 as_packages = false
-
-# `parallax.descriptor._hub` holds a grant its parent scope lacks, and a generated
-# `forbidden` contract cannot express that: package-scoped sources make the
-# parent's row govern the child too, so the generated row is relaxed by the
-# child's closure and the generated child row adds nothing. This contract carries
-# the confinement guarantee instead — every descriptor module except `_hub` is
-# forbidden the Hub-construction seam, with the one real edge named as the sole
-# exception. `unmatched_ignore_imports_alerting` defaults to `error`, so the
-# exception cannot outlive the import it describes.
-[[tool.importlinter.contracts]]
-name = "only parallax.descriptor._hub reaches the Hub-construction seam"
-type = "forbidden"
-source_modules = ["parallax.descriptor"]
-forbidden_modules = ["parallax.core.entity"]
-ignore_imports = ["parallax.descriptor._hub -> parallax.core.entity._hub"]
