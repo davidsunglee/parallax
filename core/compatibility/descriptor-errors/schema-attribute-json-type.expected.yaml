@@ -1,0 +1,13 @@
+# `Json` is not a declarable attribute type: it is the storage type core maps a
+# whole `valueObject` element to, never a type an entity attribute names, so a
+# direct free-form structured-content attribute has no spelling. The document is
+# otherwise well-formed and `json` is a real member of the neutral-type
+# vocabulary, so the refusal is scoping and not an unknown spelling — the
+# declarable set is the scalar types, and the excluded spelling fails a `not`
+# keyword at the offending `type`. A composite is instead declared as a
+# `valueObject`, whose one structured-document column core derives.
+phase: schema
+code: descriptor-schema-invalid
+violations:
+  - path: [entity, attributes, 1, type]
+    rule: not

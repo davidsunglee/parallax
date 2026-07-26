@@ -1,0 +1,9 @@
+entity:
+  name: Document
+  table: document
+  attributes:
+    - name: id
+      type: int64
+      primaryKey: true
+    - name: payload
+      type: json

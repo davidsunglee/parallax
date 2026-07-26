@@ -20,9 +20,19 @@
   },
   "$defs": {
     "neutralType": {
-      "description": "Canonical m-descriptor spelling of an m-core NeutralType variant (m-descriptor \"Type spellings\"). The decimal spelling carries precision/scale, e.g. decimal(18,2). The `json` type is the embedded-value type a valueObject element maps to; m-dialect maps it to each dialect's structured-document column type.",
+      "description": "Canonical m-descriptor spelling of an m-core NeutralType variant (m-descriptor \"Type spellings\"). The decimal spelling carries precision/scale, e.g. decimal(18,2). This is the whole variant vocabulary, not the set an attribute may declare: `json` is the embedded-value type core maps a whole valueObject element to (m-dialect maps it to each dialect's structured-document column type), so it is reachable only as that derived storage type. A declarable attribute type is a `scalarType`.",
       "type": "string",
       "pattern": "^(boolean|int32|int64|float32|float64|string|bytes|date|time|timestamp|uuid|json|decimal\\([0-9]+,[0-9]+\\))$"
+    },
+    "scalarType": {
+      "description": "A declarable attribute type: any `neutralType` variant EXCEPT `json`. `Json` names no declarable member — it is the storage type core maps a whole valueObject element to (m-core \"The `Json` embedded-value type\"), never a type a member declares — so both an entity `attribute` and a `valueObjectAttribute` inner field reject `json`. Free-form structured content is not modelable; a composite is declared as a `valueObject` with typed inner fields, and core derives the one structured-document column from it.",
+      "allOf": [
+        { "$ref": "#/$defs/neutralType" },
+        {
+          "$comment": "The exclusion is a `not` over the excluded spelling rather than a second alternation, so the variant vocabulary keeps its single home in `neutralType` (the closed-vocabulary three-home consistency check binds that pattern to the m-core algebra and the m-descriptor spellings table).",
+          "not": { "const": "json" }
+        }
+      ]
     },
     "identifier": {
       "description": "camelCase element/property name.",
@@ -208,7 +218,7 @@
       "required": ["name", "type"],
       "properties": {
         "name": { "$ref": "#/$defs/identifier" },
-        "type": { "$ref": "#/$defs/neutralType" },
+        "type": { "$ref": "#/$defs/scalarType" },
         "column": { "type": "string", "minLength": 1 },
         "primaryKey": { "type": "boolean", "default": false },
         "nullable": { "type": "boolean", "default": false },
@@ -449,13 +459,13 @@
       ]
     },
     "valueObjectAttribute": {
-      "description": "A typed field of a value object. Unlike an entity `attribute` it carries NO per-field `column`: the whole value object (all attributes plus nested value objects) is stored in one structured-document column, so an inner field has no column of its own. Its declared m-core neutral type is normative for nested-predicate literal typing and casting (m-op-algebra/m-sql).",
+      "description": "A typed field of a value object. Unlike an entity `attribute` it carries NO per-field `column`: the whole value object (all attributes plus nested value objects) is stored in one structured-document column, so an inner field has no column of its own. Its declared `scalarType` is normative for nested-predicate literal typing and casting (m-op-algebra/m-sql), which is why an inner field is a scalar and never `json`: nesting a composite is spelled as a nested `valueObject` with its own typed fields, not as free-form structured content inside the document.",
       "type": "object",
       "additionalProperties": false,
       "required": ["name", "type"],
       "properties": {
         "name": { "$ref": "#/$defs/identifier" },
-        "type": { "$ref": "#/$defs/neutralType" },
+        "type": { "$ref": "#/$defs/scalarType" },
         "nullable": { "type": "boolean", "default": false }
       }
     },

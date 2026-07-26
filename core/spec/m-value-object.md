@@ -56,7 +56,7 @@ inner field has no column of its own.
 | Property | Values / meaning |
 |---|---|
 | `name` | attribute name (REQUIRED) |
-| `type` | m-core neutral type (REQUIRED); normative for nested-predicate literal typing and casting (`m-op-algebra` / `m-sql`) |
+| `type` | m-core **scalar** neutral type (REQUIRED) — every variant except `Json`, which `m-core` reserves for the whole-value-object storage type; normative for nested-predicate literal typing and casting (`m-op-algebra` / `m-sql`) |
 | `nullable` | bool, default `false` |
 
 A `nestedValueObject` has the same shape as a top-level value object **minus**

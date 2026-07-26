@@ -1,0 +1,13 @@
+# The exclusion of `Json` reaches inside a value object too: a `valueObject` is a
+# recursive TYPED composite, not an opaque blob, so an inner field may not open a
+# free-form structured-content hole within the document. This is the distinct
+# second position `json` was reachable from — the entity attribute is the other —
+# and it is refused identically, a `not` keyword at the inner field's own `type`,
+# under the enclosing value object's path. An inner field's declared type is
+# normative for nested-predicate literal typing, which `json` would leave
+# undetermined; a composite inner field is spelled as a nested `valueObject`.
+phase: schema
+code: descriptor-schema-invalid
+violations:
+  - path: [entity, valueObjects, 0, attributes, 0, type]
+    rule: not
