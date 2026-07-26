@@ -460,7 +460,13 @@ class _Shape:
 def _classify(
     annotation: object, globalns: dict[str, Any], localns: dict[str, object]
 ) -> tuple[str, object] | None:
-    """The member kind and raw inner of an ``Attr[...]`` / ``Rel[...]`` annotation."""
+    """The member kind and raw inner of a class-body annotation.
+
+    ``class_var`` is the third kind and declares no member. It is classified here
+    rather than by the callers because a class variable is a live typing form on
+    one annotation path and text on the other, and the two paths must pass over
+    the same declarations.
+    """
     if isinstance(annotation, str):
         text = annotation.strip()
         if (match := _ATTR_TEXT.match(text)) is not None:
@@ -474,6 +480,21 @@ def _classify(
         return "attr", get_args(annotation)[0]
     if origin is Rel:
         return "rel", get_args(annotation)[0]
+    if annotation is ClassVar or origin is ClassVar:
+        return "class_var", None
+    return None
+
+
+def _annotation_text(inner: object) -> str | None:
+    """The spelling behind an unevaluated annotation fragment, if it is one.
+
+    A ``ForwardRef`` and a quoted fragment are one fact reached by the two
+    annotation paths: a name the class body wrote as text.
+    """
+    if isinstance(inner, ForwardRef):
+        return inner.__forward_arg__.strip()
+    if isinstance(inner, str):
+        return _unquote(inner)
     return None
 
 
@@ -483,30 +504,57 @@ def _shape_of_annotation(
     where: str,
     globalns: dict[str, Any],
     localns: dict[str, object],
-    allow_unresolved: bool,
+    relationship_target: bool,
 ) -> _Shape:
     """The multiplicity, optionality, and inner type an annotation declares.
 
-    ``allow_unresolved`` is set for relationship targets alone: a target may name
-    a class that does not exist yet, and it resolves against the hub candidate
-    set rather than against module globals.
+    A relationship target is read as a spelling and never evaluated: the hub
+    candidate set is the only scope a target resolves in, so a class object is
+    Exact and every text form is a name — qualified or relative to the declaring
+    Entity — however the annotation path happened to deliver it. Every other
+    annotation names a Python type, so a spelling is resolved against the class
+    body before module globals.
     """
-    if isinstance(inner, ForwardRef):
-        inner = inner.__forward_arg__
-    if isinstance(inner, str):
-        resolved = _resolve(inner, globalns, localns)
-        if resolved is not None:
-            return _live_shape(resolved, where=where, allow_unresolved=allow_unresolved)
-        if not allow_unresolved:
-            raise EntityDefinitionError(
-                code="entity-annotation-invalid",
-                message=f"{where}: cannot resolve the annotation {inner!r}",
-            )
-        return _text_shape(inner, where=where)
-    return _live_shape(inner, where=where, allow_unresolved=allow_unresolved)
+    text = _annotation_text(inner)
+    if text is None:
+        return _live_shape(
+            inner,
+            where=where,
+            globalns=globalns,
+            localns=localns,
+            relationship_target=relationship_target,
+        )
+    if relationship_target:
+        return _text_shape(text, where=where)
+    return _live_shape(
+        _resolved(text, where=where, globalns=globalns, localns=localns),
+        where=where,
+        globalns=globalns,
+        localns=localns,
+        relationship_target=relationship_target,
+    )
 
 
-def _live_shape(inner: object, *, where: str, allow_unresolved: bool) -> _Shape:
+def _resolved(
+    text: str, *, where: str, globalns: dict[str, Any], localns: dict[str, object]
+) -> object:
+    resolved = _resolve(text, globalns, localns)
+    if resolved is None:
+        raise EntityDefinitionError(
+            code="entity-annotation-invalid",
+            message=f"{where}: cannot resolve the annotation {text!r}",
+        )
+    return resolved
+
+
+def _live_shape(
+    inner: object,
+    *,
+    where: str,
+    globalns: dict[str, Any],
+    localns: dict[str, object],
+    relationship_target: bool,
+) -> _Shape:
     multiplicity = Multiplicity.ONE
     nullable = False
     origin = get_origin(inner)
@@ -529,36 +577,26 @@ def _live_shape(inner: object, *, where: str, allow_unresolved: bool) -> _Shape:
             )
         inner = args[0]
         multiplicity = Multiplicity.MANY
-    if isinstance(inner, ForwardRef):
-        inner = inner.__forward_arg__
-    if isinstance(inner, str):
-        if not allow_unresolved:
-            raise EntityDefinitionError(
-                code="entity-annotation-invalid",
-                message=f"{where}: cannot resolve the annotation {inner!r}",
-            )
-        return _Shape(None, inner, multiplicity, nullable)
+    text = _annotation_text(inner)
+    if text is not None:
+        if relationship_target:
+            return _Shape(None, text, multiplicity, nullable)
+        inner = _resolved(text, where=where, globalns=globalns, localns=localns)
     return _Shape(inner, None, multiplicity, nullable)
 
 
 def _text_shape(text: str, *, where: str) -> _Shape:
-    """The shape a stringized relationship annotation declares.
+    """The shape a relationship-target spelling declares.
 
-    Reached only for a target class that does not exist yet, where evaluation is
-    not an option and the reference resolves against the hub candidate set.
+    The wrappers are stripped in the order the live reading strips them, so one
+    spelling declares one shape whichever path delivered it.
     """
     body = text.strip()
+    nullable = False
     if (match := _OPTIONAL_TEXT.match(body)) is not None:
-        return _Shape(None, _unquote(match.group("inner")), Multiplicity.ONE, True)
-    if (match := _TUPLE_TEXT.match(body)) is not None:
-        head, _, tail = match.group("inner").rpartition(",")
-        if tail.strip() != "...":
-            raise EntityDefinitionError(
-                code="entity-annotation-invalid",
-                message=f"{where}: a many relationship is spelled `tuple[Target, ...]`",
-            )
-        return _Shape(None, _unquote(head), Multiplicity.MANY, False)
-    if "|" in body:
+        body = _unquote(match.group("inner"))
+        nullable = True
+    elif "|" in body:
         members = [part.strip() for part in body.split("|")]
         named = [part for part in members if part != "None"]
         if len(members) != 2 or len(named) != 1:
@@ -566,8 +604,19 @@ def _text_shape(text: str, *, where: str) -> _Shape:
                 code="entity-annotation-invalid",
                 message=f"{where}: only an `X | None` union is a declarable annotation",
             )
-        return _Shape(None, _unquote(named[0]), Multiplicity.ONE, True)
-    return _Shape(None, _unquote(body), Multiplicity.ONE, False)
+        body = _unquote(named[0])
+        nullable = True
+    multiplicity = Multiplicity.ONE
+    if (match := _TUPLE_TEXT.match(body)) is not None:
+        head, _, tail = match.group("inner").rpartition(",")
+        if tail.strip() != "...":
+            raise EntityDefinitionError(
+                code="entity-annotation-invalid",
+                message=f"{where}: a many relationship is spelled `tuple[Target, ...]`",
+            )
+        body = _unquote(head)
+        multiplicity = Multiplicity.MANY
+    return _Shape(None, body, multiplicity, nullable)
 
 
 def _unquote(text: str) -> str:
@@ -677,23 +726,23 @@ def _build_value_object(
     shapes: dict[str, _Shape] = {}
 
     for py_name, annotation in list(annotations.items()):
-        if get_origin(annotation) is ClassVar:
-            continue
         where = f"{cls_name}.{py_name}"
-        classified = _classify(annotation, globalns, ns)
-        if classified is None or classified[0] != "attr":
-            raise EntityDefinitionError(
-                code="entity-annotation-invalid",
-                message=f"{where}: a Value Object member is annotated Attr[...]",
-            )
         if py_name.startswith("model_"):
             raise EntityDefinitionError(
                 code="entity-reserved-member-name",
                 message=f"{where}: the `model_*` namespace is reserved by Pydantic",
             )
+        classified = _classify(annotation, globalns, ns)
+        if classified is not None and classified[0] == "class_var":
+            continue
+        if classified is None or classified[0] != "attr":
+            raise EntityDefinitionError(
+                code="entity-annotation-invalid",
+                message=f"{where}: a Value Object member is annotated Attr[...]",
+            )
         spec = cast("AttrSpec", _member_spec(ns.get(py_name), where, expect="attr"))
         shape = _shape_of_annotation(
-            classified[1], where=where, globalns=globalns, localns=ns, allow_unresolved=False
+            classified[1], where=where, globalns=globalns, localns=ns, relationship_target=False
         )
         canonical = _declared_name(spec, py_name)
         if canonical in canonical_seen:
@@ -776,6 +825,7 @@ def _build_entity(
 
     annotations = _class_body_annotations(ns)
     globalns = _module_globals(ns)
+    _reject_shadowed_class_names(cls_name, ns)
     if axes:
         _reject_temporal_redeclaration(cls_name, annotations, ns)
     if shape_owner:
@@ -804,9 +854,8 @@ def _build_entity(
     canonical_seen: set[str] = set()
 
     for py_name, annotation in list(annotations.items()):
-        if get_origin(annotation) is ClassVar:
-            continue
         where = f"{cls_name}.{py_name}"
+        _reject_reserved(where, py_name, axes, injected=py_name in STANDARD_TEMPORAL_NAMES)
         classified = _classify(annotation, globalns, ns)
         if classified is None:
             raise EntityDefinitionError(
@@ -814,14 +863,15 @@ def _build_entity(
                 message=f"{where}: a member is annotated Attr[...] or Rel[...]",
             )
         member_kind, inner = classified
-        _reject_reserved(where, py_name, axes, injected=py_name in STANDARD_TEMPORAL_NAMES)
+        if member_kind == "class_var":
+            continue
         spec = _member_spec(ns.get(py_name), where, expect=member_kind)
         shape = _shape_of_annotation(
             inner,
             where=where,
             globalns=globalns,
             localns=ns,
-            allow_unresolved=member_kind == "rel",
+            relationship_target=member_kind == "rel",
         )
         canonical = _declared_name(spec, py_name)
         if canonical in canonical_seen:
@@ -1184,6 +1234,22 @@ def _reject_reserved(
         )
 
 
+def _reject_shadowed_class_names(cls_name: str, ns: dict[str, object]) -> None:
+    """Reject a class-body name that would take a reserved class-level name.
+
+    The declaration surface answers only names the class object does not already
+    carry, so a body binding — a member's declaration value, a method, or a class
+    variable — reusing one makes the declaration unreachable rather than merely
+    shadowing it. An annotation-only member is caught by the member walk instead.
+    """
+    taken = sorted(RESERVED_MEMBER_NAMES & set(ns))
+    if taken:
+        raise EntityDefinitionError(
+            code="entity-reserved-member-name",
+            message=f"{cls_name}.{taken[0]}: reuses a reserved query-root or introspection name",
+        )
+
+
 def _reject_temporal_redeclaration(
     cls_name: str, annotations: dict[str, object], ns: dict[str, object]
 ) -> None:
@@ -1240,6 +1306,11 @@ def _reject_incompatible_generation(
 def _relationship(
     identity: EntityIdentity, canonical: str, spec: RelSpec, shape: _Shape, where: str
 ) -> UnresolvedRelationshipDeclaration:
+    if shape.multiplicity is Multiplicity.MANY and shape.nullable:
+        raise EntityDefinitionError(
+            code="entity-annotation-invalid",
+            message=f"{where}: a to-many relationship is never `| None` — loaded-empty is `()`",
+        )
     target = _entity_reference(shape, where)
     relationship = RelationshipIdentity(identity, canonical)
     order_by = tuple(

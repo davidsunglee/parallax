@@ -3,17 +3,20 @@
 This module deliberately omits ``from __future__ import annotations`` so the
 engine sees real ``Attr[T]`` / ``Rel[T]`` objects and type inference runs against
 the concrete inner type. ``frontend_probes_stringized`` is the twin covering the
-same rejections on the stringized path, which is separate code.
+same declarations on the stringized path, which is separate code.
 
 Each ``define_*`` helper builds a declaration expected to fail; the trailing
 ``return`` keeps the class referenced for the type checker even though the engine
 raises before it runs. Declaring inside a function also means re-invoking a
-helper is itself the repeated-declaration case.
+helper is itself the repeated-declaration case. Each ``accepted_*`` helper builds
+a declaration expected to succeed, whose compiled facts the two paths must agree
+on member for member.
 """
 
 from decimal import Decimal
+from typing import ClassVar, Optional
 
-from parallax.core import Attr, Entity, Rel, attr, index, rel
+from parallax.core import MANY_TO_ONE, Attr, Entity, Rel, ValueObject, attr, index, rel
 from parallax.core.base import Int32
 from parallax.core.metamodel import MAX, AbstractRoot, TablePerConcreteSubtype
 
@@ -22,6 +25,18 @@ class Peer(Entity, table="peer"):
     """A well-formed declaration the rejection probes point at."""
 
     id: Attr[int] = attr(primary_key=True)
+
+
+class Address(ValueObject):
+    """A reusable shape the accepted probes name through a quoted annotation."""
+
+    city: Attr[str]
+
+
+class Tag(ValueObject):
+    """A reusable shape reached through a Many occurrence."""
+
+    label: Attr[str]
 
 
 def define_header_unknown_option() -> type:
@@ -203,3 +218,100 @@ def define_canonical_name_collision() -> type:
         orderId: Attr[int]
 
     return Bad
+
+
+def define_class_var_reserved_name() -> type:
+    """A class variable taking one of the nine declaration member names."""
+
+    class Bad(Entity, table="bad"):
+        identity: ClassVar[str] = "shadow"
+        id: Attr[int] = attr(primary_key=True)
+
+    return Bad
+
+
+def define_shadowed_declaration_member() -> type:
+    """A method taking one of the nine declaration member names."""
+
+    class Bad(Entity, table="bad"):
+        id: Attr[int] = attr(primary_key=True)
+
+        def indices(self) -> tuple[()]:
+            return ()
+
+    return Bad
+
+
+def define_wide_union_annotation() -> type:
+    """A union that is not ``X | None``, which optionality alone may spell."""
+
+    class Bad(Entity, table="bad"):
+        id: Attr[int] = attr(primary_key=True)
+        label: Attr[int | str]
+
+    return Bad
+
+
+def define_wide_union_relationship_target() -> type:
+    """The same rule on a relationship target, which is read as a spelling."""
+
+    class Bad(Entity, table="bad"):
+        id: Attr[int] = attr(primary_key=True)
+        peer_id: Attr[int]
+        peer: Rel["Peer | Peer"] = rel(cardinality=MANY_TO_ONE, join=("peer_id", "id"))
+
+    return Bad
+
+
+def define_nullable_many_relationship() -> type:
+    """A to-many relationship spelled ``| None``, which loaded-empty rules out."""
+
+    class Bad(Entity, table="bad"):
+        id: Attr[int] = attr(primary_key=True)
+        peers: Rel[tuple[Peer, ...] | None] = rel(reverse_of="bad")
+
+    return Bad
+
+
+def accepted_relationship_targets() -> type:
+    """Every relationship-target spelling the grammar admits as text.
+
+    A bare name is Relative and a qualified one is Exact, on both paths: a
+    spelling resolves against the hub candidate set, never against the module
+    the class happens to be declared in. A qualified spelling is therefore not a
+    resolvable Python name, and carries the suppressions that costs.
+    """
+
+    class Hop(Entity, table="hop"):
+        id: Attr[int] = attr(primary_key=True)
+        peer_id: Attr[int]
+        bare: Rel["Peer"] = rel(cardinality=MANY_TO_ONE, join=("peer_id", "id"))
+        qualified: Rel["ops.Peer"] = rel(  # noqa: F821  # type: ignore[name-defined]
+            cardinality=MANY_TO_ONE, join=("peer_id", "id")
+        )
+        union_optional: Rel["Peer | None"] = rel(cardinality=MANY_TO_ONE, join=("peer_id", "id"))
+        alias_optional: Rel[Optional["Peer"]] = rel(cardinality=MANY_TO_ONE, join=("peer_id", "id"))
+        many: Rel[tuple["Peer", ...]] = rel(reverse_of="bare")
+
+    return Hop
+
+
+def accepted_value_object_spellings() -> type:
+    """Quoted Value Object occurrence spellings, which resolve on both paths."""
+
+    class Holder(Entity, table="holder"):
+        id: Attr[int] = attr(primary_key=True)
+        home: Attr["Address | None"]
+        tags: Attr[tuple["Tag", ...]]
+
+    return Holder
+
+
+def accepted_class_var() -> type:
+    """A class variable is not a member declaration on either path."""
+
+    class Marked(Entity, table="marked"):
+        kind: ClassVar[str] = "marked"
+        id: Attr[int] = attr(primary_key=True)
+
+    return Marked
