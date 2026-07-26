@@ -288,7 +288,7 @@ def accepted_relationship_targets() -> type:
         id: Attr[int] = attr(primary_key=True)
         peer_id: Attr[int]
         bare: Rel["Peer"] = rel(cardinality=MANY_TO_ONE, join=("peer_id", "id"))
-        qualified: Rel["ops.Peer"] = rel(  # noqa: F821  # type: ignore[name-defined]
+        qualified: Rel["ops.Peer"] = rel(  # type: ignore[name-defined]  # noqa: F821 - qualified target is a spelling, not a resolvable name
             cardinality=MANY_TO_ONE, join=("peer_id", "id")
         )
         union_optional: Rel["Peer | None"] = rel(cardinality=MANY_TO_ONE, join=("peer_id", "id"))
