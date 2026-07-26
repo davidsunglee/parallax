@@ -30,6 +30,7 @@ from parallax.core import (
     rel,
 )
 from parallax.core.entity import METAMODEL_DEFINITION_CODES
+from parallax.core.entity._binding import binding_of
 from parallax.core.model_formation import MetamodelValidationError
 
 pytestmark = pytest.mark.unit
@@ -242,5 +243,26 @@ def test_a_failed_realization_publishes_no_binding() -> None:
 
     # Realization raised before the claim, so `Node` was never bound and a
     # corrected hub still owns it.
+    assert binding_of(Node) is None
     models = MetamodelHub(Node)
     assert models.meta(Node).identity.name == "Node"
+
+
+def test_a_failed_publication_leaves_no_orphaned_claim(monkeypatch: pytest.MonkeyPatch) -> None:
+    class Probe(Entity, table="probe"):
+        id: Attr[int] = attr(primary_key=True)
+
+    def refuse(*_: object) -> None:
+        raise RuntimeError("publication failed")
+
+    monkeypatch.setattr(MetamodelHub, "_publish", refuse)
+    with pytest.raises(RuntimeError):
+        MetamodelHub(Probe)
+    monkeypatch.undo()
+
+    # A claim is permanent, so anything that can fail must fail before it. A
+    # step that raised after claiming would strand `Probe` on a hub no caller
+    # ever received and no later hub could take.
+    assert binding_of(Probe) is None
+    models = MetamodelHub(Probe)
+    assert models.meta(Probe).identity.name == "Probe"

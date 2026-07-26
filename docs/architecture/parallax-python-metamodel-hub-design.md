@@ -298,15 +298,16 @@ only through Entity declarations and is not passed to the hub separately.
 - One constructor call runs, in order: left-to-right validation of its source
   arguments, model-relative reference resolution, whole-model validation,
   compilation of the immutable module-owned facets, and — for a class-backed
-  hub — the Python realization phase. The accepted Metamodel, its complete
-  facet set, and every Entity Class binding are held in locals until the last
-  step succeeds and are then published in one final assignment.
+  hub — the Python realization phase. Nothing it builds is reachable from
+  outside the call while it runs: a class-backed hub becomes observable when
+  its atomic Entity Class claim publishes the binding that retains it, and a
+  source-backed hub when the constructor returns.
 - A failure at any step raises out of the constructor. No hub object escapes,
   no facet or Entity Class binding is published, and no orphaned class claim
-  survives, because the claim itself happens under the single binding
-  synchronization point. Corrected declarations go to a new constructor call:
-  there is nothing to retry, reseal, or interrogate for a stored terminal
-  cause.
+  survives, because the claim is the last step that can fail and happens under
+  the single binding synchronization point. Corrected declarations go to a new
+  constructor call: there is nothing to retry, reseal, or interrogate for a
+  stored terminal cause.
 - Every hub a caller can name is therefore authoritative, and every
   model-dependent operation on it is available: Entity enumeration, metadata
   lookup, export, typed facet access, query and path construction, class
