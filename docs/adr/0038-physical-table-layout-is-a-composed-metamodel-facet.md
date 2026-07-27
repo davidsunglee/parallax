@@ -19,36 +19,66 @@ per-ancestor or pre-capability column sequence as a prefix is not a contract.
 
 A Column Slot records its physical column, tier, contributing Attribute, Value
 Object occurrence, or inheritance discriminator, declaring owner, effective
-nullability, and applicable Entity set. Primary-key layout selects identity-tier
-slots rather than restating columns. Two distinct contributors claiming one
-column in the same Table fail Model Formation as
+nullability, and applicable Entity set. The Physical Primary Key is an ordered
+selection of designated slots across tiers: the model primary-key Attribute
+slots followed by each temporal dimension's start Attribute slot. It never
+truncates the key to the identity tier or restates independent columns. Two
+distinct contributors claiming one column in the same Table fail Model Formation as
 `storage-layout-column-collision`; no storage consumer chooses a winner.
 Inheritance continues to own `inheritance-materialization-key-collision`
 because `familyVariant`, relationship views, and materialized object keys occupy
 the result keyspace rather than physical table storage.
 
-The module composes structural facts without requiring every possible behavioral
-contributor. Its mandatory inputs are accepted Metadata and the Inheritance
-Facet. Temporal axes and Audit Metadata, when present, designate already
-declared Attribute Identities for their tiers; absence leaves the corresponding
-tier empty. In particular, `m-storage-layout` does not depend on
-`m-audit-provenance`. An audit-capable profile supplies explicit Audit Metadata
-and the audit behavior depends on the resulting layout; a profile without audit
-supplies none. The temporal `revisionInstantAttribute` alias of Transaction-Time
-start therefore produces one temporal slot and no duplicate audit slot.
+The module participates in both validation and compilation without changing
+Model Formation's phase boundary. Its Rule Set receives only the Candidate
+Metamodel and emits `storage-layout-column-collision`. It obtains table
+boundaries from a pure, total validation-time projection owned by
+`m-inheritance`, not from the Inheritance Facet. That projection returns only
+unambiguous standalone and family table groups; the Inheritance Rule Set reports
+malformed or ambiguous topology, and Storage Layout neither duplicates those
+issues nor guesses a table. This collaboration shares the topology walk without
+introducing validation-time facets or ordered Rule Set execution.
+
+After every Rule Set succeeds, the `m-storage-layout` Model Compiler consumes
+Compiled Metadata and the Inheritance Facet and produces the immutable
+TableLayout Facet. Temporal axes and Audit Metadata, when present, designate
+already declared Attribute Identities for their tiers; absence leaves the
+corresponding tier empty. The compiler makes no validity decision and emits no
+issue. In particular, `m-storage-layout` does not depend on
+`m-audit-provenance`; audit behavior depends on the resulting layout. The
+temporal `revisionInstantAttribute` alias of Transaction-Time start therefore
+produces one temporal slot and no duplicate audit slot.
 
 The direct dependency direction is:
 
 ```text
 m-storage-layout --> m-metamodel
+m-storage-layout --> m-model-formation
 m-storage-layout --> m-inheritance
 
+m-sql --> m-storage-layout
 m-audit-provenance --> m-storage-layout
 ```
 
 Inheritance retains family topology, strategy, concrete applicability,
 discriminator semantics, and ancestry. Storage Layout asks those questions
-through the Inheritance Facet and owns only the composed physical-table answer.
+through the validation-time projection during its Rule Set and through the
+Inheritance Facet during its Model Compiler, and owns only the composed
+physical-table answer.
+
+`m-sql` consumes TableLayout directly for read projection and all keyed,
+predicate, and batch DML physical ordering. `m-audit-provenance` consumes it
+directly for audit-slot discovery and finalized assignment decoration. The
+conformance family declares no behavioral edge: under its existing harness
+exception, `m-case-format` exercises TableLayout for the reference oracle's
+physical fixture/write cells and table shapes, while `m-conformance-adapter`
+exercises it for model-derived DDL, fixture loading, and table-state read-back.
+Batch planning remains expressed in semantic Attribute Identities and therefore
+has no direct
+`m-batch-write --> m-storage-layout` edge; `m-sql` applies physical order during
+lowering. `m-dialect` formats already-selected columns and likewise does not
+interpret TableLayout.
+
 This keeps a small interface over the full storage-shape complexity while
 allowing future structural contributors to add an optional tier or slot
 classification without coupling every consumer to that contributor.

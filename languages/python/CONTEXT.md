@@ -163,13 +163,12 @@ established `ModelCopyError` and framework-owned assignment rejections.
 _Avoid_: audit field, caller-authored provenance, `*_time`
 
 **Audit Authoring**:
-The root-owned Entity Class convention available when the Python profile
-includes Audit Provenance. In that profile, omission supplies Audit Attributes
-by default with fixed conventional storage columns and `audit=NO_AUDIT`
-explicitly forms an unaudited standalone Entity or family. A profile without
-Audit Provenance supplies no Audit Attributes by omission and rejects explicit
-audit authoring because the capability is unavailable. There is no audit
-configuration object or independent column override.
+The root-owned Entity Class convention in which omission always requests Audit
+Attributes with fixed conventional storage columns and `audit=NO_AUDIT`
+explicitly forms an unaudited standalone Entity or family. An implementation
+surface without Audit Provenance accepts only the explicit opt-out; it never
+changes what omission means. There is no audit configuration object or
+independent column override.
 _Avoid_: audit mixin, `Audit(...)`, `audit=True`, descendant audit override
 
 **Edited Copy**:

@@ -260,9 +260,10 @@ The family-wide, root-owned association between an audited Entity's provenance
 semantics and explicitly declared Attribute Identities. Every descendant
 inherits the metadata unchanged; frontend conveniences may expand to the
 declarations before Model Formation, but accepted metadata contains no hidden
-or synthesized audit attributes. Principal audit attributes require unbounded
-neutral strings, instant audit attributes require neutral timestamps, and only
-the termination principal is nullable.
+or synthesized audit attributes. Its presence denotes an audited mapping and
+its absence denotes explicit opt-out. Principal audit attributes require
+unbounded neutral strings, instant audit attributes require neutral timestamps,
+and only the termination principal is nullable.
 _Avoid_: audit flag, implicit audit columns, naming convention
 
 **Metamodel Lookup**:
@@ -395,11 +396,17 @@ Identity, such as temporal `revised_at` and `tx_start`, produce one slot rather
 than aliases competing for storage.
 _Avoid_: selected field, result key, duplicate alias column
 
+**Physical Primary Key**:
+The ordered Column Slots by which a physical Table identifies one stored row.
+It combines model primary-key Attributes with every temporal dimension's start
+Attribute, so its designated slots may span identity and temporal Column Tiers.
+_Avoid_: identity tier, domain key, declared primary key alone
+
 **Column Tier**:
 One table-wide semantic band in canonical physical order: identity,
-discriminator, domain, temporal, audit, then document. An absent capability
-contributes no slots to its tier. Tiers take precedence over declaration ancestry
-while declaration order remains stable within a tier.
+discriminator, domain, temporal, audit, then document. A mapping with no
+applicable contributor for a tier leaves it empty. Tiers take precedence over
+declaration ancestry while declaration order remains stable within a tier.
 _Avoid_: framework columns, per-entity prefix, module load order
 
 **Document Path**:

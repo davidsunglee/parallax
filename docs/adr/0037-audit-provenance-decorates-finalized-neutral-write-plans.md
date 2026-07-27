@@ -20,15 +20,20 @@ no disposition.
 The decorator interprets each disposition uniformly. A Lineage Start receives
 current creation and revision provenance and, when Bitemporal, current
 state-change provenance. An In-Place Revision preserves creation and replaces
-revision provenance. A Carried-State Successor preserves creation and
-state-change provenance while receiving current revision provenance. A
-Changed-State Successor preserves creation while receiving current revision and
-state-change provenance. An Ordinary Revision Close changes only the temporal
-end; it does not invent a closure principal. State Termination changes the end
-and assigns the termination principal, while any surviving head or tail is
+revision provenance. A Carried-State Successor preserves creation while
+receiving current revision provenance and, when Bitemporal, preserves
+state-change provenance. A Changed-State Successor preserves creation while
+receiving current revision provenance and, when Bitemporal, current state-change
+provenance. A Transaction-Time-Only successor has no state-change attributes to
+preserve or assign. An Ordinary Revision Close changes only the temporal end; it
+does not invent a closure principal. State Termination changes the end and
+assigns the termination principal, while any surviving head or tail is
 independently a Carried-State Successor.
 
-The current Python implementation composes this decorator at its single write-lowering seam. That placement is an implementation waypoint rather than ownership by a lifecycle extension. When write preparation moves behind the hub-owned Entity Row Codec, the decorator moves into that accepted write pipeline and Snapshot depends only on the codec capability; the Audit Provenance semantics, finalized-plan ordering, and language-neutral module boundary remain unchanged.
+The composition boundary is lifecycle-neutral. Write-plan owners expose the
+disposition-bearing neutral plan, Audit Provenance owns its decoration, and
+ordinary SQL lowering follows. No lifecycle extension owns or redefines the
+provenance semantics, and no SQL or dialect module interprets them.
 
 A readless Non-Temporal predicate update remains one statement and gives every
 matched row an In-Place Revision, stamping its revision provenance even when an
