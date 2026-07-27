@@ -141,6 +141,34 @@ _Avoid_: filtered relationship, cast collection, subtype list
 
 ### Writes
 
+**Audit Attribute**:
+One of the conventional framework-owned properties realizing core Audit
+Metadata: `created_by`, `created_at`, `revised_by`, and `revised_at` on every
+audited Entity; `terminated_by` on a temporal Entity; and `state_changed_by`
+plus `state_changed_at` on a Bitemporal Entity. `revised_at` is a mapped Audit
+Attribute on a Non-Temporal Entity and a read-only alias of `tx_start` on a
+temporal Entity, so both temporal spellings resolve to the same Attribute
+Identity and physical column. Audit Attributes are readable and queryable on
+persisted instances, but a fresh instance reports `None` until a write assigns
+provenance. Caller-supplied construction, copying, assignment, and set-based
+updates are rejected before DML. Each mapped Audit Attribute uses its Python
+property name as its fixed physical column; the temporal `revised_at` exception
+uses `in_z` through its `tx_start` alias. `terminated_by` always attributes an
+explicit State Termination, never an ordinary update's revision closure.
+At full-row extraction, an explicitly supplied Audit Attribute raises the
+generic `FrameworkOwnedAttributeError` also shared by axis-governed
+attributes; the existing `FrameworkOwnedAxisError` remains its temporal
+compatibility subtype. Copy and set-based assignment paths retain their
+established `ModelCopyError` and framework-owned assignment rejections.
+_Avoid_: audit field, caller-authored provenance, `*_time`
+
+**Audit Authoring**:
+The root-owned Entity Class convention that supplies Audit Attributes by
+default with fixed conventional storage columns.
+`audit=NO_AUDIT` explicitly forms an unaudited standalone Entity or family;
+there is no audit configuration object or independent column override.
+_Avoid_: audit mixin, `Audit(...)`, `audit=True`, descendant audit override
+
 **Edited Copy**:
 A frozen Entity Class copy produced through `edit`, carrying a Change Record.
 It is the explicit write input for `update` and is never re-associated with
@@ -156,6 +184,20 @@ key plus changed attributes, or no DML at all when the set is empty.
 _Avoid_: dirty set, touched-name set, change tracking, diff log
 
 ### Transactions
+
+**Principal Protocol**:
+The application-implemented structural interface whose `subject()` method
+returns the stable, nonempty Subject Identity required by an outer database
+operation. Parallax Python snapshots and otherwise preserves that string
+verbatim before database interaction and outside any retry loop. A non-string
+or empty result raises `InvalidPrincipalError`; an exception raised by
+`subject()` propagates unchanged. Parallax supplies no generic concrete
+Principal that would erase provider- or domain-specific identity structure. A
+joined `db.transact(principal, body)` snapshots the supplied Principal once and
+raises `PrincipalMismatchError` before `body` when it differs from the outer
+transaction's captured identity; operations on `tx` inherit without a
+Principal argument.
+_Avoid_: raw subject string, generic Subject wrapper, framework user model
 
 **Transaction Body**:
 The closure passed to `db.transact`, receiving the Parallax Transaction; it

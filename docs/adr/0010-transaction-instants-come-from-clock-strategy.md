@@ -1,0 +1,3 @@
+# Transaction instants come from Clock Strategy
+
+Each outermost unit-of-work attempt lazily obtains at most one finite Transaction Instant from the configured Parallax Clock Strategy, when its first nonempty flush needs Transaction-Time boundaries or Audit Provenance timestamps. Read-only attempts and buffered work that cancels or becomes a net-zero edit without flushing never consult the Clock Strategy. A forced read-your-own-writes flush captures the instant when it begins, and every later flush in that attempt reuses it. A retry is a new database transaction and obtains a fresh instant only if it reaches a flush that needs one. Callers cannot override it per operation, centralizing clock control while preserving deterministic tests.

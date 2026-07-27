@@ -255,6 +255,16 @@ family-uniform optimistic key: Unversioned, an explicit root-owned version
 Attribute Identity, or the Transaction-Time-derived start Attribute.
 _Avoid_: version column cache, per-subtype version, copied attribute metadata
 
+**Audit Metadata**:
+The family-wide, root-owned association between an audited Entity's provenance
+semantics and explicitly declared Attribute Identities. Every descendant
+inherits the metadata unchanged; frontend conveniences may expand to the
+declarations before Model Formation, but accepted metadata contains no hidden
+or synthesized audit attributes. Principal audit attributes require unbounded
+neutral strings, instant audit attributes require neutral timestamps, and only
+the termination principal is nullable.
+_Avoid_: audit flag, implicit audit columns, naming convention
+
 **Metamodel Lookup**:
 Total, non-throwing lookup of accepted local metadata by structured identity or
 local member name. A miss is ordinary absence and direct access is expected
@@ -516,9 +526,60 @@ _Avoid_: mass operation, list setter
 A detected write conflict where a versioned update affected no rows because another transaction advanced the version first.
 _Avoid_: transient failure, automatic retry
 
+**Audit Provenance**:
+Framework-owned attribution for an audited Entity's original creation, current
+revision, and, for a temporal milestone, explicit State Termination. A
+Bitemporal Entity additionally distinguishes the principal and instant of the
+represented state's last change from the revision that formed its current
+rectangle.
+Provenance is non-null where it applies to a persisted Entity, queryable as
+ordinary attributes, and authored only by Parallax at the write boundary.
+_Avoid_: audit columns, audit log, write-event log
+
+**State Termination**:
+An explicit temporal mutation that makes represented state absent, unbounded
+or for a bounded Valid-Time window. Its `terminated_by` provenance names the
+Principal that authored the absence; it does not name every Principal whose
+update closed a database revision.
+_Avoid_: revision close, row inactivation, physical purge
+
+**Provenance Lineage**:
+The succession of temporal milestones descended from one successful insert.
+Every successor preserves that insert's creation provenance. Distinct inserts
+start distinct lineages even when they reuse one primary key in disjoint
+Valid-Time windows, so identical current coverage need not imply identical
+creation provenance.
+_Avoid_: first-ever primary-key creation, entity lifetime, row lineage
+
+**Subject Identity**:
+The stable, nonempty, opaque string by which a Principal is identified across
+Parallax operations and Audit Provenance. It is captured once at an outer
+database operation boundary and stored and compared verbatim: Parallax does
+not trim, case-fold, parse, or impose provider syntax. Joined scopes and
+automatic retries reuse the captured value.
+_Avoid_: username, display name, credentials
+
+**Principal**:
+The caller-supplied identity carrier required by every outer database read and
+unit of work, from which Parallax obtains and validates one Subject Identity
+before database interaction and outside any retry loop. Operations inside a
+unit of work inherit the captured identity rather than accepting or
+reevaluating a Principal. An explicit joining unit-of-work boundary evaluates
+its own required Principal once and joins only when its Subject Identity
+matches the root boundary's verbatim. The operation context retains the opaque
+Principal alongside that string for future provider-specific consumers; Audit
+Provenance consumes only the string.
+_Avoid_: Write Principal, current user, ambient principal, authorization claims
+
+**Transaction Instant**:
+The finite instant shared by every write in one unit-of-work attempt. It
+supplies Transaction Time boundaries and Audit Provenance timestamps; a retry
+is a new attempt with a fresh Transaction Instant.
+_Avoid_: operation timestamp, audit timestamp, processing instant
+
 **Clock Strategy**:
-The Parallax-level strategy that supplies Transaction Time instants for
-transactions.
+The Parallax-level strategy that supplies each unit-of-work attempt's
+Transaction Instant.
 _Avoid_: per-transaction timestamp override, operation timestamp override
 
 ### Temporal And Milestoning
