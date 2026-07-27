@@ -47,7 +47,7 @@ dev = [
     "twine>=5.1",
     "pip-audit>=2.7",
     "jsonschema>=4.21",
-    "testcontainers>=4.0",
+    "testcontainers>=4.15.0",
     "types-pyyaml>=6.0",
     "types-jsonschema>=4.21",
 ]
