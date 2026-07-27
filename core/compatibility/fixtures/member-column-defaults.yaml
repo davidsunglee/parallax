@@ -1,4 +1,4 @@
-parallax.compatibility.MemberColumnDefaults:
+MemberColumnDefaults:
   - id: 1
     personId: person-1
     taxID: TAX-1

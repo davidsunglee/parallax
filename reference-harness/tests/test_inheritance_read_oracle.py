@@ -99,6 +99,14 @@ def test_canonical_order_is_independent_of_descriptor_layout() -> None:
     assert family.canonical_concrete_order(["Zebra", "Ant", "Mule"]) == ["Ant", "Mule", "Zebra"]
 
 
+def test_canonical_concrete_order_uses_exact_qualified_identities() -> None:
+    family = Family([])
+    assert family.canonical_concrete_order(["beta.Alpha", "alpha.Zulu"]) == [
+        "alpha.Zulu",
+        "beta.Alpha",
+    ]
+
+
 # --- the narrow four-step validation ----------------------------------------
 
 
@@ -647,16 +655,14 @@ def test_tpcs_mariadb_varchar_cast_golden_is_rejected() -> None:
         _materialize_family_variant(case, [])
 
 
-def test_tpcs_family_variant_column_collision_is_rejected() -> None:
-    # A concrete subtype that declares a real column named `family_variant` collides
-    # with the synthetic variant alias; the oracle rejects it with a clear diagnostic.
+def test_tpcs_family_variant_column_requires_a_hygienic_internal_alias() -> None:
     case = copy.deepcopy(_document_case("Document", {"all": {}}))
     for definition in case.model.entity_defs:
         if definition["name"] == "Memo":
             definition["attributes"].append(
                 {"name": "familyVariant", "type": "string", "column": "family_variant"}
             )
-    with pytest.raises(CaseFailure, match="collides"):
+    with pytest.raises(CaseFailure, match="parallax_attr_0"):
         _materialize_family_variant(case, [])
 
 

@@ -33,7 +33,7 @@ from parallax.core.dialect import Dialect, LockMode
 from parallax.core.entity import MetamodelBinding
 from parallax.core.metamodel import AsOfAxisMetadata as AcceptedAsOfAxis
 from parallax.core.metamodel import EntityMetadata, Metamodel, TemporalDimension, entity_by_name
-from parallax.core.sql_gen import CompiledRead, Statement, compile_read
+from parallax.core.sql_gen import CompiledRead, MaterializedReadRow, Statement, compile_read
 from parallax.core.temporal_read import Edge, Pin, milestone_edge, statement_pin
 from parallax.snapshot import materialize
 from parallax.snapshot.handle._wrap import wrap_graph
@@ -226,7 +226,7 @@ def find(
     resolving to exactly one concrete emits no `familyVariant` column, so this
     is what lets the assembler still recover the row's own concrete identity.
     Returns the root's own materialized nodes — reached from them, every
-    attached level's nodes hang off `Node.fields` — plus the full ordered
+    attached level's nodes hang off `Node.relationships` — plus the full ordered
     execution record.
     """
     # ``meta`` is the accepted model the connected ``Database`` already holds, so
@@ -238,10 +238,18 @@ def find(
     root_compiled = compile_read(
         plan_.root_operation, meta, dialect, root_entity, result_form="instance", lock=lock
     )
-    root_rows = _execute_compiled(port, dialect, root_compiled, statements)
+    root_materialized = _execute_compiled(port, dialect, root_compiled, statements)
+    root_rows = [row.values for row in root_materialized]
 
     assembler = materialize.Assembler(meta=meta)
-    root_nodes = assembler.materialize_root(target, root_rows, narrow_to=root_compiled.narrow_to)
+    root_nodes = assembler.materialize_root(
+        target,
+        root_rows,
+        narrow_to=root_compiled.narrow_to,
+        resolved_position=root_compiled.resolved_position,
+        resolved_entities=[row.resolved_entity for row in root_materialized],
+        family_variants=[row.family_variant for row in root_materialized],
+    )
     all_nodes: list[tuple[str, materialize.Node]] = [(target, node) for node in root_nodes]
 
     level_rows: list[Sequence[Row]] = []
@@ -275,8 +283,17 @@ def find(
         # A child level takes its narrow from `FetchLevel.narrow_to` (consumed
         # inside `attach_level`), never from the compiled read — only the ROOT
         # has no planner-supplied narrow to fall back on.
-        rows = _execute_compiled(port, dialect, child_compiled, statements)
-        nodes = assembler.attach_level(level, parent_nodes, parent_rows, rows)
+        child_materialized = _execute_compiled(port, dialect, child_compiled, statements)
+        rows = [row.values for row in child_materialized]
+        nodes = assembler.attach_level(
+            level,
+            parent_nodes,
+            parent_rows,
+            rows,
+            resolved_position=child_compiled.resolved_position,
+            resolved_entities=[row.resolved_entity for row in child_materialized],
+            family_variants=[row.family_variant for row in child_materialized],
+        )
         level_rows.append(rows)
         level_nodes.append(nodes)
         all_nodes.extend((child_target, node) for node in nodes)
@@ -312,12 +329,15 @@ def find_history(
     entity = declaring_metadata(meta, metadata)
     compiled = compile_read(plan_.root_operation, meta, dialect, metadata, result_form="instance")
     statements: list[ExecutedStatement] = []
-    rows = _execute(port, dialect, compiled.statement, statements)
+    materialized_rows = [
+        compiled.materialize_row(row)
+        for row in _execute(port, dialect, compiled.statement, statements)
+    ]
 
     order: list[Edge] = []
-    groups: dict[Edge, list[Row]] = {}
-    for row in sorted(rows, key=lambda row: _edge_sort_key(entity, row)):
-        edge = milestone_edge(entity, row)
+    groups: dict[Edge, list[MaterializedReadRow]] = {}
+    for row in sorted(materialized_rows, key=lambda row: _edge_sort_key(entity, row.values)):
+        edge = milestone_edge(entity, row.values)
         if edge not in groups:
             groups[edge] = []
             order.append(edge)
@@ -326,7 +346,16 @@ def find_history(
     graphs = tuple(
         MilestoneGraph(
             pin=_edge_pin(entity, edge),
-            nodes=tuple(materialize.Assembler(meta=meta).materialize_root(target, groups[edge])),
+            nodes=tuple(
+                materialize.Assembler(meta=meta).materialize_root(
+                    target,
+                    [row.values for row in groups[edge]],
+                    narrow_to=compiled.narrow_to,
+                    resolved_position=compiled.resolved_position,
+                    resolved_entities=[row.resolved_entity for row in groups[edge]],
+                    family_variants=[row.family_variant for row in groups[edge]],
+                )
+            ),
         )
         for edge in order
     )
@@ -335,7 +364,7 @@ def find_history(
 
 def _execute_compiled(
     port: DbPort, dialect: Dialect, compiled: CompiledRead, statements: list[ExecutedStatement]
-) -> list[Row]:
+) -> list[MaterializedReadRow]:
     """Execute one compiled read, materializing its rows through its OWN transform.
 
     Takes the whole `~parallax.core.sql_gen.CompiledRead` rather than a statement
@@ -349,7 +378,7 @@ def _execute_compiled(
     structural rather than a convention every level has to remember.
     """
     return [
-        compiled.transform_row(row)
+        compiled.materialize_row(row)
         for row in _execute(port, dialect, compiled.statement, statements)
     ]
 

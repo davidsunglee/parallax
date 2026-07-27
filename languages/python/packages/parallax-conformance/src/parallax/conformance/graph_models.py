@@ -58,7 +58,7 @@ class Coverage(
     navigate hop ``Policy.coverages`` reaches)."""
 
     id: Attr[int] = attr(primary_key=True)
-    policy_id: Attr[int] = attr(column="policy_id")
+    policy_id: Attr[int]
     amount: Attr[Decimal] = attr(precision=18, scale=2)
     claims: Rel[tuple["Claim", ...]] = rel(
         cardinality=ONE_TO_MANY, join=("id", "coverage_id"), dependent=True
@@ -79,7 +79,7 @@ class Claim(
     relationships of its own)."""
 
     id: Attr[int] = attr(primary_key=True)
-    coverage_id: Attr[int] = attr(column="coverage_id")
+    coverage_id: Attr[int]
     reserve: Attr[Decimal] = attr(precision=18, scale=2)
 
 

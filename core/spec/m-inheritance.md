@@ -203,6 +203,61 @@ own; the descriptor's value phase expands conventional-column spellings into
 declared attributes before formation, which is what keeps the rest of column
 order a declaration fact.
 
+Every physical column contributor in one table MUST have a distinct column
+name. The contributors are scalar Attributes, top-level Value Object document
+columns, and (under table-per-hierarchy) the root-owned tag column. The rule is
+evaluated over the physical table: a standalone Entity's local chain, each
+table-per-concrete-subtype concrete's ancestry chain, and the complete
+table-per-hierarchy shared-table superset. Two distinct contributors claiming
+one name are rejected during Model Formation as
+`inheritance-physical-column-collision`; storage consumers MUST NOT choose a
+winner or infer member identity from a duplicate raw row key.
+
+Consequently, disjoint table-per-concrete-subtype branches may reuse a physical
+column name because they own different tables. An abstract union preserves the
+per-branch contributor provenance even when two branch-local columns share that
+name; it MUST NOT infer one declaration from the duplicate spelling. Disjoint
+table-per-hierarchy branches may still reuse a canonical member name, but their
+shared table means they MUST declare distinct column overrides. The same
+requirement makes two Value Object occurrences, or an Attribute and a Value
+Object occurrence, unambiguously addressable even when their canonical names
+differ.
+
+### Materialized field keys
+
+Physical row keys and materialized graph keys are related but not identical. A
+materialized Entity node has four provenance-bearing contributor categories:
+
+1. scalar Attributes render under their physical column names;
+2. top-level Value Objects render under their canonical occurrence names, even
+   when their document storage columns differ;
+3. loaded relationships render under their canonical local relationship names,
+   or under a narrowed-view key; and
+4. a polymorphic result renders the synthetic `familyVariant` key.
+
+An implementation MUST preserve those categories until graph rendering. In
+particular, a Value Object document column whose physical name equals a
+relationship name is legal when the Value Object's canonical occurrence name is
+different: attaching the relationship MUST neither overwrite the document nor
+cause the relationship to be renamed as the Value Object. The physical document
+key is an input-row key, not the occurrence's rendered graph key. The same
+provenance rule permits a Value Object storage column named `familyVariant` when
+the occurrence renders under a different canonical name: the decoded document
+and the synthetic variant remain separate until rendering.
+
+Every key that can coexist on one concrete node MUST nevertheless be distinct in
+the rendered mapping. Formation rejects an Attribute physical column that equals
+an applicable Value Object occurrence name or broad relationship name. It also
+reserves every `<relationshipName>[` prefix from applicable Attribute physical
+columns because narrowed views occupy that derived-key namespace. On an
+inheritance participant, the synthetic `familyVariant` key is likewise reserved
+from Attribute physical columns, Value Object occurrence names, and relationship
+names. These ambiguities are
+`inheritance-materialization-key-collision`; a materializer MUST NOT choose a
+winner. Foundational canonical member-name collisions remain
+`metamodel-local-member-collision`, and duplicate physical contributors remain
+`inheritance-physical-column-collision`.
+
 If a future feature ever synthesizes a physical column that no declared
 attribute backs, that feature's owner becomes a **co-owner** of this law and the
 single-owner answer stated here needs revisiting.
@@ -212,8 +267,13 @@ single-owner answer stated here needs revisiting.
 A read targeting an abstract position (the root or an abstract subtype,
 optionally `narrow`ed) is a **discriminated-union read**: it returns every
 concrete variant the position resolves to, each tagged by `familyVariant` (the
-concrete subtype name, materialized from the tag metadata — never an authored
-column, `m-sql` / `m-case-format`). What each returned leaf carries **beyond**
+concrete subtype's **variant spelling**, materialized from the tag metadata —
+never an authored column, `m-sql` / `m-case-format`). The variant spelling is the
+bare local Entity name when that name is unique among the family's concrete
+subtypes; when two concrete subtypes in one family share a local name across
+namespaces, each such subtype uses its canonical qualified Entity spelling. Thus
+existing families retain `Dog`, while duplicate local names render, for example,
+`catalog.SharedVariant` and `archive.SharedVariant`. What each returned leaf carries **beyond**
 that tag depends on the read's result form (`m-case-format` *Read result
 form*): a **row-form** (values lane) leaf is the flat SQL superset row (every
 branch's columns, non-applicable ones `null`); an **instance-form** (object
@@ -279,10 +339,11 @@ identity predicates so it touches only that subtype's rows. A
 ## Canonical concrete-subtype ordering
 
 Whenever a family's concrete subtypes are **enumerated** in a canonical artifact,
-they appear in one fixed **total order**: **ascending by concrete-subtype entity
-name, compared codepoint-by-codepoint (Unicode scalar value)** — i.e. plain
-**alphabetical order by entity name**. This order is a pure function of the entity
-names and is **independent of the descriptor's declaration order and file layout**:
+they appear in one fixed **total order**: ascending by canonical Entity Identity
+sort key `(namespace or "", name)`, compared codepoint-by-codepoint. For the
+ordinary one-namespace family this is the existing alphabetical order by local
+entity name. This order is a pure function of the Entity Identities and is
+**independent of the descriptor's declaration order and file layout**:
 reordering the subtype entries in a model file, or splitting them across files,
 never changes it. The **effective concrete-subtype set** of any polymorphic
 position (root, abstract subtype, concrete subtype, or a resolved `narrow`) is
@@ -376,7 +437,18 @@ owns the complete code-set declaration; this module owns each code's meaning.
 - **Members do not shadow across ancestry** — a descendant cannot redeclare an
   ancestor Attribute, Relationship, or top-level Value Object name, including
   cross-category shadowing (`inheritance-member-shadowing`). Disjoint sibling
-  branches may reuse a name.
+  branches may reuse a name; under table-per-hierarchy they use distinct
+  physical column overrides as required by `inheritance-physical-column-collision`.
+- **Physical columns do not collide** — distinct Attributes, top-level Value
+  Objects, and a table-per-hierarchy tag never claim one physical column in the
+  same table (`inheritance-physical-column-collision`). The check follows the
+  strategy-specific table boundaries stated under *Canonical column order*.
+- **Materialized field keys do not collide** — the scalar-column, canonical
+  Value Object, relationship/narrowed-view, and synthetic `familyVariant`
+  keyspaces described under *Materialized field keys* remain unambiguous on
+  every concrete node (`inheritance-materialization-key-collision`). Value Object
+  storage keys retain provenance and therefore do not collide merely because a
+  relationship has the same local name.
 
 ## The Inheritance Facet
 

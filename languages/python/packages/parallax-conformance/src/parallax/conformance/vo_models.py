@@ -281,7 +281,7 @@ class Location(
     deep-fetch x value-object composition witness AT DEPTH."""
 
     id: Attr[int] = attr(primary_key=True)
-    customer_id: Attr[int] = attr(column="customer_id")
+    customer_id: Attr[int]
     label: Attr[str] = attr(max_length=64)
     address: Attr[CustomerAddress | None]
     customer: Rel[Customer | None] = rel(reverse_of="locations")
@@ -302,7 +302,7 @@ class Depot(
     decode hazard the corpus's own commentary explains."""
 
     id: Attr[int] = attr(primary_key=True)
-    customer_id: Attr[int] = attr(column="customer_id")
+    customer_id: Attr[int]
     label: Attr[str] = attr(max_length=64)
     address: Attr[DepotAddress | None]
     customer: Rel[Customer | None] = rel(reverse_of="depots")

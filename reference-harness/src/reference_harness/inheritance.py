@@ -102,6 +102,8 @@ INHERITANCE_TEMPORAL_AXES_NOT_ROOT_OWNED = "inheritance-temporal-axes-not-root-o
 # versioned or not — is rejected. A family is versioned together or not at all.
 INHERITANCE_OPTIMISTIC_LOCKING_NOT_ROOT_OWNED = "inheritance-optimistic-locking-not-root-owned"
 INHERITANCE_PERSISTENCE_NOT_ROOT_OWNED = "inheritance-persistence-not-root-owned"
+INHERITANCE_PHYSICAL_COLUMN_COLLISION = "inheritance-physical-column-collision"
+INHERITANCE_MATERIALIZATION_KEY_COLLISION = "inheritance-materialization-key-collision"
 
 MODEL_REJECTED_RULES: frozenset[str] = frozenset(
     {
@@ -121,6 +123,8 @@ MODEL_REJECTED_RULES: frozenset[str] = frozenset(
         INHERITANCE_TEMPORAL_AXES_NOT_ROOT_OWNED,
         INHERITANCE_OPTIMISTIC_LOCKING_NOT_ROOT_OWNED,
         INHERITANCE_PERSISTENCE_NOT_ROOT_OWNED,
+        INHERITANCE_PHYSICAL_COLUMN_COLLISION,
+        INHERITANCE_MATERIALIZATION_KEY_COLLISION,
     }
 )
 
@@ -184,6 +188,11 @@ def parent_of(definition: dict[str, Any]) -> str | None:
     return block.get("parent") if block else None
 
 
+def _qualified_name(definition: dict[str, Any]) -> str:
+    namespace = definition.get("namespace")
+    return definition["name"] if namespace is None else f"{namespace}.{definition['name']}"
+
+
 def is_abstract(definition: dict[str, Any]) -> bool:
     """True for a tableless/rowless abstract node (``root`` / ``abstract-subtype``)."""
     return role_of(definition) in ABSTRACT_ROLES
@@ -224,12 +233,37 @@ class Family:
     """
 
     def __init__(self, entity_defs: list[dict[str, Any]]) -> None:
-        self.defs: dict[str, dict[str, Any]] = {
-            d["name"]: d for d in entity_defs if isinstance(d, dict) and "name" in d
+        definitions = [d for d in entity_defs if isinstance(d, dict) and "name" in d]
+        counts: dict[str, int] = {}
+        for definition in definitions:
+            counts[definition["name"]] = counts.get(definition["name"], 0) + 1
+        self._keys = {
+            id(definition): (
+                definition["name"]
+                if counts[definition["name"]] == 1
+                else _qualified_name(definition)
+            )
+            for definition in definitions
         }
-        self.order: list[str] = [
-            d["name"] for d in entity_defs if isinstance(d, dict) and "name" in d
-        ]
+        self.defs = {self._keys[id(definition)]: definition for definition in definitions}
+        self.order = [self._keys[id(definition)] for definition in definitions]
+        identities = {
+            _qualified_name(definition): self._keys[id(definition)] for definition in definitions
+        }
+        self.parents: dict[str, str | None] = {}
+        for key, definition in self.defs.items():
+            parent = parent_of(definition)
+            if parent is None:
+                self.parents[key] = None
+            elif "." in parent:
+                self.parents[key] = identities.get(parent, parent)
+            else:
+                namespace = definition.get("namespace")
+                qualified = parent if namespace is None else f"{namespace}.{parent}"
+                self.parents[key] = identities.get(qualified, parent)
+
+    def key_of(self, definition: dict[str, Any]) -> str:
+        return self._keys[id(definition)]
 
     def children_of(self, name: str) -> list[str]:
         """Direct subtypes of *name*, in descriptor declaration order.
@@ -239,7 +273,7 @@ class Family:
         ordering. The canonical concrete-subtype order is alphabetical
         (:func:`concrete_descendants` / :func:`canonical_concrete_order`).
         """
-        return [child for child in self.order if parent_of(self.defs[child]) == name]
+        return [child for child in self.order if self.parents[child] == name]
 
     def ancestry(self, name: str) -> list[str]:
         """The chain root -> ... -> *name*, or a best-effort prefix if malformed.
@@ -253,7 +287,7 @@ class Family:
         while current is not None and current in self.defs and current not in seen:
             seen.add(current)
             chain.append(current)
-            current = parent_of(self.defs[current])
+            current = self.parents[current]
         chain.reverse()
         return chain
 
@@ -373,7 +407,11 @@ class Family:
         the authored spelling and of the descriptor's file layout, so ``[Cat, Dog]``
         and ``[Pet]`` both yield ``[Cat, Dog]``.
         """
-        return sorted(concretes)
+        def identity(name: str) -> tuple[str, str]:
+            namespace, separator, local_name = name.rpartition(".")
+            return (namespace if separator else "", local_name if separator else name)
+
+        return sorted(concretes, key=identity)
 
     def declaring_entity(self, cls: str, attr_name: str) -> str | None:
         """The NEAREST entity in *cls*'s ancestry that literally declares *attr_name*.
@@ -418,6 +456,13 @@ def _merge_ancestry_attributes(family: Family, name: str) -> list[dict[str, Any]
     return merged
 
 
+def _merge_ancestry_value_objects(family: Family, name: str) -> list[dict[str, Any]]:
+    merged: list[dict[str, Any]] = []
+    for ancestor in family.ancestry(name):
+        merged.extend(family.defs[ancestor].get("valueObjects", []) or [])
+    return merged
+
+
 def _synthesize_tag_attribute(column: str) -> dict[str, Any]:
     """A framework-owned tag column, presented as a non-null string attribute.
 
@@ -448,17 +493,22 @@ def resolve_effective_definition(entity_defs: list[dict[str, Any]], name: str) -
     Abstract nodes keep their (tableless) definition with the inherited attribute
     chain surfaced for introspection.
     """
-    definition = next((d for d in entity_defs if d.get("name") == name), None)
+    exact = [d for d in entity_defs if _qualified_name(d) == name]
+    local = [d for d in entity_defs if d.get("name") == name]
+    matches = exact or local
+    definition = matches[0] if len(matches) == 1 else None
     if definition is None:
         raise KeyError(f"no entity {name!r} in descriptor")
     if inheritance_of(definition) is None:
         return definition
 
     family = Family(entity_defs)
-    merged = _merge_ancestry_attributes(family, name)
+    key = family.key_of(definition)
+    merged = _merge_ancestry_attributes(family, key)
 
     resolved = copy.deepcopy(definition)
     resolved["attributes"] = merged
+    resolved["valueObjects"] = _merge_ancestry_value_objects(family, key)
 
     # Inherit As-Of Axes from
     # the family ROOT ALONE (the binding root-ownership decision: temporality is
@@ -472,19 +522,19 @@ def resolve_effective_definition(entity_defs: list[dict[str, Any]], name: str) -
     # flatten inheritance) still classifies the concrete non-temporal from its
     # own empty axes — this is the inheritance-aware view.
     if "asOfAxes" not in resolved:
-        root_name = family.root_of(name)
+        root_name = family.root_of(key)
         root_def = family.defs.get(root_name, {}) if root_name is not None else {}
         if "asOfAxes" in root_def:
             resolved["asOfAxes"] = copy.deepcopy(root_def["asOfAxes"])
 
     role = role_of(definition)
-    strategy = family.strategy_of(name)
+    strategy = family.strategy_of(key)
     if role == ROLE_CONCRETE and strategy == STRATEGY_TPH:
-        root_name = family.root_of(name)
+        root_name = family.root_of(key)
         root_def = family.defs.get(root_name, {}) if root_name is not None else {}
         if "table" in root_def:
             resolved["table"] = root_def["table"]
-        tag_column = family.tag_column_of(name)
+        tag_column = family.tag_column_of(key)
         if tag_column is not None and all(effective_column(a) != tag_column for a in merged):
             last_pk = -1
             for index, attribute in enumerate(merged):
@@ -528,6 +578,91 @@ def validate_family(descriptor: dict[str, Any]) -> None:
     validate_family_defs(defs)
 
 
+def _declared_physical_columns(definition: dict[str, Any]) -> list[tuple[str, str]]:
+    """One declaration's scalar and top-level Value Object contributors."""
+    contributors = [
+        (effective_column(attribute), f"Attribute {definition['name']}.{attribute['name']}")
+        for attribute in definition.get("attributes", []) or []
+        if isinstance(attribute, dict)
+    ]
+    contributors.extend(
+        (
+            value_object.get("column", default_column_name(value_object["name"])),
+            f"Value Object {definition['name']}.{value_object['name']}",
+        )
+        for value_object in definition.get("valueObjects", []) or []
+        if isinstance(value_object, dict)
+    )
+    return contributors
+
+
+def _validate_physical_table(
+    definitions: list[dict[str, Any]], *, tag_column: str | None = None
+) -> None:
+    """Reject two provenance-distinct contributors to one physical row key."""
+    claimed: dict[str, str] = {}
+    contributors: list[tuple[str, str]] = []
+    if tag_column is not None:
+        contributors.append((tag_column, "table-per-hierarchy tag"))
+    for definition in definitions:
+        contributors.extend(_declared_physical_columns(definition))
+    for column, contributor in contributors:
+        existing = claimed.get(column)
+        if existing is not None:
+            raise RejectionError(
+                INHERITANCE_PHYSICAL_COLUMN_COLLISION,
+                f"physical column {column!r} is claimed by both {existing} and {contributor}",
+            )
+        claimed[column] = contributor
+
+
+def _validate_materialization_keys(
+    definitions: list[dict[str, Any]], *, family_variant: bool
+) -> None:
+    """Reject provenance-distinct contributors that render one node key."""
+    claimed: dict[str, str] = {}
+
+    def claim(key: str, contributor: str) -> None:
+        existing = claimed.get(key)
+        if existing is not None:
+            raise RejectionError(
+                INHERITANCE_MATERIALIZATION_KEY_COLLISION,
+                f"materialized key {key!r} is claimed by both {existing} and {contributor}",
+            )
+        claimed[key] = contributor
+
+    if family_variant:
+        claim("familyVariant", "polymorphic family variant")
+    relationships: list[tuple[str, str]] = []
+    attributes: list[tuple[str, str]] = []
+    for definition in definitions:
+        entity = definition["name"]
+        for attribute in definition.get("attributes", []) or []:
+            if isinstance(attribute, dict):
+                attributes.append(
+                    (effective_column(attribute), f"Attribute {entity}.{attribute['name']}")
+                )
+        for value_object in definition.get("valueObjects", []) or []:
+            if isinstance(value_object, dict):
+                claim(value_object["name"], f"Value Object {entity}.{value_object['name']}")
+        for relationship in definition.get("relationships", []) or []:
+            if isinstance(relationship, dict):
+                pair = (relationship["name"], f"Relationship {entity}.{relationship['name']}")
+                relationships.append(pair)
+    for key, contributor in attributes:
+        claim(key, contributor)
+    for key, contributor in relationships:
+        claim(key, contributor)
+    for key, contributor in attributes:
+        for relationship, relationship_contributor in relationships:
+            if key.startswith(f"{relationship}["):
+                raise RejectionError(
+                    INHERITANCE_MATERIALIZATION_KEY_COLLISION,
+                    f"materialized key {key!r} from {contributor} occupies the narrowed-view "
+                    f"namespace of {relationship_contributor}",
+                )
+
+
 def _independent_families(
     participants: list[dict[str, Any]], family: Family
 ) -> list[tuple[str, list[dict[str, Any]]]]:
@@ -542,7 +677,7 @@ def _independent_families(
     """
     grouped: dict[str, list[dict[str, Any]]] = {}
     for definition in participants:
-        top = family.ancestry(definition["name"])[0]
+        top = family.ancestry(family.key_of(definition))[0]
         grouped.setdefault(top, []).append(definition)
     return list(grouped.items())
 
@@ -554,16 +689,22 @@ def validate_family_defs(entity_defs: list[dict[str, Any]]) -> None:
     strategy-scoped checks below are therefore asked once per family, so one
     family's root never answers for another's.
     """
+    for definition in entity_defs:
+        if inheritance_of(definition) is None:
+            _validate_physical_table([definition])
+            _validate_materialization_keys([definition], family_variant=False)
+
     participants = [d for d in entity_defs if inheritance_of(d) is not None]
     if not participants:
         return
 
-    by_name = {d["name"]: d for d in entity_defs if isinstance(d, dict) and "name" in d}
+    family = Family(entity_defs)
 
     # 1. Every declared parent resolves to an entity in the descriptor.
     for definition in participants:
-        parent = parent_of(definition)
-        if parent is not None and parent not in by_name:
+        key = family.key_of(definition)
+        parent = family.parents[key]
+        if parent is not None and parent not in family.defs:
             raise RejectionError(
                 INHERITANCE_UNKNOWN_PARENT,
                 f"{definition['name']!r} names parent {parent!r}, which the descriptor "
@@ -573,7 +714,7 @@ def validate_family_defs(entity_defs: list[dict[str, Any]]) -> None:
     # 2. Parent links are acyclic.
     for definition in participants:
         seen: set[str] = set()
-        current: str | None = definition["name"]
+        current: str | None = family.key_of(definition)
         while current is not None:
             if current in seen:
                 raise RejectionError(
@@ -581,7 +722,7 @@ def validate_family_defs(entity_defs: list[dict[str, Any]]) -> None:
                     f"parent links from {definition['name']!r} form a cycle at {current!r}",
                 )
             seen.add(current)
-            current = parent_of(by_name[current]) if current in by_name else None
+            current = family.parents[current] if current in family.defs else None
 
     # 4. A non-root participant MUST NOT redeclare the family strategy.
     for definition in participants:
@@ -635,15 +776,13 @@ def validate_family_defs(entity_defs: list[dict[str, Any]]) -> None:
                 f"family-wide and MUST be declared only on the root",
             )
 
-    family = Family(entity_defs)
-
     # 6. Every concrete subtype reaches an abstract root through its ancestry.
     for definition in participants:
         if role_of(definition) != ROLE_CONCRETE:
             continue
-        chain = family.ancestry(definition["name"])
+        chain = family.ancestry(family.key_of(definition))
         top = chain[0] if chain else None
-        if top is None or role_of(by_name.get(top, {})) != ROLE_ROOT:
+        if top is None or role_of(family.defs.get(top, {})) != ROLE_ROOT:
             raise RejectionError(
                 INHERITANCE_CONCRETE_WITHOUT_ABSTRACT_ROOT,
                 f"concrete subtype {definition['name']!r} has no abstract root ancestor "
@@ -660,7 +799,7 @@ def validate_family_defs(entity_defs: list[dict[str, Any]]) -> None:
     #    tops out at a `root` — a family that can never be instantiated or
     #    discriminated.
     for top, members in families:
-        if role_of(by_name.get(top, {})) != ROLE_ROOT:
+        if role_of(family.defs.get(top, {})) != ROLE_ROOT:
             raise RejectionError(
                 INHERITANCE_MISSING_ROOT,
                 f"the inheritance participants "
@@ -670,7 +809,7 @@ def validate_family_defs(entity_defs: list[dict[str, Any]]) -> None:
 
     # Strategy-scoped checks, asked of each family under ITS OWN root's strategy.
     for top, members in families:
-        root_definition = by_name[top]
+        root_definition = family.defs[top]
         root_block = inheritance_of(root_definition)
         strategy = root_block.get("strategy") if root_block else None
 
@@ -698,6 +837,12 @@ def validate_family_defs(entity_defs: list[dict[str, Any]]) -> None:
                         f"table-per-concrete-subtype family carries a tag/tagValue on "
                         f"{definition['name']!r}; only table-per-hierarchy uses a tag",
                     )
+            for definition in members:
+                if role_of(definition) != ROLE_CONCRETE:
+                    continue
+                chain = [family.defs[name] for name in family.ancestry(family.key_of(definition))]
+                _validate_physical_table(chain)
+                _validate_materialization_keys(chain, family_variant=True)
 
         if strategy == STRATEGY_TPH:
             concretes = [d for d in members if role_of(d) == ROLE_CONCRETE]
@@ -740,6 +885,13 @@ def validate_family_defs(entity_defs: list[dict[str, Any]]) -> None:
                         f"share tagValue {value!r}",
                     )
                 seen_values[value] = name
+            root_tag = inheritance_of(root_definition)
+            tag = root_tag.get("tag") if root_tag is not None else None
+            tag_column = tag.get("column") if isinstance(tag, dict) else None
+            _validate_physical_table(members, tag_column=tag_column)
+            for definition in concretes:
+                chain = [family.defs[name] for name in family.ancestry(family.key_of(definition))]
+                _validate_materialization_keys(chain, family_variant=True)
 
 
 # --- operation-level narrow / subtype-scope validation (raises RejectionError) --
@@ -1026,6 +1178,10 @@ def concrete_superset_columns(
         resolved = resolve_effective_definition(entity_defs, name)
         for attribute in resolved.get("attributes", []) or []:
             column = effective_column(attribute)
+            if column not in columns:
+                columns.append(column)
+        for value_object in resolved.get("valueObjects", []) or []:
+            column = value_object.get("column", default_column_name(value_object["name"]))
             if column not in columns:
                 columns.append(column)
     return columns

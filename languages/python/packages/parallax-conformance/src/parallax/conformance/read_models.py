@@ -93,7 +93,7 @@ class Balance(
     ),
 ):
     id: Attr[int] = attr(primary_key=True, column="bal_id")
-    acct_num: Attr[str] = attr(column="acct_num", max_length=32)
+    acct_num: Attr[str] = attr(max_length=32)
     value: Attr[Decimal] = attr(column="val", precision=18, scale=2)
 
 
@@ -114,7 +114,7 @@ class Payment(
 
 
 class CardPayment(Payment, namespace=_NS, inheritance=ConcreteSubtype(tag_value="card")):
-    card_network: Attr[str | None] = attr(column="card_network", max_length=16)
+    card_network: Attr[str | None] = attr(max_length=16)
 
 
 class CashPayment(Payment, namespace=_NS, inheritance=ConcreteSubtype(tag_value="cash")):
@@ -130,7 +130,7 @@ PAYMENT_MODEL = MetamodelHub(Payment, CardPayment, CashPayment)
 class Document(Entity, namespace=_NS, inheritance=AbstractRoot(TABLE_PER_CONCRETE_SUBTYPE)):
     id: Attr[int] = attr(primary_key=True)
     title: Attr[str] = attr(max_length=64)
-    folder_id: Attr[int | None] = attr(column="folder_id")
+    folder_id: Attr[int | None]
 
 
 class FinancialDocument(Document, namespace=_NS, inheritance=AbstractSubtype):
@@ -138,11 +138,11 @@ class FinancialDocument(Document, namespace=_NS, inheritance=AbstractSubtype):
 
 
 class Invoice(FinancialDocument, table="invoice", namespace=_NS, inheritance=ConcreteSubtype):
-    amount_due: Attr[Decimal] = attr(column="amount_due", precision=18, scale=2)
+    amount_due: Attr[Decimal] = attr(precision=18, scale=2)
 
 
 class Receipt(FinancialDocument, table="receipt", namespace=_NS, inheritance=ConcreteSubtype):
-    paid_amount: Attr[Decimal] = attr(column="paid_amount", precision=18, scale=2)
+    paid_amount: Attr[Decimal] = attr(precision=18, scale=2)
 
 
 class Memo(Document, table="memo", namespace=_NS, inheritance=ConcreteSubtype):
@@ -176,15 +176,15 @@ class Animal(
 ):
     id: Attr[int] = attr(primary_key=True)
     name: Attr[str] = attr(max_length=32)
-    owner_id: Attr[int | None] = attr(column="owner_id")
+    owner_id: Attr[int | None]
 
 
 class Pet(Animal, namespace=_NS, inheritance=AbstractSubtype):
-    license_id: Attr[str | None] = attr(column="license_id", max_length=16)
+    license_id: Attr[str | None] = attr(max_length=16)
 
 
 class Dog(Pet, namespace=_NS, inheritance=ConcreteSubtype(tag_value="dog")):
-    bark_volume: Attr[int | None] = attr(column="bark_volume", type=Int32)
+    bark_volume: Attr[int | None] = attr(type=Int32)
 
 
 class Cat(Pet, namespace=_NS, inheritance=ConcreteSubtype(tag_value="cat")):
@@ -197,7 +197,7 @@ class WildBoar(Animal, namespace=_NS, inheritance=ConcreteSubtype(tag_value="boa
     to ``WildBoar`` — its effective concrete set is ``[Dog, Cat]``, never
     ``WildBoar`` (``m-inheritance-064``/``-072``'s own rejected narrows)."""
 
-    tusk_length: Attr[Decimal | None] = attr(column="tusk_length", precision=18, scale=2)
+    tusk_length: Attr[Decimal | None] = attr(precision=18, scale=2)
 
 
 # --------------------------------------------------------------------------- #
@@ -253,7 +253,7 @@ class Passport(
     ),
 ):
     id: Attr[int] = attr(primary_key=True)
-    person_id: Attr[int] = attr(column="person_id")
+    person_id: Attr[int]
     number: Attr[str] = attr(max_length=32)
     holder: Rel[Person | None] = rel(reverse_of="passport")
 

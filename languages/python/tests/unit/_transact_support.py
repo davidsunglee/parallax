@@ -76,7 +76,7 @@ FIXED = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
 # gain, so the local fixture stays.
 class WherePosition(Bitemporal, table="where_position", namespace="parallax.compatibility"):
     id: Attr[int] = attr(primary_key=True)
-    acct_num: Attr[str] = attr(column="acct_num", max_length=32)
+    acct_num: Attr[str] = attr(max_length=32)
     value: Attr[Decimal] = attr(precision=18, scale=2)
 
 

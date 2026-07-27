@@ -134,12 +134,12 @@ def test_statement_is_frozen_value() -> None:
 
 # --------------------------------------------------------------------------- #
 # The supported interface itself. `parallax.core.sql_gen` exports               #
-# exactly six names; everything else in the package is private implementation.  #
+# exactly seven names; everything else in the package is private implementation. #
 # The result objects are ordinary frozen dataclasses, so equality, `repr`,      #
 # hashing, copying, and same-version pickling are all structural — no           #
 # `__reduce__`, no stored callable, nothing to keep in sync by hand.            #
 # --------------------------------------------------------------------------- #
-def test_the_package_exports_exactly_the_six_supported_names() -> None:
+def test_the_package_exports_exactly_the_seven_supported_names() -> None:
     # An EXACT set, not a superset: re-exporting a private helper is precisely the
     # regression this guards, and a superset assertion would not see it. Canonical
     # column order is `m-inheritance`'s export, so its absence here is the point.
@@ -148,6 +148,7 @@ def test_the_package_exports_exactly_the_six_supported_names() -> None:
     assert set(sql_gen.__all__) == {
         "CompiledPredicate",
         "CompiledRead",
+        "MaterializedReadRow",
         "SqlGenError",
         "Statement",
         "compile_read",
@@ -183,7 +184,9 @@ def test_compiled_read_repr_is_exact_and_stable() -> None:
     assert repr(compiled) == (
         "CompiledRead(statement=Statement(sql='select t0.id, t0.name, t0.sku, "
         "t0.qty, t0.price, t0.active, t0.ordered_on from orders t0', binds=()), "
-        "narrow_to=None, _transform=_IdentityTransform())"
+        "narrow_to=None, target=EntityIdentity(namespace='parallax.compatibility', name='Order'), "
+        "resolved_position=(EntityIdentity(namespace='parallax.compatibility', name='Order'),), "
+        "_transform=_IdentityTransform())"
     )
 
 

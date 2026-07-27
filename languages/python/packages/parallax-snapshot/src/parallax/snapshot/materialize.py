@@ -1,8 +1,9 @@
 """``parallax.snapshot.materialize`` enforcement scope (m-snapshot-read).
 
 The **one assembler**: rows-per-level in, neutral (class-free) graph nodes out.
-:class:`Node` is the whole vocabulary — a plain mutable field dict plus its
-declared primary-key columns (for cycle-stub rendering) — because corpus models
+:class:`Node` is the whole vocabulary — provenance-separated scalar, Value Object,
+relationship, and synthetic-variant fields plus its declared primary-key columns
+(for cycle-stub rendering) — because corpus models
 have no Python classes and the production developer surface (`Snapshot[T]`, in
 `parallax.snapshot.handle`) is a frozen wrapping over these SAME nodes, not a
 different graph.
@@ -52,14 +53,17 @@ from parallax.core import inheritance
 from parallax.core.deep_fetch import FetchLevel
 from parallax.core.metamodel import (
     AttributeMetadata,
+    EntityIdentity,
     EntityMetadata,
     Metamodel,
     Multiplicity,
     NestedValueObjectMetadata,
     PrimaryKey,
+    RelativeEntityReference,
     TablePerConcreteSubtype,
     ValueObjectMetadata,
     entity_by_name,
+    resolve_entity_reference,
 )
 
 __all__ = [
@@ -77,21 +81,29 @@ class MaterializeError(ValueError):
     """The assembler cannot materialize a row or resolve a back-reference."""
 
 
+def _new_field_map() -> dict[str, object]:
+    return {}
+
+
 @dataclass(slots=True)
 class Node:
     """One neutral, class-free snapshot graph node (m-snapshot-read).
 
-    ``fields`` is a plain mutable dict: scalar/value-object/`familyVariant`
-    values at construction, plus a relationship-attached ``Node`` / ``list[Node]``
-    / ``None`` entry per attached level, keyed by that level's own
-    ``attach_key`` — absence of a key IS the closed-world "not loaded" state,
-    never a sentinel value. ``pk_columns`` names the declared primary-key
-    columns among ``fields`` (in declaration order) — what a serializer's
+    ``fields`` contains scalar physical-column values. ``value_objects`` retains
+    decoded documents under physical storage keys, ``relationships`` contains a
+    relationship-attached ``Node`` / ``list[Node]`` / ``None`` entry per attached
+    level, and ``family_variant`` carries the synthetic polymorphic spelling.
+    Keeping those categories separate lets a Value Object storage key equal a
+    relationship name without either overwriting or renaming the other. Absence
+    from ``relationships`` IS the closed-world "not loaded" state, never a
+    sentinel value. ``pk_columns`` names the declared primary-key columns among
+    ``fields`` (in declaration order) — what a serializer's
     back-reference-cycle truncation renders as the PK-only stub.
 
-    ``resolved_entity`` is this row's own STATICALLY known concrete entity
-    name — the compile-time-resolved position `_materialize` decoded this
-    row against (never wire-visible: unlike ``fields``, it is assembler-only
+    ``resolved_entity`` is this row's own STATICALLY known canonical Entity
+    Identity — the sole concrete resolved by `_materialize` when one is known,
+    otherwise the queried inheritance position whose family contains the row.
+    It is never wire-visible: unlike ``fields``, it is assembler-only
     bookkeeping the `then.graph` renderer never walks). A table-per-concrete-
     subtype read resolving to exactly ONE concrete emits no `familyVariant`
     column at all (`m-sql`'s `_compile_tpcs_single`), so this is the ONLY
@@ -105,7 +117,10 @@ class Node:
 
     fields: dict[str, object]
     pk_columns: tuple[str, ...]
-    resolved_entity: str | None = None
+    resolved_entity: EntityIdentity | None = None
+    value_objects: dict[str, object] = field(default_factory=_new_field_map)
+    relationships: dict[str, object] = field(default_factory=_new_field_map)
+    family_variant: str | None = None
 
 
 def _entity(meta: Metamodel, name: str) -> EntityMetadata:
@@ -142,37 +157,45 @@ def _declared_primary_key(entity: EntityMetadata) -> tuple[AttributeMetadata, ..
 
 
 def _resolved_position(
-    meta: Metamodel, entity_name: str, narrow_to: tuple[str, ...] | None
-) -> tuple[str, ...]:
-    """The row's resolved effective concrete-subtype set — mirrors `m-sql`'s own
-    narrow resolution so a level's value-object superset decodes the SAME
-    position the compiled projection actually fetched, whether reached by an
-    authored narrow or a bare polymorphic target's own full effective set."""
-    entity = _entity(meta, entity_name)
+    meta: Metamodel,
+    entity: EntityMetadata,
+    narrow_to: tuple[str, ...] | None,
+    resolved_position: tuple[EntityIdentity, ...] | None = None,
+) -> tuple[EntityIdentity, ...]:
+    """The exact effective concrete-subtype set the compiled read projected.
+
+    Production callers pass ``CompiledRead.resolved_position`` so no local-name
+    round trip can erase namespaces. ``narrow_to`` remains only as the defensive
+    direct-call fallback used by tests and older callers.
+    """
+    if resolved_position is not None:
+        return resolved_position
     if entity.inheritance is None:
-        return (entity_name,)
+        return (entity.identity,)
     facet = inheritance.view(meta)
     if narrow_to is None:
         view = facet.entity(entity.identity)
         if view is None:  # pragma: no cover - the facet covers every accepted Entity
-            return (entity_name,)
-        return tuple(identity.name for identity in view.concrete_subtypes)
-    members = [_entity(meta, name).identity for name in narrow_to]
+            return (entity.identity,)
+        return tuple(view.concrete_subtypes)
+    members = [
+        resolve_entity_reference(entity.identity, RelativeEntityReference(name))
+        for name in narrow_to
+    ]
     position = facet.position(members)
     if position is None:  # pragma: no cover - a validated narrow names one family
-        return (entity_name,)
-    return tuple(identity.name for identity in position.concrete_subtypes)
+        return (entity.identity,)
+    return tuple(position.concrete_subtypes)
 
 
 def _superset_value_objects(
-    meta: Metamodel, position: Sequence[str]
+    meta: Metamodel, position: Sequence[EntityIdentity]
 ) -> tuple[ValueObjectMetadata, ...]:
     """Every value object reachable from ``position`` (an effective concrete set)
     — the Inheritance Facet's own projection superset (ancestry prefix, then each
     concrete's own; only the SET of declared value objects, not their order,
     decides what a row's document columns hold)."""
-    members = [_entity(meta, name).identity for name in position]
-    view = inheritance.view(meta).position(members)
+    view = inheritance.view(meta).position(position)
     return () if view is None else tuple(view.superset_value_objects)
 
 
@@ -181,7 +204,7 @@ def identity_key(
     entity_name: str,
     row: Mapping[str, object],
     narrow_to: tuple[str, ...] | None = None,
-) -> tuple[str, tuple[object, ...]] | None:
+) -> tuple[EntityIdentity, tuple[object, ...]] | None:
     """The row's graph-local identity key (m-snapshot-read): ``(family-normalized
     name, primary-key value tuple)``. Family-normalized — an inheritance
     participant's identity is keyed to its family ROOT's name, never the
@@ -220,28 +243,52 @@ def identity_key(
     if not pk_attrs:
         return None
     pk = tuple(row[attr.storage.name] for attr in pk_attrs)
-    name = declaring.identity.name
+    identity = declaring.identity
     if isinstance(view.strategy, TablePerConcreteSubtype):
         variant = row.get("familyVariant")
-        name = (
-            variant
+        identity = (
+            _family_variant_identity(meta, entity, variant)
             if isinstance(variant, str)
-            else _resolved_concrete(meta, entity_name, narrow_to)
+            else _resolved_concrete_identity(meta, entity, narrow_to)
         )
-    return (name, pk)
+    return (identity, pk)
 
 
-def _resolved_concrete(meta: Metamodel, entity_name: str, narrow_to: tuple[str, ...] | None) -> str:
-    """``entity_name``'s own statically-known concrete entity name for THIS
-    decode call: the resolved position reduced to its sole member when it
-    resolves to exactly one concrete — the SAME position `decode_row`'s
-    value-object superset already derives from ``narrow_to``, so identity and
-    decoding can never disagree on what a `familyVariant`-less row's own concrete
-    is. Degrades to ``entity_name`` unchanged when the position spans 2+
-    concretes (a row's own ``familyVariant`` field is authoritative there
-    instead — this helper is consulted only when the row carries none)."""
-    position = _resolved_position(meta, entity_name, narrow_to)
-    return position[0] if len(position) == 1 else entity_name
+def _resolved_concrete_identity(
+    meta: Metamodel,
+    entity: EntityMetadata,
+    narrow_to: tuple[str, ...] | None,
+    resolved_position: tuple[EntityIdentity, ...] | None = None,
+) -> EntityIdentity:
+    """The exact statically known concrete Identity for this decode call."""
+    position = _resolved_position(meta, entity, narrow_to, resolved_position)
+    return position[0] if len(position) == 1 else entity.identity
+
+
+def _family_variant_identity(
+    meta: Metamodel, entity: EntityMetadata, variant: object
+) -> EntityIdentity:  # pragma: no cover - production supplies exact resolved identities
+    """Resolve one familyVariant only inside ``entity``'s exact family."""
+    if not isinstance(variant, str) or not variant:
+        raise MaterializeError(f"familyVariant {variant!r} is not a nonempty Entity spelling")
+    facet = inheritance.view(meta)
+    view = facet.entity(entity.identity)
+    if view is None:  # pragma: no cover - the facet covers every accepted Entity
+        raise MaterializeError(f"{entity.identity.canonical}: no inheritance view")
+    root = facet.entity(view.root)
+    if root is None:  # pragma: no cover - every accepted family has a root view
+        raise MaterializeError(f"{view.root.canonical}: no inheritance view")
+    matches = (
+        tuple(identity for identity in root.concrete_subtypes if identity.canonical == variant)
+        if "." in variant
+        else tuple(identity for identity in root.concrete_subtypes if identity.name == variant)
+    )
+    if len(matches) != 1:
+        reason = "ambiguous" if len(matches) > 1 else "unknown"
+        raise MaterializeError(
+            f"familyVariant {variant!r} is {reason} within family {view.root.canonical!r}"
+        )
+    return matches[0]
 
 
 def _pk_columns(meta: Metamodel, entity_name: str) -> tuple[str, ...]:
@@ -318,7 +365,8 @@ def decode_row(
     declared members — is skipped, never assigned. Narrowing here would corrupt
     the values-lane goldens that share this exact same `Node`.
     """
-    position = _resolved_position(meta, entity_name, narrow_to)
+    entity = _entity(meta, entity_name)
+    position = _resolved_position(meta, entity, narrow_to)
     value_objects = _superset_value_objects(meta, position)
     vo_columns = {vo.storage.name for vo in value_objects}
     fields: dict[str, object] = {key: value for key, value in row.items() if key not in vo_columns}
@@ -327,10 +375,26 @@ def decode_row(
     return fields
 
 
+def _decode_row_parts(
+    meta: Metamodel,
+    entity: EntityMetadata,
+    row: Mapping[str, object],
+    position: tuple[EntityIdentity, ...],
+) -> tuple[dict[str, object], dict[str, object]]:
+    """Decode one row while preserving scalar versus Value Object provenance."""
+    value_objects = _superset_value_objects(meta, position)
+    vo_columns = {vo.storage.name for vo in value_objects}
+    fields = {key: value for key, value in row.items() if key not in vo_columns}
+    documents = {
+        vo.storage.name: _decode_value_object(row.get(vo.storage.name), vo) for vo in value_objects
+    }
+    return fields, documents
+
+
 # --------------------------------------------------------------------------- #
 # The assembler.                                                              #
 # --------------------------------------------------------------------------- #
-def _new_identity_map() -> dict[tuple[str, tuple[object, ...]], Node]:
+def _new_identity_map() -> dict[tuple[EntityIdentity, tuple[object, ...]], Node]:
     return {}
 
 
@@ -342,13 +406,19 @@ class Assembler:
     graph (m-snapshot-read)."""
 
     meta: Metamodel
-    _identity: dict[tuple[str, tuple[object, ...]], Node] = field(default_factory=_new_identity_map)
+    _identity: dict[tuple[EntityIdentity, tuple[object, ...]], Node] = field(
+        default_factory=_new_identity_map
+    )
 
     def materialize_root(
         self,
         entity_name: str,
         rows: Sequence[Mapping[str, object]],
         narrow_to: tuple[str, ...] | None = None,
+        *,
+        resolved_position: tuple[EntityIdentity, ...] | None = None,
+        resolved_entities: Sequence[EntityIdentity] | None = None,
+        family_variants: Sequence[str | None] | None = None,
     ) -> list[Node]:
         """Decode the root query's own rows into fresh, identity-registered nodes.
 
@@ -361,7 +431,14 @@ class Assembler:
         predates this parameter — a non-family or already-concrete
         ``entity_name`` resolves identically either way.
         """
-        return self._materialize(entity_name, rows, narrow_to=narrow_to)
+        return self._materialize(
+            entity_name,
+            rows,
+            narrow_to=narrow_to,
+            resolved_position=resolved_position,
+            resolved_entities=resolved_entities,
+            family_variants=family_variants,
+        )
 
     def attach_level(
         self,
@@ -369,6 +446,10 @@ class Assembler:
         parent_nodes: Sequence[Node],
         parent_rows: Sequence[Mapping[str, object]],
         child_rows: Sequence[Mapping[str, object]] | None,
+        *,
+        resolved_position: tuple[EntityIdentity, ...] | None = None,
+        resolved_entities: Sequence[EntityIdentity] | None = None,
+        family_variants: Sequence[str | None] | None = None,
     ) -> list[Node]:
         """Attach one level's children to ``parent_nodes`` under its own
         ``attach_key``; returns the level's OWN materialized child nodes (empty
@@ -386,17 +467,26 @@ class Assembler:
         if child_rows is None:
             empty: object = [] if level.to_many else None
             for node in parent_nodes:
-                node.fields[level.attach_key] = empty
+                node.relationships[level.attach_key] = empty
             return []
         assert level.child_target is not None
         assert level.related_column is not None
-        child_nodes = self._materialize(level.child_target, child_rows, level.narrow_to)
+        child_nodes = self._materialize(
+            level.child_target,
+            child_rows,
+            level.narrow_to,
+            resolved_position=resolved_position,
+            resolved_entities=resolved_entities,
+            family_variants=family_variants,
+        )
         buckets: dict[object, list[Node]] = {}
         for row, node in zip(child_rows, child_nodes, strict=True):
             buckets.setdefault(row[level.related_column], []).append(node)
         for row, node in zip(parent_rows, parent_nodes, strict=True):
             matched = buckets.get(row[level.parent_column], [])
-            node.fields[level.attach_key] = matched if level.to_many else _one_or_none(matched)
+            node.relationships[level.attach_key] = (
+                matched if level.to_many else _one_or_none(matched)
+            )
         return child_nodes
 
     def _attach_back_reference(
@@ -409,7 +499,7 @@ class Assembler:
         for row, node in zip(parent_rows, parent_nodes, strict=True):
             fk = row[level.parent_column]
             if fk is None:
-                node.fields[level.attach_key] = [] if level.to_many else None
+                node.relationships[level.attach_key] = [] if level.to_many else None
                 continue
             referenced = self._identity.get((level.back_reference_family, (fk,)))
             if referenced is None:  # pragma: no cover - guards a malformed plan
@@ -418,7 +508,7 @@ class Assembler:
                     f"{level.back_reference_family} node for key {fk!r} (m-case-format "
                     "'Back-reference cycles' guarantees the ancestor is already known)"
                 )
-            node.fields[level.attach_key] = [referenced] if level.to_many else referenced
+            node.relationships[level.attach_key] = [referenced] if level.to_many else referenced
         return []
 
     def _materialize(
@@ -426,17 +516,51 @@ class Assembler:
         entity_name: str,
         rows: Sequence[Mapping[str, object]],
         narrow_to: tuple[str, ...] | None,
+        *,
+        resolved_position: tuple[EntityIdentity, ...] | None = None,
+        resolved_entities: Sequence[EntityIdentity] | None = None,
+        family_variants: Sequence[str | None] | None = None,
     ) -> list[Node]:
+        entity = _entity(self.meta, entity_name)
+        position = _resolved_position(self.meta, entity, narrow_to, resolved_position)
         pk_columns = _pk_columns(self.meta, entity_name)
-        resolved_entity = _resolved_concrete(self.meta, entity_name, narrow_to)
+        if resolved_entities is not None and len(resolved_entities) != len(rows):
+            raise MaterializeError("resolved entity count does not match row count")
+        if family_variants is not None and len(family_variants) != len(rows):
+            raise MaterializeError("familyVariant count does not match row count")
         nodes: list[Node] = []
-        for row in rows:
+        for index, row in enumerate(rows):
+            variant = (
+                family_variants[index]
+                if family_variants is not None
+                else (
+                    cast("str", row["familyVariant"])
+                    if entity.inheritance is not None and isinstance(row.get("familyVariant"), str)
+                    else None
+                )
+            )
+            resolved_entity = (
+                resolved_entities[index]
+                if resolved_entities is not None
+                else (
+                    _family_variant_identity(self.meta, entity, variant)
+                    if variant is not None
+                    else _resolved_concrete_identity(
+                        self.meta, entity, narrow_to, resolved_position
+                    )
+                )
+            )
+            fields, value_objects = _decode_row_parts(self.meta, entity, row, position)
+            if variant is not None:
+                fields.pop("familyVariant", None)
             node = Node(
-                fields=decode_row(self.meta, entity_name, row, narrow_to),
+                fields=fields,
                 pk_columns=pk_columns,
                 resolved_entity=resolved_entity,
+                value_objects=value_objects,
+                family_variant=variant,
             )
-            key = identity_key(self.meta, entity_name, row, narrow_to)
+            key = identity_key(self.meta, resolved_entity.canonical, row)
             if key is not None:
                 self._identity.setdefault(key, node)
             nodes.append(node)

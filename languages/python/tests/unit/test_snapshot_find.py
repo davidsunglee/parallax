@@ -22,6 +22,7 @@ from parallax.conformance import models
 from parallax.core.base import INFINITY
 from parallax.core.db_port import DbPort, Row
 from parallax.core.dialect import POSTGRES
+from parallax.core.metamodel import EntityIdentity
 from parallax.core.op_algebra import deserialize
 from parallax.snapshot import handle
 from parallax.snapshot.materialize import Node
@@ -40,12 +41,12 @@ _UTC = dt.UTC
 
 def _kids(node: Node, key: str) -> list[Node]:
     """A to-many relationship attachment, typed for test-side assertions."""
-    return cast("list[Node]", node.fields[key])
+    return cast("list[Node]", node.relationships[key])
 
 
 def _kid(node: Node, key: str) -> Node | None:
     """A to-one relationship attachment, typed for test-side assertions."""
-    return cast("Node | None", node.fields[key])
+    return cast("Node | None", node.relationships[key])
 
 
 class QueuePort:
@@ -141,7 +142,7 @@ def test_find_empty_intermediate_level_suppresses_only_the_grandchild_statement(
     )
     result = handle.find(op, ORDERS, POSTGRES, "Order", port)
     assert result.execution.round_trips == 2
-    assert result.nodes[0].fields["items"] == []
+    assert result.nodes[0].relationships["items"] == []
 
 
 def test_find_back_reference_level_issues_no_additional_statement() -> None:
@@ -203,7 +204,7 @@ def test_find_materializes_family_variant_on_child_level_rows() -> None:
     )
     result = handle.find(op, ANIMAL, POSTGRES, "Person", port)
     animal = _kids(result.nodes[0], "animals")[0]
-    assert animal.fields["familyVariant"] == "Dog"
+    assert animal.family_variant == "Dog"
     assert "kind" not in animal.fields
 
 
@@ -230,8 +231,8 @@ def test_find_threads_a_root_narrow_to_a_single_tpcs_concrete() -> None:
     )
     op = deserialize({"narrow": {"entity": "Document", "to": ["Invoice"], "operand": {"all": {}}}})
     result = handle.find(op, DOCUMENT, POSTGRES, "Document", port)
-    assert "familyVariant" not in result.nodes[0].fields
-    assert result.nodes[0].resolved_entity == "Invoice"
+    assert result.nodes[0].family_variant is None
+    assert result.nodes[0].resolved_entity == EntityIdentity("parallax.compatibility", "Invoice")
 
 
 def test_find_history_groups_rows_into_chronologically_ordered_edge_pinned_graphs() -> None:

@@ -44,11 +44,13 @@ from parallax.core.inheritance._rules import (
     CYCLE,
     DUPLICATE_TAG_VALUE,
     ISSUE_CODES,
+    MATERIALIZATION_KEY_COLLISION,
     MEMBER_SHADOWING,
     MISSING_ROOT,
     MISSING_TAG_VALUE,
     OPTIMISTIC_LOCKING_NOT_ROOT_OWNED,
     PERSISTENCE_NOT_ROOT_OWNED,
+    PHYSICAL_COLUMN_COLLISION,
     PRIMARY_KEY_MISSING,
     PRIMARY_KEY_MULTIPLE,
     RULE_SET,
@@ -80,12 +82,14 @@ __all__ = [
     "FACET_KEY",
     "INHERITANCE_MODULE",
     "ISSUE_CODES",
+    "MATERIALIZATION_KEY_COLLISION",
     "MEMBER_SHADOWING",
     "MISSING_ROOT",
     "MISSING_TAG_VALUE",
     "MODEL_COMPILER",
     "OPTIMISTIC_LOCKING_NOT_ROOT_OWNED",
     "PERSISTENCE_NOT_ROOT_OWNED",
+    "PHYSICAL_COLUMN_COLLISION",
     "PRIMARY_KEY_MISSING",
     "PRIMARY_KEY_MULTIPLE",
     "RULE_SET",
@@ -105,6 +109,7 @@ __all__ = [
     "WriteAssignmentError",
     "column_order",
     "compile_facet",
+    "family_variant_name",
     "reject_predicate_write",
     "root_metadata",
     "validate_subtype_write",
@@ -127,6 +132,20 @@ class InheritanceError(ValueError):
         super().__init__(message)
         self.rule = rule
         self.entity = entity
+
+
+def family_variant_name(facet: InheritanceFacet, concrete: EntityIdentity) -> str:
+    """Return ``concrete``'s stable wire/graph variant spelling.
+
+    A family-unique local Entity name stays bare for compatibility. When two
+    concrete subtypes in the same family share that local name across namespaces,
+    the canonical qualified Entity spelling is required so the value resolves to
+    exactly one accepted Identity.
+    """
+    concrete_view = _entity_view(facet, concrete)
+    root_view = _entity_view(facet, concrete_view.root)
+    matches = sum(1 for candidate in root_view.concrete_subtypes if candidate.name == concrete.name)
+    return concrete.canonical if matches > 1 else concrete.name
 
 
 # --------------------------------------------------------------------------- #

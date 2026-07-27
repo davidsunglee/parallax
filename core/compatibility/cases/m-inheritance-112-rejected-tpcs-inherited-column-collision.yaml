@@ -1,0 +1,29 @@
+# A table-per-concrete-subtype concrete table contains its root's inherited
+# Attribute and its own Value Object document, both mapped to `account_data`.
+# Model Formation must evaluate the concrete table's complete ancestry-derived
+# contributor chain and reject the collision before SQL.
+model: models/member-column-defaults.yaml
+tags: [m-inheritance, m-model-formation, m-value-object, m-descriptor, rejected, negative, physical-column, table-per-concrete-subtype, inherited, slice-snapshot-1, slice-managed-1]
+shape: rejected
+when:
+  model:
+    entities:
+      - name: Record
+        inheritance:
+          role: root
+          strategy: table-per-concrete-subtype
+        attributes:
+          - { name: id, type: int64, primaryKey: true }
+          - { name: accountRef, type: string, column: account_data }
+      - name: Entry
+        table: entry
+        inheritance:
+          role: concrete-subtype
+          parent: Record
+        valueObjects:
+          - name: accountDocument
+            column: account_data
+            attributes:
+              - { name: label, type: string }
+then:
+  rejectedRule: inheritance-physical-column-collision

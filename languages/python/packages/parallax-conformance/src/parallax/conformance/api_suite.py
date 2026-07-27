@@ -866,6 +866,19 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     # surface; what it adds is an emitted-SQL contract, which the compile/run sweeps
     # grade byte-exact rather than a story.
     "m-inheritance-110": _TPH_POLYMORPHIC_EXISTS_SIBLING_REASON,
+    "m-inheritance-118": (
+        "the portable deep-fetch graph collision witness is exercised by the database-backed "
+        "run lane; no separate idiomatic API story is needed"
+    ),
+    "m-inheritance-119": (
+        "the value-object/familyVariant materialization collision is exercised by the "
+        "compile and database-backed run lanes; no separate idiomatic API story is needed"
+    ),
+    "m-inheritance-120": (
+        "qualified duplicate-local variant identity and scalar-alias preservation are "
+        "exercised by the compile and database-backed run lanes; no separate idiomatic API "
+        "story is needed"
+    ),
     "m-inheritance-092": _TEMPORAL_INHERITANCE_ROW_SIBLING_REASON,
     "m-inheritance-093": _TEMPORAL_INHERITANCE_ROW_SIBLING_REASON,
     "m-inheritance-101": _CONCRETE_TARGET_TEMPORAL_ROOT_AXIS_SIBLING_REASON,
@@ -916,6 +929,13 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-inheritance-099": _INHERITANCE_DESCRIPTOR_REJECT_UNREACHABLE_REASON,
     "m-inheritance-102": _INHERITANCE_DESCRIPTOR_REJECT_UNREACHABLE_REASON,
     "m-inheritance-103": _INHERITANCE_DESCRIPTOR_REJECT_UNREACHABLE_REASON,
+    "m-inheritance-111": _INHERITANCE_DESCRIPTOR_REJECT_UNREACHABLE_REASON,
+    "m-inheritance-112": _INHERITANCE_DESCRIPTOR_REJECT_UNREACHABLE_REASON,
+    "m-inheritance-113": _INHERITANCE_DESCRIPTOR_REJECT_UNREACHABLE_REASON,
+    "m-inheritance-114": _INHERITANCE_DESCRIPTOR_REJECT_UNREACHABLE_REASON,
+    "m-inheritance-115": _INHERITANCE_DESCRIPTOR_REJECT_UNREACHABLE_REASON,
+    "m-inheritance-116": _INHERITANCE_DESCRIPTOR_REJECT_UNREACHABLE_REASON,
+    "m-inheritance-117": _INHERITANCE_DESCRIPTOR_REJECT_UNREACHABLE_REASON,
     # -- m-navigate: `navigate`-tagged corpus spelling redundancy ------------ #
     "m-navigate-001": _NAVIGATE_TAG_REDUNDANT_REASON,
     "m-navigate-005": _NAVIGATE_TAG_REDUNDANT_REASON,

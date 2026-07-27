@@ -16,7 +16,7 @@ from _sql_gen_support import model as accepted_model
 from _sql_gen_support import target as entity_of
 
 from parallax.core import deep_fetch
-from parallax.core.metamodel import Metamodel
+from parallax.core.metamodel import EntityIdentity, Metamodel
 from parallax.core.op_algebra import (
     All,
     And,
@@ -225,11 +225,11 @@ def test_child_operation_raises_on_a_back_reference_level() -> None:
 def test_single_concrete_narrow_targets_the_concrete_directly_no_narrow_node() -> None:
     plan = _plan(ANIMAL, "Person", ((_seg("Person.pets", ("Dog",)),),))
     level = plan.levels[0]
-    assert level.child_target == "Dog"
+    assert level.child_target == "parallax.compatibility.Dog"
     assert level.narrow_to is None
     _target, op = level.child_operation([1])
     assert isinstance(op, Membership)
-    assert op.attr == "Dog.ownerId"
+    assert op.attr == "parallax.compatibility.Dog.ownerId"
 
 
 def test_multi_concrete_narrow_wraps_a_narrow_node() -> None:
@@ -262,7 +262,7 @@ def test_back_reference_hop_is_detected() -> None:
     items, order = plan.levels
     assert not items.is_back_reference
     assert order.is_back_reference
-    assert order.back_reference_family == "Order"
+    assert order.back_reference_family == EntityIdentity("parallax.compatibility", "Order")
     assert order.parent_column == "order_id"
 
 

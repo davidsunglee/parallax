@@ -48,6 +48,7 @@ from parallax.core.metamodel import (
     ValueObjectMetadata,
 )
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
+from parallax.core.model_formation import MetamodelValidationError
 from parallax.core.op_algebra import Operation, OperationError, OperationRejectedError, deserialize
 from parallax.core.op_algebra import validate_operation as validate_op_algebra_operation
 from parallax.core.sql_gen import CompiledRead, SqlGenError, Statement, compile_read
@@ -408,10 +409,11 @@ def run_graph_case(
     """
     target, operation_doc = _read_target_and_operation(case)
     meta = load_case_metamodel(case)
+    model = case_model(meta)
     dialect = dialect_for(dialect_name)
     try:
         raw_op = deserialize(operation_doc)
-        result = find(raw_op, case_model(meta), dialect, target, port)
+        result = find(raw_op, model, dialect, target, port)
     except (
         OperationError,
         SqlGenError,
@@ -424,7 +426,7 @@ def run_graph_case(
         Emission("/operation", statement.sql, statement.binds)
         for statement in result.execution.statements
     ]
-    graph_wire = _render_graph(target, result.nodes)
+    graph_wire = _render_graph(target, result.nodes, model)
     identity_checks = _evaluate_identity_checks(case, target, result.nodes)
     return emissions, graph_wire, result.execution.round_trips, identity_checks
 
@@ -438,10 +440,11 @@ def run_graphs_case(
     attribute name."""
     target, operation_doc = _read_target_and_operation(case)
     meta = load_case_metamodel(case)
+    model = case_model(meta)
     dialect = dialect_for(dialect_name)
     try:
         raw_op = deserialize(operation_doc)
-        result = find_history(raw_op, case_model(meta), dialect, target, port)
+        result = find_history(raw_op, model, dialect, target, port)
     except (OperationError, SqlGenError, TemporalReadError, KeyError) as exc:
         raise EngineError(f"{case.path.name}: {exc}") from exc
     emissions = [
@@ -451,21 +454,27 @@ def run_graphs_case(
     graphs_wire: list[dict[str, object]] = [
         {
             "pin": {name: wire_value(instant) for name, instant in graph.pin.items()},
-            "graph": _render_graph(target, graph.nodes),
+            "graph": _render_graph(target, graph.nodes, model),
         }
         for graph in result.graphs
     ]
     return emissions, graphs_wire, result.execution.round_trips
 
 
-def _render_graph(target: str, nodes: Sequence[materialize.Node]) -> dict[str, list[Row]]:
+def _render_graph(
+    target: str, nodes: Sequence[materialize.Node], model: AcceptedMetamodel
+) -> dict[str, list[Row]]:
     """The wire `then.graph` shape: root-class-keyed, each root row rendered
     through :func:`_render_node` (back-reference cycles truncate to a PK-only
     stub; a diamond at a non-cyclic position keeps its full value)."""
-    return {target: [_render_node(node, frozenset()) for node in nodes]}
+    return {target: [_render_node(node, frozenset(), model) for node in nodes]}
 
 
-def _render_node(node: materialize.Node, visiting: frozenset[int]) -> Row:
+def _render_node(
+    node: materialize.Node,
+    visiting: frozenset[int],
+    model: AcceptedMetamodel | None = None,
+) -> Row:
     """Render one assembled node to wire JSON: a node whose identity is ALREADY
     on the current recursion path (a true back-reference cycle, m-case-format
     "Back-reference cycles") truncates to a PK-only stub instead of recursing
@@ -476,17 +485,95 @@ def _render_node(node: materialize.Node, visiting: frozenset[int]) -> Row:
     if node_id in visiting:
         return {column: wire_value(node.fields[column]) for column in node.pk_columns}
     nested = visiting | {node_id}
-    return {key: _render_value(value, nested) for key, value in node.fields.items()}
+    value_object_names = _value_object_names(node, model)
+    rendered: Row = {}
+    for key, value in node.fields.items():
+        _put_rendered(rendered, key, _render_value(value, nested, model))
+    if node.family_variant is not None:
+        _put_rendered(rendered, "familyVariant", node.family_variant)
+    for storage, canonical in value_object_names.items():
+        if storage in node.value_objects:
+            _put_rendered(
+                rendered,
+                canonical,
+                _render_value(node.value_objects[storage], nested, model),
+            )
+    for key, value in node.relationships.items():
+        _put_rendered(rendered, key, _render_value(value, nested, model))
+    return rendered
 
 
-def _render_value(value: object, visiting: frozenset[int]) -> object:
+def _put_rendered(rendered: Row, key: str, value: object) -> None:
+    """Add one provenance-resolved graph field, refusing an impossible collision."""
+    if key in rendered:  # pragma: no cover - Model Formation rejects this defensively
+        raise EngineError(f"materialized field key {key!r} has more than one contributor")
+    rendered[key] = value
+
+
+def _value_object_names(node: materialize.Node, model: AcceptedMetamodel | None) -> dict[str, str]:
+    if model is None:
+        return {}
+    entity = _rendered_node_entity(node, model)
+    if entity is None:
+        return {}  # pragma: no cover - model-backed assembler nodes always resolve an entity
+    position = inheritance.view(model).entity(entity.identity)
+    if position is None:
+        return {}  # pragma: no cover - the inheritance facet covers every accepted entity
+    claimed: dict[str, str] = {}
+    if position.tag_column is not None:
+        claimed[position.tag_column] = f"family tag of {position.root.canonical}"
+    for attribute in position.applicable_attributes:
+        _claim_rendered_column(
+            claimed,
+            attribute.storage.name,
+            f"Attribute {attribute.identity.entity.canonical}.{attribute.identity.name}",
+        )
+    names: dict[str, str] = {}
+    for value_object in position.applicable_value_objects:
+        canonical_name = value_object.identity.path[-1]
+        _claim_rendered_column(
+            claimed,
+            value_object.storage.name,
+            f"Value Object {value_object.identity.entity.canonical}.{canonical_name}",
+        )
+        names[value_object.storage.name] = canonical_name
+    return names
+
+
+def _claim_rendered_column(claimed: dict[str, str], column: str, contributor: str) -> None:
+    existing = claimed.get(column)
+    if existing is not None:  # pragma: no cover - Model Formation rejects this defensively
+        raise EngineError(
+            f"physical column {column!r} ambiguously renders both {existing} and {contributor}"
+        )
+    claimed[column] = contributor
+
+
+def _rendered_node_entity(
+    node: materialize.Node, model: AcceptedMetamodel
+) -> EntityMetadata | None:
+    """Resolve a node through its assembler-propagated exact Entity Identity."""
+    identity = node.resolved_entity
+    if identity is None:
+        return None
+    entity = model.entity(identity)
+    if entity is None:  # pragma: no cover - assembler bookkeeping is accepted Metadata
+        raise EngineError(
+            f"node resolved entity {identity.canonical!r} is not declared by the model"
+        )
+    return entity
+
+
+def _render_value(
+    value: object, visiting: frozenset[int], model: AcceptedMetamodel | None = None
+) -> object:
     if isinstance(value, materialize.Node):
-        return _render_node(value, visiting)
+        return _render_node(value, visiting, model)
     if isinstance(value, list):
-        return [_render_value(item, visiting) for item in cast("list[object]", value)]
+        return [_render_value(item, visiting, model) for item in cast("list[object]", value)]
     if isinstance(value, Mapping):
         mapping = cast("Mapping[str, object]", value)
-        return {key: _render_value(v, visiting) for key, v in mapping.items()}
+        return {key: _render_value(v, visiting, model) for key, v in mapping.items()}
     return wire_value(value)
 
 
@@ -529,7 +616,10 @@ def _resolve_graph_pointer(
     current: object = root_map[parts[2]][int(parts[3])]
     for part in parts[4:]:
         if isinstance(current, materialize.Node):
-            current = current.fields[part]
+            if part in current.relationships:
+                current = current.relationships[part]
+            else:
+                current = current.fields[part]
         elif isinstance(current, list):
             current = cast("list[object]", current)[int(part)]
         else:
@@ -3713,9 +3803,10 @@ def run_rejected_case(case: case_format.Case) -> str:
     every read uses, then checked by the shared `validate_operation`
     (`m-op-algebra` / `m-navigate` / `m-value-object`) — the same validator an
     idiomatic statement frontend calls at build time, so the two paths cannot
-    drift. A `model` input is checked by the raw-descriptor family-invariant
-    validator (:func:`_descriptor_family.validate`, m-inheritance's own family
-    invariants). A `write` input is
+    drift. A `model` input first passes the raw-descriptor family-invariant
+    validator (:func:`_descriptor_family.validate`) for descriptor spellings the
+    accepted algebra cannot represent, then runs through the same complete Model
+    Formation profile as every reusable model. A `write` input is
     resolved against the model's default entity (`_rejected_target`'s own
     convention, reused here — the family root when the model declares one,
     else the model's single entity, since a rejected `when.write` carries no
@@ -3758,9 +3849,21 @@ def run_rejected_case(case: case_format.Case) -> str:
             _descriptor_family.validate(inline_meta)
         except inheritance.InheritanceError as exc:
             return exc.rule
+        try:
+            models.accepted_model(inline_meta)
+        except (
+            MetamodelValidationError
+        ) as exc:  # pragma: no cover - formation tests own diagnostics
+            codes = tuple(issue.code for issue in exc.issues)
+            if len(codes) != 1:
+                raise EngineError(
+                    f"{case.path.name}: inline model produced {len(codes)} formation issues "
+                    f"{codes!r}; a rejected case must isolate exactly one rule"
+                ) from exc
+            return codes[0]
         raise EngineError(
-            f"{case.path.name}: the model-aware validator accepted an inline inheritance "
-            "family the case expects rejected pre-SQL"
+            f"{case.path.name}: the model-aware validator accepted an inline model the case "
+            "expects rejected pre-SQL"
         )
     row = cast("Mapping[str, object]", when["write"])
     model = case_model(meta)

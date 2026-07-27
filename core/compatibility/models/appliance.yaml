@@ -47,7 +47,6 @@ entities:
     attributes:
       - name: capacityLiters
         type: int32
-        column: capacity_liters
         nullable: true
   - name: Oven
     namespace: parallax.compatibility

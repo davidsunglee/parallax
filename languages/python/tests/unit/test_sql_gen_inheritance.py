@@ -470,6 +470,55 @@ def test_tpcs_union_read_renames_the_projected_literal_column() -> None:
     assert "family_variant" not in transformed
 
 
+def test_tpcs_union_preserves_qualified_duplicate_variant_identities() -> None:
+    from parallax.core.metamodel import EntityIdentity
+    from parallax.descriptor._records import Attribute, Entity, Inheritance, Metamodel
+
+    root = Entity(
+        name="Record",
+        namespace="catalog",
+        inheritance=Inheritance(role="root", strategy="table-per-concrete-subtype"),
+        attributes=(Attribute(name="id", type="int64", column="id", primary_key=True),),
+    )
+    archive = Entity(
+        name="SharedVariant",
+        namespace="archive",
+        table="archive_shared",
+        inheritance=Inheritance(role="concrete-subtype", parent="catalog.Record"),
+        attributes=(Attribute(name="archiveLabel", type="string", column="shared_label"),),
+    )
+    catalog = Entity(
+        name="SharedVariant",
+        namespace="catalog",
+        table="catalog_shared",
+        inheritance=Inheritance(role="concrete-subtype", parent="catalog.Record"),
+        attributes=(Attribute(name="catalogLabel", type="string", column="shared_label"),),
+    )
+    meta = formed(Metamodel(entities=(root, archive, catalog)))
+    root_metadata = meta.entity(EntityIdentity("catalog", "Record"))
+    assert root_metadata is not None
+
+    compiled = compile_read(oa.All(), meta, POSTGRES, root_metadata)
+
+    assert compiled.statement.sql == (
+        "select t0.id, t0.shared_label parallax_attr_0, cast(null as text) "
+        "parallax_attr_1, 'archive.SharedVariant' family_variant from archive_shared t0 "
+        "union all select t0.id, cast(null as text) parallax_attr_0, t0.shared_label "
+        "parallax_attr_1, 'catalog.SharedVariant' family_variant from catalog_shared t0"
+    )
+    materialized = compiled.materialize_row(
+        {
+            "id": 1,
+            "parallax_attr_0": "archived",
+            "parallax_attr_1": None,
+            "family_variant": "archive.SharedVariant",
+        }
+    )
+    assert materialized.resolved_entity == EntityIdentity("archive", "SharedVariant")
+    assert materialized.family_variant == "archive.SharedVariant"
+    assert materialized.values == {"id": 1, "shared_label": "archived"}
+
+
 def test_tpcs_narrow_to_a_single_concrete_carries_no_family_variant() -> None:
     # The settled asymmetry with table-per-hierarchy (m-sql, explicit): a single
     # resolved concrete has no shared table to discriminate and no sibling branch

@@ -1,0 +1,26 @@
+# A table-per-hierarchy root maps an ordinary Attribute to the framework-owned
+# tag column `kind`. Both contributors occupy the same shared table even though
+# the tag never renders as an ordinary field, so Model Formation must reject the
+# collision before SQL rather than let either contributor win.
+model: models/member-column-defaults.yaml
+tags: [m-inheritance, m-model-formation, m-descriptor, rejected, negative, physical-column, table-per-hierarchy, tag, slice-snapshot-1, slice-managed-1]
+shape: rejected
+when:
+  model:
+    entities:
+      - name: Record
+        table: record
+        inheritance:
+          role: root
+          strategy: table-per-hierarchy
+          tag: { column: kind }
+        attributes:
+          - { name: id, type: int64, primaryKey: true }
+          - { name: classification, type: string, column: kind }
+      - name: CardRecord
+        inheritance:
+          role: concrete-subtype
+          parent: Record
+          tagValue: card
+then:
+  rejectedRule: inheritance-physical-column-collision

@@ -1,0 +1,22 @@
+# A scalar Attribute renders inside a Relationship's reserved bracketed narrowed-view
+# namespace. Model Formation must reject the key even though it differs from the
+# broad Relationship key and remains a legal explicit physical-column spelling.
+model: models/member-column-defaults.yaml
+tags: [m-inheritance, m-model-formation, m-relationship, m-deep-fetch, m-descriptor, rejected, negative, materialization-key, narrowed-view, slice-snapshot-1, slice-managed-1]
+shape: rejected
+when:
+  model:
+    entity:
+      name: Contact
+      table: contact
+      attributes:
+        - { name: id, type: int64, primaryKey: true }
+        - { name: petSummary, type: string, column: "pets[Dog]" }
+      relationships:
+        - name: pets
+          cardinality: one-to-many
+          join:
+            source: id
+            target: { entity: Contact, attribute: id }
+then:
+  rejectedRule: inheritance-materialization-key-collision

@@ -150,7 +150,7 @@ class FetchLevel:
     parent: ParentRef
     parent_column: str
     is_back_reference: bool = False
-    back_reference_family: str | None = None
+    back_reference_family: EntityIdentity | None = None
     child_target: str | None = None
     related_attr: str | None = None
     related_column: str | None = None
@@ -242,7 +242,7 @@ def _new_levels() -> list[FetchLevel]:
     return []
 
 
-def _new_children() -> dict[tuple[int, str, tuple[str, ...]], int]:
+def _new_children() -> dict[tuple[int, str, tuple[EntityIdentity, ...]], int]:
     return {}
 
 
@@ -260,7 +260,9 @@ class _PlanBuilder:
     families: InheritanceFacet
     root_pins: Mapping[TemporalDimension, str]
     levels: list[FetchLevel] = field(default_factory=_new_levels)
-    _children: dict[tuple[int, str, tuple[str, ...]], int] = field(default_factory=_new_children)
+    _children: dict[tuple[int, str, tuple[EntityIdentity, ...]], int] = field(
+        default_factory=_new_children
+    )
     _ancestor_families: dict[int, frozenset[EntityIdentity]] = field(
         default_factory=_new_ancestor_families
     )
@@ -300,7 +302,7 @@ class _PlanBuilder:
         is_back_reference = family in parent_ancestors
 
         _, _, rel_local = segment.rel.rpartition(".")
-        attach_key = _view_key(rel_local, bool(segment.narrow), position)
+        attach_key = _view_key(rel_local, bool(segment.narrow), position, self.families)
         to_many = direction.cardinality is Cardinality.ONE_TO_MANY
         parent_column = _attribute_column(self.families, direction.join.source)
         parent_ref: ParentRef = RootRef() if parent_id == _ROOT_ID else LevelRef(parent_id)
@@ -312,7 +314,7 @@ class _PlanBuilder:
                 parent=parent_ref,
                 parent_column=parent_column,
                 is_back_reference=True,
-                back_reference_family=family.name,
+                back_reference_family=family,
             )
         else:
             child_target, narrow_to = _child_target(direction, position, segment)
@@ -377,7 +379,7 @@ def _attribute_column(facet: InheritanceFacet, attribute: AttributeIdentity) -> 
 
 def _resolve_position(
     facet: InheritanceFacet, related: EntityMetadata, segment: PathSegment
-) -> tuple[str, ...]:
+) -> tuple[EntityIdentity, ...]:
     """The hop's resolved effective concrete-subtype set (m-deep-fetch dedup
     identity's second component): the segment's own narrow when authored, else
     the relationship target's own effective set — a non-polymorphic target's
@@ -393,7 +395,7 @@ def _resolve_position(
     itself canonically, as the relationship's own declared target does.
     """
     if related.inheritance is None:
-        return (related.identity.canonical,)
+        return (related.identity,)
     if segment.narrow:
         members = tuple(
             resolve_entity_reference(related.identity, RelativeEntityReference(name))
@@ -405,13 +407,16 @@ def _resolve_position(
                 f"narrow to {sorted(identity.canonical for identity in members)} names an "
                 "entity the model does not declare, or spans more than one inheritance family"
             )
-        return tuple(identity.name for identity in position.concrete_subtypes)
-    return tuple(
-        identity.name for identity in _entity_view(facet, related.identity).concrete_subtypes
-    )
+        return tuple(position.concrete_subtypes)
+    return tuple(_entity_view(facet, related.identity).concrete_subtypes)
 
 
-def _view_key(rel_local: str, narrowed: bool, position: tuple[str, ...]) -> str:
+def _view_key(
+    rel_local: str,
+    narrowed: bool,
+    position: tuple[EntityIdentity, ...],
+    facet: InheritanceFacet,
+) -> str:
     """The graph attach key (m-deep-fetch "Polymorphic and narrowed deep fetch"):
     the ordinary relationship name for a broad hop, else the derived
     ``<rel>[<Concrete>,<Concrete>]`` view key — keyed on whether a narrow was
@@ -419,11 +424,14 @@ def _view_key(rel_local: str, narrowed: bool, position: tuple[str, ...]) -> str:
     single-concrete narrow still derives a bracketed view key)."""
     if not narrowed:
         return rel_local
-    return f"{rel_local}[{','.join(position)}]"
+    variants = (inheritance.family_variant_name(facet, identity) for identity in position)
+    return f"{rel_local}[{','.join(variants)}]"
 
 
 def _child_target(
-    direction: RelationshipMetadata, position: tuple[str, ...], segment: PathSegment
+    direction: RelationshipMetadata,
+    position: tuple[EntityIdentity, ...],
+    segment: PathSegment,
 ) -> tuple[str, tuple[str, ...] | None]:
     """The level's own read target entity, and its ``Narrow.to`` (or
     ``None``) — the child-level analogue of `m-sql`'s abstract-read dispatch,
@@ -438,7 +446,7 @@ def _child_target(
     concretes naturally needs no wrapper — `m-sql`'s own effective-set
     resolution already returns the same set from the bare target)."""
     if len(position) == 1:
-        return position[0], None
+        return position[0].canonical, None
     if segment.narrow:
         return direction.join.target.entity.canonical, tuple(segment.narrow)
     return direction.join.target.entity.canonical, None

@@ -40,7 +40,7 @@ from typing import Literal, assert_never
 from parallax.core.dialect import Dialect, LockMode
 from parallax.core.inheritance import InheritanceFacet, column_order
 from parallax.core.inheritance import view as _inheritance_view
-from parallax.core.metamodel import EntityMetadata, Metamodel
+from parallax.core.metamodel import EntityIdentity, EntityMetadata, Metamodel
 from parallax.core.op_algebra import (
     Distinct,
     Limit,
@@ -74,6 +74,7 @@ from parallax.core.sql_gen._predicate import lower_predicate as _lower_predicate
 __all__ = [
     "CompiledPredicate",
     "CompiledRead",
+    "MaterializedReadRow",
     "SqlGenError",
     "Statement",
     "compile_read",
@@ -115,6 +116,21 @@ class CompiledPredicate:
 
 
 @dataclass(frozen=True, slots=True)
+class MaterializedReadRow:
+    """One instance-form row with exact concrete identity and field provenance.
+
+    ``values`` excludes the synthetic ``familyVariant`` key so a Value Object
+    document column with that physical spelling remains intact. ``family_variant``
+    is the optional wire/graph spelling and ``resolved_entity`` is always the exact
+    accepted Entity Identity the row denotes.
+    """
+
+    values: dict[str, object]
+    resolved_entity: EntityIdentity
+    family_variant: str | None
+
+
+@dataclass(frozen=True, slots=True)
 class CompiledRead:
     """One compiled read: its :class:`Statement`, the root narrow to materialize
     under, and the row transform that materializes `familyVariant`.
@@ -137,6 +153,8 @@ class CompiledRead:
 
     statement: Statement
     narrow_to: tuple[str, ...] | None
+    target: EntityIdentity
+    resolved_position: tuple[EntityIdentity, ...]
     _transform: _RowTransform
 
     def transform_row(self, row: Mapping[str, object]) -> dict[str, object]:
@@ -146,7 +164,24 @@ class CompiledRead:
         and always returns a FRESH ``dict``, including when there is nothing to
         materialize.
         """
-        return self._transform.apply(row)
+        materialized = self.materialize_row(row)
+        if materialized.family_variant is not None:
+            if "familyVariant" in materialized.values:  # pragma: no cover - formation rejects it
+                raise SqlGenError(
+                    "a flat row cannot represent both a declared `familyVariant` field and "
+                    "the polymorphic synthetic key; Model Formation should reject the collision"
+                )
+            materialized.values["familyVariant"] = materialized.family_variant
+        return materialized.values
+
+    def materialize_row(self, row: Mapping[str, object]) -> MaterializedReadRow:
+        """Resolve one driver row without flattening synthetic field provenance."""
+        values, resolved, family_variant = self._transform.materialize(row)
+        if resolved is None:
+            resolved = (
+                self.resolved_position[0] if len(self.resolved_position) == 1 else self.target
+            )
+        return MaterializedReadRow(values, resolved, family_variant)
 
 
 # --------------------------------------------------------------------------- #
@@ -292,7 +327,7 @@ def compile_read(
     # disagree with what was compiled.
     narrow_to = predicate.to if isinstance(predicate, Narrow) else None
     if target.inheritance is not None:
-        statement, transform = _compile_inheritance_read(
+        statement, plan_position, transform = _compile_inheritance_read(
             target,
             predicate,
             distinct,
@@ -305,7 +340,7 @@ def compile_read(
             lock,
             relationship_order,
         )
-        return CompiledRead(statement, narrow_to, transform)
+        return CompiledRead(statement, narrow_to, target.identity, plan_position, transform)
     # One context per statement (the mutable accumulator), one resolution scope
     # over it (the immutable "what does a leaf resolve against" half).
     ctx = _Ctx(model, facet, dialect)
@@ -331,7 +366,9 @@ def compile_read(
     statement = _normalize(Statement(" ".join(parts), tuple(ctx.binds)))
     # A non-family read projects no tag and no variant literal, so there is
     # nothing to materialize.
-    return CompiledRead(statement, narrow_to, _IDENTITY_TRANSFORM)
+    return CompiledRead(
+        statement, narrow_to, target.identity, (target.identity,), _IDENTITY_TRANSFORM
+    )
 
 
 def compile_write_predicate(
@@ -467,7 +504,7 @@ def _compile_inheritance_read(
     result_form: _ResultForm,
     lock: LockMode | None,
     relationship_order: bool = False,
-) -> tuple[Statement, _RowTransform]:
+) -> tuple[Statement, tuple[EntityIdentity, ...], _RowTransform]:
     """Assemble an inheritance-family read from its plan.
 
     Returns the statement AND its row transform together: whether a read carries
@@ -486,7 +523,7 @@ def _compile_inheritance_read(
     )
     match plan:
         case _TphPlan():
-            return _compile_tph_read(
+            statement, transform = _compile_tph_read(
                 plan,
                 entity,
                 distinct,
@@ -498,8 +535,9 @@ def _compile_inheritance_read(
                 lock,
                 relationship_order,
             )
+            return statement, plan.position, transform
         case _TpcsSinglePlan():
-            return _compile_tpcs_single(
+            statement, transform = _compile_tpcs_single(
                 plan,
                 entity,
                 distinct,
@@ -511,8 +549,10 @@ def _compile_inheritance_read(
                 lock,
                 relationship_order,
             )
+            return statement, plan.position, transform
         case _TpcsUnionPlan():
-            return _compile_tpcs_read(plan, entity, model, facet, dialect)
+            statement, transform = _compile_tpcs_read(plan, entity, model, facet, dialect)
+            return statement, plan.position, transform
         case _:  # pragma: no cover - exhaustiveness guard
             assert_never(plan)
 

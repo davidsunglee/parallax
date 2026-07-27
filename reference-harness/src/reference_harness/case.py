@@ -454,7 +454,7 @@ class Model:
         entities: list[Entity] = []
         for definition in defs:
             effective = (
-                resolve_effective_definition(defs, definition["name"])
+                resolve_effective_definition(defs, _entity_identity(definition))
                 if isinstance(definition.get("inheritance"), dict)
                 else definition
             )

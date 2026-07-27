@@ -171,33 +171,35 @@ def record_observations(uow: UnitOfWork, meta: Metamodel, result: FindResult, pi
     """
     latest_pinned = pin.tx_time is None or pin.tx_time is LATEST
     for entity_name, node in result.all_nodes:
+        observed_fields = {**node.fields, **node.value_objects}
         entity = entity_of(meta, entity_name)
         declaring_entity = declaring(meta, entity)
         pk_attrs = _declared_primary_key(declaring_entity)
         if not pk_attrs or any(  # pragma: no cover - defends a malformed model/projection
-            attr.storage.name not in node.fields for attr in pk_attrs
+            attr.storage.name not in observed_fields for attr in pk_attrs
         ):
             continue
         key: ObjectKey = (
             entity_name,
-            tuple((attr.identity.name, node.fields[attr.storage.name]) for attr in pk_attrs),
+            tuple((attr.identity.name, observed_fields[attr.storage.name]) for attr in pk_attrs),
         )
         version_attr = version_attribute(meta, declaring_entity)
         if version_attr is not None:
-            if version_attr.storage.name in node.fields:
+            if version_attr.storage.name in observed_fields:
                 uow.observe(
-                    key, Observation(version=cast("int", node.fields[version_attr.storage.name]))
+                    key,
+                    Observation(version=cast("int", observed_fields[version_attr.storage.name])),
                 )
             continue
         if not _is_temporal(declaring_entity):
             continue
         tx_axis = tx_time_axis(declaring_entity)
         tx_start_column, _tx_end_column = axis_columns(declaring_entity, tx_axis)
-        if tx_start_column not in node.fields:  # pragma: no cover - malformed model/projection
+        if tx_start_column not in observed_fields:  # pragma: no cover - malformed model/projection
             continue
         uow.observe(
             key,
-            _temporal_observation(meta, declaring_entity, node.fields, tx_axis, latest_pinned),
+            _temporal_observation(meta, declaring_entity, observed_fields, tx_axis, latest_pinned),
         )
 
 

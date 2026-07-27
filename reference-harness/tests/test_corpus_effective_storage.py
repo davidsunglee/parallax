@@ -72,9 +72,7 @@ def _corpus_projection(model_paths: list[Path]) -> CorpusProjection:
         assert len(projected_entities) == len(model.entity_defs)
         projection[relative_path] = projected_entities
 
-    expected_paths = {
-        path.relative_to(_COMPATIBILITY_ROOT).as_posix() for path in model_paths
-    }
+    expected_paths = {path.relative_to(_COMPATIBILITY_ROOT).as_posix() for path in model_paths}
     assert set(projection) == expected_paths
     return projection
 

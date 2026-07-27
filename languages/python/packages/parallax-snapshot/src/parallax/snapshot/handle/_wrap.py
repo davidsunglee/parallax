@@ -102,7 +102,7 @@ class _Wrapping:
     model: Metamodel
     binding: MetamodelBinding | None
     pin: Pin
-    merged: Mapping[object, Mapping[str, object]]
+    merged: Mapping[object, _MergedNode]
     cache: dict[object, object]
 
     def class_of(self, entity: EntityMetadata) -> type:
@@ -161,10 +161,7 @@ def _concrete_entity_name(node: materialize.Node, default_entity: str) -> str:
     ``default_entity`` (the caller's declared relationship target / root —
     possibly abstract) survives only as the defensive fallback for a hand-built
     ``Node`` no assembler ever populated ``resolved_entity`` on."""
-    variant = node.fields.get("familyVariant")
-    if isinstance(variant, str):
-        return variant
-    return node.resolved_entity if node.resolved_entity is not None else default_entity
+    return node.resolved_entity.canonical if node.resolved_entity is not None else default_entity
 
 
 def _entity(model: Metamodel, name: str) -> EntityMetadata:
@@ -235,18 +232,25 @@ def _discover(
     entity = _entity(model, concrete_name)
     for direction in _relationships(model, entity):
         rel_name = direction.identity.name
-        target_name = direction.join.target.entity.name
-        if rel_name in node.fields:
-            _discover_related(node.fields[rel_name], target_name, model, visited, groups)
+        target_name = direction.join.target.entity.canonical
+        if rel_name in node.relationships:
+            _discover_related(node.relationships[rel_name], target_name, model, visited, groups)
         prefix = f"{rel_name}["
-        for field_key, field_value in node.fields.items():
+        for field_key, field_value in node.relationships.items():
             if field_key.startswith(prefix):
                 _discover_related(field_value, target_name, model, visited, groups)
 
 
+@dataclass(frozen=True, slots=True)
+class _MergedNode:
+    fields: Mapping[str, object]
+    value_objects: Mapping[str, object]
+    relationships: Mapping[str, object]
+
+
 def _merged_fields(
     groups: Mapping[object, list[materialize.Node]],
-) -> dict[object, dict[str, object]]:
+) -> dict[object, _MergedNode]:
     """One UNION field-dict per logical identity key: every field key present on
     ANY sibling ``Node`` sharing that key contributes (first-seen — discovery
     order — wins on a key more than one sibling carries, so a relationship or
@@ -254,13 +258,19 @@ def _merged_fields(
     m-snapshot-read: materializing the attribute/relationship superset is
     conforming). The per-view ``Node.fields`` dicts are never mutated — only
     this derived mapping feeds the frozen instance the wrap builds."""
-    merged: dict[object, dict[str, object]] = {}
+    merged: dict[object, _MergedNode] = {}
     for key, members in groups.items():
         fields: dict[str, object] = {}
+        value_objects: dict[str, object] = {}
+        relationships: dict[str, object] = {}
         for member in members:
             for field_key, field_value in member.fields.items():
                 fields.setdefault(field_key, field_value)
-        merged[key] = fields
+            for field_key, field_value in member.value_objects.items():
+                value_objects.setdefault(field_key, field_value)
+            for field_key, field_value in member.relationships.items():
+                relationships.setdefault(field_key, field_value)
+        merged[key] = _MergedNode(fields, value_objects, relationships)
     return merged
 
 
@@ -280,34 +290,49 @@ def _wrap(node: materialize.Node, default_entity: str, wrapping: _Wrapping) -> o
     # The merged (logical, union) view for this key — computed once by the
     # discovery pass before any instance existed — never this node's OWN
     # (possibly narrower) per-view fields directly.
-    fields = wrapping.merged.get(key, node.fields)
+    merged = wrapping.merged.get(
+        key, _MergedNode(node.fields, node.value_objects, node.relationships)
+    )
 
     names = wire_names_of(cls)
-    for column, value in fields.items():
-        if column == "familyVariant":
-            continue
+    for column, value in merged.fields.items():
         py_name = names.column_to_py.get(column)
         if py_name is None:
-            continue  # a relationship attach key, handled below
+            continue
+        object.__setattr__(instance, py_name, value)
+    for column, value in merged.value_objects.items():
+        vo = next(
+            (
+                candidate
+                for candidate in _family_value_objects(model, entity)
+                if candidate.storage.name == column
+            ),
+            None,
+        )
+        if vo is None:  # pragma: no cover - assembler decodes only declared occurrences
+            continue
+        py_name = names.name_to_py.get(vo.identity.path[-1])
+        if py_name is None:  # pragma: no cover - bound classes carry every occurrence
+            continue
         object.__setattr__(instance, py_name, _wrap_member(value, entity, column, wrapping))
 
     directions = _relationships(model, entity)
     narrowed_views: dict[str, object] = {}
     for direction in directions:
         rel_name = direction.identity.name
-        target_name = direction.join.target.entity.name
+        target_name = direction.join.target.entity.canonical
         py_name = names.relationship_py.get(rel_name)
         # `py_name` is only absent for a SIBLING-declared relationship this
         # concrete class's own MRO does not carry (no corpus/fixture today
         # declares one); the narrowed-view scan below still applies to it.
         if py_name is not None:  # pragma: no branch
-            if rel_name in fields:
-                loaded = _wrap_related(fields[rel_name], target_name, wrapping)
+            if rel_name in merged.relationships:
+                loaded = _wrap_related(merged.relationships[rel_name], target_name, wrapping)
                 object.__setattr__(instance, py_name, loaded)
             else:
                 object.__setattr__(instance, py_name, UNLOADED)
         prefix = f"{rel_name}["
-        for field_key, field_value in fields.items():
+        for field_key, field_value in merged.relationships.items():
             if field_key.startswith(prefix):
                 narrowed_views[field_key] = _wrap_related(field_value, target_name, wrapping)
 
@@ -322,7 +347,7 @@ def _wrap(node: materialize.Node, default_entity: str, wrapping: _Wrapping) -> o
     declaring = _declaring(model, entity)
     if declaring.declared_as_of_axes:
         object.__setattr__(instance, _PIN_ATTR, wrapping.pin)
-        object.__setattr__(instance, _EDGE_ATTR, milestone_edge(declaring, fields))
+        object.__setattr__(instance, _EDGE_ATTR, milestone_edge(declaring, merged.fields))
 
     return instance
 
@@ -367,7 +392,11 @@ def _family_value_objects(
     model: Metamodel, entity: EntityMetadata
 ) -> tuple[ValueObjectMetadata, ...]:
     view = inheritance.view(model).entity(entity.identity)
-    return () if view is None else tuple(view.applicable_value_objects)
+    return (
+        tuple(entity.declared_value_objects)
+        if view is None
+        else tuple(view.applicable_value_objects)
+    )
 
 
 def _vo_class_for(

@@ -59,7 +59,6 @@ entities:
       # inherited title, before the FinancialDocument branch's currency).
       - name: folderId
         type: int64
-        column: folder_id
         nullable: true
   - name: FinancialDocument
     namespace: parallax.compatibility
@@ -90,7 +89,6 @@ entities:
     attributes:
       - name: amountDue
         type: decimal(18,2)
-        column: amount_due
   - name: Receipt
     namespace: parallax.compatibility
     table: receipt
@@ -100,7 +98,6 @@ entities:
     attributes:
       - name: paidAmount
         type: decimal(18,2)
-        column: paid_amount
   - name: Memo
     namespace: parallax.compatibility
     table: memo
@@ -131,7 +128,7 @@ entities:
         cardinality: one-to-many
         join:
           source: id
-          target: { entity: Document, attribute: folderId }
+          target: { entity: parallax.compatibility.Document, attribute: folderId }
     indices:
       - name: folder_pk
         attributes: [id]

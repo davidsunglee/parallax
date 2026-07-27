@@ -28,7 +28,7 @@ entities:
         cardinality: one-to-one
         join:
           source: id
-          target: { entity: Passport, attribute: personId }
+          target: { entity: parallax.compatibility.Passport, attribute: personId }
         # The passport is OWNED by its holder (m-cascade-delete): deleting a Person
         # cascade-deletes its Passport. This is the sole one-to-one `dependent`
         # relationship in the corpus (orders' dependents are one-to-many), so it
@@ -49,13 +49,12 @@ entities:
         primaryKey: true
       - name: personId
         type: int64
-        column: person_id
       - name: number
         type: string
         maxLength: 32
     relationships:
       - name: holder
-        reverseOf: Person.passport
+        reverseOf: parallax.compatibility.Person.passport
     indices:
       - name: passport_pk
         attributes: [id]

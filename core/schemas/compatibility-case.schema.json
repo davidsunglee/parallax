@@ -295,7 +295,7 @@
           "type": "object"
         },
         "model": {
-          "description": "rejected cases only (m-inheritance, resolved Q3). An INLINE model descriptor document (an instance of metamodel.schema.json) carrying an invalid inheritance family a model-aware semantic validator MUST reject before any SQL — the cross-entity family invariants (parent resolution / acyclicity / exactly one root / concrete-under-abstract-root / tag placement / tag presence under table-per-hierarchy / family-wide tagValue uniqueness / shared-table consistency) that per-entity schema validation cannot catch. Kept inline (never in the shared `models/` registry) so an invalid family cannot break sibling cases that load real models; round-tripped through descriptor serde before semantic validation asserts `then.rejectedRule`.",
+          "description": "rejected cases only (m-inheritance, resolved Q3). An INLINE model descriptor document (an instance of metamodel.schema.json) carrying an accepted-model formation defect a model-aware semantic validator MUST reject before any SQL. This includes cross-entity inheritance-family invariants and physical-column or rendered-key collisions that per-entity schema validation cannot express. Kept inline (never in the shared `models/` registry) so an invalid model cannot break sibling cases that load real models; round-tripped through descriptor serde before semantic validation asserts `then.rejectedRule`.",
           "type": "object"
         },
         "targetEntity": {
@@ -839,6 +839,8 @@
             "inheritance-temporal-axes-not-root-owned",
             "inheritance-optimistic-locking-not-root-owned",
             "inheritance-persistence-not-root-owned",
+            "inheritance-physical-column-collision",
+            "inheritance-materialization-key-collision",
             "narrow-outside-position",
             "narrow-empty-effective-set",
             "subtype-attribute-outside-narrow-scope",

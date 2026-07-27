@@ -39,7 +39,6 @@ entity:
       primaryKey: true
     - name: acctNum
       type: string
-      column: acct_num
       maxLength: 32
     - name: value
       type: decimal(18,2)

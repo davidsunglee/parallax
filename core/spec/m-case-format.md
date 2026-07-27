@@ -260,8 +260,9 @@ to the pre-inheritance "equal".
 An abstract-target read (an abstract `targetEntity`, or an abstract position
 `narrow`ed with `m-op-algebra`'s `narrow` node) materializes complete concrete
 instances. Every leaf — a `then.rows` entry or a `then.graph` node — carries a
-**`familyVariant`** key — the **concrete subtype name** of that row (`Dog`,
-`Cat`, …). `familyVariant` is **not projected as SQL**: under
+**`familyVariant`** key — the concrete subtype's **family variant spelling**
+(`Dog`, `Cat`, …; the canonical qualified Entity spelling when duplicate local
+concrete names make a bare spelling ambiguous). `familyVariant` is **not projected as SQL**: under
 `table-per-hierarchy` the golden SQL projects the **raw tag column** (`m-sql`,
 resolved Q6) and the harness materializes `familyVariant` from the tag metadata
 map (`tagValue` -> subtype name) — an independent, metadata-derived
@@ -964,8 +965,9 @@ reverse-navigated); Parallax pins the same "these operations are structurally
 invalid" semantics as a language-neutral pre-SQL rejection.
 
 `then.rejectedRule` is a **closed vocabulary**, each identifier naming a normative
-MUST — the `m-op-algebra` nested-predicate resolver rules and the `m-value-object`
-materialization/navigation and write-validation contracts. **Operation** rules:
+MUST — the `m-op-algebra` nested-predicate resolver rules, the `m-value-object`
+materialization/navigation and write-validation contracts, and accepted-model
+formation rules. **Operation** rules:
 
 - `nested-path-first-segment-not-value-object` — a nested path's first segment names
   no value object declared on the queried entity (`m-op-algebra`).
@@ -1047,16 +1049,27 @@ invariants per-entity schema validation cannot express, carried inline under
 `inheritance-tag-on-concrete-subtype-strategy`,
 `inheritance-temporal-axes-not-root-owned`, and
 `inheritance-optimistic-locking-not-root-owned`, and
-`inheritance-persistence-not-root-owned` (see `m-inheritance` for each invariant).
+`inheritance-persistence-not-root-owned`,
+`inheritance-physical-column-collision`, and
+`inheritance-materialization-key-collision` (see `m-inheritance` for each invariant).
 A `when.model` case carries an **inline** model descriptor — an
-instance of `metamodel.schema.json` whose *family* is invalid — kept inside the
-case rather than in the shared `models/` registry, so an invalid family cannot
+instance of `metamodel.schema.json` with an accepted-model formation defect — kept inside the
+case rather than in the shared `models/` registry, so an invalid model cannot
 break the sibling cases that load real models. The inline descriptor is
 **round-tripped through descriptor serde** (layer 4) like any other model before
 semantic validation asserts the rejection; the case's top-level `model:` still
 names a real, loadable descriptor (its identity/registry role is unchanged). A
 model-aware validator (and every language implementation) MUST reject the inline
-family pre-SQL with **exactly** the named rule.
+model pre-SQL with **exactly** the named rule.
+
+`inheritance-physical-column-collision` applies to every strategy-specific
+physical table, including a standalone Entity's local contributors, one
+table-per-concrete-subtype concrete's inherited contributor chain, and the full
+table-per-hierarchy shared-table superset including its tag. Inline rejected
+models separately witness an Attribute/Value Object collision, an inherited
+table-per-concrete-subtype collision, sibling contributions to one shared table,
+and a member colliding with the shared-table tag. This keeps invalid models out
+of the reusable model registry while making each table boundary executable.
 
 Purely **regex-level** negatives — an empty path after the value-object name, a
 bad-cased segment — are the operation schema's job (the `nestedRef` grammar) and

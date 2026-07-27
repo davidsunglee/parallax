@@ -67,6 +67,7 @@ from parallax.core.inheritance import (
     InheritanceEntityView,
     InheritanceFacet,
     InheritancePositionView,
+    family_variant_name,
 )
 from parallax.core.metamodel import (
     AbstractRoot,
@@ -157,8 +158,10 @@ class _IdentityTransform:
     position resolved to a single concrete. Still returns a FRESH dict, so
     every caller may mutate the result regardless of which form it got."""
 
-    def apply(self, row: Mapping[str, object]) -> dict[str, object]:
-        return dict(row)
+    def materialize(
+        self, row: Mapping[str, object]
+    ) -> tuple[dict[str, object], EntityIdentity | None, str | None]:
+        return dict(row), None, None
 
 
 @dataclass(frozen=True, slots=True)
@@ -166,7 +169,7 @@ class _TagTransform:
     """Table-per-hierarchy: pop the framework-owned raw tag column (it never
     reaches the caller) and map its value to the declaring concrete's name.
 
-    ``tag_pairs`` is the WHOLE family's `(tagValue, concreteName)` mapping in the
+    ``tag_pairs`` is the WHOLE family's `(tagValue, Identity, variant spelling)` mapping in the
     facet's canonical concrete-subtype order — never the read's own resolved
     position, since a narrowed abstract read still projects the shared table's
     tag column and may observe any of them. A tuple of pairs rather than a
@@ -174,13 +177,16 @@ class _TagTransform:
     """
 
     column: str
-    tag_pairs: tuple[tuple[str, str], ...]
+    tag_pairs: tuple[tuple[str, EntityIdentity, str], ...]
 
-    def apply(self, row: Mapping[str, object]) -> dict[str, object]:
+    def materialize(
+        self, row: Mapping[str, object]
+    ) -> tuple[dict[str, object], EntityIdentity, str]:
         materialized = dict(row)
         raw = materialized.pop(self.column)
-        materialized["familyVariant"] = dict(self.tag_pairs)[cast("str", raw)]
-        return materialized
+        pairs = {tag: (identity, spelling) for tag, identity, spelling in self.tag_pairs}
+        identity, spelling = pairs[cast("str", raw)]
+        return materialized, identity, spelling
 
 
 @dataclass(frozen=True, slots=True)
@@ -189,11 +195,27 @@ class _LiteralTransform:
     subtype-name literal column — there is no tag column to derive it from."""
 
     column: str
+    variants: tuple[tuple[str, EntityIdentity], ...]
+    projected_fields: tuple[tuple[str, tuple[tuple[str, str], ...]], ...]
+    narrow_to_owned: bool
 
-    def apply(self, row: Mapping[str, object]) -> dict[str, object]:
+    def materialize(
+        self, row: Mapping[str, object]
+    ) -> tuple[dict[str, object], EntityIdentity, str]:
         materialized = dict(row)
-        materialized["familyVariant"] = materialized.pop(self.column)
-        return materialized
+        spelling = cast("str", materialized.pop(self.column))
+        fields = dict(self.projected_fields)
+        projected_aliases = {
+            alias
+            for variant_fields in fields.values()
+            for alias, rendered_key in variant_fields
+            if self.narrow_to_owned or alias != rendered_key
+        }
+        values = {key: value for key, value in materialized.items() if key not in projected_aliases}
+        for alias, rendered_key in fields[spelling]:
+            if alias in materialized:
+                values[rendered_key] = materialized[alias]
+        return values, dict(self.variants)[spelling], spelling
 
 
 RowTransform = _IdentityTransform | _TagTransform | _LiteralTransform
@@ -235,8 +257,10 @@ def narrow_position(
 # --------------------------------------------------------------------------- #
 # The DEFERRED tag guard.                                                      #
 # --------------------------------------------------------------------------- #
-def family_tag_pairs(facet: InheritanceFacet, root: EntityIdentity) -> tuple[tuple[str, str], ...]:
-    """The WHOLE family's `(tagValue, concreteName)` pairs, in the facet's
+def family_tag_pairs(
+    facet: InheritanceFacet, root: EntityIdentity
+) -> tuple[tuple[str, EntityIdentity, str], ...]:
+    """The WHOLE family's `(tagValue, Identity, variant spelling)` triples, in the facet's
     canonical concrete-subtype order.
 
     Deliberately the family's set, not the read's resolved position: a narrowed
@@ -245,7 +269,7 @@ def family_tag_pairs(facet: InheritanceFacet, root: EntityIdentity) -> tuple[tup
     (`m-inheritance-012`).
     """
     return tuple(
-        (tag_value(facet, concrete), concrete.name)
+        (tag_value(facet, concrete), concrete, family_variant_name(facet, concrete))
         for concrete in entity_view(facet, root).concrete_subtypes
     )
 
@@ -398,6 +422,7 @@ class TphPlan:
     """
 
     table: str
+    position: tuple[EntityIdentity, ...]
     columns: tuple[AttributeMetadata, ...]
     projected_tag_column: str | None
     value_objects: tuple[ValueObjectMetadata, ...]
@@ -424,6 +449,7 @@ class TpcsSinglePlan:
     """
 
     table: str
+    position: tuple[EntityIdentity, ...]
     columns: tuple[AttributeMetadata, ...]
     value_objects: tuple[ValueObjectMetadata, ...]
     inner: Operation
@@ -443,24 +469,27 @@ class TpcsBranchPlan:
     """One `union all` branch: its own table, and the shared superset column list
     paired with whether THIS branch physically owns each column."""
 
-    name: str
+    identity: EntityIdentity
+    variant: str
     table: str
-    columns: tuple[tuple[AttributeMetadata, bool], ...]
+    columns: tuple[tuple[AttributeMetadata, bool, str], ...]
 
     def projection(self, dialect: Dialect, alias: str) -> tuple[str, tuple[object, ...]]:
         exprs: list[str] = []
         binds: list[object] = []
-        for attribute, owned in self.columns:
+        for attribute, owned, result_alias in self.columns:
             if owned:
                 expr, extra = dialect.project(alias, attribute.storage.name, attribute.type)
-                exprs.append(expr)
+                exprs.append(
+                    expr if result_alias == attribute.storage.name else f"{expr} {result_alias}"
+                )
                 binds.extend(extra)
             else:
                 cast_type = dialect.null_cast(attribute.type, attribute.max_length)
-                exprs.append(f"cast(null as {cast_type}) {attribute.storage.name}")
+                exprs.append(f"cast(null as {cast_type}) {result_alias}")
         # Slot 3 (the settled TPH/TPCS asymmetry): TPCS projects the variant NAME
         # literal per branch directly — there is no tag column to derive it from.
-        exprs.append(f"'{self.name}' family_variant")
+        exprs.append(f"'{self.variant}' family_variant")
         return ", ".join(exprs), tuple(binds)
 
 
@@ -478,6 +507,7 @@ class TpcsUnionPlan:
     """
 
     branches: tuple[TpcsBranchPlan, ...]
+    position: tuple[EntityIdentity, ...]
     inner: Operation
     transform: RowTransform
 
@@ -567,6 +597,7 @@ def _plan_tph_read(
     )
     return TphPlan(
         table=position_table(facet, view.entity),
+        position=tuple(position.concrete_subtypes),
         columns=tuple(position.superset_attributes),
         projected_tag_column=tag_col if abstract_target else None,
         value_objects=tuple(position.superset_value_objects) if instance_form else (),
@@ -605,6 +636,7 @@ def _plan_tpcs_read(
     if len(concretes) == 1:
         return TpcsSinglePlan(
             table=position_table(facet, concretes[0]),
+            position=concretes,
             columns=tuple(position.superset_attributes),
             value_objects=tuple(position.superset_value_objects) if instance_form else (),
             inner=inner,
@@ -638,25 +670,63 @@ def _plan_tpcs_read(
         )
 
     columns = position.superset_attributes
+    column_counts: dict[str, int] = {}
+    for attribute in columns:
+        column_counts[attribute.storage.name] = column_counts.get(attribute.storage.name, 0) + 1
+    reserved_aliases = {attribute.storage.name for attribute in columns} | {"family_variant"}
+    allocated_aliases = set(reserved_aliases)
+    next_internal_alias = 0
+    result_aliases: list[str] = []
+    for attribute in columns:
+        authored_alias = attribute.storage.name
+        if column_counts[authored_alias] == 1 and authored_alias != "family_variant":
+            result_aliases.append(authored_alias)
+            continue
+        while f"parallax_attr_{next_internal_alias}" in allocated_aliases:
+            next_internal_alias += 1
+        internal_alias = f"parallax_attr_{next_internal_alias}"
+        allocated_aliases.add(internal_alias)
+        result_aliases.append(internal_alias)
+        next_internal_alias += 1
     branches: list[TpcsBranchPlan] = []
     for concrete in concretes:
         owned = frozenset(entity_view(facet, concrete).ancestry)
         branches.append(
             TpcsBranchPlan(
-                name=concrete.name,
+                identity=concrete,
+                variant=family_variant_name(facet, concrete),
                 table=position_table(facet, concrete),
                 # A superset Attribute names its DECLARING position, and a branch
                 # physically owns exactly the columns its own ancestry declares —
                 # which the facet's chain already ends with the concrete itself.
                 columns=tuple(
-                    (attribute, attribute.identity.entity in owned) for attribute in columns
+                    (attribute, attribute.identity.entity in owned, result_alias)
+                    for attribute, result_alias in zip(columns, result_aliases, strict=True)
                 ),
             )
         )
     # Every branch projects its own `family_variant` literal, so the transform is
     # a plain rename — no tag map, no metamodel lookup.
     return TpcsUnionPlan(
-        branches=tuple(branches), inner=inner, transform=_LiteralTransform("family_variant")
+        branches=tuple(branches),
+        position=concretes,
+        inner=inner,
+        transform=_LiteralTransform(
+            "family_variant",
+            tuple((branch.variant, branch.identity) for branch in branches),
+            tuple(
+                (
+                    branch.variant,
+                    tuple(
+                        (result_alias, attribute.storage.name)
+                        for attribute, owned, result_alias in branch.columns
+                        if owned
+                    ),
+                )
+                for branch in branches
+            ),
+            instance_form,
+        ),
     )
 
 
