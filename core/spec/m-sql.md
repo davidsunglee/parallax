@@ -813,6 +813,25 @@ Every branch projects the **same stable superset column list**, in this order:
    entity name), each block's columns in the subtype's declared order;
 3. the **`familyVariant`** literal.
 
+The result aliases for slots 1 and 2 are allocated hygienically. Contributors are
+visited in exactly the stable-superset order above. Before allocation, the complete
+reservation set is every contributor's physical column spelling plus the synthetic
+`family_variant` carrier. A contributor retains its physical spelling as the result
+alias only when that spelling occurs once in the superset and is not
+`family_variant`. Every other contributor receives the first unallocated
+`parallax_attr_N`, starting at `N = 0`; allocation skips candidates in the complete
+reservation set and aliases already allocated. Thus an authored physical
+`parallax_attr_0` remains reserved even when another contributor needs an internal
+alias, and a physical `family_variant` never collides with the synthetic carrier.
+The same allocated alias occupies that contributor's slot in every branch, whether
+the branch projects its column or a typed `NULL` placeholder.
+
+After execution, materialization uses the selected branch's exact concrete identity
+to remap each applicable result alias back to that contributor's physical column
+spelling and discards non-applicable duplicate-spelling slots. Internal aliases are
+never member names and never appear in the materialized graph unless an authored
+physical column itself has that spelling.
+
 A column not applicable to a branch is a **`NULL` placeholder** — `cast(null as
 <type>)` in that branch's declared column type, so the union's result column types
 resolve deterministically rather than defaulting to an untyped `NULL`. The cast
@@ -840,16 +859,12 @@ asymmetry with table-per-hierarchy: TPH projects the raw tag column and derives
 literal directly:
 
 ```yaml
-# targetEntity: Document (abstract root over Invoice / Memo / Receipt — ALPHABETICAL
-# branch order) — union all, stable superset (id, title, currency, amount_due, body,
-# paid_amount) + variant. The subtype-own blocks aggregate alphabetically (Invoice's
-# amount_due, Memo's body, Receipt's paid_amount); `currency` is FinancialDocument's
-# inherited attribute, surfaced where Invoice's ancestry chain first carries it. The
-# string placeholders diverge per dialect (Postgres varchar / MariaDB char); the
-# decimal placeholders are identical:
+# targetEntity: Record (abstract root over two canonically qualified SharedVariant
+# entities) — case 120's reservation and collision-skipping witness. Physical
+# family_variant and parallax_attr_0 spellings are restored after alias remapping:
 - sql:
-    postgres: select t0.id, t0.title, t0.currency, t0.amount_due, cast(null as varchar(64)) body, cast(null as decimal(18, 2)) paid_amount, 'Invoice' family_variant from invoice t0 union all select t0.id, t0.title, cast(null as varchar(3)) currency, cast(null as decimal(18, 2)) amount_due, t0.body, cast(null as decimal(18, 2)) paid_amount, 'Memo' family_variant from memo t0 union all select t0.id, t0.title, t0.currency, cast(null as decimal(18, 2)) amount_due, cast(null as varchar(64)) body, t0.paid_amount, 'Receipt' family_variant from receipt t0
-    mariadb: select t0.id, t0.title, t0.currency, t0.amount_due, cast(null as char(64)) body, cast(null as decimal(18, 2)) paid_amount, 'Invoice' family_variant from invoice t0 union all select t0.id, t0.title, cast(null as char(3)) currency, cast(null as decimal(18, 2)) amount_due, t0.body, cast(null as decimal(18, 2)) paid_amount, 'Memo' family_variant from memo t0 union all select t0.id, t0.title, t0.currency, cast(null as decimal(18, 2)) amount_due, cast(null as char(64)) body, t0.paid_amount, 'Receipt' family_variant from receipt t0
+    postgres: select t0.id, t0.family_variant parallax_attr_1, t0.parallax_attr_0 parallax_attr_2, cast(null as varchar(64)) parallax_attr_3, 'archive.SharedVariant' family_variant from archive_shared t0 union all select t0.id, t0.family_variant parallax_attr_1, cast(null as varchar(64)) parallax_attr_2, t0.parallax_attr_0 parallax_attr_3, 'catalog.SharedVariant' family_variant from catalog_shared t0
+    mariadb: select t0.id, t0.family_variant parallax_attr_1, t0.parallax_attr_0 parallax_attr_2, cast(null as char(64)) parallax_attr_3, 'archive.SharedVariant' family_variant from archive_shared t0 union all select t0.id, t0.family_variant parallax_attr_1, cast(null as char(64)) parallax_attr_2, t0.parallax_attr_0 parallax_attr_3, 'catalog.SharedVariant' family_variant from catalog_shared t0
 ```
 
 The equivalent authored spellings of a narrow collapse to the same lowering: a

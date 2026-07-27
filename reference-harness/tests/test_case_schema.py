@@ -494,6 +494,7 @@ def _identity_checks_read_case() -> dict[str, Any]:
             "statements": [
                 {"sql": {"postgres": "select t0.id from orders t0 where t0.id = ?"}, "binds": [1]}
             ],
+            "referenceSql": "select id from orders where id = 1",
             "graph": {"Order": [{"id": 1, "items": [{"id": 11, "order": {"id": 1}}]}]},
             "identityChecks": [
                 {

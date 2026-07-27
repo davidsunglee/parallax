@@ -16,6 +16,8 @@ document order: element order in a `many` member is semantic (m-value-object).
 from __future__ import annotations
 
 import json
+from copy import deepcopy
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -27,7 +29,9 @@ from reference_harness.case_runner import (
     _assert_single_statement_graph,
     _decode_document,
     _graphs_equal,
+    _MaterializedRow,
     _project_value_object,
+    _reference_identity_row,
 )
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -35,6 +39,7 @@ COMPATIBILITY_ROOT = _REPO_ROOT / "core" / "compatibility"
 
 _CASE_023 = "m-value-object-023-graph-nested-materialization.yaml"
 _CASE_024 = "m-value-object-024-graph-filtered-materialization.yaml"
+_CASE_119 = "m-inheritance-119-value-object-family-variant-overlap-graph.yaml"
 
 
 def _customer_model():
@@ -129,6 +134,44 @@ def test_reference_oracle_identity_mismatch_fails() -> None:
 
     with pytest.raises(CaseFailure):
         _assert_single_statement_graph(case, _DropOracleRow("postgres", [1, 2]))
+
+
+@pytest.mark.parametrize("stored_profile", [None, '"VariantNote"'])
+def test_family_variant_overlap_tracks_null_and_equal_vo_payload_provenance(
+    stored_profile: Any,
+) -> None:
+    loaded = _load(_CASE_119)
+    case = replace(loaded, raw=deepcopy(loaded.raw))
+    case.then["graph"] = {
+        "VariantRecord": [{"id": 2, "profile": None, "familyVariant": "VariantNote"}]
+    }
+
+    class _OverlapDb:
+        dialect = "postgres"
+
+        def query(self, sql: str, binds: list[Any] | None = None) -> list[dict[str, Any]]:
+            if sql == "select id, kind from variant_record":
+                return [{"id": 2, "kind": "note"}]
+            return [{"id": 2, "kind": "note", "familyVariant": stored_profile}]
+
+    _assert_single_statement_graph(case, _OverlapDb())
+
+
+@pytest.mark.parametrize("payload", [None, "VariantNote"])
+def test_reference_identity_filter_uses_consumption_state_not_payload_equality(
+    payload: Any,
+) -> None:
+    unconsumed = _MaterializedRow(
+        {"id": 2, "familyVariant": payload},
+        value_object_columns={"familyVariant": payload},
+    )
+    consumed = _MaterializedRow(
+        {"id": 2, "familyVariant": payload},
+        value_object_columns={"familyVariant": payload},
+        consumed_value_object_columns={"familyVariant"},
+    )
+    assert _reference_identity_row(unconsumed) == {"id": 2}
+    assert _reference_identity_row(consumed) == {"id": 2, "familyVariant": payload}
 
 
 def test_projection_drops_undeclared_keys_and_collapses_absence() -> None:

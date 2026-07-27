@@ -224,6 +224,30 @@ def tag_of(definition: dict[str, Any]) -> tuple[str, Any] | None:
 # --- family resolution ------------------------------------------------------
 
 
+class _IdentityDefinitions(dict[str, dict[str, Any]]):
+    def __init__(self, definitions: dict[str, dict[str, Any]]) -> None:
+        super().__init__(definitions)
+        local_keys: dict[str, list[str]] = {}
+        for key, definition in definitions.items():
+            local_keys.setdefault(definition["name"], []).append(key)
+        self._local_keys = local_keys
+
+    def canonical_key(self, name: str) -> str:
+        if dict.__contains__(self, name):
+            return name
+        matches = self._local_keys.get(name, [])
+        return matches[0] if len(matches) == 1 else name
+
+    def __contains__(self, name: object) -> bool:
+        return isinstance(name, str) and dict.__contains__(self, self.canonical_key(name))
+
+    def __getitem__(self, name: str) -> dict[str, Any]:
+        return dict.__getitem__(self, self.canonical_key(name))
+
+    def get(self, name: str, default: Any = None) -> Any:
+        return dict.get(self, self.canonical_key(name), default)
+
+
 class Family:
     """A read-only view of the inheritance participants in a descriptor.
 
@@ -234,18 +258,10 @@ class Family:
 
     def __init__(self, entity_defs: list[dict[str, Any]]) -> None:
         definitions = [d for d in entity_defs if isinstance(d, dict) and "name" in d]
-        counts: dict[str, int] = {}
-        for definition in definitions:
-            counts[definition["name"]] = counts.get(definition["name"], 0) + 1
-        self._keys = {
-            id(definition): (
-                definition["name"]
-                if counts[definition["name"]] == 1
-                else _qualified_name(definition)
-            )
-            for definition in definitions
-        }
-        self.defs = {self._keys[id(definition)]: definition for definition in definitions}
+        self._keys = {id(definition): _qualified_name(definition) for definition in definitions}
+        self.defs = _IdentityDefinitions(
+            {self._keys[id(definition)]: definition for definition in definitions}
+        )
         self.order = [self._keys[id(definition)] for definition in definitions]
         identities = {
             _qualified_name(definition): self._keys[id(definition)] for definition in definitions
@@ -265,6 +281,12 @@ class Family:
     def key_of(self, definition: dict[str, Any]) -> str:
         return self._keys[id(definition)]
 
+    def _render_key(self, key: str) -> str:
+        definition = self.defs[key]
+        local_name = definition["name"]
+        local_matches = [item for item in self.order if self.defs[item]["name"] == local_name]
+        return key if len(local_matches) > 1 else local_name
+
     def children_of(self, name: str) -> list[str]:
         """Direct subtypes of *name*, in descriptor declaration order.
 
@@ -273,7 +295,8 @@ class Family:
         ordering. The canonical concrete-subtype order is alphabetical
         (:func:`concrete_descendants` / :func:`canonical_concrete_order`).
         """
-        return [child for child in self.order if self.parents[child] == name]
+        key = self.defs.canonical_key(name)
+        return [child for child in self.order if self.parents[child] == key]
 
     def ancestry(self, name: str) -> list[str]:
         """The chain root -> ... -> *name*, or a best-effort prefix if malformed.
@@ -283,7 +306,7 @@ class Family:
         """
         chain: list[str] = []
         seen: set[str] = set()
-        current: str | None = name
+        current: str | None = self.defs.canonical_key(name)
         while current is not None and current in self.defs and current not in seen:
             seen.add(current)
             chain.append(current)
@@ -337,8 +360,8 @@ class Family:
             for child in self.children_of(node):
                 visit(child)
 
-        visit(name)
-        return sorted(result)
+        visit(self.defs.canonical_key(name))
+        return self.canonical_concrete_order(result)
 
     def effective_concrete_set(self, name: str) -> list[str]:
         """The concrete subtype set a query at position *name* resolves over.
@@ -350,9 +373,10 @@ class Family:
         """
         if name not in self.defs:
             return [name]
-        if is_concrete(self.defs[name]):
-            return [name]
-        return self.concrete_descendants(name)
+        key = self.defs.canonical_key(name)
+        if is_concrete(self.defs[key]):
+            return [self._render_key(key)]
+        return self.concrete_descendants(key)
 
     def resolve_to_set(self, to_list: list[str]) -> list[str]:
         """The effective concrete set a ``narrow.to`` list resolves to.
@@ -381,7 +405,7 @@ class Family:
         """
         if not isinstance(rel_ref, str) or "." not in rel_ref:
             return None
-        cls, _, rel_name = rel_ref.partition(".")
+        cls, rel_name = rel_ref.rsplit(".", 1)
         definition = self.defs.get(cls)
         if definition is None:
             return None
@@ -392,11 +416,11 @@ class Family:
             if isinstance(join, dict):
                 target = join.get("target")
                 if isinstance(target, dict) and isinstance(target.get("entity"), str):
-                    return _short_entity_name(target["entity"])
+                    return self.defs.canonical_key(target["entity"])
             reverse_of = relationship.get("reverseOf")
             if isinstance(reverse_of, str) and "." in reverse_of:
                 owner, _relationship_name = reverse_of.rsplit(".", 1)
-                return _short_entity_name(owner)
+                return self.defs.canonical_key(owner)
         return None
 
     def canonical_concrete_order(self, concretes: list[str]) -> list[str]:
@@ -407,11 +431,16 @@ class Family:
         the authored spelling and of the descriptor's file layout, so ``[Cat, Dog]``
         and ``[Pet]`` both yield ``[Cat, Dog]``.
         """
+
         def identity(name: str) -> tuple[str, str]:
-            namespace, separator, local_name = name.rpartition(".")
+            key = self.defs.canonical_key(name)
+            namespace, separator, local_name = key.rpartition(".")
             return (namespace if separator else "", local_name if separator else name)
 
-        return sorted(concretes, key=identity)
+        return [
+            self._render_key(self.defs.canonical_key(name))
+            for name in sorted(concretes, key=identity)
+        ]
 
     def declaring_entity(self, cls: str, attr_name: str) -> str | None:
         """The NEAREST entity in *cls*'s ancestry that literally declares *attr_name*.
@@ -920,8 +949,7 @@ def narrowed_view_key(family: Family, rel_ref: str, effective_set: list[str]) ->
     relationship name and never calls this.
     """
     rel_name = rel_ref.split(".", 1)[1] if "." in rel_ref else rel_ref
-    ordered = family.canonical_concrete_order(effective_set)
-    return f"{rel_name}[{','.join(ordered)}]"
+    return f"{rel_name}[{','.join(effective_set)}]"
 
 
 def resolve_hop_effective_set(
@@ -1040,7 +1068,13 @@ def _walk_narrow(
         # exactly — subtypes are reached via `to`, not by renaming (or broadening) the
         # position. `expected_entity` is None at the queried / nested same-position
         # levels, where the CLAMP below is the whole rule.
-        if expected_entity is not None and entity != expected_entity:
+        if (
+            expected_entity is not None
+            and (
+                not isinstance(entity, str)
+                or family.defs.canonical_key(entity) != expected_entity
+            )
+        ):
             raise RejectionError(
                 NARROW_OUTSIDE_RELATIONSHIP_TARGET,
                 f"narrow at the relationship-target position names entity {entity!r}, "
@@ -1149,13 +1183,14 @@ def tag_value_to_subtype(entity_defs: list[dict[str, Any]]) -> dict[Any, str]:
     ``familyVariant``. Non-inheritance and table-per-concrete-subtype entities
     contribute nothing.
     """
+    family = Family(entity_defs)
     mapping: dict[Any, str] = {}
     for definition in entity_defs:
         if not isinstance(definition, dict):
             continue
         block = inheritance_of(definition)
         if block and block.get("role") == ROLE_CONCRETE and block.get("tagValue") is not None:
-            mapping[block["tagValue"]] = definition["name"]
+            mapping[block["tagValue"]] = family._render_key(family.key_of(definition))
     return mapping
 
 
