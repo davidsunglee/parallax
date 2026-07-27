@@ -2221,8 +2221,7 @@ def _materialize_owner_node(entity: Entity, row: dict[str, Any]) -> dict[str, An
             else node.pop(column)
         )
         if column in node and (
-            not isinstance(row, _MaterializedRow)
-            or column not in row.consumed_value_object_columns
+            not isinstance(row, _MaterializedRow) or column not in row.consumed_value_object_columns
         ):
             node.pop(column)
         node[vo["name"]] = _project_value_object(vo, _decode_document(raw))
