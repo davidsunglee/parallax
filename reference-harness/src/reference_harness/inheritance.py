@@ -1068,12 +1068,8 @@ def _walk_narrow(
         # exactly — subtypes are reached via `to`, not by renaming (or broadening) the
         # position. `expected_entity` is None at the queried / nested same-position
         # levels, where the CLAMP below is the whole rule.
-        if (
-            expected_entity is not None
-            and (
-                not isinstance(entity, str)
-                or family.defs.canonical_key(entity) != expected_entity
-            )
+        if expected_entity is not None and (
+            not isinstance(entity, str) or family.defs.canonical_key(entity) != expected_entity
         ):
             raise RejectionError(
                 NARROW_OUTSIDE_RELATIONSHIP_TARGET,
