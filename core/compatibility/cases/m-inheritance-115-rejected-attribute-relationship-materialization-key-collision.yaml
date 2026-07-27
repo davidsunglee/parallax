@@ -1,0 +1,23 @@
+# A scalar Attribute's physical column and a Relationship's canonical name render
+# the same key on one standalone node. Model Formation must reject the provenance
+# collision even though the Relationship contributes no physical column and the
+# descriptor is otherwise valid.
+model: models/member-column-defaults.yaml
+tags: [m-inheritance, m-model-formation, m-relationship, m-descriptor, rejected, negative, materialization-key, standalone, slice-snapshot-1, slice-managed-1]
+shape: rejected
+when:
+  model:
+    entity:
+      name: Contact
+      table: contact
+      attributes:
+        - { name: id, type: int64, primaryKey: true }
+        - { name: managerCode, type: string, column: manager }
+      relationships:
+        - name: manager
+          cardinality: many-to-one
+          join:
+            source: managerCode
+            target: { entity: Contact, attribute: id }
+then:
+  rejectedRule: inheritance-materialization-key-collision

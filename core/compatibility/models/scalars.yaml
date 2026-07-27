@@ -17,10 +17,8 @@ entity:
       type: bytes
     - name: localTime
       type: time
-      column: local_time
     - name: externalId
       type: uuid
-      column: external_id
   indices:
     - name: scalar_thing_pk
       attributes: [id]

@@ -1,0 +1,19 @@
+# A concrete family node inherits a scalar Attribute whose physical column renders as
+# the framework-owned synthetic familyVariant key. Model Formation must reject the
+# provenance collision before an abstract read can materialize the subtype identity.
+model: models/member-column-defaults.yaml
+tags: [m-inheritance, m-model-formation, m-descriptor, rejected, negative, materialization-key, familyVariant, table-per-concrete-subtype, slice-snapshot-1, slice-managed-1]
+shape: rejected
+when:
+  model:
+    entities:
+      - name: Record
+        inheritance: { role: root, strategy: table-per-concrete-subtype }
+        attributes:
+          - { name: id, type: int64, primaryKey: true }
+          - { name: variantText, type: string, column: familyVariant }
+      - name: Note
+        table: note
+        inheritance: { role: concrete-subtype, parent: Record }
+then:
+  rejectedRule: inheritance-materialization-key-collision

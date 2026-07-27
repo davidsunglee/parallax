@@ -54,7 +54,6 @@ entities:
       # concrete superset.
       - name: ownerId
         type: int64
-        column: owner_id
         nullable: true
   - name: Pet
     namespace: parallax.compatibility
@@ -64,7 +63,6 @@ entities:
     attributes:
       - name: licenseId
         type: string
-        column: license_id
         maxLength: 16
         nullable: true
   - name: Dog
@@ -76,7 +74,6 @@ entities:
     attributes:
       - name: barkVolume
         type: int32
-        column: bark_volume
         nullable: true
   - name: Cat
     namespace: parallax.compatibility
@@ -97,7 +94,6 @@ entities:
     attributes:
       - name: tuskLength
         type: decimal(18,2)
-        column: tusk_length
         nullable: true
   # The polymorphic OWNER (Phase 6): a plain non-inheritance entity whose
   # relationships target the abstract root and the abstract subtype, so navigation
@@ -118,7 +114,7 @@ entities:
         cardinality: one-to-many
         join:
           source: id
-          target: { entity: Animal, attribute: ownerId }
+          target: { entity: parallax.compatibility.Animal, attribute: ownerId }
       # Targets the abstract SUBTYPE Pet: reaches only { Dog, Cat }, never the sibling
       # WildBoar — so the shared-table EXISTS / deep-fetch hop carries a tag `in`
       # predicate over Pet's concretes.
@@ -126,7 +122,7 @@ entities:
         cardinality: one-to-many
         join:
           source: id
-          target: { entity: Pet, attribute: ownerId }
+          target: { entity: parallax.compatibility.Pet, attribute: ownerId }
     indices:
       - name: person_pk
         attributes: [id]

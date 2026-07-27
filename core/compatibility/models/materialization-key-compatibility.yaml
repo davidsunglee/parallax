@@ -1,0 +1,61 @@
+entities:
+  - name: ProfileOwner
+    namespace: compatibility.overlap
+    table: profile_owner
+    attributes:
+      - { name: id, type: int64, primaryKey: true }
+      - { name: targetId, type: int64 }
+    valueObjects:
+      - name: profile
+        column: details
+        attributes:
+          - { name: label, type: string }
+    relationships:
+      - name: details
+        cardinality: many-to-one
+        join:
+          source: targetId
+          target: { entity: compatibility.overlap.ProfileTarget, attribute: id }
+  - name: ProfileTarget
+    namespace: compatibility.overlap
+    table: profile_target
+    attributes:
+      - { name: id, type: int64, primaryKey: true }
+  - name: VariantRecord
+    namespace: compatibility.overlap
+    table: variant_record
+    attributes:
+      - { name: id, type: int64, primaryKey: true }
+    valueObjects:
+      - name: profile
+        column: familyVariant
+        attributes:
+          - { name: label, type: string }
+    inheritance:
+      role: root
+      strategy: table-per-hierarchy
+      tag: { column: kind }
+  - name: VariantNote
+    namespace: compatibility.overlap
+    inheritance: { role: concrete-subtype, parent: VariantRecord, tagValue: note }
+  - name: VariantMemo
+    namespace: compatibility.overlap
+    inheritance: { role: concrete-subtype, parent: VariantRecord, tagValue: memo }
+  - name: Record
+    namespace: catalog
+    attributes:
+      - { name: id, type: int64, primaryKey: true }
+      - { name: variantMarker, type: string, maxLength: 64, column: family_variant }
+    inheritance: { role: root, strategy: table-per-concrete-subtype }
+  - name: SharedVariant
+    namespace: archive
+    table: archive_shared
+    attributes:
+      - { name: archiveLabel, type: string, maxLength: 64, column: parallax_attr_0 }
+    inheritance: { role: concrete-subtype, parent: catalog.Record }
+  - name: SharedVariant
+    namespace: catalog
+    table: catalog_shared
+    attributes:
+      - { name: catalogLabel, type: string, maxLength: 64, column: parallax_attr_0 }
+    inheritance: { role: concrete-subtype, parent: Record }

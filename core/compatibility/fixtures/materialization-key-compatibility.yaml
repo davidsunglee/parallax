@@ -1,0 +1,10 @@
+compatibility.overlap.ProfileOwner:
+  - { id: 1, targetId: 10, profile: { label: owner-profile } }
+compatibility.overlap.ProfileTarget:
+  - { id: 10 }
+compatibility.overlap.VariantNote:
+  - { id: 2, profile: { label: variant-profile } }
+archive.SharedVariant:
+  - { id: 3, variantMarker: archive-marker, archiveLabel: archived }
+catalog.SharedVariant:
+  - { id: 4, variantMarker: catalog-marker, catalogLabel: current }

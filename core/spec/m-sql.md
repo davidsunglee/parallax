@@ -152,7 +152,7 @@ sources in this fixed order:
    whether a `narrow` reduces the effective set to a single concrete. A **concrete**
    `targetEntity` never projects the tag.
 3. **Table-per-concrete-subtype `familyVariant` literal.** Likewise per branch for an
-   abstract-target read — the subtype-name string literal of the `union all` lowering
+   abstract-target read — the subtype variant-spelling string literal of the `union all` lowering
    (below). The per-branch `cast(null as <type>)` placeholders remain `m-dialect`
    lowering details, not logical columns.
 4. **Value-object document columns.** For an **instance-form** read only (below): every
@@ -758,9 +758,12 @@ explicitly because it is no longer a declared attribute:
 ```
 
 `familyVariant` is **not projected as SQL**. It is materialized from the tag
-metadata map (`tagValue` -> concrete subtype **name**) at row construction — the
+metadata map (`tagValue` -> concrete subtype **variant spelling**) at row construction — the
 same independent, metadata-derived recomputation as the as-of and PK-allocation
-oracles — and appears only in the compatibility rows/graphs (`m-case-format`). A
+oracles. The variant spelling is the bare local name when family-unique and the
+canonical qualified Entity spelling when duplicate local concrete names make the
+bare spelling ambiguous (`m-inheritance`). It appears only in the compatibility
+rows/graphs (`m-case-format`). A
 **concrete-target** read needs no tag in its projection (the caller already knows
 the variant) and carries no `familyVariant`: it projects the concrete instance's
 own columns and injects `t0.kind = ?`.
@@ -829,8 +832,9 @@ the general rule; a future dialect supplies its own placeholder-cast spelling be
 the same `m-dialect` seam.
 
 Because nothing else identifies a row's source table after the union, `familyVariant`
-is projected **as a subtype-name string literal per branch** (the concrete subtype
-**name**, not the physical `tagValue` — there is none). This is the settled
+is projected **as a subtype variant-spelling string literal per branch** (the
+family-unique bare name or ambiguity-required canonical qualified spelling, not
+the physical `tagValue` — there is none). This is the settled
 asymmetry with table-per-hierarchy: TPH projects the raw tag column and derives
 `familyVariant` at materialization (resolved Q6), whereas TPCS projects the variant
 literal directly:

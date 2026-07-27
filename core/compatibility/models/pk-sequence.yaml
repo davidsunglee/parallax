@@ -17,7 +17,7 @@ entities:
     table: pk_sequence
     attributes:
       - { name: name, type: string, primaryKey: true, maxLength: 64 }
-      - { name: nextVal, type: int64, column: next_val }
+      - { name: nextVal, type: int64 }
     indices:
       - { name: pk_sequence_pk, attributes: [name], unique: true }
   - name: Badge

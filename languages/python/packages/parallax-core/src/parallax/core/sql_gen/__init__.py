@@ -5,7 +5,7 @@ normalize) that turns an ``m-op-algebra`` operation into one canonical
 ``Statement`` per dialect. Dialect variation enters only through the injected
 ``Dialect`` strategy. ``m-sql`` depends on ``m-op-algebra`` and ``m-dialect``.
 
-The six names below are the whole supported seam; everything else in this
+The seven names below are the whole supported seam; everything else in this
 package is private implementation. ``compile_read`` returns a self-contained
 :class:`CompiledRead` — statement, root narrow, and row transform together — so
 a caller executes and transforms without re-deriving anything from the
@@ -60,6 +60,7 @@ from __future__ import annotations
 from parallax.core.sql_gen._compile import (
     CompiledPredicate,
     CompiledRead,
+    MaterializedReadRow,
     SqlGenError,
     Statement,
     compile_read,
@@ -69,6 +70,7 @@ from parallax.core.sql_gen._compile import (
 __all__ = [
     "CompiledPredicate",
     "CompiledRead",
+    "MaterializedReadRow",
     "SqlGenError",
     "Statement",
     "compile_read",

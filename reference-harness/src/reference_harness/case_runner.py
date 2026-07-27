@@ -68,6 +68,25 @@ from .sql_normalize import is_union_all, normalize, sqlglot_dialect
 from .value_object_resolve import REJECTED_RULES, RejectionError
 from .write_validate import validate_subtype_write, validate_write
 
+
+class _MaterializedRow(dict[str, Any]):
+    __slots__ = ("value_object_columns",)
+
+    def __init__(
+        self,
+        values: dict[str, Any],
+        *,
+        value_object_columns: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(values)
+        self.value_object_columns = value_object_columns or {}
+
+
+def _materialized_row(row: dict[str, Any]) -> _MaterializedRow:
+    if isinstance(row, _MaterializedRow):
+        return _MaterializedRow(dict(row), value_object_columns=dict(row.value_object_columns))
+    return _MaterializedRow(dict(row))
+
 # The full pre-SQL rejection vocabulary: value-object / operation rules
 # (m-value-object / m-op-algebra) plus the inheritance family-invariant rules, the
 # narrow / subtype-scope operation rules, and the concrete-subtype WRITE rules
@@ -1139,7 +1158,7 @@ def _materialize_family_variant(case: Case, rows: list[dict[str, Any]]) -> list[
 
     materialized: list[dict[str, Any]] = []
     for row in rows:
-        new_row = dict(row)
+        new_row = _materialized_row(row)
         if tag_column not in new_row:
             raise CaseFailure(
                 f"{case.path.name}: abstract-target read does not project the tag "
@@ -1152,6 +1171,8 @@ def _materialize_family_variant(case: Case, rows: list[dict[str, Any]]) -> list[
                 f"{case.path.name}: tag value {tag_value!r} maps to no concrete subtype "
                 f"in the family (tag metadata {sorted(variant_map)})."
             )
+        if "familyVariant" in new_row:
+            new_row.value_object_columns["familyVariant"] = new_row["familyVariant"]
         new_row["familyVariant"] = variant
         materialized.append(new_row)
     return materialized
@@ -1179,11 +1200,16 @@ def _narrow_to_variant_columns(case: Case, rows: list[dict[str, Any]]) -> list[d
             continue
         own_columns = set(concrete_superset_columns(entity_defs, [variant]))
         narrowed.append(
-            {
+            _MaterializedRow(
+                {
                 key: value
                 for key, value in row.items()
                 if key == "familyVariant" or key in own_columns
-            }
+                },
+                value_object_columns=(
+                    dict(row.value_object_columns) if isinstance(row, _MaterializedRow) else None
+                ),
+            )
         )
     return narrowed
 
@@ -1195,6 +1221,38 @@ def _narrow_to_variant_columns(case: Case, rows: list[dict[str, Any]]) -> list[d
 # branch projects a subtype-name literal aliased to this column, which the oracle
 # renames to `familyVariant` after asserting the branch shape.
 _TPCS_VARIANT_COLUMN = "family_variant"
+
+
+def _tpcs_result_aliases(columns: list[str]) -> list[str]:
+    counts = {column: columns.count(column) for column in set(columns)}
+    allocated = set(columns) | {_TPCS_VARIANT_COLUMN}
+    aliases: list[str] = []
+    next_internal = 0
+    for column in columns:
+        if counts[column] == 1 and column != _TPCS_VARIANT_COLUMN:
+            aliases.append(column)
+            continue
+        while f"parallax_attr_{next_internal}" in allocated:
+            next_internal += 1
+        alias = f"parallax_attr_{next_internal}"
+        allocated.add(alias)
+        aliases.append(alias)
+        next_internal += 1
+    return aliases
+
+
+def _tpcs_superset_attributes(
+    entity_defs: list[dict[str, Any]], effective_set: list[str]
+) -> list[dict[str, Any]]:
+    attributes: list[dict[str, Any]] = []
+    names: set[str] = set()
+    for entity_name in effective_set:
+        resolved = resolve_effective_definition(entity_defs, entity_name)
+        for attribute in resolved.get("attributes", []) or []:
+            if attribute["name"] not in names:
+                attributes.append(attribute)
+                names.add(attribute["name"])
+    return attributes
 
 
 def _canonical_concrete_order(family: Family, target_name: str, effective: list[str]) -> list[str]:
@@ -1280,8 +1338,8 @@ def _assert_branch_projection_shape(
     position: int,
     name: str,
     superset: list[str],
-    applicable: set[str],
-    column_types: dict[str, dict[str, Any]],
+    superset_attributes: list[dict[str, Any]],
+    applicable_names: set[str],
     dialect: str,
 ) -> None:
     """Assert one `union all` branch's per-column projection SHAPE (m-sql).
@@ -1295,9 +1353,11 @@ def _assert_branch_projection_shape(
     otherwise pass the name-only check.
     """
     engine = sqlglot_dialect(dialect)
-    for column_index, column in enumerate(superset):
+    for column_index, (column, attribute) in enumerate(
+        zip(superset, superset_attributes, strict=True)
+    ):
         node = _projection_expr(branch.expressions[column_index])
-        if column in applicable:
+        if attribute["name"] in applicable_names:
             if not isinstance(node, exp.Column):
                 raise CaseFailure(
                     f"{case.path.name}: `union all` branch {position} ({name!r}) "
@@ -1307,13 +1367,6 @@ def _assert_branch_projection_shape(
                 )
             continue
         # Non-applicable: exactly `cast(null as <declared type>)` for this dialect.
-        attribute = column_types.get(column)
-        if attribute is None:
-            raise CaseFailure(
-                f"{case.path.name}: `union all` branch {position} ({name!r}) projects "
-                f"non-applicable column {column!r}, which resolves to no descriptor "
-                f"attribute in the effective set (internal oracle error)."
-            )
         expected = exp.DataType.build(
             placeholder_cast_type(attribute.get("type", ""), attribute.get("maxLength"), dialect),
             dialect=engine,
@@ -1353,20 +1406,9 @@ def _assert_tpcs_union_shape(case: Case, family: Family, ordered: list[str]) -> 
     branch, a dropped superset column, a bare/mis-typed placeholder, or a wrong literal.
     """
     entity_defs = case.model.entity_defs
-    superset = list(concrete_superset_columns(entity_defs, ordered))
-    # Collision guard (m-sql / m-inheritance): the synthetic `family_variant` alias is
-    # the on-the-wire carrier the oracle renames to `familyVariant`; a real declared
-    # column of that name would collide with it at both the shape check and the
-    # materialization rename. Reject it with a clear diagnostic rather than silently
-    # clobbering the real column.
-    if _TPCS_VARIANT_COLUMN in superset:
-        raise CaseFailure(
-            f"{case.path.name}: a concrete subtype in family {ordered} declares a "
-            f"column {_TPCS_VARIANT_COLUMN!r}, which collides with the synthetic "
-            f"table-per-concrete-subtype variant alias; rename the column (m-sql)."
-        )
-    expected_columns = [*superset, _TPCS_VARIANT_COLUMN]
-    column_types = _column_type_index(entity_defs, ordered)
+    superset_attributes = _tpcs_superset_attributes(entity_defs, ordered)
+    superset = [effective_column(attribute) for attribute in superset_attributes]
+    expected_columns = [*_tpcs_result_aliases(superset), _TPCS_VARIANT_COLUMN]
     for dialect in sorted(case.golden_dialects):
         statements = case.golden_statements(dialect)
         if not statements:
@@ -1397,9 +1439,21 @@ def _assert_tpcs_union_shape(case: Case, family: Family, ordered: list[str]) -> 
                     f"{expected_columns} (inherited first, then subtype-declared in "
                     f"alphabetical order by entity name, then familyVariant; m-sql)."
                 )
-            applicable = set(concrete_superset_columns(entity_defs, [name]))
+            applicable_names = {
+                attribute["name"]
+                for attribute in resolve_effective_definition(entity_defs, name).get(
+                    "attributes", []
+                )
+            }
             _assert_branch_projection_shape(
-                case, branch, position, name, superset, applicable, column_types, dialect
+                case,
+                branch,
+                position,
+                name,
+                superset,
+                superset_attributes,
+                applicable_names,
+                dialect,
             )
             literal = _string_literal_value(branch.expressions[-1])
             if literal != name:
@@ -1423,17 +1477,43 @@ def _materialize_tpcs_family_variant(
     effective = _read_effective_set(case, family, target_name)
     ordered = _canonical_concrete_order(family, target_name, effective)
     _assert_tpcs_union_shape(case, family, ordered)
+    superset_attributes = _tpcs_superset_attributes(case.model.entity_defs, ordered)
+    superset = [effective_column(attribute) for attribute in superset_attributes]
+    result_aliases = _tpcs_result_aliases(superset)
+    column_counts = {column: superset.count(column) for column in set(superset)}
 
     materialized: list[dict[str, Any]] = []
     for row in rows:
-        new_row = dict(row)
+        new_row = _materialized_row(row)
         if _TPCS_VARIANT_COLUMN not in new_row:
             raise CaseFailure(
                 f"{case.path.name}: table-per-concrete-subtype abstract read does not "
                 f"project the {_TPCS_VARIANT_COLUMN!r} literal; familyVariant cannot be "
                 f"materialized (m-sql)."
             )
-        new_row["familyVariant"] = new_row.pop(_TPCS_VARIANT_COLUMN)
+        if "familyVariant" in new_row:
+            new_row.value_object_columns["familyVariant"] = new_row["familyVariant"]
+        variant = new_row.pop(_TPCS_VARIANT_COLUMN)
+        applicable_names = {
+            attribute["name"]
+            for attribute in resolve_effective_definition(case.model.entity_defs, variant).get(
+                "attributes", []
+            )
+        }
+        for attribute, column, result_alias in zip(
+            superset_attributes, superset, result_aliases, strict=True
+        ):
+            if (
+                result_alias in new_row
+                and result_alias != column
+                and (
+                    column_counts[column] == 1 or attribute["name"] in applicable_names
+                )
+            ):
+                new_row[column] = new_row.pop(result_alias)
+            elif column_counts[column] > 1 and attribute["name"] not in applicable_names:
+                new_row.pop(result_alias, None)
+        new_row["familyVariant"] = variant
         materialized.append(new_row)
     return materialized
 
@@ -2115,7 +2195,12 @@ def _materialize_owner_node(entity: Entity, row: dict[str, Any]) -> dict[str, An
         column = vo["column"]
         if column not in node:
             continue
-        node[vo["name"]] = _project_value_object(vo, _decode_document(node.pop(column)))
+        raw = (
+            row.value_object_columns[column]
+            if isinstance(row, _MaterializedRow) and column in row.value_object_columns
+            else node.pop(column)
+        )
+        node[vo["name"]] = _project_value_object(vo, _decode_document(raw))
     return node
 
 
@@ -2155,7 +2240,7 @@ def _assert_single_statement_graph(case: Case, db: DatabaseProvider) -> None:
     """
     dialect = db.dialect
     (golden,) = case.golden_statements(dialect)
-    entity = case.model.root_entity
+    entity = case.model.entity(case.when["targetEntity"])
 
     validate_operation_inheritance(
         case.model.entity_defs, case.operation, position=case.when.get("targetEntity")

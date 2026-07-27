@@ -1,0 +1,32 @@
+# A standalone Value Object may store its document in a physical column whose spelling
+# equals a Relationship's rendered name: the graph must retain the document under the
+# occurrence name `profile` while the independently deep-fetched `details` edge attaches
+# under its relationship name; the two values must coexist after two round trips.
+model: models/materialization-key-compatibility.yaml
+tags: [m-inheritance, m-deep-fetch, m-value-object, m-relationship, m-sql, m-api-conformance, graph, instance-form, materialization-key, positive, slice-snapshot-1, slice-managed-1]
+shape: read
+compileEligibility:
+  mode: run-only
+  reason: query-result-dependent
+  note: "the details child IN-list bind is gathered from the root query result"
+when:
+  targetEntity: ProfileOwner
+  operation:
+    deepFetch:
+      operand:
+        all: {}
+      paths:
+        - [{ rel: ProfileOwner.details }]
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.target_id, t0.details from profile_owner t0
+        mariadb: select t0.id, t0.target_id, t0.details from profile_owner t0
+    - sql:
+        postgres: select t0.id from profile_target t0 where t0.id in (?)
+        mariadb: select t0.id from profile_target t0 where t0.id in (?)
+      binds: [10]
+  graph:
+    ProfileOwner:
+      - { id: 1, target_id: 10, profile: { label: owner-profile }, details: { id: 10 } }
+  roundTrips: 2

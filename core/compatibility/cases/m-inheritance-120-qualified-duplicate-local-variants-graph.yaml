@@ -1,0 +1,20 @@
+# Two concrete variants may share the local name `SharedVariant` in distinct namespaces:
+# an abstract TPCS read must emit and materialize each exact qualified identity, preserve
+# branch-specific values, and never collapse either row to a bare ambiguous local name.
+model: models/materialization-key-compatibility.yaml
+tags: [m-inheritance, m-sql, m-api-conformance, table-per-concrete-subtype, union-all, familyVariant, graph, instance-form, entity-identity, positive, slice-snapshot-1, slice-managed-1]
+shape: read
+when:
+  targetEntity: Record
+  operation:
+    all: {}
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.family_variant parallax_attr_1, t0.parallax_attr_0 parallax_attr_2, cast(null as varchar(64)) parallax_attr_3, 'archive.SharedVariant' family_variant from archive_shared t0 union all select t0.id, t0.family_variant parallax_attr_1, cast(null as varchar(64)) parallax_attr_2, t0.parallax_attr_0 parallax_attr_3, 'catalog.SharedVariant' family_variant from catalog_shared t0
+        mariadb: select t0.id, t0.family_variant parallax_attr_1, t0.parallax_attr_0 parallax_attr_2, cast(null as char(64)) parallax_attr_3, 'archive.SharedVariant' family_variant from archive_shared t0 union all select t0.id, t0.family_variant parallax_attr_1, cast(null as char(64)) parallax_attr_2, t0.parallax_attr_0 parallax_attr_3, 'catalog.SharedVariant' family_variant from catalog_shared t0
+  graph:
+    Record:
+      - { id: 3, family_variant: archive-marker, parallax_attr_0: archived, familyVariant: archive.SharedVariant }
+      - { id: 4, family_variant: catalog-marker, parallax_attr_0: current, familyVariant: catalog.SharedVariant }
+  roundTrips: 1

@@ -47,12 +47,21 @@ def _raw(path: Path) -> dict[str, Any]:
 
 
 @pytest.mark.parametrize("path", _MODELS, ids=lambda p: p.stem)
-def test_every_corpus_descriptor_round_trips_deterministically(path: Path) -> None:
+def test_every_corpus_descriptor_is_authored_in_canonical_form(path: Path) -> None:
+    authored = _raw(path)
+    assert canonicalize(authored) == authored
+
+
+@pytest.mark.parametrize("path", _MODELS, ids=lambda p: p.stem)
+def test_every_corpus_descriptor_canonicalization_is_idempotent(path: Path) -> None:
     canonical = canonicalize(_raw(path))
-    # Idempotence: the canonical form is a fixpoint of serialize ∘ deserialize.
     assert canonicalize(canonical) == canonical
-    # Records survive the round-trip identically.
-    assert deserialize(canonical) == deserialize(_raw(path))
+
+
+@pytest.mark.parametrize("path", _MODELS, ids=lambda p: p.stem)
+def test_every_corpus_descriptor_records_round_trip(path: Path) -> None:
+    records = deserialize(_raw(path))
+    assert deserialize(serialize(records)) == records
 
 
 @pytest.mark.parametrize("path", _MODELS, ids=lambda p: p.stem)

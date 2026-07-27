@@ -310,6 +310,58 @@
       "valueObject": {}
     }
   },
+  "models/materialization-key-compatibility.yaml": {
+    "archive.SharedVariant": {
+      "attribute": {
+        "archiveLabel": "parallax_attr_0"
+      },
+      "valueObject": {}
+    },
+    "catalog.Record": {
+      "attribute": {
+        "id": "id",
+        "variantMarker": "family_variant"
+      },
+      "valueObject": {}
+    },
+    "catalog.SharedVariant": {
+      "attribute": {
+        "catalogLabel": "parallax_attr_0"
+      },
+      "valueObject": {}
+    },
+    "compatibility.overlap.ProfileOwner": {
+      "attribute": {
+        "id": "id",
+        "targetId": "target_id"
+      },
+      "valueObject": {
+        "profile": "details"
+      }
+    },
+    "compatibility.overlap.ProfileTarget": {
+      "attribute": {
+        "id": "id"
+      },
+      "valueObject": {}
+    },
+    "compatibility.overlap.VariantMemo": {
+      "attribute": {},
+      "valueObject": {}
+    },
+    "compatibility.overlap.VariantNote": {
+      "attribute": {},
+      "valueObject": {}
+    },
+    "compatibility.overlap.VariantRecord": {
+      "attribute": {
+        "id": "id"
+      },
+      "valueObject": {
+        "profile": "familyVariant"
+      }
+    }
+  },
   "models/member-column-defaults.yaml": {
     "parallax.compatibility.MemberColumnDefaults": {
       "attribute": {

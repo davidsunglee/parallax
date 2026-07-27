@@ -106,7 +106,7 @@ class Position(
     stamps the rest."""
 
     id: Attr[int] = attr(primary_key=True, column="pos_id")
-    acct_num: Attr[str] = attr(column="acct_num", max_length=32)
+    acct_num: Attr[str] = attr(max_length=32)
     value: Attr[Decimal] = attr(column="val", precision=18, scale=2)
 
 
@@ -129,7 +129,7 @@ class Order(
     qty: Attr[int] = attr(type=Int32)
     price: Attr[Decimal] = attr(precision=18, scale=2)
     active: Attr[bool]
-    ordered_on: Attr[dt.date] = attr(column="ordered_on")
+    ordered_on: Attr[dt.date]
     items: Rel[tuple["OrderItem", ...]] = rel(
         cardinality=ONE_TO_MANY,
         join=("id", "order_id"),
@@ -162,10 +162,10 @@ class OrderItem(
     to-one ``order`` back-reference and the item-level ``statuses`` hop)."""
 
     id: Attr[int] = attr(primary_key=True)
-    order_id: Attr[int] = attr(column="order_id")
+    order_id: Attr[int]
     sku: Attr[str] = attr(max_length=32)
     quantity: Attr[int] = attr(type=Int32)
-    shipped_on: Attr[dt.date | None] = attr(column="shipped_on")
+    shipped_on: Attr[dt.date | None]
     order: Rel[Order | None] = rel(reverse_of="items")
     statuses: Rel[tuple["OrderStatus", ...]] = rel(
         cardinality=ONE_TO_MANY,
@@ -189,8 +189,8 @@ class OrderStatus(
     (a nullable many-to-one — the to-one navigate/deep-fetch nullable shape)."""
 
     id: Attr[int] = attr(primary_key=True)
-    order_id: Attr[int] = attr(column="order_id")
-    order_item_id: Attr[int | None] = attr(column="order_item_id")
+    order_id: Attr[int]
+    order_item_id: Attr[int | None]
     code: Attr[str] = attr(max_length=16)
     order: Rel[Order | None] = rel(reverse_of="statuses")
     order_item: Rel[OrderItem | None] = rel(reverse_of="statuses")
@@ -208,7 +208,7 @@ class OrderTag(
     """Mirror of the ``OrderTag`` entity of ``models/orders.yaml``."""
 
     id: Attr[int] = attr(primary_key=True)
-    order_id: Attr[int] = attr(column="order_id")
+    order_id: Attr[int]
     label: Attr[str] = attr(max_length=32)
     priority: Attr[int] = attr(type=Int32)
     order: Rel[Order | None] = rel(reverse_of="tags")

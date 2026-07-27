@@ -48,7 +48,7 @@ class Widget(Entity, table="widget", namespace=_NS):
     price: Attr[Decimal] = attr(precision=18, scale=2)
     active: Attr[bool]
     sku: Attr[str | None] = attr(max_length=32)
-    made_on: Attr[dt.date] = attr(column="made_on")
+    made_on: Attr[dt.date]
 
 
 _WIDGETS = MetamodelHub(Widget)

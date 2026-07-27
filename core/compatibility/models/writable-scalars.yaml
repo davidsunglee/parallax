@@ -33,11 +33,9 @@ entity:
       nullable: true
     - name: localTime
       type: time
-      column: local_time
       nullable: true
     - name: externalId
       type: uuid
-      column: external_id
       nullable: true
     - name: amount
       type: decimal(18,4)

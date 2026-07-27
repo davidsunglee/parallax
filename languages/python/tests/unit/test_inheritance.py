@@ -21,7 +21,10 @@ from parallax.core.metamodel import (
     UNRESOLVED_ENTITY_REFERENCE,
     AbstractRoot,
     AbstractSubtype,
+    AttributeIdentity,
     AttributeLocation,
+    AttributeReference,
+    Cardinality,
     Column,
     ConcreteSubtype,
     EntityIdentity,
@@ -31,10 +34,14 @@ from parallax.core.metamodel import (
     IssueCode,
     MetamodelIssue,
     PersistenceMode,
+    RelationshipIdentity,
+    RelationshipLocation,
     Table,
     TablePerConcreteSubtype,
     TablePerHierarchy,
     TemporalDimension,
+    UnresolvedDefiningRelationshipDeclaration,
+    UnresolvedRelationshipJoin,
     ValueObjectAttributeDeclaration,
     ValueObjectIdentity,
     ValueObjectLocation,
@@ -410,6 +417,25 @@ _RULE_SET_REJECTIONS: Final[Mapping[str, IssueCode]] = {
     "m-inheritance-103-rejected-optlock-second-version": (
         inheritance.OPTIMISTIC_LOCKING_NOT_ROOT_OWNED
     ),
+    "m-inheritance-111-rejected-standalone-attribute-value-object-column-collision": (
+        inheritance.PHYSICAL_COLUMN_COLLISION
+    ),
+    "m-inheritance-112-rejected-tpcs-inherited-column-collision": (
+        inheritance.PHYSICAL_COLUMN_COLLISION
+    ),
+    "m-inheritance-113-rejected-tph-sibling-column-collision": (
+        inheritance.PHYSICAL_COLUMN_COLLISION
+    ),
+    "m-inheritance-114-rejected-tph-tag-column-collision": (inheritance.PHYSICAL_COLUMN_COLLISION),
+    "m-inheritance-115-rejected-attribute-relationship-materialization-key-collision": (
+        inheritance.MATERIALIZATION_KEY_COLLISION
+    ),
+    "m-inheritance-116-rejected-narrowed-view-materialization-key-collision": (
+        inheritance.MATERIALIZATION_KEY_COLLISION
+    ),
+    "m-inheritance-117-rejected-family-variant-materialization-key-collision": (
+        inheritance.MATERIALIZATION_KEY_COLLISION
+    ),
 }
 """The fixtures this module's Rule Set rejects, with the one code each yields."""
 
@@ -451,16 +477,31 @@ def _shape(*names: str) -> ValueObjectShapeDeclaration:
     )
 
 
+def _relationship(
+    source: EntityIdentity, target: EntityIdentity, name: str = "details"
+) -> UnresolvedDefiningRelationshipDeclaration:
+    return UnresolvedDefiningRelationshipDeclaration(
+        identity=RelationshipIdentity(source, name),
+        cardinality=Cardinality.MANY_TO_ONE,
+        join=UnresolvedRelationshipJoin(
+            source=AttributeIdentity(source, "targetId"),
+            target=AttributeReference(ExactEntityReference(target), "id"),
+        ),
+    )
+
+
 def test_the_owned_issue_code_set_is_closed() -> None:
     assert sorted(inheritance.ISSUE_CODES) == [
         "inheritance-concrete-without-abstract-root",
         "inheritance-cycle",
         "inheritance-duplicate-tag-value",
+        "inheritance-materialization-key-collision",
         "inheritance-member-shadowing",
         "inheritance-missing-root",
         "inheritance-missing-tag-value",
         "inheritance-optimistic-locking-not-root-owned",
         "inheritance-persistence-not-root-owned",
+        "inheritance-physical-column-collision",
         "inheritance-primary-key-missing",
         "inheritance-primary-key-multiple",
         "inheritance-strategy-redeclared",
@@ -691,9 +732,14 @@ def test_a_descendant_may_not_redeclare_an_ancestor_member() -> None:
         _hierarchy(root_attributes=(key(_ROOT), attribute(_ROOT, "label", type=STRING))),
         _concrete(_LEAF, attributes=(attribute(_LEAF, "label", type=STRING),)),
     )
-    assert [issue.code for issue in issues] == [inheritance.MEMBER_SHADOWING]
-    assert issues[0].location == AttributeLocation(attribute(_LEAF, "label").identity)
-    assert issues[0].related == (AttributeLocation(attribute(_ROOT, "label").identity),)
+    assert [issue.code for issue in issues] == [
+        inheritance.MATERIALIZATION_KEY_COLLISION,
+        inheritance.MEMBER_SHADOWING,
+        inheritance.PHYSICAL_COLUMN_COLLISION,
+    ]
+    shadowing = next(issue for issue in issues if issue.code == inheritance.MEMBER_SHADOWING)
+    assert shadowing.location == AttributeLocation(attribute(_LEAF, "label").identity)
+    assert shadowing.related == (AttributeLocation(attribute(_ROOT, "label").identity),)
 
 
 def test_shadowing_crosses_member_categories() -> None:
@@ -708,9 +754,14 @@ def test_shadowing_crosses_member_categories() -> None:
             ),
         ),
     )
-    assert [issue.code for issue in issues] == [inheritance.MEMBER_SHADOWING]
-    assert issues[0].location == ValueObjectLocation(ValueObjectIdentity(_LEAF, ("label",)))
-    assert issues[0].related == (AttributeLocation(attribute(_ROOT, "label").identity),)
+    assert [issue.code for issue in issues] == [
+        inheritance.MATERIALIZATION_KEY_COLLISION,
+        inheritance.MEMBER_SHADOWING,
+        inheritance.PHYSICAL_COLUMN_COLLISION,
+    ]
+    shadowing = next(issue for issue in issues if issue.code == inheritance.MEMBER_SHADOWING)
+    assert shadowing.location == ValueObjectLocation(ValueObjectIdentity(_LEAF, ("label",)))
+    assert shadowing.related == (AttributeLocation(attribute(_ROOT, "label").identity),)
 
 
 def test_shadowing_names_the_nearest_ancestor_that_declares_the_member() -> None:
@@ -723,12 +774,34 @@ def test_shadowing_names_the_nearest_ancestor_that_declares_the_member() -> None
         ),
         _concrete(_LEAF, parent=_MID, attributes=(attribute(_LEAF, "label", type=STRING),)),
     )
-    assert [(issue.location, issue.related) for issue in issues] == [
+    assert [(issue.code, issue.location, issue.related) for issue in issues] == [
         (
+            inheritance.MATERIALIZATION_KEY_COLLISION,
+            AttributeLocation(attribute(_LEAF, "label").identity),
+            (AttributeLocation(attribute(_ROOT, "label").identity),),
+        ),
+        (
+            inheritance.MEMBER_SHADOWING,
             AttributeLocation(attribute(_LEAF, "label").identity),
             (AttributeLocation(attribute(_MID, "label").identity),),
         ),
         (
+            inheritance.PHYSICAL_COLUMN_COLLISION,
+            AttributeLocation(attribute(_LEAF, "label").identity),
+            (AttributeLocation(attribute(_ROOT, "label").identity),),
+        ),
+        (
+            inheritance.MATERIALIZATION_KEY_COLLISION,
+            AttributeLocation(attribute(_MID, "label").identity),
+            (AttributeLocation(attribute(_ROOT, "label").identity),),
+        ),
+        (
+            inheritance.MEMBER_SHADOWING,
+            AttributeLocation(attribute(_MID, "label").identity),
+            (AttributeLocation(attribute(_ROOT, "label").identity),),
+        ),
+        (
+            inheritance.PHYSICAL_COLUMN_COLLISION,
             AttributeLocation(attribute(_MID, "label").identity),
             (AttributeLocation(attribute(_ROOT, "label").identity),),
         ),
@@ -739,15 +812,246 @@ def test_disjoint_sibling_branches_may_reuse_a_name() -> None:
     assert (
         _codes(
             _hierarchy(),
-            _concrete(_LEAF, attributes=(attribute(_LEAF, "label", type=STRING),)),
+            _concrete(
+                _LEAF,
+                attributes=(attribute(_LEAF, "label", type=STRING, column="entry_label"),),
+            ),
             _concrete(
                 _SIBLING,
                 tag_value="note",
-                attributes=(attribute(_SIBLING, "label", type=STRING),),
+                attributes=(attribute(_SIBLING, "label", type=STRING, column="note_label"),),
             ),
         )
         == []
     )
+
+
+def test_table_per_hierarchy_sibling_names_need_distinct_physical_columns() -> None:
+    issues = _rule_issues(
+        _hierarchy(),
+        _concrete(_LEAF, attributes=(attribute(_LEAF, "label", type=STRING),)),
+        _concrete(
+            _SIBLING,
+            tag_value="note",
+            attributes=(attribute(_SIBLING, "label", type=STRING),),
+        ),
+    )
+    assert [issue.code for issue in issues] == [inheritance.PHYSICAL_COLUMN_COLLISION]
+    assert issues[0].location == AttributeLocation(attribute(_SIBLING, "label").identity)
+    assert issues[0].related == (AttributeLocation(attribute(_LEAF, "label").identity),)
+
+
+def test_table_per_concrete_subtype_siblings_may_reuse_a_physical_column() -> None:
+    assert (
+        _codes(
+            Declaration(
+                identity=_ROOT,
+                attributes=(key(_ROOT),),
+                inheritance=AbstractRoot(TablePerConcreteSubtype()),
+            ),
+            Declaration(
+                identity=_LEAF,
+                container=Table("entry"),
+                attributes=(attribute(_LEAF, "label", type=STRING),),
+                inheritance=ConcreteSubtype(ExactEntityReference(_ROOT), None),
+            ),
+            Declaration(
+                identity=_SIBLING,
+                container=Table("note"),
+                attributes=(attribute(_SIBLING, "label", type=STRING),),
+                inheritance=ConcreteSubtype(ExactEntityReference(_ROOT), None),
+            ),
+        )
+        == []
+    )
+
+
+def test_two_value_objects_cannot_claim_one_standalone_column() -> None:
+    plain = identity("Plain")
+    first = ValueObjectOccurrenceDeclaration(
+        name="mailingAddress", storage=Column("contact"), shape=_shape("street")
+    )
+    second = ValueObjectOccurrenceDeclaration(
+        name="billingAddress", storage=Column("contact"), shape=_shape("street")
+    )
+    issues = _rule_issues(
+        Declaration(identity=plain, attributes=(key(plain),), value_objects=(first, second))
+    )
+    assert [issue.code for issue in issues] == [inheritance.PHYSICAL_COLUMN_COLLISION]
+    assert issues[0].location == ValueObjectLocation(
+        ValueObjectIdentity(plain, ("billingAddress",))
+    )
+    assert issues[0].related == (
+        ValueObjectLocation(ValueObjectIdentity(plain, ("mailingAddress",))),
+    )
+
+
+def test_attribute_and_value_object_cannot_claim_one_standalone_column() -> None:
+    plain = identity("Plain")
+    scalar = attribute(plain, "profileText", type=STRING, column="profile")
+    document = ValueObjectOccurrenceDeclaration(
+        name="profileDocument", storage=Column("profile"), shape=_shape("text")
+    )
+    issues = _rule_issues(
+        Declaration(
+            identity=plain,
+            attributes=(key(plain), scalar),
+            value_objects=(document,),
+        )
+    )
+    assert [issue.code for issue in issues] == [inheritance.PHYSICAL_COLUMN_COLLISION]
+    assert issues[0].location == ValueObjectLocation(
+        ValueObjectIdentity(plain, ("profileDocument",))
+    )
+    assert issues[0].related == (AttributeLocation(scalar.identity),)
+
+
+def test_model_formation_rejects_a_physical_column_collision() -> None:
+    plain = identity("Plain")
+    scalar = attribute(plain, "profileText", type=STRING, column="profile")
+    document = ValueObjectOccurrenceDeclaration(
+        name="profileDocument", storage=Column("profile"), shape=_shape("text")
+    )
+    with pytest.raises(MetamodelValidationError) as caught:
+        form_metamodel(
+            source(
+                Declaration(
+                    identity=plain,
+                    attributes=(key(plain), scalar),
+                    value_objects=(document,),
+                )
+            )
+        )
+    assert [issue.code for issue in caught.value.issues] == [inheritance.PHYSICAL_COLUMN_COLLISION]
+
+
+def test_inherited_attribute_and_value_object_cannot_share_a_tpcs_column() -> None:
+    document = ValueObjectOccurrenceDeclaration(
+        name="accountDocument", storage=Column("account_data"), shape=_shape("name")
+    )
+    issues = _rule_issues(
+        Declaration(
+            identity=_ROOT,
+            attributes=(key(_ROOT), attribute(_ROOT, "accountRef", column="account_data")),
+            inheritance=AbstractRoot(TablePerConcreteSubtype()),
+        ),
+        Declaration(
+            identity=_LEAF,
+            container=Table("entry"),
+            value_objects=(document,),
+            inheritance=ConcreteSubtype(ExactEntityReference(_ROOT), None),
+        ),
+    )
+    assert [issue.code for issue in issues] == [inheritance.PHYSICAL_COLUMN_COLLISION]
+    assert issues[0].location == ValueObjectLocation(
+        ValueObjectIdentity(_LEAF, ("accountDocument",))
+    )
+    assert issues[0].related == (
+        AttributeLocation(attribute(_ROOT, "accountRef", column="account_data").identity),
+    )
+
+
+def test_table_per_hierarchy_tag_cannot_reuse_a_member_column() -> None:
+    tag_attribute = attribute(_ROOT, "kind", type=STRING)
+    issues = _rule_issues(
+        _hierarchy(root_attributes=(key(_ROOT), tag_attribute)),
+        _concrete(_LEAF),
+    )
+    assert [issue.code for issue in issues] == [inheritance.PHYSICAL_COLUMN_COLLISION]
+    assert issues[0].location == AttributeLocation(tag_attribute.identity)
+    assert issues[0].related == (EntityLocation(_ROOT),)
+
+
+def test_value_object_storage_may_match_a_relationship_rendered_name() -> None:
+    owner = identity("Owner")
+    target = identity("Target")
+    profile = ValueObjectOccurrenceDeclaration(
+        name="profile", storage=Column("details"), shape=_shape("label")
+    )
+    assert (
+        _codes(
+            Declaration(
+                identity=owner,
+                attributes=(key(owner), attribute(owner, "targetId")),
+                relationships=(_relationship(owner, target),),
+                value_objects=(profile,),
+            ),
+            Declaration(identity=target, attributes=(key(target),)),
+        )
+        == []
+    )
+
+
+def test_attribute_column_cannot_match_a_relationship_rendered_name() -> None:
+    owner = identity("Owner")
+    target = identity("Target")
+    details = attribute(owner, "detailsText", type=STRING, column="details")
+    issues = _rule_issues(
+        Declaration(
+            identity=owner,
+            attributes=(key(owner), attribute(owner, "targetId"), details),
+            relationships=(_relationship(owner, target),),
+        ),
+        Declaration(identity=target, attributes=(key(target),)),
+    )
+    assert [issue.code for issue in issues] == [inheritance.MATERIALIZATION_KEY_COLLISION]
+    assert issues[0].location == RelationshipLocation(RelationshipIdentity(owner, "details"))
+    assert issues[0].related == (AttributeLocation(details.identity),)
+
+
+def test_attribute_column_cannot_occupy_a_narrowed_relationship_namespace() -> None:
+    owner = identity("Owner")
+    target = identity("Target")
+    narrowed_key = attribute(owner, "dogDetails", type=STRING, column="details[Dog]")
+    issues = _rule_issues(
+        Declaration(
+            identity=owner,
+            attributes=(key(owner), attribute(owner, "targetId"), narrowed_key),
+            relationships=(_relationship(owner, target),),
+        ),
+        Declaration(identity=target, attributes=(key(target),)),
+    )
+    assert [issue.code for issue in issues] == [inheritance.MATERIALIZATION_KEY_COLLISION]
+    assert issues[0].location == AttributeLocation(narrowed_key.identity)
+    assert issues[0].related == (RelationshipLocation(RelationshipIdentity(owner, "details")),)
+
+
+def test_value_object_storage_may_match_the_synthetic_family_variant_key() -> None:
+    profile = ValueObjectOccurrenceDeclaration(
+        name="profile", storage=Column("familyVariant"), shape=_shape("label")
+    )
+    assert (
+        _codes(
+            Declaration(
+                identity=_ROOT,
+                container=Table("ledger"),
+                attributes=(key(_ROOT),),
+                value_objects=(profile,),
+                inheritance=AbstractRoot(TablePerHierarchy("kind")),
+            ),
+            _concrete(_LEAF),
+        )
+        == []
+    )
+
+
+def test_family_variant_is_reserved_from_rendered_member_names() -> None:
+    profile = ValueObjectOccurrenceDeclaration(
+        name="familyVariant", storage=Column("profile"), shape=_shape("label")
+    )
+    issues = _rule_issues(
+        Declaration(
+            identity=_ROOT,
+            container=Table("ledger"),
+            attributes=(key(_ROOT),),
+            value_objects=(profile,),
+            inheritance=AbstractRoot(TablePerHierarchy("kind")),
+        ),
+        _concrete(_LEAF),
+    )
+    assert [issue.code for issue in issues] == [inheritance.MATERIALIZATION_KEY_COLLISION]
+    assert issues[0].location == ValueObjectLocation(ValueObjectIdentity(_ROOT, ("familyVariant",)))
+    assert issues[0].related == (EntityLocation(_ROOT),)
 
 
 def test_a_shared_tag_value_is_reported_against_the_later_claimant() -> None:
@@ -779,5 +1083,7 @@ def test_the_report_is_the_same_whichever_order_a_frontend_enumerates() -> None:
     assert [issue.code for issue in next(iter(reports))] == [
         inheritance.PERSISTENCE_NOT_ROOT_OWNED,
         inheritance.PRIMARY_KEY_MULTIPLE,
+        inheritance.MATERIALIZATION_KEY_COLLISION,
         inheritance.MEMBER_SHADOWING,
+        inheritance.PHYSICAL_COLUMN_COLLISION,
     ]

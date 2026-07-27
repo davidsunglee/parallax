@@ -46,6 +46,8 @@ def test_entity_level_value_object_members_wrap_into_their_declared_classes() ->
             "order_id": 1,
             "order_item_id": None,
             "code": "shipped",
+        },
+        value_objects={
             "primary_tag": None,
             "tags": [
                 {
@@ -80,6 +82,8 @@ def test_a_null_cardinality_many_value_object_column_wraps_to_an_empty_tuple() -
             "order_id": 1,
             "order_item_id": None,
             "code": "empty",
+        },
+        value_objects={
             "primary_tag": None,
             "tags": None,
         },
@@ -135,7 +139,11 @@ def test_a_value_object_member_with_no_bound_class_is_refused() -> None:
     assert [a.identity.name for a in _WrapScalarProfile.attributes] == ["id", "profile"]
     assert _WrapScalarProfile.value_objects == ()
 
-    node = Node(fields={"id": 1, "profile": {"note": "x"}}, pk_columns=("id",))
+    node = Node(
+        fields={"id": 1},
+        pk_columns=("id",),
+        value_objects={"profile": {"note": "x"}},
+    )
     match = r"_WrapScalarProfile\.profile: the bound Entity Class declares no"
     with pytest.raises(LookupError, match=match):
         wrap((node,), "_WrapScalarProfile", _SCALAR_PROFILE, model=_PROFILE_AS_VALUE_OBJECT)

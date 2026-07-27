@@ -318,7 +318,7 @@ def fixture_statements(
     facet = inheritance.view(model)
     statements: list[tuple[str, list[object]]] = []
     for entity, table in _tables(model, facet):
-        rows = fixtures.get(entity.identity.name)
+        rows = fixtures.get(entity.identity.canonical, fixtures.get(entity.identity.name))
         if not isinstance(rows, list):
             continue
         col_order, member_by_column, tag_assignment = _fixture_columns(facet, entity)

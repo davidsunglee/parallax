@@ -40,6 +40,15 @@ def _descriptor_rejection_cases() -> list[tuple[str, dict[str, Any], str]]:
 
 
 _REJECTIONS = _descriptor_rejection_cases()
+_RAW_ONLY_REJECTIONS = [
+    rejection
+    for rejection in _REJECTIONS
+    if rejection[2]
+    not in {
+        "inheritance-physical-column-collision",
+        "inheritance-materialization-key-collision",
+    }
+]
 
 _INDEPENDENT_FAMILIES: Final[dict[str, Any]] = {
     "entities": [
@@ -77,14 +86,12 @@ families."""
 
 
 def test_every_descriptor_rejection_case_is_covered() -> None:
-    # 16 inline-descriptor inheritance rejection cases carry `when.model` (12
-    # structural/strategy witnesses + the two temporal-axis root-ownership
-    # witnesses, m-inheritance-098/099, + the two optimistic-locking
-    # root-ownership witnesses, m-inheritance-102/103).
-    assert len(_REJECTIONS) == 16
+    assert len(_RAW_ONLY_REJECTIONS) == 16
 
 
-@pytest.mark.parametrize("stem, model, rule", _REJECTIONS, ids=[r[0] for r in _REJECTIONS])
+@pytest.mark.parametrize(
+    "stem, model, rule", _RAW_ONLY_REJECTIONS, ids=[r[0] for r in _RAW_ONLY_REJECTIONS]
+)
 def test_rejected_descriptor_classifies_with_its_corpus_rule(
     stem: str, model: dict[str, Any], rule: str
 ) -> None:

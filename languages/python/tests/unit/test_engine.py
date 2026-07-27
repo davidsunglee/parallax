@@ -18,10 +18,25 @@ from collections.abc import Callable, Mapping, Sequence
 from typing import Any, cast
 
 import pytest
+from _metamodel_support import Declaration, key, source
 
 from parallax.conformance import case_format, engine, sweep
-from parallax.core.base import InstantError
+from parallax.core._formation_profile import form_metamodel
+from parallax.core.base import STRING, InstantError
 from parallax.core.db_port import DbPort, Row
+from parallax.core.metamodel import (
+    AbstractRoot,
+    Column,
+    ConcreteSubtype,
+    EntityIdentity,
+    ExactEntityReference,
+    Table,
+    TablePerHierarchy,
+    ValueObjectAttributeDeclaration,
+    ValueObjectOccurrenceDeclaration,
+    ValueObjectShapeDeclaration,
+    ValueObjectShapeKey,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -2384,7 +2399,7 @@ def test_run_rejected_case_raises_when_model_unexpectedly_accepted() -> None:
             ]
         }
     }
-    with pytest.raises(engine.EngineError, match="accepted an inline inheritance family"):
+    with pytest.raises(engine.EngineError, match="accepted an inline model"):
         engine.run_rejected_case(_synthetic_rejected(valid_model))
 
 
@@ -2594,11 +2609,286 @@ def test_run_graph_case_evaluates_identity_checks_over_the_assembled_graph() -> 
     assert _rows(graph["Order"][0], "items")[0]["order"] == {"id": 1}
 
 
+def test_run_graph_case_keys_value_objects_by_canonical_member_name() -> None:
+    port = FakeDbPort(
+        [
+            {
+                "id": 1,
+                "person_id": "person-1",
+                "tax_i_d": "TAX-1",
+                "line2_item": 2,
+                "already_snake": "ready",
+                "legacy__i_d": "legacy",
+                "mailing_address": {"city": "Oslo"},
+            }
+        ]
+    )
+    _emissions, graph, _round_trips, _identity_checks = engine.run_graph_case(
+        _case("m-descriptor-002"), "postgres", port
+    )
+    row = graph["MemberColumnDefaults"][0]
+    assert row["mailingAddress"] == {"city": "Oslo"}
+    assert "mailing_address" not in row
+
+
+def test_relationship_attachment_preserves_a_same_named_value_object_storage_key() -> None:
+    from parallax.conformance import models
+    from parallax.core.deep_fetch import FetchLevel, RootRef
+    from parallax.descriptor._serde import parse_document
+    from parallax.snapshot import materialize
+
+    model = models.accepted_model(
+        parse_document(
+            {
+                "entities": [
+                    {
+                        "name": "Owner",
+                        "table": "owner",
+                        "attributes": [
+                            {"name": "id", "type": "int64", "primaryKey": True},
+                            {"name": "targetId", "type": "int64"},
+                        ],
+                        "valueObjects": [
+                            {
+                                "name": "profile",
+                                "column": "details",
+                                "attributes": [{"name": "label", "type": "string"}],
+                            }
+                        ],
+                        "relationships": [
+                            {
+                                "name": "details",
+                                "cardinality": "many-to-one",
+                                "join": {
+                                    "source": "targetId",
+                                    "target": {"entity": "Target", "attribute": "id"},
+                                },
+                            }
+                        ],
+                    },
+                    {
+                        "name": "Target",
+                        "table": "target",
+                        "attributes": [{"name": "id", "type": "int64", "primaryKey": True}],
+                    },
+                ]
+            }
+        )
+    )
+    assembler = materialize.Assembler(model)
+    parent_rows = [{"id": 1, "target_id": 7, "details": {"label": "stored"}}]
+    parents = assembler.materialize_root("Owner", parent_rows)
+    level = FetchLevel(
+        attach_key="details",
+        to_many=False,
+        parent=RootRef(),
+        parent_column="target_id",
+        child_target="Target",
+        related_attr="Target.id",
+        related_column="id",
+    )
+    target_identity = EntityIdentity(None, "Target")
+    assembler.attach_level(
+        level,
+        parents,
+        parent_rows,
+        [{"id": 7}],
+        resolved_position=(target_identity,),
+        resolved_entities=(target_identity,),
+        family_variants=(None,),
+    )
+
+    graph = engine._render_graph(  # pyright: ignore[reportPrivateUsage] - integration test renders a real assembled relationship
+        "Owner", parents, model
+    )
+    assert graph == {
+        "Owner": [
+            {
+                "id": 1,
+                "target_id": 7,
+                "profile": {"label": "stored"},
+                "details": {"id": 7},
+            }
+        ]
+    }
+
+
+_VARIANT_ROOT = EntityIdentity("catalog", "AssetRecord")
+_NAMED_VARIANT = EntityIdentity("catalog", "NamedVariant")
+_FIRST_SHARED_VARIANT = EntityIdentity("catalog", "SharedVariant")
+_SECOND_SHARED_VARIANT = EntityIdentity("archive", "SharedVariant")
+_UNRELATED_NAMED_VARIANT = EntityIdentity("unrelated", "NamedVariant")
+
+
+def _rendering_value_object(name: str, column: str) -> ValueObjectOccurrenceDeclaration:
+    return ValueObjectOccurrenceDeclaration(
+        name=name,
+        storage=Column(column),
+        shape=ValueObjectShapeDeclaration(
+            key=ValueObjectShapeKey(),
+            attributes=(ValueObjectAttributeDeclaration("label", STRING),),
+        ),
+    )
+
+
+_VARIANT_MODEL = form_metamodel(
+    source(
+        Declaration(
+            identity=_VARIANT_ROOT,
+            container=Table("asset_record"),
+            attributes=(key(_VARIANT_ROOT),),
+            value_objects=(_rendering_value_object("mailingAddress", "familyVariant"),),
+            inheritance=AbstractRoot(TablePerHierarchy("kind")),
+        ),
+        Declaration(
+            identity=_NAMED_VARIANT,
+            value_objects=(_rendering_value_object("namedProfile", "named_profile"),),
+            inheritance=ConcreteSubtype(ExactEntityReference(_VARIANT_ROOT), "named"),
+        ),
+        Declaration(
+            identity=_FIRST_SHARED_VARIANT,
+            value_objects=(_rendering_value_object("catalogProfile", "catalog_profile"),),
+            inheritance=ConcreteSubtype(ExactEntityReference(_VARIANT_ROOT), "catalog-shared"),
+        ),
+        Declaration(
+            identity=_SECOND_SHARED_VARIANT,
+            value_objects=(_rendering_value_object("archiveProfile", "archive_profile"),),
+            inheritance=ConcreteSubtype(ExactEntityReference(_VARIANT_ROOT), "archive-shared"),
+        ),
+        Declaration(
+            identity=_UNRELATED_NAMED_VARIANT,
+            container=Table("unrelated_named_variant"),
+            attributes=(key(_UNRELATED_NAMED_VARIANT),),
+            value_objects=(_rendering_value_object("wrongProfile", "wrong_profile"),),
+        ),
+    )
+)
+
+
+def _value_object_node(*, resolved: EntityIdentity = _VARIANT_ROOT, variant: object = ...) -> Any:
+    from parallax.snapshot import materialize
+
+    value_objects: dict[str, object] = {
+        "familyVariant": {"label": "mail"},
+        "named_profile": {"label": "named"},
+        "catalog_profile": {"label": "catalog"},
+        "archive_profile": {"label": "archive"},
+    }
+    family_variant = cast("str | None", variant) if variant is not ... else None
+    return materialize.Node(
+        fields={"id": 1},
+        pk_columns=("id",),
+        resolved_entity=resolved,
+        value_objects=value_objects,
+        family_variant=family_variant,
+    )
+
+
+def test_value_object_names_use_the_static_entity_when_variant_is_absent() -> None:
+    names = engine._value_object_names(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance renderer's private helper
+        _value_object_node(resolved=_NAMED_VARIANT), _VARIANT_MODEL
+    )
+    assert names == {
+        "familyVariant": "mailingAddress",
+        "named_profile": "namedProfile",
+    }
+
+
+def test_value_object_names_without_assembler_entity_bookkeeping_are_empty() -> None:
+    from parallax.snapshot import materialize
+
+    node = materialize.Node(fields={"id": 1}, pk_columns=("id",))
+    assert (
+        engine._value_object_names(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance renderer's defensive helper
+            node, _VARIANT_MODEL
+        )
+        == {}
+    )
+
+
+def test_value_object_names_resolve_a_bare_variant_within_the_static_family() -> None:
+    names = engine._value_object_names(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance renderer's private helper
+        _value_object_node(resolved=_NAMED_VARIANT, variant="NamedVariant"), _VARIANT_MODEL
+    )
+    assert names["familyVariant"] == "mailingAddress"
+    assert names["named_profile"] == "namedProfile"
+    assert "wrong_profile" not in names
+
+
+def test_value_object_names_resolve_a_qualified_namespaced_duplicate() -> None:
+    names = engine._value_object_names(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance renderer's private helper
+        _value_object_node(resolved=_SECOND_SHARED_VARIANT, variant="archive.SharedVariant"),
+        _VARIANT_MODEL,
+    )
+    assert names == {
+        "familyVariant": "mailingAddress",
+        "archive_profile": "archiveProfile",
+    }
+
+
+def test_namespaced_duplicate_variants_flow_from_sql_plan_through_assembler_to_renderer() -> None:
+    from parallax.core.dialect import POSTGRES
+    from parallax.core.op_algebra import All
+    from parallax.core.sql_gen import compile_read
+    from parallax.snapshot import materialize
+
+    root = _VARIANT_MODEL.entity(_VARIANT_ROOT)
+    assert root is not None
+    compiled = compile_read(All(), _VARIANT_MODEL, POSTGRES, root, result_form="instance")
+    materialized = compiled.materialize_row(
+        {
+            "id": 1,
+            "kind": "archive-shared",
+            "familyVariant": {"label": "mail"},
+            "named_profile": None,
+            "catalog_profile": None,
+            "archive_profile": {"label": "archive"},
+        }
+    )
+    assert materialized.resolved_entity == _SECOND_SHARED_VARIANT
+    assert materialized.family_variant == "archive.SharedVariant"
+    assert materialized.values["familyVariant"] == {"label": "mail"}
+
+    nodes = materialize.Assembler(_VARIANT_MODEL).materialize_root(
+        _VARIANT_ROOT.canonical,
+        [materialized.values],
+        resolved_position=compiled.resolved_position,
+        resolved_entities=[materialized.resolved_entity],
+        family_variants=[materialized.family_variant],
+    )
+    assert "familyVariant" not in nodes[0].fields
+    assert nodes[0].value_objects["familyVariant"] == {"label": "mail"}
+    assert nodes[0].family_variant == "archive.SharedVariant"
+    graph = engine._render_graph(  # pyright: ignore[reportPrivateUsage] - integration test drives the renderer after real assembly
+        _VARIANT_ROOT.canonical, nodes, _VARIANT_MODEL
+    )
+    assert graph[_VARIANT_ROOT.canonical] == [
+        {
+            "id": 1,
+            "familyVariant": "archive.SharedVariant",
+            "mailingAddress": {"label": "mail"},
+            "archiveProfile": {"label": "archive"},
+        }
+    ]
+
+
+def test_value_object_name_rendering_defensively_rejects_a_column_collision() -> None:
+    claimed = {"shared": "Attribute catalog.NamedVariant.label"}
+    with pytest.raises(engine.EngineError, match="ambiguously renders"):
+        engine._claim_rendered_column(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance renderer's defensive helper
+            claimed, "shared", "Value Object catalog.NamedVariant.profile"
+        )
+
+
 def test_render_node_does_not_stub_a_diamond_at_a_non_cyclic_position() -> None:
     from parallax.snapshot import materialize
 
     child = materialize.Node(fields={"id": 11, "name": "child"}, pk_columns=("id",))
-    root = materialize.Node(fields={"id": 1, "a": child, "b": child}, pk_columns=("id",))
+    root = materialize.Node(
+        fields={"id": 1},
+        pk_columns=("id",),
+        relationships={"a": child, "b": child},
+    )
     rendered = engine._render_node(root, frozenset())  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
     assert rendered["a"] == {"id": 11, "name": "child"}
     assert rendered["b"] == {"id": 11, "name": "child"}
@@ -2608,7 +2898,7 @@ def test_render_node_truncates_a_true_ancestor_cycle_to_a_pk_only_stub() -> None
     from parallax.snapshot import materialize
 
     root = materialize.Node(fields={"id": 1, "name": "Ada"}, pk_columns=("id",))
-    root.fields["self"] = root
+    root.relationships["self"] = root
     rendered = engine._render_node(root, frozenset())  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
     assert rendered["self"] == {"id": 1}
 

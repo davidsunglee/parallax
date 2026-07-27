@@ -80,6 +80,25 @@ exactly as it does for a scalar attribute, and it MUST NOT emit a column for any
 nested value object or inner attribute. The column is part of the entity's column
 order, positioned after the scalar attributes.
 
+Each top-level occurrence is a distinct physical contributor. Its document
+column MUST NOT collide with another top-level Value Object, a scalar
+Attribute, or a table-per-hierarchy tag in the same physical table. Model
+Formation rejects that ambiguity as `inheritance-physical-column-collision`
+under the strategy-specific table boundaries and canonical column-order law in
+`m-inheritance`; a storage or materialization consumer never chooses one member
+from a duplicate raw column key.
+
+The document's physical key and the occurrence's rendered graph key retain
+distinct provenance. A graph renders the decoded value under the occurrence's
+canonical name, not its storage override. Therefore a document storage column
+may equal a relationship's local name when the occurrence's canonical name is
+different; relationship attachment MUST preserve both values. It may likewise
+equal the synthetic `familyVariant` key when its canonical occurrence name is
+different; materialization preserves the document and variant as separate
+provenance-bearing values until both render. Collisions among the keys that
+actually render on one node are formation errors under
+`m-inheritance`'s `inheritance-materialization-key-collision` rule.
+
 ## Inherited temporality
 
 A value object has **no independent temporality**. It declares no As-Of Axes —

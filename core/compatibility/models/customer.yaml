@@ -97,7 +97,7 @@ entities:
         cardinality: one-to-many
         join:
           source: id
-          target: { entity: Location, attribute: customerId }
+          target: { entity: parallax.compatibility.Location, attribute: customerId }
         dependent: true
         orderBy:
           - { attribute: id }
@@ -114,7 +114,7 @@ entities:
         cardinality: one-to-many
         join:
           source: id
-          target: { entity: Depot, attribute: customerId }
+          target: { entity: parallax.compatibility.Depot, attribute: customerId }
         dependent: true
         orderBy:
           - { attribute: id }
@@ -139,7 +139,6 @@ entities:
         primaryKey: true
       - name: customerId
         type: int64
-        column: customer_id
       - name: label
         type: string
         maxLength: 64
@@ -181,7 +180,7 @@ entities:
                 nullable: true
     relationships:
       - name: customer
-        reverseOf: Customer.locations
+        reverseOf: parallax.compatibility.Customer.locations
     indices:
       - name: location_pk
         attributes: [id]
@@ -197,7 +196,6 @@ entities:
         primaryKey: true
       - name: customerId
         type: int64
-        column: customer_id
       - name: label
         type: string
         maxLength: 64
@@ -213,7 +211,7 @@ entities:
             nullable: true
     relationships:
       - name: customer
-        reverseOf: Customer.depots
+        reverseOf: parallax.compatibility.Customer.depots
     indices:
       - name: depot_pk
         attributes: [id]

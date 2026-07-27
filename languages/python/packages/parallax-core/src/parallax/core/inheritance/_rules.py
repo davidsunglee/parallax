@@ -1,14 +1,15 @@
 """The inheritance Model Formation Rule Set (m-inheritance).
 
-Everything this module rejects is a statement about a family rather than about
-one Entity: whether the parent links form a closed tree under exactly one
+This module rejects family invariants and ambiguities in the physical column
+order it owns: whether parent links form a closed tree under exactly one
 abstract root, whether the strategy's physical mapping is declared where that
-strategy puts it, whether the facts a family owns as a whole stay on its root,
-and whether a descendant's own members leave the inherited namespace
-unambiguous. A family is a position's own ancestry, never the model: one model
-carries as many independent families as it declares roots, and each is judged
-alone. Parent resolution is not here — foundational resolution owns it, so a
-candidate's parents already name existing Entities.
+strategy puts it, whether facts a family owns as a whole stay on its root,
+whether a descendant's own members leave the inherited namespace unambiguous,
+and whether each physical table maps one contributor to each column. A family
+is a position's own ancestry, never the model: one model carries as many
+independent families as it declares roots, and each is judged alone. Parent
+resolution is not here — foundational resolution owns it, so a candidate's
+parents already name existing Entities.
 
 A position whose ancestry does not resolve is reported for that alone: the rest
 of these rules are questions about a chain, and there is no chain to ask them
@@ -51,11 +52,13 @@ __all__ = [
     "CYCLE",
     "DUPLICATE_TAG_VALUE",
     "ISSUE_CODES",
+    "MATERIALIZATION_KEY_COLLISION",
     "MEMBER_SHADOWING",
     "MISSING_ROOT",
     "MISSING_TAG_VALUE",
     "OPTIMISTIC_LOCKING_NOT_ROOT_OWNED",
     "PERSISTENCE_NOT_ROOT_OWNED",
+    "PHYSICAL_COLUMN_COLLISION",
     "PRIMARY_KEY_MISSING",
     "PRIMARY_KEY_MULTIPLE",
     "RULE_SET",
@@ -145,6 +148,23 @@ MEMBER_SHADOWING: Final[IssueCode] = "inheritance-member-shadowing"
 namespace runs down each ancestry, so shadowing is ambiguous across categories
 too; disjoint sibling branches may still reuse a name."""
 
+PHYSICAL_COLUMN_COLLISION: Final[IssueCode] = "inheritance-physical-column-collision"
+"""Two distinct physical contributors claim one column in the same table.
+
+Attributes, top-level Value Objects, and a table-per-hierarchy tag each need an
+unambiguous physical slot. Reusing a canonical member name on disjoint sibling
+branches remains legal only when explicit column overrides keep their shared
+table contributions distinct.
+"""
+
+MATERIALIZATION_KEY_COLLISION: Final[IssueCode] = "inheritance-materialization-key-collision"
+"""Two provenance-distinct contributors render one key on the same concrete node.
+
+Scalar fields render by physical column, Value Objects and relationships by
+canonical member name, narrowed relationships under a derived bracketed key,
+and polymorphic family results under the synthetic ``familyVariant`` key.
+"""
+
 ISSUE_CODES: Final[frozenset[IssueCode]] = frozenset(
     {
         CYCLE,
@@ -164,6 +184,8 @@ ISSUE_CODES: Final[frozenset[IssueCode]] = frozenset(
         OPTIMISTIC_LOCKING_NOT_ROOT_OWNED,
         PERSISTENCE_NOT_ROOT_OWNED,
         MEMBER_SHADOWING,
+        PHYSICAL_COLUMN_COLLISION,
+        MATERIALIZATION_KEY_COLLISION,
     }
 )
 """This module's complete owned Issue Code set, as the Formation Manifest
@@ -301,6 +323,182 @@ def _local_members(declaration: EntityDeclaration) -> Iterator[tuple[str, ModelL
             occurrence.name,
             ValueObjectLocation(ValueObjectIdentity(declaration.identity, (occurrence.name,))),
         )
+
+
+def _physical_column_issues(
+    contributors: Sequence[tuple[str, ModelLocation]],
+) -> list[MetamodelIssue]:
+    """Collisions within one physical table's ordered column contributors."""
+    claimed: dict[str, ModelLocation] = {}
+    issues: list[MetamodelIssue] = []
+    for column, location in contributors:
+        existing = claimed.get(column)
+        if existing is None:
+            claimed[column] = location
+            continue
+        issues.append(
+            MetamodelIssue(
+                PHYSICAL_COLUMN_COLLISION,
+                location,
+                (existing,),
+                message=f"physical column {column!r} is already claimed in this table",
+            )
+        )
+    return issues
+
+
+def _declaration_columns(declaration: EntityDeclaration) -> tuple[tuple[str, ModelLocation], ...]:
+    """One standalone declaration's canonical physical contribution order."""
+    keys = [
+        (attribute.storage.name, AttributeLocation(attribute.identity))
+        for attribute in declaration.attributes
+        if isinstance(attribute.primary_key, PrimaryKey)
+    ]
+    rest = [
+        (attribute.storage.name, AttributeLocation(attribute.identity))
+        for attribute in declaration.attributes
+        if not isinstance(attribute.primary_key, PrimaryKey)
+    ]
+    documents = [
+        (
+            occurrence.storage.name,
+            ValueObjectLocation(ValueObjectIdentity(declaration.identity, (occurrence.name,))),
+        )
+        for occurrence in declaration.value_objects
+    ]
+    return (*keys, *rest, *documents)
+
+
+def _materialization_key_issues(
+    declarations: Sequence[EntityDeclaration], *, family_root: EntityIdentity | None
+) -> list[MetamodelIssue]:
+    """Rendered-node key collisions over one concrete's applicable chain.
+
+    Value Object storage columns deliberately do not participate: decoding keeps
+    their provenance and renders each document under its canonical occurrence
+    name. Relationship attachment is likewise provenance-separated from row
+    fields. Only the final keys that coexist in the rendered mapping are claimed
+    here.
+    """
+    claimed: dict[str, ModelLocation] = {}
+    issues: list[MetamodelIssue] = []
+
+    def claim(key: str, location: ModelLocation) -> None:
+        existing = claimed.get(key)
+        if existing is None:
+            claimed[key] = location
+            return
+        issues.append(
+            MetamodelIssue(
+                MATERIALIZATION_KEY_COLLISION,
+                location,
+                (existing,),
+                message=f"materialized field key {key!r} is already claimed on this node",
+            )
+        )
+
+    if family_root is not None:
+        claim("familyVariant", EntityLocation(family_root))
+    attributes = [attribute for declaration in declarations for attribute in declaration.attributes]
+    relationships = [
+        relationship for declaration in declarations for relationship in declaration.relationships
+    ]
+    for attribute in attributes:
+        claim(attribute.storage.name, AttributeLocation(attribute.identity))
+    for declaration in declarations:
+        for occurrence in declaration.value_objects:
+            claim(
+                occurrence.name,
+                ValueObjectLocation(ValueObjectIdentity(declaration.identity, (occurrence.name,))),
+            )
+    for relationship in relationships:
+        claim(relationship.identity.name, RelationshipLocation(relationship.identity))
+
+    for attribute in attributes:
+        for relationship in relationships:
+            prefix = f"{relationship.identity.name}["
+            if not attribute.storage.name.startswith(prefix):
+                continue
+            issues.append(
+                MetamodelIssue(
+                    MATERIALIZATION_KEY_COLLISION,
+                    AttributeLocation(attribute.identity),
+                    (RelationshipLocation(relationship.identity),),
+                    message=(
+                        f"materialized field key {attribute.storage.name!r} occupies the "
+                        f"narrowed-view namespace {prefix!r}"
+                    ),
+                )
+            )
+    return issues
+
+
+def _chain_columns(
+    chain: Sequence[EntityIdentity], participants: Mapping[EntityIdentity, _Participant]
+) -> tuple[tuple[str, ModelLocation], ...]:
+    """One table-per-concrete-subtype table's ancestry-derived columns."""
+    declarations = [participants[identity].declaration for identity in chain]
+    keys = [
+        (attribute.storage.name, AttributeLocation(attribute.identity))
+        for declaration in declarations
+        for attribute in declaration.attributes
+        if isinstance(attribute.primary_key, PrimaryKey)
+    ]
+    rest = [
+        (attribute.storage.name, AttributeLocation(attribute.identity))
+        for declaration in declarations
+        for attribute in declaration.attributes
+        if not isinstance(attribute.primary_key, PrimaryKey)
+    ]
+    documents = [
+        (
+            occurrence.storage.name,
+            ValueObjectLocation(ValueObjectIdentity(declaration.identity, (occurrence.name,))),
+        )
+        for declaration in declarations
+        for occurrence in declaration.value_objects
+    ]
+    return (*keys, *rest, *documents)
+
+
+def _hierarchy_columns(
+    root: EntityIdentity,
+    members: Sequence[_Participant],
+    strategy: TablePerHierarchy,
+) -> tuple[tuple[str, ModelLocation], ...]:
+    """One table-per-hierarchy family's shared-table column contributors."""
+    declarations = [
+        member.declaration
+        for member in sorted(
+            members,
+            key=lambda member: (
+                member.declaration.identity != root,
+                member.declaration.identity.sort_key,
+            ),
+        )
+    ]
+    keys = [
+        (attribute.storage.name, AttributeLocation(attribute.identity))
+        for declaration in declarations
+        for attribute in declaration.attributes
+        if isinstance(attribute.primary_key, PrimaryKey)
+    ]
+    tag = [(strategy.tag_column, EntityLocation(root))]
+    rest = [
+        (attribute.storage.name, AttributeLocation(attribute.identity))
+        for declaration in declarations
+        for attribute in declaration.attributes
+        if not isinstance(attribute.primary_key, PrimaryKey)
+    ]
+    documents = [
+        (
+            occurrence.storage.name,
+            ValueObjectLocation(ValueObjectIdentity(declaration.identity, (occurrence.name,))),
+        )
+        for declaration in declarations
+        for occurrence in declaration.value_objects
+    ]
+    return (*keys, *tag, *rest, *documents)
 
 
 def _shadowing_issues(
@@ -516,14 +714,26 @@ def _family_issues(
 
 
 def validate_inheritance(candidate: CandidateMetamodel) -> tuple[MetamodelIssue, ...]:
-    """Every inheritance defect of ``candidate``, reported rather than the first."""
+    """Every family or physical-table defect, reported rather than the first."""
+    physical_issues: dict[tuple[ModelLocation, tuple[ModelLocation, ...]], MetamodelIssue] = {}
+    materialization_issues: dict[
+        tuple[ModelLocation, tuple[ModelLocation, ...]], MetamodelIssue
+    ] = {}
+    for declaration in candidate.entities:
+        if declaration.inheritance is not None:
+            continue
+        for issue in _physical_column_issues(_declaration_columns(declaration)):
+            physical_issues.setdefault((issue.location, issue.related), issue)
+        for issue in _materialization_key_issues((declaration,), family_root=None):
+            materialization_issues.setdefault((issue.location, issue.related), issue)
+
     participants = {
         declaration.identity: _Participant(declaration, declaration.inheritance)
         for declaration in candidate.entities
         if declaration.inheritance is not None
     }
     if not participants:
-        return ()
+        return (*physical_issues.values(), *materialization_issues.values())
 
     resolutions = {
         identity: _resolution(participant, participants)
@@ -547,8 +757,22 @@ def validate_inheritance(candidate: CandidateMetamodel) -> tuple[MetamodelIssue,
         issues.extend(_root_owned_issues(participant.declaration, chain[0]))
         issues.extend(_primary_key_issues(participant.declaration, chain, participants))
         issues.extend(_shadowing_issues(participant.declaration, chain, participants))
+        if isinstance(resolution.strategy, TablePerConcreteSubtype) and isinstance(
+            participant.inheritance, ConcreteSubtype
+        ):
+            for issue in _physical_column_issues(_chain_columns(chain, participants)):
+                physical_issues.setdefault((issue.location, issue.related), issue)
+        if isinstance(participant.inheritance, ConcreteSubtype):
+            declarations = tuple(participants[identity].declaration for identity in chain)
+            for issue in _materialization_key_issues(declarations, family_root=chain[0]):
+                materialization_issues.setdefault((issue.location, issue.related), issue)
     for root, (strategy, members) in families.items():
         issues.extend(_family_issues(root, members, strategy))
+        if isinstance(strategy, TablePerHierarchy):
+            for issue in _physical_column_issues(_hierarchy_columns(root, members, strategy)):
+                physical_issues.setdefault((issue.location, issue.related), issue)
+    issues.extend(physical_issues.values())
+    issues.extend(materialization_issues.values())
     return tuple(issues)
 
 

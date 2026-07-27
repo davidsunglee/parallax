@@ -48,7 +48,6 @@ entities:
         maxLength: 32
       - name: workshopId
         type: int64
-        column: workshop_id
         nullable: true
   - name: HandTool
     namespace: parallax.compatibility
@@ -59,7 +58,6 @@ entities:
     attributes:
       - name: gripSize
         type: int32
-        column: grip_size
         nullable: true
   - name: PowerTool
     namespace: parallax.compatibility
@@ -85,7 +83,6 @@ entities:
         maxLength: 32
       - name: workshopId
         type: int64
-        column: workshop_id
         nullable: true
   - name: Timber
     namespace: parallax.compatibility
@@ -124,12 +121,12 @@ entities:
         cardinality: one-to-many
         join:
           source: id
-          target: { entity: Tool, attribute: workshopId }
+          target: { entity: parallax.compatibility.Tool, attribute: workshopId }
       - name: materials
         cardinality: one-to-many
         join:
           source: id
-          target: { entity: Material, attribute: workshopId }
+          target: { entity: parallax.compatibility.Material, attribute: workshopId }
     indices:
       - name: workshop_pk
         attributes: [id]

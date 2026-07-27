@@ -66,11 +66,11 @@ def _order_root() -> Node:
             "price": Decimal("1"),
             "active": True,
             "ordered_on": dt.date(2024, 1, 1),
-            "items": [item],
         },
         pk_columns=("id",),
+        relationships={"items": [item]},
     )
-    item.fields["order"] = order
+    item.relationships["order"] = order
     return order
 
 
@@ -131,12 +131,14 @@ def _diamond_order_asymmetric_include() -> Node:
             "price": Decimal("1"),
             "active": True,
             "ordered_on": dt.date(2024, 1, 1),
+        },
+        pk_columns=("id",),
+        relationships={
             "items": [item_via_items],
             "itemsByShipDate": [item_via_ship_date],
         },
-        pk_columns=("id",),
     )
-    item_via_ship_date.fields["order"] = order  # ONLY the second path loads the back-reference
+    item_via_ship_date.relationships["order"] = order
     return order
 
 
@@ -174,13 +176,15 @@ def _diamond_order_conflicting_include() -> Node:
             "price": Decimal("1"),
             "active": True,
             "ordered_on": dt.date(2024, 1, 1),
+        },
+        pk_columns=("id",),
+        relationships={
             "items": [item_via_items],
             "itemsByShipDate": [item_via_ship_date],
         },
-        pk_columns=("id",),
     )
-    item_via_items.fields["order"] = order
-    item_via_ship_date.fields["order"] = order
+    item_via_items.relationships["order"] = order
+    item_via_ship_date.relationships["order"] = order
     return order
 
 
@@ -228,9 +232,9 @@ def test_loaded_to_one_relationship_attached_as_none_wraps_to_none() -> None:
             "sku": "y",
             "quantity": 2,
             "shipped_on": None,
-            "order": None,
         },
         pk_columns=("id",),
+        relationships={"order": None},
     )
     (root,) = wrap((orphan,), "SnapOrderItem", _ORDERS)
     assert isinstance(root, sm.SnapOrderItem)
@@ -248,9 +252,9 @@ def test_loaded_empty_to_many_is_an_empty_tuple() -> None:
             "price": Decimal("1"),
             "active": True,
             "ordered_on": dt.date(2024, 1, 1),
-            "items": [],
         },
         pk_columns=("id",),
+        relationships={"items": []},
     )
     (root,) = wrap((parent,), "SnapOrder", _ORDERS)
     assert isinstance(root, sm.SnapOrder)
@@ -269,9 +273,10 @@ def _dog() -> Node:
             "owner_id": 10,
             "license_id": "L-100",
             "bark_volume": 7,
-            "familyVariant": "Dog",
         },
         pk_columns=("id",),
+        resolved_entity=EntityIdentity("parallax.compatibility", "Dog"),
+        family_variant="Dog",
     )
 
 
@@ -283,16 +288,18 @@ def _cat() -> Node:
             "owner_id": 10,
             "license_id": None,
             "indoor": True,
-            "familyVariant": "Cat",
         },
         pk_columns=("id",),
+        resolved_entity=EntityIdentity("parallax.compatibility", "Cat"),
+        family_variant="Cat",
     )
 
 
 def test_polymorphic_children_materialize_as_their_concrete_classes() -> None:
     owner = Node(
-        fields={"id": 10, "name": "Alice", "animals": [_dog(), _cat()]},
+        fields={"id": 10, "name": "Alice"},
         pk_columns=("id",),
+        relationships={"animals": [_dog(), _cat()]},
     )
     (root,) = wrap((owner,), "AnimalOwner", _ANIMAL)
     assert isinstance(root, sm.AnimalOwner)
@@ -305,8 +312,9 @@ def test_polymorphic_children_materialize_as_their_concrete_classes() -> None:
 
 def test_narrowed_view_is_independent_of_the_broad_relationship() -> None:
     owner = Node(
-        fields={"id": 10, "name": "Alice", "pets[Dog]": [_dog()]},
+        fields={"id": 10, "name": "Alice"},
         pk_columns=("id",),
+        relationships={"pets[Dog]": [_dog()]},
     )
     (root,) = wrap((owner,), "AnimalOwner", _ANIMAL)
     assert isinstance(root, sm.AnimalOwner)
@@ -326,8 +334,9 @@ def test_narrowed_view_is_independent_of_the_broad_relationship() -> None:
 
 def test_two_narrowed_views_coexist_independently_on_one_node() -> None:
     owner = Node(
-        fields={"id": 10, "name": "Alice", "pets[Dog]": [_dog()], "pets[Cat]": [_cat()]},
+        fields={"id": 10, "name": "Alice"},
         pk_columns=("id",),
+        relationships={"pets[Dog]": [_dog()], "pets[Cat]": [_cat()]},
     )
     (root,) = wrap((owner,), "AnimalOwner", _ANIMAL)
     assert isinstance(root, sm.AnimalOwner)
@@ -347,8 +356,9 @@ def test_two_narrowed_views_coexist_independently_on_one_node() -> None:
 # --------------------------------------------------------------------------- #
 def test_a_directly_built_relationship_path_keys_the_same_narrowed_view() -> None:
     owner = Node(
-        fields={"id": 10, "name": "Alice", "pets[Dog]": [_dog()]},
+        fields={"id": 10, "name": "Alice"},
         pk_columns=("id",),
+        relationships={"pets[Dog]": [_dog()]},
     )
     (root,) = wrap((owner,), "AnimalOwner", _ANIMAL)
     path = RelationshipPath(
@@ -361,8 +371,9 @@ def test_a_directly_built_relationship_path_keys_the_same_narrowed_view() -> Non
 
 def test_narrowed_view_key_survives_copy_and_deepcopy_of_the_path() -> None:
     owner = Node(
-        fields={"id": 10, "name": "Alice", "pets[Dog]": [_dog()]},
+        fields={"id": 10, "name": "Alice"},
         pk_columns=("id",),
+        relationships={"pets[Dog]": [_dog()]},
     )
     (root,) = wrap((owner,), "AnimalOwner", _ANIMAL)
     path = sm.AnimalOwner.pets.narrow(sm.Dog)
@@ -382,8 +393,9 @@ def test_a_bound_relationship_path_cannot_be_pickled() -> None:
 
 def test_wrap_raises_lookup_error_for_an_entity_no_class_is_bound_to() -> None:
     owner = Node(
-        fields={"id": 10, "name": "Alice", "animals": [_dog(), _iguana()]},
+        fields={"id": 10, "name": "Alice"},
         pk_columns=("id",),
+        relationships={"animals": [_dog(), _iguana()]},
     )
     with pytest.raises(LookupError, match="Iguana"):
         wrap((owner,), "AnimalOwner", _ANIMAL, model=_ANIMAL_WITH_UNBOUND_CONCRETE)
@@ -391,8 +403,10 @@ def test_wrap_raises_lookup_error_for_an_entity_no_class_is_bound_to() -> None:
 
 def _iguana() -> Node:
     return Node(
-        fields={"id": 3, "name": "Iggy", "owner_id": 10, "familyVariant": "Iguana"},
+        fields={"id": 3, "name": "Iggy", "owner_id": 10},
         pk_columns=("id",),
+        resolved_entity=EntityIdentity("parallax.compatibility", "Iguana"),
+        family_variant="Iguana",
     )
 
 
@@ -416,7 +430,7 @@ def test_wrap_a_single_resolved_position_node_instantiates_the_concrete_class() 
             "amount_due": Decimal("120.00"),
         },
         pk_columns=("id",),
-        resolved_entity="Invoice",
+        resolved_entity=EntityIdentity("parallax.compatibility", "Invoice"),
     )
     (root,) = wrap((node,), "FinancialDocument", _DOCUMENT)
     assert type(root) is read_models.Invoice

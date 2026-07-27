@@ -78,7 +78,7 @@ class WhereRectangleAddress(ValueObject):
 
 class WhereRectangle(Bitemporal, table="where_rectangle", namespace="parallax.compatibility"):
     id: Attr[int] = attr(primary_key=True)
-    acct_num: Attr[str] = attr(column="acct_num", max_length=32)
+    acct_num: Attr[str] = attr(max_length=32)
     value: Attr[Decimal] = attr(precision=18, scale=2)
     address: Attr[WhereRectangleAddress | None]
 

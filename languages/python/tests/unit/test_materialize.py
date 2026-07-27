@@ -17,6 +17,7 @@ import pytest
 
 from parallax.conformance import models
 from parallax.core.deep_fetch import FetchLevel, LevelRef, RootRef
+from parallax.core.metamodel import EntityIdentity
 from parallax.core.model_formation import MetamodelValidationError
 from parallax.descriptor._records import (
     Attribute,
@@ -51,12 +52,12 @@ def _doc(decoded: dict[str, object], key: str) -> dict[str, Any]:
 
 def _kids(node: Node, key: str) -> list[Node]:
     """A to-many relationship attachment, typed for test-side assertions."""
-    return cast("list[Node]", node.fields[key])
+    return cast("list[Node]", node.relationships[key])
 
 
 def _kid(node: Node, key: str) -> Node | None:
     """A to-one relationship attachment, typed for test-side assertions."""
-    return cast("Node | None", node.fields[key])
+    return cast("Node | None", node.relationships[key])
 
 
 # --------------------------------------------------------------------------- #
@@ -160,7 +161,10 @@ def test_decode_row_decodes_a_top_level_many_cardinality_value_object() -> None:
 # --------------------------------------------------------------------------- #
 def test_identity_key_is_family_normalized_for_a_narrowed_concrete() -> None:
     row = {"id": 1, "name": "Rex", "owner_id": 10, "bark_volume": 7}
-    assert identity_key(ANIMAL, "Dog", row) == ("Animal", (1,))
+    assert identity_key(ANIMAL, "Dog", row) == (
+        EntityIdentity("parallax.compatibility", "Animal"),
+        (1,),
+    )
 
 
 def test_identity_key_matches_regardless_of_reaching_position() -> None:
@@ -173,7 +177,7 @@ def test_identity_key_matches_regardless_of_reaching_position() -> None:
 def test_identity_key_degrades_to_entity_name_for_a_non_participant() -> None:
     key = identity_key(ORDERS, "Order", {"id": 1})
     assert key is not None
-    assert key[0] == "Order"
+    assert key[0] == EntityIdentity("parallax.compatibility", "Order")
 
 
 def test_a_standalone_entity_without_a_primary_key_does_not_form() -> None:
@@ -211,7 +215,7 @@ def test_identity_key_resolves_a_narrowed_single_concrete_tpcs_position() -> Non
     # though the narrow resolves to exactly one concrete and the row carries
     # no `familyVariant` at all (the SQL legitimately omits it).
     key = identity_key(DOCUMENT, "FinancialDocument", _INVOICE_ROW, ("Invoice",))
-    assert key == ("Invoice", (1,))
+    assert key == (EntityIdentity("parallax.compatibility", "Invoice"), (1,))
 
 
 def test_identity_key_matches_a_direct_concrete_read_of_the_same_row() -> None:
@@ -219,7 +223,7 @@ def test_identity_key_matches_a_direct_concrete_read_of_the_same_row() -> None:
     # and the direct-concrete route resolve to the identical key.
     narrowed = identity_key(DOCUMENT, "FinancialDocument", _INVOICE_ROW, ("Invoice",))
     direct = identity_key(DOCUMENT, "Invoice", _INVOICE_ROW, None)
-    assert narrowed == direct == ("Invoice", (1,))
+    assert narrowed == direct == (EntityIdentity("parallax.compatibility", "Invoice"), (1,))
 
 
 def test_identity_key_stays_root_normalized_when_the_narrow_still_spans_two_concretes() -> None:
@@ -228,7 +232,7 @@ def test_identity_key_stays_root_normalized_when_the_narrow_still_spans_two_conc
     # helper's fallback) is what actually decides identity there; a row that
     # (defensively) carries none degrades to the read's own queried position.
     key = identity_key(DOCUMENT, "FinancialDocument", _INVOICE_ROW, None)
-    assert key == ("FinancialDocument", (1,))
+    assert key == (EntityIdentity("parallax.compatibility", "FinancialDocument"), (1,))
 
 
 def test_identity_key_tph_narrowed_to_one_concrete_stays_root_normalized() -> None:
@@ -237,7 +241,10 @@ def test_identity_key_tph_narrowed_to_one_concrete_stays_root_normalized() -> No
     # narrow's resolved cardinality (m-inheritance-012), so `identity_key`'s
     # TPCS-only branch never even applies here — no gap to close.
     row = {"id": 1, "name": "Rex", "owner_id": 10, "bark_volume": 7}
-    assert identity_key(ANIMAL, "Animal", row, ("Dog",)) == ("Animal", (1,))
+    assert identity_key(ANIMAL, "Animal", row, ("Dog",)) == (
+        EntityIdentity("parallax.compatibility", "Animal"),
+        (1,),
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -264,7 +271,7 @@ def test_materialize_root_threads_the_narrow_into_resolved_entity() -> None:
     # the row carries no `familyVariant` at all.
     asm = Assembler(meta=DOCUMENT)
     nodes = asm.materialize_root("FinancialDocument", [_INVOICE_ROW], narrow_to=("Invoice",))
-    assert nodes[0].resolved_entity == "Invoice"
+    assert nodes[0].resolved_entity == EntityIdentity("parallax.compatibility", "Invoice")
     assert "familyVariant" not in nodes[0].fields
 
 
@@ -273,7 +280,7 @@ def test_materialize_root_omitted_narrow_to_defaults_to_none() -> None:
     # exactly as before.
     asm = Assembler(meta=ORDERS)
     nodes = asm.materialize_root("Order", [{"id": 1, "name": "Ada"}])
-    assert nodes[0].resolved_entity == "Order"
+    assert nodes[0].resolved_entity == EntityIdentity("parallax.compatibility", "Order")
 
 
 # --------------------------------------------------------------------------- #
@@ -327,7 +334,7 @@ def test_attach_level_to_many_no_match_attaches_empty_list() -> None:
     parent_nodes = asm.materialize_root("Order", parent_rows)
     children = asm.attach_level(_to_many_level(), parent_nodes, parent_rows, [])
     assert children == []
-    assert parent_nodes[0].fields["items"] == []
+    assert parent_nodes[0].relationships["items"] == []
 
 
 def test_attach_level_to_one_matches_a_single_node() -> None:
@@ -352,17 +359,17 @@ def test_attach_level_empty_level_short_circuit_attaches_uniformly() -> None:
 
     many_children = asm.attach_level(_to_many_level(), parent_nodes, parent_rows, None)
     assert many_children == []
-    assert all(node.fields["items"] == [] for node in parent_nodes)
+    assert all(node.relationships["items"] == [] for node in parent_nodes)
 
     one_children = asm.attach_level(_to_one_level(), parent_nodes, parent_rows, None)
     assert one_children == []
-    assert all(node.fields["passport"] is None for node in parent_nodes)
+    assert all(node.relationships["passport"] is None for node in parent_nodes)
 
 
 # --------------------------------------------------------------------------- #
 # Back-reference (ancestor-revisit) resolution.                               #
 # --------------------------------------------------------------------------- #
-def _back_reference_level(family: str, to_many: bool = False) -> FetchLevel:
+def _back_reference_level(family: EntityIdentity, to_many: bool = False) -> FetchLevel:
     return FetchLevel(
         attach_key="order",
         to_many=to_many,
@@ -380,10 +387,15 @@ def test_back_reference_resolves_the_ancestor_already_in_the_identity_map() -> N
     item_rows = [{"id": 11, "order_id": 1}, {"id": 12, "order_id": 1}]
     item_nodes = asm.attach_level(_to_many_level(), root_nodes, root_rows, item_rows)
 
-    asm.attach_level(_back_reference_level("Order"), item_nodes, item_rows, None)
+    asm.attach_level(
+        _back_reference_level(EntityIdentity("parallax.compatibility", "Order")),
+        item_nodes,
+        item_rows,
+        None,
+    )
 
-    assert item_nodes[0].fields["order"] is root_nodes[0]
-    assert item_nodes[1].fields["order"] is root_nodes[0]
+    assert item_nodes[0].relationships["order"] is root_nodes[0]
+    assert item_nodes[1].relationships["order"] is root_nodes[0]
 
 
 def test_back_reference_null_fk_attaches_none() -> None:
@@ -393,9 +405,14 @@ def test_back_reference_null_fk_attaches_none() -> None:
     item_rows = [{"id": 11, "order_id": None}]
     item_nodes = [Node(fields=dict(item_rows[0]), pk_columns=("id",))]
 
-    asm.attach_level(_back_reference_level("Order"), item_nodes, item_rows, None)
+    asm.attach_level(
+        _back_reference_level(EntityIdentity("parallax.compatibility", "Order")),
+        item_nodes,
+        item_rows,
+        None,
+    )
 
-    assert item_nodes[0].fields["order"] is None
+    assert item_nodes[0].relationships["order"] is None
 
 
 def test_back_reference_raises_when_the_ancestor_is_not_registered() -> None:
@@ -404,7 +421,12 @@ def test_back_reference_raises_when_the_ancestor_is_not_registered() -> None:
     orphan_nodes = [Node(fields=dict(orphan_rows[0]), pk_columns=("id",))]
 
     with pytest.raises(MaterializeError):
-        asm.attach_level(_back_reference_level("Order"), orphan_nodes, orphan_rows, None)
+        asm.attach_level(
+            _back_reference_level(EntityIdentity("parallax.compatibility", "Order")),
+            orphan_nodes,
+            orphan_rows,
+            None,
+        )
 
 
 # --------------------------------------------------------------------------- #

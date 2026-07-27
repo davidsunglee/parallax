@@ -430,8 +430,9 @@ managed-slice case therefore compares object references, not sorted PK values.
 An **abstract-target read** — an abstract `targetEntity`, or an abstract position
 `narrow`ed with `m-op-algebra`'s `narrow` node — materializes complete concrete
 instances, so each observed row (and each `graph` leaf) additionally carries a
-**`familyVariant`** key: the concrete subtype name of that instance (`Dog`, `Cat`,
-…). `familyVariant` is a materialized observation, **never projected as SQL** —
+**`familyVariant`** key: the concrete subtype's family variant spelling (`Dog`,
+`Cat`, …; a canonical qualified Entity spelling when duplicate local concrete
+names make the bare spelling ambiguous). `familyVariant` is a materialized observation, **never projected as SQL** —
 under `table-per-hierarchy` the emitted SQL projects the raw tag column and the
 implementation materializes `familyVariant` from the tag metadata map, and under
 `table-per-concrete-subtype` it is a per-branch subtype-name literal

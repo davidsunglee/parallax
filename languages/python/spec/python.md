@@ -622,6 +622,19 @@ occurrence name flows through `default_column_name()` exactly like a scalar
 Attribute; nested occurrences and fields remain columnless. Containment cycles
 and empty composites are the
 formation-time `value-object-*` issues shared with the descriptor frontend.
+Distinct scalar Attributes, top-level Value Object occurrences, and a
+table-per-hierarchy tag also declare distinct physical columns within each
+physical table; hub construction reports
+`inheritance-physical-column-collision` rather than allowing a row mapping to
+infer which member a duplicate column key denotes.
+Neutral materialization preserves scalar, Value Object, relationship, and
+`familyVariant` provenance until wrapping/rendering. A Value Object storage
+column may therefore equal a differently named relationship without either
+value overwriting or renaming the other. Hub construction separately reports
+`inheritance-materialization-key-collision` when keys that actually coexist in
+one rendered node remain ambiguous. A polymorphic node's `familyVariant` uses a
+bare concrete class name when family-unique and the canonical qualified Entity
+spelling when duplicate local concrete names make the bare spelling ambiguous.
 
 #### Class creation versus hub construction
 

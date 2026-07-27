@@ -28,7 +28,7 @@ entities:
         cardinality: one-to-many
         join:
           source: id
-          target: { entity: Coverage, attribute: policyId }
+          target: { entity: parallax.compatibility.Coverage, attribute: policyId }
         dependent: true
     indices:
       - { name: policy_pk, attributes: [id, valid_start, tx_start], unique: true }
@@ -37,7 +37,7 @@ entities:
     table: coverage
     attributes:
       - { name: id, type: int64, primaryKey: true }
-      - { name: policyId, type: int64, column: policy_id }
+      - { name: policyId, type: int64 }
       - { name: amount, type: "decimal(18,2)" }
       - { name: valid_start, type: timestamp, column: from_z }
       - { name: valid_end, type: timestamp, column: thru_z }
@@ -51,10 +51,10 @@ entities:
         cardinality: one-to-many
         join:
           source: id
-          target: { entity: Claim, attribute: coverageId }
+          target: { entity: parallax.compatibility.Claim, attribute: coverageId }
         dependent: true
       - name: policy
-        reverseOf: Policy.coverages
+        reverseOf: parallax.compatibility.Policy.coverages
     indices:
       - { name: coverage_pk, attributes: [id, valid_start, tx_start], unique: true }
       - { name: coverage_policy, attributes: [policyId] }
@@ -63,7 +63,7 @@ entities:
     table: claim
     attributes:
       - { name: id, type: int64, primaryKey: true }
-      - { name: coverageId, type: int64, column: coverage_id }
+      - { name: coverageId, type: int64 }
       - { name: reserve, type: "decimal(18,2)" }
       - { name: valid_start, type: timestamp, column: from_z }
       - { name: valid_end, type: timestamp, column: thru_z }

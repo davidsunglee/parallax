@@ -46,7 +46,6 @@ entities:
     attributes:
       - name: cardNetwork
         type: string
-        column: card_network
         maxLength: 16
         nullable: true
   - name: CashPayment

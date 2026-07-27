@@ -1,0 +1,34 @@
+# Two disjoint table-per-hierarchy sibling branches introduce differently named
+# Attributes that both map to `note`. Their values never coexist on one concrete
+# node, but their columns do coexist in the family's shared table, so Model
+# Formation must reject the duplicate physical contributors before SQL.
+model: models/member-column-defaults.yaml
+tags: [m-inheritance, m-model-formation, m-descriptor, rejected, negative, physical-column, table-per-hierarchy, sibling, slice-snapshot-1, slice-managed-1]
+shape: rejected
+when:
+  model:
+    entities:
+      - name: Record
+        table: record
+        inheritance:
+          role: root
+          strategy: table-per-hierarchy
+          tag: { column: kind }
+        attributes:
+          - { name: id, type: int64, primaryKey: true }
+      - name: CardRecord
+        inheritance:
+          role: concrete-subtype
+          parent: Record
+          tagValue: card
+        attributes:
+          - { name: cardNote, type: string, column: note }
+      - name: CashRecord
+        inheritance:
+          role: concrete-subtype
+          parent: Record
+          tagValue: cash
+        attributes:
+          - { name: cashNote, type: string, column: note }
+then:
+  rejectedRule: inheritance-physical-column-collision

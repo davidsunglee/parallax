@@ -21,7 +21,7 @@ entities:
     table: audit_seq
     attributes:
       - { name: name, type: string, primaryKey: true, maxLength: 64 }
-      - { name: nextVal, type: int64, column: next_val }
+      - { name: nextVal, type: int64 }
     indices:
       - { name: audit_seq_pk, attributes: [name], unique: true }
   - name: AuditEntry

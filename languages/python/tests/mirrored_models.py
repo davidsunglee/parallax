@@ -122,7 +122,7 @@ class PkSequence(
     is why ``primary_key=True`` carries no generation restriction."""
 
     name: Attr[str] = attr(primary_key=True, max_length=64)
-    next_val: Attr[int] = attr(column="next_val")
+    next_val: Attr[int]
 
 
 class Badge(
@@ -195,8 +195,8 @@ class WritableScalar(
     f32: Attr[float | None] = attr(type=Float32)
     f64: Attr[float | None]
     payload: Attr[bytes | None]
-    local_time: Attr[dt.time | None] = attr(column="local_time")
-    external_id: Attr[uuid.UUID | None] = attr(column="external_id")
+    local_time: Attr[dt.time | None]
+    external_id: Attr[uuid.UUID | None]
     amount: Attr[Decimal | None] = attr(precision=18, scale=4)
     label: Attr[str | None] = attr(max_length=8)
 
@@ -215,9 +215,9 @@ class Taxpayer(
 ):
     """Mirror of ``models/taxpayer.yaml``: the canonical name ``taxID`` is not
     reachable from any Python member name by the snake -> camel conversion, so
-    ``name=`` authors it. ``column=`` is spelled out because omitting it would
-    normalize the storage location to the canonical name rather than to the
-    Python one, and the model stores the attribute as ``tax_id``."""
+    ``name=`` authors it. ``column=`` is spelled out because ``taxID`` derives
+    the mechanical default ``tax_i_d``, while the model stores the attribute as
+    the acronym-friendly ``tax_id``."""
 
     id: Attr[int] = attr(primary_key=True)
     tax_id: Attr[str] = attr(name="taxID", column="tax_id", max_length=32)
@@ -292,6 +292,10 @@ UNMIRRORED: Mapping[str, str] = MappingProxyType(
             "no mirror authored; its ASCII default-column vectors are covered directly by "
             "the metamodel naming, declaration frontend, descriptor serde/export, and "
             "compile-sweep contract tests"
+        ),
+        "materialization-key-compatibility": (
+            "portable compatibility-only model whose overlap and qualified-identity behavior "
+            "is exercised directly by the compile sweep and generic descriptor adapter"
         ),
         "pk-audit": (
             "no mirror authored; it composes the `sequence` generation `pk-sequence` proves with "

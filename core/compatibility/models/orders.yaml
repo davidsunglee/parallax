@@ -46,13 +46,12 @@ entities:
         type: boolean
       - name: orderedOn
         type: date
-        column: ordered_on
     relationships:
       - name: items
         cardinality: one-to-many
         join:
           source: id
-          target: { entity: OrderItem, attribute: orderId }
+          target: { entity: parallax.compatibility.OrderItem, attribute: orderId }
         dependent: true
         orderBy:
           - { attribute: id, direction: desc }
@@ -60,13 +59,13 @@ entities:
         cardinality: one-to-many
         join:
           source: id
-          target: { entity: OrderStatus, attribute: orderId }
+          target: { entity: parallax.compatibility.OrderStatus, attribute: orderId }
         dependent: true
       - name: tags
         cardinality: one-to-many
         join:
           source: id
-          target: { entity: OrderTag, attribute: orderId }
+          target: { entity: parallax.compatibility.OrderTag, attribute: orderId }
         orderBy:
           - { attribute: priority, direction: desc }
           - { attribute: label }
@@ -74,7 +73,7 @@ entities:
         cardinality: one-to-many
         join:
           source: id
-          target: { entity: OrderItem, attribute: orderId }
+          target: { entity: parallax.compatibility.OrderItem, attribute: orderId }
         orderBy:
           - { attribute: shippedOn }
     indices:
@@ -92,7 +91,6 @@ entities:
         primaryKey: true
       - name: orderId
         type: int64
-        column: order_id
       - name: sku
         type: string
         maxLength: 32
@@ -100,16 +98,15 @@ entities:
         type: int32
       - name: shippedOn
         type: date
-        column: shipped_on
         nullable: true
     relationships:
       - name: order
-        reverseOf: Order.items
+        reverseOf: parallax.compatibility.Order.items
       - name: statuses
         cardinality: one-to-many
         join:
           source: id
-          target: { entity: OrderStatus, attribute: orderItemId }
+          target: { entity: parallax.compatibility.OrderStatus, attribute: orderItemId }
         dependent: true
         orderBy:
           - { attribute: code }
@@ -128,19 +125,17 @@ entities:
         primaryKey: true
       - name: orderId
         type: int64
-        column: order_id
       - name: orderItemId
         type: int64
-        column: order_item_id
         nullable: true
       - name: code
         type: string
         maxLength: 16
     relationships:
       - name: order
-        reverseOf: Order.statuses
+        reverseOf: parallax.compatibility.Order.statuses
       - name: orderItem
-        reverseOf: OrderItem.statuses
+        reverseOf: parallax.compatibility.OrderItem.statuses
     indices:
       - name: order_status_pk
         attributes: [id]
@@ -156,7 +151,6 @@ entities:
         primaryKey: true
       - name: orderId
         type: int64
-        column: order_id
       - name: label
         type: string
         maxLength: 32
@@ -164,7 +158,7 @@ entities:
         type: int32
     relationships:
       - name: order
-        reverseOf: Order.tags
+        reverseOf: parallax.compatibility.Order.tags
     indices:
       - name: order_tag_pk
         attributes: [id]

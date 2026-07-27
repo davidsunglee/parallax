@@ -74,7 +74,7 @@ class SnapOrder(Entity, table="snap_orders", namespace=_NS):
     qty: Attr[int] = attr(type=Int32)
     price: Attr[Decimal] = attr(precision=18, scale=2)
     active: Attr[bool]
-    ordered_on: Attr[dt.date] = attr(column="ordered_on")
+    ordered_on: Attr[dt.date]
     items: Rel[tuple["SnapOrderItem", ...]] = rel(
         cardinality=ONE_TO_MANY, join=("id", "order_id"), dependent=True
     )
@@ -85,10 +85,10 @@ class SnapOrder(Entity, table="snap_orders", namespace=_NS):
 
 class SnapOrderItem(Entity, table="snap_order_item", namespace=_NS):
     id: Attr[int] = attr(primary_key=True)
-    order_id: Attr[int] = attr(column="order_id")
+    order_id: Attr[int]
     sku: Attr[str] = attr(max_length=32)
     quantity: Attr[int] = attr(type=Int32)
-    shipped_on: Attr[dt.date | None] = attr(column="shipped_on")
+    shipped_on: Attr[dt.date | None]
     order: Rel[SnapOrder | None] = rel(reverse_of="items")
     statuses: Rel[tuple["SnapOrderStatus", ...]] = rel(
         cardinality=ONE_TO_MANY, join=("id", "order_item_id"), dependent=True
@@ -97,8 +97,8 @@ class SnapOrderItem(Entity, table="snap_order_item", namespace=_NS):
 
 class SnapOrderStatus(Entity, table="snap_order_status", namespace=_NS):
     id: Attr[int] = attr(primary_key=True)
-    order_id: Attr[int] = attr(column="order_id")
-    order_item_id: Attr[int | None] = attr(column="order_item_id")
+    order_id: Attr[int]
+    order_item_id: Attr[int | None]
     code: Attr[str] = attr(max_length=16)
     primary_tag: Attr[Tag | None]
     # A `many` occurrence is a possibly-empty collection and is never nullable
@@ -117,15 +117,15 @@ class Animal(
 ):
     id: Attr[int] = attr(primary_key=True)
     name: Attr[str] = attr(max_length=32)
-    owner_id: Attr[int | None] = attr(column="owner_id")
+    owner_id: Attr[int | None]
 
 
 class Pet(Animal, namespace=_NS, inheritance=AbstractSubtype):
-    license_id: Attr[str | None] = attr(column="license_id", max_length=16)
+    license_id: Attr[str | None] = attr(max_length=16)
 
 
 class Dog(Pet, namespace=_NS, inheritance=ConcreteSubtype(tag_value="dog")):
-    bark_volume: Attr[int | None] = attr(column="bark_volume", type=Int32)
+    bark_volume: Attr[int | None] = attr(type=Int32)
 
 
 class Cat(Pet, namespace=_NS, inheritance=ConcreteSubtype(tag_value="cat")):
@@ -133,7 +133,7 @@ class Cat(Pet, namespace=_NS, inheritance=ConcreteSubtype(tag_value="cat")):
 
 
 class WildBoar(Animal, namespace=_NS, inheritance=ConcreteSubtype(tag_value="boar")):
-    tusk_length: Attr[Decimal | None] = attr(column="tusk_length", precision=18, scale=2)
+    tusk_length: Attr[Decimal | None] = attr(precision=18, scale=2)
 
 
 class AnimalOwner(Entity, table="person", namespace=_NS):

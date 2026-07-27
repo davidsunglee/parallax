@@ -93,8 +93,10 @@ effective concrete set (`narrow-outside-relationship-target`, `m-navigate`).
 
 - the **local** relationship name (never the qualified `Class.rel` ref);
 - the **effective concrete-subtype set**, in the family's canonical **alphabetical
-  order** (by entity name, `m-inheritance`; never abstract names, never a
-  `tagValue`), comma-joined with **no spaces**.
+  order** (`m-inheritance`; never abstract names, never a `tagValue`), rendered
+  with each concrete's family variant spelling and comma-joined with **no
+  spaces**. A family-unique local name stays bare; duplicate local concrete names
+  use their canonical qualified Entity spellings.
 
 So `Person.pets` narrowed to `[Pet]` (or, equivalently, `[Cat, Dog]`) both derive
 `pets[Cat,Dog]`. A narrowed include populates that view **only**; it does **not**
