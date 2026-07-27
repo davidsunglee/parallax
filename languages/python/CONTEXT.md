@@ -163,10 +163,13 @@ established `ModelCopyError` and framework-owned assignment rejections.
 _Avoid_: audit field, caller-authored provenance, `*_time`
 
 **Audit Authoring**:
-The root-owned Entity Class convention that supplies Audit Attributes by
-default with fixed conventional storage columns.
-`audit=NO_AUDIT` explicitly forms an unaudited standalone Entity or family;
-there is no audit configuration object or independent column override.
+The root-owned Entity Class convention available when the Python profile
+includes Audit Provenance. In that profile, omission supplies Audit Attributes
+by default with fixed conventional storage columns and `audit=NO_AUDIT`
+explicitly forms an unaudited standalone Entity or family. A profile without
+Audit Provenance supplies no Audit Attributes by omission and rejects explicit
+audit authoring because the capability is unavailable. There is no audit
+configuration object or independent column override.
 _Avoid_: audit mixin, `Audit(...)`, `audit=True`, descendant audit override
 
 **Edited Copy**:
@@ -196,7 +199,11 @@ Principal that would erase provider- or domain-specific identity structure. A
 joined `db.transact(principal, body)` snapshots the supplied Principal once and
 raises `PrincipalMismatchError` before `body` when it differs from the outer
 transaction's captured identity; operations on `tx` inherit without a
-Principal argument.
+Principal argument. A nested join first proves that the transaction belongs to
+the exact originating Database, then checks rollback-only state without
+evaluating the Principal, resolves and validates the Principal, compares Subject
+Identity, and finally validates explicit transaction options before invoking
+the body.
 _Avoid_: raw subject string, generic Subject wrapper, framework user model
 
 **Transaction Body**:

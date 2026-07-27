@@ -379,6 +379,29 @@ once rather than repeated by member Storage Locations. The initial form is a
 Table; a future Document Collection is a different container form.
 _Avoid_: repeated table mapping, member location, database
 
+**Table Layout**:
+The immutable `m-storage-layout` view of one physical Table: its identity,
+ordered Column Slots, effective physical primary key, contributor provenance,
+and effective nullability. It composes the storage consequences of accepted
+Metadata and module-owned semantic designations without making any contributing
+behavioral module mandatory.
+_Avoid_: inheritance column order, DDL column list, flattened entity mapping
+
+**Column Slot**:
+One physical column position in a Table Layout, carrying its column identity,
+Column Tier, declaring contributor, effective nullability, and the Entities to
+which it applies. Two model facts that intentionally designate one Attribute
+Identity, such as temporal `revised_at` and `tx_start`, produce one slot rather
+than aliases competing for storage.
+_Avoid_: selected field, result key, duplicate alias column
+
+**Column Tier**:
+One table-wide semantic band in canonical physical order: identity,
+discriminator, domain, temporal, audit, then document. An absent capability
+contributes no slots to its tier. Tiers take precedence over declaration ancestry
+while declaration order remains stable within a tier.
+_Avoid_: framework columns, per-entity prefix, module load order
+
 **Document Path**:
 The structured pair of a Document Root and a nonempty ordered sequence of
 member-name segments locating a value inside that document. The root is either
@@ -522,6 +545,42 @@ _Avoid_: session, session cache, first-level cache
 An update or delete expressed over a predicate or an unresolved result collection, intended to operate on the matching set rather than by materializing each object.
 _Avoid_: mass operation, list setter
 
+**Finalized Write Disposition**:
+A provenance-neutral semantic label attached to a row or assignment in a
+nonempty finalized write plan. It tells later decorators what the plan does to a
+stored lineage without exposing audit vocabulary to mutation planners. It is
+neither a public mutation verb nor a persisted event.
+_Avoid_: audit event, user operation, SQL statement kind
+
+**Lineage Start**:
+The Finalized Write Disposition for an inserted row that begins a new
+Provenance Lineage.
+_Avoid_: first-ever primary key, revision successor
+
+**In-Place Revision**:
+The Finalized Write Disposition for a Non-Temporal update that emits DML against
+an existing row. A readless predicate update receives it even when an assignment
+happens to equal stored data; a known canceled, coalesced, or net-zero write does
+not.
+_Avoid_: insert, temporal successor, changed-value proof
+
+**Carried-State Successor**:
+The Finalized Write Disposition for a temporal successor whose represented
+state is carried unchanged from its predecessor, including surviving head or
+tail rectangles around a Bitemporal change or termination.
+_Avoid_: unchanged transaction, no-op write, revision close
+
+**Changed-State Successor**:
+The Finalized Write Disposition for a temporal successor whose represented
+state changes relative to its predecessor.
+_Avoid_: any new temporal row, carried successor, revision close
+
+**Ordinary Revision Close**:
+The Finalized Write Disposition for closing a temporal predecessor because a
+new database revision supersedes it. It is distinct from State Termination,
+which represents explicit absence.
+_Avoid_: termination, physical delete, successor
+
 **Optimistic Lock Conflict**:
 A detected write conflict where a versioned update affected no rows because another transaction advanced the version first.
 _Avoid_: transient failure, automatic retry
@@ -572,14 +631,17 @@ Provenance consumes only the string.
 _Avoid_: Write Principal, current user, ambient principal, authorization claims
 
 **Transaction Instant**:
-The finite instant shared by every write in one unit-of-work attempt. It
-supplies Transaction Time boundaries and Audit Provenance timestamps; a retry
-is a new attempt with a fresh Transaction Instant.
+The finite instant lazily captured for a unit-of-work attempt when its first
+nonempty timestamp-requiring flush needs one. Once captured, it is shared by
+every timestamped write in that attempt and supplies Transaction Time boundaries
+and Audit Provenance timestamps. An attempt that never reaches such a flush has
+no Transaction Instant and never consults the Clock Strategy; a retry captures a
+fresh instant only if it independently reaches one.
 _Avoid_: operation timestamp, audit timestamp, processing instant
 
 **Clock Strategy**:
-The Parallax-level strategy that supplies each unit-of-work attempt's
-Transaction Instant.
+The Parallax-level strategy consulted at most once by a unit-of-work attempt,
+and only when that attempt lazily captures its Transaction Instant.
 _Avoid_: per-transaction timestamp override, operation timestamp override
 
 ### Temporal And Milestoning

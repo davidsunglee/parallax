@@ -19,23 +19,26 @@ The operation context retains both the opaque application Principal and its capt
 
 Operations invoked on the Parallax Transaction inherit the captured Subject Identity without accepting or reevaluating a Principal. A nested call through the joinable database demarcation method is itself an explicit boundary: it evaluates its required Principal once, compares the result verbatim with the root transaction's captured Subject Identity, and raises the language implementation's stable principal-mismatch error before invoking the inner body when they differ. A matching joined boundary receives the same Parallax Transaction. If its Principal is a different object with the same Subject Identity, that object proves identity continuity and is then discarded; the root boundary's retained rich Principal remains authoritative for the whole transaction. Automatic retries retain the outer boundary's originally captured object and identity and do not reevaluate either. The foundational `m-principal` module owns this propagation contract so Audit Provenance and future authorization modules can depend on it without coupling Parallax to ambient authentication state; `m-audit-provenance` remains the separate consumer that stamps audited writes.
 
-When a joining boundary has multiple invalid conditions, validation is deterministic: an already rollback-only transaction raises the rollback-only error without invoking the joining Principal; otherwise Principal resolution and validation run first, a Subject Identity mismatch follows, conflicting explicit transaction options follow that, and only then may the inner body run.
+When a joining boundary has multiple invalid conditions, validation is deterministic. Exact originating-Database ownership is checked first and a foreign transaction raises `TransactionOwnershipError`. An already rollback-only transaction is checked second and fails without invoking the joining Principal. Principal resolution and validation then run, followed by verbatim Subject Identity comparison and `PrincipalMismatchError`, conflicting explicit transaction options, and only then the inner body.
 
 Language-neutral compatibility cases carry only the already-resolved Subject
 Identity, at the location representing its executable database boundary. A
-single-boundary case uses `when.subjectIdentity`; every step in a
-`writeSequence` and every executable scenario or concurrency step carries its
-own `subjectIdentity`. Steps sharing one `uow` group MUST carry the same value,
-because they execute under one root Principal context, while independent
-sequence steps may differ to prove changing authorship across revisions. One
-buffered multi-write flush therefore still has one identity. Automatic retry
-attempts inherit the boundary's identity rather than declaring an
-attempt-local value. A nested boundary step may repeat the root value only to
-prove a matching or mismatching join. The corpus never serializes an
+single-boundary read, conflict, or boundary case uses `when.subjectIdentity`.
+Each `writeSequence` entry carries one `subjectIdentity` because each entry is
+already one unit of work; every row in a multi-row entry shares it. Scenario
+read and write steps carry `subjectIdentity`, and steps sharing one `uow` label
+MUST repeat the same value because they execute under one root Principal
+context. In-memory lifecycle actions such as mutation, cached access,
+`detachCopy`, and equivalent steps carry no identity and inherit their owning
+operation context. Concurrency cases assign identity to the held A and B
+participants rather than repeating it on every round step. Automatic retry
+attempts inherit the outer boundary's identity rather than declaring an
+attempt-local value. A nested boundary step may repeat or vary the root value
+only to prove a matching or mismatching join. The corpus never serializes an
 application Principal. Each language's API Conformance Suite supplies
 provider-shaped Principal implementations and proves resolution count,
-invalid-result, mismatch, and application-exception behavior around the same
-Subject Identity cases.
+invalid-result, ownership, mismatch, and application-exception behavior around
+the same Subject Identity cases.
 
 A lazy read boundary captures and validates its Principal context when the read API creates the operation-backed view, not when later access first resolves it. The view retains the opaque Principal and captured Subject Identity until resolution or scope end, and first access never reevaluates identity. Existing lifecycle errors still govern access after the owning scope closes.
 
