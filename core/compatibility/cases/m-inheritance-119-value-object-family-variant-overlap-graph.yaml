@@ -13,6 +13,7 @@ then:
     - sql:
         postgres: select t0.id, t0.kind, t0."familyVariant" from variant_record t0
         mariadb: select t0.id, t0.kind, t0.`familyVariant` from variant_record t0
+  referenceSql: select id, kind from variant_record
   graph:
     VariantRecord:
       - { id: 2, profile: { label: variant-profile }, familyVariant: VariantNote }

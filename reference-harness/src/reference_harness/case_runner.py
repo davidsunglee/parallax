@@ -70,22 +70,39 @@ from .write_validate import validate_subtype_write, validate_write
 
 
 class _MaterializedRow(dict[str, Any]):
-    __slots__ = ("value_object_columns",)
+    __slots__ = ("consumed_value_object_columns", "value_object_columns")
 
     def __init__(
         self,
         values: dict[str, Any],
         *,
         value_object_columns: dict[str, Any] | None = None,
+        consumed_value_object_columns: set[str] | None = None,
     ) -> None:
         super().__init__(values)
         self.value_object_columns = value_object_columns or {}
+        self.consumed_value_object_columns = consumed_value_object_columns or set()
 
 
 def _materialized_row(row: dict[str, Any]) -> _MaterializedRow:
     if isinstance(row, _MaterializedRow):
-        return _MaterializedRow(dict(row), value_object_columns=dict(row.value_object_columns))
+        return _MaterializedRow(
+            dict(row),
+            value_object_columns=dict(row.value_object_columns),
+            consumed_value_object_columns=set(row.consumed_value_object_columns),
+        )
     return _MaterializedRow(dict(row))
+
+
+def _reference_identity_row(row: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(row, _MaterializedRow):
+        return dict(row)
+    return {
+        key: value
+        for key, value in row.items()
+        if key not in row.value_object_columns or key in row.consumed_value_object_columns
+    }
+
 
 # The full pre-SQL rejection vocabulary: value-object / operation rules
 # (m-value-object / m-op-algebra) plus the inheritance family-invariant rules, the
@@ -1172,7 +1189,7 @@ def _materialize_family_variant(case: Case, rows: list[dict[str, Any]]) -> list[
                 f"in the family (tag metadata {sorted(variant_map)})."
             )
         if "familyVariant" in new_row:
-            new_row.value_object_columns["familyVariant"] = new_row["familyVariant"]
+            new_row.consumed_value_object_columns.add("familyVariant")
         new_row["familyVariant"] = variant
         materialized.append(new_row)
     return materialized
@@ -1202,12 +1219,17 @@ def _narrow_to_variant_columns(case: Case, rows: list[dict[str, Any]]) -> list[d
         narrowed.append(
             _MaterializedRow(
                 {
-                key: value
-                for key, value in row.items()
-                if key == "familyVariant" or key in own_columns
+                    key: value
+                    for key, value in row.items()
+                    if key == "familyVariant" or key in own_columns
                 },
                 value_object_columns=(
                     dict(row.value_object_columns) if isinstance(row, _MaterializedRow) else None
+                ),
+                consumed_value_object_columns=(
+                    set(row.consumed_value_object_columns)
+                    if isinstance(row, _MaterializedRow)
+                    else None
                 ),
             )
         )
@@ -1492,7 +1514,7 @@ def _materialize_tpcs_family_variant(
                 f"materialized (m-sql)."
             )
         if "familyVariant" in new_row:
-            new_row.value_object_columns["familyVariant"] = new_row["familyVariant"]
+            new_row.consumed_value_object_columns.add("familyVariant")
         variant = new_row.pop(_TPCS_VARIANT_COLUMN)
         applicable_names = {
             attribute["name"]
@@ -1506,9 +1528,7 @@ def _materialize_tpcs_family_variant(
             if (
                 result_alias in new_row
                 and result_alias != column
-                and (
-                    column_counts[column] == 1 or attribute["name"] in applicable_names
-                )
+                and (column_counts[column] == 1 or attribute["name"] in applicable_names)
             ):
                 new_row[column] = new_row.pop(result_alias)
             elif column_counts[column] > 1 and attribute["name"] not in applicable_names:
@@ -2200,6 +2220,11 @@ def _materialize_owner_node(entity: Entity, row: dict[str, Any]) -> dict[str, An
             if isinstance(row, _MaterializedRow) and column in row.value_object_columns
             else node.pop(column)
         )
+        if column in node and (
+            not isinstance(row, _MaterializedRow)
+            or column not in row.consumed_value_object_columns
+        ):
+            node.pop(column)
         node[vo["name"]] = _project_value_object(vo, _decode_document(raw))
     return node
 
@@ -2246,7 +2271,14 @@ def _assert_single_statement_graph(case: Case, db: DatabaseProvider) -> None:
         case.model.entity_defs, case.operation, position=case.when.get("targetEntity")
     )
 
-    rows = _query_rows(db, golden, case.statement_binds(0, dialect))
+    value_object_columns = {vo["column"] for vo in entity.value_objects}
+    rows: list[dict[str, Any]] = [
+        _MaterializedRow(
+            row,
+            value_object_columns={key: row[key] for key in value_object_columns if key in row},
+        )
+        for row in _query_rows(db, golden, case.statement_binds(0, dialect))
+    ]
     # `familyVariant` materialization happens on the RAW rows (also what a
     # referenceSql identity check below compares against — the matched ROW SET,
     # unrelated to per-variant field narrowing); the per-variant COLUMN narrowing
@@ -2265,10 +2297,7 @@ def _assert_single_statement_graph(case: Case, db: DatabaseProvider) -> None:
 
     reference_sql = case.reference_sql_for(dialect)
     if reference_sql is not None:
-        vo_columns = {vo["column"] for vo in entity.value_objects}
-        identity_rows = [
-            {key: value for key, value in row.items() if key not in vo_columns} for row in rows
-        ]
+        identity_rows = [_reference_identity_row(row) for row in rows]
         # An abstract-target inheritance read's naive reference SQL projects the
         # RAW tag column too (it is an independently-formulated but otherwise
         # equivalent selection); materialize familyVariant on it the same way,

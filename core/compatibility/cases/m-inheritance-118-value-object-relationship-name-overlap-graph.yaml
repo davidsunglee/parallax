@@ -26,6 +26,7 @@ then:
         postgres: select t0.id from profile_target t0 where t0.id in (?)
         mariadb: select t0.id from profile_target t0 where t0.id in (?)
       binds: [10]
+  referenceSql: select id, target_id, details from profile_owner
   graph:
     ProfileOwner:
       - { id: 1, target_id: 10, profile: { label: owner-profile }, details: { id: 10 } }

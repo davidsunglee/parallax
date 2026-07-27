@@ -210,7 +210,7 @@ the open-bound `infinity` as the literal string `infinity`.
 | `when.boundary` | `when` | boundary | an ordered list of portable unit-of-work actions (`read` / `create` / `update` / `terminate` / `delete`) |
 | `when.attempts` | `when` | conflict | an ordered retry sequence of optimistic-lock `UPDATE` attempts, each carrying its own `statements` + `affectedRows` + `write` |
 | `when.write` | `when` | conflict / rejected | the single-attempt neutral write input (①): the flat attribute-named row the versioned `UPDATE` (or temporal close) operates on; on a `rejected` case, a value-object write the validator MUST refuse pre-SQL |
-| `when.model` | `when` | rejected | an inline model descriptor (`m-inheritance`) whose *family* is invalid — the cross-entity closed-tree invariant a model-aware validator MUST reject pre-SQL; kept inline so the shared `models/` registry stays loadable (see *Rejected cases*) |
+| `when.model` | `when` | rejected | an inline model descriptor whose accepted-model formation is invalid — either a standalone/table-level defect or a cross-entity family invariant a model-aware validator MUST reject pre-SQL; kept inline so the shared `models/` registry stays loadable (see *Rejected cases*) |
 | `when.uow` | `when` | no | unit-of-work configuration (`concurrency: locking \| optimistic`, `retries`, `retryOptimisticConflicts`) the action runs under; descriptive |
 | `when.at` / `when.observedTxStart` | `when` | conflict | the harness-supplied Transaction-Time close instant (→ new `out_z`) and observed `tx_start` / physical `in_z` the optimistic gate binds |
 | `when.equivalentEncodings` | `when` | no | alternate surface encodings of `when.operation`; each MUST canonicalize to it |
@@ -1034,8 +1034,9 @@ checked payload-shape-first then target-validity):
 - `abstract-write-target` — a create / update / delete / terminate handle aimed at
   an **abstract** root or abstract subtype. Writes are concrete-subtype only.
 
-**Model** rules (`m-inheritance` closed-tree family invariants — the cross-entity
-invariants per-entity schema validation cannot express, carried inline under
+**Model** rules (`m-inheritance` accepted-model formation — standalone and
+strategy-specific physical-table defects as well as cross-entity closed-tree family
+invariants that per-entity schema validation cannot express, carried inline under
 `when.model`): `inheritance-unknown-parent`, `inheritance-cycle`,
 `inheritance-missing-root`,
 `inheritance-concrete-without-abstract-root`,
@@ -1075,10 +1076,11 @@ Purely **regex-level** negatives — an empty path after the value-object name, 
 bad-cased segment — are the operation schema's job (the `nestedRef` grammar) and
 stay **schema-validation unit tests**, never `rejected` cases: a syntactically
 malformed operation is refused at layer 1 (schema conformance) before a model-aware
-resolver ever runs. Likewise, purely **per-entity** inheritance negatives (a
+resolver ever runs. Likewise, purely **schema-expressible per-entity** inheritance negatives (a
 rejected `strategy` enum value or the retired `discriminator` vocabulary) are
-refused at layer 1 and stay schema-validation unit tests; `when.model` cases pin
-the **cross-entity** family invariants only. Table legality is strategy-relative
+refused at layer 1 and stay schema-validation unit tests; `when.model` cases pin all
+schema-valid accepted-model formation defects, including standalone/table-level
+collisions and cross-entity family invariants. Table legality is strategy-relative
 and therefore belongs to whole-model formation: a TPH root owns the shared table,
 whereas a TPCS concrete subtype owns its table.
 

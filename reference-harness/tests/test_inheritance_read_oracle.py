@@ -99,11 +99,32 @@ def test_canonical_order_is_independent_of_descriptor_layout() -> None:
     assert family.canonical_concrete_order(["Zebra", "Ant", "Mule"]) == ["Ant", "Mule", "Zebra"]
 
 
-def test_canonical_concrete_order_uses_exact_qualified_identities() -> None:
-    family = Family([])
-    assert family.canonical_concrete_order(["beta.Alpha", "alpha.Zulu"]) == [
-        "alpha.Zulu",
-        "beta.Alpha",
+def test_canonical_concrete_order_sorts_exact_identities_then_renders_unique_locals() -> None:
+    family = Family(
+        [
+            {
+                "name": "Root",
+                "namespace": "root",
+                "inheritance": {
+                    "role": "root",
+                    "strategy": "table-per-concrete-subtype",
+                },
+            },
+            {
+                "name": "Alpha",
+                "namespace": "z",
+                "inheritance": {"role": "concrete-subtype", "parent": "root.Root"},
+            },
+            {
+                "name": "Zulu",
+                "namespace": "a",
+                "inheritance": {"role": "concrete-subtype", "parent": "root.Root"},
+            },
+        ]
+    )
+    assert family.concrete_descendants("Root") == [
+        "Zulu",
+        "Alpha",
     ]
 
 
@@ -263,6 +284,42 @@ def test_tag_value_to_subtype_map() -> None:
         "dog": "Dog",
         "cat": "Cat",
         "boar": "WildBoar",
+    }
+
+
+def test_tag_value_to_subtype_qualifies_duplicate_local_names() -> None:
+    defs = [
+        {
+            "name": "Root",
+            "namespace": "catalog",
+            "inheritance": {
+                "role": "root",
+                "strategy": "table-per-hierarchy",
+                "tag": {"column": "kind"},
+            },
+        },
+        {
+            "name": "Entry",
+            "namespace": "archive",
+            "inheritance": {
+                "role": "concrete-subtype",
+                "parent": "catalog.Root",
+                "tagValue": "archive",
+            },
+        },
+        {
+            "name": "Entry",
+            "namespace": "catalog",
+            "inheritance": {
+                "role": "concrete-subtype",
+                "parent": "Root",
+                "tagValue": "current",
+            },
+        },
+    ]
+    assert tag_value_to_subtype(defs) == {
+        "archive": "archive.Entry",
+        "current": "catalog.Entry",
     }
 
 
@@ -690,9 +747,27 @@ def _person_op(rel: str, narrow_entity: str, to: list[str]) -> dict[str, Any]:
 
 def test_relationship_target_resolution() -> None:
     family = Family(_animal_defs())
-    assert family.relationship_target("Person.pets") == "Pet"
-    assert family.relationship_target("Person.animals") == "Animal"
+    assert family.relationship_target("Person.pets") == "parallax.compatibility.Pet"
+    assert family.relationship_target("Person.animals") == "parallax.compatibility.Animal"
     assert family.relationship_target("Person.missing") is None
+
+
+def test_relationship_target_preserves_qualified_duplicate_local_identity() -> None:
+    defs = [
+        {
+            "name": "Owner",
+            "namespace": "catalog",
+            "relationships": [
+                {
+                    "name": "entry",
+                    "join": {"target": {"entity": "archive.Entry", "attribute": "id"}},
+                }
+            ],
+        },
+        {"name": "Entry", "namespace": "archive"},
+        {"name": "Entry", "namespace": "catalog"},
+    ]
+    assert Family(defs).relationship_target("catalog.Owner.entry") == "archive.Entry"
 
 
 def test_narrowed_view_key_is_canonical_ordered_and_spaceless() -> None:
