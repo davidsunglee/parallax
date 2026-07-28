@@ -48,6 +48,7 @@ def test_real_dependency_graph_is_a_legal_dag() -> None:
     assert check(markdown) == []
     edges = parse_edges(markdown)
     assert ("m-sql", "m-op-algebra") in edges  # sanity: a known edge is present
+    assert ("m-sql", "m-storage-layout") in edges
     assert ("m-deep-fetch", "m-navigate") in edges  # the "surprising" direction is declared
     assert ("m-coherence", "m-process-cache") in edges  # coherence keeps caches coherent
 
@@ -100,6 +101,7 @@ def test_real_catalog_matches_the_graph() -> None:
     assert catalog["m-db-port"]["coverage"] == "contract"  # the sole contract-covered module
     assert catalog["m-agg"]["status"] == "deferred"  # aggregation is deferred
     assert catalog["m-core"]["status"] == "active"
+    assert catalog["m-storage-layout"] == {"status": "active", "coverage": "cases"}
 
 
 def test_parse_catalog_rejects_an_unknown_status() -> None:
@@ -149,6 +151,35 @@ def test_real_formation_manifest_matches_catalog_and_direct_edges() -> None:
     modules = (_SPEC_DIR / "modules.md").read_text(encoding="utf-8")
     manifest = (_SPEC_DIR / "m-model-formation.md").read_text(encoding="utf-8")
     assert formation_manifest_errors(modules, manifest) == []
+
+
+def test_storage_layout_has_exact_direct_dependencies_and_manifest_ownership() -> None:
+    modules = (_SPEC_DIR / "modules.md").read_text(encoding="utf-8")
+    edges = parse_edges(modules)
+    assert {dependency for owner, dependency in edges if owner == "m-storage-layout"} == {
+        "m-inheritance",
+        "m-metamodel",
+        "m-model-formation",
+    }
+    assert ("m-sql", "m-storage-layout") in edges
+    assert ("m-sql", "m-inheritance") in edges
+
+    manifest = (_SPEC_DIR / "m-model-formation.md").read_text(encoding="utf-8")
+    storage_row = next(
+        line for line in manifest.splitlines() if line.startswith("| `m-storage-layout` |")
+    )
+    inheritance_row = next(
+        line for line in manifest.splitlines() if line.startswith("| `m-inheritance` |")
+    )
+    assert (
+        "| required | `storage-layout-table-mapping-collision`, "
+        "`storage-layout-column-collision` |" in storage_row
+    )
+    assert "storage-layout-table-mapping-collision" in storage_row
+    assert "storage-layout-table-boundary-collision" not in storage_row
+    assert "`StorageLayoutFacet` under `FacetKey(m-storage-layout)`" in storage_row
+    assert "`FacetKey(m-inheritance)`" in storage_row
+    assert "inheritance-physical-column-collision" not in inheritance_row
 
 
 def test_formation_manifest_requires_catalog_owner_and_direct_module_edges() -> None:
@@ -245,8 +276,12 @@ def test_formation_manifest_rejects_malformed_required_module_and_facet_cells() 
     modules = (_SPEC_DIR / "modules.md").read_text(encoding="utf-8")
     manifest = (_SPEC_DIR / "m-model-formation.md").read_text(encoding="utf-8")
     manifest = manifest.replace(
-        "`m-metamodel`, `m-model-formation`, `m-inheritance`",
-        "m-metamodel, `m-model-formation`, `m-inheritance`",
+        "| `m-temporal-read` | none | none | `TemporalFacet` under "
+        "`FacetKey(m-temporal-read)` | `m-metamodel`, `m-model-formation`, "
+        "`m-inheritance` |",
+        "| `m-temporal-read` | none | none | `TemporalFacet` under "
+        "`FacetKey(m-temporal-read)` | m-metamodel, `m-model-formation`, "
+        "`m-inheritance` |",
         1,
     ).replace(
         "`FacetKey(m-inheritance)`, `FacetKey(m-temporal-read)`",
@@ -628,8 +663,8 @@ def test_real_corpus_declares_the_two_lifecycle_slices() -> None:
 @pytest.mark.parametrize(
     ("slice_tag", "expected"),
     [
-        ("slice-snapshot-1", 325),
-        ("slice-managed-1", 344),
+        ("slice-snapshot-1", 326),
+        ("slice-managed-1", 345),
     ],
 )
 def test_profile_slice_tag_counts(slice_tag: str, expected: int) -> None:

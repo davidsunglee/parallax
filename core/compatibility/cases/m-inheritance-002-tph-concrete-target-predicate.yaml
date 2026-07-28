@@ -7,7 +7,7 @@
 # is an INHERITED attribute (declared on the abstract root Payment), referenced here
 # through CardPayment's ancestry — valid at a concrete target with no narrowing.
 #
-# The projection is CardPayment's full flattened ancestry-plus-own columnOrder
+# The projection is CardPayment's applicable Entity Layout selection
 # (id, amount from the root Payment; card_network its own) — the base read
 # projection never depends on the predicate (m-sql).
 model: models/payment.yaml

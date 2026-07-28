@@ -10,7 +10,7 @@
 #   middle : valid [validFrom, until) — the NEW address D2, for the window
 #   tail   : valid [until, infinity)     — the OLD address D1 after the window
 # so the address changes ONLY inside the window. The `address` value object carries NO
-# value-object-specific write machinery: it is one document bind in columnOrder position
+# value-object-specific write machinery: it is one document bind in its layout position
 # ([br_id, name, from_z, thru_z, in_z, out_z, address]) in every full-row INSERT, and it
 # is ABSENT from the inactivating close (which sets only out_z). The document column is
 # treated exactly like the scalar `name` column — copied verbatim onto head/tail (old

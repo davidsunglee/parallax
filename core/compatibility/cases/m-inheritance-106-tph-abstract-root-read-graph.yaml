@@ -3,7 +3,7 @@
 #
 # Same model, same operation, and BYTE-IDENTICAL golden SQL as the row-form original
 # (`m-inheritance-003`) — Payment declares no value objects, so the instance-form
-# slot-4 delta is empty (m-sql *Read projection*). The two lanes diverge only in what
+# Document-slot delta is empty (m-sql *Read projection*). The two lanes diverge only in what
 # `then.graph` asserts: each node carries ONLY its own branch's members (inherited +
 # own) plus `familyVariant`, never a sibling's null-padded column — a materialized
 # CardPayment instance has no `tendered` key to be null, and a CashPayment instance
@@ -19,7 +19,7 @@ when:
 then:
   statements:
     - sql:
-        postgres: select t0.id, t0.amount, t0.card_network, t0.tendered, t0.kind from payment t0
+        postgres: select t0.id, t0.kind, t0.amount, t0.card_network, t0.tendered from payment t0
   graph:
     Payment:
       - { id: 1, amount: 100.00, card_network: Visa, familyVariant: CardPayment }

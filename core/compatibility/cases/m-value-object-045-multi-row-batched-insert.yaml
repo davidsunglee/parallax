@@ -1,5 +1,5 @@
 # valueObject multi-row batched INSERT: two Customers collapse into ONE multi-row
-# INSERT, each `address` document binding atomically in columnOrder position
+# INSERT, each `address` document binding atomically in its layout position
 # (m-value-object write + m-batch-write set-based flush).
 #
 # m-value-object-025 proves the single-row atomic document insert; m-batch-write-001

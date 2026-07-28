@@ -19,8 +19,10 @@
 #
 # `address` is the ONE m-core `json` column the whole embedded composite is stored
 # in (never column-flattened); geo/phones and every inner attribute live inside it,
-# so only `address` carries `column`/`mapping`. columnOrder is the scalar attributes
-# (id, name, in_z, out_z) then the single document column (address).
+# so only `address` carries `column`/`mapping`. The descriptor preserves the
+# Attribute and Value Object declaration sequences; Storage Layout composes
+# `sup_id` in Identity, `name` in Domain, `in_z` / `out_z` in Temporal, then
+# `address` in Document.
 #
 # Read row data lives in the sibling fixtures/supplier.yaml (the as-of READ cases);
 # the write-sequence cases construct their own milestone history from their ordered

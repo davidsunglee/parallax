@@ -2,10 +2,10 @@
 #
 # Targeting the abstract root Animal spans the whole `animal` table with NO tag
 # predicate; the user predicate `name = 'Ghost'` matches no fixture row, so the read
-# returns the EMPTY set. The projection is still the full concrete superset — inherited
-# (id, name, owner_id), Pet's license_id, then each concrete subtype's own columns in
-# ALPHABETICAL subtype order (Cat's indoor, Dog's bark_volume, WildBoar's tusk_length)
-# — PLUS the raw tag column `kind`, exactly as a non-empty abstract read. `name` is an INHERITED
+# returns the EMPTY set. The projection is still the full concrete superset in Table
+# Layout order — identity `id`, discriminator `kind`, then Domain slots from the root,
+# Pet, and the concrete subtypes (Cat's indoor, Dog's bark_volume, WildBoar's
+# tusk_length), exactly as a non-empty abstract read. `name` is an INHERITED
 # attribute (declared on the abstract root), so it is in
 # scope at the root position with no narrowing. This zero-row case is the corpus witness
 # that the abstract-read projection-shape oracle is row-count-INDEPENDENT: the harness
@@ -20,8 +20,8 @@ when:
 then:
   statements:
     - sql:
-        postgres: select t0.id, t0.name, t0.owner_id, t0.license_id, t0.indoor, t0.bark_volume, t0.tusk_length, t0.kind from animal t0 where t0.name = ?
+        postgres: select t0.id, t0.kind, t0.name, t0.owner_id, t0.license_id, t0.indoor, t0.bark_volume, t0.tusk_length from animal t0 where t0.name = ?
       binds: [Ghost]
-  referenceSql: select id, name, owner_id, license_id, indoor, bark_volume, tusk_length, kind from animal where name = 'Ghost'
+  referenceSql: select id, kind, name, owner_id, license_id, indoor, bark_volume, tusk_length from animal where name = 'Ghost'
   rows: []
   roundTrips: 1

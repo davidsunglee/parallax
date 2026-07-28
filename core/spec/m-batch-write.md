@@ -66,17 +66,18 @@ update <table> set <column> = ?, … where <predicate>
 ```
 
 There is no materialization and no equality-elimination pass: rows already equal
-to an assigned value are still matched by ordinary SQL set semantics. The emitted
-`set` columns and their assignment-value binds follow descriptor declared column
-order, regardless of the instruction's ordered assignment list; predicate binds
-come after those assignment binds. `delete` is exactly:
+to an assigned value are still matched by ordinary SQL set semantics. The
+emitted `set` columns and their assignment-value binds follow `m-sql`'s physical
+DML rule: filter the assigned cells from the target Entity Layout in Table
+Layout order, regardless of the instruction's ordered assignment list.
+Predicate binds come after those assignment binds. `delete` is exactly:
 
 ```text
 delete from <table> where <predicate>
 ```
 
 `m-batch-write-005` pins readless predicate delete and
-`m-batch-write-006` pins the update's descriptor-order SQL and bind determinism.
+`m-batch-write-006` pins the update's layout-order SQL and bind determinism.
 Reladomo's transaction behavior remains prior art for the materializing branch:
 it reads under a lock or gates on an observed optimistic version, not a Java bulk
 API template. Parallax applies that runtime rule through the owning modules above.
@@ -100,7 +101,7 @@ versioned per-key delete. The predicate-write witnesses prove a distinct target:
 | Case | Target | Predicate-write witness |
 |---|---|---|
 | `m-batch-write-005` | non-versioned `Wallet` delete | one readless `delete … where <predicate>` |
-| `m-batch-write-006` | non-versioned `Wallet` update | one readless update; reversed authored assignments still emit descriptor column order and assignment-before-predicate binds |
+| `m-batch-write-006` | non-versioned `Wallet` update | one readless update; reversed authored assignments still emit Entity Layout order and assignment-before-predicate binds |
 | `m-opt-lock-015` | versioned `Account` delete | materialize plus one optimistic per-row delete for each match |
 
 The two families share SQL terminology but not an observation contract: an `IN`

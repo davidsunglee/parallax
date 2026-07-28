@@ -1,0 +1,23 @@
+# Two standalone Entities independently map the same structural Table while
+# declaring disjoint physical Columns and separate model primary keys. Combining
+# those owners would create one non-null physical key that neither Entity's DML
+# can fully supply, so Storage Layout must reject the later canonical owner at
+# its mapping provenance before physical Column collision validation.
+model: models/member-column-defaults.yaml
+tags: [m-storage-layout, m-inheritance, m-model-formation, m-descriptor, rejected, negative, table-mapping, standalone, slice-snapshot-1, slice-managed-1]
+shape: rejected
+when:
+  model:
+    entities:
+      - name: FirstRecord
+        table: shared_record
+        attributes:
+          - { name: firstId, type: int64, column: first_id, primaryKey: true }
+          - { name: firstValue, type: string, column: first_value }
+      - name: SecondRecord
+        table: shared_record
+        attributes:
+          - { name: secondId, type: int64, column: second_id, primaryKey: true }
+          - { name: secondValue, type: string, column: second_value }
+then:
+  rejectedRule: storage-layout-table-mapping-collision

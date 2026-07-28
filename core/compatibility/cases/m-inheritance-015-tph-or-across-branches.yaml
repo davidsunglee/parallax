@@ -34,9 +34,9 @@ when:
 then:
   statements:
     - sql:
-        postgres: select t0.id, t0.name, t0.owner_id, t0.license_id, t0.indoor, t0.bark_volume, t0.tusk_length, t0.kind from animal t0 where (t0.bark_volume > ? and t0.kind = ?) or (t0.indoor = ? and t0.kind = ?)
+        postgres: select t0.id, t0.kind, t0.name, t0.owner_id, t0.license_id, t0.indoor, t0.bark_volume, t0.tusk_length from animal t0 where (t0.bark_volume > ? and t0.kind = ?) or (t0.indoor = ? and t0.kind = ?)
       binds: [5, dog, true, cat]
-  referenceSql: select id, name, owner_id, license_id, indoor, bark_volume, tusk_length, kind from animal where (bark_volume > 5 and kind = 'dog') or (indoor = true and kind = 'cat')
+  referenceSql: select id, kind, name, owner_id, license_id, indoor, bark_volume, tusk_length from animal where (bark_volume > 5 and kind = 'dog') or (indoor = true and kind = 'cat')
   rows:
     - { id: 1, name: Rex, owner_id: 10, license_id: L-100, bark_volume: 7, indoor: null, tusk_length: null, familyVariant: Dog }
     - { id: 3, name: Whiskers, owner_id: 10, license_id: L-200, bark_volume: null, indoor: true, tusk_length: null, familyVariant: Cat }

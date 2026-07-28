@@ -1,9 +1,9 @@
 # valueObject atomic document INSERT: the whole embedded composite binds as ONE
-# document value in columnOrder position (m-value-object write, m-sql), on Postgres
+# document value in its layout `Document` position (m-value-object write, m-sql), on Postgres
 # AND MariaDB.
 #
 # Inserting a Customer writes the `address` valueObject as a single structured-
-# document bind in the entity's columnOrder position ([id, name, address]) — the
+# document bind in the entity's layout position ([id, name, address]) — the
 # third `?` carries the WHOLE nested-plus-to-many document (street/city, nested
 # `geo`, to-many `phones`) atomically, never decomposed into path-level binds. The
 # INSERT DML is identical on both dialects (a plain column bind, no JSON function);
@@ -20,7 +20,7 @@ when:
     - mutation: insert
       entity: Customer
       statements: 1
-      note: insert one Customer, binding the whole address document atomically in columnOrder position
+      note: insert one Customer, binding the whole address document atomically in its layout position
       rows:
         - id: 100
           name: Solveig

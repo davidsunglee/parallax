@@ -99,6 +99,7 @@ is both `active` and `cases`-covered has at least one tagged fixture.
 | `m-descriptor` | Canonical descriptor interchange & serde | active | cases |
 | `m-pk-gen` | Primary-key generation (`max`, `sequence`) | active | cases |
 | `m-inheritance` | Closed-tree inheritance (table-per-hierarchy / -concrete-subtype) | active | cases |
+| `m-storage-layout` | Canonical physical Table composition and column layout | active | cases |
 | `m-value-object` | Embedded value objects (structured-document column) | active | cases |
 | `m-relationship` | Relationship formation and symmetric relationship facet | active | cases |
 | `m-op-algebra` | Query / operation algebra | active | cases |
@@ -155,6 +156,9 @@ m-descriptor --> m-metamodel
 m-pk-gen --> m-metamodel
 m-inheritance --> m-metamodel
 m-inheritance --> m-model-formation
+m-storage-layout --> m-metamodel
+m-storage-layout --> m-model-formation
+m-storage-layout --> m-inheritance
 m-value-object --> m-metamodel
 m-value-object --> m-model-formation
 m-relationship --> m-metamodel
@@ -166,6 +170,7 @@ m-sql --> m-op-algebra
 m-sql --> m-dialect
 m-sql --> m-metamodel
 m-sql --> m-inheritance
+m-sql --> m-storage-layout
 m-sql --> m-relationship
 m-sql-agg --> m-agg
 m-sql-agg --> m-sql
@@ -239,10 +244,18 @@ construction it may reference any behavioral module it harnesses.
   (the resolved `to` list must be a non-empty subset of the position's **effective
   concrete-subtype set**) is stated in `m-inheritance`'s vocabulary. The algebra
   therefore references the inheritance family model, not the reverse.
-- **`m-sql --> m-metamodel`, `m-sql --> m-inheritance`.** SQL lowering reads
-  resolved model Identities directly and lowers a `narrow` node's tag/branch
-  predicate against the inheritance family model; both are declared directly
-  rather than left to the transitive closure through `m-op-algebra`.
+- **`m-storage-layout --> m-metamodel`, `m-storage-layout -->
+  m-model-formation`, `m-storage-layout --> m-inheritance`.** Storage Layout
+  validates Candidate Metamodel physical claims through Inheritance's pure
+  table-group projection, then compiles immutable Table Layouts from Compiled
+  Metadata plus the Inheritance Facet. It depends on Formation for those phase
+  contracts and does not move family topology into physical storage.
+- **`m-sql --> m-metamodel`, `m-sql --> m-inheritance`, `m-sql -->
+  m-storage-layout`.** SQL lowering reads resolved model Identities directly,
+  lowers a `narrow` node's tag/branch predicate against the inheritance family
+  model, and obtains physical Tables, ordered slots, and branch presence from
+  Storage Layout. These direct collaborations are not left to the transitive
+  closure through `m-op-algebra`.
 - **`m-sql --> m-relationship`.** A navigation hop lowers to a correlated
   semi-join whose columns come from the relationship's join predicate. The
   Relationship Facet is the one place a reverse direction's swapped join exists,

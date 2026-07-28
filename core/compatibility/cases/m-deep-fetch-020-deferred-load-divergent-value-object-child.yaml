@@ -10,7 +10,7 @@
 # The classification pinned: a relationship `action: load` step is INSTANCE-FORM
 # (m-case-format "Read result form", object lane), and its SQL-producing child read
 # projects the read entity's OWN instance-form list — scalars plus the `address`
-# document LAST (m-sql "Read projection", slot 4) — decoded with the relationship
+# Document slot LAST (m-sql "Read projection") — decoded with the relationship
 # path's TERMINAL entity descriptor (Depot), never the scenario root's. The deferred
 # load emits ONE IN-keyed child statement (not one per parent) honoring
 # `orderBy: id asc`; depot 201's SQL-NULL document materializes a null address — the
@@ -31,7 +31,7 @@ when:
       find:
         eq: { attr: Customer.id, value: 1 }
       roundTrips: 1
-      note: managed find materializes the owner WITH its address document — INSTANCE-FORM, slot 4 present (id, name, then address last)
+      note: managed find materializes the owner WITH its address Document slot — INSTANCE-FORM (id, name, then address last)
       statements:
         - sql:
             postgres: select t0.id, t0.name, t0.address from customer t0 where t0.id = ?

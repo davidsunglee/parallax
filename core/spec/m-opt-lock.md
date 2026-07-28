@@ -157,11 +157,11 @@ Java API or implementation structure.
 The one exception is an **unversioned, non-temporal** target. It remains readless:
 `update` emits exactly one `update <table> set <column> = ?, … where <predicate>`
 and `delete` exactly one `delete from <table> where <predicate>`. The readless
-update has no equality-elimination pass. Its `set` columns follow descriptor
-declared column order, never authored assignment order; binds are assignment values
-in that emitted order followed by predicate binds. `m-batch-write` owns this
-readless vocabulary and witness; this module owns every observed-version or
-Transaction-Time materialization rule.
+update has no equality-elimination pass. Its `set` columns follow `m-sql`'s
+target Entity Layout filtering, never authored assignment order; binds are
+assignment values in that emitted order followed by predicate binds.
+`m-batch-write` owns this readless vocabulary and witness; this module owns every
+observed-version or Transaction-Time materialization rule.
 
 ### Temporal entities derive the version from Transaction Time
 

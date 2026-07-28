@@ -7,8 +7,8 @@
 #
 # Step 0 constructs `findMany(all Depot)` lazily — no SQL (m-op-list). Step 1's first
 # access resolves the list in ONE query (the scenario's only round trip), projecting
-# Depot's OWN instance-form list — scalars in columnOrder, the `address` document LAST
-# (slot 4) — materialized with DEPOT's descriptor; step 2 re-accesses with NO SQL,
+# Depot's OWN instance-form list — scalar layout slots followed by the `address`
+# Document slot — materialized with DEPOT's descriptor; step 2 re-accesses with NO SQL,
 # returning the SAME resolved objects. Depot's `address` is a FLAT { line, postcode },
 # DIVERGENT from the recursive Customer / Location composite (models/customer.yaml):
 # a runner materializing with the scenario ROOT's descriptor drops `line`/`postcode`

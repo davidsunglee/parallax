@@ -26,12 +26,13 @@
 # round 4): a `deepFetch(all(Customer), paths=[[Customer.locations]])` read whose
 # root level projects Customer's instance-form list (`id, name, address`) and whose
 # child level projects Location's own instance-form list (`id, customer_id, label,
-# address`: the FK via slot 1, the document last via slot 4). `Location` reuses
+# address`: `customer_id` is a Domain slot and `address` the final Document slot).
+# `Location` reuses
 # Customer's `address` composite verbatim — same declared members, same
 # absence-state vocabulary — so a null-document child materializes null exactly as
 # a null-address Customer does, pinning the absence collapse AT DEPTH. Adding a
-# sibling entity + relationship leaves Customer's own attributes/valueObjects and
-# their derived `columnOrder` untouched, so the existing customer reads (the 21
+# sibling entity + relationship leaves Customer's own Attribute and Value Object
+# declaration sequences untouched, so the existing customer reads (the 21
 # filter reads and the -023/-024 materialization graphs) do not ripple.
 #
 # A re-review round adds a THIRD entity `Depot` and the to-many `Customer.depots`,
@@ -43,7 +44,7 @@
 # `action: load` and operation-list first-`access` witnesses over `depots`
 # (m-deep-fetch-020, m-op-list-004) go RED if a runner materializes them with the
 # scenario root instead of the navigated child entity. `Depot` and its relationship
-# again leave Customer's / Location's attributes, valueObjects, and `columnOrder`
+# again leave Customer's / Location's Attribute and Value Object declarations
 # untouched, so no existing customer/location case ripples.
 entities:
   - name: Customer
@@ -107,9 +108,9 @@ entities:
       # Location's recursive composite — a deliberate descriptor DIVERGENCE. Decoding
       # a Depot row with Customer's `address` descriptor yields observably wrong keys,
       # so the deferred-load / first-access witnesses over `depots` are regression-
-      # sensitive to the per-step read-entity resolution (m-sql "Read projection",
-      # slot 4; m-case-format "Read result form"), unlike Location whose composite is
-      # Customer's verbatim.
+      # sensitive to per-step read-entity resolution (`m-sql` instance-form Document-
+      # slot selection; `m-case-format` "Read result form"), unlike Location whose
+      # composite is Customer's verbatim.
       - name: depots
         cardinality: one-to-many
         join:
@@ -128,8 +129,8 @@ entities:
   # recursive composite Customer declares (reused verbatim, m-value-object). It is
   # the first relationship-target entity in the corpus to declare a value object,
   # so a deep-fetch child level materializes a document at DEPTH: the child's
-  # instance-form projection is `id, customer_id, label, address` (scalars in
-  # columnOrder, then the single structured-document column last).
+  # instance-form projection is `id, customer_id, label, address` (Identity and
+  # Domain slots in declaration-preserving tier order, then the Document slot).
   - name: Location
     namespace: parallax.compatibility
     table: location

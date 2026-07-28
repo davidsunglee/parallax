@@ -5,9 +5,9 @@
 # shared `instrument` table, so the read injects NO tag predicate — just the as-of
 # predicate. Pinning validTime = 2024-06-01 (a past instant, so `from_z <= ? and
 # thru_z > ?`) with transactionTime defaulted to Latest (`out_z = ?`) selects each concrete's
-# Latest rectangle. The projection is the full concrete superset — the inherited chain
-# (id, price + the four interval columns) then each subtype's own column (Bond's coupon,
-# Stock's ticker, alphabetical) — PLUS the raw tag column `kind`, from which familyVariant
+# Latest rectangle. The projection is the full Table Layout selection: identity `id`,
+# discriminator `kind`, Domain slots `price`, `coupon`, and `ticker`, then the four
+# Temporal interval slots. The raw tag column is where familyVariant
 # is materialized (bond -> Bond, stock -> Stock). Bitemporal composes with the abstract
 # read unchanged: only the as-of predicate is added over the tag lowering.
 #
@@ -29,10 +29,10 @@ when:
 then:
   statements:
     - sql:
-        postgres: select t0.id, t0.price, t0.from_z, t0.thru_z, t0.in_z, t0.out_z, t0.coupon, t0.ticker, t0.kind from instrument t0 where t0.from_z <= ? and t0.thru_z > ? and t0.out_z = ?
+        postgres: select t0.id, t0.kind, t0.price, t0.coupon, t0.ticker, t0.from_z, t0.thru_z, t0.in_z, t0.out_z from instrument t0 where t0.from_z <= ? and t0.thru_z > ? and t0.out_z = ?
       binds: ["2024-06-01T00:00:00+00:00", "2024-06-01T00:00:00+00:00", infinity]
-  referenceSql: select id, price, from_z, thru_z, in_z, out_z, coupon, ticker, kind from instrument where from_z <= '2024-06-01T00:00:00+00:00'::timestamptz and thru_z > '2024-06-01T00:00:00+00:00'::timestamptz and out_z = 'infinity'::timestamptz
+  referenceSql: select id, kind, price, coupon, ticker, from_z, thru_z, in_z, out_z from instrument where from_z <= '2024-06-01T00:00:00+00:00'::timestamptz and thru_z > '2024-06-01T00:00:00+00:00'::timestamptz and out_z = 'infinity'::timestamptz
   rows:
-    - { id: 1, price: 100.00, from_z: "2024-01-01T00:00:00+00:00", thru_z: infinity, in_z: "2024-01-01T00:00:00+00:00", out_z: infinity, coupon: 5.00, ticker: null, familyVariant: Bond }
-    - { id: 2, price: 200.00, from_z: "2024-01-01T00:00:00+00:00", thru_z: infinity, in_z: "2024-01-01T00:00:00+00:00", out_z: infinity, coupon: null, ticker: ACME, familyVariant: Stock }
+    - { id: 1, price: 100.00, coupon: 5.00, ticker: null, from_z: "2024-01-01T00:00:00+00:00", thru_z: infinity, in_z: "2024-01-01T00:00:00+00:00", out_z: infinity, familyVariant: Bond }
+    - { id: 2, price: 200.00, coupon: null, ticker: ACME, from_z: "2024-01-01T00:00:00+00:00", thru_z: infinity, in_z: "2024-01-01T00:00:00+00:00", out_z: infinity, familyVariant: Stock }
   roundTrips: 1

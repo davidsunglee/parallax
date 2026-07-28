@@ -5,7 +5,7 @@
 # An audit-only update NEVER mutates in place. It (1) closes the current row
 # (out_z = the transaction instant) and (2) chains a NEW current row carrying the new
 # value. The `address` value object participates with NO value-object-specific write
-# machinery: it is one document bind in columnOrder position ([sup_id, name, in_z,
+# machinery: it is one document bind in its layout position ([sup_id, name, in_z,
 # out_z, address]) in every full-row INSERT, and it is ABSENT from the close UPDATE
 # (which sets only out_z, keyed on the current-row predicate). So the golden DML treats
 # the document column exactly like the scalar `name` column — copied verbatim onto the

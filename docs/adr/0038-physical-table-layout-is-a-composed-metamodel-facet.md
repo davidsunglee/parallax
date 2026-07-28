@@ -22,8 +22,15 @@ Object occurrence, or inheritance discriminator, declaring owner, effective
 nullability, and applicable Entity set. The Physical Primary Key is an ordered
 selection of designated slots across tiers: the model primary-key Attribute
 slots followed by each temporal dimension's start Attribute slot. It never
-truncates the key to the identity tier or restates independent columns. Two
-distinct contributors claiming one column in the same Table fail Model Formation as
+truncates the key to the identity tier or restates independent columns.
+`Table(name)` is a name-only structural identity with exactly one independent
+mapping owner: a standalone Entity, one complete table-per-hierarchy family
+represented by its root, or one table-per-concrete-subtype concrete mapping.
+Participants within one TPH family are not competing owners. A later independent
+owner of an already-owned Table fails as
+`storage-layout-table-mapping-collision` at its mapping `EntityLocation` with
+the first owner's `EntityLocation` related. Within the uniquely owned Table,
+two distinct contributors claiming one column fail as
 `storage-layout-column-collision`; no storage consumer chooses a winner.
 Inheritance continues to own `inheritance-materialization-key-collision`
 because `familyVariant`, relationship views, and materialized object keys occupy
@@ -31,13 +38,16 @@ the result keyspace rather than physical table storage.
 
 The module participates in both validation and compilation without changing
 Model Formation's phase boundary. Its Rule Set receives only the Candidate
-Metamodel and emits `storage-layout-column-collision`. It obtains table
+Metamodel and emits `storage-layout-table-mapping-collision` or
+`storage-layout-column-collision`. It obtains table
 boundaries from a pure, total validation-time projection owned by
 `m-inheritance`, not from the Inheritance Facet. That projection returns only
 unambiguous standalone and family table groups; the Inheritance Rule Set reports
 malformed or ambiguous topology, and Storage Layout neither duplicates those
-issues nor guesses a table. This collaboration shares the topology walk without
-introducing validation-time facets or ordered Rule Set execution.
+issues nor guesses a table. Mapping owners are visited in canonical Entity order
+so equal Table values reject the later independent owner before Column
+validation. This collaboration shares the topology walk without introducing
+validation-time facets or ordered Rule Set execution.
 
 After every Rule Set succeeds, the `m-storage-layout` Model Compiler consumes
 Compiled Metadata and the Inheritance Facet and produces the immutable

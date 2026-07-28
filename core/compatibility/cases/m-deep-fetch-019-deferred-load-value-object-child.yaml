@@ -1,7 +1,7 @@
 # Deferred load x value object: the LIFECYCLE-ACTION analogue of m-deep-fetch-018.
 #
 # 018 pins the value-object materialization at every level of an EAGER
-# `deepFetch(...)` graph read. This case pins the SAME slot-4 materialization at a
+# `deepFetch(...)` graph read. This case pins the SAME Document-slot materialization at a
 # relationship hop resolved by a deferred lifecycle `action: load` — the managed-
 # object surface's on-demand child fetch (m-deep-fetch deferred load; the sibling
 # scenarios m-deep-fetch-013/014/015/016). The classification the witness proves:
@@ -10,8 +10,8 @@
 #     INSTANCE-FORM (object lane): the SQL-producing read that first materializes the
 #     loaded related objects projects the read entity's OWN instance-form list, its
 #     scalars PLUS any value-object document column it declares.
-#   * m-sql "Read projection" (slot 4) — an instance-form read projects every declared
-#     value-object document column LAST; a `load` to a VO-bearing child therefore rides
+#   * m-sql "Read projection" — an instance-form read projects every applicable
+#     Document slot LAST; a `load` to a VO-bearing child therefore rides
 #     the child's whole `address` document on the child-level statement.
 #
 # The load resolves `Customer.locations` (one-to-many -> Location), and the CHILD
@@ -28,18 +28,18 @@
 # Steps:
 #   0  find (Customer id 1, Ada)      : INSTANCE-FORM managed find — the developer find
 #      materializes the owner, so the projection carries Customer's scalars in
-#      columnOrder (id, name) then the `address` document LAST (slot 4). expectRows
+#      layout order (id, name) then the `address` Document slot LAST. expectRows
 #      carries Ada's materialized address.
 #   1  load (locations, on 0)         : the deferred child fetch — INSTANCE-FORM. It
 #      projects Location's OWN instance-form list `id, customer_id, label, address`
-#      (the FK `customer_id` is a declared scalar in slot 1; the `address` document is
-#      slot 4, LAST), honoring the relationship `orderBy: id asc`. expectRows carries
+#      (the FK `customer_id` is a Domain slot; the `address` document is the final
+#      Document slot), honoring the relationship `orderBy: id asc`. expectRows carries
 #      each Location row WITH its own materialized `address` — the CHILD-VO
 #      materialization at a relationship hop. Customer 1 owns location 100 (present
 #      address, the undeclared geo `zip` dropped by the declared projection) and 101
 #      (SQL-NULL document -> the whole value object materializes null, the absence
-#      collapse pinned AT DEPTH, the analogue of a null-address Customer). Slot 4
-#      present, decoded with LOCATION's descriptor, not Customer's.
+#      collapse pinned AT DEPTH, the analogue of a null-address Customer). The
+#      Document slot is present and decoded with LOCATION's descriptor, not Customer's.
 #
 # The child rows reuse m-deep-fetch-018's Location 100/101 projections verbatim, so
 # this witness is consistent with the eager deep-fetch composition. Golden SQL is
@@ -64,7 +64,7 @@ when:
       find:
         eq: { attr: Customer.id, value: 1 }
       roundTrips: 1
-      note: managed find materializes the owner WITH its address document — INSTANCE-FORM, slot 4 present (id, name, then address last)
+      note: managed find materializes the owner WITH its address Document slot — INSTANCE-FORM (id, name, then address last)
       statements:
         - sql:
             postgres: select t0.id, t0.name, t0.address from customer t0 where t0.id = ?
