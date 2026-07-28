@@ -12,9 +12,9 @@ instead of recomputing it. ``m-inheritance`` depends on ``m-metamodel`` and
 ``m-model-formation``.
 
 It exports :func:`project_table_groups`, the pure Candidate Metamodel projection
-the dependent Storage Layout Rule Set validates. :func:`column_order` is a
-compatibility helper rather than an inheritance-owned physical contract;
-Storage Layout owns canonical physical order.
+the dependent Storage Layout Rule Set validates. Canonical physical column
+order, effective nullability, and physical keys belong to
+``m-storage-layout``; nothing here answers a physical table's shape.
 
 Consumers reach the facet through :func:`view`, so generic facet retrieval stays
 an internal formation seam.
@@ -25,7 +25,6 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 
 from parallax.core.base import coerce_neutral_input, matches_neutral_type
-from parallax.core.inheritance._columns import column_order
 from parallax.core.inheritance._compile import (
     MODEL_COMPILER,
     InheritanceModelCompiler,
@@ -119,7 +118,6 @@ __all__ = [
     "TablePerHierarchyTagContributor",
     "TopLevelValueObjectTableContributor",
     "WriteAssignmentError",
-    "column_order",
     "compile_facet",
     "family_variant_name",
     "project_table_groups",

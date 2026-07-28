@@ -311,7 +311,13 @@ class Entity:
 
     @property
     def runtime_facts(self) -> dict[str, Any]:
-        """Effective facts used only by physical/runtime harness behavior."""
+        """The ancestry-flattened declarations behind this entity's semantics.
+
+        These answer which members, temporal axes, and tag an inheritance
+        participant behaves as if it declared locally. They are not a physical
+        table: column sequence, effective nullability, physical keys, and table
+        membership come from :attr:`Model.storage_layout` alone.
+        """
         return self.definition if self.effective_definition is None else self.effective_definition
 
     @property
@@ -415,8 +421,8 @@ class Entity:
         """The top-level value object named *name* (m-value-object), else KeyError.
 
         A neutral write input (①) names a value object like a scalar attribute; it
-        resolves to the single structured-document column the whole composite binds
-        into (columnOrder position), never to its inner members.
+        resolves to the single Document-tier slot the whole composite binds into,
+        never to its inner members.
         """
         for value_object in self.value_objects:
             if value_object["name"] == name:

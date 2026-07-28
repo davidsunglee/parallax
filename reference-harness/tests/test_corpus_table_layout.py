@@ -81,3 +81,11 @@ def test_corpus_table_layout_matches_independent_baseline() -> None:
     actual = _canonical_json(_corpus_projection(model_paths))
     expected = _BASELINE_PATH.read_text(encoding="utf-8")
     assert actual == expected
+
+
+def test_every_row_owning_corpus_entity_reaches_exactly_one_baseline_table() -> None:
+    baseline: CorpusProjection = json.loads(_BASELINE_PATH.read_text(encoding="utf-8"))
+    for relative_path, tables in baseline.items():
+        model = load_model(_COMPATIBILITY_ROOT, relative_path)
+        row_owning_tables = {entity.table for entity in model.entities if not entity.is_abstract}
+        assert set(tables) == row_owning_tables, relative_path

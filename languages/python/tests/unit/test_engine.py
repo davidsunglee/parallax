@@ -2464,9 +2464,10 @@ def test_run_rejected_case_raises_when_when_carries_model_and_write() -> None:
         engine.run_rejected_case(_synthetic_rejected(when))
 
 
-def test_read_table_state_reads_each_physical_table_once() -> None:
+def test_read_table_state_reads_each_physical_table_once_over_every_slot() -> None:
     # Payment's abstract root owns the shared table; descendants carry no local
-    # table. The physical table is still read back exactly once.
+    # table. The one read projects the layout's complete slot sequence, so a
+    # CardPayment row still reports the sibling-only `tendered` column.
     from parallax.conformance import models
     from parallax.core.dialect import POSTGRES
 
@@ -2475,6 +2476,8 @@ def test_read_table_state_reads_each_physical_table_once() -> None:
     state = engine.read_table_state(port, meta, POSTGRES)
     assert set(state) == {"payment"}
     assert len(port.reads) == 1
+    sql, _ = port.reads[0]
+    assert sql == "select id, kind, amount, card_network, tendered from payment"
 
 
 def test_read_table_state_reads_each_tpcs_concrete_table() -> None:
@@ -2485,12 +2488,12 @@ def test_read_table_state_reads_each_tpcs_concrete_table() -> None:
     meta = models.load_models()["document"]
     state = engine.read_table_state(port, meta, POSTGRES)
     assert set(state) == {"invoice", "receipt", "memo", "folder"}
+    assert len(port.reads) == 4
 
 
-def test_read_table_state_projects_value_object_document_columns() -> None:
-    # `_table_column_order`'s family-wide column resolution includes each
-    # value-object's own document column last (m-sql `column_order`), even for
-    # a plain (non-inheritance) entity — the customer model's `address`.
+def test_read_table_state_projects_value_object_document_columns_last() -> None:
+    # A document slot follows every scalar tier (m-storage-layout), even for a
+    # plain non-inheritance entity — the customer model's `address`.
     from parallax.conformance import models
     from parallax.core.dialect import POSTGRES
 
@@ -2499,7 +2502,25 @@ def test_read_table_state_projects_value_object_document_columns() -> None:
     state = engine.read_table_state(port, meta, POSTGRES)
     assert "customer" in state
     sql, _ = port.reads[0]
-    assert "address" in sql
+    assert sql == "select id, name, address from customer"
+
+
+def test_read_table_state_normalizes_values_without_changing_the_projection() -> None:
+    # Value normalization is the wire encoder's own concern; the projection is the
+    # layout's slot sequence and nothing re-resolves a physical column to reach it.
+    import datetime as dt
+
+    from parallax.conformance import models
+    from parallax.core.dialect import POSTGRES
+
+    instant = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
+    port = FakeWritePort(find_rows=[{"bal_id": 1, "acct_num": "A", "val": 1, "in_z": instant}])
+    meta = models.load_models()["balance"]
+    state = engine.read_table_state(port, meta, POSTGRES)
+    (row,) = state["balance"]
+    assert row["in_z"] == "2024-01-01T00:00:00+00:00"
+    sql, _ = port.reads[0]
+    assert sql == "select bal_id, acct_num, val, in_z, out_z from balance"
 
 
 # --------------------------------------------------------------------------- #

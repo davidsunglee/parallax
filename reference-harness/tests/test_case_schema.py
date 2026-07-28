@@ -548,7 +548,7 @@ def _value_object_document_case(document: Any) -> dict[str, Any]:
     """A writeSequence insert whose `address` value object carries *document*.
 
     `address` is a top-level value object on the customer model, so its value is
-    the WHOLE literal document bound in columnOrder position — the marker-shaped
+    the WHOLE literal document bound as one atomic document bind — the marker-shaped
     payload rides through as document content, never a DB-computed marker."""
     return {
         "model": "models/customer.yaml",

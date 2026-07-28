@@ -314,7 +314,9 @@ class _StorageLayoutFacet:
         if len(roots) != 1:
             return None
         family = self._families.get(next(iter(roots)))
-        if family is None or not set(selected) <= set(family.concrete_entities):
+        if (  # pragma: no cover - every row owner's own root retains its concrete set
+            family is None or not set(selected) <= set(family.concrete_entities)
+        ):
             return None
         selected_set = frozenset(selected)
         column_facts = tuple(

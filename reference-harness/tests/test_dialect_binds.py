@@ -323,7 +323,7 @@ def test_value_object_cases_carry_both_dialects_and_per_dialect_binds() -> None:
             #    `jsonb_extract_path_text(col, ?, …)` vs. a MariaDB single `'$.a.b'`
             #    path `json_value(col, ?)`), so its holes — and its binds — are keyed.
             #  * DIALECT-IDENTICAL golden SQL → a flat, shared binds array. A value-object
-            #    WRITE binds the whole document as ONE shared hole in columnOrder position
+            #    WRITE binds the whole document as ONE shared hole at its Document-tier slot
             #    (only the provider ADAPTATION differs — Postgres `Jsonb` / MariaDB
             #    `json.dumps`), and a TEMPORAL projection read (`m-value-object-028..031`)
             #    projects the bare document column and filters on the owner's as-of axis

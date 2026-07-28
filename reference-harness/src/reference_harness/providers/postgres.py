@@ -35,8 +35,8 @@ def _adapt(value: Any) -> Any:
 
     A ``dict`` / ``list`` value is a valueObject document destined for a JSONB
     column (m-value-object) — a fixture row's stored document, or a golden
-    write-sequence bind that carries the whole document atomically in its
-    columnOrder position; psycopg does not auto-adapt a plain mapping, so wrap it
+    write-sequence bind that carries the whole document as one atomic document
+    bind; psycopg does not auto-adapt a plain mapping, so wrap it
     in ``Jsonb``. ``None`` (a null nullable value object) and every scalar pass
     through unchanged (binding SQL ``NULL`` / the literal).
     """

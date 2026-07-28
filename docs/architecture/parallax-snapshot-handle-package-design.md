@@ -102,7 +102,7 @@ parallax/snapshot/
 | `handle.__init__` | The stable handle interface. It documents and re-exports the existing names; it contains no lasting runtime orchestration. |
 | `_family` | Shared family-effective descriptor lookups: temporal axes, version attributes, and member-to-column resolution. This is a small private leaf shared by lowering and write-input preparation, not a public seam. |
 | `_write_types` | `WriteLoweringError` and lowering result values shared by the lowering and flush paths. This is a small private leaf, not a public seam. |
-| `_keyed_sql` | Primitive keyed and collapsed-batch INSERT, UPDATE, and DELETE rendering, including markers, tags, keys, and ordered cells over the module-local family column order. Named for the SQL side of the lowering boundary: inside this package "write" keeps meaning the neutral instruction level, so this is the one module named for what it emits. |
+| `_keyed_sql` | Primitive keyed and collapsed-batch INSERT, UPDATE, and DELETE rendering, including markers, tags, keys, and cells filtered from the target's Table Layout Entity view. Named for the SQL side of the lowering boundary: inside this package "write" keeps meaning the neutral instruction level, so this is the one module named for what it emits. |
 | `_write_lowering` | `lower_write` dispatch plus temporal and predicate-selected lowering. It composes neutral write plans with keyed DML primitives and owns `lower_temporal_close`. |
 | `_read` | `Snapshot` and execution/result values, `find` and `find_history`, history grouping, all read-side pin derivation (`deep_fetch_statement_pin`, `is_milestone_set_op`, and the module-local `_pin_from_milestone`), and conversion of neutral results into Snapshots. |
 | `_wrap` | Conversion of neutral materialized nodes into frozen developer entity graphs, including graph-local identity, projection merging, inheritance, value objects, and temporal metadata. |
@@ -123,6 +123,15 @@ exactly `transaction_time_axis`, `valid_time_axis`, `version_attribute`,
 `_ordered_cells`, so it is module-local to `_keyed_sql` and never crosses the
 package boundary. Phase 3 implemented the correct placement; only this table
 was stale. Later placement audits should read the `_keyed_sql` row for it.
+
+**Correction (2026-07-28, post-acceptance).** `_keyed_sql._family_column_order`
+no longer exists. Physical column order is owned by `m-storage-layout`: the
+target's Entity Layout view supplies the table-ordered slots that
+`_keyed_sql._ordered_cells` filters to a row's present cells, and `_family`
+resolves only semantic family facts plus the lookups that map a selected member
+Identity onto its slot. The correction above still stands on its own terms —
+`_family` never owned column order — and the `_keyed_sql` row remains the right
+place to read for it.
 
 ### Private-module naming
 

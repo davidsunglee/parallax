@@ -9,10 +9,13 @@ The seven names below are the whole supported seam; everything else in this
 package is private implementation. ``compile_read`` returns a self-contained
 :class:`CompiledRead` — statement, root narrow, and row transform together — so
 a caller executes and transforms without re-deriving anything from the
-operation it just compiled. The projection this package emits follows
-``m-inheritance``'s canonical physical column order, which that scope owns and
-exports for the storage-shaped callers (DDL derivation, keyed write emission,
-table read-back) that must order their own columns the same way.
+operation it just compiled. The projection this package emits follows the
+canonical slot order of ``m-storage-layout``'s compiled ``TableLayout.columns``,
+reached through the Entity and position views over it; ``m-inheritance`` keeps
+family semantics — ancestry, applicability, discriminator meaning — and no
+longer answers physical shape. Every storage-shaped caller (DDL derivation,
+keyed write emission, table read-back) reads those same views, so no consumer
+rebuilds a physical order of its own.
 
 That implementation is five private modules, each owning one concern:
 

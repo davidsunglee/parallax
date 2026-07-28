@@ -159,7 +159,7 @@ def test_insert_omits_an_absent_nullable_column() -> None:
 
 def test_insert_orders_columns_by_column_order_not_row_order() -> None:
     # m-unit-work-003 step 0: the row is authored id..orderedOn; the emission follows
-    # descriptor columnOrder (orderedOn -> ordered_on last among Order's scalars).
+    # the Entity Layout's slots (orderedOn -> ordered_on last among Order's scalars).
     row = {
         "orderedOn": "2024-07-01",
         "id": 100,
@@ -199,7 +199,7 @@ def test_delete_is_keyed_by_the_primary_key() -> None:
 
 
 def test_value_object_document_binds_as_one_json_document_in_column_order() -> None:
-    # A value-object member rides its columnOrder position as one JsonDocument — the
+    # A value-object member rides its Document-tier slot as one JsonDocument — the
     # whole document, never decomposed (m-sql valueObject atomic document write).
     statement = _lower(
         KeyedWrite("insert", "Customer", ({"id": 1, "name": "Ada", "address": {"city": "Oslo"}},)),
@@ -622,11 +622,12 @@ def test_inheritance_family_predicate_write_is_rejected_before_sql(
 
 
 def test_multi_row_insert_with_differing_row_shapes_is_refused() -> None:
-    # m-batch-write's collapse eligibility groups only rows carrying the SAME
-    # members, so a mixed-shape collapsed instruction is a caller wiring defect
-    # — but a silent one: the emitted INSERT names the FIRST row's columns, so
-    # every later value tuple would bind positionally against a column list it
-    # does not match (here `balance`'s hole would take `Omar`'s absent member).
+    # Batch grouping compares filtered slot selections
+    # (`handle.collapse_group_key`), so no PLANNED instruction is ever
+    # mixed-shape — a hand-built one is a caller wiring defect, and a silent
+    # one: the emitted INSERT names the FIRST row's columns, so every later
+    # value tuple would bind positionally against a column list it does not
+    # match (here `balance`'s hole would take `Omar`'s absent member).
     # `lower_multi_insert` refuses instead of mis-emitting.
     mixed = KeyedWrite(
         "insert",
@@ -669,7 +670,7 @@ def test_multi_row_insert_on_a_versioned_entity_derives_initial_version_per_row(
     # `lower_multi_insert`'s versioned-entity branch mirrors `lower_insert`'s
     # single-row one (`parallax.snapshot.handle`'s keyed-SQL builders): every
     # collapsed row derives the SAME `opt_lock.INITIAL_VERSION` at the version
-    # column's family columnOrder position, ignoring any row-carried value — a
+    # column's own Table Layout slot position, ignoring any row-carried value — a
     # batched insert is exactly as safe as a single-row one because the initial
     # version is a constant, never observed. No corpus witness collapses a
     # multi-row insert on a versioned entity (Wallet/Customer,
@@ -783,9 +784,9 @@ def test_readless_predicate_delete_lowers_to_one_statement() -> None:
     assert statement.binds == (200.00,)
 
 
-def test_readless_predicate_update_follows_declared_column_order() -> None:
+def test_readless_predicate_update_follows_the_entity_layout_order() -> None:
     # m-batch-write-006: reversed authored assignments (balance then owner)
-    # still emit descriptor DECLARED column order (owner then balance) —
+    # still emit the Entity Layout's slot order (owner then balance) —
     # assignment binds in emitted column order, predicate binds after.
     predicate = PredicateWrite(
         "update",

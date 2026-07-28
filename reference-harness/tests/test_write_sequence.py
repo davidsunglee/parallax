@@ -11,7 +11,9 @@ exercised end-to-end against real Postgres by the compatibility suite.
 from __future__ import annotations
 
 import copy
+from collections.abc import Sequence
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 
@@ -23,10 +25,12 @@ from reference_harness.case_runner import (
     _assert_write_step_count,
     _increment_marker,
     _is_computed_marker,
+    _read_table,
+    _table_layout,
     _tag,
     _write_column_order,
 )
-from reference_harness.ddl_builder import ddl_for
+from reference_harness.ddl_builder import contributor_types, ddl_for
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 COMPATIBILITY_ROOT = _REPO_ROOT / "core" / "compatibility"
@@ -155,6 +159,72 @@ def test_write_column_order_refuses_a_rowless_family_position() -> None:
     case = _write_case_by_id("m-inheritance-007")
     with pytest.raises(CaseFailure):
         _write_column_order(case, case.model.entity("Payment"))
+
+
+# --- physical table observation (m-storage-layout) ---------------------------
+#
+# A committed-state read projects one Table Layout's complete slot sequence, so the
+# observation is the whole physical row rather than any one Entity's selection.
+
+
+class _RecordingReadProvider:
+    """A DB-free provider recording each read and replaying authored rows."""
+
+    dialect = "postgres"
+
+    def __init__(self, rows: Sequence[dict[str, Any]] = ()) -> None:
+        self.queries: list[str] = []
+        self._rows = [dict(row) for row in rows]
+
+    def query(self, sql: str, binds: Sequence[Any] = ()) -> list[dict[str, Any]]:
+        self.queries.append(sql)
+        return [dict(row) for row in self._rows]
+
+
+def test_table_observation_reads_a_shared_table_once_over_every_slot() -> None:
+    # Both Payment variants live in one shared table, so the observation is a single
+    # read projecting the whole family's slots in canonical Table order — the
+    # sibling-only `tendered` slot included, so a CardPayment row reports it as null.
+    case = _write_case_by_id("m-inheritance-007")
+    provider = _RecordingReadProvider()
+    rows = _read_table(
+        cast("Any", provider), _table_layout(case, "payment"), contributor_types(case.model)
+    )
+    assert rows == []
+    assert provider.queries == [
+        "select t0.id, t0.kind, t0.amount, t0.card_network, t0.tendered from payment t0"
+    ]
+
+
+def test_table_observation_normalizes_values_by_slot_provenance() -> None:
+    # A document slot decodes to a Python structure and a `bytes` contributor renders
+    # to lowercase hex, so both dialects' driver representations collapse to the shape
+    # `then.tableState` is authored in. Neither is decided by a column-name convention.
+    customer = load_model(COMPATIBILITY_ROOT, "models/customer.yaml")
+    customer_case = Case(path=Path("synthetic.yaml"), raw={}, model=customer)
+    documents = _RecordingReadProvider([{"id": 1, "name": "Ada", "address": '{"city": "Rome"}'}])
+    (document_row,) = _read_table(
+        cast("Any", documents),
+        _table_layout(customer_case, "customer"),
+        contributor_types(customer),
+    )
+    assert document_row["address"] == {"city": "Rome"}
+
+    scalars = load_model(COMPATIBILITY_ROOT, "models/scalars.yaml")
+    scalars_case = Case(path=Path("synthetic.yaml"), raw={}, model=scalars)
+    binaries = _RecordingReadProvider([{"id": 1, "payload": b"\xde\xad\xbe\xef"}])
+    (binary_row,) = _read_table(
+        cast("Any", binaries),
+        _table_layout(scalars_case, "scalar_thing"),
+        contributor_types(scalars),
+    )
+    assert binary_row["payload"] == "deadbeef"
+
+
+def test_table_observation_refuses_a_table_the_model_does_not_map() -> None:
+    case = _write_case_by_id("m-inheritance-007")
+    with pytest.raises(CaseFailure):
+        _table_layout(case, "not_a_table")
 
 
 def test_multi_attribute_audit_update_chains_all_new_values() -> None:
