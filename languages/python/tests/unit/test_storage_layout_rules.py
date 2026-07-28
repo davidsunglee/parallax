@@ -467,6 +467,43 @@ def test_malformed_topology_is_omitted_without_storage_layout_guessing() -> None
     assert storage_layout.RULE_SET.validate(candidate) == ()
 
 
+def test_a_container_less_hierarchy_root_projects_no_table_group() -> None:
+    # A table-per-hierarchy family maps its whole family onto the ROOT's own
+    # Table, so a root declaring none has no mapping to project at all — the
+    # Inheritance rules own that diagnosis, and this projection stays silent
+    # rather than inventing a Table for the family's concretes.
+    candidate = accepted(
+        source(
+            Declaration(
+                identity=_ROOT,
+                attributes=(key(_ROOT),),
+                inheritance=AbstractRoot(TablePerHierarchy("kind")),
+            ),
+            _concrete(_LEAF),
+        )
+    )
+    assert inheritance.project_table_groups(candidate) == ()
+
+
+def test_a_container_less_concrete_subtype_projects_no_table_group() -> None:
+    # The table-per-concrete-subtype analogue: each concrete owns its OWN
+    # Table, so one declaring none contributes no mapping owner.
+    candidate = accepted(
+        source(
+            Declaration(
+                identity=_ROOT,
+                attributes=(key(_ROOT),),
+                inheritance=AbstractRoot(TablePerConcreteSubtype()),
+            ),
+            Declaration(
+                identity=_LEAF,
+                inheritance=ConcreteSubtype(ExactEntityReference(_ROOT), None),
+            ),
+        )
+    )
+    assert inheritance.project_table_groups(candidate) == ()
+
+
 @pytest.mark.parametrize(
     ("stem", "inline", "expected"),
     _REJECTIONS,

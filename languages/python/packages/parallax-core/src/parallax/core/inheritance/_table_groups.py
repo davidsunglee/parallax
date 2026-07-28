@@ -253,7 +253,7 @@ def _contributor_declarations(
     contributors: list[EntityIdentity] = []
     for concrete in row_owners:
         resolution = topology.resolutions[concrete]
-        if not isinstance(resolution, ResolvedAncestry):
+        if not isinstance(resolution, ResolvedAncestry):  # pragma: no cover - resolved members only
             continue
         for ancestor in resolution.entities[:-1]:
             if ancestor in encountered:
@@ -365,7 +365,7 @@ def project_table_groups(candidate: CandidateMetamodel) -> tuple[InheritanceTabl
             if declaration.container is None:
                 continue
             resolution = topology.resolutions[declaration.identity]
-            if not isinstance(resolution, ResolvedAncestry):
+            if not isinstance(resolution, ResolvedAncestry):  # pragma: no cover - resolved only
                 continue
             declarations = tuple(
                 topology.participants[identity].declaration for identity in resolution.entities
