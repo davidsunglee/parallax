@@ -33,6 +33,7 @@ from parallax.core.unit_work.instructions import (
 from parallax.core.unit_work.planner import (
     AtomicUnit,
     BufferItem,
+    CollapseGroupKey,
     CollapsePolicy,
     FlushPlan,
     ObjectKey,
@@ -58,6 +59,7 @@ __all__ = [
     "AtomicUnit",
     "BufferItem",
     "Clock",
+    "CollapseGroupKey",
     "CollapsePolicy",
     "Concurrency",
     "EscapedTransactionError",

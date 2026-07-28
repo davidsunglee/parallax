@@ -81,6 +81,7 @@ from parallax.snapshot import handle, materialize
 from parallax.snapshot.handle import (
     TransactionTimePinReadOnlyError,
     WriteLoweringError,
+    collapse_group_key,
     find,
     find_history,
     lower_write,
@@ -1397,7 +1398,14 @@ def _lower_resolved(
         if key is not None and observation is not None
     }
     model = case_model(meta)
-    plan = plan_flush(buffer, observations, tx_instant, model, collapse=batch_write.collapses)
+    plan = plan_flush(
+        buffer,
+        observations,
+        tx_instant,
+        model,
+        collapse=batch_write.collapses,
+        collapse_group=collapse_group_key,
+    )
     statements: list[Statement] = []
     for planned in plan.writes:
         statements.extend(
@@ -1454,7 +1462,14 @@ def _lower_predicate_write_step(
     assert isinstance(instruction, PredicateWrite)  # a predicate-shaped step always builds this
     model = case_model(meta)
     instructions.validate_instruction(_decoded_predicate_write(instruction, meta, model), model)
-    plan = plan_flush([instruction], {}, None, model, collapse=batch_write.collapses)
+    plan = plan_flush(
+        [instruction],
+        {},
+        None,
+        model,
+        collapse=batch_write.collapses,
+        collapse_group=collapse_group_key,
+    )
     statements = [
         lowered.statement
         for planned in plan.writes

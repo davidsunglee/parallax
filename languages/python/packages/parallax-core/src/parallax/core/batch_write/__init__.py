@@ -17,6 +17,14 @@ parameter — the injection the ``m-unit-work ↛ m-batch-write`` contract deman
 IR's own entity spelling once per flush, so every entry point below takes the
 already-resolved Entity Metadata rather than a name.
 
+What this module decides is **eligibility**, never **grouping**. Whether a run's
+rows are shaped alike enough to share one statement is a physical question — it
+compares filtered Table Layout slot selections (`m-sql` "Physical DML ordering")
+— and this scope has no edge to ``m-storage-layout``; the composition layer
+answers it separately (:func:`parallax.snapshot.handle.collapse_group_key`,
+injected into the planner beside :func:`collapses`), so by the time a run reaches
+a function here its rows already share one physical shape.
+
 Three collapse rules (``m-batch-write.md`` L15-26):
 
 - **insert** — same-entity inserts ALWAYS collapse into one multi-row
@@ -205,7 +213,11 @@ def collapses(
     function :mod:`parallax.snapshot.handle` and the conformance engine inject
     into :func:`~parallax.core.unit_work.planner.plan_flush` IDENTICALLY,
     dispatching to :func:`insert_collapses` / :func:`update_collapses` /
-    :func:`delete_collapses` by ``mutation``."""
+    :func:`delete_collapses` by ``mutation``.
+
+    Insert and delete eligibility is a property of the TARGET alone, so only the
+    update branch consults ``rows``: whether the rows are shaped alike is the
+    injected grouping key's question, already settled before this is called."""
     if mutation in _INSERT_MUTATIONS:
         return insert_collapses(model, entity)
     if mutation in _UPDATE_MUTATIONS:

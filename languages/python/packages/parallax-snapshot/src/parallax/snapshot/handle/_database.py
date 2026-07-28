@@ -16,8 +16,10 @@ classification branch (``_optimistic_conflict_retriable``) is composed here too.
 
 This is the TOP of the package's internal graph: it imports
 :mod:`parallax.snapshot.handle._read`, :mod:`~parallax.snapshot.handle._transaction`,
-:mod:`~parallax.snapshot.handle._write_lowering`, and
-:mod:`~parallax.snapshot.handle._write_types`, and nothing in the package imports
+:mod:`~parallax.snapshot.handle._write_lowering`,
+:mod:`~parallax.snapshot.handle._write_types`, and — for the batch-grouping key
+it injects into the unit of work beside the collapse policy —
+:mod:`~parallax.snapshot.handle._keyed_sql`, and nothing in the package imports
 it except ``handle/__init__.py``, which re-exports its three public names
 (:class:`Database`, :func:`connect`, :class:`TransactionOptionConflictError`)
 through the frozen ``__all__``. Because only those three cross the boundary,
@@ -65,6 +67,7 @@ from parallax.core.unit_work import (
     object_key,
     run_unit_of_work,
 )
+from parallax.snapshot.handle._keyed_sql import collapse_group_key
 from parallax.snapshot.handle._read import (
     Snapshot,
     declaring_metadata,
@@ -266,13 +269,15 @@ class Database:
                     clock=self._clock,
                     meta=model,
                     flush_executor=_flush_executor(conn, model, self._dialect, options.concurrency),
-                    # The injected `m-batch-write` collapse vocabulary —
-                    # `parallax.snapshot.handle` is the
-                    # sole module cleared to import both `batch_write` and
-                    # `m-unit-work`, so it supplies the SAME policy the
-                    # conformance compile lane injects into its own direct
-                    # `plan_flush` calls (`parallax.conformance.engine`).
+                    # The injected `m-batch-write` collapse vocabulary and its
+                    # physical-shape grouping key — `parallax.snapshot.handle`
+                    # is the sole module cleared to import both `batch_write`
+                    # and `m-unit-work`, and the only one that can resolve a
+                    # row against its Storage Layout, so it supplies the SAME
+                    # pair the conformance compile lane injects into its own
+                    # direct `plan_flush` calls (`parallax.conformance.engine`).
                     collapse_policy=batch_write.collapses,
+                    collapse_group=collapse_group_key,
                 )
 
             return self._port.transaction(in_txn)

@@ -1,10 +1,14 @@
 """Unit pins for ``parallax.core.batch_write`` (m-batch-write's injected
-collapse-eligibility vocabulary).
+collapse-eligibility vocabulary) and for the composition layer's own batch
+grouping.
 
 Direct, focused tests over the pure decision functions — independent of the
 planner's own collapse-stage adjacency logic (pinned in ``test_planner.py``)
 and the rendered SQL (pinned in ``test_write_lowering.py`` /
-``test_engine.py``).
+``test_engine.py``). The final section composes the two: it drives the planner
+with the SAME vocabulary the composition layer injects in production and lowers
+the resulting plan, pinning that a run only ever collapses rows whose filtered
+Table Layout slot selections match (`m-sql` "Physical DML ordering").
 """
 
 from __future__ import annotations
@@ -13,7 +17,11 @@ import pytest
 
 from parallax.conformance import models
 from parallax.core import batch_write
+from parallax.core.dialect import POSTGRES
 from parallax.core.metamodel import EntityIdentity, EntityMetadata, Metamodel
+from parallax.core.sql_gen import Statement
+from parallax.core.unit_work import BufferItem, KeyedWrite, plan_flush
+from parallax.snapshot.handle import collapse_group_key, lower_write
 
 pytestmark = pytest.mark.unit
 
@@ -32,6 +40,23 @@ ACCOUNT = _target("account", "Account")
 WALLET = _target("wallet", "Wallet")
 BALANCE = _target("balance", "Balance")
 POSITION = _target("position", "Position")
+
+
+def _flush_and_lower(buffer: list[BufferItem], model: Metamodel) -> list[Statement]:
+    """Plan ``buffer`` with the production collapse wiring, then lower the plan."""
+    plan = plan_flush(
+        buffer,
+        {},
+        None,
+        model,
+        collapse=batch_write.collapses,
+        collapse_group=collapse_group_key,
+    )
+    return [
+        lowered.statement
+        for planned in plan.writes
+        for lowered in lower_write(planned, model, POSTGRES, "locking")
+    ]
 
 
 def test_insert_collapses_for_an_unversioned_non_pk_gen_entity() -> None:
@@ -101,3 +126,85 @@ def test_collapses_dispatches_by_mutation() -> None:
     assert batch_write.collapses(*WALLET, "update", rows) is True
     assert batch_write.collapses(*WALLET, "delete", rows) is True
     assert batch_write.collapses(*ACCOUNT, "delete", rows) is False
+
+
+# --------------------------------------------------------------------------- #
+# Batch grouping (m-sql "Physical DML ordering"): the planner's collapse stage  #
+# composed with the write lowering it feeds, under the composition layer's own  #
+# injected vocabulary.                                                          #
+# --------------------------------------------------------------------------- #
+def test_same_shape_insert_run_collapses_into_one_multi_row_statement() -> None:
+    model, _ = WALLET
+    buffer: list[BufferItem] = [
+        KeyedWrite("insert", "Wallet", ({"id": 10, "owner": "Mira", "balance": 100.00},)),
+        KeyedWrite("insert", "Wallet", ({"id": 11, "owner": "Omar", "balance": 20.00},)),
+    ]
+    assert [statement.sql for statement in _flush_and_lower(buffer, model)] == [
+        "insert into wallet(id, owner, balance) values (?, ?, ?), (?, ?, ?)"
+    ]
+
+
+def test_mixed_shape_insert_run_partitions_by_slot_selection() -> None:
+    # Each row lowers legally on its own, but the two carry DIFFERENT filtered
+    # slot selections (the second omits the nullable `balance`), so they belong
+    # to different batch groups: grouping compares the resulting ordered slot
+    # selections, never the payload mapping alone.
+    model, _ = WALLET
+    buffer: list[BufferItem] = [
+        KeyedWrite("insert", "Wallet", ({"id": 10, "owner": "Mira", "balance": 100.00},)),
+        KeyedWrite("insert", "Wallet", ({"id": 11, "owner": "Omar"},)),
+    ]
+    statements = _flush_and_lower(buffer, model)
+    assert [statement.sql for statement in statements] == [
+        "insert into wallet(id, owner, balance) values (?, ?, ?)",
+        "insert into wallet(id, owner) values (?, ?)",
+    ]
+    assert [statement.binds for statement in statements] == [(10, "Mira", 100.00), (11, "Omar")]
+
+
+def test_mixed_shape_insert_run_still_collapses_each_same_shape_group() -> None:
+    # Partitioning is by ADJACENT run, so caller row order survives: the two
+    # leading full rows still collapse into one multi-row statement, and the
+    # narrow row that interrupts them opens its own group.
+    model, _ = WALLET
+    buffer: list[BufferItem] = [
+        KeyedWrite("insert", "Wallet", ({"id": 10, "owner": "Mira", "balance": 100.00},)),
+        KeyedWrite("insert", "Wallet", ({"id": 11, "owner": "Nils", "balance": 30.00},)),
+        KeyedWrite("insert", "Wallet", ({"id": 12, "owner": "Omar"},)),
+        KeyedWrite("insert", "Wallet", ({"id": 13, "owner": "Pia"},)),
+    ]
+    statements = _flush_and_lower(buffer, model)
+    assert [statement.sql for statement in statements] == [
+        "insert into wallet(id, owner, balance) values (?, ?, ?), (?, ?, ?)",
+        "insert into wallet(id, owner) values (?, ?), (?, ?)",
+    ]
+    assert [statement.binds for statement in statements] == [
+        (10, "Mira", 100.00, 11, "Nils", 30.00),
+        (12, "Omar", 13, "Pia"),
+    ]
+
+
+def test_grouping_an_unmappable_row_answers_one_undifferentiated_group() -> None:
+    # The grouping key is asked of every collapse candidate, before any lowering
+    # decides the row is renderable — so it stays TOTAL where a physical shape
+    # does not exist: an abstract family position owns no table, and a control
+    # key (`m-opt-lock`'s observation signal) names no slot of the view. Both
+    # answer the same absent key, leaving the loud refusal to the builder.
+    payment_model, payment = _target("payment", "Payment")
+    assert collapse_group_key(payment_model, payment, "insert", {"id": 1}) is None
+    wallet_model, wallet = WALLET
+    row = {"id": 1, "balance": 5.00, "observedVersion": 1}
+    assert collapse_group_key(wallet_model, wallet, "update", row) is None
+
+
+def test_row_member_order_alone_never_splits_a_batch_group() -> None:
+    # The grouping key is the TABLE-ordered slot selection, so two rows naming
+    # the same members in different payload order stay one group.
+    model, _ = WALLET
+    buffer: list[BufferItem] = [
+        KeyedWrite("insert", "Wallet", ({"id": 10, "owner": "Mira", "balance": 100.00},)),
+        KeyedWrite("insert", "Wallet", ({"balance": 20.00, "id": 11, "owner": "Omar"},)),
+    ]
+    assert [statement.sql for statement in _flush_and_lower(buffer, model)] == [
+        "insert into wallet(id, owner, balance) values (?, ?, ?), (?, ?, ?)"
+    ]
