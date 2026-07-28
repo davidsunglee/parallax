@@ -1,0 +1,40 @@
+# Fixture rows for the Storage Layout composition model
+# (models/storage-layout.yaml).
+#
+# Rows are keyed per ROW-OWNING Entity: the abstract LayoutPayment and
+# LayoutReport nodes are rowless. Each table-per-hierarchy row authors only the
+# members that apply to its own concrete variant — the shared `kind` column is
+# derived from its tagValue and never authored — so the two variants together
+# leave each subtype-only column null for the other's rows. Each
+# table-per-concrete-subtype row carries its ancestry chain plus its own member,
+# which reaches the `detail` column its sibling table reuses independently.
+#
+# LayoutProfile row 2 omits the optional `note`, exercising each surface's
+# omitted-cell policy.
+LayoutProfile:
+  - id: 1
+    label: Primary
+    note: preferred contact
+    contact:
+      email: solveig@example.test
+      phone: '555-0100'
+  - id: 2
+    label: Secondary
+    contact:
+      email: kari@example.test
+LayoutCardPayment:
+  - id: 1
+    amount: 100.00
+    cardNetwork: Visa
+LayoutCashPayment:
+  - id: 2
+    amount: 20.00
+    tendered: 25.00
+LayoutAudit:
+  - id: 1
+    title: Quarterly audit
+    auditor: Ingrid
+LayoutSurvey:
+  - id: 1
+    title: Annual survey
+    respondent: Bjorn

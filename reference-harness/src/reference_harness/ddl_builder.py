@@ -11,9 +11,19 @@ from __future__ import annotations
 
 import copy
 import re
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
+from typing import Any
 
 from .case import Entity, Model
+from .storage_layout import (
+    AttributeContributor,
+    ColumnContributor,
+    ColumnSlot,
+    InheritanceDiscriminator,
+    TableLayout,
+    ValueObjectContributor,
+)
 
 # m-core neutral type -> Postgres column type.
 _POSTGRES_BASE_TYPES = {
@@ -162,14 +172,6 @@ def quote_identifier(name: str, dialect: str) -> str:
     return f"{char}{name.replace(char, char * 2)}{char}"
 
 
-def _column_of_attr(entity: Entity, attr_name: str) -> str:
-    """The physical column backing an attribute *name* on *entity*."""
-    for attribute in entity.attributes:
-        if attribute["name"] == attr_name:
-            return attribute["column"]
-    raise KeyError(f"{entity.name} has no attribute {attr_name!r} (index reference)")
-
-
 def _postgres_column_type(neutral_type: str, max_length: int | None) -> str:
     decimal = _DECIMAL_RE.match(neutral_type)
     if decimal:
@@ -238,51 +240,95 @@ def placeholder_cast_type(neutral_type: str, max_length: int | None, dialect: st
     return _column_type(neutral_type, max_length, dialect)
 
 
-def _create_table(entity: Entity, dialect: str) -> str:
-    columns: list[str] = []
-    pk_columns: list[str] = []
-    for attribute in entity.attributes:
-        column_type = _column_type(attribute["type"], attribute.get("maxLength"), dialect)
-        parts = [quote_identifier(attribute["column"], dialect), column_type]
-        if not attribute.get("nullable", False):
-            parts.append("not null")
-        columns.append(" ".join(parts))
-        if attribute.get("primaryKey", False):
-            pk_columns.append(attribute["column"])
+# A framework-owned discriminator is not a declared attribute (m-inheritance), so
+# the harness fixes its own physical type; DDL is never asserted byte-exact.
+_TAG_COLUMN_TYPE = "string"
+_TAG_COLUMN_MAX_LENGTH = 32
 
-    # A valueObject is stored in ONE dialect-mapped `json` column (m-value-object/m-core, Phase
-    # 9): the whole embedded composite, not column-flattened. Append its backing
-    # column after the scalar attributes (so the Phase 1-8 cases are unaffected).
-    for value_object in entity.value_objects:
-        column_type = _column_type("json", None, dialect)
-        parts = [quote_identifier(value_object["column"], dialect), column_type]
-        if not value_object.get("nullable", False):
-            parts.append("not null")
-        columns.append(" ".join(parts))
+# A top-level valueObject occupies ONE dialect-mapped `json` column
+# (m-value-object/m-core): the whole embedded composite, not column-flattened.
+_DOCUMENT_TYPE = "json"
 
-    # A temporal entity stores many milestone rows per business key, so the
-    # declared primaryKey attribute(s) are NOT unique on their own — the unique
-    # physical key is the business key PLUS each as-of dimension's `start_column`
-    # (the milestone start). Extend the physical primary key accordingly so the
-    # DDL admits the milestone chain (m-temporal-read).
-    for as_of in entity.temporal_runtime_axes:
-        from_column = as_of["start_column"]
-        if from_column not in pk_columns:
-            pk_columns.append(from_column)
 
-    # Emit a UNIQUE constraint for each declared unique index whose columns are
-    # NOT exactly the primary key (the PK is already unique via `primary key
-    # (...)` below). This lets a model witness a unique-INDEX violation distinct
-    # from a PK collision (m-db-error error classification). Existing models declare
-    # only PK-backed unique indices, so this is a no-op for them. The guard
-    # compares against the PHYSICAL primary key (declared PK + temporal start columns
-    # appended above), so a temporal entity's full-milestone-key unique index is
-    # recognized as PK-backed and not re-emitted.
-    for index in entity.runtime_facts.get("indices", []):
-        if not index.get("unique", False):
-            continue
-        index_columns = [_column_of_attr(entity, attr_name) for attr_name in index["attributes"]]
-        if set(index_columns) == set(pk_columns):
+@dataclass(frozen=True)
+class _Declarations:
+    """The authored facts DDL still resolves outside the physical layout.
+
+    A layout slot names its contributor and physical answer; the neutral type and
+    the ordered logical components of a unique Index remain declaration facts.
+    """
+
+    types: Mapping[ColumnContributor, tuple[str, int | None]]
+    unique_indices: tuple[tuple[str, dict[str, Any]], ...]
+
+
+def _declarations(model: Model) -> _Declarations:
+    types: dict[ColumnContributor, tuple[str, int | None]] = {}
+    unique_indices: list[tuple[str, dict[str, Any]]] = []
+    for entity in model.entities:
+        owner = entity.canonical_name
+        definition = entity.definition
+        for attribute in definition.get("attributes", []) or []:
+            types[AttributeContributor(owner, attribute["name"])] = (
+                attribute["type"],
+                attribute.get("maxLength"),
+            )
+        for value_object in definition.get("valueObjects", []) or []:
+            types[ValueObjectContributor(owner, value_object["name"])] = (_DOCUMENT_TYPE, None)
+        unique_indices.extend(
+            (owner, index)
+            for index in definition.get("indices", []) or []
+            if index.get("unique", False)
+        )
+    return _Declarations(types=types, unique_indices=tuple(unique_indices))
+
+
+def _slot_ddl(slot: ColumnSlot, declarations: _Declarations, dialect: str) -> str:
+    if isinstance(slot.contributor, InheritanceDiscriminator):
+        neutral_type, max_length = _TAG_COLUMN_TYPE, _TAG_COLUMN_MAX_LENGTH
+    else:
+        neutral_type, max_length = declarations.types[slot.contributor]
+    parts = [
+        quote_identifier(slot.column, dialect),
+        _column_type(neutral_type, max_length, dialect),
+    ]
+    if not slot.effective_nullable:
+        parts.append("not null")
+    return " ".join(parts)
+
+
+def _index_columns(layout: TableLayout, owner: str, index: Mapping[str, Any]) -> list[str] | None:
+    """One declared Index's physical columns, or absent when it names another table.
+
+    An Index stays an ordered declaration of logical Attribute names local to its
+    declaring Entity (m-storage-layout), so each component resolves through the
+    layout's contributor lookup rather than a second column derivation.
+    """
+    slots = [layout.contribution(AttributeContributor(owner, name)) for name in index["attributes"]]
+    if all(slot is None for slot in slots):
+        return None
+    if any(slot is None for slot in slots):
+        raise KeyError(f"index {index['name']!r} spans table {layout.table!r} only partially")
+    return [slot.column for slot in slots if slot is not None]
+
+
+def _create_table(layout: TableLayout, declarations: _Declarations, dialect: str) -> str:
+    """One physical table's ``create table``, rendered from its canonical layout.
+
+    The layout already owns the complete slot sequence, effective physical
+    nullability, and the model-key-plus-temporal-start physical primary key
+    (m-storage-layout); this only renders those selected values per dialect.
+    """
+    columns = [_slot_ddl(slot, declarations, dialect) for slot in layout.columns]
+    pk_columns = [slot.column for slot in layout.physical_primary_key]
+
+    # A UNIQUE constraint is emitted for each declared unique index whose columns
+    # are NOT exactly the physical primary key (already enforced by `primary key
+    # (...)`), so a model can witness a unique-INDEX violation distinct from a PK
+    # collision (m-db-error error classification).
+    for owner, index in declarations.unique_indices:
+        index_columns = _index_columns(layout, owner, index)
+        if index_columns is None or set(index_columns) == set(pk_columns):
             continue
         quoted = ", ".join(quote_identifier(column, dialect) for column in index_columns)
         columns.append(f"unique ({quoted})")
@@ -292,7 +338,7 @@ def _create_table(entity: Entity, dialect: str) -> str:
         columns.append(f"primary key ({quoted_pk})")
 
     column_clause = ",\n  ".join(columns)
-    return f"create table {quote_identifier(entity.table, dialect)} (\n  {column_clause}\n)"
+    return f"create table {quote_identifier(layout.table, dialect)} (\n  {column_clause}\n)"
 
 
 def _merge_by_column(items: Sequence[dict], key: str = "column") -> list[dict]:
@@ -355,20 +401,17 @@ def _physical_table_entity(entities: Sequence[Entity]) -> Entity:
 
 
 def ddl_for(model: Model, dialect: str) -> list[str]:
-    """Return the ordered DDL statements that create every entity's table.
+    """Return the ordered DDL statements that create every physical table.
 
-    One ``CREATE TABLE`` per **distinct table** (a multi-entity descriptor yields
-    several). A `table-per-hierarchy` inheritance model maps several entities to
-    ONE shared table, so the emitted DDL is the union of every entity mapped to
-    that table rather than whichever entity appears first.
+    One ``CREATE TABLE`` per compiled Table Layout, so a `table-per-hierarchy`
+    family's shared table is created once with the whole family's slots and each
+    `table-per-concrete-subtype` concrete gets its own ancestry-derived table.
     Foreign keys are intentionally omitted: relationships are a query concern
     (navigation/join derivation), and leaving FK constraints out keeps
     fixture-load order unconstrained.
     """
-    statements: list[str] = []
-    for entities in _entities_by_table(model).values():
-        statements.append(_create_table(_physical_table_entity(entities), dialect))
-    return statements
+    declarations = _declarations(model)
+    return [_create_table(layout, declarations, dialect) for layout in model.storage_layout.tables]
 
 
 def _entities_by_table(model: Model) -> dict[str, list[Entity]]:

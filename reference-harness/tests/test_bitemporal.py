@@ -75,6 +75,26 @@ def test_bitemporal_ddl_primary_key_spans_both_as_of_from_columns() -> None:
         assert f"{column} timestamptz not null" in create
 
 
+def test_bitemporal_ddl_key_is_the_layout_selection_in_dimension_order() -> None:
+    # The DDL key is not re-derived: it is the layout's ordered slot selection —
+    # every model primary-key slot, then each temporal dimension's start slot in
+    # canonical dimension rank (Valid Time before Transaction Time). Both start
+    # slots keep their single Temporal-tier position in the complete sequence.
+    layout = _position_model().storage_layout.table("position")
+    assert layout is not None
+    assert [slot.column for slot in layout.physical_primary_key] == ["pos_id", "from_z", "in_z"]
+    assert [slot.tier.value for slot in layout.physical_primary_key] == [
+        "identity",
+        "temporal",
+        "temporal",
+    ]
+    assert [layout.columns.index(slot) for slot in layout.physical_primary_key] == [0, 3, 5]
+    (create,) = ddl_for(_position_model(), "postgres")
+    assert (
+        f"primary key ({', '.join(slot.column for slot in layout.physical_primary_key)})" in create
+    )
+
+
 def test_bitemporal_unique_index_matches_physical_primary_key() -> None:
     entity = _position_model().root_entity
     unique_index = next(
