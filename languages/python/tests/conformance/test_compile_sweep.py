@@ -289,7 +289,7 @@ _OPT_LOCK_AND_PK_GEN_WRITE_SEQUENCES: Final[frozenset[str]] = frozenset(
 # `IN`-list UPDATE (`m-batch-write-001`), the non-versioned `IN`-list DELETE
 # collapse (`m-batch-write-003`, the delete analogue of the multi-row INSERT),
 # and the value-object multi-row INSERT collapse (`m-value-object-045`, each
-# row's whole `address` document binding atomically in columnOrder position).
+# row's whole `address` document carried as one atomic document bind).
 _BATCH_COLLAPSE_WRITE_SEQUENCES: Final[frozenset[str]] = frozenset(
     {"m-batch-write-001", "m-batch-write-003", "m-value-object-045"}
 )

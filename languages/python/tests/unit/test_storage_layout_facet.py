@@ -10,7 +10,15 @@ from dataclasses import FrozenInstanceError
 from typing import Any, Literal, cast, overload
 
 import pytest
-from _metamodel_support import Declaration, attribute, identity, instant, key, source
+from _metamodel_support import (
+    Declaration,
+    accepted,
+    attribute,
+    identity,
+    instant,
+    key,
+    source,
+)
 
 from parallax.core import inheritance, storage_layout
 from parallax.core._formation_profile import BUILTIN_MANIFEST, BUILTIN_PROFILE, form_metamodel
@@ -37,6 +45,7 @@ from parallax.core.metamodel import (
     ValueObjectOccurrenceDeclaration,
     ValueObjectShapeDeclaration,
     ValueObjectShapeKey,
+    compile_metadata,
 )
 from parallax.core.model_formation import MODEL_FORMATION_MODULE, ModelCompilerRequirement
 from parallax.core.storage_layout._compile import (
@@ -662,6 +671,24 @@ def test_empty_unknown_noncanonical_and_cross_family_positions_are_total() -> No
     assert storage_layout.view(other_model).position((standalone,)) is not None
 
 
+def test_a_position_spanning_two_families_is_absent_rather_than_a_merged_shape() -> None:
+    # A position is one family's concrete selection. Two independently rooted
+    # row owners, canonically ordered so the order guard cannot answer first,
+    # name no single logical contributor sequence and no branch alignment.
+    first = identity("FirstStandalone")
+    second = identity("SecondStandalone")
+    model = form_metamodel(
+        source(
+            Declaration(identity=first, container=Table("first"), attributes=(key(first),)),
+            Declaration(identity=second, container=Table("second"), attributes=(key(second),)),
+        )
+    )
+    facet = storage_layout.view(model)
+    assert facet.position((first,)) is not None
+    assert facet.position((second,)) is not None
+    assert facet.position((first, second)) is None
+
+
 def test_unknown_table_column_contributor_and_entity_lookups_return_absence() -> None:
     model, root, _, _ = _tiered_tph_model()
     facet = storage_layout.view(model)
@@ -670,6 +697,118 @@ def test_unknown_table_column_contributor_and_entity_lookups_return_absence() ->
     assert facet.entity(EntityIdentity(None, "Absent")) is None
     assert layout.column(Column("absent")) is None
     assert layout.contribution(AttributeIdentity(root, "absent")) is None
+
+
+# --------------------------------------------------------------------------- #
+# Compiler-contract refusals. The compiler composes accepted values and decides #
+# no validity, so an input the Rule Sets would have rejected is a caller        #
+# contract failure: it is refused with the violated invariant named, never      #
+# published as a layout that quietly drops or invents a Column.                 #
+# --------------------------------------------------------------------------- #
+def _unvalidated(*declarations: Declaration) -> CompiledMetadata:
+    """Compiled Metadata over ``declarations`` with no Rule Set run."""
+    return compile_metadata(accepted(source(*declarations)))
+
+
+class _AbsentInheritanceFacet:
+    def entity(self, identity: EntityIdentity) -> inheritance.InheritanceEntityView | None:
+        return None
+
+    def position(
+        self, members: Sequence[EntityIdentity]
+    ) -> inheritance.InheritancePositionView | None:
+        return None
+
+
+def test_compiling_without_an_inheritance_view_refuses_rather_than_guessing_a_family() -> None:
+    entity = identity("Unviewed")
+    metadata = _unvalidated(
+        Declaration(identity=entity, container=Table("unviewed"), attributes=(key(entity),))
+    )
+    with pytest.raises(RuntimeError, match="no Inheritance Facet view"):
+        storage_layout.compile_facet(
+            metadata, cast(inheritance.InheritanceFacet, _AbsentInheritanceFacet())
+        )
+
+
+def test_compiling_a_twice_claimed_column_refuses_rather_than_composing_one_slot() -> None:
+    entity = identity("Colliding")
+    metadata = _unvalidated(
+        Declaration(
+            identity=entity,
+            container=Table("colliding"),
+            attributes=(
+                key(entity),
+                attribute(entity, "first", type=STRING, column="shared"),
+                attribute(entity, "second", type=STRING, column="shared"),
+            ),
+        )
+    )
+    with pytest.raises(RuntimeError, match="duplicate Column or contributor"):
+        storage_layout.compile_facet(metadata, inheritance.compile_facet(metadata))
+
+
+def test_compiling_a_tagless_shared_table_variant_refuses_rather_than_omitting_it() -> None:
+    root = identity("Untagged")
+    concrete = identity("UntaggedRow")
+    metadata = _unvalidated(
+        Declaration(
+            identity=root,
+            container=Table("untagged"),
+            attributes=(key(root),),
+            inheritance=AbstractRoot(TablePerHierarchy("kind")),
+        ),
+        Declaration(
+            identity=concrete,
+            inheritance=ConcreteSubtype(ExactEntityReference(root)),
+        ),
+    )
+    with pytest.raises(RuntimeError, match="no tag value"):
+        storage_layout.compile_facet(metadata, inheritance.compile_facet(metadata))
+
+
+def test_compiling_a_tableless_shared_family_root_refuses_rather_than_inventing_a_table() -> None:
+    root = identity("Rootless")
+    concrete = identity("RootlessRow")
+    metadata = _unvalidated(
+        Declaration(
+            identity=root,
+            attributes=(key(root),),
+            inheritance=AbstractRoot(TablePerHierarchy("kind")),
+        ),
+        Declaration(
+            identity=concrete,
+            inheritance=ConcreteSubtype(ExactEntityReference(root), "rootless"),
+        ),
+    )
+    with pytest.raises(RuntimeError, match=r"TPH root .* has no Table"):
+        storage_layout.compile_facet(metadata, inheritance.compile_facet(metadata))
+
+
+def test_compiling_a_tableless_branch_concrete_refuses_rather_than_inventing_a_table() -> None:
+    root = identity("Branchless")
+    concrete = identity("BranchlessRow")
+    metadata = _unvalidated(
+        Declaration(
+            identity=root,
+            attributes=(key(root),),
+            inheritance=AbstractRoot(TablePerConcreteSubtype()),
+        ),
+        Declaration(identity=concrete, inheritance=ConcreteSubtype(ExactEntityReference(root))),
+    )
+    with pytest.raises(RuntimeError, match=r"TPCS concrete .* has no Table"):
+        storage_layout.compile_facet(metadata, inheritance.compile_facet(metadata))
+
+
+def test_compiling_a_twice_owned_table_refuses_rather_than_merging_two_mappings() -> None:
+    first = identity("Alpha")
+    second = identity("Beta")
+    metadata = _unvalidated(
+        Declaration(identity=first, container=Table("shared"), attributes=(key(first),)),
+        Declaration(identity=second, container=Table("shared"), attributes=(key(second),)),
+    )
+    with pytest.raises(RuntimeError, match="has multiple mapping owners"):
+        storage_layout.compile_facet(metadata, inheritance.compile_facet(metadata))
 
 
 def test_layout_values_and_sequences_are_immutable() -> None:

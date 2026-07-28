@@ -28,7 +28,7 @@ from typing import Final, Literal, Protocol, cast, runtime_checkable
 
 from parallax.conformance import _descriptor_family, case_format, models, provision, temporal_state
 from parallax.conformance.temporal_state import TemporalShadow
-from parallax.core import batch_write, inheritance, navigate, opt_lock, read_lock
+from parallax.core import batch_write, inheritance, navigate, opt_lock, read_lock, storage_layout
 from parallax.core.base import (
     INFINITY_LITERAL,
     TemporalBound,
@@ -43,8 +43,6 @@ from parallax.core.metamodel import (
     EntityMetadata,
     Multiplicity,
     NestedValueObjectMetadata,
-    PrimaryKey,
-    TablePerHierarchy,
     ValueObjectMetadata,
 )
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
@@ -1226,7 +1224,7 @@ def _seed_insert_version(
 
     `parallax.snapshot.handle`'s `lower_insert` / `lower_multi_insert`, the
     keyed builders `lower_write` dispatches to, derive the
-    INITIAL version at the version column's own columnOrder position
+    INITIAL version at the version column's own Table Layout slot
     UNCONDITIONALLY, "ignoring any row-carried value" (their own docstrings)
     — every reachable insert witness already authors an explicit `version`
     matching this SAME constant (`m-unit-work-001`/`-008`), coincidentally
@@ -3304,64 +3302,22 @@ def read_table_state(
 ) -> dict[str, list[Row]]:
     """The committed contents of every model table, in canonical wire form.
 
-    Each row-owning table is read back with every physical column in FAMILY
-    columnOrder (`_table_column_order` — a shared table is read once), so the
-    observation reports exactly the state ``then.tableState`` asserts — derived
-    from the metamodel, never from the case's expectations. Takes either the
-    corpus descriptor record graph or an already-accepted model.
+    Every compiled Table Layout is read back exactly once, projecting its
+    complete slot sequence in canonical order, so the observation reports the
+    whole physical row ``then.tableState`` asserts — including a slot that only
+    a sibling table-per-hierarchy variant fills (e.g. `m-inheritance-007`'s
+    inserted `CardPayment` row still reports the cash-only `tendered` column as
+    `null`). Takes either the corpus descriptor record graph or an
+    already-accepted model.
     """
     model = case_model(meta) if isinstance(meta, Metamodel) else meta
-    facet = inheritance.view(model)
     state: dict[str, list[Row]] = {}
-    for entity in model.entities:
-        view = facet.entity(entity.identity)
-        container = None if view is None else view.container
-        if container is None or container.name in state:
-            continue
-        table = container.name
-        columns = ", ".join(dialect.quote(column) for column in _table_column_order(model, entity))
-        sql = f"select {columns} from {dialect.quote(table)}"
+    for layout in storage_layout.view(model).tables:
+        columns = ", ".join(dialect.quote(slot.column.name) for slot in layout.columns)
+        sql = f"select {columns} from {dialect.quote(layout.table.name)}"
         rows = port.execute(dialect.to_driver_sql(sql), [])
-        state[table] = [wire_row(row) for row in rows]
+        state[layout.table.name] = [wire_row(row) for row in rows]
     return state
-
-
-def _table_column_order(model: AcceptedMetamodel, entity: EntityMetadata) -> list[str]:
-    """``entity``'s table's FULL physical columns in canonical order (m-sql
-    ``column_order``'s own rule — primary key first, then the inheritance tag,
-    then the remaining scalars, then value-object documents).
-
-    For a plain entity or a table-per-concrete-subtype concrete this is its own
-    family-effective column order (`inheritance.column_order`). A
-    table-per-hierarchy shared table is EVERY family member's columns unioned
-    family-wide (the Inheritance Facet's projection superset over the family's
-    whole concrete set), since `then.tableState` asserts the WHOLE row (e.g.
-    `m-inheritance-007`'s inserted `CardPayment` row still reports the cash-only
-    `tendered` column as `null`).
-    """
-    facet = inheritance.view(model)
-    view = facet.entity(entity.identity)
-    if view is None:  # pragma: no cover - the facet covers every accepted Entity
-        return []
-    root_view = facet.entity(view.root)
-    if root_view is None or not isinstance(root_view.strategy, TablePerHierarchy):
-        return list(inheritance.column_order(entity, facet))
-    position = facet.position(list(root_view.concrete_subtypes))
-    if position is None:  # pragma: no cover - a family's own concrete set is one position
-        return list(inheritance.column_order(entity, facet))
-    pk_columns = [
-        attribute.storage.name
-        for attribute in position.superset_attributes
-        if isinstance(attribute.primary_key, PrimaryKey)
-    ]
-    tag_columns = [root_view.tag_column] if root_view.tag_column is not None else []
-    rest_columns = [
-        attribute.storage.name
-        for attribute in position.superset_attributes
-        if not isinstance(attribute.primary_key, PrimaryKey)
-    ]
-    document_columns = [vo.storage.name for vo in position.superset_value_objects]
-    return [*pk_columns, *tag_columns, *rest_columns, *document_columns]
 
 
 def _execute_reads(port: DbPort, dialect: Dialect, statements: Sequence[Statement]) -> list[Row]:

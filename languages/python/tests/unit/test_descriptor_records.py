@@ -1,5 +1,5 @@
-"""m-descriptor derived facts: temporal classification, column order, and the
-family-root ancestry walk (``declaring_entity``)."""
+"""m-descriptor derived facts: temporal classification, preserved local
+declarations, and the family-root ancestry walk (``declaring_entity``)."""
 
 from __future__ import annotations
 
@@ -7,6 +7,7 @@ import pytest
 
 from parallax.conformance import case_format
 from parallax.conformance import models as corpus_models
+from parallax.descriptor import _records
 from parallax.descriptor._errors import DescriptorError
 from parallax.descriptor._records import (
     AsOfAxisMetadata,
@@ -16,7 +17,6 @@ from parallax.descriptor._records import (
     Metamodel,
     PkGenerator,
     ValueObject,
-    column_order,
     concrete_descendant_names,
     declaring_entity,
     family_root_name,
@@ -83,14 +83,28 @@ def test_primary_key_selects_declared_pk_attributes_in_order() -> None:
     assert tuple(a.name for a in balance.primary_key) == ("id",)
 
 
-def test_column_order_places_pk_first_then_scalars_then_documents() -> None:
+def test_records_preserve_local_declarations_and_their_effective_columns() -> None:
     account = _MODELS["account"].entity("Account")
-    assert column_order(account) == ("id", "owner", "balance", "version")
+    assert tuple((a.name, a.column) for a in account.attributes) == (
+        ("id", "id"),
+        ("owner", "owner"),
+        ("balance", "balance"),
+        ("version", "version"),
+    )
     customer = _MODELS["customer"].entity("Customer")
-    assert column_order(customer) == ("id", "name", "address")
+    assert tuple((a.name, a.column) for a in customer.attributes) == (
+        ("id", "id"),
+        ("name", "name"),
+    )
+    assert tuple((v.name, v.storage_column) for v in customer.value_objects) == (
+        ("address", "address"),
+    )
 
 
-def test_column_order_slots_the_tag_column_after_the_primary_key() -> None:
+def test_records_retain_the_tag_declaration_without_composing_a_column_sequence() -> None:
+    # The framework-owned tag is a declaration on the root's strategy, and these
+    # records carry it as one. Where it sits among the table's columns — and where
+    # a document column sits — is `m-storage-layout`'s answer, not a descriptor fact.
     root = Entity(
         name="Animal",
         table="animal",
@@ -101,7 +115,11 @@ def test_column_order_slots_the_tag_column_after_the_primary_key() -> None:
         ),
         value_objects=(ValueObject(name="badge", column="badge"),),
     )
-    assert column_order(root) == ("id", "kind", "name", "badge")
+    assert root.inheritance is not None
+    assert root.inheritance.tag_column == "kind"
+    assert tuple(a.column for a in root.attributes) == ("id", "name")
+    assert tuple(v.storage_column for v in root.value_objects) == ("badge",)
+    assert not hasattr(_records, "column_order")
 
 
 def test_pk_generator_generates_flags_max_and_sequence() -> None:

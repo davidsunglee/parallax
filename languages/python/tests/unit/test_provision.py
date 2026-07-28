@@ -203,9 +203,9 @@ def test_fixture_statements_map_names_to_columns() -> None:
     assert binds == [1, 1, "low"]
 
 
-def test_fixture_statements_follow_descriptor_column_order_not_mapping_order() -> None:
+def test_fixture_statements_follow_the_entity_layout_order_not_mapping_order() -> None:
     # Re-spelling a fixture row with permuted keys must emit byte-identical SQL:
-    # columns and binds follow the descriptor `column_order`, never `row.items()`.
+    # columns and binds follow the Entity Layout's slot order, never `row.items()`.
     canonical = {"Grade": [{"id": 1, "ordinal": 1, "label": "low"}]}
     permuted = {"Grade": [{"label": "low", "id": 1, "ordinal": 1}]}
     assert provision.fixture_statements(
@@ -218,7 +218,7 @@ def test_fixture_statements_follow_descriptor_column_order_not_mapping_order() -
 
 def test_fixture_statements_skip_a_column_the_row_omits() -> None:
     # A fixture row omitting a (nullable) member emits only the present columns,
-    # still in descriptor column order — the omitted `label` is skipped.
+    # still in Entity Layout slot order — the omitted `label` is skipped.
     fixtures = {"Grade": [{"ordinal": 2, "id": 5}]}
     (sql, binds) = provision.fixture_statements(_MODELS["grade"], fixtures)[0]
     assert sql == 'insert into grade (id, "order") values (?, ?)'

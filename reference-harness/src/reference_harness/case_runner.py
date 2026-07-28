@@ -26,6 +26,7 @@ import functools
 import json
 import re
 import threading
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Any
@@ -39,7 +40,6 @@ from .data_loader import load_model
 from .ddl_builder import (
     contributor_types,
     ddl_for,
-    physical_entities_by_table,
     placeholder_cast_type,
     quote_identifier,
 )
@@ -50,7 +50,6 @@ from .inheritance import (
     STRATEGY_TPH,
     WRITE_REJECTED_RULES,
     Family,
-    effective_column,
     inheritance_of,
     is_abstract,
     narrowed_view_key,
@@ -67,10 +66,13 @@ from .storage_layout import (
     MODEL_REJECTED_RULES as STORAGE_LAYOUT_MODEL_REJECTED_RULES,
 )
 from .storage_layout import (
+    ColumnContributor,
     ColumnSlot,
+    ColumnTier,
     PositionBranch,
     PositionColumn,
     PositionLayoutView,
+    TableLayout,
     position_projection,
     position_view,
     validate_storage_layout,
@@ -128,38 +130,6 @@ def _write_column_order(case: Case, entity: Entity) -> tuple[str, ...]:
             f"write through."
         )
     return tuple(slot.column for slot in view.columns)
-
-
-def _case_column_order(entity: Entity) -> tuple[str, ...]:
-    """Derive the canonical column sequence for authored-SQL shape checks."""
-    attributes = entity.attributes
-    tag = tag_of(entity.runtime_facts)
-    tag_column = tag[0] if tag is not None else None
-    temporal_columns = {
-        column
-        for axis in entity.temporal_runtime_axes
-        for column in (axis["start_column"], axis["end_column"])
-    }
-    keys = [
-        effective_column(attribute) for attribute in attributes if bool(attribute.get("primaryKey"))
-    ]
-    discriminator = [] if tag_column is None else [tag_column]
-    domain = [
-        effective_column(attribute)
-        for attribute in attributes
-        if not bool(attribute.get("primaryKey"))
-        and effective_column(attribute) != tag_column
-        and effective_column(attribute) not in temporal_columns
-    ]
-    temporal = [
-        effective_column(attribute)
-        for attribute in attributes
-        if not bool(attribute.get("primaryKey"))
-        and effective_column(attribute) != tag_column
-        and effective_column(attribute) in temporal_columns
-    ]
-    documents = [value_object["column"] for value_object in entity.value_objects]
-    return (*keys, *discriminator, *domain, *temporal, *documents)
 
 
 # The full pre-SQL rejection vocabulary spans value objects, operations,
@@ -800,7 +770,8 @@ def _assert_pk_allocation(case: Case, db: DatabaseProvider) -> None:
     seq_name = gen["name"]
     pk_column = pk_attr["column"]
 
-    actual_rows = _read_table(db, entity)
+    types = contributor_types(case.model)
+    actual_rows = _read_table(db, _table_layout(case, entity.table), types)
     # Assumes target starts empty; row count equals ids allocated from initialValue
     # (a pre-seeded table would mismatch loudly, not silently).
     count = len(actual_rows)
@@ -816,7 +787,7 @@ def _assert_pk_allocation(case: Case, db: DatabaseProvider) -> None:
     registry = _pk_sequence_registry(case.model, entity)
     name_column = next(a for a in registry.attributes if a.get("primaryKey"))["column"]
     counter_column = _pk_sequence_counter_column(registry)
-    reg_rows = _read_table(db, registry)
+    reg_rows = _read_table(db, _table_layout(case, registry.table), types)
     reg_row = next((r for r in reg_rows if r.get(name_column) == seq_name), None)
     if reg_row is None:
         raise CaseFailure(f"{case.path.name}: {registry.name} has no row for sequence {seq_name!r}")
@@ -3608,7 +3579,7 @@ def _assert_temporal_conflict_close(
     (``m-inheritance-105``): the tag guard rides the identity predicates, the
     observed-in_z gate still binds LAST. A bitemporal close inserts the Valid-Time
     discriminator's VALUE (the classified ``set`` coordinate, e.g. ``from_z``)
-    between ``out_z`` and ``in_z`` in model column order, so the derived binds are
+    between ``out_z`` and ``in_z`` in Table Layout slot order, so the derived binds are
     ``[at, pk, (tagValue), infinity, …validTimeCoords, (observedTxStart if gated)]`` —
     the tag slots right after the pk (a no-op, ``None`` skipped, for a
     non-inheritance or table-per-concrete-subtype entity).
@@ -3633,7 +3604,7 @@ def _assert_temporal_conflict_close(
     infinity = axis.get("infinity", "infinity")
     _, pk, set_cols, _ = _classify_write_row(case, entity, write)
     # A bitemporal close's Valid-Time discriminator (e.g. from_z) slots between out_z
-    # and in_z in model column order; a Transaction-Time-Only close has none.
+    # and in_z in Table Layout slot order; a Transaction-Time-Only close has none.
     valid_coords = [
         set_cols[column] for column in _write_column_order(case, entity) if column in set_cols
     ]
@@ -3652,24 +3623,44 @@ def _assert_temporal_conflict_close(
     _assert_inheritance_write_routing(case, entity, statements, [binds])
 
 
-def _read_table(db: DatabaseProvider, entity: Entity) -> list[dict[str, Any]]:
-    """Read the full state of *entity*'s table, projecting every column by name.
+def _table_layout(case: Case, table: str) -> TableLayout:
+    """The compiled layout of one physical *table* an observation reads back."""
+    layout = case.model.storage_layout.table(table)
+    if layout is None:
+        raise CaseFailure(
+            f"{case.path.name}: an observation names table {table!r} "
+            f"which the model does not declare."
+        )
+    return layout
 
-    A value-object column is decoded to a Python structure (m-value-object): Postgres
-    returns its ``jsonb`` already parsed while MariaDB returns raw JSON text, so both
-    dialects collapse to the same ``dict`` / ``list`` / ``None`` here — the shape a
-    ``then.tableState`` document row is authored as, so the write-sequence comparison
-    is dialect-agnostic.
+
+def _read_table(
+    db: DatabaseProvider,
+    layout: TableLayout,
+    types: Mapping[ColumnContributor, tuple[str, int | None]],
+) -> list[dict[str, Any]]:
+    """Read the full state of *layout*'s table, projecting every slot in order.
+
+    The layout is the whole physical row, so a table-per-hierarchy shared table
+    reports a sibling-only column as ``null`` rather than omitting it. Each
+    slot's own provenance decides its normalization: a document slot is decoded
+    to a Python structure (m-value-object), because Postgres returns its
+    ``jsonb`` already parsed while MariaDB returns raw JSON text, and both
+    dialects must collapse to the same ``dict`` / ``list`` / ``None`` a
+    ``then.tableState`` document row is authored as. A ``bytes`` contributor
+    reads back as raw driver bytes (Postgres ``memoryview`` / MariaDB
+    ``bytes``); it renders to lowercase hex text so a write round-trip compares
+    dialect-agnostically to the authored hex string.
     """
-    columns = list(_case_column_order(entity))
-    projection = ", ".join(f"t0.{quote_identifier(column, db.dialect)}" for column in columns)
-    rows = db.query(f"select {projection} from {quote_identifier(entity.table, db.dialect)} t0")
-    document_columns = {value_object["column"] for value_object in entity.value_objects}
-    # A `bytes` column reads back as raw driver bytes (Postgres ``memoryview`` /
-    # MariaDB ``bytes``); render it to lowercase hex text so a write round-trip's
-    # ``then.tableState`` compares dialect-agnostically to the authored hex string.
+    projection = ", ".join(
+        f"t0.{quote_identifier(slot.column, db.dialect)}" for slot in layout.columns
+    )
+    rows = db.query(f"select {projection} from {quote_identifier(layout.table, db.dialect)} t0")
+    document_columns = {slot.column for slot in layout.columns if slot.tier is ColumnTier.DOCUMENT}
     bytes_columns = {
-        attribute["column"] for attribute in entity.attributes if attribute.get("type") == "bytes"
+        slot.column
+        for slot in layout.columns
+        if types.get(slot.contributor, ("", None))[0] == "bytes"
     }
     for row in rows:
         for column in document_columns:
@@ -3697,14 +3688,9 @@ def _assert_write_sequence(case: Case, db: DatabaseProvider) -> None:
         db.execute(statement, binds)
 
     expected = case.expected_table_state
-    entity_by_table = physical_entities_by_table(case.model)
+    types = contributor_types(case.model)
     for table, expected_rows in expected.items():
-        if table not in entity_by_table:
-            raise CaseFailure(
-                f"{case.path.name}: then.tableState names table {table!r} "
-                f"which the model does not declare."
-            )
-        actual = _read_table(db, entity_by_table[table])
+        actual = _read_table(db, _table_layout(case, table), types)
         if not _rows_equal(actual, expected_rows, case.tolerance):
             raise CaseFailure(
                 f"{case.path.name}: table {table!r} state after the write "
@@ -4411,14 +4397,9 @@ def _assert_conflict(case: Case, db: DatabaseProvider) -> None:
         )
 
     if case.expected_table_state:
-        entity_by_table = physical_entities_by_table(case.model)
+        types = contributor_types(case.model)
         for table, expected_rows in case.expected_table_state.items():
-            if table not in entity_by_table:
-                raise CaseFailure(
-                    f"{case.path.name}: then.tableState names table {table!r} "
-                    f"which the model does not declare."
-                )
-            actual = _read_table(db, entity_by_table[table])
+            actual = _read_table(db, _table_layout(case, table), types)
             if not _rows_equal(actual, expected_rows, case.tolerance):
                 raise CaseFailure(
                     f"{case.path.name}: table {table!r} state after the conflict "
@@ -4497,14 +4478,9 @@ def _assert_table_state(case: Case, db: DatabaseProvider) -> None:
     """Assert each table named in ``then.tableState`` matches (order-insensitive)."""
     if not case.expected_table_state:
         return
-    entity_by_table = physical_entities_by_table(case.model)
+    types = contributor_types(case.model)
     for table, expected_rows in case.expected_table_state.items():
-        if table not in entity_by_table:
-            raise CaseFailure(
-                f"{case.path.name}: then.tableState names table {table!r} "
-                f"which the model does not declare."
-            )
-        actual = _read_table(db, entity_by_table[table])
+        actual = _read_table(db, _table_layout(case, table), types)
         if not _rows_equal(actual, expected_rows, case.tolerance):
             raise CaseFailure(
                 f"{case.path.name}: table {table!r} state != then.tableState.\n"

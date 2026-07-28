@@ -224,7 +224,7 @@ def project_topology(candidate: CandidateMetamodel) -> InheritanceTopology:
         if not isinstance(resolution, ResolvedAncestry):
             continue
         strategy, members = grouped.setdefault(resolution.entities[0], (resolution.strategy, []))
-        if strategy != resolution.strategy:
+        if strategy != resolution.strategy:  # pragma: no cover - a walk reports its root's strategy
             continue
         members.append(participant_index[identity])
     families = tuple(

@@ -13,7 +13,9 @@ from __future__ import annotations
 
 import copy
 import re
+from collections.abc import Sequence
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 
@@ -26,9 +28,10 @@ from reference_harness.case_runner import (
     _assert_write_step_count,
     _has_temporal_gate,
     _read_asof_pins,
+    _read_table,
     _write_column_order,
 )
-from reference_harness.ddl_builder import ddl_for
+from reference_harness.ddl_builder import contributor_types, ddl_for
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 COMPATIBILITY_ROOT = _REPO_ROOT / "core" / "compatibility"
@@ -514,6 +517,36 @@ def test_tph_bitemporal_milestones_write_the_layout_slot_sequence() -> None:
         binds = case.statement_binds(index)
         assert binds[in_z] == case.write_sequence[0 if index == 0 else 1]["at"]
         assert binds[out_z] == "infinity"
+
+
+class _RecordingReadProvider:
+    """A DB-free provider recording each read it is asked to run."""
+
+    dialect = "postgres"
+
+    def __init__(self) -> None:
+        self.queries: list[str] = []
+
+    def query(self, sql: str, binds: Sequence[Any] = ()) -> list[dict[str, Any]]:
+        self.queries.append(sql)
+        return []
+
+
+def test_bitemporal_observation_projects_the_temporal_slots_last() -> None:
+    # The committed-rectangle read-back follows the Table Layout's canonical tier
+    # order, so both dimensions' bounds trail every domain slot even though the
+    # physical primary key selects the two starts from the identity and temporal
+    # tiers alike.
+    case = _inheritance_case("m-inheritance-094")
+    layout = case.model.storage_layout.table("instrument")
+    assert layout is not None
+    provider = _RecordingReadProvider()
+    _read_table(cast("Any", provider), layout, contributor_types(case.model))
+    assert provider.queries == [
+        "select t0.id, t0.kind, t0.price, t0.coupon, t0.ticker, "
+        "t0.from_z, t0.thru_z, t0.in_z, t0.out_z from instrument t0"
+    ]
+    assert [slot.column for slot in layout.physical_primary_key] == ["id", "from_z", "in_z"]
 
 
 def test_bitemporal_committed_rows_cover_every_shared_table_slot() -> None:

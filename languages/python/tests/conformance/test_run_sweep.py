@@ -34,6 +34,7 @@ from conftest import (
     wire_value_deep,
 )
 from parallax.conformance import adapter, case_format, concurrency_runner, engine
+from parallax.core import storage_layout
 from parallax.core.dialect import dialect_for
 
 pytestmark = pytest.mark.conformance
@@ -355,9 +356,29 @@ def test_write_run_sweep(case: case_format.Case, provisioner: Any) -> None:
             "dict[str, list[dict[str, Any]]]", case_document(case)["then"]["tableState"]
         )
         observed_state = envelope["observations"]["tableState"]
+        _assert_layout_shaped_table_state(case, meta, observed_state)
         assert set(observed_state) >= set(expected_state), (case.case_id, observed_state)
         for table, expected_rows in expected_state.items():
             compare_rows(observed_state[table], expected_rows)
+
+
+def _assert_layout_shaped_table_state(
+    case: case_format.Case, meta: Any, observed_state: dict[str, list[dict[str, Any]]]
+) -> None:
+    """Every compiled Table Layout is observed once, whole, and in canonical order.
+
+    A shared table-per-hierarchy table therefore reports a sibling-only column as
+    ``null`` instead of omitting it, and no observation carries a column the layout
+    does not place or an order the layout does not fix.
+    """
+    layouts = {
+        layout.table.name: [slot.column.name for slot in layout.columns]
+        for layout in storage_layout.view(engine.case_model(meta)).tables
+    }
+    assert set(observed_state) == set(layouts), (case.case_id, sorted(observed_state))
+    for table, rows in observed_state.items():
+        for row in rows:
+            assert list(row) == layouts[table], (case.case_id, table, list(row))
 
 
 def _reachable_interleaved_uow_group_cases() -> list[case_format.Case]:

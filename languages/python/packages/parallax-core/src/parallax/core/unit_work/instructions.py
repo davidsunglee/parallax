@@ -120,7 +120,8 @@ class KeyedWrite:
 class WriteAssignment:
     """One ordered predicate-write assignment: ``attr`` (a ``Class.member`` reference)
     set to ``value`` (a neutral literal / document). List order is DATA order only —
-    the emitted SET columns follow the descriptor ``columnOrder`` at lowering."""
+    the emitted SET columns follow the target's canonical Table Layout order at
+    lowering."""
 
     attr: str
     value: object
@@ -410,7 +411,7 @@ def validate_instruction(instruction: WriteInstruction, model: AcceptedMetamodel
     re-opens a hole the more specific check already closes. A predicate write's
     assignment `attr` must name a `target.entity` member, same family-effective
     set. This is the member-name honesty gate — the flush-time refusing compile
-    port is the structural enforcer of the remaining typed / columnOrder
+    port is the structural enforcer of the remaining typed / Table Layout slot
     classification, mirroring the predicate-write materialization split.
 
     Once a predicate-write assignment's `attr` names a genuinely declared

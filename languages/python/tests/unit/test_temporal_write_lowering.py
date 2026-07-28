@@ -15,6 +15,7 @@ one).
 from __future__ import annotations
 
 import dataclasses
+import datetime as dt
 
 import pytest
 
@@ -24,14 +25,28 @@ from parallax.core.db_port import JsonDocument
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.metamodel import EntityIdentity, EntityMetadata, TemporalDimension
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
-from parallax.core.unit_work import Concurrency, KeyedWrite, Observation, PlannedWrite
+from parallax.core.temporal_read import LATEST, Pin
+from parallax.core.unit_work import (
+    Concurrency,
+    FixedClock,
+    KeyedWrite,
+    Observation,
+    PlannedWrite,
+    TransactionSettings,
+    UnitOfWork,
+    run_unit_of_work,
+)
 from parallax.descriptor._records import Metamodel
 from parallax.snapshot.handle import (
+    Execution,
+    FindResult,
     LoweredStatement,
     WriteLoweringError,
     lower_temporal_close,
     lower_write,
 )
+from parallax.snapshot.handle._write_inputs import record_observations
+from parallax.snapshot.materialize import Node
 
 pytestmark = pytest.mark.unit
 
@@ -580,6 +595,48 @@ def test_milestone_insert_cells_follow_semantic_tier_order_not_declaration_order
             (1, 50.00, "ACME", "2024-01-01T00:00:00+00:00", "infinity"),
         )
     ]
+
+
+def test_a_temporal_concrete_observes_its_own_declared_members_not_the_roots() -> None:
+    # An observation's payload comes from the row-owning Entity's OWN Table Layout
+    # selection, so a member declared on a concrete subtype — SpotQuote's `symbol` —
+    # is observed like any inherited one. The audit-only update chain merges a
+    # sparse `tx.update(copy)` row over exactly that payload, so an observation
+    # narrowed to the declaring root's members would silently NULL `symbol` on the
+    # next milestone instead of carrying it forward.
+    model, _entity = _accepted("SpotQuote", QUOTE)
+    node = Node(
+        fields={
+            "id": 1,
+            "price": 50.00,
+            "symbol": "ACME",
+            "in_z": "2024-01-01T00:00:00+00:00",
+            "out_z": "infinity",
+        },
+        pk_columns=("id",),
+    )
+    result = FindResult(nodes=(node,), execution=Execution(()), all_nodes=(("SpotQuote", node),))
+
+    def observe(uow: UnitOfWork) -> Observation | None:
+        record_observations(uow, model, result, Pin(tx_time=LATEST))
+        return uow.observation_for(("SpotQuote", (("id", 1),)))
+
+    observation = run_unit_of_work(
+        observe,
+        settings=TransactionSettings(),
+        clock=FixedClock(dt.datetime(2024, 6, 1, tzinfo=dt.UTC)),
+        meta=model,
+        flush_executor=lambda _plan: None,
+    )
+    assert observation is not None
+    assert observation.payload == {"id": 1, "price": 50.00, "symbol": "ACME"}
+
+    update = KeyedWrite("update", "SpotQuote", ({"id": 1, "price": 60.00},))
+    _close, chain = _lower(update, QUOTE, "2024-06-01T00:00:00+00:00", observation=observation)
+    assert chain == (
+        "insert into spot_quote(id, price, symbol, in_z, out_z) values (?, ?, ?, ?, ?)",
+        (1, 60.00, "ACME", "2024-06-01T00:00:00+00:00", "infinity"),
+    )
 
 
 def test_milestone_close_gates_on_operation_identities_not_the_physical_key() -> None:

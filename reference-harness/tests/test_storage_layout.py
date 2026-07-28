@@ -14,6 +14,7 @@ from typing import Any, cast
 import pytest
 
 import reference_harness.case_runner as case_runner
+import reference_harness.ddl_builder as ddl_builder
 from reference_harness.case import Model, load_model
 from reference_harness.data_loader import load_model as load_fixture_rows
 from reference_harness.ddl_builder import ddl_for
@@ -923,7 +924,7 @@ def test_a_fixture_row_naming_the_discriminator_is_not_an_authorable_member() ->
         load_fixture_rows(corrupted, cast("Any", _RecordingProvider()))
 
 
-def test_case_runner_consumes_storage_layout_for_validation_and_read_projection() -> None:
+def test_case_runner_consumes_storage_layout_for_validation_reads_and_observation() -> None:
     source = Path(case_runner.__file__).read_text(encoding="utf-8")
     tree = ast.parse(source)
     imported = {
@@ -933,12 +934,24 @@ def test_case_runner_consumes_storage_layout_for_validation_and_read_projection(
         for alias in node.names
     }
     assert imported == {
+        "ColumnContributor",
         "ColumnSlot",
+        "ColumnTier",
         "PositionBranch",
         "PositionColumn",
         "PositionLayoutView",
         "STORAGE_LAYOUT_MODEL_REJECTED_RULES",
+        "TableLayout",
         "position_projection",
         "position_view",
         "validate_storage_layout",
     }
+
+
+def test_the_harness_retains_no_synthetic_physical_table_entity() -> None:
+    # Physical table shape has exactly one owner. A merged Entity standing in for a
+    # shared table, or a second Entity-level column sequence, would be a competing
+    # answer to the same question the layout already decides.
+    assert not hasattr(ddl_builder, "physical_entities_by_table")
+    assert not hasattr(ddl_builder, "column_order")
+    assert not hasattr(case_runner, "_case_column_order")

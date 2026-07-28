@@ -399,7 +399,7 @@ def _layout(
     physical_key: list[ColumnSlot] = []
     for contributor in key_contributors:
         slot = by_contributor.get(contributor)
-        if slot is None:
+        if slot is None:  # pragma: no cover - resolution rejects an axis naming no Attribute
             raise RuntimeError(
                 f"Table {group.table.name!r} has no slot for physical-key contributor {contributor}"
             )

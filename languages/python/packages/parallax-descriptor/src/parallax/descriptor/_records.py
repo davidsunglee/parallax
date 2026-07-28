@@ -2,11 +2,13 @@
 
 The neutral, frozen ``slots`` dataclasses that make up a parsed model
 descriptor — an in-memory instance of ``core/schemas/metamodel.schema.json``.
-Every record is immutable and shareable; derived facts (an entity's effective
-``temporal`` classification, its physical ``column_order``) are computed
-accessors, never re-authored fields. Within ``m-descriptor``, they are the
-substrate for descriptor operations; no other behavioural scope reads them
-directly. The entity frontend's own adapter and the conformance engine's
+Every record is immutable and shareable; derived facts, such as an entity's
+effective ``temporal`` classification, are computed accessors, never re-authored
+fields. Physical table shape is not among them: these records stay the frontend
+input a model forms from, and ``m-storage-layout`` composes the physical answer.
+Within ``m-descriptor``, they are the substrate for descriptor operations; no
+other behavioural scope reads them directly. The entity frontend's own adapter
+and the conformance engine's
 raw-descriptor seams answer structural family questions here — through
 :func:`declaring_entity`, :func:`family_root_name`, and
 :func:`concrete_descendant_names` — for a document that has not formed, or
@@ -48,7 +50,6 @@ __all__ = [
     "Unset",
     "ValueObject",
     "ValueObjectAttribute",
-    "column_order",
     "concrete_descendant_names",
     "declaring_entity",
     "effective_as_of_axes",
@@ -473,23 +474,3 @@ class Metamodel:
                 return relationship
         owner = self.entity(entity) if isinstance(entity, str) else entity
         raise KeyError(f"{owner.canonical_name}.{name}")
-
-
-def column_order(entity: Entity) -> tuple[str, ...]:
-    """The entity's own physical columns in canonical order.
-
-    Primary-key columns first, then the inheritance ``tag`` column when this
-    entity is the table-per-hierarchy root that declares it (m-sql: the tag sits
-    immediately after the primary key), then the remaining scalar columns in
-    declaration order, and finally each value object's single backing column in
-    declaration order (m-value-object: the document column is positional, after
-    the scalar attributes). The full inherited chain of a concrete subtype's
-    shared table is resolved above this per-entity view (m-inheritance).
-    """
-    pk = [attr.column for attr in entity.attributes if attr.primary_key]
-    tag: list[str] = []
-    if entity.inheritance is not None and entity.inheritance.tag_column is not None:
-        tag.append(entity.inheritance.tag_column)
-    rest = [attr.column for attr in entity.attributes if not attr.primary_key]
-    documents = [vo.storage_column for vo in entity.value_objects]
-    return (*pk, *tag, *rest, *documents)

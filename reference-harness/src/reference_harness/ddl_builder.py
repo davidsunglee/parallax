@@ -9,13 +9,12 @@ an implementation's would be.
 
 from __future__ import annotations
 
-import copy
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from .case import Entity, Model
+from .case import Model
 from .storage_layout import (
     AttributeContributor,
     ColumnContributor,
@@ -353,65 +352,6 @@ def _create_table(layout: TableLayout, declarations: _Declarations, dialect: str
     return f"create table {quote_identifier(layout.table, dialect)} (\n  {column_clause}\n)"
 
 
-def _merge_by_column(items: Sequence[dict], key: str = "column") -> list[dict]:
-    """Return physical column definitions once, preserving first-seen order."""
-    merged: list[dict] = []
-    seen: set[str] = set()
-    for item in items:
-        column = item[key]
-        if column in seen:
-            continue
-        seen.add(column)
-        merged.append(copy.deepcopy(item))
-    return merged
-
-
-def _merge_by_name(items: Sequence[dict], key: str = "name") -> list[dict]:
-    merged: list[dict] = []
-    seen: set[str] = set()
-    for item in items:
-        name = item[key]
-        if name in seen:
-            continue
-        seen.add(name)
-        merged.append(copy.deepcopy(item))
-    return merged
-
-
-def _physical_table_entity(entities: Sequence[Entity]) -> Entity:
-    """Synthesize the physical table shape for entities sharing one table.
-
-    Table-per-hierarchy descriptors may put subtype-specific columns only on the
-    subtype entity. DDL is physical, so the shared table must contain the union of
-    all columns that any entity mapped to that table can load or query.
-    """
-    if len(entities) == 1:
-        return entities[0]
-
-    definition = copy.deepcopy(entities[0].runtime_facts)
-    definition["attributes"] = _merge_by_column(
-        [attribute for entity in entities for attribute in entity.attributes]
-    )
-    value_objects = _merge_by_column(
-        [value_object for entity in entities for value_object in entity.value_objects]
-    )
-    if value_objects:
-        definition["valueObjects"] = value_objects
-    else:
-        definition.pop("valueObjects", None)
-
-    as_of_axes = _merge_by_name(
-        [as_of for entity in entities for as_of in entity.runtime_facts.get("asOfAxes", [])],
-        key="dimension",
-    )
-    if as_of_axes:
-        definition["asOfAxes"] = as_of_axes
-    else:
-        definition.pop("asOfAxes", None)
-
-    return Entity(definition=definition)
-
-
 def ddl_for(model: Model, dialect: str) -> list[str]:
     """Return the ordered DDL statements that create every physical table.
 
@@ -424,45 +364,3 @@ def ddl_for(model: Model, dialect: str) -> list[str]:
     """
     declarations = _declarations(model)
     return [_create_table(layout, declarations, dialect) for layout in model.storage_layout.tables]
-
-
-def _entities_by_table(model: Model) -> dict[str, list[Entity]]:
-    """Group the model's ROW-OWNING entities by physical table.
-
-    Abstract inheritance nodes (root / abstract-subtype) are tableless and rowless
-    (m-inheritance), so they are excluded — a `table-per-hierarchy` family's shared
-    table is the union of its concrete subtypes, and a `table-per-concrete-subtype`
-    family maps each concrete subtype to its own table.
-    """
-    by_table: dict[str, list[Entity]] = {}
-    for entity in model.entities:
-        if entity.is_abstract:
-            continue
-        by_table.setdefault(entity.table, []).append(entity)
-    return by_table
-
-
-def physical_entities_by_table(model: Model) -> dict[str, Entity]:
-    """Map each physical table to the synthesized entity carrying its full column set.
-
-    For a `table-per-hierarchy` shared table this is the union of every concrete
-    subtype mapped to it (so a table-state read projects the whole physical row,
-    not just one subtype's columns); for an ordinary or `table-per-concrete-subtype`
-    table it is the single entity that owns it.
-    """
-    return {
-        table: _physical_table_entity(entities)
-        for table, entities in _entities_by_table(model).items()
-    }
-
-
-def column_order(entity: Entity) -> Sequence[str]:
-    """The descriptor's column order for *entity* (matches DDL + load order).
-
-    Scalar attributes first, then each valueObject's single structured-document
-    column — the same order :func:`_create_table` emits, so fixture loading and
-    table-state reads stay column-aligned.
-    """
-    columns = [attribute["column"] for attribute in entity.attributes]
-    columns.extend(value_object["column"] for value_object in entity.value_objects)
-    return columns

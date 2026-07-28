@@ -801,8 +801,8 @@ _VO_VALUE_TYPE_MISMATCH_UNREACHABLE_REASON: Final[str] = (
 # The remaining value-object write-family siblings each use the matching
 # module-level reason above.
 _VO_BATCH_WRITE_REASON: Final[str] = (
-    "a multi-row (batched) insert, each row's whole value-object document binding "
-    "atomically in columnOrder position — the set-based flush collapse is graded "
+    "a multi-row (batched) insert, each row's whole value-object document carried as "
+    "one atomic document bind — the set-based flush collapse is graded "
     "end-to-end by the compile/run conformance lanes, matching this registry's own "
     "m-batch-write bucket reason; no idiomatic story was authored for this VO-bearing "
     "batched shape"
