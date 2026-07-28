@@ -1459,7 +1459,6 @@ def _tpcs_position_branches(
 
 def _assert_tpcs_union_shape(
     case: Case,
-    family: Family,
     view: PositionLayoutView,
     position_branches: list[tuple[PositionBranch, str]],
 ) -> None:
@@ -1557,7 +1556,7 @@ def _materialize_tpcs_family_variant(
             f"onto one family's canonical concrete selection."
         )
     position_branches = _tpcs_position_branches(case, family, ordered, view)
-    _assert_tpcs_union_shape(case, family, view, position_branches)
+    _assert_tpcs_union_shape(case, view, position_branches)
     superset = list(view.column_spellings)
     result_aliases = _tpcs_result_aliases(superset)
     column_counts = {column: superset.count(column) for column in set(superset)}
