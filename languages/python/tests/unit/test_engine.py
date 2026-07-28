@@ -1771,6 +1771,75 @@ def test_collapse_eligible_insert_entry_partitions_by_physical_slot_selection() 
     assert [e.binds for e in emissions] == [(10, "Mira", 100.00), (11, "Omar")]
 
 
+def test_update_entry_uniform_within_each_physical_group_collapses_per_group() -> None:
+    # An entry whose rows are non-uniform TAKEN AS A WHOLE, yet uniform WITHIN
+    # each physical group: the first two rows assign only `balance`, the last
+    # two only `owner`. Batch grouping partitions them into two runs before
+    # collapse eligibility is asked of either (m-sql "Physical DML ordering"),
+    # and each run's own rows ARE uniform, so both collapse into one `IN`-list
+    # UPDATE (m-batch-write "Set-based flush"). The authored `statements: 2`
+    # must agree with that per-group accounting, not with the row count.
+    case = _synthetic_write(
+        "writeSequence",
+        {
+            "model": "models/wallet.yaml",
+            "when": {
+                "writeSequence": [
+                    {
+                        "mutation": "update",
+                        "entity": "Wallet",
+                        "statements": 2,
+                        "rows": [
+                            {"id": 1, "balance": 500.00},
+                            {"id": 2, "balance": 500.00},
+                            {"id": 3, "owner": "Zed"},
+                            {"id": 4, "owner": "Zed"},
+                        ],
+                    }
+                ]
+            },
+        },
+    )
+    emissions, round_trips = engine.compile_write_sequence_case(case, "postgres")
+    assert round_trips == 2
+    assert [e.sql for e in emissions] == [
+        "update wallet set balance = ? where id in (?, ?)",
+        "update wallet set owner = ? where id in (?, ?)",
+    ]
+    assert [e.binds for e in emissions] == [(500.00, 1, 2), ("Zed", 3, 4)]
+
+
+def test_update_entry_non_uniform_within_a_physical_group_rejects_a_grouped_count() -> None:
+    # The same two physical groups as above, but each group's own rows assign
+    # DIFFERENT values, so neither collapses and the entry emits one keyed
+    # UPDATE per row. `statements` stays a real assertion: an authored count of
+    # 2 (the group count, not the statement count) is an authoring error and
+    # refuses loudly rather than being accepted as "close enough".
+    case = _synthetic_write(
+        "writeSequence",
+        {
+            "model": "models/wallet.yaml",
+            "when": {
+                "writeSequence": [
+                    {
+                        "mutation": "update",
+                        "entity": "Wallet",
+                        "statements": 2,
+                        "rows": [
+                            {"id": 1, "balance": 111.00},
+                            {"id": 2, "balance": 222.00},
+                            {"id": 3, "owner": "Zed"},
+                            {"id": 4, "owner": "Ada"},
+                        ],
+                    }
+                ]
+            },
+        },
+    )
+    with pytest.raises(engine.EngineError, match="does not match the 4 instruction"):
+        engine.compile_write_sequence_case(case, "postgres")
+
+
 def test_non_uniform_multi_row_update_decomposes_per_distinct_key() -> None:
     # m-batch-write-002's own shape: non-uniform per-key values decompose into
     # one UPDATE per distinct key — genuinely lowering end to end (neither

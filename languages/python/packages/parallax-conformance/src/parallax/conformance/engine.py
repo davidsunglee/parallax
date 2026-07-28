@@ -18,7 +18,6 @@ from __future__ import annotations
 import contextlib
 import datetime as dt
 import decimal
-import itertools
 import os
 import socket
 import threading
@@ -1149,27 +1148,34 @@ def _rows_carry_observation_keys(raw_rows: Sequence[Mapping[str, object]]) -> bo
 def _decomposes_per_row(
     meta: Metamodel, entity_name: str, mutation: str, raw_rows: Sequence[Mapping[str, object]]
 ) -> bool:
-    """Whether a non-temporal write entry's rows decompose into independent
-    single-row instructions (mirroring what that many separate
-    `Transaction.insert`/`.update`/`.delete` calls would buffer) rather than
-    collapsing into ONE multi-row instruction — the INVERSE of
-    :func:`~parallax.core.batch_write.collapses`, the injected `m-batch-write`
-    collapse-eligibility vocabulary both this
-    engine and the composition layer's own planner collapse stage
-    (:func:`_lower_resolved`, `parallax.snapshot.handle.Database.transact`)
-    consult identically, so the engine's PRE-collapsed multi-row instruction
-    construction below and the PLANNER's own collapse stage can never
-    disagree on eligibility.
+    """Whether a non-temporal write entry's rows are treated as independent
+    per-object writes — each carrying its OWN object key and observation,
+    mirroring what that many separate
+    `Transaction.insert`/`.update`/`.delete` calls would buffer — rather than
+    as anonymous rows free to be merged back together.
+
+    This decides OBSERVATION BINDING only, never statement count: either way
+    :func:`_build_instructions` buffers one single-row instruction per row and
+    leaves every merge to the planner's own collapse stage
+    (:func:`_lower_resolved`, `parallax.snapshot.handle.Database.transact`).
+    What a bound observation changes is that the planner refuses to merge that
+    row at all, which is exactly the point — a merged multi-row instruction has
+    nowhere to carry a per-row observed version. The question is answered with
+    :func:`~parallax.core.batch_write.collapses`, the same injected
+    `m-batch-write` collapse-eligibility vocabulary the planner consults, so
+    binding an observation never contradicts the planner's own eligibility
+    answer.
 
     Derived SEMANTICALLY from the instruction and model — mutation kind,
     versioned-ness, presence of per-row observations, and computed/allocated
     primary keys — never from the case's own authored ``statements`` count,
     which is a count-consistency ASSERTION only (`compatibility-case.schema.
-    json`), never a semantics discriminator (a prior review finding closed
-    this; ``_check_statement_count_consistency`` stays the assertion-only
-    verifier):
+    json`) verified separately by
+    :func:`_check_statement_count_consistency`, never a semantics
+    discriminator:
 
-    - a single row is always its own instruction (no ambiguity);
+    - a single row always binds its own observation (nothing to merge it with,
+      so nothing is given up);
     - any row authoring a reserved ``observedVersion``/``observedTxStart`` control
       key is an explicit per-row-observation signal (`m-opt-lock`; ADR 0013) —
       an ENGINE-specific pre-check `batch_write.collapses` itself does not
@@ -1198,22 +1204,58 @@ def _decomposes_per_row(
     return not batch_write.collapses(model, entity, mutation, raw_rows)
 
 
-def _batch_group_count(
-    meta: Metamodel, entity_name: str, mutation: str, rows: Sequence[Mapping[str, object]]
+def _planned_statement_count(
+    meta: Metamodel,
+    entity_name: str,
+    mutation: str,
+    rows: Sequence[tuple[Mapping[str, object], bool]],
 ) -> int:
-    """How many statements a COLLAPSE-ELIGIBLE entry's rows emit: one per
-    ADJACENT run of rows sharing a physical shape.
+    """How many statements one non-temporal entry's buffered per-row
+    instructions emit once the planner has merged what it can — the single
+    derived count :func:`_check_statement_count_consistency` grades an entry's
+    authored ``statements`` against, whatever branch built those rows.
 
-    The shape question is asked of
-    :func:`~parallax.snapshot.handle.collapse_group_key`, the same injected
-    grouping key the planner's own collapse stage applies when it merges these
-    rows back together (`m-sql` "Physical DML ordering"), so this count can
-    never disagree with what the flush actually emits.
+    Applies the planner's own two-stage rule to the SAME injected seams the
+    planner is wired with, so the two can never drift: the rows are first
+    partitioned into ADJACENT runs sharing a physical shape
+    (:func:`~parallax.snapshot.handle.collapse_group_key`, `m-sql` "Physical
+    DML ordering"), then each run's own rows are put to
+    :func:`~parallax.core.batch_write.collapses` — one statement for a run that
+    collapses, one per row for a run that does not. Asking eligibility of a
+    single run rather than of the whole entry is what lets an entry that is
+    non-uniform TAKEN AS A WHOLE still batch within each shape.
+
+    A row carrying its own observation is never a merge candidate (the planner
+    excludes it by object key), so it ends the run in progress and stands as
+    its own statement.
     """
     model = case_model(meta)
     entity = case_entity(model, meta.entity(entity_name))
-    groups = [collapse_group_key(model, entity, mutation, row) for row in rows]
-    return 1 + sum(1 for previous, group in itertools.pairwise(groups) if group != previous)
+    total = 0
+    run: list[Mapping[str, object]] = []
+    run_group: object = None
+
+    def flush_run() -> int:
+        if not run:
+            return 0
+        emitted = (
+            1 if len(run) > 1 and batch_write.collapses(model, entity, mutation, run) else len(run)
+        )
+        run.clear()
+        return emitted
+
+    for row, observed in rows:
+        if observed:
+            total += flush_run() + 1
+            continue
+        group = collapse_group_key(model, entity, mutation, row)
+        if run and group == run_group:
+            run.append(row)
+            continue
+        total += flush_run()
+        run.append(row)
+        run_group = group
+    return total + flush_run()
 
 
 def _check_statement_count_consistency(entry: Mapping[str, object], decomposed_count: int) -> None:
@@ -1296,28 +1338,27 @@ def _build_instructions(
     ``entity`` / ``rows``) beside case-authoring keys (``note`` / ``statements``
     / ``roundTrips`` / ``rollback``). ``rows`` MAY batch several logical
     per-object writes into one entry (the write-instruction schema's "one or
-    more rows" vocabulary); :func:`_decomposes_per_row` derives SEMANTICALLY
-    whether they decompose into N INDEPENDENT single-row instructions (each
-    stripping its own reserved observation control keys into an
-    :class:`Observation`, keyed by that row's OWN object key — `m-opt-lock`;
-    ADR 0013) or are COLLAPSE-ELIGIBLE.
+    more rows" vocabulary), and this seam ALWAYS buffers one single-row
+    instruction per row, exactly as that many separate ``Transaction`` calls
+    would. Nothing is ever pre-merged here: whether buffered rows share one
+    statement is the planner's own collapse stage to decide.
 
-    Either way this seam buffers one single-row instruction per row, exactly as
-    that many separate ``Transaction`` calls would: a collapse-eligible entry is
-    never pre-merged here, because whether its rows share one statement is the
-    planner's own collapse stage to decide under the injected batch grouping
-    (:func:`_batch_group_count` reports the same partition for the entry's
-    authored ``statements`` assertion). What distinguishes the two branches is
-    observation binding — a collapse-eligible row carries none by construction,
-    so merging it back stays legal. A row whose
-    own control keys yield NO observation falls back to
+    What :func:`_decomposes_per_row` derives SEMANTICALLY is whether each row
+    binds its OWN object key and :class:`Observation` (its reserved observation
+    control keys stripped into one — `m-opt-lock`; ADR 0013), which in turn
+    tells the planner to keep that row separately identifiable rather than
+    merging it. A row whose own control keys yield NO observation falls back to
     ``scenario_observations`` — a writeSequence's own permanently-empty
     instance, or (the scenario RUN lane only) a `uow` GROUP's own prior find
     step(s) (:func:`_observe_group_find`, via :func:`_run_uow_group`), keyed
     consistently with :func:`~parallax.core.unit_work.object_key` — mirroring
     how a temporal entry falls back to :meth:`TemporalShadow.resolve` above.
+
     :func:`_check_statement_count_consistency` then verifies the entry's own
-    authored ``statements`` count agrees, independently of that decision.
+    authored ``statements`` count against :func:`_planned_statement_count`,
+    which reads the buffered rows and their bound observations back through the
+    planner's own grouping and collapse seams — one derived count for both
+    branches, never one rule per branch.
     """
     if "entity" not in entry:
         target = entry.get("target")
@@ -1337,26 +1378,10 @@ def _build_instructions(
         return [_build_temporal_instruction(entry, meta, shadow, tx_instant, unit_inserted)]
     mutation = cast("str", entry["mutation"])
     raw_rows = cast("Sequence[Mapping[str, object]]", entry["rows"])
-    if not _decomposes_per_row(meta, entity_name, mutation, raw_rows):
-        clean_rows = [
-            _seed_insert_version(meta, entity_name, mutation, _strip_observation(raw_row)[0])
-            for raw_row in raw_rows
-        ]
-        _check_statement_count_consistency(
-            entry, _batch_group_count(meta, entity_name, mutation, clean_rows)
-        )
-        collapsible_model = case_model(meta)
-        collapsible: list[tuple[WriteInstruction, ObjectKey | None, Observation | None]] = []
-        for clean_row in clean_rows:
-            instruction = instructions.deserialize(
-                {"mutation": mutation, "entity": entity_name, "rows": [clean_row]}
-            )
-            instructions.validate_instruction(instruction, collapsible_model)
-            collapsible.append((instruction, None, None))
-        return collapsible
-    _check_statement_count_consistency(entry, len(raw_rows))
+    binds_observations = _decomposes_per_row(meta, entity_name, mutation, raw_rows)
     model = case_model(meta)
     out: list[tuple[WriteInstruction, ObjectKey | None, Observation | None]] = []
+    counted: list[tuple[Mapping[str, object], bool]] = []
     for raw_row in raw_rows:
         clean_row, observation = _strip_observation(raw_row)
         clean_row = _seed_insert_version(meta, entity_name, mutation, clean_row)
@@ -1364,12 +1389,20 @@ def _build_instructions(
             {"mutation": mutation, "entity": entity_name, "rows": [clean_row]}
         )
         instructions.validate_instruction(instruction, model)
-        key = object_key(instruction, model)
-        if observation is None and key is not None:
-            observation = scenario_observations.get(key)
-        if observation is None:
-            key = None
+        key: ObjectKey | None = None
+        if binds_observations:
+            key = object_key(instruction, model)
+            if observation is None and key is not None:
+                observation = scenario_observations.get(key)
+            if observation is None:
+                key = None
+        else:
+            observation = None
         out.append((instruction, key, observation))
+        counted.append((clean_row, key is not None and observation is not None))
+    _check_statement_count_consistency(
+        entry, _planned_statement_count(meta, entity_name, mutation, counted)
+    )
     return out
 
 
