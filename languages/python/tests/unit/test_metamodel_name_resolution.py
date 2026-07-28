@@ -22,14 +22,19 @@ from parallax.descriptor._adapter import unresolved_metamodel
 pytestmark = pytest.mark.unit
 
 
-def _entity(name: str, namespace: str | None) -> records.Entity:
+def _entity(name: str, namespace: str) -> records.Entity:
     key = records.Attribute(name="id", type="int64", column="id", primary_key=True)
-    return records.Entity(name=name, namespace=namespace, table=name.lower(), attributes=(key,))
+    table = f"{namespace}_{name}".lower()
+    return records.Entity(name=name, namespace=namespace, table=table, attributes=(key,))
 
 
 def _model() -> Metamodel:
     """An accepted model with two same-named Entities in distinct namespaces
-    (``a.Person`` / ``b.Person``) plus one uniquely-named ``c.Account``."""
+    (``a.Person`` / ``b.Person``) plus one uniquely-named ``c.Account``.
+
+    Each Entity maps its own physical Table: name ambiguity is a resolution
+    concern, while two independent owners of one Table is a rejected model.
+    """
     return form_metamodel(
         unresolved_metamodel(
             records.Metamodel(

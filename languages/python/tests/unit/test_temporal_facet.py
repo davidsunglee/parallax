@@ -43,6 +43,7 @@ from parallax.core.model_formation import (
 )
 from parallax.core.opt_lock import MODEL_COMPILER as OPT_LOCK_COMPILER
 from parallax.core.relationship import MODEL_COMPILER as RELATIONSHIP_COMPILER
+from parallax.core.storage_layout import MODEL_COMPILER as STORAGE_LAYOUT_COMPILER
 from parallax.core.temporal_read import (
     FACET_KEY,
     NON_TEMPORAL,
@@ -350,7 +351,12 @@ def test_an_alternate_implementation_compiles_the_same_answers() -> None:
 
 
 def test_a_profile_missing_the_required_inheritance_compiler_fails_before_execution() -> None:
-    profile = _profile(RELATIONSHIP_COMPILER, temporal_read.MODEL_COMPILER, OPT_LOCK_COMPILER)
+    profile = _profile(
+        RELATIONSHIP_COMPILER,
+        STORAGE_LAYOUT_COMPILER,
+        temporal_read.MODEL_COMPILER,
+        OPT_LOCK_COMPILER,
+    )
     with pytest.raises(FormationContractError) as raised:
         form(source(*_valid_time_only()), BUILTIN_MANIFEST, profile)
     assert raised.value.code == FORMATION_FACET_MISSING
@@ -361,6 +367,7 @@ def test_a_profile_installing_one_facet_key_twice_fails_before_execution() -> No
     profile = _profile(
         INHERITANCE_COMPILER,
         RELATIONSHIP_COMPILER,
+        STORAGE_LAYOUT_COMPILER,
         temporal_read.MODEL_COMPILER,
         temporal_read.MODEL_COMPILER,
         OPT_LOCK_COMPILER,
