@@ -21,7 +21,7 @@ import pytest
 from _sql_gen_support import model, target
 
 import fake_metamodel
-from parallax.core import inheritance, relationship
+from parallax.core import inheritance, relationship, storage_layout
 from parallax.core import op_algebra as oa
 from parallax.core.dialect import POSTGRES
 from parallax.core.metamodel import Metamodel
@@ -186,7 +186,7 @@ def test_compiled_read_repr_is_exact_and_stable() -> None:
         "t0.qty, t0.price, t0.active, t0.ordered_on from orders t0', binds=()), "
         "narrow_to=None, target=EntityIdentity(namespace='parallax.compatibility', name='Order'), "
         "resolved_position=(EntityIdentity(namespace='parallax.compatibility', name='Order'),), "
-        "_transform=_IdentityTransform())"
+        "documents=(), _transform=_IdentityTransform())"
     )
 
 
@@ -315,9 +315,11 @@ def test_distinct_read_suppresses_the_lock_even_in_locking_mode() -> None:
 # --------------------------------------------------------------------------- #
 def _fake_model() -> Metamodel:
     base = fake_metamodel.parity_model()
+    inheritance_facet = inheritance.compile_facet(base)
     return fake_metamodel.parity_model(
         {
-            inheritance.FACET_KEY: inheritance.compile_facet(base),
+            inheritance.FACET_KEY: inheritance_facet,
+            storage_layout.FACET_KEY: storage_layout.compile_facet(base, inheritance_facet),
             relationship.FACET_KEY: relationship.compile_facet(base),
         }
     )
@@ -332,7 +334,7 @@ def test_a_record_free_model_compiles_the_same_reads() -> None:
     assert scalars.statement.sql == (
         "select t0.id, t0.ledger_label, t0.balance, t0.opened_on from account t0"
     )
-    # Instance form adds the value-object document column last (slot 4).
+    # Instance form adds the `Document` tier slot after every scalar tier.
     instance = compile_read(oa.All(), model, POSTGRES, account, result_form="instance")
     assert instance.statement.sql.endswith("t0.opened_on, t0.contact_doc from account t0")
 

@@ -23,6 +23,8 @@ pytestmark = pytest.mark.unit
 PAYMENT = model("payment")
 ANIMAL = model("animal")
 DOCUMENT = model("document")
+INSTRUMENT = model("instrument")
+RATE = model("rate")
 
 
 def test_narrow_nested_under_a_table_per_concrete_subtype_family_is_refused() -> None:
@@ -88,8 +90,9 @@ def test_tph_user_predicate_then_tag_binds_user_first() -> None:
 
 def test_tph_narrow_to_one_concrete_from_an_abstract_target_still_carries_the_tag() -> None:
     # m-inheritance-012: narrowing the abstract root to ONE concrete still projects
-    # the raw tag column (slot 2 is keyed to `targetEntity` being abstract, never to
-    # the narrow's resolved cardinality) and still injects `=` (cardinality-keyed).
+    # the raw discriminator slot (its projection is keyed to `targetEntity` being
+    # abstract, never to the narrow's resolved cardinality) and still injects `=`
+    # (cardinality-keyed).
     compiled = compile_read(
         oa.Narrow(
             entity="Animal",
@@ -101,7 +104,7 @@ def test_tph_narrow_to_one_concrete_from_an_abstract_target_still_carries_the_ta
         target(ANIMAL, "Animal"),
     )
     assert compiled.statement.sql == (
-        "select t0.id, t0.name, t0.owner_id, t0.license_id, t0.bark_volume, t0.kind "
+        "select t0.id, t0.kind, t0.name, t0.owner_id, t0.license_id, t0.bark_volume "
         "from animal t0 where t0.bark_volume > ? and t0.kind = ?"
     )
     assert compiled.statement.binds == (3, "dog")
@@ -169,15 +172,34 @@ def test_user_binds_precede_framework_tag_binds() -> None:
     assert compiled.statement.binds == (5, "dog")
 
 
-def test_tph_abstract_superset_projection_ordering() -> None:
-    # Ancestry prefix (Animal's own, then Pet's own) first, never alphabetized
-    # across the chain, THEN each concrete's own block in alphabetical subtype
-    # order (Cat before Dog before WildBoar), THEN the raw tag column last.
+def test_tph_abstract_superset_projection_follows_shared_table_layout_tiers() -> None:
+    # The shared Table Layout's tier order: the `Identity` slot, then the raw
+    # `Discriminator` slot, then the `Domain` slots in their stable encounter
+    # order — ancestry prefix (Animal's own, then Pet's own) first, never
+    # alphabetized across the chain, then each concrete's own block in
+    # alphabetical subtype order (Cat before Dog before WildBoar).
     compiled = compile_read(oa.All(), ANIMAL, POSTGRES, target(ANIMAL, "Animal"))
     assert compiled.statement.sql == (
-        "select t0.id, t0.name, t0.owner_id, t0.license_id, t0.indoor, t0.bark_volume, "
-        "t0.tusk_length, t0.kind from animal t0"
+        "select t0.id, t0.kind, t0.name, t0.owner_id, t0.license_id, t0.indoor, "
+        "t0.bark_volume, t0.tusk_length from animal t0"
     )
+
+
+def test_tph_narrowed_projection_drops_slots_outside_the_position() -> None:
+    # Applicability is the Table Layout's own per-slot answer: narrowing to
+    # Cat/Dog keeps every slot applicable to one of them and drops WildBoar's
+    # own `tusk_length`, without disturbing the surviving tier order.
+    compiled = compile_read(
+        oa.Narrow(entity="Animal", to=("Cat", "Dog"), operand=oa.All()),
+        ANIMAL,
+        POSTGRES,
+        target(ANIMAL, "Animal"),
+    )
+    assert compiled.statement.sql.startswith(
+        "select t0.id, t0.kind, t0.name, t0.owner_id, t0.license_id, t0.indoor, "
+        "t0.bark_volume from animal t0"
+    )
+    assert "tusk_length" not in compiled.statement.sql
 
 
 def test_tph_equivalent_narrow_spellings_collapse() -> None:
@@ -244,6 +266,64 @@ def test_tpcs_union_all_branch_order_alias_restart_casts_and_literal() -> None:
         "'Receipt' family_variant from receipt t0"
     )
     assert compiled.statement.binds == ()
+
+
+def test_tpcs_union_predicate_on_a_sibling_only_member_is_refused() -> None:
+    # Resolving a member's column through the branch's own Table Layout makes a
+    # branch that does not physically carry it a loud refusal rather than a
+    # silent reference to a column that table has no slot for. Position validity
+    # is enforced upstream (`m-inheritance-041`), so this is the compiler's own
+    # backstop, and the message names the contributor and the branch table.
+    with pytest.raises(SqlGenError, match="has no Column in table 'receipt'"):
+        compile_read(
+            oa.Comparison(op="greaterThan", attr="Invoice.amountDue", value=1),
+            DOCUMENT,
+            POSTGRES,
+            target(DOCUMENT, "FinancialDocument"),
+        )
+
+
+def test_tph_temporal_slots_follow_every_domain_slot_across_ancestry() -> None:
+    # Tier order outranks ancestry: the root declares both `price` (Domain) and
+    # the four interval Attributes (Temporal), yet the subtypes' own Domain
+    # slots — `coupon` (Bond) and `ticker` (Equity) — still precede every
+    # root-owned Temporal slot in the shared Table.
+    compiled = compile_read(oa.All(), INSTRUMENT, POSTGRES, target(INSTRUMENT, "Instrument"))
+    assert compiled.statement.sql == (
+        "select t0.id, t0.kind, t0.price, t0.coupon, t0.ticker, "
+        "t0.from_z, t0.thru_z, t0.in_z, t0.out_z from instrument t0"
+    )
+
+
+def test_tpcs_union_uses_one_logical_contributor_order_across_branches() -> None:
+    # One Position Layout contributor sequence — `Identity`, then `Domain`
+    # (root `amount`, then each concrete's own in alphabetical branch order),
+    # then the root-owned `Temporal` slots — is shared by both branches, and a
+    # branch that does not own a contributor renders the typed `NULL`
+    # placeholder in that contributor's own position rather than reordering.
+    compiled = compile_read(oa.All(), RATE, POSTGRES, target(RATE, "Rate"))
+    branches = compiled.statement.sql.split(" union all ")
+    assert branches[0] == (
+        "select t0.id, t0.amount, t0.grade, cast(null as decimal(18, 2)) spread, "
+        "t0.from_z, t0.thru_z, t0.in_z, t0.out_z, 'DepositRate' family_variant "
+        "from deposit_rate t0"
+    )
+    assert branches[1] == (
+        "select t0.id, t0.amount, cast(null as varchar(8)) grade, t0.spread, "
+        "t0.from_z, t0.thru_z, t0.in_z, t0.out_z, 'LoanRate' family_variant "
+        "from loan_rate t0"
+    )
+
+
+def test_tpcs_single_concrete_projects_its_own_table_layout_tier_order() -> None:
+    # The concrete's own Entity Layout view: ancestry `Identity` and `Domain`
+    # slots, its own `Domain` slot, then the inherited `Temporal` slots — no
+    # discriminator and no variant literal.
+    compiled = compile_read(oa.All(), RATE, POSTGRES, target(RATE, "DepositRate"))
+    assert compiled.statement.sql == (
+        "select t0.id, t0.amount, t0.grade, t0.from_z, t0.thru_z, t0.in_z, t0.out_z "
+        "from deposit_rate t0"
+    )
 
 
 def test_tpcs_union_restarts_aliases_per_branch_and_concatenates_binds() -> None:
@@ -384,8 +464,9 @@ def test_tph_nested_narrow_with_a_trivial_branch_needs_no_grouping() -> None:
 
 def test_tph_abstract_instance_form_projects_the_value_object_document_last() -> None:
     # No corpus inheritance family combines with a value object; a synthetic family
-    # proves the slot ordering: tag column (m-sql), THEN the value-object
-    # document (m-sql *Read projection*: it rides last among ALL columns).
+    # proves the layout tier order: the `Identity` slot, the raw `Discriminator`
+    # slot, the `Domain` slot, THEN the `Document` slot, which rides last among
+    # ALL columns however early its owner declares it (m-sql *Read projection*).
     from parallax.descriptor._records import (
         Attribute,
         Entity,
@@ -415,7 +496,7 @@ def test_tph_abstract_instance_form_projects_the_value_object_document_last() ->
     )
     meta = formed(Metamodel(entities=(root, leaf)))
     compiled = compile_read(oa.All(), meta, POSTGRES, target(meta, "Root"), result_form="instance")
-    assert compiled.statement.sql == "select t0.id, t0.x, t0.kind, t0.meta from root_tbl t0"
+    assert compiled.statement.sql == "select t0.id, t0.kind, t0.x, t0.meta from root_tbl t0"
 
 
 # --------------------------------------------------------------------------- #

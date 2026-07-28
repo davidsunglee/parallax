@@ -1,0 +1,44 @@
+# Canonical semantic tier order decides a read's projection, not declaration
+# position or ancestry (m-storage-layout x m-sql).
+#
+# LayoutReading declares its members across tiers in an order the projection
+# deliberately does not follow: the root declares `sensor` (Domain) BEFORE its two
+# Transaction-Time bound Attributes, and the concrete subtype declares `celsius`
+# (Domain) AFTER both of them. The shared Table Layout still yields
+# `id` (Identity), `kind` (Discriminator), `sensor` then `celsius` (Domain),
+# `in_z` then `out_z` (Temporal), and `probe` (Document) — so a subtype-owned
+# domain slot precedes a root-owned temporal slot and the document slot follows
+# every scalar tier.
+#
+# The family designates no Audit Metadata, so the Audit tier is empty and
+# contributes no slot between the temporal and document slots: an absent optional
+# tier collapses rather than reserving a position.
+#
+# The abstract-root target projects the raw discriminator at its own tier position
+# and carries no tag predicate, and `familyVariant` is materialized from the tag
+# metadata rather than projected. The defaulted-Latest Transaction-Time pin selects
+# the open milestone alone, so the superseded 20.00 row is not observed.
+model: models/storage-layout.yaml
+tags: [m-storage-layout, m-inheritance, m-temporal-read, m-value-object, m-sql, table-per-hierarchy, root, temporal, as-of, document, familyVariant, graph, instance-form, slice-snapshot-1, slice-managed-1]
+shape: read
+when:
+  targetEntity: LayoutReading
+  operation:
+    all: {}
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.kind, t0.sensor, t0.celsius, t0.in_z, t0.out_z, t0.probe from layout_reading t0 where t0.out_z = ?
+      binds: [infinity]
+  referenceSql: select id, kind, sensor, celsius, in_z, out_z from layout_reading where out_z = 'infinity'::timestamptz
+  graph:
+    LayoutReading:
+      - id: 1
+        sensor: north
+        celsius: 21.50
+        in_z: "2024-02-01T00:00:00+00:00"
+        out_z: infinity
+        probe:
+          model: TH-2
+        familyVariant: LayoutMeterReading
+  roundTrips: 1

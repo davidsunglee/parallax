@@ -37,6 +37,7 @@ from . import errors, serde
 from .case import Case, Entity, Model
 from .data_loader import load_model
 from .ddl_builder import (
+    contributor_types,
     ddl_for,
     physical_entities_by_table,
     placeholder_cast_type,
@@ -49,12 +50,10 @@ from .inheritance import (
     STRATEGY_TPH,
     WRITE_REJECTED_RULES,
     Family,
-    concrete_superset_columns,
     effective_column,
     inheritance_of,
     is_abstract,
     narrowed_view_key,
-    resolve_effective_definition,
     resolve_hop_effective_set,
     tag_of,
     tag_value_to_subtype,
@@ -67,7 +66,15 @@ from .sql_normalize import is_union_all, normalize, sqlglot_dialect
 from .storage_layout import (
     MODEL_REJECTED_RULES as STORAGE_LAYOUT_MODEL_REJECTED_RULES,
 )
-from .storage_layout import validate_storage_layout
+from .storage_layout import (
+    ColumnSlot,
+    PositionBranch,
+    PositionColumn,
+    PositionLayoutView,
+    position_projection,
+    position_view,
+    validate_storage_layout,
+)
 from .value_object_resolve import REJECTED_RULES, RejectionError
 from .write_validate import validate_subtype_write, validate_write
 
@@ -1184,7 +1191,7 @@ def _materialize_family_variant(case: Case, rows: list[dict[str, Any]]) -> list[
     if tag_column is None:
         return rows
     effective = _read_effective_set(case, family, target_name)
-    expected_columns = set(concrete_superset_columns(entity_defs, effective))
+    expected_columns = set(position_projection(case.model.storage_layout, family, effective))
     variant_map = tag_value_to_subtype(entity_defs)
 
     # Projection-shape assertion, derived from the GOLDEN SQL projection rather than a
@@ -1244,14 +1251,14 @@ def _narrow_to_variant_columns(case: Case, rows: list[dict[str, Any]]) -> list[d
     materialized ``familyVariant`` (a no-op for a concrete-target read, or a
     non-inheritance entity, whose rows carry none).
     """
-    entity_defs = case.model.entity_defs
+    family = Family(case.model.entity_defs)
     narrowed: list[dict[str, Any]] = []
     for row in rows:
         variant = row.get("familyVariant")
         if not isinstance(variant, str):
             narrowed.append(row)
             continue
-        own_columns = set(concrete_superset_columns(entity_defs, [variant]))
+        own_columns = set(position_projection(case.model.storage_layout, family, [variant]))
         narrowed.append(
             _MaterializedRow(
                 {
@@ -1299,40 +1306,18 @@ def _tpcs_result_aliases(columns: list[str]) -> list[str]:
     return aliases
 
 
-def _tpcs_superset_attributes(
-    entity_defs: list[dict[str, Any]], effective_set: list[str]
-) -> list[dict[str, Any]]:
-    attributes: list[dict[str, Any]] = []
-    names: set[str] = set()
-    for entity_name in effective_set:
-        resolved = resolve_effective_definition(entity_defs, entity_name)
-        for attribute in resolved.get("attributes", []) or []:
-            if attribute["name"] not in names:
-                attributes.append(attribute)
-                names.add(attribute["name"])
-    family = Family(entity_defs)
-    root = family.root_of(effective_set[0]) if effective_set else None
-    root_definition = family.defs[root] if root is not None else {}
-    temporal_names = {
-        name
-        for axis in root_definition.get("asOfAxes", []) or []
-        if isinstance(axis, dict)
-        for name in (axis["startAttribute"], axis["endAttribute"])
-    }
-    return [
-        attribute
-        for category in (
-            lambda attribute: bool(attribute.get("primaryKey")),
-            lambda attribute: (
-                not bool(attribute.get("primaryKey")) and attribute["name"] not in temporal_names
-            ),
-            lambda attribute: (
-                not bool(attribute.get("primaryKey")) and attribute["name"] in temporal_names
-            ),
-        )
-        for attribute in attributes
-        if category(attribute)
-    ]
+def _placeholder_types(
+    model: Model, columns: tuple[PositionColumn, ...]
+) -> list[tuple[str, int | None]]:
+    """Each position column's declared neutral type and length bound, in column order.
+
+    The only declaration residue an abstract-read `union all` shape needs: the layout
+    settles composition and never a SQL type, yet a branch owning no slot for a
+    contributor must still render `cast(null as <declared type>)` in the same neutral
+    type the branch that owns it was provisioned with.
+    """
+    types = contributor_types(model)
+    return [types[column.contributor] for column in columns]
 
 
 def _canonical_concrete_order(family: Family, target_name: str, effective: list[str]) -> list[str]:
@@ -1392,63 +1377,42 @@ def _string_literal_value(projection: Any) -> str | None:
     return None
 
 
-def _column_type_index(
-    entity_defs: list[dict[str, Any]], effective_set: list[str]
-) -> dict[str, dict[str, Any]]:
-    """Map each superset column to the attribute descriptor that declares it.
-
-    Walks each concrete subtype's flattened (ancestry-resolved) attributes; an
-    inherited column is declared once and consistently, a subtype-declared column by
-    exactly one subtype, so first-writer-wins yields the descriptor (neutral `type` +
-    `maxLength`) the `cast(null as <type>)` placeholder for that column must use.
-    """
-    index: dict[str, dict[str, Any]] = {}
-    for name in effective_set:
-        resolved = resolve_effective_definition(entity_defs, name)
-        for attribute in resolved.get("attributes", []) or []:
-            column = effective_column(attribute)
-            if column not in index:
-                index[column] = attribute
-    return index
-
-
 def _assert_branch_projection_shape(
     case: Case,
     branch: Any,
     position: int,
     name: str,
     superset: list[str],
-    superset_attributes: list[dict[str, Any]],
-    applicable_names: set[str],
+    slots: tuple[ColumnSlot | None, ...],
+    placeholder_types: list[tuple[str, int | None]],
     dialect: str,
 ) -> None:
     """Assert one `union all` branch's per-column projection SHAPE (m-sql).
 
     For every superset column (all but the trailing `familyVariant` literal): a column
-    APPLICABLE to this concrete subtype (declared by it or an inherited ancestor) MUST
-    be a real column reference (``t0.<col>``); a NON-APPLICABLE column MUST be exactly
-    ``cast(null as <type>)`` in the column's declared type mapped to *dialect*
-    (`placeholder_cast_type`, m-dialect). This closes the gap where a bare `null <col>`
-    (no cast) or a wrong-typed cast shares the applicable column's output name and would
-    otherwise pass the name-only check.
+    the branch OWNS A SLOT for MUST be a real column reference (``t0.<col>``); a column
+    it owns no slot for MUST be exactly ``cast(null as <type>)`` in the column's
+    declared type mapped to *dialect* (`placeholder_cast_type`, m-dialect). This closes
+    the gap where a bare `null <col>` (no cast) or a wrong-typed cast shares the owned
+    column's output name and would otherwise pass the name-only check.
     """
     engine = sqlglot_dialect(dialect)
-    for column_index, (column, attribute) in enumerate(
-        zip(superset, superset_attributes, strict=True)
+    for column_index, (column, slot, placeholder_type) in enumerate(
+        zip(superset, slots, placeholder_types, strict=True)
     ):
         node = _projection_expr(branch.expressions[column_index])
-        if attribute["name"] in applicable_names:
+        if slot is not None:
             if not isinstance(node, exp.Column):
                 raise CaseFailure(
                     f"{case.path.name}: `union all` branch {position} ({name!r}) "
                     f"projects column {column!r} as {node.sql(dialect=engine)!r}, but "
-                    f"{column!r} is APPLICABLE to {name!r} (declared by it or an "
-                    f"inherited ancestor) and MUST be a real column reference (m-sql)."
+                    f"{column!r} is APPLICABLE to {name!r} (its branch owns the slot) "
+                    f"and MUST be a real column reference (m-sql)."
                 )
             continue
-        # Non-applicable: exactly `cast(null as <declared type>)` for this dialect.
+        # Slotless in this branch: exactly `cast(null as <declared type>)` for this dialect.
         expected = exp.DataType.build(
-            placeholder_cast_type(attribute.get("type", ""), attribute.get("maxLength"), dialect),
+            placeholder_cast_type(*placeholder_type, dialect),
             dialect=engine,
         )
         if not (isinstance(node, exp.Cast) and isinstance(node.this, exp.Null)):
@@ -1468,26 +1432,55 @@ def _assert_branch_projection_shape(
             )
 
 
-def _assert_tpcs_union_shape(case: Case, family: Family, ordered: list[str]) -> None:
+def _tpcs_position_branches(
+    case: Case, family: Family, ordered: list[str], view: PositionLayoutView
+) -> list[tuple[PositionBranch, str]]:
+    """The position's branches paired with the subtype name each one's literal spells.
+
+    A table-per-concrete-subtype position owns exactly one branch per concrete Table,
+    so the layout's branch sequence IS the `union all` branch order; each branch is
+    paired with the family's rendered spelling of its single row owner, which is what
+    the golden's `familyVariant` literal carries.
+    """
+    rendered = {family.defs.canonical_key(name): name for name in ordered}
+    pairs = [
+        (branch, rendered[branch.concrete_entities[0]])
+        for branch in view.branches
+        if len(branch.concrete_entities) == 1 and branch.concrete_entities[0] in rendered
+    ]
+    if len(pairs) != len(ordered):
+        raise CaseFailure(
+            f"{case.path.name}: the storage layout maps the effective concrete set "
+            f"{ordered} onto {len(view.branches)} branch table(s); a table-per-concrete-"
+            f"subtype abstract read requires exactly one branch per concrete Table."
+        )
+    return pairs
+
+
+def _assert_tpcs_union_shape(
+    case: Case,
+    family: Family,
+    view: PositionLayoutView,
+    position_branches: list[tuple[PositionBranch, str]],
+) -> None:
     """Assert the table-per-concrete-subtype abstract-read `union all` shape (m-sql).
 
     The read-side inheritance oracle for TPCS (the counterpart of the TPH
-    projection-shape check): from the descriptor alone it recomputes the branch
-    count/order (the effective concrete set in ALPHABETICAL order by entity name), the
-    stable superset projection every branch shares (inherited columns first, then
-    subtype-declared own-column blocks in alphabetical subtype order, then the
-    `familyVariant` literal), each branch's
-    per-column shape (an applicable column is a real reference; a non-applicable column
-    is a `cast(null as <declared type>)` placeholder in that dialect's type), and each
+    projection-shape check). The layout position settles the physical facts — the
+    branch count and order, the Table each branch reads, the one logical contributor
+    sequence every branch aligns to, and each branch's slot-or-absence entry per
+    contributor. This asserts the SQL renderings layered over them, which are never
+    layout concerns: the collision-safe result aliases, each branch's per-column shape
+    (an owned slot is a real reference; a slotless position is a
+    `cast(null as <declared type>)` placeholder in that dialect's type), and each
     branch's `familyVariant` literal (the concrete subtype NAME). EVERY declared golden
     dialect is checked (so a MariaDB `char` cast is asserted with the MariaDB type
     mapping, not the Postgres one). Parsed from the golden text, so it is
     row-count-independent — a zero-row abstract read still witnesses a mis-ordered
     branch, a dropped superset column, a bare/mis-typed placeholder, or a wrong literal.
     """
-    entity_defs = case.model.entity_defs
-    superset_attributes = _tpcs_superset_attributes(entity_defs, ordered)
-    superset = [effective_column(attribute) for attribute in superset_attributes]
+    superset = list(view.column_spellings)
+    placeholder_types = _placeholder_types(case.model, view.columns)
     expected_columns = [*_tpcs_result_aliases(superset), _TPCS_VARIANT_COLUMN]
     for dialect in sorted(case.golden_dialects):
         statements = case.golden_statements(dialect)
@@ -1496,14 +1489,17 @@ def _assert_tpcs_union_shape(case: Case, family: Family, ordered: list[str]) -> 
         tree = sqlglot.parse_one(statements[0], read=sqlglot_dialect(dialect))
         _assert_union_all_only(case, tree)
         branches = _union_branch_selects(tree)
-        if len(branches) != len(ordered):
+        if len(branches) != len(position_branches):
             raise CaseFailure(
                 f"{case.path.name}: table-per-concrete-subtype abstract read lowers to "
-                f"{len(ordered)} `union all` branch(es) (the effective concrete set "
-                f"{ordered}), but the {dialect} golden has {len(branches)}."
+                f"{len(position_branches)} `union all` branch(es) (the effective concrete "
+                f"set {[name for _, name in position_branches]}), but the {dialect} golden "
+                f"has {len(branches)}."
             )
-        for position, (branch, name) in enumerate(zip(branches, ordered, strict=True)):
-            table = family.defs[name].get("table")
+        for position, (branch, (position_branch, name)) in enumerate(
+            zip(branches, position_branches, strict=True)
+        ):
+            table = position_branch.layout.table
             branch_tables = [source.name for source in branch.find_all(exp.Table)]
             if not branch_tables or branch_tables[0] != table:
                 raise CaseFailure(
@@ -1516,23 +1512,17 @@ def _assert_tpcs_union_shape(case: Case, family: Family, ordered: list[str]) -> 
                 raise CaseFailure(
                     f"{case.path.name}: `union all` branch {position} ({name!r}) projects "
                     f"{out_columns}, not the stable superset + familyVariant literal "
-                    f"{expected_columns} (inherited first, then subtype-declared in "
-                    f"alphabetical order by entity name, then familyVariant; m-sql)."
+                    f"{expected_columns} (the position's one contributor sequence, then "
+                    f"familyVariant; m-sql)."
                 )
-            applicable_names = {
-                attribute["name"]
-                for attribute in resolve_effective_definition(entity_defs, name).get(
-                    "attributes", []
-                )
-            }
             _assert_branch_projection_shape(
                 case,
                 branch,
                 position,
                 name,
                 superset,
-                superset_attributes,
-                applicable_names,
+                position_branch.slots,
+                placeholder_types,
                 dialect,
             )
             literal = _string_literal_value(branch.expressions[-1])
@@ -1552,15 +1542,26 @@ def _materialize_tpcs_family_variant(
     Asserts the `union all` branch/projection shape, then renames each row's
     ``family_variant`` (the per-branch subtype-name literal) to ``familyVariant`` so
     the materialized rows compare against ``then.rows`` — the TPCS counterpart of the
-    TPH tag-to-variant materialization (m-inheritance / m-sql).
+    TPH tag-to-variant materialization (m-inheritance / m-sql). A row observed through
+    a collision-safe internal alias is restored to the physical spelling its OWN
+    branch's slot carries, and an alias standing for a slot that branch does not own is
+    dropped.
     """
     effective = _read_effective_set(case, family, target_name)
     ordered = _canonical_concrete_order(family, target_name, effective)
-    _assert_tpcs_union_shape(case, family, ordered)
-    superset_attributes = _tpcs_superset_attributes(case.model.entity_defs, ordered)
-    superset = [effective_column(attribute) for attribute in superset_attributes]
+    view = position_view(case.model.storage_layout, family, effective)
+    if view is None:
+        raise CaseFailure(
+            f"{case.path.name}: the storage layout resolves no position for the effective "
+            f"concrete set {ordered}; a table-per-concrete-subtype abstract read must map "
+            f"onto one family's canonical concrete selection."
+        )
+    position_branches = _tpcs_position_branches(case, family, ordered, view)
+    _assert_tpcs_union_shape(case, family, view, position_branches)
+    superset = list(view.column_spellings)
     result_aliases = _tpcs_result_aliases(superset)
     column_counts = {column: superset.count(column) for column in set(superset)}
+    slots_by_variant = {name: branch.slots for branch, name in position_branches}
 
     materialized: list[dict[str, Any]] = []
     for row in rows:
@@ -1574,22 +1575,20 @@ def _materialize_tpcs_family_variant(
         if "familyVariant" in new_row:
             new_row.consumed_value_object_columns.add("familyVariant")
         variant = new_row.pop(_TPCS_VARIANT_COLUMN)
-        applicable_names = {
-            attribute["name"]
-            for attribute in resolve_effective_definition(case.model.entity_defs, variant).get(
-                "attributes", []
+        slots = slots_by_variant.get(variant)
+        if slots is None:
+            raise CaseFailure(
+                f"{case.path.name}: {_TPCS_VARIANT_COLUMN!r} literal {variant!r} names no "
+                f"branch of the effective concrete set {sorted(slots_by_variant)}."
             )
-        }
-        for attribute, column, result_alias in zip(
-            superset_attributes, superset, result_aliases, strict=True
-        ):
+        for slot, column, result_alias in zip(slots, superset, result_aliases, strict=True):
             if (
                 result_alias in new_row
                 and result_alias != column
-                and (column_counts[column] == 1 or attribute["name"] in applicable_names)
+                and (column_counts[column] == 1 or slot is not None)
             ):
                 new_row[column] = new_row.pop(result_alias)
-            elif column_counts[column] > 1 and attribute["name"] not in applicable_names:
+            elif column_counts[column] > 1 and slot is None:
                 new_row.pop(result_alias, None)
         new_row["familyVariant"] = variant
         materialized.append(new_row)

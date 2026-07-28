@@ -175,6 +175,13 @@ _DESCRIPTOR_DEFAULT_COLUMN_READS: Final[frozenset[str]] = frozenset({"m-descript
 _MATERIALIZATION_KEY_COMPATIBILITY_READS: Final[frozenset[str]] = frozenset(
     {"m-inheritance-119", "m-inheritance-120"}
 )
+# The Storage Layout read witnesses: canonical semantic tier order over a shared
+# table whose declarations interleave the tiers, and the cross-table position
+# branch mapping whose two contributors legally reuse one physical Column
+# spelling. Both grade projection ORDER byte-exactly, which is the whole point.
+_STORAGE_LAYOUT_READS: Final[frozenset[str]] = frozenset(
+    {"m-storage-layout-009", "m-storage-layout-010"}
+)
 COMPILE_EXERCISED: Final[frozenset[str]] = (
     _SCALAR_READS
     | _VALUE_OBJECT_PREDICATE_READS
@@ -193,6 +200,7 @@ COMPILE_EXERCISED: Final[frozenset[str]] = (
     | _READ_LOCK_READS
     | _DESCRIPTOR_DEFAULT_COLUMN_READS
     | _MATERIALIZATION_KEY_COMPATIBILITY_READS
+    | _STORAGE_LAYOUT_READS
 )
 
 # Keyed, non-temporal unit-of-work writes graded byte-exact across `m-unit-work`,

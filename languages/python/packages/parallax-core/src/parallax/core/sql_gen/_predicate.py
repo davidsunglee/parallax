@@ -101,6 +101,7 @@ from parallax.core.op_algebra import (
 )
 from parallax.core.sql_gen._context import Ctx as _Ctx
 from parallax.core.sql_gen._context import SqlGenError
+from parallax.core.sql_gen._context import table_layout as _table_layout
 
 # The family LANE of the compiler — distinct from `parallax.core.inheritance`
 # above, which is the metamodel module. Aliased down to the module-private
@@ -113,6 +114,7 @@ from parallax.core.sql_gen._inheritance import tag_guard as _tph_tag_guard
 # of them) out. Same aliasing-down convention as the family lane above.
 from parallax.core.sql_gen._navigation import open_branch as _open_branch
 from parallax.core.sql_gen._navigation import plan_hop as _plan_hop
+from parallax.core.storage_layout import ColumnContributor, StorageLayoutFacet, TableLayout
 
 _COMPARATORS: dict[str, str] = {
     "eq": "=",
@@ -152,10 +154,19 @@ class EntityScope:
     lives on the scope rather than on the context precisely so that
     `compile_write_predicate` reaches the very same vocabulary a read does, one
     flag apart.
+
+    ``layout`` is the ONE physical Table this statement (or `union all` branch)
+    reads, so every reference to a member's column is answered by a Storage
+    Layout slot rather than by re-reading the member's own storage declaration.
+    A branch of a table-per-concrete-subtype union carries its OWN branch layout
+    even though its active entity stays the read's `targetEntity`, which is what
+    makes "does this branch physically carry that member?" a question the scope
+    can answer at all.
     """
 
     ctx: _Ctx
     entity: EntityMetadata
+    layout: TableLayout
     alias: str = "t0"
     unaliased: bool = False
 
@@ -166,6 +177,10 @@ class EntityScope:
     @property
     def facet(self) -> InheritanceFacet:
         return self.ctx.facet
+
+    @property
+    def storage(self) -> StorageLayoutFacet:
+        return self.ctx.storage
 
     @property
     def dialect(self) -> Dialect:
@@ -192,7 +207,24 @@ class EntityScope:
         return self.dialect.qualified(self.alias, column)
 
     def column_of(self, attr_ref: str) -> str:
-        return self.own_column(self.entity_attribute(attr_ref).storage.name)
+        return self.own_column(self.slot_column(self.entity_attribute(attr_ref).identity))
+
+    def document_column(self, vo: ValueObjectMetadata) -> str:
+        """Render ``vo``'s backing document column against this scope."""
+        return self.own_column(self.slot_column(vo.identity))
+
+    def slot_column(self, contributor: ColumnContributor) -> str:
+        """``contributor``'s physical Column in the Table this scope reads.
+
+        The one place a member reaches its column: `m-sql` resolves accepted
+        member Identities through the Storage Layout slot index rather than
+        re-reading each declaration's own storage location, so a predicate and
+        the projection beside it can never disagree about the physical Table.
+        """
+        slot = self.layout.contribution(contributor)
+        if slot is None:
+            raise SqlGenError(f"{contributor} has no Column in table {self.layout.table.name!r}")
+        return slot.column.name
 
     def entity_attribute(self, attr_ref: str) -> AttributeMetadata:
         _, _, name = attr_ref.rpartition(".")
@@ -229,9 +261,16 @@ class EntityScope:
         ``unaliased`` deliberately does NOT travel: the subquery this scope
         describes declares `alias` itself, so its columns are alias-qualified
         even inside a write's otherwise-unaliased predicate (`t1.folder_id = id`
-        — the child correlation qualified, the parent column bare).
+        — the child correlation qualified, the parent column bare). The child's
+        own Table Layout does travel, because the hop selects from the child's
+        own table.
         """
-        return EntityScope(ctx=self.ctx, entity=entity, alias=alias)
+        return EntityScope(
+            ctx=self.ctx,
+            entity=entity,
+            layout=_table_layout(self.ctx.storage, self.ctx.facet, entity.identity),
+            alias=alias,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -413,7 +452,7 @@ def _lower_branch_narrow(narrow: Narrow, scope: EntityScope) -> str:
     before this dispatcher ever runs (`_compile._compile_tph_read`); every narrow
     this function receives is nested, so it always groups when it has two terms.
     """
-    plan = _plan_branch_narrow(scope.facet, scope.entity, narrow)
+    plan = _plan_branch_narrow(scope.facet, scope.storage, scope.entity, narrow)
     # Branch predicate first, THEN the guard's binds — the same explicit ordering
     # the top-level read states, for the same reason.
     branch_sql = lower_predicate(plan.operand, scope)
@@ -490,9 +529,7 @@ def _lower_nested(
     leaf = _resolve_leaf(vo, segments)
     # The document column is the TARGET's own, so it renders through `own_column`
     # and goes bare in a write's unaliased predicate (m-sql rule 1).
-    extraction, path_binds = scope.dialect.nested_extract(
-        scope.own_column(vo.storage.name), segments
-    )
+    extraction, path_binds = scope.dialect.nested_extract(scope.document_column(vo), segments)
     scope.ctx.binds.extend(path_binds)
     return _lower_comparator(op, extraction, leaf.type, scope)
 
@@ -605,7 +642,7 @@ def _lower_any_element(
     # The owning document column is the target's own (bare under `unaliased`); the
     # unnested ELEMENT is not, and stays alias-qualified either way — this very
     # subquery declares `array_alias`, so there is no alias here to leak.
-    guard_sql, guard_binds = scope.dialect.array_guard(scope.own_column(vo.storage.name), pre)
+    guard_sql, guard_binds = scope.dialect.array_guard(scope.document_column(vo), pre)
     scope.ctx.binds.extend(guard_binds)
     element = ElementScope(ctx=scope.ctx, container=container, alias=scope.next_alias())
     extraction, path_binds = scope.dialect.nested_extract(element.element_reference(), post)
@@ -640,7 +677,7 @@ def _lower_nested_exists(op: NestedExists | NestedNotExists, scope: EntityScope)
             f"nestedExists/nestedNotExists over a `one`-multiplicity value object "
             f"({op.path!r}) has no goldened lowering yet"
         )
-    guard_sql, guard_binds = scope.dialect.array_guard(scope.own_column(vo.storage.name), pre)
+    guard_sql, guard_binds = scope.dialect.array_guard(scope.document_column(vo), pre)
     scope.ctx.binds.extend(guard_binds)
     element = ElementScope(ctx=scope.ctx, container=container, alias=scope.next_alias())
     inner = f"select 1 from jsonb_array_elements({guard_sql}) {element.alias}"

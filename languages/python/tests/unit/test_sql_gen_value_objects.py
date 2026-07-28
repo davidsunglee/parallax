@@ -89,6 +89,52 @@ def test_nested_path_ending_on_a_value_object_is_refused() -> None:
         )
 
 
+def test_document_slots_stay_atomic_and_follow_every_scalar_tier() -> None:
+    # A top-level Value Object occupies ONE `Document` slot however early its
+    # owner declares it: the layout's `Document` tier follows every scalar tier,
+    # so an instance-form read projects `t0.address` whole after the Temporal
+    # slots even though `address` is declared before them, and its nested fields
+    # contribute no column of their own.
+    from parallax.descriptor._records import (
+        AsOfAxisMetadata,
+        Attribute,
+        Entity,
+        Metamodel,
+        ValueObject,
+        ValueObjectAttribute,
+    )
+
+    site = Entity(
+        name="Site",
+        table="site",
+        attributes=(
+            Attribute(name="id", type="int64", column="id", primary_key=True),
+            Attribute(name="tx_start", type="timestamp", column="in_z"),
+            Attribute(name="tx_end", type="timestamp", column="out_z"),
+            Attribute(name="label", type="string", column="label"),
+        ),
+        value_objects=(
+            ValueObject(
+                name="address",
+                column="address",
+                attributes=(ValueObjectAttribute(name="city", type="string"),),
+            ),
+        ),
+        as_of_axes=(
+            AsOfAxisMetadata(
+                dimension="transactionTime", start_attribute="tx_start", end_attribute="tx_end"
+            ),
+        ),
+    )
+    meta = formed(Metamodel(entities=(site,)))
+    instance = compile_read(oa.All(), meta, POSTGRES, target(meta, "Site"), result_form="instance")
+    assert instance.statement.sql == (
+        "select t0.id, t0.label, t0.in_z, t0.out_z, t0.address from site t0"
+    )
+    row_form = compile_read(oa.All(), meta, POSTGRES, target(meta, "Site"))
+    assert row_form.statement.sql == "select t0.id, t0.label, t0.in_z, t0.out_z from site t0"
+
+
 def test_top_level_many_value_object_any_element_needs_no_path_descent() -> None:
     # A `many` value object declared AT THE TOP LEVEL (the array IS the whole
     # document, not a nested member reached by descending through a `one` VO) is

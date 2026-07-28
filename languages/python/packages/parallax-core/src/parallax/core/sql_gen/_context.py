@@ -6,8 +6,9 @@ to live here — it is the one name the whole package raises, so any other home
 would make some module import sideways.
 
 :class:`Ctx` is the whole of that state, and it is deliberately small: the
-metamodel, its Inheritance Facet, and the dialect a statement renders against,
-its ordered bind list, and its alias counter. It holds **no resolution policy** —
+metamodel, its Inheritance Facet and Storage Layout Facet, and the dialect a
+statement renders against, its ordered bind list, and its alias counter. It
+holds **no resolution policy** —
 no active entity, no alias, no
 aliased-versus-unaliased rendering decision, no attribute search. Those are the
 `_predicate` resolution scope's, which is also what makes a `Ctx` a plain mutable
@@ -37,24 +38,33 @@ from typing import Protocol
 
 from parallax.core.dialect import Dialect
 from parallax.core.inheritance import InheritanceFacet
-from parallax.core.metamodel import EntityMetadata, Metamodel
+from parallax.core.metamodel import EntityIdentity, EntityMetadata, Metamodel
+from parallax.core.storage_layout import StorageLayoutFacet, TableLayout
 
 
 class SqlGenError(ValueError):
     """An operation cannot be lowered to SQL (unsupported node or unbound reference)."""
 
 
-def declared_table(entity: EntityMetadata) -> str:
-    """``entity``'s own physical table name.
+def table_layout(
+    storage: StorageLayoutFacet, facet: InheritanceFacet, entity: EntityIdentity
+) -> TableLayout:
+    """The canonical layout of the one Table a read of ``entity``'s rows selects.
 
-    A monomorphic read or navigation hop renders against a single Entity's own
-    container; a row-owning Entity always declares one, so its absence is an
-    impossible model state rather than a runtime input.
+    Total at every call site: a table-per-hierarchy position reads the root's
+    shared Table and a concrete subtype reads its own, so only a
+    table-per-concrete-subtype abstract position owns none — and such a position
+    fans out to its concretes, each carrying its own layout, before a layout is
+    ever asked for.
     """
-    container = entity.declared_container
-    if container is None:  # pragma: no cover - a row-owning Entity always declares a container
-        raise SqlGenError(f"{entity.identity.canonical}: read/navigation target declares no table")
-    return container.name
+    view = facet.entity(entity)
+    container = None if view is None else view.container
+    if container is None:  # pragma: no cover - an abstract position never reads one table
+        raise SqlGenError(f"{entity.canonical}: this inheritance position has no Table Layout")
+    layout = storage.table(container)
+    if layout is None:  # pragma: no cover - every accepted Table compiles exactly one layout
+        raise SqlGenError(f"{container.name}: the model compiles no layout for this table")
+    return layout
 
 
 # --------------------------------------------------------------------------- #
@@ -111,6 +121,9 @@ class PlanScope(ColumnScope, Protocol):
     def facet(self) -> InheritanceFacet: ...
 
     @property
+    def storage(self) -> StorageLayoutFacet: ...
+
+    @property
     def entity(self) -> EntityMetadata: ...
 
     def column_of(self, attr_ref: str) -> str: ...
@@ -131,16 +144,24 @@ class Ctx:
     and binds continue the enclosing statement's single sequence by identity
     rather than by an argument someone has to remember to thread.
 
-    ``facet`` is the model's Inheritance Facet, the one facet `m-sql` reads: it
-    is retrieved once per compiled statement and travels with the model it was
-    compiled from, so no lowering step re-derives a family answer.
+    ``facet`` is the model's Inheritance Facet and ``storage`` its Storage
+    Layout Facet, the two facets `m-sql` reads: each is retrieved once per
+    compiled statement and travels with the model it was compiled from, so no
+    lowering step re-derives a family answer or a physical table shape.
     """
 
-    __slots__ = ("_next_alias_index", "binds", "dialect", "facet", "meta")
+    __slots__ = ("_next_alias_index", "binds", "dialect", "facet", "meta", "storage")
 
-    def __init__(self, meta: Metamodel, facet: InheritanceFacet, dialect: Dialect) -> None:
+    def __init__(
+        self,
+        meta: Metamodel,
+        facet: InheritanceFacet,
+        storage: StorageLayoutFacet,
+        dialect: Dialect,
+    ) -> None:
         self.meta = meta
         self.facet = facet
+        self.storage = storage
         self.dialect = dialect
         self.binds: list[object] = []
         # The next alias INDEX after this statement's own `t0`, which is never

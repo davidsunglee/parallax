@@ -185,6 +185,24 @@ class PositionLayoutView:
     columns: tuple[PositionColumn, ...]
     branches: tuple[PositionBranch, ...]
 
+    @property
+    def column_spellings(self) -> tuple[str, ...]:
+        """Each logical column's physical name, positionally aligned with ``columns``.
+
+        A contributor is spelled by the first branch owning a slot for it. Distinct
+        contributors may legally reuse one spelling in structurally different
+        Tables, so the result can repeat a name; disambiguating that is result
+        planning, not layout.
+        """
+        spellings: list[str] = []
+        for index in range(len(self.columns)):
+            for branch in self.branches:
+                slot = branch.slots[index]
+                if slot is not None:
+                    spellings.append(slot.column)
+                    break
+        return tuple(spellings)
+
 
 @dataclass(frozen=True, slots=True)
 class _Group:
@@ -645,9 +663,10 @@ def _compile_layout(
 class StorageLayout:
     """The model's bounded immutable Table, Entity, and position layout graph.
 
-    A caller that deep-copies a parsed corpus case to mutate it safely shares
-    this graph instead: the values are immutable, and the read-only indexes
-    behind the lookups are not copyable.
+    Deep-copying a graph yields the graph itself: the values are immutable, and
+    the read-only indexes behind the lookups are not copyable. A copy that may
+    describe a different model must therefore compile its own graph rather than
+    carry this one across.
     """
 
     tables: tuple[TableLayout, ...]
@@ -851,3 +870,43 @@ def compile_storage_layout(
         _entities=MappingProxyType({view.entity: view for view in entity_views}),
         _families=MappingProxyType({facts.root: facts for facts in family_facts}),
     )
+
+
+def position_view(
+    layout: StorageLayout, family: Family, effective_set: Sequence[str]
+) -> PositionLayoutView | None:
+    """``layout``'s position over ``effective_set``, canonicalized through ``family``.
+
+    ``effective_set`` names entities as a case authors them; each name resolves to
+    its canonical identity and the set is presented in canonical order, so neither
+    an authored spelling nor an authored order reaches the layout. Absent when the
+    named set is not one family's concrete selection.
+    """
+    canonical = {_canonical(family, name) for name in effective_set}
+    return layout.position(tuple(sorted(canonical, key=_identity_sort_key)))
+
+
+def position_projection(
+    layout: StorageLayout, family: Family, effective_set: Sequence[str]
+) -> tuple[str, ...]:
+    """The ordered physical Columns a read of ``effective_set`` projects.
+
+    The independent oracle's own answer to `m-sql` *Read projection*: within one
+    Table the applicable slots keep canonical `TableLayout.columns` order, so a
+    table-per-hierarchy read carries its discriminator slot in the
+    `Discriminator` tier rather than after the scalars; a cross-table
+    table-per-concrete-subtype position instead follows its one logical
+    contributor sequence (`PositionLayoutView.column_spellings`). Result aliases,
+    typed `NULL` placeholders, and ``familyVariant`` are SQL renderings and never
+    appear here.
+    """
+    view = position_view(layout, family, effective_set)
+    if view is None:
+        return ()
+    if len(view.branches) == 1:
+        branch = view.branches[0]
+        selected = frozenset(view.concrete_entities)
+        return tuple(
+            slot.column for slot in branch.layout.columns if slot.applicable_entities & selected
+        )
+    return view.column_spellings

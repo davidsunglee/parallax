@@ -38,9 +38,9 @@ from dataclasses import dataclass
 from typing import Literal, assert_never
 
 from parallax.core.dialect import Dialect, LockMode
-from parallax.core.inheritance import InheritanceFacet, column_order
+from parallax.core.inheritance import InheritanceFacet
 from parallax.core.inheritance import view as _inheritance_view
-from parallax.core.metamodel import EntityIdentity, EntityMetadata, Metamodel
+from parallax.core.metamodel import EntityIdentity, EntityMetadata, Metamodel, ValueObjectMetadata
 from parallax.core.op_algebra import (
     Distinct,
     Limit,
@@ -51,7 +51,7 @@ from parallax.core.op_algebra import (
 )
 from parallax.core.sql_gen._context import Ctx as _Ctx
 from parallax.core.sql_gen._context import SqlGenError
-from parallax.core.sql_gen._context import declared_table as _table
+from parallax.core.sql_gen._context import table_layout as _table_layout
 
 # The family LANE of this compiler — distinct from `parallax.core.inheritance`
 # above, which is the metamodel module. Each name is aliased down to the
@@ -63,6 +63,9 @@ from parallax.core.sql_gen._inheritance import TpcsSinglePlan as _TpcsSinglePlan
 from parallax.core.sql_gen._inheritance import TpcsUnionPlan as _TpcsUnionPlan
 from parallax.core.sql_gen._inheritance import TphPlan as _TphPlan
 from parallax.core.sql_gen._inheritance import plan_inheritance_read as _plan_inheritance_read
+from parallax.core.sql_gen._inheritance import position_documents as _position_documents
+from parallax.core.sql_gen._inheritance import render_projection as _render_projection
+from parallax.core.sql_gen._inheritance import select_projection as _select_projection
 from parallax.core.sql_gen._inheritance import tag_guard as _tph_tag_guard
 
 # The predicate lane: an entity resolution scope in, one `where`-clause fragment
@@ -70,6 +73,9 @@ from parallax.core.sql_gen._inheritance import tag_guard as _tph_tag_guard
 # aliasing-down convention as the family lane above.
 from parallax.core.sql_gen._predicate import EntityScope as _EntityScope
 from parallax.core.sql_gen._predicate import lower_predicate as _lower_predicate
+from parallax.core.storage_layout import StorageLayoutFacet as _StorageLayoutFacet
+from parallax.core.storage_layout import TableLayout as _TableLayout
+from parallax.core.storage_layout import view as _storage_view
 
 __all__ = [
     "CompiledPredicate",
@@ -149,12 +155,20 @@ class CompiledRead:
     :meth:`~parallax.snapshot.materialize.Assembler.materialize_root` still
     recover the row's own concrete identity. A deep-fetch CHILD level takes its
     narrow from its own ``FetchLevel.narrow_to`` instead.
+
+    ``documents`` is the resolved position's `Document` tier contributors in
+    Position Layout order — the scalar/document provenance a materializing caller
+    needs, carried here so no consumer re-projects a family superset of its own.
+    It is a property of the POSITION, not of the result form: a row-form read
+    projects no document column, yet its rows still render every applicable
+    document key as absent.
     """
 
     statement: Statement
     narrow_to: tuple[str, ...] | None
     target: EntityIdentity
     resolved_position: tuple[EntityIdentity, ...]
+    documents: tuple[ValueObjectMetadata, ...]
     _transform: _RowTransform
 
     def transform_row(self, row: Mapping[str, object]) -> dict[str, object]:
@@ -189,7 +203,7 @@ class CompiledRead:
 # --------------------------------------------------------------------------- #
 def _projection(
     entity: EntityMetadata,
-    facet: InheritanceFacet,
+    layout: _TableLayout,
     dialect: Dialect,
     alias: str,
     result_form: _ResultForm,
@@ -198,26 +212,25 @@ def _projection(
 ) -> tuple[str, list[object]]:
     """The base read projection (m-sql *Read projection*), a function of the model.
 
-    Slot 1 — every declared scalar attribute's column in ``column_order`` — is the
-    whole list for a **row-form** read (the values lane). The dialect maps each
-    scalar to its select-list expression (a `bytes` column projects `encode(col,
-    ?)`; every other column its plain reference). The framework-owned inheritance
-    tag / familyVariant (slots 2/3) are never reached here — an inheritance-family
-    read's projection is a distinct function of its resolved concrete-subtype
-    position, not this per-entity ``column_order`` view, and is built by
+    The Entity's own Table Layout fixes the whole order — `Identity`,
+    `Domain`, `Temporal`, `Audit`, then `Document`, stable in declaration order
+    inside each tier — and this selects from it. Every applicable scalar slot is
+    projected, and the dialect maps each to its select-list expression (a `bytes`
+    column projects `encode(col, ?)`; every other column its plain reference).
+    The framework-owned inheritance discriminator and `familyVariant` are never
+    reached here: an inheritance-family read is built by
     :func:`_compile_tph_read` / :func:`_compile_tpcs_read`.
 
-    An **instance-form** read (the object lane) additionally projects slot 4: each
-    declared top-level value object's backing document column, **last among all
-    columns**, in declared value-object order — a json document is always a plain
-    alias-qualified reference — so a value-object-bearing entity's whole document
-    rides the owner's single statement (the one-round-trip materialization
-    contract, m-value-object). A row-form read omits them by default.
+    An **instance-form** read (the object lane) additionally projects the
+    `Document` slots — a json document is always a plain alias-qualified
+    reference — so a value-object-bearing entity's whole document rides the
+    owner's single statement (the one-round-trip materialization contract,
+    m-value-object). A row-form read omits them by default.
 
-    ``include_value_objects`` opts a **row-form** read into slot 4 too, WITHOUT
-    becoming instance-form (`m-case-format.md:727`): a materializing predicate
-    write's own internal resolving read stays row-form (it constructs no
-    instance, `m-value-object-047`) but an assignment-bearing verb still needs
+    ``include_value_objects`` opts a **row-form** read into the `Document` slots
+    too, WITHOUT becoming instance-form (`m-case-format.md:727`): a materializing
+    predicate write's own internal resolving read stays row-form (it constructs
+    no instance, `m-value-object-047`) but an assignment-bearing verb still needs
     the raw VO document(s) its own no-op comparison or chained/carried-forward
     row must read — the caller (the
     materializing predicate-write resolve in `parallax.snapshot.handle`)
@@ -226,19 +239,9 @@ def _projection(
     carry forward whichever documents the assignments do NOT themselves
     reassign); a ``frozenset`` of value-object NAMES projects ONLY those (a
     comparison-only need on a target that never chains — minimal-read
-    discipline, `m-sql`) — in EITHER case the declared value-object order is
+    discipline, `m-sql`) — in EITHER case the layout's `Document` slot order is
     preserved, never the caller's own set iteration order.
     """
-    by_column = {attribute.storage.name: attribute for attribute in entity.declared_attributes}
-    exprs: list[str] = []
-    binds: list[object] = []
-    for column in column_order(entity, facet):
-        attribute = by_column.get(column)
-        if attribute is None:
-            continue  # a value object's document column — slot 4, appended below
-        expr, extra = dialect.project(alias, column, attribute.type)
-        exprs.append(expr)
-        binds.extend(extra)
     declared_vos = entity.declared_value_objects
     if result_form == "instance" or include_value_objects is True:
         projected_vos = tuple(declared_vos)
@@ -248,8 +251,14 @@ def _projection(
         )
     else:
         projected_vos = ()
-    exprs.extend(dialect.qualified(alias, member.storage.name) for member in projected_vos)
-    return ", ".join(exprs), binds
+    columns = _select_projection(
+        layout.columns,
+        entity.declared_attributes,
+        projected_vos,
+        project_discriminator=False,
+    )
+    sql, binds = _render_projection(dialect, alias, columns)
+    return sql, list(binds)
 
 
 # --------------------------------------------------------------------------- #
@@ -321,6 +330,7 @@ def compile_read(
     relationship-ordering golden byte-for-byte).
     """
     facet = _inheritance_view(model)
+    storage = _storage_view(model)
     predicate, distinct, order_keys, limit = _peel_directives(op)
     # The read's own TOP-LEVEL authored narrow, taken from the SAME peel the
     # lowering below uses — so what the caller materializes under can never
@@ -335,20 +345,29 @@ def compile_read(
             limit,
             model,
             facet,
+            storage,
             dialect,
             result_form,
             lock,
             relationship_order,
         )
-        return CompiledRead(statement, narrow_to, target.identity, plan_position, transform)
+        return CompiledRead(
+            statement,
+            narrow_to,
+            target.identity,
+            plan_position,
+            _position_documents(facet, storage, plan_position),
+            transform,
+        )
     # One context per statement (the mutable accumulator), one resolution scope
     # over it (the immutable "what does a leaf resolve against" half).
-    ctx = _Ctx(model, facet, dialect)
-    scope = _EntityScope(ctx, target)
+    ctx = _Ctx(model, facet, storage, dialect)
+    layout = _table_layout(storage, facet, target.identity)
+    scope = _EntityScope(ctx, target, layout)
 
     proj_sql, proj_binds = _projection(
         target,
-        facet,
+        layout,
         dialect,
         scope.alias,
         result_form,
@@ -356,7 +375,7 @@ def compile_read(
     )
     ctx.binds.extend(proj_binds)
     select = f"select {'distinct ' if distinct else ''}{proj_sql}"
-    parts = [select, f"from {_table(target)} {scope.alias}"]
+    parts = [select, f"from {layout.table.name} {scope.alias}"]
 
     where_sql = _lower_predicate(predicate, scope)
     if where_sql:
@@ -367,7 +386,12 @@ def compile_read(
     # A non-family read projects no tag and no variant literal, so there is
     # nothing to materialize.
     return CompiledRead(
-        statement, narrow_to, target.identity, (target.identity,), _IDENTITY_TRANSFORM
+        statement,
+        narrow_to,
+        target.identity,
+        (target.identity,),
+        _position_documents(facet, storage, (target.identity,)),
+        _IDENTITY_TRANSFORM,
     )
 
 
@@ -389,8 +413,12 @@ def compile_write_predicate(
     directive reaching this raises :class:`SqlGenError` exactly as it would
     inside an ordinary read's predicate.
     """
-    ctx = _Ctx(model, _inheritance_view(model), dialect)
-    scope = _EntityScope(ctx, target, unaliased=True)
+    facet = _inheritance_view(model)
+    storage = _storage_view(model)
+    ctx = _Ctx(model, facet, storage, dialect)
+    scope = _EntityScope(
+        ctx, target, _table_layout(storage, facet, target.identity), unaliased=True
+    )
     where_sql = _lower_predicate(op, scope)
     return CompiledPredicate(where_sql, tuple(ctx.binds))
 
@@ -500,6 +528,7 @@ def _compile_inheritance_read(
     limit: int | None,
     model: Metamodel,
     facet: InheritanceFacet,
+    storage: _StorageLayoutFacet,
     dialect: Dialect,
     result_form: _ResultForm,
     lock: LockMode | None,
@@ -518,6 +547,7 @@ def _compile_inheritance_read(
         order_keys,
         limit,
         facet,
+        storage,
         result_form == "instance",
         lock,
     )
@@ -531,6 +561,7 @@ def _compile_inheritance_read(
                 limit,
                 model,
                 facet,
+                storage,
                 dialect,
                 lock,
                 relationship_order,
@@ -545,13 +576,14 @@ def _compile_inheritance_read(
                 limit,
                 model,
                 facet,
+                storage,
                 dialect,
                 lock,
                 relationship_order,
             )
             return statement, plan.position, transform
         case _TpcsUnionPlan():
-            statement, transform = _compile_tpcs_read(plan, entity, model, facet, dialect)
+            statement, transform = _compile_tpcs_read(plan, entity, model, facet, storage, dialect)
             return statement, plan.position, transform
         case _:  # pragma: no cover - exhaustiveness guard
             assert_never(plan)
@@ -565,6 +597,7 @@ def _compile_tph_read(
     limit: int | None,
     model: Metamodel,
     facet: InheritanceFacet,
+    storage: _StorageLayoutFacet,
     dialect: Dialect,
     lock: LockMode | None,
     relationship_order: bool = False,
@@ -576,8 +609,8 @@ def _compile_tph_read(
     is projected — is decided by :func:`_plan_inheritance_read`; this builds the
     statement's context and sequences the four bind phases.
     """
-    ctx = _Ctx(model, facet, dialect)
-    scope = _EntityScope(ctx, entity)
+    ctx = _Ctx(model, facet, storage, dialect)
+    scope = _EntityScope(ctx, entity, _table_layout(storage, facet, entity.identity))
     proj_sql, proj_binds = plan.projection(dialect, scope.alias)
     ctx.binds.extend(proj_binds)
 
@@ -606,6 +639,7 @@ def _compile_tpcs_read(
     entity: EntityMetadata,
     model: Metamodel,
     facet: InheritanceFacet,
+    storage: _StorageLayoutFacet,
     dialect: Dialect,
 ) -> tuple[Statement, _RowTransform]:
     """Assemble a table-per-concrete-subtype `union all` read (m-sql "Inheritance —
@@ -620,8 +654,10 @@ def _compile_tpcs_read(
     branch_sqls: list[str] = []
     all_binds: list[object] = []
     for branch in plan.branches:
-        branch_ctx = _Ctx(model, facet, dialect)
-        branch_scope = _EntityScope(branch_ctx, entity)
+        branch_ctx = _Ctx(model, facet, storage, dialect)
+        branch_scope = _EntityScope(
+            branch_ctx, entity, _table_layout(storage, facet, branch.identity)
+        )
         proj_sql, proj_binds = branch.projection(dialect, branch_scope.alias)
         branch_ctx.binds.extend(proj_binds)
         parts = [f"select {proj_sql}", f"from {branch.table} {branch_scope.alias}"]
@@ -643,6 +679,7 @@ def _compile_tpcs_single(
     limit: int | None,
     model: Metamodel,
     facet: InheritanceFacet,
+    storage: _StorageLayoutFacet,
     dialect: Dialect,
     lock: LockMode | None,
     relationship_order: bool = False,
@@ -660,8 +697,8 @@ def _compile_tpcs_single(
     sequences its bind phases explicitly — here projection, then user predicate,
     then limit; there is no framework tag guard on this lane.
     """
-    ctx = _Ctx(model, facet, dialect)
-    scope = _EntityScope(ctx, entity)
+    ctx = _Ctx(model, facet, storage, dialect)
+    scope = _EntityScope(ctx, entity, _table_layout(storage, facet, plan.position[0]))
     proj_sql, proj_binds = plan.projection(dialect, scope.alias)
     ctx.binds.extend(proj_binds)
     select = f"select {'distinct ' if distinct else ''}{proj_sql}"

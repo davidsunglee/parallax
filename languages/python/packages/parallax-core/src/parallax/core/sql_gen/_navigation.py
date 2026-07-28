@@ -76,11 +76,10 @@ from parallax.core.op_algebra import Exists, Narrow, Navigate, NotExists, Operat
 from parallax.core.relationship import view as _relationship_view
 from parallax.core.sql_gen._context import PlanScope as _PlanScope
 from parallax.core.sql_gen._context import SqlGenError
-from parallax.core.sql_gen._context import declared_table as _table
+from parallax.core.sql_gen._context import table_layout as _table_layout
 from parallax.core.sql_gen._inheritance import TagPredicate as _TagPredicate
 from parallax.core.sql_gen._inheritance import entity_view as _entity_view
 from parallax.core.sql_gen._inheritance import narrow_position as _narrow_position
-from parallax.core.sql_gen._inheritance import position_table as _position_table
 from parallax.core.sql_gen._inheritance import tag_column as _tag_column
 from parallax.core.sql_gen._inheritance import tag_guard as _tag_guard
 
@@ -220,7 +219,7 @@ def plan_hop(op: Navigate | Exists | NotExists, scope: _PlanScope) -> HopPlan:
         return _plan_polymorphic_hop(
             target, op.op, parent_column, join.target.name, scope, negate=negate
         )
-    return _plan_simple_hop(target, op.op, parent_column, join.target.name, negate=negate)
+    return _plan_simple_hop(target, op.op, parent_column, join.target.name, scope, negate=negate)
 
 
 def open_branch(branch: HopBranch, scope: _PlanScope) -> OpenBranch:
@@ -266,6 +265,7 @@ def _plan_simple_hop(
     inner: Operation | None,
     parent_column: str,
     related_attr: str,
+    scope: _PlanScope,
     *,
     negate: bool,
 ) -> HopPlan:
@@ -275,7 +275,7 @@ def _plan_simple_hop(
         branches=(
             HopBranch(
                 entity=target,
-                table=_table(target),
+                table=_table_layout(scope.storage, scope.facet, target.identity).table.name,
                 related_attr=related_attr,
                 parent_column=parent_column,
                 inner=inner,
@@ -353,11 +353,11 @@ def _plan_tph_hop(
     is_bare_root: bool,
     negate: bool,
 ) -> HopPlan:
-    view = _entity_view(scope.facet, root)
+    layout = _table_layout(scope.storage, scope.facet, root)
     # An UNTOUCHED abstract root hops to the whole family, so it carries no tag
     # predicate at all — the same rule a top-level family read applies, spelled
     # here as the absence of a `TagPredicate` rather than as a sentinel kind.
-    tag = None if is_bare_root else _TagPredicate(_tag_column(view), tuple(position))
+    tag = None if is_bare_root else _TagPredicate(_tag_column(layout, root), tuple(position))
     return HopPlan(
         branches=(
             HopBranch(
@@ -366,7 +366,7 @@ def _plan_tph_hop(
                 # that the position participates, exactly like a top-level
                 # inheritance read's resolution scope.
                 entity=_entity(scope.meta, root),
-                table=_position_table(scope.facet, root),
+                table=layout.table.name,
                 related_attr=related_attr,
                 parent_column=parent_column,
                 inner=remaining_inner,
@@ -429,7 +429,7 @@ def _tpcs_branch(
     """
     return HopBranch(
         entity=_entity(scope.meta, concrete),
-        table=_position_table(scope.facet, concrete),
+        table=_table_layout(scope.storage, scope.facet, concrete).table.name,
         related_attr=related_attr,
         parent_column=parent_column,
         inner=remaining_inner,

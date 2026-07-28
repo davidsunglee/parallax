@@ -189,12 +189,20 @@ def _resolved_position(
 
 
 def _superset_value_objects(
-    meta: Metamodel, position: Sequence[EntityIdentity]
+    meta: Metamodel,
+    position: Sequence[EntityIdentity],
+    documents: Sequence[ValueObjectMetadata] | None = None,
 ) -> tuple[ValueObjectMetadata, ...]:
-    """Every value object reachable from ``position`` (an effective concrete set)
-    — the Inheritance Facet's own projection superset (ancestry prefix, then each
-    concrete's own; only the SET of declared value objects, not their order,
-    decides what a row's document columns hold)."""
+    """The value objects ``position``'s rows can carry.
+
+    Production callers pass the compiled read's own ``documents`` — the resolved
+    position's `Document` tier contributors, decided once where the projection
+    was — so no level re-derives document provenance from a round-tripped Entity
+    name. The Inheritance Facet projection remains the defensive direct-call
+    fallback used by tests and older callers; only the SET of value objects, not
+    their order, decides what a row's document columns hold."""
+    if documents is not None:
+        return tuple(documents)
     view = inheritance.view(meta).position(position)
     return () if view is None else tuple(view.superset_value_objects)
 
@@ -380,15 +388,16 @@ def _decode_row_parts(
     entity: EntityMetadata,
     row: Mapping[str, object],
     position: tuple[EntityIdentity, ...],
+    documents: Sequence[ValueObjectMetadata] | None = None,
 ) -> tuple[dict[str, object], dict[str, object]]:
     """Decode one row while preserving scalar versus Value Object provenance."""
-    value_objects = _superset_value_objects(meta, position)
+    value_objects = _superset_value_objects(meta, position, documents)
     vo_columns = {vo.storage.name for vo in value_objects}
     fields = {key: value for key, value in row.items() if key not in vo_columns}
-    documents = {
+    decoded = {
         vo.storage.name: _decode_value_object(row.get(vo.storage.name), vo) for vo in value_objects
     }
-    return fields, documents
+    return fields, decoded
 
 
 # --------------------------------------------------------------------------- #
@@ -419,6 +428,7 @@ class Assembler:
         resolved_position: tuple[EntityIdentity, ...] | None = None,
         resolved_entities: Sequence[EntityIdentity] | None = None,
         family_variants: Sequence[str | None] | None = None,
+        documents: Sequence[ValueObjectMetadata] | None = None,
     ) -> list[Node]:
         """Decode the root query's own rows into fresh, identity-registered nodes.
 
@@ -438,6 +448,7 @@ class Assembler:
             resolved_position=resolved_position,
             resolved_entities=resolved_entities,
             family_variants=family_variants,
+            documents=documents,
         )
 
     def attach_level(
@@ -450,6 +461,7 @@ class Assembler:
         resolved_position: tuple[EntityIdentity, ...] | None = None,
         resolved_entities: Sequence[EntityIdentity] | None = None,
         family_variants: Sequence[str | None] | None = None,
+        documents: Sequence[ValueObjectMetadata] | None = None,
     ) -> list[Node]:
         """Attach one level's children to ``parent_nodes`` under its own
         ``attach_key``; returns the level's OWN materialized child nodes (empty
@@ -478,6 +490,7 @@ class Assembler:
             resolved_position=resolved_position,
             resolved_entities=resolved_entities,
             family_variants=family_variants,
+            documents=documents,
         )
         buckets: dict[object, list[Node]] = {}
         for row, node in zip(child_rows, child_nodes, strict=True):
@@ -520,6 +533,7 @@ class Assembler:
         resolved_position: tuple[EntityIdentity, ...] | None = None,
         resolved_entities: Sequence[EntityIdentity] | None = None,
         family_variants: Sequence[str | None] | None = None,
+        documents: Sequence[ValueObjectMetadata] | None = None,
     ) -> list[Node]:
         entity = _entity(self.meta, entity_name)
         position = _resolved_position(self.meta, entity, narrow_to, resolved_position)
@@ -550,7 +564,7 @@ class Assembler:
                     )
                 )
             )
-            fields, value_objects = _decode_row_parts(self.meta, entity, row, position)
+            fields, value_objects = _decode_row_parts(self.meta, entity, row, position, documents)
             if variant is not None:
                 fields.pop("familyVariant", None)
             node = Node(

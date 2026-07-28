@@ -30,10 +30,10 @@ from reference_harness.inheritance import (
     NARROW_OUTSIDE_POSITION,
     SUBTYPE_ATTRIBUTE_OUTSIDE_NARROW_SCOPE,
     Family,
-    concrete_superset_columns,
     tag_value_to_subtype,
     validate_operation_inheritance,
 )
+from reference_harness.storage_layout import compile_storage_layout, position_projection
 from reference_harness.value_object_resolve import RejectionError
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -323,24 +323,45 @@ def test_tag_value_to_subtype_qualifies_duplicate_local_names() -> None:
     }
 
 
-def test_concrete_superset_columns() -> None:
+def test_tph_position_projection_follows_the_shared_table_layout() -> None:
     defs = _animal_defs()
-    # Pet's descendants only — no tusk_length; the inherited owner_id and the tag
-    # column are included.
-    pet = set(concrete_superset_columns(defs, ["Dog", "Cat"]))
-    assert pet == {"id", "kind", "name", "owner_id", "license_id", "bark_volume", "indoor"}
-    whole = set(concrete_superset_columns(defs, ["Dog", "Cat", "WildBoar"]))
-    assert whole == pet | {"tusk_length"}
+    layout = compile_storage_layout(defs)
+    family = Family(defs)
+    # The shared Table Layout's tier order: the `Identity` slot, the raw
+    # `Discriminator` slot, then the `Domain` slots — ancestry prefix first,
+    # then each concrete's own block in alphabetical subtype order. Pet's
+    # descendants alone drop WildBoar's `tusk_length` without disturbing it.
+    assert position_projection(layout, family, ["Dog", "Cat"]) == (
+        "id",
+        "kind",
+        "name",
+        "owner_id",
+        "license_id",
+        "indoor",
+        "bark_volume",
+    )
+    assert position_projection(layout, family, ["Dog", "Cat", "WildBoar"]) == (
+        "id",
+        "kind",
+        "name",
+        "owner_id",
+        "license_id",
+        "indoor",
+        "bark_volume",
+        "tusk_length",
+    )
 
 
-def test_tpcs_superset_column_order_is_canonical() -> None:
-    # The stable superset ORDER (not just the set): the inherited prefix in ANCESTRY
-    # order (id, title, folder_id, currency) then the per-subtype OWN-column blocks in
-    # ALPHABETICAL subtype order — Invoice's amount_due, then Memo's body, then Receipt's
-    # paid_amount. The passed effective set is deliberately shuffled to prove the
-    # function canonicalizes.
+def test_tpcs_position_projection_order_is_canonical() -> None:
+    # The stable cross-Table contributor ORDER (not just the set): the inherited
+    # prefix in ANCESTRY order (id, title, folder_id, currency) then the
+    # per-subtype OWN-column blocks in ALPHABETICAL subtype order — Invoice's
+    # amount_due, then Memo's body, then Receipt's paid_amount. The passed
+    # effective set is deliberately shuffled to prove canonicalization.
     defs = _document_defs()
-    assert concrete_superset_columns(defs, ["Receipt", "Memo", "Invoice"]) == [
+    layout = compile_storage_layout(defs)
+    family = Family(defs)
+    assert position_projection(layout, family, ["Receipt", "Memo", "Invoice"]) == (
         "id",
         "title",
         "folder_id",
@@ -348,7 +369,22 @@ def test_tpcs_superset_column_order_is_canonical() -> None:
         "amount_due",
         "body",
         "paid_amount",
-    ]
+    )
+
+
+def test_tpcs_single_concrete_position_projection_is_its_own_table() -> None:
+    # A single-concrete position is an ordinary read of that concrete's own
+    # Table: its ancestry chain plus its own slot, and no sibling padding.
+    defs = _document_defs()
+    layout = compile_storage_layout(defs)
+    family = Family(defs)
+    assert position_projection(layout, family, ["Invoice"]) == (
+        "id",
+        "title",
+        "folder_id",
+        "currency",
+        "amount_due",
+    )
 
 
 # --- _materialize_family_variant --------------------------------------------

@@ -1,0 +1,34 @@
+# One Position Layout contributor sequence aligns every table-per-concrete-subtype
+# branch (m-storage-layout x m-sql).
+#
+# LayoutReport's abstract position spans two independent concrete Tables. Its
+# logical contributor sequence is built once — the inherited `id` and `title`
+# appear ONCE even though each concrete Table carries its own physical occurrence
+# of them, then `LayoutAudit.auditor` and `LayoutSurvey.respondent` follow in
+# canonical concrete order — and each branch maps that one sequence through its
+# own slot-or-absence entries. A branch that owns the contributor projects its
+# slot; a branch that does not renders a typed `NULL` placeholder in the same
+# position, so both branches present identical arity and order.
+#
+# `auditor` and `respondent` are distinct contributors legally reusing the
+# physical Column spelling `detail` in structurally different Tables. Resolving
+# that duplicate spelling is SQL result planning, not layout: both contributors
+# take collision-safe internal aliases, and materialization maps each observed row
+# back to its own concrete's physical spelling. The `familyVariant` literal is
+# likewise SQL-owned — it is appended after every layout contributor and is never
+# a slot.
+model: models/storage-layout.yaml
+tags: [m-storage-layout, m-inheritance, m-sql, table-per-concrete-subtype, union-all, root, familyVariant, slice-snapshot-1, slice-managed-1]
+shape: read
+when:
+  targetEntity: LayoutReport
+  operation:
+    all: {}
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.title, t0.detail parallax_attr_0, cast(null as varchar(32)) parallax_attr_1, 'LayoutAudit' family_variant from layout_audit t0 union all select t0.id, t0.title, cast(null as varchar(32)) parallax_attr_0, t0.detail parallax_attr_1, 'LayoutSurvey' family_variant from layout_survey t0
+  rows:
+    - { id: 1, title: Quarterly audit, detail: Ingrid, familyVariant: LayoutAudit }
+    - { id: 1, title: Annual survey, detail: Bjorn, familyVariant: LayoutSurvey }
+  roundTrips: 1

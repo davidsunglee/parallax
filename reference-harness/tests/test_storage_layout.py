@@ -923,7 +923,7 @@ def test_a_fixture_row_naming_the_discriminator_is_not_an_authorable_member() ->
         load_fixture_rows(corrupted, cast("Any", _RecordingProvider()))
 
 
-def test_case_runner_consumes_storage_layout_only_for_model_validation() -> None:
+def test_case_runner_consumes_storage_layout_for_validation_and_read_projection() -> None:
     source = Path(case_runner.__file__).read_text(encoding="utf-8")
     tree = ast.parse(source)
     imported = {
@@ -933,9 +933,12 @@ def test_case_runner_consumes_storage_layout_only_for_model_validation() -> None
         for alias in node.names
     }
     assert imported == {
+        "ColumnSlot",
+        "PositionBranch",
+        "PositionColumn",
+        "PositionLayoutView",
         "STORAGE_LAYOUT_MODEL_REJECTED_RULES",
+        "position_projection",
+        "position_view",
         "validate_storage_layout",
     }
-    assert not any(
-        isinstance(node, ast.Attribute) and node.attr == "storage_layout" for node in ast.walk(tree)
-    )
