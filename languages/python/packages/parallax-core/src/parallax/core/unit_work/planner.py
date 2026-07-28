@@ -26,12 +26,13 @@ The stages, in order (``m-unit-work`` "Same-transaction write coalescing" /
   predicate write is opaque here — never a coalescing
   candidate, never folded with an unrelated instruction.
 - **collapse** — same-entity, same-mutation, ADJACENT single-row keyed writes
-  merge into one multi-row instruction when the injected ``collapse`` policy
-  (``m-batch-write``'s vocabulary, supplied by the composition layer — this
-  scope takes no edge to it) says the run collapses; declining or omitted
-  (``collapse=None``) leaves every instruction exactly as coalesce produced it.
-  Deterministic in buffer order: a run never regroups across an intervening,
-  differently-keyed instruction or an :class:`AtomicUnit` boundary.
+  that share the injected ``collapse_group`` key merge into one multi-row
+  instruction when the injected ``collapse`` policy (``m-batch-write``'s
+  vocabulary, supplied by the composition layer — this scope takes no edge to
+  it) says the run collapses; declining or omitted (``collapse=None``) leaves
+  every instruction exactly as coalesce produced it. Deterministic in buffer
+  order: a run never regroups across an intervening, differently-keyed
+  instruction or an :class:`AtomicUnit` boundary.
 - **FK-order** — a topological order over the declared foreign-key graph:
   inserts parent-first, deletes child-first, updates between (the canonical
   INSERT -> UPDATE -> DELETE flush order). An :class:`AtomicUnit` moves as ONE
@@ -62,6 +63,7 @@ from parallax.core.unit_work.instructions import KeyedWrite, WriteInstruction
 __all__ = [
     "AtomicUnit",
     "BufferItem",
+    "CollapseGroupKey",
     "CollapsePolicy",
     "FlushPlan",
     "ObjectKey",
@@ -242,6 +244,16 @@ BufferItem = WriteInstruction | AtomicUnit
 # keep per-instruction lowering.
 CollapsePolicy = Callable[[Metamodel, EntityMetadata, str, Sequence[Mapping[str, object]]], bool]
 
+# The injected batch-GROUPING key (`model, entity, mutation, row) -> key`): the
+# physical shape two adjacent rows must share to belong to one collapse run.
+# Deciding it needs the target's physical slot selection, which this scope has no
+# edge to (`m-storage-layout`), so it arrives the same way the collapse policy
+# does — from the composition layer, which resolves each row against the concrete
+# Entity's layout view (`m-sql` "Physical DML ordering": batch grouping compares
+# the resulting ordered slot selections). Keys are compared with ``==`` only.
+# Omitted (`None`) groups purely by entity, mutation, and Valid-Time bounds.
+CollapseGroupKey = Callable[[Metamodel, EntityMetadata, str, Mapping[str, object]], object]
+
 
 @dataclass(frozen=True, slots=True)
 class FlushPlan:
@@ -268,6 +280,7 @@ def plan_flush(
     model: Metamodel,
     *,
     collapse: CollapsePolicy | None = None,
+    collapse_group: CollapseGroupKey | None = None,
 ) -> FlushPlan:
     """Plan a flush: coalesce -> collapse -> FK-order -> elide, then attach
     observations.
@@ -275,11 +288,13 @@ def plan_flush(
     Pure. Returns the neutral :class:`FlushPlan` the composition layer lowers to
     DML; this function renders no SQL and takes no dialect (the ``m-unit-work``
     seam is DML-neutral by DAG design). ``collapse`` is the injected
-    ``m-batch-write`` vocabulary (omitted: the collapse stage is a no-op).
+    ``m-batch-write`` vocabulary (omitted: the collapse stage is a no-op) and
+    ``collapse_group`` the injected physical-shape grouping key a run's rows must
+    share (omitted: rows group by entity, mutation, and Valid-Time bounds alone).
     """
     targets = _targets(model)
     coalesced = _coalesce(buffer, targets)
-    collapsed = _collapse(coalesced, targets, collapse, observations)
+    collapsed = _collapse(coalesced, targets, collapse, collapse_group, observations)
     ordered = _fk_order(collapsed, targets)
     elided = _elide(ordered, targets)
     writes = tuple(_attach_observation(instr, observations, targets) for instr in elided)
@@ -420,6 +435,7 @@ def _collapse(
     buffer: Sequence[BufferItem],
     targets: _Targets,
     collapse: CollapsePolicy | None,
+    group: CollapseGroupKey | None,
     observations: Mapping[ObjectKey, Observation],
 ) -> list[BufferItem]:
     """Merge each ADJACENT run of same-entity, same-mutation, single-row keyed
@@ -431,7 +447,11 @@ def _collapse(
     instruction, a :class:`PredicateWrite`, an already-multi-row instruction, or
     an :class:`AtomicUnit` — so a run NEVER regroups across one of these
     boundaries, and an :class:`AtomicUnit` is never a merge candidate itself
-    (opaque, exactly as coalesce treats it). A row whose
+    (opaque, exactly as coalesce treats it). A change in the injected ``group``
+    key ends a run too: rows whose physical shapes differ can never share one
+    statement, so they must never share one run, and splitting HERE keeps every
+    same-shaped neighbourhood collapsible instead of decomposing the lot. A row
+    whose
     :func:`object_key` is already present in ``observations`` is likewise
     NEVER a merge candidate: a recorded per-row observation (an engine
     `observedVersion`/`observedTxStart` signal, or a real transaction-scoped
@@ -447,6 +467,13 @@ def _collapse(
         return list(buffer)
     result: list[BufferItem] = []
     run: list[KeyedWrite] = []
+    run_group: object = None
+
+    def group_key(item: KeyedWrite) -> object:
+        entity = targets.entity(item.entity)
+        if group is None or entity is None:
+            return None
+        return group(targets.model, entity, item.mutation, item.rows[0])
 
     def flush_run() -> None:
         if not run:
@@ -466,21 +493,21 @@ def _collapse(
         return key is not None and key in observations
 
     for item in buffer:
-        if (
-            isinstance(item, KeyedWrite)
-            and len(item.rows) == 1
-            and not observed(item)
-            and run
-            and run[-1].entity == item.entity
-            and run[-1].mutation == item.mutation
-            and run[-1].valid_from == item.valid_from
-            and run[-1].until == item.until
-        ):
-            run.append(item)
-            continue
-        flush_run()
         if isinstance(item, KeyedWrite) and len(item.rows) == 1 and not observed(item):
+            item_group = group_key(item)
+            if (
+                run
+                and run[-1].entity == item.entity
+                and run[-1].mutation == item.mutation
+                and run[-1].valid_from == item.valid_from
+                and run[-1].until == item.until
+                and item_group == run_group
+            ):
+                run.append(item)
+                continue
+            flush_run()
             run.append(item)
+            run_group = item_group
         else:
             result.append(item)
     flush_run()

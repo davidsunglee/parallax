@@ -33,6 +33,7 @@ from parallax.core.unit_work.instructions import WriteInstruction
 from parallax.core.unit_work.planner import (
     AtomicUnit,
     BufferItem,
+    CollapseGroupKey,
     CollapsePolicy,
     FlushPlan,
     ObjectKey,
@@ -96,6 +97,7 @@ class UnitOfWork:
     __slots__ = (
         "_buffer",
         "_closed",
+        "_collapse_group",
         "_collapse_policy",
         "_frame_depth",
         "_observations",
@@ -117,6 +119,7 @@ class UnitOfWork:
         meta: Metamodel,
         flush_executor: FlushExecutor,
         collapse_policy: CollapsePolicy | None = None,
+        collapse_group: CollapseGroupKey | None = None,
     ) -> None:
         self.settings = settings
         self.clock = clock
@@ -128,6 +131,9 @@ class UnitOfWork:
         # transact`) supplies it here, identically for production and the
         # conformance engine (both drive writes through this SAME shell).
         self._collapse_policy = collapse_policy
+        # Its grouping companion: the physical shape a run's rows must share
+        # before the policy is even asked (`plan_flush`'s own optional pair).
+        self._collapse_group = collapse_group
         # An opaque demarcation-layer companion (the `db.transact` transaction
         # facade), published for the scope's duration so a joining call recovers
         # it via `active_unit_of_work()`. The shell never reads it, and it needs
@@ -187,6 +193,7 @@ class UnitOfWork:
             self._transaction_instant_literal(),
             self.meta,
             collapse=self._collapse_policy,
+            collapse_group=self._collapse_group,
         )
         self._buffer.clear()
         self.flush_executor(plan)
@@ -304,18 +311,21 @@ def run_unit_of_work[T](
     meta: Metamodel,
     flush_executor: FlushExecutor,
     collapse_policy: CollapsePolicy | None = None,
+    collapse_group: CollapseGroupKey | None = None,
 ) -> T:
     """Run ``body`` in a unit of work — joining the active one or opening a new frame.
 
     A call while a transaction is active on the current thread **joins** it: the
     body receives the same unit of work and its return value is returned
     immediately (commit and abort belong to the outermost frame), and the passed
-    ``settings`` / ``clock`` / ``meta`` / ``flush_executor`` / ``collapse_policy``
+    ``settings`` / ``clock`` / ``meta`` / ``flush_executor`` / ``collapse_policy`` /
+    ``collapse_group``
     are ignored in favor of the active transaction's (``db.transact`` performs
     the option-conflict check before calling). Otherwise a new outermost frame is
     opened, and its value is returned only after a durable flush; an abort
-    withholds it. ``collapse_policy`` is the injected ``m-batch-write``
-    vocabulary consulted by a new outermost frame's flushes.
+    withholds it. ``collapse_policy`` and ``collapse_group`` are the injected
+    ``m-batch-write`` vocabulary and physical-shape grouping key consulted by a
+    new outermost frame's flushes.
     """
     active = active_unit_of_work()
     if active is not None:
@@ -326,5 +336,6 @@ def run_unit_of_work[T](
         meta=meta,
         flush_executor=flush_executor,
         collapse_policy=collapse_policy,
+        collapse_group=collapse_group,
     )
     return uow.run_outermost(body)

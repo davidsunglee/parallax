@@ -38,7 +38,11 @@ public-surface check promises. Where the exported names live:
   finite-Transaction-Time-pin refusal the keyed verbs and the conformance
   engine's scenario grading share.
 
-The four modules behind no exported name (``_wrap``, ``_family``, ``_keyed_sql``,
+- :mod:`~parallax.snapshot.handle._keyed_sql` — :func:`collapse_group_key`, the
+  physical-shape batch-grouping key the composition root and the conformance
+  engine inject into ``plan_flush`` beside ``m-batch-write``'s collapse policy.
+
+The three modules behind no exported name (``_wrap``, ``_family``,
 ``_predicate_writes``) are reached only through the modules above; each
 documents its own place in the package's acyclic internal graph.
 """
@@ -50,6 +54,7 @@ from parallax.snapshot.handle._database import (
     TransactionOptionConflictError,
     connect,
 )
+from parallax.snapshot.handle._keyed_sql import collapse_group_key
 from parallax.snapshot.handle._read import (
     ExecutedStatement,
     Execution,
@@ -85,6 +90,7 @@ __all__ = [
     "TransactionOptionConflictError",
     "TransactionTimePinReadOnlyError",
     "WriteLoweringError",
+    "collapse_group_key",
     "connect",
     "find",
     "find_history",

@@ -20,9 +20,15 @@ primary key (`_family.family_primary_key`) and the version column
 which this module maps onto layout slots rather than reading storage
 declarations of its own.
 
-The eight builders `_write_lowering` dispatches to are spelled bare; the helpers
-they share among themselves keep their leading underscore because every one of
-their call sites is in THIS module.
+The same slot selection that fixes a statement's column list also fixes which
+buffered rows may share one: `collapse_group_key` answers a row's filtered,
+table-ordered selection for the planner's batch grouping, so a collapsed
+multi-row instruction is same-shaped before any builder sees it.
+
+The eight builders `_write_lowering` dispatches to are spelled bare, as is
+`collapse_group_key` (the composition root and the conformance engine inject
+it); the helpers they share among themselves keep their leading underscore
+because every one of their call sites is in THIS module.
 """
 
 from __future__ import annotations
@@ -55,6 +61,7 @@ from parallax.snapshot.handle._family import (
 from parallax.snapshot.handle._write_types import WriteLoweringError
 
 __all__ = [
+    "collapse_group_key",
     "key_predicate",
     "lower_batched_update",
     "lower_delete",
@@ -329,6 +336,11 @@ def lower_multi_insert(
     `opt_lock.INITIAL_VERSION` at its own slot position as the single-row
     form — the initial version is a constant, never observed, so it is exactly
     as safe to batch as any other column (`m-opt-lock`).
+
+    Batch grouping (:func:`collapse_group_key`) already keeps differing slot
+    selections in separate runs, so the mixed-shape refusal below can only fire
+    for a hand-built instruction — where refusing beats binding a later row's
+    values positionally against the first row's column list.
     """
     columns: list[str] | None = None
     rows_cells: list[list[tuple[str, object]]] = []
@@ -551,6 +563,57 @@ def _member_contributor(contributor: ColumnContributor) -> str | None:
     return None
 
 
+def _member_ordinals(layout: EntityLayoutView) -> dict[str, tuple[int, str, bool]]:
+    """Each member name the view carries, mapped to its
+    ``(slot ordinal, physical column, is a document slot)``.
+
+    The framework-owned discriminator has no member name and is absent: no write
+    input ever names it, and every form that emits it derives it from the view's
+    own assignment instead.
+    """
+    ordinals: dict[str, tuple[int, str, bool]] = {}
+    for ordinal, slot in enumerate(layout.columns):
+        member = _member_contributor(slot.contributor)
+        if member is not None:
+            is_document = isinstance(slot.contributor, ValueObjectIdentity)
+            ordinals[member] = (ordinal, slot.column.name, is_document)
+    return ordinals
+
+
+def collapse_group_key(
+    meta: Metamodel, entity: EntityMetadata, mutation: str, row: Mapping[str, object]
+) -> object:
+    """The physical shape a buffered row must share with its neighbours before
+    they may collapse into one statement — this layer's half of the planner's
+    batch grouping (`m-sql` "Physical DML ordering": grouping compares the
+    FILTERED, table-ordered slot selections, never the payload mapping).
+
+    Two rows carrying different members select different columns, so one shared
+    statement could only bind the later row's values positionally against the
+    first row's column list. Answering their shapes apart keeps them in separate
+    runs, which is why every collapsed instruction that reaches a batch builder
+    is same-shaped by construction.
+
+    TOTAL: the planner asks this of every collapse candidate, long before any
+    lowering decides the row is renderable at all. A target owning no table and a
+    row naming a member its view does not carry both answer ``None`` — one
+    undifferentiated group, leaving the loud refusal to the builder that would
+    have rendered them.
+    """
+    view = entity_layout(meta, entity)
+    if view is None:
+        return None
+    ordinals = _member_ordinals(view)
+    selection: list[tuple[int, str]] = []
+    for name in row:
+        slot = ordinals.get(name)
+        if slot is None:
+            return None
+        selection.append((slot[0], slot[1]))
+    selection.sort()
+    return (mutation, tuple(column for _, column in selection))
+
+
 def _ordered_cells(
     meta: Metamodel,
     entity: EntityMetadata,
@@ -573,16 +636,12 @@ def _ordered_cells(
     """
     layout = _layout(meta, entity)
     assignment = layout.discriminator
-    ordinals: dict[str, tuple[int, str, bool]] = {}
+    ordinals = _member_ordinals(layout)
     discriminator_cell: tuple[int, str, object] | None = None
-    for ordinal, slot in enumerate(layout.columns):
-        member = _member_contributor(slot.contributor)
-        if member is None:
-            if discriminator and assignment is not None and slot == assignment.slot:
+    if discriminator and assignment is not None:
+        for ordinal, slot in enumerate(layout.columns):
+            if slot == assignment.slot:
                 discriminator_cell = (ordinal, slot.column.name, assignment.value)
-            continue
-        is_document = isinstance(slot.contributor, ValueObjectIdentity)
-        ordinals[member] = (ordinal, slot.column.name, is_document)
     cells: list[tuple[int, str, object]] = []
     for name, value in row.items():
         ordinal, column, is_value_object = ordinals[name]
