@@ -51,6 +51,7 @@ from parallax.core.unit_work import (
 from parallax.descriptor import _records
 from parallax.descriptor._records import Metamodel
 from parallax.snapshot.handle import WriteLoweringError, lower_write
+from parallax.snapshot.handle._keyed_sql import _keys_in_list  # pyright: ignore[reportPrivateUsage]
 
 pytestmark = pytest.mark.unit
 
@@ -769,6 +770,24 @@ def test_a_composite_primary_key_does_not_form() -> None:
     # defensive under that contract.
     with pytest.raises(MetamodelValidationError, match="metamodel-primary-key-multiple"):
         models.accepted_model(_LEDGER)
+
+
+def test_a_multi_column_key_in_list_renders_a_row_constructor() -> None:
+    # The form that branch keeps: `(<pk1>, <pk2>) in ((?, ?), …)`, one tuple per
+    # row in row order, key columns in their own declared order. No accepted
+    # Metamodel can reach it through a lowering (the rule above), so the
+    # renderer is driven directly with a two-column key.
+    model = models.accepted_model(WALLET)
+    wallet = entity_by_name(model, "Wallet")
+    assert wallet is not None
+    by_name = {attribute.identity.name: attribute for attribute in wallet.declared_attributes}
+    sql, binds = _keys_in_list(
+        ((by_name["id"], "id"), (by_name["owner"], "owner")),
+        ({"id": 1, "owner": "Ada"}, {"id": 2, "owner": "Bo"}),
+        POSTGRES,
+    )
+    assert sql == "(id, owner) in ((?, ?), (?, ?))"
+    assert binds == (1, "Ada", 2, "Bo")
 
 
 def test_readless_predicate_delete_lowers_to_one_statement() -> None:

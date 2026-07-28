@@ -85,10 +85,14 @@ source_pkgs = ["parallax"]
 
 [tool.coverage.report]
 show_missing = true
+# The two ellipsis patterns are anchored to the END of the line so they match a
+# stub BODY only — `...` inside a signature's own type annotation (a variadic
+# `tuple[T, ...]` return) must never exclude the block that signature opens.
 exclude_also = [
     "if TYPE_CHECKING:",
     "raise NotImplementedError",
-    "\\.\\.\\.",
+    "^\\s*\\.\\.\\.\\s*$",
+    ":\\s*\\.\\.\\.\\s*$",
 ]
 
 # ---------------------------------------------------------------------------
