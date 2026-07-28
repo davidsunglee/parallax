@@ -588,26 +588,35 @@ def collapse_group_key(
     batch grouping (`m-sql` "Physical DML ordering": grouping compares the
     FILTERED, table-ordered slot selections, never the payload mapping).
 
-    Two rows carrying different members select different columns, so one shared
-    statement could only bind the later row's values positionally against the
-    first row's column list. Answering their shapes apart keeps them in separate
-    runs, which is why every collapsed instruction that reaches a batch builder
-    is same-shaped by construction.
+    The compared selection is the one the EMITTED statement makes, so a member
+    the statement never renders never splits a group. An `INSERT`'s value list
+    and an `UPDATE`'s `set` clause both render the row's own present members:
+    two such rows carrying different members select different columns, and one
+    shared statement could only bind the later row's values positionally against
+    the first row's column list, so answering their shapes apart keeps them in
+    separate runs. A `DELETE` renders its identity predicate alone, so its
+    selection is the key columns and its non-key payload members are invisible
+    here — two legal deletes always share one `IN`-list statement.
 
     TOTAL: the planner asks this of every collapse candidate, long before any
-    lowering decides the row is renderable at all. A target owning no table and a
-    row naming a member its view does not carry both answer ``None`` — one
-    undifferentiated group, leaving the loud refusal to the builder that would
-    have rendered them.
+    lowering decides the row is renderable at all. A target owning no table, a
+    row naming a member its view does not carry, and a delete row omitting a key
+    member all answer ``None`` — one undifferentiated group, leaving the loud
+    refusal to the builder that would have rendered them.
     """
     view = entity_layout(meta, entity)
     if view is None:
         return None
     ordinals = _member_ordinals(view)
+    members: Sequence[str] = (
+        [attribute.identity.name for attribute in family_primary_key(meta, entity)]
+        if mutation == "delete"
+        else list(row)
+    )
     selection: list[tuple[int, str]] = []
-    for name in row:
+    for name in members:
         slot = ordinals.get(name)
-        if slot is None:
+        if slot is None or name not in row:
             return None
         selection.append((slot[0], slot[1]))
     selection.sort()

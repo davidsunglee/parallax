@@ -26,6 +26,8 @@ when:
             city: Oslo
             geo:
               country: "NO"
+            phones:
+              - { type: home, number: '555-0201' }
         - id: 201
           name: Bo
           address:
@@ -33,6 +35,8 @@ when:
             city: Bergen
             geo:
               country: "NO"
+            phones:
+              - { type: work, number: '555-0202' }
 then:
   statements:
     - sql:
@@ -45,12 +49,16 @@ then:
           city: Oslo
           geo:
             country: "NO"
+          phones:
+            - { type: home, number: '555-0201' }
         - 201
         - Bo
         - street: 2 Birch Rd
           city: Bergen
           geo:
             country: "NO"
+          phones:
+            - { type: work, number: '555-0202' }
   tableState:
     customer:
       - id: 200
@@ -60,6 +68,8 @@ then:
           city: Oslo
           geo:
             country: "NO"
+          phones:
+            - { type: home, number: '555-0201' }
       - id: 201
         name: Bo
         address:
@@ -67,4 +77,6 @@ then:
           city: Bergen
           geo:
             country: "NO"
+          phones:
+            - { type: work, number: '555-0202' }
   roundTrips: 1

@@ -447,6 +447,65 @@ def test_collapse_never_merges_a_row_carrying_a_recorded_observation() -> None:
     assert len(plan.writes) == 2
 
 
+def test_collapse_never_merges_across_an_intervening_atomic_unit() -> None:
+    # An AtomicUnit is opaque to collapse AND a hard run boundary: the two
+    # surrounding uniform updates are individually collapse-eligible, but
+    # merging them would emit the caller's second update BEFORE the unit the
+    # caller buffered between them.
+    unit = AtomicUnit(writes=(KeyedWrite("update", "Wallet", ({"id": 9, "balance": 5.00},)),))
+    buffer = [
+        KeyedWrite("update", "Wallet", ({"id": 1, "balance": 5.00},)),
+        unit,
+        KeyedWrite("update", "Wallet", ({"id": 2, "balance": 5.00},)),
+    ]
+    plan = plan_flush(buffer, {}, None, _WALLET, collapse=batch_write.collapses)
+    assert _rows(plan) == [
+        {"id": 1, "balance": 5.00},
+        {"id": 9, "balance": 5.00},
+        {"id": 2, "balance": 5.00},
+    ]
+
+
+def test_collapse_never_merges_across_an_intervening_observed_write() -> None:
+    # The same boundary for the other non-candidate kinds: a row carrying a
+    # recorded observation interrupts a run rather than being lifted out of it.
+    middle = KeyedWrite("update", "Wallet", ({"id": 9, "balance": 5.00},))
+    middle_key = object_key(middle, _WALLET)
+    assert middle_key is not None
+    buffer = [
+        KeyedWrite("update", "Wallet", ({"id": 1, "balance": 5.00},)),
+        middle,
+        KeyedWrite("update", "Wallet", ({"id": 2, "balance": 5.00},)),
+    ]
+    plan = plan_flush(
+        buffer, {middle_key: Observation(version=1)}, None, _WALLET, collapse=batch_write.collapses
+    )
+    assert _rows(plan) == [
+        {"id": 1, "balance": 5.00},
+        {"id": 9, "balance": 5.00},
+        {"id": 2, "balance": 5.00},
+    ]
+
+
+def test_collapse_never_merges_across_an_intervening_multi_row_write() -> None:
+    # An already-multi-row instruction is likewise a boundary, not a candidate.
+    buffer = [
+        KeyedWrite("update", "Wallet", ({"id": 1, "balance": 5.00},)),
+        KeyedWrite("update", "Wallet", ({"id": 8, "balance": 5.00}, {"id": 9, "balance": 5.00})),
+        KeyedWrite("update", "Wallet", ({"id": 2, "balance": 5.00},)),
+    ]
+    plan = plan_flush(buffer, {}, None, _WALLET, collapse=batch_write.collapses)
+    assert [
+        [dict(row) for row in planned.instruction.rows]
+        for planned in plan.writes
+        if isinstance(planned.instruction, KeyedWrite)
+    ] == [
+        [{"id": 1, "balance": 5.00}],
+        [{"id": 8, "balance": 5.00}, {"id": 9, "balance": 5.00}],
+        [{"id": 2, "balance": 5.00}],
+    ]
+
+
 def test_collapse_never_touches_a_predicate_write() -> None:
     predicate = PredicateWrite(
         "delete", WriteTarget("Wallet", op_algebra.Comparison("lessThan", "Wallet.balance", 1.0))

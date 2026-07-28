@@ -509,6 +509,7 @@ def _collapse(
             run.append(item)
             run_group = item_group
         else:
+            flush_run()
             result.append(item)
     flush_run()
     return result
