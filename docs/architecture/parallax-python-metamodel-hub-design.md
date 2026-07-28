@@ -1,6 +1,6 @@
 # Python Metamodel Hub and Entity frontend design
 
-**Status:** Accepted
+**Status:** Accepted design; COR-50 shared-contract closure pending
 
 **Accepted:** 2026-07-20
 
@@ -22,6 +22,16 @@ This is an intentional interface and specification redesign, not a
 behavior-preserving file split. Parallax specifications remain authoritative,
 but this work may change those specifications where the cleaner model requires
 it. There is no compatibility or data migration requirement.
+
+The normative Python surface and host-language carrier contracts live in
+[`languages/python/spec/python.md`](../../languages/python/spec/python.md).
+This document records architectural ownership, dependency direction, and
+rationale and links to that contract rather than defining a second copy. Its
+COR-50 Null Placement, nested Value Object predicate, and path-root Narrow
+material is accepted target state, not a claim that the current core already
+contains those forms. COR-50 owns the synchronized update of core
+specifications, schemas, compatibility artifacts, dialects, and claiming
+frontends before Python runtime implementation may expose them.
 
 The core decision is recorded in
 [ADR 0028](../adr/0028-behavioral-modules-depend-on-the-metamodel-interface.md).
@@ -1500,292 +1510,45 @@ only through Entity declarations and is not passed to the hub separately.
 
 ### Query values and expressions
 
+The normative Python query contract is
+[§2, “Query and operation API”](../../languages/python/spec/python.md#query-and-operation-api).
+This section records why the boundary is shaped that way; examples and named
+operations here are rationale, not a second surface definition.
+
 - The developer query value is named **Find Query**, represented as
   `FindQuery[T]`; `Statement` is retired from this surface.
 - `Entity.where(...)` remains the query root. There is no competing
   `hub.find(...)` builder.
-- `FindQuery[T]` is an exported typing and fluent-operation type but has no
-  supported public constructor. Only `Entity.where(...)` creates one. It is an
-  immutable opaque value: every clause returns a new Find Query, and target,
-  Predicate, includes, temporal state, opaque hub identity, and all other
-  representation fields are not public attributes. It defines no structural
-  equality or semantic hashing: ordinary object identity governs `==` and
-  hashing, so only the same Find Query object compares equal to itself.
-  Canonical-operation equality remains a first-party conformance concern.
-  `FindQuery.__bool__` raises `TypeError` with guidance to execute the query and
-  inspect its Snapshot; an unexecuted query is neither empty nor nonempty.
-- Canonical operation extraction and serialization are first-party
-  lowering/conformance seams, not `FindQuery` methods. There is no public
-  `operation()`, `serialize()`, `is_bare()`, `is_milestone_set()`, or similar
-  representation/state inspection. Predicate-selected write compatibility is
-  checked internally through the one query interface.
-- The complete COR-50 fluent interface is:
-
-  ```text
-  Entity.all -> Predicate
-  Entity.where(predicate, *predicates) -> FindQuery[T]
-
-  FindQuery.include(*relationship_paths) -> FindQuery[T]
-  FindQuery.order_by(*sort_keys) -> FindQuery[T]
-  FindQuery.limit(count) -> FindQuery[T]
-  FindQuery.narrow(*subtypes) -> FindQuery[T]
-  FindQuery.as_of(*, valid_time=..., tx_time=...) -> FindQuery[T]
-  FindQuery.history(dimension) -> FindQuery[T]
-  FindQuery.as_of_range(
-    *, valid_time=(start, end), tx_time=(start, end)
-  ) -> FindQuery[T]
-  ```
-
-  There is no Find Query `.where(...)` refinement in this slice, and no
-  `distinct`, offset, pagination, projection, count, aggregation, execution,
-  or serialization method. `Entity.narrow(*subtypes, where=...)` remains the
-  scoped Predicate constructor; the result-set `FindQuery.narrow(*subtypes)`
-  clause accepts no `where=` argument. Database and Transaction `find(...)`
-  remain the only execution doors. Distinct remains in the lower-level
-  operation algebra for result shapes that can contain duplicate rows. It is
-  not a Find Query clause because a Find Query returns complete root Entities,
-  navigation lowers through existence tests, and included graphs are fetched
-  separately. Duplicate roots indicate a lowering or identity-resolution
-  defect rather than caller-selectable result shaping.
-- `Entity.where(...)` requires at least one Predicate; an empty call raises
-  `QueryDefinitionError(query-clause-invalid)`. `Entity.all` is the
-  non-callable class-scoped Predicate for an explicitly unfiltered query. It
-  carries the Entity's exact hub and target identity, lowers to canonical
-  `all`, and is legal only as the sole `where(...)` argument. Combining it with
-  another Predicate variadically or through Boolean operators raises
-  `QueryDefinitionError(query-expression-invalid)` rather than being silently
-  simplified. There is no `Entity.all()` query constructor.
-- `include(*relationship_paths)` requires at least one path and accumulates
-  across calls. Passing multiple paths at once produces the same accumulated
-  Deep Fetch directive as passing them through successive calls.
-  Canonical deep-fetch planning deduplicates shared and equivalent effective
-  relationship hops.
-- A Relationship Path exposes cardinality-neutral
-  `exists(*predicates)` and `not_exists(*predicates)` for both to-one and
-  to-many relationships. Zero arguments test pure path existence or absence;
-  multiple arguments conjoin in the terminal related-Entity scope, while
-  separate existence predicates may match different terminal objects. A
-  multi-hop path lowers to nested canonical `exists` operations;
-  `not_exists(...)` uses `notExists` at the outermost hop to negate the complete
-  chain. Path-segment narrowing becomes its corresponding nested `narrow`
-  scope. Intermediate-Entity conditions still require explicit nested
-  `exists(...)`. Predicate inversion canonicalizes `~exists` to `notExists` and
-  `~notExists` to `exists`; Value Object occurrence nodes receive the same
-  `nestedExists`/`nestedNotExists` inversion. The operator and named method
-  spellings therefore converge on one operation.
-- Value Object occurrence paths use the same
-  `exists(*predicates)`/`not_exists(*predicates)` vocabulary, lowering to the
-  canonical nested operation family. Zero arguments mean present/absent for
-  One and nonempty/empty for Many; multiple predicates must match the same
-  occurrence. The Python surface exposes no `any()`/`none()` methods.
-- Equality and inequality against Python `None` are null-test spellings:
-  `attribute == None` lowers to the same canonical `isNull` operation as
-  `attribute.is_null()`, and `attribute != None` lowers to the same
-  `isNotNull` operation as `attribute.is_not_null()`. The rule applies equally
-  to top-level scalar Attributes and nested Value Object leaves. The explicit
-  methods are the documented, lint-clean spelling. Null tests are legal
-  regardless of the member's declared nullability and are never
-  constant-folded: a top-level non-nullable Attribute's `isNull` simply matches
-  no conforming rows, while a nested non-nullable leaf may still be not-present
-  because an ancestor or document path is absent under core's absence-collapse
-  rule. Predicate legality is distinct from whether construction or assignment
-  may supply explicit null. `None` is otherwise not a comparison, bound, string
-  predicate, or Boolean-test literal: relational comparison, `between`, string
-  methods, and `.is_(...)` reject it as
-  `QueryDefinitionError(query-expression-invalid)`, even for nullable members.
-  `None` is never a member of
-  an `.in_(...)` or `.not_in(...)` value collection: encountering it at any
-  position raises `QueryDefinitionError(query-expression-invalid)` rather than
-  exposing SQL three-valued membership behavior or silently expanding the
-  Predicate into a Boolean combination. Both membership methods also require a
-  nonempty value collection, matching the canonical operation algebra;
-  `.in_([])` and `.not_in([])` raise the same error rather than becoming
-  implicit match-none or match-all Predicates. The sole collection argument
-  must be an exact built-in `list` or `tuple`; the frontend copies it into
-  immutable Predicate storage and preserves authored order and duplicates.
-  Strings, sets, generators, tuple/list subclasses, custom iterables, and
-  coercion are rejected with the same error.
-- Nested Value Object leaves expose the same `between`, `in_`/`not_in`, and
-  string-predicate surface as top-level scalar Attributes. This requires an
-  atomic cross-core expansion: the canonical operation family gains
-  `nestedBetween`, `nestedNotIn`, `nestedLike`, `nestedNotLike`,
-  `nestedStartsWith`, `nestedEndsWith`, and `nestedContains` alongside the
-  existing `nestedIn`. Their payloads, typed-literal validation,
-  case-insensitive option, wildcard escaping, absence-collapse behavior, and
-  bind ordering parallel the corresponding top-level operations. They work as
-  both Entity-rooted flat paths and element-relative paths inside
-  `nestedExists`/`nestedNotExists`. A flat node crossing a Many occurrence
-  retains any-element semantics, but one element must satisfy the whole node;
-  in particular `nestedBetween` is a dedicated node rather than an
-  `and(nestedGte, nestedLte)` rewrite that could satisfy its bounds on different
-  elements. Top-level and nested `between(lower, upper)` validate each bound
-  against the leaf type but impose no `lower <= upper` construction rule; a
-  reversed pair is a valid Predicate that naturally matches no values under
-  SQL `BETWEEN` semantics. The prerequisite must update `m-core`, `m-op-algebra`,
-  `m-value-object`, `m-sql`, `m-dialect`, the canonical operation schema,
-  models/fixtures/compatibility cases and benchmarks, dialect renderers, and
-  all claiming frontends together. COR-50 ships no Python-only lowering or
-  partial contract state.
-- Boolean-specific query inputs are exact built-in `bool` values with no
-  coercion. `.is_(...)` accepts only `True` or `False`, and every top-level or
-  nested string Predicate's keyword-only `case_insensitive=` accepts only an
-  exact `bool`; `1`, `0`, strings, and truthy objects raise
-  `QueryDefinitionError(query-expression-invalid)`. Omitting
-  `case_insensitive` and explicitly passing `False` lower to the same canonical
-  node with the optional flag absent; `True` emits the canonical true flag.
-- `order_by(*sort_keys)` requires at least one key and also accumulates across
-  calls. Successive calls append keys exactly as though all keys appeared in
-  one call. Keys remain in left-to-right precedence order. A resolved Attribute
-  Identity may occur only once across the accumulated ordering, irrespective
-  of direction. A duplicate in one call or across calls raises
-  `QueryDefinitionError(query-clause-invalid)` during construction of the new
-  Find Query; duplicate keys are never silently removed.
-- A Sort Key is exactly one top-level scalar Attribute Expression with a sort
-  direction. Passing a bare Attribute Expression means ascending and preserves
-  core's omitted-direction default; `.asc()` and `.desc()` spell the direction
-  explicitly. Null placement defaults to last in either direction;
-  `.nulls_first()` and `.nulls_last()` exist only on a Sort Key already returned
-  by `.asc()` or `.desc()`. A bare Attribute has no null-placement modifier.
-  Placement is single-shot; a second modifier raises
-  `QueryDefinitionError(query-expression-invalid)`. Relationship declaration
-  terms follow the same chain through `asc("member")` or `desc("member")`.
-  Inherited Attributes are valid; subtype-declared Attributes
-  require an already-established compatible root narrow. Nested Value Object
-  members, Relationship traversals, computed expressions, literals, and
-  arbitrary functions raise `QueryDefinitionError(query-expression-invalid)`.
-  COR-50 leaves core `orderBy`'s Attribute-Reference shape unchanged.
-- Null Placement is a cross-core prerequisite, not a Python-only extension.
-  Its implementation must change `m-metamodel`, `m-relationship`,
-  `m-op-algebra`, `m-deep-fetch`, `m-sql`, both canonical schemas, affected
-  models/fixtures/compatibility cases, dialect rendering, and every claiming
-  frontend together under the core behavior-change workflow. COR-50 exposes
-  `.nulls_first()`/`.nulls_last()` only against that completed shared contract;
-  it does not ship an interim Python representation or provider-specific rule.
-- A root `FindQuery.narrow(...)` establishes the effective subtype scope used
-  to validate sort keys added afterward. The ordered Attribute must be
-  available on every concrete subtype then in scope. Consequently,
-  `Animal.where(Animal.all).narrow(Dog).order_by(Dog.bark_volume.desc())` is
-  valid, but
-  the same `order_by(...)` before `narrow(Dog)` immediately raises
-  `QueryDefinitionError(query-target-mismatch)`. A later clause never repairs
-  an invalid intermediate Find Query.
-- A preceding root `FindQuery.narrow(...)` also authorizes subtype-rooted first
-  include hops, including inherited relationships accessed through a subtype.
-  A path authored through the Find Query target remains broad across the
-  narrowed result. A path authored through a descendant is valid only when a
-  root narrow is already present and the authored source resolves to a
-  nonempty subset of the active root set; that resolved subset is the path-root
-  Narrow, so the planner gathers correlation keys only from matching root
-  objects and attaches the ordinary relationship view only to those objects.
-  An empty or broader source raises
-  `QueryDefinitionError(query-target-mismatch)`. Thus
-  `Animal.where(Animal.all).narrow(Dog, Cat).include(
-  Animal.owner, Dog.doghouse, Cat.ball_of_yarn)` loads `owner` for both result
-  variants, `doghouse` only for Dogs, and `ball_of_yarn` only for Cats.
-  `Animal.where(Animal.all).include(Dog.doghouse)` remains invalid, and a later
-  root narrow never repairs it.
-- An included path retains both the canonical Relationship Identity and the
-  Entity Identity through which its first relationship was accessed. They are
-  deliberately distinct: `Dog.owner` retains relationship identity
-  `Animal.owner` but carries Dog's effective set as its source guard, whereas
-  `Animal.owner` has the broad Animal source. `Dog.owner` therefore loads the
-  ordinary `owner` view only on Dog-family roots; it is neither rejected nor
-  silently broadened. `Dog.doghouse` follows the same rule regardless of where
-  `doghouse` was declared.
-- Canonical Deep Fetch paths become closed objects with required nonempty
-  `path` segments and an optional path-root `narrow` carrying the same
-  `entity` plus nonempty `to` contract as operation-position Narrow, but no
-  operand:
-
-  ```yaml
-  - path:
-      - rel: Animal.owner
-  - narrow:
-      entity: Animal
-      to: [Dog]
-    path:
-      - rel: Animal.owner
-  ```
-
-  The first path is broad `Animal.owner`; the second is `Dog.owner`. A Deep
-  Fetch path is therefore an optional root-position Narrow followed by one or
-  more relationship segments, each of which may retain its existing
-  target-position `narrow`. Every target Narrow becomes the source position for
-  the next segment, so multi-level paths can narrow at every inheritance
-  boundary without a source guard on each hop. The root Narrow's effective set
-  must be a nonempty subset of the already-active Find Query root set.
-- Root-source Narrow and relationship-target Narrow have different loaded-view
-  effects. A root Narrow selects which existing root objects traverse the path
-  and does not create a relationship view. A segment target Narrow populates
-  its distinct narrowed view. Consequently
-  `include(Person.pets, Person.pets.narrow(Dog).doghouse)` performs separate
-  broad `pets` and `pets[Dog]` fetches; COR-50 does not reuse a broad view as the
-  source of a subtype-conditional continuation. Branches use separate paths.
-  Equivalent shared prefixes retain the existing deduplication rules, while
-  broad and target-narrowed hops remain distinct.
-- Effective path-root source set participates in fetch-hop identity. Paths with
-  identical or equivalent root Narrows and the same relationship/target-view
-  prefix deduplicate; different root source sets, and broad versus guarded
-  sources, remain distinct hops even when they traverse the same canonical
-  Relationship Identity. The planner does not union guarded source sets in
-  COR-50. Thus `include(Dog.owner, Cat.owner)` performs two owner hops, while
-  `include(Animal.owner)` performs one broad owner hop that gathers the
-  deduplicated correlation keys from every active Dog and Cat root into one
-  child query. `Dog.owner` and `Dog.owner.address` still share their identical
-  guarded prefix.
-- The core expansion must update `m-op-algebra`, its schema, `m-inheritance`,
-  `m-deep-fetch`, `m-sql`, semantic validation, planning, compatibility cases,
-  and claiming frontends atomically.
-- Existing target narrowing after a relationship hop remains distinct and
-  supported: `Person.pets.narrow(Dog).doghouse` narrows the `pets` target,
-  populates the distinct `pets[Dog]` view, and then traverses `doghouse`.
-  Root-source guarding does not create a narrowed relationship view.
-- `limit(count)` is single-shot. A second call on a Find Query that already
-  carries a limit raises `QueryDefinitionError(query-clause-invalid)` rather
-  than replacing or tightening the existing value. Callers that need multiple
-  bounded variants retain and derive them from the same unbounded base query.
-  `count` must be a positive built-in `int`; `bool`, zero, negative values,
-  other numeric types, and coercible values raise the same error without
-  coercion.
-- `limit(...)` is valid without `order_by(...)` and never injects an implicit
-  primary-key Sort Key. In that form, row order and subset membership are
-  unspecified; callers author an order explicitly when deterministic selection
-  matters.
-- `as_of(...)`, `history(...)`, and `as_of_range(...)` are one mutually
-  exclusive, single-shot temporal-clause family. Once any member is present,
-  every later temporal-clause call raises
-  `QueryDefinitionError(query-clause-invalid)`; it never merges with or
-  replaces the original. A caller that needs both dimensions supplies them in
-  the same initial `as_of(...)` or `as_of_range(...)` call. Both keyword-based
-  methods require at least one dimension: zero-argument `as_of()` and
-  `as_of_range()` calls raise the same error rather than representing an
-  implicit-latest no-op or an axis-free scan. Each supplied range is exactly an
-  immutable two-item built-in `tuple`; lists, tuple subclasses, arbitrary
-  iterables, and coercion are rejected. Its endpoints are finite timezone-aware
-  `datetime` values normalized to UTC microsecond precision, with
-  `start < end`; `LATEST` is not a range endpoint.
-- Independent fluent-clause invocation order does not affect canonical
-  lowering. Find Query state lowers in the fixed inner-to-outer order Predicate,
-  optional root Narrow, optional Temporal wrappers, optional Order By, optional
-  Limit, and optional Deep Fetch. Permuting otherwise valid `include`,
-  `order_by`, `limit`, and temporal calls therefore yields the same canonical
-  operation. Normalization never postpones construction-time validation: a
-  subtype-specific sort key still requires a root narrow already present when
-  `order_by(...)` is called.
-- `FindQuery.narrow(*subtypes)` is single-shot. A second root-narrowing clause
-  raises `QueryDefinitionError(query-clause-invalid)`; it neither intersects
-  nor replaces the original subtype alternatives.
-- Every Python narrowing form requires at least one subtype alternative. The
-  alternatives' resolved concrete-subtype sets must be pairwise disjoint, so an
-  exact duplicate or an ancestor named alongside one of its descendants raises
-  `QueryDefinitionError(query-path-invalid)` rather than being silently
-  deduplicated. The generic operation algebra retains its authored-list and
-  resolved-union semantics; this is an Entity-frontend construction rule.
-- A relationship-path segment may likewise be narrowed only once. Calling
-  `.narrow(...)` again on the same already-narrowed segment raises
-  `QueryDefinitionError(query-path-invalid)`. After continuing through another
-  relationship, that new segment may independently narrow its own polymorphic
-  target.
+- The Find Query is deliberately opaque and immutable. Public callers author
+  behavior; first-party lowering and conformance own representation access.
+  This prevents a second public operation model and keeps canonical equality a
+  conformance concern rather than a query-value promise.
+- The intentionally small fluent surface has one constructor and no public
+  execution, serialization, representation-inspection, refinement, or
+  duplicate-masking clause. The exact methods and validation rules are defined
+  only in the Python spec.
+- Explicit match-all, one existence vocabulary, named null tests, and strict
+  immutable inputs keep the Python authoring surface aligned with one canonical
+  operation shape. The Python spec alone defines their signatures, validation,
+  and lowering.
+- Null Placement and the complete nested Value Object predicate family are
+  accepted COR-50 target state. They require the synchronized core closure
+  identified by the Python spec and ADR 0039; this design adds no Python-only
+  canonical representation.
+- Deep Fetch paths alternate Entity positions with relationship hops. A
+  path-root Narrow guards the initial position; a segment Narrow changes the
+  next position and names a distinct narrowed view. Every segment resolves from
+  its immediately preceding target after narrowing, never from the root,
+  declaring owner, or a local-name lookup. The Python spec owns the
+  cross-namespace `SalesOrder.customer.notes` compatibility proof.
+- Broad, source-guarded, and target-narrowed paths retain distinct identity.
+  COR-50 favors explicit branches over source-set union or broad-view reuse so
+  provenance, loaded views, deduplication, and round trips remain predictable.
+  ADR 0040 records the tradeoff and the Python spec defines the exact grammar.
+- Null Placement, nested predicates, and path-root Narrow remain unavailable to
+  Python runtime code until COR-50 atomically updates the affected core
+  specifications, schemas, compatibility artifacts, dialects, planners, and
+  claiming frontends.
 - Direct class-level expressions remain idiomatic:
   `Order.status == "OPEN"`, not `Order.fields.status == "OPEN"`.
 - The declaration metaclass installs thin typed field and relationship
@@ -1831,8 +1594,12 @@ only through Entity declarations and is not passed to the hub separately.
   second serialized query representation.
 - `update_where` and `update_until_where` require one or more Assignments;
   `delete_where`, `terminate_where`, and `terminate_until_where` accept none.
-  Every Assignment carries the same exact hub identity and must target a member
-  of the Find Query's exact Entity. A mismatch raises
+  The Attribute Expression's `.set(...)` has already applied member assignability,
+  declared-type, and nullability validation before producing each Assignment;
+  this COR-50 contract does not derive from the COR-51 edited-copy path.
+  Combining inputs validates only the list and composition rules. Every
+  Assignment carries the same exact hub identity and must target a member of
+  the Find Query's exact Entity. A mismatch raises
   `QueryDefinitionError(query-assignment-target-mismatch)` while combining the
   inputs at the transaction method, before buffering, SQL, or adapter access.
 - After composition succeeds, the Transaction still requires identity with its
@@ -1884,6 +1651,11 @@ only through Entity declarations and is not passed to the hub separately.
 
 ### Snapshot collaboration
 
+The normative Snapshot and Entity Graph Construction contracts are
+[§3, “Snapshot lifecycle”](../../languages/python/spec/python.md#snapshot-lifecycle).
+This section explains ownership and seam rationale; named states and failures
+refer to that contract and do not redefine it.
+
 - Graph-local identity reuse, closed-world loaded/unloaded relationships,
   narrowed relationship views, whole-graph pins, and milestone edges are
   Snapshot-slice state. The common Entity implementation defines no generic
@@ -1904,327 +1676,62 @@ only through Entity declarations and is not passed to the hub separately.
   loaded-state decisions, whole-graph pin and milestone-edge decisions, and
   the transient merge index required while associating projections. It is not
   a `parallax.core.entity` capability.
-- Snapshot graph input is already associated and structured rather than a row
-  batch or fetch plan:
-
-  ```text
-  SnapshotGraphInput
-    roots: ordered sequence<SnapshotNodeInput>
-    pin: whole-graph temporal coordinates
-
-  SnapshotNodeInput
-    concrete_entity: EntityIdentity
-    attributes: AttributeIdentity -> null | NeutralValue
-    value_objects: tuple<ValueObjectOccurrenceInput>
-    relationship_views:
-      RelationshipViewKey -> null | one node | ordered nodes
-
-  ValueObjectRecord
-    attributes: tuple<ValueObjectAttributeInput>
-    value_objects: tuple<ValueObjectOccurrenceInput>
-
-  ValueObjectAttributeInput
-    identity: ValueObjectAttributeIdentity
-    value: null | NeutralValue
-
-  ValueObjectOccurrenceInput
-    identity: ValueObjectIdentity
-    value:
-        null
-      | ValueObjectRecord
-      | tuple<ValueObjectRecord>
-
-  RelationshipViewKey =
-      Broad(RelationshipIdentity)
-    | Narrowed(RelationshipIdentity, canonical effective concrete set)
-
-  BoundRelationshipViewKey
-    hub_identity: opaque exact-hub sentinel
-    view: RelationshipViewKey
-  ```
-
-  `ValueObjectRecord`, `ValueObjectAttributeInput`, and
-  `ValueObjectOccurrenceInput` are frozen slotted records. Their tuple fields
-  are the exact host collections accepted across both Snapshot Graph Input and
-  Entity Graph Construction; mutable mappings, mutable sequences, raw document
-  dictionaries, Pydantic Value Objects, and parallel frozen-map abstractions do
-  not cross the seam. The same recursive input algebra is used unchanged by
-  `SnapshotNodeInput.value_objects` and `EntityGraphWriter.populate(...)`.
-  Tuple order for a record's attribute and nested-occurrence entries is
-  non-semantic. Entity Graph Construction indexes those entries by structured
-  identity, rejects duplicates, and validates and constructs them in accepted
-  metadata declaration order, so producer insertion order cannot change
-  behavior or failure precedence. Only the records inside a Many occurrence
-  have semantic order, which construction preserves exactly.
-
-  Value Object presence is recursive and does not collapse document omission
-  into explicit null. Within a present Value Object record, omission of a
-  declared scalar or nested-occurrence identity means that document key was
-  absent; a present identity mapped to `null` means that the document carried
-  an explicit null. Either state is legal only for a nullable scalar or
-  nullable One occurrence. Both materialize as `None`, but Entity construction
-  retains whether the identity was present so later canonical document
-  serialization omits the former and emits the latter. A required scalar or
-  One occurrence rejects both states. A Many occurrence is never nullable: its
-  value is an immutable ordered tuple of non-null records, with the empty tuple
-  as its sole zero-element value; omission, null, and null elements are invalid.
-  These rules apply identically at every nesting depth.
-  Row-to-Graph-Input conversion owns validation of the physical structured
-  document and its conversion into this algebra, including member presence,
-  nullability, container shape, and Neutral Value membership. A failure there
-  raises exported `SnapshotDecodingError(ValueError)` with stable code
-  `snapshot-decoding-failed`, the concrete Entity Identity, the applicable
-  Value Object or Value Object Attribute Identity, and an optional original
-  cause. It exposes no raw database value, remains a pre-materialization
-  neutral-decoding failure, and never becomes a Graph Construction error.
-  Entity Graph Construction independently validates every identity, duplicate,
-  occurrence shape, nullability state, and Neutral Value it receives. Invalid
-  direct first-party input raises
-  `GraphConstructionError` using `entity-graph-invalid-member` or
-  `entity-graph-invalid-value`; production Snapshot conversion is expected to
-  make that path unreachable except through an implementation defect.
-
-  Node references may be shared or cyclic, and separate input nodes may carry
-  different projections of one logical identity. The Snapshot materializer
-  treats the input as read-only, groups and merges those projections using the
-  Metamodel and graph pin, and preserves root and to-many order. An absent
-  relationship-view key means unloaded; a present null or empty sequence means
-  loaded-null or loaded-empty respectively. Projection merging may retain
-  identity indexes, input references, and slot-level winner references, but
-  MUST NOT clone every node's attribute, Value Object, and relationship
-  payloads into a second graph-sized merged representation. It emits Entity
-  Graph Writer operations directly from that transient merge state.
+- The exact immutable host-language contract is defined only in
+  [§3, “Snapshot lifecycle”](../../languages/python/spec/python.md#snapshot-lifecycle).
+  Snapshot Graph Input is already associated and structured rather than a row
+  batch or fetch plan. It uses a flat tuple of frozen node records plus
+  immutable node references, so roots, scalar entries, relationship-view
+  entries, and loaded-many values all have exact tuple carriers while shared
+  and cyclic references remain constructible. Mutable mappings, abstract or
+  mutable sequences, raw document dictionaries, Pydantic values, and a
+  parallel frozen-map abstraction do not cross the seam.
+- Entry order is non-semantic except for roots and loaded-many values.
+  Structured identities therefore determine validation and construction order,
+  while immutable references preserve graph topology independently of producer
+  insertion order. Recursive Value Object carriers preserve omission versus
+  explicit null and make Many occurrences immutable; the Python spec defines
+  the exact legality and decoding errors.
+- Snapshot treats Graph Input as read-only and merges separate projections of
+  one logical node, including shared and cyclic references. Its transient
+  identity/slot index points into the original payloads and emits writer
+  operations directly, avoiding a second graph-sized merged representation.
 - `parallax.core.entity` instead provides one advanced concrete
   `EntityGraphConstruction` capability. It is backed by the Metamodel Binding,
   is not a protocol with interchangeable adapters, and is not re-exported from
-  top-level `parallax.core`. Its complete interface is:
+  top-level `parallax.core`. The Python spec owns its exact callback, tuple
+  carrier, `NodeHandle`, inspection, lifecycle-factory, and error contracts.
+  Architecturally, the capability exists to concentrate Pydantic allocation,
+  canonical-to-Python member mapping, and cycle closure behind one narrow,
+  class-aware seam while Snapshot retains graph identity and lifecycle policy.
 
-  ```text
-  EntityGraphConstruction
-    construct(build: EntityGraphWriter -> ordered sequence<NodeHandle>)
-      -> ordered sequence<Entity>
-
-  EntityGraphWriter
-    allocate(concrete_entity: EntityIdentity) -> NodeHandle
-    populate(
-      node: NodeHandle,
-      attributes: AttributeIdentity -> null | NeutralValue,
-      value_objects: tuple<ValueObjectOccurrenceInput>,
-      relationships:
-        RelationshipIdentity ->
-          Unloaded
-          | LoadedNull
-          | LoadedOne(NodeHandle)
-          | LoadedMany(ordered sequence<NodeHandle>),
-      lifecycle_state:
-        absent
-        | (EntityGraphResolution -> opaque object),
-    ) -> None
-
-  EntityGraphResolution
-    entity(node: NodeHandle) -> Entity
-
-  relationship_value_of(
-    value: Entity,
-    relationship: RelationshipIdentity,
-  ) -> Unloaded | LoadedNull | LoadedOne(Entity) | LoadedMany(ordered sequence<Entity>)
-
-  lifecycle_state_of(value: Entity) -> opaque object | absent
-  ```
-
-  `NodeHandle` is opaque and graph-local. It may be used by the active writer
-  during the build callback and captured for resolution during any
-  lifecycle-state factory in the same `construct(...)` call; no operation
-  accepts it after that call exits. Snapshot allocates merged logical nodes in deterministic
-  first-encounter preorder: roots in result order; for each node,
-  relationships in accepted metadata declaration order; each broad view before
-  that relationship's narrowed views; narrowed views by canonical effective
-  concrete-identity set; and children in to-many result order. A repeated
-  logical node reuses its first allocation index. Snapshot then populates nodes
-  and Entity later invokes lifecycle-state factories in that same allocation
-  order. The callback first allocates every node, then populates them; the
-  first population closes the allocation phase. Each allocated handle is
-  populated exactly once, relationship values may refer to any handle from the
-  same construction, and every returned root must be one of the populated
-  handles. After the build callback returns, Entity first verifies that every
-  node is populated and then validates every root. Only then does it invoke each
-  optional lifecycle-state factory with a read-only resolution view over the
-  same construction. A factory may resolve any local handle to its final Entity
-  instance and sees scalar fields, Value Objects, and broad relationships fully
-  wired, including cycles. No lifecycle-state value is attached or observable
-  yet, and no root is published. A factory cannot allocate, populate, or
-  publish. Entity buffers every factory result without attaching it. Only
-  after every factory succeeds does Entity attach all results and publish the
-  ordered roots atomically. A factory failure stops invocation, discards every
-  buffered result, and leaves every Entity unreachable and lifecycle-state-free.
-  These rules provide cycle closure and lifecycle attachment without exposing
-  a partially constructed Entity graph or order-dependent state.
-- `construct(...)` publishes the ordered Entity roots only after the callback
-  returns successfully and the complete graph passes construction checks. A
-  callback, population, or lifecycle-state factory failure returns no graph;
-  every buffered state result is discarded and any partially allocated
-  instance remains unreachable. The capability owns concrete Entity Class
-  selection, Pydantic allocation and population, canonical-to-Python member
-  mapping, recursive Value Object construction, broad relationship-slot
-  installation, and private storage of exactly one opaque lifecycle-state
-  value per node. It neither interprets that value nor decides Snapshot
-  identity merging, loaded state, narrowing, pins, or edges.
-- Failure precedence is total. Writer-operation failures are raised eagerly at
-  the offending call. If the build callback raises, its original exception
-  propagates unchanged and Entity performs no completion, root, or factory
-  work. After a successful callback, the lowest allocation index not populated
-  raises `entity-graph-node-unpopulated`. Only when every node is populated are
-  returned roots validated from left to right for value shape, foreign
-  construction, and membership. Factories then run in allocation order; the
-  first factory exception propagates unchanged and no later factory runs.
-  State attachment and root publication are last.
-- Violations detected by Entity raise the advanced
-  `GraphConstructionError(RuntimeError)` from `parallax.core.entity`. It has a
-  stable `code`, optional zero-based `node_index`, optional structured Entity
-  or member identity, and optional cause. Its complete code set is:
-
-  ```text
-  entity-graph-invalid-entity
-  entity-graph-invalid-member
-  entity-graph-allocation-closed
-  entity-graph-scope-closed
-  entity-graph-foreign-handle
-  entity-graph-node-already-populated
-  entity-graph-node-unpopulated
-  entity-graph-invalid-root
-  entity-graph-invalid-value
-  ```
-
-  Invalid Entity means the requested identity has no concrete class in this
-  Metamodel Binding. Invalid member means an Attribute or Relationship Identity
-  is unknown, belongs to another Entity, or appears in the wrong member map.
-  Allocation closes with the first `populate`. A retained writer closes as
-  soon as its build callback exits, and a retained resolution view closes as
-  soon as its one factory invocation exits. An operation on either closed scope
-  raises `entity-graph-scope-closed` before inspecting any supplied argument.
-  An active writer or resolution view given a handle from another construction
-  raises `entity-graph-foreign-handle`. Handles from the current construction
-  remain resolvable during every factory invocation, then no operation accepts
-  them after `construct(...)` exits. Foreign handle also covers relationship
-  and root positions supplied through an active construction. Duplicate and
-  missing population are reported by the deterministic first-encounter
-  allocation index; the first missing node is the lowest such index. Invalid
-  root covers a non-handle root value; a local but unpopulated root uses
-  `entity-graph-node-unpopulated`. Invalid value covers a
-  Neutral Value, Value Object occurrence, relationship cardinality/null shape,
-  or concrete-class construction value incompatible with accepted metadata and
-  retains the underlying conversion cause when one exists.
-- `GraphConstructionError` is never an assertion and is not re-exported from
-  top-level `parallax.core`. Exceptions raised by the lifecycle build function
-  or an opaque-state factory are not translated or wrapped by Entity; they
-  propagate unchanged to their lifecycle owner while the construction still
-  publishes nothing. Snapshot may classify such a cause only at its own public
-  read boundary.
-- `parallax.snapshot` owns and exports
-  `SnapshotMaterializationError(RuntimeError)`. Once adapter execution and
-  neutral graph production have succeeded, the Snapshot Graph Materializer
-  wraps any escaping `GraphConstructionError` or build/state-factory exception
-  as `SnapshotMaterializationError(code="snapshot-materialization-failed",
-  cause=original)`, using normal Python exception chaining. It returns no
-  partial Snapshot or Entity roots. An existing `SnapshotMaterializationError`
-  is passed through rather than double-wrapped.
-- Query-definition, unsupported-capability, transaction, adapter, SQL, and
-  neutral decoding failures raised before Snapshot graph materialization retain
-  their existing public classifications. In particular,
-  `SnapshotDecodingError(snapshot-decoding-failed)` passes through unchanged
-  and is never wrapped as `SnapshotMaterializationError`. Direct advanced
-  callers of `EntityGraphConstruction` continue to receive the original
-  construction or callback exception.
-- `parallax.snapshot` defines the private `SnapshotNodeState` stored in that
-  slot. It contains the originating opaque exact-hub sentinel, narrowed
-  relationship views keyed by `BoundRelationshipViewKey`, whole-graph pin
-  coordinates, and the node's optional milestone edge. Its narrowed values are
-  created by the deferred state factory, which resolves Node Handles only after
-  structural population. `Pin` and `Edge` remain core semantic value types, but
-  `is_view_loaded`, `view`, `pin_of`, and `edge_of` belong to and are exported
-  by `parallax.snapshot`.
-- Snapshot reads its state only through the advanced Entity collaboration
-  operations `lifecycle_state_of(...)` and `relationship_value_of(...)`. The
-  latter exposes a broad relationship slot without triggering lifecycle
-  behavior. Snapshot verifies that the opaque value is `SnapshotNodeState`;
-  passing a plain or future Managed Entity to a Snapshot inspection function
-  is therefore rejected rather than misinterpreted.
-- `is_view_loaded`, `view`, `pin_of`, and `edge_of` first require the opaque
-  state to be `SnapshotNodeState`, before path, relationship, or temporal
-  validation. A plain Entity, a future Managed Entity, or any other lifecycle
-  value raises exported `SnapshotInspectionError(ValueError)` with stable code
-  `snapshot-node-required` and `operation` equal to the invoked function name.
-  The error never exposes the opaque state value. In particular,
-  `is_view_loaded(non_snapshot, ...)` does not return `False` because wrong
-  lifecycle and a valid Snapshot's unloaded relationship are different
-  conditions.
-- For `is_view_loaded` and `view`, a valid Snapshot node is followed by
-  exact-hub validation. Both functions require a class-derived, hub-bound
-  Relationship Path; bare relationship names and strings are not accepted.
-  Each path segment produces a `BoundRelationshipViewKey` carrying the path's
-  opaque exact-hub sentinel and that segment's structured Broad or Narrowed
-  view. Identity with the `SnapshotNodeState` sentinel is required even when
-  every structured view is equal. A mismatch raises
-  `SnapshotInspectionError(code="snapshot-hub-mismatch")` with the invoked
-  operation and structured path, but neither opaque sentinel. This check
-  precedes relationship-owner and loaded-state validation.
-- After exact-hub validation, the path's starting owner must apply to the
-  supplied node's concrete Entity Identity. A relationship declared by an
-  accepted ancestor applies to its concrete subtype. An unrelated same-hub
-  owner raises
-  `SnapshotInspectionError(code="snapshot-view-owner-mismatch")` carrying the
-  invoked operation, node Entity Identity, and structured path; it is not an
-  unloaded view, so `is_view_loaded` raises rather than returning `False`.
-  Relationship Path construction already guarantees that each later segment
-  applies to the preceding segment's target, including a target changed by
-  narrowing.
-- `view(node, path)` applies every path segment from left to right to already
-  loaded Snapshot state and never issues SQL. A narrowing changes the accepted
-  target type for subsequent segments, so
-  `view(owner, Owner.pets.narrow(Dog).doghouse)` is valid when `doghouse` is a
-  relationship declared for `Dog`. To-many segments fan out; null and empty
-  intermediate results contribute no terminal value. If any segment is
-  to-many, `view` returns one flat tuple of non-null terminal values in
-  left-to-right traversal order and preserves duplicates. An all-to-one path
-  returns its terminal Entity or `None`.
-- `is_view_loaded(node, path)` is `True` exactly when every relationship view
-  encountered on every reachable branch is loaded. A null or empty
-  intermediate branch makes its uninstantiated suffix vacuously loaded.
-  `view` instead raises `UnloadedRelationshipError` for the first unloaded
-  view in path-segment order and, within a fanned-out segment, source-tuple
-  order. Neither operation performs lazy loading.
-- After that common precondition, operation-specific semantics remain distinct:
-  `is_view_loaded` returns a boolean, an unrequested `view` raises
-  `UnloadedRelationshipError`, and unavailable node temporal state raises
-  `SnapshotInspectionError` with operation-specific codes.
-- On a valid Snapshot node, `pin_of` without node pin state raises
-  `SnapshotInspectionError(code="snapshot-pin-unavailable",
-  operation="pin_of")`; `edge_of` without node edge state raises
-  `SnapshotInspectionError(code="snapshot-edge-unavailable",
-  operation="edge_of")`. Both errors carry the node's structured Entity
-  Identity and expose no private state. This covers a non-temporal node and
-  defensively classifies an invariant-defective temporal node.
-- `TemporalReadError` remains the core temporal query/lowering error family.
-  `UndeclaredAxisError` remains the core error for requesting an axis a valid
-  `Pin` or `Edge` value does not declare. Snapshot node inspection no longer
-  overloads either condition.
-- Broad descriptor access and `view(...)` use the same structured
-  closed-world error:
-
-  ```text
-  UnloadedRelationshipError(AttributeError)
-    code: "entity-relationship-unloaded"
-    view:
-      Broad(RelationshipIdentity)
-      | Narrowed(RelationshipIdentity, canonical effective concrete set)
-  ```
-
-  `parallax.core.entity._errors` defines the class so the Entity relationship
-  descriptor can raise it without importing Snapshot. The advanced
-  `parallax.core.entity` interface exposes it, while `parallax.snapshot`
-  re-exports the identical class for ordinary Snapshot callers. Top-level
-  `parallax.core` does not re-export it. `is_view_loaded` remains the
-  nonthrowing way to test a valid Snapshot view before access.
+- Allocate-before-populate construction closes cycles before Snapshot state is
+  attached. Deferred lifecycle-state factories run only against a completely
+  wired graph, and publication is atomic. Entity owns the construction
+  mechanism; Snapshot owns merge order and the opaque state value. The Python
+  spec alone defines handle lifetime, phase transitions, deterministic order,
+  failure precedence, and construction error codes.
+- Construction failures remain visible to advanced Entity callers, while the
+  Snapshot public read boundary classifies construction and state-factory
+  failures once. Query, capability, transaction, adapter, SQL, and neutral
+  decoding failures occur outside that boundary and retain their owner
+  classifications. The exact taxonomy and chaining rules live in the Python
+  spec.
+- `parallax.snapshot` owns the private `SnapshotNodeState` and the public
+  `is_view_loaded`, `view`, `pin_of`, and `edge_of` functions. Entity
+  stores one opaque lifecycle value and exposes only raw first-party
+  relationship/state inspection, so it never imports or interprets Snapshot.
+- Snapshot inspection establishes lifecycle ownership before exact hub, path,
+  loaded-view, or temporal validation. The Python spec alone defines the
+  validation precedence and public error codes.
+- Exact-hub and path-owner validation prevents structurally equal paths from
+  another hub or an unrelated same-hub Entity from inspecting a node.
+  Traversal reads loaded state only, preserves the narrowed position at every
+  hop, and never issues SQL. The Python spec alone defines fan-out, vacuous
+  loaded-state, pin/edge behavior, validation precedence, and errors.
+- Broad relationship descriptors and Snapshot `view(...)` share the same
+  `UnloadedRelationshipError` class from the advanced Entity seam. Snapshot
+  re-exports it for callers without moving closed-world relationship policy
+  into Entity.
 - The lifecycle slot is singular and opaque. It is not a generic property bag,
   keyed extension map, shared graph-state protocol, callback registry, or
   lifecycle-neutral state model. A future Managed Object materializer supplies

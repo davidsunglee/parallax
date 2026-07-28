@@ -1,10 +1,24 @@
-# Parallax Python — Completed Language Spec
+# Parallax Python — Language Spec
 
-This is the completed per-language spec for the Python implementation of
+**Status:** Completed baseline with accepted COR-50 target-state amendments;
+shared-contract closure pending.
+
+This is the per-language spec for the Python implementation of
 Parallax, authored from [`core/spec/language-spec-template.md`](../../../core/spec/language-spec-template.md).
-Nothing here contradicts the core specification, the canonical claim in
+Except for the explicitly identified COR-50 target-state amendments below,
+nothing here contradicts the core specification, the canonical claim in
 [`slices.md`](../../../core/spec/slices.md), or the normative module DAG and
 artifact topology in [`modules.md`](../../../core/spec/modules.md).
+
+The Null Placement, complete nested Value Object predicate, and path-root
+Narrow material below records the accepted target state for COR-50; it does not
+claim those canonical forms exist in the current core specification, schemas,
+or compatibility corpus. Until COR-50 updates every affected core contract,
+schema, model, fixture, case, benchmark, dialect, and claiming frontend
+together, the current core artifacts remain authoritative and the Python
+runtime MUST NOT expose or lower these additions. COR-50 owns that synchronized
+contract catch-up as part of its implementation and cannot restore this
+document to completed/readiness status before the shared closure is green.
 
 Guiding decision: the Python target is **Python-first and SQLModel-inspired**.
 Developers author Pydantic-based entity classes; the canonical YAML/JSON
@@ -19,7 +33,7 @@ never something an application developer hand-writes.
 | Exact `describe` claim | The complete canonical `describeOk` envelope below; structurally equal to the canonical claim after JSON parsing, except for the `adapter` identity. |
 | Claimed capability coverage | Copied verbatim from the canonical claim: the 26 `modules` below, `dialects: ["postgres"]`, the eight `caseShapes`, `caseTags.include: ["slice-snapshot-1"]`, `commands: ["describe", "compile", "run"]`, `provisioning: "self-managed"`. `modules` is the tagged-case union of the slice, **not** a dependency closure and not a packaging plan. |
 | Unclaimed implementation prerequisites | `m-db-port` — reached via `m-unit-work` and `m-db-error`; abstract port supplied by the `parallax.core.db_port` scope, concrete adapter by `parallax-postgres`; contract-covered, never case-advertised. |
-| Deferred capabilities | MariaDB (dialect); `benchmark` command and `m-perf-bench`; `m-agg` / `m-sql-agg`; Valid-Time-Only models; `m-process-cache` / `m-coherence`; `m-cascade-delete`; the `snapshot-history-includes` feature; the managed-object lifecycle (`m-identity-map`, `m-detach`, public operation-backed lists); an async developer surface; MAY-tier mutations (`insertWithIncrement`, `incrementUntil`, `purge`, `inactivateForArchiving`); template-database reset optimization; isolation-level configuration; handle-level default concurrency override; statement `where`-refinement chaining and `as_of` re-pinning; the class-header temporal-axis column-mapping override. Deferral is roadmap intent; **unsupported classification** is the adapter's wire behavior for out-of-claim requests — the two are recorded separately and never conflated. |
+| Deferred capabilities | MariaDB (dialect); `benchmark` command and `m-perf-bench`; `m-agg` / `m-sql-agg`; Valid-Time-Only models; `m-process-cache` / `m-coherence`; `m-cascade-delete`; the `snapshot-history-includes` feature; the managed-object lifecycle (`m-identity-map`, `m-detach`, public operation-backed lists); an async developer surface; MAY-tier mutations (`insertWithIncrement`, `incrementUntil`, `purge`, `inactivateForArchiving`); template-database reset optimization; isolation-level configuration; handle-level default concurrency override; Find Query `where`-refinement chaining and `as_of` re-pinning; the class-header temporal-axis column-mapping override. Deferral is roadmap intent; **unsupported classification** is the adapter's wire behavior for out-of-claim requests — the two are recorded separately and never conflated. |
 | Supported dialects and commands | Postgres only; `describe`, `compile`, `run`. Exercised locally and in CI by `uv run pytest -m compile_sweep` (Docker-free compile of every compile-eligible claimed case) and `uv run pytest -m conformance` (the `pg-full` run profile, every claimed case), aggregated by `just python-static` and `just python-verify`. |
 
 ```json
@@ -121,6 +135,19 @@ mutations, exceptions, or exports.
   inapplicable Entity uses `query-target-mismatch`; and non-assignable members
   or values use `query-assignment-invalid`. The remaining three codes retain
   their exact hub, Assignment-target, and predicate-selected-write meanings.
+- **Assignment construction validates immediately.**
+  An Attribute Expression's `.set(value)` constructs an immutable Assignment and
+  applies the member's assignability, declared neutral-type, and nullability
+  rules before returning it. Only a mapped scalar Attribute or scalar Value
+  Object leaf is assignable. Primary-key, framework-owned, read-only,
+  relationship, and whole-Value-Object occurrences are rejected, as are values
+  that require coercion or violate the declared type or nullability. Failure
+  raises `QueryDefinitionError(query-assignment-invalid)` from `.set(...)`
+  itself; it is never postponed until a Transaction mutation method, write
+  boundary, or database call. Assignment-list validation remains separate:
+  an assignment-bearing mutation checks nonemptiness, duplicates, and exact
+  hub/target compatibility when combining already-valid Assignments with its
+  Find Query.
 - **Opaque immutable Find Query.** `FindQuery[T]` is exported for annotations
   and fluent use, but direct `FindQuery(...)` construction is unsupported;
   `Entity.where(...)` is its sole public constructor. Every clause returns a
@@ -447,10 +474,20 @@ mutations, exceptions, or exports.
   declaration identity, so inherited `Dog.owner` is relationship
   `Animal.owner` guarded to Dog-family roots. Each relationship segment may
   independently retain its existing target `narrow: {to}`, and that narrowed
-  target is the source position of the next segment. Separate paths express
-  subtype branches. A broad relationship view and a target-narrowed view remain
-  distinct observable views and separate fetch hops; the planner does not reuse
-  the broad view for conditional subtype descent in COR-50.
+  target is the source position of the next segment. Every later segment
+  resolves relative to that immediately preceding target position—after any
+  target narrowing—never relative to the path root, the previous relationship's
+  declaring Entity, or an unqualified local Entity name. Structured Entity and
+  Relationship Identities retain namespaces throughout resolution. The
+  cross-namespace proof is
+  `sales.SalesOrder.customer -> crm.Customer` followed by
+  `crm.Customer.notes`: Python
+  `SalesOrder.where(SalesOrder.all).include(SalesOrder.customer.notes)` and the
+  equivalent corpus-authored operation document must accept and execute the
+  same structured path. Separate paths express subtype branches. A broad
+  relationship view and a target-narrowed view remain distinct observable
+  views and separate fetch hops; the planner does not reuse the broad view for
+  conditional subtype descent in COR-50.
 - **Relationship existence predicates.** A Relationship Path exposes
   `exists(*predicates)` and `not_exists(*predicates)` for either to-one or
   to-many cardinality. Zero arguments mean pure path existence or absence.
@@ -1298,6 +1335,63 @@ class Truck(Vehicle, table="truck", inheritance=ConcreteSubtype):
   `tuple` of non-null Value Object records and is never nullable: `()` is its
   sole zero-element value, while omission, `None`, and `None` elements are
   invalid. The same rules apply recursively at every nesting depth.
+- **Exact immutable Graph Input carriers.** Snapshot Graph Input is a private
+  first-party graph of frozen slotted records and exact built-in tuples:
+
+  ```text
+  SnapshotGraphInput
+    nodes: tuple[SnapshotNodeInput, ...]
+    roots: tuple[SnapshotNodeRef, ...]
+    pin: Pin
+
+  SnapshotNodeRef
+    node_index: int
+
+  SnapshotNodeInput
+    concrete_entity: EntityIdentity
+    attributes: tuple[EntityAttributeInput, ...]
+    value_objects: tuple[ValueObjectOccurrenceInput, ...]
+    relationship_views: tuple[SnapshotRelationshipViewInput, ...]
+
+  EntityAttributeInput
+    identity: AttributeIdentity
+    value: NeutralValue | None
+
+  SnapshotRelationshipViewInput
+    view: RelationshipViewKey
+    value:
+        None
+      | SnapshotNodeRef
+      | tuple[SnapshotNodeRef, ...]
+  ```
+
+  A `SnapshotNodeRef` is an immutable reference to an entry in `nodes`; its
+  node index is an exact nonnegative built-in `int`, is not the later
+  deterministic allocation index, and has no public meaning. References rather
+  than recursively embedded records make shared and cyclic inputs constructible
+  without a mutable carrier. `roots` order and the tuple inside a loaded-many
+  relationship are semantic and preserved. The `nodes` tuple order is
+  non-semantic. Within one `SnapshotNodeInput`, Attribute-entry, Value
+  Object-entry, and relationship-view-entry tuple order is also non-semantic;
+  Graph Input validation indexes those member/view entries by structured
+  identity and rejects a duplicate within that node. Separate node records may
+  resolve to the same logical graph identity; those are the duplicate
+  projections that the materializer merges. Out-of-range node references are
+  rejected before merging. Omission of a Relationship View entry means
+  unloaded, while a present `None` or empty tuple means loaded-null or
+  loaded-empty.
+
+  Entity Graph Construction accepts the same immutable scalar and Value Object
+  carriers. Its build callback returns exactly
+  `tuple[NodeHandle, ...]`; `EntityGraphWriter.populate(...)` accepts
+  `tuple[EntityAttributeInput, ...]`,
+  `tuple[ValueObjectOccurrenceInput, ...]`, and
+  `tuple[EntityRelationshipInput, ...]`, where
+  `EntityRelationshipInput` is a frozen slotted pair of
+  `RelationshipIdentity` and
+  `Unloaded | LoadedNull | LoadedOne(NodeHandle) |
+  LoadedMany(tuple[NodeHandle, ...])`. No mapping, abstract sequence, mutable
+  collection, or caller-defined collection subtype crosses either seam.
 - **Value Object graph-input carriers.** Snapshot Graph Input and Entity Graph
   Construction share one exact recursive immutable algebra:
   `ValueObjectRecord` is a frozen slotted record containing
@@ -1697,8 +1791,8 @@ class Truck(Vehicle, table="truck", inheritance=ConcreteSubtype):
   assignment-bearing verbs (`update_where` / `update_until_where`), each
   resolved row that survives the per-row no-op elimination below; for the
   delete and terminate verbs, every resolved row (`1 + N` round trips, a
-  mid-batch zero-row gate aborting like any conflict). A statement becomes
-  a write target only as a **bare statement** — one carrying nothing but a
+  mid-batch zero-row gate aborting like any conflict). A Find Query becomes
+  a write target only as a **bare Find Query** — one carrying nothing but a
   predicate (its `where(...)` arguments); `order_by`, `limit`, `include`,
   `as_of`, `history` / `as_of_range`, and `narrow` are all rejected on any
   write target. This is the single definition; the set-based verbs below
@@ -1732,20 +1826,17 @@ class Truck(Vehicle, table="truck", inheritance=ConcreteSubtype):
   `update_where` and `update_until_where`; `delete_where`, `terminate_where`,
   and `terminate_until_where` take no assignments, and passing any raises at
   build — a delete or terminate names nothing to assign. Assignments are the
-  typed `.set(value)` spelling on attribute expressions,
-  validated while the mutation call is built as one rule family shared with
-  `model_copy`'s
-  `update=` validation (§3) — the assignability and scalar-input rules are
-  stated once there and referenced here, never duplicated, so the two lists
-  cannot drift: only mapped scalar attributes and value-object members are
-  assignable, never relationship fields. Three list-level rules complete the
-  family, scoped to the assignment-bearing verbs: the assignment list must
-  be non-empty (zero assignments raises),
+  typed `.set(value)` spelling on Attribute Expressions. Each `.set(...)`
+  call has already applied §2's Assignment-construction contract before the
+  mutation call receives it; the mutation method never supplies the first
+  assignability, declared-type, or nullability check. Three list-level rules
+  remain at the assignment-bearing verb: the assignment list must be non-empty
+  (zero assignments raises),
   each field may be assigned at most once (a duplicate raises), and every
   assigned attribute or value-object member must be declared by the exact
   target entity — set-based writes already reject inheritance-family targets
-  (below), so ancestry resolution never arises. The target statement must be
-  a **bare statement** (the single definition above);
+  (below), so ancestry resolution never arises. The target Find Query must be
+  a **bare Find Query** (the single definition above);
   resolution happens inside the transaction and participates in its mode
   (shared-locked under `locking`, lock-free under `optimistic`). Lowering
   follows the observation rule above, with **per-path no-op semantics**.
@@ -1967,7 +2058,7 @@ legalizes a forbidden edge.
 | `m-conformance-adapter` | `parallax.conformance.cli` (dev-only) | `parallax.conformance.cli` | `m-case-format`, plus any claimed behavioral or support scope it harnesses — the core conformance-family exception | generated forbidden contracts (dev tree) |
 | `m-api-conformance` | `languages/python/tests/api_conformance` (dev-only) | `tests.api_conformance` | `m-case-format` (harnesses the public surface) | pytest collection boundary |
 | Descriptor Hub orchestration (support, child of `parallax.descriptor`) | `parallax.descriptor._hub` | `parallax.descriptor._hub` | `parallax.core.entity` (private Hub-construction seam only) | generated forbidden contracts + cross-package contract |
-| Entity and statement frontend (support) | `parallax.core.entity` | `parallax.core.entity` | `m-core`, `m-metamodel`, `m-inheritance`, `m-relationship`, `m-op-algebra`, `m-temporal-read`, `parallax.core._formation_profile` | generated forbidden contracts |
+| Entity and Find Query frontend (support) | `parallax.core.entity` | `parallax.core.entity` | `m-core`, `m-metamodel`, `m-inheritance`, `m-relationship`, `m-op-algebra`, `m-temporal-read`, `parallax.core._formation_profile` | generated forbidden contracts |
 | Concrete Postgres adapter (support) | `parallax.postgres.adapter` | `parallax.postgres` | `m-core`, `m-db-port`, `m-db-error`, `m-dialect`, psycopg | generated forbidden contracts + cross-package contract |
 | Composition root (support) | application/test code calling `parallax.snapshot.connect` | (application-owned) | `parallax.snapshot`, `parallax.postgres` | only the root imports a concrete adapter |
 
@@ -2177,7 +2268,7 @@ hatchling.
 
 | Artifact/package | Production or development-only | Included source scopes | External runtime dependencies | Depends on artifacts | Public exports/entry points |
 |---|---|---|---|---|---|
-| `parallax-core` (the common runtime) | production | all `parallax.core.*` scopes of §7 (behavioral modules, entity/statement frontend, driver-free postgres dialect strategy) | `pydantic` | (none) | `parallax.core`: the `Entity`/`TxTemporal`/`Bitemporal`/`ValueObject` bases, `Attr`, `Rel`, `attr`, `rel`, `index`, `desc`, `asc`, `Int32`, `Float32`, `MAX`, `Sequence`, the cardinality, persistence, inheritance role and strategy values, `MetamodelHub`, `FindQuery`, `Predicate`, `LATEST`, `VALID_TIME`, `TX_TIME`, `Pin`, `Edge`, and its documented errors |
+| `parallax-core` (the common runtime) | production | all `parallax.core.*` scopes of §7 (behavioral modules, Entity/Find Query frontend, driver-free postgres dialect strategy) | `pydantic` | (none) | `parallax.core`: the `Entity`/`TxTemporal`/`Bitemporal`/`ValueObject` bases, `Attr`, `Rel`, `attr`, `rel`, `index`, `desc`, `asc`, `Int32`, `Float32`, `MAX`, `Sequence`, the cardinality, persistence, inheritance role and strategy values, `MetamodelHub`, `FindQuery`, `Predicate`, `LATEST`, `VALID_TIME`, `TX_TIME`, `Pin`, `Edge`, and its documented errors |
 | `parallax-descriptor` (descriptor interchange) | production, optional | `parallax.descriptor` (`m-descriptor` plus its private Hub orchestration) | `pyyaml`, `jsonschema` | `parallax-core` | `parallax.descriptor`: `hub_from_document`, `hub_from_json`, `hub_from_yaml`, `export_document`, `export_json`, `export_yaml`, `DescriptorError`, `DescriptorSyntaxError`, `DescriptorSchemaError`, `DescriptorValueError`, `DescriptorSchemaViolation`, `DescriptorValueViolation`, `DescriptorExportError` |
 | `parallax-snapshot` (snapshot lifecycle extension) | production | `parallax.snapshot.*` (`materialize`, `handle`) | (none beyond core) | `parallax-core` | `parallax.snapshot`: `connect()`, `Snapshot[T]`, `Execution`, `is_view_loaded`, `view`, `pin_of`, `edge_of`, `UnloadedRelationshipError`, `SnapshotConnectionError`, `SnapshotDecodingError`, `SnapshotMaterializationError`, `SnapshotInspectionError`, `TransactionOwnershipError` |
 | `parallax-postgres` (Postgres database adapter) | production | `parallax.postgres.*` (concrete port over psycopg) | `psycopg[binary]` (sole declarer) | `parallax-core` | `parallax.postgres`: `PostgresAdapter` |
@@ -2261,6 +2352,11 @@ subsection of the template is deleted from this completed spec.
 
 ## Completion check
 
+- COR-50's target-state amendments exist in the synchronized core
+  specifications, schemas, compatibility corpus, dialects, and every claiming
+  frontend. Until that shared-contract closure is green, this completion check
+  is not satisfied and no Python runtime implementation may claim the amended
+  surface.
 - No decide-and-record markers or blank required table cells remain.
 - Exactly one §3 lifecycle profile (snapshot) and its matching §4 result
   branch are retained; all managed-object instructions are removed.

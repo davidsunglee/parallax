@@ -32,3 +32,8 @@ The contract change lands atomically across the Metamodel and operation
 schemas, specifications, compatibility cases, dialect renderers, and claiming
 language frontends. No frontend introduces an interim private field or
 provider-specific behavior before the shared contract is complete.
+
+This ADR records COR-50's accepted target state; it does not amend the current
+core contract by itself. Until COR-50 completes that atomic shared-contract
+update, the existing core specifications, schemas, and corpus remain
+authoritative and Python does not expose Null Placement.

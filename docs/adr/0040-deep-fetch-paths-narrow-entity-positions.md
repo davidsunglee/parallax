@@ -18,3 +18,8 @@ deduplication, and statement-count expectations explicit.
 The canonical path-shape change lands atomically across the operation schema,
 inheritance and Deep Fetch semantics, SQL planning, compatibility cases, and
 claiming language frontends.
+
+This ADR records COR-50's accepted target state; it does not amend the current
+core contract by itself. Until COR-50 completes that atomic shared-contract
+update, the existing core Deep Fetch path shape remains authoritative and
+Python does not emit path-root Narrow.
