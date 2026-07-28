@@ -96,22 +96,210 @@ mutations, exceptions, or exports.
 
 ### Query and operation API
 
-- **Finder/query entry point.** A free-standing, side-effect-free statement is
-  built from classmethods on the entity class and executed by the Parallax
-  Handle. Variadic `where(*predicates)` conjoins its arguments (the natural
-  big-AND of filter criteria; zero arguments is find-all). A statement with
-  predicates rejects a further `.where()` call (refinement chaining is a
-  deferred additive extension).
+- **One query-definition error family.** Every invalid Python Attribute
+  Expression, Relationship Path, Predicate, Assignment, Sort Key, or Find
+  Query construction, composition, and refinement raises
+  `QueryDefinitionError(ValueError)` with a stable `query-*` code. The Entity
+  frontend translates an `m-op-algebra`, inheritance, relationship-navigation,
+  deep-fetch, or temporal-read semantic rejection exactly once and preserves
+  its cause; an incoming `QueryDefinitionError` passes through unchanged.
+  Direct callers of those behavioral modules continue to receive their native
+  error families. Unbound Entity Classes, valid-but-unsupported provider
+  features, and execution failures retain their separate classifications.
+  The closed stable code set is
+  `query-hub-mismatch`, `query-target-mismatch`,
+  `query-expression-invalid`, `query-path-invalid`,
+  `query-clause-invalid`, `query-assignment-invalid`,
+  `query-assignment-target-mismatch`, and
+  `query-not-mutation-compatible`. Optional structured `target`, `member`,
+  `path`, and `clause` context plus the preserved cause identify the exact
+  rejection; errors expose neither literal values nor opaque hub identities.
+  Invalid operators and literals use `query-expression-invalid`; invalid Value
+  Object or relationship hops, quantifiers, and narrowing use
+  `query-path-invalid`; invalid, repeated, or conflicting Find Query clauses
+  use `query-clause-invalid`; a same-hub expression or Predicate rooted at an
+  inapplicable Entity uses `query-target-mismatch`; and non-assignable members
+  or values use `query-assignment-invalid`. The remaining three codes retain
+  their exact hub, Assignment-target, and predicate-selected-write meanings.
+- **Opaque immutable Find Query.** `FindQuery[T]` is exported for annotations
+  and fluent use, but direct `FindQuery(...)` construction is unsupported;
+  `Entity.where(...)` is its sole public constructor. Every clause returns a
+  new value and leaves its receiver unchanged. Target, Predicate, include,
+  temporal, and opaque-hub representation fields are not public attributes.
+  Find Queries define no structural equality or semantic hash: ordinary
+  object-identity equality and hashing apply, so independently authored queries
+  compare unequal even when they lower to identical operations. Conformance
+  code compares canonical lowered operations through its first-party seam.
+  Truth-testing with `bool(query)` or `if query:` raises `TypeError` directing
+  the caller to execute the query and inspect its Snapshot; a Find Query has no
+  pre-execution empty/nonempty state.
+  Canonical operation extraction and serialization remain first-party
+  lowering/conformance seams: `operation()`, `serialize()`, `is_bare()`,
+  `is_milestone_set()`, and equivalent state-inspection helpers are not public
+  methods.
+- **Complete fluent surface.** The COR-50 interface consists exactly of
+  the class-scoped match-all value `Entity.all`,
+  `Entity.where(*predicates)`, and the `FindQuery` methods
+  `include(*relationship_paths)`, `order_by(*sort_keys)`, `limit(count)`,
+  `narrow(*subtypes)`, `as_of(*, valid_time=..., tx_time=...)`,
+  `history(dimension)`, and
+  `as_of_range(*, valid_time=(start, end), tx_time=(start, end))`. There is no
+  Find Query `.where(...)` refinement in this slice and no `distinct`, offset,
+  pagination, projection, count, aggregation, execution, or serialization
+  method. The lower-level operation algebra retains Distinct for result shapes
+  that can contain duplicate rows, but a Find Query always returns complete
+  root Entities: navigation lowers through existence tests and included graphs
+  are fetched separately. Duplicate roots are therefore a lowering or identity
+  resolution defect, not a condition for callers to mask with `distinct()`.
+  `include(*relationship_paths)` requires at least one path and accumulates
+  across calls; passing several paths in one call is equivalent to passing them
+  in successive calls. Canonical deep-fetch planning deduplicates shared and
+  equivalent effective relationship hops. `order_by(*sort_keys)` likewise
+  requires at least one key and accumulates across calls; successive calls
+  append keys exactly as if supplied in one call. Sort-key order is precedence
+  order. The same resolved Attribute Identity may occur only once across the
+  complete accumulated ordering, regardless of direction; a duplicate within
+  one call or across calls raises
+  `QueryDefinitionError(query-clause-invalid)` while constructing the new Find
+  Query. Duplicate keys are never silently removed. Each Sort Key is exactly
+  one top-level scalar Attribute Expression, optionally converted with
+  `.asc()` or `.desc()`. A bare Attribute Expression means ascending and lowers
+  with the core default direction omitted; explicit `.asc()` and `.desc()`
+  lower their named direction. Null placement defaults to last for either
+  direction. Only a Sort Key already created by `.asc()` or `.desc()` may add
+  `.nulls_first()` or `.nulls_last()`; a bare Attribute Expression exposes
+  neither placement modifier. Placement is single-shot, so a second modifier
+  raises `QueryDefinitionError(query-expression-invalid)`. The explicit choice
+  lowers to core's shared `nulls: first | last` value.
+  Inherited Attributes are valid, and a
+  subtype-declared
+  Attribute is valid after the root narrow that establishes its scope. Nested
+  Value Object members, Relationship traversals, computed expressions,
+  literals, and arbitrary functions cannot form Sort Keys; attempting to do so
+  raises `QueryDefinitionError(query-expression-invalid)`. COR-50 does not
+  extend core `orderBy` beyond its Attribute Reference.
+  `limit(count)` is
+  single-shot: calling it on a Find Query that already carries a limit raises
+  `QueryDefinitionError(query-clause-invalid)` rather than replacing or
+  tightening the original limit. Code that needs alternate limits derives each
+  query from the same unbounded base. Its argument must be a positive built-in
+  `int`; `bool`, zero, negative values, other numeric types, and coercible
+  values raise `QueryDefinitionError(query-clause-invalid)` without coercion.
+  A limit does not require ordering and never injects an implicit primary-key
+  Sort Key. Without `order_by(...)`, both row order and which rows survive the
+  cap are unspecified; deterministic selection requires caller-authored
+  ordering.
+  A root `FindQuery.narrow(...)` establishes subtype scope for subsequently
+  added sort keys. A key is legal only when its Attribute is available on every
+  concrete subtype in the query's effective set at the moment `order_by(...)`
+  is called. Thus
+  `Animal.where(Animal.all).narrow(Dog).order_by(Dog.bark_volume.desc())` is
+  valid, while spelling `order_by(...)` before `narrow(Dog)` raises
+  `QueryDefinitionError(query-target-mismatch)` immediately; later clauses
+  never retroactively legalize an invalid intermediate query.
+  A root `FindQuery.narrow(...)` also authorizes first include hops authored
+  through a subtype, whether the relationship is declared by that subtype or
+  inherited. A path authored through the Find Query target remains broad across
+  the narrowed result. A path authored through a descendant is valid only when
+  its source Entity resolves to a nonempty subset of the already-established
+  root-narrowed set; that subset is the conditional source set. An empty or
+  broader source raises `QueryDefinitionError(query-target-mismatch)`. The
+  planner gathers keys only from matching root objects and populates the
+  ordinary relationship view only on those objects.
+  Thus
+  `Animal.where(Animal.all).narrow(Dog, Cat).include(
+  Animal.owner, Dog.doghouse, Cat.ball_of_yarn)` loads `owner` for Dogs and
+  Cats, `doghouse` only for Dogs, and `ball_of_yarn` only for Cats.
+  `Animal.where(Animal.all).include(Dog.doghouse)` raises
+  `QueryDefinitionError(query-target-mismatch)` immediately; a later narrow
+  never repairs it.
+  A path retains the Entity Identity through which its first relationship was
+  accessed separately from the canonical Relationship Identity. Consequently
+  `Dog.owner` retains relationship identity `Animal.owner` while carrying Dog
+  as its source guard and loads `owner` only on Dog-family roots;
+  `Animal.owner` remains broad. `Dog.doghouse` follows the same rule regardless
+  of the relationship's declaring type. Canonical Deep Fetch `paths` are closed
+  objects with a required nonempty `path` segment list and an optional
+  path-root `narrow: {entity, to}`. The latter reuses the operation-position
+  Narrow contract without an operand: it narrows the path's initial Entity
+  position, not the Find Query result. Each relationship segment retains its
+  existing optional target `narrow: {to}`. A path is therefore an optional
+  root-position Narrow followed by alternating relationship segments and
+  target-position Narrows; each target position becomes the next segment's
+  source. This expresses multi-level inheritance traversal without per-hop
+  source metadata.
+  Existing hop-target narrowing remains valid and distinct:
+  `Person.pets.narrow(Dog).doghouse` stores Dog narrowing on the `pets` segment,
+  populates the `pets[Dog]` view, and continues through `doghouse`; root-source
+  guarding does not create a narrowed relationship view.
+  `include(Person.pets, Person.pets.narrow(Dog).doghouse)` performs separate
+  broad `pets` and narrowed `pets[Dog]` fetches. COR-50 does not reuse a broad
+  view for subtype-conditional continuation; branches use separate paths and
+  broad versus target-narrowed hops retain their distinct view and round-trip
+  semantics. The effective path-root source set is also part of fetch-hop
+  identity: identical/equivalent guarded prefixes deduplicate, but different
+  source guards and broad-versus-guarded sources remain distinct. The planner
+  does not union separately guarded source sets in COR-50. Consequently
+  `include(Dog.owner, Cat.owner)` performs two owner hops, while
+  `include(Animal.owner)` performs one broad owner hop whose single child query
+  receives the deduplicated parent keys from every active Dog and Cat root.
+  Paths `Dog.owner` and `Dog.owner.address` share their identical guarded
+  prefix. The core expansion updates `m-op-algebra`, its schema,
+  `m-inheritance`, `m-deep-fetch`, `m-sql`, semantic validation, planning,
+  compatibility cases, and claiming frontends atomically.
+  `Entity.where(...)` requires at least one Predicate; zero arguments raise
+  `QueryDefinitionError(query-clause-invalid)`. `Entity.all` is the
+  non-callable, exact-hub-and-target-bound Predicate spelling an explicitly
+  unfiltered query and lowers to the canonical `all` operation:
+  `Animal.where(Animal.all)`. It is legal only as the sole `where(...)`
+  argument. Combining it with another Predicate, whether variadically or
+  through Boolean operators, raises
+  `QueryDefinitionError(query-expression-invalid)` rather than silently
+  simplifying redundant input. There is no `Entity.all()` Find Query
+  constructor; `Entity.where(...)` remains the sole query constructor.
+  `as_of(...)`, `history(...)`, and `as_of_range(...)` form one mutually
+  exclusive, single-shot temporal-clause family. Once any one is present, every
+  later temporal-clause call raises
+  `QueryDefinitionError(query-clause-invalid)`; calls never merge coordinates
+  or replace an earlier clause. Both dimensions must be supplied together in
+  the original `as_of(...)` or `as_of_range(...)` call when both are desired.
+  Each keyword-based method requires at least one supplied dimension;
+  zero-argument `as_of()` and `as_of_range()` calls raise
+  `QueryDefinitionError(query-clause-invalid)`. A supplied range must be an
+  exact built-in two-item `tuple`; lists, tuple subclasses, arbitrary
+  iterables, and coercion are rejected with the same error.
+  Independent clause invocation order never changes canonical lowering. The
+  fixed inner-to-outer order is Predicate, optional root Narrow, optional
+  Temporal wrapper(s), optional Order By, optional Limit, then optional Deep
+  Fetch. Thus permuting otherwise valid `include`, `order_by`, `limit`, and
+  temporal calls produces the same canonical operation. This normalization
+  does not defer validation or weaken build-time scope: a subtype-specific sort
+  key still requires a preceding root narrow when `order_by(...)` is called.
+  `Entity.narrow(*subtypes, where=...)` remains the scoped Predicate
+  constructor; result-set `FindQuery.narrow(*subtypes)` accepts no `where=` and
+  is single-shot. Calling it on an already root-narrowed Find Query raises
+  `QueryDefinitionError(query-clause-invalid)`. Every Python narrowing form
+  requires at least one subtype alternative, and the alternatives' resolved
+  concrete-subtype sets must be pairwise disjoint. Repeating the same subtype
+  or naming both an ancestor and one of its descendants raises
+  `QueryDefinitionError(query-path-invalid)` rather than silently
+  deduplicating their union.
+  Only `Database.find(query)` and `Transaction.find(query)` execute it.
+- **Finder/query entry point.** A free-standing, side-effect-free Find Query is
+  built from classmethods on the Entity Class and executed by the Parallax
+  Handle. Nonempty variadic `where(*predicates)` conjoins its arguments (the
+  natural big-AND of filter criteria), while `where(Entity.all)` is the
+  explicit unfiltered spelling. A Find Query has no further `.where()` method.
 
   ```python
   op = Order.where(
       Order.order_id == 42,
-      Order.items.any(OrderItem.sku.in_(["A", "B"])),
+      Order.items.exists(OrderItem.sku.in_(["A", "B"])),
   )
   snapshot = db.find(op)
   ```
 
-  Canonical `m-op-algebra` serialization of that statement:
+  Canonical `m-op-algebra` serialization of that Find Query:
 
   ```yaml
   targetEntity: Order
@@ -125,7 +313,8 @@ mutations, exceptions, or exports.
               in: { attr: OrderItem.sku, values: [A, B] }
   ```
 
-  To-many predicate paths always carry an explicit quantifier (`.any(...)`);
+  Relationship predicate paths always carry an explicit cardinality-neutral
+  quantifier (`.exists(...)` or `.not_exists(...)`);
   expression objects raise on `__bool__` (catching accidental `and`/`or`/`not`
   and chained comparisons, pointing at `&`/`|`/`~` and `.between()`), and
   reflected operators (`25 | expr`) raise with parenthesization guidance.
@@ -137,6 +326,40 @@ mutations, exceptions, or exports.
   representation, two spellings that cannot drift). The `==` spelling remains
   legal in user code; documented examples and the generated Usage Guide use the
   lint-clean `.is_()` form throughout.
+- **Boolean query inputs.** `.is_(...)` accepts only exact built-in `True` or
+  `False`. The keyword-only `case_insensitive=` option on top-level and nested
+  string predicates likewise accepts only an exact built-in `bool`; integers,
+  strings, and arbitrary truthy objects raise
+  `QueryDefinitionError(query-expression-invalid)` without coercion. Omitting
+  the option and explicitly passing `False` lower to the same canonical node
+  with `caseInsensitive` absent; `True` emits the canonical true flag.
+- **Null-test spellings and membership.** Comparing a scalar Attribute
+  Expression or nested Value Object leaf to Python `None` with `==` or `!=`
+  normalizes to the same canonical null-test node as `.is_null()` or
+  `.is_not_null()`, respectively. The named methods are the documented,
+  lint-clean spellings; the operator forms do not introduce a second semantic
+  representation. Null tests are legal on both nullable and non-nullable
+  members and are not constant-folded. On a top-level non-nullable Attribute,
+  `isNull` matches no conforming row and `isNotNull` matches every conforming
+  row. A nested non-nullable leaf can still be not-present because a nullable
+  ancestor or stored-document path is absent under core's absence-collapse
+  rule. This predicate rule does not make explicit null a legal construction
+  or assignment value for a non-nullable member. Every operator other than
+  `==` and `!=` rejects `None`, even for a nullable member: relational
+  comparisons, `between(...)`, string predicates, and `.is_(...)` raise
+  `QueryDefinitionError(query-expression-invalid)`. A value collection supplied to `.in_(...)` or
+  `.not_in(...)` must not contain `None`. Any `None` member raises
+  `QueryDefinitionError(query-expression-invalid)` during expression
+  construction. The frontend neither exposes provider three-valued membership
+  surprises nor silently rewrites membership into an `isNull`/`isNotNull`
+  Boolean combination. The collection must also be nonempty, as required by
+  the canonical operation algebra: `.in_([])` and `.not_in([])` both raise
+  `QueryDefinitionError(query-expression-invalid)` rather than normalizing to
+  match-none or match-all Predicates. Each method accepts exactly one
+  collection, whose runtime type must be the built-in `list` or `tuple`. The
+  frontend immediately copies it into immutable Predicate storage, preserving
+  order and duplicate values exactly. Strings, sets, generators, list/tuple
+  subclasses, custom iterables, and coercion raise the same error.
 - **Single-object find.** Arity is negotiated on the materialized result:
   `snapshot.result()` raises `NoResultFound` on zero and `TooManyResultsFound`
   on more than one; `snapshot.result_or_none()` returns `T | None`, raising
@@ -155,13 +378,18 @@ mutations, exceptions, or exports.
   class-level attribute access: `Customer.address.city == "Berlin"` builds the
   flat `nestedEq` node carrying the dotted canonical path
   (`nestedEq: { path: Customer.address.city, value: Berlin }`). The scalar
-  operator surface maps one-to-one onto the flat `nested*` family —
-  `==` / `!=` / `>` / `>=` / `<` / `<=` / `.in_(...)` serialize to `nestedEq` /
-  `nestedNotEq` / `nestedGt` / `nestedGte` / `nestedLt` / `nestedLte` /
-  `nestedIn`, and `.is_null()` / `.is_not_null()` to `nestedIsNull` /
-  `nestedIsNotNull` (core's absence-collapse semantics). The first hop is
+  operator surface maps one-to-one onto the flat `nested*` family. `==` / `!=`
+  / `>` / `>=` / `<` / `<=` serialize to `nestedEq` / `nestedNotEq` /
+  `nestedGt` / `nestedGte` / `nestedLt` / `nestedLte`; `.between(...)` to
+  `nestedBetween`; `.in_(...)` / `.not_in(...)` to `nestedIn` /
+  `nestedNotIn`; `.like(...)` / `.not_like(...)` / `.starts_with(...)` /
+  `.ends_with(...)` / `.contains(...)` to `nestedLike` / `nestedNotLike` /
+  `nestedStartsWith` / `nestedEndsWith` / `nestedContains`; and `.is_null()` /
+  `.is_not_null()` to `nestedIsNull` / `nestedIsNotNull` (core's
+  absence-collapse semantics). Nested string predicates share the top-level
+  case-insensitive option, wildcard escaping, and bind ordering. The first hop is
   statically typed via the `Attr[...]` descriptor overloads; deeper hops
-  resolve dynamically and are validated at statement build against the
+  resolve dynamically and are validated during Predicate construction against the
   declared value-object structure — an undeclared segment or a literal
   mismatching the leaf's declared neutral type is rejected at build, never at
   the database. A flat predicate whose path crosses a `multiplicity: many`
@@ -169,33 +397,83 @@ mutations, exceptions, or exports.
   each such predicate matches independently, so two ANDed flat predicates may
   be satisfied by *different* elements. **Same-element** composition and
   member-presence tests hang off the value-object-terminated path:
-  `.any(*predicates)` serializes to `nestedExists { path, where }` and
-  `.none(*predicates)` to `nestedNotExists { path, where }`; zero arguments
+  `.exists(*predicates)` serializes to `nestedExists { path, where }` and
+  `.not_exists(*predicates)` to `nestedNotExists { path, where }`; zero arguments
   emit the bare presence/non-empty (`nestedExists`) or absent/empty
   (`nestedNotExists`) node with no `where`. Variadic arguments conjoin exactly
   like `where(*predicates)`; inside the scope, sub-predicates are built from
   the value-object class's own class-level attributes and serialize as
   **element-relative** paths (`type`, `geo.country` — no leading entity
   prefix), composing with `&`/`|`/`~` and parentheses. An element-scoped
-  expression is valid only inside an `.any(...)`/`.none(...)` over that
-  element type; a stray one is rejected at statement build.
+  expression is valid only inside an `.exists(...)`/`.not_exists(...)` over that
+  element type; a stray one is rejected during Predicate construction.
+  Every new nested operator is also valid on these element-relative paths. A
+  flat operator crossing a Many occurrence retains core's any-element
+  semantics, but one element must satisfy the complete operator:
+  `nestedBetween` is a dedicated canonical node and never lowers to two
+  independent flat comparisons that different elements could satisfy.
+  Top-level and nested `between(lower, upper)` validate both literals against
+  the Attribute's neutral type but do not compare the bounds during
+  construction. A reversed pair is valid and naturally matches no rows under
+  SQL `BETWEEN`; only semantic interval APIs such as `as_of_range(...)` require
+  ordered endpoints.
+
+  The expanded family is a cross-core prerequisite rather than Python-only
+  sugar. `m-core`, `m-op-algebra`, `m-value-object`, `m-sql`, `m-dialect`, the
+  canonical operation schema, affected models, fixtures, compatibility cases,
+  benchmarks, dialect renderers, and every claiming frontend must add
+  `nestedBetween`, `nestedNotIn`, and the five nested string nodes atomically.
+  COR-50 exposes the methods only against that completed shared contract.
 
   ```python
   Customer.where(
-      Customer.address.phones.any(
+      Customer.address.phones.exists(
           Phone.type == "home",
           Phone.number == "555-9999",
       )
   )
   ```
 
-- **Deep-fetch/include spelling.** Chained attribute paths on the statement:
+- **Deep-fetch/include spelling.** Chained attribute paths on the Find Query:
   `Order.where(...).include(Order.items.statuses, Order.tags)`. One path
   grammar shared with predicates; longer paths imply their intermediates
-  (glossary Include Path). The first hop is statically typed via descriptor
+  (glossary Relationship Path). The first hop is statically typed via descriptor
   `__get__` overloads; deeper hops resolve dynamically and are validated
-  against the metamodel at statement-build time — never at execution and never
-  at the database.
+  against the metamodel during Find Query construction — never at execution and
+  never at the database. An access class equal to the Find Query target authors
+  a broad path root. An access class naming a descendant requires an already
+  compatible root `FindQuery.narrow(...)` and authors the path-root
+  `narrow: {entity, to}`; the canonical Relationship Identity remains the
+  declaration identity, so inherited `Dog.owner` is relationship
+  `Animal.owner` guarded to Dog-family roots. Each relationship segment may
+  independently retain its existing target `narrow: {to}`, and that narrowed
+  target is the source position of the next segment. Separate paths express
+  subtype branches. A broad relationship view and a target-narrowed view remain
+  distinct observable views and separate fetch hops; the planner does not reuse
+  the broad view for conditional subtype descent in COR-50.
+- **Relationship existence predicates.** A Relationship Path exposes
+  `exists(*predicates)` and `not_exists(*predicates)` for either to-one or
+  to-many cardinality. Zero arguments mean pure path existence or absence.
+  Multiple arguments are conjoined in the terminal related-Entity scope, so one
+  terminal object must satisfy every argument; separate `exists(...)`
+  predicates may be satisfied by different terminal objects. A multi-hop path
+  lowers mechanically to nested canonical `exists` nodes. `not_exists(...)`
+  negates existence of that complete nested chain by using `notExists` at the
+  outermost hop; it does not negate every hop independently. Hop narrowing
+  becomes the corresponding nested `narrow` scope. Callers needing predicates
+  on intermediate Entities use explicit nested `exists(...)`; direct multi-hop
+  arguments always target the terminal Entity. Predicate inversion recognizes
+  existence nodes: `~path.exists(...)` lowers identically to
+  `path.not_exists(...)`, and `~path.not_exists(...)` to `path.exists(...)`.
+  The same normalization maps `nestedExists` and `nestedNotExists` for Value
+  Object occurrence paths. Python therefore retains the general `~predicate`
+  idiom without creating a second canonical shape for existence negation.
+- **Uniform existence vocabulary.** Value Object occurrence paths use the same
+  `exists(*predicates)` / `not_exists(*predicates)` names, lowering to
+  `nestedExists` / `nestedNotExists` instead of relational navigation. On a One
+  occurrence, zero arguments mean present or absent; on a Many occurrence they
+  mean nonempty or empty. Multiple predicates must match the same occurrence.
+  The Python surface exposes no `any()` or `none()` methods.
 - **Subtype narrowing.** The canonical `narrow` node is spelled with the
   class-level constructor `Entity.narrow(*subtypes, where=...)` on the
   polymorphic position's class, serializing to
@@ -204,7 +482,7 @@ mutations, exceptions, or exports.
   subtype class), and `operand` is the `where=` expression (omitted ⇒ `all`).
   Inside `where=`, subtype-declared attributes become predicable
   (`Animal.narrow(Dog, where=Dog.bark_volume > 3)`); referencing one outside a
-  compatible narrow scope is rejected at statement build
+  compatible narrow scope is rejected during Predicate construction
   (`subtype-attribute-outside-narrow-scope`). A narrow expression is an
   ordinary predicate, so separately narrowed branches compose with the
   Boolean operators:
@@ -218,11 +496,12 @@ mutations, exceptions, or exports.
 
   serializes to `or` over two `narrow` nodes, branch order preserved. Inside a
   relationship quantifier the constructor must be called on exactly the
-  relationship target (`Person.pets.any(Pet.narrow(Cat))` — `m-navigate`'s
-  exact-naming rule, checked at build). The statement-level clause
-  `Animal.where(...).narrow(Dog, ...)` is the whole-statement form: it wraps
-  the statement's conjoined predicate as the single top-level `narrow` node's
-  operand (zero predicates ⇒ `all`) and is single-shot like `as_of`. It is a
+  relationship target (`Person.pets.exists(Pet.narrow(Cat))` —
+  `m-navigate`'s
+  exact-naming rule, checked at build). The Find Query clause
+  `Animal.where(...).narrow(Dog, ...)` is the whole-query form: it wraps
+  the Find Query's conjoined predicate as the single top-level `narrow` node's
+  operand (`Entity.all` ⇒ `all`) and is single-shot like `as_of`. It is a
   **pure result-set narrowing** that grants no attribute scope to the
   already-built `where` arguments: every predicate is validated immediately as
   it is built, so subtype-declared attributes are predicable **only** inside
@@ -235,14 +514,19 @@ mutations, exceptions, or exports.
   spelling can drift. On an include path, `.narrow(*subtypes)` on a hop
   (`Owner.pets.narrow(Dog)`, continuable to deeper hops) serializes to the
   path segment's `narrow: { to: [...] }` and requests a distinct **narrowed
-  view** (§3). Everywhere, the resolved set must stay within the **enclosing
+  view** (§3). Narrowing is single-shot per path segment:
+  `Owner.pets.narrow(Cat, Dog).narrow(ServiceDog)` raises
+  `QueryDefinitionError(query-path-invalid)` rather than intersecting or
+  replacing the first subtype set. Continuing to another relationship creates
+  a new segment that may independently narrow its own polymorphic target.
+  Everywhere, the resolved set must stay within the **enclosing
   effective concrete-subtype set** — the threaded active position, re-narrowed
   at every hop and by every enclosing `narrow` scope, never the declared base
   type — so a nested same-position narrow can only constrain the position
   further, and one that broadens back out (a `Cat` narrow inside a `Dog`
   scope) is rejected at build time (`narrow-outside-position`, the corpus's
   threaded-position rule).
-- **Temporal-read spelling.** Statement-level and dimension-keyed, with Valid
+- **Temporal-read spelling.** Query-level and dimension-keyed, with Valid
   Time and Transaction Time as the only public vocabulary:
 
   ```python
@@ -255,9 +539,13 @@ mutations, exceptions, or exports.
   `history` takes its dimension as the module-level `VALID_TIME` / `TX_TIME`
   constants — `Final` singleton values exported from `parallax.core` in the
   `LATEST` sentinel's pattern; a string dimension argument is rejected at
-  statement build.
+  Find Query construction.
   Timestamps are timezone-aware `datetime` values, normalized to UTC,
-  microsecond precision; naive datetimes are rejected at statement build. An
+  microsecond precision; naive datetimes are rejected at Find Query
+  construction. Every `as_of_range(...)` window is an exact built-in
+  two-item `tuple` of finite such instants with `start < end`; lists, tuple
+  subclasses, arbitrary iterables, coercion, and `LATEST` endpoints raise
+  `QueryDefinitionError(query-clause-invalid)`. An
   omitted axis defaults to **latest** per the core default-injection rule; the
   module-level `LATEST` sentinel spells the same pin explicitly and lowers to
   the identical injected predicate. Canonical serialization is deterministic:
@@ -267,12 +555,15 @@ mutations, exceptions, or exports.
   omitted axis serializes **no** wrapper — its latest default is injected at
   lowering — while an explicit `LATEST` pin serializes its wrapper with the
   canonical Latest value, never `now`. A finite current-clock datetime is Now
-  and lowers to containment rather than Latest's `end = infinity`. `as_of` is
-  single-shot: calling it on an
-  already-pinned statement raises (derive from the unpinned base instead;
-  re-pinning is a deferred additive extension). Rejected at build: pinning or
-  scanning an axis the entity does not declare, temporal clauses on
-  non-temporal entities, and conflicting double pins.
+  and lowers to containment rather than Latest's `end = infinity`. `as_of()`
+  with no dimension raises `QueryDefinitionError(query-clause-invalid)` rather
+  than duplicating the ordinary query's implicit-latest behavior;
+  `as_of_range()` likewise rejects an axis-free scan. Both methods are part of
+  the mutually exclusive, single-shot temporal-clause family: calling
+  `as_of`, `history`, or `as_of_range` on a Find Query that already carries any
+  temporal clause raises `QueryDefinitionError(query-clause-invalid)`.
+  Rejected at build: pinning or scanning an axis the entity does not declare,
+  temporal clauses on non-temporal entities, and conflicting double pins.
 
 ### Declaration and descriptor-input grammar
 
@@ -545,8 +836,12 @@ rel(reverse_of=target_relationship_name, order_by=(...), name=...)
   (`UnloadedRelationshipError`); `None` means exactly "loaded, and there is
   none".
 - **Ordering.** `order_by=` is a tuple of target-local member names: a bare
-  string means ascending; `desc("name")` marks descending, with an `asc()`
-  twin for symmetry. Ordering is legal only on a to-many direction; an
+  string means ascending with nulls last; `desc("name")` marks descending,
+  with an `asc()` twin for symmetry. Either helper returns an immutable term
+  supporting `.nulls_first()` and `.nulls_last()`; omitted placement remains
+  nulls last in either direction, and placement is single-shot. A bare string
+  cannot customize null placement because doing so requires an explicit
+  `asc(...)` or `desc(...)` term. Ordering is legal only on a to-many direction; an
   unknown member is the formation-time `relationship-order-attribute-invalid`
   issue, and an empty or omitted tuple means no ordering.
 
@@ -554,7 +849,8 @@ rel(reverse_of=target_relationship_name, order_by=(...), name=...)
 class Customer(Entity, table="customer"):
     id: Attr[int] = attr(primary_key=True)
     orders: Rel[tuple["Order", ...]] = rel(
-        reverse_of="customer", order_by=("placed_at", desc("id")),
+        reverse_of="customer",
+        order_by=("placed_at", desc("id").nulls_last()),
     )
 
 
@@ -579,7 +875,7 @@ At runtime on a Snapshot node the three relationship states stay distinct:
 an included 1..1 read is the instance (never `None`, no narrowing); an
 included 0..1 read is the instance or `None` (loaded-null); an unincluded
 relationship raises `UnloadedRelationshipError` regardless of spelling, and
-`is_loaded(node, "coupon")` is `True` for a loaded-null answer. A reverse
+`is_view_loaded(node, Order.coupon)` is `True` for a loaded-null answer. A reverse
 to-one is always `Rel[T | None]` — nothing in the model guarantees a
 counterpart row:
 
@@ -765,6 +1061,42 @@ conversion or serialization defects raise
 `document`, `json`, or `yaml` and the original cause, return no partial output,
 and leave the hub unchanged.
 
+The separately distributed Descriptor Frontend reads the hub through the
+durable first-party collaboration seam
+`parallax.core.entity.model_of(hub) -> Metamodel`. It returns the same accepted
+immutable Metamodel without copying, works for class-backed and
+descriptor-backed hubs, and exposes no Entity Class binding or construction
+capability. It belongs to the advanced `parallax.core.entity` interface and is
+not re-exported from `parallax.core`; there is no `MetamodelHub.model`
+property. Ordinary application code uses `models.meta(...)`, `models.entities`,
+or the public Descriptor Frontend export functions. Snapshot connection uses a
+separate class-backed Entity-capability query and never treats successful
+`model_of(...)` access as proof that a hub can materialize Entity instances.
+
+That class-backed query is
+`parallax.core.entity.entity_runtime_of(hub) -> EntityRuntime | None`.
+`EntityRuntime` is a frozen slotted value containing exactly the accepted
+`Metamodel`, opaque exact-hub identity, `EntityGraphConstruction`, and
+`EntityRowCodec`. One instance is created during each successful class-backed
+Hub construction and every query for that Hub returns the same object.
+Descriptor-backed Hubs return `None`. The runtime references rather than copies
+the accepted model and exact identity, and it exposes neither
+`MetamodelBinding` nor the bidirectional Entity Identity/Class index. It is a
+closed first-party collaboration value, not a registry, extension map,
+third-party adapter interface, or generic capability bag. Neither
+`EntityRuntime` nor `entity_runtime_of` is re-exported from top-level
+`parallax.core`.
+
+`Database.connect(adapter, models)` queries `entity_runtime_of(models)` before
+inspecting `adapter`. When `models` is a descriptor-backed Hub, the absent
+runtime raises exported
+`SnapshotConnectionError(ValueError)` with sole stable code
+`snapshot-class-backed-hub-required`. The error exposes neither an Entity
+Runtime nor opaque hub identity. It is not
+`UnsupportedCapabilityError(capability-unsupported)`, which is reserved for a
+valid operation requiring a feature unavailable on an already connected
+provider.
+
 `parallax.descriptor` publicly exports the ingestion base
 `DescriptorError(ValueError)` and its `DescriptorSyntaxError`,
 `DescriptorSchemaError`, and `DescriptorValueError` subclasses; the frozen
@@ -918,7 +1250,7 @@ class Truck(Vehicle, table="truck", inheritance=ConcreteSubtype):
   strict-Pyright-clean class-level expressions via the annotation aliases.
 - **Drift prevention without codegen.** The API Conformance Suite's
   descriptor-equality guard (idiomatic class exports ≡ corpus descriptor) and
-  the operation no-drift guard (idiomatic statement serialization ≡ corpus
+  the operation no-drift guard (idiomatic Find Query serialization ≡ corpus
   operation) are the drift gates; both run in CI.
 - **Derivable typed artifacts.** None are generated. The spec deliberately
   promises no generated surface; everything typed is derived at runtime from
@@ -945,7 +1277,7 @@ class Truck(Vehicle, table="truck", inheritance=ConcreteSubtype):
   are shareable but not hashable. `Snapshot[T]`'s
   complete surface: `result()`, `result_or_none()`, `results()` (a fresh
   `list[T]` per call), `pin` (the lowered as-of coordinates), `execution`
-  (per-statement `sql`, `binds`, informational `duration`, and `round_trips`,
+  (per-query-execution `sql`, `binds`, informational `duration`, and `round_trips`,
   mirroring the adapter emission convention), and `__repr__`. Deliberately
   absent: iteration/len/truthiness/indexing on the container, refresh or
   write methods, and any lazy behavior. Accessors are pure in-memory reads.
@@ -956,14 +1288,102 @@ class Truck(Vehicle, table="truck", inheritance=ConcreteSubtype):
   materialization), and projections targeting the same key merge into one
   node. Value objects have no identity (fresh values per owner). Identity
   never escapes one graph: nodes from different `find` calls never coalesce.
-- **Whole-graph temporal pinning.** The statement's `as_of` coordinates (with
+- **Value Object presence.** Within a present Value Object record, an omitted
+  scalar or nested-occurrence identity and a present identity mapped to `None`
+  are distinct stored-document states. Either is legal only when the scalar or
+  One occurrence is nullable; a required scalar or One occurrence rejects
+  both. Both legal states read as `None`, while the frozen Value Object retains
+  field presence so canonical document serialization omits the former and
+  emits the latter as explicit null. A Many occurrence is an ordered immutable
+  `tuple` of non-null Value Object records and is never nullable: `()` is its
+  sole zero-element value, while omission, `None`, and `None` elements are
+  invalid. The same rules apply recursively at every nesting depth.
+- **Value Object graph-input carriers.** Snapshot Graph Input and Entity Graph
+  Construction share one exact recursive immutable algebra:
+  `ValueObjectRecord` is a frozen slotted record containing
+  `tuple[ValueObjectAttributeInput, ...]` and
+  `tuple[ValueObjectOccurrenceInput, ...]`;
+  `ValueObjectAttributeInput` is a frozen slotted pair of exact
+  `ValueObjectAttributeIdentity` and `NeutralValue | None`; and
+  `ValueObjectOccurrenceInput` is a frozen slotted pair of exact
+  `ValueObjectIdentity` and
+  `None | ValueObjectRecord | tuple[ValueObjectRecord, ...]`. Absence is
+  represented only by omission of the corresponding entry. Mutable mappings
+  or sequences, raw document dictionaries, Pydantic Value Objects, and a
+  separate frozen-map abstraction do not cross this seam. Attribute-entry and
+  nested-occurrence-entry tuple order is non-semantic: Entity Graph
+  Construction indexes entries by structured identity, rejects duplicates,
+  and validates and constructs them in accepted metadata declaration order.
+  Only a Many occurrence's record tuple has semantic order, preserved exactly.
+  Conversion from physical structured-document values into this algebra owns
+  stored-document presence, nullability, container-shape, and Neutral Value
+  validation. A failure raises exported
+  `SnapshotDecodingError(ValueError)` with stable code
+  `snapshot-decoding-failed`, the concrete `EntityIdentity`, the applicable
+  `ValueObjectIdentity | ValueObjectAttributeIdentity`, and an optional
+  original cause; it exposes no raw database value and is never wrapped as
+  `SnapshotMaterializationError`. Entity Graph Construction nevertheless
+  revalidates every identity, duplicate, occurrence shape, nullability state,
+  and Neutral Value; invalid direct first-party input raises
+  `GraphConstructionError` with `entity-graph-invalid-member` or
+  `entity-graph-invalid-value`. A public Snapshot read reaches that path only
+  through an implementation defect.
+- **Single graph input.** Projection merging may retain a transient logical
+  identity index, references to input projections, and slot-level winner
+  references. It MUST NOT clone each node's scalar, Value Object, and
+  relationship payloads into a second graph-sized merged representation.
+  Construction operations are emitted directly from that transient merge
+  state into Entity Graph Construction; no `_MergedNode`-equivalent graph plan
+  is permitted.
+- **Deterministic graph order.** Merged logical nodes receive their zero-based
+  allocation index by deterministic first-encounter preorder: roots in result
+  order; relationships on each node in accepted metadata declaration order;
+  the broad view before that relationship's narrowed views; narrowed views by
+  canonical effective concrete-identity set; and children in to-many result
+  order. A repeated logical node reuses its first index. Population and
+  lifecycle-state factory invocation both follow allocation order. Every
+  node-indexed error uses that index, and the first missing population is the
+  lowest unpopulated index.
+- **Graph-construction phase barrier.** Entity Graph Construction has three
+  non-overlapping phases: allocate every shell; close allocation permanently
+  with the first `populate()` and populate every node; then, only after the
+  build callback returns and all population and root checks succeed, invoke
+  lifecycle-state factories. Factory resolution sees every final Entity
+  instance with scalars, Value Objects, and broad relationships fully wired,
+  including cycles. It sees no attached lifecycle state and no published root,
+  and it cannot allocate, populate, or publish.
+- **Atomic lifecycle-state attachment.** Entity buffers factory results in
+  allocation order and attaches none while any factory remains. Only after
+  every factory succeeds does it attach all results and publish the ordered
+  roots atomically. The first factory failure stops invocation, discards every
+  buffered result, and leaves all allocated Entities unreachable and
+  lifecycle-state-free.
+- **Construction scope closure.** A writer closes when its build callback
+  exits, and a resolution view closes when its one factory invocation exits.
+  Using either retained closed scope raises
+  `GraphConstructionError(entity-graph-scope-closed)` before argument
+  inspection. An active writer or resolution view receiving a handle from
+  another construction instead raises
+  `GraphConstructionError(entity-graph-foreign-handle)`. Current-construction
+  handles remain resolvable during every factory invocation, but no operation
+  accepts them after `construct(...)` exits.
+- **Construction failure precedence.** Writer-operation failures are eager. A
+  build-callback exception propagates unchanged and suppresses completion,
+  root, and factory work. After a successful callback, the lowest unpopulated
+  allocation index fails first. Only after every node is populated are roots
+  validated from left to right for value shape, foreign construction, and
+  membership. Factories then run in allocation order; the first factory
+  exception propagates unchanged and stops later factories. State attachment
+  and root publication occur last.
+- **Whole-graph temporal pinning.** The Find Query's `as_of` coordinates (with
   latest defaults per axis) pin the whole graph; the pin propagates per hop,
   matched by axis, to every temporal entity in the include tree — auto
   injected, never user-written. `history` / `as_of_range` return one root per
   milestone, each root **edge-pinned** at its milestone's from-instant;
   `snapshot.pin` reports only genuinely pinned axes (a scanned axis is absent,
-  per the core rule that a scan is not a pin), and `parallax.core.pin_of(node)`
-  reports each node's own coordinates. `parallax.core.edge_of(node) -> Edge`
+  per the core rule that a scan is not a pin), and
+  `parallax.snapshot.pin_of(node)` reports each node's own coordinates.
+  `parallax.snapshot.edge_of(node) -> Edge`
   reports a temporal node's **milestone edge** as a distinct frozen `Edge`
   value exposing one strict-typed accessor pair per dimension — the established
   arity-accessor house pattern (§2's `result()` / `result_or_none()`) applied
@@ -983,25 +1403,62 @@ class Truck(Vehicle, table="truck", inheritance=ConcreteSubtype):
   passes it straight to `as_of(...)` (the stale-web-edit recipe below). The
   `snapshot-history-includes` feature
   is **deferred, not invalid**: combining `.history()` with `.include()`
-  raises `UnsupportedFeatureError` naming the deferral, distinct from
-  validation errors.
+  builds a valid Find Query tagged with that required capability. After exact
+  hub validation, executing it against a provider that lacks the tag raises
+  `UnsupportedCapabilityError(capability-unsupported)` before SQL generation
+  or adapter access. It never raises `QueryDefinitionError`.
 - **Closed-world relationships.** An included to-one is the related node or
   `None` (loaded-null); an included to-many is a `tuple` (possibly empty —
   loaded-empty is `()`). A relationship outside the include set is
   **unloaded**: attribute access raises `UnloadedRelationshipError` naming the
-  path and the include fix, and `parallax.core.is_loaded(node, "items")`
+  path and the include fix, and
+  `parallax.snapshot.is_view_loaded(node, Owner.items)`
   answers without raising. Access never issues SQL — there is no lazy loading
   in this lifecycle.
+- **Exact-hub inspection keys.** `is_view_loaded` and `view` first require
+  private `SnapshotNodeState`. Both accept only a class-derived, hub-bound
+  Relationship Path; bare relationship-name strings are not accepted. They
+  form one private bound key per segment from the Relationship Path's opaque
+  exact-hub sentinel and that segment's structured Broad or Narrowed
+  Relationship View identity, and require identity with the sentinel stored
+  in the node state. A path from another hub raises
+  `SnapshotInspectionError(snapshot-hub-mismatch)` with the operation and
+  structured path, but neither sentinel, even when every structured view is
+  equal. This check precedes relationship-owner and loaded-state validation.
+- **Relationship-path owner.** After exact-hub validation, the path's starting
+  owner must apply to the supplied node's concrete Entity Identity. A
+  relationship declared by an accepted ancestor applies to its concrete
+  subtype. An unrelated same-hub owner raises
+  `SnapshotInspectionError(snapshot-view-owner-mismatch)` with the operation,
+  node Entity Identity, and structured path. `is_view_loaded` raises this
+  error rather than returning `False`. Path construction guarantees that each
+  later segment applies to its predecessor's target, including a target
+  changed by narrowing.
+- **Relationship-path inspection.** `view(node, path)` traverses every
+  relationship segment from left to right using only already loaded Snapshot
+  state; it never issues SQL. Narrowing changes the accepted target type for
+  later segments, so
+  `view(owner, Owner.pets.narrow(Dog).doghouse)` traverses the narrowed pets
+  view and then the `Dog.doghouse` relationship. To-many segments fan out,
+  null and empty intermediate branches contribute no terminal value, and a
+  path containing any to-many segment returns one flat tuple of non-null
+  terminal values in traversal order with duplicates preserved. An all-to-one
+  path returns its terminal Entity or `None`.
+- **Relationship-path loaded state.** `is_view_loaded(node, path)` is `True`
+  exactly when every relationship view on every reachable branch is loaded.
+  The uninstantiated suffix of a null or empty branch is vacuously loaded.
+  `view` instead raises `UnloadedRelationshipError` for the first unloaded
+  view in path-segment order and, within fan-out, source-tuple order.
 - **Narrowed views.** A narrowed include populates a distinct **narrowed
   view** keyed by relationship name plus effective concrete-subtype set — it
   never marks the broad relationship loaded. Views are read with
-  `parallax.core.narrowed(node, Owner.pets.narrow(Dog))`: the include-path
+  `parallax.snapshot.view(node, Owner.pets.narrow(Dog))`: the include-path
   grammar names the view, equivalent authored narrowings (`.narrow(Pet)` vs
   `.narrow(Cat, Dog)`) resolve to the same effective set and therefore the
   same loaded view, and differently narrowed views (the corpus's `pets[Dog]`
   and `pets[Cat]`) coexist on one node as independent simultaneous views. An
   unrequested narrowed view raises `UnloadedRelationshipError` naming the
-  derived view key; `is_loaded` accepts the same narrowed-path argument.
+  derived view key; `is_view_loaded` accepts the same narrowed-path argument.
 - **Eager include execution.** One query per non-empty relationship level
   (semi-join against the parent level's keys); an empty level short-circuits
   its subtree; declared descriptor `orderBy` governs child ordering; narrowed
@@ -1091,7 +1548,7 @@ class Truck(Vehicle, table="truck", inheritance=ConcreteSubtype):
   is also how identity expectations are observed by scenario cases.
   Polymorphic positions: every materialized node is an instance of its
   concrete entity class, so the corpus's `familyVariant` is observable as
-  `type(node)`. Narrowed views: `parallax.core.narrowed(node, path)` returns
+  `type(node)`. Narrowed views: `parallax.snapshot.view(node, path)` returns
   the view's `tuple` for a to-many hop (the related node or `None` for
   to-one); a single-concrete view is typed as that concrete class, and a
   multi-concrete view's elements are their concrete classes.
@@ -1276,7 +1733,8 @@ class Truck(Vehicle, table="truck", inheritance=ConcreteSubtype):
   and `terminate_until_where` take no assignments, and passing any raises at
   build — a delete or terminate names nothing to assign. Assignments are the
   typed `.set(value)` spelling on attribute expressions,
-  validated at statement build as one rule family shared with `model_copy`'s
+  validated while the mutation call is built as one rule family shared with
+  `model_copy`'s
   `update=` validation (§3) — the assignability and scalar-input rules are
   stated once there and referenced here, never duplicated, so the two lists
   cannot drift: only mapped scalar attributes and value-object members are
@@ -1421,7 +1879,7 @@ class Truck(Vehicle, table="truck", inheritance=ConcreteSubtype):
 - **Coverage partition and no-drift guards.** An assertion computes
   `exercised ∪ reasoned-skipped == active slice` from corpus data at runtime,
   failing on stale case IDs or empty skip reasons. Four no-drift guards
-  close the loop. Two run per example: the idiomatic statement's
+  close the loop. Two run per example: the idiomatic Find Query's
   serialization equals the corpus operation, and idiomatic class descriptors
   equal corpus descriptors. A third, scoped to every registered write story,
   drives it against a recording fake port and asserts its wire DML equals its
@@ -1462,7 +1920,12 @@ the metamodel it needs through `m-metamodel` and the typed owner facets.
 `m-descriptor` maps to the separate `parallax.descriptor` scope and imports the
 common runtime only through its language-neutral `m-core` and `m-metamodel`
 edges. Its private child support scope `parallax.descriptor._hub` alone imports
-the Python-specific Hub-construction seam in `parallax.core.entity`; no
+the Python-specific Hub construction and accepted-model read seams in
+`parallax.core.entity`. This direct support edge is required because the class
+and Descriptor Frontends deliberately return one concrete `MetamodelHub` type,
+while the Hub's class-backed constructor owns Python realization and atomic
+Entity Class binding and therefore does not belong to the
+representation-independent `parallax.core.metamodel` module. No
 common-runtime, Snapshot, or Postgres scope imports the descriptor package.
 import-linter forbids every production scope-pair import the DAG does not
 permit — the generated forbidden-edge complement below, with the
@@ -1654,16 +2117,25 @@ parallax.postgres --> parallax.core.dialect
   generated-contract drift, fails.
 - **Child enforcement scopes.** A support scope MAY declare child scopes over
   its own private implementation modules when the child's declared grants are
-  materially narrower than the parent's closure. The two declared children of
-  `parallax.snapshot.handle` are the wrapping leaf and the write-lowering
-  cluster; `parallax.descriptor._hub` is likewise a private child whose sole
-  extra grant is the first-party Hub seam. All are generated exactly like any
-  other scope, and none is a new supported import path. Because
+  materially narrower than the parent's closure or when one orchestration leaf
+  requires a narrowly additive first-party grant that must remain forbidden to
+  the rest of the parent package. The two declared children of
+  `parallax.snapshot.handle` are narrower wrapping and write-lowering scopes.
+  `parallax.descriptor._hub` is the additive case: its sole extra grant is the
+  first-party Entity Hub seam required to construct and read the one concrete
+  Hub type. All are generated as ordinary contract sources, and none is a new
+  supported import path. Because
   import-linter's `forbidden` contracts are package-scoped on both sides, a
   child is emitted only as a contract **source**: naming it as a forbidden
   target of its own parent would overlap the parent's source package and be
   skipped, and the parent's existing row already forbids the same targets for
-  every descendant. The handle scope declares no `m-pk-gen` grant: nothing
+  every descendant. When a child has an additive grant, the generator keeps the
+  parent's forbidden row unchanged and emits one wildcarded `ignore_imports`
+  entry for each exact child-to-direct-grant edge. Ignoring that first hop also
+  withdraws import-linter's indirect chains through it; no transitive grant
+  receives a second exception. `unmatched_ignore_imports_alerting="error"`
+  ensures an exception cannot outlive the import it describes. The handle
+  scope declares no `m-pk-gen` grant: nothing
   under `parallax.snapshot.handle` imports primary-key generation, so the
   generated complement forbids it. The unused direct `m-navigate` grant is
   retained on purpose — navigation stays reachable through `m-snapshot-read`
@@ -1705,9 +2177,9 @@ hatchling.
 
 | Artifact/package | Production or development-only | Included source scopes | External runtime dependencies | Depends on artifacts | Public exports/entry points |
 |---|---|---|---|---|---|
-| `parallax-core` (the common runtime) | production | all `parallax.core.*` scopes of §7 (behavioral modules, entity/statement frontend, driver-free postgres dialect strategy) | `pydantic` | (none) | `parallax.core`: the `Entity`/`TxTemporal`/`Bitemporal`/`ValueObject` bases, `Attr`, `Rel`, `attr`, `rel`, `index`, `desc`, `asc`, `Int32`, `Float32`, `MAX`, `Sequence`, the cardinality, persistence, inheritance role, and strategy values, `MetamodelHub`, statement API, `LATEST`, `VALID_TIME`, `TX_TIME`, `Pin`, `Edge`, `pin_of`, `edge_of`, `is_loaded`, `narrowed`, errors |
+| `parallax-core` (the common runtime) | production | all `parallax.core.*` scopes of §7 (behavioral modules, entity/statement frontend, driver-free postgres dialect strategy) | `pydantic` | (none) | `parallax.core`: the `Entity`/`TxTemporal`/`Bitemporal`/`ValueObject` bases, `Attr`, `Rel`, `attr`, `rel`, `index`, `desc`, `asc`, `Int32`, `Float32`, `MAX`, `Sequence`, the cardinality, persistence, inheritance role and strategy values, `MetamodelHub`, `FindQuery`, `Predicate`, `LATEST`, `VALID_TIME`, `TX_TIME`, `Pin`, `Edge`, and its documented errors |
 | `parallax-descriptor` (descriptor interchange) | production, optional | `parallax.descriptor` (`m-descriptor` plus its private Hub orchestration) | `pyyaml`, `jsonschema` | `parallax-core` | `parallax.descriptor`: `hub_from_document`, `hub_from_json`, `hub_from_yaml`, `export_document`, `export_json`, `export_yaml`, `DescriptorError`, `DescriptorSyntaxError`, `DescriptorSchemaError`, `DescriptorValueError`, `DescriptorSchemaViolation`, `DescriptorValueViolation`, `DescriptorExportError` |
-| `parallax-snapshot` (snapshot lifecycle extension) | production | `parallax.snapshot.*` (`materialize`, `handle`) | (none beyond core) | `parallax-core` | `parallax.snapshot`: `connect()`, `Snapshot[T]`, `Execution` |
+| `parallax-snapshot` (snapshot lifecycle extension) | production | `parallax.snapshot.*` (`materialize`, `handle`) | (none beyond core) | `parallax-core` | `parallax.snapshot`: `connect()`, `Snapshot[T]`, `Execution`, `is_view_loaded`, `view`, `pin_of`, `edge_of`, `UnloadedRelationshipError`, `SnapshotConnectionError`, `SnapshotDecodingError`, `SnapshotMaterializationError`, `SnapshotInspectionError`, `TransactionOwnershipError` |
 | `parallax-postgres` (Postgres database adapter) | production | `parallax.postgres.*` (concrete port over psycopg) | `psycopg[binary]` (sole declarer) | `parallax-core` | `parallax.postgres`: `PostgresAdapter` |
 | `parallax-conformance` | development-only | `parallax.conformance.*` (CLI, case format, corpus loading, provider harness) | `testcontainers`, `jsonschema` | `parallax-core`, `parallax-descriptor`, `parallax-snapshot`, `parallax-postgres` | `parallax-conformance` console script (`describe` / `compile` / `run`) |
 

@@ -78,6 +78,14 @@ Identities and their Python Entity Classes. Every participating class shares
 the same Metamodel Binding; it contains no copied model facts.
 _Avoid_: bound model, runtime model, model context, metadata copy
 
+**Entity Runtime**:
+The narrow immutable first-party execution view a class-backed Metamodel Hub
+supplies to Snapshot: its accepted Metamodel, opaque exact-hub identity, Entity
+Graph Construction capability, and Entity Row Codec. It exposes neither the
+Metamodel Binding nor its Entity Class index and is absent for a
+descriptor-backed Hub.
+_Avoid_: raw binding, sealed model pair, runtime registry, capability bag
+
 **Entity Class Binding**:
 One permanent association within a Metamodel Binding between a core Entity
 Identity and the Entity Class that realizes it. It is a relationship in the
@@ -88,10 +96,26 @@ _Avoid_: registry entry, class mapping, mirror registration, temporary binding
 ### Queries And Results
 
 **Find Query**:
-A free-standing, side-effect-free query value bound to its sealed Metamodel
-Hub, built from `Entity.where(...)` and its chainable clauses. It serializes to
-one canonical operation and is executed only by a handle or transaction.
+A free-standing, side-effect-free, immutable opaque query value bound to its
+sealed Metamodel Hub. Only `Entity.where(...)` constructs one; its chainable
+clauses return new values, and first-party lowering converts it to one
+canonical operation for execution by a handle or transaction.
 _Avoid_: find statement, statement, query builder, queryset, cursor, lazy result
+
+**Match-All Predicate**:
+The non-callable `Entity.all` value spelling an explicitly unfiltered Find
+Query as `Entity.where(Entity.all)`. It is bound to that Entity Class's exact
+hub and target, lowers to the canonical All operation, and is valid only as the
+sole `where(...)` argument. Empty `where()` and an `all()` query constructor do
+not exist.
+_Avoid_: empty where, implicit find-all, all query method, global ALL
+
+**Query Definition Error**:
+The single public Python Entity-frontend error family for constructing,
+composing, or refining an invalid expression, relationship path, predicate,
+assignment, sort key, or Find Query. Behavioral owner modules retain their
+native errors behind this translation seam.
+_Avoid_: statement error, query-scope error, leaked validator error
 
 **Snapshot**:
 The fully materialized container returned by `find`, reifying one core
@@ -123,11 +147,12 @@ _Avoid_: now, current timestamp, infinity literal
 **Temporal Dimension Constant**:
 One of the module-level values `VALID_TIME` and `TX_TIME` spelling a Temporal
 Dimension wherever the developer surface takes a dimension argument, such as
-`history(...)`; a string dimension spelling is rejected at statement build.
+`history(...)`; a string dimension spelling is rejected during Find Query
+construction.
 _Avoid_: dimension string literal, axis name argument
 
 **Execution Record**:
-The per-statement provenance carried by a Snapshot — placeholder SQL, binds,
+The per-query-execution provenance carried by a Snapshot — placeholder SQL, binds,
 informational duration, and the round-trip count — mirroring the
 conformance-adapter emission convention.
 _Avoid_: query log, debug trace, profiler output
@@ -135,9 +160,46 @@ _Avoid_: query log, debug trace, profiler output
 **Narrowed View**:
 The distinct relationship view a narrowed include populates on a node, keyed
 by relationship name plus effective concrete-subtype set and read through the
-`narrowed` accessor; equivalent authored narrowings converge on one view, and
-differently narrowed views coexist on the same node.
+Snapshot `view` accessor; equivalent authored narrowings converge on one view,
+and differently narrowed views coexist on the same node.
 _Avoid_: filtered relationship, cast collection, subtype list
+
+**Relationship Path**:
+An immutable exact-hub-bound sequence of relationship views used for includes
+and Snapshot inspection. Its authored root position normally validates against
+the Find Query target; a preceding root narrow may additionally authorize a
+subtype-rooted first hop. The path retains that authored source Entity Identity
+separately from the canonical Relationship Identity, so an inherited
+`Dog.owner` relationship may still guard loading to Dog-family roots while
+`Animal.owner` remains broad. Same-named sibling relationships never match
+structurally. Canonically, the path has an optional root-position Narrow and a
+nonempty relationship sequence whose segments may each narrow their target
+position; a target position is the next segment's source. Applying a path
+traverses loaded state left to right. Root narrowing guards which existing roots
+traverse the path without creating a relationship view; narrowing a segment
+changes the accepted target type for later segments and populates a distinct
+Narrowed View. Broad and target-narrowed views remain separate fetches. The path
+also authors cardinality-neutral relationship predicates through variadic
+`exists(...)` and `not_exists(...)`; multi-hop paths lower to nested existence
+operations, and multiple predicates must match one terminal related object.
+_Avoid_: dotted relationship string, lazy traversal
+
+**Existence Predicate**:
+The uniform `exists(*predicates)` / `not_exists(*predicates)` quantifier on a
+Relationship Path or Value Object occurrence path. Multiple predicates must
+match the same terminal related Entity or embedded occurrence; storage-specific
+lowering chooses relational or nested canonical operations. `~exists(...)`
+canonicalizes to `not_exists(...)` and the inverse does the reverse. Python
+exposes no `any()` / `none()` aliases.
+_Avoid_: collection any, collection none, SQL-only existence
+
+**Null Placement**:
+The shared ordering value choosing whether nulls precede or follow non-null
+values for one Sort Key or declared relationship-order term. Omission means
+Nulls Last for both ascending and descending order; Python authors an override
+with one `.nulls_first()` or `.nulls_last()` after explicitly choosing
+`.asc()` or `.desc()`, and dialect lowering preserves the choice portably.
+_Avoid_: provider-native null order, query-only null option
 
 ### Writes
 
