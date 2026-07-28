@@ -197,6 +197,39 @@ def test_grouping_an_unmappable_row_answers_one_undifferentiated_group() -> None
     assert collapse_group_key(wallet_model, wallet, "update", row) is None
 
 
+def test_delete_grouping_ignores_members_the_statement_never_uses() -> None:
+    # A DELETE's emitted statement selects the key columns alone, so two rows
+    # carrying different non-key payload members are the SAME physical shape and
+    # must reach one `IN`-list statement.
+    model, _ = WALLET
+    buffer: list[BufferItem] = [
+        KeyedWrite("delete", "Wallet", ({"id": 10, "owner": "Mira", "balance": 100.00},)),
+        KeyedWrite("delete", "Wallet", ({"id": 11},)),
+    ]
+    statements = _flush_and_lower(buffer, model)
+    assert [statement.sql for statement in statements] == ["delete from wallet where id in (?, ?)"]
+    assert [statement.binds for statement in statements] == [(10, 11)]
+
+
+def test_update_grouping_still_splits_on_a_differing_set_clause() -> None:
+    # An UPDATE's emitted statement DOES select the assignable members (its `set`
+    # clause), so a differing assignable selection stays a differing group —
+    # each side then collapses on its own uniform values.
+    model, _ = WALLET
+    buffer: list[BufferItem] = [
+        KeyedWrite("update", "Wallet", ({"id": 10, "balance": 5.00},)),
+        KeyedWrite("update", "Wallet", ({"id": 11, "balance": 5.00},)),
+        KeyedWrite("update", "Wallet", ({"id": 12, "owner": "Omar"},)),
+        KeyedWrite("update", "Wallet", ({"id": 13, "owner": "Omar"},)),
+    ]
+    statements = _flush_and_lower(buffer, model)
+    assert [statement.sql for statement in statements] == [
+        "update wallet set balance = ? where id in (?, ?)",
+        "update wallet set owner = ? where id in (?, ?)",
+    ]
+    assert [statement.binds for statement in statements] == [(5.00, 10, 11), ("Omar", 12, 13)]
+
+
 def test_row_member_order_alone_never_splits_a_batch_group() -> None:
     # The grouping key is the TABLE-ordered slot selection, so two rows naming
     # the same members in different payload order stay one group.

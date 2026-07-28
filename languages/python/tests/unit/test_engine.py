@@ -1736,6 +1736,41 @@ def test_a_collapsed_multi_row_insert_decodes_its_wire_floats_before_real_execut
     assert isinstance(binds[2], decimal.Decimal) and isinstance(binds[5], decimal.Decimal)
 
 
+def test_collapse_eligible_insert_entry_partitions_by_physical_slot_selection() -> None:
+    # Collapse ELIGIBILITY is a property of the target alone, so a Wallet insert
+    # entry never decomposes per row — but its rows still carry two different
+    # filtered slot selections (the second omits the nullable `balance`). The
+    # entry reaches the planner as individually buffered rows, which the SAME
+    # batch grouping every write path uses partitions into two statements
+    # (m-sql "Physical DML ordering") instead of one illegal mixed-shape insert.
+    case = _synthetic_write(
+        "writeSequence",
+        {
+            "model": "models/wallet.yaml",
+            "when": {
+                "writeSequence": [
+                    {
+                        "mutation": "insert",
+                        "entity": "Wallet",
+                        "statements": 2,
+                        "rows": [
+                            {"id": 10, "owner": "Mira", "balance": 100.00},
+                            {"id": 11, "owner": "Omar"},
+                        ],
+                    }
+                ]
+            },
+        },
+    )
+    emissions, round_trips = engine.compile_write_sequence_case(case, "postgres")
+    assert round_trips == 2
+    assert [e.sql for e in emissions] == [
+        "insert into wallet(id, owner, balance) values (?, ?, ?)",
+        "insert into wallet(id, owner) values (?, ?)",
+    ]
+    assert [e.binds for e in emissions] == [(10, "Mira", 100.00), (11, "Omar")]
+
+
 def test_non_uniform_multi_row_update_decomposes_per_distinct_key() -> None:
     # m-batch-write-002's own shape: non-uniform per-key values decompose into
     # one UPDATE per distinct key — genuinely lowering end to end (neither

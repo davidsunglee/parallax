@@ -18,6 +18,7 @@ from __future__ import annotations
 import contextlib
 import datetime as dt
 import decimal
+import itertools
 import os
 import socket
 import threading
@@ -1197,6 +1198,24 @@ def _decomposes_per_row(
     return not batch_write.collapses(model, entity, mutation, raw_rows)
 
 
+def _batch_group_count(
+    meta: Metamodel, entity_name: str, mutation: str, rows: Sequence[Mapping[str, object]]
+) -> int:
+    """How many statements a COLLAPSE-ELIGIBLE entry's rows emit: one per
+    ADJACENT run of rows sharing a physical shape.
+
+    The shape question is asked of
+    :func:`~parallax.snapshot.handle.collapse_group_key`, the same injected
+    grouping key the planner's own collapse stage applies when it merges these
+    rows back together (`m-sql` "Physical DML ordering"), so this count can
+    never disagree with what the flush actually emits.
+    """
+    model = case_model(meta)
+    entity = case_entity(model, meta.entity(entity_name))
+    groups = [collapse_group_key(model, entity, mutation, row) for row in rows]
+    return 1 + sum(1 for previous, group in itertools.pairwise(groups) if group != previous)
+
+
 def _check_statement_count_consistency(entry: Mapping[str, object], decomposed_count: int) -> None:
     """``statements`` is a count-CONSISTENCY assertion the schema intends
     (`compatibility-case.schema.json`), never a semantics discriminator — verify
@@ -1278,11 +1297,19 @@ def _build_instructions(
     / ``roundTrips`` / ``rollback``). ``rows`` MAY batch several logical
     per-object writes into one entry (the write-instruction schema's "one or
     more rows" vocabulary); :func:`_decomposes_per_row` derives SEMANTICALLY
-    whether they decompose into N independent single-row instructions (each
+    whether they decompose into N INDEPENDENT single-row instructions (each
     stripping its own reserved observation control keys into an
     :class:`Observation`, keyed by that row's OWN object key — `m-opt-lock`;
-    ADR 0013) or stay ONE multi-row instruction (reaching `lower_write`'s own
-    multi-row refusal, the honest collapse deferral). A row whose
+    ADR 0013) or are COLLAPSE-ELIGIBLE.
+
+    Either way this seam buffers one single-row instruction per row, exactly as
+    that many separate ``Transaction`` calls would: a collapse-eligible entry is
+    never pre-merged here, because whether its rows share one statement is the
+    planner's own collapse stage to decide under the injected batch grouping
+    (:func:`_batch_group_count` reports the same partition for the entry's
+    authored ``statements`` assertion). What distinguishes the two branches is
+    observation binding — a collapse-eligible row carries none by construction,
+    so merging it back stays legal. A row whose
     own control keys yield NO observation falls back to
     ``scenario_observations`` — a writeSequence's own permanently-empty
     instance, or (the scenario RUN lane only) a `uow` GROUP's own prior find
@@ -1311,16 +1338,22 @@ def _build_instructions(
     mutation = cast("str", entry["mutation"])
     raw_rows = cast("Sequence[Mapping[str, object]]", entry["rows"])
     if not _decomposes_per_row(meta, entity_name, mutation, raw_rows):
-        _check_statement_count_consistency(entry, 1)
         clean_rows = [
             _seed_insert_version(meta, entity_name, mutation, _strip_observation(raw_row)[0])
             for raw_row in raw_rows
         ]
-        instruction = instructions.deserialize(
-            {"mutation": mutation, "entity": entity_name, "rows": clean_rows}
+        _check_statement_count_consistency(
+            entry, _batch_group_count(meta, entity_name, mutation, clean_rows)
         )
-        instructions.validate_instruction(instruction, case_model(meta))
-        return [(instruction, None, None)]
+        collapsible_model = case_model(meta)
+        collapsible: list[tuple[WriteInstruction, ObjectKey | None, Observation | None]] = []
+        for clean_row in clean_rows:
+            instruction = instructions.deserialize(
+                {"mutation": mutation, "entity": entity_name, "rows": [clean_row]}
+            )
+            instructions.validate_instruction(instruction, collapsible_model)
+            collapsible.append((instruction, None, None))
+        return collapsible
     _check_statement_count_consistency(entry, len(raw_rows))
     model = case_model(meta)
     out: list[tuple[WriteInstruction, ObjectKey | None, Observation | None]] = []
@@ -1380,14 +1413,16 @@ def _lower_resolved(
     tx_instant: str,
 ) -> tuple[Statement, ...]:
     """Plan one write buffer (coalesce / collapse / FK-order / elide) and lower
-    each survivor — PURE, no database. ``collapse=batch_write.collapses`` is
-    injected identically to the composition layer's own production wiring
-    (`parallax.snapshot.handle.Database.transact`) —
-    a case's own PRE-collapsed multi-row entry (`_decomposes_per_row`'s "not
-    decomposes" branch) reaches the planner already merged, so the collapse
-    stage is a no-op for it; a case entry the engine decomposed per row instead
-    (`m-batch-write-002`'s non-uniform shape) never re-collapses either, since
-    `batch_write.collapses` answers the SAME eligibility question either way.
+    each survivor — PURE, no database. ``collapse=batch_write.collapses`` and
+    ``collapse_group=collapse_group_key`` are injected identically to the
+    composition layer's own production wiring
+    (`parallax.snapshot.handle.Database.transact`), so the planner is the ONE
+    authority that merges a case entry's rows: a collapse-ELIGIBLE entry
+    (`_decomposes_per_row`'s "not decomposes" branch) arrives as its own
+    per-row instructions and collapses HERE, per physical shape, while a case
+    entry that decomposes semantically (`m-batch-write-002`'s non-uniform
+    shape) never re-collapses, since `batch_write.collapses` answers the SAME
+    eligibility question either way.
     """
     buffer = [instruction for instruction, _key, _observation in resolved]
     observations: dict[ObjectKey, Observation] = {
@@ -1886,24 +1921,22 @@ def _buffer_execution_instruction(
     model: AcceptedMetamodel,
     instruction: KeyedWrite,
 ) -> None:
-    """Buffer one resolved keyed-write instruction for REAL execution, every row
+    """Buffer one resolved keyed-write instruction for REAL execution, its row
     decoded to native carriers first — the ONE entity-lookup/decode/buffer seam
     every real-execution write path (an ungrouped unit, a `uow` group, an
     interleaved group) shares.
 
-    A single-row instruction buffers through the neutral ``Transaction._buffer``
-    route (never the typed instance verbs, which this engine's case-driven
-    metamodel has no compiled Python classes for) — that developer verb is
-    coercion-only (`~parallax.core.base.coerce_neutral_input`) and stays
+    Every resolved instruction is SINGLE-row (:func:`_build_instructions`
+    buffers one per case row, collapse-eligible or not), so this buffers through
+    the neutral ``Transaction._buffer`` route exactly as that many separate
+    developer calls would — never the typed instance verbs, which this engine's
+    case-driven metamodel has no compiled Python classes for. That developer
+    verb is coercion-only (`~parallax.core.base.coerce_neutral_input`) and stays
     decode-free itself, so a case-authored wire spelling (a decimal literal
     spelled as a float, `m-core-007`) is lowered to its native carrier HERE,
     once, before the developer-facing boundary ever sees it; ``_buffer`` also
-    runs `validate_write`'s full value-space check. A COLLAPSED multi-row
-    instruction (`m-batch-write`) has no single-row document route to buffer
-    through (`Transaction._buffer` carries exactly one row), so its OWN rows
-    are each decoded and the whole decoded instruction buffers directly on the
-    unit of work, preserving the collapse `_build_instructions`'s "not
-    decomposes" branch already decided.
+    runs `validate_write`'s full value-space check. Any batch collapse then
+    happens where production does it, in the unit of work's own planner.
 
     The caller's own ``instruction`` argument is left untouched: a separate
     PURE re-lowering (`_lower_resolved`) grades a golden bind against that
@@ -1911,17 +1944,13 @@ def _buffer_execution_instruction(
     cannot drift a compile-time emission.
     """
     entity_metadata = case_entity(model, meta.entity(instruction.entity))
-    if len(instruction.rows) == 1:
-        tx._buffer(  # pyright: ignore[reportPrivateUsage] - conformance harness drives the transaction's private unit-of-work seam
-            instruction.mutation,
-            instruction.entity,
-            decode_write_row(entity_metadata, instruction.rows[0], model),
-            valid_from=instruction.valid_from,
-            until=instruction.until,
-        )
-        return
-    decoded_rows = tuple(decode_write_row(entity_metadata, row, model) for row in instruction.rows)
-    tx._uow.buffer(replace(instruction, rows=decoded_rows))  # pyright: ignore[reportPrivateUsage] - conformance harness drives the transaction's private unit-of-work seam
+    tx._buffer(  # pyright: ignore[reportPrivateUsage] - conformance harness drives the transaction's private unit-of-work seam
+        instruction.mutation,
+        instruction.entity,
+        decode_write_row(entity_metadata, instruction.rows[0], model),
+        valid_from=instruction.valid_from,
+        until=instruction.until,
+    )
 
 
 def _execute_write_unit(
@@ -1939,9 +1968,9 @@ def _execute_write_unit(
     ``clock=FixedClock(tx_instant)``
     (ADR 0010: instants come from the Clock Strategy, never a per-operation
     override). Each instruction buffers through :func:`_buffer_execution_instruction`
-    (a collapsed multi-row instruction carries no per-row observation by
-    construction — `_build_instructions`'s "not decomposes" branch already
-    deserialized + `validate_instruction`-ed it). A
+    (a collapse-eligible row carries no observation by construction —
+    `_build_instructions`'s "not decomposes" branch already deserialized +
+    `validate_instruction`-ed it — so the flush is free to merge it). A
     ``rollback: true`` step raises inside the callback (rollback-only,
     `m-unit-work` abort contract): the buffered DML still executes — and counts
     its round trips — before the provider rolls the transaction back.
