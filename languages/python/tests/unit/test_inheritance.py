@@ -417,16 +417,6 @@ _RULE_SET_REJECTIONS: Final[Mapping[str, IssueCode]] = {
     "m-inheritance-103-rejected-optlock-second-version": (
         inheritance.OPTIMISTIC_LOCKING_NOT_ROOT_OWNED
     ),
-    "m-inheritance-111-rejected-standalone-attribute-value-object-column-collision": (
-        inheritance.PHYSICAL_COLUMN_COLLISION
-    ),
-    "m-inheritance-112-rejected-tpcs-inherited-column-collision": (
-        inheritance.PHYSICAL_COLUMN_COLLISION
-    ),
-    "m-inheritance-113-rejected-tph-sibling-column-collision": (
-        inheritance.PHYSICAL_COLUMN_COLLISION
-    ),
-    "m-inheritance-114-rejected-tph-tag-column-collision": (inheritance.PHYSICAL_COLUMN_COLLISION),
     "m-inheritance-115-rejected-attribute-relationship-materialization-key-collision": (
         inheritance.MATERIALIZATION_KEY_COLLISION
     ),
@@ -501,7 +491,6 @@ def test_the_owned_issue_code_set_is_closed() -> None:
         "inheritance-missing-tag-value",
         "inheritance-optimistic-locking-not-root-owned",
         "inheritance-persistence-not-root-owned",
-        "inheritance-physical-column-collision",
         "inheritance-primary-key-missing",
         "inheritance-primary-key-multiple",
         "inheritance-strategy-redeclared",
@@ -735,7 +724,6 @@ def test_a_descendant_may_not_redeclare_an_ancestor_member() -> None:
     assert [issue.code for issue in issues] == [
         inheritance.MATERIALIZATION_KEY_COLLISION,
         inheritance.MEMBER_SHADOWING,
-        inheritance.PHYSICAL_COLUMN_COLLISION,
     ]
     shadowing = next(issue for issue in issues if issue.code == inheritance.MEMBER_SHADOWING)
     assert shadowing.location == AttributeLocation(attribute(_LEAF, "label").identity)
@@ -757,7 +745,6 @@ def test_shadowing_crosses_member_categories() -> None:
     assert [issue.code for issue in issues] == [
         inheritance.MATERIALIZATION_KEY_COLLISION,
         inheritance.MEMBER_SHADOWING,
-        inheritance.PHYSICAL_COLUMN_COLLISION,
     ]
     shadowing = next(issue for issue in issues if issue.code == inheritance.MEMBER_SHADOWING)
     assert shadowing.location == ValueObjectLocation(ValueObjectIdentity(_LEAF, ("label",)))
@@ -786,22 +773,12 @@ def test_shadowing_names_the_nearest_ancestor_that_declares_the_member() -> None
             (AttributeLocation(attribute(_MID, "label").identity),),
         ),
         (
-            inheritance.PHYSICAL_COLUMN_COLLISION,
-            AttributeLocation(attribute(_LEAF, "label").identity),
-            (AttributeLocation(attribute(_ROOT, "label").identity),),
-        ),
-        (
             inheritance.MATERIALIZATION_KEY_COLLISION,
             AttributeLocation(attribute(_MID, "label").identity),
             (AttributeLocation(attribute(_ROOT, "label").identity),),
         ),
         (
             inheritance.MEMBER_SHADOWING,
-            AttributeLocation(attribute(_MID, "label").identity),
-            (AttributeLocation(attribute(_ROOT, "label").identity),),
-        ),
-        (
-            inheritance.PHYSICAL_COLUMN_COLLISION,
             AttributeLocation(attribute(_MID, "label").identity),
             (AttributeLocation(attribute(_ROOT, "label").identity),),
         ),
@@ -824,21 +801,6 @@ def test_disjoint_sibling_branches_may_reuse_a_name() -> None:
         )
         == []
     )
-
-
-def test_table_per_hierarchy_sibling_names_need_distinct_physical_columns() -> None:
-    issues = _rule_issues(
-        _hierarchy(),
-        _concrete(_LEAF, attributes=(attribute(_LEAF, "label", type=STRING),)),
-        _concrete(
-            _SIBLING,
-            tag_value="note",
-            attributes=(attribute(_SIBLING, "label", type=STRING),),
-        ),
-    )
-    assert [issue.code for issue in issues] == [inheritance.PHYSICAL_COLUMN_COLLISION]
-    assert issues[0].location == AttributeLocation(attribute(_SIBLING, "label").identity)
-    assert issues[0].related == (AttributeLocation(attribute(_LEAF, "label").identity),)
 
 
 def test_table_per_concrete_subtype_siblings_may_reuse_a_physical_column() -> None:
@@ -864,102 +826,6 @@ def test_table_per_concrete_subtype_siblings_may_reuse_a_physical_column() -> No
         )
         == []
     )
-
-
-def test_two_value_objects_cannot_claim_one_standalone_column() -> None:
-    plain = identity("Plain")
-    first = ValueObjectOccurrenceDeclaration(
-        name="mailingAddress", storage=Column("contact"), shape=_shape("street")
-    )
-    second = ValueObjectOccurrenceDeclaration(
-        name="billingAddress", storage=Column("contact"), shape=_shape("street")
-    )
-    issues = _rule_issues(
-        Declaration(identity=plain, attributes=(key(plain),), value_objects=(first, second))
-    )
-    assert [issue.code for issue in issues] == [inheritance.PHYSICAL_COLUMN_COLLISION]
-    assert issues[0].location == ValueObjectLocation(
-        ValueObjectIdentity(plain, ("billingAddress",))
-    )
-    assert issues[0].related == (
-        ValueObjectLocation(ValueObjectIdentity(plain, ("mailingAddress",))),
-    )
-
-
-def test_attribute_and_value_object_cannot_claim_one_standalone_column() -> None:
-    plain = identity("Plain")
-    scalar = attribute(plain, "profileText", type=STRING, column="profile")
-    document = ValueObjectOccurrenceDeclaration(
-        name="profileDocument", storage=Column("profile"), shape=_shape("text")
-    )
-    issues = _rule_issues(
-        Declaration(
-            identity=plain,
-            attributes=(key(plain), scalar),
-            value_objects=(document,),
-        )
-    )
-    assert [issue.code for issue in issues] == [inheritance.PHYSICAL_COLUMN_COLLISION]
-    assert issues[0].location == ValueObjectLocation(
-        ValueObjectIdentity(plain, ("profileDocument",))
-    )
-    assert issues[0].related == (AttributeLocation(scalar.identity),)
-
-
-def test_model_formation_rejects_a_physical_column_collision() -> None:
-    plain = identity("Plain")
-    scalar = attribute(plain, "profileText", type=STRING, column="profile")
-    document = ValueObjectOccurrenceDeclaration(
-        name="profileDocument", storage=Column("profile"), shape=_shape("text")
-    )
-    with pytest.raises(MetamodelValidationError) as caught:
-        form_metamodel(
-            source(
-                Declaration(
-                    identity=plain,
-                    attributes=(key(plain), scalar),
-                    value_objects=(document,),
-                )
-            )
-        )
-    assert [issue.code for issue in caught.value.issues] == [inheritance.PHYSICAL_COLUMN_COLLISION]
-
-
-def test_inherited_attribute_and_value_object_cannot_share_a_tpcs_column() -> None:
-    document = ValueObjectOccurrenceDeclaration(
-        name="accountDocument", storage=Column("account_data"), shape=_shape("name")
-    )
-    issues = _rule_issues(
-        Declaration(
-            identity=_ROOT,
-            attributes=(key(_ROOT), attribute(_ROOT, "accountRef", column="account_data")),
-            inheritance=AbstractRoot(TablePerConcreteSubtype()),
-        ),
-        Declaration(
-            identity=_LEAF,
-            container=Table("entry"),
-            value_objects=(document,),
-            inheritance=ConcreteSubtype(ExactEntityReference(_ROOT), None),
-        ),
-    )
-    assert [issue.code for issue in issues] == [inheritance.PHYSICAL_COLUMN_COLLISION]
-    assert issues[0].location == ValueObjectLocation(
-        ValueObjectIdentity(_LEAF, ("accountDocument",))
-    )
-    assert issues[0].related == (
-        AttributeLocation(attribute(_ROOT, "accountRef", column="account_data").identity),
-    )
-
-
-def test_table_per_hierarchy_tag_cannot_reuse_a_member_column() -> None:
-    tag_attribute = attribute(_ROOT, "kind", type=STRING)
-    issues = _rule_issues(
-        _hierarchy(root_attributes=(key(_ROOT), tag_attribute)),
-        _concrete(_LEAF),
-    )
-    assert [issue.code for issue in issues] == [inheritance.PHYSICAL_COLUMN_COLLISION]
-    assert issues[0].location == AttributeLocation(tag_attribute.identity)
-    assert issues[0].related == (EntityLocation(_ROOT),)
 
 
 def test_value_object_storage_may_match_a_relationship_rendered_name() -> None:
@@ -1085,5 +951,4 @@ def test_the_report_is_the_same_whichever_order_a_frontend_enumerates() -> None:
         inheritance.PRIMARY_KEY_MULTIPLE,
         inheritance.MATERIALIZATION_KEY_COLLISION,
         inheritance.MEMBER_SHADOWING,
-        inheritance.PHYSICAL_COLUMN_COLLISION,
     ]

@@ -189,6 +189,30 @@
     "sort_issues",
     "vo_document_violation"
   ],
+  "parallax.core.storage_layout": [
+    "COLUMN_COLLISION",
+    "ColumnContributor",
+    "ColumnSlot",
+    "ColumnTier",
+    "DiscriminatorAssignment",
+    "EntityLayoutView",
+    "FACET_KEY",
+    "ISSUE_CODES",
+    "InheritanceDiscriminator",
+    "MODEL_COMPILER",
+    "PositionBranch",
+    "PositionColumn",
+    "PositionLayoutView",
+    "RULE_SET",
+    "STORAGE_LAYOUT_MODULE",
+    "StorageLayoutFacet",
+    "StorageLayoutModelCompiler",
+    "StorageLayoutRuleSet",
+    "TABLE_MAPPING_COLLISION",
+    "TableLayout",
+    "compile_facet",
+    "view"
+  ],
   "parallax.postgres": [
     "PostgresAdapter"
   ],

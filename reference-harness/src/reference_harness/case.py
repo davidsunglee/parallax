@@ -6,8 +6,7 @@ model. The model descriptor is a pure metamodel document (an instance of
 ``metamodel.schema.json``); fixture rows live in a sibling
 ``fixtures/<model-stem>.yaml`` file, keyed by class name.
 
-A descriptor declares EITHER a single ``entity`` (Phase 1/2 models) OR an
-``entities`` list (Phase 3+, so relationships can name sibling entities). The
+A descriptor declares either a single ``entity`` or an ``entities`` list. The
 :class:`Model` normalizes both into a uniform list of :class:`Entity` views; the
 single-entity convenience properties (``class_name``/``table``/``attributes``/
 ``rows``) resolve to the model's *root* entity (the first declared entity, which
@@ -19,12 +18,16 @@ from __future__ import annotations
 import copy
 from dataclasses import dataclass, field
 from decimal import Decimal
+from functools import cached_property
 from pathlib import Path
-from typing import Any, NoReturn
+from typing import TYPE_CHECKING, Any, NoReturn
 
 import yaml
 
 from .naming import default_column_name
+
+if TYPE_CHECKING:
+    from .storage_layout import StorageLayout
 
 
 def _entity_identity(definition: dict[str, Any]) -> str:
@@ -427,7 +430,7 @@ class Model:
 
     Supports both the single-``entity`` and the multi-``entities`` descriptor
     shapes. The convenience single-entity properties resolve to the root entity
-    (the first declared one) so the Phase 1/2 runner path is unchanged.
+    (the first declared one).
     """
 
     path: Path
@@ -439,6 +442,13 @@ class Model:
         if "entities" in self.descriptor:
             return self.descriptor["entities"]
         return [self.descriptor["entity"]]
+
+    @cached_property
+    def storage_layout(self) -> StorageLayout:
+        """The independently compiled immutable physical layout graph."""
+        from .storage_layout import compile_storage_layout
+
+        return compile_storage_layout(self.entity_defs)
 
     @property
     def entities(self) -> list[Entity]:
@@ -633,7 +643,7 @@ class Case:
 
     @property
     def is_conflict(self) -> bool:
-        """True for an m-opt-lock optimistic-lock conflict / success case (Phase 7).
+        """True for an m-opt-lock optimistic-lock conflict or success case.
 
         A single-attempt conflict carries ``when.write`` + ``then.affectedRows`` (the
         affected-row count a golden ``UPDATE`` leaves behind) and an OPTIONAL out-of-band
@@ -685,7 +695,7 @@ class Case:
 
     @property
     def is_scenario(self) -> bool:
-        """True for a scenario case (Phase 6 — unit-of-work / cache / identity shape).
+        """True for a unit-of-work, cache, or identity scenario case.
 
         A scenario case carries ``when.scenario`` (an ordered list of operation
         steps with per-step round-trip counts) instead of a single operation;
@@ -699,7 +709,7 @@ class Case:
 
     @property
     def is_boundary(self) -> bool:
-        """True for an m-auto-retry/m-opt-lock bounded-automatic-retry boundary case (Phase 4).
+        """True for an m-auto-retry/m-opt-lock bounded-retry boundary case.
 
         A boundary case carries ``when.boundary`` (the portable unit-of-work actions)
         and a ``then.outcome`` (the portable outcome) instead of an operation /
@@ -725,7 +735,7 @@ class Case:
 
     @property
     def is_coherence(self) -> bool:
-        """True for a cross-process cache-coherence case (Phase 11).
+        """True for a cross-process cache-coherence case.
 
         A coherence case carries ``when.coherence`` — a two-node operation sequence
         (run over two connections to one database) instead of a single operation;

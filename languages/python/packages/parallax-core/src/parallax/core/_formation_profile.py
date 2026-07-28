@@ -55,6 +55,11 @@ from parallax.core.relationship import ISSUE_CODES as RELATIONSHIP_ISSUE_CODES
 from parallax.core.relationship import MODEL_COMPILER as RELATIONSHIP_COMPILER
 from parallax.core.relationship import RELATIONSHIP_MODULE
 from parallax.core.relationship import RULE_SET as RELATIONSHIP_RULE_SET
+from parallax.core.storage_layout import FACET_KEY as STORAGE_LAYOUT_FACET_KEY
+from parallax.core.storage_layout import ISSUE_CODES as STORAGE_LAYOUT_ISSUE_CODES
+from parallax.core.storage_layout import MODEL_COMPILER as STORAGE_LAYOUT_COMPILER
+from parallax.core.storage_layout import RULE_SET as STORAGE_LAYOUT_RULE_SET
+from parallax.core.storage_layout import STORAGE_LAYOUT_MODULE
 from parallax.core.temporal_read import FACET_KEY as TEMPORAL_FACET_KEY
 from parallax.core.temporal_read import MODEL_COMPILER as TEMPORAL_COMPILER
 from parallax.core.temporal_read import TEMPORAL_READ_MODULE
@@ -94,6 +99,16 @@ BUILTIN_MANIFEST: Final[FormationManifest] = FormationManifest(
             issue_codes=INHERITANCE_ISSUE_CODES,
             compiler=ModelCompilerRequirement(INHERITANCE_FACET_KEY),
             required_modules=frozenset({METAMODEL_MODULE, MODEL_FORMATION_MODULE}),
+        ),
+        FormationManifestEntry(
+            owner=STORAGE_LAYOUT_MODULE,
+            rule_set=REQUIRED_RULE_SET,
+            issue_codes=STORAGE_LAYOUT_ISSUE_CODES,
+            compiler=ModelCompilerRequirement(STORAGE_LAYOUT_FACET_KEY),
+            required_modules=frozenset(
+                {METAMODEL_MODULE, MODEL_FORMATION_MODULE, INHERITANCE_MODULE}
+            ),
+            required_facets=frozenset({INHERITANCE_FACET_KEY}),
         ),
         FormationManifestEntry(
             owner=VALUE_OBJECT_MODULE,
@@ -148,6 +163,7 @@ class _BuiltinProfile:
 BUILTIN_PROFILE: Final[_BuiltinProfile] = _BuiltinProfile(
     rule_sets=(
         INHERITANCE_RULE_SET,
+        STORAGE_LAYOUT_RULE_SET,
         VALUE_OBJECT_RULE_SET,
         RELATIONSHIP_RULE_SET,
         OPT_LOCK_RULE_SET,
@@ -155,6 +171,7 @@ BUILTIN_PROFILE: Final[_BuiltinProfile] = _BuiltinProfile(
     metadata_compiler=METADATA_COMPILER,
     model_compilers=(
         INHERITANCE_COMPILER,
+        STORAGE_LAYOUT_COMPILER,
         RELATIONSHIP_COMPILER,
         TEMPORAL_COMPILER,
         OPT_LOCK_COMPILER,

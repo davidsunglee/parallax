@@ -43,11 +43,7 @@ _REJECTIONS = _descriptor_rejection_cases()
 _RAW_ONLY_REJECTIONS = [
     rejection
     for rejection in _REJECTIONS
-    if rejection[2]
-    not in {
-        "inheritance-physical-column-collision",
-        "inheritance-materialization-key-collision",
-    }
+    if rejection[2] != "inheritance-materialization-key-collision"
 ]
 
 _INDEPENDENT_FAMILIES: Final[dict[str, Any]] = {

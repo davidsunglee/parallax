@@ -71,6 +71,7 @@ _ORDER = identity("Order")
 _ITEM = identity("Item")
 
 _INHERITANCE: Final[ModuleIdentity] = "m-inheritance"
+_STORAGE_LAYOUT: Final[ModuleIdentity] = "m-storage-layout"
 _RELATIONSHIP: Final[ModuleIdentity] = "m-relationship"
 _TEMPORAL: Final[ModuleIdentity] = "m-temporal-read"
 _OPT_LOCK: Final[ModuleIdentity] = "m-opt-lock"
@@ -609,6 +610,7 @@ def test_the_specification_table_is_readable_and_complete() -> None:
         METAMODEL_MODULE,
         "m-pk-gen",
         _INHERITANCE,
+        _STORAGE_LAYOUT,
         "m-value-object",
         _RELATIONSHIP,
         _TEMPORAL,

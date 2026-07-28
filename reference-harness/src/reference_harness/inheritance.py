@@ -91,8 +91,7 @@ INHERITANCE_STRATEGY_REDECLARED = "inheritance-strategy-redeclared"
 INHERITANCE_MISSING_TAG_VALUE = "inheritance-missing-tag-value"
 INHERITANCE_DUPLICATE_TAG_VALUE = "inheritance-duplicate-tag-value"
 INHERITANCE_TAG_ON_CONCRETE_SUBTYPE_STRATEGY = "inheritance-tag-on-concrete-subtype-strategy"
-# Temporality is a family-wide property (the binding root-ownership decision,
-# COR-3 Phase 7 review remediation): only the root may declare `asOfAxes`;
+# Temporality is a family-wide property: only the root may declare `asOfAxes`;
 # an `abstract-subtype` or `concrete-subtype` that declares its own — whether
 # the root is itself non-temporal or temporal — is rejected.
 INHERITANCE_TEMPORAL_AXES_NOT_ROOT_OWNED = "inheritance-temporal-axes-not-root-owned"
@@ -102,7 +101,6 @@ INHERITANCE_TEMPORAL_AXES_NOT_ROOT_OWNED = "inheritance-temporal-axes-not-root-o
 # versioned or not — is rejected. A family is versioned together or not at all.
 INHERITANCE_OPTIMISTIC_LOCKING_NOT_ROOT_OWNED = "inheritance-optimistic-locking-not-root-owned"
 INHERITANCE_PERSISTENCE_NOT_ROOT_OWNED = "inheritance-persistence-not-root-owned"
-INHERITANCE_PHYSICAL_COLUMN_COLLISION = "inheritance-physical-column-collision"
 INHERITANCE_MATERIALIZATION_KEY_COLLISION = "inheritance-materialization-key-collision"
 
 MODEL_REJECTED_RULES: frozenset[str] = frozenset(
@@ -123,19 +121,18 @@ MODEL_REJECTED_RULES: frozenset[str] = frozenset(
         INHERITANCE_TEMPORAL_AXES_NOT_ROOT_OWNED,
         INHERITANCE_OPTIMISTIC_LOCKING_NOT_ROOT_OWNED,
         INHERITANCE_PERSISTENCE_NOT_ROOT_OWNED,
-        INHERITANCE_PHYSICAL_COLUMN_COLLISION,
         INHERITANCE_MATERIALIZATION_KEY_COLLISION,
     }
 )
 
 # Operation-level rules (m-op-algebra x m-inheritance): a SCHEMA-VALID operation a
 # model-aware validator MUST refuse pre-SQL because it narrows or references
-# subtypes incompatibly with the polymorphic position it queries (Phase 4).
+# subtypes incompatibly with the polymorphic position it queries.
 NARROW_OUTSIDE_POSITION = "narrow-outside-position"
 NARROW_EMPTY_EFFECTIVE_SET = "narrow-empty-effective-set"
 SUBTYPE_ATTRIBUTE_OUTSIDE_NARROW_SCOPE = "subtype-attribute-outside-narrow-scope"
 # A narrow in a navigation filter's `op` (or a deep-fetch path segment) that
-# resolves outside the RELATIONSHIP TARGET's effective concrete set (Phase 6, Q10).
+# resolves outside the relationship target's effective concrete set.
 NARROW_OUTSIDE_RELATIONSHIP_TARGET = "narrow-outside-relationship-target"
 
 OPERATION_REJECTED_RULES: frozenset[str] = frozenset(
@@ -147,7 +144,7 @@ OPERATION_REJECTED_RULES: frozenset[str] = frozenset(
     }
 )
 
-# Write-scope rules (m-inheritance x concrete-subtype writes, Phase 7): a
+# Write-scope rules (m-inheritance x concrete-subtype writes): a
 # SCHEMA-VALID neutral write input (1) a model-aware validator MUST refuse pre-SQL
 # because it violates the concrete-subtype write protocol — it is keyless
 # (set-based), carries framework-owned metadata, references a sibling / unrelated
@@ -607,44 +604,6 @@ def validate_family(descriptor: dict[str, Any]) -> None:
     validate_family_defs(defs)
 
 
-def _declared_physical_columns(definition: dict[str, Any]) -> list[tuple[str, str]]:
-    """One declaration's scalar and top-level Value Object contributors."""
-    contributors = [
-        (effective_column(attribute), f"Attribute {definition['name']}.{attribute['name']}")
-        for attribute in definition.get("attributes", []) or []
-        if isinstance(attribute, dict)
-    ]
-    contributors.extend(
-        (
-            value_object.get("column", default_column_name(value_object["name"])),
-            f"Value Object {definition['name']}.{value_object['name']}",
-        )
-        for value_object in definition.get("valueObjects", []) or []
-        if isinstance(value_object, dict)
-    )
-    return contributors
-
-
-def _validate_physical_table(
-    definitions: list[dict[str, Any]], *, tag_column: str | None = None
-) -> None:
-    """Reject two provenance-distinct contributors to one physical row key."""
-    claimed: dict[str, str] = {}
-    contributors: list[tuple[str, str]] = []
-    if tag_column is not None:
-        contributors.append((tag_column, "table-per-hierarchy tag"))
-    for definition in definitions:
-        contributors.extend(_declared_physical_columns(definition))
-    for column, contributor in contributors:
-        existing = claimed.get(column)
-        if existing is not None:
-            raise RejectionError(
-                INHERITANCE_PHYSICAL_COLUMN_COLLISION,
-                f"physical column {column!r} is claimed by both {existing} and {contributor}",
-            )
-        claimed[column] = contributor
-
-
 def _validate_materialization_keys(
     definitions: list[dict[str, Any]], *, family_variant: bool
 ) -> None:
@@ -720,7 +679,6 @@ def validate_family_defs(entity_defs: list[dict[str, Any]]) -> None:
     """
     for definition in entity_defs:
         if inheritance_of(definition) is None:
-            _validate_physical_table([definition])
             _validate_materialization_keys([definition], family_variant=False)
 
     participants = [d for d in entity_defs if inheritance_of(d) is not None]
@@ -870,7 +828,6 @@ def validate_family_defs(entity_defs: list[dict[str, Any]]) -> None:
                 if role_of(definition) != ROLE_CONCRETE:
                     continue
                 chain = [family.defs[name] for name in family.ancestry(family.key_of(definition))]
-                _validate_physical_table(chain)
                 _validate_materialization_keys(chain, family_variant=True)
 
         if strategy == STRATEGY_TPH:
@@ -914,10 +871,6 @@ def validate_family_defs(entity_defs: list[dict[str, Any]]) -> None:
                         f"share tagValue {value!r}",
                     )
                 seen_values[value] = name
-            root_tag = inheritance_of(root_definition)
-            tag = root_tag.get("tag") if root_tag is not None else None
-            tag_column = tag.get("column") if isinstance(tag, dict) else None
-            _validate_physical_table(members, tag_column=tag_column)
             for definition in concretes:
                 chain = [family.defs[name] for name in family.ancestry(family.key_of(definition))]
                 _validate_materialization_keys(chain, family_variant=True)
@@ -994,7 +947,7 @@ def validate_operation_inheritance(
     operation: Any,
     position: str | None = None,
 ) -> None:
-    """Reject an operation that narrows / references subtypes incompatibly (Phase 4).
+    """Reject an operation that narrows or references subtypes incompatibly.
 
     The read-side counterpart of the write-derivation oracle: it walks the operation
     tree of an inheritance family and raises :class:`RejectionError` with the
