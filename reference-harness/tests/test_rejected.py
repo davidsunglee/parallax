@@ -44,6 +44,13 @@ from reference_harness.inheritance import (
     validate_family,
 )
 from reference_harness.op_validate import validate_operation
+from reference_harness.storage_layout import (
+    MODEL_REJECTED_RULES as STORAGE_LAYOUT_MODEL_REJECTED_RULES,
+)
+from reference_harness.storage_layout import (
+    STORAGE_LAYOUT_COLUMN_COLLISION,
+    STORAGE_LAYOUT_TABLE_MAPPING_COLLISION,
+)
 from reference_harness.value_object_resolve import (
     NESTED_LITERAL_TYPE_MISMATCH,
     NESTED_PATH_FIRST_SEGMENT_NOT_VALUE_OBJECT,
@@ -78,29 +85,31 @@ def _contact_entity():
 def test_rejected_cases_exist() -> None:
     cases = _rejected_cases()
     assert cases, "no rejected-shape cases discovered"
-    # Every named rule is a member of the closed vocabulary (value-object / operation
-    # rules plus the inheritance family-invariant rules).
+    # Every named rule is a member of the closed owner vocabularies.
     for case in cases:
         assert case.rejected_rule in ALL_REJECTED_RULES, (
             f"{case.path.name}: {case.rejected_rule!r} is not a known rejectedRule"
         )
 
 
-def test_inheritance_model_negatives_are_covered() -> None:
-    """The corpus pins every inheritance family invariant as a portable model
-    rejected case (m-inheritance, resolved Q3/Q4): each `when.model` case's named
-    rule is in the closed inheritance vocabulary, and the corpus covers the whole
-    set of family invariants across its cases."""
+def test_model_negatives_use_closed_owner_vocabularies() -> None:
+    """Every model rejection belongs to Inheritance or Storage Layout."""
     model_cases = [c for c in _rejected_cases() if "model" in c.when]
-    assert model_cases, "no inheritance `when.model` rejected cases discovered"
+    assert model_cases, "no `when.model` rejected cases discovered"
     used = {c.rejected_rule for c in model_cases}
-    for rule in used:
-        assert rule in MODEL_REJECTED_RULES, f"{rule!r} is not an inheritance model rule"
+    allowed = MODEL_REJECTED_RULES | STORAGE_LAYOUT_MODEL_REJECTED_RULES
+    assert not (unexpected := used - allowed), (
+        f"model rejection rules are outside the closed owner vocabularies: {sorted(unexpected)}"
+    )
     # Structural invariants that a family MUST reject have at least one witness.
     assert {INHERITANCE_UNKNOWN_PARENT, INHERITANCE_MISSING_ROOT} <= used
+    assert {
+        STORAGE_LAYOUT_TABLE_MAPPING_COLLISION,
+        STORAGE_LAYOUT_COLUMN_COLLISION,
+    } <= used
 
 
-# --- inheritance family invariants closed by the Phase 3 review --------------
+# --- inheritance family invariants -------------------------------------------
 #
 # Two family invariants the per-entity metamodel schema deliberately delegates to
 # the semantic validator (m-inheritance): under table-per-hierarchy every concrete
@@ -416,7 +425,7 @@ def test_the_authored_corpus_covers_both_operation_and_write_negatives() -> None
     } <= used
 
 
-# --- concrete-subtype WRITE negatives (m-inheritance, Phase 7) ----------------
+# --- concrete-subtype WRITE negatives (m-inheritance) -------------------------
 #
 # A write to an inheritance family is a concrete-subtype write: its accepted fields
 # are exactly the target's ancestry chain. `validate_subtype_write` refuses a keyless
@@ -435,7 +444,7 @@ def _subtype_write(row: dict[str, Any]) -> None:
 
 
 def test_subtype_write_negatives_are_covered() -> None:
-    # The corpus pins all four Phase-7 subtype-write rules as portable rejected cases.
+    # The corpus pins all four subtype-write rules as portable rejected cases.
     used = {c.rejected_rule for c in _rejected_cases()}
     assert WRITE_REJECTED_RULES <= used
 

@@ -10,7 +10,7 @@ Per case, against a freshly-provisioned database selected via the provider seam:
    then.statements[dialect]`` (per statement, for multi-statement cases).
 4. **Serde round-trip** — ``serialize(deserialize(x)) == x`` for BOTH the
    operation encoding AND the model descriptor, in BOTH JSON and YAML.
-5. **Round-trip-count consistency** (Phase 3) — for relationship / deep-fetch
+5. **Round-trip-count consistency** — for relationship / deep-fetch
    cases the number of golden SQL statements equals the declared ``roundTrips``,
    each level executes (child levels keyed by the parents gathered from the
    previous level), and the assembled object graph equals ``then.graph``.
@@ -37,7 +37,6 @@ from . import errors, serde
 from .case import Case, Entity, Model
 from .data_loader import load_model
 from .ddl_builder import (
-    column_order,
     ddl_for,
     physical_entities_by_table,
     placeholder_cast_type,
@@ -65,6 +64,10 @@ from .inheritance import (
 from .op_validate import validate_operation
 from .providers import DatabaseProvider
 from .sql_normalize import is_union_all, normalize, sqlglot_dialect
+from .storage_layout import (
+    MODEL_REJECTED_RULES as STORAGE_LAYOUT_MODEL_REJECTED_RULES,
+)
+from .storage_layout import validate_storage_layout
 from .value_object_resolve import REJECTED_RULES, RejectionError
 from .write_validate import validate_subtype_write, validate_write
 
@@ -104,14 +107,48 @@ def _reference_identity_row(row: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-# The full pre-SQL rejection vocabulary: value-object / operation rules
-# (m-value-object / m-op-algebra) plus the inheritance family-invariant rules, the
-# narrow / subtype-scope operation rules, and the concrete-subtype WRITE rules
-# (m-inheritance x m-op-algebra / concrete-subtype writes). The compatibility-case
-# schema's `rejectedRule` enum is the source of truth; these sets MUST stay in
-# lockstep with it.
+def _case_column_order(entity: Entity) -> tuple[str, ...]:
+    """Derive the canonical column sequence for authored-SQL shape checks."""
+    attributes = entity.attributes
+    tag = tag_of(entity.runtime_facts)
+    tag_column = tag[0] if tag is not None else None
+    temporal_columns = {
+        column
+        for axis in entity.temporal_runtime_axes
+        for column in (axis["start_column"], axis["end_column"])
+    }
+    keys = [
+        effective_column(attribute) for attribute in attributes if bool(attribute.get("primaryKey"))
+    ]
+    discriminator = [] if tag_column is None else [tag_column]
+    domain = [
+        effective_column(attribute)
+        for attribute in attributes
+        if not bool(attribute.get("primaryKey"))
+        and effective_column(attribute) != tag_column
+        and effective_column(attribute) not in temporal_columns
+    ]
+    temporal = [
+        effective_column(attribute)
+        for attribute in attributes
+        if not bool(attribute.get("primaryKey"))
+        and effective_column(attribute) != tag_column
+        and effective_column(attribute) in temporal_columns
+    ]
+    documents = [value_object["column"] for value_object in entity.value_objects]
+    return (*keys, *discriminator, *domain, *temporal, *documents)
+
+
+# The full pre-SQL rejection vocabulary spans value objects, operations,
+# inheritance, storage layout, and writes. The compatibility-case schema's
+# `rejectedRule` enum is the source of truth; these sets MUST stay in lockstep
+# with it.
 ALL_REJECTED_RULES = (
-    REJECTED_RULES | MODEL_REJECTED_RULES | OPERATION_REJECTED_RULES | WRITE_REJECTED_RULES
+    REJECTED_RULES
+    | MODEL_REJECTED_RULES
+    | STORAGE_LAYOUT_MODEL_REJECTED_RULES
+    | OPERATION_REJECTED_RULES
+    | WRITE_REJECTED_RULES
 )
 
 
@@ -562,8 +599,7 @@ def _deepfetch_segments(case: Case) -> list[list[dict[str, Any]]]:
     """The deep-fetch paths as ordered lists of raw ``{rel, narrow?}`` segments.
 
     Preserves the optional per-hop ``narrow`` so the fetch machinery can derive the
-    narrowed view key and dedup identity ``(relationship hop, effective concrete set)``
-    (m-deep-fetch, Phase 6).
+    narrowed view key and dedup identity ``(relationship hop, effective concrete set)``.
     """
     return [list(path) for path in case.operation["deepFetch"]["paths"]]
 
@@ -776,7 +812,7 @@ class _FetchStep:
     concrete set), so a BROAD hop and a NARROWED hop over the same relationship, or
     two narrowed hops with different effective sets, are DISTINCT levels (each counts
     toward ``L`` in ``1 + L``), while equivalent authored narrowings that resolve to
-    the same effective set DEDUPLICATE (m-deep-fetch, Phase 6). Its graph attach key
+    the same effective set DEDUPLICATE (m-deep-fetch). Its graph attach key
     is :attr:`view_key` — the ordinary relationship name for a broad hop, the derived
     ``<rel>[<Concrete>,<Concrete>]`` for a narrowed one.
     """
@@ -1198,7 +1234,7 @@ def _materialize_family_variant(case: Case, rows: list[dict[str, Any]]) -> list[
 def _narrow_to_variant_columns(case: Case, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Narrow each row of an INSTANCE-FORM abstract-target read to its own concrete
     variant's declared columns (m-case-format "Read targeting", the instance-form
-    per-variant node shape, COR-3 Phase 8 part C).
+    per-variant node shape).
 
     A materialized instance carries only its own branch's members — its inherited
     chain plus its own declared attributes — never a sibling branch's null-padded
@@ -1274,7 +1310,29 @@ def _tpcs_superset_attributes(
             if attribute["name"] not in names:
                 attributes.append(attribute)
                 names.add(attribute["name"])
-    return attributes
+    family = Family(entity_defs)
+    root = family.root_of(effective_set[0]) if effective_set else None
+    root_definition = family.defs[root] if root is not None else {}
+    temporal_names = {
+        name
+        for axis in root_definition.get("asOfAxes", []) or []
+        if isinstance(axis, dict)
+        for name in (axis["startAttribute"], axis["endAttribute"])
+    }
+    return [
+        attribute
+        for category in (
+            lambda attribute: bool(attribute.get("primaryKey")),
+            lambda attribute: (
+                not bool(attribute.get("primaryKey")) and attribute["name"] not in temporal_names
+            ),
+            lambda attribute: (
+                not bool(attribute.get("primaryKey")) and attribute["name"] in temporal_names
+            ),
+        )
+        for attribute in attributes
+        if category(attribute)
+    ]
 
 
 def _canonical_concrete_order(family: Family, target_name: str, effective: list[str]) -> list[str]:
@@ -1417,7 +1475,7 @@ def _assert_tpcs_union_shape(case: Case, family: Family, ordered: list[str]) -> 
     projection-shape check): from the descriptor alone it recomputes the branch
     count/order (the effective concrete set in ALPHABETICAL order by entity name), the
     stable superset projection every branch shares (inherited columns first, then
-    subtype-declared OWN-column blocks in alphabetical subtype order, then the
+    subtype-declared own-column blocks in alphabetical subtype order, then the
     `familyVariant` literal), each branch's
     per-column shape (an applicable column is a real reference; a non-applicable column
     is a `cast(null as <declared type>)` placeholder in that dialect's type), and each
@@ -2245,7 +2303,7 @@ def _assert_single_statement_graph(case: Case, db: DatabaseProvider) -> None:
       values arrive with the owner, never via a deep fetch ("Materialization and
       navigation contract"). A no-op for an entity that declares no value objects.
     * **An abstract-target inheritance read** (m-inheritance / m-case-format "Read
-      targeting", COR-3 Phase 8 part C): additionally materializes ``familyVariant``
+      targeting"): additionally materializes ``familyVariant``
       (:func:`_materialize_family_variant`, the SAME oracle the row-form path uses)
       and then narrows each node to its own concrete variant's declared columns
       (:func:`_narrow_to_variant_columns`) — the instance-form per-variant node
@@ -2310,20 +2368,23 @@ def _assert_single_statement_graph(case: Case, db: DatabaseProvider) -> None:
             )
 
 
-# --- negative validation (Phase 8, the `rejected` shape) -------------------------------
+# --- negative validation (the `rejected` shape) ----------------------------------------
 
 
 def _assert_rejected(case: Case) -> None:
-    """Assert the input is refused PRE-SQL by model-aware validation (m-case-format Q7).
+    """Assert one of the three rejected inputs is refused before SQL.
 
-    A ``rejected`` case carries a schema-valid ``when.operation`` OR a ``when.write``
-    that a model-aware validator MUST refuse BEFORE any SQL is emitted, naming the
-    violated normative rule in ``then.rejectedRule``. This runs the reference
-    validators (``op_validate`` / ``write_validate``) against the queried entity's
-    DECLARED value-object structure and asserts they raise EXACTLY that rule — the
-    portable analogue of Reladomo refusing a structurally-invalid embedded-value use.
-    No dialect, no provisioning, no execution: rejection is dialect-agnostic and
-    happens with no database.
+    A rejected case carries exactly one schema-valid ``when.operation``,
+    ``when.write``, or inline ``when.model`` and names the violated rule in
+    ``then.rejectedRule``. Operations run ``validate_operation`` and Inheritance's
+    ``validate_operation_inheritance``. Writes run ``validate_write`` and
+    Inheritance's ``validate_subtype_write``. Inline models run Inheritance's
+    ``validate_family`` and Storage Layout’s ``validate_storage_layout``, including
+    standalone Table ownership and Column claims. The referenced top-level model
+    remains valid and loadable.
+
+    The raised rule must match exactly. No rejected variant reaches dialect
+    selection, provisioning, SQL emission, or database execution.
     """
     entity = case.model.root_entity
     expected = case.rejected_rule
@@ -2336,17 +2397,17 @@ def _assert_rejected(case: Case) -> None:
             validate_operation_inheritance(case.model.entity_defs, case.when["operation"])
         elif "write" in case.when:
             validate_write(entity, case.write or {})
-            # Concrete-subtype write validation (m-inheritance x concrete-subtype
-            # writes, Phase 7): a no-op on a non-inheritance model, so it runs after
+            # Concrete-subtype write validation is a no-op on a non-inheritance
+            # model, so it runs after
             # the value-object write validation without disturbing the existing cases.
             validate_subtype_write(entity, case.model.entity_defs, case.write or {})
         elif "model" in case.when:
-            # A model rejected case carries an INLINE invalid inheritance descriptor
-            # (m-inheritance resolved Q3): the cross-entity family invariants a
-            # model-aware validator MUST reject, which per-entity schema validation
-            # cannot catch. The referenced top-level `model:` stays a valid, loadable
-            # descriptor; only this inline `when.model` is the invalid input.
             validate_family(case.when["model"])
+            inline_entities = case.when["model"].get("entities")
+            if not isinstance(inline_entities, list):
+                inline_entity = case.when["model"].get("entity")
+                inline_entities = [inline_entity] if isinstance(inline_entity, dict) else []
+            validate_storage_layout(inline_entities)
         else:  # pragma: no cover - guarded by _assert_schema
             raise CaseFailure(
                 f"{case.path.name}: rejected case needs when.operation / when.write / when.model"
@@ -2597,7 +2658,7 @@ def _assert_inheritance_write_routing(
     step_statements: list[str],
     step_binds: list[list[Any]],
 ) -> None:
-    """Assert an inheritance write's golden DML routes/guards correctly (Phase 7/8).
+    """Assert an inheritance write's golden DML routes and guards correctly.
 
     A no-op on a non-inheritance entity. For a TABLE-PER-HIERARCHY concrete subtype
     every EXISTING-ROW statement in the step — a plain ``update`` / ``delete`` OR a
@@ -2805,7 +2866,7 @@ def _assert_write_input_columns(case: Case, dialect: str) -> None:
             )
         else:
             _assert_update_input(case, entity, classified, step_statements, step_binds)
-        # Inheritance write routing (m-inheritance, Phase 7/8): a TABLE-PER-HIERARCHY
+        # Inheritance write routing: a TABLE-PER-HIERARCHY
         # existing-row statement (a plain update/delete OR a temporal close/inactivation)
         # carries the tag guard after the pk; a TABLE-PER-CONCRETE-SUBTYPE write targets
         # the subtype's own table. A no-op on a non-inheritance entity and on a chained
@@ -2851,7 +2912,7 @@ def _assert_insert_statement(
     binds: list[Any],
 ) -> None:
     golden_columns = _parse_insert_columns(case, statement)
-    domain = [c for c in column_order(entity) if any(c in cols for cols, *_ in classified)]
+    domain = [c for c in _case_column_order(entity) if any(c in cols for cols, *_ in classified)]
     # A TABLE-PER-HIERARCHY insert writes the tag column from the concrete subtype's
     # tagValue (m-inheritance) — a FRAMEWORK-DERIVED column, never carried in ① —
     # slotted at its columnOrder position, exactly as the version column is derived.
@@ -2862,7 +2923,9 @@ def _assert_insert_statement(
             f"column {tag[0]!r}, which a table-per-hierarchy write derives from "
             f"the concrete subtype's tagValue (m-inheritance), never authored."
         )
-    emitted = [c for c in column_order(entity) if c in domain or (tag is not None and c == tag[0])]
+    emitted = [
+        c for c in _case_column_order(entity) if c in domain or (tag is not None and c == tag[0])
+    ]
     # A VERSIONED insert appends the framework-owned version column with the DERIVED
     # initial value `1` (never authored in ①, so it is not in the row's columns).
     present = [*emitted, version_col] if version_col is not None else emitted
@@ -2932,7 +2995,7 @@ def _assert_versioned_update_input(
         classified, step_statements, step_binds, strict=True
     ):
         golden_set = _parse_set_columns(case, statement)
-        set_present = [c for c in column_order(entity) if c in set_cols]
+        set_present = [c for c in _case_column_order(entity) if c in set_cols]
         expected_cols = [*set_present, version_col]
         if golden_set != expected_cols:
             raise CaseFailure(
@@ -2967,7 +3030,9 @@ def _assert_update_input(
     step_binds: list[list[Any]],
 ) -> None:
     set_present = [
-        c for c in column_order(entity) if any(c in set_cols for _, _, set_cols, _ in classified)
+        c
+        for c in _case_column_order(entity)
+        if any(c in set_cols for _, _, set_cols, _ in classified)
     ]
     # Columns whose ① value is a self-referential `{ increment: <n> }` marker (a
     # sequence registry's `next_val`): the golden assigns `col = col + ?` and the bind
@@ -3094,7 +3159,7 @@ def _assert_temporal_input(
     )
     axis, at, instant_key = transaction_time, step.get("at"), "at"
     in_z, infinity = axis["start_column"], axis.get("infinity", "infinity")
-    full_columns = list(column_order(entity))
+    full_columns = list(_case_column_order(entity))
     if at is None:
         raise CaseFailure(
             f"{case.path.name}: a temporal write step's neutral write input (①) MUST carry "
@@ -3216,7 +3281,7 @@ def _assert_until_input(
     from_z, thru_z = valid_time["start_column"], valid_time["end_column"]
     in_z, out_z = transaction_time["start_column"], transaction_time["end_column"]
     infinity = transaction_time.get("infinity", "infinity")
-    full_columns = list(column_order(entity))
+    full_columns = list(_case_column_order(entity))
     in_z_pos, out_z_pos = full_columns.index(in_z), full_columns.index(out_z)
     from_z_pos, thru_z_pos = full_columns.index(from_z), full_columns.index(thru_z)
 
@@ -3443,7 +3508,7 @@ def _assert_versioned_conflict_write(
     statement = statements[0]
     _, pk, set_cols, observed = _classify_write_row(case, entity, write)
     golden_set = _parse_set_columns(case, statement)
-    set_present = [c for c in column_order(entity) if c in set_cols]
+    set_present = [c for c in _case_column_order(entity) if c in set_cols]
     expected_cols = [*set_present, version_col]
     if golden_set != expected_cols:
         raise CaseFailure(
@@ -3556,7 +3621,7 @@ def _assert_temporal_conflict_close(
     _, pk, set_cols, _ = _classify_write_row(case, entity, write)
     # A bitemporal close's Valid-Time discriminator (e.g. from_z) slots between out_z
     # and in_z in model column order; a Transaction-Time-Only close has none.
-    valid_coords = [set_cols[column] for column in column_order(entity) if column in set_cols]
+    valid_coords = [set_cols[column] for column in _case_column_order(entity) if column in set_cols]
     tag = _tag(entity)
     tag_binds = [tag[1]] if tag is not None else []
     expected = [at, pk, *tag_binds, infinity, *valid_coords]
@@ -3581,7 +3646,7 @@ def _read_table(db: DatabaseProvider, entity: Entity) -> list[dict[str, Any]]:
     ``then.tableState`` document row is authored as, so the write-sequence comparison
     is dialect-agnostic.
     """
-    columns = list(column_order(entity))
+    columns = list(_case_column_order(entity))
     projection = ", ".join(f"t0.{quote_identifier(column, db.dialect)}" for column in columns)
     rows = db.query(f"select {projection} from {quote_identifier(entity.table, db.dialect)} t0")
     document_columns = {value_object["column"] for value_object in entity.value_objects}
@@ -3634,7 +3699,7 @@ def _assert_write_sequence(case: Case, db: DatabaseProvider) -> None:
             )
 
 
-# --- scenarios (Phase 6, m-unit-work) ------------------------------------------------
+# --- scenarios (m-unit-work) ----------------------------------------------------------
 
 
 def _step_statements(step: dict[str, Any], dialect: str) -> list[str]:
@@ -4290,7 +4355,7 @@ def _identity_keys(
     return sorted(_coerce_identity_key(row[identity_col]) for row in rows)
 
 
-# --- conflict cases (Phase 7, m-opt-lock optimistic locking) -----------------------
+# --- conflict cases (m-opt-lock optimistic locking) ----------------------------------
 
 
 def _assert_conflict(case: Case, db: DatabaseProvider) -> None:
@@ -4377,7 +4442,7 @@ def _assert_conflict_retry_normalization(case: Case, dialect: str) -> None:
 def _assert_conflict_retry(case: Case, db: DatabaseProvider) -> None:
     """Run the given.apply + ordered retry attempts, asserting each affected count.
 
-    This is the observable form of the m-opt-lock RETRY contract (Phase 7). The model's
+    This is the observable form of the m-opt-lock RETRY contract. The model's
     fixtures are loaded (the versioned row exists), an OPTIONAL out-of-band
     ``given.apply`` simulates a concurrent writer that advanced the version, then
     each attempt's golden ``UPDATE`` is applied in order. The first attempt gates
@@ -4791,7 +4856,7 @@ def _assert_concurrency_success(case: Case, db: DatabaseProvider) -> None:
         raise CaseFailure(f"{case.path.name}: " + "\n".join(row_failures))
 
 
-# --- coherence cases (Phase 11, cross-process cache coherence) ---------------
+# --- coherence cases (cross-process cache coherence) -------------------------
 
 
 def _coherence_step_statements(step: dict[str, Any], dialect: str) -> list[str]:
@@ -5093,7 +5158,7 @@ def run_case(case: Case, db: DatabaseProvider) -> None:
         # A top-level, single-instant `then.graph` read (no deepFetch): the single
         # golden statement materializes into the graph with no child statement.
         # Value-object decoding (m-value-object) and inheritance per-variant
-        # narrowing (COR-3 Phase 8 part C) are each a conditional step inside —
+        # narrowing are each a conditional step inside —
         # a no-op for a case that carries neither.
         _assert_single_statement_graph(case, db)  # layer 2 + 5 (graph)
     else:

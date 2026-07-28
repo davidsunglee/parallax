@@ -36,6 +36,7 @@ from .predicate_write_validate import (
     validate_predicate_write_materialization,
 )
 from .schemas import build_registry, load_schemas
+from .storage_layout import validate_storage_layout
 from .value_object_resolve import RejectionError
 
 
@@ -361,10 +362,11 @@ def validate_tree(compatibility_root: Path) -> list[str]:
     operation_schema = schema_map["operation.schema.json"]
     case_schema = schema_map["compatibility-case.schema.json"]
 
-    # 2. Every model descriptor validates against the metamodel schema AND, if it
-    #    declares an inheritance family, satisfies the cross-entity closed-tree
-    #    invariants the per-entity schema cannot express (m-inheritance). A family
-    #    resolver per model backs the family-aware targetEntity cross-check below.
+    # 2. Every model descriptor validates against the metamodel schema and the
+    #    unconditional semantic validators for Inheritance and Storage Layout.
+    #    Inheritance validates family topology when present; Storage Layout also
+    #    validates standalone Table ownership and Column claims. A family resolver
+    #    per model backs the family-aware targetEntity cross-check below.
     models_dir = compatibility_root / "models"
     families: dict[str, Family] = {}
     model_entities: dict[str, list[dict[str, Any]]] = {}
@@ -376,6 +378,7 @@ def validate_tree(compatibility_root: Path) -> list[str]:
         model_entities[model_path.name] = entity_defs
         try:
             validate_family_defs(entity_defs)
+            validate_storage_layout(entity_defs)
         except RejectionError as exc:
             errors.append(f"model {model_path.name}: {exc.rule}: {exc.detail}")
 
@@ -457,7 +460,7 @@ def validate_tree(compatibility_root: Path) -> list[str]:
                         f"case {case_path.name} scenario[{index}]",
                         errors,
                     )
-        # A coherence case (Phase 11) likewise carries read-step operations under
+        # A coherence case likewise carries read-step operations under
         # `when.coherence[].find`; each must validate against the operation algebra schema.
         if isinstance(when.get("coherence"), list):
             for index, step in enumerate(when["coherence"]):

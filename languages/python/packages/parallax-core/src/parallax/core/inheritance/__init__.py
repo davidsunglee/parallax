@@ -11,9 +11,10 @@ root-owned Persistence Mode — so a consumer reads a precomputed family fact
 instead of recomputing it. ``m-inheritance`` depends on ``m-metamodel`` and
 ``m-model-formation``.
 
-It also owns :func:`column_order`, the canonical physical column order of an
-Entity's table: the order is family-effective, and the table-per-hierarchy tag
-is the one physical column no declared Attribute backs.
+It exports :func:`project_table_groups`, the pure Candidate Metamodel projection
+the dependent Storage Layout Rule Set validates. :func:`column_order` is a
+compatibility helper rather than an inheritance-owned physical contract;
+Storage Layout owns canonical physical order.
 
 Consumers reach the facet through :func:`view`, so generic facet retrieval stays
 an internal formation seam.
@@ -50,7 +51,6 @@ from parallax.core.inheritance._rules import (
     MISSING_TAG_VALUE,
     OPTIMISTIC_LOCKING_NOT_ROOT_OWNED,
     PERSISTENCE_NOT_ROOT_OWNED,
-    PHYSICAL_COLUMN_COLLISION,
     PRIMARY_KEY_MISSING,
     PRIMARY_KEY_MULTIPLE,
     RULE_SET,
@@ -62,6 +62,14 @@ from parallax.core.inheritance._rules import (
     TPH_DESCENDANT_TABLE_FORBIDDEN,
     TPH_ROOT_TABLE_REQUIRED,
     InheritanceRuleSet,
+)
+from parallax.core.inheritance._table_groups import (
+    AttributeTableContributor,
+    InheritanceTableGroup,
+    TableGroupContributor,
+    TablePerHierarchyTagContributor,
+    TopLevelValueObjectTableContributor,
+    project_table_groups,
 )
 from parallax.core.metamodel import (
     AbstractRoot,
@@ -89,7 +97,6 @@ __all__ = [
     "MODEL_COMPILER",
     "OPTIMISTIC_LOCKING_NOT_ROOT_OWNED",
     "PERSISTENCE_NOT_ROOT_OWNED",
-    "PHYSICAL_COLUMN_COLLISION",
     "PRIMARY_KEY_MISSING",
     "PRIMARY_KEY_MULTIPLE",
     "RULE_SET",
@@ -100,16 +107,22 @@ __all__ = [
     "TPCS_CONCRETE_TABLE_REQUIRED",
     "TPH_DESCENDANT_TABLE_FORBIDDEN",
     "TPH_ROOT_TABLE_REQUIRED",
+    "AttributeTableContributor",
     "InheritanceEntityView",
     "InheritanceError",
     "InheritanceFacet",
     "InheritanceModelCompiler",
     "InheritancePositionView",
     "InheritanceRuleSet",
+    "InheritanceTableGroup",
+    "TableGroupContributor",
+    "TablePerHierarchyTagContributor",
+    "TopLevelValueObjectTableContributor",
     "WriteAssignmentError",
     "column_order",
     "compile_facet",
     "family_variant_name",
+    "project_table_groups",
     "reject_predicate_write",
     "root_metadata",
     "validate_subtype_write",

@@ -1,15 +1,15 @@
 """The inheritance Model Formation Rule Set (m-inheritance).
 
-This module rejects family invariants and ambiguities in the physical column
-order it owns: whether parent links form a closed tree under exactly one
-abstract root, whether the strategy's physical mapping is declared where that
-strategy puts it, whether facts a family owns as a whole stay on its root,
-whether a descendant's own members leave the inherited namespace unambiguous,
-and whether each physical table maps one contributor to each column. A family
-is a position's own ancestry, never the model: one model carries as many
-independent families as it declares roots, and each is judged alone. Parent
-resolution is not here — foundational resolution owns it, so a candidate's
-parents already name existing Entities.
+This module rejects family invariants: whether parent links form a closed tree
+under exactly one abstract root, whether the strategy's physical mapping is
+declared where that strategy puts it, whether facts a family owns as a whole
+stay on its root, whether a descendant's own members leave the inherited
+namespace unambiguous, and whether rendered materialization keys remain
+distinct. Physical Table and Column collisions belong to ``m-storage-layout``.
+A family is a position's own ancestry, never the model: one model carries as
+many independent families as it declares roots, and each is judged alone.
+Parent resolution is not here — foundational resolution owns it, so a
+candidate's parents already name existing Entities.
 
 A position whose ancestry does not resolve is reported for that alone: the rest
 of these rules are questions about a chain, and there is no chain to ask them
@@ -19,13 +19,18 @@ of.
 from __future__ import annotations
 
 from collections.abc import Iterator, Mapping, Sequence
-from dataclasses import dataclass
 from typing import Final
 
 from parallax.core.inheritance._facet import INHERITANCE_MODULE
+from parallax.core.inheritance._table_groups import (
+    AncestryResolution,
+    CyclicAncestry,
+    InheritanceParticipant,
+    ResolvedAncestry,
+    UnrootedAncestry,
+    project_topology,
+)
 from parallax.core.metamodel import (
-    AbstractRoot,
-    AbstractSubtype,
     AsOfAxisLocation,
     AttributeLocation,
     CandidateMetamodel,
@@ -33,7 +38,6 @@ from parallax.core.metamodel import (
     EntityDeclaration,
     EntityIdentity,
     EntityLocation,
-    InheritanceMetadata,
     InheritanceStrategy,
     IssueCode,
     MetamodelIssue,
@@ -58,7 +62,6 @@ __all__ = [
     "MISSING_TAG_VALUE",
     "OPTIMISTIC_LOCKING_NOT_ROOT_OWNED",
     "PERSISTENCE_NOT_ROOT_OWNED",
-    "PHYSICAL_COLUMN_COLLISION",
     "PRIMARY_KEY_MISSING",
     "PRIMARY_KEY_MULTIPLE",
     "RULE_SET",
@@ -148,15 +151,6 @@ MEMBER_SHADOWING: Final[IssueCode] = "inheritance-member-shadowing"
 namespace runs down each ancestry, so shadowing is ambiguous across categories
 too; disjoint sibling branches may still reuse a name."""
 
-PHYSICAL_COLUMN_COLLISION: Final[IssueCode] = "inheritance-physical-column-collision"
-"""Two distinct physical contributors claim one column in the same table.
-
-Attributes, top-level Value Objects, and a table-per-hierarchy tag each need an
-unambiguous physical slot. Reusing a canonical member name on disjoint sibling
-branches remains legal only when explicit column overrides keep their shared
-table contributions distinct.
-"""
-
 MATERIALIZATION_KEY_COLLISION: Final[IssueCode] = "inheritance-materialization-key-collision"
 """Two provenance-distinct contributors render one key on the same concrete node.
 
@@ -184,80 +178,11 @@ ISSUE_CODES: Final[frozenset[IssueCode]] = frozenset(
         OPTIMISTIC_LOCKING_NOT_ROOT_OWNED,
         PERSISTENCE_NOT_ROOT_OWNED,
         MEMBER_SHADOWING,
-        PHYSICAL_COLUMN_COLLISION,
         MATERIALIZATION_KEY_COLLISION,
     }
 )
 """This module's complete owned Issue Code set, as the Formation Manifest
 declares it."""
-
-
-@dataclass(frozen=True, slots=True)
-class _Chain:
-    """The position's ancestry resolves: ``entities`` runs root first.
-
-    The root's strategy travels with the chain because reaching a root is what
-    established it: a family whose strategy is still in question is one of the
-    other two outcomes.
-    """
-
-    entities: tuple[EntityIdentity, ...]
-    strategy: InheritanceStrategy
-
-
-@dataclass(frozen=True, slots=True)
-class _Cycle:
-    """The walk revisited a position; ``entities`` is the loop it closed on."""
-
-    entities: tuple[EntityIdentity, ...]
-
-
-@dataclass(frozen=True, slots=True)
-class _Unrooted:
-    """The walk ended somewhere that is not an abstract root."""
-
-
-type _Resolution = _Chain | _Cycle | _Unrooted
-
-
-@dataclass(frozen=True, slots=True)
-class _Participant:
-    """One Entity that declares inheritance, paired with what it declares.
-
-    Participation is carried as a type rather than rechecked: every walk below
-    reads a position's role directly instead of asking again whether it has one.
-    """
-
-    declaration: EntityDeclaration
-    inheritance: InheritanceMetadata
-
-
-def _resolution(
-    participant: _Participant, participants: Mapping[EntityIdentity, _Participant]
-) -> _Resolution:
-    """Where ``participant``'s ancestry leads.
-
-    Each position has at most one parent, so the walk either closes on a loop,
-    leaves the participants — a parent that declares no inheritance of its own —
-    or reaches the abstract root that establishes the family and its strategy.
-    """
-    path: list[EntityIdentity] = []
-    depth: dict[EntityIdentity, int] = {}
-    position = participant
-    while True:
-        identity = position.declaration.identity
-        if identity in depth:
-            return _Cycle(tuple(path[depth[identity] :]))
-        depth[identity] = len(path)
-        path.append(identity)
-        match position.inheritance:
-            case AbstractRoot(strategy):
-                return _Chain(tuple(reversed(path)), strategy)
-            case AbstractSubtype(parent) | ConcreteSubtype(parent, _):
-                ancestor = participants.get(parent)
-                if ancestor is None:
-                    return _Unrooted()
-                position = ancestor
 
 
 def _rotated(loop: Sequence[EntityIdentity]) -> tuple[EntityIdentity, ...]:
@@ -270,7 +195,9 @@ def _rotated(loop: Sequence[EntityIdentity]) -> tuple[EntityIdentity, ...]:
     return (*loop[anchor:], *loop[:anchor])
 
 
-def _cycle_issues(resolutions: Mapping[EntityIdentity, _Resolution]) -> list[MetamodelIssue]:
+def _cycle_issues(
+    resolutions: Mapping[EntityIdentity, AncestryResolution],
+) -> list[MetamodelIssue]:
     """One issue per distinct cycle, whichever positions the walks started from.
 
     Every position at or below a cycle reaches the same loop, so grouping by the
@@ -279,7 +206,7 @@ def _cycle_issues(resolutions: Mapping[EntityIdentity, _Resolution]) -> list[Met
     """
     loops: dict[frozenset[EntityIdentity], tuple[EntityIdentity, ...]] = {}
     for resolution in resolutions.values():
-        if isinstance(resolution, _Cycle):
+        if isinstance(resolution, CyclicAncestry):
             loops.setdefault(frozenset(resolution.entities), _rotated(resolution.entities))
     return [
         MetamodelIssue(
@@ -292,7 +219,7 @@ def _cycle_issues(resolutions: Mapping[EntityIdentity, _Resolution]) -> list[Met
     ]
 
 
-def _unrooted_issue(participant: _Participant) -> MetamodelIssue:
+def _unrooted_issue(participant: InheritanceParticipant) -> MetamodelIssue:
     """The defect of a position whose ancestry reaches no abstract root."""
     location = EntityLocation(participant.declaration.identity)
     if isinstance(participant.inheritance, ConcreteSubtype):
@@ -323,50 +250,6 @@ def _local_members(declaration: EntityDeclaration) -> Iterator[tuple[str, ModelL
             occurrence.name,
             ValueObjectLocation(ValueObjectIdentity(declaration.identity, (occurrence.name,))),
         )
-
-
-def _physical_column_issues(
-    contributors: Sequence[tuple[str, ModelLocation]],
-) -> list[MetamodelIssue]:
-    """Collisions within one physical table's ordered column contributors."""
-    claimed: dict[str, ModelLocation] = {}
-    issues: list[MetamodelIssue] = []
-    for column, location in contributors:
-        existing = claimed.get(column)
-        if existing is None:
-            claimed[column] = location
-            continue
-        issues.append(
-            MetamodelIssue(
-                PHYSICAL_COLUMN_COLLISION,
-                location,
-                (existing,),
-                message=f"physical column {column!r} is already claimed in this table",
-            )
-        )
-    return issues
-
-
-def _declaration_columns(declaration: EntityDeclaration) -> tuple[tuple[str, ModelLocation], ...]:
-    """One standalone declaration's canonical physical contribution order."""
-    keys = [
-        (attribute.storage.name, AttributeLocation(attribute.identity))
-        for attribute in declaration.attributes
-        if isinstance(attribute.primary_key, PrimaryKey)
-    ]
-    rest = [
-        (attribute.storage.name, AttributeLocation(attribute.identity))
-        for attribute in declaration.attributes
-        if not isinstance(attribute.primary_key, PrimaryKey)
-    ]
-    documents = [
-        (
-            occurrence.storage.name,
-            ValueObjectLocation(ValueObjectIdentity(declaration.identity, (occurrence.name,))),
-        )
-        for occurrence in declaration.value_objects
-    ]
-    return (*keys, *rest, *documents)
 
 
 def _materialization_key_issues(
@@ -433,78 +316,10 @@ def _materialization_key_issues(
     return issues
 
 
-def _chain_columns(
-    chain: Sequence[EntityIdentity], participants: Mapping[EntityIdentity, _Participant]
-) -> tuple[tuple[str, ModelLocation], ...]:
-    """One table-per-concrete-subtype table's ancestry-derived columns."""
-    declarations = [participants[identity].declaration for identity in chain]
-    keys = [
-        (attribute.storage.name, AttributeLocation(attribute.identity))
-        for declaration in declarations
-        for attribute in declaration.attributes
-        if isinstance(attribute.primary_key, PrimaryKey)
-    ]
-    rest = [
-        (attribute.storage.name, AttributeLocation(attribute.identity))
-        for declaration in declarations
-        for attribute in declaration.attributes
-        if not isinstance(attribute.primary_key, PrimaryKey)
-    ]
-    documents = [
-        (
-            occurrence.storage.name,
-            ValueObjectLocation(ValueObjectIdentity(declaration.identity, (occurrence.name,))),
-        )
-        for declaration in declarations
-        for occurrence in declaration.value_objects
-    ]
-    return (*keys, *rest, *documents)
-
-
-def _hierarchy_columns(
-    root: EntityIdentity,
-    members: Sequence[_Participant],
-    strategy: TablePerHierarchy,
-) -> tuple[tuple[str, ModelLocation], ...]:
-    """One table-per-hierarchy family's shared-table column contributors."""
-    declarations = [
-        member.declaration
-        for member in sorted(
-            members,
-            key=lambda member: (
-                member.declaration.identity != root,
-                member.declaration.identity.sort_key,
-            ),
-        )
-    ]
-    keys = [
-        (attribute.storage.name, AttributeLocation(attribute.identity))
-        for declaration in declarations
-        for attribute in declaration.attributes
-        if isinstance(attribute.primary_key, PrimaryKey)
-    ]
-    tag = [(strategy.tag_column, EntityLocation(root))]
-    rest = [
-        (attribute.storage.name, AttributeLocation(attribute.identity))
-        for declaration in declarations
-        for attribute in declaration.attributes
-        if not isinstance(attribute.primary_key, PrimaryKey)
-    ]
-    documents = [
-        (
-            occurrence.storage.name,
-            ValueObjectLocation(ValueObjectIdentity(declaration.identity, (occurrence.name,))),
-        )
-        for declaration in declarations
-        for occurrence in declaration.value_objects
-    ]
-    return (*keys, *tag, *rest, *documents)
-
-
 def _shadowing_issues(
     declaration: EntityDeclaration,
     chain: tuple[EntityIdentity, ...],
-    participants: Mapping[EntityIdentity, _Participant],
+    participants: Mapping[EntityIdentity, InheritanceParticipant],
 ) -> list[MetamodelIssue]:
     """The local members of ``declaration`` that an ancestor already declares.
 
@@ -534,7 +349,7 @@ def _shadowing_issues(
 def _primary_key_issues(
     declaration: EntityDeclaration,
     chain: tuple[EntityIdentity, ...],
-    participants: Mapping[EntityIdentity, _Participant],
+    participants: Mapping[EntityIdentity, InheritanceParticipant],
 ) -> list[MetamodelIssue]:
     """The one-key rule over a position's applicable ancestry chain.
 
@@ -611,7 +426,7 @@ def _root_owned_issues(
 
 
 def _hierarchy_issues(
-    root: EntityIdentity, members: Sequence[_Participant]
+    root: EntityIdentity, members: Sequence[InheritanceParticipant]
 ) -> list[MetamodelIssue]:
     """The storage and tag rules of one table-per-hierarchy family."""
     issues: list[MetamodelIssue] = []
@@ -665,7 +480,7 @@ def _hierarchy_issues(
 
 
 def _concrete_subtype_issues(
-    root: EntityIdentity, members: Sequence[_Participant]
+    root: EntityIdentity, members: Sequence[InheritanceParticipant]
 ) -> list[MetamodelIssue]:
     """The storage and tag rules of one table-per-concrete-subtype family."""
     issues: list[MetamodelIssue] = []
@@ -703,7 +518,9 @@ def _concrete_subtype_issues(
 
 
 def _family_issues(
-    root: EntityIdentity, members: Sequence[_Participant], strategy: InheritanceStrategy
+    root: EntityIdentity,
+    members: Sequence[InheritanceParticipant],
+    strategy: InheritanceStrategy,
 ) -> list[MetamodelIssue]:
     """The strategy-dependent rules of the family ``root`` names."""
     match strategy:
@@ -714,64 +531,43 @@ def _family_issues(
 
 
 def validate_inheritance(candidate: CandidateMetamodel) -> tuple[MetamodelIssue, ...]:
-    """Every family or physical-table defect, reported rather than the first."""
-    physical_issues: dict[tuple[ModelLocation, tuple[ModelLocation, ...]], MetamodelIssue] = {}
+    """Every family or materialization-key defect, reported rather than the first."""
     materialization_issues: dict[
         tuple[ModelLocation, tuple[ModelLocation, ...]], MetamodelIssue
     ] = {}
     for declaration in candidate.entities:
         if declaration.inheritance is not None:
             continue
-        for issue in _physical_column_issues(_declaration_columns(declaration)):
-            physical_issues.setdefault((issue.location, issue.related), issue)
         for issue in _materialization_key_issues((declaration,), family_root=None):
             materialization_issues.setdefault((issue.location, issue.related), issue)
 
-    participants = {
-        declaration.identity: _Participant(declaration, declaration.inheritance)
-        for declaration in candidate.entities
-        if declaration.inheritance is not None
-    }
+    topology = project_topology(candidate)
+    participants = topology.participants
     if not participants:
-        return (*physical_issues.values(), *materialization_issues.values())
+        return tuple(materialization_issues.values())
 
-    resolutions = {
-        identity: _resolution(participant, participants)
-        for identity, participant in participants.items()
-    }
+    resolutions = topology.resolutions
     issues = _cycle_issues(resolutions)
     issues.extend(
         _unrooted_issue(participants[identity])
         for identity, resolution in resolutions.items()
-        if isinstance(resolution, _Unrooted)
+        if isinstance(resolution, UnrootedAncestry)
     )
 
-    families: dict[EntityIdentity, tuple[InheritanceStrategy, list[_Participant]]] = {}
     for identity, resolution in resolutions.items():
-        if not isinstance(resolution, _Chain):
+        if not isinstance(resolution, ResolvedAncestry):
             continue
         participant = participants[identity]
         chain = resolution.entities
-        _, members = families.setdefault(chain[0], (resolution.strategy, []))
-        members.append(participant)
         issues.extend(_root_owned_issues(participant.declaration, chain[0]))
         issues.extend(_primary_key_issues(participant.declaration, chain, participants))
         issues.extend(_shadowing_issues(participant.declaration, chain, participants))
-        if isinstance(resolution.strategy, TablePerConcreteSubtype) and isinstance(
-            participant.inheritance, ConcreteSubtype
-        ):
-            for issue in _physical_column_issues(_chain_columns(chain, participants)):
-                physical_issues.setdefault((issue.location, issue.related), issue)
         if isinstance(participant.inheritance, ConcreteSubtype):
             declarations = tuple(participants[identity].declaration for identity in chain)
             for issue in _materialization_key_issues(declarations, family_root=chain[0]):
                 materialization_issues.setdefault((issue.location, issue.related), issue)
-    for root, (strategy, members) in families.items():
-        issues.extend(_family_issues(root, members, strategy))
-        if isinstance(strategy, TablePerHierarchy):
-            for issue in _physical_column_issues(_hierarchy_columns(root, members, strategy)):
-                physical_issues.setdefault((issue.location, issue.related), issue)
-    issues.extend(physical_issues.values())
+    for family in topology.families:
+        issues.extend(_family_issues(family.root, family.members, family.strategy))
     issues.extend(materialization_issues.values())
     return tuple(issues)
 

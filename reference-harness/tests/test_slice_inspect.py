@@ -131,11 +131,7 @@ def test_storage_layout_rejected_witnesses_pin_distinct_issue_namespaces() -> No
     second_columns = {attribute.get("column") for attribute in entities[1]["attributes"]}
     assert first_columns.isdisjoint(second_columns)
     assert [
-        next(
-            attribute["column"]
-            for attribute in entity["attributes"]
-            if attribute["primaryKey"]
-        )
+        next(attribute["column"] for attribute in entity["attributes"] if attribute["primaryKey"])
         for entity in entities
     ] == ["first_id", "second_id"]
 

@@ -85,6 +85,7 @@ SNAPSHOT_CLAIM: Final[Claim] = Claim(
         "m-relationship",
         "m-snapshot-read",
         "m-sql",
+        "m-storage-layout",
         "m-temporal-read",
         "m-txtime-write",
         "m-unit-work",

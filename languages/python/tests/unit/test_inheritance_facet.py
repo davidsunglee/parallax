@@ -20,7 +20,6 @@ from parallax.core.inheritance import (
     RULE_SET,
     InheritanceEntityView,
     InheritanceFacet,
-    column_order,
     compile_facet,
 )
 from parallax.core.metamodel import (
@@ -604,36 +603,3 @@ def test_a_value_object_identity_survives_the_projection() -> None:
     assert nested.identity == ValueObjectIdentity(fake.ACCOUNT, ("contact", "address"))
     assert nested.attribute("street") is not None
     assert ValueObjectAttributeIdentity(nested.identity, "street") == nested.attributes[0].identity
-
-
-# --------------------------------------------------------------------------
-# Canonical physical column order.
-# --------------------------------------------------------------------------
-def test_column_order_states_the_canonical_physical_order() -> None:
-    model = fake.parity_model({FACET_KEY: compile_facet(fake.parity_model())})
-    account = model.entity(fake.ACCOUNT)
-    assert account is not None
-    # Primary key first, then the remaining scalars in declaration order, then
-    # the value object's backing document column last.
-    assert column_order(account, inheritance.view(model)) == (
-        "id",
-        "ledger_label",
-        "balance",
-        "opened_on",
-        "contact_doc",
-    )
-
-
-def test_column_order_slots_the_tag_after_the_key_and_spans_the_family() -> None:
-    # An inheritance participant's own declaration carries only its own members,
-    # so the order is the ancestry chain's: the root's key, then the family tag,
-    # then the remaining scalars in chain order.
-    model = _formed("payment")
-    card = model.entity(_corpus_entity("CardPayment"))
-    assert card is not None
-    assert column_order(card, inheritance.view(model)) == (
-        "id",
-        "kind",
-        "amount",
-        "card_network",
-    )
