@@ -368,6 +368,22 @@ SKIP_REASONS: Final[dict[str, str]] = {
         "end-to-end by the compile/run conformance lanes (or the run lane alone for the "
         "materializing ones, query-result-dependent) meanwhile"
     ),
+    "m-storage-layout": (
+        "canonical physical composition has no standalone developer surface. Its "
+        "positive witnesses (shared-table applicability and effective physical "
+        "nullability, table-per-concrete-subtype ancestry with legal sibling Column "
+        "reuse, and the top-level document slot's position after every scalar tier) "
+        "are graded end-to-end by the compile/run conformance lanes over the "
+        "`storage-layout` model, which places already-mirrored table-per-hierarchy, "
+        "table-per-concrete-subtype, and value-object declarations in one descriptor "
+        "so physical composition can be witnessed — it adds no declaration construct "
+        "of its own, so it carries no class mirror to write an instance-native story "
+        "against (`tests/mirrored_models.py`'s own UNMIRRORED reason). Its physical "
+        "Column and Table mapping rejects are model-declaration invariants the Rule "
+        "Set classifies at hub construction (a `MetamodelValidationError` issue), not "
+        "an operation or write the Usage Guide's statement- and verb-level examples "
+        "could spell"
+    ),
     "m-batch-write": (
         "the set-based collapse / readless / materialize forms (multi-row INSERT "
         "collapse, batched UPDATE, IN-list DELETE, readless predicate update/delete, "
@@ -929,10 +945,6 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-inheritance-099": _INHERITANCE_DESCRIPTOR_REJECT_UNREACHABLE_REASON,
     "m-inheritance-102": _INHERITANCE_DESCRIPTOR_REJECT_UNREACHABLE_REASON,
     "m-inheritance-103": _INHERITANCE_DESCRIPTOR_REJECT_UNREACHABLE_REASON,
-    "m-inheritance-111": _INHERITANCE_DESCRIPTOR_REJECT_UNREACHABLE_REASON,
-    "m-inheritance-112": _INHERITANCE_DESCRIPTOR_REJECT_UNREACHABLE_REASON,
-    "m-inheritance-113": _INHERITANCE_DESCRIPTOR_REJECT_UNREACHABLE_REASON,
-    "m-inheritance-114": _INHERITANCE_DESCRIPTOR_REJECT_UNREACHABLE_REASON,
     "m-inheritance-115": _INHERITANCE_DESCRIPTOR_REJECT_UNREACHABLE_REASON,
     "m-inheritance-116": _INHERITANCE_DESCRIPTOR_REJECT_UNREACHABLE_REASON,
     "m-inheritance-117": _INHERITANCE_DESCRIPTOR_REJECT_UNREACHABLE_REASON,
