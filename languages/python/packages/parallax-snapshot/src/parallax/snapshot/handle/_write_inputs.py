@@ -16,9 +16,12 @@ plus the observation machinery a read leaves behind for it:
   predicate-write resolve (:func:`materialize_row`), which share their payload
   extraction through the module-local ``_temporal_observation`` / ``_row_payload``.
 
-Physical facts come from the accepted Metamodel and its facets, resolved through
-:mod:`parallax.snapshot.handle._family` (the declaring root, family-effective
-axes and primary key, version attribute, member-to-column map). For the
+Semantic family facts come from the accepted Metamodel and its facets, resolved
+through :mod:`parallax.snapshot.handle._family` (the declaring root,
+family-effective axes and primary key, version attribute). Every PHYSICAL column
+instead comes from the row-owning Entity's Storage Layout view, which each entry
+point resolves once and carries into the helpers that read or write a row's
+columns. For the
 :class:`~parallax.snapshot.handle.FindResult` :func:`record_observations`
 consumes it also imports :mod:`parallax.snapshot.handle._read`. That edge is
 deliberately one-way: the pin helpers ``Transaction.find`` shares with the read
@@ -56,6 +59,7 @@ from parallax.core.metamodel import (
     PrimaryKey,
     TemporalDimension,
 )
+from parallax.core.storage_layout import EntityLayoutView
 from parallax.core.temporal_read import LATEST, Latest, Pin
 from parallax.core.unit_work import (
     KeyedMutation,
@@ -67,9 +71,11 @@ from parallax.core.unit_work import (
 from parallax.snapshot.handle._family import (
     axis_columns,
     declaring,
+    entity_layout,
     entity_of,
     family_primary_key,
     members,
+    slot_column,
     tx_time_axis,
     valid_time_axis,
     version_attribute,
@@ -174,37 +180,44 @@ def record_observations(uow: UnitOfWork, meta: Metamodel, result: FindResult, pi
         observed_fields = {**node.fields, **node.value_objects}
         entity = entity_of(meta, entity_name)
         declaring_entity = declaring(meta, entity)
+        layout = entity_layout(meta, entity)
+        if layout is None:  # pragma: no cover - a materialized node always owns rows
+            continue
         pk_attrs = _declared_primary_key(declaring_entity)
+        pk_columns = [slot_column(layout, attr.identity) for attr in pk_attrs]
         if not pk_attrs or any(  # pragma: no cover - defends a malformed model/projection
-            attr.storage.name not in observed_fields for attr in pk_attrs
+            column not in observed_fields for column in pk_columns
         ):
             continue
         key: ObjectKey = (
             entity_name,
-            tuple((attr.identity.name, observed_fields[attr.storage.name]) for attr in pk_attrs),
+            tuple(
+                (attr.identity.name, observed_fields[column])
+                for attr, column in zip(pk_attrs, pk_columns, strict=True)
+            ),
         )
         version_attr = version_attribute(meta, declaring_entity)
         if version_attr is not None:
-            if version_attr.storage.name in observed_fields:
-                uow.observe(
-                    key,
-                    Observation(version=cast("int", observed_fields[version_attr.storage.name])),
-                )
+            version_column = slot_column(layout, version_attr.identity)
+            if version_column in observed_fields:
+                uow.observe(key, Observation(version=cast("int", observed_fields[version_column])))
             continue
         if not _is_temporal(declaring_entity):
             continue
         tx_axis = tx_time_axis(declaring_entity)
-        tx_start_column, _tx_end_column = axis_columns(declaring_entity, tx_axis)
+        tx_start_column, _tx_end_column = axis_columns(layout, tx_axis)
         if tx_start_column not in observed_fields:  # pragma: no cover - malformed model/projection
             continue
         uow.observe(
             key,
-            _temporal_observation(meta, declaring_entity, observed_fields, tx_axis, latest_pinned),
+            _temporal_observation(
+                layout, declaring_entity, observed_fields, tx_axis, latest_pinned
+            ),
         )
 
 
 def _temporal_observation(
-    meta: Metamodel,
+    layout: EntityLayoutView,
     declaring_entity: EntityMetadata,
     fields: Mapping[str, object],
     tx_axis: AsOfAxisMetadata,
@@ -245,7 +258,7 @@ def _temporal_observation(
     forward whole (`m-bitemp-write` "head/tail old values"; `m-value-object`
     "the document rides every chained/split row whole").
     """
-    tx_start_column, tx_end_column = axis_columns(declaring_entity, tx_axis)
+    tx_start_column, tx_end_column = axis_columns(layout, tx_axis)
     tx_start = cast("str", fields[tx_start_column])
     if not _is_bitemporal(declaring_entity):
         # Audit-only: the observed payload every other member besides
@@ -254,21 +267,20 @@ def _temporal_observation(
         # row onto it, so an unauthored field carries forward from THIS
         # observation rather than being silently dropped.
         payload = _row_payload(
-            meta,
-            declaring_entity,
+            layout,
             fields,
             {tx_start_column, tx_end_column},
             include_value_objects=True,
         )
         return Observation(tx_start=tx_start, payload=payload, latest_pinned=latest_pinned)
     valid_axis = valid_time_axis(declaring_entity)
-    valid_start_column, valid_end_column = axis_columns(declaring_entity, valid_axis)
+    valid_start_column, valid_end_column = axis_columns(layout, valid_axis)
     if valid_start_column not in fields or valid_end_column not in fields:  # pragma: no cover
         return Observation(
             tx_start=tx_start, latest_pinned=latest_pinned
         )  # malformed model/projection
     excluded = {tx_start_column, tx_end_column, valid_start_column, valid_end_column}
-    payload = _row_payload(meta, declaring_entity, fields, excluded, include_value_objects=True)
+    payload = _row_payload(layout, fields, excluded, include_value_objects=True)
     return Observation(
         tx_start=tx_start,
         valid_start=cast("str", fields[valid_start_column]),
@@ -279,14 +291,13 @@ def _temporal_observation(
 
 
 def _row_payload(
-    meta: Metamodel,
-    declaring_entity: EntityMetadata,
+    layout: EntityLayoutView,
     fields: Mapping[str, object],
     excluded: set[str],
     *,
     include_value_objects: bool = False,
 ) -> dict[str, object]:
-    """``fields``'s own payload (every declared member besides ``excluded``
+    """``fields``'s own payload (every applicable member besides ``excluded``
     axis-bound columns) — the observed-payload source a real TEMPORAL find's
     :class:`Observation` (`_temporal_observation`, above — audit-only and
     bitemporal alike) and an audit-only materializing resolve's CHAINED
@@ -306,7 +317,7 @@ def _row_payload(
     """
     return {
         name: fields[column]
-        for name, (column, is_value_object) in members(meta, declaring_entity).items()
+        for name, (column, is_value_object) in members(layout).items()
         if (include_value_objects or not is_value_object)
         and column in fields
         and column not in excluded
@@ -447,6 +458,7 @@ def validate_until(
 
 def materialize_row(
     meta: Metamodel,
+    layout: EntityLayoutView,
     entity: EntityMetadata,
     declaring_entity: EntityMetadata,
     version_attr: AttributeMetadata | None,
@@ -464,33 +476,36 @@ def materialize_row(
     assignment-bearing mutations, no-op elimination is per resolved row";
     `delete` / `terminate` / `terminateUntil` always write every resolved row,
     no assignments to compare). ``row`` is the resolve's OWN row-form row
-    (never an implicit second read).
+    (never an implicit second read), keyed by the physical Columns ``layout``
+    names, which is also where the resulting keyed instruction's own cells land.
     """
     pk_attrs = family_primary_key(meta, entity)
-    pk_row = {attr.identity.name: row[attr.storage.name] for attr in pk_attrs}
+    pk_row = {attr.identity.name: row[slot_column(layout, attr.identity)] for attr in pk_attrs}
     key: ObjectKey = (entity.identity.name, tuple(pk_row.items()))
     assignment_bearing = mutation in ("update", "updateUntil")
 
     if version_attr is not None:
-        observation = Observation(version=cast("int", row[version_attr.storage.name]))
+        observation = Observation(
+            version=cast("int", row[slot_column(layout, version_attr.identity)])
+        )
         if not assignment_bearing:
             return key, observation, dict(pk_row)
-        new_row, changed = _apply_assignments(meta, entity, pk_row, row, assignments)
+        new_row, changed = _apply_assignments(layout, pk_row, row, assignments)
         return key, observation, (new_row if changed else None)
 
     tx_axis = tx_time_axis(declaring_entity)
-    tx_start_column, tx_end_column = axis_columns(declaring_entity, tx_axis)
+    tx_start_column, tx_end_column = axis_columns(layout, tx_axis)
     tx_start = cast("str", row[tx_start_column])
     if _is_bitemporal(declaring_entity):
         # A SPARSE new row: `bitemp_write.plan` merges it onto the observed
         # payload itself (`_merged_payload`), the bitemporal analogue of an
         # edited copy's effective change set.
         observation = _temporal_observation(
-            meta, declaring_entity, row, tx_axis, latest_pinned=True
+            layout, declaring_entity, row, tx_axis, latest_pinned=True
         )
         if not assignment_bearing:
             return key, observation, dict(pk_row)
-        new_row, changed = _apply_assignments(meta, declaring_entity, pk_row, row, assignments)
+        new_row, changed = _apply_assignments(layout, pk_row, row, assignments)
         return key, observation, (new_row if changed else None)
 
     # Audit-only: `txtime_write.plan` chains the instruction's OWN authored
@@ -524,20 +539,18 @@ def materialize_row(
     full_row: dict[str, object] = {
         **pk_row,
         **_row_payload(
-            meta,
-            declaring_entity,
+            layout,
             row,
             {tx_start_column, tx_end_column},
             include_value_objects=True,
         ),
     }
-    new_row, changed = _apply_assignments(meta, declaring_entity, full_row, row, assignments)
+    new_row, changed = _apply_assignments(layout, full_row, row, assignments)
     return key, observation, (new_row if changed else None)
 
 
 def _apply_assignments(
-    meta: Metamodel,
-    entity: EntityMetadata,
+    layout: EntityLayoutView,
     base_row: Mapping[str, object],
     row: Row,
     assignments: Mapping[str, object],
@@ -549,7 +562,7 @@ def _apply_assignments(
     no-op's effective-change-set test uses). ``row`` is the row-form RESOLVED
     row the comparison reads from; ``base_row`` is what the eventual keyed
     write carries."""
-    member_columns = members(meta, entity)
+    member_columns = members(layout)
     new_row = dict(base_row)
     changed = False
     for member, value in assignments.items():

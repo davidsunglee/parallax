@@ -142,13 +142,15 @@ def test_readless_delete_where_buffers_one_statement_no_read() -> None:
     ]
 
 
-def test_readless_update_where_reorders_assignments_to_column_order() -> None:
-    # The SET clause orders by descriptor column order
+def test_readless_update_where_reorders_assignments_to_layout_slot_order() -> None:
+    # The SET clause orders by the target's Table Layout slots
     # (`lower_predicate_write`'s own `_ordered_cells` reuse), never the
     # AUTHORED assignment order -- reversing the two `.set(...)` calls below
-    # (price before name, the opposite of Order's own declared column order)
-    # emits BYTE-IDENTICAL SQL to the natural order (mirrors `test_insert_
-    # orders_columns_by_column_order_not_row_order`'s own insert-side proof).
+    # (price before name, the opposite of Order's own slot order) emits
+    # BYTE-IDENTICAL SQL to the natural order (mirrors `test_full_row_insert_
+    # emits_the_entity_layout_slot_selection`'s own insert-side proof).
+    # Eligibility is untouched: the target is still unversioned and
+    # non-temporal, so the write stays readless.
     forward_port = RecordingPort()
 
     def forward(tx: Transaction) -> None:

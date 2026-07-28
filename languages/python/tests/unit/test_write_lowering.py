@@ -29,10 +29,11 @@ from collections.abc import Mapping
 import pytest
 
 from parallax.conformance import models
-from parallax.core import inheritance, opt_lock
+from parallax.core import inheritance, opt_lock, storage_layout
 from parallax.core import op_algebra as oa
 from parallax.core.db_port import JsonDocument
 from parallax.core.dialect import POSTGRES, Dialect
+from parallax.core.metamodel import entity_by_name
 from parallax.core.model_formation import MetamodelValidationError
 from parallax.core.sql_gen import Statement
 from parallax.core.unit_work import (
@@ -102,6 +103,21 @@ def _flush_and_lower(
         for planned in plan.writes
         for lowered in lower_write(planned, model, POSTGRES, concurrency)
     ]
+
+
+def _layout_columns(meta: Metamodel, entity_name: str) -> tuple[str, ...]:
+    """The target Entity's applicable Table Layout slots, in canonical order."""
+    model = models.accepted_model(meta)
+    metadata = entity_by_name(model, entity_name)
+    assert metadata is not None
+    view = storage_layout.view(model).entity(metadata.identity)
+    assert view is not None
+    return tuple(slot.column.name for slot in view.columns)
+
+
+def _insert_columns(statement: Statement) -> tuple[str, ...]:
+    columns = statement.sql.split("(", 1)[1].split(")", 1)[0]
+    return tuple(column.strip() for column in columns.split(","))
 
 
 def test_non_temporal_write_requires_an_effective_table() -> None:
@@ -192,6 +208,82 @@ def test_value_object_document_binds_as_one_json_document_in_column_order() -> N
     assert statement.sql == "insert into customer(id, name, address) values (?, ?, ?)"
     assert statement.binds[:2] == (1, "Ada")
     assert statement.binds[2] == JsonDocument({"city": "Oslo"})
+
+
+# --------------------------------------------------------------------------- #
+# m-storage-layout: the one physical shape every keyed emission follows.       #
+# --------------------------------------------------------------------------- #
+@pytest.mark.parametrize(
+    ("meta", "entity", "row"),
+    [
+        (
+            ORDERS,
+            "Order",
+            {
+                "id": 1,
+                "name": "H",
+                "sku": "X",
+                "qty": 1,
+                "price": 1.0,
+                "active": True,
+                "orderedOn": "2024-07-01",
+            },
+        ),
+        (PAYMENT, "CardPayment", {"id": 1, "amount": 10.00, "cardNetwork": "Visa"}),
+        (
+            DOCUMENT,
+            "Invoice",
+            {"id": 1, "title": "T", "folderId": 9, "currency": "USD", "amountDue": 10.00},
+        ),
+    ],
+)
+def test_full_row_insert_emits_the_entity_layout_slot_selection(
+    meta: Metamodel, entity: str, row: dict[str, object]
+) -> None:
+    # A row naming every applicable member emits exactly the target's Table Layout
+    # slot selection, in slot order — a standalone Entity's own table, a
+    # table-per-hierarchy concrete's applicable slots of the SHARED table (the
+    # derived discriminator included, the sibling's own slot excluded), and a
+    # table-per-concrete-subtype concrete's complete ancestry in its own table.
+    statement = _lower(KeyedWrite("insert", entity, (row,)), meta)[0]
+    assert _insert_columns(statement) == _layout_columns(meta, entity)
+
+
+def test_update_sets_every_layout_slot_the_row_names_except_the_model_key() -> None:
+    # The SET clause is the layout slot order filtered to the row's members, minus
+    # the model key the predicate carries; the tag slot is a guard, never a SET
+    # column, even though it precedes both domain slots in the shared table.
+    statement = _lower(
+        KeyedWrite("update", "CardPayment", ({"id": 1, "amount": 130.00, "cardNetwork": "Visa"},)),
+        PAYMENT,
+    )[0]
+    assert _layout_columns(PAYMENT, "CardPayment") == ("id", "kind", "amount", "card_network")
+    assert statement.sql == (
+        "update payment set amount = ?, card_network = ? where id = ? and kind = ?"
+    )
+    assert statement.binds == (130.00, "Visa", 1, "card")
+
+
+def test_multi_row_insert_column_list_is_the_shared_layout_slot_filter() -> None:
+    # A collapsed multi-row INSERT emits ONE column list: the layout slot order
+    # filtered to the members every row carries, with the derived discriminator at
+    # its own slot in each value tuple.
+    statement = _lower(
+        KeyedWrite(
+            "insert",
+            "CardPayment",
+            (
+                {"id": 1, "amount": 10.00, "cardNetwork": "Visa"},
+                {"cardNetwork": "Amex", "amount": 20.00, "id": 2},
+            ),
+        ),
+        PAYMENT,
+    )[0]
+    assert _insert_columns(statement) == _layout_columns(PAYMENT, "CardPayment")
+    assert statement.sql == (
+        "insert into payment(id, kind, amount, card_network) values (?, ?, ?, ?), (?, ?, ?, ?)"
+    )
+    assert statement.binds == (1, "card", 10.00, "Visa", 2, "card", 20.00, "Amex")
 
 
 # --------------------------------------------------------------------------- #

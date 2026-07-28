@@ -19,6 +19,7 @@ import dataclasses
 import pytest
 
 from parallax.conformance import models
+from parallax.core import storage_layout
 from parallax.core.db_port import JsonDocument
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.metamodel import EntityIdentity, EntityMetadata, TemporalDimension
@@ -552,6 +553,77 @@ def test_temporal_close_requires_an_effective_table() -> None:
             "2024-10-01T00:00:00+00:00",
             None,
         )
+
+
+# --------------------------------------------------------------------------- #
+# m-storage-layout: milestone cells follow tiers; gates map identities to slots.#
+# --------------------------------------------------------------------------- #
+def test_milestone_insert_cells_follow_semantic_tier_order_not_declaration_order() -> None:
+    # SpotQuote declares `symbol` AFTER the root's two Transaction-Time bound
+    # Attributes, yet canonical tier order writes every domain slot ahead of the
+    # temporal bounds, so the chained milestone's cells are id, price, symbol,
+    # then in_z / out_z.
+    model, entity = _accepted("SpotQuote", QUOTE)
+    view = storage_layout.view(model).entity(entity.identity)
+    assert view is not None
+    assert tuple(slot.column.name for slot in view.columns) == (
+        "id",
+        "price",
+        "symbol",
+        "in_z",
+        "out_z",
+    )
+    insert = KeyedWrite("insert", "SpotQuote", ({"id": 1, "price": 50.00, "symbol": "ACME"},))
+    assert _lower(insert, QUOTE, "2024-01-01T00:00:00+00:00") == [
+        (
+            "insert into spot_quote(id, price, symbol, in_z, out_z) values (?, ?, ?, ?, ?)",
+            (1, 50.00, "ACME", "2024-01-01T00:00:00+00:00", "infinity"),
+        )
+    ]
+
+
+def test_milestone_close_gates_on_operation_identities_not_the_physical_key() -> None:
+    # The physical key spans the model key AND the Transaction-Time start, but a
+    # close still selects its own operation identities — the model key, the
+    # discriminator, the Transaction-Time end, and the observed start gate — and
+    # only maps each one onto its slot. The Valid-Time start it gates on is a
+    # physical-key slot; the Transaction-Time end it sets is not.
+    model, entity = _accepted("Bond", INSTRUMENT)
+    view = storage_layout.view(model).entity(entity.identity)
+    assert view is not None
+    assert tuple(slot.column.name for slot in view.layout.physical_primary_key) == (
+        "id",
+        "from_z",
+        "in_z",
+    )
+    terminate = KeyedWrite(
+        "terminate", "Bond", ({"id": 1},), valid_from="2024-06-01T00:00:00+00:00"
+    )
+    observation = Observation(
+        tx_start="2024-01-01T00:00:00+00:00",
+        valid_start="2024-01-01T00:00:00+00:00",
+        valid_end="infinity",
+        payload={"id": 1, "price": 100.00, "coupon": 5.00},
+    )
+    close = _lower(
+        terminate,
+        INSTRUMENT,
+        "2024-07-01T00:00:00+00:00",
+        observation=observation,
+        concurrency="optimistic",
+    )[0]
+    assert close == (
+        "update instrument set out_z = ? "
+        "where id = ? and kind = ? and out_z = ? and from_z = ? and in_z = ?",
+        (
+            "2024-07-01T00:00:00+00:00",
+            1,
+            "bond",
+            "infinity",
+            "2024-01-01T00:00:00+00:00",
+            "2024-01-01T00:00:00+00:00",
+        ),
+    )
 
 
 # --------------------------------------------------------------------------- #

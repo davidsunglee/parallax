@@ -26,6 +26,7 @@ from reference_harness.case_runner import (
     _assert_write_step_count,
     _has_temporal_gate,
     _read_asof_pins,
+    _write_column_order,
 )
 from reference_harness.ddl_builder import ddl_for
 
@@ -490,6 +491,56 @@ def test_tph_bitemporal_inactivation_is_tag_guarded() -> None:
     assert inactivate == "update instrument set out_z = ? where id = ? and kind = ? and out_z = ?"
     assert case.statement_binds(1)[1:3] == [1, "bond"]
     _assert_write_input_columns(case, "postgres")
+
+
+def test_tph_bitemporal_milestones_write_the_layout_slot_sequence() -> None:
+    # m-inheritance-094: both the opening rectangle and the chained head write Bond's
+    # applicable slots of the shared `instrument` table in one canonical sequence —
+    # identity, discriminator, the root-owned then subtype-owned domain slots, and
+    # finally the four temporal bounds. The sibling Stock's `ticker` slot is not
+    # applicable to a Bond row and never enters the write shape, while the
+    # inactivating close between them touches only the Transaction-Time end column.
+    case = _inheritance_case("m-inheritance-094")
+    order = _write_column_order(case, case.model.entity("Bond"))
+    assert order == ("id", "kind", "price", "coupon", "from_z", "thru_z", "in_z", "out_z")
+    opening, close, head = case.golden_statements("postgres")
+    columns = ", ".join(order)
+    assert opening.startswith(f"insert into instrument({columns}) values")
+    assert head.startswith(f"insert into instrument({columns}) values")
+    assert close == "update instrument set out_z = ? where id = ? and kind = ? and out_z = ?"
+    # Every chained INSERT opens at the transaction instant with an open upper bound.
+    in_z, out_z = order.index("in_z"), order.index("out_z")
+    for index in (0, 2):
+        binds = case.statement_binds(index)
+        assert binds[in_z] == case.write_sequence[0 if index == 0 else 1]["at"]
+        assert binds[out_z] == "infinity"
+
+
+def test_bitemporal_committed_rows_cover_every_shared_table_slot() -> None:
+    # The committed rectangles are graded over the shared Table Layout's COMPLETE slot
+    # sequence, so a Bond row still records the sibling-only `ticker` column as null
+    # rather than omitting it.
+    case = _inheritance_case("m-inheritance-094")
+    layout = case.model.storage_layout.table("instrument")
+    assert layout is not None
+    columns = {slot.column for slot in layout.columns}
+    assert "ticker" in columns
+    for row in case.expected_table_state["instrument"]:
+        assert set(row) == columns
+        assert row["ticker"] is None
+
+
+def test_tpcs_bitemporal_milestones_write_each_concrete_table_layout() -> None:
+    # m-inheritance-095: a table-per-concrete-subtype concrete writes its OWN table's
+    # complete ancestry-derived sequence with no discriminator slot, and its committed
+    # rows cover exactly that table's slots.
+    case = _inheritance_case("m-inheritance-095")
+    order = _write_column_order(case, case.model.entity("DepositRate"))
+    assert order == ("id", "amount", "grade", "from_z", "thru_z", "in_z", "out_z")
+    opening = case.golden_statements("postgres")[0]
+    assert opening.startswith(f"insert into deposit_rate({', '.join(order)}) values")
+    for row in case.expected_table_state["deposit_rate"]:
+        assert set(row) == set(order)
 
 
 def test_tph_temporal_close_missing_tag_guard_is_rejected() -> None:

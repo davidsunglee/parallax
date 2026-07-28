@@ -71,6 +71,31 @@ def test_commit_flushes_the_buffer_through_the_lowering_seam() -> None:
     ]
 
 
+def test_keyed_insert_through_the_verb_follows_the_entity_layout_slot_order() -> None:
+    # The developer verb reaches the SAME lowering seam the conformance engine
+    # does, so a table-per-hierarchy concrete's INSERT emits its applicable
+    # shared-table slots in canonical Table order — the derived `kind`
+    # discriminator at its Discriminator-tier position between the model key and
+    # the domain slots, never appended after them and never authored.
+    port = RecordingPort()
+    db_for(PAYMENT, port).transact(
+        lambda tx: tx._buffer(  # pyright: ignore[reportPrivateUsage] - unit test drives the transaction's private buffer seam
+            "insert", "CardPayment", {"cardNetwork": "Visa", "id": 10, "amount": Decimal("200.00")}
+        )
+    )
+    assert port.ops == [
+        ("begin",),
+        (
+            "write",
+            POSTGRES.to_driver_sql(
+                "insert into payment(id, kind, amount, card_network) values (?, ?, ?, ?)"
+            ),
+            (10, "card", Decimal("200.00"), "Visa"),
+        ),
+        ("commit",),
+    ]
+
+
 def test_update_lowers_to_its_keyed_dml() -> None:
     # m-unit-work-005, migrated to the m-opt-lock observation flow: a keyed
     # update (SET the non-PK members, WHERE the
