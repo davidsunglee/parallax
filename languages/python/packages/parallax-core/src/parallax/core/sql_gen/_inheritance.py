@@ -62,6 +62,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Literal, cast
 
+from parallax.core.base import NeutralType
 from parallax.core.dialect import Dialect, LockMode
 from parallax.core.inheritance import (
     InheritanceEntityView,
@@ -72,17 +73,29 @@ from parallax.core.inheritance import (
 from parallax.core.metamodel import (
     AbstractRoot,
     AbstractSubtype,
+    AttributeIdentity,
     AttributeMetadata,
     EntityIdentity,
     EntityMetadata,
     RelativeEntityReference,
     TablePerHierarchy,
+    ValueObjectIdentity,
     ValueObjectMetadata,
     resolve_entity_reference,
 )
 from parallax.core.op_algebra import Narrow, Operation, OrderKey
 from parallax.core.sql_gen._context import ColumnScope as _ColumnScope
 from parallax.core.sql_gen._context import SqlGenError
+from parallax.core.sql_gen._context import table_layout as _table_layout
+from parallax.core.storage_layout import (
+    ColumnSlot,
+    ColumnTier,
+    InheritanceDiscriminator,
+    PositionBranch,
+    PositionLayoutView,
+    StorageLayoutFacet,
+    TableLayout,
+)
 
 
 # --------------------------------------------------------------------------- #
@@ -98,26 +111,12 @@ def entity_view(facet: InheritanceFacet, entity: EntityIdentity) -> InheritanceE
     return view
 
 
-def position_table(facet: InheritanceFacet, entity: EntityIdentity) -> str:
-    """The one physical table a read of ``entity``'s own rows selects from.
-
-    Row-bearing by construction at every call site: a table-per-hierarchy
-    position reads the root's shared table and a concrete subtype reads its own,
-    so only a table-per-concrete-subtype abstract position has none — and that
-    position never reaches a single-table read, it fans out to its concretes.
-    """
-    container = entity_view(facet, entity).container
-    if container is None:  # pragma: no cover - an abstract position never reads one table
-        raise SqlGenError(f"{entity.canonical}: this inheritance position declares no table")
-    return container.name
-
-
-def tag_column(view: InheritanceEntityView) -> str:
-    """The table-per-hierarchy tag column ``view``'s family discriminates by."""
-    column = view.tag_column
-    if column is None:  # pragma: no cover - every table-per-hierarchy view carries one
-        raise SqlGenError(f"{view.entity.canonical}: this family declares no tag column")
-    return column
+def tag_column(layout: TableLayout, root: EntityIdentity) -> str:
+    """The physical discriminator Column ``root``'s family discriminates by."""
+    slot = layout.contribution(InheritanceDiscriminator(root))
+    if slot is None:  # pragma: no cover - every table-per-hierarchy layout carries one
+        raise SqlGenError(f"{root.canonical}: this family's Table Layout has no discriminator")
+    return slot.column.name
 
 
 def tag_value(facet: InheritanceFacet, concrete: EntityIdentity) -> str:
@@ -358,46 +357,105 @@ def tag_guard(
 # guard's inputs, and the row transform. Nothing here holds a `Ctx`, a bind     #
 # list, or an alias.                                                           #
 # --------------------------------------------------------------------------- #
-def _single_table_projection(
-    dialect: Dialect,
-    alias: str,
-    columns: Sequence[AttributeMetadata],
-    projected_tag_column: str | None,
+@dataclass(frozen=True, slots=True)
+class ProjectedColumn:
+    """One selected physical Column and the seam the dialect renders it through.
+
+    ``type`` is the contributing Attribute's neutral type, or ``None`` for a slot
+    with no scalar rendering seam — a top-level Value Object document column or
+    the framework-owned discriminator — which projects as a plain
+    alias-qualified reference.
+    """
+
+    column: str
+    type: NeutralType | None
+
+
+def position_slots(
+    layout: TableLayout, position: Sequence[EntityIdentity]
+) -> tuple[ColumnSlot, ...]:
+    """``layout``'s slots applicable to ``position``, in canonical Table order."""
+    selected = frozenset(position)
+    return tuple(slot for slot in layout.columns if slot.applicable_entities & selected)
+
+
+def position_documents(
+    facet: InheritanceFacet,
+    storage: StorageLayoutFacet,
+    position: Sequence[EntityIdentity],
+) -> tuple[ValueObjectMetadata, ...]:
+    """The `Document` tier contributors ``position``'s rows can carry.
+
+    The compiled read carries this so materialization decodes documents from the
+    contributors the position actually has, in the Position Layout's own order,
+    rather than re-projecting the family superset from a round-tripped name. It
+    is keyed to the position and not to the read's result form: a row-form read
+    projects no document column, yet its rows still render every applicable
+    document key as absent.
+    """
+    view = facet.position(tuple(position))
+    layout_view = storage.position(tuple(position))
+    if view is None or layout_view is None:  # pragma: no cover - a resolved position is total
+        return ()
+    by_identity = {member.identity: member for member in view.superset_value_objects}
+    return tuple(
+        by_identity[column.contributor]
+        for column in layout_view.columns
+        if column.tier is ColumnTier.DOCUMENT and column.contributor in by_identity
+    )
+
+
+def select_projection(
+    slots: Sequence[ColumnSlot],
+    attributes: Sequence[AttributeMetadata],
     value_objects: Sequence[ValueObjectMetadata],
+    *,
+    project_discriminator: bool,
+) -> tuple[ProjectedColumn, ...]:
+    """The m-sql projection order for a single-Table read, taken from ``slots``.
+
+    ``slots`` is already the canonical `Identity`, `Discriminator`, `Domain`,
+    `Temporal`, `Audit`, `Document` tier sequence restricted to the read's
+    position, so this selects rather than orders: a contributor absent from
+    ``attributes`` / ``value_objects`` is not projected, which is how a row-form
+    read omits every `Document` slot. The discriminator is projected iff the
+    read's own `targetEntity` is abstract, independently of what the position
+    resolved to, and keeps its own tier position rather than trailing the
+    scalars.
+    """
+    types: dict[object, NeutralType | None] = {
+        attribute.identity: attribute.type for attribute in attributes
+    }
+    types.update({member.identity: None for member in value_objects})
+    selected: list[ProjectedColumn] = []
+    for slot in slots:
+        if isinstance(slot.contributor, InheritanceDiscriminator):
+            if project_discriminator:
+                selected.append(ProjectedColumn(slot.column.name, None))
+            continue
+        if slot.contributor not in types:
+            continue
+        selected.append(ProjectedColumn(slot.column.name, types[slot.contributor]))
+    return tuple(selected)
+
+
+def render_projection(
+    dialect: Dialect, alias: str, columns: Sequence[ProjectedColumn]
 ) -> tuple[str, tuple[object, ...]]:
-    """The m-sql projection SLOT ORDER for a single-table family read, once.
+    """Render one select list and its ordered projection binds against ``alias``.
 
-    * **Slot 1** — the resolved position's stable superset columns, each through
-      the dialect's own select-list expression (a `bytes` column projects
-      `encode(col, ?)`, which is where a projection BIND comes from and why
-      projection binds lead the statement's bind tuple).
-    * **Slot 2** — the raw tag column, projected iff the
-      read's OWN `targetEntity` is abstract, NEVER derived from the resolved
-      position. ``None`` is "this read projects no tag": a table-per-hierarchy
-      read whose own `targetEntity` is concrete, and every
-      table-per-concrete-subtype single-concrete read, which reads a table that
-      carries no tag column at all.
-    * **Slot 4** — the value-object document columns, LAST among all columns, in
-      declared order.
-
-    Both single-table family plans render through here instead of each spelling
-    the order out. That order is contractual, so two copies means a future
-    slot-order correction can be applied to one and missed in the other — the
-    duplication's real cost, well before its size. :class:`TpcsBranchPlan`
-    deliberately does NOT share it: a `union all` branch projects `cast(null as
-    …)` placeholders for the superset columns it does not own plus a slot-3
-    variant-name literal, which is a genuinely different list rather than this
-    one minus a slot.
+    A `bytes` column projects `encode(col, ?)`, which is where a projection BIND
+    comes from and why projection binds lead the statement's bind tuple.
     """
     exprs: list[str] = []
     binds: list[object] = []
-    for attribute in columns:
-        expr, extra = dialect.project(alias, attribute.storage.name, attribute.type)
+    for projected in columns:
+        if projected.type is None:
+            exprs.append(dialect.qualified(alias, projected.column))
+            continue
+        expr, extra = dialect.project(alias, projected.column, projected.type)
         exprs.append(expr)
         binds.extend(extra)
-    if projected_tag_column is not None:
-        exprs.append(dialect.qualified(alias, projected_tag_column))
-    exprs.extend(dialect.qualified(alias, member.storage.name) for member in value_objects)
     return ", ".join(exprs), tuple(binds)
 
 
@@ -410,31 +468,26 @@ class TphPlan:
     SIZE — one concrete lowers to `=` whether reached by a direct concrete
     `targetEntity` or a narrow, several lower to `in`, and only an untouched
     abstract-**root** `targetEntity` (no top-level narrow at all) carries no tag
-    predicate at all, which is ``None``. The raw tag column PROJECTION
-    (:attr:`projected_tag_column`, slot 2) is instead keyed to whether
-    `targetEntity` itself is abstract — independent of the narrow's resolved
-    cardinality (`m-inheritance-012`: `Animal` narrowed to the single concrete
-    `Dog` still projects `t0.kind` and still carries `familyVariant`, because the
-    caller queried the polymorphic `Animal` position). These are deliberately two
-    different conditions, and each is spelled as its OWN optional so neither can
-    be read off the other: a bare abstract root projects the tag it does not
+    predicate at all, which is ``None``. Whether the discriminator slot appears
+    in :attr:`columns` is instead keyed to whether `targetEntity` itself is
+    abstract — independent of the narrow's resolved cardinality
+    (`m-inheritance-012`: `Animal` narrowed to the single concrete `Dog` still
+    projects `t0.kind` and still carries `familyVariant`, because the caller
+    queried the polymorphic `Animal` position). These are deliberately two
+    different conditions: a bare abstract root projects the tag it does not
     guard on, and a concrete target guards on the tag it does not project.
     """
 
     table: str
     position: tuple[EntityIdentity, ...]
-    columns: tuple[AttributeMetadata, ...]
-    projected_tag_column: str | None
-    value_objects: tuple[ValueObjectMetadata, ...]
+    columns: tuple[ProjectedColumn, ...]
     inner: Operation
     tag: TagPredicate | None
     transform: RowTransform
 
     def projection(self, dialect: Dialect, alias: str) -> tuple[str, tuple[object, ...]]:
         """The select list and its ordered projection binds, against ``alias``."""
-        return _single_table_projection(
-            dialect, alias, self.columns, self.projected_tag_column, self.value_objects
-        )
+        return render_projection(dialect, alias, self.columns)
 
 
 @dataclass(frozen=True, slots=True)
@@ -450,45 +503,62 @@ class TpcsSinglePlan:
 
     table: str
     position: tuple[EntityIdentity, ...]
-    columns: tuple[AttributeMetadata, ...]
-    value_objects: tuple[ValueObjectMetadata, ...]
+    columns: tuple[ProjectedColumn, ...]
     inner: Operation
     transform: RowTransform
 
     def projection(self, dialect: Dialect, alias: str) -> tuple[str, tuple[object, ...]]:
         """The select list and its ordered projection binds, against ``alias``.
 
-        Slot 2 is always absent: this reads the resolved concrete's OWN table,
-        which declares no tag column to project.
+        The discriminator is always absent: this reads the resolved concrete's
+        OWN table, whose layout carries no discriminator slot.
         """
-        return _single_table_projection(dialect, alias, self.columns, None, self.value_objects)
+        return render_projection(dialect, alias, self.columns)
+
+
+@dataclass(frozen=True, slots=True)
+class BranchColumn:
+    """One Position Layout contributor as one `union all` branch renders it.
+
+    ``owned`` is that branch's slot presence taken from the Position Layout's own
+    slot-or-absence mapping; an unowned contributor renders the typed `NULL`
+    placeholder under the same allocated ``result_alias`` its owning branches use.
+    """
+
+    column: str
+    type: NeutralType
+    max_length: int | None
+    owned: bool
+    result_alias: str
 
 
 @dataclass(frozen=True, slots=True)
 class TpcsBranchPlan:
-    """One `union all` branch: its own table, and the shared superset column list
-    paired with whether THIS branch physically owns each column."""
+    """One `union all` branch: its own table, and the Position Layout's one
+    logical contributor sequence paired with this branch's slot presence."""
 
     identity: EntityIdentity
     variant: str
     table: str
-    columns: tuple[tuple[AttributeMetadata, bool, str], ...]
+    columns: tuple[BranchColumn, ...]
 
     def projection(self, dialect: Dialect, alias: str) -> tuple[str, tuple[object, ...]]:
         exprs: list[str] = []
         binds: list[object] = []
-        for attribute, owned, result_alias in self.columns:
-            if owned:
-                expr, extra = dialect.project(alias, attribute.storage.name, attribute.type)
+        for branch_column in self.columns:
+            if branch_column.owned:
+                expr, extra = dialect.project(alias, branch_column.column, branch_column.type)
                 exprs.append(
-                    expr if result_alias == attribute.storage.name else f"{expr} {result_alias}"
+                    expr
+                    if branch_column.result_alias == branch_column.column
+                    else f"{expr} {branch_column.result_alias}"
                 )
                 binds.extend(extra)
             else:
-                cast_type = dialect.null_cast(attribute.type, attribute.max_length)
-                exprs.append(f"cast(null as {cast_type}) {result_alias}")
-        # Slot 3 (the settled TPH/TPCS asymmetry): TPCS projects the variant NAME
-        # literal per branch directly — there is no tag column to derive it from.
+                cast_type = dialect.null_cast(branch_column.type, branch_column.max_length)
+                exprs.append(f"cast(null as {cast_type}) {branch_column.result_alias}")
+        # The settled TPH/TPCS asymmetry: TPCS projects the variant NAME literal
+        # per branch directly — there is no discriminator slot to derive it from.
         exprs.append(f"'{self.variant}' family_variant")
         return ", ".join(exprs), tuple(binds)
 
@@ -534,6 +604,7 @@ def plan_inheritance_read(
     order_keys: tuple[OrderKey, ...],
     limit: int | None,
     facet: InheritanceFacet,
+    storage: StorageLayoutFacet,
     instance_form: bool,
     lock: LockMode | None,
 ) -> TphPlan | TpcsSinglePlan | TpcsUnionPlan:
@@ -552,8 +623,12 @@ def plan_inheritance_read(
     view = entity_view(facet, entity.identity)
     position, inner, narrowed = _read_position(view, predicate, facet)
     if isinstance(view.strategy, TablePerHierarchy):
-        return _plan_tph_read(entity, view, position, inner, facet, instance_form, narrowed)
-    return _plan_tpcs_read(position, inner, distinct, order_keys, limit, facet, instance_form, lock)
+        return _plan_tph_read(
+            entity, view, position, inner, facet, storage, instance_form, narrowed
+        )
+    return _plan_tpcs_read(
+        position, inner, distinct, order_keys, limit, facet, storage, instance_form, lock
+    )
 
 
 def _read_position(
@@ -578,29 +653,34 @@ def _plan_tph_read(
     position: InheritancePositionView,
     inner: Operation,
     facet: InheritanceFacet,
+    storage: StorageLayoutFacet,
     instance_form: bool,
     narrowed: bool,
 ) -> TphPlan:
-    tag_col = tag_column(view)
+    layout = _table_layout(storage, facet, view.entity)
+    tag_col = tag_column(layout, view.root)
     abstract_target = isinstance(entity.inheritance, (AbstractRoot, AbstractSubtype))
     # Only an UNTOUCHED abstract root queries the whole family, so only it carries
     # no tag predicate at all.
     guarded = narrowed or not isinstance(entity.inheritance, AbstractRoot)
 
-    # `familyVariant` rides the SAME condition as the slot-2 tag projection: the
-    # transform reads the column this read projects, or there is no column to read
-    # and nothing to materialize.
+    # `familyVariant` rides the SAME condition as the discriminator projection:
+    # the transform reads the column this read projects, or there is no column to
+    # read and nothing to materialize.
     transform: RowTransform = (
         _TagTransform(tag_col, family_tag_pairs(facet, view.root))
         if abstract_target
         else IDENTITY_TRANSFORM
     )
     return TphPlan(
-        table=position_table(facet, view.entity),
+        table=layout.table.name,
         position=tuple(position.concrete_subtypes),
-        columns=tuple(position.superset_attributes),
-        projected_tag_column=tag_col if abstract_target else None,
-        value_objects=tuple(position.superset_value_objects) if instance_form else (),
+        columns=select_projection(
+            position_slots(layout, position.concrete_subtypes),
+            position.superset_attributes,
+            position.superset_value_objects if instance_form else (),
+            project_discriminator=abstract_target,
+        ),
         inner=inner,
         tag=TagPredicate(tag_col, tuple(position.concrete_subtypes)) if guarded else None,
         transform=transform,
@@ -614,6 +694,7 @@ def _plan_tpcs_read(
     order_keys: tuple[OrderKey, ...],
     limit: int | None,
     facet: InheritanceFacet,
+    storage: StorageLayoutFacet,
     instance_form: bool,
     lock: LockMode | None,
 ) -> TpcsSinglePlan | TpcsUnionPlan:
@@ -634,11 +715,16 @@ def _plan_tpcs_read(
     concretes = tuple(position.concrete_subtypes)
 
     if len(concretes) == 1:
+        layout = _table_layout(storage, facet, concretes[0])
         return TpcsSinglePlan(
-            table=position_table(facet, concretes[0]),
+            table=layout.table.name,
             position=concretes,
-            columns=tuple(position.superset_attributes),
-            value_objects=tuple(position.superset_value_objects) if instance_form else (),
+            columns=select_projection(
+                position_slots(layout, concretes),
+                position.superset_attributes,
+                position.superset_value_objects if instance_form else (),
+                project_discriminator=False,
+            ),
             inner=inner,
             # A single resolved concrete projects neither a tag column nor a
             # variant literal — the settled asymmetry with table-per-hierarchy,
@@ -669,46 +755,42 @@ def _plan_tpcs_read(
             "BEARING family (the VO-free shape is witnessed, m-inheritance-109)"
         )
 
-    columns = position.superset_attributes
-    column_counts: dict[str, int] = {}
-    for attribute in columns:
-        column_counts[attribute.storage.name] = column_counts.get(attribute.storage.name, 0) + 1
-    reserved_aliases = {attribute.storage.name for attribute in columns} | {"family_variant"}
-    allocated_aliases = set(reserved_aliases)
-    next_internal_alias = 0
-    result_aliases: list[str] = []
-    for attribute in columns:
-        authored_alias = attribute.storage.name
-        if column_counts[authored_alias] == 1 and authored_alias != "family_variant":
-            result_aliases.append(authored_alias)
-            continue
-        while f"parallax_attr_{next_internal_alias}" in allocated_aliases:
-            next_internal_alias += 1
-        internal_alias = f"parallax_attr_{next_internal_alias}"
-        allocated_aliases.add(internal_alias)
-        result_aliases.append(internal_alias)
-        next_internal_alias += 1
-    branches: list[TpcsBranchPlan] = []
-    for concrete in concretes:
-        owned = frozenset(entity_view(facet, concrete).ancestry)
-        branches.append(
-            TpcsBranchPlan(
-                identity=concrete,
-                variant=family_variant_name(facet, concrete),
-                table=position_table(facet, concrete),
-                # A superset Attribute names its DECLARING position, and a branch
-                # physically owns exactly the columns its own ancestry declares —
-                # which the facet's chain already ends with the concrete itself.
-                columns=tuple(
-                    (attribute, attribute.identity.entity in owned, result_alias)
-                    for attribute, result_alias in zip(columns, result_aliases, strict=True)
-                ),
-            )
+    layout_position = position_layout(storage, concretes)
+    scalars = tuple(
+        index
+        for index, column in enumerate(layout_position.columns)
+        if column.tier is not ColumnTier.DOCUMENT
+    )
+    by_identity: dict[AttributeIdentity | ValueObjectIdentity, AttributeMetadata] = {
+        attribute.identity: attribute for attribute in position.superset_attributes
+    }
+    attributes = tuple(by_identity[layout_position.columns[index].contributor] for index in scalars)
+    spellings = tuple(_contributor_column(layout_position.branches, index) for index in scalars)
+    result_aliases = _result_aliases(spellings)
+    branches = tuple(
+        TpcsBranchPlan(
+            identity=branch.concrete_entities[0],
+            variant=family_variant_name(facet, branch.concrete_entities[0]),
+            table=branch.layout.table.name,
+            columns=tuple(
+                BranchColumn(
+                    column=spelling,
+                    type=attribute.type,
+                    max_length=attribute.max_length,
+                    owned=branch.slots[index] is not None,
+                    result_alias=result_alias,
+                )
+                for index, attribute, spelling, result_alias in zip(
+                    scalars, attributes, spellings, result_aliases, strict=True
+                )
+            ),
         )
+        for branch in layout_position.branches
+    )
     # Every branch projects its own `family_variant` literal, so the transform is
     # a plain rename — no tag map, no metamodel lookup.
     return TpcsUnionPlan(
-        branches=tuple(branches),
+        branches=branches,
         position=concretes,
         inner=inner,
         transform=_LiteralTransform(
@@ -718,9 +800,9 @@ def _plan_tpcs_read(
                 (
                     branch.variant,
                     tuple(
-                        (result_alias, attribute.storage.name)
-                        for attribute, owned, result_alias in branch.columns
-                        if owned
+                        (branch_column.result_alias, branch_column.column)
+                        for branch_column in branch.columns
+                        if branch_column.owned
                     ),
                 )
                 for branch in branches
@@ -730,8 +812,67 @@ def _plan_tpcs_read(
     )
 
 
+def position_layout(
+    storage: StorageLayoutFacet, concretes: Sequence[EntityIdentity]
+) -> PositionLayoutView:
+    """``concretes``' one logical contributor sequence and per-Table branch map."""
+    view = storage.position(tuple(concretes))
+    if view is None:  # pragma: no cover - a validated position is one canonical family
+        raise SqlGenError(
+            f"position {sorted(identity.canonical for identity in concretes)} "
+            "has no Position Layout"
+        )
+    return view
+
+
+def _contributor_column(branches: Sequence[PositionBranch], index: int) -> str:
+    """One logical contributor's physical Column spelling across ``branches``.
+
+    An inherited contributor occupies one Column occurrence per concrete Table
+    and every occurrence carries the declaration's own spelling, so the first
+    branch that owns the slot fixes the result-alias candidate for all of them.
+    """
+    for branch in branches:
+        slot = branch.slots[index]
+        if slot is not None:
+            return slot.column.name
+    raise SqlGenError(  # pragma: no cover - a Position Layout contributor is owned somewhere
+        "a table-per-concrete-subtype position contributor occupies no branch Column"
+    )
+
+
+def _result_aliases(spellings: Sequence[str]) -> tuple[str, ...]:
+    """Hygienic result aliases for one union's logical contributor sequence.
+
+    A contributor keeps its own physical spelling only when that spelling occurs
+    once across the position and is not the synthetic `family_variant` carrier;
+    every other contributor takes the first `parallax_attr_N` outside the
+    complete reservation set, so an authored `parallax_attr_0` stays reserved.
+    """
+    counts: dict[str, int] = {}
+    for spelling in spellings:
+        counts[spelling] = counts.get(spelling, 0) + 1
+    allocated = set(spellings) | {"family_variant"}
+    next_internal = 0
+    aliases: list[str] = []
+    for spelling in spellings:
+        if counts[spelling] == 1 and spelling != "family_variant":
+            aliases.append(spelling)
+            continue
+        while f"parallax_attr_{next_internal}" in allocated:
+            next_internal += 1
+        internal = f"parallax_attr_{next_internal}"
+        allocated.add(internal)
+        aliases.append(internal)
+        next_internal += 1
+    return tuple(aliases)
+
+
 def plan_branch_narrow(
-    facet: InheritanceFacet, entity: EntityMetadata, narrow: Narrow
+    facet: InheritanceFacet,
+    storage: StorageLayoutFacet,
+    entity: EntityMetadata,
+    narrow: Narrow,
 ) -> BranchNarrowPlan:
     """Plan a mid-predicate `narrow` (m-sql "Grouped branch predicates").
 
@@ -745,7 +886,8 @@ def plan_branch_narrow(
             "family has no goldened lowering yet"
         )
     position = narrow_position(facet, entity.identity, narrow.to)
+    layout = _table_layout(storage, facet, entity.identity)
     return BranchNarrowPlan(
         operand=narrow.operand,
-        tag=TagPredicate(tag_column(view), tuple(position.concrete_subtypes)),
+        tag=TagPredicate(tag_column(layout, view.root), tuple(position.concrete_subtypes)),
     )

@@ -672,6 +672,12 @@
       },
       "valueObject": {}
     },
+    "parallax.compatibility.LayoutMeterReading": {
+      "attribute": {
+        "celsius": "celsius"
+      },
+      "valueObject": {}
+    },
     "parallax.compatibility.LayoutPayment": {
       "attribute": {
         "amount": "amount",
@@ -687,6 +693,17 @@
       },
       "valueObject": {
         "contact": "contact"
+      }
+    },
+    "parallax.compatibility.LayoutReading": {
+      "attribute": {
+        "id": "id",
+        "sensor": "sensor",
+        "tx_end": "out_z",
+        "tx_start": "in_z"
+      },
+      "valueObject": {
+        "probe": "probe"
       }
     },
     "parallax.compatibility.LayoutReport": {

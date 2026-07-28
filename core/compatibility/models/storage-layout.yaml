@@ -17,6 +17,11 @@
 #   LayoutReport       (root, ABSTRACT, TPCS)— tableless and rowless; owns id + title
 #     LayoutAudit      (concrete-subtype)    — its own `layout_audit` table
 #     LayoutSurvey     (concrete-subtype)    — its own `layout_survey` table
+#   LayoutReading      (root, ABSTRACT, TPH) — owns the shared `layout_reading`
+#                                               table, the `kind` tag column, a
+#                                               Transaction-Time dimension, and one
+#                                               top-level document
+#     LayoutMeterReading (concrete-subtype)  — tagValue 'meter'; adds `celsius`
 #
 # The two required subtype-only members are the shared-table nullability witness:
 # a cash row has no card network and a card row has no tendered amount, so both
@@ -28,6 +33,12 @@
 # map to the physical column `detail`. Their concrete tables are structurally
 # different, so the reuse is legal; co-locating the same two claims in one table
 # would be a physical Column collision instead.
+#
+# LayoutReading interleaves its declarations across semantic tiers: the root
+# declares the domain `sensor` before its two Transaction-Time bound Attributes,
+# and the concrete subtype's domain `celsius` is declared after both of them.
+# Canonical tier order still places every domain slot ahead of every temporal
+# slot, its audit tier is empty, and the `probe` document occupies the final slot.
 #
 # Row data lives in the sibling fixtures/storage-layout.yaml, keyed per row-owning
 # Entity.
@@ -124,3 +135,42 @@ entities:
         type: string
         maxLength: 32
         column: detail
+  - name: LayoutReading
+    namespace: parallax.compatibility
+    table: layout_reading
+    inheritance:
+      role: root
+      strategy: table-per-hierarchy
+      tag:
+        column: kind
+    attributes:
+      - name: id
+        type: int64
+        primaryKey: true
+      - name: sensor
+        type: string
+        maxLength: 16
+      - name: tx_start
+        type: timestamp
+        column: in_z
+      - name: tx_end
+        type: timestamp
+        column: out_z
+    asOfAxes:
+      - dimension: transactionTime
+        startAttribute: tx_start
+        endAttribute: tx_end
+    valueObjects:
+      - name: probe
+        attributes:
+          - name: model
+            type: string
+  - name: LayoutMeterReading
+    namespace: parallax.compatibility
+    inheritance:
+      role: concrete-subtype
+      parent: LayoutReading
+      tagValue: meter
+    attributes:
+      - name: celsius
+        type: decimal(18,2)

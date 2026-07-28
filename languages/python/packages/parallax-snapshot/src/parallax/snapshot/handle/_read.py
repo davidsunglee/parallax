@@ -249,6 +249,7 @@ def find(
         resolved_position=root_compiled.resolved_position,
         resolved_entities=[row.resolved_entity for row in root_materialized],
         family_variants=[row.family_variant for row in root_materialized],
+        documents=root_compiled.documents,
     )
     all_nodes: list[tuple[str, materialize.Node]] = [(target, node) for node in root_nodes]
 
@@ -293,6 +294,7 @@ def find(
             resolved_position=child_compiled.resolved_position,
             resolved_entities=[row.resolved_entity for row in child_materialized],
             family_variants=[row.family_variant for row in child_materialized],
+            documents=child_compiled.documents,
         )
         level_rows.append(rows)
         level_nodes.append(nodes)
@@ -354,6 +356,7 @@ def find_history(
                     resolved_position=compiled.resolved_position,
                     resolved_entities=[row.resolved_entity for row in groups[edge]],
                     family_variants=[row.family_variant for row in groups[edge]],
+                    documents=compiled.documents,
                 )
             ),
         )

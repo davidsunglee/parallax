@@ -11,6 +11,11 @@
 #
 # LayoutProfile row 2 omits the optional `note`, exercising each surface's
 # omitted-cell policy.
+#
+# The LayoutMeterReading rows are two Transaction-Time milestones sharing one
+# business key: the superseded milestone closed at 2024-02-01 and the current one
+# open at infinity. A defaulted-Latest read therefore observes exactly one row and
+# the physical key spans the model key plus the Transaction-Time start.
 LayoutProfile:
   - id: 1
     label: Primary
@@ -38,3 +43,18 @@ LayoutSurvey:
   - id: 1
     title: Annual survey
     respondent: Bjorn
+LayoutMeterReading:
+  - id: 1
+    sensor: north
+    celsius: 20.00
+    tx_start: "2024-01-01T00:00:00+00:00"
+    tx_end: "2024-02-01T00:00:00+00:00"
+    probe:
+      model: TH-1
+  - id: 1
+    sensor: north
+    celsius: 21.50
+    tx_start: "2024-02-01T00:00:00+00:00"
+    tx_end: infinity
+    probe:
+      model: TH-2

@@ -16,9 +16,12 @@ from typing import Any, cast
 import pytest
 
 from parallax.conformance import models
+from parallax.core import op_algebra as oa
 from parallax.core.deep_fetch import FetchLevel, LevelRef, RootRef
-from parallax.core.metamodel import EntityIdentity
+from parallax.core.dialect import POSTGRES
+from parallax.core.metamodel import EntityIdentity, EntityMetadata
 from parallax.core.model_formation import MetamodelValidationError
+from parallax.core.sql_gen import compile_read
 from parallax.descriptor._records import (
     Attribute,
     Entity,
@@ -35,6 +38,11 @@ from parallax.snapshot.materialize import (
 )
 
 pytestmark = pytest.mark.unit
+
+
+def _entity(model: Any, name: str) -> EntityMetadata:
+    return next(entity for entity in model.entities if entity.identity.name == name)
+
 
 _MODELS = models.load_models()
 ORDERS = models.accepted_model(_MODELS["orders"])
@@ -273,6 +281,36 @@ def test_materialize_root_threads_the_narrow_into_resolved_entity() -> None:
     nodes = asm.materialize_root("FinancialDocument", [_INVOICE_ROW], narrow_to=("Invoice",))
     assert nodes[0].resolved_entity == EntityIdentity("parallax.compatibility", "Invoice")
     assert "familyVariant" not in nodes[0].fields
+
+
+def test_materialize_root_decodes_documents_from_the_compiled_provenance() -> None:
+    # The compiled read decides document provenance once, where the projection
+    # was decided, and carries it here: the assembler decodes exactly those
+    # contributors instead of re-projecting a family superset of its own, so a
+    # row whose document column is absent still renders the declared shape.
+    customer = models.accepted_model(_MODELS["customer"])
+    compiled = compile_read(
+        oa.All(), customer, POSTGRES, _entity(customer, "Customer"), result_form="instance"
+    )
+    assert [member.storage.name for member in compiled.documents] == ["address"]
+    asm = Assembler(meta=customer)
+    nodes = asm.materialize_root(
+        "Customer",
+        [{"id": 1, "name": "Ada", "address": {"city": "Oslo"}}],
+        resolved_position=compiled.resolved_position,
+        documents=compiled.documents,
+    )
+    assert _doc(nodes[0].value_objects, "address")["city"] == "Oslo"
+    assert "address" not in nodes[0].fields
+
+
+def test_materialize_root_omitted_documents_falls_back_to_the_family_projection() -> None:
+    # The defensive direct-call route: an omitted `documents` reproduces the
+    # Inheritance Facet projection the compiled read would have carried.
+    customer = models.accepted_model(_MODELS["customer"])
+    asm = Assembler(meta=customer)
+    nodes = asm.materialize_root("Customer", [{"id": 1, "name": "Ada", "address": None}])
+    assert nodes[0].value_objects == {"address": None}
 
 
 def test_materialize_root_omitted_narrow_to_defaults_to_none() -> None:

@@ -3016,6 +3016,84 @@
         0
       ]
     },
+    "layout_reading": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "parallax.compatibility.LayoutMeterReading"
+          ],
+          "column": "id",
+          "contributor": "attribute:parallax.compatibility.LayoutReading.id",
+          "declaringOwner": "parallax.compatibility.LayoutReading",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.LayoutMeterReading"
+          ],
+          "column": "kind",
+          "contributor": "discriminator:parallax.compatibility.LayoutReading",
+          "declaringOwner": "parallax.compatibility.LayoutReading",
+          "effectiveNullable": false,
+          "tier": "discriminator"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.LayoutMeterReading"
+          ],
+          "column": "sensor",
+          "contributor": "attribute:parallax.compatibility.LayoutReading.sensor",
+          "declaringOwner": "parallax.compatibility.LayoutReading",
+          "effectiveNullable": false,
+          "tier": "domain"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.LayoutMeterReading"
+          ],
+          "column": "celsius",
+          "contributor": "attribute:parallax.compatibility.LayoutMeterReading.celsius",
+          "declaringOwner": "parallax.compatibility.LayoutMeterReading",
+          "effectiveNullable": false,
+          "tier": "domain"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.LayoutMeterReading"
+          ],
+          "column": "in_z",
+          "contributor": "attribute:parallax.compatibility.LayoutReading.tx_start",
+          "declaringOwner": "parallax.compatibility.LayoutReading",
+          "effectiveNullable": false,
+          "tier": "temporal"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.LayoutMeterReading"
+          ],
+          "column": "out_z",
+          "contributor": "attribute:parallax.compatibility.LayoutReading.tx_end",
+          "declaringOwner": "parallax.compatibility.LayoutReading",
+          "effectiveNullable": false,
+          "tier": "temporal"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.LayoutMeterReading"
+          ],
+          "column": "probe",
+          "contributor": "valueObject:parallax.compatibility.LayoutReading.probe",
+          "declaringOwner": "parallax.compatibility.LayoutReading",
+          "effectiveNullable": false,
+          "tier": "document"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0,
+        4
+      ]
+    },
     "layout_survey": {
       "columns": [
         {

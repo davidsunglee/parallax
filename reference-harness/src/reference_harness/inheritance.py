@@ -1141,31 +1141,3 @@ def tag_value_to_subtype(entity_defs: list[dict[str, Any]]) -> dict[Any, str]:
         if block and block.get("role") == ROLE_CONCRETE and block.get("tagValue") is not None:
             mapping[block["tagValue"]] = family._render_key(family.key_of(definition))
     return mapping
-
-
-def concrete_superset_columns(
-    entity_defs: list[dict[str, Any]], effective_set: list[str]
-) -> list[str]:
-    """The ordered union of flattened columns over *effective_set* (incl. the tag).
-
-    Each concrete subtype's flattened definition carries its full inherited chain
-    plus, for table-per-hierarchy, the synthesized tag column
-    (:func:`resolve_effective_definition`), so this is exactly the superset an
-    abstract-target read MUST project. The union walks the concretes in the family's
-    CANONICAL sibling-set order (ALPHABETICAL by entity name, m-inheritance), so the
-    per-subtype OWN-column blocks aggregate in that order; the INHERITED-column prefix
-    each block contributes stays ANCESTRY order (root -> ... -> self) — columns are
-    never alphabetized across the inheritance chain.
-    """
-    columns: list[str] = []
-    for name in sorted(effective_set):
-        resolved = resolve_effective_definition(entity_defs, name)
-        for attribute in resolved.get("attributes", []) or []:
-            column = effective_column(attribute)
-            if column not in columns:
-                columns.append(column)
-        for value_object in resolved.get("valueObjects", []) or []:
-            column = value_object.get("column", default_column_name(value_object["name"]))
-            if column not in columns:
-                columns.append(column)
-    return columns

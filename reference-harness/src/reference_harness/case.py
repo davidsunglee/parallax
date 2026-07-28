@@ -450,6 +450,23 @@ class Model:
 
         return compile_storage_layout(self.entity_defs)
 
+    def __deepcopy__(self, memo: dict[int, Any]) -> Model:
+        """A copy with a thawed descriptor and no layout carried over from the source.
+
+        Copying a model is how a caller obtains a *mutable* descriptor, so the copy
+        may describe a different model than the one it was copied from. The layout
+        is derived state and is re-compiled on demand from the copy's own
+        descriptor; carrying the memoized graph across would silently answer for
+        the source descriptor instead.
+        """
+        copied = Model(
+            path=self.path,
+            descriptor=copy.deepcopy(self.descriptor, memo),
+            fixtures=copy.deepcopy(self.fixtures, memo),
+        )
+        memo[id(self)] = copied
+        return copied
+
     @property
     def entities(self) -> list[Entity]:
         # Present each entity as its FLATTENED (inheritance-resolved) definition: a

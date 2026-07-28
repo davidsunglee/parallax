@@ -283,6 +283,18 @@ def _declarations(model: Model) -> _Declarations:
     return _Declarations(types=types, unique_indices=tuple(unique_indices))
 
 
+def contributor_types(model: Model) -> Mapping[ColumnContributor, tuple[str, int | None]]:
+    """Each layout contributor's declared neutral type and length bound.
+
+    A layout slot names its contributor and its physical answer but never a type,
+    so every consumer that must spell one — a ``CREATE TABLE`` column, a read's
+    typed ``NULL`` placeholder — resolves it here. A top-level value object binds
+    into one structured document column whatever its inner members declare. The
+    framework-owned discriminator has no declaration and so no entry.
+    """
+    return _declarations(model).types
+
+
 def _slot_ddl(slot: ColumnSlot, declarations: _Declarations, dialect: str) -> str:
     if isinstance(slot.contributor, InheritanceDiscriminator):
         neutral_type, max_length = _TAG_COLUMN_TYPE, _TAG_COLUMN_MAX_LENGTH
