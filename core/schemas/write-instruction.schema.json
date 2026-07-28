@@ -17,7 +17,7 @@
         "mutation": { "$ref": "#/$defs/keyedMutation" },
         "entity": { "$ref": "#/$defs/entityName" },
         "rows": {
-          "description": "The neutral write input: one or more flat attribute-named rows the mutation operates on (`$defs/writeRow`). A generating implementation classifies each field by its metamodel role and derives the emitted column list and ORDER from `columnOrder(entity)`.",
+          "description": "The neutral write input: one or more flat attribute-named rows the mutation operates on (`$defs/writeRow`). A generating implementation classifies each field by metamodel role and derives the emitted column list and ORDER by filtering the target's Entity Layout slots.",
           "type": "array",
           "minItems": 1,
           "items": { "$ref": "#/$defs/writeRow" }
@@ -44,7 +44,7 @@
       ]
     },
     "predicateWriteInstruction": {
-      "description": "A predicate-selected (set-based) write: a mutation on every row of `target.entity` matching `target.predicate`, with `assignments` on the update forms. This is the set-based analogue of the keyed instruction; `m-batch-write` / `m-opt-lock` decide whether it lowers readless (unversioned non-temporal) or materializes per-row (versioned / temporal). Assignment list order is DATA order only — descriptor `columnOrder(entity)` determines the emitted SET columns and their binds.",
+      "description": "A predicate-selected (set-based) write: a mutation on every row of `target.entity` matching `target.predicate`, with `assignments` on the update forms. This is the set-based analogue of the keyed instruction; `m-batch-write` / `m-opt-lock` decide whether it lowers readless (unversioned non-temporal) or materializes per-row (versioned / temporal). Assignment list order is DATA order only — the target's Entity Layout determines the emitted SET columns and their binds.",
       "type": "object",
       "additionalProperties": false,
       "required": ["mutation", "target"],
@@ -122,12 +122,12 @@
       "additionalProperties": { "$ref": "#/$defs/writeRowValue" }
     },
     "writeRowValue": {
-      "description": "The value a neutral write-row field carries, classified by the field's metamodel role (resolved from `columnOrder(entity)`, NOT from the value's shape): a scalar literal / explicit `null` for a scalar attribute; a one-key DB-computed marker (`writeComputedMarker`) for a computed scalar column; or the WHOLE embedded value-object document — a JSON object for a `one` member, a JSON array of objects for a `many` member — bound atomically in its columnOrder position. The branches are NON-exclusive (`anyOf`): a marker-shaped value-object document validates via both the marker and the document branch, and the model role decides. This is the single shared value vocabulary `compatibility-case.schema.json`'s flush-context write row references rather than redefining.",
+      "description": "The value a neutral write-row field carries, classified by its Entity Layout contributor (NOT from the value's shape): a scalar literal / explicit `null` for a scalar attribute; a one-key DB-computed marker (`writeComputedMarker`) for a computed scalar column; or the WHOLE embedded value-object document — a JSON object for a `one` member, a JSON array of objects for a `many` member — bound atomically in its layout position. The branches are NON-exclusive (`anyOf`): a marker-shaped value-object document validates via both the marker and the document branch, and the model role decides. This is the single shared value vocabulary `compatibility-case.schema.json`'s flush-context write row references rather than redefining.",
       "anyOf": [
         { "type": ["string", "number", "boolean", "null"] },
         { "$ref": "#/$defs/writeComputedMarker" },
         {
-          "description": "A value-object document (m-value-object): a value-object-named field binds the WHOLE embedded composite atomically as one document value in its columnOrder position — a JSON object for a `one` value object, a JSON array of objects for a `many` one.",
+          "description": "A value-object document (m-value-object): a value-object-named field binds the WHOLE embedded composite atomically as one document value in its Storage Layout position — a JSON object for a `one` value object, a JSON array of objects for a `many` one.",
           "type": ["object", "array"]
         }
       ]

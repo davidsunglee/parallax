@@ -8,7 +8,7 @@
 # in the neutral write input (①). The accepted payload fields are exactly the target's
 # ancestry chain; the framework derives the tag column the same way it derives a
 # version bump or a milestone bound: the ① row carries only the domain attributes (id,
-# amount, cardNetwork), and `kind` is slotted at its columnOrder position with the
+# amount, cardNetwork), and `kind` is slotted at its Entity Layout position with the
 # tagValue as its bind. `tendered` (the cash subtype's column) is left null.
 #
 # Starts from an EMPTY table (self-contained), then asserts the single inserted row

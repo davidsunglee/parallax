@@ -64,7 +64,8 @@ A provider contract suite must exercise these operations:
 
 - `reset`: return the database to an empty, isolated state
 - `applyDdl`: apply the ordered DDL derived for a case model
-- `loadFixtures`: insert physical table rows in descriptor column order
+- `loadFixtures`: resolve fixture cells through the target Entity Layout and
+  insert them in Table Layout order
 - `query`: execute row-returning canonical SQL and return wire-normalized rows
 - `exec`: execute DML and return affected rows
 - `execRolledBack`: execute DML in a transaction that is rolled back

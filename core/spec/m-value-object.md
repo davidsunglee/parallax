@@ -78,15 +78,17 @@ both within the one column. A `many` member MUST NOT be nullable; its empty arra
 is the sole zero-element representation. The harness derives the concrete column type through `m-dialect`
 exactly as it does for a scalar attribute, and it MUST NOT emit a column for any
 nested value object or inner attribute. The column is part of the entity's column
-order, positioned after the scalar attributes.
+layout as one `Document`-tier slot, positioned after every scalar tier
+(`m-storage-layout`).
 
 Each top-level occurrence is a distinct physical contributor. Its document
 column MUST NOT collide with another top-level Value Object, a scalar
 Attribute, or a table-per-hierarchy tag in the same physical table. Model
-Formation rejects that ambiguity as `inheritance-physical-column-collision`
-under the strategy-specific table boundaries and canonical column-order law in
-`m-inheritance`; a storage or materialization consumer never chooses one member
-from a duplicate raw column key.
+Formation rejects that ambiguity as `storage-layout-column-collision` within
+`m-storage-layout`'s uniquely owned strategy-specific Table boundary; a storage
+or materialization consumer never chooses one member from a duplicate raw
+column key. A second independent owner of the Table is the separate
+`storage-layout-table-mapping-collision` and is rejected before this claim set.
 
 The document's physical key and the occurrence's rendered graph key retain
 distinct provenance. A graph renders the decoded value under the occurrence's
@@ -103,7 +105,7 @@ actually render on one node are formation errors under
 
 A value object has **no independent temporality**. It declares no As-Of Axes —
 the schema does not admit `asOfAxes` on a value object — and it owns no timeline.
-Its backing column is part of the owning entity's column order, so it
+Its backing column is part of the owning Entity's Storage Layout, so it
 rides the owner's (possibly milestoned) row and inherits whatever temporal
 classification the entity declares (`m-temporal-read`). On a temporal owner the
 document is carried across milestone chaining exactly like any scalar column;
@@ -121,7 +123,7 @@ returns the fully-current (both-axes) document while `m-value-object-031` recons
 the originally-believed document of a past audit read. `writeSequence` cases show the
 document is **carried across the chain** exactly like a scalar column: a Transaction-Time-Only
 update closes the current row and chains a new milestone whose golden DML binds the
-whole document in `columnOrder` position (`m-value-object-032`, `m-txtime-write`), and a
+whole document in its layout position (`m-value-object-032`, `m-txtime-write`), and a
 bitemporal `updateUntil` rectangle split carries the document verbatim onto the
 head / middle / tail rectangles (`m-value-object-033`, `m-bitemp-write`) — in both, the
 close / inactivating `UPDATE` sets only the interval bound and never touches the
@@ -139,12 +141,12 @@ relationship target.
 
 A top-level value object is **written atomically as one document**. On an insert
 or an update its backing column takes **exactly one bind** in the entity's
-`columnOrder` position (after the scalar attributes), carrying the whole embedded
+Storage Layout position (the `Document` tier after every scalar tier), carrying the whole embedded
 composite — every inner attribute and every nested `one` / `many` value object,
 at every depth — as a single structured-document value. The write path **MUST
 NOT** decompose the document into path-level binds: a value-object column
 participates in insert/update DML **exactly like a scalar column** (one `?` in
-`columnOrder` position), and the concrete document value is adapted to the
+its layout position), and the concrete document value is adapted to the
 dialect's structured-document type at bind time (`m-dialect` — e.g. Postgres
 `jsonb`, MariaDB `json`). This mirrors Reladomo's embedded value riding the
 owner's row, expressed as one atomic document rather than flattened columns.
@@ -163,8 +165,8 @@ the database derives; those marker semantics apply **only to scalar attribute
 columns**. A value object binds its whole document even when that document is
 *shaped* like a marker (its sole field happening to be `computed` or `increment`).
 The two are disambiguated by the field's declared **metamodel role** — resolved
-from the entity's `columnOrder` (scalar attribute vs value object) — **not** by the
-value's shape. This keeps the atomic-document guarantee total: a value object is
+from the Entity view slot's contributor (scalar Attribute vs Value Object) —
+**not** by the value's shape. This keeps the atomic-document guarantee total: a value object is
 bound as one document value regardless of what that value happens to look like.
 
 There are **no partial-document (path-level) writes**. A whole-document update
@@ -180,7 +182,7 @@ across the rectangle split (`m-value-object-033`); there is no
 value-object-specific write machinery.
 
 Atomic writes are proven by `writeSequence` cases whose golden DML binds the
-document in `columnOrder` position and whose `then.tableState` reads it back
+document in its Storage Layout position and whose `then.tableState` reads it back
 (`m-case-format`): `m-value-object-025` inserts a Customer whose whole
 nested-plus-to-many `address` document binds as one value; `m-value-object-026`
 replaces that whole document with an update (`set address = ?`), proving no
@@ -209,9 +211,10 @@ rather than left true by omission:
    to-one and to-many value is decoded from that one column. Invoking a getter
    MUST NOT take a lock, populate an identity cache, or emit **any** statement —
    there is no per-value-object fetch, and `m-deep-fetch` never applies. This
-   whole-document projection is **slot 4** of the base read projection (`m-sql`,
-   *Read projection*): it is added **only on an instance-form read** — one that
-   materializes instances (`then.graph` / `then.graphs`) — and a plain row-form value
+   whole-document projection is the owner's applicable Storage Layout
+   `Document` slot (`m-sql`, *Read projection*): it is selected **only on an
+   instance-form read** — one that materializes instances (`then.graph` /
+   `then.graphs`) — and a plain row-form value
    read (`then.rows`) omits it. Because materialization requires the document, an
    instance-form read of a value-object-bearing entity always projects it.
 3. **No reverse getters.** A value object has no identity and holds no reference

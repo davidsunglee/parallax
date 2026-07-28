@@ -3,10 +3,10 @@
 #
 # Targeting the abstract root Animal spans the whole `animal` table (Cat, Dog, and the
 # sibling WildBoar) with NO tag predicate. The projection is the full concrete
-# superset reachable from Animal — inherited (id, name, owner_id), the abstract subtype
-# Pet's license_id, then each concrete subtype's own columns in ALPHABETICAL subtype
-# order (Cat's indoor, Dog's bark_volume, WildBoar's tusk_length) — PLUS the raw tag
-# column `kind`. familyVariant is materialized from the tag map (dog -> Dog, cat -> Cat,
+# superset reachable from Animal in semantic tier order: identity `id`, raw
+# discriminator `kind`, then Domain slots from the root, Pet, and concrete subtypes
+# (Cat's indoor, Dog's bark_volume, WildBoar's tusk_length) in stable declaration
+# encounter order. familyVariant is materialized from the tag map (dog -> Dog, cat -> Cat,
 # boar -> WildBoar); columns not applicable to a row are null (shared table). Every
 # fixture row is returned.
 model: models/animal.yaml
@@ -19,7 +19,7 @@ when:
 then:
   statements:
     - sql:
-        postgres: select t0.id, t0.name, t0.owner_id, t0.license_id, t0.indoor, t0.bark_volume, t0.tusk_length, t0.kind from animal t0
+        postgres: select t0.id, t0.kind, t0.name, t0.owner_id, t0.license_id, t0.indoor, t0.bark_volume, t0.tusk_length from animal t0
   rows:
     - { id: 1, name: Rex, owner_id: 10, license_id: L-100, bark_volume: 7, indoor: null, tusk_length: null, familyVariant: Dog }
     - { id: 2, name: Fido, owner_id: 11, license_id: L-101, bark_volume: 3, indoor: null, tusk_length: null, familyVariant: Dog }

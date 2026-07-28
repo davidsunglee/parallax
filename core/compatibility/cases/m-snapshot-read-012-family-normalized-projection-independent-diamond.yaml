@@ -38,7 +38,7 @@ then:
         postgres: select t0.id, t0.name from person t0 where t0.id = ?
       binds: [10]
     - sql:
-        postgres: select t0.id, t0.name, t0.owner_id, t0.license_id, t0.indoor, t0.bark_volume, t0.tusk_length, t0.kind from animal t0 where t0.owner_id in (?)
+        postgres: select t0.id, t0.kind, t0.name, t0.owner_id, t0.license_id, t0.indoor, t0.bark_volume, t0.tusk_length from animal t0 where t0.owner_id in (?)
       binds: [10]
     - sql:
         postgres: select t0.id, t0.name, t0.owner_id, t0.license_id, t0.bark_volume from animal t0 where t0.owner_id in (?) and t0.kind = ?

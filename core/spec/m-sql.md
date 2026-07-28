@@ -3,7 +3,10 @@
 `m-sql` is the contract that turns an `m-op-algebra` operation into per-dialect
 SQL, and the rules that make "equivalent SQL per database" **testable**. `m-sql`
 depends on `m-op-algebra` (the algebra it lowers) and `m-dialect` (the dialect
-that decides the concrete SQL).
+that decides the concrete SQL). It reads canonical model identities from
+`m-metamodel`, family and discriminator semantics from `m-inheritance`,
+physical Tables and slots from `m-storage-layout`, and compiled relationship
+directions from `m-relationship`.
 
 The core does **not** mandate *how* an implementation produces SQL (a language
 MAY lower the algebra onto an external SQL IR inside `m-sql`). The core mandates
@@ -128,60 +131,62 @@ list, and a column-subset result is expressible **only** through the aggregation
 algebra (`m-agg`, deferred). The directives `distinct`, `orderBy`, and `limit` never
 change the list.
 
-The list is **one deterministic ordered union, duplicates removed**, drawn from four
-sources in this fixed order:
+Inheritance first resolves the target and every `narrow` to one canonical
+effective concrete-Entity sequence. `StorageLayoutFacet.position(...)` then
+supplies one logical contributor sequence and one slot-or-absence mapping per
+physical Table. A concrete or standalone read may use the corresponding Entity
+view directly. SQL never walks ancestry, merges a whole shared Table, or orders
+physical declarations itself.
 
-1. **Effective scalar columns.** Every declared attribute's column of the read's
-   **effective position**, in `columnOrder` (declaration order). This **includes** the
-   `optimisticLocking` **version** attribute and **each as-of axis's
-   start / end Attribute columns** (`m-descriptor`) — all of them are
-   ordinary declared attributes, so excluding either would need a carve-out this rule
-   does not make. For a Bitemporal Entity the dimensions read **Valid Time first,
-   then Transaction Time** — `from_z, thru_z, in_z, out_z` — matching every
-   Bitemporal model's declaration order and Valid-Time-first bind order the temporal predicates
-   and write sequences use (below). The effective position is inheritance-aware: a
-   **concrete** target contributes its flattened ancestry-chain-plus-own
-   `columnOrder`; an **abstract** target contributes the concrete-subtype superset of
-   the abstract-read lowering (*Metamodel-extension lowering*, below) — inherited
-   columns in ancestry order, then each effective concrete's own block in alphabetical
-   subtype order. Per-type rendering seams — the `bytes` `encode(t0.payload, ?)
-   payload_hex` form, reserved-word quoting `t0."order"` — are `m-dialect` renderings
-   of a column **at its position**, not changes to the list.
-2. **Table-per-hierarchy tag column.** Appended after the scalars **iff the read's
-   `targetEntity` is abstract** (the queried position is polymorphic), regardless of
-   whether a `narrow` reduces the effective set to a single concrete. A **concrete**
-   `targetEntity` never projects the tag.
-3. **Table-per-concrete-subtype `familyVariant` literal.** Likewise per branch for an
-   abstract-target read — the subtype variant-spelling string literal of the `union all` lowering
-   (below). The per-branch `cast(null as <type>)` placeholders remain `m-dialect`
-   lowering details, not logical columns.
-4. **Value-object document columns.** For an **instance-form** read only (below): every
-   declared top-level value object's backing column, **last among all projected
-   columns**, in declared value-object order. A **row-form** read omits them.
+For each physical branch, SQL selects from the layout values as follows:
 
-Slot order is 1 → 2/3 → 4: the data scalars, then the framework discriminator, then
-the verbose documents. The four sources are disjoint in every current model, so the
-duplicate removal is a formal safeguard that keeps the union well-formed. Because the
-primary key is always in slot 1, `distinct` over an entity read is structurally
-**row-preserving**; its one remaining operative semantic is **read-lock suppression**
-— a `distinct` / grouped / aggregate result takes no shared read lock (`m-read-lock`;
+1. Every applicable Attribute slot is projected. This includes model identity,
+   optimistic version, ordinary Domain, Temporal start/end, and future Audit
+   slots; a designation changes the slot's tier, not whether the Attribute is
+   readable.
+2. A table-per-hierarchy discriminator slot is projected **iff** the read's
+   `targetEntity` is abstract, regardless of whether a `narrow` reduces the
+   effective set to one concrete. A concrete target uses the same slot for its
+   tag predicate but does not project it.
+3. Every applicable top-level Value Object `Document` slot is projected only
+   for an **instance-form** read. A row-form read omits those slots.
+4. A table-per-concrete-subtype abstract read appends the SQL-owned
+   `familyVariant` literal to each branch. It is not a layout slot. Typed `NULL`
+   placeholders and collision-safe aliases are likewise SQL renderings over a
+   branch's absent slot entries.
+
+Within one Table, selected physical slots retain `TableLayout.columns` order:
+`Identity`, `Discriminator`, `Domain`, `Temporal`, `Audit`, then `Document`, with
+stable declaration order inside each tier. A cross-table
+table-per-concrete-subtype union uses the Position Layout's one logical
+contributor sequence and aligns each branch through its slot-or-absence map.
+Duplicate removal is by structural contributor identity, never by a Column or
+result-key spelling. Per-type rendering seams — the `bytes`
+`encode(t0.payload, ?) payload_hex` form or reserved-word quoting
+`t0."order"` — render a selected slot without changing its position.
+
+Because every Entity projection contains its model primary-key Attribute slot,
+`distinct` over an Entity read is structurally **row-preserving**; its one
+remaining operative semantic is **read-lock suppression** — a `distinct` /
+grouped / aggregate result takes no shared read lock (`m-read-lock`;
 *Read-lock suffix*, below).
 
 ### Result form — row-form vs instance-form
 
-A read is consumed in one of two lanes, and the projection differs **only in slot 4**:
+A read is consumed in one of two lanes, and the projection differs only in
+whether `Document` slots are selected:
 
 - **Instance-form** (the **object lane**) — the result materializes into instances: a
   snapshot-graph read, a `deepFetch` (its root and every child level), a deferred
   relationship **`load`** or an operation-list **first `access`** (`m-op-list`), or any
-  other find whose rows become objects. It projects slot 4, so a value-object-bearing
+  other find whose rows become objects. It projects Document slots, so a value-object-bearing
   entity's whole document rides the owner's single statement (the one-round-trip
   materialization contract, `m-value-object`). Deep-fetch and snapshot **child levels
   are instance-form** — each level projects the child entity's own instance-form list
   (its scalars, plus any value-object document columns it declares) — as does a deferred
   `load` / first `access`, which is a child level resolved on demand.
 - **Row-form** (the **values lane**) — the result is consumed as flat values, with no
-  instance constructed. It omits slot 4. The corpus's predicate `read` cases
+  instance constructed. It omits Document slots. The corpus's predicate `read` cases
   (`then.rows`) and the internal materialized-predicate-write read — which resolves a
   set-based write to each row's pk and gate values (ADR 0014) — are the values lane; a
   future aggregation result (`m-agg`) lands here too.
@@ -197,14 +202,36 @@ first `access`, and a full-scalar shared concurrency read are **instance-form**;
 internal materialized-predicate-write resolving read and a `distinct` / grouped
 concurrency-witness read are **row-form**.
 
-Everything already specified composes with this rule unchanged: the **versioned-read
-projection** (below) is the slot-1 corollary for the framework-owned `version` column;
-the **table-per-hierarchy abstract-read superset + tag** is slots 1 + 2; the
-**table-per-concrete-subtype stable superset + variant** is slots 1 + 3; the
-deep-fetch "child level MUST include the join keys" is **subsumed** (foreign keys are
-declared attributes, always in slot 1); and the whole-value-object projection
-`t0.address` is slot 4 on an instance-form read. A `history` read's interval columns
-are in slot 1, so they are projected automatically.
+Everything already specified composes with this rule unchanged: a version
+Attribute is an applicable Attribute slot; a TPH abstract read selects its
+discriminator slot; a TPCS abstract read appends its per-branch synthetic
+variant; and a deep-fetch child level includes its declared join-key Attribute
+slots. The whole-value-object projection `t0.address` is a selected Document
+slot on an instance-form read. A `history` read's interval Attributes are
+Temporal slots and are projected automatically.
+
+## Physical DML ordering
+
+Physical DML obtains its target Table and complete slot order from the concrete
+Entity's `EntityLayoutView`. An `INSERT` filters that table-ordered sequence to
+the caller-present and framework-derived cells. An `UPDATE` filters it to the
+present assignable cells after excluding semantic keys and gates from the `set`
+clause. Batch grouping compares those resulting ordered slot selections; it
+does not reconstruct order from the payload mapping.
+
+Accepted Storage Layout ownership guarantees that this view belongs to exactly
+one standalone mapping, one complete TPH family, or one TPCS concrete mapping.
+Its physical primary key therefore contains only that owner's model-key and
+temporal-start slots: DML never targets a layout whose key combines independent
+Entity mappings that can supply only disjoint subsets.
+
+The layout supplies physical lookup, not operation semantics. Model primary-key
+Attributes, a TPH discriminator assignment, an optimistic observation, and
+temporal start/end Attributes are selected for their operation-specific roles by
+their owning modules, then mapped through layout contributor lookups. The
+predicate order and bind order specified by each DML template below remain
+normative even when they differ from complete table order. `familyVariant`, SQL
+aliases, and typed `NULL` expressions never become DML slots.
 
 ## Per-operator SQL emission
 
@@ -401,7 +428,7 @@ and is appended **after** it (binds read user-first, then the as-of bind):
 `history(operand, dimension)` injects **no** as-of predicate — it returns every
 milestone — so its golden SQL is just the operand's predicate; its projection
 **includes** the interval columns automatically — they are declared attributes in
-slot 1 of the base *Read projection* — so the caller sees each milestone's bounds
+the layout's Temporal tier — so the caller sees each milestone's bounds
 (the current row's `out_z` reads back as `infinity`).
 
 `asOfRange(operand, dimension, start, end)` reads the dimension as **edge points**
@@ -679,8 +706,8 @@ version must ride each write.
 ### Versioned-read projection
 
 A read of a versioned entity **projects the version column** alongside the row's
-other columns — the slot-1 corollary of the base *Read projection* rule, since the
-`optimisticLocking` version is a declared attribute — so the reader observes the
+other columns because the `optimisticLocking` version is an applicable declared
+Attribute slot — so the reader observes the
 current version (the value a later optimistic gate binds). The canonical read golden
 lists the version column in its projection like any other:
 
@@ -742,19 +769,18 @@ binds `[5, 'dog']`.
 #### Abstract-read projection and `familyVariant`
 
 An **abstract-target** read must materialize complete concrete instances, so its
-projection is the **full concrete-subtype attribute superset** reachable from the
-position — inherited (root + abstract-ancestor) columns first, then each concrete
-subtype's own columns in **alphabetical subtype order** (by entity name,
-`m-inheritance`) — **plus the raw tag column** (resolved Q6). A subtype column not
-applicable to a returned row reads back `NULL`; the tag column is projected
-explicitly because it is no longer a declared attribute:
+projection selects the complete Position Layout superset reachable from the
+position plus the raw discriminator slot (resolved Q6). The slot sequence follows
+the shared Table Layout's semantic tiers; canonical concrete order from
+`m-inheritance` remains the stable encounter order within a tier. A subtype slot
+not applicable to a returned row reads back `NULL`; SQL projects the discriminator
+because an abstract target must materialize each concrete variant:
 
 ```yaml
-# targetEntity: Animal (root over Cat / Dog / WildBoar) — full superset + tag; the
-# subtype-own blocks aggregate alphabetically (Cat's indoor, Dog's bark_volume,
-# WildBoar's tusk_length), the inherited prefix stays ancestry order:
+# targetEntity: Animal (root over Cat / Dog / WildBoar) — the Identity slot, raw
+# Discriminator slot, then Domain slots in stable declaration encounter order:
 - sql:
-    postgres: select t0.id, t0.name, t0.owner_id, t0.license_id, t0.indoor, t0.bark_volume, t0.tusk_length, t0.kind from animal t0
+    postgres: select t0.id, t0.kind, t0.name, t0.owner_id, t0.license_id, t0.indoor, t0.bark_volume, t0.tusk_length from animal t0
 ```
 
 `familyVariant` is **not projected as SQL**. It is materialized from the tag
@@ -778,14 +804,15 @@ effective concrete tables) is specified next.
 A `table-per-concrete-subtype` family maps **each concrete subtype to its own
 table** (`m-inheritance`); there is **no shared table and no tag column**. A
 concrete table physically carries the full inherited attribute chain (root +
-abstract-ancestor columns) plus that subtype's own columns.
+abstract-ancestor columns) plus that subtype's own columns in its canonical
+Storage Layout.
 
 #### Concrete-subtype read
 
 A read whose queried position resolves to a **single** concrete subtype is an
 **ordinary single-table read** of that subtype's table — no tag predicate, no
 `union all`. The subtype is selected by *which* table is queried. The projection is
-the concrete instance's full inherited-chain-plus-own columns, and it carries **no
+the applicable slots from its Entity Layout view, and it carries **no
 `familyVariant`** (the caller queried a known variant):
 
 ```yaml
@@ -805,16 +832,14 @@ table (each branch's alias scheme restarts at `t0`, and the branch order is
 preserved). A sibling branch outside the effective set contributes no branch — an
 abstract-subtype read `union all`s only that subtype's concrete descendants.
 
-Every branch projects the **same stable superset column list**, in this order:
+Every branch projects the **same stable Position Layout sequence**. Declaration-
+backed contributors follow `Identity`, `Domain`, `Temporal`, `Audit`, then
+`Document` tier order (there is no physical discriminator), with root-first
+ancestry, local declaration order, and canonical concrete order stable within
+each tier. The SQL-owned **`familyVariant`** literal follows those contributors.
 
-1. **inherited** columns (root + abstract-ancestor), which every branch has, in
-   **ancestry order** (never alphabetized across the inheritance chain);
-2. **subtype-declared** own-column blocks, in **alphabetical subtype order** (by
-   entity name), each block's columns in the subtype's declared order;
-3. the **`familyVariant`** literal.
-
-The result aliases for slots 1 and 2 are allocated hygienically. Contributors are
-visited in exactly the stable-superset order above. Before allocation, the complete
+Result aliases for the declaration-backed contributors are allocated
+hygienically in that Position Layout order. Before allocation, the complete
 reservation set is every contributor's physical column spelling plus the synthetic
 `family_variant` carrier. A contributor retains its physical spelling as the result
 alias only when that spelling occurs once in the superset and is not
@@ -886,7 +911,8 @@ refused pre-SQL, `m-case-format`). The DML shape depends on the strategy.
 
 Every concrete subtype shares one table discriminated by the root's tag column. The
 tag is **framework-owned metadata**: an **insert** sets it from the subtype's
-`tagValue` (slotted at its `columnOrder` position, right after the primary key, so
+`tagValue` (slotted at its Entity Layout's `Discriminator` position, after every
+`Identity` slot, so
 the value list carries the derived tag exactly as the versioned insert carries the
 derived initial version); an existing-row statement (**update** / **delete**, and the
 temporal closes of `m-txtime-write` / `m-bitemp-write`) carries a **tag guard** —
@@ -900,7 +926,7 @@ temporal closes of `m-txtime-write` / `m-bitemp-write`) carries a **tag guard** 
 
 The tag guard is positioned **immediately after the primary-key equality** — it
 joins the **identity predicates**, not the tail of the `where` clause. The insert's
-tag bind sits in `columnOrder` position; the update/delete's tag bind sits with the
+tag bind sits in layout order; the update/delete's tag bind sits with the
 pk (right after it). DML keeps its canonical DML shape (`m-sql` rule 1): an
 **unaliased** target table with **bare** columns, so the tag guard reads `kind`, not
 `t0.kind`.
@@ -928,7 +954,7 @@ keeps `… where id = ? and kind = ?` (tag guard still present, no gate).
 
 Each concrete subtype owns its **own table** and carries no tag, so the subtype is
 selected by *which* table the DML targets. An **insert** writes the concrete table
-with the full inherited-chain-plus-own column set; a **delete** removes the keyed row
+with the present cells filtered from its Entity Layout; a **delete** removes the keyed row
 from that same table. There is no tag column and therefore **no tag guard**:
 
 | Mutation | Canonical Postgres DML | Binds |
@@ -936,8 +962,8 @@ from that same table. There is no tag column and therefore **no tag guard**:
 | **insert** | `insert into invoice(id, title, currency, amount_due) values (?, ?, ?, ?)` | `[…full chain…]` |
 | **delete** | `delete from invoice where id = ?` | `[<pk>]` |
 
-The insert's column list is the target's ancestry-derived columns present in the
-payload (a nullable inherited column the payload omits is simply absent from the
+The insert's column list is the target's layout-ordered slots present in the
+payload (a nullable inherited slot the payload omits is simply absent from the
 list, defaulting to `NULL`); a sibling branch's write names *its* table, never a
 shared one (`memo` for a `Memo`, `invoice` for an `Invoice`). A concrete-subtype
 `UPDATE` under table-per-concrete-subtype is the ordinary single-table versioned /
@@ -962,7 +988,7 @@ temporal statement that targets **existing** rows — the Transaction-Time-Only 
 the **tag guard** among the identity predicates, immediately **after** the
 primary-key equality and **before** the current-on-Transaction-Time predicate; every
 chained **insert** (the Transaction-Time-Only chain, or the bitemporal `head` / `middle` / `tail`)
-sets the tag column from the subtype's `tagValue` in its `columnOrder` position,
+sets the tag column from the subtype's `tagValue` in its Entity Layout position,
 exactly as a non-temporal concrete-subtype insert does (above). There is no temporal
 exception to the resolved-Q9 bind order: the tag guard rides with the identity
 predicates; any gate the temporal write already carries (the optimistic
@@ -974,7 +1000,7 @@ predicates; any gate the temporal write already carries (the optimistic
 | **Transaction-Time-Only insert** | `insert into reading(id, kind, celsius, in_z, out_z) values (?, ?, ?, ?, ?)` | `[<pk>, <tagValue>, …row…, <txInstant>, infinity]` |
 | **Transaction-Time-Only close** (`terminate` / `update` step 1) | `update reading set out_z = ? where id = ? and kind = ? and out_z = ?` | `[<txInstant>, <pk>, <tagValue>, infinity]` |
 | **bitemporal inactivation** (`terminate` / `terminateUntil` / `update` / `*Until` step 1) | `update instrument set out_z = ? where id = ? and kind = ? and out_z = ?` | `[<txInstant>, <pk>, <tagValue>, infinity]` |
-| **bitemporal head / middle / tail insert** | `insert into instrument(id, kind, price, from_z, thru_z, in_z, out_z, coupon) values (?, …, ?)` | `[<pk>, <tagValue>, …row…, <from_z>, <thru_z>, <txInstant>, infinity, …own…]` |
+| **bitemporal head / middle / tail insert** | `insert into instrument(id, kind, price, coupon, from_z, thru_z, in_z, out_z) values (?, …, ?)` | `[<pk>, <tagValue>, …domain row…, <from_z>, <thru_z>, <txInstant>, infinity]` |
 
 The close / inactivation is keyed by the **current-on-Transaction-Time** predicate
 (`out_z = ?` / `infinity`) exactly as its standalone form (the Transaction-Time-Only / bitemporal
@@ -1015,7 +1041,7 @@ the per-branch as-of binds repeated in **alphabetical branch order**:
 # finite v, Transaction Time Latest — each branch injects `from_z <= ? and thru_z > ? and out_z = ?`
 # (Valid-Time-first) and the binds repeat per branch in alphabetical branch order:
 - sql:
-    postgres: select t0.id, t0.amount, t0.from_z, t0.thru_z, t0.in_z, t0.out_z, t0.grade, cast(null as decimal(18, 2)) spread, 'DepositRate' family_variant from deposit_rate t0 where t0.from_z <= ? and t0.thru_z > ? and t0.out_z = ? union all select t0.id, t0.amount, t0.from_z, t0.thru_z, t0.in_z, t0.out_z, cast(null as varchar(8)) grade, t0.spread, 'LoanRate' family_variant from loan_rate t0 where t0.from_z <= ? and t0.thru_z > ? and t0.out_z = ?
+    postgres: select t0.id, t0.amount, t0.grade, cast(null as decimal(18, 2)) spread, t0.from_z, t0.thru_z, t0.in_z, t0.out_z, 'DepositRate' family_variant from deposit_rate t0 where t0.from_z <= ? and t0.thru_z > ? and t0.out_z = ? union all select t0.id, t0.amount, cast(null as varchar(8)) grade, t0.spread, t0.from_z, t0.thru_z, t0.in_z, t0.out_z, 'LoanRate' family_variant from loan_rate t0 where t0.from_z <= ? and t0.thru_z > ? and t0.out_z = ?
   binds: [v, v, infinity, v, v, infinity]
 ```
 
@@ -1028,7 +1054,7 @@ per-branch `familyVariant` literal; a column not applicable to a branch is the
 
 A `valueObject` is stored in **one structured-document column** (`m-core` /
 `m-value-object`), not column-flattened. Reading the whole value object — an
-**instance-form** read (slot 4 of the base *Read projection*) — projects that backing
+**instance-form** read selecting its layout `Document` slot — projects that backing
 column directly (`t0.address`). Reading or filtering an **inner
 attribute** uses the `m-op-algebra` nested-attribute access form and lowers through
 the `m-dialect` **nested-extraction** seam to a per-dialect extraction. The JSON
@@ -1233,7 +1259,7 @@ fully general; the corpus's to-many coverage is equality-based accordingly.
 
 A `valueObject` is **written atomically as one document** (`m-value-object`). On
 an insert or an update the backing column takes **one bind** in the entity's
-`columnOrder` position, carrying the whole embedded composite; the write path
+layout `Document` position, carrying the whole embedded composite; the write path
 **never** decomposes it into path-level binds. Unlike the read extraction — whose
 per-dialect function family and bind holes diverge (`json_value` vs
 `jsonb_extract_path_text`, one `'$.a.b'` bind vs per-segment binds) — the write DML
@@ -1244,7 +1270,7 @@ time (Postgres wraps it as `jsonb`, MariaDB serializes it to `json` text), so th
 (`m-case-format` — the shared-hole form), the document riding as one element:
 
 ```yaml
-# insert one Customer, binding the whole address document in columnOrder position:
+# insert one Customer, binding the whole address document in layout position:
 - sql:
     postgres: insert into customer(id, name, address) values (?, ?, ?)
     mariadb: insert into customer(id, name, address) values (?, ?, ?)
@@ -1267,8 +1293,8 @@ time (Postgres wraps it as `jsonb`, MariaDB serializes it to `json` text), so th
 ```
 
 The value-object column appears in the `INSERT` column list and the `UPDATE`
-`set` clause **exactly like a scalar column** — one `?` in `columnOrder` position,
-after the scalar attributes. A whole-document update **replaces** the column value;
+`set` clause **exactly like a scalar column** — one `?` in its layout position,
+after every scalar tier. A whole-document update **replaces** the column value;
 there is no `UPDATE` of a path inside the document (`m-value-object`). A null bind
 stores SQL `NULL`. On a temporal owner the same document rides milestone chaining
 like any scalar column (the milestone-chaining write sequences above); there is no

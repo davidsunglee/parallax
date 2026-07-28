@@ -3,17 +3,17 @@
 # `deepFetch(all(Customer), paths=[[Customer.locations]])` — every Customer with
 # its `locations` eager-fetched via the one-to-many relationship — where BOTH the
 # root (Customer) and the child (Location) declare a value object. This pins that
-# the instance-form read projection (m-sql "Read projection", slot 4) materializes
+# the instance-form read projection (m-sql "Read projection") selects each applicable
 # the structured-document column at EVERY level of a graph, not just the root:
 #
 #   level 0 (root)  : all customers, projecting Customer's instance-form list
-#                     `id, name, address` (scalars in columnOrder, then the single
+#                     `id, name, address` (scalar layout slots, then the single
 #                     `address` document column LAST).
 #   level 1 (child) : location rows whose customer_id is in the DISTINCT customer
 #                     ids {1..10}, projecting Location's OWN instance-form list
 #                     `id, customer_id, label, address` (the FK `customer_id` is a
-#                     declared scalar in slot 1; the `address` document is slot 4,
-#                     last). roundTrips = 2 (root + one IN-keyed child level), NOT
+#                     Domain slot; the `address` document is the final Document slot).
+#                     roundTrips = 2 (root + one IN-keyed child level), NOT
 #                     1 + N.
 #
 # The child level's `address` decodes to the SAME declared projection as the

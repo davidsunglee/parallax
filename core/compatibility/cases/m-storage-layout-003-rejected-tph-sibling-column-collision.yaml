@@ -1,9 +1,9 @@
 # Two disjoint table-per-hierarchy sibling branches introduce differently named
 # Attributes that both map to `note`. Their values never coexist on one concrete
-# node, but their columns do coexist in the family's shared table, so Model
-# Formation must reject the duplicate physical contributors before SQL.
+# node, but their columns do coexist in the family's shared table, so the Storage
+# Layout Rule Set must reject the duplicate physical contributors before SQL.
 model: models/member-column-defaults.yaml
-tags: [m-inheritance, m-model-formation, m-descriptor, rejected, negative, physical-column, table-per-hierarchy, sibling, slice-snapshot-1, slice-managed-1]
+tags: [m-storage-layout, m-inheritance, m-model-formation, m-descriptor, rejected, negative, physical-column, table-per-hierarchy, sibling, slice-snapshot-1, slice-managed-1]
 shape: rejected
 when:
   model:
@@ -31,4 +31,4 @@ when:
         attributes:
           - { name: cashNote, type: string, column: note }
 then:
-  rejectedRule: inheritance-physical-column-collision
+  rejectedRule: storage-layout-column-collision

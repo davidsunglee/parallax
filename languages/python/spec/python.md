@@ -31,7 +31,7 @@ never something an application developer hand-writes.
 |---|---|
 | Conformance Slice | `slice-snapshot-1` — tag `slice-snapshot-1`, plain-value **snapshot** lifecycle profile, defined in [`core/spec/slices.md`](../../../core/spec/slices.md). |
 | Exact `describe` claim | The complete canonical `describeOk` envelope below; structurally equal to the canonical claim after JSON parsing, except for the `adapter` identity. |
-| Claimed capability coverage | Copied verbatim from the canonical claim: the 26 `modules` below, `dialects: ["postgres"]`, the eight `caseShapes`, `caseTags.include: ["slice-snapshot-1"]`, `commands: ["describe", "compile", "run"]`, `provisioning: "self-managed"`. `modules` is the tagged-case union of the slice, **not** a dependency closure and not a packaging plan. |
+| Claimed capability coverage | Copied verbatim from the canonical claim: the 27 `modules` below, `dialects: ["postgres"]`, the eight `caseShapes`, `caseTags.include: ["slice-snapshot-1"]`, `commands: ["describe", "compile", "run"]`, `provisioning: "self-managed"`. `modules` is the tagged-case union of the slice, **not** a dependency closure and not a packaging plan. |
 | Unclaimed implementation prerequisites | `m-db-port` — reached via `m-unit-work` and `m-db-error`; abstract port supplied by the `parallax.core.db_port` scope, concrete adapter by `parallax-postgres`; contract-covered, never case-advertised. |
 | Deferred capabilities | MariaDB (dialect); `benchmark` command and `m-perf-bench`; `m-agg` / `m-sql-agg`; Valid-Time-Only models; `m-process-cache` / `m-coherence`; `m-cascade-delete`; the `snapshot-history-includes` feature; the managed-object lifecycle (`m-identity-map`, `m-detach`, public operation-backed lists); an async developer surface; MAY-tier mutations (`insertWithIncrement`, `incrementUntil`, `purge`, `inactivateForArchiving`); template-database reset optimization; isolation-level configuration; handle-level default concurrency override; Find Query `where`-refinement chaining and `as_of` re-pinning; the class-header temporal-axis column-mapping override. Deferral is roadmap intent; **unsupported classification** is the adapter's wire behavior for out-of-claim requests — the two are recorded separately and never conflated. |
 | Supported dialects and commands | Postgres only; `describe`, `compile`, `run`. Exercised locally and in CI by `uv run pytest -m compile_sweep` (Docker-free compile of every compile-eligible claimed case) and `uv run pytest -m conformance` (the `pg-full` run profile, every claimed case), aggregated by `just python-static` and `just python-verify`. |
@@ -41,7 +41,7 @@ never something an application developer hand-writes.
   "schemaVersion": "1", "command": "describe", "status": "ok",
   "adapter": { "language": "python", "name": "parallax-core", "version": "0.1.0" },
   "capabilities": {
-    "modules": ["m-api-conformance", "m-auto-retry", "m-batch-write", "m-bitemp-write", "m-case-format", "m-conformance-adapter", "m-core", "m-db-error", "m-deep-fetch", "m-descriptor", "m-dialect", "m-inheritance", "m-metamodel", "m-model-formation", "m-navigate", "m-op-algebra", "m-opt-lock", "m-pk-gen", "m-read-lock", "m-relationship", "m-snapshot-read", "m-sql", "m-temporal-read", "m-txtime-write", "m-unit-work", "m-value-object"],
+    "modules": ["m-api-conformance", "m-auto-retry", "m-batch-write", "m-bitemp-write", "m-case-format", "m-conformance-adapter", "m-core", "m-db-error", "m-deep-fetch", "m-descriptor", "m-dialect", "m-inheritance", "m-metamodel", "m-model-formation", "m-navigate", "m-op-algebra", "m-opt-lock", "m-pk-gen", "m-read-lock", "m-relationship", "m-snapshot-read", "m-sql", "m-storage-layout", "m-temporal-read", "m-txtime-write", "m-unit-work", "m-value-object"],
     "dialects": ["postgres"],
     "caseShapes": ["read", "writeSequence", "scenario", "conflict", "boundary", "error", "concurrencySuccess", "rejected"],
     "caseTags": { "include": ["slice-snapshot-1"] },
@@ -958,8 +958,16 @@ formation-time `value-object-*` issues shared with the descriptor frontend.
 Distinct scalar Attributes, top-level Value Object occurrences, and a
 table-per-hierarchy tag also declare distinct physical columns within each
 physical table; hub construction reports
-`inheritance-physical-column-collision` rather than allowing a row mapping to
+`storage-layout-column-collision` rather than allowing a row mapping to
 infer which member a duplicate column key denotes.
+Because `Table(name)` identity is name-only, each structural Table accepts
+exactly one independent mapping owner: a standalone Entity, one whole TPH family
+represented by its root, or one TPCS concrete mapping. TPH participants belong
+to their family owner and do not compete with it. Formation visits owners in
+canonical Entity Identity order and reports every later independent same-Table
+owner as `storage-layout-table-mapping-collision` at that Entity's mapping
+provenance with the first owner's provenance related. It never merges separate
+model primary keys into one layout that each Entity can only partially supply.
 Neutral materialization preserves scalar, Value Object, relationship, and
 `familyVariant` provenance until wrapping/rendering. A Value Object storage
 column may therefore equal a differently named relationship without either
@@ -1216,6 +1224,49 @@ class Truck(Vehicle, table="truck", inheritance=ConcreteSubtype):
 ```
 
 ### Metadata and model input
+
+#### Storage Layout formation and immutable facet
+
+The built-in Formation Manifest and Profile include the exact
+`m-storage-layout` contributions. `StorageLayoutRuleSet` receives only the
+Candidate Metamodel and asks `parallax.core.inheritance` for its pure, total
+validation-time Table-group projection; it owns exactly
+`storage-layout-table-mapping-collision` and
+`storage-layout-column-collision`, never consumes a facet, and never relies on
+Rule Set order. Owner collisions are reported before physical Column claims;
+the latter code remains exclusive to distinct physical Column contributors.
+After every Rule Set succeeds, `StorageLayoutCompiler` consumes the same
+Compiled Metadata object plus `FacetKey(m-inheritance)` and installs one
+`StorageLayoutFacet` under `FacetKey(m-storage-layout)`. It emits no Issue.
+Profile drift, compiler ordering, and all-or-nothing publication follow
+`m-model-formation` without a Python-specific phase or registry.
+
+`parallax.core.storage_layout` is the supported advanced import path. It
+exports `ColumnTier`, `InheritanceDiscriminator`, `ColumnContributor`,
+`ColumnSlot`, the `TableLayout`, `EntityLayoutView`, `PositionLayoutView`, and
+`StorageLayoutFacet` protocols, and `view(model) -> StorageLayoutFacet`. These
+names are not broadly re-exported from `parallax.core`. Python spellings use
+`table`, `columns`, `physical_primary_key`, `declaring_owner`,
+`effective_nullable`, and `applicable_entities`; lookup methods use the core
+contract's `table`, `entity`, `position`, `column`, and `contribution` names.
+
+Public values are immutable: `ColumnTier` is an Enum; contributor, slot,
+discriminator-assignment, logical-position-column, and branch values are
+frozen slotted dataclasses; ordered collections are exact tuples; and private
+lookup indexes are read-only. One eager object graph is compiled per accepted
+model: one Table Layout per physical Table and one Column Slot per physical
+column occurrence. Layout primary keys, Entity selections, and position
+branches reference those slots structurally instead of copying them. Repeated
+applicability sets may be interned, and arbitrary position views are not kept
+in an unbounded model-lifetime cache. Equality is structural; Python object
+identity and a particular ordinal/index representation are not contractual.
+
+The Python facet implements all six tiers and the temporal-over-audit alias
+precedence. The claimed model inputs currently supply no accepted Audit
+Metadata, so their Audit tier is empty. The compiler's internal classifier seam
+accepts optional audit designations for focused unit proof of non-empty Audit
+ordering and Transaction-Time revision alias de-duplication; it adds no Python
+or descriptor authoring form and performs no audit stamping.
 
 - **Runtime introspection API.** `models.meta(Order)` (or by canonical Entity
   Identity) returns the immutable, local `EntityMetadata` contract from
@@ -1860,8 +1911,8 @@ class Truck(Vehicle, table="truck", inheritance=ConcreteSubtype):
   shape no golden pins. That readless lowering is itself pinned so nothing is
   left to invent: `update_where` emits exactly one
   `update <table> set <col> = ?, … where <predicate>` whose `set` columns
-  follow the model's declared attribute order — the descriptor `columnOrder`
-  convention that canonical row-write lowering and fixture loading already
+  filter the target's Entity Layout slots in table order — the same
+  `m-storage-layout` sequence canonical row-write lowering and fixture loading
   follow — never the authored assignment order, so equivalent calls with
   reordered assignments emit identical SQL (deterministic emission,
   authoring-order-insensitive goldens); the binds are the assignment values
@@ -1877,7 +1928,7 @@ class Truck(Vehicle, table="truck", inheritance=ConcreteSubtype):
   `update_where` is covered in both modes (`m-opt-lock-003` / `-004`) and its
   mixed equal/changed-row elimination in `m-opt-lock-014`; versioned
   `delete_where` is predicate-shaped in `m-opt-lock-015`; readless
-  non-versioned `delete_where` / `update_where` (including descriptor-column
+  non-versioned `delete_where` / `update_where` (including Entity Layout
   order) are `m-batch-write-005` / `-006`; audit-only `terminate_where` is
   `m-txtime-write-007`; and the bitemporal plain update/terminate plus both
   bounded forms are `m-bitemp-write-010`–`-013`. The nine newly authored cases
@@ -1893,6 +1944,22 @@ class Truck(Vehicle, table="truck", inheritance=ConcreteSubtype):
 
 ## 6. Database support and compatibility proof
 
+### Independent Storage Layout oracle boundary
+
+The reference harness remains an independent executable oracle over the core
+specifications, schemas, and corpus. It compiles its own minimal conceptual
+Table Layout from frozen descriptor and Inheritance facts for physical claim
+validation, DDL, fixtures, golden write-shape checks, and Table read-back. It
+MUST NOT import `parallax.core.storage_layout`, Python conformance provisioning,
+generated Python layout output, or another Python production implementation.
+
+The Python conformance adapter follows the opposite side of that boundary: its
+model-derived DDL, fixture loading, SQL compilation, write lowering, and Table
+observations use the accepted model's production `StorageLayoutFacet` and never
+ask the reference harness to supply physical shape. Both implementations are
+graded against the same language-neutral contract and corpus, so disagreement
+remains observable rather than making Python its own oracle.
+
 ### Database provider integration
 
 - **Test runner and discovery.** pytest. A conformance-runner module loads
@@ -1907,7 +1974,8 @@ class Truck(Vehicle, table="truck", inheritance=ConcreteSubtype):
   from production artifacts by the §8 clean-install checks.
 - **Reset lifecycle.** One container per test session; per-case isolation via
   `DROP SCHEMA … CASCADE` + `CREATE SCHEMA`, then ordered DDL derived from the
-  case's descriptor (`applyDdl`), then fixture rows in descriptor column order
+  case's compiled Table Layouts (`applyDdl`), then fixture rows in Entity
+  Layout order
   (`loadFixtures`). No snapshot/template-database optimization in v1 — the
   simple path is the only path (recorded as a deferred optimization), so no
   provider snapshot API or fallback needs naming.
@@ -2000,9 +2068,11 @@ class Truck(Vehicle, table="truck", inheritance=ConcreteSubtype):
 ## 7. Source-enforcement topology
 
 Behavioral modules map onto Python submodules (enforcement scopes) inside the
-distributions of §8. `m-metamodel`, `m-model-formation`, and `m-relationship`
-own the dedicated `parallax.core.metamodel`, `parallax.core.model_formation`,
-and `parallax.core.relationship` scopes.
+distributions of §8. `m-metamodel`, `m-model-formation`, `m-inheritance`,
+`m-storage-layout`, and `m-relationship` own the dedicated
+`parallax.core.metamodel`, `parallax.core.model_formation`,
+`parallax.core.inheritance`, `parallax.core.storage_layout`, and
+`parallax.core.relationship` scopes.
 `parallax.core._formation_profile` is the built-in Model Formation
 composition root; its declared grants are exactly the formation runner plus every
 module whose Formation Manifest row supplies a Rule Set or compiler, and
@@ -2029,14 +2099,15 @@ legalizes a forbidden edge.
 | `m-core` | `parallax.core.base` | `parallax.core.base` | (none) | generated forbidden contracts, `languages/python/pyproject.toml` |
 | `m-metamodel` | `parallax.core.metamodel` | `parallax.core.metamodel` | `m-core` | generated forbidden contracts |
 | `m-model-formation` | `parallax.core.model_formation` | `parallax.core.model_formation` | `m-metamodel` | generated forbidden contracts |
-| Model formation composition root (support) | `parallax.core._formation_profile` | `parallax.core._formation_profile` | `m-metamodel`, `m-model-formation`, `m-inheritance`, `m-value-object`, `m-relationship`, `m-temporal-read`, `m-opt-lock` | generated forbidden contracts |
+| Model formation composition root (support) | `parallax.core._formation_profile` | `parallax.core._formation_profile` | `m-metamodel`, `m-model-formation`, `m-inheritance`, `m-storage-layout`, `m-value-object`, `m-relationship`, `m-temporal-read`, `m-opt-lock` | generated forbidden contracts |
 | `m-descriptor` | `parallax.descriptor` | `parallax.descriptor` | `m-core`, `m-metamodel` | generated forbidden contracts + cross-package contract |
 | `m-pk-gen` | `parallax.core.pk_gen` | `parallax.core.pk_gen` | `m-metamodel` | generated forbidden contracts |
 | `m-inheritance` | `parallax.core.inheritance` | `parallax.core.inheritance` | `m-metamodel`, `m-model-formation` | generated forbidden contracts |
+| `m-storage-layout` | `parallax.core.storage_layout` | `parallax.core.storage_layout` | `m-metamodel`, `m-model-formation`, `m-inheritance` | generated forbidden contracts |
 | `m-value-object` | `parallax.core.value_object` | `parallax.core.value_object` | `m-metamodel`, `m-model-formation` | generated forbidden contracts |
 | `m-relationship` | `parallax.core.relationship` | `parallax.core.relationship` | `m-metamodel`, `m-model-formation` | generated forbidden contracts |
 | `m-op-algebra` | `parallax.core.op_algebra` | `parallax.core.op_algebra` | `m-metamodel`, `m-inheritance` | generated forbidden contracts |
-| `m-sql` | `parallax.core.sql_gen` | `parallax.core.sql_gen` | `m-op-algebra`, `m-dialect`, `m-metamodel`, `m-inheritance`, `m-relationship` | generated forbidden contracts |
+| `m-sql` | `parallax.core.sql_gen` | `parallax.core.sql_gen` | `m-op-algebra`, `m-dialect`, `m-metamodel`, `m-inheritance`, `m-storage-layout`, `m-relationship` | generated forbidden contracts |
 | `m-dialect` | `parallax.core.dialect` (incl. driver-free `dialect.postgres`) | `parallax.core.dialect` | `m-core` | generated forbidden contracts |
 | `m-db-port` | `parallax.core.db_port` (abstract) | `parallax.core.db_port` | `m-core` | generated forbidden contracts |
 | `m-db-error` | `parallax.core.db_error` | `parallax.core.db_error` | `m-db-port`, `m-dialect` | generated forbidden contracts |
@@ -2051,9 +2122,9 @@ legalizes a forbidden edge.
 | `m-navigate` | `parallax.core.navigate` | `parallax.core.navigate` | `m-op-algebra`, `m-unit-work`, `m-temporal-read`, `m-inheritance`, `m-relationship` | generated forbidden contracts |
 | `m-deep-fetch` | `parallax.core.deep_fetch` | `parallax.core.deep_fetch` | `m-navigate`, `m-relationship` | generated forbidden contracts |
 | `m-snapshot-read` | `parallax.snapshot.materialize` | `parallax.snapshot.materialize` | `m-deep-fetch` | generated forbidden contracts + cross-package contract |
-| Snapshot handle and composition surface (support) | `parallax.snapshot.handle` | `parallax.snapshot.handle` | `parallax.snapshot.materialize`, `parallax.core.entity`, `m-core`, `m-metamodel`, `m-op-algebra`, `m-inheritance`, `m-temporal-read`, `m-deep-fetch`, `m-navigate`, `m-dialect`, `m-db-port`, `m-sql`, `m-unit-work`, `m-read-lock`, `m-auto-retry`, `m-opt-lock`, `m-batch-write`, `m-txtime-write`, `m-bitemp-write` | generated forbidden contracts + cross-package contract |
+| Snapshot handle and composition surface (support) | `parallax.snapshot.handle` | `parallax.snapshot.handle` | `parallax.snapshot.materialize`, `parallax.core.entity`, `m-core`, `m-metamodel`, `m-op-algebra`, `m-inheritance`, `m-storage-layout`, `m-temporal-read`, `m-deep-fetch`, `m-navigate`, `m-dialect`, `m-db-port`, `m-sql`, `m-unit-work`, `m-read-lock`, `m-auto-retry`, `m-opt-lock`, `m-batch-write`, `m-txtime-write`, `m-bitemp-write` | generated forbidden contracts + cross-package contract |
 | Snapshot handle wrapping (support, child of `parallax.snapshot.handle`) | `parallax.snapshot.handle._wrap` | `parallax.snapshot.handle._wrap` | `parallax.snapshot.materialize`, `parallax.core.entity`, `m-metamodel`, `m-relationship`, `m-inheritance`, `m-temporal-read` | generated forbidden contracts |
-| Snapshot handle write lowering (support, child group of `parallax.snapshot.handle`) | `parallax.snapshot.handle._family`, `._write_types`, `._keyed_sql`, `._write_lowering` | those four scopes, sharing one grant row | `m-core`, `m-metamodel`, `m-inheritance`, `m-temporal-read`, `m-dialect`, `m-db-port`, `m-sql`, `m-unit-work`, `m-opt-lock`, `m-txtime-write`, `m-bitemp-write` | generated forbidden contracts |
+| Snapshot handle write lowering (support, child group of `parallax.snapshot.handle`) | `parallax.snapshot.handle._family`, `._write_types`, `._keyed_sql`, `._write_lowering` | those four scopes, sharing one grant row | `m-core`, `m-metamodel`, `m-inheritance`, `m-storage-layout`, `m-temporal-read`, `m-dialect`, `m-db-port`, `m-sql`, `m-unit-work`, `m-opt-lock`, `m-txtime-write`, `m-bitemp-write` | generated forbidden contracts |
 | `m-case-format` | `parallax.conformance.case_format` (dev-only) | `parallax.conformance.case_format` | `m-core` | generated forbidden contracts (dev tree) |
 | `m-conformance-adapter` | `parallax.conformance.cli` (dev-only) | `parallax.conformance.cli` | `m-case-format`, plus any claimed behavioral or support scope it harnesses — the core conformance-family exception | generated forbidden contracts (dev tree) |
 | `m-api-conformance` | `languages/python/tests/api_conformance` (dev-only) | `tests.api_conformance` | `m-case-format` (harnesses the public surface) | pytest collection boundary |
@@ -2086,6 +2157,7 @@ prose (`psycopg`) names no enforcement scope.
 parallax.core._formation_profile --> parallax.core.metamodel
 parallax.core._formation_profile --> parallax.core.model_formation
 parallax.core._formation_profile --> parallax.core.inheritance
+parallax.core._formation_profile --> parallax.core.storage_layout
 parallax.core._formation_profile --> parallax.core.value_object
 parallax.core._formation_profile --> parallax.core.relationship
 parallax.core._formation_profile --> parallax.core.temporal_read
@@ -2104,6 +2176,7 @@ parallax.snapshot.handle --> parallax.core.base
 parallax.snapshot.handle --> parallax.core.metamodel
 parallax.snapshot.handle --> parallax.core.op_algebra
 parallax.snapshot.handle --> parallax.core.inheritance
+parallax.snapshot.handle --> parallax.core.storage_layout
 parallax.snapshot.handle --> parallax.core.temporal_read
 parallax.snapshot.handle --> parallax.core.deep_fetch
 parallax.snapshot.handle --> parallax.core.navigate
@@ -2126,6 +2199,7 @@ parallax.snapshot.handle._wrap --> parallax.core.temporal_read
 parallax.snapshot.handle._family --> parallax.core.base
 parallax.snapshot.handle._family --> parallax.core.metamodel
 parallax.snapshot.handle._family --> parallax.core.inheritance
+parallax.snapshot.handle._family --> parallax.core.storage_layout
 parallax.snapshot.handle._family --> parallax.core.temporal_read
 parallax.snapshot.handle._family --> parallax.core.dialect
 parallax.snapshot.handle._family --> parallax.core.db_port
@@ -2137,6 +2211,7 @@ parallax.snapshot.handle._family --> parallax.core.bitemp_write
 parallax.snapshot.handle._write_types --> parallax.core.base
 parallax.snapshot.handle._write_types --> parallax.core.metamodel
 parallax.snapshot.handle._write_types --> parallax.core.inheritance
+parallax.snapshot.handle._write_types --> parallax.core.storage_layout
 parallax.snapshot.handle._write_types --> parallax.core.temporal_read
 parallax.snapshot.handle._write_types --> parallax.core.dialect
 parallax.snapshot.handle._write_types --> parallax.core.db_port
@@ -2148,6 +2223,7 @@ parallax.snapshot.handle._write_types --> parallax.core.bitemp_write
 parallax.snapshot.handle._keyed_sql --> parallax.core.base
 parallax.snapshot.handle._keyed_sql --> parallax.core.metamodel
 parallax.snapshot.handle._keyed_sql --> parallax.core.inheritance
+parallax.snapshot.handle._keyed_sql --> parallax.core.storage_layout
 parallax.snapshot.handle._keyed_sql --> parallax.core.temporal_read
 parallax.snapshot.handle._keyed_sql --> parallax.core.dialect
 parallax.snapshot.handle._keyed_sql --> parallax.core.db_port
@@ -2159,6 +2235,7 @@ parallax.snapshot.handle._keyed_sql --> parallax.core.bitemp_write
 parallax.snapshot.handle._write_lowering --> parallax.core.base
 parallax.snapshot.handle._write_lowering --> parallax.core.metamodel
 parallax.snapshot.handle._write_lowering --> parallax.core.inheritance
+parallax.snapshot.handle._write_lowering --> parallax.core.storage_layout
 parallax.snapshot.handle._write_lowering --> parallax.core.temporal_read
 parallax.snapshot.handle._write_lowering --> parallax.core.dialect
 parallax.snapshot.handle._write_lowering --> parallax.core.db_port
@@ -2325,7 +2402,7 @@ subsection of the template is deleted from this completed spec.
 | Quality concern | Tool and version policy | Configuration path(s) | Local command | Blocking CI command/job | Threshold, exclusions, and enforcement policy |
 |---|---|---|---|---|---|
 | Dependency directions within and across artifacts | import-linter (pinned in `uv.lock`) + `check_dag_sync.py` + `check_scope_ownership.py` | `languages/python/pyproject.toml` `[tool.importlinter]`; `languages/python/tools/check_dag_sync.py`; `languages/python/tools/check_scope_ownership.py` | `uv run python tools/check_dag_sync.py && uv run python tools/check_scope_ownership.py && uv run lint-imports` | `python-static` job, same commands | any production-scope import outside the DAG's transitive closure fails — the forbidden-edge complement generated from `modules.md` rejects illegal non-edges, not just wrong directions, with only the §7 conformance-family importer exemption; generated-contract drift fails, as does any disagreement among the three declarations of the support-scope graph — `check_dag_sync.py`'s support-scope table, the §7 prose rows, and the §7 `support-scope-graph` block — including the case where two of the three are edited consistently and the third is left stale; a production source file owned by no §7 scope (and so covered by no contract), owned by undeclared overlapping scopes, or covered by a stale exemption also fails |
-| Unit tests | pytest (pinned) | `languages/python/pyproject.toml` `[tool.pytest.ini_options]` | `uv run pytest -m unit` | `python-static` job | unit = no container/socket I/O; any failure blocks |
+| Unit tests | pytest (pinned) | `languages/python/pyproject.toml` `[tool.pytest.ini_options]` | `uv run pytest -m unit` | `python-static` job | unit = no container/socket I/O; Storage Layout tests pin Rule Set ownership, exact immutable layouts/views, all six tiers, applicability, effective nullability, physical keys, alias de-duplication, unknown lookups, and bounded allocation; any failure blocks |
 | Code coverage | coverage.py via pytest-cov, branch mode + diff-cover (both pinned) | `[tool.coverage]` in `languages/python/pyproject.toml` | `uv run pytest -m unit --cov --cov-branch --cov-report=xml && uv run diff-cover coverage.xml --compare-branch origin/main --fail-under 100` | `python-static` job with `--cov-fail-under=90` plus the same diff-cover gate | **90% branch minimum** overall; diff-cover requires **100%** of changed lines vs the merge-base with `main`, making the no-new-uncovered-code policy executable; no generated/vendor code exists to exclude; conformance CLI included |
 | Linting | ruff (pinned) | `[tool.ruff]` in `languages/python/pyproject.toml` | `uv run ruff check` | `python-static` job | rule sets E, F, W, I, UP, B, SIM, RUF; `# noqa` requires rule code + one-line justification |
 | Deterministic formatter check | ruff format (pinned) | `[tool.ruff.format]` | check: `uv run ruff format --check`; write: `uv run ruff format` | `python-static` job (`--check` only) | CI checks without rewriting |
@@ -2340,6 +2417,15 @@ subsection of the template is deleted from this completed spec.
 | API Conformance Suite and Usage Guide | pytest + guide generator | `languages/python/tests/api_conformance/`; `languages/python/docs/usage-guide.md` | `uv run pytest -m api_conformance && uv run gen-usage-guide --check` | `python-database` job | coverage partition exact (exercised ∪ reasoned-skips = slice; no stale IDs, no empty reasons); operation, descriptor, and unit-lane copy-to-row no-drift guards green; guide drift fails |
 | Database-backed verification | testcontainers Postgres profiles | §6 profile definitions | `uv run pytest -m "conformance or provider_contract or adapter_smoke"` | `python-database` job | required profiles `pg-full`, provider contract, adapter smoke; every skipped check is reported with a reason in the session summary; silent skips are forbidden and any CI skip fails |
 
+- **Storage Layout contract verification.** Before the target advertises the
+  expanded claim, `just core-dep-graph`, both canonical slice inspections, and
+  `just core-language-spec-check languages/python/spec/python.md` prove the
+  catalog/manifest/claim boundary; focused unit tests prove the Rule Set,
+  compiler, facet, and profile wiring; and compile/conformance intersections
+  selected by `--parallax-tags m-storage-layout` prove every physical consumer.
+  The reference-harness structural layout tests and corpus layout baseline run
+  independently and no Python test satisfies them by importing or serializing
+  production layout objects.
 - **Aggregate static-verification command.** `just python-static` — one local
   command and one blocking CI job running every database-free row above
   (imports/DAG, unit + coverage, ruff check + format check, Pyright strict,

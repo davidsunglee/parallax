@@ -122,8 +122,9 @@ subtypes temporal, others not, or descendants disagreeing on which axes apply �
 is **not supported**: it would leave the family's root-owned as-of coordinate
 system, root-result identity, and relationship-propagation target ill-defined
 (see *Family invariants* below and the family-wide rejection rule there). Every
-concrete table in a temporal family derives its temporal physical primary key
-from the root's axes (`m-descriptor` "physical primary key"); reads through the
+physical Table in a temporal family uses the root's axes when Storage Layout
+selects its temporal-start physical primary-key slots (`m-storage-layout`);
+reads through the
 root, an intermediate abstract position, or a concrete subtype all resolve and
 inject the same root-owned axes (`m-temporal-read`, `m-navigate`).
 
@@ -147,10 +148,10 @@ attribute, and no descendant may declare one) or **entirely versioned together**
 mode, gates on — that same inherited column, `m-opt-lock`). Physically this needs
 no new machinery: table-per-hierarchy already lands the root's version column in
 the one shared table every concrete subtype's rows occupy, and table-per-concrete-
-subtype's ancestry-derived column chain (*Physical mapping*, below) already
-replicates the root's version column onto every concrete subtype's own table — the
-same mechanism that already threads the primary key and every ordinary inherited
-attribute. Combining an explicit `optimisticLocking` Attribute with
+subtype Storage Layout includes the root's version Attribute slot in every
+concrete subtype's own table — the same composition that places the primary key
+and every ordinary inherited Attribute. Combining an explicit
+`optimisticLocking` Attribute with
 `asOfAxes` on one Entity remains invalid (`m-descriptor`); a temporal family's
 root therefore derives its optimistic key from the Transaction-Time start
 Attribute (`m-opt-lock`) rather than declaring a version Attribute, so a temporal family
@@ -163,10 +164,11 @@ locking composed with inheritance at all (ADR 0027).
 
 **Table-per-hierarchy.** The whole family maps to **one shared table** declared
 by the root; descendants never repeat it. The root's `tag` column distinguishes
-rows. The shared
-table physically carries the union of every concrete subtype's columns, so a
-subtype-declared column is **nullable** in the shared table (a `card` row leaves
-the `cash` column null and vice-versa). The `tag` column is **framework-owned
+rows. The shared Table's complete contributor union, semantic order, and
+effective physical nullability are composed by `m-storage-layout` from this
+family topology. A contributor applicable only to one concrete branch is
+physically nullable so sibling rows can omit it, while Entity-level validation
+retains its declared nullability. The `tag` column is **framework-owned
 metadata, not a declared attribute**: a concrete-subtype read injects
 `t0.<tag> = ?` (its `tagValue`); an abstract-target read projects the tag column
 raw so `familyVariant` can be materialized (`m-sql` / `m-case-format`). `m-sql`
@@ -176,52 +178,76 @@ fixes the tag-filter golden SQL.
 no shared table and no tag exist. A concrete read is an ordinary single-table read
 of that subtype's table — the subtype is selected by *which table* is queried.
 Each concrete table **physically contains columns for the full inherited attribute
-chain** plus the concrete subtype's own attributes, derived from the ancestry.
+chain** plus the concrete subtype's own attributes, composed as one canonical
+layout by `m-storage-layout`.
 
-### Canonical column order
+### Validation-time table-group projection
 
-`columnOrder` is an entity's physical columns in canonical order, and this
-module owns the law: **primary-key columns first, then the table-per-hierarchy
-`tag` column, then the remaining scalar attributes in declaration order, then
-each value object's single backing document column in declaration order**
-(`m-value-object`). Every consumer that shapes storage — read projection
-(`m-sql`), keyed and batch writes (`m-batch-write`, `m-opt-lock`), DDL
-derivation, and table read-back — orders its own columns by this law rather than
-restating it.
+Inheritance exposes a pure, total projection of Candidate Metamodel family facts
+for the dependent `m-storage-layout` Rule Set. The projection accepts only the
+Candidate Metamodel, emits no Issue, consumes no facet, and assumes no Rule Set
+has run. It shares this module's topology walk without creating a
+validation-time `InheritanceFacet`.
 
-The order is **family-effective**, which is the first reason it belongs here: a
-participant declares only its local members while its physical table also
-carries every ancestor's, so the order is taken from the position's applicable
-member chain — root first, each contributor's members in declaration order. A
-standalone entity's chain is itself alone, so both cases share one rule.
+```text
+InheritanceTableGroup
+  table: Table
+  mappingOwner: EntityIdentity
+  mappingProvenance: EntityLocation
+  rowOwners: immutable sequence<EntityIdentity>
+  declarationContributors:
+    immutable sequence<AttributeDeclaration
+                       | TopLevelValueObjectDeclaration
+                       | TablePerHierarchyTagDeclaration>
 
-The second reason is that the `tag` column is the only physical column **no
-declared attribute backs**, and this module is what contributes it. Temporality
-*designates* already-declared attributes as axis bounds and optimistic locking
-*marks* an already-declared attribute, so neither contributes a column of its
-own; the descriptor's value phase expands conventional-column spellings into
-declared attributes before formation, which is what keeps the rest of column
-order a declaration fact.
+projectTableGroups(candidate: CandidateMetamodel)
+  -> immutable sequence<InheritanceTableGroup>
+```
 
-Every physical column contributor in one table MUST have a distinct column
-name. The contributors are scalar Attributes, top-level Value Object document
-columns, and (under table-per-hierarchy) the root-owned tag column. The rule is
-evaluated over the physical table: a standalone Entity's local chain, each
-table-per-concrete-subtype concrete's ancestry chain, and the complete
-table-per-hierarchy shared-table superset. Two distinct contributors claiming
-one name are rejected during Model Formation as
-`inheritance-physical-column-collision`; storage consumers MUST NOT choose a
-winner or infer member identity from a duplicate raw row key.
+The projection returns one mapping-owner group per standalone Entity, one per
+unambiguous table-per-hierarchy family, and one per unambiguous table-per-
+concrete-subtype concrete Entity, ordered by canonical mapping-owner Entity
+Identity. A standalone Entity is its owner; a TPH root represents its whole
+family owner, including all family participants; and a TPCS concrete Entity is
+its own owner. `mappingProvenance` is that owner's `EntityLocation`, the precise
+Model Location available for its Table declaration. TPH descendants are family
+participants and never appear as competing owners.
 
-Consequently, disjoint table-per-concrete-subtype branches may reuse a physical
-column name because they own different tables. An abstract union preserves the
-per-branch contributor provenance even when two branch-local columns share that
-name; it MUST NOT infer one declaration from the duplicate spelling. Disjoint
-table-per-hierarchy branches may still reuse a canonical member name, but their
-shared table means they MUST declare distinct column overrides. The same
-requirement makes two Value Object occurrences, or an Attribute and a Value
-Object occurrence, unambiguously addressable even when their canonical names
-differ.
+The projection does not coalesce independent owners that name equal structural
+`Table(name)` values. Storage Layout uses the ordered owner stream to reject
+every later owner of an already-claimed Table at its mapping provenance, with
+the first owner's provenance related. After that validation succeeds, each
+Table has exactly one owner group and can produce exactly one coherent layout.
+
+"Unambiguous" means that family membership, root, strategy, ancestry, and each
+group's intended Table are uniquely derivable. The projection omits a group
+when malformed topology makes one of those answers ambiguous; this Rule Set
+retains exclusive ownership of the corresponding `inheritance-*` issue and the
+dependent module never guesses. A distinct invalid property that does not
+obscure the segment does not require the projection to suppress an otherwise
+unambiguous contribution.
+
+Each uniquely owned group's diagnostic declaration stream preserves accepted
+provenance through four stable category passes: model primary-key Attributes,
+the optional root-owned
+TPH tag, remaining Attributes, then top-level Value Objects. Within an Attribute
+or Value Object pass, a concrete-table group visits root-to-concrete ancestry,
+and a shared-table group visits ancestry root first and concrete contributors in
+canonical concrete Entity order. Every local category retains declaration order,
+and a declaration reached through several concrete chains appears once. This
+diagnostic encounter order does not define accepted physical order. The
+projection supplies mapping-owner boundaries and declaration streams only.
+`m-storage-layout` owns structural Table-owner uniqueness, physical-column
+uniqueness within an owner, semantic tiers, final table order, effective
+nullability, applicability sets, and physical primary keys.
+
+Disjoint table-per-concrete-subtype branches that declare structurally distinct
+Tables may therefore reuse a physical Column spelling because they remain
+different owner groups. An abstract union preserves per-branch declaration
+provenance even when two
+branch-local columns share that spelling; it never infers one declaration from
+the raw key. Sibling contributors in one shared table occupy one group and are
+subject to Storage Layout's physical collision rule.
 
 ### Materialized field keys
 
@@ -256,11 +282,7 @@ names. These ambiguities are
 `inheritance-materialization-key-collision`; a materializer MUST NOT choose a
 winner. Foundational canonical member-name collisions remain
 `metamodel-local-member-collision`, and duplicate physical contributors remain
-`inheritance-physical-column-collision`.
-
-If a future feature ever synthesizes a physical column that no declared
-attribute backs, that feature's owner becomes a **co-owner** of this law and the
-single-owner answer stated here needs revisiting.
+`storage-layout-column-collision` (`m-storage-layout`).
 
 ## Abstract-position reads
 
@@ -276,16 +298,19 @@ existing families retain `Dog`, while duplicate local names render, for example,
 `catalog.SharedVariant` and `archive.SharedVariant`. What each returned leaf carries **beyond**
 that tag depends on the read's result form (`m-case-format` *Read result
 form*): a **row-form** (values lane) leaf is the flat SQL superset row (every
-branch's columns, non-applicable ones `null`); an **instance-form** (object
-lane) leaf, at a read case's own top-level leaves, is a **complete concrete
-instance** in the ordinary sense — only its own branch's inherited-plus-own
-members, never a sibling's null-padded column. Both forms read the **identical**
-superset SQL row (`m-sql` *Read projection* fixes the projected column list as a
-function of the target position alone, independent of result form); only the
-instance-form materialization step narrows it to the variant's own declared
-shape — the SQL itself never changes. This is the read-side counterpart of
-*Concrete-subtype writes*, below: a discriminated union at both boundaries, with
-the object lane's shape divergence confined to materialization, never SQL.
+branch's projected columns, non-applicable ones `null`); an **instance-form**
+(object lane) leaf, at a read case's own top-level leaves, is a **complete
+concrete instance** in the ordinary sense — only its own branch's inherited-
+plus-own members, never a sibling's null-padded column. Inheritance resolves the
+same effective concrete set and branch applicability for both forms. `m-sql`
+owns result projection: both forms select the same applicable non-Document
+Position Layout sequence, while instance-form additionally selects applicable
+top-level Value Object Document slots and row-form omits them. The SQL is
+therefore identical only when that Document-slot delta is empty. After the read,
+instance-form materialization narrows the branch-backed values to the concrete
+variant's own declared shape. This is the read-side counterpart of *Concrete-
+subtype writes*, below: a discriminated union at both boundaries, with family
+semantics retained here and result projection retained by SQL.
 
 ## Concrete-subtype writes
 
@@ -357,16 +382,18 @@ enumerate a family's concretes:
 - the grouped-`OR` per-branch `EXISTS` **branch order** for polymorphic navigation
   (`m-navigate`, `m-sql`);
 - the derived **narrowed view key** `<rel>[<Concrete>,<Concrete>]` (`m-deep-fetch`);
-- the **per-subtype own-column blocks** of an abstract-read superset projection
-  (`m-sql`, below).
+- the per-subtype contributor visitation order used by Storage Layout's shared
+  Table and cross-table position composition (`m-storage-layout`).
 
 Three orderings are deliberately **not** this alphabetical sibling order and are
 specified elsewhere:
 
-- The **inherited-column prefix** of a superset stays **ancestry order**
-  (root → abstract-subtype → concrete): columns are enumerated down the inheritance
-  chain, never alphabetized across it.
-- A **single entity's own attributes/columns** keep their **declared order**.
+- An inherited declaration stream stays **ancestry order**
+  (root → abstract-subtype → concrete), never alphabetical across the chain.
+  Storage Layout subsequently applies table-wide semantic tier precedence, so
+  ancestry order is not a promised physical prefix.
+- A **single entity's own members** keep their **declared order** within that
+  stream and therefore remain stable within a Storage Layout tier.
 - A `narrow` node's authored **`to` list** is preserved **verbatim** by serde
   (`m-op-algebra`); only the *resolved/effective* concrete set it denotes is
   canonicalized to this alphabetical order, so `to: [Pet]` and `to: [Cat, Dog]`
@@ -437,12 +464,10 @@ owns the complete code-set declaration; this module owns each code's meaning.
 - **Members do not shadow across ancestry** — a descendant cannot redeclare an
   ancestor Attribute, Relationship, or top-level Value Object name, including
   cross-category shadowing (`inheritance-member-shadowing`). Disjoint sibling
-  branches may reuse a name; under table-per-hierarchy they use distinct
-  physical column overrides as required by `inheritance-physical-column-collision`.
-- **Physical columns do not collide** — distinct Attributes, top-level Value
-  Objects, and a table-per-hierarchy tag never claim one physical column in the
-  same table (`inheritance-physical-column-collision`). The check follows the
-  strategy-specific table boundaries stated under *Canonical column order*.
+  branches may reuse a name. This module's validation-time projection exposes
+  each independent mapping owner; `m-storage-layout` rejects a second owner of
+  one structural Table, then checks every physical Column claim within the
+  uniquely owned boundary.
 - **Materialized field keys do not collide** — the scalar-column, canonical
   Value Object, relationship/narrowed-view, and synthetic `familyVariant`
   keyspaces described under *Materialized field keys* remain unambiguous on
@@ -531,8 +556,8 @@ write time.
   the whole chain; ancestry-wide name uniqueness
   (`inheritance-member-shadowing`) makes each lookup unambiguous. A concrete
   subtype's `applicable_attributes` is exactly the accepted-field chain of a
-  concrete-subtype write and the inherited column chain the physical mapping
-  derives.
+  concrete-subtype write and the declaration chain Storage Layout composes for
+  that Entity's Table.
 - `superset_attributes` and `superset_value_objects` are the abstract-read
   projection supersets (`m-sql`) and equal the corresponding
   `position([entity])` members exactly (the ordering rule below).
@@ -562,7 +587,8 @@ whose effective set is empty returns empty sequences rather than absence.
   Entity contributes exactly once, its members in declaration order, so every
   Attribute and Value Object appears exactly once with its declaring identity
   preserved. The framework-owned tag column is not a declared Attribute and
-  is never in these sequences; `m-sql` projects it separately.
+  is never in these sequences; Storage Layout supplies its physical slot and
+  `m-sql` retains the semantics for when that slot is projected or filtered.
 
 `position(...)` is expected output-sensitive: its cost is linear in the
 member count plus the returned view's size — resolution over precomputed

@@ -26,8 +26,9 @@
 # value-object-specific temporal machinery (m-value-object "Inherited temporality").
 #
 # `address` is the ONE m-core `json` column the whole embedded composite is stored
-# in. columnOrder is the scalar attributes (id, name, from_z, thru_z, in_z, out_z)
-# then the single document column (address).
+# in. The descriptor preserves the Attribute and Value Object declaration
+# sequences; Storage Layout composes `br_id` in Identity, `name` in Domain, the
+# four axis bounds in Temporal, then `address` in Document.
 #
 # Read row data lives in the sibling fixtures/branch.yaml (the both-axis as-of READ
 # cases); the write-sequence cases construct their own bitemporal history from their

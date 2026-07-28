@@ -4,7 +4,7 @@
 # m-opt-lock-006 proves the single-attribute success (balance only). This pins the
 # multi-attribute form: the unit of work observes account 2 at version 1 and
 # updates BOTH owner and balance. The golden SET lists the domain columns in
-# columnOrder (owner, balance) followed by the framework-owned version advance
+# Entity Layout order (owner, balance) followed by the framework-owned version advance
 # (version = observed + 1 = 2); the gate binds the observed version (1). With no
 # concurrent writer the fresh gate matches exactly ONE row — success — so both
 # attributes land and the version advances to 2:
@@ -14,7 +14,7 @@
 # The harness loads fixtures, applies the golden UPDATE, and asserts affectedRows = 1
 # and the resulting table state: account 2 is now Ling / 300.00 / version 2, the
 # other rows untouched. This proves the version advances ONCE (not once per set
-# column) and the multi-column SET binds in columnOrder ahead of the version.
+# column) and the multi-column SET binds in Entity Layout order ahead of the version.
 model: models/account.yaml
 tags: [m-opt-lock, m-sql, success, optimistic-lock-success, slice-snapshot-1, slice-managed-1]
 shape: conflict

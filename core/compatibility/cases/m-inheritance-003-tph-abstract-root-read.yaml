@@ -2,9 +2,9 @@
 #
 # Targeting the abstract root Payment spans the WHOLE shared table and injects NO tag
 # predicate (its absence is the contract): every concrete row across the family is
-# returned. The projection is the full concrete superset — inherited (id, amount)
-# then each concrete subtype's own columns (card_network, tendered) — PLUS the raw
-# tag column `kind` (resolved Q6), so familyVariant can be materialized. familyVariant
+# returned. The projection follows the shared Table Layout: identity `id`, raw
+# discriminator `kind`, then the Domain-tier `amount`, `card_network`, and `tendered`
+# slots. The raw tag lets familyVariant be materialized. familyVariant
 # is derived at materialization from the tag metadata map (card -> CardPayment,
 # cash -> CashPayment), NEVER projected as SQL; non-applicable subtype columns are null.
 model: models/payment.yaml
@@ -17,7 +17,7 @@ when:
 then:
   statements:
     - sql:
-        postgres: select t0.id, t0.amount, t0.card_network, t0.tendered, t0.kind from payment t0
+        postgres: select t0.id, t0.kind, t0.amount, t0.card_network, t0.tendered from payment t0
   rows:
     - { id: 1, amount: 100.00, card_network: Visa, tendered: null, familyVariant: CardPayment }
     - { id: 2, amount: 50.00, card_network: Amex, tendered: null, familyVariant: CardPayment }

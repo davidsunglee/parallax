@@ -15,7 +15,7 @@ The implementation selects `slice-managed-1` and the managed-object lifecycle.
     "version": "1.0.0"
   },
   "capabilities": {
-    "modules": ["m-api-conformance", "m-auto-retry", "m-batch-write", "m-bitemp-write", "m-case-format", "m-conformance-adapter", "m-core", "m-db-error", "m-deep-fetch", "m-descriptor", "m-detach", "m-dialect", "m-identity-map", "m-inheritance", "m-metamodel", "m-model-formation", "m-navigate", "m-op-algebra", "m-op-list", "m-opt-lock", "m-pk-gen", "m-read-lock", "m-relationship", "m-sql", "m-temporal-read", "m-txtime-write", "m-unit-work", "m-value-object"],
+    "modules": ["m-api-conformance", "m-auto-retry", "m-batch-write", "m-bitemp-write", "m-case-format", "m-conformance-adapter", "m-core", "m-db-error", "m-deep-fetch", "m-descriptor", "m-detach", "m-dialect", "m-identity-map", "m-inheritance", "m-metamodel", "m-model-formation", "m-navigate", "m-op-algebra", "m-op-list", "m-opt-lock", "m-pk-gen", "m-read-lock", "m-relationship", "m-sql", "m-storage-layout", "m-temporal-read", "m-txtime-write", "m-unit-work", "m-value-object"],
     "dialects": ["postgres"],
     "caseShapes": ["read", "writeSequence", "scenario", "conflict", "boundary", "error", "concurrencySuccess", "rejected"],
     "caseTags": { "include": ["slice-managed-1"] },
@@ -63,6 +63,7 @@ map while preserving empty, null, unloaded, ordered, and shared states.
 | `m-dialect` | src/dialect | dialect | `m-core` | depcheck.toml |
 | `m-identity-map` | src/identity-map | identity-map | `m-unit-work`, `m-temporal-read` | depcheck.toml |
 | `m-inheritance` | src/inheritance | inheritance | `m-descriptor`, `m-metamodel`, `m-model-formation` | depcheck.toml |
+| `m-storage-layout` | src/storage-layout | storage-layout | `m-metamodel`, `m-model-formation`, `m-inheritance` | depcheck.toml |
 | `m-metamodel` | src/metamodel | metamodel | `m-core` | depcheck.toml |
 | `m-model-formation` | src/model-formation | model-formation | `m-metamodel` | depcheck.toml |
 | `m-navigate` | src/navigate | navigate | `m-op-algebra`, `m-unit-work`, `m-temporal-read`, `m-inheritance`, `m-relationship` | depcheck.toml |

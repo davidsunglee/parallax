@@ -1,10 +1,10 @@
 # A standalone Entity maps a scalar Attribute and a top-level Value Object to
 # the same physical column even though their canonical rendered names differ.
-# Model Formation must reject the duplicate storage contributors before SQL;
+# The Storage Layout Rule Set must reject the contributors before SQL;
 # neither ingestion nor materialization may choose which declaration owns the
 # raw row key.
 model: models/member-column-defaults.yaml
-tags: [m-inheritance, m-model-formation, m-value-object, m-descriptor, rejected, negative, physical-column, standalone, slice-snapshot-1, slice-managed-1]
+tags: [m-storage-layout, m-inheritance, m-model-formation, m-value-object, m-descriptor, rejected, negative, physical-column, standalone, slice-snapshot-1, slice-managed-1]
 shape: rejected
 when:
   model:
@@ -20,4 +20,4 @@ when:
           attributes:
             - { name: label, type: string }
 then:
-  rejectedRule: inheritance-physical-column-collision
+  rejectedRule: storage-layout-column-collision

@@ -97,7 +97,8 @@ A case is one of **nine shapes**, named by the required top-level `shape`:
 - **`rejected`** — a schema-valid `when.operation`, a `when.write`, **or** an
   inline `when.model` a model-aware validator MUST refuse **before any SQL**,
   naming the violated normative rule in `then.rejectedRule` (`m-value-object` /
-  `m-op-algebra` / `m-inheritance` negative validation, carrying no golden SQL —
+  `m-op-algebra` / `m-inheritance` / `m-storage-layout` negative validation,
+  carrying no golden SQL —
   see *Rejected cases*, below).
 
 #### The statement entry
@@ -275,15 +276,16 @@ concrete-subtype set (`m-op-algebra`); an invalid narrow is a `rejected` case
 
 **A "complete concrete instance" means something different in each result
 form** (*Read result form*, below), so what ELSE a leaf carries beyond
-`familyVariant` diverges by lane — a divergence beyond the value-object slot-4
-split that section otherwise fixes:
+`familyVariant` diverges by lane — independently of the Document-tier
+projection split that section otherwise fixes:
 
 - **Row-form** (`then.rows`) is the flat SQL projection observed unfiltered:
-  every leaf carries the full **concrete-superset** columns (inherited first,
-  then each concrete subtype's own columns, canonical alphabetical sibling
-  order), with non-applicable subtype columns `null` — the values lane reports
-  the query's own fixed-superset `select` list exactly as it comes back
-  (`m-sql` *Read projection*, slots 1-3, unconditional on result form).
+  every leaf carries the full non-Document **Position Layout** sequence in
+  table-wide semantic tier order, with root-first ancestry, local declaration
+  order, and canonical concrete order stable only within a tier. Non-applicable
+  subtype contributors are `null` — the values lane reports the query's own
+  fixed-superset `select` list exactly as it comes back (`m-sql` *Read
+  projection*).
 - **Instance-form**, at a **top-level read case's own `then.graph` leaves**
   (a `shape: read` case with no `deepFetch`), is the
   **per-variant node shape**: each node carries **only its own branch's
@@ -291,12 +293,15 @@ split that section otherwise fixes:
   **omits every sibling branch's column entirely**, with **no null sibling
   padding** — a materialized `Dog` node has no `indoor` key to be null, exactly
   as an ordinary (non-inheritance) instance never carries an undeclared member.
-  This is a **materialization-time** narrowing, not a projection change: the
-  golden SQL is unaffected (`m-sql` *Read projection* fixes the `select` list
-  as a function of the target position alone, independent of result form,
-  slots 1-3), so both lanes read the identical superset row from the database
-  and only the graph-assembly step — never the `select` list — narrows it to
-  the variant's own declared shape. `m-inheritance-003`/`-013`/`-015`/`-052`
+  This per-variant reduction is **materialization-time** narrowing, but result
+  form still affects projection. The target position fixes the family, physical
+  Table/branch shape, and non-Document Position Layout sequence. Instance-form
+  then adds applicable `Document` slots, while row-form omits them (`m-sql`
+  *Read projection*). The paired goldens named here are byte-identical only
+  because their models have no applicable top-level Value Objects; in general,
+  SQL differs by that Document-slot delta. Graph assembly — never branch shape
+  or the non-Document sequence — narrows values to the variant's own declared
+  shape. `m-inheritance-003`/`-013`/`-015`/`-052`
   (row-form) and their `then.graph` siblings `m-inheritance-106`/`-107`/
   `-108`/`-109` (instance-form) are this divergence's own result-form pair
   (like the supplier form-divergence witness, *Read result form*, below): the
@@ -332,8 +337,9 @@ elements remain distinct.
 
 **Every** read a case asserts carries a **result form** — the **object lane**
 (**instance-form**) or the **values lane** (**row-form**) of `m-sql`'s *Read result form*
-— and that form fixes the read's projection (`m-sql`, *Read projection*, slot 4:
-instance-form projects every declared value-object document column; row-form omits them).
+— and that form fixes the read's Document-slot selection (`m-sql`, *Read
+projection*: instance-form projects every applicable top-level Value Object
+`Document` slot; row-form omits those slots).
 The form follows the read's **nature**, and a case expresses that nature in one of two
 ways, keyed on **where** the read is asserted — never on a bare member name alone:
 
@@ -364,14 +370,14 @@ ways, keyed on **where** the read is asserted — never on a bare member name al
     level** does (`m-sql`, *Read result form*). A **subsequent** `action: access` of an
     already-materialized relationship or list issues **no read** (a cache hit,
     `roundTrips: 0`) — there is no projection to classify.
-  - A value-object-bearing target therefore projects its whole document (slot 4) at
+  - A value-object-bearing target therefore projects its whole `Document` slot at
     **every** instance-form step above, even though the channel is `expectRows` /
     `observeRows`.
   - The **internal materialized-predicate-write resolving read** — the "materializing
     find" a set-based versioned / temporal predicate write consumes to plan its per-row
     DML, resolving each matched row to its pk and gate values with **no instance
     constructed** (`m-sql`, ADR 0014) — is the **sole row-form** (values lane) step read;
-    it omits slot 4 (a reassigned value-object document comes from the write instruction,
+    it omits `Document` slots (a reassigned value-object document comes from the write instruction,
     not the read). A **`distinct` / grouped concurrency-witness read** is likewise a
     projection over the values lane (`m-sql`), constructing no instance.
 
@@ -381,17 +387,17 @@ Row-form is **not a developer surface** — the idiomatic find API is instance-f
 results — `m-agg`; a `distinct` / grouped concurrency-witness read is likewise a
 projection over the values lane, `m-sql`). The form is **structural intent** an adapter's
 `compile` MAY consume, exactly like `when.uow.concurrency`; it needs no schema field and
-no case edit. The supplier result-form witness is the **sole slot-4 / value-object
+no case edit. The supplier result-form witness is the **sole Document-slot / value-object
 projection** place the two result FORMS **diverge** — a scenario whose managed find
 projects the `address` document (instance-form) while its predicate-write resolving
 read omits it (row-form). It is not the forms' only divergence overall: the
 abstract-target per-variant materialization narrowing established above (*Read
 targeting*, `then.graph`'s per-variant node shape vs `then.rows`'s concrete-superset
-row) is the other — a slots-1-3 graph-assembly-time shape difference, not a slot-4
-projection one. It is **no
+row) is the other — a graph-assembly-time shape difference over the same
+non-Document Position Layout, not a Document projection difference. It is **no
 longer the sole value-object-bearing step read**, now that the lifecycle-action
 `load` / first-`access` witnesses carry value-object-bearing instance-form step reads
-(each projecting its read entity's own `address` document at slot 4). Every other entity
+(each projecting its read entity's own `address` Document slot). Every other entity
 read at a step (`balance`, `position`, `account`, `order_item`, and the rest) declares no
 value object, so instance-form and row-form project the same columns there: the
 classification changes no existing golden and pins the answer for the value-object-bearing
@@ -584,7 +590,8 @@ document (a JSON object, a JSON array, or `NULL`) — never a DB-computed write 
 (`{computed: "maxPlusOne"}` / `{increment: n}`), which is a **scalar-attribute-only**
 form. A value object binds its whole document even when that document is *shaped*
 like a marker; the two are disambiguated by the field's declared metamodel role
-(resolved from `columnOrder(entity)`), not by the value's shape (`m-value-object`).
+(resolved from the Entity Layout slot's contributor), not by the value's shape
+(`m-value-object`, `m-storage-layout`).
 
 A writeSequence case MAY set **`given.fixtures: true`** to load the model's
 fixtures **before** the ordered DML (instead of starting empty) — so a sequence
@@ -712,7 +719,7 @@ are deliberately small and structural:
 | `until` | `updateUntil` / `terminateUntil` | bounded operation's exclusive upper bound |
 
 Delete and terminate mutations carry **no** assignments. Assignment list order is
-not SQL order: descriptor declared column order determines the emitted `set`
+not SQL order: the target's Entity Layout order determines the emitted `set`
 columns and assignment binds. The model-aware validator validates the predicate
 against `operation.schema.json`, checks entity scope and bare-predicate rules,
 rejects duplicate or framework-owned/unassignable assignments, and requires only
@@ -938,13 +945,13 @@ a surfaced error kind), and its retry configuration under `when.uow` (`retries` 
 error types stay per-language. Every boundary case is on the `api-conformance`
 lane.
 
-### Rejected cases (`m-value-object` / `m-op-algebra` / `m-inheritance`)
+### Rejected cases (`m-value-object` / `m-op-algebra` / `m-inheritance` / `m-storage-layout`)
 
 A **rejected** case proves a **negative**: that a model-aware validator refuses an
 invalid input **before any SQL is emitted** (resolved question 7). It carries the
 invalid input under `when` — **exactly one** of an `operation` (a schema-valid
 `m-op-algebra` node), a `write` (a neutral write row, ①), **or** a `model` (an
-inline invalid inheritance descriptor, below) — and a `then.rejectedRule` naming
+inline invalid model descriptor, below) — and a `then.rejectedRule` naming
 the violated normative rule. A rejected case pins a **single** invalid input:
 carrying **more than one** of `operation` / `write` / `model`, or **none**, is
 invalid — enforced by the schema `oneOf` (paired with the `propertyNames` enum
@@ -1034,10 +1041,10 @@ checked payload-shape-first then target-validity):
 - `abstract-write-target` — a create / update / delete / terminate handle aimed at
   an **abstract** root or abstract subtype. Writes are concrete-subtype only.
 
-**Model** rules (`m-inheritance` accepted-model formation — standalone and
-strategy-specific physical-table defects as well as cross-entity closed-tree family
-invariants that per-entity schema validation cannot express, carried inline under
-`when.model`): `inheritance-unknown-parent`, `inheritance-cycle`,
+**Model** rules (accepted-model formation — foundational, Inheritance, and
+Storage Layout invariants that per-entity schema validation cannot express,
+carried inline under `when.model`):
+`inheritance-unknown-parent`, `inheritance-cycle`,
 `inheritance-missing-root`,
 `inheritance-concrete-without-abstract-root`,
 `inheritance-tph-root-table-required`,
@@ -1048,11 +1055,15 @@ invariants that per-entity schema validation cannot express, carried inline unde
 `inheritance-strategy-redeclared`, `inheritance-missing-tag-value`,
 `inheritance-duplicate-tag-value`,
 `inheritance-tag-on-concrete-subtype-strategy`,
-`inheritance-temporal-axes-not-root-owned`, and
-`inheritance-optimistic-locking-not-root-owned`, and
+`inheritance-temporal-axes-not-root-owned`,
+`inheritance-optimistic-locking-not-root-owned`,
 `inheritance-persistence-not-root-owned`,
-`inheritance-physical-column-collision`, and
-`inheritance-materialization-key-collision` (see `m-inheritance` for each invariant).
+`inheritance-materialization-key-collision` (see `m-inheritance`),
+`storage-layout-table-mapping-collision`: a later independent mapping owner
+claims a structural Table already claimed by the first canonical owner, and
+`storage-layout-column-collision`: within one uniquely owned Table, distinct
+Attributes, top-level Value Objects, or a TPH discriminator claim one physical
+Column (see `m-storage-layout` for each invariant).
 A `when.model` case carries an **inline** model descriptor — an
 instance of `metamodel.schema.json` with an accepted-model formation defect — kept inside the
 case rather than in the shared `models/` registry, so an invalid model cannot
@@ -1063,14 +1074,24 @@ names a real, loadable descriptor (its identity/registry role is unchanged). A
 model-aware validator (and every language implementation) MUST reject the inline
 model pre-SQL with **exactly** the named rule.
 
-`inheritance-physical-column-collision` applies to every strategy-specific
-physical table, including a standalone Entity's local contributors, one
-table-per-concrete-subtype concrete's inherited contributor chain, and the full
-table-per-hierarchy shared-table superset including its tag. Inline rejected
-models separately witness an Attribute/Value Object collision, an inherited
-table-per-concrete-subtype collision, sibling contributions to one shared table,
-and a member colliding with the shared-table tag. This keeps invalid models out
-of the reusable model registry while making each table boundary executable.
+Storage Layout validation is keyed by structural Table identity. A standalone
+Entity is one mapping owner, a whole TPH family represented by its root is one
+owner, and each TPCS concrete mapping is one owner; TPH participants do not
+compete with their family. Owners are encountered in canonical Entity Identity
+order. The first owner claims the Table, and every later independent owner is
+rejected as `storage-layout-table-mapping-collision` at its Entity mapping
+location with the first owner related. The same-Table witness uses non-overlapping
+Columns so this ownership issue cannot be mistaken for a physical Column claim.
+
+Within every uniquely owned Table, `storage-layout-column-collision` applies to
+a standalone Entity's local contributors, one table-per-concrete-subtype
+concrete's inherited contributor chain, or the full table-per-hierarchy shared-
+table superset including its tag. Inline rejected models separately witness the
+same-Table owner collision, an Attribute/Value Object Column collision, an
+inherited table-per-concrete-subtype Column collision, sibling contributions to
+one shared Table, and a member colliding with the shared-table tag. This keeps
+invalid models out of the reusable model registry while making each boundary
+executable.
 
 Purely **regex-level** negatives — an empty path after the value-object name, a
 bad-cased segment — are the operation schema's job (the `nestedRef` grammar) and

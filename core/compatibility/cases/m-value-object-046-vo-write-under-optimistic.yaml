@@ -5,7 +5,7 @@
 # No existing model combines a value object with an optimistic-lock version, so a
 # versioned document write had no witness. The unit of work observes Subscriber 1 at
 # version 1 and assigns a NEW `address` document. The golden SET lists the domain
-# column (address, the whole document bound atomically in columnOrder position)
+# column (address, the whole document bound atomically in its layout position)
 # ahead of the framework-owned version advance (version = observed + 1 = 2), gated
 # on the observed version (1). With no concurrent writer the fresh gate matches
 # exactly ONE row — success — so the new document lands and the version advances to

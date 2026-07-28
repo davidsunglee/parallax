@@ -43,28 +43,28 @@ when:
 then:
   statements:
     - sql:
-        postgres: insert into deposit_rate(id, amount, from_z, thru_z, in_z, out_z, grade) values (?, ?, ?, ?, ?, ?, ?)
-      binds: [1, 2.50, "2024-01-01T00:00:00+00:00", infinity, "2024-01-01T00:00:00+00:00", infinity, A]
+        postgres: insert into deposit_rate(id, amount, grade, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?, ?)
+      binds: [1, 2.50, A, "2024-01-01T00:00:00+00:00", infinity, "2024-01-01T00:00:00+00:00", infinity]
     - sql:
         postgres: update deposit_rate set out_z = ? where id = ? and out_z = ?
       binds: ["2024-07-01T00:00:00+00:00", 1, infinity]
     - sql:
-        postgres: insert into deposit_rate(id, amount, from_z, thru_z, in_z, out_z, grade) values (?, ?, ?, ?, ?, ?, ?)
-      binds: [1, 2.50, "2024-01-01T00:00:00+00:00", "2024-06-01T00:00:00+00:00", "2024-07-01T00:00:00+00:00", infinity, A]
+        postgres: insert into deposit_rate(id, amount, grade, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?, ?)
+      binds: [1, 2.50, A, "2024-01-01T00:00:00+00:00", "2024-06-01T00:00:00+00:00", "2024-07-01T00:00:00+00:00", infinity]
   tableState:
     deposit_rate:
       - id: 1
         amount: 2.50
+        grade: A
         from_z: "2024-01-01T00:00:00+00:00"
         thru_z: infinity
         in_z: "2024-01-01T00:00:00+00:00"
         out_z: "2024-07-01T00:00:00+00:00"
-        grade: A
       - id: 1
         amount: 2.50
+        grade: A
         from_z: "2024-01-01T00:00:00+00:00"
         thru_z: "2024-06-01T00:00:00+00:00"
         in_z: "2024-07-01T00:00:00+00:00"
         out_z: infinity
-        grade: A
   roundTrips: 3
