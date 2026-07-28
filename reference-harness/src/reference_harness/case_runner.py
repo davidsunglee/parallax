@@ -114,6 +114,22 @@ def _reference_identity_row(row: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _write_column_order(case: Case, entity: Entity) -> tuple[str, ...]:
+    """The Table-Layout Columns a row-owning *entity* writes, in canonical order.
+
+    Every golden write-shape check reads its column sequence here, so the
+    independently compiled layout — not a second effective-definition walk — is
+    what the authored DML is graded against.
+    """
+    view = case.model.storage_layout.entity(entity.canonical_name)
+    if view is None:
+        raise CaseFailure(
+            f"{case.path.name}: {entity.name} owns no rows, so it has no Table Layout to "
+            f"write through."
+        )
+    return tuple(slot.column for slot in view.columns)
+
+
 def _case_column_order(entity: Entity) -> tuple[str, ...]:
     """Derive the canonical column sequence for authored-SQL shape checks."""
     attributes = entity.attributes
@@ -2525,7 +2541,7 @@ def _document_columns(entity: Entity) -> set[str]:
     NULL), NEVER a DB-computed marker. DB-computed marker interpretation
     (``computed`` / ``increment``) is gated on this set so the marker branch is only
     ever taken for a SCALAR ATTRIBUTE column — the role is resolved from the
-    metamodel (``columnOrder(entity)`` position), not from the value's shape, so a
+    metamodel (the member's own declared role), not from the value's shape, so a
     marker-SHAPED document (``{computed: …}`` / ``{increment: n}``) still binds as
     one literal document.
     """
@@ -2562,9 +2578,9 @@ def _classify_write_row(
     value is split into the pk, every other attribute AND every value object into
     the domain ``set`` — all keyed by physical column. A value object resolves to
     its single structured-document column and its value is the WHOLE document
-    (m-value-object): it binds atomically as one document value in columnOrder
-    position, never decomposed into path-level binds. Because that role is resolved
-    HERE (from ``columnOrder(entity)``), a value-object column's value is ALWAYS
+    (m-value-object): it binds atomically as one document value at its Document-tier
+    slot, never decomposed into path-level binds. Because that role is resolved
+    HERE (from the entity's declared members), a value-object column's value is ALWAYS
     literal document content downstream — never a DB-computed marker
     (``computed`` / ``increment``), even when the document is marker-SHAPED; marker
     interpretation applies only to a scalar-attribute column (see
@@ -2582,8 +2598,8 @@ def _classify_write_row(
         try:
             column = entity.attribute_by_name(key)["column"]
         except KeyError:
-            # Not an attribute — a value object binds as ONE document in its
-            # columnOrder position (m-value-object); the neutral input names it
+            # Not an attribute — a value object binds as ONE document at its
+            # Document-tier slot (m-value-object); the neutral input names it
             # like a scalar attribute and its value is the whole document.
             try:
                 column = entity.value_object_by_name(key)["column"]
@@ -2806,14 +2822,14 @@ def _assert_write_input_columns(case: Case, dialect: str) -> None:
     The corpus is self-validating regardless of any adapter: a GENERATING adapter
     derives the emitted column list from ① (``rows``) classified against the model,
     so the harness asserts that same classification agrees with the authored golden.
-    Per non-temporal write step the columns ① resolves to — in ``columnOrder``
+    Per non-temporal write step the columns ① resolves to — in Table Layout
     order, filtered to the present attributes — MUST equal the golden's INSERT / SET
     column list, and ①'s values MUST equal the write-value prefix of the golden
     binds. Comparing against the golden HERE is legitimate: the harness compares two
     AUTHORED representations, never grading its own generation.
 
     A TEMPORAL step is Family B: it ALWAYS writes the entity's full physical row, so
-    the column list stays metamodel-sourced (``column_order``) and ① carries only the
+    the column list stays layout-sourced (``_write_column_order``) and ① carries only the
     domain values (``rows``) plus the handle-supplied transaction instant ``at``
     (→ ``in_z``), with the ``start_column = instant`` / ``end_column = infinity``
     bookkeeping DERIVED, never authored (:func:`_assert_temporal_input`). A
@@ -2910,10 +2926,11 @@ def _assert_insert_statement(
     binds: list[Any],
 ) -> None:
     golden_columns = _parse_insert_columns(case, statement)
-    domain = [c for c in _case_column_order(entity) if any(c in cols for cols, *_ in classified)]
+    order = _write_column_order(case, entity)
+    domain = [c for c in order if any(c in cols for cols, *_ in classified)]
     # A TABLE-PER-HIERARCHY insert writes the tag column from the concrete subtype's
     # tagValue (m-inheritance) — a FRAMEWORK-DERIVED column, never carried in ① —
-    # slotted at its columnOrder position, exactly as the version column is derived.
+    # slotted at its Discriminator-tier position, exactly as the version column is derived.
     tag = _tag(entity)
     if tag is not None and tag[0] in domain:
         raise CaseFailure(
@@ -2921,23 +2938,21 @@ def _assert_insert_statement(
             f"column {tag[0]!r}, which a table-per-hierarchy write derives from "
             f"the concrete subtype's tagValue (m-inheritance), never authored."
         )
-    emitted = [
-        c for c in _case_column_order(entity) if c in domain or (tag is not None and c == tag[0])
-    ]
+    emitted = [c for c in order if c in domain or (tag is not None and c == tag[0])]
     # A VERSIONED insert appends the framework-owned version column with the DERIVED
     # initial value `1` (never authored in ①, so it is not in the row's columns).
     present = [*emitted, version_col] if version_col is not None else emitted
     if golden_columns != present:
         raise CaseFailure(
             f"{case.path.name}: the golden INSERT column list {golden_columns} != the "
-            f"columns the neutral write input resolves to {present} (columnOrder order, "
+            f"columns the neutral write input resolves to {present} (Table Layout order, "
             f"present attributes"
             f"{' + derived tag' if tag is not None else ''}"
             f"{' + derived version' if version_col is not None else ''})."
         )
     # A DB-computed marker is a SCALAR-ATTRIBUTE-only interpretation (m-value-object):
     # a value-object (document) column ALWAYS binds its whole literal document in
-    # columnOrder position, so it is excluded here even when the authored document is
+    # Document-tier slot, so it is excluded here even when the authored document is
     # marker-SHAPED (`{computed: …}`) — the role is resolved from the metamodel, never
     # from the value's shape.
     document_columns = _document_columns(entity)
@@ -2993,7 +3008,7 @@ def _assert_versioned_update_input(
         classified, step_statements, step_binds, strict=True
     ):
         golden_set = _parse_set_columns(case, statement)
-        set_present = [c for c in _case_column_order(entity) if c in set_cols]
+        set_present = [c for c in _write_column_order(case, entity) if c in set_cols]
         expected_cols = [*set_present, version_col]
         if golden_set != expected_cols:
             raise CaseFailure(
@@ -3029,7 +3044,7 @@ def _assert_update_input(
 ) -> None:
     set_present = [
         c
-        for c in _case_column_order(entity)
+        for c in _write_column_order(case, entity)
         if any(c in set_cols for _, _, set_cols, _ in classified)
     ]
     # Columns whose ① value is a self-referential `{ increment: <n> }` marker (a
@@ -3133,7 +3148,7 @@ def _assert_temporal_input(
     """Cross-check a Transaction-Time-Only write step's ① against its golden DML.
 
     A milestone-chaining write ALWAYS writes the entity's full physical row (DQ-B
-    Family B), so the emitted column list is metamodel-sourced (``column_order``) —
+    Family B), so the emitted column list is layout-sourced (``_write_column_order``) —
     ① carries only the domain values (``rows``) plus the handle-supplied
     Transaction-Time instant ``at`` (→ ``in_z``). The bookkeeping
     ``start_column = instant`` and the open bound
@@ -3157,7 +3172,7 @@ def _assert_temporal_input(
     )
     axis, at, instant_key = transaction_time, step.get("at"), "at"
     in_z, infinity = axis["start_column"], axis.get("infinity", "infinity")
-    full_columns = list(_case_column_order(entity))
+    full_columns = list(_write_column_order(case, entity))
     if at is None:
         raise CaseFailure(
             f"{case.path.name}: a temporal write step's neutral write input (①) MUST carry "
@@ -3178,7 +3193,7 @@ def _assert_temporal_input(
     columns, pk, _set_cols, _observed = classified[0] if classified else ({}, None, {}, None)
     # A TABLE-PER-HIERARCHY concrete subtype's milestone rows carry the framework-owned
     # tag column, DERIVED from its `tagValue` (m-inheritance) — the chained INSERT sets
-    # it in columnOrder position and the close GUARDS on it right after the pk, exactly
+    # it at its Discriminator-tier slot and the close GUARDS on it right after the pk, exactly
     # as the non-temporal concrete-subtype write does. `None` for a table-per-concrete-
     # subtype / non-inheritance entity (an ordinary single-table milestone write).
     tag = _tag(entity)
@@ -3279,7 +3294,7 @@ def _assert_until_input(
     from_z, thru_z = valid_time["start_column"], valid_time["end_column"]
     in_z, out_z = transaction_time["start_column"], transaction_time["end_column"]
     infinity = transaction_time.get("infinity", "infinity")
-    full_columns = list(_case_column_order(entity))
+    full_columns = list(_write_column_order(case, entity))
     in_z_pos, out_z_pos = full_columns.index(in_z), full_columns.index(out_z)
     from_z_pos, thru_z_pos = full_columns.index(from_z), full_columns.index(thru_z)
 
@@ -3506,7 +3521,7 @@ def _assert_versioned_conflict_write(
     statement = statements[0]
     _, pk, set_cols, observed = _classify_write_row(case, entity, write)
     golden_set = _parse_set_columns(case, statement)
-    set_present = [c for c in _case_column_order(entity) if c in set_cols]
+    set_present = [c for c in _write_column_order(case, entity) if c in set_cols]
     expected_cols = [*set_present, version_col]
     if golden_set != expected_cols:
         raise CaseFailure(
@@ -3619,7 +3634,9 @@ def _assert_temporal_conflict_close(
     _, pk, set_cols, _ = _classify_write_row(case, entity, write)
     # A bitemporal close's Valid-Time discriminator (e.g. from_z) slots between out_z
     # and in_z in model column order; a Transaction-Time-Only close has none.
-    valid_coords = [set_cols[column] for column in _case_column_order(entity) if column in set_cols]
+    valid_coords = [
+        set_cols[column] for column in _write_column_order(case, entity) if column in set_cols
+    ]
     tag = _tag(entity)
     tag_binds = [tag[1]] if tag is not None else []
     expected = [at, pk, *tag_binds, infinity, *valid_coords]

@@ -3,11 +3,17 @@
 Every question of the form "what shape does this entity's FAMILY declare?"
 answers here off the accepted Metamodel and its facets: the declaring root
 (:func:`declaring`), the temporal axes (:func:`tx_time_axis` /
-:func:`valid_time_axis`) and their physical columns (:func:`axis_columns`), the
-optimistic-lock version attribute (:func:`version_attribute`), and the writable
-member-to-column map (:func:`members`), plus the small ``Class.member`` reference
-split (:func:`assignment_member`) that resolves an authored assignment against
-those members.
+:func:`valid_time_axis`), the optimistic-lock version attribute
+(:func:`version_attribute`), and the family-effective primary key
+(:func:`family_primary_key`), plus the small ``Class.member`` reference split
+(:func:`assignment_member`) that resolves an authored assignment against the
+entity's members.
+
+Every PHYSICAL answer instead comes from the Storage Layout Facet, entered
+through :func:`entity_layout`: the row-owning Entity's canonical slot selection.
+:func:`slot_column`, :func:`axis_columns`, and :func:`members` map a semantically
+selected contributor identity onto that layout's slots, so no write-side module
+composes a physical column sequence of its own.
 
 This is the package's bottom leaf: it imports no other handle module, so every
 write-side module (`_keyed_sql`, `_write_lowering`, `_write_inputs`,
@@ -27,24 +33,29 @@ Mirrors :mod:`parallax.core.entity._annotations`.
 
 from __future__ import annotations
 
-from parallax.core import inheritance, opt_lock
+from parallax.core import inheritance, opt_lock, storage_layout
 from parallax.core.metamodel import (
     AsOfAxisMetadata,
+    AttributeIdentity,
     AttributeMetadata,
     EntityMetadata,
     Metamodel,
     PrimaryKey,
     TemporalDimension,
+    ValueObjectIdentity,
     entity_by_name,
 )
+from parallax.core.storage_layout import ColumnContributor, EntityLayoutView
 
 __all__ = [
     "assignment_member",
     "axis_columns",
     "declaring",
+    "entity_layout",
     "entity_of",
     "family_primary_key",
     "members",
+    "slot_column",
     "tx_time_axis",
     "valid_time_axis",
     "version_attribute",
@@ -117,16 +128,38 @@ def valid_time_axis(declaring_entity: EntityMetadata) -> AsOfAxisMetadata:
     return axis
 
 
-def axis_columns(declaring_entity: EntityMetadata, axis: AsOfAxisMetadata) -> tuple[str, str]:
-    """The physical ``(start, end)`` storage column names ``axis`` names on
-    ``declaring_entity`` — the interval bounds a temporal write reads and stamps.
-    Raises :class:`ValueError` when the axis names a column the entity does not
-    declare (an accepted axis always names declared columns)."""
-    start = declaring_entity.attribute(axis.start_attribute.name)
-    end = declaring_entity.attribute(axis.end_attribute.name)
-    if start is None or end is None:  # pragma: no cover - an accepted axis names declared columns
-        raise ValueError(f"{declaring_entity.identity.canonical}: axis names an undeclared column")
-    return start.storage.name, end.storage.name
+def entity_layout(model: Metamodel, entity: EntityMetadata) -> EntityLayoutView | None:
+    """``entity``'s canonical selection over its physical Table Layout, or
+    ``None`` when it owns no rows (an abstract family position, or an Entity the
+    model maps to no Table).
+
+    This is the write side's only physical-shape entry point: the view's slots
+    already carry Table order, the applicable member set, and the derived
+    table-per-hierarchy discriminator assignment, so nothing downstream
+    reassembles a column sequence from declarations."""
+    return storage_layout.view(model).entity(entity.identity)
+
+
+def slot_column(layout: EntityLayoutView, contributor: ColumnContributor) -> str:
+    """The physical Column ``contributor`` occupies in ``layout``'s Table.
+
+    An operation selects its identities semantically — model primary key,
+    version attribute, temporal bound — and maps each one here. Raises
+    :class:`ValueError` when the Table Layout retains no slot for it."""
+    slot = layout.layout.contribution(contributor)
+    if slot is None:  # pragma: no cover - a selected contributor always has a slot
+        raise ValueError(f"{layout.entity.canonical}: {contributor} occupies no physical Column")
+    return slot.column.name
+
+
+def axis_columns(layout: EntityLayoutView, axis: AsOfAxisMetadata) -> tuple[str, str]:
+    """The physical ``(start, end)`` Columns ``axis``'s bound Attributes occupy in
+    ``layout``'s Table — the interval bounds a temporal write reads and stamps.
+
+    Temporal axes are family-wide and root-owned, so the bound Attributes are
+    declared on the root while their slots live in the row-owning Entity's own
+    Table."""
+    return slot_column(layout, axis.start_attribute), slot_column(layout, axis.end_attribute)
 
 
 def version_attribute(
@@ -150,17 +183,17 @@ def assignment_member(attr: str) -> str:
     return member
 
 
-def members(model: Metamodel, entity: EntityMetadata) -> dict[str, tuple[str, bool]]:
-    """Map each writable member name to `(column, is_value_object)`, FAMILY-WIDE
-    (the Inheritance Facet's applicable-member view, which already degrades to
-    ``entity``'s own declarations for a non-participant)."""
-    view = inheritance.view(model).entity(entity.identity)
-    if view is None:  # pragma: no cover - the facet covers every accepted Entity
-        return {}
-    resolved: dict[str, tuple[str, bool]] = {
-        attribute.identity.name: (attribute.storage.name, False)
-        for attribute in view.applicable_attributes
-    }
-    for value_object in view.applicable_value_objects:
-        resolved[value_object.identity.path[-1]] = (value_object.storage.name, True)
+def members(layout: EntityLayoutView) -> dict[str, tuple[str, bool]]:
+    """Map each writable member name to `(column, is_value_object)` over
+    ``layout``'s applicable slots.
+
+    The framework-owned discriminator slot is not a member: a write derives it
+    from the layout's own discriminator assignment rather than from row data."""
+    resolved: dict[str, tuple[str, bool]] = {}
+    for slot in layout.columns:
+        contributor = slot.contributor
+        if isinstance(contributor, AttributeIdentity):
+            resolved[contributor.name] = (slot.column.name, False)
+        elif isinstance(contributor, ValueObjectIdentity):
+            resolved[contributor.path[-1]] = (slot.column.name, True)
     return resolved

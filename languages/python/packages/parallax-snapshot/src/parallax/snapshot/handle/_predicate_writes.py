@@ -11,14 +11,16 @@ Every entry point threads ``(uow, meta, conn, dialect)`` — the four pieces of
 transaction state this lane actually reads — mirroring
 :func:`~parallax.snapshot.handle._write_inputs.record_observations`'s own shape.
 ``meta`` is the accepted Metamodel; family shape comes from the Inheritance,
-Temporal, and Optimistic Lock facets through :mod:`parallax.snapshot.handle._family`.
+Temporal, and Optimistic Lock facets through :mod:`parallax.snapshot.handle._family`,
+and every physical column comes from the target's Storage Layout view, resolved
+once here and carried into the per-row materialization.
 ``Transaction`` keeps five thin ``_where`` delegates plus the frozen
 ``_buffer_predicate_instruction`` seam the conformance engine calls, so this
 module buffers through ``uow.buffer`` directly and never reaches back into
 ``Transaction``.
 
 Depends on :mod:`parallax.snapshot.handle._family` (the declaring root, version
-attribute, and the member-to-column map) and
+attribute, and the layout member-to-column map) and
 :mod:`parallax.snapshot.handle._write_inputs` (window validation and the per-row
 materialization).
 
@@ -58,6 +60,7 @@ from parallax.core.unit_work import (
 from parallax.snapshot.handle._family import (
     assignment_member,
     declaring,
+    entity_layout,
     entity_of,
     members,
     version_attribute,
@@ -219,6 +222,9 @@ def _materialize_predicate_write(
     resolve would match every historical milestone too, not just the open
     one(s).
     """
+    layout = entity_layout(meta, entity)
+    if layout is None:  # pragma: no cover - a predicate-write target always owns rows
+        raise ValueError(f"{entity.identity.canonical}: predicate-write target has no Table")
     lock: LockMode | None = read_lock.mode_for(uow.settings.concurrency)
     plan_ = deep_fetch.plan(entity, instruction.target.predicate, meta)
     assignments = {
@@ -279,7 +285,7 @@ def _materialize_predicate_write(
     if chain_need:
         needs_documents = True
     elif assignment_bearing:
-        member_columns = members(meta, entity)
+        member_columns = members(layout)
         needs_documents = frozenset(member for member in assignments if member_columns[member][1])
     else:
         needs_documents = False
@@ -301,7 +307,14 @@ def _materialize_predicate_write(
     pending: list[tuple[ObjectKey, Observation | None]] = []
     for row in rows:
         key, observation, new_row = materialize_row(
-            meta, entity, declaring_entity, version_attr, instruction.mutation, assignments, row
+            meta,
+            layout,
+            entity,
+            declaring_entity,
+            version_attr,
+            instruction.mutation,
+            assignments,
+            row,
         )
         if new_row is None:
             continue  # per-row no-op elimination (assignment-bearing verbs only)

@@ -1,0 +1,98 @@
+# The physical key is the model key then each temporal start, even though every domain
+# slot precedes the temporal slots in the complete Column sequence (m-storage-layout x
+# m-txtime-write).
+#
+# LayoutReading's shared Table Layout is `id` (Identity), `kind` (Discriminator),
+# `sensor` then `celsius` (Domain), `in_z` then `out_z` (Temporal), and `probe`
+# (Document). Every milestone row is written in exactly that order, so the two
+# Transaction-Time bounds appear AFTER the subtype-owned `celsius` even though the root
+# declares them before it. The physical primary key does not follow that sequence: it
+# selects the model key slot `id` and then the Transaction-Time start slot `in_z`,
+# spanning the Identity and Temporal tiers and skipping every Domain slot between them.
+#
+# The write sequence makes that key observable. The chaining update closes the current
+# milestone (`out_z = the transaction instant`, tag-guarded on the shared table) and
+# opens a new one carrying the same `id`. Two rows therefore coexist under one model
+# key, which only the `(id, in_z)` physical key admits; a key of the model key alone
+# would reject the chained INSERT, and a key following Column order would have to take
+# `sensor` instead of `in_z`.
+#
+# The `probe` document rides both milestones whole as the final slot, and the family
+# designates no Audit Metadata, so the Audit tier contributes no slot between the
+# temporal and document slots.
+#
+# The sequence (self-contained, from an empty table):
+#   step 1 insert : open [2024-01-01, infinity) at 20.00 with probe TH-1  (1 statement)
+#   step 2 update : close that milestone at 2024-02-01 and chain a new current
+#                   milestone at 21.50 with probe TH-2                    (2 statements)
+model: models/storage-layout.yaml
+tags: [m-storage-layout, m-inheritance, m-txtime-write, m-value-object, m-sql, table-per-hierarchy, tag, temporal, audit-only, document, write-sequence, update, slice-snapshot-1, slice-managed-1]
+shape: writeSequence
+when:
+  writeSequence:
+    - mutation: insert
+      entity: LayoutMeterReading
+      statements: 1
+      note: open a current milestone; kind='meter' is derived and in_z/out_z are bookkeeping
+      rows:
+        - id: 1
+          sensor: north
+          celsius: 20.00
+          probe:
+            model: TH-1
+      at: "2024-01-01T00:00:00+00:00"
+    - mutation: update
+      entity: LayoutMeterReading
+      statements: 2
+      note: close the current milestone, then chain a second row under the same model key
+      rows:
+        - id: 1
+          sensor: north
+          celsius: 21.50
+          probe:
+            model: TH-2
+      at: "2024-02-01T00:00:00+00:00"
+then:
+  statements:
+    - sql:
+        postgres: insert into layout_reading(id, kind, sensor, celsius, in_z, out_z, probe) values (?, ?, ?, ?, ?, ?, ?)
+      binds:
+        - 1
+        - meter
+        - north
+        - 20.00
+        - "2024-01-01T00:00:00+00:00"
+        - infinity
+        - model: TH-1
+    - sql:
+        postgres: update layout_reading set out_z = ? where id = ? and kind = ? and out_z = ?
+      binds: ["2024-02-01T00:00:00+00:00", 1, meter, infinity]
+    - sql:
+        postgres: insert into layout_reading(id, kind, sensor, celsius, in_z, out_z, probe) values (?, ?, ?, ?, ?, ?, ?)
+      binds:
+        - 1
+        - meter
+        - north
+        - 21.50
+        - "2024-02-01T00:00:00+00:00"
+        - infinity
+        - model: TH-2
+  tableState:
+    layout_reading:
+      - id: 1
+        kind: meter
+        sensor: north
+        celsius: 20.00
+        in_z: "2024-01-01T00:00:00+00:00"
+        out_z: "2024-02-01T00:00:00+00:00"
+        probe:
+          model: TH-1
+      - id: 1
+        kind: meter
+        sensor: north
+        celsius: 21.50
+        in_z: "2024-02-01T00:00:00+00:00"
+        out_z: infinity
+        probe:
+          model: TH-2
+  roundTrips: 3

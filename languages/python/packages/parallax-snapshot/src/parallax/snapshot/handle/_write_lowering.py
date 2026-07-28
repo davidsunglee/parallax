@@ -22,11 +22,12 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Final
 
-from parallax.core import bitemp_write, inheritance, opt_lock, txtime_write
+from parallax.core import bitemp_write, opt_lock, txtime_write
 from parallax.core.base import INFINITY_LITERAL
 from parallax.core.dialect import Dialect
 from parallax.core.metamodel import EntityMetadata, Metamodel, TemporalDimension
 from parallax.core.sql_gen import Statement
+from parallax.core.storage_layout import EntityLayoutView
 from parallax.core.unit_work import (
     Concurrency,
     KeyedWrite,
@@ -37,6 +38,7 @@ from parallax.core.unit_work import (
 from parallax.snapshot.handle._family import (
     axis_columns,
     declaring,
+    entity_layout,
     entity_of,
     tx_time_axis,
     valid_time_axis,
@@ -63,14 +65,13 @@ __all__ = ["lower_temporal_close", "lower_write"]
 _NON_TEMPORAL_VERBS: Final[frozenset[str]] = frozenset({"insert", "update", "delete"})
 
 
-def _effective_table(meta: Metamodel, entity: EntityMetadata) -> str:
-    view = inheritance.view(meta).entity(entity.identity)
-    container = None if view is None else view.container
-    if container is None:
+def _layout(meta: Metamodel, entity: EntityMetadata) -> EntityLayoutView:
+    view = entity_layout(meta, entity)
+    if view is None:
         raise WriteLoweringError(
             f"{entity.identity.name!r}: temporal write target has no effective table"
         )
-    return container.name
+    return view
 
 
 def _is_bitemporal(declaring_entity: EntityMetadata) -> bool:
@@ -276,22 +277,23 @@ def _render_close(
     them — gating is concurrency-driven, never data-driven (`m-bitemp-write`
     "Locking-mode closes are UNGATED").
     """
+    layout = _layout(meta, entity)
     tx_axis = tx_time_axis(declaring_entity)
-    tx_start_column, tx_end_column = axis_columns(declaring_entity, tx_axis)
+    tx_start_column, tx_end_column = axis_columns(layout, tx_axis)
     where_sql, key_binds = key_predicate(meta, entity, step.identity, dialect)
     where_sql = f"{where_sql} and {dialect.quote(tx_end_column)} = ?"
     key_binds = (*key_binds, INFINITY_LITERAL)
     if gated and step.gate_valid_start is not None:
         valid_axis = valid_time_axis(declaring_entity)
-        valid_start_column, _valid_end_column = axis_columns(declaring_entity, valid_axis)
+        valid_start_column, _valid_end_column = axis_columns(layout, valid_axis)
         where_sql = f"{where_sql} and {dialect.quote(valid_start_column)} = ?"
         key_binds = (*key_binds, step.gate_valid_start)
     if gated and step.gate_tx_start is not None:
         where_sql = f"{where_sql} and {dialect.quote(tx_start_column)} = ?"
         key_binds = (*key_binds, step.gate_tx_start)
-    table = _effective_table(meta, entity)
     statement = Statement(
-        f"update {table} set {dialect.quote(tx_end_column)} = ? where {where_sql}",
+        f"update {layout.layout.table.name} set {dialect.quote(tx_end_column)} = ? "
+        f"where {where_sql}",
         (tx_instant, *key_binds),
     )
     return LoweredStatement(statement, expected_affected=1, stale_error=not gated)

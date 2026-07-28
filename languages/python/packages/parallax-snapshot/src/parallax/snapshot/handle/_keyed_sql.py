@@ -11,11 +11,14 @@ Inside the handle package "write" keeps meaning the NEUTRAL instruction level
 (`m-unit-work`'s :class:`~parallax.core.unit_work.KeyedWrite`, `_write_types`,
 `_write_inputs`, `_write_lowering`); this is the one module named for the SQL
 side. It owns the shared column-ordering, key-predicate, and marker/tag-column
-discipline every builder reuses, so no form reinvents bind order. Physical facts
-come from the accepted Metamodel and its Inheritance Facet — the family-effective
-column order (`~parallax.core.inheritance.column_order`), the effective table and
-tag discriminator (`InheritanceEntityView`), and the version column
-(`OptimisticLockFacet`, resolved through `_family`).
+discipline every builder reuses, so no form reinvents bind order. Every physical
+fact comes from the target's Storage Layout Entity view (`_family.entity_layout`)
+— its Table, its Table-ordered applicable slots, and its derived discriminator
+assignment. Semantic selections stay where they are decided: the family-effective
+primary key (`_family.family_primary_key`) and the version column
+(`OptimisticLockFacet`, resolved through `_family`) name Attribute identities,
+which this module maps onto layout slots rather than reading storage
+declarations of its own.
 
 The eight builders `_write_lowering` dispatches to are spelled bare; the helpers
 they share among themselves keep their leading underscore because every one of
@@ -30,15 +33,23 @@ from typing import Final, cast
 from parallax.core import inheritance, opt_lock
 from parallax.core.db_port import JsonDocument
 from parallax.core.dialect import Dialect
-from parallax.core.metamodel import AttributeMetadata, EntityMetadata, Metamodel
+from parallax.core.metamodel import (
+    AttributeIdentity,
+    AttributeMetadata,
+    EntityMetadata,
+    Metamodel,
+    ValueObjectIdentity,
+)
 from parallax.core.sql_gen import Statement, compile_write_predicate
+from parallax.core.storage_layout import ColumnContributor, EntityLayoutView
 from parallax.core.unit_work import Concurrency, KeyedWrite, Observation, PredicateWrite
 from parallax.snapshot.handle._family import (
     assignment_member,
     declaring,
+    entity_layout,
     entity_of,
     family_primary_key,
-    members,
+    slot_column,
     version_attribute,
 )
 from parallax.snapshot.handle._write_types import WriteLoweringError
@@ -63,22 +74,27 @@ __all__ = [
 _MARKER_KEYS: Final[frozenset[str]] = frozenset({"computed", "increment"})
 
 
-def _table(meta: Metamodel, entity: EntityMetadata) -> str:
-    view = inheritance.view(meta).entity(entity.identity)
-    container = None if view is None else view.container
-    if container is None:
+def _layout(meta: Metamodel, entity: EntityMetadata) -> EntityLayoutView:
+    """``entity``'s canonical physical layout selection, or a loud refusal when
+    it owns no rows (an abstract family position is never a write target)."""
+    view = entity_layout(meta, entity)
+    if view is None:
         raise WriteLoweringError(f"{entity.identity.name!r}: write target has no effective table")
-    return container.name
+    return view
+
+
+def _table(meta: Metamodel, entity: EntityMetadata) -> str:
+    return _layout(meta, entity).layout.table.name
 
 
 def _tag(meta: Metamodel, entity: EntityMetadata) -> tuple[str, str] | None:
     """``(tag column, tag value)`` for an inheritance-family table-per-hierarchy
-    concrete, else ``None`` — the discriminator a keyed write derives from the
-    Inheritance Facet (never authored in the neutral write input)."""
-    view = inheritance.view(meta).entity(entity.identity)
-    if view is None or view.tag_column is None or view.tag_value is None:
+    concrete, else ``None`` — the discriminator assignment a keyed write derives
+    from the layout's own slot (never authored in the neutral write input)."""
+    discriminator = _layout(meta, entity).discriminator
+    if discriminator is None:
         return None
-    return view.tag_column, view.tag_value
+    return discriminator.slot.column.name, discriminator.value
 
 
 def _marker_kind(value: object) -> str | None:
@@ -118,7 +134,7 @@ def lower_insert(
     meta: Metamodel,
     version_attr: AttributeMetadata | None,
 ) -> Statement:
-    """`insert into <table>(<present columns in family columnOrder>) values (?, …)`,
+    """`insert into <table>(<present columns in Table Layout order>) values (?, …)`,
     or the pk-gen `max` INSERT…SELECT form when a scalar cell carries the
     `{computed: "maxPlusOne"}` marker (`m-pk-gen`).
 
@@ -126,16 +142,16 @@ def lower_insert(
     column produces a narrower `INSERT` (never an explicit `NULL` bind), matching the
     corpus (`m-unit-work-003` inserts 4 of OrderItem's 5 columns). A versioned entity's
     row derives the INITIAL version (`m-opt-lock.INITIAL_VERSION`) at the version
-    column's family columnOrder position, ignoring any row-carried value; an
+    column's own slot position, ignoring any row-carried value; an
     inheritance-family (table-per-hierarchy) concrete additionally derives the tag
-    column from its own `tagValue`, slotted right after the primary key
+    column from its own `tagValue` at the layout's Discriminator-tier slot
     (`m-inheritance` / `m-sql` "Table-per-hierarchy DML") — neither is ever authored
     in the neutral write input.
     """
     row = dict(instruction.rows[0])
     if version_attr is not None:
         row[version_attr.identity.name] = opt_lock.INITIAL_VERSION
-    cells = _ordered_cells(meta, entity, row, _tag_insert_column(meta, entity))
+    cells = _ordered_cells(meta, entity, row, discriminator=True)
     columns = ", ".join(dialect.quote(column) for column, _ in cells)
     has_computed = any(_marker_kind(value) == "computed" for _, value in cells)
     if not has_computed:
@@ -175,15 +191,6 @@ def _require_max_plus_one(entity: EntityMetadata, column: str, value: object) ->
         )
 
 
-def _tag_insert_column(meta: Metamodel, entity: EntityMetadata) -> dict[str, object]:
-    """The framework-derived `{tag column: tagValue}` an inheritance-family
-    concrete's INSERT carries — empty for a non-participant, a table-per-
-    concrete-subtype participant (no shared table, no tag column), or the
-    abstract root itself (never a write target)."""
-    tag = _tag(meta, entity)
-    return {} if tag is None else {tag[0]: tag[1]}
-
-
 def lower_update(
     entity: EntityMetadata,
     instruction: KeyedWrite,
@@ -193,17 +200,17 @@ def lower_update(
     observation: Observation | None,
     concurrency: Concurrency,
 ) -> Statement:
-    """`update <table> set <non-pk columns in family columnOrder> = ?, <version> = ?
+    """`update <table> set <non-pk columns in Table Layout order> = ?, <version> = ?
     where <pk> = ? [and <tag.column> = ?] [and <version> = ?]`.
 
-    The domain `SET` columns follow the family columnOrder (not the row's data
-    order); the FRAMEWORK-DERIVED version advance is NEVER one of them — it is
+    The domain `SET` columns follow the Table Layout's slot order (not the row's
+    data order); the FRAMEWORK-DERIVED version advance is NEVER one of them — it is
     appended LAST, after every domain column, unconditionally (`m-value-object-046`:
-    a value-object document column sorts AFTER every scalar in columnOrder
-    (`m-value-object` "One column"), including the version attribute, so
-    threading the derived advance through the SAME columnOrder sort would
+    a value-object document occupies the Document tier, after every scalar tier
+    (`m-value-object` "One column"), including the version attribute's own slot,
+    so threading the derived advance through the SAME slot order would
     wrongly render it BEFORE the document; the version SET position is a
-    framework-owned rendering decision, not a columnOrder fact, mirroring the
+    framework-owned rendering decision, not a layout fact, mirroring the
     version GATE's own "binds last" rule one clause family over). The `WHERE`
     keys on the (family-effective) primary key, then an inheritance-family tag
     guard (`m-inheritance` / `m-sql` "Opt-lock composition" — the tag guard
@@ -222,7 +229,8 @@ def lower_update(
     (`m-opt-lock.gates`).
     """
     row = dict(instruction.rows[0])
-    pk_columns = {attr.storage.name for attr in family_primary_key(meta, entity)}
+    layout = _layout(meta, entity)
+    pk_columns = {column for _, column in _key_columns(layout, meta, entity)}
     if version_attr is not None and version_attr.identity.name in row:
         opt_lock.reject_caller_authored_version(entity.identity.name, version_attr.identity.name)
     observed_version: int | None = None
@@ -246,16 +254,16 @@ def lower_update(
             binds.append(value)
     if version_bind is not None:
         assert version_attr is not None  # derived above whenever version_bind is set
-        assignment_parts.append(f"{dialect.quote(version_attr.storage.name)} = ?")
+        assignment_parts.append(f"{dialect.quote(_version_column(layout, version_attr))} = ?")
         binds.append(version_bind)
     where_sql, key_binds = key_predicate(meta, entity, row, dialect)
     if version_attr is not None and opt_lock.gates(concurrency):
         assert observed_version is not None  # derived above whenever version_attr is not None
-        where_sql = f"{where_sql} and {dialect.quote(version_attr.storage.name)} = ?"
+        where_sql = f"{where_sql} and {dialect.quote(_version_column(layout, version_attr))} = ?"
         key_binds = (*key_binds, observed_version)
     assignments = ", ".join(assignment_parts)
     return Statement(
-        f"update {_table(meta, entity)} set {assignments} where {where_sql}",
+        f"update {layout.layout.table.name} set {assignments} where {where_sql}",
         (*binds, *key_binds),
     )
 
@@ -289,12 +297,13 @@ def lower_delete(
     reach this at all (``version_attr is None``).
     """
     row = instruction.rows[0]
+    layout = _layout(meta, entity)
     where_sql, key_binds = key_predicate(meta, entity, row, dialect)
     if version_attr is not None:
         observed_version = opt_lock.require_observed(entity.identity.name, observation)
-        where_sql = f"{where_sql} and {dialect.quote(version_attr.storage.name)} = ?"
+        where_sql = f"{where_sql} and {dialect.quote(_version_column(layout, version_attr))} = ?"
         key_binds = (*key_binds, observed_version)
-    return Statement(f"delete from {_table(meta, entity)} where {where_sql}", key_binds)
+    return Statement(f"delete from {layout.layout.table.name} where {where_sql}", key_binds)
 
 
 # --------------------------------------------------------------------------- #
@@ -315,20 +324,19 @@ def lower_multi_insert(
 ) -> Statement:
     """`insert into <table>(<cols>) values (?, …), (?, …), …` — the multi-row
     INSERT collapse (`m-batch-write.md` L17-19): every row's cells in the SAME
-    family columnOrder (`_ordered_cells`, unchanged), one value tuple per row,
+    Table Layout order (`_ordered_cells`, unchanged), one value tuple per row,
     in buffer order. A versioned entity's row derives the SAME
-    `opt_lock.INITIAL_VERSION` at its columnOrder position as the single-row
+    `opt_lock.INITIAL_VERSION` at its own slot position as the single-row
     form — the initial version is a constant, never observed, so it is exactly
     as safe to batch as any other column (`m-opt-lock`).
     """
-    tag = _tag_insert_column(meta, entity)
     columns: list[str] | None = None
     rows_cells: list[list[tuple[str, object]]] = []
     for raw_row in instruction.rows:
         row = dict(raw_row)
         if version_attr is not None:
             row[version_attr.identity.name] = opt_lock.INITIAL_VERSION
-        cells = _ordered_cells(meta, entity, row, tag)
+        cells = _ordered_cells(meta, entity, row, discriminator=True)
         row_columns = [column for column, _ in cells]
         if columns is None:
             columns = row_columns
@@ -367,7 +375,7 @@ def lower_batched_update(
     ?]` — the uniform-value batched UPDATE collapse (`m-batch-write.md` L20-22):
     every row assigns the IDENTICAL non-key values (the injected
     `m-batch-write` eligibility check already verified this), so ONE `SET`
-    clause (the first row's own cells, family columnOrder) applies to every
+    clause (the first row's own cells, Table Layout order) applies to every
     key in the `IN`-list, in row order. A VERSIONED entity's update never
     reaches here — `m-batch-write` never collapses one (the per-row gate binds
     a per-row observed version no shared statement can carry).
@@ -376,11 +384,12 @@ def lower_batched_update(
     # this assertion's failure arm is unreachable from any planner-produced
     # instruction.
     assert version_attr is None, "a versioned entity's update never collapses (m-batch-write)"
-    pk_attrs = family_primary_key(meta, entity)
-    pk_names = {attr.identity.name for attr in pk_attrs}
+    layout = _layout(meta, entity)
+    key_columns = _key_columns(layout, meta, entity)
+    pk_columns = {column for _, column in key_columns}
     first_row = dict(instruction.rows[0])
     set_cells = [
-        cell for cell in _ordered_cells(meta, entity, first_row) if cell[0] not in pk_names
+        cell for cell in _ordered_cells(meta, entity, first_row) if cell[0] not in pk_columns
     ]
     assignment_parts: list[str] = []
     binds: list[object] = []
@@ -388,11 +397,11 @@ def lower_batched_update(
         _refuse_unrecognized_marker(entity, column, value, "update")
         assignment_parts.append(f"{dialect.quote(column)} = ?")
         binds.append(value)
-    in_sql, in_binds = _keys_in_list(pk_attrs, instruction.rows, dialect)
+    in_sql, in_binds = _keys_in_list(key_columns, instruction.rows, dialect)
     tag_sql, tag_binds = _tag_guard(meta, entity, dialect)
     assignments_sql = ", ".join(assignment_parts)
     return Statement(
-        f"update {_table(meta, entity)} set {assignments_sql} where {in_sql}{tag_sql}",
+        f"update {layout.layout.table.name} set {assignments_sql} where {in_sql}{tag_sql}",
         (*binds, *in_binds, *tag_binds),
     )
 
@@ -414,30 +423,32 @@ def lower_multi_delete(
     # this assertion's failure arm is unreachable from any planner-produced
     # instruction.
     assert version_attr is None, "a versioned entity's delete never collapses (m-batch-write)"
-    pk_attrs = family_primary_key(meta, entity)
-    in_sql, in_binds = _keys_in_list(pk_attrs, instruction.rows, dialect)
+    layout = _layout(meta, entity)
+    in_sql, in_binds = _keys_in_list(_key_columns(layout, meta, entity), instruction.rows, dialect)
     tag_sql, tag_binds = _tag_guard(meta, entity, dialect)
     return Statement(
-        f"delete from {_table(meta, entity)} where {in_sql}{tag_sql}",
+        f"delete from {layout.layout.table.name} where {in_sql}{tag_sql}",
         (*in_binds, *tag_binds),
     )
 
 
 def _keys_in_list(
-    pk_attrs: Sequence[AttributeMetadata], rows: Sequence[Mapping[str, object]], dialect: Dialect
+    key_columns: Sequence[tuple[AttributeMetadata, str]],
+    rows: Sequence[Mapping[str, object]],
+    dialect: Dialect,
 ) -> tuple[str, tuple[object, ...]]:
     """``<pk> in (?, …)`` (a single-column key) or ``(<pk1>, <pk2>) in ((?, ?),
     …)`` (a composite key), one entry per row, in row order."""
-    pk_columns = [attr.storage.name for attr in pk_attrs]
-    if len(pk_columns) == 1:
-        keys_sql = dialect.quote(pk_columns[0])
+    if len(key_columns) == 1:
+        attribute, column = key_columns[0]
+        keys_sql = dialect.quote(column)
         holes = ", ".join("?" for _ in rows)
-        binds = tuple(row[pk_attrs[0].identity.name] for row in rows)
+        binds = tuple(row[attribute.identity.name] for row in rows)
         return f"{keys_sql} in ({holes})", binds
-    keys_sql = f"({', '.join(dialect.quote(column) for column in pk_columns)})"
-    row_hole = f"({', '.join('?' for _ in pk_columns)})"
+    keys_sql = f"({', '.join(dialect.quote(column) for _, column in key_columns)})"
+    row_hole = f"({', '.join('?' for _ in key_columns)})"
     holes = ", ".join(row_hole for _ in rows)
-    binds = tuple(row[attr.identity.name] for row in rows for attr in pk_attrs)
+    binds = tuple(row[attribute.identity.name] for row in rows for attribute, _ in key_columns)
     return f"{keys_sql} in ({holes})", binds
 
 
@@ -471,7 +482,7 @@ def lower_predicate_write(
     """`update <table> set <col> = ?, … where <predicate>` / `delete from
     <table> where <predicate>` — one readless statement, no materialization,
     no equality-elimination pass (`m-batch-write.md` L59-92). The `SET`
-    columns and their binds follow declared family columnOrder
+    columns and their binds follow Table Layout order
     (`_ordered_cells`, reused unchanged), never the authored assignment order;
     predicate binds come AFTER assignment binds. The rendered predicate is
     UNALIASED (`compile_write_predicate`), contrasting the resolving read's
@@ -530,38 +541,78 @@ def lower_predicate_write(
     )
 
 
+def _member_contributor(contributor: ColumnContributor) -> str | None:
+    """The declared member name behind ``contributor``, or ``None`` for the
+    framework-owned discriminator (which no write input ever names)."""
+    if isinstance(contributor, AttributeIdentity):
+        return contributor.name
+    if isinstance(contributor, ValueObjectIdentity):
+        return contributor.path[-1]
+    return None
+
+
 def _ordered_cells(
     meta: Metamodel,
     entity: EntityMetadata,
     row: Mapping[str, object],
-    extra_columns: Mapping[str, object] | None = None,
+    *,
+    discriminator: bool = False,
 ) -> list[tuple[str, object]]:
-    """The row's present members (plus any framework-derived ``extra_columns``,
-    e.g. an inheritance tag) as `(column, bind)` pairs, in family columnOrder.
+    """The row's present members as `(column, bind)` pairs, in Table Layout order.
 
-    Each row key names a declared scalar attribute or a value object, resolved
-    FAMILY-WIDE (`members`) so an inheritance participant's inherited members
-    lower correctly; the family columnOrder is the Inheritance Facet's own
-    (`~parallax.core.inheritance.column_order`). A value-object member binds as
-    one :class:`JsonDocument` in its columnOrder position (the whole document —
-    the write never decomposes it), a scalar binds its value (or its DB-computed
-    marker document verbatim, classified by the caller).
+    The target's Storage Layout Entity view supplies both the physical column of
+    each member and the one order every cell follows, so a row's data order never
+    reaches the statement. Each row key names a declared scalar Attribute or a
+    top-level Value Object of that view; a value-object member binds as one
+    :class:`JsonDocument` at its Document-tier slot (the whole document — the
+    write never decomposes it), a scalar binds its value (or its DB-computed
+    marker document verbatim, classified by the caller). ``discriminator``
+    additionally emits the layout's derived table-per-hierarchy tag value at its
+    own Discriminator-tier slot — the one cell a full-row write derives rather
+    than reads.
     """
-    member_columns = members(meta, entity)
-    order = {
-        column: index
-        for index, column in enumerate(inheritance.column_order(entity, inheritance.view(meta)))
-    }
+    layout = _layout(meta, entity)
+    assignment = layout.discriminator
+    ordinals: dict[str, tuple[int, str, bool]] = {}
+    discriminator_cell: tuple[int, str, object] | None = None
+    for ordinal, slot in enumerate(layout.columns):
+        member = _member_contributor(slot.contributor)
+        if member is None:
+            if discriminator and assignment is not None and slot == assignment.slot:
+                discriminator_cell = (ordinal, slot.column.name, assignment.value)
+            continue
+        is_document = isinstance(slot.contributor, ValueObjectIdentity)
+        ordinals[member] = (ordinal, slot.column.name, is_document)
     cells: list[tuple[int, str, object]] = []
     for name, value in row.items():
-        column, is_value_object = member_columns[name]
-        bind = JsonDocument(value) if is_value_object else value
-        cells.append((order[column], column, bind))
-    if extra_columns:
-        for column, value in extra_columns.items():
-            cells.append((order[column], column, value))
+        ordinal, column, is_value_object = ordinals[name]
+        cells.append((ordinal, column, JsonDocument(value) if is_value_object else value))
+    if discriminator_cell is not None:
+        cells.append(discriminator_cell)
     cells.sort(key=lambda cell: cell[0])
     return [(column, bind) for _, column, bind in cells]
+
+
+def _key_columns(
+    layout: EntityLayoutView, meta: Metamodel, entity: EntityMetadata
+) -> tuple[tuple[AttributeMetadata, str], ...]:
+    """The family-effective primary-key Attributes paired with the physical
+    Columns their slots occupy.
+
+    Operation key selection stays semantic (`_family.family_primary_key`); only
+    the mapping onto physical Columns comes from the layout, so an update or
+    delete predicate keys on the model identity rather than on the Table's own
+    physical key.
+    """
+    return tuple(
+        (attribute, slot_column(layout, attribute.identity))
+        for attribute in family_primary_key(meta, entity)
+    )
+
+
+def _version_column(layout: EntityLayoutView, version_attr: AttributeMetadata) -> str:
+    """The physical Column the optimistic-lock version Attribute's slot occupies."""
+    return slot_column(layout, version_attr.identity)
 
 
 def key_predicate(
@@ -574,9 +625,9 @@ def key_predicate(
     never present for a table-per-concrete-subtype participant or a
     non-participant.
     """
-    keys = family_primary_key(meta, entity)
-    predicate = " and ".join(f"{dialect.quote(attr.storage.name)} = ?" for attr in keys)
-    binds: tuple[object, ...] = tuple(row[attr.identity.name] for attr in keys)
+    keys = _key_columns(_layout(meta, entity), meta, entity)
+    predicate = " and ".join(f"{dialect.quote(column)} = ?" for _, column in keys)
+    binds: tuple[object, ...] = tuple(row[attribute.identity.name] for attribute, _ in keys)
     tag = _tag(meta, entity)
     if tag is not None:
         predicate = f"{predicate} and {dialect.quote(tag[0])} = ?"

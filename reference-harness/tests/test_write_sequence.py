@@ -24,6 +24,7 @@ from reference_harness.case_runner import (
     _increment_marker,
     _is_computed_marker,
     _tag,
+    _write_column_order,
 )
 from reference_harness.ddl_builder import ddl_for
 
@@ -109,6 +110,51 @@ def test_write_input_column_corruption_is_rejected() -> None:
 
 def _write_case_by_id(prefix: str):
     return next(c for c in discover_cases(COMPATIBILITY_ROOT) if c.path.stem.startswith(prefix))
+
+
+# --- the one write-shape column sequence (m-storage-layout) ------------------
+#
+# Every golden write-shape check grades against the row-owning Entity's applicable
+# Table Layout slots, so no write assertion re-derives a column sequence of its own.
+
+
+def test_write_column_order_is_the_entity_layout_slot_selection() -> None:
+    # A table-per-hierarchy concrete selects from the SHARED table: its identity slot,
+    # the framework-owned discriminator, the family-wide domain slot, and its own
+    # subtype-only slot — the sibling's `cash_tendered` never applies to a CardPayment
+    # row and so never enters its write shape.
+    case = _write_case_by_id("m-inheritance-007")
+    view = case.model.storage_layout.entity("parallax.compatibility.CardPayment")
+    assert view is not None
+    order = _write_column_order(case, case.model.entity("CardPayment"))
+    assert order == tuple(slot.column for slot in view.columns)
+    assert order == ("id", "kind", "amount", "card_network")
+    assert view.layout.table == "payment"
+
+
+def test_write_column_order_places_every_domain_slot_before_the_temporal_slots() -> None:
+    # m-inheritance-091's SpotQuote declares `symbol` AFTER the root's two
+    # Transaction-Time bound Attributes, yet canonical tier order still writes every
+    # domain slot ahead of every temporal slot — the write shape follows tiers, not
+    # declaration position or ancestry.
+    case = _write_case_by_id("m-inheritance-091")
+    assert _write_column_order(case, case.model.entity("SpotQuote")) == (
+        "id",
+        "price",
+        "symbol",
+        "in_z",
+        "out_z",
+    )
+    (opening, _close) = case.golden_statements("postgres")
+    assert opening.startswith("insert into spot_quote(id, price, symbol, in_z, out_z)")
+
+
+def test_write_column_order_refuses_a_rowless_family_position() -> None:
+    # An abstract root owns the shared table but no rows, so it has no Entity layout
+    # selection and is never a write target.
+    case = _write_case_by_id("m-inheritance-007")
+    with pytest.raises(CaseFailure):
+        _write_column_order(case, case.model.entity("Payment"))
 
 
 def test_multi_attribute_audit_update_chains_all_new_values() -> None:
@@ -375,7 +421,7 @@ def test_detach_noop_merge_back_issues_no_dml() -> None:
 # A DB-computed marker (`{computed}` / `{increment}`) is a SCALAR-ATTRIBUTE-only
 # interpretation: a value-object (document) column ALWAYS binds its WHOLE literal
 # document, even when that document is shaped like a marker. The role is resolved
-# from `columnOrder(entity)`, never from the value's shape (m-value-object).
+# from the entity's declared members, never from the value's shape (m-value-object).
 
 
 def _customer_insert_case(address, sql: str, binds: list) -> Case:
@@ -433,8 +479,8 @@ def _customer_update_case(address, sql: str, binds: list) -> Case:
     ],
 )
 def test_marker_shaped_value_object_insert_binds_the_whole_document(document) -> None:
-    # The `address` value-object column binds its whole document literally in
-    # columnOrder position — the golden's third `?` carries it verbatim, so ① ↔ ②
+    # The `address` value-object column binds its whole document literally at its
+    # Document-tier slot — the golden's third `?` carries it verbatim, so ① ↔ ②
     # agrees. (Before role-aware gating, the marker-shaped document was mistaken for
     # a DB-computed column and its literal bind was skipped, misaligning the binds.)
     case = _customer_insert_case(
