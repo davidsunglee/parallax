@@ -1,0 +1,44 @@
+# Table-per-concrete-subtype ancestry composition and legal sibling Column reuse
+# (m-storage-layout).
+#
+# Each concrete Entity of the LayoutReport family owns an independent physical
+# Table whose layout carries its complete ancestry-derived shape: the root-owned
+# `id` and `title` followed by the concrete's own member. Neither table holds a
+# discriminator, and the inherited root Attribute occupies one distinct slot per
+# Table rather than a shared one.
+#
+# LayoutAudit.auditor and LayoutSurvey.respondent are distinct contributors that
+# both map to the physical Column `detail`. Because the two mappings own
+# structurally different Tables, the reuse is accepted and each write reaches its
+# own table's slot.
+model: models/storage-layout.yaml
+tags: [m-storage-layout, m-inheritance, m-sql, table-per-concrete-subtype, write-sequence, slice-snapshot-1, slice-managed-1]
+shape: writeSequence
+when:
+  writeSequence:
+    - mutation: insert
+      entity: LayoutAudit
+      statements: 1
+      note: insert into the audit table; ancestry chain then the reused detail column
+      rows:
+        - { id: 1, title: Quarterly audit, auditor: Ingrid }
+    - mutation: insert
+      entity: LayoutSurvey
+      statements: 1
+      note: insert into the sibling survey table, which reuses the same column spelling
+      rows:
+        - { id: 1, title: Annual survey, respondent: Bjorn }
+then:
+  statements:
+    - sql:
+        postgres: insert into layout_audit(id, title, detail) values (?, ?, ?)
+      binds: [1, Quarterly audit, Ingrid]
+    - sql:
+        postgres: insert into layout_survey(id, title, detail) values (?, ?, ?)
+      binds: [1, Annual survey, Bjorn]
+  tableState:
+    layout_audit:
+      - { id: 1, title: Quarterly audit, detail: Ingrid }
+    layout_survey:
+      - { id: 1, title: Annual survey, detail: Bjorn }
+  roundTrips: 2

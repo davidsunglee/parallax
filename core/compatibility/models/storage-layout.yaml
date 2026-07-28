@@ -1,0 +1,126 @@
+# Storage Layout: a focused physical-composition model (m-storage-layout).
+#
+# This descriptor is an instance of core/schemas/metamodel.schema.json. It holds
+# the three independent physical mapping forms side by side so one model
+# witnesses every layout answer the composed facet owns:
+#
+#   LayoutProfile      (standalone)          — its own `layout_profile` table;
+#                                               required + optional scalars and one
+#                                               top-level document column
+#   LayoutPayment      (root, ABSTRACT, TPH) — owns the shared `layout_payment`
+#                                               table, the `kind` tag column, and
+#                                               the family-wide required `amount`
+#     LayoutCardPayment (concrete-subtype)   — tagValue 'card'; adds a REQUIRED
+#                                               subtype-only `cardNetwork`
+#     LayoutCashPayment (concrete-subtype)   — tagValue 'cash'; adds a REQUIRED
+#                                               subtype-only `tendered`
+#   LayoutReport       (root, ABSTRACT, TPCS)— tableless and rowless; owns id + title
+#     LayoutAudit      (concrete-subtype)    — its own `layout_audit` table
+#     LayoutSurvey     (concrete-subtype)    — its own `layout_survey` table
+#
+# The two required subtype-only members are the shared-table nullability witness:
+# a cash row has no card network and a card row has no tendered amount, so both
+# physical columns must permit NULL even though each remains required for the
+# concrete Entity it applies to. The family-wide `amount` applies to every row
+# owner of the shared table and stays physically non-null.
+#
+# LayoutAudit.auditor and LayoutSurvey.respondent are DISTINCT members that both
+# map to the physical column `detail`. Their concrete tables are structurally
+# different, so the reuse is legal; co-locating the same two claims in one table
+# would be a physical Column collision instead.
+#
+# Row data lives in the sibling fixtures/storage-layout.yaml, keyed per row-owning
+# Entity.
+entities:
+  - name: LayoutProfile
+    namespace: parallax.compatibility
+    table: layout_profile
+    attributes:
+      - name: id
+        type: int64
+        primaryKey: true
+      - name: label
+        type: string
+        maxLength: 32
+      # Optional: an omitted fixture or write cell leaves this column null.
+      - name: note
+        type: string
+        maxLength: 64
+        nullable: true
+    valueObjects:
+      # One top-level document occupying a single structured-document column,
+      # ordered after every scalar tier.
+      - name: contact
+        attributes:
+          - name: email
+            type: string
+          - name: phone
+            type: string
+            nullable: true
+  - name: LayoutPayment
+    namespace: parallax.compatibility
+    table: layout_payment
+    inheritance:
+      role: root
+      strategy: table-per-hierarchy
+      tag:
+        column: kind
+    attributes:
+      - name: id
+        type: int64
+        primaryKey: true
+      - name: amount
+        type: decimal(18,2)
+  - name: LayoutCardPayment
+    namespace: parallax.compatibility
+    inheritance:
+      role: concrete-subtype
+      parent: LayoutPayment
+      tagValue: card
+    attributes:
+      - name: cardNetwork
+        type: string
+        maxLength: 16
+  - name: LayoutCashPayment
+    namespace: parallax.compatibility
+    inheritance:
+      role: concrete-subtype
+      parent: LayoutPayment
+      tagValue: cash
+    attributes:
+      - name: tendered
+        type: decimal(18,2)
+  - name: LayoutReport
+    namespace: parallax.compatibility
+    inheritance:
+      role: root
+      strategy: table-per-concrete-subtype
+    attributes:
+      - name: id
+        type: int64
+        primaryKey: true
+      - name: title
+        type: string
+        maxLength: 64
+  - name: LayoutAudit
+    namespace: parallax.compatibility
+    table: layout_audit
+    inheritance:
+      role: concrete-subtype
+      parent: LayoutReport
+    attributes:
+      - name: auditor
+        type: string
+        maxLength: 32
+        column: detail
+  - name: LayoutSurvey
+    namespace: parallax.compatibility
+    table: layout_survey
+    inheritance:
+      role: concrete-subtype
+      parent: LayoutReport
+    attributes:
+      - name: respondent
+        type: string
+        maxLength: 32
+        column: detail

@@ -1,10 +1,12 @@
 """Provisioning statement-generation unit tests (Docker-free).
 
 The DDL and fixture-load statement generation is pure and proven here without a
-container: descriptor-derived ``create table`` DDL in column order (reserved
-identifiers quoted, value objects as ``jsonb``), fixtures mapped attribute-name →
-column with value-object documents wrapped for a ``jsonb`` bind, and the reset
-statements. The container lifecycle itself is proven by the Docker provider lane.
+container: ``create table`` DDL rendered from the model's compiled Table Layouts
+(canonical slot order, effective physical nullability, the layout's physical
+primary key, reserved identifiers quoted, documents as ``jsonb``), fixtures
+resolved through each Entity Layout view with value-object documents wrapped for
+a ``jsonb`` bind, and the reset statements. The container lifecycle itself is
+proven by the Docker provider lane.
 """
 
 from __future__ import annotations
@@ -42,7 +44,8 @@ def test_reset_statements() -> None:
 def test_schema_statements_quote_reserved_and_order_columns() -> None:
     (ddl,) = provision.schema_statements(_MODELS["grade"])
     assert ddl == (
-        'create table grade (id bigint, "order" integer, label varchar(32), primary key (id))'
+        'create table grade (id bigint not null, "order" integer not null, '
+        "label varchar(32) not null, primary key (id))"
     )
 
 
@@ -79,12 +82,13 @@ def test_schema_statements_create_the_shared_table_once() -> None:
 def test_schema_statements_tph_merges_the_whole_family_plus_the_tag_column() -> None:
     # The shared `payment` table physically carries the root's own columns, the
     # tag column, and EVERY concrete's own column (nullable — a card row leaves
-    # `tendered` null and a cash row leaves `card_network` null). The tag sits
-    # in canonical column order, immediately after the primary key.
+    # `tendered` null and a cash row leaves `card_network` null). The tag occupies
+    # its own Discriminator tier, immediately after the identity slots.
     (ddl,) = [stmt for stmt in provision.schema_statements(_MODELS["payment"]) if "payment" in stmt]
     assert ddl == (
-        "create table payment (id bigint, kind varchar(32), amount numeric(18, 2), "
-        "card_network varchar(16), tendered numeric(18, 2), primary key (id))"
+        "create table payment (id bigint not null, kind varchar(32) not null, "
+        "amount numeric(18, 2) not null, card_network varchar(16), "
+        "tendered numeric(18, 2), primary key (id))"
     )
 
 
@@ -105,8 +109,9 @@ def test_schema_statements_tpcs_creates_one_table_per_concrete_with_its_own_ance
     tables = provision.schema_statements(_MODELS["document"])
     (invoice,) = [t for t in tables if t.startswith("create table invoice ")]
     assert invoice == (
-        "create table invoice (id bigint, title varchar(64), folder_id bigint, "
-        "currency varchar(3), amount_due numeric(18, 2), primary key (id))"
+        "create table invoice (id bigint not null, title varchar(64) not null, "
+        "folder_id bigint, currency varchar(3) not null, "
+        "amount_due numeric(18, 2) not null, primary key (id))"
     )
     (memo,) = [t for t in tables if t.startswith("create table memo ")]
     assert "currency" not in memo  # Memo does not descend from FinancialDocument
@@ -147,10 +152,11 @@ def test_fixture_statements_tph_binds_the_tag_from_tagvalue_never_the_fixture_ro
     fixtures = provision.load_fixtures("models/payment.yaml")
     statements = provision.fixture_statements(_MODELS["payment"], fixtures)
     sql, binds = statements[0]
-    # The tag column is bound first, from the concrete's OWN declared `tagValue` —
-    # never authored in the fixture row (m-inheritance: framework-owned metadata).
-    assert sql.startswith("insert into payment (kind, ")
-    assert binds[0] == "card"
+    # The tag column binds at its Discriminator-tier slot, from the concrete's OWN
+    # declared `tagValue` — never authored in the fixture row (m-inheritance:
+    # framework-owned metadata).
+    assert sql.startswith("insert into payment (id, kind, ")
+    assert binds[1] == "card"
 
 
 def test_fixture_statements_tph_resolves_inherited_members_by_name() -> None:
@@ -496,6 +502,101 @@ def _entity_with_two_indices_over_one_column() -> AcceptedMetamodel:
 def test_schema_statements_deduplicates_a_redundant_unique_index() -> None:
     (ddl,) = provision.schema_statements(_entity_with_two_indices_over_one_column())
     assert ddl.count("unique (code)") == 1
+
+
+# --------------------------------------------------------------------------- #
+# The focused Storage Layout composition model: one descriptor carrying the     #
+# standalone, table-per-hierarchy, and table-per-concrete-subtype mapping forms #
+# side by side, so DDL and fixture shaping are pinned against every layout      #
+# answer the facet owns.                                                        #
+# --------------------------------------------------------------------------- #
+def _storage_layout_ddl(table: str) -> str:
+    (ddl,) = [
+        statement
+        for statement in provision.schema_statements(_MODELS["storage-layout"])
+        if statement.startswith(f"create table {table} ")
+    ]
+    return ddl
+
+
+def test_schema_statements_standalone_slots_carry_declared_nullability() -> None:
+    # A standalone Entity's slots apply to its table's only row owner, so each
+    # keeps its declared answer; the identity slot is non-null because the
+    # physical primary key selects it. The one top-level document occupies a
+    # single `jsonb` column after every scalar tier.
+    assert _storage_layout_ddl("layout_profile") == (
+        "create table layout_profile (id bigint not null, label varchar(32) not null, "
+        "note varchar(64), contact jsonb not null, primary key (id))"
+    )
+
+
+def test_schema_statements_tph_requires_family_wide_but_not_subtype_only_slots() -> None:
+    # `amount` is declared on the root, so it applies to every row owner of the
+    # shared table and stays physically non-null. `cardNetwork` and `tendered` are
+    # each REQUIRED of the concrete Entity declaring them, yet neither applies to
+    # the sibling variant's rows, so both physical columns must permit NULL. The
+    # framework-owned discriminator is never nullable.
+    assert _storage_layout_ddl("layout_payment") == (
+        "create table layout_payment (id bigint not null, kind varchar(32) not null, "
+        "amount numeric(18, 2) not null, card_network varchar(16), "
+        "tendered numeric(18, 2), primary key (id))"
+    )
+
+
+def test_schema_statements_tpcs_tables_repeat_ancestry_and_may_reuse_a_column() -> None:
+    # Each concrete table carries the root-owned ancestry slots followed by its own
+    # member. The two sibling members are distinct contributors that map to the same
+    # physical column spelling in structurally different tables, so each keeps its
+    # declared non-null answer.
+    assert _storage_layout_ddl("layout_audit") == (
+        "create table layout_audit (id bigint not null, title varchar(64) not null, "
+        "detail varchar(32) not null, primary key (id))"
+    )
+    assert _storage_layout_ddl("layout_survey") == (
+        "create table layout_survey (id bigint not null, title varchar(64) not null, "
+        "detail varchar(32) not null, primary key (id))"
+    )
+
+
+def test_fixture_statements_follow_each_entity_layout_selection() -> None:
+    fixtures = provision.load_fixtures("models/storage-layout.yaml")
+    statements = provision.fixture_statements(_MODELS["storage-layout"], fixtures)
+    emitted = dict(statements)
+    card = "insert into layout_payment (id, kind, amount, card_network) values (?, ?, ?, ?)"
+    cash = "insert into layout_payment (id, kind, amount, tendered) values (?, ?, ?, ?)"
+    # Each shared-table variant binds only its own applicable slots, with the
+    # discriminator derived at its canonical position.
+    assert emitted[card][:2] == [1, "card"]
+    assert emitted[cash][:2] == [2, "cash"]
+    # A sibling concrete table's reused column spelling resolves through its own
+    # layout rather than the sibling's declaration.
+    assert emitted["insert into layout_audit (id, title, detail) values (?, ?, ?)"] == [
+        1,
+        "Quarterly audit",
+        "Ingrid",
+    ]
+    assert emitted["insert into layout_survey (id, title, detail) values (?, ?, ?)"] == [
+        1,
+        "Annual survey",
+        "Bjorn",
+    ]
+
+
+def test_fixture_statements_omit_an_absent_cell_and_keep_the_document_last() -> None:
+    fixtures = provision.load_fixtures("models/storage-layout.yaml")
+    statements = provision.fixture_statements(_MODELS["storage-layout"], fixtures)
+    profile = [
+        (sql, binds) for sql, binds in statements if sql.startswith("insert into layout_profile ")
+    ]
+    complete, omitted = profile
+    assert complete[0] == (
+        "insert into layout_profile (id, label, note, contact) values (?, ?, ?, ?)"
+    )
+    assert isinstance(complete[1][3], JsonDocument)
+    # Python omits the absent optional cell entirely rather than binding NULL; the
+    # document keeps the final position among the columns that remain.
+    assert omitted[0] == "insert into layout_profile (id, label, contact) values (?, ?, ?)"
+    assert isinstance(omitted[1][2], JsonDocument)
 
 
 def test_an_axis_naming_an_unknown_attribute_never_reaches_provisioning() -> None:

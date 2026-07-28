@@ -2,8 +2,9 @@
 
 The simple reset path — the only path in v1: one session-scoped
 Testcontainers Postgres pinned to :data:`~parallax.conformance.constants.POSTGRES_IMAGE`,
-and per case ``DROP SCHEMA … CASCADE`` → ``CREATE SCHEMA`` → model-derived
-DDL (``applyDdl``) → fixture rows in canonical column order (``loadFixtures``).
+and per case ``DROP SCHEMA … CASCADE`` → ``CREATE SCHEMA`` → DDL derived from
+the accepted model's compiled Table Layouts (``applyDdl``) → fixture rows in
+Entity Layout order (``loadFixtures``).
 
 DDL and fixture *statement generation* is pure (``schema_statements`` /
 ``fixture_statements``) and unit-tested without Docker; the container lifecycle
@@ -13,23 +14,29 @@ provider / conformance lanes.
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from contextlib import suppress
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 from parallax.conformance import case_format, models
-from parallax.core import inheritance
+from parallax.core import storage_layout
 from parallax.core.base import STRING
 from parallax.core.db_port import DbPort, JsonDocument
 from parallax.core.dialect import POSTGRES, Dialect
-from parallax.core.inheritance import InheritanceEntityView, InheritanceFacet, column_order
 from parallax.core.metamodel import (
+    AttributeIdentity,
     AttributeMetadata,
-    EntityIdentity,
-    EntityMetadata,
+    Column,
+    IndexMetadata,
     Metamodel,
-    PrimaryKey,
+    ValueObjectIdentity,
+)
+from parallax.core.storage_layout import (
+    ColumnSlot,
+    EntityLayoutView,
+    InheritanceDiscriminator,
+    TableLayout,
 )
 from parallax.descriptor._records import Metamodel as DescriptorMetamodel
 
@@ -50,212 +57,109 @@ def reset_statements() -> list[str]:
     return ["drop schema if exists public cascade", "create schema public"]
 
 
-def _position(facet: InheritanceFacet, entity: EntityMetadata) -> InheritanceEntityView:
-    """``entity``'s family-effective view; the facet covers every accepted Entity."""
-    view = facet.entity(entity.identity)
-    if view is None:  # pragma: no cover - the facet covers every accepted Entity
-        raise ValueError(f"{entity.identity.canonical}: the model declares no such entity")
-    return view
-
-
-def _tables(model: Metamodel, facet: InheritanceFacet) -> list[tuple[EntityMetadata, str]]:
-    """Every row-owning Entity paired with the physical table it targets.
-
-    The container is the position's own row storage, which is the root-owned
-    shared table for a table-per-hierarchy participant and absent for a
-    tableless abstract position.
-    """
-    tables: list[tuple[EntityMetadata, str]] = []
-    for entity in model.entities:
-        container = _position(facet, entity).container
-        if container is not None:
-            tables.append((entity, container.name))
-    return tables
-
-
 def schema_statements(model: Metamodel, dialect: Dialect = POSTGRES) -> list[str]:
-    """Model-derived ``create table`` DDL for every row-owning table.
+    """``create table`` DDL for every compiled Table Layout, once per table.
 
-    A table is created once even when several entities map to it. For a
-    non-inheritance entity that is the plain per-entity column set. For an
-    inheritance participant (m-inheritance) it is derived from the family: a
-    table-per-hierarchy table merges the WHOLE family sharing it — every
-    concrete's own columns (nullable — a card row leaves the cash-only column
-    null and vice versa), the inherited (root + abstract-subtype) columns, and
-    the framework-owned tag column, physically nullable-free since every row
-    carries one — created exactly once, from the first entity ``_tables``
-    encounters mapped to that table; a table-per-concrete-subtype table is one
-    concrete's own ancestry-derived full column chain (root → … → that
-    concrete), no tag. Columns emit in the inheritance-owned canonical order
-    (`m-inheritance`, the rule `inheritance.column_order` states): primary key,
-    then the framework-owned tag, then the remaining scalars in family-effective
-    declaration order, then each value object's document column. DDL is not
-    asserted byte-exact anywhere in the corpus (`m-case-format`), so only the tag
-    column's own physical type is this provisioning path's choice, not a golden.
-
-    A **temporal** Entity's physical primary key is its declared primary key plus
-    the physical column of each As-Of Axis's start Attribute: many milestone
-    rows share one domain identity, so the declared key alone would reject a
-    second milestone. Start-Attribute columns are appended in declared axis
-    order (Valid-Time before Transaction-Time), matching each model's declared
-    composite unique index.
+    `m-storage-layout` already composed each physical table: the layout's
+    ``columns`` are the sole physical order, ``effective_nullable`` is the sole
+    nullability answer, and ``physical_primary_key`` is the sole key. This path
+    therefore only renders those selected values through the dialect. DDL is not
+    asserted byte-exact anywhere in the corpus (`m-case-format`), so the
+    framework-owned discriminator's physical type is this path's own choice
+    rather than a golden.
     """
-    facet = inheritance.view(model)
-    statements: list[str] = []
-    seen_tables: set[str] = set()
-    for entity, table in _tables(model, facet):
-        if table in seen_tables:
-            continue
-        seen_tables.add(table)
-        statements.append(_table_ddl(model, facet, entity, table, dialect))
-    return statements
+    facet = storage_layout.view(model)
+    return [_table_ddl(model, layout, dialect) for layout in facet.tables]
 
 
-def _column_ddl(attribute: AttributeMetadata, dialect: Dialect) -> str:
-    column_type = dialect.column_type(attribute.type, attribute.max_length)
-    return f"{dialect.quote(attribute.storage.name)} {column_type}"
-
-
-# A framework-owned tag column is not a declared attribute (m-inheritance), so
-# provisioning fixes its own physical type — wide enough for any authored
+# A framework-owned discriminator is not a declared Attribute (m-inheritance),
+# so provisioning fixes its own physical type — wide enough for any authored
 # tagValue and never asserted byte-exact (no DDL golden, `m-case-format`).
 _TAG_COLUMN_TYPE = STRING
 _TAG_COLUMN_MAX_LENGTH = 32
 
+# A top-level Value Object occupies one structured-document column
+# (m-value-object); nested occurrences and inner fields live inside it.
+_DOCUMENT_COLUMN_TYPE = "jsonb"
 
-def _table_ddl(
-    model: Metamodel,
-    facet: InheritanceFacet,
-    entity: EntityMetadata,
-    table: str,
-    dialect: Dialect,
-) -> str:
-    """One table's ``create table``.
 
-    A table-per-hierarchy family's ONE shared table merges every member sharing
-    it — root, every intermediate abstract subtype, and every concrete — because
-    value objects and unique secondary indices may be declared on ANY member
-    (m-inheritance "Inherited members"). Every other table stores one position's
-    own ancestry chain: a table-per-concrete-subtype concrete's root → … →
-    concrete, and a standalone Entity's own single-member chain. As-of axes are
-    DIFFERENT again: temporality is family-wide and root-declared, so the
-    milestone-interval primary-key suffix is read off the root alone.
+def _slot_type(model: Metamodel, slot: ColumnSlot, dialect: Dialect) -> str:
+    """The physical column type of one slot's contributor."""
+    contributor = slot.contributor
+    if isinstance(contributor, InheritanceDiscriminator):
+        return dialect.column_type(_TAG_COLUMN_TYPE, _TAG_COLUMN_MAX_LENGTH)
+    if isinstance(contributor, ValueObjectIdentity):
+        return _DOCUMENT_COLUMN_TYPE
+    attribute = _declared_attribute(model, contributor)
+    return dialect.column_type(attribute.type, attribute.max_length)
+
+
+def _declared_attribute(model: Metamodel, contributor: AttributeIdentity) -> AttributeMetadata:
+    entity = model.entity(contributor.entity)
+    attribute = None if entity is None else entity.attribute(contributor.name)
+    if attribute is None:  # pragma: no cover - a slot names an accepted declaration
+        raise ValueError(f"{contributor.entity.canonical}: no attribute {contributor.name!r}")
+    return attribute
+
+
+def _column_ddl(model: Metamodel, slot: ColumnSlot, dialect: Dialect) -> str:
+    nullability = "" if slot.effective_nullable else " not null"
+    return f"{dialect.quote(slot.column.name)} {_slot_type(model, slot, dialect)}{nullability}"
+
+
+def _table_ddl(model: Metamodel, layout: TableLayout, dialect: Dialect) -> str:
+    """One layout's ``create table``, in complete canonical slot order."""
+    columns = [_column_ddl(model, slot, dialect) for slot in layout.columns]
+    key_columns = [dialect.quote(slot.column.name) for slot in layout.physical_primary_key]
+    if key_columns:
+        columns.append(f"primary key ({', '.join(key_columns)})")
+    columns.extend(_unique_constraints(model, layout, key_columns, dialect))
+    return f"create table {dialect.quote(layout.table.name)} ({', '.join(columns)})"
+
+
+def _index_columns(layout: TableLayout, index: IndexMetadata) -> list[Column] | None:
+    """One Index's physical columns, or absent when it names another table.
+
+    Index Metadata stays an ordered declaration of local Attribute Identities
+    (`m-storage-layout`), so each component resolves through the layout's
+    contributor lookup. An Entity's whole local Attribute set reaches the same
+    tables, so a partially resolvable Index is a defect rather than a shape.
     """
-    view = _position(facet, entity)
-    root = _root(model, facet, entity)
-    if view.tag_column is not None:
-        members = _family_members(model, facet, root.identity)
-        projection = facet.position([root.identity])
-        assert projection is not None  # a root always denotes its own family position
-        attributes: Sequence[AttributeMetadata] = projection.superset_attributes
-        value_objects = projection.superset_value_objects
-    else:
-        members = tuple(
-            member
-            for member in (model.entity(identity) for identity in view.ancestry)
-            if member is not None
+    slots = [layout.contribution(attribute) for attribute in index.attributes]
+    if all(slot is None for slot in slots):
+        return None
+    if any(slot is None for slot in slots):  # pragma: no cover - defensive
+        raise ValueError(
+            f"index {index.identity.name!r} spans Table {layout.table.name!r} only partially"
         )
-        attributes = view.applicable_attributes
-        value_objects = view.applicable_value_objects
-
-    # Canonical physical column order (`m-inheritance` canonical column order,
-    # the rule `inheritance.column_order` states): the primary key, then the
-    # framework-owned tag immediately after it, then the remaining scalars in
-    # family-effective declaration order, and finally each value object's single
-    # document column.
-    key_columns: list[str] = []
-    rest_columns: list[str] = []
-    pk_columns: list[str] = []
-    for attribute in attributes:
-        if isinstance(attribute.primary_key, PrimaryKey):
-            key_columns.append(_column_ddl(attribute, dialect))
-            pk_columns.append(dialect.quote(attribute.storage.name))
-        else:
-            rest_columns.append(_column_ddl(attribute, dialect))
-    tag_columns = (
-        [
-            f"{dialect.quote(view.tag_column)} "
-            f"{dialect.column_type(_TAG_COLUMN_TYPE, _TAG_COLUMN_MAX_LENGTH)}"
-        ]
-        if view.tag_column is not None
-        else []
-    )
-    documents = [f"{dialect.quote(member.storage.name)} jsonb" for member in value_objects]
-    columns: list[str] = [*key_columns, *tag_columns, *rest_columns, *documents]
-    pk_columns.extend(
-        dialect.quote(_attribute_column(root, axis.start_attribute.name))
-        for axis in root.declared_as_of_axes
-    )
-    if pk_columns:
-        columns.append(f"primary key ({', '.join(pk_columns)})")
-    columns.extend(_unique_constraints(members, pk_columns, dialect))
-    return f"create table {dialect.quote(table)} ({', '.join(columns)})"
-
-
-def _root(model: Metamodel, facet: InheritanceFacet, entity: EntityMetadata) -> EntityMetadata:
-    root = model.entity(_position(facet, entity).root)
-    if root is None:  # pragma: no cover - a family root is always an accepted Entity
-        raise ValueError(f"{entity.identity.canonical}: the model declares no family root")
-    return root
-
-
-def _family_members(
-    model: Metamodel, facet: InheritanceFacet, root: EntityIdentity
-) -> tuple[EntityMetadata, ...]:
-    """Every accepted Entity whose family root is ``root``, in canonical order."""
-    return tuple(
-        member
-        for member in model.entities
-        if (position := facet.entity(member.identity)) is not None and position.root == root
-    )
+    return [cast("ColumnSlot", slot).column for slot in slots]
 
 
 def _unique_constraints(
-    chain: Sequence[EntityMetadata], pk_columns: list[str], dialect: Dialect
+    model: Metamodel, layout: TableLayout, key_columns: list[str], dialect: Dialect
 ) -> list[str]:
-    """``unique (…)`` constraints for the declared unique secondary indices of
-    every entity in ``chain`` (a plain entity's own single-element chain, a
-    table-per-concrete-subtype concrete's full ancestry, or a table-per-hierarchy
-    table's whole member set — an ancestor's own index, e.g. its temporal
-    composite, is otherwise invisible from a concrete declaration alone).
+    """``unique (…)`` constraints for every declared unique Index this table holds.
 
-    An index's Attribute Identities resolve to physical columns through the
-    WHOLE chain's scalar attributes. The composite milestone indices name the
-    start Attribute (for example, ``tx_start`` maps to ``in_z``), so an index
-    declared on one chain member may reference an attribute inherited from
-    another. The index matching the physical primary key is skipped —
-    ``primary key (…)`` already enforces it — what remains are the true
-    secondaries (a unique business column, a one-to-one FK column), which must
-    be enforced for the `m-db-error` uniqueViolation-via-secondary-index
-    triggers to raise. A duplicate constraint (the same resolved column set
-    declared more than once in the chain) is emitted once. An unresolvable
-    attribute name fails loudly rather than silently dropping a declared
-    constraint.
+    A unique Index may be declared on any Entity whose members reach the table —
+    a standalone Entity, an ancestor of a table-per-concrete-subtype concrete, or
+    any table-per-hierarchy family participant — so the layout's contributor
+    lookup, not an ancestry walk, decides membership. The Index matching the
+    physical primary key is skipped because ``primary key (…)`` already enforces
+    it; what remains are the true secondaries (a unique business column, a
+    one-to-one FK column) the `m-db-error` uniqueViolation triggers need. The
+    same resolved column set declared more than once emits one constraint.
     """
-    resolve: dict[str, str] = {}
-    for member in chain:
-        resolve.update(
-            {
-                attribute.identity.name: attribute.storage.name
-                for attribute in member.declared_attributes
-            }
-        )
     constraints: list[str] = []
     seen: set[frozenset[str]] = set()
-    for member in chain:
-        for index in member.indices:
+    for entity in model.entities:
+        for index in entity.indices:
             if not index.unique:
                 continue
-            unresolved = [
-                attribute.name for attribute in index.attributes if attribute.name not in resolve
-            ]
-            if unresolved:  # pragma: no cover - the resolver rejects a non-local index attribute
-                raise ValueError(
-                    f"{member.identity.name}: unique index {index.identity.name!r} names "
-                    f"attributes with no physical column: {unresolved}"
-                )
-            quoted = [dialect.quote(resolve[attribute.name]) for attribute in index.attributes]
-            if set(quoted) == set(pk_columns):
+            resolved = _index_columns(layout, index)
+            if resolved is None:
+                continue
+            quoted = [dialect.quote(column.name) for column in resolved]
+            if set(quoted) == set(key_columns):
                 continue
             key = frozenset(quoted)
             if key in seen:
@@ -265,87 +169,76 @@ def _unique_constraints(
     return constraints
 
 
-def _attribute_column(entity: EntityMetadata, name: str) -> str:
-    attribute = entity.attribute(name)
-    if attribute is None:  # pragma: no cover - an accepted axis names a declared Attribute
-        raise ValueError(f"{entity.identity.name}: no attribute {name!r}")
-    return attribute.storage.name
+def _fixture_member(slot: ColumnSlot) -> tuple[str, bool] | None:
+    """One slot's authorable fixture member name and whether it is a document.
 
-
-def _fixture_columns(
-    facet: InheritanceFacet, entity: EntityMetadata
-) -> tuple[Sequence[str], dict[str, tuple[str, bool]], tuple[str, object] | None]:
-    """The column order, member resolution map, and an optional (framework-owned)
-    tag assignment for one fixture-bearing entity.
-
-    An inheritance participant's fixture rows carry every ancestry-inherited
-    member BY NAME (`m-case-format`: a Dog fixture row authors ``name`` /
-    ``ownerId`` — Animal's own — alongside its own ``barkVolume``), and the
-    canonical column order is family-effective for exactly that reason, so one
-    derivation serves a participant and a standalone Entity alike. A
-    table-per-hierarchy concrete additionally always binds its tag column from
-    its own declared ``tagValue`` — never authored in the fixture row
-    (m-inheritance: "framework-owned metadata, never authored").
+    A framework-owned discriminator has no fixture member: its value is derived
+    from the concrete's own ``tagValue`` (m-inheritance).
     """
-    view = _position(facet, entity)
-    member_by_column: dict[str, tuple[str, bool]] = {
-        attribute.storage.name: (attribute.identity.name, False)
-        for attribute in view.applicable_attributes
-    }
-    member_by_column.update(
-        (member.storage.name, (member.identity.path[-1], True))
-        for member in view.applicable_value_objects
+    contributor = slot.contributor
+    if isinstance(contributor, AttributeIdentity):
+        return contributor.name, False
+    if isinstance(contributor, ValueObjectIdentity):
+        return contributor.path[-1], True
+    return None
+
+
+def _fixture_insert(
+    view: EntityLayoutView, row: Mapping[str, object], dialect: Dialect
+) -> tuple[str, list[object]]:
+    """One fixture row's ``insert``, following the Entity Layout slot order."""
+    columns: list[str] = []
+    binds: list[object] = []
+    for slot in view.columns:
+        member = _fixture_member(slot)
+        if member is None:
+            assert view.discriminator is not None  # only a shared table has a discriminator slot
+            columns.append(dialect.quote(slot.column.name))
+            binds.append(view.discriminator.value)
+            continue
+        name, is_document = member
+        if name not in row:
+            continue  # the fixture omits this cell
+        columns.append(dialect.quote(slot.column.name))
+        value = row[name]
+        binds.append(JsonDocument(value) if is_document else value)
+    placeholders = ", ".join("?" for _ in columns)
+    sql = (
+        f"insert into {dialect.quote(view.layout.table.name)} "
+        f"({', '.join(columns)}) values ({placeholders})"
     )
-    tag_assignment: tuple[str, object] | None = None
-    if view.tag_column is not None and view.tag_value is not None:
-        tag_assignment = (view.tag_column, view.tag_value)
-    return column_order(entity, facet), member_by_column, tag_assignment
+    return sql, binds
 
 
 def fixture_statements(
     model: Metamodel, fixtures: Mapping[str, object], dialect: Dialect = POSTGRES
 ) -> list[tuple[str, list[object]]]:
-    """``insert`` statements for the model's fixtures, in canonical column order.
+    """``insert`` statements for the model's fixtures, in Entity Layout order.
 
-    Columns and binds follow the canonical physical column order (the same one
-    DDL and row-write lowering use) rather than the fixture mapping's key order,
-    so re-spelling a fixture row with permuted keys emits byte-identical SQL
-    (python.md §6 ``loadFixtures``). A physical column with no member in the row
-    (an omitted nullable) is skipped, so only authored members bind; a
-    table-per-hierarchy concrete's tag column is always bound first, derived
-    from its own ``tagValue`` (never a fixture member).
+    An Entity Layout view already selects the slots applicable to one row-owning
+    Entity, in complete table order, so an inheritance participant's fixture row
+    resolves every ancestry-inherited member by name exactly as a standalone
+    Entity's does. Columns and binds follow that order rather than the fixture
+    mapping's key order, so re-spelling a row with permuted keys emits
+    byte-identical SQL (python.md §6 ``loadFixtures``). A physical column with no
+    member in the row is skipped, so only authored members bind; a
+    table-per-hierarchy concrete's discriminator always binds its own derived
+    ``tagValue``.
     """
-    facet = inheritance.view(model)
+    facet = storage_layout.view(model)
     statements: list[tuple[str, list[object]]] = []
-    for entity, table in _tables(model, facet):
+    for entity in model.entities:
+        view = facet.entity(entity.identity)
+        if view is None:
+            continue  # a rowless abstract position owns no fixture rows
         rows = fixtures.get(entity.identity.canonical, fixtures.get(entity.identity.name))
         if not isinstance(rows, list):
             continue
-        col_order, member_by_column, tag_assignment = _fixture_columns(facet, entity)
-        for row in cast("list[object]", rows):
-            if not isinstance(row, Mapping):
-                continue
-            member_row = cast("Mapping[str, object]", row)
-            columns: list[str] = []
-            binds: list[object] = []
-            if tag_assignment is not None:
-                tag_col, tag_value = tag_assignment
-                columns.append(dialect.quote(tag_col))
-                binds.append(tag_value)
-            for column in col_order:
-                member = member_by_column.get(column)
-                if member is None:
-                    continue  # the framework-owned tag column binds above, never here
-                name, is_value_object = member
-                if name not in member_row:
-                    continue  # fixture omits this (nullable) column
-                columns.append(dialect.quote(column))
-                value = member_row[name]
-                binds.append(JsonDocument(value) if is_value_object else value)
-            placeholders = ", ".join("?" for _ in columns)
-            column_list = ", ".join(columns)
-            sql = f"insert into {dialect.quote(table)} ({column_list}) values ({placeholders})"
-            statements.append((sql, binds))
+        statements.extend(
+            _fixture_insert(view, cast("Mapping[str, object]", row), dialect)
+            for row in cast("list[object]", rows)
+            if isinstance(row, Mapping)
+        )
     return statements
 
 

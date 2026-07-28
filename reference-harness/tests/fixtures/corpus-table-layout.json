@@ -2871,6 +2871,189 @@
       ]
     }
   },
+  "models/storage-layout.yaml": {
+    "layout_audit": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "parallax.compatibility.LayoutAudit"
+          ],
+          "column": "id",
+          "contributor": "attribute:parallax.compatibility.LayoutReport.id",
+          "declaringOwner": "parallax.compatibility.LayoutReport",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.LayoutAudit"
+          ],
+          "column": "title",
+          "contributor": "attribute:parallax.compatibility.LayoutReport.title",
+          "declaringOwner": "parallax.compatibility.LayoutReport",
+          "effectiveNullable": false,
+          "tier": "domain"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.LayoutAudit"
+          ],
+          "column": "detail",
+          "contributor": "attribute:parallax.compatibility.LayoutAudit.auditor",
+          "declaringOwner": "parallax.compatibility.LayoutAudit",
+          "effectiveNullable": false,
+          "tier": "domain"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0
+      ]
+    },
+    "layout_payment": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "parallax.compatibility.LayoutCardPayment",
+            "parallax.compatibility.LayoutCashPayment"
+          ],
+          "column": "id",
+          "contributor": "attribute:parallax.compatibility.LayoutPayment.id",
+          "declaringOwner": "parallax.compatibility.LayoutPayment",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.LayoutCardPayment",
+            "parallax.compatibility.LayoutCashPayment"
+          ],
+          "column": "kind",
+          "contributor": "discriminator:parallax.compatibility.LayoutPayment",
+          "declaringOwner": "parallax.compatibility.LayoutPayment",
+          "effectiveNullable": false,
+          "tier": "discriminator"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.LayoutCardPayment",
+            "parallax.compatibility.LayoutCashPayment"
+          ],
+          "column": "amount",
+          "contributor": "attribute:parallax.compatibility.LayoutPayment.amount",
+          "declaringOwner": "parallax.compatibility.LayoutPayment",
+          "effectiveNullable": false,
+          "tier": "domain"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.LayoutCardPayment"
+          ],
+          "column": "card_network",
+          "contributor": "attribute:parallax.compatibility.LayoutCardPayment.cardNetwork",
+          "declaringOwner": "parallax.compatibility.LayoutCardPayment",
+          "effectiveNullable": true,
+          "tier": "domain"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.LayoutCashPayment"
+          ],
+          "column": "tendered",
+          "contributor": "attribute:parallax.compatibility.LayoutCashPayment.tendered",
+          "declaringOwner": "parallax.compatibility.LayoutCashPayment",
+          "effectiveNullable": true,
+          "tier": "domain"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0
+      ]
+    },
+    "layout_profile": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "parallax.compatibility.LayoutProfile"
+          ],
+          "column": "id",
+          "contributor": "attribute:parallax.compatibility.LayoutProfile.id",
+          "declaringOwner": "parallax.compatibility.LayoutProfile",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.LayoutProfile"
+          ],
+          "column": "label",
+          "contributor": "attribute:parallax.compatibility.LayoutProfile.label",
+          "declaringOwner": "parallax.compatibility.LayoutProfile",
+          "effectiveNullable": false,
+          "tier": "domain"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.LayoutProfile"
+          ],
+          "column": "note",
+          "contributor": "attribute:parallax.compatibility.LayoutProfile.note",
+          "declaringOwner": "parallax.compatibility.LayoutProfile",
+          "effectiveNullable": true,
+          "tier": "domain"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.LayoutProfile"
+          ],
+          "column": "contact",
+          "contributor": "valueObject:parallax.compatibility.LayoutProfile.contact",
+          "declaringOwner": "parallax.compatibility.LayoutProfile",
+          "effectiveNullable": false,
+          "tier": "document"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0
+      ]
+    },
+    "layout_survey": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "parallax.compatibility.LayoutSurvey"
+          ],
+          "column": "id",
+          "contributor": "attribute:parallax.compatibility.LayoutReport.id",
+          "declaringOwner": "parallax.compatibility.LayoutReport",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.LayoutSurvey"
+          ],
+          "column": "title",
+          "contributor": "attribute:parallax.compatibility.LayoutReport.title",
+          "declaringOwner": "parallax.compatibility.LayoutReport",
+          "effectiveNullable": false,
+          "tier": "domain"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.LayoutSurvey"
+          ],
+          "column": "detail",
+          "contributor": "attribute:parallax.compatibility.LayoutSurvey.respondent",
+          "declaringOwner": "parallax.compatibility.LayoutSurvey",
+          "effectiveNullable": false,
+          "tier": "domain"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0
+      ]
+    }
+  },
   "models/subscriber.yaml": {
     "subscriber": {
       "columns": [

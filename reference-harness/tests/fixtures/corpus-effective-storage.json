@@ -653,6 +653,56 @@
       }
     }
   },
+  "models/storage-layout.yaml": {
+    "parallax.compatibility.LayoutAudit": {
+      "attribute": {
+        "auditor": "detail"
+      },
+      "valueObject": {}
+    },
+    "parallax.compatibility.LayoutCardPayment": {
+      "attribute": {
+        "cardNetwork": "card_network"
+      },
+      "valueObject": {}
+    },
+    "parallax.compatibility.LayoutCashPayment": {
+      "attribute": {
+        "tendered": "tendered"
+      },
+      "valueObject": {}
+    },
+    "parallax.compatibility.LayoutPayment": {
+      "attribute": {
+        "amount": "amount",
+        "id": "id"
+      },
+      "valueObject": {}
+    },
+    "parallax.compatibility.LayoutProfile": {
+      "attribute": {
+        "id": "id",
+        "label": "label",
+        "note": "note"
+      },
+      "valueObject": {
+        "contact": "contact"
+      }
+    },
+    "parallax.compatibility.LayoutReport": {
+      "attribute": {
+        "id": "id",
+        "title": "title"
+      },
+      "valueObject": {}
+    },
+    "parallax.compatibility.LayoutSurvey": {
+      "attribute": {
+        "respondent": "detail"
+      },
+      "valueObject": {}
+    }
+  },
   "models/subscriber.yaml": {
     "parallax.compatibility.Subscriber": {
       "attribute": {

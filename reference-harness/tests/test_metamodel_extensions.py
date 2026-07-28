@@ -27,9 +27,9 @@ from pathlib import Path
 import pytest
 from jsonschema import Draft202012Validator
 
-from reference_harness.case import Entity, Model, discover_cases, load_model
+from reference_harness.case import Model, discover_cases, load_model
 from reference_harness.case_runner import _assert_write_input_columns, _tag
-from reference_harness.ddl_builder import _create_table, column_order, ddl_for
+from reference_harness.ddl_builder import ddl_for
 from reference_harness.inheritance import (
     INHERITANCE_ABSTRACT_NODE_FIXTURE_ROWS,
     assert_no_abstract_fixture_rows,
@@ -39,6 +39,13 @@ from reference_harness.value_object_resolve import RejectionError
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 COMPATIBILITY_ROOT = _REPO_ROOT / "core" / "compatibility"
+
+
+def _entity_columns(model: Model, name: str) -> list[str]:
+    """One row-owning entity's applicable physical columns, in Table Layout order."""
+    view = model.storage_layout.entity(model.entity(name).canonical_name)
+    assert view is not None, f"{name} owns no physical rows"
+    return [slot.column for slot in view.columns]
 
 
 def _metamodel_validator() -> Draft202012Validator:
@@ -203,11 +210,12 @@ def test_relationship_transition_preserves_exact_namespace_identity() -> None:
 
 
 def test_concrete_subtype_derives_the_full_inherited_attribute_chain() -> None:
-    # A concrete subtype does not repeat inherited attributes; the harness derives
-    # the full ancestry chain (root -> ... -> self). For table-per-hierarchy it also
-    # synthesizes the framework-owned tag column after the primary key.
+    # A concrete subtype does not repeat inherited attributes; its Entity Layout
+    # selection carries the full ancestry chain (root -> ... -> self). For
+    # table-per-hierarchy the framework-owned discriminator sits in its own tier,
+    # after the identity slots.
     payment = load_model(COMPATIBILITY_ROOT, "models/payment.yaml")
-    assert list(column_order(payment.entity("CardPayment"))) == [
+    assert _entity_columns(payment, "CardPayment") == [
         "id",
         "kind",
         "amount",
@@ -218,7 +226,7 @@ def test_concrete_subtype_derives_the_full_inherited_attribute_chain() -> None:
     # the intermediate abstract subtype FinancialDocument (currency) before its own
     # amount_due. folder_id is the Phase 6 polymorphic-owner FK on the root Document.
     document = load_model(COMPATIBILITY_ROOT, "models/document.yaml")
-    assert list(column_order(document.entity("Invoice"))) == [
+    assert _entity_columns(document, "Invoice") == [
         "id",
         "title",
         "folder_id",
@@ -227,7 +235,7 @@ def test_concrete_subtype_derives_the_full_inherited_attribute_chain() -> None:
     ]
     # The concrete sibling Memo sits directly under the root, so it inherits only the
     # root chain (id, title, folder_id) — NOT FinancialDocument's currency — plus body.
-    assert list(column_order(document.entity("Memo"))) == ["id", "title", "folder_id", "body"]
+    assert _entity_columns(document, "Memo") == ["id", "title", "folder_id", "body"]
 
 
 def test_intermediate_abstract_subtype_inheritance_chain() -> None:
@@ -237,7 +245,7 @@ def test_intermediate_abstract_subtype_inheritance_chain() -> None:
     model = load_model(COMPATIBILITY_ROOT, "models/animal.yaml")
     assert _is_valid(model.descriptor)
     assert model.entity("Pet").is_abstract
-    assert list(column_order(model.entity("Dog"))) == [
+    assert _entity_columns(model, "Dog") == [
         "id",
         "kind",
         "name",
@@ -247,7 +255,7 @@ def test_intermediate_abstract_subtype_inheritance_chain() -> None:
     ]
     # WildBoar is under Animal directly, so it inherits name + owner_id (root) but NOT
     # license_id (Pet).
-    boar_columns = list(column_order(model.entity("WildBoar")))
+    boar_columns = _entity_columns(model, "WildBoar")
     assert boar_columns == ["id", "kind", "name", "owner_id", "tusk_length"]
     assert "license_id" not in boar_columns
 
@@ -303,7 +311,7 @@ def test_inherited_attributes_with_omitted_conventional_columns_all_survive_flat
     }
     assert _is_valid(descriptor)
     model = Model(Path("conventional-columns.yaml"), descriptor)
-    assert list(column_order(model.entity("Hardcover"))) == [
+    assert _entity_columns(model, "Hardcover") == [
         "id",
         "kind",
         "display_name",
@@ -321,7 +329,8 @@ def test_multiword_value_object_uses_the_derived_document_column() -> None:
     assert "mapping" not in value_object
     assert value_object["multiplicity"] == "one"
     assert value_object["column"] == "mailing_address"
-    assert list(column_order(model.root_entity)) == [
+    columns = _entity_columns(model, model.root_entity.name)
+    assert columns == [
         "id",
         "person_id",
         "tax_i_d",
@@ -330,7 +339,7 @@ def test_multiword_value_object_uses_the_derived_document_column() -> None:
         "legacy__i_d",
         "mailing_address",
     ]
-    assert value_object["column"] in column_order(model.root_entity)
+    assert value_object["column"] in columns
     (create,) = ddl_for(model, "postgres")
     assert f"{value_object['column']} jsonb" in create
 
@@ -647,25 +656,28 @@ def test_abstract_node_fixture_rows_are_rejected() -> None:
 # --- unique-index DDL emission (Task 5) --------------------------------------
 
 
-def _entity_with_unique_index() -> Entity:
-    return Entity(
-        definition={
-            "name": "Tag",
-            "table": "tag",
-            "attributes": [
-                {"name": "id", "type": "int64", "column": "id", "primaryKey": True},
-                {"name": "name", "type": "string", "column": "name", "maxLength": 64},
-            ],
-            "indices": [
-                {"name": "tag_pk", "attributes": ["id"], "unique": True},
-                {"name": "tag_name_uq", "attributes": ["name"], "unique": True},
-            ],
-        }
+def _model_with_unique_index() -> Model:
+    return Model(
+        Path("tag.yaml"),
+        {
+            "entity": {
+                "name": "Tag",
+                "table": "tag",
+                "attributes": [
+                    {"name": "id", "type": "int64", "column": "id", "primaryKey": True},
+                    {"name": "name", "type": "string", "column": "name", "maxLength": 64},
+                ],
+                "indices": [
+                    {"name": "tag_pk", "attributes": ["id"], "unique": True},
+                    {"name": "tag_name_uq", "attributes": ["name"], "unique": True},
+                ],
+            }
+        },
     )
 
 
 def test_non_pk_unique_index_emits_unique_constraint() -> None:
-    ddl = _create_table(_entity_with_unique_index(), "postgres")
+    (ddl,) = ddl_for(_model_with_unique_index(), "postgres")
     assert "primary key (id)" in ddl
     assert "unique (name)" in ddl
     # The PK-backed unique index is NOT re-emitted as a separate UNIQUE clause.
@@ -673,7 +685,7 @@ def test_non_pk_unique_index_emits_unique_constraint() -> None:
 
 
 def test_unique_index_emitted_for_mariadb_too() -> None:
-    ddl = _create_table(_entity_with_unique_index(), "mariadb")
+    (ddl,) = ddl_for(_model_with_unique_index(), "mariadb")
     assert "unique (name)" in ddl
 
 
@@ -681,27 +693,30 @@ def test_temporal_full_key_unique_index_is_not_re_emitted() -> None:
     # A temporal entity whose unique index lists the FULL physical key (declared
     # PK + the as-of start columns) is the primary key, not a secondary unique
     # index -- it must NOT produce a redundant `unique (...)` alongside the PK.
-    entity = Entity(
-        definition={
-            "name": "Milestone",
-            "table": "milestone",
-            "attributes": [
-                {"name": "id", "type": "int64", "column": "id", "primaryKey": True},
-                {"name": "tx_start", "type": "timestamp", "column": "in_z"},
-                {"name": "tx_end", "type": "timestamp", "column": "out_z"},
-            ],
-            "asOfAxes": [
-                {
-                    "dimension": "transactionTime",
-                    "startAttribute": "tx_start",
-                    "endAttribute": "tx_end",
-                },
-            ],
-            "indices": [
-                {"name": "milestone_pk", "attributes": ["id", "tx_start"], "unique": True},
-            ],
-        }
+    model = Model(
+        Path("milestone.yaml"),
+        {
+            "entity": {
+                "name": "Milestone",
+                "table": "milestone",
+                "attributes": [
+                    {"name": "id", "type": "int64", "column": "id", "primaryKey": True},
+                    {"name": "tx_start", "type": "timestamp", "column": "in_z"},
+                    {"name": "tx_end", "type": "timestamp", "column": "out_z"},
+                ],
+                "asOfAxes": [
+                    {
+                        "dimension": "transactionTime",
+                        "startAttribute": "tx_start",
+                        "endAttribute": "tx_end",
+                    },
+                ],
+                "indices": [
+                    {"name": "milestone_pk", "attributes": ["id", "tx_start"], "unique": True},
+                ],
+            }
+        },
     )
-    ddl = _create_table(entity, "postgres")
+    (ddl,) = ddl_for(model, "postgres")
     assert "primary key (id, in_z)" in ddl
     assert "unique (" not in ddl  # the PK-backed unique index is not re-emitted

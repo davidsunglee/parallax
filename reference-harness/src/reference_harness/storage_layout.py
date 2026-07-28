@@ -113,6 +113,9 @@ class TableLayout:
             MappingProxyType({slot.contributor: slot for slot in self.columns}),
         )
 
+    def __deepcopy__(self, memo: dict[int, Any]) -> TableLayout:
+        return self
+
     def column(self, column: str) -> ColumnSlot | None:
         """Return the slot claiming ``column``, or absent."""
         return self._column_index.get(column)
@@ -640,12 +643,20 @@ def _compile_layout(
 
 @dataclass(frozen=True, slots=True)
 class StorageLayout:
-    """The model's bounded immutable Table, Entity, and position layout graph."""
+    """The model's bounded immutable Table, Entity, and position layout graph.
+
+    A caller that deep-copies a parsed corpus case to mutate it safely shares
+    this graph instead: the values are immutable, and the read-only indexes
+    behind the lookups are not copyable.
+    """
 
     tables: tuple[TableLayout, ...]
     _tables: Mapping[str, TableLayout] = field(repr=False, compare=False)
     _entities: Mapping[str, EntityLayoutView] = field(repr=False, compare=False)
     _families: Mapping[str, _FamilyFacts] = field(repr=False, compare=False)
+
+    def __deepcopy__(self, memo: dict[int, Any]) -> StorageLayout:
+        return self
 
     def table(self, table: str) -> TableLayout | None:
         """Return one structural Table's layout, or absent."""

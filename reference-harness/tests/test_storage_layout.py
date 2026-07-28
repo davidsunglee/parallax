@@ -6,15 +6,17 @@ import ast
 import dataclasses
 import enum
 import sys
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import FrozenInstanceError
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
 import reference_harness.case_runner as case_runner
-from reference_harness.case import load_model
+from reference_harness.case import Model, load_model
+from reference_harness.data_loader import load_model as load_fixture_rows
+from reference_harness.ddl_builder import ddl_for
 from reference_harness.storage_layout import (
     STORAGE_LAYOUT_COLUMN_COLLISION,
     STORAGE_LAYOUT_TABLE_MAPPING_COLLISION,
@@ -31,6 +33,37 @@ from reference_harness.value_object_resolve import RejectionError
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _COMPATIBILITY_ROOT = _REPO_ROOT / "core" / "compatibility"
+
+
+class _RecordingProvider:
+    """A no-database provider recording the fixture-load calls it receives."""
+
+    dialect = "postgres"
+
+    def __init__(self) -> None:
+        self.loads: list[tuple[str, list[str], list[list[Any]]]] = []
+
+    def load(self, table: str, columns: Sequence[str], rows: Sequence[Sequence[Any]]) -> None:
+        self.loads.append((table, list(columns), [list(row) for row in rows]))
+
+
+def _storage_layout_model() -> Model:
+    return load_model(_COMPATIBILITY_ROOT, "models/storage-layout.yaml")
+
+
+def _create_table_ddl(model: Model, table: str, dialect: str = "postgres") -> str:
+    prefix = f"create table {table} ("
+    (statement,) = [ddl for ddl in ddl_for(model, dialect) if ddl.startswith(prefix)]
+    return statement
+
+
+def _ddl_column(statement: str, column: str) -> str:
+    (line,) = [
+        stripped
+        for raw in statement.splitlines()
+        if (stripped := raw.strip().rstrip(",")).split(" ")[0] == column
+    ]
+    return line
 
 
 class _VisitedDefinitions(list[dict[str, Any]]):
@@ -795,6 +828,99 @@ def test_entity_columns_are_materialized_on_demand_without_retained_position_gro
         assert tuple(repeated.columns) == expected
         assert facet.position((alpha, beta)) == facet.position((alpha, beta))
     assert _retained_size(facet) == before
+
+
+def test_ddl_renders_the_complete_shared_table_in_canonical_slot_order() -> None:
+    model = _storage_layout_model()
+    statement = _create_table_ddl(model, "layout_payment")
+    layout = model.storage_layout.table("layout_payment")
+    assert layout is not None
+    emitted = [
+        stripped.split(" ")[0]
+        for raw in statement.splitlines()
+        if (stripped := raw.strip().rstrip(",")).split(" ")[0]
+        not in {"create", "primary", "unique", ")"}
+    ]
+    assert emitted == [slot.column for slot in layout.columns]
+    assert "primary key (id)" in statement
+
+
+def test_ddl_nullability_is_the_layout_answer_not_authored_nullability() -> None:
+    model = _storage_layout_model()
+    statement = _create_table_ddl(model, "layout_payment")
+    # The model key and the framework-owned discriminator are never nullable, and
+    # the family-wide `amount` applies to every row owner of the shared table.
+    assert _ddl_column(statement, "id") == "id bigint not null"
+    assert _ddl_column(statement, "kind") == "kind varchar(32) not null"
+    assert _ddl_column(statement, "amount") == "amount numeric(18,2) not null"
+    # Both subtype-only members are REQUIRED of their own concrete Entity yet apply
+    # to a strict subset of the shared table's row owners, so the physical columns
+    # must accept the sibling variant's rows.
+    assert _ddl_column(statement, "card_network") == "card_network varchar(16)"
+    assert _ddl_column(statement, "tendered") == "tendered numeric(18,2)"
+    # A table-per-concrete-subtype slot applies to its table's only row owner, so it
+    # keeps the declared answer even though the same spelling is reused elsewhere.
+    assert _ddl_column(_create_table_ddl(model, "layout_audit"), "detail") == (
+        "detail varchar(32) not null"
+    )
+    assert _ddl_column(_create_table_ddl(model, "layout_survey"), "detail") == (
+        "detail varchar(32) not null"
+    )
+
+
+def test_ddl_document_slot_follows_every_scalar_tier() -> None:
+    statement = _create_table_ddl(_storage_layout_model(), "layout_profile")
+    assert _ddl_column(statement, "note") == "note varchar(64)"
+    assert _ddl_column(statement, "contact") == "contact jsonb not null"
+    assert statement.index("contact jsonb") > statement.index("note varchar(64)")
+
+
+def test_fixture_load_binds_absent_cells_as_none_in_entity_layout_order() -> None:
+    model = _storage_layout_model()
+    provider = _RecordingProvider()
+    load_fixture_rows(model, cast("Any", provider))
+    loads = {
+        table: (columns, rows)
+        for table, columns, rows in provider.loads
+        if table != "layout_payment"
+    }
+
+    profile_columns, profile_rows = loads["layout_profile"]
+    assert profile_columns == ["id", "label", "note", "contact"]
+    # The harness binds every layout column, so an omitted optional cell is an
+    # explicit None rather than a skipped column.
+    assert profile_rows[1] == [2, "Secondary", None, {"email": "kari@example.test"}]
+    assert loads["layout_audit"] == (["id", "title", "detail"], [[1, "Quarterly audit", "Ingrid"]])
+    assert loads["layout_survey"] == (["id", "title", "detail"], [[1, "Annual survey", "Bjorn"]])
+
+    # Each shared-table variant loads only the slots applicable to itself, so the
+    # sibling's required column is absent from its own column list entirely.
+    shared = [entry for entry in provider.loads if entry[0] == "layout_payment"]
+    assert [(columns, rows) for _table, columns, rows in shared] == [
+        (["id", "kind", "amount", "card_network"], [[1, "card", 100.00, "Visa"]]),
+        (["id", "kind", "amount", "tendered"], [[2, "cash", 20.00, 25.00]]),
+    ]
+
+
+def test_fixture_load_derives_each_variant_discriminator_through_its_view() -> None:
+    model = _storage_layout_model()
+    provider = _RecordingProvider()
+    load_fixture_rows(model, cast("Any", provider))
+    variants = [
+        (columns[columns.index("kind")], row[columns.index("kind")])
+        for table, columns, rows in provider.loads
+        if table == "layout_payment"
+        for row in rows
+    ]
+    assert variants == [("kind", "card"), ("kind", "cash")]
+
+
+def test_a_fixture_row_naming_the_discriminator_is_not_an_authorable_member() -> None:
+    model = _storage_layout_model()
+    rows = {"parallax.compatibility.LayoutCardPayment": [{"id": 9, "amount": 1.00, "kind": "card"}]}
+    corrupted = Model(model.path, model.descriptor, fixtures=cast("Any", rows))
+    with pytest.raises(ValueError, match="unknown member"):
+        load_fixture_rows(corrupted, cast("Any", _RecordingProvider()))
 
 
 def test_case_runner_consumes_storage_layout_only_for_model_validation() -> None:

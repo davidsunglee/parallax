@@ -1,0 +1,46 @@
+# Table-per-hierarchy applicability and effective physical nullability
+# (m-storage-layout).
+#
+# Both concrete variants of the LayoutPayment family occupy the one shared
+# `layout_payment` table. Each insert carries exactly the slots applicable to its
+# own concrete Entity, in complete Table Layout order — the family-wide `amount`
+# plus its own subtype-only member — and the framework-owned `kind` discriminator
+# is derived from the variant's tagValue at its Discriminator-tier position.
+#
+# `cardNetwork` and `tendered` are each REQUIRED of the concrete Entity that
+# declares them, yet neither applies to the sibling variant's rows. Their
+# applicable Entity set is therefore a strict subset of the shared Table's row
+# owners, so both physical columns must permit NULL: the cash row leaves
+# `card_network` null and the card row leaves `tendered` null. The root-owned
+# `amount` applies to every row owner and stays physically non-null, as do the
+# model key and the discriminator.
+model: models/storage-layout.yaml
+tags: [m-storage-layout, m-inheritance, m-sql, table-per-hierarchy, tag, nullability, write-sequence, slice-snapshot-1, slice-managed-1]
+shape: writeSequence
+when:
+  writeSequence:
+    - mutation: insert
+      entity: LayoutCardPayment
+      statements: 1
+      note: insert a card variant; kind='card' is derived, tendered does not apply
+      rows:
+        - { id: 1, amount: 100.00, cardNetwork: Visa }
+    - mutation: insert
+      entity: LayoutCashPayment
+      statements: 1
+      note: insert a cash variant into the same shared table; card_network does not apply
+      rows:
+        - { id: 2, amount: 20.00, tendered: 25.00 }
+then:
+  statements:
+    - sql:
+        postgres: insert into layout_payment(id, kind, amount, card_network) values (?, ?, ?, ?)
+      binds: [1, card, 100.00, Visa]
+    - sql:
+        postgres: insert into layout_payment(id, kind, amount, tendered) values (?, ?, ?, ?)
+      binds: [2, cash, 20.00, 25.00]
+  tableState:
+    layout_payment:
+      - { id: 1, kind: card, amount: 100.00, card_network: Visa, tendered: null }
+      - { id: 2, kind: cash, amount: 20.00, card_network: null, tendered: 25.00 }
+  roundTrips: 2

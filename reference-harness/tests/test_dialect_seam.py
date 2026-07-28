@@ -135,6 +135,42 @@ def test_reserved_word_column_ddl_is_quoted() -> None:
     assert "id bigint not null" in ddl_for(model, "postgres")[0]
 
 
+# --- the layout answer is shared; only type and quoting diverge --------------
+
+
+def _ddl_shape(create_table_sql: str) -> list[tuple[str, bool]]:
+    """Each emitted column's raw identifier and whether the DDL declares it non-null."""
+    shape: list[tuple[str, bool]] = []
+    for raw in create_table_sql.splitlines():
+        line = raw.strip().rstrip(",")
+        token = line.split(" ")[0]
+        if not line or token in {"create", "primary", "unique", ")"}:
+            continue
+        shape.append((token.strip('"`'), line.endswith(" not null")))
+    return shape
+
+
+def test_both_dialects_render_the_same_selected_slots_and_nullability() -> None:
+    # A dialect renders the layout's already-selected slots, order, effective
+    # nullability, and physical key; only the column type spelling and the
+    # identifier quote character are its own decisions.
+    model = load_model(COMPATIBILITY_ROOT, "models/storage-layout.yaml")
+    layout = model.storage_layout.table("layout_payment")
+    assert layout is not None
+    expected = [(slot.column, not slot.effective_nullable) for slot in layout.columns]
+    rendered = {
+        dialect: next(
+            ddl for ddl in ddl_for(model, dialect) if "create table layout_payment " in ddl
+        )
+        for dialect in ("postgres", "mariadb")
+    }
+    for create in rendered.values():
+        assert _ddl_shape(create) == expected
+        assert "primary key (id)" in create
+    assert "amount numeric(18,2) not null" in rendered["postgres"]
+    assert "amount decimal(18,2) not null" in rendered["mariadb"]
+
+
 # --- the infinity / instant adapters (the max-sentinel fallback) -------------
 
 

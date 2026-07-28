@@ -296,11 +296,22 @@ _BATCH_COLLAPSE_WRITE_SEQUENCES: Final[frozenset[str]] = frozenset(
 # Docker run sweep through `WRITE_EXERCISED`, proving end to end that the decode
 # keeps this authored decimal write intact against real Postgres.
 _DECIMAL_PRECISION_WRITE_SEQUENCES: Final[frozenset[str]] = frozenset({"m-core-007"})
+# The physical-composition witnesses (`m-storage-layout`): both concrete variants
+# of one shared table (each binding only its own applicable slots while the
+# sibling's required column stays null), the two table-per-concrete-subtype
+# tables whose distinct members reuse one column spelling, and the top-level
+# document slot that follows every scalar tier. Each is a plain keyed insert with
+# fully authored goldens, so compile grades the emitted column list and binds and
+# run additionally grades the committed physical rows.
+_STORAGE_LAYOUT_WRITE_SEQUENCES: Final[frozenset[str]] = frozenset(
+    {"m-storage-layout-006", "m-storage-layout-007", "m-storage-layout-008"}
+)
 _WRITE_SEQUENCES: Final[frozenset[str]] = (
     frozenset({"m-unit-work-003", "m-unit-work-007", "m-batch-write-002"})
     | _OPT_LOCK_AND_PK_GEN_WRITE_SEQUENCES
     | _BATCH_COLLAPSE_WRITE_SEQUENCES
     | _DECIMAL_PRECISION_WRITE_SEQUENCES
+    | _STORAGE_LAYOUT_WRITE_SEQUENCES
 )
 # The `m-snapshot-read-010` mutate scenario emits no write DML. Its two `find`
 # steps' emissions and round trips grade byte-

@@ -1,0 +1,66 @@
+# A top-level Value Object is one Document-tier slot after every scalar tier
+# (m-storage-layout, m-value-object).
+#
+# LayoutProfile's layout is `id` (Identity), `label` and `note` (Domain), then
+# `contact` (Document). The document slot therefore follows every scalar tier
+# regardless of where the occurrence is declared, and the whole embedded
+# composite binds atomically into that one column rather than decomposing into
+# per-field columns.
+#
+# The second insert omits the optional `note`, so only the present cells bind and
+# the document still occupies the final position.
+model: models/storage-layout.yaml
+tags: [m-storage-layout, m-value-object, m-sql, json, document, write-sequence, slice-snapshot-1, slice-managed-1]
+shape: writeSequence
+when:
+  writeSequence:
+    - mutation: insert
+      entity: LayoutProfile
+      statements: 1
+      note: insert a complete profile; the whole contact document binds as one cell
+      rows:
+        - id: 1
+          label: Primary
+          note: preferred contact
+          contact:
+            email: solveig@example.test
+            phone: '555-0100'
+    - mutation: insert
+      entity: LayoutProfile
+      statements: 1
+      note: omit the optional note; the document keeps its position after the scalars
+      rows:
+        - id: 2
+          label: Secondary
+          contact:
+            email: kari@example.test
+then:
+  statements:
+    - sql:
+        postgres: insert into layout_profile(id, label, note, contact) values (?, ?, ?, ?)
+      binds:
+        - 1
+        - Primary
+        - preferred contact
+        - email: solveig@example.test
+          phone: '555-0100'
+    - sql:
+        postgres: insert into layout_profile(id, label, contact) values (?, ?, ?)
+      binds:
+        - 2
+        - Secondary
+        - email: kari@example.test
+  tableState:
+    layout_profile:
+      - id: 1
+        label: Primary
+        note: preferred contact
+        contact:
+          email: solveig@example.test
+          phone: '555-0100'
+      - id: 2
+        label: Secondary
+        note: null
+        contact:
+          email: kari@example.test
+  roundTrips: 2

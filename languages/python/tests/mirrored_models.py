@@ -313,6 +313,12 @@ UNMIRRORED: Mapping[str, str] = MappingProxyType(
             "no mirror authored; the mirrored `writable-scalars` carries the same scalar set, so "
             "the only construct this model adds is `persistence=READ_ONLY`"
         ),
+        "storage-layout": (
+            "no mirror authored; it places the mirrored `payment`'s table-per-hierarchy family, "
+            "the mirrored `document`'s table-per-concrete-subtype family, and the mirrored "
+            "`customer`'s top-level Value Object in one descriptor so physical composition can "
+            "be witnessed, adding no declaration construct of its own"
+        ),
         "subscriber": (
             "no mirror authored; it composes the nested Value Object tree the mirrored `customer` "
             "and `supplier` prove with the optimistic-lock version `account` proves"
