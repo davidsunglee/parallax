@@ -319,7 +319,7 @@ reach.
 
 A rung names what is proved, not how to prove it. Take the exact language-level
 local and CI commands from the completed language spec, and the repository-wide
-ones from the root `justfile`. Report every database-backed check that could not
+ones from [TESTING.md](TESTING.md). Report every database-backed check that could not
 run and its reason; silent skips are failures. The root Python harness validates
 the core corpus. It does not prove a language implementation conforms unless that
 implementation is wired through its own adapter or test runner.

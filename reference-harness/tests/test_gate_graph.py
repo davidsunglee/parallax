@@ -10,40 +10,40 @@ import pytest
 from reference_harness.gate_graph import (
     GateGraph,
     GateGraphError,
-    RecipeName,
+    _parse_name,
+    _RecipeName,
     load_graph,
-    parse_name,
 )
 
 
 @pytest.mark.parametrize(
     ("name", "expected"),
     [
-        ("check", RecipeName(None, "check", None)),
-        ("check-dbfree", RecipeName(None, "check", "dbfree")),
-        ("show-gates", RecipeName(None, "show", "gates")),
-        ("report-matrix", RecipeName(None, "report", "matrix")),
-        ("lint-markdown", RecipeName(None, "lint", "markdown")),
-        ("harness-format-check", RecipeName("harness", "format-check", None)),
-        ("harness-format", RecipeName("harness", "format", None)),
-        ("python-check-dbfree", RecipeName("python", "check", "dbfree")),
-        ("python-test-provider-contract", RecipeName("python", "test", "provider-contract")),
-        ("core-check-slice-profiles", RecipeName("core", "check", "slice-profiles")),
-        ("harness-test-contract-tools", RecipeName("harness", "test", "contract-tools")),
+        ("check", _RecipeName(None, "check", None)),
+        ("check-dbfree", _RecipeName(None, "check", "dbfree")),
+        ("show-gates", _RecipeName(None, "show", "gates")),
+        ("report-matrix", _RecipeName(None, "report", "matrix")),
+        ("lint-markdown", _RecipeName(None, "lint", "markdown")),
+        ("harness-format-check", _RecipeName("harness", "format-check", None)),
+        ("harness-format", _RecipeName("harness", "format", None)),
+        ("python-check-dbfree", _RecipeName("python", "check", "dbfree")),
+        ("python-test-provider-contract", _RecipeName("python", "test", "provider-contract")),
+        ("core-check-slice-profiles", _RecipeName("core", "check", "slice-profiles")),
+        ("harness-test-contract-tools", _RecipeName("harness", "test", "contract-tools")),
         # Deliberately not repository recipes: a name outside the grammar must still
         # decompose, so the caller reports what it found rather than failing to read
         # the graph containing it.
-        ("smoke", RecipeName(None, "smoke", None)),
-        ("python-smoke", RecipeName("python", "smoke", None)),
-        ("core-model-sweep", RecipeName("core", "model-sweep", None)),
-        ("core-graph-check", RecipeName("core", "graph-check", None)),
-        ("java-typecheck", RecipeName("java", "typecheck", None)),
+        ("smoke", _RecipeName(None, "smoke", None)),
+        ("python-smoke", _RecipeName("python", "smoke", None)),
+        ("core-model-sweep", _RecipeName("core", "model-sweep", None)),
+        ("core-graph-check", _RecipeName("core", "graph-check", None)),
+        ("java-typecheck", _RecipeName("java", "typecheck", None)),
     ],
 )
 def test_names_decompose_into_scope_operation_and_qualifier(
-    name: str, expected: RecipeName
+    name: str, expected: _RecipeName
 ) -> None:
-    parsed = parse_name(name)
+    parsed = _parse_name(name)
 
     assert parsed == expected
 

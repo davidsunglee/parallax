@@ -11,6 +11,7 @@ import pytest
 import yaml
 
 from reference_harness.check_gates import (
+    AGENT_GUIDANCE,
     CI_WORKFLOW,
     OPERATIONAL_MAP,
     SUPPORT_DIRECTORY,
@@ -26,6 +27,7 @@ _MIRRORED_PYTHON_SPEC = Path("languages") / "python" / "spec" / "python.md"
 _MIRRORED_FILES = (
     "justfile",
     str(CI_WORKFLOW),
+    AGENT_GUIDANCE,
     OPERATIONAL_MAP,
     str(_MIRRORED_PYTHON_MAP),
     str(_MIRRORED_PYTHON_SPEC),
