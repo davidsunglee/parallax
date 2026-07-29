@@ -375,9 +375,7 @@ op = Order.where(Order.items.none(), Order.active.is_(True))
 Corpus case: `m-navigate-008`
 
 ```python
-op = Order.where(
-    Order.items.any(OrderItem.statuses.any(OrderStatus.code == "PACKED"))
-)
+op = Order.where(Order.items.any(OrderItem.statuses.any(OrderStatus.code == "PACKED")))
 ```
 
 ## Existence over a to-one (nullable) relationship
@@ -1287,11 +1285,17 @@ Customer.where(Customer.address.city == 42)
 Corpus case: `m-value-object-039`
 
 ```python
-db.transact(lambda tx: tx.insert(Contact(
-    id=1, name="Acme",
-    address=ContactAddress(city="Oslo", geo=ContactGeo(
-        country="NO", point=ContactPoint(lat=59.9, lon=10.7))),
-)))
+db.transact(
+    lambda tx: tx.insert(
+        Contact(
+            id=1,
+            name="Acme",
+            address=ContactAddress(
+                city="Oslo", geo=ContactGeo(country="NO", point=ContactPoint(lat=59.9, lon=10.7))
+            ),
+        )
+    )
+)
 # raises WriteRejectedError(rule="write-required-attribute-missing")
 ```
 
@@ -1300,11 +1304,19 @@ db.transact(lambda tx: tx.insert(Contact(
 Corpus case: `m-value-object-040`
 
 ```python
-db.transact(lambda tx: tx.insert(Contact(
-    id=2, name="Beacon",
-    address=ContactAddress(street="1 Main St", city="Oslo",
-        geo=ContactGeo(point=ContactPoint(lat=59.9, lon=10.7))),
-)))
+db.transact(
+    lambda tx: tx.insert(
+        Contact(
+            id=2,
+            name="Beacon",
+            address=ContactAddress(
+                street="1 Main St",
+                city="Oslo",
+                geo=ContactGeo(point=ContactPoint(lat=59.9, lon=10.7)),
+            ),
+        )
+    )
+)
 # raises WriteRejectedError(rule="write-required-attribute-missing")
 ```
 
@@ -1313,11 +1325,19 @@ db.transact(lambda tx: tx.insert(Contact(
 Corpus case: `m-value-object-041`
 
 ```python
-db.transact(lambda tx: tx.insert(Contact(
-    id=3, name="Cairn",
-    address=ContactAddress(street="2 Fjord Vei", city="Bergen",
-        geo=ContactGeo(country="NO", point=ContactPoint(lon=5.3))),
-)))
+db.transact(
+    lambda tx: tx.insert(
+        Contact(
+            id=3,
+            name="Cairn",
+            address=ContactAddress(
+                street="2 Fjord Vei",
+                city="Bergen",
+                geo=ContactGeo(country="NO", point=ContactPoint(lon=5.3)),
+            ),
+        )
+    )
+)
 # raises WriteRejectedError(rule="write-required-attribute-missing")
 ```
 
@@ -1326,10 +1346,15 @@ db.transact(lambda tx: tx.insert(Contact(
 Corpus case: `m-value-object-042`
 
 ```python
-db.transact(lambda tx: tx.insert(Contact(
-    id=4, name="Delta",
-    address=ContactAddress(street="3 Harbour Rd", city="Oslo"),
-)))
+db.transact(
+    lambda tx: tx.insert(
+        Contact(
+            id=4,
+            name="Delta",
+            address=ContactAddress(street="3 Harbour Rd", city="Oslo"),
+        )
+    )
+)
 # raises WriteRejectedError(rule="write-required-value-object-missing")
 ```
 
@@ -1360,6 +1385,7 @@ def render_balance_milestone(db: Database, *, id: int) -> tuple[Balance, Edge]:
     node = db.find(Balance.where(Balance.id == id)).result()
     return node, edge_of(node)
 
+
 def submit_balance_edit(db: Database, *, id: int, edge: Edge, fields: Mapping[str, Any]) -> None:
     """SUBMIT time (Transaction-Time-Only): re-fetch pinned at the transported edge,
     inside an OPTIMISTIC transaction (`python.md` §5: an edge-pinned
@@ -1388,6 +1414,7 @@ def render_branch_milestone(db: Database, *, id: int) -> tuple[Branch, Edge]:
     Transaction Time)."""
     node = db.find(Branch.where(Branch.id == id)).result()
     return node, edge_of(node)
+
 
 def submit_branch_edit(
     db: Database, *, id: int, edge: Edge, fields: Mapping[str, Any], valid_from: dt.datetime

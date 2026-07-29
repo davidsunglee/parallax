@@ -238,9 +238,7 @@ READ_STORIES: Final[tuple[ReadStory, ...]] = (
         "Multi-hop relationship existence",
         "orders",
         lambda: Order.where(Order.items.any(OrderItem.statuses.any(OrderStatus.code == "PACKED"))),
-        "op = Order.where(\n"
-        '    Order.items.any(OrderItem.statuses.any(OrderStatus.code == "PACKED"))\n'
-        ")",
+        'op = Order.where(Order.items.any(OrderItem.statuses.any(OrderStatus.code == "PACKED")))',
     ),
     ReadStory(
         "m-navigate-009",

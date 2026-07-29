@@ -82,7 +82,7 @@ RECIPES: Final[list[Recipe]] = [
         ),
         snippet=(
             inspect.getsource(stale_web_edit.render_balance_milestone)
-            + "\n"
+            + "\n\n"
             + inspect.getsource(stale_web_edit.submit_balance_edit)
         ),
     ),
@@ -95,7 +95,7 @@ RECIPES: Final[list[Recipe]] = [
         ),
         snippet=(
             inspect.getsource(stale_web_edit.render_branch_milestone)
-            + "\n"
+            + "\n\n"
             + inspect.getsource(stale_web_edit.submit_branch_edit)
         ),
     ),
@@ -209,40 +209,68 @@ EXAMPLES: Final[list[Example]] = [
     Example(
         "m-value-object-039",
         "A write missing a required value-object attribute at depth 1",
-        "db.transact(lambda tx: tx.insert(Contact(\n"
-        '    id=1, name="Acme",\n'
-        '    address=ContactAddress(city="Oslo", geo=ContactGeo(\n'
-        '        country="NO", point=ContactPoint(lat=59.9, lon=10.7))),\n'
-        ")))\n"
+        "db.transact(\n"
+        "    lambda tx: tx.insert(\n"
+        "        Contact(\n"
+        "            id=1,\n"
+        '            name="Acme",\n'
+        "            address=ContactAddress(\n"
+        '                city="Oslo", geo=ContactGeo(country="NO", '
+        "point=ContactPoint(lat=59.9, lon=10.7))\n"
+        "            ),\n"
+        "        )\n"
+        "    )\n"
+        ")\n"
         '# raises WriteRejectedError(rule="write-required-attribute-missing")',
     ),
     Example(
         "m-value-object-040",
         "A write missing a required value-object attribute at depth 2",
-        "db.transact(lambda tx: tx.insert(Contact(\n"
-        '    id=2, name="Beacon",\n'
-        '    address=ContactAddress(street="1 Main St", city="Oslo",\n'
-        "        geo=ContactGeo(point=ContactPoint(lat=59.9, lon=10.7))),\n"
-        ")))\n"
+        "db.transact(\n"
+        "    lambda tx: tx.insert(\n"
+        "        Contact(\n"
+        "            id=2,\n"
+        '            name="Beacon",\n'
+        "            address=ContactAddress(\n"
+        '                street="1 Main St",\n'
+        '                city="Oslo",\n'
+        "                geo=ContactGeo(point=ContactPoint(lat=59.9, lon=10.7)),\n"
+        "            ),\n"
+        "        )\n"
+        "    )\n"
+        ")\n"
         '# raises WriteRejectedError(rule="write-required-attribute-missing")',
     ),
     Example(
         "m-value-object-041",
         "A write missing a required value-object attribute at depth 3",
-        "db.transact(lambda tx: tx.insert(Contact(\n"
-        '    id=3, name="Cairn",\n'
-        '    address=ContactAddress(street="2 Fjord Vei", city="Bergen",\n'
-        '        geo=ContactGeo(country="NO", point=ContactPoint(lon=5.3))),\n'
-        ")))\n"
+        "db.transact(\n"
+        "    lambda tx: tx.insert(\n"
+        "        Contact(\n"
+        "            id=3,\n"
+        '            name="Cairn",\n'
+        "            address=ContactAddress(\n"
+        '                street="2 Fjord Vei",\n'
+        '                city="Bergen",\n'
+        '                geo=ContactGeo(country="NO", point=ContactPoint(lon=5.3)),\n'
+        "            ),\n"
+        "        )\n"
+        "    )\n"
+        ")\n"
         '# raises WriteRejectedError(rule="write-required-attribute-missing")',
     ),
     Example(
         "m-value-object-042",
         "A write missing a required NESTED value object entirely",
-        "db.transact(lambda tx: tx.insert(Contact(\n"
-        '    id=4, name="Delta",\n'
-        '    address=ContactAddress(street="3 Harbour Rd", city="Oslo"),\n'
-        ")))\n"
+        "db.transact(\n"
+        "    lambda tx: tx.insert(\n"
+        "        Contact(\n"
+        "            id=4,\n"
+        '            name="Delta",\n'
+        '            address=ContactAddress(street="3 Harbour Rd", city="Oslo"),\n'
+        "        )\n"
+        "    )\n"
+        ")\n"
         '# raises WriteRejectedError(rule="write-required-value-object-missing")',
     ),
     Example(
