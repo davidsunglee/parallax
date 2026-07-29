@@ -42,7 +42,7 @@ def test_names_decompose_into_scope_operation_and_qualifier(
 ) -> None:
     parsed = parse_name(name)
 
-    assert (parsed.scope, parsed.operation, parsed.qualifier) == expected
+    assert parsed == expected
 
 
 def test_role_follows_the_presence_of_a_command_body(
