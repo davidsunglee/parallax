@@ -36,11 +36,9 @@ __all__ = [
     "GateGraph",
     "GateGraphError",
     "Recipe",
-    "RecipeName",
     "ResolvedRecipe",
     "RuntimeClass",
     "load_graph",
-    "parse_name",
 ]
 
 OPERATIONS: tuple[str, ...] = (
@@ -88,7 +86,7 @@ class GateGraphError(Exception):
     """The command graph could not be resolved, or a recipe was not found in it."""
 
 
-class RecipeName(NamedTuple):
+class _RecipeName(NamedTuple):
     """A command name decomposed into the grammar's three slots."""
 
     scope: str | None
@@ -127,7 +125,7 @@ def _match_operation(tokens: Sequence[str]) -> tuple[str, str | None] | None:
     return None
 
 
-def parse_name(name: str) -> RecipeName:
+def _parse_name(name: str) -> _RecipeName:
     """Decompose a recipe name into its scope, operation, and qualifier.
 
     The operation is matched against the closed vocabulary, longest spelling
@@ -141,14 +139,14 @@ def parse_name(name: str) -> RecipeName:
     matched = _match_operation(tokens)
     if matched is not None:
         operation, qualifier = matched
-        return RecipeName(None, operation, qualifier)
+        return _RecipeName(None, operation, qualifier)
     if len(tokens) == 1:
-        return RecipeName(None, name, None)
+        return _RecipeName(None, name, None)
     matched = _match_operation(tokens[1:])
     if matched is not None:
         operation, qualifier = matched
-        return RecipeName(tokens[0], operation, qualifier)
-    return RecipeName(tokens[0], "-".join(tokens[1:]), None)
+        return _RecipeName(tokens[0], operation, qualifier)
+    return _RecipeName(tokens[0], "-".join(tokens[1:]), None)
 
 
 @dataclass(frozen=True)
@@ -352,7 +350,7 @@ def _recipe_from_dump(name: str, entry: Mapping[str, Any]) -> Recipe:
     attributes: Sequence[Any] = entry.get("attributes", [])
     docs = _attribute_values(attributes, "doc")
     body = tuple(_render_line(line) for line in entry.get("body", []))
-    parsed = parse_name(name)
+    parsed = _parse_name(name)
     return Recipe(
         name=name,
         scope=parsed.scope,

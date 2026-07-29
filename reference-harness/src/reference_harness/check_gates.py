@@ -41,6 +41,7 @@ from reference_harness.gate_graph import (
 from reference_harness.markdown_read import code_spans
 
 __all__ = [
+    "AGENT_GUIDANCE",
     "CI_WORKFLOW",
     "OPERATIONAL_MAP",
     "SUPPORT_DIRECTORY",
@@ -92,12 +93,12 @@ CI_WORKFLOW = Path(".github/workflows/ci.yml")
 OPERATIONAL_MAP = "TESTING.md"
 """The operational map, at the repository root and in every language scope.
 
-The graph, the maps, the language specs, and the CI job list all describe which
-commands gate this repository. Three pairs are compared here, and one is
-deliberately not:
+The graph, the maps, the language specs, the agent guidance, and the CI job list
+all describe which commands gate this repository. Three pairs are compared here,
+and one is deliberately not:
 
-- graph → documents: every command a map or a language spec cites must resolve
-  (`doc-unknown-command`);
+- graph → documents: every command a map, a language spec, or an agent-guidance
+  document cites must resolve (`doc-unknown-command`);
 - CI → maps: every job must be named by the maps answerable for it
   (`doc-uncovered-ci-job`);
 - maps → CI: every job a map's CI table names must exist
@@ -109,6 +110,14 @@ these documents concise, and requiring completeness would turn a scope's map
 into a second listing — which §8 forbids. So an added command needs no
 documentation edit, while a renamed or removed one fails every document still
 naming it."""
+
+AGENT_GUIDANCE = "AGENTS.md"
+"""The agent guidance, at the repository root and in every language scope.
+
+It tells an agent which command to run, so a name it cites is answerable to the
+graph exactly as a map's or a language spec's is — and naming commands there is
+safe only while a rename fails on it. Nothing requires the document to exist:
+guidance is not a gate, so a scope without one cites nothing."""
 
 _CI_SECTION_TITLE = "Continuous integration"
 
@@ -796,6 +805,15 @@ def _language_specs(repository: _Repository) -> list[Path]:
     ]
 
 
+def _agent_guidance(repository: _Repository) -> list[Path]:
+    """Each agent-guidance document that exists, over the audiences the
+    operational maps have."""
+    candidates = [repository.root / AGENT_GUIDANCE] + [
+        repository.language_dir(scope) / AGENT_GUIDANCE for scope in repository.language_scopes
+    ]
+    return [path for path in candidates if path.is_file()]
+
+
 def _section_body(text: str, title: str) -> str:
     """The body of the section *title* opens, or empty when there is none."""
     headings = list(_HEADING_RE.finditer(text))
@@ -869,9 +887,9 @@ def _check_documentation(repository: _Repository) -> Iterator[Diagnostic]:
                     f"{CI_WORKFLOW} does not declare",
                 )
 
-    for spec in _language_specs(repository):
+    for document in _language_specs(repository) + _agent_guidance(repository):
         yield from _check_cited_commands(
-            repository, spec, code_spans(spec.read_text(encoding="utf-8"))
+            repository, document, code_spans(document.read_text(encoding="utf-8"))
         )
 
     if repository.jobs is None:

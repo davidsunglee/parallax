@@ -295,6 +295,13 @@
   code: doc-unknown-ci-job
   message: "TESTING.md lists `python-check` as a CI job"
 
+- name: agent-guidance-citing-a-command-the-graph-does-not-declare
+  file: AGENTS.md
+  old: "`just check`"
+  new: "`just chekc`"
+  code: doc-unknown-command
+  message: "AGENTS.md cites `just chekc`, which the graph does not declare"
+
 - name: language-spec-citing-a-command-the-graph-does-not-declare
   file: languages/python/spec/python.md
   old: "- **Aggregate `dbfree` command.** `just python-check-dbfree` — one local command"

@@ -25,9 +25,10 @@
 
 ## Verification
 
-- Resolve what an aggregate command already runs before listing or running verification, and never list a focused command beside an aggregate that contains it.
-- Invoke an authoritative aggregate directly rather than piping it through an output filter, and trust the status the execution tool reports.
+- Resolve what an aggregate command already runs before listing or running verification — `just show-gates <command>` prints its execution owners — and never list a focused command beside an aggregate that contains it.
+- Invoke an authoritative aggregate — `just check` for the whole repository — directly rather than piping it through an output filter, and trust the status the execution tool reports.
 - If another agent reports that an exact verification command passed, do not rerun it unless relevant repository state changed afterward.
+- [`TESTING.md`](TESTING.md) is the operational map: which command owns which gate, and the workflow from focused iteration with the `<scope>-test-<surface>` selectors to one merge-ready run.
 
 ## Commits
 
