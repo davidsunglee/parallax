@@ -37,7 +37,7 @@ from _transact_support import (
     new_account,
 )
 
-import mirrored_models as mm
+from _support import mirrored_models as mm
 from parallax.conformance.class_models import MODELS
 from parallax.core import LATEST, Attr, Entity, MetamodelHub, attr, opt_lock
 from parallax.core.db_port import Row

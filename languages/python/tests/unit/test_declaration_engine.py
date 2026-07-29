@@ -17,8 +17,7 @@ from collections.abc import Callable
 
 import pytest
 
-import frontend_probes
-import frontend_probes_stringized
+from _support import frontend_probes, frontend_probes_stringized
 from parallax.core import (
     MANY_TO_ONE,
     ONE_TO_MANY,

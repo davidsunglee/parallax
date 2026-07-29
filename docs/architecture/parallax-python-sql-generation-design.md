@@ -417,7 +417,7 @@ well as the conforming compatibility baseline. The implementation handoff must
 name every skipped database-backed lane and why; an unexplained skip does not
 satisfy the ticket.
 
-Also extend `tests/artifact/test_wheels.py` to require the supported
+Also extend `tests/distribution/test_wheels.py` to require the supported
 `sql_gen/__init__.py` and all five private implementation files in the
 `parallax-core` wheel, and to forbid the retired `sql_gen/compile.py` path. A
 cold import of `parallax.core.sql_gen` from the built artifact must succeed.

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from conftest import canonical_snapshot_claim
+from _support.repo import canonical_snapshot_claim
 from parallax.conformance.claim import ADAPTER, SNAPSHOT_CLAIM, Adapter, Claim
 
 pytestmark = pytest.mark.unit

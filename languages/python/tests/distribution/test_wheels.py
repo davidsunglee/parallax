@@ -9,18 +9,10 @@ from pathlib import Path
 
 import pytest
 
-from conftest import PRODUCTION_PACKAGES, PY_ROOT, REPO_ROOT, Wheelhouse
+from _support.distributions import PRODUCTION_PACKAGES, TOP_PACKAGE_DIR, Wheelhouse
+from _support.repo import PY_ROOT, REPO_ROOT
 
 pytestmark = pytest.mark.artifact
-
-# Each distribution's top regular package under the shared PEP 420 namespace.
-TOP_PACKAGE_DIR: dict[str, str] = {
-    "parallax-core": "parallax/core",
-    "parallax-descriptor": "parallax/descriptor",
-    "parallax-snapshot": "parallax/snapshot",
-    "parallax-postgres": "parallax/postgres",
-    "parallax-conformance": "parallax/conformance",
-}
 
 _PACKAGED_SCHEMA = "parallax/descriptor/_schemas/metamodel.schema.json"
 

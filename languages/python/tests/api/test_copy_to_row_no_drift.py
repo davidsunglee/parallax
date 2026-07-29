@@ -41,7 +41,7 @@ from decimal import Decimal
 
 import pytest
 
-import mirrored_models as mm
+from _support import mirrored_models as mm
 from parallax.conformance import models
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity import (

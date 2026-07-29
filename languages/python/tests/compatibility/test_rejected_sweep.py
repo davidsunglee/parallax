@@ -12,8 +12,8 @@ cases"): grading its `run` envelope needs no provisioner, so — unlike
 contract structurally, the same way the compile lane's refusing port proves
 query-result-independence.
 
-Marked `unit` as well as `conformance` (the `tests/api_conformance/
-test_write_no_drift.py` dual-marking precedent): it is pure, Docker-free,
+Marked `unit` as well as `conformance` (the `tests/api/test_write_no_drift.py`
+dual-marking precedent): it is pure, Docker-free,
 in-process behaviour, so it contributes to the unit-lane branch-coverage gate
 and also runs under `pytest -m conformance`.
 """
@@ -26,7 +26,8 @@ from typing import Any, cast
 import jsonschema
 import pytest
 
-from conftest import adapter_schema, case_document
+from _support.corpus import case_document
+from _support.repo import adapter_schema
 from parallax.conformance import adapter, case_format, sweep
 from parallax.core.db_port import DbPort, Row
 

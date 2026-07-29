@@ -23,8 +23,8 @@ exists to end):
   SAME fields `m-auto-retry.md` / `m-opt-lock.md` fix the retriability rules
   from (never a per-case hand table).
 
-Exercised by the real-database suite (`tests/api_conformance/test_boundary_
-run.py`, over the shipped `parallax-postgres` adapter) and, DB-free, by unit
+Exercised by the real-database suite (`tests/api/test_boundary_run.py`, over
+the shipped `parallax-postgres` adapter) and, DB-free, by unit
 tests over a fake port (`tests/unit/test_boundary_runner.py`) — the same
 split every other engine-adjacent module in this package already follows.
 """

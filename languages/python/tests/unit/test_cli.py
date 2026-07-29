@@ -10,7 +10,7 @@ from typing import Any
 import jsonschema
 import pytest
 
-from conftest import adapter_schema, canonical_snapshot_claim
+from _support.repo import adapter_schema, canonical_snapshot_claim
 from parallax.conformance import case_format, cli
 
 pytestmark = pytest.mark.unit

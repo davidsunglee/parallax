@@ -17,7 +17,7 @@ from typing import Any
 
 import pytest
 
-from conftest import case_fixtures
+from _support.corpus import case_fixtures
 from parallax.conformance import boundary_runner, case_format, engine
 from parallax.conformance.boundary_runner import BoundaryAbort, FaultInjectingPort
 from parallax.conformance.class_models import MODELS

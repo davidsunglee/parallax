@@ -17,21 +17,21 @@ from typing import Any, Final, cast
 
 import jsonschema
 import pytest
-from test_compile_sweep import (
-    COMPILE_EXERCISED,
-    WRITE_EXERCISED,
-    wire_binds,
-    write_golden_statements,
-)
 
-from conftest import (
-    adapter_schema,
+from _support.corpus import (
     case_document,
     case_fixtures,
     compare_binds,
     compare_graph,
     compare_rows,
     wire_value_deep,
+)
+from _support.repo import adapter_schema
+from _support.sweep_goldens import (
+    COMPILE_EXERCISED,
+    WRITE_EXERCISED,
+    wire_binds,
+    write_golden_statements,
 )
 from parallax.conformance import adapter, case_format, concurrency_runner, engine
 from parallax.core import storage_layout
@@ -41,7 +41,7 @@ pytestmark = pytest.mark.conformance
 
 # Multi-concrete polymorphic INSTANCE-FORM reads:
 # m-inheritance-106/-107/-108/-109 compile byte-identical to their row-form
-# siblings (`test_compile_sweep.py`'s own `COMPILE_EXERCISED`) and are exercised
+# siblings (the shared `COMPILE_EXERCISED`) and are exercised
 # for real — but NOT through this file's own wire-level `_render_node`
 # rendering, permanently: that rendering shares the identical `materialize.Node`
 # the VALUES-lane witnesses (m-inheritance-003/-013/-015/-052, and OTHER
@@ -52,7 +52,7 @@ pytestmark = pytest.mark.conformance
 # through the CONCRETE class's own declared members, skipping a sibling's) —
 # these four are the OBJECT-lane (developer-surface `db.find`) witnesses each
 # case's own comment names, graded by the API Conformance Suite instead
-# (`tests/api_conformance/test_story_run.py`, `type(node)` + `instance_row`).
+# (`tests/api/test_story_run.py`, `type(node)` + `instance_row`).
 # A structural, PERMANENT lane split (both lanes of the same behavior
 # are expressed, each through its own grader), never a forward promise.
 _INSTANCE_FORM_GRAPH_OBJECT_LANE_ONLY: Final[frozenset[str]] = frozenset(

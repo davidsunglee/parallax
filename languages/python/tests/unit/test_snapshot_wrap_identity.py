@@ -19,7 +19,7 @@ import pytest
 from _metamodel_support import Declaration, source
 from _snapshot_wrap_support import wrap
 
-import snapshot_models as sm
+from _support import snapshot_models as sm
 from parallax.conformance import read_models
 from parallax.conformance.story_models import ORDERS_MODEL
 from parallax.conformance.story_models import Order as _soOrder

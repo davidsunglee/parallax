@@ -15,9 +15,9 @@ from decimal import Decimal
 
 import pytest
 
-import mirrored_models as mm
-import snapshot_models as sm
-import value_object_models as vom
+from _support import mirrored_models as mm
+from _support import snapshot_models as sm
+from _support import value_object_models as vom
 from parallax.core import Attr, Entity, MetamodelHub, ModelCopyError, TxTemporal, ValueObject, attr
 from parallax.core.entity import AttributeAssignment
 from parallax.core.temporal_read import LATEST, TX_TIME

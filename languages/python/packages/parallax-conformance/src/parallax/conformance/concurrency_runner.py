@@ -30,7 +30,7 @@ TWO-SESSION choreography every such case shares:
   acts still waits for its partner to finish theirs before the next round
   starts — the SAME thread/barrier choreography the provider-contract
   deadlock proof exercises by hand
-  (`tests/provider/test_provider_contract.py`), generalized here to an
+  (`tests/provider_contract/test_provider_contract.py`), generalized here to an
   arbitrary ordered round sequence rather than one hand-authored contention
   round.
 
@@ -42,7 +42,7 @@ calls the port's `execute` (row-returning; harmless on DML too — psycopg
 does not require a SELECT to read rows back, `cursor.description is None`
 degrades to an empty list); `kind: "write"` calls `execute_write`. Grading
 (the classified error for the `error` shape; `expectRows` per read step for
-`concurrencySuccess`) is the CALLER's job (`tests/conformance/
+`concurrencySuccess`) is the CALLER's job (`tests/compatibility/
 test_run_sweep.py`) — this module reports only the raw per-step outcome
 (observed rows, or the raised, already-classified `DatabaseError`), mirroring
 the `boundary_runner` / `run_read_case` split between pure machinery and

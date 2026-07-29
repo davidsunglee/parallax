@@ -109,7 +109,7 @@ def test_deadlock_is_reraised_as_a_retriable_database_error(provisioner: Any) ->
     choreography here is structurally identical to `m-db-error-004`'s own
     corpus case, which grades case-driven, byte-exact against the golden
     `errorClass`/`nativeCode` through `parallax.conformance.concurrency_runner`
-    (`tests/conformance/test_run_sweep.py::test_concurrency_rounds`) — so the
+    (`tests/compatibility/test_run_sweep.py::test_concurrency_rounds`) — so the
     `category`/`native_code` exact-value pins retire from here (redundant with
     that grading) and only the assertions the corpus's own `then` block never
     declares survive: the adapter populates the FULL `DatabaseError` shape

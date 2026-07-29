@@ -54,7 +54,7 @@ _BEGIN = "# >>> check_dag_sync.py: BEGIN GENERATED IMPORT-LINTER CONTRACTS >>>"
 _END = "# <<< check_dag_sync.py: END GENERATED IMPORT-LINTER CONTRACTS <<<"
 
 # Behavioural / support module tag -> Python enforcement scope (spec/python.md §7).
-# `m-api-conformance` maps to the pytest-bounded `tests.api_conformance` and is
+# `m-api-conformance` maps to the pytest-bounded `tests.api` and is
 # enforced by the pytest collection boundary, not import-linter, so it is absent.
 MODULE_SCOPE: Mapping[str, str] = {
     "m-core": "parallax.core.base",

@@ -6,10 +6,10 @@ This module deliberately omits ``from __future__ import annotations`` so the
 engine reads the live ``Attr[T]`` objects directly; the stringized path has its
 own probes.
 
-It lives at the top level of ``tests/`` rather than under ``tests/unit/`` because
-the unit lane and the API Conformance Suite's Value Object examples share these
-same classes, and only a module on the configured ``pythonpath`` resolves
-reliably regardless of collection order.
+It is cross-surface rather than under ``tests/unit/`` because the unit tests and
+the API Conformance Suite's Value Object examples share these same classes, and
+only a module on the configured ``pythonpath`` resolves reliably regardless of
+collection order.
 """
 
 from parallax.core import Attr, Entity, MetamodelHub, ValueObject, attr

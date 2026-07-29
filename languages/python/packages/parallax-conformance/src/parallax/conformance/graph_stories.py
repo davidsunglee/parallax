@@ -18,7 +18,7 @@ API Conformance Suite exists to prove (`m-api-conformance` "Two proof paths").
 
 Each story's own source is the Usage Guide snippet (`graph_story_snippet`,
 mirroring `stories.story_snippet`) and is ALSO what
-``tests/api_conformance/test_story_run.py`` executes against real Postgres —
+``tests/api/test_story_run.py`` executes against real Postgres —
 one source, both consumers, so the documented spelling cannot drift from the
 executed one. Grading is bespoke per story (unlike the write stories' shared
 row/table-state comparators): a graph story returns whatever its own

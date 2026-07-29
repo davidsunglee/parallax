@@ -27,7 +27,7 @@ from typing import Any, Final, cast
 import pytest
 from pydantic import ValidationError
 
-from conftest import case_document, compare_binds
+from _support.corpus import case_document, compare_binds
 from parallax.conformance import case_format
 from parallax.conformance.class_models import MODELS
 from parallax.conformance.engine import decode_write_row
@@ -472,7 +472,7 @@ REJECTED_WRITE_MODELS: dict[str, str] = {"m-inheritance-088": "payment"}
 #   rule, fails." Reaching that seam needs a raw document, which is what the
 #   corpus's own `when.write` is — so the case's document is walked against the
 #   declared structure the ENTITY CLASSES compose (never the corpus descriptor,
-#   whose own walk `tests/conformance/test_rejected_sweep.py` already grades),
+#   whose own walk `tests/compatibility/test_rejected_sweep.py` already grades),
 #   and the classified rule is compared to `then.rejectedRule` exactly.
 INCOMPLETE_DOCUMENT_BUILDERS: dict[str, tuple[str, Callable[[], object]]] = {
     "m-value-object-039": (

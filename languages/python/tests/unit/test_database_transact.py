@@ -32,7 +32,7 @@ from _transact_support import (
     new_account,
 )
 
-import mirrored_models as mm
+from _support import mirrored_models as mm
 from parallax.core import opt_lock
 from parallax.core.db_error import DatabaseError
 from parallax.core.entity._hub import sealed_model

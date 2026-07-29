@@ -6,7 +6,7 @@ Every registered story — write (`parallax.conformance.stories`) or graph-read
 Guide renders — executes here through the **shipped** surface:
 `parallax.snapshot.connect` over the `parallax-postgres` adapter against the
 real Testcontainers Postgres, inside the documented API-conformance lane
-(python.md: pytest ``-m api_conformance`` under ``tests/api_conformance/``,
+(python.md: pytest ``-m api_conformance`` under ``tests/api/``,
 "executing idiomatic public-API code through the shipped `parallax-snapshot`
 extension and `parallax-postgres` adapter"; IMPLEMENTING.md "Continuous API
 Conformance Lane" step 2). Docker-backed: the shared ``provisioner`` fixture
@@ -32,7 +32,7 @@ from typing import Any, cast
 
 import pytest
 
-from conftest import (
+from _support.corpus import (
     case_document,
     case_fixtures,
     compare_binds,
@@ -84,7 +84,7 @@ def _reset_for(case_id: str, provisioner: Any) -> MetamodelHub:
 
 
 # `kind == "boundary"` (m-unit-work-004) is excluded from execution here because
-# the case-driven boundary runner (`tests/api_conformance/test_boundary_run.py`)
+# the case-driven boundary runner (`tests/api/test_boundary_run.py`)
 # grades it directly
 # against the corpus, case-driven like every other boundary case — the hand
 # story's function stays registered (`stories.WRITE_STORIES`) ONLY so the

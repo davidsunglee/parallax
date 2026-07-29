@@ -8,7 +8,7 @@ from typing import Final, cast
 import pytest
 from _metamodel_support import Declaration, accepted, attribute, identity, instant, key, source
 
-import fake_metamodel as fake
+from _support import fake_metamodel as fake
 from parallax.conformance import case_format
 from parallax.core import inheritance, opt_lock, temporal_read
 from parallax.core._formation_profile import BUILTIN_MANIFEST, BUILTIN_PROFILE, form_metamodel

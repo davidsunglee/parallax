@@ -611,7 +611,7 @@ def test_inheritance_family_predicate_write_is_rejected_before_sql(
     # `buffer_predicate_instruction`) guard the developer `_where` verbs and the
     # engine's buffering translation — but they are NOT on every road here.
     # `lower_write` is EXPORTED (`parallax.snapshot.handle.__all__`,
-    # `tests/api_surface/public_api.json`), and the conformance engine's readless
+    # `tests/api/public_api.json`), and the conformance engine's readless
     # predicate-write step (`engine._lower_predicate_write_step`) reaches it
     # straight from a deserialized instruction. The lowering-side guard must
     # reject the `narrow` case before it can introduce an alias that unaliased

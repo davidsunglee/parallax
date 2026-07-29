@@ -20,7 +20,7 @@ from typing import cast
 import pytest
 from _sql_gen_support import model, target
 
-import fake_metamodel
+from _support import fake_metamodel
 from parallax.core import inheritance, relationship, storage_layout
 from parallax.core import op_algebra as oa
 from parallax.core.dialect import POSTGRES

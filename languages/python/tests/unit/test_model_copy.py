@@ -12,9 +12,9 @@ from decimal import Decimal
 
 import pytest
 
-import mirrored_models as mm
-import snapshot_models as sm
-import value_object_models as vm
+from _support import mirrored_models as mm
+from _support import snapshot_models as sm
+from _support import value_object_models as vm
 from parallax.core.base import INFINITY
 from parallax.core.entity import (
     EntityDefinitionError,

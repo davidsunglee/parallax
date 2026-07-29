@@ -12,8 +12,7 @@ from typing import cast
 
 import pytest
 
-import frontend_probes
-import frontend_probes_stringized
+from _support import frontend_probes, frontend_probes_stringized
 from parallax.core.entity import ENTITY_DEFINITION_CODES, EntityDefinitionError
 
 pytestmark = pytest.mark.unit

@@ -17,7 +17,7 @@ Two inventories encode the production/development split rather than the full
 set, so membership is asserted as "production xor development" instead of
 "present in the production list".
 
-``tests/api_surface/public_api.json`` is deliberately not asserted per
+``tests/api/public_api.json`` is deliberately not asserted per
 distribution: it is keyed by public *module* surface, not by distribution. It
 carries the sub-scopes ``parallax.core.metamodel`` and
 ``parallax.snapshot.handle`` and omits ``parallax.conformance`` entirely, whose
@@ -37,16 +37,20 @@ from typing import cast
 import pytest
 
 import check_dag_sync as dag
-from artifact.test_wheels import TOP_PACKAGE_DIR
-from conftest import ALL_PACKAGES, PRODUCTION_PACKAGES, PY_ROOT
-from unit.test_smoke import TOP_PACKAGE_NAMES
+from _support.distributions import (
+    ALL_PACKAGES,
+    PRODUCTION_PACKAGES,
+    TOP_PACKAGE_DIR,
+    TOP_PACKAGE_NAMES,
+)
+from _support.repo import PY_ROOT
 
 pytestmark = pytest.mark.unit
 
 _PACKAGES_DIR = PY_ROOT / "packages"
 _WORKSPACE_PYPROJECT = PY_ROOT / "pyproject.toml"
 _PYRIGHT_CONFIG = PY_ROOT / "pyrightconfig.json"
-_PUBLIC_API_SNAPSHOT = PY_ROOT / "tests" / "api_surface" / "public_api.json"
+_PUBLIC_API_SNAPSHOT = PY_ROOT / "tests" / "api" / "public_api.json"
 
 _REQUIREMENT_NAME = re.compile(r"[A-Za-z0-9._-]+")
 
@@ -156,10 +160,11 @@ def test_every_distribution_source_root_is_type_checked(distribution: str) -> No
 
 def test_the_test_suite_package_tuples_cover_every_distribution() -> None:
     assert set(ALL_PACKAGES) == set(DISTRIBUTIONS), (
-        "conftest.ALL_PACKAGES does not match packages/*"
+        "_support.distributions.ALL_PACKAGES does not match packages/*"
     )
     assert set(PRODUCTION_PACKAGES) == _production_distributions(), (
-        "conftest.PRODUCTION_PACKAGES does not match pyproject.toml [project].dependencies"
+        "_support.distributions.PRODUCTION_PACKAGES does not match "
+        "pyproject.toml [project].dependencies"
     )
 
 
@@ -168,7 +173,7 @@ def test_every_distribution_has_a_wheel_top_package_directory() -> None:
         distribution: root.replace(".", "/") for distribution, root in ROOT_PACKAGES.items()
     }
     assert packaged == TOP_PACKAGE_DIR, (
-        "artifact.test_wheels.TOP_PACKAGE_DIR does not match packages/*"
+        "_support.distributions.TOP_PACKAGE_DIR does not match packages/*"
     )
 
 
@@ -180,7 +185,7 @@ def test_every_root_package_is_an_import_linter_root() -> None:
 
 def test_every_root_package_is_import_smoke_tested() -> None:
     assert set(TOP_PACKAGE_NAMES) == set(ROOT_PACKAGES.values()), (
-        "unit.test_smoke.TOP_PACKAGE_NAMES does not match packages/*"
+        "_support.distributions.TOP_PACKAGE_NAMES does not match packages/*"
     )
 
 

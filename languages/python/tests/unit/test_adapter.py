@@ -12,7 +12,7 @@ from pathlib import Path
 import jsonschema
 import pytest
 
-from conftest import adapter_schema, canonical_snapshot_claim
+from _support.repo import adapter_schema, canonical_snapshot_claim
 from parallax.conformance import adapter, case_format, engine
 from parallax.conformance.claim import SNAPSHOT_CLAIM, Claim
 from parallax.core.db_error import DatabaseError
