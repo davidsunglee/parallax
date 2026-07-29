@@ -3,10 +3,11 @@
 #
 # The two paths traverse `Animal.owner` over nested source sets: the first is
 # unguarded, so it starts from every animal, and the second is guarded to {Dog},
-# which the first already covers. Containment is the weakest case for allowing
-# overlapping guards, and freezing it is the point — the guarded hop fetches nothing
-# the broad hop has not already fetched, yet `1 + L` = 3, because hop identity keys
-# on the resolved source set and {Dog} is a strict subset of {Cat, Dog, WildBoar}.
+# which the first already covers. Of the four relations two guards can stand in,
+# containment is where the extra statement is least justified, and freezing it is the
+# point — the guarded hop fetches nothing the broad hop has not already fetched, yet
+# `1 + L` = 3, because hop identity keys on the resolved source set and {Dog} is a
+# strict subset of {Cat, Dog, WildBoar}.
 # The semantic distinction the case pins down is that the extra statement is
 # invisible in the object graph: both hops attach to the SAME ordinary `owner` view
 # with the same rows, so `then.graph` is exactly what the broad path alone produces
