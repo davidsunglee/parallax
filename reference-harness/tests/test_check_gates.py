@@ -13,20 +13,22 @@ import yaml
 from reference_harness.check_gates import (
     CI_WORKFLOW,
     OPERATIONAL_MAP,
-    RUNNER_ROOT_FILES,
     SUPPORT_DIRECTORY,
     SURFACES,
     main,
 )
+from reference_harness.runner_config import PYTEST
 
 _INVALID_CASES = Path(__file__).parent / "fixtures" / "gate-graphs" / "invalid-cases.yaml"
 
 _MIRRORED_PYTHON_MAP = Path("languages") / "python" / OPERATIONAL_MAP
+_MIRRORED_PYTHON_SPEC = Path("languages") / "python" / "spec" / "python.md"
 _MIRRORED_FILES = (
     "justfile",
     str(CI_WORKFLOW),
     OPERATIONAL_MAP,
     str(_MIRRORED_PYTHON_MAP),
+    str(_MIRRORED_PYTHON_SPEC),
     "reference-harness/pyproject.toml",
     "languages/python/pyproject.toml",
 )
@@ -52,7 +54,7 @@ def conforming_repository(repo_root: Path, tmp_path_factory: pytest.TempPathFact
     tests = root / _MIRRORED_TEST_ROOT
     for directory in (*SURFACES.values(), SUPPORT_DIRECTORY):
         (tests / directory).mkdir(parents=True)
-    for name in RUNNER_ROOT_FILES:
+    for name in PYTEST.root_files:
         (tests / name).touch()
     return root
 
@@ -135,7 +137,7 @@ def test_a_scope_without_an_operational_map_is_reported(
     rc = main([str(root)])
 
     assert rc == 1
-    assert f"[missing-operational-map] `python` has no {_MIRRORED_PYTHON_MAP}" in (
+    assert f"[doc-missing-operational-map] `python` has no {_MIRRORED_PYTHON_MAP}" in (
         capsys.readouterr().err
     )
 

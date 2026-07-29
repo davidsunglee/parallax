@@ -95,8 +95,15 @@
   new: |-
     [metadata("runtime:slow", "scheduling:database")]
     [doc("The compatibility corpus against every selected provider (Testcontainers; Docker).")]
-  code: missing-class-aggregate
+  code: missing-aggregate
   message: "`harness` declares the scheduling class `database` but exposes no `harness-check-database`"
+
+- name: scheduling-class-with-no-defining-resource
+  file: justfile
+  old: '[metadata("runtime:medium", "scheduling:dbfree")]'
+  new: '[metadata("runtime:medium", "scheduling:offline")]'
+  code: unknown-scheduling-class
+  message: "`harness` declares the scheduling class `offline`, which this check cannot name a defining resource for"
 
 - name: class-aggregate-composing-the-other-class
   file: justfile
@@ -116,7 +123,7 @@
   file: justfile
   old: "python-check: python-check-dbfree python-check-db"
   new: "python-check-all: python-check-dbfree python-check-db"
-  code: missing-scope-check
+  code: missing-aggregate
   message: "`python` exposes no `python-check` aggregate"
 
 - name: class-aggregate-omitting-a-scope
@@ -125,6 +132,13 @@
   new: "check-dbfree: core-check lint-markdown harness-check-dbfree"
   code: incomplete-aggregate
   message: "`check-dbfree` does not compose `python-check-dbfree`"
+
+- name: classless-scope-run-by-no-class-aggregate
+  file: justfile
+  old: "check-dbfree: core-check lint-markdown"
+  new: "check-dbfree: lint-markdown"
+  code: ambiguous-class-ownership
+  message: "`core-check` declares no scheduling class and is composed by 0 class aggregate(s)"
 
 - name: gate-owned-by-both-classes
   file: justfile
@@ -273,6 +287,20 @@
   new: "| `harness-check-database` |"
   code: doc-uncovered-ci-job
   message: "TESTING.md does not name the CI job `harness-check-db`"
+
+- name: map-listing-a-lane-ci-does-not-run
+  file: TESTING.md
+  old: "| `python-check-db` | — | `just python-check-db` |"
+  new: "| `python-check` | — | `just python-check-db` |"
+  code: doc-unknown-ci-job
+  message: "TESTING.md lists `python-check` as a CI job"
+
+- name: language-spec-citing-a-command-the-graph-does-not-declare
+  file: languages/python/spec/python.md
+  old: "- **Aggregate `dbfree` command.** `just python-check-dbfree` — one local command"
+  new: "- **Aggregate `dbfree` command.** `just python-check-dbfre` — one local command"
+  code: doc-unknown-command
+  message: "languages/python/spec/python.md cites `just python-check-dbfre`, which the graph does not declare"
 
 - name: ci-job-narrower-than-its-name
   file: .github/workflows/ci.yml

@@ -240,6 +240,30 @@ An ordering constraint between two commands MUST be expressed as a dependency,
 never as adjacency inside one body. A constraint that exists only as line order
 is invisible to the graph and is not enforced when either command runs alone.
 
+### Declaration order
+
+The file declaring these commands MUST declare them in one fixed order, and that
+order MUST be enforced ([§8](#8-graph-inspection)). Order is the only structure a
+reader gets before opening a command, so an enforced one is what lets the file be
+scanned rather than read; an unenforced one decays into the order each command
+happened to be added in.
+
+- **Top level.** The repository-wide blocking commands
+  ([§2](#2-operation-vocabulary)), then the repository-wide non-blocking ones,
+  then one section per scope — the tooling scopes, then the language scopes, each
+  kind alphabetically.
+- **Within a section.** Aggregates, the scheduling-class test commands
+  ([§5](#5-scheduling-classification)), the semantic-surface commands
+  ([§3](#3-primary-semantic-surfaces)), the remaining focused selectors, the
+  remaining execution commands, then the mutating helpers.
+
+Both orders run from what composes the most to what composes the least: the top
+level from the commands spanning every scope down to one scope's own, and each
+section from its aggregates down to the single-purpose commands, ending with the
+one operation that rewrites tracked sources. A command the orchestrator requires
+but the grammar does not govern — its own default entry point — is not part of
+the public interface and sits outside this order.
+
 ## 8. Graph inspection
 
 The orchestrator's command graph is the single authoritative description of what
@@ -255,9 +279,9 @@ verification runs. A second gate manifest MUST NOT be introduced.
   closure outruns — the display MUST say so. Failing on it stays the blocking
   command's job; describing the graph as it is stays the display's.
 - The repository MUST provide a blocking `check` command over that graph,
-  failing on naming, ordering, role, scheduling-composition, declared-metadata,
-  test-layout, runner-configuration, documentation, and CI drift. The
-  repository's own check aggregate MUST depend on it.
+  failing on naming, declaration-order, role, scheduling-composition,
+  declared-metadata, test-layout, runner-configuration, documentation, and CI
+  drift. The repository's own check aggregate MUST depend on it.
 
 ## 9. Continuous integration contract
 

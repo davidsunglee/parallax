@@ -30,6 +30,7 @@ from pathlib import Path
 from typing import Any, Literal, NamedTuple
 
 __all__ = [
+    "BLOCKING_OPERATIONS",
     "OPERATIONS",
     "RUNTIME_CLASSES",
     "GateGraph",
@@ -56,6 +57,16 @@ OPERATIONS: tuple[str, ...] = (
     "typecheck",
 )
 """The closed operation vocabulary."""
+
+BLOCKING_OPERATIONS: frozenset[str] = frozenset(
+    {"audit", "build", "check", "coverage", "format-check", "lint", "test", "typecheck"}
+)
+"""The operations whose purpose is a verdict.
+
+The rest rewrite, describe, or display, and pass no judgement: they belong to no
+gate, so nothing requires them to be covered and nothing forbids an aggregate
+from depending on one for its output. Blocking is a property of an operation
+rather than of a graph, so it is declared beside the vocabulary it partitions."""
 
 RuntimeClass = Literal["fast", "medium", "slow"]
 """One relative execution duration."""

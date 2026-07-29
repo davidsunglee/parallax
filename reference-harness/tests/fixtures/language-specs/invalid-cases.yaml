@@ -146,6 +146,26 @@
   code: missing-aggregate-command
   message: "no aggregate command for the declared scheduling class 'db'"
 
+# The declaration is a list item, so a class pushed onto a continuation line is
+# still declared and still owes an aggregate command.
+- name: wrapped-class-without-an-aggregate-command
+  base: valid-snapshot.md
+  old: |-
+    - **Scheduling classes.** `dbfree` and `db`, decided per item by whether the
+      item's fixture closure reaches the provisioned database.
+    - **Aggregate `dbfree` command.** `example-check-dbfree` runs every
+      database-free row above in blocking CI job `ci dbfree`.
+    - **Aggregate `db` command.** `example-check-db` runs every database-backed row
+      above in blocking CI job `ci database`.
+  new: |-
+    - **Scheduling classes.** `dbfree` and
+      `db`, decided per item by whether the item's fixture closure reaches the
+      provisioned database.
+    - **Aggregate `dbfree` command.** `example-check-dbfree` runs every
+      database-free row above in blocking CI job `ci dbfree`.
+  code: missing-aggregate-command
+  message: "no aggregate command for the declared scheduling class 'db'"
+
 - name: missing-complete-aggregate-command
   base: valid-snapshot.md
   old: "- **Complete verification command.** `example-check` composes both class"

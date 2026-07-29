@@ -30,6 +30,10 @@ src/reference_harness/
 ├── gate_graph.py      # resolve the orchestrator's command graph: roles, classes, closures
 ├── show_gates.py      # render the resolved command graph
 ├── check_gates.py     # fail when that graph breaks core/spec/language-testing.md
+├── ci_workflow.py     # read a CI workflow as job identifiers and the commands they run
+├── runner_config.py   # read a scope's test-runner configuration through a declared profile
+├── diagnostics.py     # the shared code/message diagnostic and its failure report
+├── markdown_read.py   # read code spans and list items out of Markdown prose
 ├── check_database_access.py  # live database access stays inside the designated fixture
 └── providers/
     ├── __init__.py    # the DatabaseProvider protocol (the seam)
