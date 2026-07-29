@@ -7,7 +7,8 @@
 # Recipes are grouped by scope. Repo-wide gates and reports stay bare; every
 # other recipe carries a scope prefix so its category is obvious and future
 # languages slot in cleanly:
-#   (bare)     repo-wide gates and reports: verify, lint, lint-md, matrix
+#   (bare)     repo-wide gates and reports: verify, lint, lint-md, matrix,
+#              show-gates
 #   core-      validation of the core spec + compatibility corpus
 #   oracle-    the Python reference harness (its own checks + running the oracle)
 #   python-    the Python implementation (future: java-, rust-, ...)
@@ -43,6 +44,11 @@ lint-md:
 # Compatibility-matrix report (implementations x databases; Postgres + MariaDB).
 matrix:
     cd {{harness}} && uv run python -m reference_harness.matrix ../core/compatibility
+
+[group("fast")]
+[doc("Resolved gate graph: roles, execution owners, prerequisites, and runtime classes.")]
+show-gates *recipes:
+    cd {{harness}} && uv run python -m reference_harness.show_gates .. {{recipes}}
 
 # ===========================================================================
 # Core spec: validation of the core specification and compatibility corpus.
