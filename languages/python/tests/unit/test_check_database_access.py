@@ -11,9 +11,9 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-import check_database_access as access
+import pytest
 
-PY_ROOT = Path(__file__).resolve().parents[2]
+import check_database_access as access
 
 
 def _seams(source: str) -> list[str]:
@@ -94,6 +94,26 @@ def test_naming_a_seam_without_calling_it_is_not_a_violation() -> None:
 # --------------------------------------------------------------------------
 # Structural preconditions: the rule is vacuous without them
 # --------------------------------------------------------------------------
+def test_every_declared_seam_names_a_callable() -> None:
+    assert access.unresolved_seams() == ()
+
+
+def test_a_seam_whose_attribute_was_renamed_is_reported(monkeypatch: pytest.MonkeyPatch) -> None:
+    renamed = "parallax.postgres.PostgresAdapter.open"
+    monkeypatch.setattr(access, "DATABASE_SEAMS", access.DATABASE_SEAMS | {renamed})
+    assert access.unresolved_seams() == (renamed,)
+
+
+def test_a_seam_whose_module_disappeared_is_reported(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(access, "DATABASE_SEAMS", frozenset({"parallax.pool.Pool"}))
+    assert access.unresolved_seams() == ("parallax.pool.Pool",)
+
+
+def test_a_seam_naming_something_uncallable_is_reported(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(access, "DATABASE_SEAMS", frozenset({"parallax.postgres.__doc__"}))
+    assert access.unresolved_seams() == ("parallax.postgres.__doc__",)
+
+
 def test_a_minimal_tree_is_clean(tmp_path: Path) -> None:
     _minimal_tree(tmp_path)
     assert access.audit(tmp_path) == []
@@ -153,18 +173,26 @@ def test_the_real_test_tree_confines_database_access() -> None:
     assert access.main(["--check"]) == 0
 
 
-def test_a_planted_rogue_acquisition_fails() -> None:
-    # Named `_canary_*` rather than `test_*` so it can never be collected.
-    canary = PY_ROOT / "tests/unit/_canary_database_access.py"
-    canary.write_text(
+def test_a_planted_rogue_acquisition_fails(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The plant goes into a scratch tree the audited root is pointed at, never
+    into the real one: a canary interrupted mid-run would otherwise leave an
+    untracked module behind and fail a sibling gate."""
+    _minimal_tree(tmp_path)
+    monkeypatch.setattr(access, "TESTS_ROOT", tmp_path)
+    assert access.main([]) == 0
+
+    (tmp_path / "test_rogue.py").write_text(
         "from parallax.conformance.provision import Provisioner\n"
         "\n"
         "\n"
-        "def reach_a_database():\n"
+        "def test_rogue():\n"
         "    return Provisioner()\n"
     )
-    try:
-        assert access.main([]) == 1
-    finally:
-        canary.unlink()
-    assert access.main([]) == 0
+    assert access.main([]) == 1
+
+
+def test_an_unresolved_seam_fails_the_gate(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        access, "DATABASE_SEAMS", access.DATABASE_SEAMS | {"parallax.postgres.PostgresAdapter.open"}
+    )
+    assert access.main([]) == 1

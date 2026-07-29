@@ -2,9 +2,9 @@
 
 The coverage partition asserts that exercised and reasoned-skipped cases
 together equal the active slice (no stale IDs, no empty reasons); the Usage
-Guide drift check fails on any divergence from generated output. Both run from
-day one — at this phase every active-slice case is reasoned-skipped and the
-guide has no examples yet.
+Guide drift check fails on any divergence from generated output. Both hold at
+every point in the implementation, including one where nothing is exercised yet
+and the guide renders no example.
 """
 
 from __future__ import annotations
