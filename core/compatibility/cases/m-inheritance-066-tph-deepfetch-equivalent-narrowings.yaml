@@ -24,8 +24,8 @@ when:
       operand:
         all: {}
       paths:
-        - [{ rel: Person.pets, narrow: { to: [Pet] } }]
-        - [{ rel: Person.pets, narrow: { to: [Cat, Dog] } }]
+        - { segments: [{ rel: Person.pets, narrow: { to: [Pet] } }] }
+        - { segments: [{ rel: Person.pets, narrow: { to: [Cat, Dog] } }] }
 then:
   statements:
     - sql:

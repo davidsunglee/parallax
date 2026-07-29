@@ -377,20 +377,24 @@ result into an **object graph** rather than a flat row set.
 
 | Operation | Encoding | Effect |
 |---|---|---|
-| `deepFetch` | `{ "deepFetch": { "operand", "paths": [ [ { "rel": …, "narrow"? }, … ], … ] } }` | resolve `operand`, then eager-fetch each navigation `path` |
+| `deepFetch` | `{ "deepFetch": { "operand", "paths": [ { "segments": [ { "rel": …, "narrow"? }, … ] }, … ] } }` | resolve `operand`, then eager-fetch each navigation `path` |
 
-Each `path` is an ordered list of **path segments** naming a chain to fetch, and
-every segment is a **closed object** carrying the relationship to traverse under
-`rel` (a `Class.relationship` reference) — one hop (`[{ "rel": "Order.items" }]`)
-or multi-hop
-(`[{ "rel": "Order.items" }, { "rel": "OrderItem.statuses" }]`). The object
-segment is the single structural carrier for a hop, so a **polymorphic** hop (a
-relationship whose target is an abstract position, `m-inheritance`) MAY add an
-optional `narrow` alongside `rel` — the `{ "to": [ … ] }` subtype narrowing of that
-hop's effective concrete set — without a second spelling of a path. Unlike the
-operation-position `narrow` node (which carries `entity` + `operand`), a path
-narrow carries only `to`: the position is the relationship target (implicit) and a
-hop fetches a whole **view**, not a filtered predicate. A narrowed hop populates a
+Each `path` is a **closed object** whose required `segments` member is the
+ordered, non-empty list of **path segments** naming the chain to fetch, and
+every segment is itself a **closed object** carrying the relationship to traverse
+under `rel` (a `Class.relationship` reference) — one hop
+(`{ "segments": [{ "rel": "Order.items" }] }`) or multi-hop
+(`{ "segments": [{ "rel": "Order.items" }, { "rel": "OrderItem.statuses" }] }`).
+The object path is the single structural carrier for a path, keeping what
+qualifies the path as a whole distinguishable from what qualifies one hop. The
+object segment is likewise the single structural carrier for a hop, so a
+**polymorphic** hop (a relationship whose target is an abstract position,
+`m-inheritance`) MAY add an optional `narrow` alongside `rel` — the
+`{ "to": [ … ] }` subtype narrowing of that hop's effective concrete set —
+without a second spelling of a path. Unlike the operation-position `narrow` node
+(which carries `entity` + `operand`), a path narrow carries only `to`: the
+position is the relationship target (implicit) and a hop fetches a whole
+**view**, not a filtered predicate. A narrowed hop populates a
 **distinct narrowed view** keyed `<rel>[<Concrete>,<Concrete>]`; the narrow must
 resolve within the relationship target's effective set
 (`narrow-outside-relationship-target`). The normative guarantee is **one SQL

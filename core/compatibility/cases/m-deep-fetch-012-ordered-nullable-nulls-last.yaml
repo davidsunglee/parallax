@@ -21,7 +21,7 @@ when:
           attr: Order.id
           values: [1, 42]
       paths:
-        - [{ rel: Order.itemsByShipDate }]
+        - { segments: [{ rel: Order.itemsByShipDate }] }
 then:
   statements:
     - sql:

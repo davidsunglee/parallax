@@ -31,10 +31,10 @@ from parallax.core.op_algebra import (
     History,
     Limit,
     Narrow,
+    NavigationPath,
     Operation,
     OrderBy,
     OrderKey,
-    PathSegment,
     serialize,
     validate_operation,
 )
@@ -83,7 +83,7 @@ class Statement:
     # Deep-fetch include paths (``m-deep-fetch``), each a hop sequence built by
     # chained ``Rel[T]`` class access (``Order.items.statuses``); accumulates
     # across calls (unlike ``as_of`` / ``narrow``, ``.include`` is not single-shot).
-    include_paths: tuple[tuple[PathSegment, ...], ...] = ()
+    include_paths: tuple[NavigationPath, ...] = ()
     # Whether the statement-level ``.narrow(...)`` clause already wrapped the
     # predicate (single-shot, like ``as_of``).
     is_narrowed: bool = False
@@ -205,7 +205,9 @@ class Statement:
                 "`.include(...)` combined with `.history()` / `.as_of_range()` is deferred "
                 "(snapshot-history-includes, spec §3)"
             )
-        new_paths = self.include_paths + tuple(path.segments for path in paths)
+        new_paths = self.include_paths + tuple(
+            NavigationPath(segments=path.segments) for path in paths
+        )
         _validate(self.binding, self.target, DeepFetch(operand=self.predicate, paths=new_paths))
         return replace(self, include_paths=new_paths)
 

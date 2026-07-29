@@ -28,8 +28,8 @@ when:
           attr: Order.id
           value: 1
       paths:
-        - [{ rel: Order.items }]
-        - [{ rel: Order.itemsByShipDate }]
+        - { segments: [{ rel: Order.items }] }
+        - { segments: [{ rel: Order.itemsByShipDate }] }
 then:
   statements:
     - sql:

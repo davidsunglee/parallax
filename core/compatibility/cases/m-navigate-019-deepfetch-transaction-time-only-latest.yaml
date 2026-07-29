@@ -18,7 +18,7 @@ when:
           dimension: transactionTime
           coordinate: latest
       paths:
-        - [{ rel: Invoice.lines }]
+        - { segments: [{ rel: Invoice.lines }] }
 then:
   statements:
     - sql:

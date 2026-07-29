@@ -88,7 +88,7 @@ def test_find_issues_one_statement_per_non_empty_level() -> None:
         {
             "deepFetch": {
                 "operand": {"eq": {"attr": "Order.id", "value": 1}},
-                "paths": [[{"rel": "Order.items"}]],
+                "paths": [{"segments": [{"rel": "Order.items"}]}],
             }
         }
     )
@@ -103,7 +103,7 @@ def test_find_empty_root_short_circuits_with_no_child_statement() -> None:
         {
             "deepFetch": {
                 "operand": {"eq": {"attr": "Order.id", "value": 999}},
-                "paths": [[{"rel": "Order.items"}, {"rel": "OrderItem.statuses"}]],
+                "paths": [{"segments": [{"rel": "Order.items"}, {"rel": "OrderItem.statuses"}]}],
             }
         }
     )
@@ -134,7 +134,7 @@ def test_find_empty_intermediate_level_suppresses_only_the_grandchild_statement(
         {
             "deepFetch": {
                 "operand": {"eq": {"attr": "Order.id", "value": 4}},
-                "paths": [[{"rel": "Order.items"}, {"rel": "OrderItem.statuses"}]],
+                "paths": [{"segments": [{"rel": "Order.items"}, {"rel": "OrderItem.statuses"}]}],
             }
         }
     )
@@ -164,7 +164,7 @@ def test_find_back_reference_level_issues_no_additional_statement() -> None:
         {
             "deepFetch": {
                 "operand": {"eq": {"attr": "Order.id", "value": 1}},
-                "paths": [[{"rel": "Order.items"}, {"rel": "OrderItem.order"}]],
+                "paths": [{"segments": [{"rel": "Order.items"}, {"rel": "OrderItem.order"}]}],
             }
         }
     )
@@ -196,7 +196,7 @@ def test_find_materializes_family_variant_on_child_level_rows() -> None:
         {
             "deepFetch": {
                 "operand": {"eq": {"attr": "Person.id", "value": 10}},
-                "paths": [[{"rel": "Person.animals"}]],
+                "paths": [{"segments": [{"rel": "Person.animals"}]}],
             }
         }
     )
@@ -369,7 +369,7 @@ def test_find_history_refuses_a_plan_carrying_deep_fetch_levels() -> None:
         {
             "deepFetch": {
                 "operand": {"history": {"operand": {"all": {}}, "dimension": "transactionTime"}},
-                "paths": [[{"rel": "Policy.coverages"}]],
+                "paths": [{"segments": [{"rel": "Policy.coverages"}]}],
             }
         }
     )

@@ -64,7 +64,10 @@ def test_canonicalize_is_identity_without_any_navigation_node() -> None:
 
 
 def test_canonicalize_is_identity_for_a_deep_fetch_root_with_no_navigation() -> None:
-    op = oa.DeepFetch(operand=oa.All(), paths=((oa.PathSegment(rel="Order.items"),),))
+    op = oa.DeepFetch(
+        operand=oa.All(),
+        paths=(oa.NavigationPath(segments=(oa.PathSegment(rel="Order.items"),)),),
+    )
     assert canonicalize(op, ORDERS, ORDER) is op
 
 

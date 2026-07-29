@@ -30,8 +30,8 @@ when:
           attr: Person.id
           value: 10
       paths:
-        - [{ rel: Person.animals }]
-        - [{ rel: Person.pets, narrow: { to: [Dog] } }]
+        - { segments: [{ rel: Person.animals }] }
+        - { segments: [{ rel: Person.pets, narrow: { to: [Dog] } }] }
 then:
   statements:
     - sql:

@@ -177,7 +177,29 @@ def test_order_key_defaulted_direction_round_trips() -> None:
                 {
                     "deepFetch": {
                         "operand": {"all": {}},
-                        "paths": [[{"rel": "Order.items", "x": 1}]],
+                        "paths": [{"segments": [{"rel": "Order.items"}], "x": 1}],
+                    }
+                },
+                r"deepFetch path: unexpected key\(s\) \['x'\]",
+            ),
+            (
+                {
+                    "deepFetch": {
+                        "operand": {"all": {}},
+                        "paths": [[{"rel": "Order.items"}]],
+                    }
+                },
+                "each path must be a mapping",
+            ),
+            (
+                {"deepFetch": {"operand": {"all": {}}, "paths": [{"segments": []}]}},
+                "each path `segments` must be a non-empty list",
+            ),
+            (
+                {
+                    "deepFetch": {
+                        "operand": {"all": {}},
+                        "paths": [{"segments": [{"rel": "Order.items", "x": 1}]}],
                     }
                 },
                 r"deepFetch path segment: unexpected key\(s\) \['x'\]",
@@ -186,7 +208,13 @@ def test_order_key_defaulted_direction_round_trips() -> None:
                 {
                     "deepFetch": {
                         "operand": {"all": {}},
-                        "paths": [[{"rel": "Order.items", "narrow": {"to": ["Dog"], "x": 1}}]],
+                        "paths": [
+                            {
+                                "segments": [
+                                    {"rel": "Order.items", "narrow": {"to": ["Dog"], "x": 1}}
+                                ]
+                            }
+                        ],
                     }
                 },
                 r"deepFetch path narrow: unexpected key\(s\) \['x'\]",
@@ -269,7 +297,7 @@ def test_order_key_defaulted_direction_round_trips() -> None:
                 {
                     "deepFetch": {
                         "operand": {"all": {}},
-                        "paths": [[{"rel": "bad rel"}]],
+                        "paths": [{"segments": [{"rel": "bad rel"}]}],
                     }
                 },
                 "not a valid relationship reference",

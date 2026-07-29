@@ -27,7 +27,7 @@ when:
       operand:
         all: {}
       paths:
-        - [{ rel: OrderItem.order }]
+        - { segments: [{ rel: OrderItem.order }] }
 then:
   statements:
     - sql:

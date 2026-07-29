@@ -20,7 +20,7 @@ when:
           dimension: transactionTime
           coordinate: "2024-02-01T00:00:00+00:00"
       paths:
-        - [{ rel: Invoice.lines }]
+        - { segments: [{ rel: Invoice.lines }] }
 then:
   statements:
     - sql:

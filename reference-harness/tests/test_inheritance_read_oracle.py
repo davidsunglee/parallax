@@ -912,3 +912,24 @@ def test_operation_narrow_in_navigation_filter_naming_rule_holds_under_and() -> 
         }
     }
     validate_operation_inheritance(defs, pet_and, position="Person")
+
+
+def _deep_fetch_op(rel: str, to: list[str] | None) -> dict[str, Any]:
+    segment: dict[str, Any] = {"rel": rel}
+    if to is not None:
+        segment["narrow"] = {"to": to}
+    return {"deepFetch": {"operand": {"all": {}}, "paths": [{"segments": [segment]}]}}
+
+
+def test_deep_fetch_path_segment_narrow_is_resolved_through_the_path_object() -> None:
+    # A path is a closed object carrying its hops under `segments`, so the position
+    # walk reaches a segment narrow only through that member. A hop narrowed outside
+    # the relationship target is rejected exactly as it is in a navigation filter.
+    defs = _animal_defs()
+    validate_operation_inheritance(defs, _deep_fetch_op("Person.pets", ["Dog"]), position="Person")
+    validate_operation_inheritance(defs, _deep_fetch_op("Person.pets", None), position="Person")
+    with pytest.raises(RejectionError) as exc:
+        validate_operation_inheritance(
+            defs, _deep_fetch_op("Person.pets", ["WildBoar"]), position="Person"
+        )
+    assert exc.value.rule == NARROW_OUTSIDE_RELATIONSHIP_TARGET

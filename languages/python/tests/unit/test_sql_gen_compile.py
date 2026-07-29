@@ -84,7 +84,10 @@ def test_unbound_attribute_is_refused() -> None:
             "temporal wrapper reached",
         ),
         (
-            oa.DeepFetch(operand=oa.All(), paths=((oa.PathSegment(rel="Order.items"),),)),
+            oa.DeepFetch(
+                operand=oa.All(),
+                paths=(oa.NavigationPath(segments=(oa.PathSegment(rel="Order.items"),)),),
+            ),
             "deep fetch .* is not a predicate",
         ),
     ],

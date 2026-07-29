@@ -114,8 +114,9 @@ def _collect_result_modifier_classes(tag: str, body: dict[str, Any], classes: se
     if tag == "deepFetch":
         collect_reference_classes(body.get("operand"), classes, descend_result_modifiers=True)
         for path in body.get("paths", []) or []:
-            if path:
-                segment = path[0]
+            segments = path.get("segments") if isinstance(path, dict) else None
+            if segments:
+                segment = segments[0]
                 rel = segment.get("rel") if isinstance(segment, dict) else segment
                 _add_reference_class(rel, classes)
     elif tag in ("distinct", "asOf", "asOfRange", "history", "limit", "narrow"):

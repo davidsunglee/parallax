@@ -246,7 +246,7 @@ mutations, exceptions, or exports.
   as its source guard and loads `owner` only on Dog-family roots;
   `Animal.owner` remains broad. `Dog.doghouse` follows the same rule regardless
   of the relationship's declaring type. Canonical Deep Fetch `paths` are closed
-  objects with a required nonempty `path` segment list and an optional
+  objects with a required nonempty `segments` list and an optional
   path-root `narrow: {entity, to}`. The latter reuses the operation-position
   Narrow contract without an operand: it narrows the path's initial Entity
   position, not the Find Query result. Each relationship segment retains its

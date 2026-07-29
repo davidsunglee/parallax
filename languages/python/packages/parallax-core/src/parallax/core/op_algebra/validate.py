@@ -80,6 +80,7 @@ from parallax.core.op_algebra.nodes import (
     Membership,
     Narrow,
     Navigate,
+    NavigationPath,
     NestedComparison,
     NestedExists,
     NestedMembership,
@@ -92,7 +93,6 @@ from parallax.core.op_algebra.nodes import (
     Operation,
     Or,
     OrderBy,
-    PathSegment,
     Scalar,
     StringMatch,
 )
@@ -160,7 +160,7 @@ def _collect_entities(op: Operation, names: set[str]) -> None:
         case DeepFetch(operand=operand, paths=paths):
             _collect_entities(operand, names)
             for path in paths:
-                for segment in path:
+                for segment in path.segments:
                     names.add(_class_of(segment.rel))
                     names.update(segment.narrow)
 
@@ -414,8 +414,8 @@ def _relationship_target(rel_ref: str, model: Metamodel, *, wrong_kind_rule: str
     raise ValueError(f"{rel_ref!r} names no declared relationship on {entity.identity.name}")
 
 
-def _check_deep_fetch_path(path: tuple[PathSegment, ...], model: Metamodel) -> None:
-    for segment in path:
+def _check_deep_fetch_path(path: NavigationPath, model: Metamodel) -> None:
+    for segment in path.segments:
         target = _relationship_target(
             segment.rel, model, wrong_kind_rule="deep-fetch-value-object-segment"
         )

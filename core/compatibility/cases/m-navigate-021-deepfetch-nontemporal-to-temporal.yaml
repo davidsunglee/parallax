@@ -15,7 +15,7 @@ when:
     deepFetch:
       operand: { all: {} }
       paths:
-        - [{ rel: Tenant.leases }]
+        - { segments: [{ rel: Tenant.leases }] }
 then:
   statements:
     - sql:

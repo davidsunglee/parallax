@@ -20,7 +20,7 @@ when:
           dimension: transactionTime
           coordinate: latest
       paths:
-        - [{ rel: Lease.notes }]
+        - { segments: [{ rel: Lease.notes }] }
 then:
   statements:
     - sql:

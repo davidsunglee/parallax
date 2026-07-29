@@ -31,6 +31,7 @@ __all__ = [
     "MembershipOp",
     "Narrow",
     "Navigate",
+    "NavigationPath",
     "NestedComparison",
     "NestedComparisonOp",
     "NestedExists",
@@ -280,11 +281,22 @@ class PathSegment:
 
 
 @dataclass(frozen=True, slots=True)
+class NavigationPath:
+    """One deep-fetch path: the ordered, non-empty hops it traverses.
+
+    A path is its own node rather than a bare segment tuple, so what qualifies the
+    path as a whole stays distinguishable from what qualifies one hop.
+    """
+
+    segments: tuple[PathSegment, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class DeepFetch:
     """Resolve ``operand`` then eager-fetch each navigation path."""
 
     operand: Operation
-    paths: tuple[tuple[PathSegment, ...], ...] = field(default_factory=tuple)
+    paths: tuple[NavigationPath, ...] = field(default_factory=tuple)
 
 
 @dataclass(frozen=True, slots=True)

@@ -39,6 +39,7 @@ from parallax.core.op_algebra.nodes import (
     MembershipOp,
     Narrow,
     Navigate,
+    NavigationPath,
     NestedComparison,
     NestedComparisonOp,
     NestedExists,
@@ -312,16 +313,21 @@ def _to_list(body: Mapping[str, object], tag: str) -> tuple[str, ...]:
     return tuple(out)
 
 
-def _paths(body: Mapping[str, object]) -> tuple[tuple[PathSegment, ...], ...]:
+def _paths(body: Mapping[str, object]) -> tuple[NavigationPath, ...]:
     raw = body.get("paths")
     if not isinstance(raw, list) or not raw:
         raise OperationError("deepFetch: `paths` must be a non-empty list")
-    paths: list[tuple[PathSegment, ...]] = []
-    for path in cast("list[object]", raw):
-        if not isinstance(path, list) or not path:
-            raise OperationError("deepFetch: each path must be a non-empty list of segments")
+    paths: list[NavigationPath] = []
+    for entry in cast("list[object]", raw):
+        if not isinstance(entry, Mapping):
+            raise OperationError("deepFetch: each path must be a mapping")
+        path = cast("Mapping[str, object]", entry)
+        _closed(path, frozenset({"segments"}), "deepFetch path")
+        raw_segments = path.get("segments")
+        if not isinstance(raw_segments, list) or not raw_segments:
+            raise OperationError("deepFetch: each path `segments` must be a non-empty list")
         segments: list[PathSegment] = []
-        for seg in cast("list[object]", path):
+        for seg in cast("list[object]", raw_segments):
             if not isinstance(seg, Mapping):
                 raise OperationError("deepFetch: each path segment must be a mapping")
             segment = cast("Mapping[str, object]", seg)
@@ -336,7 +342,7 @@ def _paths(body: Mapping[str, object]) -> tuple[tuple[PathSegment, ...], ...]:
                 narrow = _to_list(narrow_body, "deepFetch.narrow")
             rel = _ref(segment, "rel", "deepFetch", _MEMBER_REF, "relationship reference")
             segments.append(PathSegment(rel=rel, narrow=narrow))
-        paths.append(tuple(segments))
+        paths.append(NavigationPath(segments=tuple(segments)))
     return tuple(paths)
 
 
@@ -601,11 +607,11 @@ def _order_key(key: OrderKey) -> dict[str, object]:
     return entry
 
 
-def _path(path: tuple[PathSegment, ...]) -> list[dict[str, object]]:
-    out: list[dict[str, object]] = []
-    for seg in path:
+def _path(path: NavigationPath) -> dict[str, object]:
+    segments: list[dict[str, object]] = []
+    for seg in path.segments:
         entry: dict[str, object] = {"rel": seg.rel}
         if seg.narrow:
             entry["narrow"] = {"to": list(seg.narrow)}
-        out.append(entry)
-    return out
+        segments.append(entry)
+    return {"segments": segments}

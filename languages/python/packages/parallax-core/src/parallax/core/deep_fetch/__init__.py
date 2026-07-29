@@ -74,6 +74,7 @@ from parallax.core.op_algebra import (
     DeepFetch,
     Membership,
     Narrow,
+    NavigationPath,
     Operation,
     OrderBy,
     OrderKey,
@@ -216,7 +217,7 @@ def plan(entity: EntityMetadata, op: Operation, model: Metamodel) -> FetchPlan:
     temporal_entity = _entity(model, _entity_view(families, entity.identity).root)
     if isinstance(op, DeepFetch):
         root_raw: Operation = op.operand
-        paths: tuple[tuple[PathSegment, ...], ...] = op.paths
+        paths: tuple[NavigationPath, ...] = op.paths
     else:
         root_raw = op
         paths = ()
@@ -276,9 +277,9 @@ class _PlanBuilder:
         )
         self._owners[_ROOT_ID] = root_entity
 
-    def add_path(self, path: tuple[PathSegment, ...]) -> None:
+    def add_path(self, path: NavigationPath) -> None:
         parent_id = _ROOT_ID
-        for segment in path:
+        for segment in path.segments:
             parent_id = self._add_segment(parent_id, segment)
 
     def _add_segment(self, parent_id: int, segment: PathSegment) -> int:

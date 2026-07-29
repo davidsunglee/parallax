@@ -27,6 +27,7 @@ from parallax.core.op_algebra import (
     Exists,
     Limit,
     Narrow,
+    NavigationPath,
     NotExists,
     OperationRejectedError,
     PathSegment,
@@ -40,7 +41,7 @@ def test_single_hop_include_builds_a_deep_fetch_node() -> None:
     statement = sm.SnapOrder.where().include(sm.SnapOrder.items)
     op = statement.operation()
     assert isinstance(op, DeepFetch)
-    assert op.paths == ((PathSegment(rel="SnapOrder.items"),),)
+    assert op.paths == (NavigationPath(segments=(PathSegment(rel="SnapOrder.items"),)),)
 
 
 def test_multi_hop_include_resolves_the_deeper_hop_against_the_model() -> None:
@@ -48,7 +49,12 @@ def test_multi_hop_include_resolves_the_deeper_hop_against_the_model() -> None:
     op = statement.operation()
     assert isinstance(op, DeepFetch)
     assert op.paths == (
-        (PathSegment(rel="SnapOrder.items"), PathSegment(rel="SnapOrderItem.statuses")),
+        NavigationPath(
+            segments=(
+                PathSegment(rel="SnapOrder.items"),
+                PathSegment(rel="SnapOrderItem.statuses"),
+            )
+        ),
     )
 
 
@@ -96,7 +102,7 @@ def test_include_of_a_narrowed_path_serializes_the_hop_narrow() -> None:
     statement = im.Folder.where().include(im.Folder.documents.narrow(im.Invoice))
     op = statement.operation()
     assert isinstance(op, DeepFetch)
-    assert op.paths[0][0].narrow == ("Invoice",)
+    assert op.paths[0].segments[0].narrow == ("Invoice",)
 
 
 # --------------------------------------------------------------------------- #

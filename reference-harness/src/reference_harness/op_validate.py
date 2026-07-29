@@ -195,7 +195,7 @@ def _check_navigation(entity: Entity, body: dict[str, Any]) -> None:
 
 def _check_deep_fetch(entity: Entity, body: dict[str, Any]) -> None:
     for path in body.get("paths", []):
-        for segment in path:
+        for segment in path.get("segments", []):
             # A path segment is a closed object ``{rel, narrow?}`` (m-op-algebra);
             # the value-object misuse rule is about the traversed relationship ref.
             rel = segment["rel"] if isinstance(segment, dict) else segment
