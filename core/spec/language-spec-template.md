@@ -374,9 +374,12 @@ capability as deferred in §1 when appropriate.
 
 ## 10. Mandatory quality toolchain
 
-Every row is mandatory. Name executable tools rather than categories, and give
-exact repository-relative config paths and copy-pasteable commands. A completed
-row cannot say only “the ecosystem default” or “run in CI.” Every CI gate is
+Every row is mandatory and records one quality outcome: the tool that produces
+it, its configuration, the local and blocking CI commands that run it, and the
+threshold, supported matrix, exclusions, and required proof that make the
+outcome checkable. Name executable tools rather than categories, and give exact
+repository-relative config paths and copy-pasteable commands. A completed row
+cannot say only “the ecosystem default” or “run in CI.” Every CI gate is
 blocking unless its policy cell defines a narrower, objective exception.
 
 | Quality concern | Tool and version policy | Configuration path(s) | Local command | Blocking CI command/job | Threshold, exclusions, and enforcement policy |
@@ -397,11 +400,20 @@ blocking unless its policy cell defines a narrower, objective exception.
 | API Conformance Suite and Usage Guide | **(decide and record — All slices)** | | | | Enforce coverage partition, no-drift guard, real-adapter proof, and guide drift. |
 | Database-backed verification | **(decide and record — All slices)** | | | | Name required profiles and define how every skipped check is reported with reason; silent skips are forbidden. |
 
-- **(decide and record — All slices)** The single local static-verification
-  command and CI job that aggregate all database-free rows above.
-- **(decide and record — All slices)** The full verification command and CI lane,
-  including database-backed checks, plus the exact summary format for checks that
-  were run, failed, or skipped.
+The commands above are owned by aggregates, whose roles and composition
+[`language-testing.md`](language-testing.md) fixes. Every test the
+implementation collects belongs to exactly one **scheduling class**, and each
+class has one aggregate command running every row above assigned to it.
+
+- **(decide and record — All slices)** The scheduling classes this
+  implementation declares, on one line opening **Scheduling classes.** — each
+  class a backticked token, and no other backticked text on that line.
+- **(decide and record — All slices)** One line per declared class, opening
+  **Aggregate `<class>` command.**, naming the local command and the blocking CI
+  job that run every row above assigned to that class.
+- **(decide and record — All slices)** One line opening **Complete verification
+  command.**, naming the command that composes every class aggregate above, plus
+  the exact summary format for checks that were run, failed, or skipped.
 
 ## Completion check
 
@@ -429,6 +441,8 @@ A finished language spec satisfies every item:
   tooling;
 - every mandatory quality row names a tool, config, local command, blocking CI
   command/job, and concrete enforcement policy; coverage has a numeric threshold,
-  strict typing is explicit, and database skips cannot be silent; and
+  strict typing is explicit, and database skips cannot be silent;
+- §10 declares the scheduling classes and names one aggregate command per
+  declared class plus the complete verification command; and
 - a fresh reader can implement the language and run both conformance surfaces
   without inventing a lifecycle, source-boundary, packaging, or tooling decision.

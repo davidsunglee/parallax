@@ -49,6 +49,7 @@ uv run python -m reference_harness.schema_validate ../core/compatibility
 uv run python -m reference_harness.sql_lint ../core/compatibility
 uv run python -m reference_harness.dep_graph_check ../core/spec/modules.md
 uv run python -m reference_harness.slice_inspect ../core/spec ../core/compatibility slice-snapshot-1
+uv run python -m reference_harness.language_spec_validate ..
 uv run python -m reference_harness.language_spec_validate ../languages/<target>/spec/implementation.md ../core/spec
 uv run ruff format --check .
 uv run ruff check .
@@ -61,5 +62,7 @@ uv run python -m reference_harness.show_gates ..
 uv run python -m reference_harness.check_gates ..
 ```
 
-The `language_spec_validate` line uses a placeholder path: replace
-`<target>` with a target's completed language spec.
+The two `language_spec_validate` lines differ in what they select. The first
+discovers and validates every completed language spec in the repository and is
+the form the gate runs. The second takes one path and is for a spec still being
+drafted; replace `<target>` with the target it belongs to.

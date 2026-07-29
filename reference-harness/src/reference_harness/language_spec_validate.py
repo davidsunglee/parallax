@@ -1,4 +1,13 @@
-"""Validate a completed language spec against the canonical authoring contract."""
+"""Validate completed language specs against the canonical authoring contract::
+
+    uv run python -m reference_harness.language_spec_validate <repository-root>
+    uv run python -m reference_harness.language_spec_validate <spec.md> <core-spec-dir>
+
+The first form discovers every `languages/*/spec/*.md` and is the blocking gate,
+so a completed spec cannot drift from the template between the times someone
+remembers to check it. The second validates one path and is how a spec still
+being drafted — not yet complete, and therefore not yet passing — is checked.
+"""
 
 from __future__ import annotations
 
@@ -27,6 +36,16 @@ _UNRESOLVED_RE = re.compile(
     r"\(decide and record\b|\b(?:TBD|TODO|FIXME|UNRESOLVED)\b|\?\?\?",
     re.IGNORECASE,
 )
+
+# The §10 aggregate-command declarations, in the shape language-spec-template.md
+# fixes for them. How many aggregate commands a spec owes comes from the spec's
+# own scheduling classes rather than from a list here, so a language declaring
+# three classes owes three; the template fixes only how each is spelled. Whether
+# the commands named exist is the command graph's own check, not this one's.
+_SCHEDULING_CLASSES_RE = re.compile(r"\*\*Scheduling classes\.\*\*(?P<declared>[^\n]*)")
+_CLASS_AGGREGATE_RE = re.compile(r"\*\*Aggregate `(?P<scheduling_class>[^`]+)` command\.\*\*")
+_COMPLETE_AGGREGATE_RE = re.compile(r"\*\*Complete verification command\.\*\*")
+_BACKTICKED_RE = re.compile(r"`([^`]+)`")
 
 # Section titles that mirror the numbered headings in language-spec-template.md.
 _SECTION_SOURCE_TOPOLOGY = "7. Source-enforcement topology"
@@ -464,19 +483,35 @@ def _check_quality(markdown: str, template: str, issues: list[ValidationIssue]) 
             )
         )
 
-    section = _section(markdown, title) or ""
-    if not re.search(r"\bstatic[- ]verification\b", section, re.IGNORECASE):
+    _check_aggregate_commands(_section(markdown, title) or "", issues)
+
+
+def _check_aggregate_commands(section: str, issues: list[ValidationIssue]) -> None:
+    declaration = _SCHEDULING_CLASSES_RE.search(section)
+    declared = _BACKTICKED_RE.findall(declaration.group("declared")) if declaration else []
+    if not declared:
         issues.append(
             ValidationIssue(
                 "missing-aggregate-command",
-                "quality section has no aggregate static-verification command",
+                "quality section declares no scheduling classes, so the aggregate commands it "
+                "owes cannot be determined",
             )
         )
-    if not re.search(r"\bfull verification\b", section, re.IGNORECASE):
+    named = {match.group("scheduling_class") for match in _CLASS_AGGREGATE_RE.finditer(section)}
+    for scheduling_class in declared:
+        if scheduling_class not in named:
+            issues.append(
+                ValidationIssue(
+                    "missing-aggregate-command",
+                    f"quality section has no aggregate command for the declared scheduling "
+                    f"class {scheduling_class!r}",
+                )
+            )
+    if not _COMPLETE_AGGREGATE_RE.search(section):
         issues.append(
             ValidationIssue(
                 "missing-aggregate-command",
-                "quality section has no aggregate full verification command",
+                "quality section has no complete verification command over every scheduling class",
             )
         )
 
@@ -571,17 +606,13 @@ def validate_language_spec(
 
 def _usage() -> str:
     return (
-        "usage: python -m reference_harness.language_spec_validate "
+        "usage: python -m reference_harness.language_spec_validate <repository-root>\n"
+        "       python -m reference_harness.language_spec_validate "
         "<language-spec.md> <core-spec-dir>"
     )
 
 
-def main(argv: list[str]) -> int:
-    if len(argv) != 2:
-        print(_usage(), file=sys.stderr)
-        return 2
-    language_spec = Path(argv[0])
-    spec_dir = Path(argv[1])
+def _validate_one(language_spec: Path, spec_dir: Path) -> int:
     if not language_spec.is_file():
         print(f"not a file: {language_spec}", file=sys.stderr)
         return 2
@@ -622,6 +653,49 @@ def main(argv: list[str]) -> int:
 
     print(f"language spec OK: {language_spec} ({selected}, {lifecycle} lifecycle)")
     return 0
+
+
+def _validate_every_spec(root: Path) -> int:
+    spec_dir = root / "core" / "spec"
+    languages = root / "languages"
+    if not languages.is_dir():
+        print(f"not a directory: {languages}", file=sys.stderr)
+        return 2
+    targets = sorted(entry for entry in languages.iterdir() if entry.is_dir())
+    worst = 0
+    discovered = 0
+    for target in targets:
+        specs = sorted((target / "spec").glob("*.md"))
+        if not specs:
+            print(f"no language spec under {target / 'spec'}", file=sys.stderr)
+            worst = max(worst, 1)
+            continue
+        discovered += len(specs)
+        for spec in specs:
+            worst = max(worst, _validate_one(spec, spec_dir))
+    if worst:
+        return worst
+    print(f"language specs OK: {discovered} completed spec(s) under {languages}")
+    return 0
+
+
+def main(argv: list[str]) -> int:
+    """Validate one completed language spec, or every one the repository holds.
+
+    Exit codes: 0 — every spec examined satisfies the canonical template; 1 — one
+    does not, or an input could not be read; 2 — usage error, including a path
+    that does not exist.
+    """
+    if len(argv) == 2:
+        return _validate_one(Path(argv[0]), Path(argv[1]))
+    if len(argv) != 1:
+        print(_usage(), file=sys.stderr)
+        return 2
+    root = Path(argv[0])
+    if not root.is_dir():
+        print(f"not a directory: {root}", file=sys.stderr)
+        return 2
+    return _validate_every_spec(root)
 
 
 if __name__ == "__main__":

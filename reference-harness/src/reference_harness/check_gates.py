@@ -11,10 +11,10 @@ holds only while each author remembers it. This is the blocking check §8
 requires over the graph.
 
 Every rule is decided from the orchestrator's own dump, from the runner
-configuration and test roots the graph itself locates, and from the CI workflow.
-Nothing is restated here that one of those already states: a second description
-of the gates is what §8 forbids, and a checker that carried its own copy of the
-recipe list would be one.
+configuration and test roots the graph itself locates, from the CI workflow, and
+from the operational maps. Nothing is restated here that one of those already
+states: a second description of the gates is what §8 forbids, and a checker that
+carried its own copy of the recipe list would be one.
 """
 
 from __future__ import annotations
@@ -41,6 +41,7 @@ from reference_harness.gate_graph import (
 __all__ = [
     "BLOCKING_OPERATIONS",
     "CI_WORKFLOW",
+    "OPERATIONAL_MAP",
     "RUNNER_ROOT_FILES",
     "SCHEDULING_GUARDS",
     "SUPPORT_DIRECTORY",
@@ -95,8 +96,22 @@ command only requires that one exists and that a class aggregate runs it."""
 CI_WORKFLOW = Path(".github/workflows/ci.yml")
 """The workflow whose jobs must cover the required repository check graph."""
 
+OPERATIONAL_MAP = "TESTING.md"
+"""The operational map, at the repository root and in every language scope.
+
+The graph, this map, and the CI job list are three descriptions of one fact —
+which commands gate this repository and what runs them — so every pair is
+compared. Editing two of the three consistently while the third goes stale
+therefore fails, which is the only arrangement in which a map is worth reading.
+"""
+
 _RECIPE_LINE_RE = re.compile(r"^(?P<name>[A-Za-z_][A-Za-z0-9_-]*)[^:=\n]*:(?!=)", re.MULTILINE)
 _JUST_INVOCATION_RE = re.compile(r"\bjust\s+(?P<recipe>[a-z][a-z0-9-]*)")
+_CODE_SPAN_RE = re.compile(r"`([^`\n]+)`")
+# A code span citing a command: the orchestrator, one recipe name, and whatever
+# arguments follow. A span holding a placeholder rather than a name — the
+# `<surface>` of a family of commands — matches nothing and cites nothing.
+_CITED_COMMAND_RE = re.compile(r"^just (?P<recipe>[a-z][a-z0-9-]*)(?:\s.*)?$")
 
 # The operation each recognized runner performs, longest spelling first so
 # `ruff format --check` is read as `format-check` rather than as `format`. A tool
@@ -736,17 +751,25 @@ def _blocking_owners(repository: _Repository, name: str) -> set[str]:
     }
 
 
+def _workflow_jobs(root: Path) -> list[_Job] | None:
+    """Every job the CI workflow declares, or ``None`` when it declares no
+    workflow at all."""
+    workflow_path = root / CI_WORKFLOW
+    if not workflow_path.is_file():
+        return None
+    parsed: Any = yaml.safe_load(workflow_path.read_text(encoding="utf-8"))
+    return _jobs(parsed) if isinstance(parsed, dict) else []
+
+
 def _check_ci(repository: _Repository) -> Iterator[Finding]:
     """§9: the same interface as local verification, covering the same graph."""
-    workflow_path = repository.root / CI_WORKFLOW
-    if not workflow_path.is_file():
+    jobs = _workflow_jobs(repository.root)
+    if jobs is None:
         yield Finding(
             "missing-ci-workflow",
             f"{CI_WORKFLOW} does not exist, so no job list can be compared with the graph",
         )
         return
-    parsed: Any = yaml.safe_load(workflow_path.read_text(encoding="utf-8"))
-    jobs = _jobs(parsed) if isinstance(parsed, dict) else []
 
     covered: set[str] = set()
     ownership: dict[str, set[str]] = {}
@@ -802,6 +825,60 @@ def _check_ci(repository: _Repository) -> Iterator[Finding]:
         )
 
 
+def _operational_maps(repository: _Repository) -> dict[str | None, Path]:
+    """Each operational map and the scope it speaks for. The repository's own map
+    speaks for every scope, so a scoped job is answerable to two of them."""
+    maps: dict[str | None, Path] = {None: repository.root / OPERATIONAL_MAP}
+    for scope in repository.language_scopes:
+        directory = repository.module_dir(scope)
+        if directory is not None:
+            maps[scope] = directory / OPERATIONAL_MAP
+    return maps
+
+
+def _check_documentation(repository: _Repository) -> Iterator[Finding]:
+    """§8's documentation drift, over the third representation of the gates."""
+    cited: dict[str | None, frozenset[str]] = {}
+    for scope, path in _operational_maps(repository).items():
+        subject = "the repository" if scope is None else f"`{scope}`"
+        if not path.is_file():
+            yield Finding(
+                "missing-operational-map",
+                f"{subject} has no {path.relative_to(repository.root)}; a scope whose commands "
+                f"nothing maps is navigable only by reading the orchestrator's own file",
+            )
+            continue
+        spans = frozenset(_CODE_SPAN_RE.findall(path.read_text(encoding="utf-8")))
+        cited[scope] = spans
+        for span in sorted(spans):
+            match = _CITED_COMMAND_RE.match(span)
+            if match is None or repository.declares(match.group("recipe")):
+                continue
+            yield Finding(
+                "doc-unknown-command",
+                f"{path.relative_to(repository.root)} cites `{span}`, which the graph does "
+                f"not declare",
+            )
+
+    jobs = _workflow_jobs(repository.root)
+    if jobs is None:
+        return
+    for job in jobs:
+        if not repository.declares(job.identifier):
+            continue
+        scope = repository.graph.recipe(job.identifier).scope
+        for audience in dict.fromkeys((None, scope)):
+            spans = cited.get(audience)
+            if spans is None or job.identifier in spans:
+                continue
+            path = _operational_maps(repository)[audience]
+            yield Finding(
+                "doc-uncovered-ci-job",
+                f"{path.relative_to(repository.root)} does not name the CI job "
+                f"`{job.identifier}`; a map that omits a lane understates what gates a merge",
+            )
+
+
 _RULES = (
     _check_names,
     _check_order,
@@ -811,6 +888,7 @@ _RULES = (
     _check_runner_config,
     _check_layout,
     _check_ci,
+    _check_documentation,
 )
 
 

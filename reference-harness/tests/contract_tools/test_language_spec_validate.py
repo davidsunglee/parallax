@@ -10,7 +10,8 @@ import yaml
 from reference_harness.language_spec_validate import main
 
 _TESTS_ROOT = Path(__file__).resolve().parents[1]
-_SPEC_DIR = _TESTS_ROOT.parents[1] / "core" / "spec"
+_REPO_ROOT = _TESTS_ROOT.parents[1]
+_SPEC_DIR = _REPO_ROOT / "core" / "spec"
 _FIXTURES = _TESTS_ROOT / "fixtures" / "language-specs"
 
 
@@ -57,6 +58,26 @@ def test_focused_invalid_specs_report_the_precise_decision(
         error = capsys.readouterr().err
         assert f"[{scenario['code']}]" in error, (scenario["name"], error)
         assert scenario["message"] in error, (scenario["name"], error)
+
+
+def test_discovery_validates_every_completed_spec(capsys: pytest.CaptureFixture[str]) -> None:
+    rc = main([str(_REPO_ROOT)])
+
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert f"language spec OK: {_REPO_ROOT / 'languages' / 'python' / 'spec' / 'python.md'}" in out
+    assert "language specs OK:" in out
+
+
+def test_a_language_target_without_a_spec_is_reported(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (tmp_path / "languages" / "rust" / "spec").mkdir(parents=True)
+
+    rc = main([str(tmp_path)])
+
+    assert rc == 1
+    assert "no language spec under" in capsys.readouterr().err
 
 
 def test_missing_input_is_a_usage_error(capsys: pytest.CaptureFixture[str]) -> None:

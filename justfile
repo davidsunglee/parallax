@@ -105,7 +105,7 @@ report-check-summary:
 # ===========================================================================
 
 [doc("Every blocking check over the core spec and compatibility corpus.")]
-core-check: core-check-module-graph core-check-slice-profiles core-check-schemas core-check-contract-tools
+core-check: core-check-module-graph core-check-slice-profiles core-check-schemas core-check-contract-tools core-check-language-spec
 
 [metadata("runtime:fast")]
 [doc("modules.md DAG legality, per-module fixture coverage, and the active-to-deferred rule.")]
@@ -137,12 +137,17 @@ core-check-contract-tools:
     cd {{harness}} && uv run python -m reference_harness.case_comment_check ../core/compatibility
 
 [metadata("runtime:fast")]
+[doc("Every completed language spec still fills in the canonical template.")]
+core-check-language-spec:
+    cd {{harness}} && uv run python -m reference_harness.language_spec_validate ..
+
+[metadata("runtime:fast")]
 [doc("Inspect one canonical slice using the claims, module DAG, and compatibility corpus.")]
 core-show-slice slice:
     cd {{harness}} && uv run python -m reference_harness.slice_inspect ../core/spec ../core/compatibility {{slice}}
 
 [metadata("runtime:fast")]
-[doc("Validate one completed, root-relative language-spec path against the canonical template.")]
+[doc("Validate one root-relative language-spec path, drafted or complete, against the template.")]
 core-show-language-spec language_spec:
     cd {{harness}} && uv run python -m reference_harness.language_spec_validate ../{{language_spec}} ../core/spec
 

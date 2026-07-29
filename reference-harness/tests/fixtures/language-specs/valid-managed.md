@@ -105,14 +105,18 @@ No conditional capability is part of this claim.
 | Import-cycle detection | depcheck 1.x | depcheck.toml | `depcheck cycles` | `ci cycles` | All production scopes are checked. |
 | Dead code and unused exports | vulture 2.x | pyproject.toml | `vulture src` | `ci dead-code` | Unused production symbols block unless allowlisted with rationale. |
 | Built-artifact and public-export health | twine 6.x | pyproject.toml | `twine check dist/*` | `ci package` | Packed metadata and exports must be valid. |
-| Clean-install production smoke tests | pip 26.x | tests/install | `pytest tests/install` | `ci install` | Selective installs exclude alternative lifecycles and drivers. |
+| Clean-install production smoke tests | pip 26.x | tests/distribution | `pytest tests/distribution` | `ci install` | Selective installs exclude alternative lifecycles and drivers. |
 | Supported language/runtime versions | Python 3.11-3.13 | ci/runtime.yml | `tox` | `ci runtime-matrix` | All supported versions block; EOL versions are removed deliberately. |
 | Dependency and supply-chain audit | pip-audit 2.x | requirements.lock | `pip-audit` | `ci audit` | High severity blocks; owned exceptions expire in 30 days. |
-| Compatibility Conformance Suite | pytest 9.x | tests/conformance | `pytest tests/conformance` | `ci conformance` | Selects active slice and capability tags; validates envelopes. |
+| Compatibility Conformance Suite | pytest 9.x | tests/compatibility | `pytest tests/compatibility` | `ci conformance` | Selects active slice and capability tags; validates envelopes. |
 | API Conformance Suite and Usage Guide | pytest 9.x | tests/api | `pytest tests/api` | `ci api` | Coverage partition, operation no-drift, real adapter, and guide drift block. |
-| Database-backed verification | pytest 9.x | tests/database | `pytest tests/database` | `ci database` | Required profiles run; every skipped check is reported with its reason. |
+| Database-backed verification | pytest 9.x | pyproject.toml | `pytest -m db` | `ci database` | Required profiles run; every skipped check is reported with its reason. |
 
-**Static verification:** `just static` runs in blocking CI job `ci static`.
-
-**Full verification:** `just verify` reports every run, failed, and skipped check
-with a reason.
+- **Scheduling classes.** `dbfree` and `db`, decided per item by whether the
+  item's fixture closure reaches the provisioned database.
+- **Aggregate `dbfree` command.** `example-check-dbfree` runs every
+  database-free row above in blocking CI job `ci dbfree`.
+- **Aggregate `db` command.** `example-check-db` runs every database-backed row
+  above in blocking CI job `ci database`.
+- **Complete verification command.** `example-check` composes both class
+  aggregates and reports every run, failed, and skipped check with a reason.
