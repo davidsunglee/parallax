@@ -4,19 +4,24 @@
 # together. Each module (core/, reference-harness/, languages/<lang>/) uses its
 # own native toolchain; this file only fans out into them.
 #
-# Every public recipe reads `<scope>-<operation>[-<qualifier>]`, and the sections
-# below follow the same order every time: configuration, repository-wide gates,
-# introspection and reports, then one section per scope — `core-`, `harness-`,
-# and the language scopes alphabetically.
+# The sections below follow the same order every time: configuration,
+# repository-wide gates, introspection and reports, then one section per scope —
+# `core-`, `harness-`, and the language scopes alphabetically.
 #   (bare)     repository-wide gates, reports, and graph introspection
 #   core-      validation of the core spec + compatibility corpus
 #   harness-   the reference harness's own code health and test suite
 #   python-    the Python implementation (future: java-, rust-, ...)
 #
+# Every public recipe reads `<scope>-<operation>[-<qualifier>]`, drawing its
+# operation from the closed vocabulary in `core/spec/language-testing.md` — the
+# normative contract for the grammar, the roles, and the scheduling partition.
+# Three stand outside it: `default`, which is the listing entry point rather
+# than a verification command, and the Python scope's `python-static` /
+# `python-verify`, which each bundle several operations under one name.
+#
 # A scope names the subject under validation, not the module implementing it:
 # the `core-*` tools live in the harness, and `harness-*` is the harness's own
-# health. `core/spec/language-testing.md` is the normative contract for the
-# grammar, the roles, and the scheduling partition.
+# health.
 #
 # Runtime and scheduling classes are declared as `[metadata("runtime:<class>")]`
 # and `[metadata("scheduling:<class>")]`, which `just show-gates` reads.
@@ -101,18 +106,9 @@ core-check-schemas:
     cd {{harness}} && uv run python -m reference_harness.schema_validate ../core/compatibility
     cd {{harness}} && uv run python -m reference_harness.sql_lint ../core/compatibility
 
-# The canonical-input smoke check for the language-contract diagnostics: the
-# slice-report cross-check over every canonical claim, the closed-vocabulary
-# drift guards (the m-case-format.md <-> compatibility-case.schema.json
-# rejectedRule vocabulary, and the m-core.md <-> m-descriptor.md <->
-# metamodel.schema.json neutral-type vocabulary), the m-descriptor
-# ingestion/export contract gate (the descriptor-errors fixture set and
-# corpus-wide byte-deterministic export), the retired-temporal-vocabulary
-# deny-list over the whole active tree, and the case comment-placement gate
-# (header-comment-only compatibility cases).
-#
 # Each diagnostic's own tests live in the harness suite, so `harness-test-dbfree`
-# owns them and this recipe stays one operation over one subject.
+# owns them and this recipe stays one operation over one subject: running the
+# diagnostics against the canonical inputs they govern.
 [metadata("runtime:fast")]
 [doc("Every language-contract diagnostic against the real core spec and corpus.")]
 core-check-contract-tools:
@@ -188,12 +184,6 @@ harness-test-contract-tools:
 # are pinned by languages/python/spec/python.md §10.
 # ===========================================================================
 
-# Every database-free §10 row: ruff (lint + format check), Pyright strict, the
-# generated import-linter forbidden-edge complement (DAG-sync check) +
-# lint-imports, unit tests + branch coverage + diff-cover, the built-artifact /
-# clean-install / api-surface proofs, dead-code scan, and the supply-chain
-# audit. The Docker-free compile-sweep row joins here in COR-3 Phase 5.
-#
 # `check_untracked_sources.py` runs before the coverage rows on purpose:
 # diff-cover derives its line inventory from git, so an untracked production
 # module scores zero changed lines and `--fail-under 100` passes vacuously over
@@ -222,11 +212,8 @@ python-static:
     cd {{python}} && uv lock --check
     cd {{python}} && uv run pip-audit
 
-# Static plus every database-backed §10 row (Docker): the pg-full run sweep,
-# provider contract, adapter smoke, and API conformance. Those lanes come
-# online in COR-3 Phase 5+ (with the skip-reporting summary block that forbids
-# silent database-backed skips); until then the markers collect nothing and
-# pytest's no-tests exit code (5) is tolerated.
+# The trailing `|| [ "$?" -eq 5 ]` tolerates pytest's no-tests exit code, which
+# the selection returns whenever none of the four markers it names is present.
 [doc("Every database-free Python quality row plus the database-backed ones (Docker).")]
 python-verify: python-static
     cd {{python}} && uv run pytest -m "conformance or provider_contract or adapter_smoke or api_conformance" || [ "$?" -eq 5 ]

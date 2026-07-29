@@ -197,7 +197,7 @@ def test_the_shared_corpus_is_parsed_at_most_once_per_process(yaml_reads: list[P
 def test_an_unresolved_spelling_of_a_root_does_not_reparse(yaml_reads: list[Path]) -> None:
     """The cache keys on ``.resolve()``, so an equivalent spelling is one entry.
 
-    Every test module spells the root as a fixed-depth ``parents[2]`` walk, but a
+    Every test module spells the root as a fixed-depth ``parents`` walk, but a
     CLI caller passes whatever was on the command line; keying on the raw path
     would hand a second full parse to a ``..``-containing or symlinked spelling of
     the very same directory.
