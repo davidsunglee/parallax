@@ -101,8 +101,8 @@ _NAVIGATE_READS: Final[frozenset[str]] = frozenset(
 # Polymorphic relationship-navigation reads (m-navigate x m-inheritance): the TPH
 # abstract-root/abstract-subtype/narrowed-to-concrete/narrowed-to-abstract-subtype
 # hops over animal.yaml (060-063) and the TPCS grouped-OR abstract-root/narrowed
-# hops over document.yaml (070-071) — all row-form. The 3 narrowed-deep-fetch
-# inheritance reads (065-067) stay OUT of this set for the same declared-run-only
+# hops over document.yaml (070-071) — all row-form. The 4 narrowed-deep-fetch
+# inheritance reads (065-068) stay OUT of this set for the same declared-run-only
 # reason as the navigate deep-fetch reads above.
 # -110 is -062's bind-order sibling: the same narrowed-to-concrete hop, but with a
 # REAL branch predicate, so the subquery carries a user bind AND the injected tag

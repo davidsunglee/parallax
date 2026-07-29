@@ -29,12 +29,16 @@ temporal propagation can never drift from a navigation filter's.
 
 Levels form a **trie** over the declared paths: each ``PathSegment`` is looked
 up (or inserted) as a child of its parent level (the root, or an earlier level)
-keyed by ``(the segment's relationship reference, the resolved effective
-concrete-subtype set)`` — the pair ``m-deep-fetch.md`` fixes as dedup identity.
-Two paths sharing a prefix therefore walk into the SAME trie node and never
-duplicate a level; a broad and a narrowed hop over the same relationship, or two
-hops narrowed to different concrete sets, resolve to DIFFERENT keys and become
-distinct levels, each counting toward `L`.
+keyed by ``(the segment's relationship reference, whether a narrow was AUTHORED,
+the resolved effective concrete-subtype set)`` — the dedup identity
+``m-deep-fetch.md`` fixes, with the authored flag carried alongside the resolved
+set because a segment's own view key is derived from it. Two paths sharing a
+prefix therefore walk into the SAME trie node and never duplicate a level; two
+hops narrowed to different concrete sets resolve to DIFFERENT keys, and a broad
+hop is never the same hop as an authored narrow over the same relationship —
+including a REDUNDANT narrow resolving to the target's entire effective set,
+which returns the same rows under a distinct bracketed view key. Each distinct
+key counts toward `L`.
 
 ## Back-reference cycles (m-case-format "Back-reference cycles")
 
@@ -243,7 +247,7 @@ def _new_levels() -> list[FetchLevel]:
     return []
 
 
-def _new_children() -> dict[tuple[int, str, tuple[EntityIdentity, ...]], int]:
+def _new_children() -> dict[tuple[int, str, bool, tuple[EntityIdentity, ...]], int]:
     return {}
 
 
@@ -261,7 +265,7 @@ class _PlanBuilder:
     families: InheritanceFacet
     root_pins: Mapping[TemporalDimension, str]
     levels: list[FetchLevel] = field(default_factory=_new_levels)
-    _children: dict[tuple[int, str, tuple[EntityIdentity, ...]], int] = field(
+    _children: dict[tuple[int, str, bool, tuple[EntityIdentity, ...]], int] = field(
         default_factory=_new_children
     )
     _ancestor_families: dict[int, frozenset[EntityIdentity]] = field(
@@ -293,7 +297,8 @@ class _PlanBuilder:
         direction = navigate.resolve_relationship(segment.rel, owner.identity, self.model)
         related_entity = _entity(self.model, direction.join.target.entity)
         position = _resolve_position(self.families, related_entity, segment)
-        key = (parent_id, segment.rel, position)
+        narrowed = bool(segment.narrow)
+        key = (parent_id, segment.rel, narrowed, position)
         existing = self._children.get(key)
         if existing is not None:
             return existing
@@ -303,7 +308,7 @@ class _PlanBuilder:
         is_back_reference = family in parent_ancestors
 
         _, _, rel_local = segment.rel.rpartition(".")
-        attach_key = _view_key(rel_local, bool(segment.narrow), position, self.families)
+        attach_key = _view_key(rel_local, narrowed, position, self.families)
         to_many = direction.cardinality is Cardinality.ONE_TO_MANY
         parent_column = _attribute_column(self.families, direction.join.source)
         parent_ref: ParentRef = RootRef() if parent_id == _ROOT_ID else LevelRef(parent_id)

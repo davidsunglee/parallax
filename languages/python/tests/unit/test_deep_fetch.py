@@ -117,6 +117,22 @@ def test_equivalent_narrowings_dedup_to_one_hop() -> None:
     assert plan.levels[0].attach_key == "pets[Cat,Dog]"
 
 
+def test_broad_and_a_redundant_narrow_are_distinct_levels_filling_both_views() -> None:
+    # `Person.pets` targets Pet, whose effective concrete set is exactly {Cat, Dog},
+    # so `to: [Pet]` is REDUNDANT — it resolves to the very set the broad hop
+    # already reaches, and both levels read the same rows. They are still TWO
+    # levels: the view key is derived from whether a narrow was AUTHORED, so keying
+    # identity on the resolved set alone would merge them and leave one view
+    # unpopulated (m-deep-fetch, case m-inheritance-068).
+    paths = (_path(_seg("Person.pets")), _path(_seg("Person.pets", ("Pet",))))
+    plan = _plan(ANIMAL, "Person", paths)
+    assert [level.attach_key for level in plan.levels] == ["pets", "pets[Cat,Dog]"]
+    assert {level.child_target for level in plan.levels} == {"parallax.compatibility.Pet"}
+    # Authoring order decides only which view comes first, never how many hops.
+    reversed_plan = _plan(ANIMAL, "Person", tuple(reversed(paths)))
+    assert [level.attach_key for level in reversed_plan.levels] == ["pets[Cat,Dog]", "pets"]
+
+
 def test_two_different_narrow_sets_are_distinct_levels() -> None:
     plan = _plan(
         ANIMAL,

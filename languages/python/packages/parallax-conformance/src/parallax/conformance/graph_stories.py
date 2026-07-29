@@ -189,6 +189,20 @@ def equivalent_narrow_spellings_dedupe_to_one_view(db: Database) -> Snapshot[Any
     )
 
 
+def a_redundant_narrow_populates_a_view_beside_the_broad_one(db: Database) -> Snapshot[Any]:
+    """A broad hop and a REDUNDANT narrow over the same relationship stay TWO
+    hops (`m-inheritance-068`): ``narrow(Pet)`` resolves to the very
+    ``{Cat, Dog}`` set the broad ``pets`` hop already reaches, so both views
+    hold the same pets — under ``pets`` and ``pets[Cat,Dog]`` respectively. A
+    segment's view key follows whether a narrow was AUTHORED, never what it
+    resolves to."""
+    return db.find(
+        AnimalOwnerPerson.where().include(
+            AnimalOwnerPerson.pets, AnimalOwnerPerson.pets.narrow(Pet)
+        )
+    )
+
+
 def distinct_narrowed_views_populate_independently(db: Database) -> Snapshot[Any]:
     """Two narrowings to DIFFERENT concrete sets stay two distinct views
     (`m-inheritance-067`): ``pets[Dog]`` and ``pets[Cat]`` populate
@@ -430,6 +444,12 @@ GRAPH_STORIES: tuple[GraphStory, ...] = (
         "Two distinct narrowed views over the same relationship populate independently",
         "animal",
         distinct_narrowed_views_populate_independently,
+    ),
+    GraphStory(
+        "m-inheritance-068",
+        "A redundant narrow populates its own view beside the broad relationship",
+        "animal",
+        a_redundant_narrow_populates_a_view_beside_the_broad_one,
     ),
     GraphStory(
         "m-value-object-028",

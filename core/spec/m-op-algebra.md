@@ -399,11 +399,11 @@ position is the relationship target (implicit) and a hop fetches a whole
 resolve within the relationship target's effective set
 (`narrow-outside-relationship-target`). The normative guarantee is **one SQL
 statement per relationship level** (N+1 elimination): the root query plus one
-statement per distinct hop, where hop identity is the pair **(relationship,
-effective concrete set)** — a broad hop and a narrowed hop over the same
-relationship, or two hops narrowed to different sets, are distinct; equivalent
-narrow spellings resolving to the same set converge. Paths sharing a hop fetch it
-**once**. This is specified in full in [`m-deep-fetch.md`](m-deep-fetch.md) and
+statement per distinct hop, where hop identity is the triple **(relationship,
+whether a narrow was authored, effective concrete set)** — a broad hop and any
+authored narrow over the same relationship, or two hops narrowed to different
+sets, are distinct; equivalent narrow spellings resolving to the same set
+converge. Paths sharing a hop fetch it **once**. This is specified in full in [`m-deep-fetch.md`](m-deep-fetch.md) and
 proven by the round-trip-count layer of the compatibility harness
 (`m-case-format`).
 

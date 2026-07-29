@@ -24,7 +24,7 @@ from typing import Any
 import pytest
 
 from reference_harness.case import Case, load_model
-from reference_harness.case_runner import CaseFailure, _materialize_family_variant
+from reference_harness.case_runner import CaseFailure, _hop_key_of, _materialize_family_variant
 from reference_harness.inheritance import (
     NARROW_EMPTY_EFFECTIVE_SET,
     NARROW_OUTSIDE_POSITION,
@@ -830,6 +830,32 @@ def test_resolve_hop_effective_set_broad_and_narrowed() -> None:
         True,
     )
     assert resolve_hop_effective_set(family, "Person.pets", ["Dog"]) == (["Dog"], True)
+
+
+def test_hop_key_separates_a_broad_hop_from_a_redundant_narrow() -> None:
+    # `Person.pets` targets Pet, whose effective concrete set is exactly {Cat, Dog},
+    # so `narrow: {to: [Pet]}` is REDUNDANT: it resolves to the very set the broad
+    # hop already reaches. The two hops nonetheless stay distinct, because a
+    # segment's view key is derived from whether a narrow was AUTHORED — `pets`
+    # versus `pets[Cat,Dog]` — so hop identity must carry that flag and cannot key
+    # on the resolved set alone (m-deep-fetch, case m-inheritance-068).
+    family = Family(_animal_defs())
+    broad_set, broad_narrowed = resolve_hop_effective_set(family, "Person.pets", None)
+    redundant_set, redundant_narrowed = resolve_hop_effective_set(family, "Person.pets", ["Pet"])
+    assert broad_set == redundant_set == ["Cat", "Dog"]
+    assert (broad_narrowed, redundant_narrowed) == (False, True)
+
+    broad_key = _hop_key_of("Person.pets", broad_set, broad_narrowed)
+    redundant_key = _hop_key_of("Person.pets", redundant_set, redundant_narrowed)
+    assert broad_key != redundant_key
+    assert narrowed_view_key(family, "Person.pets", redundant_set) == "pets[Cat,Dog]"
+
+    # Two AUTHORED narrows resolving to that same set still converge on one hop —
+    # dedup of equivalent spellings applies between two narrowed hops only.
+    equivalent_set, equivalent_narrowed = resolve_hop_effective_set(
+        family, "Person.pets", ["Cat", "Dog"]
+    )
+    assert _hop_key_of("Person.pets", equivalent_set, equivalent_narrowed) == redundant_key
 
 
 def test_resolve_hop_outside_relationship_target_is_rejected() -> None:
