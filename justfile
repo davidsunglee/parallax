@@ -7,8 +7,7 @@
 # Recipes are grouped by scope. Repo-wide gates and reports stay bare; every
 # other recipe carries a scope prefix so its category is obvious and future
 # languages slot in cleanly:
-#   (bare)     repo-wide gates and reports: verify, lint, lint-md, matrix,
-#              show-gates
+#   (bare)     repo-wide gates and reports
 #   core-      validation of the core spec + compatibility corpus
 #   oracle-    the Python reference harness (its own checks + running the oracle)
 #   python-    the Python implementation (future: java-, rust-, ...)
