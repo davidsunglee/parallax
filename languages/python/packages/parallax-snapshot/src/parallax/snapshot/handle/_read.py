@@ -209,7 +209,10 @@ def find(
     — a plain snapshot read, or the source find behind a scenario `mutate`
     action). Canonicalizes the root query (`m-temporal-read` + `m-navigate`,
     composed here), compiles and executes it, then for each
-    planned level: gathers the distinct non-null parent keys; an empty gathered
+    planned level: restricts the parent rows to the ones a path-root guard admits
+    (`FetchLevel.source_position`, m-deep-fetch — an excluded parent contributes no
+    key and receives no attachment, so its view stays unset); gathers the distinct
+    non-null parent keys; an empty gathered
     set attaches the empty/null relationship result and issues no child SQL; a
     back-reference level issues no SQL either (resolved via the assembler's own
     graph-local identity map); otherwise compiles and executes ONE child query
@@ -256,8 +259,8 @@ def find(
     level_rows: list[Sequence[Row]] = []
     level_nodes: list[list[materialize.Node]] = []
     for level in plan_.levels:
-        parent_rows, parent_nodes = _parent_data(
-            level.parent, root_rows, root_nodes, level_rows, level_nodes
+        parent_rows, parent_nodes = _guarded_parents(
+            level, *_parent_data(level.parent, root_rows, root_nodes, level_rows, level_nodes)
         )
         if level.is_back_reference:
             nodes = assembler.attach_level(level, parent_nodes, parent_rows, None)
@@ -407,6 +410,33 @@ def _parent_data(
     if isinstance(parent, deep_fetch.RootRef):
         return root_rows, root_nodes
     return level_rows[parent.index], level_nodes[parent.index]
+
+
+def _guarded_parents(
+    level: deep_fetch.FetchLevel,
+    parent_rows: Sequence[Row],
+    parent_nodes: Sequence[materialize.Node],
+) -> tuple[Sequence[Row], Sequence[materialize.Node]]:
+    """The parent rows and nodes a path-root guard admits into ``level``
+    (m-deep-fetch "Path-root guards").
+
+    A guard is a SOURCE filter, not a view: it selects which already-materialized
+    parents this level gathers keys from and attaches to, so an excluded parent
+    never sees the level's ``attach_key`` at all — the closed-world distinction
+    between "no such related row" and "this object never participated". Selection
+    is by each parent's OWN resolved concrete Entity, which is exactly what a
+    guard's resolved source set enumerates. An unguarded level returns both
+    sequences unchanged.
+    """
+    if level.source_position is None:
+        return parent_rows, parent_nodes
+    admitted = frozenset(level.source_position)
+    pairs = [
+        (row, node)
+        for row, node in zip(parent_rows, parent_nodes, strict=True)
+        if node.resolved_entity in admitted
+    ]
+    return [row for row, _ in pairs], [node for _, node in pairs]
 
 
 def _distinct_keys(rows: Sequence[Row], column: str) -> list[op_algebra.Scalar]:

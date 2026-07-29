@@ -49,15 +49,30 @@
       }
     },
     "navigationPath": {
-      "description": "ONE path to eager-fetch: a CLOSED object carrying the hops to traverse under its required `segments` member, e.g. { segments: [{ rel: 'Order.items' }] } (one hop) or { segments: [{ rel: 'Order.items' }, { rel: 'OrderItem.product' }] } (multi-hop). `segments` is an ordered, NON-EMPTY list read left to right from the queried entity, each entry a closed object (`pathSegment`) rather than a bare string, so broad and narrowed hops share one uniform shape; a polymorphic hop MAY carry `narrow` (subtype narrowing of that hop's target). The object — rather than a bare segment array — is the single structural carrier for a path, so what qualifies the path as a whole stays distinguishable from what qualifies one hop.",
+      "description": "ONE path to eager-fetch: a CLOSED object carrying the hops to traverse under its required `segments` member, e.g. { segments: [{ rel: 'Order.items' }] } (one hop) or { segments: [{ rel: 'Order.items' }, { rel: 'OrderItem.product' }] } (multi-hop), plus the OPTIONAL path-root `narrow` that guards which queried objects the path starts from. `segments` is an ordered, NON-EMPTY list read left to right from the queried entity, each entry a closed object (`pathSegment`) rather than a bare string, so broad and narrowed hops share one uniform shape; a polymorphic hop MAY carry `narrow` (subtype narrowing of that hop's target). The object — rather than a bare segment array — is the single structural carrier for a path, so what qualifies the path as a whole stays distinguishable from what qualifies one hop. The two narrow positions are deliberately OPPOSITE: the path-root narrow (`pathRootNarrow`) guards SOURCE objects and creates NO view key, while a segment narrow (`pathNarrow`, on a `pathSegment`) narrows one hop's TARGET and creates a distinct narrowed view.",
       "type": "object",
       "additionalProperties": false,
       "required": ["segments"],
       "properties": {
+        "narrow": { "$ref": "#/$defs/pathRootNarrow" },
         "segments": {
           "type": "array",
           "minItems": 1,
           "items": { "$ref": "#/$defs/pathSegment" }
+        }
+      }
+    },
+    "pathRootNarrow": {
+      "description": "The subtype guard of a deep-fetch path's ROOT position: restrict the path to the queried objects whose concrete subtype is in the resolved set, without changing the read's own result set (m-inheritance, m-deep-fetch). Unlike `pathNarrow` it carries `entity` as well as `to`, because the root position is NAMED rather than implied by a relationship — `entity` names the polymorphic position the guard applies to and is CLAMPED to the read's active position exactly as the operation-position `narrow` node's is, never re-widening it (`narrow-outside-position`); a `to` resolving to nothing is `narrow-empty-effective-set`. A root guard creates NO view key: every hop of a guarded path populates the same ordinary (or segment-narrowed) view the unguarded spelling would, on FEWER root objects — so `include(Dog.owner, Cat.owner)` fills the ordinary `owner` view on disjoint root objects and there is no `owner[Dog]` view. Hop identity at the root position therefore keys on the RESOLVED SOURCE SET rather than on whether a guard was authored: two guards resolving to the same set are one hop, a guard admitting every root object IS the broad path, and every proper guard differs from broad automatically because it resolves to a strict subset.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["entity", "to"],
+      "properties": {
+        "entity": { "$ref": "#/$defs/entityName" },
+        "to": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/entityName" }
         }
       }
     },

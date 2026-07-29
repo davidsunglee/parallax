@@ -40,18 +40,34 @@ including a REDUNDANT narrow resolving to the target's entire effective set,
 which returns the same rows under a distinct bracketed view key. Each distinct
 key counts toward `L`.
 
+A path may additionally carry a **root guard** (``NavigationPath.narrow``), which
+restricts the queried objects the path starts from. It joins the key at the ROOT
+position only, and it keys on the **resolved source set** rather than on whether a
+guard was authored — the deliberate opposite of the segment rule above, because a
+guard creates no view of its own. Two guards resolving to the same concretes are
+therefore one hop, a guard admitting every root object IS the broad path, and every
+proper guard resolves to a strict subset and separates automatically.
+
 ## Back-reference cycles (m-case-format "Back-reference cycles")
 
 While inserting a path's segments, this module tracks the chain of relationship
 **target families** already reached on that same declared path (the root's own
-family first). A segment whose resolved target family matches one already on
-that chain is a **back-reference**: m-snapshot-read's graph-local identity
-guarantees its rows are — by construction — exactly the already-materialized
-ancestor's own rows (reached by walking the SAME correlation FK backwards), so
-the level is marked :attr:`FetchLevel.is_back_reference` and carries no child
-query at all — the assembler resolves it from the graph-local identity map,
-never issuing SQL for it (m-deep-fetch's "at most 1 + L" ceiling is an upper
-bound; a back-reference level costs zero).
+family first). A **to-one** segment whose resolved target family matches one
+already on that chain is a **back-reference**: the parent row itself carries the
+ancestor's key, so m-snapshot-read's graph-local identity guarantees its rows are
+— by construction — exactly the already-materialized ancestor's own rows (reached
+by walking the SAME correlation FK backwards). Such a level is marked
+:attr:`FetchLevel.is_back_reference` and carries no child query at all — the
+assembler resolves it from the graph-local identity map, never issuing SQL for it
+(m-deep-fetch's "at most 1 + L" ceiling is an upper bound; a back-reference level
+costs zero).
+
+A **to-many** segment revisiting a family is NOT a back-reference, even though it
+revisits: its rows are gathered by the CHILD's own foreign key to the parent, so
+they are whatever that key selects rather than the ancestor the path arrived
+from — the owner of the Dog a path reached may own Dogs the read never
+materialized. Such a level is an ordinary queried level and costs its own
+statement.
 """
 
 from __future__ import annotations
@@ -82,6 +98,7 @@ from parallax.core.op_algebra import (
     Operation,
     OrderBy,
     OrderKey,
+    PathRootNarrow,
     PathSegment,
     Scalar,
 )
@@ -148,6 +165,15 @@ class FetchLevel:
     above — :meth:`child_operation` is never called for it; ``back_reference_family``
     names the family the assembler resolves through its identity map instead, as
     that map keys a row on its family ROOT's declared name.
+
+    ``source_position`` is the path-root guard, and the one member of this class that
+    qualifies the level's PARENT rows rather than its children: the concrete subtypes
+    a guarded path admits, so the caller gathers keys from — and attaches this level
+    to — only those parents, leaving an excluded parent's ``attach_key`` UNSET rather
+    than empty. It is carried only on a level whose parent is the root (a deeper
+    level descends from already-guarded parents) and only when the guard admits fewer
+    than every root object, so a guard resolving to the whole position is
+    indistinguishable from an unguarded path here as well as in the trie key.
     """
 
     attach_key: str
@@ -162,6 +188,7 @@ class FetchLevel:
     as_of_terms: tuple[Operation, ...] = ()
     order_keys: tuple[OrderKey, ...] = ()
     narrow_to: tuple[str, ...] | None = None
+    source_position: tuple[EntityIdentity, ...] | None = None
 
     def child_operation(self, parent_keys: Sequence[Scalar]) -> tuple[str, Operation]:
         """Build ``(child entity name, child operation)`` from the gathered ``parent_keys``.
@@ -247,7 +274,10 @@ def _new_levels() -> list[FetchLevel]:
     return []
 
 
-def _new_children() -> dict[tuple[int, str, bool, tuple[EntityIdentity, ...]], int]:
+_TrieKey = tuple[int, tuple[EntityIdentity, ...] | None, str, bool, tuple[EntityIdentity, ...]]
+
+
+def _new_children() -> dict[_TrieKey, int]:
     return {}
 
 
@@ -265,28 +295,33 @@ class _PlanBuilder:
     families: InheritanceFacet
     root_pins: Mapping[TemporalDimension, str]
     levels: list[FetchLevel] = field(default_factory=_new_levels)
-    _children: dict[tuple[int, str, bool, tuple[EntityIdentity, ...]], int] = field(
-        default_factory=_new_children
-    )
+    _children: dict[_TrieKey, int] = field(default_factory=_new_children)
     _ancestor_families: dict[int, frozenset[EntityIdentity]] = field(
         default_factory=_new_ancestor_families
     )
     # Each trie node's own Entity: the scope a segment beneath it names its
     # ``Class.relationship`` reference relative to.
     _owners: dict[int, EntityMetadata] = field(default_factory=_new_owners)
+    # The queried position's own effective concrete set, against which a path's
+    # resolved root source set is measured for properness.
+    _root_position: tuple[EntityIdentity, ...] = ()
 
     def seed_root(self, root_entity: EntityMetadata) -> None:
         self._ancestor_families[_ROOT_ID] = frozenset(
             {_entity_view(self.families, root_entity.identity).root}
         )
         self._owners[_ROOT_ID] = root_entity
+        self._root_position = _resolve_root_source(self.families, root_entity, None)
 
     def add_path(self, path: NavigationPath) -> None:
+        source = _resolve_root_source(self.families, self._owners[_ROOT_ID], path.narrow)
         parent_id = _ROOT_ID
         for segment in path.segments:
-            parent_id = self._add_segment(parent_id, segment)
+            parent_id = self._add_segment(parent_id, segment, source)
 
-    def _add_segment(self, parent_id: int, segment: PathSegment) -> int:
+    def _add_segment(
+        self, parent_id: int, segment: PathSegment, root_source: tuple[EntityIdentity, ...]
+    ) -> int:
         if parent_id != _ROOT_ID and self.levels[parent_id].is_back_reference:
             raise DeepFetchError(
                 f"{segment.rel!r}: a deep-fetch path cannot continue past a back-reference "
@@ -298,20 +333,26 @@ class _PlanBuilder:
         related_entity = _entity(self.model, direction.join.target.entity)
         position = _resolve_position(self.families, related_entity, segment)
         narrowed = bool(segment.narrow)
-        key = (parent_id, segment.rel, narrowed, position)
+        # The root source qualifies the key only at the root: a deeper level already
+        # separates by its own parent level's index.
+        source = root_source if parent_id == _ROOT_ID else None
+        key = (parent_id, source, segment.rel, narrowed, position)
         existing = self._children.get(key)
         if existing is not None:
             return existing
 
         family = _entity_view(self.families, related_entity.identity).root
         parent_ancestors = self._ancestor_families[parent_id]
-        is_back_reference = family in parent_ancestors
+        to_many = direction.cardinality is Cardinality.ONE_TO_MANY
+        is_back_reference = family in parent_ancestors and not to_many
 
         _, _, rel_local = segment.rel.rpartition(".")
         attach_key = _view_key(rel_local, narrowed, position, self.families)
-        to_many = direction.cardinality is Cardinality.ONE_TO_MANY
         parent_column = _attribute_column(self.families, direction.join.source)
         parent_ref: ParentRef = RootRef() if parent_id == _ROOT_ID else LevelRef(parent_id)
+        # Only a PROPER guard restricts anything; one admitting the whole queried
+        # position has already collapsed onto the broad path in the key above.
+        source_position = source if source is not None and source != self._root_position else None
 
         if is_back_reference:
             level = FetchLevel(
@@ -321,6 +362,7 @@ class _PlanBuilder:
                 parent_column=parent_column,
                 is_back_reference=True,
                 back_reference_family=family,
+                source_position=source_position,
             )
         else:
             child_target, narrow_to = _child_target(direction, position, segment)
@@ -335,6 +377,7 @@ class _PlanBuilder:
                 as_of_terms=navigate.hop_as_of_terms(related_entity, self.model, self.root_pins),
                 order_keys=_order_keys(direction, child_target),
                 narrow_to=narrow_to,
+                source_position=source_position,
             )
 
         index = len(self.levels)
@@ -415,6 +458,38 @@ def _resolve_position(
             )
         return tuple(position.concrete_subtypes)
     return tuple(_entity_view(facet, related.identity).concrete_subtypes)
+
+
+def _resolve_root_source(
+    facet: InheritanceFacet, root: EntityMetadata, narrow: PathRootNarrow | None
+) -> tuple[EntityIdentity, ...]:
+    """The concrete source set ONE path starts from (m-deep-fetch's root hop identity).
+
+    Absent a root guard the path starts from every queried object, so the source set
+    is the queried position's own effective concrete set; a guard resolves it down to
+    the guard's own ``to``. The guard's ``entity`` names the position it applies to
+    and is resolution-inert here — validation has already clamped it to the queried
+    position, and the position the planner starts from is that queried position
+    regardless of how broadly the guard spells it.
+
+    The result is the position's canonical effective set either way, so two guards
+    resolving to the same concretes yield the SAME tuple — which is what makes a
+    full-set guard indistinguishable from an unguarded path.
+    """
+    if root.inheritance is None:
+        return (root.identity,)
+    if narrow is None:
+        return tuple(_entity_view(facet, root.identity).concrete_subtypes)
+    members = tuple(
+        resolve_entity_reference(root.identity, RelativeEntityReference(name)) for name in narrow.to
+    )
+    position = facet.position(members)
+    if position is None:
+        raise DeepFetchError(
+            f"path-root narrow to {sorted(identity.canonical for identity in members)} names an "
+            "entity the model does not declare, or spans more than one inheritance family"
+        )
+    return tuple(position.concrete_subtypes)
 
 
 def _view_key(

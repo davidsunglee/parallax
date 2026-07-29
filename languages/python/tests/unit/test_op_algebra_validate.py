@@ -51,6 +51,7 @@ from parallax.core.op_algebra import (
     Or,
     OrderBy,
     OrderKey,
+    PathRootNarrow,
     PathSegment,
     Scalar,
     StringMatch,
@@ -107,7 +108,12 @@ def test_referenced_entities_collects_every_class_the_operation_names() -> None:
             dimension="validTime",
             coordinate="latest",
         ),
-        paths=(NavigationPath(segments=(PathSegment(rel="Root.leaves", narrow=("Leaf",)),)),),
+        paths=(
+            NavigationPath(
+                segments=(PathSegment(rel="Root.leaves", narrow=("Leaf",)),),
+                narrow=PathRootNarrow(entity="Trunk", to=("Branch",)),
+            ),
+        ),
     )
     assert referenced_entities(op) == frozenset(
         {
@@ -124,6 +130,8 @@ def test_referenced_entities_collects_every_class_the_operation_names() -> None:
             "Status",
             "Root",
             "Leaf",
+            "Trunk",
+            "Branch",
         }
     )
 
@@ -131,6 +139,18 @@ def test_referenced_entities_collects_every_class_the_operation_names() -> None:
 _MODEL_DIR = case_format.find_repo_root() / "core" / "compatibility" / "models"
 _ANIMAL = corpus_models.load_model(_MODEL_DIR / "animal.yaml")
 _CUSTOMER = corpus_models.load_model(_MODEL_DIR / "customer.yaml")
+# The animal family plus one abstract subtype with no concrete descendants — the
+# only way a `to` list resolves to the empty set.
+_ANIMAL_WITH_A_CHILDLESS_SUBTYPE = Metamodel(
+    entities=(
+        *_ANIMAL.entities,
+        Entity(
+            name="Ghost",
+            namespace="parallax.compatibility",
+            inheritance=Inheritance(role="abstract-subtype", parent="Animal"),
+        ),
+    )
+)
 
 
 def _validate(target: str, op: Operation, meta: Metamodel) -> None:
@@ -325,6 +345,50 @@ def test_deep_fetch_path_narrow_within_relationship_target_accepts() -> None:
         paths=(NavigationPath(segments=(PathSegment(rel="Person.pets", narrow=("Dog",)),)),),
     )
     _validate("Person", op, _ANIMAL)  # no raise
+
+
+def _rooted(narrow: PathRootNarrow | None) -> DeepFetch:
+    return DeepFetch(
+        operand=All(),
+        paths=(NavigationPath(segments=(PathSegment(rel="Animal.owner"),), narrow=narrow),),
+    )
+
+
+def test_deep_fetch_path_root_narrow_within_the_queried_position_accepts() -> None:
+    # The ROOT guard is governed by the four-step same-position rule, not by the
+    # relationship-target rule its segments follow: it names the queried position
+    # and may resolve anywhere inside it, including redundantly to all of it.
+    _validate("Animal", _rooted(PathRootNarrow(entity="Animal", to=("Dog",))), _ANIMAL)
+    _validate("Animal", _rooted(PathRootNarrow(entity="Animal", to=("Pet",))), _ANIMAL)
+    _validate("Animal", _rooted(PathRootNarrow(entity="Animal", to=("Animal",))), _ANIMAL)
+
+
+def test_deep_fetch_path_root_narrow_broadening_past_the_position_rejects() -> None:
+    # Read narrowed to Pet, guard reaching the sibling branch: the guard's `entity`
+    # is clamped to the active position first, so WildBoar is outside it.
+    op = _rooted(PathRootNarrow(entity="Animal", to=("WildBoar",)))
+    exc = _rejects(op, _ANIMAL, "Pet")
+    assert exc.rule == "narrow-outside-position"
+
+
+def test_deep_fetch_path_root_narrow_inherits_the_enclosing_narrow_position() -> None:
+    # The guard is checked against the position active where its `deepFetch` sits,
+    # so an enclosing narrow constrains it exactly as it constrains a nested narrow.
+    op = Narrow(
+        entity="Animal",
+        to=("Dog",),
+        operand=_rooted(PathRootNarrow(entity="Animal", to=("Cat",))),
+    )
+    exc = _rejects(op, _ANIMAL, "Animal")
+    assert exc.rule == "narrow-outside-position"
+
+
+def test_deep_fetch_path_root_narrow_empty_effective_set_rejects() -> None:
+    # A guard whose `to` names an abstract subtype with no concrete descendants
+    # resolves to nothing, which is the guard's own rejection, not a broadening.
+    op = _rooted(PathRootNarrow(entity="Animal", to=("Ghost",)))
+    exc = _rejects(op, _ANIMAL_WITH_A_CHILDLESS_SUBTYPE, "Animal")
+    assert exc.rule == "narrow-empty-effective-set"
 
 
 # --------------------------------------------------------------------------- #

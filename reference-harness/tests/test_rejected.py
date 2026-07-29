@@ -53,6 +53,7 @@ from reference_harness.storage_layout import (
     STORAGE_LAYOUT_TABLE_MAPPING_COLLISION,
 )
 from reference_harness.value_object_resolve import (
+    FIND_ROOT_VALUE_OBJECT,
     NESTED_LITERAL_TYPE_MISMATCH,
     NESTED_PATH_FIRST_SEGMENT_NOT_VALUE_OBJECT,
     NESTED_PATH_UNKNOWN_MEMBER,
@@ -610,6 +611,47 @@ def test_membership_literal_type_mismatch_rejected() -> None:
             _customer_entity(), {"nestedIn": {"path": "Customer.address.city", "values": [1, 2]}}
         )
     assert exc.value.rule == NESTED_LITERAL_TYPE_MISMATCH
+
+
+def test_deep_fetch_path_root_narrow_naming_a_value_object_rejected() -> None:
+    # A path-ROOT guard resolves at the queried position, so both its members name
+    # Entities. A value object has no identity, no position, and no concrete
+    # subtypes, so naming one there is the same refusal a value-object-rooted
+    # attribute reference gets — reported against the guard, not against a segment.
+    for narrow in (
+        {"entity": "address", "to": ["Customer"]},
+        {"entity": "Customer", "to": ["address"]},
+    ):
+        with pytest.raises(RejectionError) as exc:
+            validate_operation(
+                _customer_entity(),
+                {
+                    "deepFetch": {
+                        "operand": {"all": {}},
+                        "paths": [{"narrow": narrow, "segments": [{"rel": "Customer.locations"}]}],
+                    }
+                },
+            )
+        assert exc.value.rule == FIND_ROOT_VALUE_OBJECT
+
+
+def test_deep_fetch_path_root_narrow_over_entities_is_accepted() -> None:
+    # The subtype-position rules themselves belong to the inheritance walk, so a
+    # guard naming Entities passes this validator untouched.
+    validate_operation(
+        _customer_entity(),
+        {
+            "deepFetch": {
+                "operand": {"all": {}},
+                "paths": [
+                    {
+                        "narrow": {"entity": "Customer", "to": ["Customer"]},
+                        "segments": [{"rel": "Customer.locations"}],
+                    }
+                ],
+            }
+        },
+    )
 
 
 def test_scoped_where_undeclared_member_rejected() -> None:

@@ -117,6 +117,42 @@ def test_scoped_where_element_predicate_round_trips() -> None:
     assert op_algebra.serialize(op_algebra.deserialize(doc)) == doc
 
 
+def test_deep_fetch_path_root_narrow_round_trips() -> None:
+    # The path-ROOT guard rides beside `segments` rather than on one, and the two
+    # narrow positions coexist on one path: the root's `{entity, to}` and the
+    # segment's `{to}` survive the round trip independently.
+    doc: dict[str, Any] = {
+        "deepFetch": {
+            "operand": {"all": {}},
+            "paths": [
+                {
+                    "narrow": {"entity": "Animal", "to": ["Pet"]},
+                    "segments": [
+                        {"rel": "Animal.owner"},
+                        {"rel": "Person.pets", "narrow": {"to": ["Dog"]}},
+                    ],
+                }
+            ],
+        }
+    }
+    node = op_algebra.deserialize(doc)
+    path = cast("op_algebra.DeepFetch", node).paths[0]
+    assert path.narrow == op_algebra.PathRootNarrow(entity="Animal", to=("Pet",))
+    assert path.segments[1].narrow == ("Dog",)
+    assert op_algebra.serialize(node) == doc
+
+
+def test_deep_fetch_path_without_a_root_narrow_round_trips_unguarded() -> None:
+    # The guard is optional, so an unguarded path must come back with no `narrow`
+    # key at all rather than an empty or defaulted one.
+    doc: dict[str, Any] = {
+        "deepFetch": {"operand": {"all": {}}, "paths": [{"segments": [{"rel": "Order.items"}]}]}
+    }
+    node = op_algebra.deserialize(doc)
+    assert cast("op_algebra.DeepFetch", node).paths[0].narrow is None
+    assert op_algebra.serialize(node) == doc
+
+
 def test_order_key_authored_direction_round_trips() -> None:
     # An explicitly authored `direction` (either `asc` or `desc`) serializes back
     # verbatim (the corpus authors it explicitly on every operation orderBy key).
@@ -196,6 +232,10 @@ def test_order_key_defaulted_direction_round_trips() -> None:
                 "each path `segments` must be a non-empty list",
             ),
             (
+                {"deepFetch": {"operand": {"all": {}}, "paths": []}},
+                "`paths` must be a non-empty list",
+            ),
+            (
                 {
                     "deepFetch": {
                         "operand": {"all": {}},
@@ -218,6 +258,59 @@ def test_order_key_defaulted_direction_round_trips() -> None:
                     }
                 },
                 r"deepFetch path narrow: unexpected key\(s\) \['x'\]",
+            ),
+            (
+                {
+                    "deepFetch": {
+                        "operand": {"all": {}},
+                        "paths": [
+                            {
+                                "narrow": {"entity": "Animal", "to": ["Dog"], "x": 1},
+                                "segments": [{"rel": "Animal.owner"}],
+                            }
+                        ],
+                    }
+                },
+                r"deepFetch path root narrow: unexpected key\(s\) \['x'\]",
+            ),
+            (
+                {
+                    "deepFetch": {
+                        "operand": {"all": {}},
+                        "paths": [
+                            {"narrow": ["Dog"], "segments": [{"rel": "Animal.owner"}]},
+                        ],
+                    }
+                },
+                "path `narrow` must be a mapping",
+            ),
+            (
+                {
+                    "deepFetch": {
+                        "operand": {"all": {}},
+                        "paths": [
+                            {
+                                "narrow": {"entity": "bad name", "to": ["Dog"]},
+                                "segments": [{"rel": "Animal.owner"}],
+                            }
+                        ],
+                    }
+                },
+                "not a valid entity name",
+            ),
+            (
+                {
+                    "deepFetch": {
+                        "operand": {"all": {}},
+                        "paths": [
+                            {
+                                "narrow": {"entity": "Animal", "to": []},
+                                "segments": [{"rel": "Animal.owner"}],
+                            }
+                        ],
+                    }
+                },
+                "`to` must be a non-empty list",
             ),
             # Reference-pattern enforcement (operation.schema.json $defs): each
             # reference string must match the schema pattern for its position.

@@ -177,6 +177,11 @@ class Animal(
     id: Attr[int] = attr(primary_key=True)
     name: Attr[str] = attr(max_length=32)
     owner_id: Attr[int | None]
+    # A relationship target is read as a SPELLING and resolved in the hub's own
+    # candidate set, so this names `animal_owner.Person` — the owner
+    # `models/animal.yaml` declares — never this module's unrelated `Person`
+    # (`models/person.yaml`), which shares only the canonical name.
+    owner: Rel["Person | None"] = rel(reverse_of="animals")
 
 
 class Pet(Animal, namespace=_NS, inheritance=AbstractSubtype):

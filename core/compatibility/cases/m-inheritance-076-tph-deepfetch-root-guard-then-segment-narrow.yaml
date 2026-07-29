@@ -1,0 +1,95 @@
+# One path narrowing at BOTH positions: a root guard, then a segment narrow
+# (m-deep-fetch, m-inheritance).
+#
+# The single path is
+# `{ narrow: { entity: Animal, to: [Pet] }, segments: [{ rel: Animal.owner },
+# { rel: Person.pets, narrow: { to: [Dog] } }] }` — guarded at the root to the pets
+# of the family, then narrowed at its second hop to the owners' Dogs. Both hops run
+# once (`1 + L` = 3): the owner level is keyed by the owner ids gathered from the
+# Cat and Dog roots alone (10, 11 — never Carol's 12, which the guard excludes), and
+# the pets level descends from those already-guarded owners, so it needs no guard of
+# its own. The semantic distinction the case pins down is that the two positions
+# compose while keeping OPPOSITE view semantics: the root guard contributes no key,
+# so Rex, Fido, and Whiskers reach their owner under the ordinary `owner` view, while
+# the segment narrow contributes the derived `pets[Dog]` key on those owners — never
+# marking the broad `pets` relationship loaded. Tusker, excluded at the root, carries
+# no `owner` key and therefore no branch of this path at all.
+model: models/animal.yaml
+tags: [m-deep-fetch, m-inheritance, m-op-algebra, m-sql, table-per-hierarchy, narrow, deep-fetch, familyVariant, slice-snapshot-1, slice-managed-1]
+shape: read
+compileEligibility:
+  mode: run-only
+  reason: query-result-dependent
+  note: "deep-fetch child levels - the guarded owner hop and the narrowed pets[Dog] hop each bind their IN-list from keys gathered from the previous level's result, so the child emissions depend on a query result"
+when:
+  targetEntity: Animal
+  operation:
+    deepFetch:
+      operand:
+        all: {}
+      paths:
+        - narrow: { entity: Animal, to: [Pet] }
+          segments:
+            - { rel: Animal.owner }
+            - { rel: Person.pets, narrow: { to: [Dog] } }
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.kind, t0.name, t0.owner_id, t0.license_id, t0.indoor, t0.bark_volume, t0.tusk_length from animal t0
+    - sql:
+        postgres: select t0.id, t0.name from person t0 where t0.id in (?, ?)
+      binds: [10, 11]
+    - sql:
+        postgres: select t0.id, t0.name, t0.owner_id, t0.license_id, t0.bark_volume from animal t0 where t0.owner_id in (?, ?) and t0.kind = ?
+      binds: [10, 11, dog]
+  referenceSql: select id, kind, name, owner_id, license_id, indoor, bark_volume, tusk_length from animal
+  graph:
+    Animal:
+      - id: 1
+        name: Rex
+        owner_id: 10
+        license_id: L-100
+        bark_volume: 7
+        indoor: null
+        tusk_length: null
+        familyVariant: Dog
+        owner:
+          id: 10
+          name: Alice
+          "pets[Dog]":
+            - { id: 1, name: Rex, owner_id: 10, license_id: L-100, bark_volume: 7 }
+      - id: 2
+        name: Fido
+        owner_id: 11
+        license_id: L-101
+        bark_volume: 3
+        indoor: null
+        tusk_length: null
+        familyVariant: Dog
+        owner:
+          id: 11
+          name: Bob
+          "pets[Dog]":
+            - { id: 2, name: Fido, owner_id: 11, license_id: L-101, bark_volume: 3 }
+      - id: 3
+        name: Whiskers
+        owner_id: 10
+        license_id: L-200
+        bark_volume: null
+        indoor: true
+        tusk_length: null
+        familyVariant: Cat
+        owner:
+          id: 10
+          name: Alice
+          "pets[Dog]":
+            - { id: 1, name: Rex, owner_id: 10, license_id: L-100, bark_volume: 7 }
+      - id: 4
+        name: Tusker
+        owner_id: 12
+        license_id: null
+        bark_volume: null
+        indoor: null
+        tusk_length: 12.50
+        familyVariant: WildBoar
+  roundTrips: 3

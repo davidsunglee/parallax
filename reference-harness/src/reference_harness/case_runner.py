@@ -54,6 +54,7 @@ from .inheritance import (
     is_abstract,
     narrowed_view_key,
     resolve_hop_effective_set,
+    resolve_root_source_set,
     tag_of,
     tag_value_to_subtype,
     validate_family,
@@ -580,10 +581,10 @@ def _resolve_rel_ref(model: Model, rel_ref: str) -> tuple[Entity, dict[str, Any]
 def _deepfetch_paths(case: Case) -> list[list[str]]:
     """The deep-fetch paths as ordered lists of ``Class.relationship`` refs.
 
-    A path is a closed object ``{segments}`` whose entries are closed
+    A path is a closed object ``{narrow?, segments}`` whose entries are closed
     ``{rel, narrow?}`` segments (m-op-algebra); this projection keeps only the ``rel``
     and is used where narrowing is irrelevant (root-entity resolution). Narrow-aware
-    hop identity is built from :func:`_deepfetch_segments`.
+    hop identity is built from :func:`_deepfetch_paths_raw`.
     """
     return [
         [segment["rel"] for segment in path["segments"]]
@@ -591,13 +592,25 @@ def _deepfetch_paths(case: Case) -> list[list[str]]:
     ]
 
 
-def _deepfetch_segments(case: Case) -> list[list[dict[str, Any]]]:
-    """The deep-fetch paths as ordered lists of raw ``{rel, narrow?}`` segments.
+def _deepfetch_paths_raw(case: Case) -> list[dict[str, Any]]:
+    """The deep-fetch paths as authored: closed ``{narrow?, segments}`` objects.
 
-    Preserves the optional per-hop ``narrow`` so the fetch machinery can derive the
-    narrowed view key and dedup identity ``(relationship hop, effective concrete set)``.
+    Preserves both narrow positions — the path-ROOT guard and each hop's own
+    ``narrow`` — so the fetch machinery can derive the narrowed view key, the root
+    participation filter, and the dedup identity built from both.
     """
-    return [list(path["segments"]) for path in case.operation["deepFetch"]["paths"]]
+    return list(case.operation["deepFetch"]["paths"])
+
+
+def _deepfetch_root_position(case: Case) -> str | None:
+    """The polymorphic position a deep fetch's paths are rooted at.
+
+    The read's own ``targetEntity`` when it names an entity of the model, which is
+    what a path-root guard clamps against; ``None`` for a case that authors none
+    (the guard then has no position to resolve in).
+    """
+    target = case.when.get("targetEntity")
+    return target if isinstance(target, str) else None
 
 
 def _deepfetch_root_operand(case: Case) -> dict[str, Any]:
@@ -802,16 +815,24 @@ def _assert_pk_allocation(case: Case, db: DatabaseProvider) -> None:
         )
 
 
+_HopKey = tuple[tuple[str, ...] | None, str, tuple[str, ...] | None]
+
+
 class _FetchStep:
     """One relationship hop = one golden statement (after the root).
 
-    A hop is identified by :attr:`hop_key` — the pair (relationship ref, effective
-    concrete set), so a BROAD hop and a NARROWED hop over the same relationship, or
-    two narrowed hops with different effective sets, are DISTINCT levels (each counts
-    toward ``L`` in ``1 + L``), while equivalent authored narrowings that resolve to
-    the same effective set DEDUPLICATE (m-deep-fetch). Its graph attach key
-    is :attr:`view_key` — the ordinary relationship name for a broad hop, the derived
-    ``<rel>[<Concrete>,<Concrete>]`` for a narrowed one.
+    A hop is identified by :attr:`hop_key` — the triple (the path's resolved ROOT
+    SOURCE SET, relationship ref, the hop's own narrowed effective set), so a BROAD
+    hop and a NARROWED hop over the same relationship, two narrowed hops with
+    different effective sets, and two paths guarded to different root sources are all
+    DISTINCT levels (each counts toward ``L`` in ``1 + L``), while equivalent
+    authored narrowings that resolve to the same set DEDUPLICATE (m-deep-fetch). Its
+    graph attach key is :attr:`view_key` — the ordinary relationship name for a broad
+    hop, the derived ``<rel>[<Concrete>,<Concrete>]`` for a narrowed one; a root
+    guard contributes NO view key at all. :attr:`root_guard` is the source set a
+    PROPER root guard restricts this hop's parent objects to, carried only on the
+    hop a guarded path starts with (a deeper hop's parents are already the guarded
+    ones) and only when the guard admits fewer than every root object.
     """
 
     def __init__(
@@ -824,10 +845,11 @@ class _FetchStep:
         cardinality: str,
         order_by: list[dict[str, Any]] | None = None,
         *,
-        hop_key: tuple[str, tuple[str, ...] | None],
+        hop_key: _HopKey,
         view_key: str,
         effective_set: list[str] | None,
         is_narrowed: bool,
+        root_guard: tuple[str, ...] | None,
         tag_column: str | None,
         tag_binds: list[Any],
         polymorphic: bool,
@@ -845,6 +867,7 @@ class _FetchStep:
         self.view_key = view_key
         self.effective_set = effective_set
         self.is_narrowed = is_narrowed
+        self.root_guard = root_guard
         self.tag_column = tag_column
         self.tag_binds = tag_binds
         self.polymorphic = polymorphic
@@ -856,31 +879,56 @@ class _FetchStep:
 
 
 def _hop_key_of(
-    rel_ref: str, effective_set: list[str] | None, is_narrowed: bool
-) -> tuple[str, tuple[str, ...] | None]:
-    """The dedup identity of a hop: ``(rel_ref, None)`` broad, ``(rel_ref, set)`` narrowed."""
-    return (rel_ref, tuple(effective_set) if (is_narrowed and effective_set is not None) else None)
+    root_source: tuple[str, ...] | None,
+    rel_ref: str,
+    effective_set: list[str] | None,
+    is_narrowed: bool,
+) -> _HopKey:
+    """The dedup identity of a hop: its path's resolved ROOT SOURCE SET, the
+    relationship, and — for a narrowed hop only — the hop's own effective set.
+
+    The two narrow positions key on deliberately different things (m-deep-fetch).
+    The SEGMENT component keys on whether a narrow was AUTHORED (``None`` broad, the
+    set narrowed), because a narrowed hop populates its own view key even when it
+    resolves to the target's entire set. The ROOT component keys on the RESOLVED
+    source set alone, because a root guard creates no view: a guard admitting every
+    root object is observationally the broad path and collapses onto it, while every
+    proper guard resolves to a strict subset and differs automatically.
+    """
+    return (
+        root_source,
+        rel_ref,
+        tuple(effective_set) if (is_narrowed and effective_set is not None) else None,
+    )
 
 
 def _fetch_steps(case: Case) -> list[_FetchStep]:
     """Ordered, de-duplicated relationship hops for a deep fetch.
 
     Each distinct hop across all paths is exactly one statement (one query per level
-    — the N+1-eliminating contract). Dedup identity is ``(relationship, effective
-    concrete set)``: paths sharing a segment prefix
+    — the N+1-eliminating contract). Dedup identity is ``(root source set,
+    relationship, effective concrete set)``: paths sharing a segment prefix
     (``{segments: [{rel: Order.items}]}`` /
     ``{segments: [{rel: Order.items}, {rel: OrderItem.statuses}]}``) fetch
     ``Order.items`` once; a broad and a narrowed hop over the same relationship, or
     two differently-narrowed hops, are DISTINCT; equivalent authored narrowings
-    (``[Pet]`` vs ``[Cat, Dog]``) converge.
+    (``[Pet]`` vs ``[Cat, Dog]``) converge — at the segment position and at the root
+    position alike. A path's root source set qualifies EVERY hop on it, because a
+    guarded path's deeper levels descend from guarded parents alone.
     """
     model = case.model
     family = Family(model.entity_defs)
     variant_map = tag_value_to_subtype(model.entity_defs)
+    root_position = _deepfetch_root_position(case)
+    root_full_set = resolve_root_source_set(family, root_position, {})
     steps: list[_FetchStep] = []
-    seen: set[tuple[str, tuple[str, ...] | None]] = set()
-    for path in _deepfetch_segments(case):
-        for segment in path:
+    seen: set[_HopKey] = set()
+    for path in _deepfetch_paths_raw(case):
+        root_source = resolve_root_source_set(family, root_position, path)
+        # A guard admitting every root object restricts nothing, so only a PROPER
+        # guard is carried as a participation filter.
+        guard = root_source if root_source != root_full_set else None
+        for index, segment in enumerate(path["segments"]):
             rel_ref = segment["rel"]
             narrow_to = segment["narrow"]["to"] if isinstance(segment.get("narrow"), dict) else None
 
@@ -919,7 +967,7 @@ def _fetch_steps(case: Case) -> list[_FetchStep]:
                 tag_column, tag_binds, polymorphic = None, [], False
                 view_key = rel_ref.split(".", 1)[1]
 
-            hop_key = _hop_key_of(rel_ref, effective_set, is_narrowed)
+            hop_key = _hop_key_of(root_source, rel_ref, effective_set, is_narrowed)
             if hop_key in seen:
                 continue
             seen.add(hop_key)
@@ -937,6 +985,7 @@ def _fetch_steps(case: Case) -> list[_FetchStep]:
                     view_key=view_key,
                     effective_set=effective_set,
                     is_narrowed=is_narrowed,
+                    root_guard=guard if index == 0 else None,
                     tag_column=tag_column,
                     tag_binds=tag_binds,
                     polymorphic=bool(polymorphic),
@@ -1615,7 +1664,7 @@ def _sorted_by_order_keys(
 def _assert_child_ordering(
     case_name: str,
     steps: list[_FetchStep],
-    children_by_step: dict[tuple[str, tuple[str, ...] | None], dict[Any, list[dict[str, Any]]]],
+    children_by_step: dict[_HopKey, dict[Any, list[dict[str, Any]]]],
 ) -> None:
     """Assert each ordered to-many level returned its children in the declared order.
 
@@ -1666,6 +1715,32 @@ def _assert_child_ordering(
                 )
 
 
+def _guarded_parents(
+    case_name: str, step: _FetchStep, parents: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """The parent rows a path-root guard admits into *step* (m-deep-fetch).
+
+    A root guard changes no statement of its own and populates no view of its own:
+    it selects which already-fetched ROOT objects the hop starts from, so the hop's
+    child statement is keyed by exactly those objects' gathered keys. Selection is
+    by the root row's own concrete subtype, which an abstract-target read carries as
+    ``familyVariant`` — a guard can only ever be a proper subset of a POLYMORPHIC
+    position, so a root read that projects no variant cannot be guarded at all.
+    """
+    if step.root_guard is None:
+        return parents
+    admitted = set(step.root_guard)
+    for row in parents:
+        if "familyVariant" not in row:
+            raise CaseFailure(
+                f"{case_name}: the path-root guard {list(step.root_guard)!r} on "
+                f"{step.rel_ref} cannot select root objects — the root read carries no "
+                f"`familyVariant`, so its own position is not polymorphic "
+                f"(m-inheritance / m-deep-fetch)."
+            )
+    return [row for row in parents if row["familyVariant"] in admitted]
+
+
 def _assert_deep_fetch(case: Case, db: DatabaseProvider) -> None:
     """Execute each level, assemble the object graph, compare to then.graph.
 
@@ -1673,8 +1748,9 @@ def _assert_deep_fetch(case: Case, db: DatabaseProvider) -> None:
     statement per relationship level (never one-per-parent). A child level is
     executed only when the previous level produces parent keys; an empty parent
     key set elides that child SQL entirely. Executed child levels are keyed by
-    the DISTINCT parent keys gathered from the previous level, and the children
-    are fanned back out in memory.
+    the DISTINCT parent keys gathered from the previous level — narrowed to the
+    root objects a path-root guard admits, which is the only place a guard is
+    observable — and the children are fanned back out in memory.
     """
     dialect = db.dialect
     statements = case.golden_statements(dialect)
@@ -1683,18 +1759,23 @@ def _assert_deep_fetch(case: Case, db: DatabaseProvider) -> None:
     root_entity = _deepfetch_root_entity(case)
     root_pins = _root_asof_pins(case)
 
-    # Level 0: the root query.
+    # Level 0: the root query. An abstract-target root resolves each row's own
+    # concrete subtype into `familyVariant` exactly as a flat abstract read does —
+    # both because the graph's root nodes carry it and because a path-root guard
+    # selects the participating roots by it.
     root_binds = case.statement_binds(0, dialect)
-    root_rows = _query_rows(db, statements[0], root_binds)
+    root_rows = _materialize_family_variant(case, _query_rows(db, statements[0], root_binds))
 
     # rows_by_entity[entity_name] -> list of result-rows fetched for that entity.
     rows_by_entity: dict[str, list[dict[str, Any]]] = {root_entity.name: root_rows}
 
     # Execute each hop once, keyed by gathered parent keys, bucketed by hop identity.
-    children_by_step: dict[tuple[str, tuple[str, ...] | None], dict[Any, list[dict[str, Any]]]] = {}
+    children_by_step: dict[_HopKey, dict[Any, list[dict[str, Any]]]] = {}
     statement_index = 1
     for step in steps:
-        parents = rows_by_entity.get(step.parent_entity.name, [])
+        parents = _guarded_parents(
+            case.path.name, step, rows_by_entity.get(step.parent_entity.name, [])
+        )
         parent_col = _column_of(step.parent_entity, step.parent_attr)
         parent_keys = sorted(
             {_coerce_identity_key(p[parent_col]) for p in parents if p.get(parent_col) is not None}
@@ -1799,7 +1880,7 @@ def _assert_deep_fetch(case: Case, db: DatabaseProvider) -> None:
     # ROOT row set of the deep fetch.
     reference_sql = case.reference_sql_for(db.dialect)
     if reference_sql is not None:
-        reference_rows = db.query(reference_sql)
+        reference_rows = _materialize_family_variant(case, db.query(reference_sql))
         root_projection = [_project_like(r, root_rows) for r in reference_rows]
         if not _rows_equal(root_projection, root_rows, case.tolerance):
             raise CaseFailure(
@@ -1972,19 +2053,24 @@ def _assemble_graph(
     case: Case,
     steps: list[_FetchStep],
     rows_by_entity: dict[str, list[dict[str, Any]]],
-    children_by_step: dict[tuple[str, tuple[str, ...] | None], dict[Any, list[dict[str, Any]]]],
+    children_by_step: dict[_HopKey, dict[Any, list[dict[str, Any]]]],
 ) -> dict[str, list[dict[str, Any]]]:
     """Build the root-keyed object graph following the deep-fetch paths.
 
     Each path is walked hop by hop; at each hop the child rows for a given parent are
     attached under the hop's VIEW KEY — the ordinary relationship name for a broad
     hop, the derived ``<rel>[<Concrete>,<Concrete>]`` for a narrowed one (m-deep-fetch).
+    A path-root guard contributes no key of its own: it withholds the path's whole
+    attachment from the root objects it excludes, so an unguarded object's view stays
+    UNSET rather than empty — the observable difference between "no such related row"
+    and "this object never participated".
     """
     root_entity = _deepfetch_root_entity(case)
     family = Family(case.model.entity_defs)
+    root_position = _deepfetch_root_position(case)
     step_by_hopkey = {step.hop_key: step for step in steps}
 
-    def seg_hop_key(segment: dict[str, Any]) -> tuple[str, tuple[str, ...] | None]:
+    def seg_hop_key(root_source: tuple[str, ...] | None, segment: dict[str, Any]) -> _HopKey:
         rel_ref = segment["rel"]
         narrow_to = segment["narrow"]["to"] if isinstance(segment.get("narrow"), dict) else None
         target = family.relationship_target(rel_ref)
@@ -1992,7 +2078,7 @@ def _assemble_graph(
             effective_set, is_narrowed = resolve_hop_effective_set(family, rel_ref, narrow_to)
         else:
             effective_set, is_narrowed = None, False
-        return _hop_key_of(rel_ref, effective_set, is_narrowed)
+        return _hop_key_of(root_source, rel_ref, effective_set, is_narrowed)
 
     # Build per-view row registries keyed by primary key so a shared hop (e.g.
     # Order.items consumed by two paths) reuses the same child objects, while two
@@ -2022,13 +2108,14 @@ def _assemble_graph(
 
     root_nodes = [node_for("", root_entity, r) for r in rows_by_entity[root_entity.name]]
 
-    for path in _deepfetch_segments(case):
+    for path in _deepfetch_paths_raw(case):
+        root_source = resolve_root_source_set(family, root_position, path)
         parent_entities = [root_entity]
         parent_nodes_levels: list[list[dict[str, Any]]] = [root_nodes]
-        for segment in path:
-            step = step_by_hopkey[seg_hop_key(segment)]
+        for segment in path["segments"]:
+            step = step_by_hopkey[seg_hop_key(root_source, segment)]
             parent_entity = parent_entities[-1]
-            parent_nodes = parent_nodes_levels[-1]
+            parent_nodes = _guarded_parents(case.path.name, step, parent_nodes_levels[-1])
             parent_col = _column_of(parent_entity, step.parent_attr)
             bucket = children_by_step[step.hop_key]
 

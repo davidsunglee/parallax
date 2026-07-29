@@ -1,0 +1,80 @@
+# Two DISJOINT path-root guards over one relationship stay two hops filling ONE view
+# (m-deep-fetch, m-inheritance).
+#
+# This is the canonical `include(Dog.owner, Cat.owner)` shape: `owner` is declared
+# once, on the abstract root Animal, and each path guards that one relationship to a
+# different concrete source set. The guards resolve to {Dog} and {Cat}, so they are
+# TWO hops — `1 + L` = 3 statements, the first keyed by the Dog roots' owner ids
+# (10, 11) and the second by the Cat root's (10) — and neither is unioned into the
+# other, which is what keeps a path's statement cost independent of its siblings.
+# The semantic distinction the case pins down is what those two hops produce: both
+# populate the SAME ordinary `owner` view, on DISJOINT root objects, because a root
+# guard guards sources rather than narrowing a target. There is no `owner[Dog]` and
+# no `owner[Cat]` key, and Alice — owner of both a Dog and a Cat — is one object
+# reached through both hops. Tusker, whom neither guard admits, carries no `owner`
+# key at all.
+model: models/animal.yaml
+tags: [m-deep-fetch, m-inheritance, m-op-algebra, m-sql, table-per-hierarchy, narrow, deep-fetch, familyVariant, slice-snapshot-1, slice-managed-1]
+shape: read
+compileEligibility:
+  mode: run-only
+  reason: query-result-dependent
+  note: "deep-fetch child levels - each guarded owner hop binds its person-table IN-list from the owner ids gathered from its own guard's rows of the root query result, so the child emissions depend on a query result"
+when:
+  targetEntity: Animal
+  operation:
+    deepFetch:
+      operand:
+        all: {}
+      paths:
+        - { narrow: { entity: Animal, to: [Dog] }, segments: [{ rel: Animal.owner }] }
+        - { narrow: { entity: Animal, to: [Cat] }, segments: [{ rel: Animal.owner }] }
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.kind, t0.name, t0.owner_id, t0.license_id, t0.indoor, t0.bark_volume, t0.tusk_length from animal t0
+    - sql:
+        postgres: select t0.id, t0.name from person t0 where t0.id in (?, ?)
+      binds: [10, 11]
+    - sql:
+        postgres: select t0.id, t0.name from person t0 where t0.id in (?)
+      binds: [10]
+  referenceSql: select id, kind, name, owner_id, license_id, indoor, bark_volume, tusk_length from animal
+  graph:
+    Animal:
+      - id: 1
+        name: Rex
+        owner_id: 10
+        license_id: L-100
+        bark_volume: 7
+        indoor: null
+        tusk_length: null
+        familyVariant: Dog
+        owner: { id: 10, name: Alice }
+      - id: 2
+        name: Fido
+        owner_id: 11
+        license_id: L-101
+        bark_volume: 3
+        indoor: null
+        tusk_length: null
+        familyVariant: Dog
+        owner: { id: 11, name: Bob }
+      - id: 3
+        name: Whiskers
+        owner_id: 10
+        license_id: L-200
+        bark_volume: null
+        indoor: true
+        tusk_length: null
+        familyVariant: Cat
+        owner: { id: 10, name: Alice }
+      - id: 4
+        name: Tusker
+        owner_id: 12
+        license_id: null
+        bark_volume: null
+        indoor: null
+        tusk_length: 12.50
+        familyVariant: WildBoar
+  roundTrips: 3

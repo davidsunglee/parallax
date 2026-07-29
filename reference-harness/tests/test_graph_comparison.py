@@ -118,10 +118,11 @@ def _orders_model():
 def _broad_hop_kwargs(rel_ref):
     """Keyword args for a BROAD (non-narrowed, non-inheritance) fetch hop."""
     return dict(
-        hop_key=(rel_ref, None),
+        hop_key=(None, rel_ref, None),
         view_key=rel_ref.split(".", 1)[1],
         effective_set=None,
         is_narrowed=False,
+        root_guard=None,
         tag_column=None,
         tag_binds=[],
         polymorphic=False,
@@ -145,21 +146,21 @@ def _items_step(order_by):
 
 def test_child_ordering_accepts_rows_in_declared_desc_order():
     step = _items_step([{"attribute": "id", "direction": "desc"}])
-    buckets = {("Order.items", None): {1: [{"id": 12}, {"id": 11}]}}
+    buckets = {(None, "Order.items", None): {1: [{"id": 12}, {"id": 11}]}}
     _assert_child_ordering("unit", [step], buckets)  # no raise
 
 
 def test_child_ordering_rejects_rows_out_of_declared_order():
     # Ascending rows are exactly what the DB returns if ORDER BY is dropped.
     step = _items_step([{"attribute": "id", "direction": "desc"}])
-    buckets = {("Order.items", None): {1: [{"id": 11}, {"id": 12}]}}
+    buckets = {(None, "Order.items", None): {1: [{"id": 11}, {"id": 12}]}}
     with pytest.raises(CaseFailure):
         _assert_child_ordering("unit", [step], buckets)
 
 
 def test_child_ordering_ignores_relationships_without_orderby():
     step = _items_step(None)
-    buckets = {("Order.items", None): {1: [{"id": 11}, {"id": 12}]}}
+    buckets = {(None, "Order.items", None): {1: [{"id": 11}, {"id": 12}]}}
     _assert_child_ordering("unit", [step], buckets)  # no raise (unordered)
 
 
@@ -172,7 +173,7 @@ def test_child_ordering_multikey_mixed_direction_with_tiebreak():
     )
     # quantity desc, then id asc within the quantity=5 tie.
     buckets = {
-        ("Order.items", None): {
+        (None, "Order.items", None): {
             1: [
                 {"id": 12, "quantity": 9},
                 {"id": 11, "quantity": 5},
@@ -184,7 +185,7 @@ def test_child_ordering_multikey_mixed_direction_with_tiebreak():
 
     # Swapping the two quantity=5 rows violates the id-asc tie-break.
     bad = {
-        ("Order.items", None): {
+        (None, "Order.items", None): {
             1: [
                 {"id": 12, "quantity": 9},
                 {"id": 13, "quantity": 5},
@@ -198,7 +199,7 @@ def test_child_ordering_multikey_mixed_direction_with_tiebreak():
 
 def test_child_ordering_accepts_empty_bucket():
     step = _items_step([{"attribute": "id", "direction": "desc"}])
-    _assert_child_ordering("unit", [step], {("Order.items", None): {}})  # no raise
+    _assert_child_ordering("unit", [step], {(None, "Order.items", None): {}})  # no raise
 
 
 class _OrderedItemsWrongOrderDb:
@@ -249,20 +250,20 @@ def test_child_ordering_skips_to_one_relationship():
 
 def test_child_ordering_places_nulls_last_ascending():
     step = _items_step([{"attribute": "id", "direction": "asc"}])
-    buckets = {("Order.items", None): {1: [{"id": 10}, {"id": 20}, {"id": None}]}}
+    buckets = {(None, "Order.items", None): {1: [{"id": 10}, {"id": 20}, {"id": None}]}}
     _assert_child_ordering("unit", [step], buckets)  # no raise
 
 
 def test_child_ordering_places_nulls_last_descending():
     step = _items_step([{"attribute": "id", "direction": "desc"}])
     # NULLs sort last even for desc: non-null descending, then NULL.
-    buckets = {("Order.items", None): {1: [{"id": 20}, {"id": 10}, {"id": None}]}}
+    buckets = {(None, "Order.items", None): {1: [{"id": 20}, {"id": 10}, {"id": None}]}}
     _assert_child_ordering("unit", [step], buckets)  # no raise
 
 
 def test_child_ordering_rejects_nulls_first():
     step = _items_step([{"attribute": "id", "direction": "asc"}])
-    buckets = {("Order.items", None): {1: [{"id": None}, {"id": 10}, {"id": 20}]}}
+    buckets = {(None, "Order.items", None): {1: [{"id": None}, {"id": 10}, {"id": 20}]}}
     with pytest.raises(CaseFailure):
         _assert_child_ordering("unit", [step], buckets)
 
@@ -275,9 +276,17 @@ def test_child_ordering_null_vs_null_tiebreak_by_next_key():
         ]
     )
     # Both NULL on key 1 → equal there → tiebroken by id asc.
-    ok = {("Order.items", None): {1: [{"id": 11, "quantity": None}, {"id": 13, "quantity": None}]}}
+    ok = {
+        (None, "Order.items", None): {
+            1: [{"id": 11, "quantity": None}, {"id": 13, "quantity": None}]
+        }
+    }
     _assert_child_ordering("unit", [step], ok)  # no raise
-    bad = {("Order.items", None): {1: [{"id": 13, "quantity": None}, {"id": 11, "quantity": None}]}}
+    bad = {
+        (None, "Order.items", None): {
+            1: [{"id": 13, "quantity": None}, {"id": 11, "quantity": None}]
+        }
+    }
     with pytest.raises(CaseFailure):
         _assert_child_ordering("unit", [step], bad)
 
@@ -285,7 +294,7 @@ def test_child_ordering_null_vs_null_tiebreak_by_next_key():
 def test_child_ordering_rejects_unprojected_orderby_key():
     # orderBy key 'sku' is not present in the returned rows → cannot verify.
     step = _items_step([{"attribute": "sku", "direction": "asc"}])
-    buckets = {("Order.items", None): {1: [{"id": 11}, {"id": 12}]}}
+    buckets = {(None, "Order.items", None): {1: [{"id": 11}, {"id": 12}]}}
     with pytest.raises(CaseFailure):
         _assert_child_ordering("unit", [step], buckets)
 

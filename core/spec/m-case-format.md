@@ -550,6 +550,21 @@ cases `then.statements` is an **ordered list** of statement entries (root plus
 the child levels that execute) rather than a single entry, and `then.graph`
 replaces (or accompanies) `then.rows`.
 
+A **path-root guard** (`m-op-algebra`'s `{ entity, to }` beside a path's
+`segments`) participates in this layer twice, and both are declared rather than
+inferred. Its level's authored `IN` binds must equal the keys gathered from the
+**guarded** root objects alone, so a guard that a case declares but an
+implementation ignores fails on the bind comparison rather than passing quietly.
+And per-path statement counts follow the guard's **resolved source set**, so
+`then.roundTrips` must be derived under the new shape rather than carried over:
+two paths whose guards resolve to the same set are **one** hop, while every other
+relation between two guards — disjoint, overlapping, or one containing the other
+— is two, even where the second fetches nothing the first did not
+(`m-deep-fetch`). Since a guard creates no view key, a case whose extra hop is
+subsumed observes it in `roundTrips` and nowhere else: its `then.graph` is
+identical to the covering path's alone, and a root object outside every guard
+carries **no** entry for that path's relationship rather than an empty one.
+
 For each deep-fetch level whose child entity is temporal, the harness derives the
 **propagated as-of binds independently** (an oracle, parallel to the ordering
 oracle): it reads the root pin from the operation's nested `asOf` nodes, matches

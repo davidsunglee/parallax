@@ -172,12 +172,26 @@ def _entity(model: Metamodel, name: str) -> EntityMetadata:
 
 
 def _relationships(model: Metamodel, entity: EntityMetadata) -> tuple[RelationshipMetadata, ...]:
-    """``entity``'s navigable relationship directions (the Relationship Facet's
-    own per-Entity value): today's corpus declares relationships only on the
-    non-participant owner side, so an Entity's own directions are its complete
-    navigable set."""
-    directions = relationship.view(model).relationships(entity.identity)
-    return tuple(directions) if directions is not None else ()
+    """``entity``'s navigable relationship directions, INHERITED ones included.
+
+    A relationship declared on an inheritance ancestor is reached by every concrete
+    descendant under the ancestor's own relationship identity (`m-inheritance`
+    "Inherited members"), and a descendant never redeclares it — so the navigable
+    set is the ancestry chain's directions, root first, each name taken from the
+    nearest declaration. A standalone Entity is its own whole chain, which makes
+    this the identity for one.
+    """
+    facet = relationship.view(model)
+    view = inheritance.view(model).entity(entity.identity)
+    chain = tuple(view.ancestry) if view is not None else (entity.identity,)
+    directions: list[RelationshipMetadata] = []
+    seen: set[str] = set()
+    for identity in chain:
+        for direction in facet.relationships(identity) or ():
+            if direction.identity.name not in seen:
+                seen.add(direction.identity.name)
+                directions.append(direction)
+    return tuple(directions)
 
 
 def _identity_cache_key(node: materialize.Node, concrete_name: str, model: Metamodel) -> object:

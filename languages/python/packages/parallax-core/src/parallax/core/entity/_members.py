@@ -44,7 +44,7 @@ from parallax.core.metamodel import (
     TablePerHierarchy,
     entity_by_name,
 )
-from parallax.core.op_algebra import PathSegment
+from parallax.core.op_algebra import PathRootNarrow, PathSegment
 
 __all__ = [
     "MANY_TO_ONE",
@@ -480,6 +480,12 @@ class Rel[T]:
 
     ``target`` is the canonical spelling of the Entity this relationship points
     at, so a continuing hop keeps the namespace a local name would drop.
+
+    A subtype does not redeclare an inherited relationship, so class access
+    through one (``Dog.owner`` where ``Animal`` declares ``owner``) reaches this
+    same descriptor and keeps the one relationship identity ``Animal.owner``. What
+    the accessing class adds is the path-ROOT guard: the path applies to that
+    subtype's objects alone.
     """
 
     __slots__ = ("_py_name", "_ref", "_target")
@@ -498,6 +504,7 @@ class Rel[T]:
             return RelationshipPath(
                 segments=(PathSegment(rel=str(self._ref)),),
                 target=self._target,
+                root_narrow=self._root_narrow(_owner),
                 binding=None if _owner is None else binding_of(_owner),
                 resolve_hop=_hop,
             )
@@ -508,3 +515,18 @@ class Rel[T]:
 
     def __set__(self, obj: object, value: object) -> None:
         obj.__dict__[self._py_name] = value
+
+    def _root_narrow(self, owner: type | None) -> PathRootNarrow | None:
+        """The path-root guard class access through ``owner`` authors, or ``None``.
+
+        Access through the declaring class itself guards nothing — the path already
+        starts from every object of that position. Access through any other class is
+        an inherited reach, so the guard names the declaring position and narrows it
+        to the accessing subtype. The accessing class's own declared identity answers
+        both, so this module resolves nothing and reaches no model.
+        """
+        identity = getattr(owner, "identity", None)
+        name = getattr(identity, "name", None)
+        if not isinstance(name, str) or name == self._ref.entity:
+            return None
+        return PathRootNarrow(entity=self._ref.entity, to=(name,))

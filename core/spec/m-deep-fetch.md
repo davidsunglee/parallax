@@ -20,8 +20,9 @@ own read (`m-value-object`, "Materialization and navigation contract").
 
 `deepFetch(operand, paths)` resolves `operand` (the root query), then eagerly
 fetches each navigation `path` — a closed object whose required `segments` member
-is the ordered, non-empty list of hops that path traverses. The normative
-guarantee:
+is the ordered, non-empty list of hops that path traverses, plus an optional root
+`narrow` guarding which of the resolved objects that path starts from (*Path-root
+guards*, below). The normative guarantee:
 
 > The number of SQL statements is **at most `1 + L`**, where `L` is the number
 > of **distinct relationship hops** across all declared paths. A level whose
@@ -31,7 +32,8 @@ guarantee:
 Concretely, for each relationship level:
 
 1. Gather the **distinct key values** of the already-fetched parent rows for that
-   relationship's correlation column.
+   relationship's correlation column — of the root objects a path-root guard
+   admits, when the level is a guarded path's first one.
 2. If the gathered set is empty, issue **no** child query for that level; attach
    the empty/null relationship result and let downstream levels see an empty
    parent set.
@@ -127,6 +129,56 @@ the redundant pair into one hop and leave one of the two views unpopulated.
 
 Each distinct hop counts toward `L`, so `1 + L` is preserved with narrowed hops
 counting as distinct.
+
+### Path-root guards
+
+A path MAY also carry a **root** `narrow` (`m-op-algebra`, `{ entity, to }`)
+beside its `segments`, which **guards which queried objects the path starts
+from**. It is the deliberate opposite of a segment narrow, and the contrast is
+the whole of its semantics:
+
+| | root `narrow` | segment `narrow` |
+|---|---|---|
+| Narrows | the hop's **source** objects | the hop's **target** subtypes |
+| View key | **none** — the path fills the view its unguarded spelling would | a **distinct** `<rel>[<Concrete>,<Concrete>]` view |
+| Hop identity | the **resolved source set** | whether a narrow was **authored**, plus the resolved set |
+
+A root guard therefore **creates no view**. `include(Dog.owner, Cat.owner)` —
+one relationship `Animal.owner`, guarded to two disjoint source sets — populates
+the **ordinary** `owner` view on Dogs and on Cats; there is no `owner[Dog]` view
+and no unioning of the two hops. A root object **outside** every authored guard
+is never attached at all, which is observably different from being attached
+empty: the closed-world graph distinguishes "this object has no such related
+row" from "this object never participated in that path".
+
+Because identity at the root keys on the **resolved source set**, the
+distinctness rule *falls out* rather than being asserted separately:
+
+| Relation between two guards | Example | Hops |
+|---|---|---|
+| equal / equivalent | `to: [Pet]` and `to: [Cat, Dog]` over the same family | **1** — they deduplicate |
+| disjoint | `to: [Dog]` and `to: [Cat]` | 2 — neither fills anything the other does |
+| overlapping | `to: [Dog]` and `to: [Cat, Dog]` | 2 — the shared roots' view is filled twice, identically |
+| containment (including broad) | no guard, and `to: [Dog]` | 2 — the guarded hop fetches nothing new |
+
+Every **proper** guard resolves to a strict subset of the queried position, so
+its key differs from the broad path's automatically; only a guard admitting
+**every** queried object collapses onto broad, and there every observable agrees
+(same rows, same view, same objects), so collapsing is not a special case but the
+absence of a difference.
+
+The last three rows cost one statement more than a set-unioning planner would
+need. That cost is **deliberate**: it keeps `roundTrips` **compositional** — an
+authored path's statement cost does not depend on which other paths were authored
+beside it — and it keeps each hop's branch provenance explicit, so a path
+continuing past a guarded hop knows which parents it descends from. In the
+overlapping and containment rows the extra work is invisible in the assembled
+graph, so the only observable is the statement count.
+
+The two positions **compose** on one path, keeping their own semantics: a guarded
+root continuing through a narrowed segment fills the segment's derived view key on
+the guarded branch's objects alone, and a segment beneath a guarded hop needs no
+guard of its own because its parents are already the guarded ones.
 
 **One statement per hop, both strategies.** Under `table-per-hierarchy` a
 polymorphic hop is one shared-table `IN`-keyed read with the effective set's tag

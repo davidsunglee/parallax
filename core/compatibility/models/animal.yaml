@@ -31,6 +31,11 @@
 # A narrowed include/navigation over either derives a distinct narrowed view keyed
 # `pets[Dog,Cat]` etc. (m-navigate / m-deep-fetch).
 #
+# `Animal.owner` reverses `Person.animals` on the abstract ROOT, so the to-one is
+# INHERITED: every concrete subtype reaches its owner under the one relationship
+# identity `Animal.owner`, which is what a deep-fetch path rooted at a subtype
+# guards rather than redeclares.
+#
 # Row data lives in the sibling fixtures/animal.yaml, keyed per concrete subtype.
 entities:
   - name: Animal
@@ -55,6 +60,14 @@ entities:
       - name: ownerId
         type: int64
         nullable: true
+    relationships:
+      # The inherited to-ONE back to the owner, declared on the abstract ROOT so
+      # every concrete subtype reaches it under the SAME relationship identity
+      # `Animal.owner`. It is what a deep-fetch path ROOTED at a subtype traverses:
+      # `Dog.owner` and `Cat.owner` are one relationship guarded to disjoint source
+      # objects, never two relationships (m-deep-fetch / m-inheritance).
+      - name: owner
+        reverseOf: parallax.compatibility.Person.animals
   - name: Pet
     namespace: parallax.compatibility
     inheritance:

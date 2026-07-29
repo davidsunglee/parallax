@@ -28,6 +28,7 @@ from parallax.core.op_algebra import (
     NavigationPath,
     Operation,
     OrderBy,
+    PathRootNarrow,
     PathSegment,
 )
 
@@ -41,8 +42,12 @@ def _seg(rel: str, narrow: tuple[str, ...] = ()) -> PathSegment:
     return PathSegment(rel=rel, narrow=narrow)
 
 
-def _path(*segments: PathSegment) -> NavigationPath:
-    return NavigationPath(segments=segments)
+def _path(*segments: PathSegment, narrow: PathRootNarrow | None = None) -> NavigationPath:
+    return NavigationPath(segments=segments, narrow=narrow)
+
+
+def _guard(*to: str, entity: str = "Animal") -> PathRootNarrow:
+    return PathRootNarrow(entity=entity, to=to)
 
 
 def _plan(
@@ -278,6 +283,90 @@ def test_non_polymorphic_child_target_is_the_related_entity_itself() -> None:
 
 
 # --------------------------------------------------------------------------- #
+# Path-ROOT guards (m-deep-fetch "Path-root guards"): identity keys on the     #
+# RESOLVED SOURCE SET, the deliberate opposite of the segment rule above.      #
+# --------------------------------------------------------------------------- #
+def test_equivalent_root_guards_dedup_to_one_hop() -> None:
+    # `to: [Pet]` and `to: [Cat, Dog]` resolve to the same source set, and a guard
+    # creates no view to tell them apart, so they are ONE hop — unlike the two
+    # equivalent SEGMENT spellings, which also dedup, and unlike a broad segment
+    # beside a redundant narrow, which does not.
+    plan = _plan(
+        ANIMAL,
+        "Animal",
+        (
+            _path(_seg("Animal.owner"), narrow=_guard("Pet")),
+            _path(_seg("Animal.owner"), narrow=_guard("Cat", "Dog")),
+        ),
+    )
+    assert len(plan.levels) == 1
+    assert plan.levels[0].attach_key == "owner"
+    assert plan.levels[0].source_position == (
+        EntityIdentity("parallax.compatibility", "Cat"),
+        EntityIdentity("parallax.compatibility", "Dog"),
+    )
+
+
+def test_a_root_guard_admitting_every_queried_object_is_the_broad_path() -> None:
+    # The degenerate guard: it resolves to the whole queried position, so nothing
+    # observable separates it from the unguarded path and it must not emit a
+    # second, identical statement filling one view twice.
+    plan = _plan(
+        ANIMAL,
+        "Animal",
+        (_path(_seg("Animal.owner")), _path(_seg("Animal.owner"), narrow=_guard("Animal"))),
+    )
+    assert len(plan.levels) == 1
+    assert plan.levels[0].source_position is None
+
+
+def test_disjoint_overlapping_and_contained_root_guards_stay_distinct_hops() -> None:
+    # Every relation other than equality yields distinct hops, each costing its own
+    # statement, and every one of them fills the SAME ordinary view key.
+    for guards in (
+        (_guard("Dog"), _guard("Cat")),  # disjoint
+        (_guard("Dog"), _guard("Cat", "Dog")),  # overlapping
+        (None, _guard("Dog")),  # containment (broad and a proper guard)
+    ):
+        plan = _plan(
+            ANIMAL,
+            "Animal",
+            tuple(_path(_seg("Animal.owner"), narrow=guard) for guard in guards),
+        )
+        assert len(plan.levels) == 2
+        assert {level.attach_key for level in plan.levels} == {"owner"}
+
+
+def test_a_root_guard_naming_an_undeclared_subtype_is_rejected() -> None:
+    # A guard denotes ONE position, exactly as a segment narrow does, so a member
+    # the model does not declare resolves to no position rather than silently
+    # contributing nothing to the union.
+    with pytest.raises(deep_fetch.DeepFetchError, match="does not declare"):
+        _plan(ANIMAL, "Animal", (_path(_seg("Animal.owner"), narrow=_guard("Ghost")),))
+
+
+def test_a_root_guard_qualifies_only_the_first_level_of_its_path() -> None:
+    # A guard restricts which ROOT objects a path starts from; a deeper level
+    # descends from the already-guarded parents, so it carries no guard of its own
+    # and the two narrow positions keep their own keys.
+    plan = _plan(
+        ANIMAL,
+        "Animal",
+        (
+            _path(
+                _seg("Animal.owner"),
+                _seg("Person.pets", ("Dog",)),
+                narrow=_guard("Pet"),
+            ),
+        ),
+    )
+    owner, pets = plan.levels
+    assert (owner.attach_key, pets.attach_key) == ("owner", "pets[Dog]")
+    assert owner.source_position is not None
+    assert pets.source_position is None
+
+
+# --------------------------------------------------------------------------- #
 # Back-reference (ancestor-revisit) cycle detection.                          #
 # --------------------------------------------------------------------------- #
 def test_back_reference_hop_is_detected() -> None:
@@ -292,6 +381,18 @@ def test_back_reference_hop_is_detected() -> None:
 def test_ordinary_deeper_level_is_not_flagged_a_back_reference() -> None:
     plan = _plan(ORDERS, "Order", (_path(_seg("Order.items"), _seg("OrderItem.statuses")),))
     assert not any(level.is_back_reference for level in plan.levels)
+
+
+def test_a_to_many_hop_revisiting_a_family_is_an_ordinary_queried_level() -> None:
+    # `Animal.owner` then `Person.pets` returns to the Animal family, but the pets
+    # are selected by their OWN foreign key to that owner — they are whatever the
+    # owner owns, not the animal the path arrived from — so the level is queried
+    # rather than resolved from the graph-local identity map.
+    plan = _plan(ANIMAL, "Animal", (_path(_seg("Animal.owner"), _seg("Person.pets")),))
+    owner, pets = plan.levels
+    assert not owner.is_back_reference
+    assert not pets.is_back_reference
+    assert pets.child_target == "parallax.compatibility.Pet"
 
 
 def test_a_path_cannot_continue_past_a_back_reference_level() -> None:

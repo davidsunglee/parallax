@@ -343,6 +343,63 @@ def test_a_redundant_narrow_populates_a_view_beside_the_broad_one(provisioner: A
     assert snapshot.execution.round_trips == 3
 
 
+def test_disjoint_root_guards_fill_one_owner_view(provisioner: Any) -> None:
+    story = _GRAPH_STORIES_BY_ID["m-inheritance-074"]
+    meta = _reset_for(story.case_id, provisioner)
+    db = connect(provisioner.port, meta)
+    snapshot = story.run(db)
+    by_name = {animal.name: animal for animal in snapshot.results()}
+    # Both guards fill the ORDINARY `owner` view, so the Dog and the Cat reach
+    # their owner under the same key rather than a per-guard one.
+    assert by_name["Rex"].owner.name == "Alice"
+    assert by_name["Fido"].owner.name == "Bob"
+    assert by_name["Whiskers"].owner.name == "Alice"
+    # The WildBoar is admitted by neither guard, so its `owner` stays UNSET —
+    # closed-world "never participated", not "no owner".
+    assert is_loaded(by_name["Tusker"], "owner") is False
+    with pytest.raises(UnloadedRelationshipError, match="owner"):
+        _ = by_name["Tusker"].owner
+    assert snapshot.execution.round_trips == 3
+
+
+def test_a_root_guard_beside_a_broad_path_stays_its_own_hop(provisioner: Any) -> None:
+    story = _GRAPH_STORIES_BY_ID["m-inheritance-075"]
+    meta = _reset_for(story.case_id, provisioner)
+    db = connect(provisioner.port, meta)
+    snapshot = story.run(db)
+    by_name = {animal.name: animal for animal in snapshot.results()}
+    # The subsumed guard adds a statement and nothing else: the graph is exactly
+    # the broad path's, the WildBoar included.
+    assert {name: animal.owner.name for name, animal in by_name.items()} == {
+        "Rex": "Alice",
+        "Fido": "Bob",
+        "Whiskers": "Alice",
+        "Tusker": "Carol",
+    }
+    assert snapshot.execution.round_trips == 3
+
+
+def test_a_guarded_root_continues_through_a_narrowed_hop(provisioner: Any) -> None:
+    story = _GRAPH_STORIES_BY_ID["m-inheritance-076"]
+    meta = _reset_for(story.case_id, provisioner)
+    db = connect(provisioner.port, meta)
+    snapshot = story.run(db)
+    by_name = {animal.name: animal for animal in snapshot.results()}
+    alice = by_name["Rex"].owner
+    assert alice.name == "Alice"
+    # The root guard contributed no key of its own; the segment narrow did.
+    assert is_loaded(alice, AnimalOwnerPerson.pets) is False
+    alice_dogs = narrowed(alice, AnimalOwnerPerson.pets.narrow(Dog))
+    assert [dog.name for dog in cast("tuple[Any, ...]", alice_dogs)] == ["Rex"]
+    bob_dogs = narrowed(by_name["Fido"].owner, AnimalOwnerPerson.pets.narrow(Dog))
+    assert [dog.name for dog in cast("tuple[Any, ...]", bob_dogs)] == ["Fido"]
+    # The Cat reaches the SAME owner object the Dog does; the guard excludes only
+    # the WildBoar, whose whole branch of the path is therefore absent.
+    assert by_name["Whiskers"].owner is alice
+    assert is_loaded(by_name["Tusker"], "owner") is False
+    assert snapshot.execution.round_trips == 3
+
+
 def _vo_owner_row(instance: Any, vo_py_name: str = "address") -> dict[str, Any]:
     """A materialized VO-bearing owner's own row, PHYSICAL-column-keyed
     (``instance_row``), with its value-object member serialized to its

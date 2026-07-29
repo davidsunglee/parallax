@@ -768,7 +768,9 @@ def test_tpcs_family_variant_column_requires_a_hygienic_internal_alias() -> None
 from reference_harness.inheritance import (  # noqa: E402
     NARROW_OUTSIDE_RELATIONSHIP_TARGET,
     narrowed_view_key,
+    resolve_clamped_narrow,
     resolve_hop_effective_set,
+    resolve_root_source_set,
 )
 
 
@@ -845,8 +847,8 @@ def test_hop_key_separates_a_broad_hop_from_a_redundant_narrow() -> None:
     assert broad_set == redundant_set == ["Cat", "Dog"]
     assert (broad_narrowed, redundant_narrowed) == (False, True)
 
-    broad_key = _hop_key_of("Person.pets", broad_set, broad_narrowed)
-    redundant_key = _hop_key_of("Person.pets", redundant_set, redundant_narrowed)
+    broad_key = _hop_key_of(None, "Person.pets", broad_set, broad_narrowed)
+    redundant_key = _hop_key_of(None, "Person.pets", redundant_set, redundant_narrowed)
     assert broad_key != redundant_key
     assert narrowed_view_key(family, "Person.pets", redundant_set) == "pets[Cat,Dog]"
 
@@ -855,7 +857,70 @@ def test_hop_key_separates_a_broad_hop_from_a_redundant_narrow() -> None:
     equivalent_set, equivalent_narrowed = resolve_hop_effective_set(
         family, "Person.pets", ["Cat", "Dog"]
     )
-    assert _hop_key_of("Person.pets", equivalent_set, equivalent_narrowed) == redundant_key
+    assert _hop_key_of(None, "Person.pets", equivalent_set, equivalent_narrowed) == redundant_key
+
+
+def test_root_source_set_resolves_a_guard_against_the_queried_position() -> None:
+    family = Family(_animal_defs())
+    # An unguarded path starts from the whole queried position, canonically ordered.
+    assert resolve_root_source_set(family, "Animal", {}) == ("Cat", "Dog", "WildBoar")
+    # A guard resolves to its own effective set — equivalent spellings converge on
+    # the SAME tuple, which is what makes them one hop at the root position.
+    pet_guard = {"narrow": {"entity": "Animal", "to": ["Pet"]}}
+    concrete_guard = {"narrow": {"entity": "Animal", "to": ["Cat", "Dog"]}}
+    assert resolve_root_source_set(family, "Animal", pet_guard) == ("Cat", "Dog")
+    assert resolve_root_source_set(family, "Animal", concrete_guard) == ("Cat", "Dog")
+    # A non-polymorphic queried position has no source set to distinguish hops by.
+    assert resolve_root_source_set(family, "Person", {}) is None
+
+
+def test_root_hop_identity_keys_on_the_resolved_source_set() -> None:
+    # The four relations two guards can stand in, all measured through the hop key
+    # (m-deep-fetch "Path-root guards"). The root component keys on the RESOLVED
+    # source set — deliberately unlike the segment component, which keys on whether
+    # a narrow was AUTHORED — so a guard admitting every root object collapses onto
+    # the broad path and every proper guard separates from it automatically.
+    family = Family(_animal_defs())
+
+    def key(path: dict[str, Any]) -> Any:
+        return _hop_key_of(
+            resolve_root_source_set(family, "Animal", path), "Animal.owner", None, False
+        )
+
+    broad = key({})
+    pet_guard = key({"narrow": {"entity": "Animal", "to": ["Pet"]}})
+    concrete_guard = key({"narrow": {"entity": "Animal", "to": ["Cat", "Dog"]}})
+    dog_guard = key({"narrow": {"entity": "Animal", "to": ["Dog"]}})
+    cat_guard = key({"narrow": {"entity": "Animal", "to": ["Cat"]}})
+    whole_guard = key({"narrow": {"entity": "Animal", "to": ["Animal"]}})
+
+    assert pet_guard == concrete_guard  # equal / equivalent -> one hop
+    assert dog_guard != cat_guard  # disjoint -> two hops
+    assert dog_guard != pet_guard  # overlapping -> two hops
+    assert dog_guard != broad  # containment -> two hops
+    assert whole_guard == broad  # a full-set guard IS the broad path
+
+
+def test_root_guard_outside_the_queried_position_is_rejected() -> None:
+    family = Family(_animal_defs())
+    # A guard is clamped to the queried position exactly as an operation-position
+    # narrow is: WildBoar is outside a read already narrowed to Pet's concretes.
+    with pytest.raises(RejectionError) as exc:
+        resolve_clamped_narrow(family, ["Cat", "Dog"], "Animal", ["WildBoar"])
+    assert exc.value.rule == NARROW_OUTSIDE_POSITION
+    # An abstract subtype with no concrete descendants resolves to nothing, which
+    # is the guard's own rejection rather than a position violation.
+    childless = [
+        {"name": "Root", "table": "root", "inheritance": {"role": "root", "tag": {"column": "k"}}},
+        {"name": "Empty", "inheritance": {"role": "abstract-subtype", "parent": "Root"}},
+        {
+            "name": "Real",
+            "inheritance": {"role": "concrete-subtype", "parent": "Root", "tagValue": "real"},
+        },
+    ]
+    with pytest.raises(RejectionError) as empty:
+        resolve_clamped_narrow(Family(childless), ["Real"], "Root", ["Empty"])
+    assert empty.value.rule == NARROW_EMPTY_EFFECTIVE_SET
 
 
 def test_resolve_hop_outside_relationship_target_is_rejected() -> None:

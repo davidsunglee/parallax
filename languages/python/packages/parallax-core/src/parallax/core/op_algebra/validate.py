@@ -18,7 +18,9 @@ Rule provenance:
   clamped (intersected) against the **active polymorphic position** threaded
   through the read (the queried `targetEntity`, re-narrowed by every enclosing
   `narrow`), and a predicate referencing a concrete-subtype-declared attribute
-  needs the active position narrowed to a compatible subtype.
+  needs the active position narrowed to a compatible subtype. A deep-fetch
+  path's own root `{entity, to}` guard resolves at that same queried position
+  and is clamped by the same rule.
 - `narrow-outside-relationship-target` — `m-navigate` "Polymorphic navigation":
   a `narrow` inside a navigation filter's `op` (or a deep-fetch path segment's
   hop narrow) does **not** clamp; its `entity` MUST name the relationship
@@ -160,6 +162,9 @@ def _collect_entities(op: Operation, names: set[str]) -> None:
         case DeepFetch(operand=operand, paths=paths):
             _collect_entities(operand, names)
             for path in paths:
+                if path.narrow is not None:
+                    names.add(path.narrow.entity)
+                    names.update(path.narrow.to)
                 for segment in path.segments:
                     names.add(_class_of(segment.rel))
                     names.update(segment.narrow)
@@ -264,7 +269,7 @@ def _walk(op: Operation, model: Metamodel, scope: _PositionScope) -> None:
         case DeepFetch(operand=operand, paths=paths):
             _walk(operand, model, scope)
             for path in paths:
-                _check_deep_fetch_path(path, model)
+                _check_deep_fetch_path(path, model, scope)
         case _:  # pragma: no cover - exhaustiveness guard
             assert_never(op)
 
@@ -414,7 +419,14 @@ def _relationship_target(rel_ref: str, model: Metamodel, *, wrong_kind_rule: str
     raise ValueError(f"{rel_ref!r} names no declared relationship on {entity.identity.name}")
 
 
-def _check_deep_fetch_path(path: NavigationPath, model: Metamodel) -> None:
+def _check_deep_fetch_path(path: NavigationPath, model: Metamodel, scope: _PositionScope) -> None:
+    if path.narrow is not None:
+        # The root guard names the QUERIED position, so it is governed by the
+        # same-position clamp the four-step rule states, not by the relationship-target
+        # rule its segments follow: `entity` is intersected with the active position and
+        # `to` must land inside that intersection. A guard is a source filter and never
+        # a view, so nothing about the resolved set is carried past this check.
+        _validate_narrow(path.narrow.entity, path.narrow.to, scope, model)
     for segment in path.segments:
         target = _relationship_target(
             segment.rel, model, wrong_kind_rule="deep-fetch-value-object-segment"
