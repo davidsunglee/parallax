@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import pytest
 
-import inheritance_models as im
+from _support import inheritance_models as im
 from parallax.core import (
     READ_ONLY,
     TABLE_PER_CONCRETE_SUBTYPE,

@@ -15,7 +15,7 @@ from typing import cast
 
 import pytest
 
-import fake_metamodel
+from _support import fake_metamodel
 from parallax.conformance import case_format, models
 from parallax.core.base import STRING
 from parallax.core.metamodel import (

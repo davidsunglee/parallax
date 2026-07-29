@@ -4,11 +4,11 @@ shipped surface, never serialization-only.
 
 Every entry is ONE case-driven idiomatic read example: a pure ``build()``
 returning the SAME idiomatic ``Statement`` expression
-``tests/api_conformance/test_operation_no_drift.py``'s ``BUILDERS`` proves
+``tests/api/test_operation_no_drift.py``'s ``BUILDERS`` proves
 no-drift against the corpus's own ``when.operation`` (the query-shape half),
 plus the ``case_id`` / ``title`` / ``model`` it mirrors. Execution is
 GENERIC, unlike the write/graph stories: a single runner
-(``tests/api_conformance/test_story_run.py``) drives EVERY entry through the
+(``tests/api/test_story_run.py``) drives EVERY entry through the
 SAME shipped surface (``parallax.snapshot.connect`` -> ``db.find``), grading
 the mirrored case's own ``then.rows`` (order-insensitive, exact-typed) and
 ``then.roundTrips`` — a hand-rolled per-case story function would only repeat

@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-import mirrored_models as mm
+from _support import mirrored_models as mm
 from parallax.conformance import case_format, models
 
 if TYPE_CHECKING:

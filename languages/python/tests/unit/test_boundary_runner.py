@@ -1,7 +1,7 @@
 """``parallax.conformance.boundary_runner`` unit tests (Docker-free fake ports).
 
-Pins the pure pieces the real-database suite (`tests/api_conformance/
-test_boundary_run.py`) composes against real Postgres: `when.uow`/
+Pins the pure pieces the real-database suite (`tests/api/test_boundary_run.py`)
+composes against real Postgres: `when.uow`/
 `when.boundary`/`given.fault` parsing, the action -> verb mapping (incl. its
 branches no reachable corpus case reaches — `create`/`delete`/`terminate`),
 the fault-injecting port decorator's firing/attempt-counting behavior, and

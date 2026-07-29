@@ -31,7 +31,7 @@ This design refines the selected direction in
 - Preserve the exact existing `parallax.snapshot.handle.__all__` throughout
   the cleanup. Interface reduction is separate work. The exact list is now a
   committed `parallax.snapshot.handle` entry in
-  `languages/python/tests/api_surface/public_api.json`; that gate must pass in
+  `languages/python/tests/api/public_api.json`; that gate must pass in
   every migration phase.
 - Preserve the specified `parallax.snapshot` exports: `connect`, `Snapshot`,
   `Execution`, `NoResultFound`, and `TooManyResultsFound`.
@@ -249,7 +249,7 @@ Each phase must leave the tree green and should be independently reviewable.
 ### Phase 1 — Mechanical file-to-package conversion
 
 The pre-migration interface gate is already in place:
-`languages/python/tests/api_surface/public_api.json` records the exact current
+`languages/python/tests/api/public_api.json` records the exact current
 `parallax.snapshot.handle.__all__`. Run that focused test before the move and
 after every edit to `handle/__init__.py`; keep the Phase-1 `__all__` list as the
 canonical scaffold rather than reconstructing it during later extractions.
@@ -261,7 +261,7 @@ imports, moving tests, or changing behavior. Verify immediately that:
 - existing handle and top-level Snapshot exports remain importable;
 - the existing handle enforcement contract still recognizes the package
   interface as its source scope;
-- a targeted assertion added to `tests/artifact/test_wheels.py` proves the
+- a targeted assertion added to `tests/distribution/test_wheels.py` proves the
   built `parallax-snapshot` wheel contains
   `parallax/snapshot/handle/__init__.py` and no longer contains
   `parallax/snapshot/handle.py`; and

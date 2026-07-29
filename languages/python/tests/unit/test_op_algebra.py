@@ -14,7 +14,7 @@ from typing import Any, cast
 
 import pytest
 
-from conftest import case_document
+from _support.corpus import case_document
 from parallax.conformance import case_format
 from parallax.core import op_algebra
 from parallax.core.op_algebra import OperationError

@@ -19,11 +19,10 @@ API-suite's execution both resolve the exact SAME registered class, never a
 second, differently-scoped copy that would silently race it in the shared,
 global, process-wide entity registry.
 
-Lives at the top level of ``tests/`` rather than lane-local: the unit lane's
-frontend/no-drift tests AND the API
-Conformance Suite's descriptor no-drift guard both need the SAME classes, and
-only a module directly on ``pythonpath = ["tools", "tests"]`` resolves
-reliably regardless of which lane's files pytest collects first.
+Cross-surface rather than surface-local: the unit frontend/no-drift tests AND
+the API Conformance Suite's descriptor no-drift guard both need the SAME
+classes, and only a module ``pythonpath = ["tools", "tests"]`` reaches resolves
+reliably regardless of which surface's files pytest collects first.
 """
 
 from parallax.conformance.read_models import (

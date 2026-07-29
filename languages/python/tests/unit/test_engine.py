@@ -2341,7 +2341,7 @@ def test_run_write_sequence_case_wraps_a_lowering_error() -> None:
 # single-attempt, given.apply, and when.attempts forms, each                   #
 # driven against the fake in-memory port (no Docker; the real conflict/retry   #
 # semantics against a reset database are the Docker-gated pg-full proof,       #
-# `tests/conformance/test_run_sweep.py::test_conflict_run_sweep`).             #
+# `tests/compatibility/test_run_sweep.py::test_conflict_run_sweep`).           #
 # --------------------------------------------------------------------------- #
 def test_run_conflict_case_single_attempt() -> None:
     port = FakeWritePort()

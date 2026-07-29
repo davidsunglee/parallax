@@ -21,12 +21,19 @@ everything from `spec/python.md`, the core specs, `core/schemas/`, the
 compatibility corpus, and the conformance-adapter contract. Resolve gaps in
 those artifacts rather than consulting another implementation.
 
+## Before adding, moving, or changing a test
+
+Read `TESTING.md`. It is this target's authoritative testing map: which semantic
+surface directory a test belongs in, what may live at the test root, where
+cross-surface support goes, which fixture reaches a live database, and which
+command owns which selection.
+
 ## Design decisions live in the spec
 
-Do not record design decisions here or in `GUIDE.md`. They belong in
-`spec/python.md` and the ADRs under `docs/adr/`. Per-language operational docs
-are limited to milestones, executable commands, database setup, current status,
-and blockers.
+Do not record design decisions here, in `GUIDE.md`, or in `TESTING.md`. They
+belong in `spec/python.md` and the ADRs under `docs/adr/`. Per-language
+operational docs are limited to milestones, executable commands, the test map,
+database setup, current status, and blockers.
 
 ## Deferred-work ledger
 

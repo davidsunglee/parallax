@@ -7,7 +7,7 @@ from typing import TypeGuard, cast
 
 import pytest
 
-import fake_metamodel as fake
+from _support import fake_metamodel as fake
 from parallax.conformance import case_format
 from parallax.core._formation_profile import form_metamodel
 from parallax.core.metamodel import (

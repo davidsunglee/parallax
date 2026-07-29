@@ -43,10 +43,10 @@ from collections.abc import Callable
 
 import pytest
 
-import inheritance_models as im
-import snapshot_models as sm
-import value_object_models as vm
-from conftest import case_document
+from _support import inheritance_models as im
+from _support import snapshot_models as sm
+from _support import value_object_models as vm
+from _support.corpus import case_document
 from parallax.conformance import case_format
 from parallax.conformance.animal_owner import Person as AnimalOwnerPerson
 from parallax.conformance.graph_models import Policy

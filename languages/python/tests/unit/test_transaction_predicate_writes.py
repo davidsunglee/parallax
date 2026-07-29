@@ -28,8 +28,8 @@ from _transact_support import (
     account_db,
 )
 
-import inheritance_models as im
-import mirrored_models as mm
+from _support import inheritance_models as im
+from _support import mirrored_models as mm
 from parallax.conformance.story_models import Order
 from parallax.core import (
     Attr,

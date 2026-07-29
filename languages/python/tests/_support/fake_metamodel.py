@@ -12,8 +12,8 @@ ahead of namespaced ones, document order differs from canonical order, a
 relative and an exact Entity Reference each appear, one Entity is read-only and
 Transaction-Time, and one carries a nested and a Many Value Object occurrence.
 
-Top-level so the unit lane and the API Conformance Suite share one fixture, and
-never imported by production code.
+Cross-surface so the unit tests and the API Conformance Suite share one fixture,
+and never imported by production code.
 """
 
 from __future__ import annotations

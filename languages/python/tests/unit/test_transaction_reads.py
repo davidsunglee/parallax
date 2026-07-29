@@ -30,8 +30,8 @@ from _transact_support import (
     new_account,
 )
 
-import inheritance_models as im
-import mirrored_models as mm
+from _support import inheritance_models as im
+from _support import mirrored_models as mm
 from parallax.conformance import stale_web_edit
 from parallax.conformance.class_models import MODELS
 from parallax.core import TX_TIME, opt_lock

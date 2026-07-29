@@ -20,7 +20,7 @@ from value_object_bad_models import (
     build_non_attr_annotated_value_object,
 )
 
-import value_object_models as vm
+from _support import value_object_models as vm
 from parallax.conformance import case_format
 from parallax.core import Attr, Entity, ValueObject, attr
 from parallax.core.base import Decimal as NeutralDecimal

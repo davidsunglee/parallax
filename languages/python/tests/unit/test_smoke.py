@@ -16,20 +16,13 @@ import parallax.core
 import parallax.descriptor
 import parallax.postgres
 import parallax.snapshot
-from conftest import PY_ROOT
+from _support.distributions import TOP_PACKAGE_NAMES
+from _support.repo import PY_ROOT
 from parallax.conformance import cli
 
 pytestmark = pytest.mark.unit
 
-TOP_PACKAGE_NAMES: tuple[str, ...] = (
-    "parallax.core",
-    "parallax.descriptor",
-    "parallax.snapshot",
-    "parallax.postgres",
-    "parallax.conformance",
-)
-
-_PUBLIC_API_SNAPSHOT = PY_ROOT / "tests" / "api_surface" / "public_api.json"
+_PUBLIC_API_SNAPSHOT = PY_ROOT / "tests" / "api" / "public_api.json"
 
 
 def test_top_package_public_surfaces() -> None:
@@ -51,7 +44,7 @@ def test_top_package_public_surfaces() -> None:
     # psycopg bind mechanics (Jsonb) stay internal to the adapter.
     assert set(parallax.postgres.__all__) == {"PostgresAdapter"}
     # §8 pins the Descriptor Frontend's surface closed, so the committed
-    # api_surface snapshot is the authority for it rather than a second list.
+    # public-API snapshot is the authority for it rather than a second list.
     descriptor_surface = json.loads(_PUBLIC_API_SNAPSHOT.read_text())["parallax.descriptor"]
     assert set(parallax.descriptor.__all__) == set(descriptor_surface)
     assert parallax.conformance.__all__ == []

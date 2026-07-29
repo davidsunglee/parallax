@@ -1,7 +1,7 @@
 """``parallax.conformance.api_suite`` — API Conformance Suite machinery.
 
 The coverage-partition computation and the Usage Guide model shared by the
-``tests/api_conformance`` suite and the ``gen-usage-guide`` generator. The
+``tests/api`` suite and the ``gen-usage-guide`` generator. The
 partition asserts the union of exercised and reasoned-skipped cases equals the
 active slice, with no stale case IDs and no empty skip reasons.
 
@@ -76,7 +76,7 @@ RECIPES: Final[list[Recipe]] = [
         title="Stale web edit — Transaction-Time-Only (Balance)",
         spec="`python.md` §3 (the recipe) and §5 (why it runs optimistic)",
         graded_by=(
-            "`tests/api_conformance/test_stale_web_edit.py` (real Postgres: the clean "
+            "`tests/api/test_stale_web_edit.py` (real Postgres: the clean "
             "submit, the concurrent-supersession conflict, and both negative pins) and "
             "`tests/unit/test_transaction_reads.py`'s Docker-free recipe halves"
         ),
@@ -90,7 +90,7 @@ RECIPES: Final[list[Recipe]] = [
         title="Stale web edit — bitemporal (Branch, both axes transported)",
         spec="`python.md` §3 (the recipe) and §5 (why it runs optimistic)",
         graded_by=(
-            "`tests/api_conformance/test_stale_web_edit.py` (real Postgres) and "
+            "`tests/api/test_stale_web_edit.py` (real Postgres) and "
             "`tests/unit/test_transaction_reads.py`'s Docker-free recipe halves"
         ),
         snippet=(
@@ -199,7 +199,7 @@ EXAMPLES: Final[list[Example]] = [
     # lane grades, through the SAME model-aware `validate_write`
     # (`Transaction._buffer`), naming the SAME classified rule — proven by
     # `test_idiomatic_write_build_rejects_the_corpus_rule`
-    # (`tests/api_conformance/test_write_no_drift.py`).
+    # (`tests/api/test_write_no_drift.py`).
     Example(
         "m-inheritance-088",
         "A keyed write aimed at an abstract inheritance position",
@@ -316,7 +316,7 @@ SKIP_REASONS: Final[dict[str, str]] = {
         "(`m-temporal-read-009`..`-012`: gated success, stale-`in_z` conflict, the "
         "`when.attempts` 0-then-1 retry, and the locking-mode non-retriable stale close) "
         "— are graded end-to-end by the D-17 case-driven boundary runner "
-        "(`tests/api_conformance/test_boundary_run.py`, driving the REAL db.transact "
+        "(`tests/api/test_boundary_run.py`, driving the REAL db.transact "
         "against the provisioned database through a fault-injecting port decorator): a "
         "gated-retry/conflict choreography has no single-callback idiomatic spelling "
         "distinct from what the boundary runner already exercises directly"
@@ -345,7 +345,7 @@ SKIP_REASONS: Final[dict[str, str]] = {
         "optimistic-lock opt-in classification; the five boundary-shape cases (transient "
         "retry with the opt-in unset/set, the opt-in inert in locking mode, `retries: 0` "
         "disabling the loop, and bound exhaustion) are graded end-to-end by the D-17 "
-        "case-driven boundary runner (`tests/api_conformance/test_boundary_run.py`, "
+        "case-driven boundary runner (`tests/api/test_boundary_run.py`, "
         "driving the REAL db.transact against the provisioned database through a "
         "fault-injecting port decorator): a retry/backoff choreography has no "
         "single-callback idiomatic developer spelling distinct from what the boundary "
@@ -406,7 +406,7 @@ SKIP_REASONS: Final[dict[str, str]] = {
         "table-per-concrete-subtype, and value-object declarations in one descriptor "
         "so physical composition can be witnessed — it adds no declaration construct "
         "of its own, so it carries no class mirror to write an instance-native story "
-        "against (`tests/mirrored_models.py`'s own UNMIRRORED reason). Its physical "
+        "against (`tests/_support/mirrored_models.py`'s own UNMIRRORED reason). Its physical "
         "Column and Table mapping rejects are model-declaration invariants the Rule "
         "Set classifies at hub construction (a `MetamodelValidationError` issue), not "
         "an operation or write the Usage Guide's statement- and verb-level examples "
@@ -573,7 +573,7 @@ _OPT_LOCK_BOUNDARY_RUNNER_REASON: Final[str] = (
     "the auto-retry optimistic-conflict opt-in's own boundary witness (the conflict "
     "surfacing after one attempt without the opt-in, or auto-retried to success with "
     "it) is graded end-to-end by the D-17 case-driven boundary runner "
-    "(`tests/api_conformance/test_boundary_run.py`) against the real, provisioned "
+    "(`tests/api/test_boundary_run.py`) against the real, provisioned "
     "database (the boundary runner's own generic action mapping is deliberately not "
     "itself an idiomatic developer surface, D-17); a retry/backoff choreography has no "
     "single-callback idiomatic developer spelling distinct from what the boundary "

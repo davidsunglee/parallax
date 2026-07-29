@@ -5,7 +5,7 @@ Pins the pure `when.concurrency.rounds` parsing and the rounds runner's own
 choreography (thread/barrier round-boundary protocol, per-node
 `DatabaseError` capture, unconditional session teardown) as far as fakes
 allow; the real two-session Postgres proof lives in
-``tests/conformance/test_concurrency_rounds.py``.
+``tests/compatibility/test_run_sweep.py``.
 """
 
 from __future__ import annotations

@@ -18,7 +18,7 @@ from typing import Any, cast
 import jsonschema
 import pytest
 
-from conftest import REPO_ROOT
+from _support.repo import REPO_ROOT
 from parallax.conformance import models
 from parallax.core import op_algebra
 from parallax.core.unit_work import instructions as wi

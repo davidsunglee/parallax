@@ -1894,7 +1894,7 @@ def _seed_shadow_from_fixtures(
     """Seed ``shadow`` from the case's OWN fixture-loading rule (`m-case-format`):
     a writeSequence starts EMPTY unless it opts in with ``given.fixtures: true``;
     every other shape (scenario, conflict) loads the model's default fixtures —
-    mirrored from ``tests/conftest.case_fixtures``'s own rule, kept independent
+    mirrored from ``tests/_support/corpus.py``'s ``case_fixtures`` rule, kept independent
     (production/adapter code never imports the test suite)."""
     given = case.document.get("given")
     fixtures_flag = (
@@ -2051,7 +2051,7 @@ class _CapturingPort:
     reports exactly what executed. Nested ``transaction()`` wrapping shares
     the SAME ``captured`` list across the outer port and the inner connection
     the provider's own ``transaction()`` hands the callback (mirroring
-    ``tests/conformance/test_run_sweep.py``'s ``_ReadCapturePort`` precedent),
+    ``tests/compatibility/test_run_sweep.py``'s ``_ReadCapturePort`` precedent),
     so a grouped or nested call captures into one single ordered list.
     """
 
@@ -3709,7 +3709,7 @@ def run_error_case(
     caller that owns two sessions (
     ``m-read-lock-006`` is graded by the CASE-DRIVEN two-session rounds
     runner instead, ``parallax.conformance.concurrency_runner`` — this
-    module's own dispatcher (`tests/conformance/test_run_sweep.py`) routes it
+    module's own dispatcher (`tests/compatibility/test_run_sweep.py`) routes it
     there and never reaches this function for that case at all; the
     provider-contract deadlock proof remains the OTHER two-session witness,
     hand-authored rather than case-driven). The ``m-db-error`` two-connection

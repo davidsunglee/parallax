@@ -13,7 +13,7 @@ from decimal import Decimal
 import pytest
 from _snapshot_wrap_support import wrap
 
-import snapshot_models as sm
+from _support import snapshot_models as sm
 from parallax.conformance.read_models import BALANCE_MODEL
 from parallax.core import (
     TABLE_PER_CONCRETE_SUBTYPE,

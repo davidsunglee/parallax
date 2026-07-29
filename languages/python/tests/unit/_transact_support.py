@@ -18,7 +18,7 @@ from collections.abc import Callable, Sequence
 from decimal import Decimal
 from typing import Final, cast
 
-import mirrored_models as mm
+from _support import mirrored_models as mm
 from parallax.conformance.class_models import MODELS
 from parallax.core import Attr, Bitemporal, MetamodelHub, attr
 from parallax.core.db_error import DatabaseError
