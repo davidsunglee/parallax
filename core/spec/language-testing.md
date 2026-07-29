@@ -170,6 +170,44 @@ the scope designates for it, and that restriction MUST itself be a blocking
 check. Otherwise a test can acquire the resource by another route, and its class
 silently understates what it needs.
 
+### The classes
+
+The scheduling classes are `dbfree` and `db`. The vocabulary is closed the way
+[§2](#2-operation-vocabulary)'s is: a class named anywhere else has no defined
+meaning and MUST NOT be declared.
+
+| Class | A test belongs to it when |
+|---|---|
+| `db` | Running it requires a live database |
+| `dbfree` | Running it does not |
+
+One resource decides both, and `dbfree` is `db`'s complement. That is what the
+derived classification above rests on: a test either reaches a live database or
+it does not, so neither zero nor two classes is representable and there is no
+third answer for a case to fall into.
+
+`db`'s defining resource is the live database, so the entry-point restriction
+above is `db`'s alone. The blocking check confining it is
+`<scope>-check-database-access`, and one of the scope's class aggregates
+([§7](#7-command-roles-and-composition)) MUST run it. `dbfree` is defined by that
+resource's absence and owes no such check, because an absence has no entry point
+to confine.
+
+A scope declares the classes its own tests populate: both where its tests divide,
+and one where the other would hold nothing and the commands
+[§7](#7-command-roles-and-composition) derives for it would select no test.
+
+Fixing the pair here, rather than leaving each scope to name its own, is what
+makes the entry-point restriction enforceable at all. Which resource a class is
+about is not readable from a command graph, so a scope free to invent a class is
+a scope whose defining resource nothing can confine, and the restriction binds
+only the classes the blocking check [§8](#8-graph-inspection) requires was
+already told about. A distinction a scope needs beyond this one is therefore a
+change to this section and to that check, not a class declared locally. A
+selection that is not about a required resource is no scheduling class in the
+first place: it is a focused selector ([§3](#3-primary-semantic-surfaces)), which
+cross-cuts the partition and stays out of the gate graph.
+
 ## 6. Runtime classification
 
 Runtime class is relative execution duration: `fast`, `medium`, or `slow`. It is
