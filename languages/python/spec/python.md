@@ -2439,16 +2439,18 @@ subsection of the template is deleted from this completed spec.
   The reference-harness structural layout tests and corpus layout baseline run
   independently and no Python test satisfies them by importing or serializing
   production layout objects.
-- **Aggregate static-verification command.** `just python-check-dbfree` — one
-  local command and one blocking CI job composing every database-free row above
-  (imports/DAG, the `dbfree` test class + coverage, ruff check + format check,
-  Pyright strict, vulture + API surface, database-access guard, build +
-  distribution metadata, clean-install checks, supply-chain audit, and the
-  Docker-free `compile-sweep`).
-- **Aggregate full verification command.** `just python-check` — the
-  database-free aggregate plus every database-backed row (`pg-full`, provider
-  contract, adapter smoke, API conformance + Usage Guide story runs), ending
-  with a summary block listing every check as run, failed, or
+- **Scheduling classes.** `dbfree` and `db`, the §6 partition every collected
+  item carries exactly one of.
+- **Aggregate `dbfree` command.** `just python-check-dbfree` — one local command
+  and one blocking CI job composing every database-free row above (imports/DAG,
+  the `dbfree` test class + coverage, ruff check + format check, Pyright strict,
+  vulture + API surface, database-access guard, build + distribution metadata,
+  clean-install checks, supply-chain audit, and the Docker-free `compile-sweep`).
+- **Aggregate `db` command.** `just python-check-db` — one local command and one
+  blocking CI job composing every database-backed row above (`pg-full`, provider
+  contract, adapter smoke, API conformance + Usage Guide story runs).
+- **Complete verification command.** `just python-check` — both class aggregates,
+  ending with a summary block listing every check as run, failed, or
   skipped-with-reason.
 
 ## Completion check

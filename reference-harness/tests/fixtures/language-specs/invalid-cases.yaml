@@ -132,6 +132,27 @@
   code: result-profile
   message: "slice requires 'Snapshot results'"
 
+- name: undeclared-scheduling-classes
+  base: valid-snapshot.md
+  old: "- **Scheduling classes.** `dbfree` and `db`, decided per item by whether the"
+  new: "- **Scheduling.** `dbfree` and `db`, decided per item by whether the"
+  code: missing-aggregate-command
+  message: "quality section declares no scheduling classes"
+
+- name: class-without-an-aggregate-command
+  base: valid-snapshot.md
+  old: "- **Aggregate `db` command.** `example-check-db` runs every database-backed row"
+  new: "- **Aggregate command.** `example-check-db` runs every database-backed row"
+  code: missing-aggregate-command
+  message: "no aggregate command for the declared scheduling class 'db'"
+
+- name: missing-complete-aggregate-command
+  base: valid-snapshot.md
+  old: "- **Complete verification command.** `example-check` composes both class"
+  new: "- **Everything command.** `example-check` composes both class"
+  code: missing-aggregate-command
+  message: "no complete verification command over every scheduling class"
+
 - name: stray-lifecycle-extension
   base: valid-snapshot.md
   old: "| example snapshot lifecycle extension | production | snapshot | none | common runtime | snapshot API |"

@@ -260,6 +260,20 @@
   code: ci-duplicate-ownership
   message: "jobs `harness-check-dbfree` and `harness-test-dbfree` both run harness-test-dbfree"
 
+- name: map-citing-a-command-the-graph-does-not-declare
+  file: TESTING.md
+  old: "`just check-dbfree`"
+  new: "`just check-dbfre`"
+  code: doc-unknown-command
+  message: "TESTING.md cites `just check-dbfre`, which the graph does not declare"
+
+- name: map-omitting-a-ci-lane
+  file: TESTING.md
+  old: "| `harness-check-db` |"
+  new: "| `harness-check-database` |"
+  code: doc-uncovered-ci-job
+  message: "TESTING.md does not name the CI job `harness-check-db`"
+
 - name: ci-job-narrower-than-its-name
   file: .github/workflows/ci.yml
   old: "        run: just core-check"

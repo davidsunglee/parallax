@@ -12,6 +12,7 @@ import yaml
 
 from reference_harness.check_gates import (
     CI_WORKFLOW,
+    OPERATIONAL_MAP,
     RUNNER_ROOT_FILES,
     SUPPORT_DIRECTORY,
     SURFACES,
@@ -20,9 +21,12 @@ from reference_harness.check_gates import (
 
 _INVALID_CASES = Path(__file__).parent / "fixtures" / "gate-graphs" / "invalid-cases.yaml"
 
+_MIRRORED_PYTHON_MAP = Path("languages") / "python" / OPERATIONAL_MAP
 _MIRRORED_FILES = (
     "justfile",
     str(CI_WORKFLOW),
+    OPERATIONAL_MAP,
+    str(_MIRRORED_PYTHON_MAP),
     "reference-harness/pyproject.toml",
     "languages/python/pyproject.toml",
 )
@@ -118,6 +122,20 @@ def test_a_stray_file_at_the_test_root_is_reported(
 
     assert rc == 1
     assert "[unexpected-test-root-entry] `python` holds `helpers.py` at the root" in (
+        capsys.readouterr().err
+    )
+
+
+def test_a_scope_without_an_operational_map_is_reported(
+    conforming_repository: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    root = _copy(conforming_repository, tmp_path / "no-operational-map")
+    (root / _MIRRORED_PYTHON_MAP).unlink()
+
+    rc = main([str(root)])
+
+    assert rc == 1
+    assert f"[missing-operational-map] `python` has no {_MIRRORED_PYTHON_MAP}" in (
         capsys.readouterr().err
     )
 

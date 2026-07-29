@@ -110,6 +110,7 @@ the spec, schemas, corpus, and conformance-adapter contract.
 | [`reference-harness/`](reference-harness/) | Non-normative oracle that validates and executes the core corpus |
 | [`docs/adr/`](docs/adr/) | Cross-cutting architecture decisions |
 | [`IMPLEMENTING.md`](IMPLEMENTING.md) | End-to-end playbook for specifying and building a language target |
+| [`TESTING.md`](TESTING.md) | Operational map of the verification commands and how to run them |
 | [`justfile`](justfile) | Root orchestration for validation and implementation checks |
 
 ## Running And Inspecting The Project
@@ -122,29 +123,16 @@ just core-show-slice slice-snapshot-1
 ```
 
 Every public recipe reads `<scope>-<operation>[-<qualifier>]`, so its scope, its
-effect, and whether it mutates anything are readable from the name alone.
-
-Run every check that needs no database:
-
-```bash
-just check-dbfree
-```
-
-Run one scope's checks while iterating:
+effect, and whether it mutates anything are readable from the name alone. Run
+the complete repository merge gate with:
 
 ```bash
-just core-check
-just harness-check-dbfree
-just python-check-dbfree
-```
-
-Run the database-backed checks against pinned Testcontainers databases, or the
-complete repository merge gate:
-
-```bash
-just check-db
 just check
 ```
+
+[`TESTING.md`](TESTING.md) is the operational map: which command owns which gate,
+how to iterate with focused commands, and how CI covers the same graph.
+`just --list` prints the full catalog.
 
 Docker must be available for database-backed commands. Testcontainers locates
 the daemon by itself under Docker Desktop and on CI, where the socket sits at
@@ -159,8 +147,6 @@ docker context inspect --format '{{ .Endpoints.docker.Host }}'
 Write that endpoint to `~/.testcontainers.properties` as a `docker.host` entry,
 for example `docker.host=unix:///Users/you/.orbstack/run/docker.sock`. The file
 is per-machine and untracked; both clients read it.
-
-Use `just --list` for the full command catalog.
 
 ## Extending Parallax
 
