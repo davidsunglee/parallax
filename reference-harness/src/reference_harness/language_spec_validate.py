@@ -26,6 +26,8 @@ from reference_harness.dep_graph_check import (
     parse_profile_envelopes,
     transitive_prerequisites,
 )
+from reference_harness.diagnostics import Diagnostic, report_failures
+from reference_harness.markdown_read import CODE_SPAN_RE, list_items
 from reference_harness.schema_validate import validation_error
 
 _HEADING_RE = re.compile(r"^(#{1,6})\s+(.+?)\s*$", re.MULTILINE)
@@ -42,22 +44,20 @@ _UNRESOLVED_RE = re.compile(
 # own scheduling classes rather than from a list here, so a language declaring
 # three classes owes three; the template fixes only how each is spelled. Whether
 # the commands named exist is the command graph's own check, not this one's.
-_SCHEDULING_CLASSES_RE = re.compile(r"\*\*Scheduling classes\.\*\*(?P<declared>[^\n]*)")
-_CLASS_AGGREGATE_RE = re.compile(r"\*\*Aggregate `(?P<scheduling_class>[^`]+)` command\.\*\*")
-_COMPLETE_AGGREGATE_RE = re.compile(r"\*\*Complete verification command\.\*\*")
-_BACKTICKED_RE = re.compile(r"`([^`]+)`")
+#
+# Each declaration is one list item, matched against the item as a whole rather
+# than against a physical line: prose in a spec wraps freely, and a rule reading
+# one line would stop seeing whatever a wrap pushes onto the next one — passing
+# on a spec that declares a class and never names its aggregate.
+_SCHEDULING_CLASSES_RE = re.compile(r"^\*\*Scheduling classes\.\*\*(?P<declared>.*)$")
+_CLASS_AGGREGATE_RE = re.compile(r"^\*\*Aggregate `(?P<scheduling_class>[^`]+)` command\.\*\*")
+_COMPLETE_AGGREGATE_RE = re.compile(r"^\*\*Complete verification command\.\*\*")
 
 # Section titles that mirror the numbered headings in language-spec-template.md.
 _SECTION_SOURCE_TOPOLOGY = "7. Source-enforcement topology"
 _SECTION_ARTIFACT_TOPOLOGY = "8. Deployable artifact topology"
 _SECTION_CONDITIONALS = "9. Conditional capability decisions"
 _SECTION_QUALITY = "10. Mandatory quality toolchain"
-
-
-@dataclass(frozen=True)
-class ValidationIssue:
-    code: str
-    message: str
 
 
 @dataclass(frozen=True)
@@ -167,16 +167,14 @@ def _table_in_section(markdown: str, title: str) -> _Table | None:
     return None
 
 
-def _describe_envelopes(markdown: str) -> tuple[list[dict[str, Any]], list[ValidationIssue]]:
+def _describe_envelopes(markdown: str) -> tuple[list[dict[str, Any]], list[Diagnostic]]:
     envelopes: list[dict[str, Any]] = []
-    issues: list[ValidationIssue] = []
+    issues: list[Diagnostic] = []
     for index, block in enumerate(JSON_FENCE_RE.findall(markdown), start=1):
         try:
             value = json.loads(block)
         except json.JSONDecodeError as exc:
-            issues.append(
-                ValidationIssue("invalid-json", f"JSON fence {index} is invalid: {exc.msg}")
-            )
+            issues.append(Diagnostic("invalid-json", f"JSON fence {index} is invalid: {exc.msg}"))
             continue
         if (
             isinstance(value, dict)
@@ -226,7 +224,7 @@ def _conditional_rules(template: str) -> dict[str, set[str]]:
     return rules
 
 
-def _check_lifecycle(markdown: str, expected: str | None, issues: list[ValidationIssue]) -> None:
+def _check_lifecycle(markdown: str, expected: str | None, issues: list[Diagnostic]) -> None:
     # The §3 lifecycle headings and §4 result headings run the same retained-heading
     # logic; each kind's per-lifecycle titles come from _LIFECYCLE_PROFILES.
     heading_kinds = (
@@ -245,7 +243,7 @@ def _check_lifecycle(markdown: str, expected: str | None, issues: list[Validatio
         retained = [title for title in title_for.values() if _heading_count(markdown, title) > 0]
         if len(retained) != 1:
             issues.append(
-                ValidationIssue(
+                Diagnostic(
                     code,
                     f"retain exactly one {noun}; found: "
                     + (", ".join(retained) if retained else "none"),
@@ -255,7 +253,7 @@ def _check_lifecycle(markdown: str, expected: str | None, issues: list[Validatio
             expected_title = title_for[expected]
             if retained[0] != expected_title:
                 issues.append(
-                    ValidationIssue(
+                    Diagnostic(
                         code,
                         f"slice requires '{expected_title}', but '{retained[0]}' is retained",
                     )
@@ -266,7 +264,7 @@ def _check_conditionals(
     markdown: str,
     template: str,
     capabilities: dict[str, Any],
-    issues: list[ValidationIssue],
+    issues: list[Diagnostic],
 ) -> None:
     claimed = {module for module in capabilities.get("modules", []) if isinstance(module, str)}
     for title, required in _conditional_rules(template).items():
@@ -274,37 +272,35 @@ def _check_conditionals(
         present = _heading_count(markdown, title) == 1
         if expected and not present:
             issues.append(
-                ValidationIssue(
+                Diagnostic(
                     "missing-conditional-section",
                     f"retain '{title}'; {', '.join(sorted(required))} is claimed",
                 )
             )
         elif not expected and present:
             issues.append(
-                ValidationIssue(
+                Diagnostic(
                     "unexpected-conditional-section",
                     f"remove '{title}'; {', '.join(sorted(required))} is not claimed",
                 )
             )
         elif present and not (_section(markdown, title, level=3) or "").strip():
             issues.append(
-                ValidationIssue(
-                    "incomplete-conditional-section", f"'{title}' has no completed decision"
-                )
+                Diagnostic("incomplete-conditional-section", f"'{title}' has no completed decision")
             )
 
     additional_dialects = len(capabilities.get("dialects", [])) > 1
     has_additional = _heading_count(markdown, "Additional dialects") == 1
     if additional_dialects and not has_additional:
         issues.append(
-            ValidationIssue(
+            Diagnostic(
                 "missing-conditional-section",
                 "retain 'Additional dialects'; the claim contains more than one dialect",
             )
         )
     elif not additional_dialects and has_additional:
         issues.append(
-            ValidationIssue(
+            Diagnostic(
                 "unexpected-conditional-section",
                 "remove 'Additional dialects'; the claim contains only its initial dialect",
             )
@@ -315,11 +311,11 @@ def _check_table_shape(
     markdown: str,
     template: str,
     title: str,
-    issues: list[ValidationIssue],
+    issues: list[Diagnostic],
 ) -> _Table | None:
     table = _table_in_section(markdown, title)
     if table is None:
-        issues.append(ValidationIssue("missing-section", f"missing '## {title}' or its table"))
+        issues.append(Diagnostic("missing-section", f"missing '## {title}' or its table"))
         return None
     template_table = _table_in_section(template, title)
     if template_table is None:
@@ -328,17 +324,17 @@ def _check_table_shape(
         _normalize(cell) for cell in template_table.header
     ]:
         issues.append(
-            ValidationIssue(
+            Diagnostic(
                 "topology-header",
                 f"table under '## {title}' does not retain the canonical columns",
             )
         )
     if not table.rows:
-        issues.append(ValidationIssue("empty-topology", f"table under '## {title}' has no rows"))
+        issues.append(Diagnostic("empty-topology", f"table under '## {title}' has no rows"))
     for _line, row in table.rows:
         if len(row) != len(table.header) or any(not cell.strip() for cell in row):
             issues.append(
-                ValidationIssue(
+                Diagnostic(
                     "incomplete-topology-row",
                     f"table under '## {title}' has a row with blank or missing cells",
                 )
@@ -352,7 +348,7 @@ def _check_topologies(
     capabilities: dict[str, Any],
     lifecycle: str | None,
     edges: list[tuple[str, str]],
-    issues: list[ValidationIssue],
+    issues: list[Diagnostic],
 ) -> None:
     source = _check_table_shape(markdown, template, _SECTION_SOURCE_TOPOLOGY, issues)
     claimed = {module for module in capabilities.get("modules", []) if isinstance(module, str)}
@@ -363,14 +359,14 @@ def _check_topologies(
             occurrences = sum(module in modules for modules in row_modules)
             if occurrences == 0:
                 issues.append(
-                    ValidationIssue(
+                    Diagnostic(
                         "missing-source-module",
                         f"source-enforcement topology has no row for {module}",
                     )
                 )
             elif occurrences > 1:
                 issues.append(
-                    ValidationIssue(
+                    Diagnostic(
                         "duplicate-source-module",
                         f"source-enforcement topology repeats {module}",
                     )
@@ -382,13 +378,13 @@ def _check_topologies(
     row_text = [" ".join(row).casefold() for _line, row in artifacts.rows]
     if not any("common runtime" in row for row in row_text):
         issues.append(
-            ValidationIssue("missing-artifact-role", "artifact topology has no common runtime row")
+            Diagnostic("missing-artifact-role", "artifact topology has no common runtime row")
         )
     if lifecycle is not None:
         selected_keyword = _LIFECYCLE_PROFILES[lifecycle].artifact_keyword
         if not any(selected_keyword in row and "lifecycle" in row for row in row_text):
             issues.append(
-                ValidationIssue(
+                Diagnostic(
                     "missing-artifact-role",
                     f"artifact topology has no {selected_keyword} lifecycle extension row",
                 )
@@ -400,7 +396,7 @@ def _check_topologies(
                 continue
             if any(sibling.artifact_keyword in row and "lifecycle" in row for row in row_text):
                 issues.append(
-                    ValidationIssue(
+                    Diagnostic(
                         "unexpected-artifact-role",
                         f"artifact topology lists a stray {sibling.artifact_keyword} "
                         "lifecycle extension row",
@@ -411,7 +407,7 @@ def _check_topologies(
             dialect.casefold() in row and "adapter" in row for row in row_text
         ):
             issues.append(
-                ValidationIssue(
+                Diagnostic(
                     "missing-artifact-role",
                     f"artifact topology has no separate {dialect} adapter row",
                 )
@@ -420,18 +416,18 @@ def _check_topologies(
         len(row) > 1 and "development-only" in row[1].casefold() for _line, row in artifacts.rows
     ):
         issues.append(
-            ValidationIssue(
+            Diagnostic(
                 "missing-artifact-role", "artifact topology has no development-only tooling row"
             )
         )
 
 
-def _check_quality(markdown: str, template: str, issues: list[ValidationIssue]) -> None:
+def _check_quality(markdown: str, template: str, issues: list[Diagnostic]) -> None:
     title = _SECTION_QUALITY
     table = _table_in_section(markdown, title)
     canonical = _table_in_section(template, title)
     if table is None:
-        issues.append(ValidationIssue("missing-section", f"missing '## {title}' or its table"))
+        issues.append(Diagnostic("missing-section", f"missing '## {title}' or its table"))
         return
     if canonical is None:
         raise DepGraphFailure("template has no mandatory quality table")
@@ -439,7 +435,7 @@ def _check_quality(markdown: str, template: str, issues: list[ValidationIssue]) 
         _normalize(cell) for cell in canonical.header
     ]:
         issues.append(
-            ValidationIssue("quality-header", "quality table does not retain the canonical columns")
+            Diagnostic("quality-header", "quality table does not retain the canonical columns")
         )
 
     rows = {_normalize(row[0]): row for _line, row in table.rows if row}
@@ -448,14 +444,12 @@ def _check_quality(markdown: str, template: str, issues: list[ValidationIssue]) 
         normalized = _normalize(label)
         row = rows.get(normalized)
         if row is None:
-            issues.append(
-                ValidationIssue("missing-quality-row", f"quality table has no '{label}' row")
-            )
+            issues.append(Diagnostic("missing-quality-row", f"quality table has no '{label}' row"))
             continue
         for index, header in enumerate(table.header):
             if index >= len(row) or not row[index].strip():
                 issues.append(
-                    ValidationIssue(
+                    Diagnostic(
                         "incomplete-quality-row",
                         f"quality row '{label}' has a blank {header} cell",
                     )
@@ -464,20 +458,18 @@ def _check_quality(markdown: str, template: str, issues: list[ValidationIssue]) 
     coverage = rows.get(_normalize("Code coverage"), [])
     if coverage and not re.search(r"\b\d+(?:\.\d+)?\s*%", " ".join(coverage)):
         issues.append(
-            ValidationIssue(
-                "coverage-threshold", "Code coverage row has no explicit numeric percentage"
-            )
+            Diagnostic("coverage-threshold", "Code coverage row has no explicit numeric percentage")
         )
     typing = rows.get(_normalize("Strict static typing"), [])
     if typing and "strict" not in " ".join(typing).casefold():
         issues.append(
-            ValidationIssue("strict-typing", "Strict static typing row does not enable strict mode")
+            Diagnostic("strict-typing", "Strict static typing row does not enable strict mode")
         )
     database = rows.get(_normalize("Database-backed verification"), [])
     database_text = " ".join(database).casefold()
     if database and not ("skip" in database_text and "reason" in database_text):
         issues.append(
-            ValidationIssue(
+            Diagnostic(
                 "database-skip-policy",
                 "Database-backed verification row must report every skipped check with a reason",
             )
@@ -486,30 +478,39 @@ def _check_quality(markdown: str, template: str, issues: list[ValidationIssue]) 
     _check_aggregate_commands(_section(markdown, title) or "", issues)
 
 
-def _check_aggregate_commands(section: str, issues: list[ValidationIssue]) -> None:
-    declaration = _SCHEDULING_CLASSES_RE.search(section)
-    declared = _BACKTICKED_RE.findall(declaration.group("declared")) if declaration else []
+def _check_aggregate_commands(section: str, issues: list[Diagnostic]) -> None:
+    items = list_items(section)
+    declared: list[str] = []
+    named: set[str] = set()
+    complete = False
+    for item in items:
+        classes = _SCHEDULING_CLASSES_RE.match(item)
+        if classes is not None:
+            declared.extend(CODE_SPAN_RE.findall(classes.group("declared")))
+        aggregate = _CLASS_AGGREGATE_RE.match(item)
+        if aggregate is not None:
+            named.add(aggregate.group("scheduling_class"))
+        complete = complete or _COMPLETE_AGGREGATE_RE.match(item) is not None
     if not declared:
         issues.append(
-            ValidationIssue(
+            Diagnostic(
                 "missing-aggregate-command",
                 "quality section declares no scheduling classes, so the aggregate commands it "
                 "owes cannot be determined",
             )
         )
-    named = {match.group("scheduling_class") for match in _CLASS_AGGREGATE_RE.finditer(section)}
     for scheduling_class in declared:
         if scheduling_class not in named:
             issues.append(
-                ValidationIssue(
+                Diagnostic(
                     "missing-aggregate-command",
                     f"quality section has no aggregate command for the declared scheduling "
                     f"class {scheduling_class!r}",
                 )
             )
-    if not _COMPLETE_AGGREGATE_RE.search(section):
+    if not complete:
         issues.append(
-            ValidationIssue(
+            Diagnostic(
                 "missing-aggregate-command",
                 "quality section has no complete verification command over every scheduling class",
             )
@@ -522,12 +523,12 @@ def validate_language_spec(
     modules_markdown: str,
     template: str,
     adapter_schema: dict[str, Any],
-) -> tuple[list[ValidationIssue], str | None, str | None]:
+) -> tuple[list[Diagnostic], str | None, str | None]:
     """Return all completion issues plus the selected slice/lifecycle when known."""
-    issues: list[ValidationIssue] = []
+    issues: list[Diagnostic] = []
     for match in _UNRESOLVED_RE.finditer(markdown):
         issues.append(
-            ValidationIssue(
+            Diagnostic(
                 "unresolved-marker",
                 f"line {_line_number(markdown, match.start())} contains unresolved marker "
                 f"{match.group(0)!r}",
@@ -538,7 +539,7 @@ def validate_language_spec(
     issues.extend(json_issues)
     if len(authored) != 1:
         issues.append(
-            ValidationIssue(
+            Diagnostic(
                 "describe-claim",
                 f"expected exactly one describe claim JSON fence, found {len(authored)}",
             )
@@ -551,7 +552,7 @@ def validate_language_spec(
         schema_problem = validation_error(authored[0], adapter_schema)
         if schema_problem is not None:
             issues.append(
-                ValidationIssue(
+                Diagnostic(
                     "invalid-describe-envelope",
                     "describe claim does not satisfy conformance-adapter.schema.json: "
                     + schema_problem,
@@ -559,7 +560,7 @@ def validate_language_spec(
             )
         if selected is None:
             issues.append(
-                ValidationIssue(
+                Diagnostic(
                     "slice-selection",
                     "describe claim must select exactly one slice tag with caseTags.include",
                 )
@@ -571,7 +572,7 @@ def validate_language_spec(
         envelope = canonical.get(selected)
         if envelope is None:
             issues.append(
-                ValidationIssue(
+                Diagnostic(
                     "unknown-slice", f"selected slice {selected!r} is not declared in slices.md"
                 )
             )
@@ -580,7 +581,7 @@ def validate_language_spec(
             for key in sorted(set(capabilities) | set(expected_capabilities)):
                 if capabilities.get(key) != expected_capabilities.get(key):
                     issues.append(
-                        ValidationIssue(
+                        Diagnostic(
                             "claim-mismatch",
                             f"capabilities.{key} differs from the canonical claim",
                         )
@@ -589,7 +590,7 @@ def validate_language_spec(
     lifecycle = _lifecycle(expected_capabilities) if expected_capabilities else None
     if selected is not None and selected in canonical and lifecycle is None:
         issues.append(
-            ValidationIssue(
+            Diagnostic(
                 "lifecycle-incomplete-slice",
                 f"selected slice {selected!r} is not a lifecycle-complete authoring choice",
             )
@@ -643,12 +644,7 @@ def _validate_one(language_spec: Path, spec_dir: Path) -> int:
         return 1
 
     if issues:
-        print(
-            f"language spec validation FAILED ({len(issues)} problem(s)): {language_spec}",
-            file=sys.stderr,
-        )
-        for issue in issues:
-            print(f"  - [{issue.code}] {issue.message}", file=sys.stderr)
+        report_failures("language spec validation", str(language_spec), issues)
         return 1
 
     print(f"language spec OK: {language_spec} ({selected}, {lifecycle} lifecycle)")

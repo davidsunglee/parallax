@@ -4,22 +4,17 @@
 # together. Each module (core/, reference-harness/, languages/<lang>/) uses its
 # own native toolchain; this file only fans out into them.
 #
-# The sections below follow the same order every time: configuration,
-# repository-wide gates, introspection and reports, then one section per scope —
-# `core-`, `harness-`, and the language scopes alphabetically.
+# The scopes this file fans out into:
 #   (bare)     repository-wide gates, reports, and graph introspection
 #   core-      validation of the core spec + compatibility corpus
 #   harness-   the reference harness's own code health and test suite
 #   python-    the Python implementation (future: java-, rust-, ...)
 #
-# Within a section the order is: aggregates, the scheduling-class test recipes,
-# the semantic-surface recipes, other focused selectors, other execution
-# recipes, then mutating helpers.
-#
 # Every public recipe reads `<scope>-<operation>[-<qualifier>]`, drawing its
 # operation from the closed vocabulary in `core/spec/language-testing.md` — the
-# normative contract for the grammar, the roles, and the scheduling partition.
-# `just check-gates` fails when this file stops matching it.
+# normative contract for the grammar, the roles, the scheduling partition, and
+# the order the sections below are declared in. `just check-gates` fails when
+# this file stops matching it.
 #
 # A scope names the subject under validation, not the module implementing it:
 # the `core-*` tools live in the harness, and `harness-*` is the harness's own

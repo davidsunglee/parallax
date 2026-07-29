@@ -406,14 +406,16 @@ implementation collects belongs to exactly one **scheduling class**, and each
 class has one aggregate command running every row above assigned to it.
 
 - **(decide and record — All slices)** The scheduling classes this
-  implementation declares, on one line opening **Scheduling classes.** — each
-  class a backticked token, and no other backticked text on that line.
-- **(decide and record — All slices)** One line per declared class, opening
+  implementation declares, in one list item opening **Scheduling classes.** —
+  each class a backticked token, and no other backticked text in that item. The
+  item may wrap across lines.
+- **(decide and record — All slices)** One list item per declared class, opening
   **Aggregate `<class>` command.**, naming the local command and the blocking CI
   job that run every row above assigned to that class.
-- **(decide and record — All slices)** One line opening **Complete verification
-  command.**, naming the command that composes every class aggregate above, plus
-  the exact summary format for checks that were run, failed, or skipped.
+- **(decide and record — All slices)** One list item opening **Complete
+  verification command.**, naming the command that composes every class aggregate
+  above, plus the exact summary format for checks that were run, failed, or
+  skipped.
 
 ## Completion check
 
