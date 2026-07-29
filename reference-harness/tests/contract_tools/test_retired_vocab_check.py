@@ -12,8 +12,8 @@ from pathlib import Path
 
 from reference_harness.retired_vocab_check import check_text, main, scanned_files
 
-# reference-harness/tests/ -> reference-harness/ -> repo root
-_REPO_ROOT = Path(__file__).resolve().parents[2]
+# reference-harness/tests/contract_tools/ -> tests/ -> reference-harness/ -> repo root
+_REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
 def test_real_tree_is_clean() -> None:

@@ -118,28 +118,32 @@ Run commands from the repository root. Inspect the exact capabilities and case
 membership of the Python claim:
 
 ```bash
-just core-slice-inspect slice-snapshot-1
+just core-show-slice slice-snapshot-1
 ```
 
-Run database-free repository and Python checks:
+Every public recipe reads `<scope>-<operation>[-<qualifier>]`, so its scope, its
+effect, and whether it mutates anything are readable from the name alone.
+
+Run every check that needs no database:
 
 ```bash
-just lint
-just core-dep-graph
+just check-dbfree
+```
+
+Run one scope's checks while iterating:
+
+```bash
+just core-check
+just harness-check-dbfree
 just python-static
 ```
 
-Run the Python implementation against its pinned Testcontainers Postgres:
+Run the database-backed checks against pinned Testcontainers databases, or the
+complete repository merge gate:
 
 ```bash
-just python-verify
-```
-
-Run the reference oracle or the complete repository merge gate:
-
-```bash
-just oracle-test
-just verify
+just check-db
+just check
 ```
 
 Docker must be available for database-backed commands. Testcontainers locates
@@ -175,8 +179,8 @@ of who claims them.
 Inspect and verify the result with:
 
 ```bash
-just core-slice-inspect <slice-name>
-just core-dep-graph
+just core-show-slice <slice-name>
+just core-check-slice-profiles
 ```
 
 ### Build A Language Implementation
@@ -196,7 +200,7 @@ runtime. In outline:
 Validate a completed language spec with:
 
 ```bash
-just core-language-spec-check languages/<target>/spec/<spec>.md
+just core-show-language-spec languages/<target>/spec/<spec>.md
 ```
 
 ### Add Or Change Core Behavior
@@ -213,7 +217,7 @@ Use the [module catalog](core/spec/modules.md),
 shapes as the authoring references. Add benchmark coverage when a change makes
 performance characteristics such as query shape, round trips, write shape, or
 memory part of the claim, then run the smallest relevant gates followed by
-`just verify` when feasible.
+`just check` when feasible.
 
 ## License
 

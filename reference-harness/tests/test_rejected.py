@@ -6,7 +6,8 @@ normative rule in `then.rejectedRule`. These tests exercise, without a database:
 
 * every authored `rejected` case runs through :func:`run_case` with NO provider —
   the pre-SQL refusal needs no dialect / provisioning / execution — and its named
-  rule is the one the validator raises;
+  rule is the one the validator raises. This module is their sole runner, and the
+  partition against the dialect-parametrized collection is pinned here;
 * the model-aware validators (:mod:`op_validate` / :mod:`write_validate`) ACCEPT
   valid operations / documents and RAISE the exact rule for each misuse;
 * the runner FAILS loudly when a valid input is (mis)authored as rejected or the
@@ -502,6 +503,24 @@ def test_rejected_case_is_refused_pre_sql_db_free(case: Case) -> None:
     # `None` is a safe stand-in for the provider: a rejected case is refused with NO
     # database (no dialect / provisioning / execution is reached).
     run_case(case, None)  # type: ignore[arg-type]
+
+
+def test_rejected_and_dialect_executed_cases_partition_the_harness_lane() -> None:
+    # This module owns every `rejected` case and the dialect-parametrized runner owns
+    # the rest, so the two selections must stay disjoint and together cover the whole
+    # harness lane. Recomputed from `discover_cases` rather than read off the sibling
+    # module: a shared filter that drifted would agree with itself and prove nothing.
+    harness_lane = [c for c in discover_cases(_COMPATIBILITY_ROOT) if c.lane != "api-conformance"]
+    rejected = {c.path for c in harness_lane if c.shape == "rejected"}
+    dialect_executed = {c.path for c in harness_lane if c.shape != "rejected"}
+
+    assert rejected == {c.path for c in _rejected_cases()}, (
+        "a rejected case outside the harness lane would be run here and nowhere else"
+    )
+    assert rejected, "no rejected cases discovered under core/compatibility/cases"
+    assert dialect_executed, "no dialect-executed cases discovered under core/compatibility/cases"
+    assert rejected.isdisjoint(dialect_executed)
+    assert rejected | dialect_executed == {c.path for c in harness_lane}
 
 
 # --- the validators ACCEPT valid inputs (no false rejections) ---------------

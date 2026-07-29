@@ -25,11 +25,25 @@ jobs:
         with:
           extra_args: --results=verified,unknown
 
-  # Static checks: lint + schema/meta-schema validation + sqlglot-parse +
-  # dependency-graph DAG check + the coverage gate (every in-scope module has a
-  # fixture) + the profile gate (each tagged slice is consistent with its
-  # canonical describe claim). No Docker required.
-  lint:
+  # Validation of the core spec and compatibility corpus: module-graph DAG
+  # legality + the coverage gate (every in-scope module has a fixture), the
+  # profile gate (each tagged slice is consistent with its canonical describe
+  # claim), schema/meta-schema validation + sqlglot-parse, and the
+  # language-contract diagnostics against canonical inputs. No Docker required.
+  core-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: extractions/setup-just@v4
+      - uses: astral-sh/setup-uv@v7
+      - name: Sync harness deps
+        working-directory: reference-harness
+        run: uv sync --frozen
+      - name: just core-check
+        run: just core-check
+
+  # Markdown lint across core/spec, languages/**/spec, and root.
+  lint-markdown:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -40,14 +54,8 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - uses: astral-sh/setup-uv@v7
-      - name: Sync harness deps
-        working-directory: reference-harness
-        run: uv sync --frozen
-      - name: just lint
-        run: just lint
-      - name: just core-dep-graph
-        run: just core-dep-graph
+      - name: just lint-markdown
+        run: just lint-markdown
 
   # Conventional-commit validation across the PR commit range.
   commitlint:
@@ -66,9 +74,23 @@ jobs:
       - name: Validate PR commits
         run: pnpm exec commitlint --from ${{ github.event.pull_request.base.sha }} --to ${{ github.event.pull_request.head.sha }}
 
-  # The compatibility suite across the database matrix. Docker is available on
+  # The harness's own code health plus every harness test whose fixture closure
+  # reaches no database provider. No Docker required.
+  harness-check-dbfree:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: extractions/setup-just@v4
+      - uses: astral-sh/setup-uv@v7
+      - name: Sync harness deps
+        working-directory: reference-harness
+        run: uv sync --frozen
+      - name: just harness-check-dbfree
+        run: just harness-check-dbfree
+
+  # The compatibility corpus across the database matrix. Docker is available on
   # GitHub-hosted ubuntu runners, so Testcontainers works out of the box.
-  suite:
+  harness-check-db:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -81,10 +103,10 @@ jobs:
       - name: Sync harness deps
         working-directory: reference-harness
         run: uv sync --frozen
-      - name: Run suite (${{ matrix.database }})
+      - name: just harness-check-db (${{ matrix.database }})
         env:
           PARALLAX_DATABASES: ${{ matrix.database }}
-        run: just oracle-test
+        run: just harness-check-db
 
   # The Docker-free Python static lane across the supported CPython matrix: ruff
   # (lint + format check), Pyright strict, the generated import-linter

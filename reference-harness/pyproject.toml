@@ -42,7 +42,14 @@ dev = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-ra"
+addopts = "-ra --strict-markers"
+# The scheduling partition. Neither marker is ever authored onto a test: the
+# collection hook in tests/conftest.py derives exactly one of them per item from
+# that item's fixture closure, so zero and both are unrepresentable.
+markers = [
+    "dbfree: requires no live database provider",
+    "db: requires a live database provider",
+]
 
 [tool.ruff]
 line-length = 100

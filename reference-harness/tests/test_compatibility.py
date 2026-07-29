@@ -2,9 +2,10 @@
 
 For each available database provider (selected by ``PARALLAX_DATABASES``,
 default: all registered), one container is booted for the whole module and every
-case is run against it. This is the m-case-format runner exercising the suite end-to-end:
-schema conformance, triple equivalence, normalization determinism, and serde
-round-trip — against real Postgres.
+case whose outcome depends on the dialect is run against it. This is the
+m-case-format runner exercising the suite end-to-end: schema conformance, triple
+equivalence, normalization determinism, and serde round-trip — against real
+Postgres.
 
 Requires Docker (Testcontainers). If no provider can be started, the suite errors
 rather than silently passing, because the walking skeleton's whole point is the
@@ -25,12 +26,19 @@ from reference_harness.providers import available_dialects, provider_for
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 COMPATIBILITY_ROOT = _REPO_ROOT / "core" / "compatibility"
 
+# Two exclusions, for unrelated reasons.
+#
 # api-conformance-lane cases (boundary retry cases, read-lock matrix reads) are
 # schema-validated by the harness but satisfied by each language's API Conformance
 # Suite, so they are NOT executed here. They still round-trip through schema
 # validation (test_schema_validate) and the profile gate (test_dep_graph).
+#
+# `rejected`-shape cases are refused before the dialect is read, so a dialect axis
+# proves nothing about them: running one per available dialect repeats an identical
+# database-free assertion. test_rejected.py is their sole runner, and the two
+# collections are pinned there as a partition of the harness lane.
 ALL_CASES = discover_cases(COMPATIBILITY_ROOT)
-CASES = [c for c in ALL_CASES if c.lane != "api-conformance"]
+CASES = [c for c in ALL_CASES if c.lane != "api-conformance" and c.shape != "rejected"]
 DIALECTS = available_dialects()
 
 
