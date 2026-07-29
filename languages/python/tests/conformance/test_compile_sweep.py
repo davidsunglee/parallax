@@ -279,8 +279,8 @@ _OPT_LOCK_AND_PK_GEN_WRITE_SEQUENCES: Final[frozenset[str]] = frozenset(
 )
 # `m-batch-write-002` is an unversioned Wallet update whose two rows assign non-uniform per-key
 # values (`m-batch-write` "Set-based flush": non-uniform values decompose into
-# one UPDATE per distinct key, `_decomposes_per_row`'s own uniform-value
-# check). It compiles as two
+# one UPDATE per distinct key, `batch_write.update_collapses`'s own
+# uniform-value check). It compiles as two
 # independent single-row keyed updates, neither versioned nor pk-gen-managed,
 # so neither needs `lower_write`'s multi-row refusal.
 #
