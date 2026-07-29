@@ -1594,14 +1594,13 @@ def test_write_sequence_compile_wraps_a_lowering_failure_as_engine_error() -> No
 
 
 # --------------------------------------------------------------------------- #
-# The observation-binding                                                      #
-# discriminator (`engine._binds_row_observations`) is derived SEMANTICALLY —   #
-# mutation kind, versioned-ness, per-row observation control keys, pk-gen      #
-# management, and (for update) per-key value uniformity — never from the       #
-# case's own authored `statements` count, which is a count-consistency        #
-# ASSERTION the real plan verifies independently (`_check_statement_count_    #
-# consistency`). Finding E: a structured predicate-write instruction reaching  #
-# this seam refuses loudly, never a bare `KeyError`.                          #
+# The observation-binding discriminator (`engine._binds_row_observations`) is #
+# derived SEMANTICALLY — mutation kind, versioned-ness, per-row observation   #
+# control keys, pk-gen management, and (for update) per-key value uniformity  #
+# — never from the case's own authored `statements` count, which is a         #
+# count-consistency ASSERTION the real plan verifies independently            #
+# (`_check_statement_count_consistency`). A structured predicate-write        #
+# instruction reaching this seam refuses loudly, never a bare `KeyError`.     #
 # --------------------------------------------------------------------------- #
 def test_versioned_delete_decomposes_per_row_and_gates_each_key() -> None:
     # m-batch-write-004's own shape: a versioned entity's multi-row delete
@@ -1993,10 +1992,10 @@ def test_authored_statement_count_mismatch_is_rejected() -> None:
 
 
 def test_predicate_shaped_scenario_write_lowers_readless_not_a_keyerror() -> None:
-    # Finding E's own witness (`m-batch-write-005`'s shape): a structured
-    # PREDICATE-write instruction (`target`/`predicate`) reaching the scenario
-    # compile lane is never mistaken for a keyed-write entry list (no bare
-    # `KeyError`) — it lowers readless end to end.
+    # `m-batch-write-005`'s shape: a structured PREDICATE-write instruction
+    # (`target`/`predicate`) reaching the scenario compile lane is never
+    # mistaken for a keyed-write entry list (no bare `KeyError`) — it lowers
+    # readless end to end.
     case = _synthetic_write(
         "scenario",
         {
