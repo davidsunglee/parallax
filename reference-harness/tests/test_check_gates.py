@@ -100,6 +100,9 @@ def test_each_drift_reports_its_own_code(
         error = capsys.readouterr().err
         assert f"[{scenario['code']}]" in error, (scenario["name"], error)
         assert scenario["message"] in error, (scenario["name"], error)
+        expected = scenario.get("problems")
+        if expected is not None:
+            assert f"FAILED ({expected} problem(s))" in error, (scenario["name"], error)
 
 
 def test_a_renamed_surface_directory_is_reported(
