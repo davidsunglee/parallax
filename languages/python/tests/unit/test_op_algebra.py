@@ -176,6 +176,42 @@ def test_order_key_defaulted_direction_round_trips() -> None:
     assert op_algebra.serialize(node) == doc
 
 
+def test_order_key_authored_null_placement_round_trips() -> None:
+    # Null Placement round-trips verbatim in both directions and under BOTH
+    # placements — including the explicit `last`, which denotes the same order as
+    # omission and must still survive as an authored value.
+    for direction in ("asc", "desc"):
+        for placement in ("first", "last"):
+            doc: dict[str, Any] = {
+                "orderBy": {
+                    "operand": {"all": {}},
+                    "keys": [{"attr": "Order.sku", "direction": direction, "nulls": placement}],
+                }
+            }
+            assert op_algebra.serialize(op_algebra.deserialize(doc)) == doc
+
+
+def test_order_key_omitted_null_placement_stays_distinct_from_explicit_last() -> None:
+    # Omission and an explicit `last` mean the same ORDER but are distinct
+    # authorings: the omitted form deserializes to `None` and serializes back
+    # omitted, so canonical round-trip never manufactures the default.
+    omitted: dict[str, Any] = {
+        "orderBy": {"operand": {"all": {}}, "keys": [{"attr": "Order.sku", "direction": "desc"}]}
+    }
+    node = op_algebra.deserialize(omitted)
+    key = cast("op_algebra.OrderBy", node).keys[0]
+    assert key.nulls is None
+    assert op_algebra.serialize(node) == omitted
+    assert key.nulls_last().nulls == "last"
+
+
+def test_order_key_null_placement_is_single_shot() -> None:
+    key = op_algebra.OrderKey(attr="Order.sku", direction="desc")
+    assert key.nulls_first().nulls == "first"
+    with pytest.raises(ValueError, match="single-shot"):
+        key.nulls_first().nulls_last()
+
+
 @pytest.mark.parametrize(
     "doc, message",
     cast(
@@ -208,6 +244,15 @@ def test_order_key_defaulted_direction_round_trips() -> None:
             (
                 {"orderBy": {"operand": {"all": {}}, "keys": [{"attr": "Order.id", "x": 1}]}},
                 r"orderBy key: unexpected key\(s\) \['x'\]",
+            ),
+            (
+                {
+                    "orderBy": {
+                        "operand": {"all": {}},
+                        "keys": [{"attr": "Order.sku", "nulls": "l"}],
+                    }
+                },
+                "`nulls` must be 'first' or 'last'",
             ),
             (
                 {

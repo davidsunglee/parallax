@@ -33,7 +33,7 @@ _VALUE_OBJECT_TO_MANY_READS: Final[frozenset[str]] = frozenset(
 # Orders op-algebra reads use the full declared scalar projection emitted by
 # the default find projection. Case 028 is intentionally absent from the corpus.
 _ORDERS_OP_ALGEBRA_READS: Final[frozenset[str]] = frozenset(
-    f"m-op-algebra-{n:03d}" for n in (*range(1, 28), 29, 30, 31, 32, 33, 34)
+    f"m-op-algebra-{n:03d}" for n in (*range(1, 28), *range(29, 39))
 )
 # Value-object instance-form materialization reads (the object lane): the slot-4
 # document splice projects the `address` column (m-sql *Read projection*). Their graph

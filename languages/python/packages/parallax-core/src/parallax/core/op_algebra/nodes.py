@@ -166,13 +166,31 @@ class OrderKey:
     """One ordering term of an ``orderBy`` directive.
 
     ``direction`` is ``None`` when the authored key omitted it (the schema's
-    optional ``direction`` defaults to ``asc``). Serde round-trips that absence
-    faithfully — an omitted ``direction`` serializes back omitted — while SQL
-    lowering treats the absent direction as the ``asc`` default.
+    optional ``direction`` defaults to ``asc``), and ``nulls`` is ``None`` when it
+    omitted the Null Placement (schema default ``last``). Serde round-trips both
+    absences faithfully — an omitted member serializes back omitted — while SQL
+    lowering treats them as the ``asc`` and ``last`` defaults.
     """
 
     attr: str
     direction: Literal["asc", "desc"] | None = None
+    nulls: Literal["first", "last"] | None = None
+
+    def nulls_first(self) -> OrderKey:
+        """This key with NULLs placed first. Single-shot (m-op-algebra)."""
+        return self._with_placement("first")
+
+    def nulls_last(self) -> OrderKey:
+        """This key with NULLs placed last — the default, stated explicitly."""
+        return self._with_placement("last")
+
+    def _with_placement(self, placement: Literal["first", "last"]) -> OrderKey:
+        if self.nulls is not None:
+            raise ValueError(
+                f"{self.attr}: null placement is single-shot and is already "
+                f"{self.nulls!r}; derive the key from the unplaced base"
+            )
+        return OrderKey(attr=self.attr, direction=self.direction, nulls=placement)
 
 
 @dataclass(frozen=True, slots=True)

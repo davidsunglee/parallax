@@ -272,7 +272,6 @@ def compile_read(
     *,
     result_form: _ResultForm = "row",
     lock: LockMode | None = None,
-    relationship_order: bool = False,
     include_value_objects: bool | frozenset[str] = False,
 ) -> CompiledRead:
     """Compile a read operation to one self-contained :class:`CompiledRead`.
@@ -318,16 +317,6 @@ def compile_read(
     read-lock is an object-find property); grouped / aggregate reads are not yet
     reachable. The conformance scenario runner derives ``lock`` from the step's unit
     of work concurrency mode.
-
-    ``relationship_order`` marks the peeled ``orderBy`` (if any) as a **declared
-    relationship ordering** (`m-deep-fetch` "Ordered to-many children", a deep-fetch
-    child level's own model-derived directive) rather than a user-authored
-    directive: a NULLABLE key renders through the dialect's NULLS-last rule
-    (`Dialect.null_order`) instead of the plain `col dir` rendering every ordinary
-    `orderBy` operation node still gets — the canonical, dialect-independent
-    NULLs-last-both-directions rule applies only to the declared form (a
-    non-nullable key renders identically either way, matching every existing
-    relationship-ordering golden byte-for-byte).
     """
     facet = _inheritance_view(model)
     storage = _storage_view(model)
@@ -349,7 +338,6 @@ def compile_read(
             dialect,
             result_form,
             lock,
-            relationship_order,
         )
         return CompiledRead(
             statement,
@@ -380,7 +368,7 @@ def compile_read(
     where_sql = _lower_predicate(predicate, scope)
     if where_sql:
         parts.append(f"where {where_sql}")
-    _append_result_shape(parts, scope, distinct, order_keys, limit, lock, relationship_order)
+    _append_result_shape(parts, scope, distinct, order_keys, limit, lock)
 
     statement = _normalize(Statement(" ".join(parts), tuple(ctx.binds)))
     # A non-family read projects no tag and no variant literal, so there is
@@ -430,22 +418,15 @@ def _append_result_shape(
     order_keys: tuple[OrderKey, ...],
     limit: int | None,
     lock: LockMode | None,
-    relationship_order: bool = False,
 ) -> None:
     """Append the shared ``order by`` / ``limit`` / read-lock tail (m-sql), used by
     every single-select read form (plain, table-per-hierarchy, and a
     table-per-concrete-subtype read resolving to one concrete).
-
-    ``relationship_order`` (m-deep-fetch "Ordered to-many children") renders each
-    NULLABLE key through the dialect's NULLs-last rule (``Dialect.null_order``);
-    a non-nullable key, and every key under an ordinary (non-declared) `orderBy`,
-    renders the plain ``col dir`` form — the two forms coincide for `asc` on
-    Postgres and for any non-nullable key, so this changes no existing golden.
     """
     if order_keys:
-        # An authored key that omitted `direction` (serde `None`) lowers to the
-        # schema default `asc`.
-        terms = [_order_term(scope, key, relationship_order) for key in order_keys]
+        # An authored key that omitted `direction` or `nulls` (serde `None`) lowers
+        # to the schema defaults `asc` and `last`.
+        terms = [_order_term(scope, key) for key in order_keys]
         parts.append("order by " + ", ".join(terms))
     if limit is not None:
         parts.append(scope.dialect.limit_clause())
@@ -456,13 +437,18 @@ def _append_result_shape(
         parts.append(scope.dialect.read_lock_suffix(scope.alias))
 
 
-def _order_term(scope: _EntityScope, key: OrderKey, relationship_order: bool) -> str:
-    """One ``order by`` term: `m-deep-fetch`'s declared-relationship NULLs-last
-    rule for a NULLABLE key under ``relationship_order``, else the plain form."""
+def _order_term(scope: _EntityScope, key: OrderKey) -> str:
+    """One ``order by`` term: the dialect's Null Placement term for a NULLABLE key,
+    else the plain form (`m-sql` "``order by`` key terms").
+
+    A non-nullable key has no NULLs to place, so both placements denote the same
+    order and it renders plain without consulting the dialect — which is why no
+    existing golden moves as placement becomes authorable.
+    """
     direction = key.direction or "asc"
     column_sql = scope.column_of(key.attr)
-    if relationship_order and scope.entity_attribute(key.attr).nullable:
-        return scope.dialect.null_order(column_sql, direction)
+    if scope.entity_attribute(key.attr).nullable:
+        return scope.dialect.null_order(column_sql, direction, key.nulls or "last")
     return f"{column_sql} {direction}"
 
 
@@ -532,7 +518,6 @@ def _compile_inheritance_read(
     dialect: Dialect,
     result_form: _ResultForm,
     lock: LockMode | None,
-    relationship_order: bool = False,
 ) -> tuple[Statement, tuple[EntityIdentity, ...], _RowTransform]:
     """Assemble an inheritance-family read from its plan.
 
@@ -564,7 +549,6 @@ def _compile_inheritance_read(
                 storage,
                 dialect,
                 lock,
-                relationship_order,
             )
             return statement, plan.position, transform
         case _TpcsSinglePlan():
@@ -579,7 +563,6 @@ def _compile_inheritance_read(
                 storage,
                 dialect,
                 lock,
-                relationship_order,
             )
             return statement, plan.position, transform
         case _TpcsUnionPlan():
@@ -600,7 +583,6 @@ def _compile_tph_read(
     storage: _StorageLayoutFacet,
     dialect: Dialect,
     lock: LockMode | None,
-    relationship_order: bool = False,
 ) -> tuple[Statement, _RowTransform]:
     """Assemble a table-per-hierarchy read: one shared correlated `EXISTS`-free
     single-table SELECT (m-sql "Inheritance — table-per-hierarchy lowering").
@@ -629,7 +611,7 @@ def _compile_tph_read(
     if where_terms:
         parts.append("where " + " and ".join(where_terms))
 
-    _append_result_shape(parts, scope, distinct, order_keys, limit, lock, relationship_order)
+    _append_result_shape(parts, scope, distinct, order_keys, limit, lock)
     statement = _normalize(Statement(" ".join(parts), tuple(ctx.binds)))
     return statement, plan.transform
 
@@ -682,7 +664,6 @@ def _compile_tpcs_single(
     storage: _StorageLayoutFacet,
     dialect: Dialect,
     lock: LockMode | None,
-    relationship_order: bool = False,
 ) -> tuple[Statement, _RowTransform]:
     """Assemble a table-per-concrete-subtype read resolving to exactly one
     concrete: an ordinary single-table read of that subtype's own table, no tag,
@@ -706,7 +687,7 @@ def _compile_tpcs_single(
     where_sql = _lower_predicate(plan.inner, scope)
     if where_sql:
         parts.append(f"where {where_sql}")
-    _append_result_shape(parts, scope, distinct, order_keys, limit, lock, relationship_order)
+    _append_result_shape(parts, scope, distinct, order_keys, limit, lock)
     statement = _normalize(Statement(" ".join(parts), tuple(ctx.binds)))
     return statement, plan.transform
 

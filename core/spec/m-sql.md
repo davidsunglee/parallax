@@ -265,7 +265,7 @@ left-to-right.
 | `or` | operands joined by ` or ` |
 | `not` | `not <operand>` |
 | `group` | `( <operand> )` |
-| `orderBy` | `order by t0.col [asc\|desc][, …]` |
+| `orderBy` | `order by <key term>[, …]`, one term per key — `t0.col [asc\|desc]` for a non-nullable key, else the `m-dialect` Null Placement term |
 | `limit` | `limit ?` |
 | `distinct` | `select distinct …` |
 | `navigate`/`exists` | `exists (select 1 from child t1 where t1.fk = t0.key [and <op>])` |
@@ -291,6 +291,19 @@ the literal value is escaped: `contains '50%'` lowers to
 `t0.sku like ? escape ?` with binds `['%50\%%', '\\']`, so the embedded `%` is
 matched literally. `like`/`notLike` pass the bind through verbatim (the value is
 already a pattern, no escape clause).
+
+### `order by` key terms
+
+`orderBy` emits one comma-separated term per key, in the authored key order. A key
+over a **non-nullable** attribute lowers to the plain `t0.col [asc|desc]` term
+under either Null Placement — the placements denote the same order there, so
+neither dialect compensates. A key over a **nullable** attribute delegates its
+whole term to the `m-dialect` Null Placement seam, which owns both the suffix form
+and the leading-rank-term form; the emitter joins the returned terms and never
+composes the placement itself. The canonical Postgres terms are `t0.col asc`,
+`t0.col asc nulls first`, `t0.col desc nulls last`, and `t0.col desc` for
+`asc`/`last`, `asc`/`first`, `desc`/`last`, and `desc`/`first` respectively;
+`m-dialect`'s table is normative for every dialect.
 
 ### Clause order
 

@@ -1,0 +1,37 @@
+# orderBy ASCENDING with `nulls: first` over a NULLABLE key — the placement that has
+# no default anywhere, proven on BOTH dialects (m-op-algebra orderBy + m-dialect NULL
+# ordering).
+#
+# Nulls First is the mirror of the canonical nulls-last default, so the dialect that
+# compensates flips: Postgres treats NULL as largest and must spell an explicit
+# `asc nulls first` suffix, while MariaDB treats it as smallest and already leads with
+# NULLs on `asc`, emitting nothing. `limit 2` makes the placement observable through
+# row MEMBERSHIP, since top-level row comparison is order-insensitive: order 4 (no
+# sku) sorts first and takes a slot the canonical default would have given to the
+# second-smallest sku, which is exactly how this case separates from
+# m-op-algebra-035.
+model: models/orders.yaml
+tags: [m-op-algebra, m-dialect, orderBy, ordering, nulls, nullable, limit, directive, slice-snapshot-1, slice-managed-1]
+shape: read
+when:
+  targetEntity: Order
+  operation:
+    limit:
+      count: 2
+      operand:
+        orderBy:
+          keys:
+            - { attr: Order.sku, direction: asc, nulls: first }
+          operand:
+            all: {}
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0 order by t0.sku asc nulls first limit ?
+        mariadb: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0 order by t0.sku asc limit ?
+      binds: [2]
+  referenceSql: select id, name, sku, qty, price, active, ordered_on from orders order by case when sku is null then 0 else 1 end, sku asc limit 2
+  rows:
+    - { id: 4, name: Margaret, sku: null, qty: 20, price: 40.00, active: true, ordered_on: 2024-04-20 }
+    - { id: 1, name: Ada, sku: A-100, qty: 5, price: 10.50, active: true, ordered_on: 2024-01-05 }
+  roundTrips: 1

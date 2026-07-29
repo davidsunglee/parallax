@@ -238,20 +238,37 @@ set-returning unnest is available.
 
 ### `NULL` ordering
 
-The canonical ordered-relationship rule (`m-deep-fetch`) sorts `NULL`s **last** on
-every key. The two dialects reach that order differently, because their native
-`ORDER BY` `NULL` placement diverges:
+An ordering key carries an authored **Null Placement** alongside its direction (the
+operation Sort Key's `nulls` member, `m-op-algebra`); an omitted placement is `last`,
+the canonical dialect-independent default in both directions (`m-deep-fetch`). The two
+dialects reach a requested placement differently, because their native `ORDER BY`
+`NULL` placement diverges:
 
-| direction | Postgres | MariaDB |
-|---|---|---|
-| `asc` | `order by t0.c asc` (NULLs last by default) | `order by t0.c is null, t0.c asc` |
-| `desc` | `order by t0.c desc nulls last` | `order by t0.c desc` (NULLs last by default) |
+| direction | placement | Postgres | MariaDB |
+|---|---|---|---|
+| `asc` | `last` | `order by t0.c asc` (NULLs last by default) | `order by t0.c is null, t0.c asc` |
+| `desc` | `last` | `order by t0.c desc nulls last` | `order by t0.c desc` (NULLs last by default) |
+| `asc` | `first` | `order by t0.c asc nulls first` | `order by t0.c asc` (NULLs first by default) |
+| `desc` | `first` | `order by t0.c desc` (NULLs first by default) | `order by not t0.c is null, t0.c desc` |
 
-Postgres treats `NULL` as the largest value (so `asc` already trails `NULL`s and
-`desc` needs an explicit `nulls last`); MariaDB/MySQL treat `NULL` as the
-smallest and have **no** `NULLS FIRST/LAST` syntax, so the ascending case forces
-`NULL`s last with a leading `<col> is null` term. The compatibility suite proves
-both forms yield the identical observable order (case `m-deep-fetch-012`).
+Postgres treats `NULL` as the largest value, MariaDB/MySQL as the smallest, so
+exactly one dialect compensates per row and the two placements are mirror images.
+Postgres spells its compensation as a `nulls first`/`nulls last` suffix; MariaDB has
+**no** `NULLS FIRST/LAST` syntax at all, so it compensates with a leading boolean
+rank term (`t0.c is null` sorts `NULL`s last, `not t0.c is null` sorts them first —
+the `m-sql` normalizer's canonical spelling of `is not null`). Where a dialect's
+native default already yields the requested placement it emits neither form: that is
+a deliberate lowering decision recorded here, not an omission.
+
+The seam returns the **whole** rendered key term, comma-joined leading rank term
+included, so a caller joining terms never learns which structure a dialect chose.
+
+Placement is observable only on a **nullable** key. A non-nullable key lowers to the
+plain `t0.c [asc|desc]` term in both dialects under either placement, because there
+are no `NULL`s to place. The compatibility suite proves the compensating and native
+forms yield the identical observable order (case `m-deep-fetch-012` for the
+`asc`/`last` default; `m-op-algebra-035` through `-038` for all four combinations on
+an operation Sort Key).
 
 ## Decision points needed now
 

@@ -216,8 +216,8 @@ def find(
     set attaches the empty/null relationship result and issues no child SQL; a
     back-reference level issues no SQL either (resolved via the assembler's own
     graph-local identity map); otherwise compiles and executes ONE child query
-    (declared relationship ordering rendered through the dialect's NULLs-last
-    rule), applies `familyVariant` materialization (`m-sql`) to its rows, and
+    (carrying the level's declared relationship ordering), applies
+    `familyVariant` materialization (`m-sql`) to its rows, and
     feeds the assembler. Every level is the same three steps — compile,
     execute, transform — with `familyVariant` materialization coming from that
     level's OWN `~parallax.core.sql_gen.CompiledRead.transform_row`, never
@@ -282,7 +282,6 @@ def find(
             child_entity,
             result_form="instance",
             lock=lock,
-            relationship_order=True,
         )
         # A child level takes its narrow from `FetchLevel.narrow_to` (consumed
         # inside `attach_level`), never from the compiled read — only the ROOT

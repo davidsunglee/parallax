@@ -303,9 +303,18 @@ Directives wrap an inner operation rather than filtering:
 
 | Operation | Encoding | Effect |
 |---|---|---|
-| `orderBy` | `{ "orderBy": { "operand", "keys": [ { "attr", "direction"? } ] } }` | order rows; `direction` ∈ `asc` (default) / `desc` |
+| `orderBy` | `{ "orderBy": { "operand", "keys": [ { "attr", "direction"?, "nulls"? } ] } }` | order rows; `direction` ∈ `asc` (default) / `desc`; `nulls` ∈ `first` / `last` (default `last`) |
 | `limit` | `{ "limit": { "operand", "count" } }` | cap the row count |
 | `distinct` | `{ "distinct": { "operand" } }` | deduplicate rows |
+
+A Sort Key's `nulls` member is its **Null Placement**: where `NULL`s sort on that
+key, independent of `direction`. Omitting it means `last` — the canonical,
+dialect-independent default in both directions — and an authored value survives
+canonical round-trip distinctly from omission. Placement is a property of the key,
+not of the dialect: the two dialects' native placement diverges, so `m-dialect`
+carries the per-dialect lowering that makes the observable order identical
+everywhere. It is observable only on a **nullable** attribute; on a non-nullable one
+both placements denote the same order and lower to the same term.
 
 These directives shape the **result set** — its order, its cardinality, its
 deduplication — but **none of them changes the projected column list**. The algebra

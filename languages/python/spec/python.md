@@ -10,11 +10,13 @@ nothing here contradicts the core specification, the canonical claim in
 [`slices.md`](../../../core/spec/slices.md), or the normative module DAG and
 artifact topology in [`modules.md`](../../../core/spec/modules.md).
 
-The Null Placement and complete nested Value Object predicate material below
+The relationship-declaration Null Placement and complete nested Value Object
+predicate material below
 records the accepted target state for COR-50; it does not
 claim those canonical forms exist in the current core specification, schemas,
-or compatibility corpus. The path-root Narrow material is no longer among them:
-it is landed core contract, implemented and lowered. Until COR-50 updates every
+or compatibility corpus. The path-root Narrow material is no longer among them,
+and neither is Sort Key Null Placement: both are landed core contract,
+implemented and lowered. Until COR-50 updates every
 remaining affected core contract,
 schema, model, fixture, case, benchmark, dialect, and claiming frontend
 together, the current core artifacts remain authoritative and the Python

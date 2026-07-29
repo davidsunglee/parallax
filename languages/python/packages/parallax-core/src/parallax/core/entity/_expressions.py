@@ -342,11 +342,17 @@ class AttributeExpr:
         return self._string("contains", value, case_insensitive)
 
     def asc(self) -> OrderKey:
-        """An ascending order-by key over this attribute."""
+        """An ascending order-by key over this attribute.
+
+        Only the Sort Key these converters produce carries the single-shot
+        ``.nulls_first()`` / ``.nulls_last()`` placement modifiers; an Attribute
+        Expression itself exposes neither, so placement is authorable exactly where
+        a direction is.
+        """
         return OrderKey(attr=str(self.ref), direction="asc")
 
     def desc(self) -> OrderKey:
-        """A descending order-by key over this attribute."""
+        """A descending order-by key over this attribute (see :meth:`asc`)."""
         return OrderKey(attr=str(self.ref), direction="desc")
 
     def set(self, value: object) -> AttributeAssignment:

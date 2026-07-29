@@ -101,7 +101,11 @@ _FUNCTION_NAME = "function-name"
 # rule 2 lowercases keywords, so these are lowercased even though they arrive as
 # value tokens. (Unquoted identifiers are already lowercased on the AST and
 # quoted ones tokenize as ``IDENTIFIER``, so lowercasing these VARs is safe.)
-_KEYWORD_VARS = frozenset({"SHARE", "OF"})
+# ``NULLS`` and ``LAST`` join them for the Null Placement suffix of an ordering key
+# (``order by t0.c desc nulls last``, the m-dialect seam): sqlglot tokenizes both as
+# ``VAR`` while ``FIRST`` has its own token type, so without this the canonical form
+# would read ``NULLS LAST`` beside a lowercase ``nulls first``.
+_KEYWORD_VARS = frozenset({"SHARE", "OF", "NULLS", "LAST"})
 
 # String-literal tokens keep their (case-sensitive) text but tokenize with the
 # surrounding quotes STRIPPED; the renderer re-wraps them in single quotes so a

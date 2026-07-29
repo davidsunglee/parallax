@@ -366,7 +366,12 @@
                 "required": ["attr"],
                 "properties": {
                   "attr": { "$ref": "#/$defs/attributeRef" },
-                  "direction": { "enum": ["asc", "desc"], "default": "asc" }
+                  "direction": { "enum": ["asc", "desc"], "default": "asc" },
+                  "nulls": {
+                    "description": "Where NULLs sort on this key, independent of `direction`. Omitted means `last`, the canonical default in both directions. Placement is observable only on a nullable attribute; on a non-nullable one both placements lower to the same term.",
+                    "enum": ["first", "last"],
+                    "default": "last"
+                  }
                 }
               }
             }

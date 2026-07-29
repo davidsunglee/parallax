@@ -283,19 +283,26 @@ def _order_keys(body: Mapping[str, object]) -> tuple[OrderKey, ...]:
         if not isinstance(item, Mapping):
             raise OperationError("orderBy: each key must be a mapping")
         key = cast("Mapping[str, object]", item)
-        _closed(key, frozenset({"attr", "direction"}), "orderBy key")
+        _closed(key, frozenset({"attr", "direction", "nulls"}), "orderBy key")
         if "attr" not in key:
             raise OperationError("orderBy: key missing required key `attr`")
-        # `direction` is optional (schema default `asc`); a key that omits it
-        # deserializes to `None` so serialization can omit it back (round-trip).
+        # `direction` and `nulls` are optional (schema defaults `asc` and `last`); a
+        # key that omits one deserializes to `None` so serialization can omit it
+        # back (round-trip).
         direction: Literal["asc", "desc"] | None = None
         if "direction" in key:
             raw_direction = key["direction"]
             if raw_direction not in ("asc", "desc"):
                 raise OperationError("orderBy: `direction` must be 'asc' or 'desc'")
             direction = raw_direction
+        nulls: Literal["first", "last"] | None = None
+        if "nulls" in key:
+            raw_nulls = key["nulls"]
+            if raw_nulls not in ("first", "last"):
+                raise OperationError("orderBy: `nulls` must be 'first' or 'last'")
+            nulls = raw_nulls
         attr = _ref(key, "attr", "orderBy", _MEMBER_REF, "attribute reference")
-        keys.append(OrderKey(attr=attr, direction=direction))
+        keys.append(OrderKey(attr=attr, direction=direction, nulls=nulls))
     return tuple(keys)
 
 
@@ -611,13 +618,16 @@ def serialize(op: Operation) -> dict[str, object]:
 
 
 def _order_key(key: OrderKey) -> dict[str, object]:
-    # `direction` is optional in the schema (default `asc`); it is emitted only
-    # when it was authored, so a key that omitted it round-trips omitted and a
-    # key that authored it (both `asc` and `desc`) round-trips verbatim —
+    # `direction` and `nulls` are optional in the schema (defaults `asc` and
+    # `last`); each is emitted only when it was authored, so a key that omitted one
+    # round-trips omitted and a key that authored it round-trips verbatim — including
+    # an explicit `last`, which is distinguishable from omission —
     # satisfying `serialize(deserialize(op)) == op` for either authored form.
     entry: dict[str, object] = {"attr": key.attr}
     if key.direction is not None:
         entry["direction"] = key.direction
+    if key.nulls is not None:
+        entry["nulls"] = key.nulls
     return entry
 
 

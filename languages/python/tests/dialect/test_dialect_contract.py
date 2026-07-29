@@ -47,9 +47,11 @@ def test_identifier_quoting(dialect: Dialect) -> None:
 
 
 @pytest.mark.parametrize("dialect", DIALECTS, ids=IDS)
-def test_null_ordering_per_direction(dialect: Dialect) -> None:
-    assert dialect.null_order("t0.c", "asc") == "t0.c asc"
-    assert dialect.null_order("t0.c", "desc") == "t0.c desc nulls last"
+def test_null_ordering_per_direction_and_placement(dialect: Dialect) -> None:
+    assert dialect.null_order("t0.c", "asc", "last") == "t0.c asc"
+    assert dialect.null_order("t0.c", "desc", "last") == "t0.c desc nulls last"
+    assert dialect.null_order("t0.c", "asc", "first") == "t0.c asc nulls first"
+    assert dialect.null_order("t0.c", "desc", "first") == "t0.c desc"
 
 
 @pytest.mark.parametrize("dialect", DIALECTS, ids=IDS)

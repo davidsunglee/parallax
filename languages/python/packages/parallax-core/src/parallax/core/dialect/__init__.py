@@ -94,16 +94,30 @@ class Dialect:
         """The row-limit clause (the count rides as a `?` bind)."""
         return "limit ?"
 
-    def null_order(self, column_sql: str, direction: Literal["asc", "desc"]) -> str:
-        """A relationship-ordering term with this dialect's NULLs-last placement.
+    def null_order(
+        self,
+        column_sql: str,
+        direction: Literal["asc", "desc"],
+        placement: Literal["first", "last"],
+    ) -> str:
+        """One WHOLE ordering-key term placing NULLs where *placement* asks.
 
-        Used by the descriptor-`orderBy` relationship ordering (`m-deep-fetch`),
-        where the canonical rule sorts NULLs last on every key. A user-authored
-        `orderBy` directive renders plain (`m-sql`); it does not go through here.
+        The m-dialect Null Placement seam, used for every ordering key over a
+        NULLABLE attribute — a user-authored `orderBy` Sort Key and the
+        descriptor-`orderBy` relationship ordering alike (a non-nullable key renders
+        the plain term without consulting the dialect, `m-sql`).
+
+        The return value is the complete term text, including any comma-joined
+        LEADING rank term a dialect needs: Postgres compensates with a
+        `nulls first`/`nulls last` suffix while MariaDB has no such syntax and
+        compensates with a leading boolean rank term instead, and no caller composes
+        or splits either form. Where the dialect's native placement already answers
+        the request it returns the plain term — a deliberate lowering decision, not
+        an omission.
         """
-        if direction == "asc":
-            return f"{column_sql} asc"
-        return f"{column_sql} desc nulls last"
+        if (direction, placement) in (("asc", "last"), ("desc", "first")):
+            return f"{column_sql} {direction}"
+        return f"{column_sql} {direction} nulls {placement}"
 
     # -- read lock --------------------------------------------------------- #
     def read_lock_suffix(self, root_alias: str) -> str:
