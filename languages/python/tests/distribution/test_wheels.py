@@ -7,12 +7,8 @@ import tarfile
 import zipfile
 from pathlib import Path
 
-import pytest
-
 from _support.distributions import PRODUCTION_PACKAGES, TOP_PACKAGE_DIR, Wheelhouse
 from _support.repo import PY_ROOT, REPO_ROOT
-
-pytestmark = pytest.mark.artifact
 
 _PACKAGED_SCHEMA = "parallax/descriptor/_schemas/metamodel.schema.json"
 

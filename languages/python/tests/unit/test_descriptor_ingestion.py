@@ -31,8 +31,6 @@ from parallax.descriptor._errors import (
 )
 from parallax.descriptor._ingest import parse_json, parse_yaml
 
-pytestmark = pytest.mark.unit
-
 _REPO = case_format.find_repo_root()
 _CORPUS = _REPO / "core" / "compatibility" / "descriptor-errors"
 _SCHEMA = cast(

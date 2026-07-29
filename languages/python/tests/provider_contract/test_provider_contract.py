@@ -26,8 +26,6 @@ from parallax.conformance import engine, provision
 from parallax.conformance.case_format import default_cases_dir, load_case
 from parallax.core.db_error import DatabaseError
 
-pytestmark = pytest.mark.provider_contract
-
 
 def _grade_case() -> Any:
     return load_case(default_cases_dir() / "m-descriptor-001-quoted-reserved-identifier.yaml")

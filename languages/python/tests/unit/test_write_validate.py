@@ -68,8 +68,6 @@ from parallax.core.metamodel import (
 )
 from parallax.core.unit_work import WriteRejectedError, validate_write
 
-pytestmark = pytest.mark.unit
-
 # A synthetic multi-type entity: every scalar neutral type as a NULLABLE
 # top-level attribute (so a bare `{id, label}` row is a valid INSERT baseline
 # regardless of which field a given test exercises), one required attribute

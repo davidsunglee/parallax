@@ -12,9 +12,9 @@ and the surrounding reads still match their goldens — their rolled-back round
 trips are graded by the conformance run lane, which executes-then-aborts; the
 developer surface discards the buffer before it ever reaches the wire.
 
-Marked ``unit`` as well as ``api_conformance`` (the compile-sweep precedent): it
-is pure, Docker-free, in-process behaviour, so the story executions contribute
-to the unit-lane branch-coverage gate — the story bodies' only DB-free driver.
+Pure, Docker-free, in-process behaviour, so it classifies ``dbfree`` and the
+story executions contribute to the database-free branch-coverage gate — the
+story bodies' only database-free driver.
 """
 
 from __future__ import annotations
@@ -48,8 +48,6 @@ from parallax.core.entity._hub import sealed_model
 from parallax.core.metamodel import EntityMetadata
 from parallax.core.unit_work import WriteRejectedError, validate_write
 from parallax.snapshot.handle import Database, Transaction
-
-pytestmark = [pytest.mark.unit, pytest.mark.api_conformance]
 
 _CASES = {c.case_id: c for c in case_format.load_cases()}
 _STORIES = {story.case_id: story for story in WRITE_STORIES}

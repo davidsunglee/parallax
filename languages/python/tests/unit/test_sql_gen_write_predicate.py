@@ -27,8 +27,6 @@ from parallax.core.sql_gen import (
     compile_write_predicate,
 )
 
-pytestmark = pytest.mark.unit
-
 ORDERS = model("orders")
 ACCOUNT = model("account")
 CUSTOMER = model("customer")

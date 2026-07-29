@@ -3,7 +3,7 @@
 Every ``GRAPH_STORIES`` function executes through the shipped in-process
 pipeline (statement build → canonicalize → plan → compile → port →
 materialize → wrap) against a canned fake ``m-db-port``, so the story bodies
-contribute to the unit-lane coverage gate exactly as ``test_write_no_drift``
+contribute to the database-free coverage gate exactly as ``test_write_no_drift``
 keeps ``stories.py`` in it (pure, Docker-free, in-process behaviour). The
 golden grading — real Postgres, each case's own oracle — stays in
 ``test_story_run.py``; this driver pins that each story RUNS through the
@@ -25,9 +25,6 @@ from parallax.conformance import graph_stories
 from parallax.conformance.class_models import MODELS
 from parallax.core.db_port import Bind, DbPort, Row
 from parallax.snapshot.handle import Database
-
-pytestmark = [pytest.mark.unit, pytest.mark.api_conformance]
-
 
 _ORDER_ROW: Row = {
     "id": 1,
@@ -92,7 +89,7 @@ def test_the_supplemental_history_story_runs_through_the_shipped_surface() -> No
     # SUPPLEMENTAL: `history_of_a_concrete_temporal_node_
     # distinguishes_milestones` is deliberately NOT a `GRAPH_STORIES` entry (not
     # counted toward any case's exercised status — see `graph_stories`'s own
-    # module docstring), but its body still needs a unit-lane, Docker-free
-    # driver exactly like every registered story.
+    # module docstring), but its body still needs a Docker-free driver exactly
+    # like every registered story.
     db = Database.connect(_CannedPort(), MODELS["rate"])
     graph_stories.history_of_a_concrete_temporal_node_distinguishes_milestones(db)

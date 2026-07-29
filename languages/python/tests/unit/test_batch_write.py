@@ -13,8 +13,6 @@ Table Layout slot selections match (`m-sql` "Physical DML ordering").
 
 from __future__ import annotations
 
-import pytest
-
 from parallax.conformance import models
 from parallax.core import batch_write
 from parallax.core.dialect import POSTGRES
@@ -22,8 +20,6 @@ from parallax.core.metamodel import EntityIdentity, EntityMetadata, Metamodel
 from parallax.core.sql_gen import Statement
 from parallax.core.unit_work import BufferItem, KeyedWrite, plan_flush
 from parallax.snapshot.handle import collapse_group_key, lower_write
-
-pytestmark = pytest.mark.unit
 
 _MODELS = models.load_models()
 

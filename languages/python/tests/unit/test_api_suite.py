@@ -12,8 +12,6 @@ from parallax.conformance.api_suite import Example, Skip
 from parallax.conformance.graph_stories import GRAPH_STORIES, graph_story_snippet
 from parallax.conformance.read_stories import READ_STORIES, read_story_snippet
 
-pytestmark = pytest.mark.unit
-
 # A leading-underscore identifier (never a legitimate public-API token): the
 # Usage Guide's rendered read/graph story snippets must never expose one (the
 # m-inheritance-100 story once leaked `_temporal_as_of_axes`, a
@@ -226,7 +224,7 @@ def test_render_usage_guide_with_examples() -> None:
 def test_render_usage_guide_is_markdownlint_clean(examples: list[Example]) -> None:
     # Guards the MD012 (no consecutive blank lines) and single-trailing-newline
     # invariants the committed guide is linted against, so drift is caught in
-    # `pytest -m unit` and not only by the pre-commit markdownlint hook.
+    # the database-free test class and not only by the pre-commit markdownlint hook.
     text = api_suite.render_usage_guide(examples)
     assert text.endswith("\n")
     assert not text.endswith("\n\n")

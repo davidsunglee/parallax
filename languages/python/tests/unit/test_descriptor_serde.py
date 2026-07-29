@@ -31,8 +31,6 @@ from parallax.descriptor._records import (
 )
 from parallax.descriptor._serde import canonicalize, deserialize, serialize
 
-pytestmark = pytest.mark.unit
-
 _REPO = case_format.find_repo_root()
 _MODELS = sorted((_REPO / "core" / "compatibility" / "models").glob("*.yaml"))
 _SCHEMA = cast(

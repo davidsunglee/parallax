@@ -30,8 +30,6 @@ from parallax.core.entity import (
 )
 from parallax.core.metamodel import Column
 
-pytestmark = pytest.mark.unit
-
 
 def _account(balance: str = "100.00", version: int = 1) -> mm.Account:
     return mm.Account(id=1, owner="Ada", balance=Decimal(balance), version=version)

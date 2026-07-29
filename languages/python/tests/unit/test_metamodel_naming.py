@@ -6,8 +6,6 @@ import pytest
 
 from parallax.core.metamodel import default_column_name
 
-pytestmark = pytest.mark.unit
-
 
 @pytest.mark.parametrize(
     ("name", "column"),

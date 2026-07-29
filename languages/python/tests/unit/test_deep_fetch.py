@@ -30,8 +30,6 @@ from parallax.core.op_algebra import (
     PathSegment,
 )
 
-pytestmark = pytest.mark.unit
-
 ORDERS = accepted_model("orders")
 ANIMAL = accepted_model("animal")
 POLICY = accepted_model("policy")

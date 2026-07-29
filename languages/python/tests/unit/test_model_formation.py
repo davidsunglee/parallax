@@ -65,8 +65,6 @@ from parallax.core.model_formation import (
 )
 from parallax.core.model_formation import _runner as runner
 
-pytestmark = pytest.mark.unit
-
 _ORDER = identity("Order")
 _ITEM = identity("Item")
 

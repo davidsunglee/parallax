@@ -49,8 +49,6 @@ from parallax.snapshot.handle._read import (
     _pin_from_milestone,  # pyright: ignore[reportPrivateUsage] - unit test imports a private helper to exercise directly
 )
 
-pytestmark = pytest.mark.unit
-
 # The `_pin_from_milestone` probe's own instant — deliberately NOT the shared
 # `FIXED` clock instant: this test builds a milestone pin by hand and asserts the
 # same value comes back, so it must not depend on what the fake clock is set to.

@@ -23,8 +23,6 @@ from parallax.conformance import models
 from parallax.core import op_algebra
 from parallax.core.unit_work import instructions as wi
 
-pytestmark = pytest.mark.unit
-
 _SCHEMA = cast(
     "dict[str, Any]",
     json.loads((REPO_ROOT / "core" / "schemas" / "write-instruction.schema.json").read_text()),

@@ -28,8 +28,6 @@ from parallax.descriptor._records import (
     ValueObjectAttribute,
 )
 
-pytestmark = pytest.mark.unit
-
 _RECORDS = models.load_models()
 _MODELS = {stem: models.accepted_model(meta) for stem, meta in _RECORDS.items()}
 

@@ -65,11 +65,38 @@ Both are session-scoped and defined in `tests/conftest.py`.
 | `provisioner` | **yes** | A self-managed Testcontainers Postgres and an open adapter connection |
 | `wheelhouse` | no | A directory of freshly built wheels plus a package-name-to-wheel map |
 
-`provisioner` is the only route to a live database. When Docker or the provider
-cannot be brought up it records the reason and skips, and the terminal summary
-prints every recorded reason; `PARALLAX_REQUIRE_DB=1` turns any such skip into a
+`provisioner` is the only route to a live database, and
+`tools/check_database_access.py` is what keeps it so: it fails when any module
+under `tests/` calls a seam that starts a container or opens a connection
+anywhere but inside that fixture. When Docker or the provider cannot be brought
+up the fixture records the reason and skips, and the terminal summary prints
+every recorded reason; `PARALLAX_REQUIRE_DB=1` turns any such skip into a
 failure. Docker setup — including the one-time `~/.testcontainers.properties` fix
 for runtimes other than Docker Desktop — is in the root `README.md`.
+
+## Scheduling labels
+
+Two classes, and every collected item carries exactly one.
+
+| Class | Marker | Means | Owning command |
+|---|---|---|---|
+| Database-free | `dbfree` | The item's fixture closure reaches no live database | `just python-test-dbfree` |
+| Database-backed | `db` | It does, so a Docker daemon is required | `just python-test-db` |
+
+Neither marker is ever written beside a test. `tests/conftest.py`'s collection
+hook adds one to every item, chosen by whether the item's resolved fixture
+closure contains `provisioner` — so the label covers indirect requests, is
+decided per item rather than per file, and can be neither missing nor doubled.
+Deleting `provisioner` from a test's signature reclassifies that test.
+
+Scheduling class is orthogonal to the semantic surface. `compatibility/` and
+`api/` hold both classes; `unit/`, `dialect/`, and `distribution/` are entirely
+`dbfree`; `provider_contract/` is entirely `db`. A surface is therefore never a
+substitute for a class, in either direction.
+
+Two further markers exist and classify nothing — `compile_sweep` and
+`adapter_smoke` are focused selectors for iteration, authored where they apply.
+They are the whole catalog beside `dbfree` and `db`.
 
 ## Commands
 
@@ -78,15 +105,20 @@ Run from the repository root through `just`, or from `languages/python` through
 
 | Purpose | Command |
 |---|---|
-| Every database-free gate | `just python-static` |
-| That plus the database-backed lanes (Docker) | `just python-verify` |
-| Iterate on one surface | `cd languages/python && uv run pytest tests/<surface>` |
+| Every database-free gate | `just python-check-dbfree` |
+| Every database-backed gate (Docker) | `just python-check-db` |
+| Both | `just python-check` |
+| Iterate on one surface | `just python-test-<surface>` |
 | Iterate on one module | `cd languages/python && uv run pytest tests/<surface>/test_<name>.py` |
+
+The six `python-test-<surface>` recipes are for iteration and are deliberately no
+aggregate's dependency: a surface cuts across both scheduling classes, so a gate
+composing one would run part of it twice.
 
 ## Continuous integration
 
 | Workflow and job | Matrix | Runs |
 |---|---|---|
-| `ci` / `python-static` | CPython 3.12 / 3.13 / 3.14 | `just python-static`, checked out at `fetch-depth: 0` because diff-cover compares against `origin/main` |
-| `ci` / `python-database` | — | The database-backed pytest selection against Testcontainers Postgres |
+| `ci` / `python-check-dbfree` | CPython 3.12 / 3.13 / 3.14 | `just python-check-dbfree`, checked out at `fetch-depth: 0` because `python-coverage-diff` compares against `origin/main` |
+| `ci` / `python-check-db` | — | `just python-check-db` against Testcontainers Postgres, with `PARALLAX_REQUIRE_DB=1` so a provider skip fails the job |
 | `python-deps-refresh` / `refresh` (monthly) | — | `uv lock --upgrade`, opening a pull request the two jobs above still gate |

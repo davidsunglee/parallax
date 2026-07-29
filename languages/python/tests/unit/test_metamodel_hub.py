@@ -33,8 +33,6 @@ from parallax.core.entity import METAMODEL_DEFINITION_CODES
 from parallax.core.entity._binding import binding_of
 from parallax.core.model_formation import MetamodelValidationError
 
-pytestmark = pytest.mark.unit
-
 _SPEC_CODES = frozenset(
     {"metamodel-empty", "metamodel-invalid-entity-class", "metamodel-duplicate-entity-class"}
 )

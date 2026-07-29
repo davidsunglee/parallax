@@ -52,8 +52,6 @@ from parallax.core.metamodel import (
     resolve_entity_reference,
 )
 
-pytestmark = pytest.mark.unit
-
 _ORDERS = EntityIdentity("parallax.test", "Order")
 _OWNERLESS = EntityIdentity(None, "Order")
 

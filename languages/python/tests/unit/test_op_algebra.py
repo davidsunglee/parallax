@@ -19,8 +19,6 @@ from parallax.conformance import case_format
 from parallax.core import op_algebra
 from parallax.core.op_algebra import OperationError
 
-pytestmark = pytest.mark.unit
-
 
 def _operations() -> list[tuple[str, dict[str, Any]]]:
     """Every authored operation in the read algebra (aggregation deferred, out of claim)."""

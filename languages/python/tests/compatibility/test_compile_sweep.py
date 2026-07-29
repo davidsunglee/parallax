@@ -7,9 +7,9 @@ schema-validated; the exercised set must emit SQL and binds equal to the case's
 explicit skip reason. Because read compilation is pure, the refusing port never
 sees a row request.
 
-Marked ``unit`` as well as ``compile_sweep``: it is pure, Docker-free, in-process
-behaviour, so it contributes to the unit-lane branch-coverage gate and also runs
-under ``pytest -m compile_sweep`` in ``python-static``.
+Pure, Docker-free, in-process behaviour, so it classifies ``dbfree`` and
+contributes to the database-free branch-coverage gate. ``compile_sweep`` is its
+orthogonal focused selector, not a class.
 """
 
 from __future__ import annotations
@@ -30,7 +30,7 @@ from _support.sweep_goldens import (
 )
 from parallax.conformance import adapter, case_format, engine, sweep
 
-pytestmark = [pytest.mark.unit, pytest.mark.compile_sweep]
+pytestmark = pytest.mark.compile_sweep
 
 _REACHABLE = sweep.reachable_cases()
 _SCHEMA = adapter_schema()

@@ -20,8 +20,6 @@ from _support.distributions import TOP_PACKAGE_NAMES
 from _support.repo import PY_ROOT
 from parallax.conformance import cli
 
-pytestmark = pytest.mark.unit
-
 _PUBLIC_API_SNAPSHOT = PY_ROOT / "tests" / "api" / "public_api.json"
 
 

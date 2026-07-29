@@ -56,8 +56,6 @@ from parallax.core.temporal_read import (
 from parallax.descriptor._adapter import unresolved_metamodel
 from parallax.descriptor._serde import parse_document
 
-pytestmark = pytest.mark.unit
-
 _MODELS = case_format.find_repo_root() / "core" / "compatibility" / "models"
 _CORPUS_NAMESPACE: Final[str] = "parallax.compatibility"
 

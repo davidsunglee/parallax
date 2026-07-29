@@ -108,12 +108,13 @@ jobs:
           PARALLAX_DATABASES: ${{ matrix.database }}
         run: just harness-check-db
 
-  # The Docker-free Python static lane across the supported CPython matrix: ruff
-  # (lint + format check), Pyright strict, the generated import-linter
-  # forbidden-edge complement (DAG-sync check) + lint-imports, unit tests +
-  # branch coverage + diff-cover, the built-artifact / clean-install /
-  # api-surface proofs, dead-code scan, and the supply-chain audit. No Docker.
-  python-static:
+  # Every Python check that needs no live database, across the supported CPython
+  # matrix: ruff (lint + format check), Pyright strict, the generated
+  # import-linter forbidden-edge complement (DAG-sync check) + lint-imports, the
+  # database-free test selection + branch coverage + diff-cover, the
+  # database-access guard, dead-code scan, build + distribution metadata, and the
+  # supply-chain audit. No Docker.
+  python-check-dbfree:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -125,7 +126,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          # diff-cover compares changed lines against origin/main.
+          # python-coverage-diff compares changed lines against origin/main.
           fetch-depth: 0
       - uses: extractions/setup-just@v4
       - uses: astral-sh/setup-uv@v7
@@ -134,26 +135,27 @@ jobs:
       - name: Sync Python workspace (frozen)
         working-directory: languages/python
         run: uv sync --frozen
-      - name: just python-static
-        run: just python-static
+      - name: just python-check-dbfree
+        run: just python-check-dbfree
 
-  # The Docker-backed Python run lane: provisions Testcontainers Postgres and
-  # runs the pg-full run sweep, provider contract, adapter smoke, and API
-  # conformance. The trailing `|| [ "$?" -eq 5 ]` tolerates pytest's no-tests
-  # exit code, which the selection returns whenever none of the four markers it
-  # names is present. Docker is available on GitHub-hosted ubuntu runners.
-  python-database:
+  # Every Python check that needs a live database: provisions Testcontainers
+  # Postgres and runs the pg-full run sweep, provider contract, adapter smoke,
+  # and API conformance. Docker is available on GitHub-hosted ubuntu runners, so
+  # PARALLAX_REQUIRE_DB turns a provider skip into a failure here — a green run
+  # has therefore exercised every database-backed check, never skipped one.
+  python-check-db:
     runs-on: ubuntu-latest
     env:
       UV_FROZEN: "1"
+      PARALLAX_REQUIRE_DB: "1"
     steps:
       - uses: actions/checkout@v7
+      - uses: extractions/setup-just@v4
       - uses: astral-sh/setup-uv@v7
         with:
           python-version: "3.12"
       - name: Sync Python workspace (frozen)
         working-directory: languages/python
         run: uv sync --frozen
-      - name: Python database lanes (Testcontainers Postgres)
-        working-directory: languages/python
-        run: uv run pytest -m "conformance or provider_contract or adapter_smoke or api_conformance" || [ "$?" -eq 5 ]
+      - name: just python-check-db
+        run: just python-check-db

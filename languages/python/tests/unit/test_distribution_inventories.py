@@ -45,8 +45,6 @@ from _support.distributions import (
 )
 from _support.repo import PY_ROOT
 
-pytestmark = pytest.mark.unit
-
 _PACKAGES_DIR = PY_ROOT / "packages"
 _WORKSPACE_PYPROJECT = PY_ROOT / "pyproject.toml"
 _PYRIGHT_CONFIG = PY_ROOT / "pyrightconfig.json"

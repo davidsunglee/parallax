@@ -48,8 +48,6 @@ from parallax.snapshot.handle import (
 from parallax.snapshot.handle._write_inputs import record_observations
 from parallax.snapshot.materialize import Node
 
-pytestmark = pytest.mark.unit
-
 
 def _accepted(name: str, meta: Metamodel) -> tuple[AcceptedMetamodel, EntityMetadata]:
     """One corpus model and one of its Entities, both accepted."""

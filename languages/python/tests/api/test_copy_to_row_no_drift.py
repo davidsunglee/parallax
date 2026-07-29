@@ -13,7 +13,7 @@ effective_change_set`, which `Transaction.update` narrows to a sparse
 version/Transaction-Time columns are ALWAYS framework-owned, never the copy's
 own carried value (`m-opt-lock`; ADR 0003/0013).
 
-This guard drives that seam directly, Docker-free, at the unit lane, scoped to
+This guard drives that seam directly, Docker-free, scoped to
 the write shapes that actually pass through edited-copy lowering: a keyed
 non-temporal (versioned) update and a keyed temporal (audit-only) update. It
 builds a fixture instance, edits a copy through ``model_copy``, derives the
@@ -52,8 +52,6 @@ from parallax.core.entity import (
 )
 from parallax.core.unit_work import KeyedWrite, Observation, PlannedWrite
 from parallax.snapshot.handle import lower_write
-
-pytestmark = [pytest.mark.unit, pytest.mark.api_conformance]
 
 _MODELS = models.load_models()
 _ACCOUNT = models.accepted_model(_MODELS["account"])

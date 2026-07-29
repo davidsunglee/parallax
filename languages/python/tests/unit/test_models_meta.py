@@ -28,8 +28,6 @@ from parallax.core.entity import METAMODEL_LOOKUP_CODES
 from parallax.core.entity._hub import MetamodelHub as _Hub
 from parallax.core.metamodel import EntityIdentity, UnresolvedEntityDeclaration
 
-pytestmark = pytest.mark.unit
-
 _SPEC_CODES = frozenset(
     {
         "metamodel-invalid-entity-reference",

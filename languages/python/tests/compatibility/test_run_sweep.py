@@ -37,8 +37,6 @@ from parallax.conformance import adapter, case_format, concurrency_runner, engin
 from parallax.core import storage_layout
 from parallax.core.dialect import dialect_for
 
-pytestmark = pytest.mark.conformance
-
 # Multi-concrete polymorphic INSTANCE-FORM reads:
 # m-inheritance-106/-107/-108/-109 compile byte-identical to their row-form
 # siblings (the shared `COMPILE_EXERCISED`) and are exercised

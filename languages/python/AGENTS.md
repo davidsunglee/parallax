@@ -53,8 +53,8 @@ All commands run against the uv workspace rooted at this directory.
 
 - `uv sync` — install the dev environment (all five workspace distributions
   editable, plus the toolchain).
-- `just python-static` — every database-free gate (§10).
-- `just python-verify` — static plus the Docker-backed database lanes.
+- `just python-check-dbfree` — every database-free gate (§10).
+- `just python-check` — that plus the Docker-backed database gates.
 - `uv run python tools/check_dag_sync.py --write` — regenerate the import-linter
   forbidden-edge complement after a `core/spec/modules.md` change.
 

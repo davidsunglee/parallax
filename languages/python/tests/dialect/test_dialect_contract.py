@@ -9,7 +9,7 @@ forms, canonical `?` -> `%s` placeholder translation, the infinity sentinel, and
 the native error-code classification predicates. Pure strategy, no driver I/O.
 
 Dual-marked ``unit`` so the pure strategy is covered by the branch-coverage gate
-and also runs under ``pytest -m dialect``.
+and runs in the ``dbfree`` class.
 """
 
 from __future__ import annotations
@@ -32,8 +32,6 @@ from parallax.core.base import (
     Decimal,
 )
 from parallax.core.dialect import INFINITY, POSTGRES, Dialect, dialect_for
-
-pytestmark = [pytest.mark.unit, pytest.mark.dialect]
 
 DIALECTS: list[Dialect] = [POSTGRES]
 IDS = [d.name for d in DIALECTS]

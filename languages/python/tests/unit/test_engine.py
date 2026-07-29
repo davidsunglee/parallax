@@ -38,8 +38,6 @@ from parallax.core.metamodel import (
     ValueObjectShapeKey,
 )
 
-pytestmark = pytest.mark.unit
-
 
 def _rows(row: Row, key: str) -> list[Row]:
     """A graph leaf's relationship-attached rows, typed for test-side assertions

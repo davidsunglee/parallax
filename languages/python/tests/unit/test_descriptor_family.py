@@ -16,8 +16,6 @@ from parallax.core.inheritance import InheritanceError
 from parallax.descriptor._records import AsOfAxisMetadata, Attribute, Entity, Inheritance, Metamodel
 from parallax.descriptor._serde import deserialize
 
-pytestmark = pytest.mark.unit
-
 _REPO = case_format.find_repo_root()
 _MODELS = corpus_models.load_models(_REPO / "core" / "compatibility" / "models")
 _CASES = _REPO / "core" / "compatibility" / "cases"

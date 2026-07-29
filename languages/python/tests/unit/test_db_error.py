@@ -31,8 +31,6 @@ from parallax.core.db_error import (
 )
 from parallax.core.dialect import POSTGRES
 
-pytestmark = pytest.mark.unit
-
 _PREDICATES: dict[str, Callable[[Category | None], bool]] = {
     "is_retriable": is_retriable,
     "violates_unique_index": violates_unique_index,

@@ -65,8 +65,6 @@ from parallax.descriptor._records import (
 )
 from parallax.descriptor._serde import parse_document
 
-pytestmark = pytest.mark.unit
-
 _REPO = case_format.find_repo_root()
 _MODELS = corpus_models.load_models(_REPO / "core" / "compatibility" / "models")
 _CASES = _REPO / "core" / "compatibility" / "cases"

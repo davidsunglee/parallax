@@ -9,8 +9,6 @@ import pytest
 from parallax.conformance import case_format
 from parallax.conformance.case_format import Case, SelectionFilter
 
-pytestmark = pytest.mark.unit
-
 
 def _case(
     *,

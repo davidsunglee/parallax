@@ -48,8 +48,6 @@ from parallax.core.unit_work import (
 )
 from parallax.snapshot.handle import Database, Transaction, TransactionOptionConflictError
 
-pytestmark = pytest.mark.unit
-
 
 def test_abort_discards_the_buffer_and_withholds_the_value() -> None:
     port = RecordingPort()

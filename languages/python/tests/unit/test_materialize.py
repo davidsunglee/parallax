@@ -37,8 +37,6 @@ from parallax.snapshot.materialize import (
     identity_key,
 )
 
-pytestmark = pytest.mark.unit
-
 
 def _entity(model: Any, name: str) -> EntityMetadata:
     return next(entity for entity in model.entities if entity.identity.name == name)

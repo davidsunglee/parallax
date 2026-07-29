@@ -12,10 +12,9 @@ cases"): grading its `run` envelope needs no provisioner, so — unlike
 contract structurally, the same way the compile lane's refusing port proves
 query-result-independence.
 
-Marked `unit` as well as `conformance` (the `tests/api/test_write_no_drift.py`
-dual-marking precedent): it is pure, Docker-free,
-in-process behaviour, so it contributes to the unit-lane branch-coverage gate
-and also runs under `pytest -m conformance`.
+Pure, Docker-free, in-process behaviour, so it classifies `dbfree` and
+contributes to the database-free branch-coverage gate even though the rest of
+`tests/compatibility/` needs a database.
 """
 
 from __future__ import annotations
@@ -30,8 +29,6 @@ from _support.corpus import case_document
 from _support.repo import adapter_schema
 from parallax.conformance import adapter, case_format, sweep
 from parallax.core.db_port import DbPort, Row
-
-pytestmark = [pytest.mark.unit, pytest.mark.conformance]
 
 _SCHEMA = adapter_schema()
 _REACHABLE_REJECTED = [c for c in sweep.reachable_cases() if c.shape == "rejected"]

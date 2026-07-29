@@ -37,8 +37,6 @@ from parallax.core.metamodel import (
 )
 from parallax.core.op_algebra import serialize
 
-pytestmark = pytest.mark.unit
-
 _CORPUS_TYPES: dict[str, NeutralType] = {
     "string": String(),
     "float64": Float64(),

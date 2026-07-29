@@ -9,8 +9,6 @@ import pytest
 
 from parallax.core import base
 
-pytestmark = pytest.mark.unit
-
 
 def test_neutral_type_set_matches_m_core() -> None:
     expected = {

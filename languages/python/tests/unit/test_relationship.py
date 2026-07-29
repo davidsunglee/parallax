@@ -85,8 +85,6 @@ from parallax.core.relationship import (
 from parallax.descriptor._adapter import unresolved_metamodel
 from parallax.descriptor._serde import parse_document
 
-pytestmark = pytest.mark.unit
-
 _ORDER = identity("Order")
 _ITEM = identity("Item")
 _TAG = identity("Tag")

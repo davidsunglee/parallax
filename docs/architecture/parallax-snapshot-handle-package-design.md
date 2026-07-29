@@ -607,7 +607,7 @@ handoff, run from `languages/python`:
 ```text
 uv run python tools/check_dag_sync.py
 uv run lint-imports
-just python-static
+just python-check-dbfree
 ```
 
 Also run the public-interface and built-artifact checks affected by the

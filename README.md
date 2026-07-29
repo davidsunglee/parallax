@@ -135,7 +135,7 @@ Run one scope's checks while iterating:
 ```bash
 just core-check
 just harness-check-dbfree
-just python-static
+just python-check-dbfree
 ```
 
 Run the database-backed checks against pinned Testcontainers databases, or the

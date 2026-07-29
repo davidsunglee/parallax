@@ -22,8 +22,6 @@ from parallax.conformance.concurrency_runner import ConcurrencyStep, RoundsRun
 from parallax.core.db_error import DatabaseError
 from parallax.core.dialect import POSTGRES
 
-pytestmark = pytest.mark.unit
-
 
 def _case(document: dict[str, Any], *, case_id: str = "m-read-lock-900") -> case_format.Case:
     return case_format.Case(

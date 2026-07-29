@@ -27,8 +27,6 @@ from parallax.core.op_algebra import deserialize
 from parallax.snapshot import handle
 from parallax.snapshot.materialize import Node
 
-pytestmark = pytest.mark.unit
-
 _MODELS = models.load_models()
 ORDERS = models.accepted_model(_MODELS["orders"])
 ANIMAL = models.accepted_model(_MODELS["animal"])

@@ -9,11 +9,7 @@ guide has no examples yet.
 
 from __future__ import annotations
 
-import pytest
-
 from parallax.conformance import api_suite, usage_guide
-
-pytestmark = pytest.mark.api_conformance
 
 
 def test_coverage_partition_is_exact_over_the_active_slice() -> None:

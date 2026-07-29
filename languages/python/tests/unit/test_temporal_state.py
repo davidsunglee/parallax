@@ -18,8 +18,6 @@ from parallax.conformance.temporal_state import AmbiguousObservationError, Tempo
 from parallax.core.metamodel import EntityIdentity
 from parallax.core.unit_work import KeyedWrite
 
-pytestmark = pytest.mark.unit
-
 POSITION = models.accepted_model(models.load_models()["position"])
 _POSITION_ENTITY = POSITION.entity(EntityIdentity("parallax.compatibility", "Position"))
 assert _POSITION_ENTITY is not None

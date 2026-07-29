@@ -35,8 +35,6 @@ from parallax.descriptor._errors import DescriptorError
 from parallax.descriptor._export import DescriptorExportError, export_document
 from parallax.descriptor._serde import canonicalize
 
-pytestmark = pytest.mark.unit
-
 
 def _corpus_paths() -> list[Path]:
     root = case_format.find_repo_root() / "core" / "compatibility" / "models"

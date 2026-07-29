@@ -50,8 +50,6 @@ from parallax.core.unit_work import (
 )
 from parallax.snapshot.handle import Database, Transaction, TransactionTimePinReadOnlyError
 
-pytestmark = pytest.mark.unit
-
 
 # --------------------------------------------------------------------------- #
 # Wiring: buffer -> flush -> lower_write -> execute_write on the connection.   #

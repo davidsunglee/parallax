@@ -66,8 +66,6 @@ from parallax.descriptor._records import (
     ValueObjectAttribute,
 )
 
-pytestmark = pytest.mark.unit
-
 
 def test_referenced_entities_collects_every_class_the_operation_names() -> None:
     # The reachable-closure seed the Entity frontend forms its early-validation

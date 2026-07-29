@@ -31,8 +31,6 @@ from parallax.core import (
 from parallax.core.entity import RelationshipPath, RelationshipRef
 from parallax.core.op_algebra import DeepFetch, PathSegment
 
-pytestmark = pytest.mark.unit
-
 
 class Leaf(Entity, table="leaf", namespace="orchard"):
     id: Attr[int] = attr(primary_key=True)

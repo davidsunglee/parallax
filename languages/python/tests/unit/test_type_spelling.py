@@ -14,8 +14,6 @@ import pytest
 from parallax.core.base import Decimal
 from parallax.descriptor._type_spelling import format_type_spelling, parse_type_spelling
 
-pytestmark = pytest.mark.unit
-
 # Comfortably above CPython's default int/str conversion guard
 # (``sys.int_info.default_max_str_digits``, 4300), so a parameter pair this
 # long only round-trips if the conversion is chunked rather than direct. Built

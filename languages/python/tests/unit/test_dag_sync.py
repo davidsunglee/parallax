@@ -30,8 +30,6 @@ import pytest
 
 import check_dag_sync as dag
 
-pytestmark = pytest.mark.unit
-
 PY_ROOT = Path(__file__).resolve().parents[2]
 
 # The §7 table header the prose parser keys on, for synthetic one-row fixtures.
@@ -210,7 +208,7 @@ def test_a_tampered_spec_fence_fails_generation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # The full canary: editing §7 without editing the tool (or the reverse) makes
-    # `check_dag_sync.py` refuse to generate, so `python-static` blocks.
+    # `check_dag_sync.py` refuse to generate, so `python-check-dag-sync` blocks.
     tampered = tmp_path / "python.md"
     original = dag.PYTHON_MD.read_text()
     edited = original.replace("parallax.snapshot.handle --> parallax.core.navigate\n", "", 1)
@@ -404,7 +402,7 @@ def test_fence_and_tool_edited_consistently_still_fail_a_stale_prose_row(
 
 
 def test_a_tampered_prose_row_alone_exits_one_at_the_command() -> None:
-    # Command level, not library level: `python-static` runs the script, so the
+    # Command level, not library level: `python-check-dag-sync` runs the script, so the
     # prose arm has to block there too. Same write-run-restore shape as the
     # `lint-imports` canaries below, against the real committed spec.
     original = dag.PYTHON_MD.read_text()
