@@ -20,6 +20,7 @@ checker that carried its own copy of the recipe list would be one.
 from __future__ import annotations
 
 import re
+import shlex
 import sys
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
@@ -127,6 +128,7 @@ _HEADING_RE = re.compile(r"^(?P<hashes>#{1,6})[ \t]+(?P<title>.+?)[ \t]*$", re.M
 # arguments follow. A span holding a placeholder rather than a name — the
 # `<surface>` of a family of commands — matches nothing and cites nothing.
 _CITED_COMMAND_RE = re.compile(r"^just (?P<recipe>[a-z][a-z0-9-]*)(?:\s.*)?$")
+_IDENTIFIER_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_-]*")
 
 # The operation each recognized runner performs, longest spelling first so
 # `ruff format --check` is read as `format-check` rather than as `format`. A tool
@@ -228,6 +230,15 @@ def _runner_operation(command: str) -> str | None:
         if pattern.search(command):
             return operation
     return None
+
+
+def _shell_tokens(command: str) -> list[str]:
+    """*command* split the way a shell would, so a quoted selection expression
+    stays one argument. A command that does not lex falls back to whitespace."""
+    try:
+        return shlex.split(command)
+    except ValueError:
+        return command.split()
 
 
 def _is_scheduling_test(recipe: Recipe) -> bool:
@@ -400,14 +411,21 @@ def _check_scheduling(repository: _Repository) -> Iterator[Diagnostic]:
     off the names."""
     graph = repository.graph
     for recipe in repository.public:
-        for scheduling_class in sorted(recipe.declared_scheduling_classes):
-            expected = f"{recipe.scope}-test-{scheduling_class}"
-            if recipe.name != expected:
-                yield Diagnostic(
-                    "misplaced-scheduling-class",
-                    f"`{recipe.name}` declares the scheduling class `{scheduling_class}`; the "
-                    f"command owning that class's execution is `{expected}`",
-                )
+        declared = recipe.declared_scheduling_classes
+        misplaced = [
+            scheduling_class
+            for scheduling_class in sorted(declared)
+            if recipe.name != f"{recipe.scope}-test-{scheduling_class}"
+        ]
+        for scheduling_class in misplaced:
+            owner = f"{recipe.scope}-test-{scheduling_class}"
+            yield Diagnostic(
+                "misplaced-scheduling-class",
+                f"`{recipe.name}` declares the scheduling class `{scheduling_class}`; the "
+                f"command owning that class's execution is `{owner}`",
+            )
+        if declared and not misplaced:
+            yield from _check_class_selection(repository, recipe, declared)
 
     for recipe in repository.public:
         for dependency in recipe.dependencies:
@@ -454,6 +472,52 @@ def _check_scheduling(repository: _Repository) -> Iterator[Diagnostic]:
         yield from _check_scheduling_guard(repository, scope, classes)
 
     yield from _check_repository_aggregates(repository)
+
+
+def _selected_scheduling_classes(repository: _Repository, recipe: Recipe) -> frozenset[str] | None:
+    """Which scheduling classes *recipe*'s test invocations select, or ``None``
+    when the scope's runner configuration cannot be read.
+
+    The selection lives in the argument of the runner's own selection flag, so
+    only that argument is read: a path, an option, or a coverage threshold that
+    happens to spell a class name is not a selection. A body preserves its
+    source spelling, so the file's own assignments are applied first.
+    """
+    config = None if recipe.scope is None else repository.runners.get(recipe.scope)
+    if config is None:
+        return None
+    known = set(repository.scheduling_classes)
+    selected: set[str] = set()
+    for line in recipe.body:
+        if _runner_operation(line) != "test":
+            continue
+        tokens = _shell_tokens(repository.graph.expand(line))
+        for flag, argument in zip(tokens, tokens[1:], strict=False):
+            if flag == config.profile.selection_flag:
+                selected |= {word for word in _IDENTIFIER_RE.findall(argument) if word in known}
+    return frozenset(selected)
+
+
+def _check_class_selection(
+    repository: _Repository, recipe: Recipe, declared: frozenset[str]
+) -> Iterator[Diagnostic]:
+    """§5's disjoint and collectively complete selections, at the one command
+    that owns a class: what it runs must be the class it declares.
+
+    Counting a class owner's test-runner invocations says the selection is made
+    once; it says nothing about which selection. A command naming one class and
+    selecting another leaves its own class unrun and another class run twice,
+    and both aggregates still pass.
+    """
+    selected = _selected_scheduling_classes(repository, recipe)
+    if selected is None or selected == declared:
+        return
+    yield Diagnostic(
+        "scheduling-recipe-selection",
+        f"`{recipe.name}` selects {', '.join(sorted(selected)) or 'no scheduling class'} "
+        f"rather than exactly {', '.join(sorted(declared))}; the command owning a class runs "
+        f"that class's tests and no others",
+    )
 
 
 def _check_scheduling_guard(
@@ -572,6 +636,36 @@ def _check_repository_aggregates(repository: _Repository) -> Iterator[Diagnostic
                 f"`check-{first}` and `check-{second}` both run {', '.join(sorted(shared))}; "
                 f"the class aggregates run as separate jobs, so a shared owner runs twice",
             )
+
+
+def _check_gate_ownership(repository: _Repository) -> Iterator[Diagnostic]:
+    """§5's "every logical gate has exactly one execution owner inside a complete
+    aggregate", read from the complete aggregate outwards.
+
+    The class aggregates decide which gates run *together*; only the repository's
+    own complete aggregate decides which gates run *at all*. A blocking command
+    it never reaches is a verdict nobody asks for, and every other rule here
+    still passes over it.
+
+    Two kinds of command are legitimately outside it, both by the contract's own
+    reckoning: a non-blocking operation belongs to no gate (§2, §7), and a
+    focused selector cuts across the scheduling partition, so §3 requires it to
+    be no aggregate's dependency.
+    """
+    if not repository.declares("check"):
+        return
+    owned = set(repository.execution_owners("check"))
+    for recipe in repository.public:
+        if recipe.role != "execution" or recipe.name in owned:
+            continue
+        if recipe.operation not in BLOCKING_OPERATIONS or _is_focused_test(recipe):
+            continue
+        yield Diagnostic(
+            "unowned-gate",
+            f"`{recipe.name}` performs a blocking `{recipe.operation}` that `check` never runs; "
+            f"a gate outside the complete aggregate passes only while someone remembers to "
+            f"invoke it",
+        )
 
 
 def _pairs(values: Sequence[str]) -> Iterator[tuple[str, str]]:
@@ -914,6 +1008,7 @@ _RULES = (
     _check_order,
     _check_roles,
     _check_scheduling,
+    _check_gate_ownership,
     _check_runtime,
     _check_runner_config,
     _check_layout,

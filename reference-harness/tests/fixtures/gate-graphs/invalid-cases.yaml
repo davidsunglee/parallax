@@ -1,6 +1,12 @@
 # Each scenario rewrites one file of a mirrored, conforming repository and names
 # the drift code the gate check must report. `old` is asserted to occur exactly
 # once, so a mutation cannot silently apply to nothing.
+#
+# A mutation may legitimately break several rules at once, so a scenario asserts
+# only that its own code is among what was reported. `problems: <n>` additionally
+# pins the total, and belongs on a scenario whose breach is meant to be exactly
+# one — which is what distinguishes a rule that fires on its own subject from one
+# that fires as collateral of another.
 
 - name: non-canonical-operation
   file: justfile
@@ -105,6 +111,14 @@
   code: unknown-scheduling-class
   message: "`harness` declares the scheduling class `offline`, which this check cannot name a defining resource for"
 
+- name: class-owner-selecting-the-other-class
+  file: justfile
+  old: "uv run pytest -m dbfree --cov"
+  new: "uv run pytest -m db --cov"
+  code: scheduling-recipe-selection
+  message: "`python-test-dbfree` selects db rather than exactly dbfree"
+  problems: 1
+
 - name: class-aggregate-composing-the-other-class
   file: justfile
   old: "python-check-dbfree: python-format-check"
@@ -153,6 +167,14 @@
   new: "harness-check-dbfree: harness-format-check"
   code: missing-scheduling-guard
   message: "no class aggregate runs `harness-check-database-access`"
+
+- name: blocking-command-no-aggregate-runs
+  file: justfile
+  old: "python-check-dbfree: python-format-check python-lint python-typecheck"
+  new: "python-check-dbfree: python-format-check python-typecheck"
+  code: unowned-gate
+  message: "`python-lint` performs a blocking `lint` that `check` never runs"
+  problems: 1
 
 - name: undeclared-runtime-class
   file: justfile

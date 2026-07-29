@@ -41,6 +41,10 @@ class RunnerProfile:
     error instead of an empty selection. ``root_files`` are the files this
     runner requires at the root of a test tree, and therefore the only files
     §4's closed root may hold beyond its directories.
+
+    ``selection_flag`` is the command-line flag whose argument names which
+    classes an invocation selects. It is what lets a class-owning command be
+    read for the selection it makes rather than only for the class it declares.
     """
 
     runner: str
@@ -50,6 +54,7 @@ class RunnerProfile:
     catalog_separator: str
     options_key: str
     strictness_flag: str
+    selection_flag: str
     test_paths_key: str
     root_files: frozenset[str]
 
@@ -62,6 +67,7 @@ PYTEST = RunnerProfile(
     catalog_separator=":",
     options_key="addopts",
     strictness_flag="--strict-markers",
+    selection_flag="-m",
     test_paths_key="testpaths",
     root_files=frozenset({"conftest.py"}),
 )
