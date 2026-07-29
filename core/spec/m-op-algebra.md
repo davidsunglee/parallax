@@ -377,7 +377,7 @@ result into an **object graph** rather than a flat row set.
 
 | Operation | Encoding | Effect |
 |---|---|---|
-| `deepFetch` | `{ "deepFetch": { "operand", "paths": [ { "segments": [ { "rel": …, "narrow"? }, … ] }, … ] } }` | resolve `operand`, then eager-fetch each navigation `path` |
+| `deepFetch` | `{ "deepFetch": { "operand", "paths": [ { "narrow"?: { "entity", "to": [ … ] }, "segments": [ { "rel": …, "narrow"? }, … ] }, … ] } }` | resolve `operand`, then eager-fetch each navigation `path` |
 
 Each `path` is a **closed object** whose required `segments` member is the
 ordered, non-empty list of **path segments** naming the chain to fetch, and
@@ -407,6 +407,38 @@ converge. Paths sharing a hop fetch it **once**. This is specified in full in [`
 proven by the round-trip-count layer of the compatibility harness
 (`m-case-format`).
 
+A path MAY additionally carry a **path-root `narrow`** — `{ "entity", "to" }`,
+both required — beside `segments`. It **guards which queried objects the path
+starts from** without changing the read's own result set, so a caller whose
+`targetEntity` is polymorphic can eager-fetch a relationship for one branch of
+the family alone:
+
+```yaml
+# targetEntity: Animal; `owner` is declared on Animal, so Dogs and Cats reach it
+# under the one relationship identity `Animal.owner`:
+deepFetch:
+  operand: { all: {} }
+  paths:
+    - { narrow: { entity: Animal, to: [Dog] }, segments: [{ rel: Animal.owner }] }
+    - { narrow: { entity: Animal, to: [Cat] }, segments: [{ rel: Animal.owner }] }
+```
+
+The root position and the segment position narrow **opposite things**, and their
+hop identities follow:
+
+- a **root** guard restricts a hop's SOURCE objects and creates **no** view key —
+  every hop of a guarded path populates the view its unguarded spelling would, on
+  fewer objects. Identity at the root keys on the **resolved source set** alone,
+  so two guards resolving to the same concretes are one hop and a guard admitting
+  every queried object *is* the broad path.
+- a **segment** narrow restricts a hop's TARGET and creates a distinct narrowed
+  view. Identity there keys on whether a narrow was **authored** as well as on the
+  set it resolves to, because the view key is derived from the authoring.
+
+`m-deep-fetch` specifies the consequences in full; `m-inheritance` owns the
+resolution of `entity` and `to`, which is the same four-step rule the
+operation-position `narrow` node below follows, with the same rejections.
+
 ## Subtype narrowing
 
 An inheritance family (`m-inheritance`) is a closed tree of one abstract `root`,
@@ -424,6 +456,18 @@ node like any other — a single-key tagged object joining the operation `oneOf`
 | Operation | Encoding | Meaning |
 |---|---|---|
 | `narrow` | `{ "narrow": { "entity", "to": [ … ], "operand" } }` | evaluate `operand` over the position `entity` narrowed to the subtypes `to` |
+
+Narrowing appears at exactly **three positions**, which differ in what names the
+position and in what the narrowing produces:
+
+| Position | Shape | Position named by | Produces |
+|---|---|---|---|
+| operation | `{ entity, to, operand }` | `entity`, clamped to the active position | the narrowed position `operand` evaluates over |
+| deep-fetch path root | `{ entity, to }` | `entity`, clamped the same way | a source guard — no view key |
+| deep-fetch path segment | `{ to }` | the hop's relationship target, implicitly | a distinct narrowed view key |
+
+The four-step rule below governs the first two; the third resolves against the
+relationship target instead (`narrow-outside-relationship-target`, `m-navigate`).
 
 - **`entity`** names the polymorphic position this node narrows — the queried
   entity at top level (so `entity` equals the read's `targetEntity`), or the
@@ -481,6 +525,14 @@ narrow:
 4. **Accept iff** the resolved set is **non-empty** and a **subset** of the
    effective position's set. The resolved set then becomes the active position for
    `operand`, so a nested `narrow` cannot broaden back out.
+
+A **path-root narrow** is checked by the same four steps against the position
+active where its `deepFetch` node sits, and raises the same
+`narrow-empty-effective-set` / `narrow-outside-position`. Only step 4's second
+half differs: a guard carries no `operand`, so its resolved set becomes the
+path's **source set** rather than an active position — it qualifies which objects
+the path's hops start from, never what the read returns and never what any
+predicate resolves against.
 
 Consequences:
 

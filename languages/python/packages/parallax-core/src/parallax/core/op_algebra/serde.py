@@ -56,6 +56,7 @@ from parallax.core.op_algebra.nodes import (
     Or,
     OrderBy,
     OrderKey,
+    PathRootNarrow,
     PathSegment,
     Scalar,
     StringMatch,
@@ -322,7 +323,20 @@ def _paths(body: Mapping[str, object]) -> tuple[NavigationPath, ...]:
         if not isinstance(entry, Mapping):
             raise OperationError("deepFetch: each path must be a mapping")
         path = cast("Mapping[str, object]", entry)
-        _closed(path, frozenset({"segments"}), "deepFetch path")
+        _closed(path, frozenset({"narrow", "segments"}), "deepFetch path")
+        root_narrow: PathRootNarrow | None = None
+        if "narrow" in path:
+            root_raw = path["narrow"]
+            if not isinstance(root_raw, Mapping):
+                raise OperationError("deepFetch: path `narrow` must be a mapping")
+            root_body = cast("Mapping[str, object]", root_raw)
+            _closed(root_body, frozenset({"entity", "to"}), "deepFetch path root narrow")
+            root_narrow = PathRootNarrow(
+                entity=_ref(
+                    root_body, "entity", "deepFetch path root narrow", _ENTITY_NAME, "entity name"
+                ),
+                to=_to_list(root_body, "deepFetch path root narrow"),
+            )
         raw_segments = path.get("segments")
         if not isinstance(raw_segments, list) or not raw_segments:
             raise OperationError("deepFetch: each path `segments` must be a non-empty list")
@@ -342,7 +356,7 @@ def _paths(body: Mapping[str, object]) -> tuple[NavigationPath, ...]:
                 narrow = _to_list(narrow_body, "deepFetch.narrow")
             rel = _ref(segment, "rel", "deepFetch", _MEMBER_REF, "relationship reference")
             segments.append(PathSegment(rel=rel, narrow=narrow))
-        paths.append(NavigationPath(segments=tuple(segments)))
+        paths.append(NavigationPath(segments=tuple(segments), narrow=root_narrow))
     return tuple(paths)
 
 
@@ -614,4 +628,11 @@ def _path(path: NavigationPath) -> dict[str, object]:
         if seg.narrow:
             entry["narrow"] = {"to": list(seg.narrow)}
         segments.append(entry)
-    return {"segments": segments}
+    # The path-root guard is optional, so an unguarded path round-trips without a
+    # `narrow` key rather than with an empty one.
+    if path.narrow is None:
+        return {"segments": segments}
+    return {
+        "narrow": {"entity": path.narrow.entity, "to": list(path.narrow.to)},
+        "segments": segments,
+    }

@@ -281,14 +281,29 @@ class PathSegment:
 
 
 @dataclass(frozen=True, slots=True)
+class PathRootNarrow:
+    """A deep-fetch path's root guard: which queried objects the path starts from.
+
+    Names the polymorphic position (``entity``) and the subtypes it is guarded to
+    (``to``). Unlike a segment's own narrow it creates NO view — every hop of a
+    guarded path fills the view its unguarded spelling would, on fewer objects.
+    """
+
+    entity: str
+    to: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class NavigationPath:
-    """One deep-fetch path: the ordered, non-empty hops it traverses.
+    """One deep-fetch path: the ordered, non-empty hops it traverses, and the
+    optional root guard restricting which queried objects it starts from.
 
     A path is its own node rather than a bare segment tuple, so what qualifies the
     path as a whole stays distinguishable from what qualifies one hop.
     """
 
     segments: tuple[PathSegment, ...]
+    narrow: PathRootNarrow | None = None
 
 
 @dataclass(frozen=True, slots=True)

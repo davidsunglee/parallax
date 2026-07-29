@@ -312,6 +312,28 @@ variant's own declared shape. This is the read-side counterpart of *Concrete-
 subtype writes*, below: a discriminated union at both boundaries, with family
 semantics retained here and result projection retained by SQL.
 
+### The path root as a resolvable position
+
+A deep-fetch path's **root** is a resolvable position of exactly the kind above:
+the read's own queried position, which the path's optional root `narrow`
+(`m-op-algebra`, `{ entity, to }`) may guard. Both members resolve through the
+vocabulary this module already fixes — `entity` and each `to` entry resolve to
+their effective concrete-subtype set, the union is presented in the canonical
+alphabetical order, and acceptance is the four-step rule's non-empty-subset test
+against the position clamped into that node. It reuses the existing rejections
+rather than adding any: a `to` resolving to nothing is `narrow-empty-effective-set`,
+and one escaping the clamped position is `narrow-outside-position`.
+
+What the root position does **not** do is change the read. The guard selects
+which already-resolved root objects a path traverses from, so the read's own
+effective concrete set, its projection superset, and its `familyVariant` tagging
+are exactly what they would be with no path authored at all. Relationship
+identity is likewise unchanged: a relationship declared on an ancestor is
+inherited by every concrete descendant under the **ancestor's** identity, so a
+guarded path names that one relationship and adds only the source restriction —
+never a per-subtype relationship. `m-deep-fetch` owns what the guard means for
+hop identity and views.
+
 ## Concrete-subtype writes
 
 A create / update / delete of an inheritance participant is a **concrete-subtype

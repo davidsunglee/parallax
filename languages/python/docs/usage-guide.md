@@ -280,6 +280,48 @@ Person.pets.any(Animal.narrow(Dog))
 # raises OperationRejectedError(rule="narrow-outside-relationship-target")
 ```
 
+## Disjoint path-root guards fetch one relationship into one view
+
+Corpus case: `m-inheritance-074`
+
+```python
+def disjoint_root_guards_fill_one_owner_view(db: Database) -> Snapshot[Any]:
+    """``include(Dog.owner, Cat.owner)`` is ONE relationship guarded to disjoint
+    root objects (`m-inheritance-074`): ``owner`` is declared on ``Animal``, so
+    reaching it through a subtype keeps that identity and adds a path-ROOT guard.
+    Two hops result, and both fill the ORDINARY ``owner`` view — a root guard
+    creates no view of its own, so there is no ``owner[Dog]``, and an animal
+    neither guard admits is never attached at all."""
+    return db.find(Animal.where().include(Dog.owner, Cat.owner))
+```
+
+## A path-root guard subsumed by a broad path stays its own hop
+
+Corpus case: `m-inheritance-075`
+
+```python
+def a_root_guard_beside_a_broad_path_stays_its_own_hop(db: Database) -> Snapshot[Any]:
+    """A guarded path subsumed by a broad one beside it still costs its own
+    statement (`m-inheritance-075`): ``Dog.owner``'s source set is a strict subset
+    of the unguarded path's, and hop identity at the root keys on the RESOLVED
+    source set, so the two stay distinct. The graph is indistinguishable from the
+    broad path's alone — only the round-trip count observes the second hop."""
+    return db.find(Animal.where().include(Animal.owner, Dog.owner))
+```
+
+## A guarded path root composes with a narrowed hop target
+
+Corpus case: `m-inheritance-076`
+
+```python
+def a_guarded_root_continues_through_a_narrowed_hop(db: Database) -> Snapshot[Any]:
+    """The two narrow positions compose with OPPOSITE view semantics
+    (`m-inheritance-076`): ``Pet.owner`` guards which animals the path starts
+    from — contributing no key — while ``.pets.narrow(Dog)`` narrows the second
+    hop's target into its own derived ``pets[Dog]`` view on those owners."""
+    return db.find(Animal.where().include(Pet.owner.pets.narrow(Dog)))
+```
+
 ## A keyed write aimed at an abstract inheritance position
 
 Corpus case: `m-inheritance-088`

@@ -10,10 +10,12 @@ nothing here contradicts the core specification, the canonical claim in
 [`slices.md`](../../../core/spec/slices.md), or the normative module DAG and
 artifact topology in [`modules.md`](../../../core/spec/modules.md).
 
-The Null Placement, complete nested Value Object predicate, and path-root
-Narrow material below records the accepted target state for COR-50; it does not
+The Null Placement and complete nested Value Object predicate material below
+records the accepted target state for COR-50; it does not
 claim those canonical forms exist in the current core specification, schemas,
-or compatibility corpus. Until COR-50 updates every affected core contract,
+or compatibility corpus. The path-root Narrow material is no longer among them:
+it is landed core contract, implemented and lowered. Until COR-50 updates every
+remaining affected core contract,
 schema, model, fixture, case, benchmark, dialect, and claiming frontend
 together, the current core artifacts remain authoritative and the Python
 runtime MUST NOT expose or lower these additions. COR-50 owns that synchronized
@@ -263,10 +265,13 @@ mutations, exceptions, or exports.
   broad `pets` and narrowed `pets[Dog]` fetches. COR-50 does not reuse a broad
   view for subtype-conditional continuation; branches use separate paths and
   broad versus target-narrowed hops retain their distinct view and round-trip
-  semantics. The effective path-root source set is also part of fetch-hop
-  identity: identical/equivalent guarded prefixes deduplicate, but different
-  source guards and broad-versus-guarded sources remain distinct. The planner
-  does not union separately guarded source sets in COR-50. Consequently
+  semantics. The effective path-root source set is fetch-hop identity at the
+  root position: two prefixes whose guards resolve to the same source set
+  deduplicate, and any two that resolve to different sets stay distinct. Broad
+  is the unguarded source set rather than a separate kind, so a proper guard —
+  every guard that admits fewer than all root objects — differs from broad
+  automatically, while a guard admitting every root object is the broad path.
+  The planner does not union separately guarded source sets. Consequently
   `include(Dog.owner, Cat.owner)` performs two owner hops, while
   `include(Animal.owner)` performs one broad owner hop whose single child query
   receives the deduplicated parent keys from every active Dog and Cat root.

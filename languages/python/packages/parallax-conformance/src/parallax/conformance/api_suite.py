@@ -470,6 +470,20 @@ _TPH_POLYMORPHIC_EXISTS_SIBLING_REASON: Final[str] = (
     "the correlated-EXISTS form itself): the TPH analogue is the SAME "
     "EXISTS-over-effective-concrete-set mechanism, just the other inheritance strategy"
 )
+# A path-ROOT guard is authored by reaching an inherited relationship through a
+# subtype (`Dog.owner`), so one class access spells exactly one subtype: the
+# multi-subtype `to: [Cat, Dog]` half of the equivalent-guard pair has no idiomatic
+# spelling at all. Its own property — that two guards resolving to one source set
+# are one hop — is graded by the corpus against the reference harness and by the
+# planner's own unit test, and the guard mechanism it shares is executed for real
+# by the three sibling stories.
+_ROOT_GUARD_MULTI_SUBTYPE_SPELLING_UNREACHABLE_REASON: Final[str] = (
+    "the equivalent-guard pair needs a multi-subtype path-root guard (`to: [Cat, Dog]`), "
+    "which no idiomatic spelling reaches: a root guard is authored by reaching an "
+    "inherited relationship through ONE subtype class. Resolved-source-set dedup at the "
+    "root is graded by the corpus and by the planner's own unit test, and the guard "
+    "mechanism itself is executed for real (m-inheritance-074/075/076, `graph_stories.py`)"
+)
 _TEMPORAL_INHERITANCE_ROW_SIBLING_REASON: Final[str] = (
     "a representative sibling combining two INDEPENDENTLY exercised capabilities — the "
     "as-of spelling (m-temporal-read-003) and the TPH/TPCS single-concrete tag-predicate "
@@ -910,6 +924,7 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     # surface; what it adds is an emitted-SQL contract, which the compile/run sweeps
     # grade byte-exact rather than a story.
     "m-inheritance-110": _TPH_POLYMORPHIC_EXISTS_SIBLING_REASON,
+    "m-inheritance-073": _ROOT_GUARD_MULTI_SUBTYPE_SPELLING_UNREACHABLE_REASON,
     "m-inheritance-118": (
         "the portable deep-fetch graph collision witness is exercised by the database-backed "
         "run lane; no separate idiomatic API story is needed"

@@ -387,6 +387,26 @@ the child's own key when it is itself a parent of a deeper level).
 The temp-table variant for very large parent key sets is a **fast-follow**
 (`m-deep-fetch`); round 1 uses the simplified `IN` form only.
 
+A **path-root guard** (`m-op-algebra`'s `{ entity, to }` beside `segments`) emits
+**no statement and no clause of its own**. It restricts which already-fetched root
+rows a path's first level gathers its keys from, so it is observable only in that
+level's `IN` list — which carries the guarded roots' keys alone — and, through it,
+in the rows that level returns. The root query itself is unchanged, because the
+guard does not change the read's own result set (`m-inheritance`), and a level
+beneath a guarded one carries no guard term either: its parents are already the
+guarded branch's rows.
+
+```text
+# targetEntity: Animal (Dog 1 -> owner 10, Dog 2 -> owner 11, Cat 3 -> owner 10,
+# WildBoar 4 -> owner 12), one path guarded to the Dogs:
+deepFetch(all(Animal), paths = [ { narrow: { entity: Animal, to: [Dog] },
+                                   segments: [{ rel: Animal.owner }] } ])
+  level 0 (root)  : select t0.id, t0.kind, t0.name, t0.owner_id, t0.license_id,
+                    t0.indoor, t0.bark_volume, t0.tusk_length from animal t0
+  level 1 (owner) : select t0.id, t0.name from person t0 where t0.id in (?, ?)
+                    -- the DOG rows' distinct owner_id values, never the Cat's or the WildBoar's
+```
+
 A **polymorphic** hop (relationship target abstract, optionally narrowed by a path
 `narrow`, `m-op-algebra` / `m-deep-fetch`) stays **one statement per level**. Under
 `table-per-hierarchy` the child level is the shared-table `IN` read with the

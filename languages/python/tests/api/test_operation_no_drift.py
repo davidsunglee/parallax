@@ -139,6 +139,13 @@ BUILDERS: dict[str, Callable[[], Statement]] = {
     "m-inheritance-068": lambda: AnimalOwnerPerson.where().include(
         AnimalOwnerPerson.pets, AnimalOwnerPerson.pets.narrow(Pet)
     ),
+    # Path-ROOT guards: reaching the inherited `Animal.owner` through a subtype
+    # keeps that one relationship identity and guards which queried objects the
+    # path starts from, so the wire carries `narrow: {entity, to}` beside
+    # `segments` rather than on a segment.
+    "m-inheritance-074": lambda: AnimalRoot.where().include(Dog.owner, Cat.owner),
+    "m-inheritance-075": lambda: AnimalRoot.where().include(AnimalRoot.owner, Dog.owner),
+    "m-inheritance-076": lambda: AnimalRoot.where().include(Pet.owner.pets.narrow(Dog)),
     # Value-object-bearing temporal reads over the installed Supplier/
     # Branch mirrors.
     "m-value-object-028": lambda: Supplier.where().as_of(tx_time=LATEST),

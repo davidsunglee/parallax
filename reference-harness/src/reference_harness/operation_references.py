@@ -119,6 +119,13 @@ def _collect_result_modifier_classes(tag: str, body: dict[str, Any], classes: se
                 segment = segments[0]
                 rel = segment.get("rel") if isinstance(segment, dict) else segment
                 _add_reference_class(rel, classes)
+            # A path-ROOT narrow contributes nothing here, for the same reason the
+            # `narrow` node below does not: its `entity` names a polymorphic
+            # POSITION rather than referencing a queried member, and naming a
+            # position broader than the active one is CLAMPED rather than rejected
+            # (m-op-algebra), which is exactly what a subset cross-check would
+            # refuse. Its own validity — the clamp, the empty set, the subset — is
+            # asserted by the position walk instead.
     elif tag in ("distinct", "asOf", "asOfRange", "history", "limit", "narrow"):
         # A narrow evaluates its operand over the SAME polymorphic position (its
         # `entity`, which equals the read's targetEntity at top level), so the

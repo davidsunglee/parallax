@@ -17,7 +17,9 @@ normative rule:
   m-deep-fetch / m-navigate);
 * a **find() rooted at a value object** — a value object is not a queryable root
   entity (m-value-object contract 5), surfaced here as an attribute reference whose
-  class segment names a declared value object rather than the entity.
+  class segment names a declared value object rather than the entity, or as a
+  ``deepFetch`` path-ROOT narrow whose `entity` / `to` names one: the root position
+  a guard resolves at is the queried position itself.
 
 The reference harness (a non-normative oracle) runs this so the reference
 implementation actually rejects what the `rejected` cases pin — the same refusal
@@ -195,6 +197,7 @@ def _check_navigation(entity: Entity, body: dict[str, Any]) -> None:
 
 def _check_deep_fetch(entity: Entity, body: dict[str, Any]) -> None:
     for path in body.get("paths", []):
+        _check_path_root_narrow(entity, path.get("narrow"))
         for segment in path.get("segments", []):
             # A path segment is a closed object ``{rel, narrow?}`` (m-op-algebra);
             # the value-object misuse rule is about the traversed relationship ref.
@@ -206,6 +209,31 @@ def _check_deep_fetch(entity: Entity, body: dict[str, Any]) -> None:
                     f"deepFetch path segment {rel!r} names value object {member!r} — "
                     f"a value-object segment is invalid in a deep-fetch path",
                 )
+
+
+def _check_path_root_narrow(entity: Entity, narrow: Any) -> None:
+    """Reject a deep-fetch path-root guard aimed at a value object.
+
+    A path-root ``{entity, to}`` guard resolves at the QUERIED position, so both
+    members name Entities: `entity` the polymorphic position and each `to` entry a
+    subtype of it. The subtype-position rules themselves (the clamp, the empty and
+    outside-position rejections) belong to the inheritance walk; what belongs here
+    is the value-object rule the queried root already carries — a value object has
+    no identity, no position, and no concrete subtypes, so it is no more guardable
+    than it is queryable.
+    """
+    if not isinstance(narrow, dict):
+        return
+    to = narrow.get("to")
+    names = [narrow.get("entity"), *(to if isinstance(to, list) else [])]
+    for name in names:
+        if isinstance(name, str) and find_top_value_object(entity, name) is not None:
+            raise RejectionError(
+                FIND_ROOT_VALUE_OBJECT,
+                f"deepFetch path-root narrow names value object {name!r} on "
+                f"{entity.name} — a value object is not a queryable root position and "
+                f"has no concrete subtypes to guard",
+            )
 
 
 def _check_find_root(entity: Entity, attr: Any) -> None:

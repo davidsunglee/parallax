@@ -942,6 +942,73 @@ def resolve_hop_effective_set(
     return ordered, True
 
 
+def resolve_clamped_narrow(
+    family: Family,
+    current_set: list[str],
+    entity: Any,
+    to_list: Any,
+    outside_rule: str = NARROW_OUTSIDE_POSITION,
+) -> list[str]:
+    """The resolved effective set of an ``{entity, to}`` narrow at a NAMED position.
+
+    Shared by the operation-position ``narrow`` node and a deep-fetch path's ROOT
+    guard, which resolve identically: the ``entity``-declared position is CLAMPED to
+    (intersected with) *current_set* — the active position threaded into the walk —
+    and ``to`` is accepted iff it resolves NON-EMPTY and within that clamp. Naming a
+    broader position is therefore constrained rather than rejected, while a ``to``
+    reaching outside the active position raises *outside_rule* and a ``to``
+    resolving to nothing raises ``narrow-empty-effective-set``. Binding the subset
+    check to the intersection (rather than to ``effective_concrete_set(entity)``
+    alone) is what stops a nested narrow, or one whose ``entity`` is broader than
+    the threaded position, from broadening back out.
+    """
+    names = [t for t in to_list if isinstance(t, str)] if isinstance(to_list, list) else []
+    entity_set = family.effective_concrete_set(entity) if isinstance(entity, str) else []
+    current = set(current_set)
+    position_set = [c for c in entity_set if c in current]
+    to_set = family.resolve_to_set(names)
+    if not to_set:
+        raise RejectionError(
+            NARROW_EMPTY_EFFECTIVE_SET,
+            f"narrow to {to_list!r} resolves to the empty concrete-subtype set",
+        )
+    if not set(to_set) <= set(position_set):
+        raise RejectionError(
+            outside_rule,
+            f"narrow of {entity!r} to {to_list!r} resolves to {sorted(to_set)}, "
+            f"which is not a subset of the active position's effective set "
+            f"{sorted(position_set)} (the entity position {sorted(entity_set)} "
+            f"clamped to the threaded position {sorted(current_set)})",
+        )
+    return to_set
+
+
+def resolve_root_source_set(
+    family: Family, position: str | None, path: Any
+) -> tuple[str, ...] | None:
+    """The concrete source set ONE deep-fetch path starts from, or ``None``.
+
+    A path's root position is the read's own queried position: absent a root
+    ``narrow`` the path starts from every root object, so the source set is
+    *position*'s whole effective concrete set; a root ``narrow`` guards it down to
+    the guard's resolved set. ``None`` is a non-polymorphic root, which has no
+    source set to distinguish hops by. The returned set is in the family's
+    canonical sibling-set order, so two guards resolving to the same concretes
+    yield the SAME tuple and therefore the same hop — which is what makes a
+    full-set guard indistinguishable from a broad path (m-deep-fetch).
+    """
+    if position is None or inheritance_of(family.defs.get(position, {})) is None:
+        return None
+    narrow = path.get("narrow") if isinstance(path, dict) else None
+    if isinstance(narrow, dict):
+        resolved = resolve_clamped_narrow(
+            family, family.effective_concrete_set(position), narrow.get("entity"), narrow.get("to")
+        )
+    else:
+        resolved = family.effective_concrete_set(position)
+    return tuple(family.canonical_concrete_order(resolved))
+
+
 def validate_operation_inheritance(
     entity_defs: list[dict[str, Any]],
     operation: Any,
@@ -1045,23 +1112,7 @@ def _walk_narrow(
         # (rather than to `effective_concrete_set(entity)` alone) is what stops a
         # nested narrow, or a top-level narrow whose `entity` is broader than the
         # threaded position, from broadening back out.
-        entity_set = family.effective_concrete_set(entity) if isinstance(entity, str) else []
-        current = set(current_set)
-        position_set = [c for c in entity_set if c in current]
-        to_set = family.resolve_to_set([t for t in to_list if isinstance(t, str)])
-        if not to_set:
-            raise RejectionError(
-                NARROW_EMPTY_EFFECTIVE_SET,
-                f"narrow to {to_list!r} resolves to the empty concrete-subtype set",
-            )
-        if not set(to_set) <= set(position_set):
-            raise RejectionError(
-                outside_rule,
-                f"narrow of {entity!r} to {to_list!r} resolves to {sorted(to_set)}, "
-                f"which is not a subset of the active position's effective set "
-                f"{sorted(position_set)} (the entity position {sorted(entity_set)} "
-                f"clamped to the threaded position {sorted(current_set)})",
-            )
+        to_set = resolve_clamped_narrow(family, current_set, entity, to_list, outside_rule)
         # Descending into `operand`: the position becomes the narrowed set, so a
         # nested narrow is a SAME-POSITION narrow governed by the clamp — clear
         # `expected_entity` (the naming requirement was this narrow's alone).
@@ -1079,11 +1130,23 @@ def _walk_narrow(
             if isinstance(key, dict):
                 _check_subtype_attr(family, current_set, key.get("attr"))
     elif tag == "deepFetch":
-        # A deep-fetch path segment MAY narrow its (polymorphic) hop with `{to: […]}`;
-        # each such narrow must resolve within the hop's relationship target
+        # A deep-fetch path narrows at two positions with two different rules. Its
+        # ROOT `{entity, to}` guard names the queried position and is clamped to the
+        # active one exactly as an operation-position `narrow` node is
+        # (`narrow-outside-position`). Each SEGMENT's `{to}` narrows that hop's
+        # (polymorphic) relationship target and must resolve within it
         # (`narrow-outside-relationship-target`). The operand is the root query,
         # walked at the queried position.
         for path in body.get("paths", []) or []:
+            root_narrow = path.get("narrow") if isinstance(path, dict) else None
+            if isinstance(root_narrow, dict):
+                resolve_clamped_narrow(
+                    family,
+                    current_set,
+                    root_narrow.get("entity"),
+                    root_narrow.get("to"),
+                    outside_rule,
+                )
             segments = path.get("segments") if isinstance(path, dict) else None
             for segment in segments if isinstance(segments, list) else []:
                 rel = segment.get("rel") if isinstance(segment, dict) else None

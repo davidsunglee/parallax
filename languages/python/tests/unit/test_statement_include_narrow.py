@@ -17,7 +17,9 @@ import pytest
 
 from _support import inheritance_models as im
 from _support import snapshot_models as sm
+from parallax.conformance.animal_owner import ANIMAL_MODEL as _ANIMAL_MODEL
 from parallax.conformance.graph_models import Policy
+from parallax.conformance.read_models import Animal, Cat, Dog, Pet, WildBoar
 from parallax.core import TX_TIME, UnsupportedFeatureError
 from parallax.core.entity import RelationshipPath
 from parallax.core.entity.statement import build_statement
@@ -30,8 +32,13 @@ from parallax.core.op_algebra import (
     NavigationPath,
     NotExists,
     OperationRejectedError,
+    PathRootNarrow,
     PathSegment,
 )
+
+# The animal family is queryable only through the hub that seals it with its own
+# polymorphic owner, so importing the hub is what binds these classes.
+assert _ANIMAL_MODEL is not None
 
 
 # --------------------------------------------------------------------------- #
@@ -103,6 +110,64 @@ def test_include_of_a_narrowed_path_serializes_the_hop_narrow() -> None:
     op = statement.operation()
     assert isinstance(op, DeepFetch)
     assert op.paths[0].segments[0].narrow == ("Invoice",)
+
+
+# --------------------------------------------------------------------------- #
+# Path-ROOT guards: reaching an INHERITED relationship through a subtype.      #
+# --------------------------------------------------------------------------- #
+def test_reaching_an_inherited_relationship_through_a_subtype_guards_the_path_root() -> None:
+    # `owner` is declared once, on the abstract root, so a subtype does not
+    # redeclare it: `Dog.owner` keeps the one relationship identity `Animal.owner`
+    # and adds the guard beside `segments`, never a per-subtype relationship and
+    # never a segment narrow.
+    path = Dog.owner
+    assert path.segments == (PathSegment(rel="Animal.owner"),)
+    assert path.root_narrow == PathRootNarrow(entity="Animal", to=("Dog",))
+
+
+def test_reaching_a_relationship_through_its_declaring_class_guards_nothing() -> None:
+    assert Animal.owner.root_narrow is None
+
+
+def test_include_through_two_subtypes_authors_two_guarded_paths() -> None:
+    op = Animal.where().include(Dog.owner, Cat.owner).operation()
+    assert isinstance(op, DeepFetch)
+    assert op.paths == (
+        NavigationPath(
+            segments=(PathSegment(rel="Animal.owner"),),
+            narrow=PathRootNarrow(entity="Animal", to=("Dog",)),
+        ),
+        NavigationPath(
+            segments=(PathSegment(rel="Animal.owner"),),
+            narrow=PathRootNarrow(entity="Animal", to=("Cat",)),
+        ),
+    )
+
+
+def test_a_guarded_path_keeps_its_root_guard_through_deeper_and_narrowed_hops() -> None:
+    # The guard qualifies the path, not a hop: continuing the path resolves the
+    # deeper hop against the CURRENT target and leaves the root guard alone, and a
+    # hop-level `.narrow()` adds its own segment narrow beside it.
+    op = Animal.where().include(Pet.owner.pets.narrow(Dog)).operation()
+    assert isinstance(op, DeepFetch)
+    assert op.paths == (
+        NavigationPath(
+            segments=(
+                PathSegment(rel="Animal.owner"),
+                PathSegment(rel="Person.pets", narrow=("Dog",)),
+            ),
+            narrow=PathRootNarrow(entity="Animal", to=("Pet",)),
+        ),
+    )
+
+
+def test_a_root_guard_outside_the_queried_position_is_rejected_at_build() -> None:
+    # A read already narrowed to the Pet branch cannot guard a path to the sibling
+    # WildBoar: the guard is clamped to the active position exactly as an
+    # operation-position narrow is.
+    with pytest.raises(OperationRejectedError) as exc:
+        Pet.where().include(WildBoar.owner)
+    assert exc.value.rule == "narrow-outside-position"
 
 
 # --------------------------------------------------------------------------- #

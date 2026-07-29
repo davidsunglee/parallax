@@ -197,6 +197,11 @@ class Statement:
         intermediates. Accumulates across calls (not single-shot). Validated
         against the metamodel immediately (never at execution, never at the
         database) — an undeclared hop or an illegal narrow raises here.
+
+        A path seeded through a subtype (``include(Dog.owner, Cat.owner)``) carries
+        that class's path-root guard, so the two are one relationship fetched for
+        disjoint sets of queried objects — never two relationships, and never two
+        views (spec §3).
         """
         if not paths:
             raise ValueError("include requires at least one path")
@@ -206,7 +211,7 @@ class Statement:
                 "(snapshot-history-includes, spec §3)"
             )
         new_paths = self.include_paths + tuple(
-            NavigationPath(segments=path.segments) for path in paths
+            NavigationPath(segments=path.segments, narrow=path.root_narrow) for path in paths
         )
         _validate(self.binding, self.target, DeepFetch(operand=self.predicate, paths=new_paths))
         return replace(self, include_paths=new_paths)

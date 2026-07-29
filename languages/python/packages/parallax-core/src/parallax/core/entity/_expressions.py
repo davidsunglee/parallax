@@ -53,6 +53,7 @@ from parallax.core.op_algebra import (
     Operation,
     Or,
     OrderKey,
+    PathRootNarrow,
     PathSegment,
     Scalar,
     StringMatch,
@@ -532,10 +533,17 @@ class RelationshipPath:
     Entity name stay distinguishable. The first hop is statically typed through
     the relationship descriptor's overload; a deeper hop is a declaration
     question, so it is answered by the resolver the seeding class access supplied.
+
+    ``root_narrow`` is the path-ROOT guard the seeding class access authored
+    (``Dog.owner`` over an ``owner`` declared on ``Animal``): it qualifies which
+    queried objects the whole path starts from, so — unlike a hop's own narrow — it
+    lives beside ``segments`` rather than inside one, and a deeper hop neither adds
+    nor replaces it.
     """
 
     segments: tuple[PathSegment, ...]
     target: str
+    root_narrow: PathRootNarrow | None = None
     # The Binding of the hub the seeding class belongs to, carried so a deeper
     # hop resolves in exactly that model. Absent only for a path built directly,
     # which cannot continue.
@@ -569,9 +577,13 @@ class RelationshipPath:
                 "composed model, which this path does not carry"
             )
         hop = self.resolve_hop(self.binding, self.target, name)
+        # Only the hop's segments continue this path: a deeper hop's own seeding
+        # access is a member lookup on the current target, which qualifies nothing
+        # about where the path is rooted.
         return RelationshipPath(
             segments=(*self.segments, *hop.segments),
             target=hop.target,
+            root_narrow=self.root_narrow,
             binding=self.binding,
             resolve_hop=self.resolve_hop,
         )
@@ -589,6 +601,7 @@ class RelationshipPath:
         return RelationshipPath(
             segments=(*head, new_last),
             target=new_target,
+            root_narrow=self.root_narrow,
             binding=self.binding,
             resolve_hop=self.resolve_hop,
         )
