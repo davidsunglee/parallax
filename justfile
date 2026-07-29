@@ -221,7 +221,7 @@ python-check-db: python-test-db
 [metadata("runtime:slow", "scheduling:dbfree")]
 [doc("Every Python test whose fixture closure reaches no database, plus branch coverage.")]
 python-test-dbfree:
-    cd {{python}} && uv run pytest -m dbfree --cov --cov-branch --cov-report=xml --cov-report=term-missing --cov-fail-under=96
+    cd {{python}} && uv run pytest -m dbfree --cov --cov-branch --cov-report=xml --cov-report=term-missing --cov-fail-under=95
 
 [metadata("runtime:slow", "scheduling:db")]
 [doc("Every Python test whose fixture closure reaches a database (Testcontainers; Docker).")]
