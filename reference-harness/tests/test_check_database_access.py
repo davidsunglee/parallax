@@ -11,9 +11,9 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from reference_harness import check_database_access as access
+import pytest
 
-_TESTS_ROOT = Path(__file__).resolve().parent
+from reference_harness import check_database_access as access
 
 
 def _seams(source: str) -> list[str]:
@@ -87,6 +87,28 @@ def test_a_local_name_that_merely_looks_like_a_seam_is_not_one() -> None:
 # --------------------------------------------------------------------------
 # Structural preconditions: the rule is vacuous without them
 # --------------------------------------------------------------------------
+def test_every_declared_seam_names_a_callable() -> None:
+    assert access.unresolved_seams() == ()
+
+
+def test_a_seam_whose_attribute_was_renamed_is_reported(monkeypatch: pytest.MonkeyPatch) -> None:
+    renamed = "reference_harness.providers.provider_for_dialect"
+    monkeypatch.setattr(access, "DATABASE_SEAMS", access.DATABASE_SEAMS | {renamed})
+    assert access.unresolved_seams() == (renamed,)
+
+
+def test_a_seam_whose_module_disappeared_is_reported(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(access, "DATABASE_SEAMS", frozenset({"reference_harness.pools.acquire"}))
+    assert access.unresolved_seams() == ("reference_harness.pools.acquire",)
+
+
+def test_a_seam_naming_something_uncallable_is_reported(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        access, "DATABASE_SEAMS", frozenset({"reference_harness.providers.__doc__"})
+    )
+    assert access.unresolved_seams() == ("reference_harness.providers.__doc__",)
+
+
 def test_a_minimal_tree_is_clean(tmp_path: Path) -> None:
     _minimal_tree(tmp_path)
     assert access.audit(tmp_path) == []
@@ -144,19 +166,27 @@ def test_an_argument_is_a_usage_error() -> None:
     assert access.main(["tests"]) == 2
 
 
-def test_a_planted_rogue_acquisition_fails() -> None:
-    # Named `_canary_*` rather than `test_*` so it can never be collected.
-    canary = _TESTS_ROOT / "_canary_database_access.py"
-    canary.write_text(
+def test_a_planted_rogue_acquisition_fails(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The plant goes into a scratch tree the audited root is pointed at, never
+    into the real one: a canary interrupted mid-run would otherwise leave an
+    untracked module behind and fail a sibling gate."""
+    _minimal_tree(tmp_path)
+    monkeypatch.setattr(access, "TESTS_ROOT", tmp_path)
+    assert access.main([]) == 0
+
+    (tmp_path / "test_rogue.py").write_text(
         "from reference_harness.providers import provider_for\n"
         "\n"
         "\n"
-        "def reach_a_database():\n"
+        "def test_rogue():\n"
         "    with provider_for('postgres') as db:\n"
-        "        return db\n"
+        "        assert db\n"
     )
-    try:
-        assert access.main([]) == 1
-    finally:
-        canary.unlink()
-    assert access.main([]) == 0
+    assert access.main([]) == 1
+
+
+def test_an_unresolved_seam_fails_the_gate(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        access, "DATABASE_SEAMS", access.DATABASE_SEAMS | {"reference_harness.providers.acquire"}
+    )
+    assert access.main([]) == 1

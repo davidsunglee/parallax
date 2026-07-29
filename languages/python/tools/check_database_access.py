@@ -15,9 +15,9 @@ target is resolved through the importing module's own bindings, so a local name
 that merely looks like a seam is not one, and a seam reached under an alias
 still is.
 
-Two structural facts are checked with it, because the rule is vacuous without
-them: the designated fixture must exist, and the classifier's own designated
-set must name exactly it.
+Three structural facts are checked with it, because the rule is vacuous without
+them: every declared seam must still name an importable callable, the designated
+fixture must exist, and the classifier's own designated set must name exactly it.
 
 Usage
 -----
@@ -32,13 +32,13 @@ from __future__ import annotations
 
 import argparse
 import ast
+import importlib
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 
 _TOOL = "tools/check_database_access.py"
-PY_ROOT = Path(__file__).resolve().parents[1]
-TESTS_ROOT = PY_ROOT / "tests"
+TESTS_ROOT = Path(__file__).resolve().parents[1] / "tests"
 
 ENTRY_POINT_MODULE = "conftest.py"
 ENTRY_POINT_FIXTURE = "provisioner"
@@ -95,8 +95,8 @@ def _imported_names(tree: ast.Module) -> dict[str, str]:
 def _resolved_target(func: ast.expr, bindings: dict[str, str]) -> str | None:
     """The dotted path *func* names, with its head expanded through *bindings*.
 
-    ``None`` when the callee is not a plain dotted name — a call on a
-    subscript, a call of a call, or an attribute of a literal.
+    ``None`` when the callee is not a plain dotted name — a call on a subscript,
+    a call of a call, or an attribute of a literal.
     """
     parts: list[str] = []
     node = func
@@ -111,6 +111,37 @@ def _resolved_target(func: ast.expr, bindings: dict[str, str]) -> str | None:
     if head is None:
         return ".".join(parts)
     return ".".join([head, *parts[1:]])
+
+
+def _resolves_to_callable(dotted: str) -> bool:
+    """Whether *dotted* still names an importable callable.
+
+    The longest importable prefix is the module; the rest is walked as
+    attributes. A seam that resolves to a non-callable is as dead as a missing
+    one — nothing spelled that way can be called.
+    """
+    parts = dotted.split(".")
+    for split in range(len(parts) - 1, 0, -1):
+        try:
+            target: object = importlib.import_module(".".join(parts[:split]))
+        except ImportError:
+            continue
+        for attribute in parts[split:]:
+            if not hasattr(target, attribute):
+                return False
+            target = getattr(target, attribute)
+        return callable(target)
+    return False
+
+
+def unresolved_seams() -> tuple[str, ...]:
+    """Every entry of :data:`DATABASE_SEAMS` that no longer names a callable.
+
+    The seam set is hand-maintained against code it does not import, so a
+    renamed or deleted seam would otherwise leave the guard reporting success
+    over a rule that matches nothing.
+    """
+    return tuple(seam for seam in sorted(DATABASE_SEAMS) if not _resolves_to_callable(seam))
 
 
 def seam_calls(tree: ast.Module) -> list[tuple[int, str]]:
@@ -157,14 +188,14 @@ def _declared_database_fixtures(tree: ast.Module) -> frozenset[str] | None:
 def audit(tests_root: Path) -> list[Finding]:
     """Every violation under *tests_root*, addressed relative to it."""
     findings: list[Finding] = []
-    entry_module = tests_root / ENTRY_POINT_MODULE
     allowed: tuple[int, int] | None = None
 
+    entry_module = tests_root / ENTRY_POINT_MODULE
     if not entry_module.is_file():
         findings.append(Finding(ENTRY_POINT_MODULE, 0, f"{ENTRY_POINT_MODULE} does not exist"))
     else:
-        tree = ast.parse(entry_module.read_text(encoding="utf-8"))
-        allowed = _entry_point_span(tree, ENTRY_POINT_FIXTURE)
+        entry_tree = ast.parse(entry_module.read_text(encoding="utf-8"))
+        allowed = _entry_point_span(entry_tree, ENTRY_POINT_FIXTURE)
         if allowed is None:
             findings.append(
                 Finding(
@@ -173,7 +204,7 @@ def audit(tests_root: Path) -> list[Finding]:
                     f"the designated database fixture `{ENTRY_POINT_FIXTURE}` is not defined here",
                 )
             )
-        declared = _declared_database_fixtures(tree)
+        declared = _declared_database_fixtures(entry_tree)
         if declared != frozenset({ENTRY_POINT_FIXTURE}):
             findings.append(
                 Finding(
@@ -212,19 +243,30 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.parse_args(argv)
 
+    stale = unresolved_seams()
     findings = audit(TESTS_ROOT)
-    if not findings:
+    if not stale and not findings:
         print(f"{_TOOL}: live database access is confined to `{ENTRY_POINT_FIXTURE}`")
         return 0
 
-    print(
-        f"{_TOOL}: live database access outside the designated fixture. Each\n"
-        "  collected item's scheduling class is derived from its fixture closure, so an\n"
-        "  item reaching a database another way is selected by `-m dbfree`.",
-        file=sys.stderr,
-    )
-    for finding in findings:
-        print(f"    tests/{finding}", file=sys.stderr)
+    if stale:
+        print(
+            f"{_TOOL}: {len(stale)} declared seam(s) name nothing importable. A seam\n"
+            "  that resolves to nothing guards nothing, and the call-site audit reports\n"
+            "  a clean tree either way.",
+            file=sys.stderr,
+        )
+        for seam in stale:
+            print(f"    {seam}", file=sys.stderr)
+    if findings:
+        print(
+            f"{_TOOL}: live database access outside the designated fixture. Each\n"
+            "  collected item's scheduling class is derived from its fixture closure, so an\n"
+            "  item reaching a database another way is selected by `-m dbfree`.",
+            file=sys.stderr,
+        )
+        for finding in findings:
+            print(f"    tests/{finding}", file=sys.stderr)
     return 1
 
 
