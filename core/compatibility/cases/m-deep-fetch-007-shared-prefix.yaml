@@ -1,7 +1,8 @@
 # Deep fetch, SHARED-PREFIX paths — the shared hop is fetched once (m-deep-fetch dedup).
 #
 # m-deep-fetch-004 fetches two INDEPENDENT paths off the root; this is the spec's literal
-# shared-prefix example: `[Order.items]` and `[Order.items, OrderItem.statuses]`.
+# shared-prefix example: `{ segments: [{ rel: Order.items }] }` and
+# `{ segments: [{ rel: Order.items }, { rel: OrderItem.statuses }] }`.
 # The two paths share the `Order.items` hop, which MUST be fetched ONCE (de-
 # duplicated), so the level count is 3, not 4:
 #   level 0 (root)     : all orders

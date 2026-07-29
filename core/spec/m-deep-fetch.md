@@ -41,9 +41,9 @@ Concretely, for each relationship level:
    each child set under the relationship name (a list for a to-many relationship,
    a single object or null for a to-one).
 
-Paths that share a prefix (e.g. `[Order.items]` and
-`[Order.items, OrderItem.statuses]`) fetch the shared hop **once** — the hop is
-de-duplicated, so it counts as a single level.
+Paths that share a segment prefix (e.g. `{ segments: [{ rel: Order.items }] }` and
+`{ segments: [{ rel: Order.items }, { rel: OrderItem.statuses }] }`) fetch the
+shared hop **once** — the hop is de-duplicated, so it counts as a single level.
 
 ### The 1 → N → N proof
 

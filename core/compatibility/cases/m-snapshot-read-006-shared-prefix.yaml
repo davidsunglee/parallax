@@ -2,7 +2,8 @@
 # prefix fetch that prefix ONCE.
 #
 # The snapshot twin of the m-deep-fetch shared-prefix shape (no m-op-list tag). The
-# includes are `[Order.items]` and `[Order.items, OrderItem.statuses]`; the shared
+# includes are `{ segments: [{ rel: Order.items }] }` and
+# `{ segments: [{ rel: Order.items }, { rel: OrderItem.statuses }] }`; the shared
 # `Order.items` hop is de-duplicated, so the level count is 3, not 4:
 #   level 0 (root)     : all orders
 #   level 1 (items)    : items keyed by the distinct order ids {1,2,3,4,5,42}
