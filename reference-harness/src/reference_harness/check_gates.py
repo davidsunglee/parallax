@@ -71,22 +71,20 @@ SUPPORT_DIRECTORY = "_support"
 """The one non-surface directory a language scope's test root may hold."""
 
 _SCHEDULING_GUARDS: Mapping[str, str | None] = {"db": "database-access", "dbfree": None}
-"""What confines each scheduling class's defining resource, by class.
+"""§5's closed scheduling vocabulary, as the qualifier of the blocking check
+confining each class's defining resource.
 
 A class is honest only while the resource that defines it is unreachable by any
-other route, and §5 makes that restriction a blocking check of its own. Which
-resource a class is about is a fact about the class, not about the graph, so it
-is named here rather than derived: `db` is defined by live database access, and
-the check confining it is `<scope>-check-database-access`. `dbfree` maps to
-``None`` because it is defined by the *absence* of that resource, and an absence
-cannot be confined.
+other route, and §5 makes that restriction a blocking check of its own. `db` is
+defined by the live database, which §5 confines through
+`<scope>-check-database-access`; `dbfree` maps to ``None`` because it is defined
+by the *absence* of that resource, and an absence has no entry point to confine.
 
-The mapping is closed on purpose. A class absent from it is one whose defining
-resource this command cannot name, so it is reported rather than passed over —
-the alternative is a class that quietly owes no guard at all, which is the state
-§5 exists to prevent. Where a guard itself looks — a fixture name, a set of
-seams — stays in that guard; this command only requires that one exists and that
-a class aggregate runs it."""
+The mapping is closed because §5's vocabulary is. A class in neither position has
+no defined membership rule and no resource anything could confine, so it is
+reported rather than passed over. Where a guard itself looks — a fixture name, a
+set of seams — stays in that guard; this command only requires that one exists
+and that a class aggregate runs it."""
 
 CI_WORKFLOW = Path(".github/workflows/ci.yml")
 """The workflow whose jobs must cover the required repository check graph."""
@@ -501,8 +499,9 @@ def _selected_scheduling_classes(repository: _Repository, recipe: Recipe) -> fro
 def _check_class_selection(
     repository: _Repository, recipe: Recipe, declared: frozenset[str]
 ) -> Iterator[Diagnostic]:
-    """§5's disjoint and collectively complete selections, at the one command
-    that owns a class: what it runs must be the class it declares.
+    """§7's class owner — the command holding one test-runner invocation *for
+    that class* — and §5's disjoint and collectively complete selections: what
+    the command runs must be the class it declares.
 
     Counting a class owner's test-runner invocations says the selection is made
     once; it says nothing about which selection. A command naming one class and
@@ -523,8 +522,9 @@ def _check_class_selection(
 def _check_scheduling_guard(
     repository: _Repository, scope: str, classes: Sequence[str]
 ) -> Iterator[Diagnostic]:
-    """§5's closing requirement: the resource defining a class is confined by a
-    blocking check that the scope's own gate runs."""
+    """§5's closing requirement: the class declared is one the contract defines,
+    and the resource defining it is confined by a blocking check that one of the
+    scope's own class aggregates runs."""
     reachable: set[str] = set()
     for scheduling_class in classes:
         aggregate = f"{scope}-check-{scheduling_class}"
@@ -534,10 +534,10 @@ def _check_scheduling_guard(
         if scheduling_class not in _SCHEDULING_GUARDS:
             yield Diagnostic(
                 "unknown-scheduling-class",
-                f"`{scope}` declares the scheduling class `{scheduling_class}`, which this "
-                f"check cannot name a defining resource for; §5 requires every class's "
-                f"resource to be confined by a blocking check, and which resource a class is "
-                f"about is not readable from the graph",
+                f"`{scope}` declares the scheduling class `{scheduling_class}`, which is "
+                f"outside §5's closed vocabulary ({', '.join(sorted(_SCHEDULING_GUARDS))}); a "
+                f"class named elsewhere has no membership rule and no defining resource for a "
+                f"blocking check to confine",
             )
             continue
         qualifier = _SCHEDULING_GUARDS[scheduling_class]

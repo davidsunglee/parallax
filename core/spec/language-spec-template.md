@@ -402,13 +402,14 @@ blocking unless its policy cell defines a narrower, objective exception.
 
 The commands above are owned by aggregates, whose roles and composition
 [`language-testing.md`](language-testing.md) fixes. Every test the
-implementation collects belongs to exactly one **scheduling class**, and each
-class has one aggregate command running every row above assigned to it.
+implementation collects belongs to exactly one **scheduling class**, drawn from
+the closed vocabulary that document also fixes, and each class has one aggregate
+command running every row above assigned to it.
 
-- **(decide and record — All slices)** The scheduling classes this
-  implementation declares, in one list item opening **Scheduling classes.** —
-  each class a backticked token, and no other backticked text in that item. The
-  item may wrap across lines.
+- **(decide and record — All slices)** Which of those classes this
+  implementation's tests populate, in one list item opening **Scheduling
+  classes.** — each class a backticked token, and no other backticked text in
+  that item. The item may wrap across lines.
 - **(decide and record — All slices)** One list item per declared class, opening
   **Aggregate `<class>` command.**, naming the local command and the blocking CI
   job that run every row above assigned to that class.

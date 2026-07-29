@@ -104,12 +104,12 @@
   code: missing-aggregate
   message: "`harness` declares the scheduling class `database` but exposes no `harness-check-database`"
 
-- name: scheduling-class-with-no-defining-resource
+- name: scheduling-class-outside-the-vocabulary
   file: justfile
   old: '[metadata("runtime:medium", "scheduling:dbfree")]'
   new: '[metadata("runtime:medium", "scheduling:offline")]'
   code: unknown-scheduling-class
-  message: "`harness` declares the scheduling class `offline`, which this check cannot name a defining resource for"
+  message: "`harness` declares the scheduling class `offline`, which is outside §5's closed vocabulary (db, dbfree)"
 
 - name: class-owner-selecting-the-other-class
   file: justfile
