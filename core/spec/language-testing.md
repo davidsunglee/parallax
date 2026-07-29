@@ -25,7 +25,7 @@ Every public verification command MUST read:
 - **operation** — exactly one entry from the closed vocabulary in [§2](#2-operation-vocabulary).
 - **qualifier** — a scheduling class ([§5](#5-scheduling-classification)), a
   semantic surface ([§3](#3-primary-semantic-surfaces)), or the subject the
-  operation validates.
+  operation acts on.
 
 A scope is either a **language scope** — one language implementation, which
 ships a test suite under a published contract — or a **tooling scope**, which
@@ -65,6 +65,14 @@ may modify them. `build` and `test` additionally produce untracked output —
 artifacts and coverage data. A command's effect therefore follows from its name,
 which is what lets tooling and permission policy reason about safety
 syntactically.
+
+An operation is **blocking** when its purpose is a verdict: `check`, `test`,
+`coverage`, `lint`, `typecheck`, `format-check`, `build`, and `audit` each fail
+when what they examine is wrong. `format`, `report`, and `show` are
+**non-blocking**: they rewrite, describe, or display, and pass no judgement.
+Only blocking commands are gates. An aggregate's verdict is its blocking
+dependencies', so it may depend on a non-blocking command for that command's
+output without acquiring a second verdict.
 
 ## 3. Primary semantic surfaces
 
@@ -147,6 +155,16 @@ itself requires satisfies this by construction, because neither zero nor two
 classes is then representable. A class authored onto a test instead MUST be
 checked against those requirements.
 
+A command that owns a scheduling class's execution MUST declare that class as
+structured data on itself, in the carrier [§6](#6-runtime-classification) fixes
+for the runtime class. The declaration, not the name, is what separates the two
+kinds of test command: a scheduling command and a focused one
+([§3](#3-primary-semantic-surfaces)) are the same shape, and only the first
+declares a class. Graph inspection therefore decides which test commands
+[§7](#7-command-roles-and-composition) requires an aggregate to compose, and
+which [§3](#3-primary-semantic-surfaces) forbids it from composing, without
+reading names.
+
 The resource that defines a class MUST be reachable only through the entry points
 the scope designates for it, and that restriction MUST itself be a blocking
 check. Otherwise a test can acquire the resource by another route, and its class
@@ -168,6 +186,11 @@ scheduling class — a class that needs no database is not necessarily fast.
   and MUST signal a declaration that understates it.
 - The declaration MUST be structured data on the command itself, readable by
   machine from the orchestrator's own output rather than from a separate table.
+  Its carrier MUST NOT be one the orchestrator also uses to organize the command
+  listing it presents to a reader. A classification and a menu answer different
+  questions, so overloading one channel for both degrades the listing exactly as
+  the classification approaches complete coverage. The same carrier holds the
+  scheduling-class declaration ([§5](#5-scheduling-classification)).
 
 Measured durations are supporting evidence, never an acceptance threshold.
 
@@ -177,7 +200,7 @@ Every public command is exactly one of two roles:
 
 | Role | Rule |
 |---|---|
-| Execution | Has a command body and owns one coherent operation. It MAY depend on the commands producing its required inputs. It MUST NOT inline unrelated lint, typecheck, build, audit, or test work. |
+| Execution | Has a command body that performs one operation — the one its name declares — over one subject. Several invocations are that one operation when each is a step of it, and are not when any performs work another entry in [§2](#2-operation-vocabulary) names. What an invocation does decides that, not what the tool it runs is called. It MAY depend on the commands producing its required inputs. |
 | Aggregate | Has at least one dependency and no command body. |
 
 No command may compose others while also carrying an unrelated body. A command
@@ -204,7 +227,14 @@ is a dependency-only aggregate over each scope's aggregate for that class, the
 complete check aggregate of each scope that declares no class, and the
 repository-wide execution commands assigned to the class. `check` is a
 dependency-only aggregate over the class aggregates plus the repository-wide
-commands that belong to no single class.
+blocking commands that belong to no single class.
+
+Every composition rule above quantifies over blocking commands
+([§2](#2-operation-vocabulary)). A non-blocking command belongs to no gate, and a
+repository that exposes one reachable from nothing is conforming. An aggregate
+MAY nonetheless depend on a non-blocking command for its output — a success
+summary as a terminal dependency, say — which makes that command neither a gate
+nor a second verdict.
 
 An ordering constraint between two commands MUST be expressed as a dependency,
 never as adjacency inside one body. A constraint that exists only as line order
@@ -220,6 +250,10 @@ verification runs. A second gate manifest MUST NOT be introduced.
 - The repository MUST provide a `show` command that displays the resolved
   graph: dependencies, execution owners, scheduling classes, prerequisites, and
   runtime classes.
+- Where the graph violates this contract in a way the display would otherwise
+  render as ordinary output — a command composing nothing, a declaration its own
+  closure outruns — the display MUST say so. Failing on it stays the blocking
+  command's job; describing the graph as it is stays the display's.
 - The repository MUST provide a blocking `check` command over that graph,
   failing on naming, ordering, role, scheduling-composition, declared-metadata,
   test-layout, runner-configuration, documentation, and CI drift. The

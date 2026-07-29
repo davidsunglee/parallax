@@ -1,7 +1,7 @@
 core-check-schemas:
     echo schemas
 
-[group("medium")]
+[metadata("runtime:medium")]
 core-check-module-graph:
     echo module-graph
 

@@ -7,83 +7,80 @@ from pathlib import Path
 
 import pytest
 
-from reference_harness.show_gates import main
+from reference_harness.gate_graph import GateGraph
+from reference_harness.show_gates import main, render
+
+
+def _report(graph: GateGraph, *names: str) -> str:
+    return "\n".join(render(graph, list(names)))
 
 
 def test_an_aggregate_reports_its_dependencies_and_execution_owners(
-    gate_graph_dir: Callable[[str], Path], capsys: pytest.CaptureFixture[str]
+    gate_graph: Callable[[str], GateGraph],
 ) -> None:
-    justfile_dir = gate_graph_dir("diamond.just")
+    report = _report(gate_graph("diamond.just"), "top-check")
 
-    rc = main([str(justfile_dir), "top-check"])
-
-    assert rc == 0
-    out = capsys.readouterr().out
-    assert "  top-check\n    runtime: slow\n" in out
-    assert "    dependencies: left-check-branch, right-check-branch\n" in out
+    assert "  top-check\n    runtime: slow\n" in report
+    assert "    dependencies: left-check-branch, right-check-branch\n" in report
     assert (
         "    execution owners (3):\n"
         "      - leaf-check-shared\n"
         "      - left-check-branch\n"
         "      - right-check-branch\n"
-    ) in out
-    assert out.endswith("1 recipe(s): 0 execution, 1 aggregate\n")
+    ) in report
+    assert report.endswith("1 recipe(s): 0 execution, 1 aggregate")
+
+
+def test_an_aggregate_composing_nothing_is_signalled(
+    gate_graph: Callable[[str], GateGraph],
+) -> None:
+    report = _report(gate_graph("roles.just"), "harness-check-empty")
+
+    assert "  harness-check-empty\n" in report
+    assert "    composes nothing: no command body and no dependency\n" in report
+    assert "dependencies:" not in report
+    assert "execution owners" not in report
 
 
 def test_an_execution_recipe_reports_its_classes_prerequisites_and_command_count(
-    gate_graph_dir: Callable[[str], Path], capsys: pytest.CaptureFixture[str]
+    gate_graph: Callable[[str], GateGraph],
 ) -> None:
-    justfile_dir = gate_graph_dir("roles.just")
+    report = _report(gate_graph("roles.just"), "harness-coverage-diff", "harness-format-check")
 
-    rc = main([str(justfile_dir), "harness-coverage-diff", "harness-format-check"])
-
-    assert rc == 0
-    out = capsys.readouterr().out
-    assert "  harness-coverage-diff\n    runtime: slow   understated (declared: fast)\n" in out
-    assert "    prerequisites: harness-test-db\n" in out
-    assert "    commands: 1\n" in out
-    assert "  harness-format-check\n    runtime: fast   scheduling: dbfree\n" in out
-    assert "    doc: the description the resolver reports\n" in out
+    assert "  harness-coverage-diff\n    runtime: slow   understated (declared: fast)\n" in report
+    assert "    prerequisites: harness-test-db\n" in report
+    assert "    commands: 1\n" in report
+    assert "  harness-format-check\n    runtime: fast   scheduling: dbfree\n" in report
+    assert "    doc: the description the resolver reports\n" in report
 
 
 def test_an_undeclared_runtime_class_reads_as_unclassified(
-    gate_graph_dir: Callable[[str], Path], capsys: pytest.CaptureFixture[str]
+    gate_graph: Callable[[str], GateGraph],
 ) -> None:
-    justfile_dir = gate_graph_dir("undeclared-runtime.just")
+    report = _report(gate_graph("undeclared-runtime.just"), "core-check-undeclared")
 
-    rc = main([str(justfile_dir), "core-check-undeclared"])
-
-    assert rc == 0
-    assert "  core-check-undeclared\n    runtime: unclassified\n" in capsys.readouterr().out
+    assert "  core-check-undeclared\n    runtime: unclassified\n" in report
 
 
 def test_a_parameterized_recipe_renders_its_signature(
-    gate_graph_dir: Callable[[str], Path], capsys: pytest.CaptureFixture[str]
+    gate_graph: Callable[[str], GateGraph],
 ) -> None:
-    justfile_dir = gate_graph_dir("roles.just")
+    report = _report(gate_graph("roles.just"), "core-show-language-spec", "_internal-show-detail")
 
-    rc = main([str(justfile_dir), "core-show-language-spec", "_internal-show-detail"])
-
-    assert rc == 0
-    out = capsys.readouterr().out
-    assert "  core-show-language-spec <language_spec>\n" in out
-    assert "  _internal-show-detail (private)\n" in out
+    assert "  core-show-language-spec <language_spec>\n" in report
+    assert "  _internal-show-detail (private)\n" in report
 
 
 def test_the_whole_graph_is_grouped_by_role(
-    gate_graph_dir: Callable[[str], Path], capsys: pytest.CaptureFixture[str]
+    gate_graph: Callable[[str], GateGraph], gate_graph_dir: Callable[[str], Path]
 ) -> None:
-    justfile_dir = gate_graph_dir("roles.just")
+    report = _report(gate_graph("roles.just"))
 
-    rc = main([str(justfile_dir)])
-
-    assert rc == 0
-    out = capsys.readouterr().out
-    assert out.startswith(f"gate graph: {justfile_dir / 'justfile'}\n")
-    assert "aggregate recipes (2)\n" in out
-    assert "execution recipes (7)\n" in out
-    assert out.index("aggregate recipes") < out.index("execution recipes")
-    assert out.endswith("9 recipe(s): 7 execution, 2 aggregate\n")
+    assert report.startswith(f"gate graph: {gate_graph_dir('roles.just') / 'justfile'}\n")
+    assert "aggregate recipes (2)\n" in report
+    assert "execution recipes (8)\n" in report
+    assert report.index("aggregate recipes") < report.index("execution recipes")
+    assert report.endswith("10 recipe(s): 8 execution, 2 aggregate")
 
 
 def test_the_repository_graph_renders(repo_root: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -114,9 +111,7 @@ def test_no_argument_is_a_usage_error(capsys: pytest.CaptureFixture[str]) -> Non
 def test_an_unknown_recipe_is_a_usage_error(
     gate_graph_dir: Callable[[str], Path], capsys: pytest.CaptureFixture[str]
 ) -> None:
-    justfile_dir = gate_graph_dir("diamond.just")
-
-    rc = main([str(justfile_dir), "top-verify"])
+    rc = main([str(gate_graph_dir("diamond.just")), "top-verify"])
 
     assert rc == 2
     assert "unknown recipe 'top-verify'" in capsys.readouterr().err
