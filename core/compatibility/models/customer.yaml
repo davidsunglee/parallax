@@ -18,7 +18,7 @@
 # Row data lives in the sibling fixtures/customer.yaml; each `address` fixture
 # value is a nested mapping loaded into the structured-document column. Nested
 # members not yet present in every fixture row are `nullable: true` so the current
-# fixtures stay valid; fixtures/cases are enriched in later phases.
+# fixtures stay valid.
 #
 # A SECOND, VO-bearing child entity `Location` and the to-many
 # `Customer.locations` relationship let the corpus witness the deep-fetch ×
@@ -27,24 +27,24 @@
 # whose root level projects Customer's instance-form list (`id, name, address`)
 # and whose child level projects Location's own instance-form list (`id,
 # customer_id, label, address`: `customer_id` is a Domain slot and `address` the
-# final Document slot). `Location` reuses Customer's `address` composite
-# verbatim — same declared members, same
-# absence-state vocabulary — so a null-document child materializes null exactly as
-# a null-address Customer does, pinning the absence collapse AT DEPTH. Adding a
-# sibling entity + relationship leaves Customer's own Attribute and Value Object
-# declaration sequences untouched, so the existing customer reads (the 21
-# filter reads and the -023/-024 materialization graphs) do not ripple.
+# final Document slot). `Location` reuses Customer's `address` composite verbatim
+# — same declared members, same absence-state vocabulary — so a null-document
+# child materializes null exactly as a null-address Customer does, pinning the
+# absence collapse AT DEPTH. Being a sibling entity + relationship, it leaves
+# Customer's own Attribute and Value Object declaration sequences untouched, so
+# the existing customer reads (the 21 filter reads and the -023/-024
+# materialization graphs) do not ripple.
 #
-# A re-review round adds a THIRD entity `Depot` and the to-many `Customer.depots`,
-# to make the per-step read-entity resolution regression-sensitive. Where `Location`
-# reuses Customer's `address` composite VERBATIM (so a wrong-descriptor decode is
+# A THIRD entity `Depot` and the to-many `Customer.depots` make the per-step
+# read-entity resolution regression-sensitive. Where `Location` reuses Customer's
+# `address` composite VERBATIM (so a wrong-descriptor decode is
 # indistinguishable), `Depot.address` is a DIFFERENT declared STRUCTURE — a FLAT
 # `{ line, postcode }` in the same `address` column. Decoding a Depot row with the
 # root Customer descriptor therefore yields observably wrong keys, so the deferred
 # `action: load` and operation-list first-`access` witnesses over `depots`
 # (m-deep-fetch-020, m-op-list-004) go RED if a runner materializes them with the
 # scenario root instead of the navigated child entity. `Depot` and its relationship
-# again leave Customer's / Location's Attribute and Value Object declarations
+# likewise leave Customer's / Location's Attribute and Value Object declarations
 # untouched, so no existing customer/location case ripples.
 entities:
   - name: Customer
