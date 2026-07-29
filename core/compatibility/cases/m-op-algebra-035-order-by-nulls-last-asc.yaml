@@ -1,0 +1,37 @@
+# orderBy ASCENDING with an explicit `nulls: last` placement over a NULLABLE key,
+# proven on BOTH dialects (m-op-algebra orderBy + m-dialect NULL ordering).
+#
+# `Order.sku` is nullable (order 4 has none), so the placement is OBSERVABLE; the
+# `limit 2` makes it observable through row MEMBERSHIP, since top-level row
+# comparison is order-insensitive. Nulls-last is the canonical default, so this
+# authored spelling must lower exactly as omission does — the two dialects reach it
+# differently (Postgres trails NULLs on `asc` natively; MariaDB has no NULLS LAST
+# syntax and forces the order with a leading `sku is null` rank term) yet both return
+# the two smallest skus and never the NULL row. The paired contrast is
+# m-op-algebra-037, whose `nulls: first` over the same key and the same limit returns
+# the NULL row instead of the second-smallest sku.
+model: models/orders.yaml
+tags: [m-op-algebra, m-dialect, orderBy, ordering, nulls, nullable, limit, directive, slice-snapshot-1, slice-managed-1]
+shape: read
+when:
+  targetEntity: Order
+  operation:
+    limit:
+      count: 2
+      operand:
+        orderBy:
+          keys:
+            - { attr: Order.sku, direction: asc, nulls: last }
+          operand:
+            all: {}
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0 order by t0.sku asc limit ?
+        mariadb: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0 order by t0.sku is null, t0.sku asc limit ?
+      binds: [2]
+  referenceSql: select id, name, sku, qty, price, active, ordered_on from orders order by case when sku is null then 1 else 0 end, sku asc limit 2
+  rows:
+    - { id: 1, name: Ada, sku: A-100, qty: 5, price: 10.50, active: true, ordered_on: 2024-01-05 }
+    - { id: 3, name: ada, sku: A-300, qty: 15, price: 30.25, active: false, ordered_on: 2024-03-15 }
+  roundTrips: 1

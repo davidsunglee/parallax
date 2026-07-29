@@ -15,7 +15,7 @@ from __future__ import annotations
 import copy
 import pickle
 from collections.abc import Callable
-from typing import cast
+from typing import Literal, cast
 
 import pytest
 from _sql_gen_support import model, target
@@ -125,6 +125,55 @@ def test_single_of_each_directive_still_composes() -> None:
     compiled = compile_read(op, ORDERS, POSTGRES, target(ORDERS, "Order"))
     assert compiled.statement.sql.endswith("order by t0.id asc limit ?")
     assert "select distinct" in compiled.statement.sql
+
+
+@pytest.mark.parametrize(
+    ("direction", "placement", "term"),
+    [
+        ("asc", None, "t0.sku asc"),
+        ("asc", "last", "t0.sku asc"),
+        ("desc", "last", "t0.sku desc nulls last"),
+        ("asc", "first", "t0.sku asc nulls first"),
+        ("desc", "first", "t0.sku desc"),
+        ("desc", None, "t0.sku desc nulls last"),
+    ],
+)
+def test_nullable_order_key_lowers_through_the_placement_seam(
+    direction: str, placement: str | None, term: str
+) -> None:
+    # `Order.sku` is nullable, so every placement — including the omitted one, which
+    # defaults to `last` — renders through the m-dialect seam.
+    op = oa.OrderBy(
+        operand=oa.All(),
+        keys=(
+            oa.OrderKey(
+                attr="Order.sku",
+                direction=cast('Literal["asc", "desc"]', direction),
+                nulls=cast('Literal["first", "last"] | None', placement),
+            ),
+        ),
+    )
+    compiled = compile_read(op, ORDERS, POSTGRES, target(ORDERS, "Order"))
+    assert compiled.statement.sql.endswith(f"order by {term}")
+
+
+@pytest.mark.parametrize("placement", [None, "first", "last"])
+def test_non_nullable_order_key_ignores_placement(placement: str | None) -> None:
+    # `Order.qty` is non-nullable: there are no NULLs to place, so both placements
+    # denote the same order and the plain term is emitted under either — the guard
+    # that keeps every pre-existing golden byte-identical.
+    op = oa.OrderBy(
+        operand=oa.All(),
+        keys=(
+            oa.OrderKey(
+                attr="Order.qty",
+                direction="desc",
+                nulls=cast('Literal["first", "last"] | None', placement),
+            ),
+        ),
+    )
+    compiled = compile_read(op, ORDERS, POSTGRES, target(ORDERS, "Order"))
+    assert compiled.statement.sql.endswith("order by t0.qty desc")
 
 
 def test_statement_is_frozen_value() -> None:

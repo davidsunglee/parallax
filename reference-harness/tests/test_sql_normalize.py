@@ -26,6 +26,29 @@ def test_read_lock_update_suffix_normalizes_to_lowercase() -> None:
     assert is_canonical(canonical)
 
 
+def test_null_placement_suffix_normalizes_to_lowercase() -> None:
+    # The m-dialect Null Placement suffix has the same hazard as the lock clause:
+    # sqlglot tokenizes `NULLS` and `LAST` as VAR (while `FIRST` has its own token
+    # type), so without lowercasing them the canonical form would read
+    # `NULLS LAST` beside a lowercase `nulls first`.
+    for term in ("t0.sku asc nulls first", "t0.sku desc nulls last"):
+        canonical = f"select t0.id from orders t0 order by {term}"
+        assert normalize(canonical.upper().replace("T0", "t0")) == canonical
+        assert is_canonical(canonical)
+
+
+def test_null_placement_leading_rank_term_normalizes_negation() -> None:
+    # MariaDB's `nulls first` compensation on `desc` is a leading `is not null` rank
+    # term, which m-sql normalization rewrites to a leading `not` like any other
+    # negated null test — so the canonical golden carries `not t0.sku is null`.
+    canonical = "select t0.id from orders t0 order by not t0.sku is null, t0.sku desc"
+    assert (
+        normalize("select t0.id from orders t0 order by t0.sku is not null, t0.sku desc", "mariadb")
+        == canonical
+    )
+    assert is_canonical(canonical, "mariadb")
+
+
 # --- quoted identifiers (reserved words) are preserved, not stripped ---------
 # A reserved-word column must be quoted; the normalizer keeps the quotes (with
 # the dialect's quote character) rather than stripping them (Postgres) or
