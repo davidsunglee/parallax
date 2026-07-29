@@ -1145,18 +1145,17 @@ def _rows_carry_observation_keys(raw_rows: Sequence[Mapping[str, object]]) -> bo
     return any(_OBSERVATION_CONTROL_KEYS & row.keys() for row in raw_rows)
 
 
-def _decomposes_per_row(
+def _binds_row_observations(
     meta: Metamodel, entity_name: str, mutation: str, raw_rows: Sequence[Mapping[str, object]]
 ) -> bool:
-    """Whether a non-temporal write entry's rows are treated as independent
-    per-object writes — each carrying its OWN object key and observation,
-    mirroring what that many separate
+    """Whether a non-temporal write entry's rows each carry their OWN object key
+    and observation, mirroring what that many separate
     `Transaction.insert`/`.update`/`.delete` calls would buffer — rather than
-    as anonymous rows free to be merged back together.
+    arriving as anonymous rows free to be merged back together.
 
-    This decides OBSERVATION BINDING only, never statement count: either way
-    :func:`_build_instructions` buffers one single-row instruction per row and
-    leaves every merge to the planner's own collapse stage
+    This decides OBSERVATION BINDING only, never statement count:
+    :func:`_build_instructions` buffers one single-row instruction per row
+    regardless, and leaves every merge to the planner's own collapse stage
     (:func:`_lower_resolved`, `parallax.snapshot.handle.Database.transact`).
     What a bound observation changes is that the planner refuses to merge that
     row at all, which is exactly the point — a merged multi-row instruction has
@@ -1204,74 +1203,40 @@ def _decomposes_per_row(
     return not batch_write.collapses(model, entity, mutation, raw_rows)
 
 
-def _planned_statement_count(
-    meta: Metamodel,
-    entity_name: str,
-    mutation: str,
-    rows: Sequence[tuple[Mapping[str, object], bool]],
-) -> int:
-    """How many statements one non-temporal entry's buffered per-row
-    instructions emit once the planner has merged what it can — the single
-    derived count :func:`_check_statement_count_consistency` grades an entry's
-    authored ``statements`` against, whatever branch built those rows.
-
-    Applies the planner's own two-stage rule to the SAME injected seams the
-    planner is wired with, so the two can never drift: the rows are first
-    partitioned into ADJACENT runs sharing a physical shape
-    (:func:`~parallax.snapshot.handle.collapse_group_key`, `m-sql` "Physical
-    DML ordering"), then each run's own rows are put to
-    :func:`~parallax.core.batch_write.collapses` — one statement for a run that
-    collapses, one per row for a run that does not. Asking eligibility of a
-    single run rather than of the whole entry is what lets an entry that is
-    non-uniform TAKEN AS A WHOLE still batch within each shape.
-
-    A row carrying its own observation is never a merge candidate (the planner
-    excludes it by object key), so it ends the run in progress and stands as
-    its own statement.
-    """
-    model = case_model(meta)
-    entity = case_entity(model, meta.entity(entity_name))
-    total = 0
-    run: list[Mapping[str, object]] = []
-    run_group: object = None
-
-    def flush_run() -> int:
-        if not run:
-            return 0
-        emitted = (
-            1 if len(run) > 1 and batch_write.collapses(model, entity, mutation, run) else len(run)
-        )
-        run.clear()
-        return emitted
-
-    for row, observed in rows:
-        if observed:
-            total += flush_run() + 1
-            continue
-        group = collapse_group_key(model, entity, mutation, row)
-        if run and group == run_group:
-            run.append(row)
-            continue
-        total += flush_run()
-        run.append(row)
-        run_group = group
-    return total + flush_run()
-
-
-def _check_statement_count_consistency(entry: Mapping[str, object], decomposed_count: int) -> None:
+def _check_statement_count_consistency(
+    entries: Sequence[Mapping[str, object]], emitted_count: int
+) -> None:
     """``statements`` is a count-CONSISTENCY assertion the schema intends
     (`compatibility-case.schema.json`), never a semantics discriminator — verify
-    the entry's OWN authored count against this seam's independently DERIVED
-    instruction count and fail loudly on a mismatch (an authoring error),
-    rather than silently trusting either number.
+    the authored count against the statements this buffer's flush ACTUALLY
+    emitted and fail loudly on a mismatch (an authoring error), rather than
+    silently trusting either number.
+
+    ``emitted_count`` comes from the real plan (:func:`_lower_resolved`), so the
+    assertion sees every stage the planner applies — coalescing, physical-shape
+    collapse, and the ELISION that drops a keyed update whose effective change
+    set is empty (`m-opt-lock`'s no-op write) — rather than a second,
+    drift-prone reconstruction of them.
+
+    Only a writeSequence entry authors ``statements`` (a buffered scenario write
+    entry has no such key at all), and a writeSequence entry is planned ALONE,
+    so the sum below spans exactly one entry in practice; summing is what
+    `m-case-format` asserts either way ("the DML statement count MUST equal the
+    sum of the steps' declared statement counts"). An entry that authors nothing
+    grades nothing.
     """
-    declared = entry.get("statements")
-    if declared is not None and declared != decomposed_count:
+    declared = [entry.get("statements") for entry in entries]
+    if any(count is None for count in declared):
+        return
+    expected = sum(cast("int", count) for count in declared)
+    if expected != emitted_count:
+        described = ", ".join(
+            f"{entry.get('entity')!r} {entry.get('mutation')!r}" for entry in entries
+        )
         raise EngineError(
-            f"{entry.get('entity')!r} {entry.get('mutation')!r}: authored `statements: "
-            f"{declared!r}` does not match the {decomposed_count} instruction(s) this entry "
-            "decomposes into (m-case-format: `statements` is a count-consistency assertion, "
-            "not a semantics discriminator)"
+            f"{described}: authored `statements: {expected}` does not match the "
+            f"{emitted_count} statement(s) this flush emits (m-case-format: `statements` is a "
+            "count-consistency assertion, not a semantics discriminator)"
         )
 
 
@@ -1343,7 +1308,7 @@ def _build_instructions(
     would. Nothing is ever pre-merged here: whether buffered rows share one
     statement is the planner's own collapse stage to decide.
 
-    What :func:`_decomposes_per_row` derives SEMANTICALLY is whether each row
+    What :func:`_binds_row_observations` derives SEMANTICALLY is whether each row
     binds its OWN object key and :class:`Observation` (its reserved observation
     control keys stripped into one — `m-opt-lock`; ADR 0013), which in turn
     tells the planner to keep that row separately identifiable rather than
@@ -1354,11 +1319,10 @@ def _build_instructions(
     consistently with :func:`~parallax.core.unit_work.object_key` — mirroring
     how a temporal entry falls back to :meth:`TemporalShadow.resolve` above.
 
-    :func:`_check_statement_count_consistency` then verifies the entry's own
-    authored ``statements`` count against :func:`_planned_statement_count`,
-    which reads the buffered rows and their bound observations back through the
-    planner's own grouping and collapse seams — one derived count for both
-    branches, never one rule per branch.
+    An entry's authored ``statements`` count is graded later, once
+    :func:`_lower_resolved` has actually planned and lowered the buffer these
+    instructions join (:func:`_check_statement_count_consistency`) — nothing
+    here predicts what the flush will emit.
     """
     if "entity" not in entry:
         target = entry.get("target")
@@ -1378,10 +1342,9 @@ def _build_instructions(
         return [_build_temporal_instruction(entry, meta, shadow, tx_instant, unit_inserted)]
     mutation = cast("str", entry["mutation"])
     raw_rows = cast("Sequence[Mapping[str, object]]", entry["rows"])
-    binds_observations = _decomposes_per_row(meta, entity_name, mutation, raw_rows)
+    binds_observations = _binds_row_observations(meta, entity_name, mutation, raw_rows)
     model = case_model(meta)
     out: list[tuple[WriteInstruction, ObjectKey | None, Observation | None]] = []
-    counted: list[tuple[Mapping[str, object], bool]] = []
     for raw_row in raw_rows:
         clean_row, observation = _strip_observation(raw_row)
         clean_row = _seed_insert_version(meta, entity_name, mutation, clean_row)
@@ -1399,10 +1362,6 @@ def _build_instructions(
         else:
             observation = None
         out.append((instruction, key, observation))
-        counted.append((clean_row, key is not None and observation is not None))
-    _check_statement_count_consistency(
-        entry, _planned_statement_count(meta, entity_name, mutation, counted)
-    )
     return out
 
 
@@ -1440,6 +1399,7 @@ def _resolve_entries(
 
 def _lower_resolved(
     resolved: Sequence[tuple[WriteInstruction, ObjectKey | None, Observation | None]],
+    entries: Sequence[Mapping[str, object]],
     meta: Metamodel,
     dialect: Dialect,
     concurrency: Concurrency,
@@ -1450,12 +1410,15 @@ def _lower_resolved(
     ``collapse_group=collapse_group_key`` are injected identically to the
     composition layer's own production wiring
     (`parallax.snapshot.handle.Database.transact`), so the planner is the ONE
-    authority that merges a case entry's rows: a collapse-ELIGIBLE entry
-    (`_decomposes_per_row`'s "not decomposes" branch) arrives as its own
-    per-row instructions and collapses HERE, per physical shape, while a case
-    entry that decomposes semantically (`m-batch-write-002`'s non-uniform
-    shape) never re-collapses, since `batch_write.collapses` answers the SAME
-    eligibility question either way.
+    authority that merges a case entry's rows: every entry arrives as its own
+    per-row instructions, and which of them share a statement is decided HERE,
+    per physical shape, by the same `batch_write.collapses` eligibility answer
+    production consults.
+
+    ``entries`` are the case entries ``resolved`` was built from, carried only so
+    their authored ``statements`` counts can be graded against the statements
+    this ONE plan actually emits (:func:`_check_statement_count_consistency`) —
+    the count is never derived from a second, reconstructed plan.
     """
     buffer = [instruction for instruction, _key, _observation in resolved]
     observations: dict[ObjectKey, Observation] = {
@@ -1478,6 +1441,7 @@ def _lower_resolved(
             lowered.statement
             for lowered in lower_write(planned, model, dialect, concurrency, tx_instant)
         )
+    _check_statement_count_consistency(entries, len(statements))
     return tuple(statements)
 
 
@@ -1496,7 +1460,7 @@ def _lower_writes(
     :func:`_lower_resolved` directly, rather than calling this a second time, so
     the shadow tracker advances exactly once per entry)."""
     resolved = _resolve_entries(entries, meta, shadow, tx_instant, scenario_observations)
-    return _lower_resolved(resolved, meta, dialect, concurrency, tx_instant)
+    return _lower_resolved(resolved, entries, meta, dialect, concurrency, tx_instant)
 
 
 def _lower_predicate_write_step(
@@ -2001,9 +1965,9 @@ def _execute_write_unit(
     ``clock=FixedClock(tx_instant)``
     (ADR 0010: instants come from the Clock Strategy, never a per-operation
     override). Each instruction buffers through :func:`_buffer_execution_instruction`
-    (a collapse-eligible row carries no observation by construction —
-    `_build_instructions`'s "not decomposes" branch already deserialized +
-    `validate_instruction`-ed it — so the flush is free to merge it). A
+    — already deserialized and `validate_instruction`-ed by
+    :func:`_build_instructions`, and single-row, so the flush is free to merge
+    any of them that carries no observation of its own. A
     ``rollback: true`` step raises inside the callback (rollback-only,
     `m-unit-work` abort contract): the buffered DML still executes — and counts
     its round trips — before the provider rolls the transaction back.
@@ -2391,7 +2355,9 @@ def _run_uow_group(
             if "write" in step:
                 entries = _write_entries(step["write"])
                 resolved = _resolve_entries(entries, meta, shadow, tx_instant, group_observations)
-                statements = _lower_resolved(resolved, meta, dialect, concurrency, tx_instant)
+                statements = _lower_resolved(
+                    resolved, entries, meta, dialect, concurrency, tx_instant
+                )
                 for instruction, key, observation in resolved:
                     assert isinstance(
                         instruction, KeyedWrite
@@ -2593,7 +2559,7 @@ def _run_interleaved_group(
                     entries, meta, shadow, _INERT_CLOCK_INSTANT, group_observations
                 )
                 statements = _lower_resolved(
-                    resolved, meta, dialect, concurrency, _INERT_CLOCK_INSTANT
+                    resolved, entries, meta, dialect, concurrency, _INERT_CLOCK_INSTANT
                 )
                 for instruction, key, observation in resolved:
                     assert isinstance(
@@ -3312,7 +3278,9 @@ def run_scenario_case(
                 entries = _write_entries(raw_write)
                 tx_instant = _entry_instant(entries[0])
                 resolved = _resolve_entries(entries, meta, shadow, tx_instant, {})
-                statements = _lower_resolved(resolved, meta, dialect, concurrency, tx_instant)
+                statements = _lower_resolved(
+                    resolved, entries, meta, dialect, concurrency, tx_instant
+                )
                 _execute_write_unit(
                     port, meta, dialect, concurrency, resolved, tx_instant, rollback=rollback
                 )
@@ -3347,7 +3315,7 @@ def run_write_sequence_case(
         for index, entry in enumerate(_write_sequence_entries(case)):
             tx_instant = _entry_instant(entry)
             resolved = _resolve_entries([entry], meta, shadow, tx_instant, scenario_observations)
-            statements = _lower_resolved(resolved, meta, dialect, concurrency, tx_instant)
+            statements = _lower_resolved(resolved, [entry], meta, dialect, concurrency, tx_instant)
             _execute_write_unit(
                 port, meta, dialect, concurrency, resolved, tx_instant, rollback=False
             )

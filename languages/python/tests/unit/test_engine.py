@@ -1594,12 +1594,12 @@ def test_write_sequence_compile_wraps_a_lowering_failure_as_engine_error() -> No
 
 
 # --------------------------------------------------------------------------- #
-# The row-decomposition                                                        #
-# discriminator (`engine._decomposes_per_row`) is derived SEMANTICALLY —       #
+# The observation-binding                                                      #
+# discriminator (`engine._binds_row_observations`) is derived SEMANTICALLY —   #
 # mutation kind, versioned-ness, per-row observation control keys, pk-gen      #
 # management, and (for update) per-key value uniformity — never from the       #
 # case's own authored `statements` count, which is a count-consistency        #
-# ASSERTION only (verified independently, `_check_statement_count_            #
+# ASSERTION the real plan verifies independently (`_check_statement_count_    #
 # consistency`). Finding E: a structured predicate-write instruction reaching  #
 # this seam refuses loudly, never a bare `KeyError`.                          #
 # --------------------------------------------------------------------------- #
@@ -1836,7 +1836,7 @@ def test_update_entry_non_uniform_within_a_physical_group_rejects_a_grouped_coun
             },
         },
     )
-    with pytest.raises(engine.EngineError, match="does not match the 4 instruction"):
+    with pytest.raises(engine.EngineError, match="does not match the 4 statement"):
         engine.compile_write_sequence_case(case, "postgres")
 
 
@@ -1903,6 +1903,65 @@ def test_pk_gen_managed_insert_decomposes_per_row_even_with_literal_ids() -> Non
         "insert into pass(id, zone) values (?, ?)",
         "insert into pass(id, zone) values (?, ?)",
     ]
+
+
+def test_elided_no_op_row_is_not_counted_as_a_statement() -> None:
+    # A versioned UPDATE row that assigns nothing but its own primary key has an
+    # EMPTY effective change set, so the planner's elision stage drops it
+    # (m-opt-lock: a versioned update that changes no attribute issues no DML).
+    # The authored count grades the statements the flush actually emits, so this
+    # entry is ONE statement — the surviving `balance` update — not two.
+    case = _synthetic_write(
+        "writeSequence",
+        {
+            "when": {
+                "writeSequence": [
+                    {
+                        "mutation": "update",
+                        "entity": "Account",
+                        "statements": 1,
+                        "rows": [
+                            {"id": 1, "observedVersion": 1},
+                            {"id": 2, "balance": 5.00, "observedVersion": 1},
+                        ],
+                    }
+                ]
+            }
+        },
+    )
+    emissions, round_trips = engine.compile_write_sequence_case(case, "postgres")
+    assert round_trips == 1
+    assert [e.sql for e in emissions] == [
+        "update account set balance = ?, version = ? where id = ?"
+    ]
+    assert emissions[0].binds == (5.00, 2, 2)
+
+
+def test_an_entry_whose_every_row_elides_emits_no_statement() -> None:
+    # Every row of the entry is a versioned primary-key-only no-op, so the whole
+    # entry elides to NO DML. The derived count is 0, which no authored count can
+    # match (`statements` is constrained to at least 1), so an authored count
+    # still refuses loudly rather than silently passing on an empty flush.
+    rows = [{"id": 1, "observedVersion": 1}, {"id": 2, "observedVersion": 1}]
+    silent = _synthetic_write(
+        "writeSequence",
+        {"when": {"writeSequence": [{"mutation": "update", "entity": "Account", "rows": rows}]}},
+    )
+    emissions, round_trips = engine.compile_write_sequence_case(silent, "postgres")
+    assert round_trips == 0
+    assert emissions == []
+    counted = _synthetic_write(
+        "writeSequence",
+        {
+            "when": {
+                "writeSequence": [
+                    {"mutation": "update", "entity": "Account", "statements": 1, "rows": rows}
+                ]
+            }
+        },
+    )
+    with pytest.raises(engine.EngineError, match="does not match the 0 statement"):
+        engine.compile_write_sequence_case(counted, "postgres")
 
 
 def test_authored_statement_count_mismatch_is_rejected() -> None:
