@@ -5,11 +5,14 @@ tooling reads it rather than a second manifest. This module is that reader: it
 resolves ``just --dump --dump-format json``, which exposes each recipe's
 dependencies, body, parameters, and attributes structurally.
 
-Scheduling and runtime classes travel as ``[group(...)]`` attributes and the
-human description as ``[doc(...)]``. A leading comment is deliberately NOT a
-description source: the dump truncates a comment block to the single line above
-the recipe, so a recipe without ``[doc(...)]`` reports no description at all
-rather than a fragment of one.
+Runtime and scheduling classes travel as ``[metadata(...)]`` values prefixed
+``runtime:`` and ``scheduling:``, and the human description as ``[doc(...)]``.
+``[group(...)]`` is deliberately NOT a class carrier: ``just`` also organizes
+``--list`` by group, so classifying recipes that way would segregate the listing
+by class and repeat every recipe once per class it declares. A leading comment is
+deliberately NOT a description source: the dump truncates a comment block to the
+single line above the recipe, so a recipe without ``[doc(...)]`` reports no
+description at all rather than a fragment of one.
 
 Grammar and vocabulary conformance is not judged here: a name outside the
 vocabulary still decomposes, so a caller can report on the graph it finds rather
@@ -32,6 +35,7 @@ __all__ = [
     "GateGraphError",
     "Recipe",
     "RecipeName",
+    "ResolvedRecipe",
     "RuntimeClass",
     "load_graph",
     "parse_name",
@@ -59,6 +63,8 @@ RUNTIME_CLASSES: tuple[RuntimeClass, ...] = ("fast", "medium", "slow")
 """Every runtime class, ordered fastest to slowest."""
 
 _JUSTFILE_NAME = "justfile"
+_RUNTIME_PREFIX = "runtime:"
+_SCHEDULING_PREFIX = "scheduling:"
 
 _OPERATION_TOKENS: tuple[tuple[str, ...], ...] = tuple(
     sorted((tuple(operation.split("-")) for operation in OPERATIONS), key=len, reverse=True)
@@ -77,12 +83,27 @@ class RecipeName(NamedTuple):
     qualifier: str | None
 
 
-def _slowest(candidates: Iterable[str]) -> RuntimeClass | None:
-    declared = set(candidates)
-    for runtime_class in reversed(RUNTIME_CLASSES):
-        if runtime_class in declared:
-            return runtime_class
-    return None
+def _slowest(candidates: Iterable[RuntimeClass]) -> RuntimeClass | None:
+    return max(candidates, key=RUNTIME_CLASSES.index, default=None)
+
+
+def _fastest(candidates: Iterable[RuntimeClass]) -> RuntimeClass | None:
+    return min(candidates, key=RUNTIME_CLASSES.index, default=None)
+
+
+def _declared_classes(metadata: Iterable[str], prefix: str) -> frozenset[str]:
+    return frozenset(value.removeprefix(prefix) for value in metadata if value.startswith(prefix))
+
+
+def _understated(
+    declared: frozenset[RuntimeClass], effective: RuntimeClass | None
+) -> RuntimeClass | None:
+    optimistic = _fastest(declared)
+    if optimistic is None or effective is None:
+        return None
+    if RUNTIME_CLASSES.index(effective) <= RUNTIME_CLASSES.index(optimistic):
+        return None
+    return effective
 
 
 def _match_operation(tokens: Sequence[str]) -> tuple[str, str | None] | None:
@@ -132,7 +153,7 @@ class Recipe:
     operation: str
     qualifier: str | None
     role: Literal["execution", "aggregate"]
-    groups: frozenset[str]
+    metadata: tuple[str, ...]
     doc: str | None
     dependencies: tuple[str, ...]
     body: tuple[str, ...]
@@ -142,19 +163,52 @@ class Recipe:
     @property
     def declared_runtime_classes(self) -> frozenset[RuntimeClass]:
         """The runtime classes this recipe declares. Empty and plural are both
-        representable; judging either is the caller's job."""
+        representable; judging either is the caller's job. A ``runtime:`` value
+        outside the vocabulary is not a runtime class and stays in ``metadata``
+        for a caller to reject."""
+        declared = _declared_classes(self.metadata, _RUNTIME_PREFIX)
         return frozenset(
-            runtime_class for runtime_class in RUNTIME_CLASSES if runtime_class in self.groups
+            runtime_class for runtime_class in RUNTIME_CLASSES if runtime_class in declared
         )
 
     @property
-    def scheduling_classes(self) -> frozenset[str]:
-        """Every declared group that is not a runtime class."""
-        return self.groups - frozenset(RUNTIME_CLASSES)
+    def declared_scheduling_classes(self) -> frozenset[str]:
+        """The scheduling classes this recipe declares. A test recipe declaring
+        one owns that class's execution; one declaring none is a focused
+        selector, which the name alone cannot distinguish."""
+        return _declared_classes(self.metadata, _SCHEDULING_PREFIX)
+
+
+@dataclass(frozen=True)
+class ResolvedRecipe:
+    """One recipe together with what its dependency closure implies, worked out
+    in a single walk.
+
+    ``closure`` is the recipe and everything it reaches, in run order.
+    ``runtime_class`` is the slowest class declared anywhere in that closure, or
+    ``None`` when nothing in it declares one. ``understated_runtime_class`` is
+    that effective class when the recipe itself declares a faster one, and
+    ``None`` otherwise — a recipe declaring nothing understates nothing, since
+    what to require of an absent declaration is the caller's rule. A recipe
+    declaring several classes is judged by the fastest of them, because each
+    declared class is a claim about the whole cost.
+    """
+
+    recipe: Recipe
+    closure: tuple[Recipe, ...]
+    runtime_class: RuntimeClass | None
+    understated_runtime_class: RuntimeClass | None
+
+    @property
+    def execution_owners(self) -> tuple[str, ...]:
+        """The names of every recipe in the closure that carries a command body,
+        in run order — what running this recipe actually executes."""
+        return tuple(owned.name for owned in self.closure if owned.role == "execution")
 
 
 class GateGraph:
-    """Every recipe in one ``justfile``, resolvable by name and by closure."""
+    """Every recipe in one ``justfile``, addressable by name and resolvable
+    together with what its dependency closure implies."""
 
     def __init__(self, source: Path, recipes: Iterable[Recipe]) -> None:
         self._by_name = {recipe.name: recipe for recipe in recipes}
@@ -189,32 +243,27 @@ class GateGraph:
         visit(name)
         return tuple(order)
 
-    def runtime_class(self, name: str) -> RuntimeClass | None:
-        """*name*'s effective runtime class — the slowest one declared anywhere
-        in its closure — or ``None`` when no recipe in that closure declares
-        one."""
-        return _slowest(
-            runtime_class
-            for recipe in self.closure(name)
-            for runtime_class in recipe.declared_runtime_classes
-        )
-
-    def understated_runtime_class(self, name: str) -> RuntimeClass | None:
-        """*name*'s effective runtime class when that is slower than every class
-        *name* itself declares, and ``None`` otherwise.
+    def resolve(self, name: str) -> ResolvedRecipe:
+        """*name* with its closure and runtime classification worked out
+        together.
 
         A prerequisite makes running a recipe cost what the prerequisite costs,
         so an execution recipe understates its runtime the same way an aggregate
-        does. A recipe declaring nothing understates nothing: what to require of
-        an absent declaration is the caller's rule, not the graph's.
+        does; both are judged here.
         """
-        declared = _slowest(self.recipe(name).declared_runtime_classes)
-        effective = self.runtime_class(name)
-        if declared is None or effective is None:
-            return None
-        if RUNTIME_CLASSES.index(effective) <= RUNTIME_CLASSES.index(declared):
-            return None
-        return effective
+        recipe = self.recipe(name)
+        closure = self.closure(name)
+        effective = _slowest(
+            runtime_class
+            for reached in closure
+            for runtime_class in reached.declared_runtime_classes
+        )
+        return ResolvedRecipe(
+            recipe=recipe,
+            closure=closure,
+            runtime_class=effective,
+            understated_runtime_class=_understated(recipe.declared_runtime_classes, effective),
+        )
 
 
 def _render_expression(expression: Any) -> str:
@@ -254,6 +303,17 @@ def _attribute_values(attributes: Sequence[Any], key: str) -> list[str]:
     ]
 
 
+def _metadata_values(attributes: Sequence[Any]) -> tuple[str, ...]:
+    """Every ``[metadata(...)]`` value, flattened — the attribute carries a list
+    and may be repeated on one recipe."""
+    values: list[str] = []
+    for attribute in attributes:
+        if isinstance(attribute, Mapping) and "metadata" in attribute:
+            entries: Sequence[Any] = attribute["metadata"]
+            values.extend(str(entry) for entry in entries)
+    return tuple(values)
+
+
 def _recipe_from_dump(name: str, entry: Mapping[str, Any]) -> Recipe:
     attributes: Sequence[Any] = entry.get("attributes", [])
     docs = _attribute_values(attributes, "doc")
@@ -265,7 +325,7 @@ def _recipe_from_dump(name: str, entry: Mapping[str, Any]) -> Recipe:
         operation=parsed.operation,
         qualifier=parsed.qualifier,
         role="execution" if body else "aggregate",
-        groups=frozenset(_attribute_values(attributes, "group")),
+        metadata=_metadata_values(attributes),
         doc=docs[0] if docs else None,
         dependencies=tuple(
             str(dependency["recipe"]) for dependency in entry.get("dependencies", [])

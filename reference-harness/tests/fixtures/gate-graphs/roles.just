@@ -5,20 +5,26 @@ module := "somewhere"
 harness-lint:
     cd {{module}} && echo lint
 
-[group("fast")]
-[group("dbfree")]
+# `[group("slow")]` contradicts the declared runtime class on purpose: groups
+# organize `just --list` and carry no classification.
+[group("slow")]
+[metadata("runtime:fast", "scheduling:dbfree")]
 [doc("the description the resolver reports")]
 harness-format-check:
     cd {{module}} && echo format-check
 
-[group("slow")]
-[group("db")]
+[metadata("runtime:slow", "scheduling:db")]
 harness-test-db:
     cd {{module}} && echo test-db
 
-[group("fast")]
+[metadata("runtime:fast")]
 harness-coverage-diff: harness-test-db
     cd {{module}} && echo coverage
+
+[metadata("runtime:fast")]
+[metadata("runtime:slow")]
+harness-audit:
+    cd {{module}} && echo audit
 
 harness-check-dbfree: harness-format-check harness-lint
 

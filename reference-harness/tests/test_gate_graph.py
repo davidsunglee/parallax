@@ -7,40 +7,48 @@ from pathlib import Path
 
 import pytest
 
-from reference_harness.gate_graph import GateGraphError, load_graph, parse_name
+from reference_harness.gate_graph import (
+    GateGraph,
+    GateGraphError,
+    RecipeName,
+    load_graph,
+    parse_name,
+)
 
 
 @pytest.mark.parametrize(
     ("name", "expected"),
     [
-        ("check", (None, "check", None)),
-        ("check-dbfree", (None, "check", "dbfree")),
-        ("show-gates", (None, "show", "gates")),
-        ("report-matrix", (None, "report", "matrix")),
-        ("lint-md", (None, "lint", "md")),
-        ("harness-format-check", ("harness", "format-check", None)),
-        ("harness-format", ("harness", "format", None)),
-        ("python-check-dbfree", ("python", "check", "dbfree")),
-        ("python-test-provider-contract", ("python", "test", "provider-contract")),
-        ("core-check-slice-profiles", ("core", "check", "slice-profiles")),
-        ("verify", (None, "verify", None)),
-        ("matrix", (None, "matrix", None)),
-        ("python-static", ("python", "static", None)),
-        ("core-dep-graph", ("core", "dep-graph", None)),
-        ("core-language-spec-check", ("core", "language-spec-check", None)),
-        ("oracle-typecheck", ("oracle", "typecheck", None)),
+        ("check", RecipeName(None, "check", None)),
+        ("check-dbfree", RecipeName(None, "check", "dbfree")),
+        ("show-gates", RecipeName(None, "show", "gates")),
+        ("report-matrix", RecipeName(None, "report", "matrix")),
+        ("lint-md", RecipeName(None, "lint", "md")),
+        ("harness-format-check", RecipeName("harness", "format-check", None)),
+        ("harness-format", RecipeName("harness", "format", None)),
+        ("python-check-dbfree", RecipeName("python", "check", "dbfree")),
+        ("python-test-provider-contract", RecipeName("python", "test", "provider-contract")),
+        ("core-check-slice-profiles", RecipeName("core", "check", "slice-profiles")),
+        ("verify", RecipeName(None, "verify", None)),
+        ("matrix", RecipeName(None, "matrix", None)),
+        ("python-static", RecipeName("python", "static", None)),
+        ("core-dep-graph", RecipeName("core", "dep-graph", None)),
+        ("core-language-spec-check", RecipeName("core", "language-spec-check", None)),
+        ("oracle-typecheck", RecipeName("oracle", "typecheck", None)),
     ],
 )
 def test_names_decompose_into_scope_operation_and_qualifier(
-    name: str, expected: tuple[str | None, str, str | None]
+    name: str, expected: RecipeName
 ) -> None:
-    assert parse_name(name) == expected
+    parsed = parse_name(name)
+
+    assert (parsed.scope, parsed.operation, parsed.qualifier) == expected
 
 
 def test_role_follows_the_presence_of_a_command_body(
-    gate_graph_dir: Callable[[str], Path],
+    gate_graph: Callable[[str], GateGraph],
 ) -> None:
-    graph = load_graph(gate_graph_dir("roles.just"))
+    graph = gate_graph("roles.just")
 
     assert graph.recipe("harness-check-dbfree").role == "aggregate"
     assert graph.recipe("harness-lint").role == "execution"
@@ -49,9 +57,9 @@ def test_role_follows_the_presence_of_a_command_body(
 
 
 def test_a_recipe_composing_nothing_is_an_empty_aggregate(
-    gate_graph_dir: Callable[[str], Path],
+    gate_graph: Callable[[str], GateGraph],
 ) -> None:
-    graph = load_graph(gate_graph_dir("roles.just"))
+    graph = gate_graph("roles.just")
 
     empty = graph.recipe("harness-check-empty")
     assert empty.role == "aggregate"
@@ -59,37 +67,56 @@ def test_a_recipe_composing_nothing_is_an_empty_aggregate(
     assert empty.body == ()
 
 
-def test_groups_split_into_runtime_and_scheduling_classes(
-    gate_graph_dir: Callable[[str], Path],
+def test_metadata_splits_into_runtime_and_scheduling_classes(
+    gate_graph: Callable[[str], GateGraph],
 ) -> None:
-    graph = load_graph(gate_graph_dir("roles.just"))
+    graph = gate_graph("roles.just")
 
     format_check = graph.recipe("harness-format-check")
-    assert format_check.groups == frozenset({"fast", "dbfree"})
+    assert format_check.metadata == ("runtime:fast", "scheduling:dbfree")
     assert format_check.declared_runtime_classes == frozenset({"fast"})
-    assert format_check.scheduling_classes == frozenset({"dbfree"})
-    assert graph.recipe("harness-lint").groups == frozenset()
+    assert format_check.declared_scheduling_classes == frozenset({"dbfree"})
+    assert graph.recipe("harness-lint").metadata == ()
+    assert graph.recipe("harness-lint").declared_runtime_classes == frozenset()
+    assert graph.recipe("harness-lint").declared_scheduling_classes == frozenset()
+
+
+def test_a_group_declares_no_class(gate_graph: Callable[[str], GateGraph]) -> None:
+    graph = gate_graph("roles.just")
+
+    format_check = graph.recipe("harness-format-check")
+    assert "slow" not in format_check.metadata
+    assert format_check.declared_runtime_classes == frozenset({"fast"})
+    assert graph.resolve("harness-format-check").runtime_class == "fast"
+
+
+def test_repeated_metadata_attributes_accumulate(
+    gate_graph: Callable[[str], GateGraph],
+) -> None:
+    graph = gate_graph("roles.just")
+
+    assert graph.recipe("harness-audit").declared_runtime_classes == frozenset({"fast", "slow"})
 
 
 def test_only_the_doc_attribute_describes_a_recipe(
-    gate_graph_dir: Callable[[str], Path],
+    gate_graph: Callable[[str], GateGraph],
 ) -> None:
-    graph = load_graph(gate_graph_dir("roles.just"))
+    graph = gate_graph("roles.just")
 
     assert graph.recipe("harness-format-check").doc == "the description the resolver reports"
     assert graph.recipe("harness-lint").doc is None
 
 
 def test_bodies_reproduce_variable_interpolation(
-    gate_graph_dir: Callable[[str], Path],
+    gate_graph: Callable[[str], GateGraph],
 ) -> None:
-    graph = load_graph(gate_graph_dir("roles.just"))
+    graph = gate_graph("roles.just")
 
     assert graph.recipe("harness-lint").body == ("cd {{module}} && echo lint",)
 
 
-def test_parameters_and_privacy_are_exposed(gate_graph_dir: Callable[[str], Path]) -> None:
-    graph = load_graph(gate_graph_dir("roles.just"))
+def test_parameters_and_privacy_are_exposed(gate_graph: Callable[[str], GateGraph]) -> None:
+    graph = gate_graph("roles.just")
 
     assert graph.recipe("core-show-language-spec").parameters == ("language_spec",)
     assert graph.recipe("show-gates").parameters == ("recipes",)
@@ -99,9 +126,9 @@ def test_parameters_and_privacy_are_exposed(gate_graph_dir: Callable[[str], Path
 
 
 def test_closure_runs_a_shared_dependency_once_in_run_order(
-    gate_graph_dir: Callable[[str], Path],
+    gate_graph: Callable[[str], GateGraph],
 ) -> None:
-    graph = load_graph(gate_graph_dir("diamond.just"))
+    graph = gate_graph("diamond.just")
 
     assert [recipe.name for recipe in graph.closure("top-check")] == [
         "leaf-check-shared",
@@ -115,50 +142,74 @@ def test_closure_runs_a_shared_dependency_once_in_run_order(
     ]
 
 
-def test_runtime_class_is_the_slowest_in_the_closure(
-    gate_graph_dir: Callable[[str], Path],
+def test_execution_owners_exclude_the_aggregates_that_compose_them(
+    gate_graph: Callable[[str], GateGraph],
 ) -> None:
-    graph = load_graph(gate_graph_dir("diamond.just"))
+    graph = gate_graph("diamond.just")
 
-    assert graph.runtime_class("leaf-check-shared") == "fast"
-    assert graph.runtime_class("left-check-branch") == "medium"
-    assert graph.runtime_class("top-check") == "slow"
+    assert graph.resolve("top-check").execution_owners == (
+        "leaf-check-shared",
+        "left-check-branch",
+        "right-check-branch",
+    )
+
+
+def test_runtime_class_is_the_slowest_in_the_closure(
+    gate_graph: Callable[[str], GateGraph],
+) -> None:
+    graph = gate_graph("diamond.just")
+
+    assert graph.resolve("leaf-check-shared").runtime_class == "fast"
+    assert graph.resolve("left-check-branch").runtime_class == "medium"
+    assert graph.resolve("top-check").runtime_class == "slow"
 
 
 def test_a_prerequisite_slower_than_the_declaration_is_reported_as_understated(
-    gate_graph_dir: Callable[[str], Path],
+    gate_graph: Callable[[str], GateGraph],
 ) -> None:
-    graph = load_graph(gate_graph_dir("roles.just"))
+    graph = gate_graph("roles.just")
 
-    assert graph.recipe("harness-coverage-diff").declared_runtime_classes == frozenset({"fast"})
-    assert graph.runtime_class("harness-coverage-diff") == "slow"
-    assert graph.understated_runtime_class("harness-coverage-diff") == "slow"
+    resolved = graph.resolve("harness-coverage-diff")
+    assert resolved.recipe.declared_runtime_classes == frozenset({"fast"})
+    assert resolved.runtime_class == "slow"
+    assert resolved.understated_runtime_class == "slow"
+
+
+def test_the_fastest_of_several_declarations_decides_understatement(
+    gate_graph: Callable[[str], GateGraph],
+) -> None:
+    graph = gate_graph("roles.just")
+
+    resolved = graph.resolve("harness-audit")
+    assert resolved.runtime_class == "slow"
+    assert resolved.understated_runtime_class == "slow"
 
 
 def test_a_declaration_covering_its_closure_understates_nothing(
-    gate_graph_dir: Callable[[str], Path],
+    gate_graph: Callable[[str], GateGraph],
 ) -> None:
-    graph = load_graph(gate_graph_dir("diamond.just"))
+    graph = gate_graph("diamond.just")
 
-    assert graph.understated_runtime_class("left-check-branch") is None
-    assert graph.understated_runtime_class("right-check-branch") is None
-    assert graph.understated_runtime_class("top-check") is None
+    assert graph.resolve("left-check-branch").understated_runtime_class is None
+    assert graph.resolve("right-check-branch").understated_runtime_class is None
+    assert graph.resolve("top-check").understated_runtime_class is None
 
 
 def test_runtime_class_is_absent_only_when_nothing_declares_one(
-    gate_graph_dir: Callable[[str], Path],
+    gate_graph: Callable[[str], GateGraph],
 ) -> None:
-    graph = load_graph(gate_graph_dir("undeclared-runtime.just"))
+    graph = gate_graph("undeclared-runtime.just")
 
-    assert graph.runtime_class("core-check-undeclared") is None
-    assert graph.understated_runtime_class("core-check-undeclared") is None
-    assert graph.runtime_class("core-check") == "medium"
+    undeclared = graph.resolve("core-check-undeclared")
+    assert undeclared.runtime_class is None
+    assert undeclared.understated_runtime_class is None
+    assert graph.resolve("core-check").runtime_class == "medium"
 
 
 def test_an_unknown_recipe_names_the_graph_it_is_missing_from(
-    gate_graph_dir: Callable[[str], Path],
+    gate_graph: Callable[[str], GateGraph],
 ) -> None:
-    graph = load_graph(gate_graph_dir("diamond.just"))
+    graph = gate_graph("diamond.just")
 
     with pytest.raises(GateGraphError) as failure:
         graph.recipe("top-verify")
@@ -174,13 +225,13 @@ def test_a_directory_without_a_justfile_is_a_resolution_failure(tmp_path: Path) 
     assert "not a file" in str(failure.value)
 
 
-def test_the_repository_graph_resolves_every_recipe_it_declares(repo_root: Path) -> None:
-    graph = load_graph(repo_root)
-
-    assert graph.source == repo_root / "justfile"
-    assert {"show-gates", "verify", "lint"} <= {recipe.name for recipe in graph.recipes}
-    for recipe in graph.recipes:
-        closure = graph.closure(recipe.name)
+def test_the_repository_graph_resolves_every_recipe_it_declares(
+    repository_graph: GateGraph, repo_root: Path
+) -> None:
+    assert repository_graph.source == repo_root / "justfile"
+    assert {"show-gates", "verify", "lint"} <= {recipe.name for recipe in repository_graph.recipes}
+    for recipe in repository_graph.recipes:
+        closure = repository_graph.closure(recipe.name)
         assert closure[-1] is recipe
         assert len({resolved.name for resolved in closure}) == len(closure)
         assert (recipe.role == "aggregate") is (recipe.body == ())

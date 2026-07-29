@@ -12,6 +12,12 @@
 #   oracle-    the Python reference harness (its own checks + running the oracle)
 #   python-    the Python implementation (future: java-, rust-, ...)
 #
+# Runtime and scheduling classes are declared as `[metadata("runtime:<class>")]`
+# and `[metadata("scheduling:<class>")]`, which `just show-gates` reads.
+# `[group(...)]` is not a class carrier: `just` organizes `--list` by group, so
+# classifying that way would segregate this listing and repeat every recipe once
+# per class.
+#
 # Database-backed recipes (verify, oracle-test, python-verify) start
 # Testcontainers containers and need a reachable Docker daemon. README.md
 # "Running And Inspecting The Project" has the one-time
@@ -44,7 +50,7 @@ lint-md:
 matrix:
     cd {{harness}} && uv run python -m reference_harness.matrix ../core/compatibility
 
-[group("fast")]
+[metadata("runtime:fast")]
 [doc("Resolved gate graph: roles, execution owners, prerequisites, and runtime classes.")]
 show-gates *recipes:
     cd {{harness}} && uv run python -m reference_harness.show_gates .. {{recipes}}

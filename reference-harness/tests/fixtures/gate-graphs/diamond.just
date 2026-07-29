@@ -1,12 +1,12 @@
-[group("fast")]
+[metadata("runtime:fast")]
 leaf-check-shared:
     echo leaf
 
-[group("medium")]
+[metadata("runtime:medium")]
 left-check-branch: leaf-check-shared
     echo left
 
-[group("slow")]
+[metadata("runtime:slow")]
 right-check-branch: leaf-check-shared
     echo right
 
