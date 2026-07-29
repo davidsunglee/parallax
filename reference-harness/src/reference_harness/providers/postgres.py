@@ -96,7 +96,17 @@ class PostgresProvider:
 
     def __init__(self, connection_url: str) -> None:
         self._url = connection_url
-        self._conn = psycopg.connect(connection_url, autocommit=True)
+        # One long-lived connection serves every case, and `reset` drops and
+        # recreates the schema underneath it, so a server-side prepared plan can
+        # outlive the table it was planned against: two models declaring a
+        # same-named table with different columns (`models/person.yaml` and
+        # `models/animal.yaml` each declare `person`) make the identical golden
+        # SQL text change result type between cases, which Postgres refuses with
+        # `cached plan must not change result type`. Automatic preparation is a
+        # throughput optimization the harness never depends on — it grades SQL
+        # text and returned rows — so it is disabled rather than invalidated
+        # per reset.
+        self._conn = psycopg.connect(connection_url, autocommit=True, prepare_threshold=None)
         # Read instant columns as stable ISO-8601 / "infinity" text (see the
         # loader docstring): infinity-safe and deterministic for row comparison.
         self._conn.adapters.register_loader("timestamptz", _IsoTimestamptzLoader)
