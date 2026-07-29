@@ -5,8 +5,7 @@
 Aggregates are listed first, because they are the entry points, and each one
 names the execution recipes its closure actually runs — the answer to "what does
 this gate already cover?" that otherwise requires reading the orchestrator's
-file. Execution recipes follow with their prerequisites and command counts.
-Naming recipes narrows the output to those recipes.
+file.
 """
 
 from __future__ import annotations
@@ -18,6 +17,8 @@ from reference_harness.gate_graph import GateGraph, GateGraphError, Recipe, load
 
 __all__ = ["main", "render"]
 
+_UNCLASSIFIED = "unclassified"
+
 
 def _signature(recipe: Recipe) -> str:
     parameters = "".join(f" <{parameter}>" for parameter in recipe.parameters)
@@ -25,8 +26,11 @@ def _signature(recipe: Recipe) -> str:
     return f"{recipe.name}{parameters}{private}"
 
 
-def _classes(graph: GateGraph, recipe: Recipe) -> str:
-    line = f"runtime: {graph.runtime_class(recipe.name)}"
+def _classification_line(graph: GateGraph, recipe: Recipe) -> str:
+    line = f"runtime: {graph.runtime_class(recipe.name) or _UNCLASSIFIED}"
+    if graph.understated_runtime_class(recipe.name) is not None:
+        declared = ", ".join(sorted(recipe.declared_runtime_classes))
+        line += f"   understated (declared: {declared})"
     scheduling = sorted(recipe.scheduling_classes)
     if scheduling:
         line += f"   scheduling: {', '.join(scheduling)}"
@@ -34,7 +38,7 @@ def _classes(graph: GateGraph, recipe: Recipe) -> str:
 
 
 def _describe(graph: GateGraph, recipe: Recipe) -> list[str]:
-    lines = [f"  {_signature(recipe)}", f"    {_classes(graph, recipe)}"]
+    lines = [f"  {_signature(recipe)}", f"    {_classification_line(graph, recipe)}"]
     if recipe.doc is not None:
         lines.append(f"    doc: {recipe.doc}")
     if recipe.role == "aggregate":
@@ -76,12 +80,9 @@ def _usage() -> str:
 
 
 def main(argv: list[str]) -> int:
-    """CLI entry point.
-
-    Exit codes: 0 — the report was rendered; 1 — the graph could not be
+    """Exit codes: 0 — the report was rendered; 1 — the graph could not be
     resolved; 2 — usage error (argument count, missing directory, or a recipe
-    the graph does not declare).
-    """
+    the graph does not declare)."""
     if not argv:
         print(_usage(), file=sys.stderr)
         return 2

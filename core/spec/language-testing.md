@@ -27,6 +27,14 @@ Every public verification command MUST read:
   semantic surface ([§3](#3-primary-semantic-surfaces)), or the subject the
   operation validates.
 
+A scope is either a **language scope** — one language implementation, which
+ships a test suite under a published contract — or a **tooling scope**, which
+validates a shared artifact or maintains the repository's own tooling. `core`
+and `harness` are tooling scopes. The unscoped repository-wide commands compose
+both kinds and are themselves governed by
+[§7](#7-command-roles-and-composition). Every rule below binds every scope
+unless it names a kind.
+
 A renamed command MUST NOT keep an alias under its former name. Two spellings of
 one gate defeat the point of a scannable interface, and the stale one outlives
 every document that would have explained it.
@@ -62,7 +70,7 @@ syntactically.
 
 A semantic surface is *what a test proves*. Its primary classification comes from
 its directory, not from an annotation that restates the directory. Every language
-implementation MUST provide these six surfaces under its test root:
+scope MUST provide these six surfaces under its test root:
 
 | Surface | Directory | Focused command |
 |---|---|---|
@@ -80,25 +88,37 @@ An additional surface is permitted only for a genuinely distinct contract, and
 requires synchronized updates to the language spec, the implementation's
 operational guide, its commands, its CI jobs, and its drift enforcement.
 
-Focused surface commands exist for iteration. They MUST NOT be dependencies of
-any aggregate. Surfaces cross-cut scheduling classes
+A tooling scope declares no semantic surface. It proves one subject rather than
+a portfolio of contracts, so the six-way split has nothing to classify, and the
+`test-<surface>` commands do not apply to it.
+
+Focused test commands exist for iteration — a surface command in a language
+scope, or any command selecting part of a tooling scope's suite. They MUST NOT
+be dependencies of any aggregate. Such selections cross-cut scheduling classes
 ([§5](#5-scheduling-classification)), so a gate composed out of them selects some
 tests more than once.
 
-## 4. Closed test-root structure
+## 4. Test-root structure
 
-The test root is closed: every entry under it is one of the following, and
-anything else MUST fail enforcement.
+A language scope's test root is closed: every entry under it is a semantic
+surface directory, `_support/`, or a file the test runner requires at the root.
+Anything else MUST fail enforcement.
 
 - Cross-surface helpers, models, and support code MUST live under `_support/`.
 - Support code used by exactly one surface MUST stay inside that surface's
   directory.
-- Only files the test runner requires at the root may live directly under the
-  test root.
 - `_support/` is not a semantic surface and gets no `test-*` command.
 
-A test module MUST NOT import a sibling test module. Shared symbols belong in
-`_support/`, where their audience is explicit and collection order is irrelevant.
+A tooling scope has no canonical surface set, so it has no closed entry list to
+enforce. Its test root MAY stay flat, and it MAY group a coherent subject into
+its own directory when that directory is exactly what one focused test command
+selects. Which directories exist is its operational guide's fact to record, not
+this contract's to fix.
+
+In every test root, a test module MUST NOT import a sibling test module. Shared
+symbols belong in a module that exists to be imported — `_support/` where a
+language scope has one — so their audience is explicit and collection order is
+irrelevant.
 
 ## 5. Scheduling classification
 
@@ -106,7 +126,11 @@ A scheduling class is *when and where a test executes*. It is orthogonal to the
 semantic surface: one surface may hold tests of several classes, and one class
 spans several surfaces.
 
-Each language implementation MUST:
+Every scope that runs tests MUST declare a partition, tooling scopes included: a
+repository class aggregate that omits one scope's tests does not gate what its
+name claims. A scope that runs no tests declares no class.
+
+Each scope that declares a partition MUST:
 
 - declare an exhaustive, mutually exclusive partition of scheduling classes;
 - assign every collected test to exactly one class;
@@ -124,9 +148,9 @@ classes is then representable. A class authored onto a test instead MUST be
 checked against those requirements.
 
 The resource that defines a class MUST be reachable only through the entry points
-the implementation designates for it, and that restriction MUST itself be a
-blocking check. Otherwise a test can acquire the resource by another route, and
-its class silently understates what it needs.
+the scope designates for it, and that restriction MUST itself be a blocking
+check. Otherwise a test can acquire the resource by another route, and its class
+silently understates what it needs.
 
 ## 6. Runtime classification
 
@@ -135,8 +159,13 @@ guidance rather than a timing budget, and it is orthogonal to both surface and
 scheduling class — a class that needs no database is not necessarily fast.
 
 - Every public execution command MUST declare exactly one runtime class.
-- An aggregate's runtime class MUST be the slowest one in its transitive
-  dependency closure, and MUST NOT understate it.
+- A command's effective runtime class is the slowest one in its transitive
+  dependency closure. Any command that declares a class MUST NOT declare one
+  faster than its effective class. An aggregate and an execution command with
+  prerequisites understate the cost of running them the same way, so the rule
+  binds both roles.
+- Graph inspection ([§8](#8-graph-inspection)) MUST report the effective class,
+  and MUST signal a declaration that understates it.
 - The declaration MUST be structured data on the command itself, readable by
   machine from the orchestrator's own output rather than from a separate table.
 
@@ -149,18 +178,33 @@ Every public command is exactly one of two roles:
 | Role | Rule |
 |---|---|
 | Execution | Has a command body and owns one coherent operation. It MAY depend on the commands producing its required inputs. It MUST NOT inline unrelated lint, typecheck, build, audit, or test work. |
-| Aggregate | Has dependencies and no command body. |
+| Aggregate | Has at least one dependency and no command body. |
 
-No command may compose others while also carrying an unrelated body.
+No command may compose others while also carrying an unrelated body. A command
+with neither a body nor a dependency is not a third role: it is an aggregate
+that composes nothing, and MUST fail enforcement.
 
-For each declared scheduling class `<class>`:
+For each scheduling class `<class>` a scope declares:
 
-- `<language>-test-<class>` is the execution command owning exactly one
-  test-runner invocation for that class;
-- `<language>-check-<class>` is a dependency-only aggregate over that test
-  command plus the quality execution commands assigned to the class; and
-- `<language>-check` is a dependency-only aggregate over the scheduling-class
-  aggregates.
+- `<scope>-test-<class>` is the execution command owning exactly one test-runner
+  invocation for that class; and
+- `<scope>-check-<class>` is a dependency-only aggregate over that test command
+  plus the quality execution commands assigned to the class.
+
+A language scope MUST additionally expose `<scope>-check`, a dependency-only
+aggregate over its scheduling-class aggregates: its language spec names one
+complete verification command for the implementation, and nothing else in the
+graph provides it. Any other scope MAY expose one.
+
+A scope that declares no scheduling class exposes `<scope>-check` as a
+dependency-only aggregate over its execution commands directly.
+
+The repository-wide commands follow the same shape one level up. `check-<class>`
+is a dependency-only aggregate over each scope's aggregate for that class, the
+complete check aggregate of each scope that declares no class, and the
+repository-wide execution commands assigned to the class. `check` is a
+dependency-only aggregate over the class aggregates plus the repository-wide
+commands that belong to no single class.
 
 An ordering constraint between two commands MUST be expressed as a dependency,
 never as adjacency inside one body. A constraint that exists only as line order
@@ -178,8 +222,8 @@ verification runs. A second gate manifest MUST NOT be introduced.
   runtime classes.
 - The repository MUST provide a blocking `check` command over that graph,
   failing on naming, ordering, role, scheduling-composition, declared-metadata,
-  test-layout, runner-configuration, and CI drift. The repository's own check
-  aggregate MUST depend on it.
+  test-layout, runner-configuration, documentation, and CI drift. The
+  repository's own check aggregate MUST depend on it.
 
 ## 9. Continuous integration contract
 

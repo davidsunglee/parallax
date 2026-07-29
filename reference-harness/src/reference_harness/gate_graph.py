@@ -23,15 +23,16 @@ import subprocess
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, NamedTuple
 
 __all__ = [
     "OPERATIONS",
     "RUNTIME_CLASSES",
-    "UNCLASSIFIED",
     "GateGraph",
     "GateGraphError",
     "Recipe",
+    "RecipeName",
+    "RuntimeClass",
     "load_graph",
     "parse_name",
 ]
@@ -51,11 +52,11 @@ OPERATIONS: tuple[str, ...] = (
 )
 """The closed operation vocabulary."""
 
-RUNTIME_CLASSES: tuple[str, ...] = ("fast", "medium", "slow")
-"""Relative execution durations, ordered fastest to slowest."""
+RuntimeClass = Literal["fast", "medium", "slow"]
+"""One relative execution duration."""
 
-UNCLASSIFIED = "unclassified"
-"""Reported runtime class when nothing in a closure declares one."""
+RUNTIME_CLASSES: tuple[RuntimeClass, ...] = ("fast", "medium", "slow")
+"""Every runtime class, ordered fastest to slowest."""
 
 _JUSTFILE_NAME = "justfile"
 
@@ -68,6 +69,22 @@ class GateGraphError(Exception):
     """The command graph could not be resolved, or a recipe was not found in it."""
 
 
+class RecipeName(NamedTuple):
+    """A command name decomposed into the grammar's three slots."""
+
+    scope: str | None
+    operation: str
+    qualifier: str | None
+
+
+def _slowest(candidates: Iterable[str]) -> RuntimeClass | None:
+    declared = set(candidates)
+    for runtime_class in reversed(RUNTIME_CLASSES):
+        if runtime_class in declared:
+            return runtime_class
+    return None
+
+
 def _match_operation(tokens: Sequence[str]) -> tuple[str, str | None] | None:
     for candidate in _OPERATION_TOKENS:
         if tuple(tokens[: len(candidate)]) == candidate:
@@ -76,33 +93,39 @@ def _match_operation(tokens: Sequence[str]) -> tuple[str, str | None] | None:
     return None
 
 
-def parse_name(name: str) -> tuple[str | None, str, str | None]:
-    """Decompose a recipe name into ``(scope, operation, qualifier)``.
+def parse_name(name: str) -> RecipeName:
+    """Decompose a recipe name into its scope, operation, and qualifier.
 
     The operation is matched against the closed vocabulary, longest spelling
     first, so ``format-check`` is one operation rather than ``format`` with a
     ``check`` qualifier. A name whose operation slot holds no vocabulary entry
     still decomposes — the whole slot becomes the operation and the qualifier is
-    ``None`` — so a caller can tell ``core-dep-graph`` apart from ``core`` and
-    report it as the non-canonical operation ``dep-graph``.
+    ``None`` — so a caller can report a non-canonical operation instead of
+    failing to read the graph that contains it.
     """
     tokens = name.split("-")
     matched = _match_operation(tokens)
     if matched is not None:
         operation, qualifier = matched
-        return None, operation, qualifier
+        return RecipeName(None, operation, qualifier)
     if len(tokens) == 1:
-        return None, name, None
+        return RecipeName(None, name, None)
     matched = _match_operation(tokens[1:])
     if matched is not None:
         operation, qualifier = matched
-        return tokens[0], operation, qualifier
-    return tokens[0], "-".join(tokens[1:]), None
+        return RecipeName(tokens[0], operation, qualifier)
+    return RecipeName(tokens[0], "-".join(tokens[1:]), None)
 
 
 @dataclass(frozen=True)
 class Recipe:
-    """One recipe as the orchestrator reports it, with its name decomposed."""
+    """One recipe as the orchestrator reports it, with its name decomposed.
+
+    ``role`` follows the presence of a command body alone, so a recipe with
+    neither a body nor a dependency reports ``aggregate`` — an aggregate that
+    composes nothing. That is a contract violation for a caller to report, not a
+    shape this reader declines to describe.
+    """
 
     name: str
     scope: str | None
@@ -117,10 +140,12 @@ class Recipe:
     private: bool
 
     @property
-    def declared_runtime_classes(self) -> frozenset[str]:
+    def declared_runtime_classes(self) -> frozenset[RuntimeClass]:
         """The runtime classes this recipe declares. Empty and plural are both
         representable; judging either is the caller's job."""
-        return self.groups & frozenset(RUNTIME_CLASSES)
+        return frozenset(
+            runtime_class for runtime_class in RUNTIME_CLASSES if runtime_class in self.groups
+        )
 
     @property
     def scheduling_classes(self) -> frozenset[str]:
@@ -164,18 +189,32 @@ class GateGraph:
         visit(name)
         return tuple(order)
 
-    def runtime_class(self, name: str) -> str:
-        """The slowest runtime class declared anywhere in *name*'s closure, or
-        ``UNCLASSIFIED`` when no recipe in it declares one."""
-        declared = {
+    def runtime_class(self, name: str) -> RuntimeClass | None:
+        """*name*'s effective runtime class — the slowest one declared anywhere
+        in its closure — or ``None`` when no recipe in that closure declares
+        one."""
+        return _slowest(
             runtime_class
             for recipe in self.closure(name)
             for runtime_class in recipe.declared_runtime_classes
-        }
-        for candidate in reversed(RUNTIME_CLASSES):
-            if candidate in declared:
-                return candidate
-        return UNCLASSIFIED
+        )
+
+    def understated_runtime_class(self, name: str) -> RuntimeClass | None:
+        """*name*'s effective runtime class when that is slower than every class
+        *name* itself declares, and ``None`` otherwise.
+
+        A prerequisite makes running a recipe cost what the prerequisite costs,
+        so an execution recipe understates its runtime the same way an aggregate
+        does. A recipe declaring nothing understates nothing: what to require of
+        an absent declaration is the caller's rule, not the graph's.
+        """
+        declared = _slowest(self.recipe(name).declared_runtime_classes)
+        effective = self.runtime_class(name)
+        if declared is None or effective is None:
+            return None
+        if RUNTIME_CLASSES.index(effective) <= RUNTIME_CLASSES.index(declared):
+            return None
+        return effective
 
 
 def _render_expression(expression: Any) -> str:
@@ -219,12 +258,12 @@ def _recipe_from_dump(name: str, entry: Mapping[str, Any]) -> Recipe:
     attributes: Sequence[Any] = entry.get("attributes", [])
     docs = _attribute_values(attributes, "doc")
     body = tuple(_render_line(line) for line in entry.get("body", []))
-    scope, operation, qualifier = parse_name(name)
+    parsed = parse_name(name)
     return Recipe(
         name=name,
-        scope=scope,
-        operation=operation,
-        qualifier=qualifier,
+        scope=parsed.scope,
+        operation=parsed.operation,
+        qualifier=parsed.qualifier,
         role="execution" if body else "aggregate",
         groups=frozenset(_attribute_values(attributes, "group")),
         doc=docs[0] if docs else None,

@@ -22,6 +22,8 @@ harness-coverage-diff: harness-test-db
 
 harness-check-dbfree: harness-format-check harness-lint
 
+harness-check-empty:
+
 [private]
 _internal-show-detail:
     echo internal
