@@ -236,6 +236,25 @@ def distinct_narrowed_views_populate_independently(db: Database) -> Snapshot[Any
     )
 ```
 
+## A redundant narrow populates its own view beside the broad relationship
+
+Corpus case: `m-inheritance-068`
+
+```python
+def a_redundant_narrow_populates_a_view_beside_the_broad_one(db: Database) -> Snapshot[Any]:
+    """A broad hop and a REDUNDANT narrow over the same relationship stay TWO
+    hops (`m-inheritance-068`): ``narrow(Pet)`` resolves to the very
+    ``{Cat, Dog}`` set the broad ``pets`` hop already reaches, so both views
+    hold the same pets — under ``pets`` and ``pets[Cat,Dog]`` respectively. A
+    segment's view key follows whether a narrow was AUTHORED, never what it
+    resolves to."""
+    return db.find(
+        AnimalOwnerPerson.where().include(
+            AnimalOwnerPerson.pets, AnimalOwnerPerson.pets.narrow(Pet)
+        )
+    )
+```
+
 ## Polymorphic navigation over table-per-concrete-subtype (grouped OR)
 
 Corpus case: `m-inheritance-070`

@@ -108,14 +108,25 @@ relationship key. The polymorphic view's child objects additionally carry
 as an abstract-target flat read (`m-case-format`); a single-concrete narrowed view
 carries none (the caller fetched a known variant).
 
-**Dedup identity is the pair `(relationship hop, effective concrete set)`**, not
-the relationship alone. Two paths whose `segments` resolve to the **same**
-effective set deduplicate to **one** hop (one statement) — this is what makes the
-equivalent spellings `[Pet]` and `[Cat, Dog]` converge. A **broad** hop and a
-**narrowed** hop over the same relationship, or two hops narrowed to
-**different** sets (`pets[Dog]` and `pets[Cat]`), are **distinct** hops that each
-count toward `L`, so `1 + L` is preserved with narrowed hops counting as
-distinct.
+**Dedup identity is the triple `(relationship hop, whether a narrow was
+authored, effective concrete set)`**, not the relationship alone. Deduplication
+of equivalent spellings applies **between two narrowed hops**: two paths whose
+`segments` both author a narrow over the same relationship, resolving to the
+**same** effective set, deduplicate to **one** hop (one statement) — this is what
+makes the equivalent spellings `[Pet]` and `[Cat, Dog]` converge. Two hops
+narrowed to **different** sets (`pets[Dog]` and `pets[Cat]`) stay **distinct**.
+
+A **broad** hop and **any** authored narrow over the same relationship are
+**distinct** hops — including a **redundant** narrow, one whose `to` resolves to
+the relationship target's entire effective concrete set. A redundant narrow
+returns exactly the rows the broad hop returns, yet the two populate **different**
+views (`pets` and `pets[Cat,Dog]`), because a segment's view key is derived from
+whether a narrow was **authored**, independent of what that narrow resolves to.
+Identity therefore cannot key on the resolved set alone: doing so would collapse
+the redundant pair into one hop and leave one of the two views unpopulated.
+
+Each distinct hop counts toward `L`, so `1 + L` is preserved with narrowed hops
+counting as distinct.
 
 **One statement per hop, both strategies.** Under `table-per-hierarchy` a
 polymorphic hop is one shared-table `IN`-keyed read with the effective set's tag

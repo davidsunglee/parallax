@@ -1,0 +1,66 @@
+# Deep fetch pairing a BROAD hop with a REDUNDANT narrow over the same relationship
+# (m-deep-fetch, m-inheritance).
+#
+# `Person.pets` targets the abstract subtype Pet, whose effective concrete set is
+# exactly {Cat, Dog}. One path traverses it broad; the other authors
+# `narrow: { to: [Pet] }`, which resolves to that SAME entire set. The two hops
+# therefore return IDENTICAL rows and emit IDENTICAL child SQL, yet they are TWO
+# DISTINCT hops: `1 + L` = 3 statements, and the same pets land under BOTH the
+# ordinary `pets` view and the derived `pets[Cat,Dog]` view. This is the semantic
+# distinction the case pins down — a segment's view key is derived from whether a
+# narrow was AUTHORED, independent of what it resolves to, so hop identity cannot
+# key on the resolved effective set alone. Keying on the set alone would collapse
+# the pair into one hop and leave whichever view was inserted second unpopulated,
+# and the choice of which one would depend on authoring order. Both views are
+# polymorphic (two concretes under table-per-hierarchy), so each child level
+# projects the raw tag column and the harness materializes `familyVariant`; the
+# tag predicate is `t0.kind in (?, ?)` (binds [cat, dog], alphabetical order),
+# present because Pet's set excludes the sibling WildBoar sharing the table.
+model: models/animal.yaml
+tags: [m-deep-fetch, m-inheritance, m-op-algebra, m-sql, table-per-hierarchy, narrow, deep-fetch, familyVariant, slice-snapshot-1, slice-managed-1]
+shape: read
+compileEligibility:
+  mode: run-only
+  reason: query-result-dependent
+  note: "deep-fetch child levels - both the broad pets and the redundantly-narrowed pets[Cat,Dog] view bind their shared animal-table IN-lists from the distinct owner ids gathered from the root query result, so the child emissions depend on a query result"
+when:
+  targetEntity: Person
+  operation:
+    deepFetch:
+      operand:
+        all: {}
+      paths:
+        - { segments: [{ rel: Person.pets }] }
+        - { segments: [{ rel: Person.pets, narrow: { to: [Pet] } }] }
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.name from person t0
+    - sql:
+        postgres: select t0.id, t0.kind, t0.name, t0.owner_id, t0.license_id, t0.indoor, t0.bark_volume from animal t0 where t0.owner_id in (?, ?, ?) and t0.kind in (?, ?)
+      binds: [10, 11, 12, cat, dog]
+    - sql:
+        postgres: select t0.id, t0.kind, t0.name, t0.owner_id, t0.license_id, t0.indoor, t0.bark_volume from animal t0 where t0.owner_id in (?, ?, ?) and t0.kind in (?, ?)
+      binds: [10, 11, 12, cat, dog]
+  referenceSql: select id, name from person
+  graph:
+    Person:
+      - id: 10
+        name: Alice
+        pets:
+          - { id: 1, name: Rex, owner_id: 10, license_id: L-100, bark_volume: 7, indoor: null, familyVariant: Dog }
+          - { id: 3, name: Whiskers, owner_id: 10, license_id: L-200, bark_volume: null, indoor: true, familyVariant: Cat }
+        "pets[Cat,Dog]":
+          - { id: 1, name: Rex, owner_id: 10, license_id: L-100, bark_volume: 7, indoor: null, familyVariant: Dog }
+          - { id: 3, name: Whiskers, owner_id: 10, license_id: L-200, bark_volume: null, indoor: true, familyVariant: Cat }
+      - id: 11
+        name: Bob
+        pets:
+          - { id: 2, name: Fido, owner_id: 11, license_id: L-101, bark_volume: 3, indoor: null, familyVariant: Dog }
+        "pets[Cat,Dog]":
+          - { id: 2, name: Fido, owner_id: 11, license_id: L-101, bark_volume: 3, indoor: null, familyVariant: Dog }
+      - id: 12
+        name: Carol
+        pets: []
+        "pets[Cat,Dog]": []
+  roundTrips: 3

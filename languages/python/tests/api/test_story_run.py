@@ -326,6 +326,23 @@ def test_distinct_narrowed_views_populate_independently(provisioner: Any) -> Non
     assert snapshot.execution.round_trips == 3
 
 
+def test_a_redundant_narrow_populates_a_view_beside_the_broad_one(provisioner: Any) -> None:
+    story = _GRAPH_STORIES_BY_ID["m-inheritance-068"]
+    meta = _reset_for(story.case_id, provisioner)
+    db = connect(provisioner.port, meta)
+    snapshot = story.run(db)
+    alice = next(person for person in snapshot.results() if person.name == "Alice")
+    # `narrowed` derives its key from the AUTHORED spelling, so the story's
+    # `narrow(Pet)` view is reached by the equivalent concrete spelling — the same
+    # accessor route `test_equivalent_narrow_spellings_dedupe_to_one_view` takes.
+    redundant = narrowed(alice, AnimalOwnerPerson.pets.narrow(Cat, Dog))
+    # The redundant narrow reaches exactly what the broad hop reaches, yet lands
+    # under its own derived view key rather than merging into `pets`.
+    assert sorted(pet.name for pet in alice.pets) == ["Rex", "Whiskers"]
+    assert sorted(pet.name for pet in cast("tuple[Any, ...]", redundant)) == ["Rex", "Whiskers"]
+    assert snapshot.execution.round_trips == 3
+
+
 def _vo_owner_row(instance: Any, vo_py_name: str = "address") -> dict[str, Any]:
     """A materialized VO-bearing owner's own row, PHYSICAL-column-keyed
     (``instance_row``), with its value-object member serialized to its
