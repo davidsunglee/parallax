@@ -369,7 +369,8 @@ level** — so the round-trip count is `1 + (number of relationship levels)`,
 never one query per parent (N+1 elimination):
 
 ```text
-deepFetch(all(Order), paths = [ [Order.items], [Order.items, OrderItem.statuses] ])
+deepFetch(all(Order), paths = [ { segments: [{ rel: Order.items }] },
+                                { segments: [{ rel: Order.items }, { rel: OrderItem.statuses }] } ])
   level 0 (root)  : select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0
   level 1 (items) : select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on from order_item t0
                     where t0.order_id in (?, ?)          -- distinct Order.id values

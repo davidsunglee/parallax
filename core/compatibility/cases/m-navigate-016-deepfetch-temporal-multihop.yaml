@@ -1,4 +1,4 @@
-# Multi-hop deep fetch [Policy.coverages, Coverage.claims], Valid Time LATEST /
+# Multi-hop deep fetch `Policy.coverages -> Coverage.claims`, Valid Time LATEST /
 # Transaction Time LATEST — the temporal analog of the 1 -> N -> N N+1-elimination
 # proof. THREE statements (root + coverages + claims), and the root pin
 # propagates to BOTH temporal child levels (each carries `thru_z = ? and

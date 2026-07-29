@@ -1,10 +1,11 @@
-# Deep fetch x value object: the composition witness (design note 14 §3, round 4).
+# Deep fetch x value object: the composition witness.
 #
-# `deepFetch(all(Customer), paths=[[Customer.locations]])` — every Customer with
-# its `locations` eager-fetched via the one-to-many relationship — where BOTH the
-# root (Customer) and the child (Location) declare a value object. This pins that
-# the instance-form read projection (m-sql "Read projection") selects each applicable
-# the structured-document column at EVERY level of a graph, not just the root:
+# `deepFetch(all(Customer), paths=[{ segments: [{ rel: Customer.locations }] }])` —
+# every Customer with its `locations` eager-fetched via the one-to-many
+# relationship — where BOTH the root (Customer) and the child (Location) declare a
+# value object. This pins that the instance-form read projection (m-sql "Read
+# projection") selects each applicable structured-document column at EVERY level of
+# a graph, not just the root:
 #
 #   level 0 (root)  : all customers, projecting Customer's instance-form list
 #                     `id, name, address` (scalar layout slots, then the single

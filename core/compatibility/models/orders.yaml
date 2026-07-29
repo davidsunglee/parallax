@@ -20,7 +20,7 @@
 #                    to-one `Order.status`-style lookup and the multi-hop
 #                    `Order.items -> OrderItem.statuses` deep-fetch path.
 #
-# The multi-hop `[Order.items, OrderItem.statuses]` path is the 1 -> N -> N case
+# The multi-hop `Order.items -> OrderItem.statuses` path is the 1 -> N -> N case
 # that MUST resolve in exactly three statements (root + items + statuses), never
 # 1 + N + N, which is how the suite proves N+1 elimination automatically.
 entities:

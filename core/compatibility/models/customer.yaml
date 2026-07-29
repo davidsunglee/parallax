@@ -20,15 +20,15 @@
 # members not yet present in every fixture row are `nullable: true` so the current
 # fixtures stay valid; fixtures/cases are enriched in later phases.
 #
-# COR-3 Phase 5b (read-projection amendment) adds a SECOND, VO-bearing child
-# entity `Location` and the to-many `Customer.locations` relationship, so the
-# corpus can witness the deep-fetch × value-object composition (design note 14 §3,
-# round 4): a `deepFetch(all(Customer), paths=[[Customer.locations]])` read whose
-# root level projects Customer's instance-form list (`id, name, address`) and whose
-# child level projects Location's own instance-form list (`id, customer_id, label,
-# address`: `customer_id` is a Domain slot and `address` the final Document slot).
-# `Location` reuses
-# Customer's `address` composite verbatim — same declared members, same
+# A SECOND, VO-bearing child entity `Location` and the to-many
+# `Customer.locations` relationship let the corpus witness the deep-fetch ×
+# value-object composition — a read
+# `deepFetch(all(Customer), paths=[{ segments: [{ rel: Customer.locations }] }])`
+# whose root level projects Customer's instance-form list (`id, name, address`)
+# and whose child level projects Location's own instance-form list (`id,
+# customer_id, label, address`: `customer_id` is a Domain slot and `address` the
+# final Document slot). `Location` reuses Customer's `address` composite
+# verbatim — same declared members, same
 # absence-state vocabulary — so a null-document child materializes null exactly as
 # a null-address Customer does, pinning the absence collapse AT DEPTH. Adding a
 # sibling entity + relationship leaves Customer's own Attribute and Value Object

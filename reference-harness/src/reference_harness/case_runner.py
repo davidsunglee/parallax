@@ -867,10 +867,12 @@ def _fetch_steps(case: Case) -> list[_FetchStep]:
 
     Each distinct hop across all paths is exactly one statement (one query per level
     — the N+1-eliminating contract). Dedup identity is ``(relationship, effective
-    concrete set)``: paths sharing a prefix (``[Order.items]`` /
-    ``[Order.items, OrderItem.statuses]``) fetch ``Order.items`` once; a broad and a
-    narrowed hop over the same relationship, or two differently-narrowed hops, are
-    DISTINCT; equivalent authored narrowings (``[Pet]`` vs ``[Cat, Dog]``) converge.
+    concrete set)``: paths sharing a segment prefix
+    (``{segments: [{rel: Order.items}]}`` /
+    ``{segments: [{rel: Order.items}, {rel: OrderItem.statuses}]}``) fetch
+    ``Order.items`` once; a broad and a narrowed hop over the same relationship, or
+    two differently-narrowed hops, are DISTINCT; equivalent authored narrowings
+    (``[Pet]`` vs ``[Cat, Dog]``) converge.
     """
     model = case.model
     family = Family(model.entity_defs)

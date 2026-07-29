@@ -2,7 +2,7 @@
 # rows, and the snapshot graph materializes them in 1 + L statements — one node
 # per row, referenced from both positions.
 #
-# Order 1 is fetched with [Order.items] and [Order.itemsByShipDate]: two
+# Order 1 is fetched with the `Order.items` and `Order.itemsByShipDate` paths: two
 # relationships over the same order_id join, so both levels return the same
 # OrderItem rows {11, 12} — the diamond. One row is ONE node referenced from both
 # lists; only the list order differs (id desc vs shipped_on asc, NULLs last).
