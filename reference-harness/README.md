@@ -27,6 +27,8 @@ src/reference_harness/
 ├── dep_graph_check.py # parse modules.md; assert DAG + legal direction
 ├── matrix.py          # emit the compatibility-matrix report (implementations x databases)
 ├── case_runner.py     # the layered assertion engine
+├── gate_graph.py      # resolve the orchestrator's command graph: roles, classes, closures
+├── show_gates.py      # render the resolved command graph
 └── providers/
     ├── __init__.py    # the DatabaseProvider protocol (the seam)
     └── postgres.py    # Testcontainers Postgres provider (dialect = "postgres")
@@ -49,6 +51,7 @@ uv run ruff check .
 uv run basedpyright
 uv run pytest          # boots Postgres via Testcontainers (Docker required)
 uv run python -m reference_harness.matrix ../core/compatibility
+uv run python -m reference_harness.show_gates ..
 ```
 
 The `language_spec_validate` line uses a placeholder path: replace
