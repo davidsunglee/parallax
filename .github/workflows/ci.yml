@@ -139,10 +139,9 @@ jobs:
 
   # The Docker-backed Python run lane: provisions Testcontainers Postgres and
   # runs the pg-full run sweep, provider contract, adapter smoke, and API
-  # conformance. Those lanes come online in COR-3 Phase 5+, together with the
-  # session summary that fails on any silently skipped database-backed check;
-  # until then the markers collect nothing (pytest's no-tests exit code 5 is
-  # tolerated). Docker is available on GitHub-hosted ubuntu runners.
+  # conformance. The trailing `|| [ "$?" -eq 5 ]` tolerates pytest's no-tests
+  # exit code, which the selection returns whenever none of the four markers it
+  # names is present. Docker is available on GitHub-hosted ubuntu runners.
   python-database:
     runs-on: ubuntu-latest
     env:

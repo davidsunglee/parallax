@@ -4,9 +4,10 @@
     "allow": [
       "Bash(docker info *)",
       "Bash(just core-check*)",
-      "Bash(just lint-markdown *)",
-      "Bash(just harness-check-dbfree *)",
-      "Bash(just report-matrix *)",
+      "Bash(just harness-check-dbfree)",
+      "Bash(just lint-markdown)",
+      "Bash(just report-matrix)",
+      "Bash(just show-gates)",
       "Bash(just show-gates *)",
       "Bash(pnpm install *)",
       "Bash(reference-harness/.venv/bin/python *)"

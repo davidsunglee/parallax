@@ -18,27 +18,18 @@ from pathlib import Path
 
 import pytest
 
-from reference_harness.case import discover_cases
+from reference_harness.case import dialect_executed_cases, discover_cases
 from reference_harness.case_runner import run_case
 from reference_harness.providers import available_dialects, provider_for
 
-# reference-harness/tests/ -> reference-harness/ -> repo root -> core/compatibility
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 COMPATIBILITY_ROOT = _REPO_ROOT / "core" / "compatibility"
 
-# Two exclusions, for unrelated reasons.
-#
-# api-conformance-lane cases (boundary retry cases, read-lock matrix reads) are
-# schema-validated by the harness but satisfied by each language's API Conformance
-# Suite, so they are NOT executed here. They still round-trip through schema
-# validation (test_schema_validate) and the profile gate (test_dep_graph).
-#
-# `rejected`-shape cases are refused before the dialect is read, so a dialect axis
-# proves nothing about them: running one per available dialect repeats an identical
-# database-free assertion. test_rejected.py is their sole runner, and the two
-# collections are pinned there as a partition of the harness lane.
+# The excluded cases still round-trip through schema validation
+# (test_schema_validate) and the profile gate (test_dep_graph); test_rejected.py
+# is the sole runner for the `rejected` shape and pins the partition.
 ALL_CASES = discover_cases(COMPATIBILITY_ROOT)
-CASES = [c for c in ALL_CASES if c.lane != "api-conformance" and c.shape != "rejected"]
+CASES = dialect_executed_cases(COMPATIBILITY_ROOT)
 DIALECTS = available_dialects()
 
 

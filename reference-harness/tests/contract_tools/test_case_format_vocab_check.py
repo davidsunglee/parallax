@@ -21,7 +21,6 @@ from reference_harness.case_format_vocab_check import (
     schema_rejected_rules,
 )
 
-# reference-harness/tests/contract_tools/ -> tests/ -> reference-harness/ -> repo root
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _SPEC_DIR = _REPO_ROOT / "core" / "spec"
 _SCHEMA_PATH = _REPO_ROOT / "core" / "schemas" / "compatibility-case.schema.json"

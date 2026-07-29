@@ -13,7 +13,6 @@ from pathlib import Path
 
 from reference_harness.case_comment_check import case_comment_violations, main
 
-# reference-harness/tests/contract_tools/ -> tests/ -> reference-harness/ -> repo root
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _COMPAT_DIR = _REPO_ROOT / "core" / "compatibility"
 

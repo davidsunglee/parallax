@@ -27,7 +27,7 @@ from typing import Any
 import pytest
 from jsonschema import Draft202012Validator
 
-from reference_harness.case import Case, discover_cases, load_model
+from reference_harness.case import Case, dialect_executed_cases, discover_cases, load_model
 from reference_harness.case_runner import ALL_REJECTED_RULES, CaseFailure, run_case
 from reference_harness.inheritance import (
     ABSTRACT_WRITE_TARGET,
@@ -506,21 +506,24 @@ def test_rejected_case_is_refused_pre_sql_db_free(case: Case) -> None:
 
 
 def test_rejected_and_dialect_executed_cases_partition_the_harness_lane() -> None:
-    # This module owns every `rejected` case and the dialect-parametrized runner owns
-    # the rest, so the two selections must stay disjoint and together cover the whole
-    # harness lane. Recomputed from `discover_cases` rather than read off the sibling
-    # module: a shared filter that drifted would agree with itself and prove nothing.
-    harness_lane = [c for c in discover_cases(_COMPATIBILITY_ROOT) if c.lane != "api-conformance"]
-    rejected = {c.path for c in harness_lane if c.shape == "rejected"}
-    dialect_executed = {c.path for c in harness_lane if c.shape != "rejected"}
+    # Each side is the selection its runner really parametrizes over — this module's
+    # `_rejected_cases`, and `dialect_executed_cases`, which is what the
+    # dialect-parametrized runner collects. The lane they must cover is recomputed
+    # here from `discover_cases`, so an exclusion added to either selection strands
+    # the cases it drops instead of shrinking both sides of the comparison at once.
+    harness_lane = {
+        c.path for c in discover_cases(_COMPATIBILITY_ROOT) if c.lane != "api-conformance"
+    }
+    rejected = {c.path for c in _rejected_cases()}
+    dialect_executed = {c.path for c in dialect_executed_cases(_COMPATIBILITY_ROOT)}
 
-    assert rejected == {c.path for c in _rejected_cases()}, (
-        "a rejected case outside the harness lane would be run here and nowhere else"
-    )
     assert rejected, "no rejected cases discovered under core/compatibility/cases"
     assert dialect_executed, "no dialect-executed cases discovered under core/compatibility/cases"
+    assert rejected <= harness_lane, (
+        "a rejected case outside the harness lane would be run here and nowhere else"
+    )
     assert rejected.isdisjoint(dialect_executed)
-    assert rejected | dialect_executed == {c.path for c in harness_lane}
+    assert rejected | dialect_executed == harness_lane
 
 
 # --- the validators ACCEPT valid inputs (no false rejections) ---------------

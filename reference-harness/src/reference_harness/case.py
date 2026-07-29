@@ -1082,3 +1082,26 @@ def discover_cases(compatibility_root: Path) -> list[Case]:
         cached = tuple(load_case(root, path) for path in sorted(set(case_files)))
         _TEMPLATE_CACHE[root] = cached
     return list(cached)
+
+
+def dialect_executed_cases(compatibility_root: Path) -> list[Case]:
+    """The discovered cases a dialect-parametrized runner executes, one run per dialect.
+
+    Two exclusions, for unrelated reasons.
+
+    An ``api-conformance``-lane case (boundary retry cases, read-lock matrix
+    reads) is schema-validated by the harness but satisfied by each language's
+    API Conformance Suite, so no harness runner executes it —
+    :func:`case_runner.run_case` early-returns for that lane.
+
+    A ``rejected``-shape case is refused before the dialect is read, so a
+    dialect axis proves nothing about it: running one per available dialect
+    repeats an identical database-free assertion. Its own dialect-independent
+    runner owns it, and the two selections partition the harness lane — every
+    case outside the api-conformance lane belongs to exactly one of them.
+    """
+    return [
+        case
+        for case in discover_cases(compatibility_root)
+        if case.lane != "api-conformance" and case.shape != "rejected"
+    ]

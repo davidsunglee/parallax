@@ -12,7 +12,6 @@ from pathlib import Path
 
 from reference_harness.retired_vocab_check import check_text, main, scanned_files
 
-# reference-harness/tests/contract_tools/ -> tests/ -> reference-harness/ -> repo root
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 
 

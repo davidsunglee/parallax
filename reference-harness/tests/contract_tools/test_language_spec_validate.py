@@ -9,9 +9,9 @@ import yaml
 
 from reference_harness.language_spec_validate import main
 
-_REPO_ROOT = Path(__file__).resolve().parents[3]
-_SPEC_DIR = _REPO_ROOT / "core" / "spec"
-_FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "language-specs"
+_TESTS_ROOT = Path(__file__).resolve().parents[1]
+_SPEC_DIR = _TESTS_ROOT.parents[1] / "core" / "spec"
+_FIXTURES = _TESTS_ROOT / "fixtures" / "language-specs"
 
 
 @pytest.mark.parametrize(
