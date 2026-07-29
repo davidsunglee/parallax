@@ -23,6 +23,12 @@
 - For runtime semantics research—including locking, transactions, temporal behavior, and caching—document Reladomo's behavior as prior art. Start at `docs/research/reladomo/00-index.md` and consult `../reladomo` when available.
 - Adopt Reladomo semantics only through an explicit Parallax specification or design decision; do not copy its Java idioms.
 
+## Verification
+
+- Resolve what an aggregate command already runs before listing or running verification, and never list a focused command beside an aggregate that contains it.
+- Invoke an authoritative aggregate directly rather than piping it through an output filter, and trust the status the execution tool reports.
+- If another agent reports that an exact verification command passed, do not rerun it unless relevant repository state changed afterward.
+
 ## Commits
 
 - Commit messages must pass the repository's Commitlint and Husky hooks; do not bypass them.

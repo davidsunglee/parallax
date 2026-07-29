@@ -299,8 +299,11 @@ Only advertise commands present in the canonical claim. In particular,
 
 ## Verification Ladder
 
-Use the smallest verification that can catch the problem being worked on, then
-walk upward before declaring a milestone complete:
+Each rung below is a verification surface, ordered by widening scope. The ladder
+is a choice of stopping point, not a checklist to run top to bottom: while
+iterating, use the lowest rung that can catch the problem being worked on;
+before declaring a milestone complete, climb to the highest rung its changes can
+reach.
 
 1. Language unit tests for parsers, compilers, materializers, lifecycle state,
    and diagnostics.
@@ -308,27 +311,18 @@ walk upward before declaring a milestone complete:
 3. Conformance tests for the active-slice and capability-tag intersection.
 4. API Conformance Suite coverage partition and Usage Guide drift check.
 5. Built-artifact inspection and selective clean-install smoke tests.
-6. Root static checks:
-
-   ```bash
-   just lint
-   just core-dep-graph
-   ```
-
-7. Root compatibility-corpus sanity check:
-
-   ```bash
-   PARALLAX_DATABASES=postgres just oracle-test
-   ```
-
+6. Root static checks that need no database.
+7. Root compatibility-corpus sanity check, run through the reference harness
+   against one supported dialect.
 8. Claimed language matrix for every supported dialect and provider profile.
 9. Benchmark reports only under a claim that includes `m-perf-bench`.
 
-Run the exact aggregate local and CI commands recorded in the completed language
-spec. Report every database-backed check that could not run and its reason;
-silent skips are failures. The root Python harness validates the core corpus. It
-does not prove a language implementation conforms unless that implementation is
-wired through its own adapter or test runner.
+A rung names what is proved, not how to prove it. Take the exact language-level
+local and CI commands from the completed language spec, and the repository-wide
+ones from the root `justfile`. Report every database-backed check that could not
+run and its reason; silent skips are failures. The root Python harness validates
+the core corpus. It does not prove a language implementation conforms unless that
+implementation is wired through its own adapter or test runner.
 
 ## Classifying Failures
 
