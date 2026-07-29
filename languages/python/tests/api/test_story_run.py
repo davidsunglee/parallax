@@ -379,6 +379,26 @@ def test_a_root_guard_beside_a_broad_path_stays_its_own_hop(provisioner: Any) ->
     assert snapshot.execution.round_trips == 3
 
 
+def test_guarded_branches_keep_their_own_parents(provisioner: Any) -> None:
+    story = _GRAPH_STORIES_BY_ID["m-inheritance-078"]
+    meta = _reset_for(story.case_id, provisioner)
+    db = connect(provisioner.port, meta)
+    snapshot = story.run(db)
+    by_name = {animal.name: animal for animal in snapshot.results()}
+    # Both guarded owner hops fill the ordinary `owner` view; the Cat is admitted
+    # by neither, so its whole branch of every path is absent.
+    assert by_name["Rex"].owner.name == "Alice"
+    assert by_name["Fido"].owner.name == "Bob"
+    assert by_name["Tusker"].owner.name == "Carol"
+    assert is_loaded(by_name["Whiskers"], "owner") is False
+    # `pets` continues from the DOG branch's owners alone, so the owner the
+    # WildBoar branch reached carries none of it.
+    assert sorted(pet.name for pet in by_name["Rex"].owner.pets) == ["Rex", "Whiskers"]
+    assert [pet.name for pet in by_name["Fido"].owner.pets] == ["Fido"]
+    assert is_loaded(by_name["Tusker"].owner, AnimalOwnerPerson.pets) is False
+    assert snapshot.execution.round_trips == 4
+
+
 def test_a_guarded_root_continues_through_a_narrowed_hop(provisioner: Any) -> None:
     story = _GRAPH_STORIES_BY_ID["m-inheritance-076"]
     meta = _reset_for(story.case_id, provisioner)

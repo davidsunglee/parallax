@@ -44,7 +44,7 @@ from parallax.core.metamodel import (
     TablePerHierarchy,
     entity_by_name,
 )
-from parallax.core.op_algebra import PathRootNarrow, PathSegment
+from parallax.core.op_algebra import PathSegment
 
 __all__ = [
     "MANY_TO_ONE",
@@ -484,8 +484,11 @@ class Rel[T]:
     A subtype does not redeclare an inherited relationship, so class access
     through one (``Dog.owner`` where ``Animal`` declares ``owner``) reaches this
     same descriptor and keeps the one relationship identity ``Animal.owner``. What
-    the accessing class adds is the path-ROOT guard: the path applies to that
-    subtype's objects alone.
+    the accessing class adds is the path's SOURCE — the Entity it was reached
+    through — which a Find Query turns into a path-ROOT guard. The source is
+    recorded for every access, including one through the declaring class itself
+    (``Dog.doghouse``, declared on ``Dog``), because whether it guards anything is a
+    question about the QUERIED position, which only the Find Query knows.
     """
 
     __slots__ = ("_py_name", "_ref", "_target")
@@ -504,7 +507,7 @@ class Rel[T]:
             return RelationshipPath(
                 segments=(PathSegment(rel=str(self._ref)),),
                 target=self._target,
-                root_narrow=self._root_narrow(_owner),
+                source=_access_source(_owner),
                 binding=None if _owner is None else binding_of(_owner),
                 resolve_hop=_hop,
             )
@@ -516,17 +519,15 @@ class Rel[T]:
     def __set__(self, obj: object, value: object) -> None:
         obj.__dict__[self._py_name] = value
 
-    def _root_narrow(self, owner: type | None) -> PathRootNarrow | None:
-        """The path-root guard class access through ``owner`` authors, or ``None``.
 
-        Access through the declaring class itself guards nothing — the path already
-        starts from every object of that position. Access through any other class is
-        an inherited reach, so the guard names the declaring position and narrows it
-        to the accessing subtype. The accessing class's own declared identity answers
-        both, so this module resolves nothing and reaches no model.
-        """
-        identity = getattr(owner, "identity", None)
-        name = getattr(identity, "name", None)
-        if not isinstance(name, str) or name == self._ref.entity:
-            return None
-        return PathRootNarrow(entity=self._ref.entity, to=(name,))
+def _access_source(owner: type | None) -> str | None:
+    """The declared Entity name class access went THROUGH, or ``None`` for a bare
+    descriptor invocation that names no class.
+
+    The accessing class's own declared identity answers this, so this module
+    resolves nothing and reaches no model: whether that Entity differs from the
+    relationship's declaring one, and whether it narrows the queried position, are
+    both decided later, where the query's own position is known.
+    """
+    name = getattr(getattr(owner, "identity", None), "name", None)
+    return name if isinstance(name, str) else None

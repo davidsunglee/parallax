@@ -77,6 +77,7 @@ from parallax.conformance.read_models import (
     Payment,
     Person,
     Pet,
+    WildBoar,
 )
 from parallax.conformance.story_models import Order
 from parallax.conformance.vo_models import Branch, Customer, CustomerPhone, Supplier
@@ -232,6 +233,15 @@ def a_root_guard_beside_a_broad_path_stays_its_own_hop(db: Database) -> Snapshot
     source set, so the two stay distinct. The graph is indistinguishable from the
     broad path's alone — only the round-trip count observes the second hop."""
     return db.find(Animal.where().include(Animal.owner, Dog.owner))
+
+
+def guarded_branches_keep_their_own_parents(db: Database) -> Snapshot[Any]:
+    """Two guarded branches over one relationship diverge at the next level
+    (`m-inheritance-078`): ``Dog.owner`` and ``WildBoar.owner`` fill the same
+    ordinary ``owner`` view from disjoint roots, and ``Dog.owner.pets`` continues
+    from the DOG branch's owners alone — so Alice and Bob carry ``pets`` while
+    Carol, reached only through the WildBoar branch, does not."""
+    return db.find(Animal.where().include(Dog.owner, WildBoar.owner, Dog.owner.pets))
 
 
 def a_guarded_root_continues_through_a_narrowed_hop(db: Database) -> Snapshot[Any]:
@@ -495,6 +505,12 @@ GRAPH_STORIES: tuple[GraphStory, ...] = (
         "A guarded path root composes with a narrowed hop target",
         "animal",
         a_guarded_root_continues_through_a_narrowed_hop,
+    ),
+    GraphStory(
+        "m-inheritance-078",
+        "Two guarded branches over one relationship keep their own parents",
+        "animal",
+        guarded_branches_keep_their_own_parents,
     ),
     GraphStory(
         "m-value-object-028",

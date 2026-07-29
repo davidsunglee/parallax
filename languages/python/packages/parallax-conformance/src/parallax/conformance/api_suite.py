@@ -471,18 +471,20 @@ _TPH_POLYMORPHIC_EXISTS_SIBLING_REASON: Final[str] = (
     "EXISTS-over-effective-concrete-set mechanism, just the other inheritance strategy"
 )
 # A path-ROOT guard is authored by reaching an inherited relationship through a
-# subtype (`Dog.owner`), so one class access spells exactly one subtype: the
-# multi-subtype `to: [Cat, Dog]` half of the equivalent-guard pair has no idiomatic
-# spelling at all. Its own property — that two guards resolving to one source set
-# are one hop — is graded by the corpus against the reference harness and by the
-# planner's own unit test, and the guard mechanism it shares is executed for real
-# by the three sibling stories.
+# subtype (`Dog.owner`), so one class access spells exactly one subtype. Two guard
+# relations need a multi-subtype `to` that no class access reaches: equivalence
+# (`to: [Pet]` beside `to: [Cat, Dog]`) and proper overlap, which the family tree
+# cannot produce from two single-class guards at all — any two of those are equal,
+# disjoint, or nested. Both properties are graded by the corpus against the
+# reference harness and by the planner's own unit tests, and the guard mechanism
+# they share is executed for real by the three sibling stories.
 _ROOT_GUARD_MULTI_SUBTYPE_SPELLING_UNREACHABLE_REASON: Final[str] = (
-    "the equivalent-guard pair needs a multi-subtype path-root guard (`to: [Cat, Dog]`), "
-    "which no idiomatic spelling reaches: a root guard is authored by reaching an "
-    "inherited relationship through ONE subtype class. Resolved-source-set dedup at the "
-    "root is graded by the corpus and by the planner's own unit test, and the guard "
-    "mechanism itself is executed for real (m-inheritance-074/075/076, `graph_stories.py`)"
+    "the guard relation needs a multi-subtype path-root guard (`to: [Cat, Dog]`), which no "
+    "idiomatic spelling reaches: a root guard is authored by reaching an inherited "
+    "relationship through ONE subtype class, and two single-class guards over one family "
+    "are always equal, disjoint, or nested. Resolved-source-set hop identity at the root "
+    "is graded by the corpus and by the planner's own unit tests, and the guard mechanism "
+    "itself is executed for real (m-inheritance-074/075/076, `graph_stories.py`)"
 )
 _TEMPORAL_INHERITANCE_ROW_SIBLING_REASON: Final[str] = (
     "a representative sibling combining two INDEPENDENTLY exercised capabilities — the "
@@ -925,6 +927,7 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     # grade byte-exact rather than a story.
     "m-inheritance-110": _TPH_POLYMORPHIC_EXISTS_SIBLING_REASON,
     "m-inheritance-073": _ROOT_GUARD_MULTI_SUBTYPE_SPELLING_UNREACHABLE_REASON,
+    "m-inheritance-077": _ROOT_GUARD_MULTI_SUBTYPE_SPELLING_UNREACHABLE_REASON,
     "m-inheritance-118": (
         "the portable deep-fetch graph collision witness is exercised by the database-backed "
         "run lane; no separate idiomatic API story is needed"

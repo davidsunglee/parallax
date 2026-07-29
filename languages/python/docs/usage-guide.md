@@ -322,6 +322,20 @@ def a_guarded_root_continues_through_a_narrowed_hop(db: Database) -> Snapshot[An
     return db.find(Animal.where().include(Pet.owner.pets.narrow(Dog)))
 ```
 
+## Two guarded branches over one relationship keep their own parents
+
+Corpus case: `m-inheritance-078`
+
+```python
+def guarded_branches_keep_their_own_parents(db: Database) -> Snapshot[Any]:
+    """Two guarded branches over one relationship diverge at the next level
+    (`m-inheritance-078`): ``Dog.owner`` and ``WildBoar.owner`` fill the same
+    ordinary ``owner`` view from disjoint roots, and ``Dog.owner.pets`` continues
+    from the DOG branch's owners alone — so Alice and Bob carry ``pets`` while
+    Carol, reached only through the WildBoar branch, does not."""
+    return db.find(Animal.where().include(Dog.owner, WildBoar.owner, Dog.owner.pets))
+```
+
 ## A keyed write aimed at an abstract inheritance position
 
 Corpus case: `m-inheritance-088`

@@ -126,6 +126,11 @@ class Pet(Animal, namespace=_NS, inheritance=AbstractSubtype):
 
 class Dog(Pet, namespace=_NS, inheritance=ConcreteSubtype(tag_value="dog")):
     bark_volume: Attr[int | None] = attr(type=Int32)
+    # The one relationship a SUBTYPE declares itself, so a path seeded through
+    # `Dog` can be checked where the relationship identity is `Dog.handler` rather
+    # than an inherited `Animal.owner`. The corpus animal family declares every
+    # relationship on the root, so this shape exists only here.
+    handler: Rel["AnimalOwner | None"] = rel(reverse_of="dogs")
 
 
 class Cat(Pet, namespace=_NS, inheritance=ConcreteSubtype(tag_value="cat")):
@@ -145,6 +150,7 @@ class AnimalOwner(Entity, table="person", namespace=_NS):
     name: Attr[str] = attr(max_length=32)
     animals: Rel[tuple[Animal, ...]] = rel(cardinality=ONE_TO_MANY, join=("id", "owner_id"))
     pets: Rel[tuple[Pet, ...]] = rel(cardinality=ONE_TO_MANY, join=("id", "owner_id"))
+    dogs: Rel[tuple[Dog, ...]] = rel(cardinality=ONE_TO_MANY, join=("id", "owner_id"))
 
 
 ANIMAL_MODEL = MetamodelHub(Animal, Pet, Dog, Cat, WildBoar, AnimalOwner)

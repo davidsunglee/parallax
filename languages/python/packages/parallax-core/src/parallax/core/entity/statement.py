@@ -35,6 +35,7 @@ from parallax.core.op_algebra import (
     Operation,
     OrderBy,
     OrderKey,
+    PathRootNarrow,
     serialize,
     validate_operation,
 )
@@ -211,10 +212,28 @@ class Statement:
                 "(snapshot-history-includes, spec §3)"
             )
         new_paths = self.include_paths + tuple(
-            NavigationPath(segments=path.segments, narrow=path.root_narrow) for path in paths
+            NavigationPath(segments=path.segments, narrow=self._root_guard(path.source))
+            for path in paths
         )
         _validate(self.binding, self.target, DeepFetch(operand=self.predicate, paths=new_paths))
         return replace(self, include_paths=new_paths)
+
+    def _root_guard(self, source: str | None) -> PathRootNarrow | None:
+        """The path-root guard an include path seeded through ``source`` authors.
+
+        A guard is what makes a path start from fewer than every queried object, so
+        it is the ACCESS SOURCE — the Entity the first hop was reached through —
+        measured against this statement's own queried position, never against the
+        relationship's declaring Entity. That distinction is the whole point of
+        keeping the two identities apart: ``Dog.doghouse``, declared on ``Dog``, and
+        ``Dog.owner``, inherited from ``Animal``, guard an ``Animal`` query
+        identically. Reaching the first hop through the queried position itself
+        guards nothing, so it authors no narrow at all rather than one resolving to
+        the whole position.
+        """
+        if source is None or source == self.target:
+            return None
+        return PathRootNarrow(entity=self.target, to=(source,))
 
     def narrow(self, *subtypes: type) -> Statement:
         """The whole-statement subtype-narrowing clause (python.md §2):

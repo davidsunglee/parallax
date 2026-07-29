@@ -146,6 +146,9 @@ BUILDERS: dict[str, Callable[[], Statement]] = {
     "m-inheritance-074": lambda: AnimalRoot.where().include(Dog.owner, Cat.owner),
     "m-inheritance-075": lambda: AnimalRoot.where().include(AnimalRoot.owner, Dog.owner),
     "m-inheritance-076": lambda: AnimalRoot.where().include(Pet.owner.pets.narrow(Dog)),
+    "m-inheritance-078": lambda: AnimalRoot.where().include(
+        Dog.owner, WildBoar.owner, Dog.owner.pets
+    ),
     # Value-object-bearing temporal reads over the installed Supplier/
     # Branch mirrors.
     "m-value-object-028": lambda: Supplier.where().as_of(tx_time=LATEST),

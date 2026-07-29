@@ -50,31 +50,39 @@ proper guard resolves to a strict subset and separates automatically.
 
 ## Back-reference cycles (m-case-format "Back-reference cycles")
 
-While inserting a path's segments, this module tracks the chain of relationship
-**target families** already reached on that same declared path (the root's own
-family first). A **to-one** segment whose resolved target family matches one
-already on that chain is a **back-reference**: the parent row itself carries the
-ancestor's key, so m-snapshot-read's graph-local identity guarantees its rows are
-— by construction — exactly the already-materialized ancestor's own rows (reached
-by walking the SAME correlation FK backwards). Such a level is marked
-:attr:`FetchLevel.is_back_reference` and carries no child query at all — the
-assembler resolves it from the graph-local identity map, never issuing SQL for it
-(m-deep-fetch's "at most 1 + L" ceiling is an upper bound; a back-reference level
-costs zero).
+m-case-format stops recursion at a **true cycle** — a relationship reaching an
+**ancestor node on the current path** — so the shortcut this module applies is
+sound only where the reached node is that ancestor by construction, never merely
+where the reached *family* was seen before. The condition is the **inverse edge**:
+a segment is a back-reference when it is **to-one** and its direction is the peer
+of the very direction its parent level was reached by (each names the other as its
+reverse, across the same association). The parent row then carries the ancestor's
+key on the SAME correlation attribute the arrival hop joined on, so walking it
+backwards can only land on the parent level's own parent — already materialized.
+Such a level is marked :attr:`FetchLevel.is_back_reference` and carries no child
+query at all — the assembler resolves it from the graph-local identity map, never
+issuing SQL for it (m-deep-fetch's "at most 1 + L" ceiling is an upper bound; a
+back-reference level costs zero).
 
-A **to-many** segment revisiting a family is NOT a back-reference, even though it
-revisits: its rows are gathered by the CHILD's own foreign key to the parent, so
-they are whatever that key selects rather than the ancestor the path arrived
-from — the owner of the Dog a path reached may own Dogs the read never
-materialized. Such a level is an ordinary queried level and costs its own
-statement.
+Every other family revisit is an ordinary queried level, because nothing pins the
+reached row to the path's ancestor:
+
+- a **to-many** segment gathers its rows by the CHILD's own foreign key to the
+  parent, so they are whatever that key selects rather than the ancestor the path
+  arrived from — the owner of the Dog a path reached may own Dogs the read never
+  materialized;
+- a to-one segment over a **different association** than the one the path arrived
+  on revisits the family through an unrelated key, so it may select a row of that
+  family the read never materialized at all;
+- a to-one segment hanging directly off the **root** revisits the root's own family
+  with no arrival edge behind it, so there is no ancestor row to resolve against.
 """
 
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Final, Literal
+from typing import Final, Literal, NamedTuple
 
 from parallax.core import inheritance, navigate
 from parallax.core.inheritance import InheritanceEntityView, InheritanceFacet
@@ -274,14 +282,31 @@ def _new_levels() -> list[FetchLevel]:
     return []
 
 
-_TrieKey = tuple[int, tuple[EntityIdentity, ...] | None, str, bool, tuple[EntityIdentity, ...]]
+class _TrieKey(NamedTuple):
+    """One level's dedup identity, with each narrow position's own rule named.
+
+    ``parent`` is the trie node this level hangs from (``_ROOT_ID`` at a path's
+    first segment). ``root_source`` is the path's resolved root source set, carried
+    at that first segment alone and ``None`` deeper, where ``parent`` already
+    separates branches. ``narrowed`` and ``position`` are the SEGMENT's own rule and
+    are deliberately the opposite of the root's: the authored flag joins the key
+    because a narrowed hop owns a distinct view key even when it resolves to the
+    target's whole set, while the root carries no flag at all because a guard owns
+    no view and a guard admitting every root object simply IS the broad path.
+    """
+
+    parent: int
+    root_source: tuple[EntityIdentity, ...] | None
+    rel: str
+    narrowed: bool
+    position: tuple[EntityIdentity, ...]
 
 
 def _new_children() -> dict[_TrieKey, int]:
     return {}
 
 
-def _new_ancestor_families() -> dict[int, frozenset[EntityIdentity]]:
+def _new_arrivals() -> dict[int, RelationshipMetadata]:
     return {}
 
 
@@ -296,9 +321,9 @@ class _PlanBuilder:
     root_pins: Mapping[TemporalDimension, str]
     levels: list[FetchLevel] = field(default_factory=_new_levels)
     _children: dict[_TrieKey, int] = field(default_factory=_new_children)
-    _ancestor_families: dict[int, frozenset[EntityIdentity]] = field(
-        default_factory=_new_ancestor_families
-    )
+    # The relationship direction each trie node was REACHED by, absent for the root:
+    # a segment is a back-reference only against its parent's own arrival edge.
+    _arrivals: dict[int, RelationshipMetadata] = field(default_factory=_new_arrivals)
     # Each trie node's own Entity: the scope a segment beneath it names its
     # ``Class.relationship`` reference relative to.
     _owners: dict[int, EntityMetadata] = field(default_factory=_new_owners)
@@ -307,9 +332,6 @@ class _PlanBuilder:
     _root_position: tuple[EntityIdentity, ...] = ()
 
     def seed_root(self, root_entity: EntityMetadata) -> None:
-        self._ancestor_families[_ROOT_ID] = frozenset(
-            {_entity_view(self.families, root_entity.identity).root}
-        )
         self._owners[_ROOT_ID] = root_entity
         self._root_position = _resolve_root_source(self.families, root_entity, None)
 
@@ -333,18 +355,23 @@ class _PlanBuilder:
         related_entity = _entity(self.model, direction.join.target.entity)
         position = _resolve_position(self.families, related_entity, segment)
         narrowed = bool(segment.narrow)
-        # The root source qualifies the key only at the root: a deeper level already
-        # separates by its own parent level's index.
         source = root_source if parent_id == _ROOT_ID else None
-        key = (parent_id, source, segment.rel, narrowed, position)
+        key = _TrieKey(
+            parent=parent_id,
+            root_source=source,
+            rel=segment.rel,
+            narrowed=narrowed,
+            position=position,
+        )
         existing = self._children.get(key)
         if existing is not None:
             return existing
 
         family = _entity_view(self.families, related_entity.identity).root
-        parent_ancestors = self._ancestor_families[parent_id]
         to_many = direction.cardinality is Cardinality.ONE_TO_MANY
-        is_back_reference = family in parent_ancestors and not to_many
+        is_back_reference = not to_many and _is_inverse_edge(
+            self._arrivals.get(parent_id), direction
+        )
 
         _, _, rel_local = segment.rel.rpartition(".")
         attach_key = _view_key(rel_local, narrowed, position, self.families)
@@ -383,9 +410,29 @@ class _PlanBuilder:
         index = len(self.levels)
         self.levels.append(level)
         self._children[key] = index
-        self._ancestor_families[index] = parent_ancestors | {family}
+        self._arrivals[index] = direction
         self._owners[index] = related_entity
         return index
+
+
+def _is_inverse_edge(arrival: RelationshipMetadata | None, direction: RelationshipMetadata) -> bool:
+    """Whether ``direction`` is ``arrival``'s peer — the two navigable directions of
+    ONE association (``m-relationship``), each naming the other as its reverse.
+
+    This is what proves a hop lands on the very node the path arrived from rather
+    than merely on that node's family: the two directions share one join, so the
+    child row's correlation attribute holds the arrival hop's own source key. Both
+    reverse names are checked, and the target Entity with them, so two unrelated
+    associations sharing a local relationship name cannot pair. An absent arrival is
+    a hop leaving the root, which nothing preceded and which therefore revisits no
+    ancestor node at all.
+    """
+    return (
+        arrival is not None
+        and arrival.reverse == direction.identity.name
+        and direction.reverse == arrival.identity.name
+        and direction.join.target.entity == arrival.identity.source_entity
+    )
 
 
 # --------------------------------------------------------------------------- #

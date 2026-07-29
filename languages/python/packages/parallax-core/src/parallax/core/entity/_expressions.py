@@ -53,7 +53,6 @@ from parallax.core.op_algebra import (
     Operation,
     Or,
     OrderKey,
-    PathRootNarrow,
     PathSegment,
     Scalar,
     StringMatch,
@@ -534,16 +533,20 @@ class RelationshipPath:
     the relationship descriptor's overload; a deeper hop is a declaration
     question, so it is answered by the resolver the seeding class access supplied.
 
-    ``root_narrow`` is the path-ROOT guard the seeding class access authored
-    (``Dog.owner`` over an ``owner`` declared on ``Animal``): it qualifies which
-    queried objects the whole path starts from, so — unlike a hop's own narrow — it
-    lives beside ``segments`` rather than inside one, and a deeper hop neither adds
-    nor replaces it.
+    ``source`` is the Entity the seeding class access reached the first hop
+    THROUGH, kept separate from that hop's own relationship identity: ``Dog.owner``
+    and ``Dog.doghouse`` both name the Entity ``Dog`` there, whether ``owner`` is
+    inherited from ``Animal`` or ``doghouse`` is declared on ``Dog`` itself. It is
+    what a Find Query turns into the path-ROOT guard — qualifying which queried
+    objects the whole path starts from — so, unlike a hop's own narrow, it lives
+    beside ``segments`` rather than inside one, and a deeper hop neither adds nor
+    replaces it: a deeper hop is a member lookup on the current target and says
+    nothing about where the path is rooted.
     """
 
     segments: tuple[PathSegment, ...]
     target: str
-    root_narrow: PathRootNarrow | None = None
+    source: str | None = None
     # The Binding of the hub the seeding class belongs to, carried so a deeper
     # hop resolves in exactly that model. Absent only for a path built directly,
     # which cannot continue.
@@ -583,7 +586,7 @@ class RelationshipPath:
         return RelationshipPath(
             segments=(*self.segments, *hop.segments),
             target=hop.target,
-            root_narrow=self.root_narrow,
+            source=self.source,
             binding=self.binding,
             resolve_hop=self.resolve_hop,
         )
@@ -601,7 +604,7 @@ class RelationshipPath:
         return RelationshipPath(
             segments=(*head, new_last),
             target=new_target,
-            root_narrow=self.root_narrow,
+            source=self.source,
             binding=self.binding,
             resolve_hop=self.resolve_hop,
         )
