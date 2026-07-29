@@ -1,0 +1,268 @@
+# Each scenario rewrites one file of a mirrored, conforming repository and names
+# the drift code the gate check must report. `old` is asserted to occur exactly
+# once, so a mutation cannot silently apply to nothing.
+
+- name: non-canonical-operation
+  file: justfile
+  old: "python-format:"
+  new: "python-reformat:"
+  code: non-canonical-operation
+  message: "`python-reformat` performs the operation `reformat`"
+
+- name: unknown-scope
+  file: justfile
+  old: "harness-format:"
+  new: "oracle-format:"
+  code: unknown-scope
+  message: "`oracle-format` names the scope `oracle`"
+
+- name: recipe-in-a-later-section
+  file: justfile
+  old: "core-show-slice slice:"
+  new: "harness-show-slice slice:"
+  code: section-order
+  message: "`core-show-language-spec` is declared after `harness-show-slice`"
+
+- name: mutating-helper-before-its-section
+  file: justfile
+  old: |-
+    [metadata("runtime:fast")]
+    [doc("Audit the locked dependency set for known vulnerabilities.")]
+    python-audit:
+        cd {{python}} && uv run pip-audit
+
+    [metadata("runtime:fast")]
+    [doc("Format the Python workspace in place (rewrites tracked sources).")]
+    python-format:
+        cd {{python}} && uv run ruff format .
+  new: |-
+    [metadata("runtime:fast")]
+    [doc("Format the Python workspace in place (rewrites tracked sources).")]
+    python-format:
+        cd {{python}} && uv run ruff format .
+
+    [metadata("runtime:fast")]
+    [doc("Audit the locked dependency set for known vulnerabilities.")]
+    python-audit:
+        cd {{python}} && uv run pip-audit
+  code: scope-order
+  message: "`python-audit` is declared after `python-format`"
+
+- name: aggregate-composing-nothing
+  file: justfile
+  old: "check-db: harness-check-db python-check-db"
+  new: "check-db:"
+  code: composes-nothing
+  message: "`check-db` has no command body and no dependency"
+
+- name: class-aggregate-with-a-body
+  file: justfile
+  old: "python-check-db: python-test-db"
+  new: "python-check-db: python-test-db\n    @echo drift"
+  code: aggregate-with-body
+  message: "`python-check-db` composes other commands and carries a command body"
+
+- name: check-recipe-running-tests
+  file: justfile
+  old: "    cd {{harness}} && uv run python -m reference_harness.case_comment_check ../core/compatibility"
+  new: "    cd {{harness}} && uv run python -m reference_harness.case_comment_check ../core/compatibility\n    cd {{harness}} && uv run pytest tests/contract_tools"
+  code: inlined-operation
+  message: "`core-check-contract-tools` performs `test`"
+
+- name: scheduling-class-selected-twice
+  file: justfile
+  old: "harness-test-dbfree:\n    cd {{harness}} && uv run pytest -m dbfree"
+  new: "harness-test-dbfree:\n    cd {{harness}} && uv run pytest -m dbfree\n    cd {{harness}} && uv run pytest -m dbfree tests/contract_tools"
+  code: multiple-test-invocations
+  message: "`harness-test-dbfree` owns a scheduling class and makes 2 test-runner invocations"
+
+- name: scheduling-class-on-a-lint-command
+  file: justfile
+  old: |-
+    [metadata("runtime:fast")]
+    [doc("Ruff lint rules over the harness.")]
+  new: |-
+    [metadata("runtime:fast", "scheduling:dbfree")]
+    [doc("Ruff lint rules over the harness.")]
+  code: misplaced-scheduling-class
+  message: "`harness-lint` declares the scheduling class `dbfree`"
+
+- name: scheduling-class-without-an-aggregate
+  file: justfile
+  old: |-
+    [metadata("runtime:slow", "scheduling:db")]
+    [doc("The compatibility corpus against every selected provider (Testcontainers; Docker).")]
+  new: |-
+    [metadata("runtime:slow", "scheduling:database")]
+    [doc("The compatibility corpus against every selected provider (Testcontainers; Docker).")]
+  code: missing-class-aggregate
+  message: "`harness` declares the scheduling class `database` but exposes no `harness-check-database`"
+
+- name: class-aggregate-composing-the-other-class
+  file: justfile
+  old: "python-check-dbfree: python-format-check"
+  new: "python-check-dbfree: python-test-db python-format-check"
+  code: foreign-test-in-aggregate
+  message: "`python-check-dbfree` composes `python-test-db`"
+
+- name: aggregate-composing-a-focused-selector
+  file: justfile
+  old: "harness-check-db: harness-test-db"
+  new: "harness-check-db: harness-test-db harness-test-contract-tools"
+  code: focused-test-in-aggregate
+  message: "`harness-check-db` depends on the focused selector `harness-test-contract-tools`"
+
+- name: language-scope-without-a-complete-aggregate
+  file: justfile
+  old: "python-check: python-check-dbfree python-check-db"
+  new: "python-check-all: python-check-dbfree python-check-db"
+  code: missing-scope-check
+  message: "`python` exposes no `python-check` aggregate"
+
+- name: class-aggregate-omitting-a-scope
+  file: justfile
+  old: "check-dbfree: core-check lint-markdown harness-check-dbfree python-check-dbfree"
+  new: "check-dbfree: core-check lint-markdown harness-check-dbfree"
+  code: incomplete-aggregate
+  message: "`check-dbfree` does not compose `python-check-dbfree`"
+
+- name: gate-owned-by-both-classes
+  file: justfile
+  old: "check-db: harness-check-db python-check-db"
+  new: "check-db: lint-markdown harness-check-db python-check-db"
+  code: overlapping-class-aggregates
+  message: "`check-db` and `check-dbfree` both run lint-markdown"
+
+- name: unguarded-scheduling-resource
+  file: justfile
+  old: "harness-check-dbfree: harness-check-database-access harness-format-check"
+  new: "harness-check-dbfree: harness-format-check"
+  code: missing-scheduling-guard
+  message: "no class aggregate runs `harness-check-database-access`"
+
+- name: undeclared-runtime-class
+  file: justfile
+  old: |-
+    [metadata("runtime:fast")]
+    [doc("Audit the locked dependency set for known vulnerabilities.")]
+  new: |-
+    [doc("Audit the locked dependency set for known vulnerabilities.")]
+  code: missing-runtime-class
+  message: "`python-audit` declares no runtime class"
+
+- name: two-runtime-classes
+  file: justfile
+  old: |-
+    [metadata("runtime:fast")]
+    [doc("Ruff lint rules over the Python workspace.")]
+  new: |-
+    [metadata("runtime:fast", "runtime:medium")]
+    [doc("Ruff lint rules over the Python workspace.")]
+  code: ambiguous-runtime-class
+  message: "`python-lint` declares 2 runtime classes"
+
+- name: runtime-class-outside-the-vocabulary
+  file: justfile
+  old: |-
+    [metadata("runtime:fast")]
+    [doc("Typecheck the harness with basedpyright.")]
+  new: |-
+    [metadata("runtime:instant")]
+    [doc("Typecheck the harness with basedpyright.")]
+  code: unknown-runtime-class
+  message: "`harness-typecheck` declares the runtime class instant"
+
+- name: runtime-class-faster-than-its-prerequisite
+  file: justfile
+  old: |-
+    [metadata("runtime:slow")]
+    [doc("Every changed line is covered by database-free proof.")]
+  new: |-
+    [metadata("runtime:fast")]
+    [doc("Every changed line is covered by database-free proof.")]
+  code: understated-runtime-class
+  message: "`python-coverage-diff` declares fast but its closure is `slow`"
+
+- name: surface-without-a-focused-command
+  file: justfile
+  old: "python-test-distribution:"
+  new: "python-test-distributions:"
+  code: missing-surface-recipe
+  message: "`python` exposes no `python-test-distribution` command"
+
+- name: focused-command-selecting-another-surface
+  file: justfile
+  old: "uv run pytest tests/api"
+  new: "uv run pytest tests/unit"
+  code: surface-recipe-selection
+  message: "`python-test-api` selects unit rather than exactly api/"
+
+- name: scope-directory-that-does-not-exist
+  file: justfile
+  old: 'harness := "reference-harness"'
+  new: 'harness := "reference-oracle"'
+  code: unresolvable-scope-directory
+  message: "`harness` runs tests but the file declares no directory for it"
+
+- name: scheduling-class-outside-the-marker-catalog
+  file: languages/python/pyproject.toml
+  old: "    \"dbfree: requires no live database provider\",\n"
+  new: ""
+  code: missing-marker-catalog
+  message: "`python` selects the scheduling class `dbfree` but its runner catalog does not declare it"
+
+- name: markers-that-are-not-strict
+  file: languages/python/pyproject.toml
+  old: 'addopts = "-ra --strict-markers --strict-config"'
+  new: 'addopts = "-ra --strict-config"'
+  code: permissive-markers
+  message: "`python`'s runner does not enable --strict-markers"
+
+- name: two-declared-test-roots
+  file: languages/python/pyproject.toml
+  old: 'testpaths = ["tests"]'
+  new: 'testpaths = ["tests", "tools"]'
+  code: ambiguous-test-root
+  message: "`python` declares no single test root"
+
+- name: ci-step-embedding-a-gate
+  file: .github/workflows/ci.yml
+  old: "      - name: just core-check\n        run: just core-check"
+  new: "      - name: pytest\n        run: cd reference-harness && uv run pytest\n      - name: just core-check\n        run: just core-check"
+  code: ci-embedded-gate
+  message: "job `core-check` runs `cd reference-harness && uv run pytest`"
+
+- name: ci-job-renamed-away-from-its-command
+  file: .github/workflows/ci.yml
+  old: "  core-check:\n"
+  new: "  core-validate:\n"
+  code: ci-job-name-mismatch
+  message: "job `core-validate` runs core-check"
+
+- name: ci-job-that-invokes-nothing
+  file: .github/workflows/ci.yml
+  old: "        run: just lint-markdown"
+  new: "        run: echo skipped"
+  code: ci-missing-invocation
+  message: "job `lint-markdown` names a command but does not invoke it"
+
+- name: ci-job-that-invokes-an-unknown-command
+  file: .github/workflows/ci.yml
+  old: "        run: just check-gates"
+  new: "        run: just check-gate"
+  code: ci-unknown-recipe
+  message: "job `check-gates` invokes `just check-gate`"
+
+- name: ci-gate-owned-by-two-jobs
+  file: .github/workflows/ci.yml
+  old: "  harness-check-db:\n"
+  new: "  harness-test-dbfree:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v7\n      - run: just harness-test-dbfree\n\n  harness-check-db:\n"
+  code: ci-duplicate-ownership
+  message: "jobs `harness-check-dbfree` and `harness-test-dbfree` both run harness-test-dbfree"
+
+- name: ci-job-narrower-than-its-name
+  file: .github/workflows/ci.yml
+  old: "        run: just core-check"
+  new: "        run: just core-check-schemas"
+  code: ci-uncovered-gate
+  message: "no job runs `core-check-module-graph`"

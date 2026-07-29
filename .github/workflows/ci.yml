@@ -25,6 +25,22 @@ jobs:
         with:
           extra_args: --results=verified,unknown
 
+  # The root justfile against the language testing contract: the command
+  # grammar, the execution/aggregate roles, the scheduling partition and its
+  # composition, the declared runtime classes, the test layout, the runner
+  # configuration, and this job list. No Docker required.
+  check-gates:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: extractions/setup-just@v4
+      - uses: astral-sh/setup-uv@v7
+      - name: Sync harness deps
+        working-directory: reference-harness
+        run: uv sync --frozen
+      - name: just check-gates
+        run: just check-gates
+
   # Validation of the core spec and compatibility corpus: module-graph DAG
   # legality + the coverage gate (every in-scope module has a fixture), the
   # profile gate (each tagged slice is consistent with its canonical describe

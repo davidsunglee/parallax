@@ -128,6 +128,23 @@ def test_parameters_and_privacy_are_exposed(gate_graph: Callable[[str], GateGrap
     assert graph.recipe("harness-lint").private is False
 
 
+def test_assignments_expand_the_paths_a_body_only_spells(
+    gate_graph: Callable[[str], GateGraph],
+) -> None:
+    graph = gate_graph("roles.just")
+
+    assert graph.assignments == {"module": "somewhere"}
+    assert graph.expand("cd {{module}} && echo lint") == "cd somewhere && echo lint"
+
+
+def test_an_interpolation_naming_no_assignment_is_left_alone(
+    gate_graph: Callable[[str], GateGraph],
+) -> None:
+    graph = gate_graph("roles.just")
+
+    assert graph.expand("echo {{recipes}}") == "echo {{recipes}}"
+
+
 def test_closure_runs_a_shared_dependency_once_in_run_order(
     gate_graph: Callable[[str], GateGraph],
 ) -> None:
