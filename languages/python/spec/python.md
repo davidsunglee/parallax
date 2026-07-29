@@ -480,9 +480,11 @@ mutations, exceptions, or exports.
   `__get__` overloads; deeper hops resolve dynamically and are validated
   against the metamodel during Find Query construction — never at execution and
   never at the database. An access class equal to the Find Query target authors
-  a broad path root. An access class naming a descendant requires an already
-  compatible root `FindQuery.narrow(...)` and authors the path-root
-  `narrow: {entity, to}`; the canonical Relationship Identity remains the
+  a broad path root. An access class naming a descendant authors the path-root
+  `narrow: {entity, to}` and is legal whenever it resolves to a nonempty subset
+  of the query's effective position; a root `FindQuery.narrow(...)` constrains
+  the result rather than the legal sources, so it neither grants nor withholds
+  that legality. The canonical Relationship Identity remains the
   declaration identity, so inherited `Dog.owner` is relationship
   `Animal.owner` guarded to Dog-family roots. Each relationship segment may
   independently retain its existing target `narrow: {to}`, and that narrowed

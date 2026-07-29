@@ -20,7 +20,20 @@ from _support import snapshot_models as sm
 from parallax.conformance.animal_owner import ANIMAL_MODEL as _ANIMAL_MODEL
 from parallax.conformance.graph_models import Policy
 from parallax.conformance.read_models import Animal, Cat, Dog, Pet, WildBoar
-from parallax.core import TX_TIME, UnsupportedFeatureError
+from parallax.core import (
+    MANY_TO_ONE,
+    TX_TIME,
+    AbstractRoot,
+    Attr,
+    ConcreteSubtype,
+    Entity,
+    MetamodelHub,
+    Rel,
+    TablePerHierarchy,
+    UnsupportedFeatureError,
+    attr,
+    rel,
+)
 from parallax.core.entity import RelationshipPath
 from parallax.core.entity.statement import build_statement
 from parallax.core.op_algebra import (
@@ -39,6 +52,33 @@ from parallax.core.op_algebra import (
 # The animal family is queryable only through the hub that seals it with its own
 # polymorphic owner, so importing the hub is what binds these classes.
 assert _ANIMAL_MODEL is not None
+
+_LOCAL_NS = "parallax.tests.include"
+
+
+class Keeper(Entity, table="keeper", namespace=_LOCAL_NS):
+    id: Attr[int] = attr(primary_key=True)
+
+
+class Beast(
+    Entity,
+    table="beast",
+    namespace=_LOCAL_NS,
+    inheritance=AbstractRoot(TablePerHierarchy(tag_column="kind")),
+):
+    id: Attr[int] = attr(primary_key=True)
+    keeper_id: Attr[int | None]
+
+
+class Hound(Beast, namespace=_LOCAL_NS, inheritance=ConcreteSubtype(tag_value="hound")):
+    # A relationship a SUBTYPE declares itself, so a path seeded through `Hound`
+    # carries the relationship identity `Hound.handler` rather than an inherited
+    # one. Every corpus family declares its relationships on the root, so this
+    # shape reaches the root-guard rule from nowhere else.
+    handler: Rel[Keeper | None] = rel(cardinality=MANY_TO_ONE, join=("keeper_id", "id"))
+
+
+KENNEL = MetamodelHub(Beast, Hound, Keeper)
 
 
 # --------------------------------------------------------------------------- #
@@ -130,21 +170,21 @@ def test_reaching_an_inherited_relationship_through_a_subtype_guards_the_path_ro
 
 
 def test_a_subtype_declared_relationship_guards_the_path_root_the_same_way() -> None:
-    # `handler` is declared BY `Dog`, so the path's relationship identity and its
+    # `handler` is declared BY `Hound`, so the path's relationship identity and its
     # access source name the same Entity. The guard follows from the source against
     # the QUERIED position, not from that comparison, so a subtype-declared path
     # rooted at the family root guards exactly as an inherited one does.
-    path = sm.Dog.handler
-    assert path.segments == (PathSegment(rel="Dog.handler"),)
-    assert path.source == "Dog"
-    op = sm.Animal.where().include(path).operation()
+    path = Hound.handler
+    assert path.segments == (PathSegment(rel="Hound.handler"),)
+    assert path.source == "Hound"
+    op = Beast.where().include(path).operation()
     assert isinstance(op, DeepFetch)
-    assert op.paths[0].narrow == PathRootNarrow(entity="Animal", to=("Dog",))
+    assert op.paths[0].narrow == PathRootNarrow(entity="Beast", to=("Hound",))
 
 
 def test_a_subtype_declared_relationship_queried_at_its_own_position_guards_nothing() -> None:
-    # The same path rooted at `Dog` starts from every queried object already.
-    op = sm.Dog.where().include(sm.Dog.handler).operation()
+    # The same path rooted at `Hound` starts from every queried object already.
+    op = Hound.where().include(Hound.handler).operation()
     assert isinstance(op, DeepFetch)
     assert op.paths[0].narrow is None
 

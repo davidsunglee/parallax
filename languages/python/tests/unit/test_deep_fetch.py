@@ -325,8 +325,9 @@ def test_disjoint_overlapping_and_contained_root_guards_stay_distinct_hops() -> 
     # statement, and every one of them fills the SAME ordinary view key.
     for guards in (
         (_guard("Dog"), _guard("Cat")),  # disjoint
-        (_guard("Dog"), _guard("Cat", "Dog")),  # overlapping
-        (None, _guard("Dog")),  # containment (broad and a proper guard)
+        (_guard("Dog", "WildBoar"), _guard("Cat", "Dog")),  # overlapping (neither nests)
+        (_guard("Dog"), _guard("Cat", "Dog")),  # containment (a guard inside a guard)
+        (None, _guard("Dog")),  # containment (a guard inside broad)
     ):
         plan = _plan(
             ANIMAL,
