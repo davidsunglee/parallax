@@ -12,11 +12,7 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
-import pytest
-
 import check_untracked_sources as untracked
-
-pytestmark = pytest.mark.unit
 
 PY_ROOT = Path(__file__).resolve().parents[2]
 

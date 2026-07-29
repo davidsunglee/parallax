@@ -34,8 +34,6 @@ from parallax.core.metamodel import (
 )
 from parallax.core.op_algebra import All
 
-pytestmark = pytest.mark.unit
-
 _NS = "parallax.compatibility"
 
 

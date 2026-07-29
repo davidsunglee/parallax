@@ -49,8 +49,6 @@ from parallax.core.unit_work import (
 )
 from parallax.snapshot.handle import Database, Transaction
 
-pytestmark = pytest.mark.unit
-
 
 # A local Transaction-Time-Only, value-object-bearing entity with the
 # `supplier.yaml` shape from `m-value-object-047`. The minimal self-contained

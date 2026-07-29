@@ -18,8 +18,6 @@ import pytest
 from parallax.core import opt_lock
 from parallax.core.unit_work import Observation
 
-pytestmark = pytest.mark.unit
-
 
 def test_initial_version_is_one() -> None:
     assert opt_lock.INITIAL_VERSION == 1

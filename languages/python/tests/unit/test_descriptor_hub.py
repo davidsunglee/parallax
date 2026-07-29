@@ -47,8 +47,6 @@ from parallax.descriptor import (
 )
 from parallax.descriptor import _hub as hub_module
 
-pytestmark = pytest.mark.unit
-
 _YAML = """
 entities:
   - name: Author

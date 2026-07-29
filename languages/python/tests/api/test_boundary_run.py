@@ -27,8 +27,6 @@ from parallax.core.db_error import DatabaseError
 from parallax.snapshot import connect
 from parallax.snapshot.handle import Transaction
 
-pytestmark = pytest.mark.api_conformance
-
 _CASES = boundary_runner.reachable_boundary_cases()
 _CASE_IDS = [case.case_id for case in _CASES]
 

@@ -6,12 +6,12 @@ Every registered story — write (`parallax.conformance.stories`) or graph-read
 Guide renders — executes here through the **shipped** surface:
 `parallax.snapshot.connect` over the `parallax-postgres` adapter against the
 real Testcontainers Postgres, inside the documented API-conformance lane
-(python.md: pytest ``-m api_conformance`` under ``tests/api/``,
+(python.md: pytest under ``tests/api/``,
 "executing idiomatic public-API code through the shipped `parallax-snapshot`
 extension and `parallax-postgres` adapter"; IMPLEMENTING.md "Continuous API
 Conformance Lane" step 2). Docker-backed: the shared ``provisioner`` fixture
 skips with a recorded reason when Docker is unavailable (never silently), and
-the ``python-database`` CI job fails on any skip. A write story's grading is
+the ``python-check-db`` CI job fails on any skip. A write story's grading is
 the mirrored case's own oracle: a story returning rows must observe its final
 find's `expectRows`; a writeSequence story must leave exactly `then.tableState`
 behind. The one `kind == "boundary"` story (`m-unit-work-004`) is excluded from
@@ -55,8 +55,6 @@ from parallax.core.dialect import POSTGRES
 from parallax.core.entity import UnloadedRelationshipError, to_document
 from parallax.core.entity._hub import sealed_model
 from parallax.snapshot import connect
-
-pytestmark = pytest.mark.api_conformance
 
 _CASES = {c.case_id: c for c in case_format.load_cases()}
 

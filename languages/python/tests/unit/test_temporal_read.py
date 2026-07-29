@@ -30,8 +30,6 @@ from parallax.core.temporal_read import (
     statement_pin,
 )
 
-pytestmark = pytest.mark.unit
-
 _MODELS = models.load_models()
 _ACCEPTED = {
     "Balance": accepted_model("balance"),

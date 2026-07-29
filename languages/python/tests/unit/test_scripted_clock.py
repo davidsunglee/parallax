@@ -21,8 +21,6 @@ from parallax.core.db_port import Bind, DbPort, Row
 from parallax.core.unit_work import FixedClock
 from parallax.snapshot.handle import Database, Transaction
 
-pytestmark = pytest.mark.unit
-
 _ACCOUNT = MODELS["account"]
 _I1 = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
 _I2 = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)

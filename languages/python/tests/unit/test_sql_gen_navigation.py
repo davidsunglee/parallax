@@ -19,8 +19,6 @@ from parallax.core import op_algebra as oa
 from parallax.core.dialect import POSTGRES
 from parallax.core.sql_gen import SqlGenError, compile_read
 
-pytestmark = pytest.mark.unit
-
 ORDERS = model("orders")
 ANIMAL = model("animal")
 DOCUMENT = model("document")

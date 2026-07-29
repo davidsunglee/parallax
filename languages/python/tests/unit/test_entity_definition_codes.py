@@ -15,8 +15,6 @@ import pytest
 from _support import frontend_probes, frontend_probes_stringized
 from parallax.core.entity import ENTITY_DEFINITION_CODES, EntityDefinitionError
 
-pytestmark = pytest.mark.unit
-
 _SPEC_CODES = frozenset(
     {
         "entity-header-unknown-option",

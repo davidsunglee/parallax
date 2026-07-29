@@ -9,7 +9,6 @@ elision, object identity, and the neutral observation binding.
 
 from __future__ import annotations
 
-import pytest
 from _metamodel_support import Declaration, attribute, identity, key, source
 
 from parallax.conformance import models
@@ -36,8 +35,6 @@ from parallax.core.unit_work import (
     plan_flush,
 )
 from parallax.descriptor._records import Metamodel as DescriptorMetamodel
-
-pytestmark = pytest.mark.unit
 
 _MODELS = models.load_models()
 _ACCOUNT = models.accepted_model(_MODELS["account"])

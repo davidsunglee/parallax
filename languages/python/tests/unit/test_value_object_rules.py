@@ -47,8 +47,6 @@ from parallax.core.value_object import (
 from parallax.descriptor._adapter import unresolved_metamodel
 from parallax.descriptor._serde import parse_document
 
-pytestmark = pytest.mark.unit
-
 _OWNER = identity("Customer")
 
 _CORPUS = sorted(

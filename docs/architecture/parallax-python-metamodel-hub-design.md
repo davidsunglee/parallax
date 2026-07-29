@@ -2681,7 +2681,7 @@ Acceptance requires:
   scope and from Snapshot, Postgres, and the write-lowering scopes; no
   `parallax.core.descriptor` compatibility scope or lazy import hides a cycle;
   and
-- `just python-static` and `just python-verify` pass.
+- `just python-check-dbfree` and `just python-check` pass.
 
 ### COR-47 → COR-50 → COR-51 — Replace the Python Entity registry frontend
 
@@ -2912,7 +2912,7 @@ by COR-51. Program-level acceptance requires:
 - the Python spec, usage guide, conformance models, public API snapshot,
   package artifacts, type checks, and focused lifecycle/error tests describe
   and prove only the new surface; and
-- `just python-verify` passes.
+- `just python-check` passes.
 
 ## Verification commands
 
@@ -2931,7 +2931,7 @@ uv run python tools/check_dag_sync.py --write
 uv run python tools/check_dag_sync.py
 ```
 
-COR-47 finishes with `just python-static`. COR-40, COR-46, COR-50, and COR-51
-finish with `just python-verify`; COR-46 also proves the narrower
-`just python-static` gate. Run affected existing-language gates in COR-45 and
+COR-47 finishes with `just python-check-dbfree`. COR-40, COR-46, COR-50, and
+COR-51 finish with `just python-check`; COR-46 also proves the narrower
+`just python-check-dbfree` gate. Run affected existing-language gates in COR-45 and
 COR-40 because their canonical descriptor changes affect every implementation.

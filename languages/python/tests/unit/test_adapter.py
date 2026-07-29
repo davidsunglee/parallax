@@ -18,8 +18,6 @@ from parallax.conformance.claim import SNAPSHOT_CLAIM, Claim
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import DbPort, Row
 
-pytestmark = pytest.mark.unit
-
 _SCHEMA = adapter_schema()
 _READ_CASE = case_format.default_cases_dir() / "m-op-algebra-002-eq.yaml"
 _VO_READ_CASE = case_format.default_cases_dir() / "m-value-object-001-nested-eq.yaml"

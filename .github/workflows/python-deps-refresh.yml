@@ -2,7 +2,7 @@ name: python-deps-refresh
 
 # §10 supply-chain freshness: a monthly `uv lock --upgrade` refresh PR for the
 # Parallax Python workspace. The PR is human-reviewed like any change and must
-# not be merged red (the python-static / python-database lanes still gate it).
+# not be merged red (the python-check-dbfree / python-check-db lanes still gate it).
 on:
   schedule:
     - cron: "0 6 1 * *" # 06:00 UTC on the 1st of each month
@@ -35,5 +35,5 @@ jobs:
             Automated monthly `uv lock --upgrade` refresh for the Parallax Python
             workspace (`languages/python`).
 
-            Reviewed like any change; do not merge red — the `python-static` and
-            `python-database` lanes still gate it.
+            Reviewed like any change; do not merge red — the `python-check-dbfree`
+            and `python-check-db` lanes still gate it.

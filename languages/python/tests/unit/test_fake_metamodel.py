@@ -25,8 +25,6 @@ from parallax.descriptor import _records as records
 from parallax.descriptor._adapter import unresolved_metamodel
 from parallax.descriptor._serde import parse_document
 
-pytestmark = pytest.mark.unit
-
 
 @pytest.fixture(scope="module")
 def formed() -> Metamodel:

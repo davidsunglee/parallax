@@ -68,8 +68,6 @@ from parallax.core import Entity, OperationRejectedError, Predicate, Statement
 from parallax.core.op_algebra import serialize
 from parallax.core.temporal_read import LATEST
 
-pytestmark = pytest.mark.api_conformance
-
 # case id -> the idiomatic statement that must serialize to the case's operation.
 BUILDERS: dict[str, Callable[[], Statement]] = {
     # The op-algebra / temporal-read / navigate / single-concrete-inheritance

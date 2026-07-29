@@ -34,7 +34,7 @@ never something an application developer hand-writes.
 | Claimed capability coverage | Copied verbatim from the canonical claim: the 27 `modules` below, `dialects: ["postgres"]`, the eight `caseShapes`, `caseTags.include: ["slice-snapshot-1"]`, `commands: ["describe", "compile", "run"]`, `provisioning: "self-managed"`. `modules` is the tagged-case union of the slice, **not** a dependency closure and not a packaging plan. |
 | Unclaimed implementation prerequisites | `m-db-port` — reached via `m-unit-work` and `m-db-error`; abstract port supplied by the `parallax.core.db_port` scope, concrete adapter by `parallax-postgres`; contract-covered, never case-advertised. |
 | Deferred capabilities | MariaDB (dialect); `benchmark` command and `m-perf-bench`; `m-agg` / `m-sql-agg`; Valid-Time-Only models; `m-process-cache` / `m-coherence`; `m-cascade-delete`; the `snapshot-history-includes` feature; the managed-object lifecycle (`m-identity-map`, `m-detach`, public operation-backed lists); an async developer surface; MAY-tier mutations (`insertWithIncrement`, `incrementUntil`, `purge`, `inactivateForArchiving`); template-database reset optimization; isolation-level configuration; handle-level default concurrency override; Find Query `where`-refinement chaining and `as_of` re-pinning; the class-header temporal-axis column-mapping override. Deferral is roadmap intent; **unsupported classification** is the adapter's wire behavior for out-of-claim requests — the two are recorded separately and never conflated. |
-| Supported dialects and commands | Postgres only; `describe`, `compile`, `run`. Exercised locally and in CI by `uv run pytest -m compile_sweep` (Docker-free compile of every compile-eligible claimed case) and `uv run pytest -m conformance` (the `pg-full` run profile, every claimed case), aggregated by `just python-static` and `just python-verify`. |
+| Supported dialects and commands | Postgres only; `describe`, `compile`, `run`. Exercised locally and in CI by `uv run pytest -m compile_sweep` (Docker-free compile of every compile-eligible claimed case) and `uv run pytest tests/compatibility/test_run_sweep.py` (the `pg-full` run profile, every claimed case), aggregated by `just python-check-dbfree` and `just python-check-db`. |
 
 ```json
 {
@@ -1310,8 +1310,8 @@ or descriptor authoring form and performs no audit stamping.
   `hub_from_document`, `hub_from_json`, `hub_from_yaml`, `export_document`,
   `export_json`, `export_yaml`, and the descriptor error/violation types listed
   above; descriptor records, serde, schema machinery, and adapters are private.
-  JSON and YAML canonicalization tests run in the unit lane
-  (`uv run pytest -m unit`), and every corpus descriptor must import, export
+  JSON and YAML canonicalization tests run under the internal-behavior
+  surface (`uv run pytest tests/unit`), and every corpus descriptor must import, export
   deterministically, and re-export structurally equal to its canonical corpus
   spelling (`m-descriptor` "Metamodel serde": the canonicalization law and its
   omission set).
@@ -1998,7 +1998,7 @@ remains observable rather than making Python its own oracle.
   bytes projection shape and projection-introduced binds, temporal-infinity
   bind representation, placeholder translation (canonical `?` → psycopg `%s`),
   typed bind normalization, precision-sensitive value parsing, and native
-  error-code classification predicates. Runs in `uv run pytest -m dialect`
+  error-code classification predicates. Runs in `uv run pytest tests/dialect`
   with no Docker and no driver I/O.
 - **Adapter smoke and provider contract suites.** The psycopg adapter — the
   production `parallax-postgres` artifact declaring `psycopg[binary]`, whose
@@ -2021,11 +2021,14 @@ remains observable rather than making Python its own oracle.
   (`m-conformance-adapter`) rather than a golden comparison, so the sweep stays
   honest without hard-coding which cases are excluded. No partial profiles
   exist; MariaDB is a §1 deferral, not a profile exclusion.
-- **Commands and skip reporting.** Markers: `unit`, `dialect`,
-  `compile_sweep`, `adapter_smoke`, `provider_contract`, `conformance`,
-  `api_conformance`, `artifact`, `clean_install`, `api_surface`; run via `uv`
-  and aggregated by the `languages/python` justfile (`just python-static`,
-  `just python-verify`). Database-backed markers skip only when Docker is
+- **Commands and skip reporting.** Every collected item carries exactly one
+  scheduling marker — `dbfree` or `db` — added at collection from whether the
+  item's fixture closure reaches the session-scoped database fixture, so no
+  item can carry none or both. `compile_sweep` and `adapter_smoke` remain as
+  orthogonal focused selectors and classify nothing. `just python-test-dbfree`
+  and `just python-test-db` each own one invocation of their class, aggregated
+  by `just python-check-dbfree`, `just python-check-db`, and `just python-check`.
+  Database-backed checks skip only when Docker is
   unavailable; a session-scoped fixture prints a final summary naming every
   skipped database-backed check and its reason, and the CI database lane fails
   on any skip — silent skips are structurally impossible.
@@ -2039,7 +2042,7 @@ remains observable rather than making Python its own oracle.
 
 ### API Conformance Suite and Usage Guide
 
-- **Framework and location.** pytest (`-m api_conformance`) under
+- **Framework and location.** pytest under
   `languages/python/tests/api/`, executing idiomatic public-API
   code through the shipped `parallax-snapshot` extension and
   `parallax-postgres` adapter against the real Testcontainers Postgres.
@@ -2051,8 +2054,9 @@ remains observable rather than making Python its own oracle.
   equal corpus descriptors. A third, scoped to every registered write story,
   drives it against a recording fake port and asserts its wire DML equals its
   corpus golden byte-exact (a commit story the golden DML, an abort story
-  nothing for the discarded buffer). The fourth is a Docker-free, unit-lane
-  **copy-to-row contract test** (`uv run pytest -m unit`), scoped to the
+  nothing for the discarded buffer). The fourth is a Docker-free, database-free
+  **copy-to-row contract test** (`tests/api/test_copy_to_row_no_drift.py`, in the
+  `dbfree` class), scoped to the
   write shapes that actually pass through edited-copy lowering — keyed
   non-temporal updates and keyed temporal updates driven by an edited copy;
   inserts, deletes/terminates, and set-based materialize paths never touch
@@ -2327,7 +2331,7 @@ parallax.postgres --> parallax.core.dialect
   what governs it. Zero owners, **undeclared** overlapping owners (two or more
   matching scopes that are not a parent/child chain declared in
   `check_dag_sync.CHILD_SCOPE_PARENT`), and stale exemptions each fail the
-  check, which runs in `just python-static`.
+  check, which runs in `just python-check-scope-ownership`.
 - **Scopes sharing one artifact.** Every behavioral module in `parallax-core`
   is its own submodule; the generated forbidden contracts operate at
   submodule granularity, so co-location in one wheel cannot legalize a
@@ -2391,7 +2395,7 @@ hatchling.
   `parallax.snapshot.connect(adapter=...)`; neither dependency leaks into
   common-runtime code, and no umbrella artifact exists.
 - **Clean-install and runtime-load checks.** Four uv-venv fixtures
-  (`uv run pytest -m clean_install`): core alone; core + descriptor; core +
+  (`uv run pytest tests/distribution/test_clean_install.py`): core alone; core + descriptor; core +
   snapshot; core + snapshot + postgres. Each inspects installed distributions
   and import-probes to prove unselected interchange, lifecycle, adapter,
   driver, conformance, benchmark, and container dependencies are absent from
@@ -2409,21 +2413,21 @@ subsection of the template is deleted from this completed spec.
 
 | Quality concern | Tool and version policy | Configuration path(s) | Local command | Blocking CI command/job | Threshold, exclusions, and enforcement policy |
 |---|---|---|---|---|---|
-| Dependency directions within and across artifacts | import-linter (pinned in `uv.lock`) + `check_dag_sync.py` + `check_scope_ownership.py` | `languages/python/pyproject.toml` `[tool.importlinter]`; `languages/python/tools/check_dag_sync.py`; `languages/python/tools/check_scope_ownership.py` | `uv run python tools/check_dag_sync.py && uv run python tools/check_scope_ownership.py && uv run lint-imports` | `python-static` job, same commands | any production-scope import outside the DAG's transitive closure fails — the forbidden-edge complement generated from `modules.md` rejects illegal non-edges, not just wrong directions, with only the §7 conformance-family importer exemption; generated-contract drift fails, as does any disagreement among the three declarations of the support-scope graph — `check_dag_sync.py`'s support-scope table, the §7 prose rows, and the §7 `support-scope-graph` block — including the case where two of the three are edited consistently and the third is left stale; a production source file owned by no §7 scope (and so covered by no contract), owned by undeclared overlapping scopes, or covered by a stale exemption also fails |
-| Unit tests | pytest (pinned) | `languages/python/pyproject.toml` `[tool.pytest.ini_options]` | `uv run pytest -m unit` | `python-static` job | unit = no container/socket I/O; Storage Layout tests pin Rule Set ownership, exact immutable layouts/views, all six tiers, applicability, effective nullability, physical keys, alias de-duplication, unknown lookups, and bounded allocation; any failure blocks |
-| Code coverage | coverage.py via pytest-cov, branch mode + diff-cover (both pinned) | `[tool.coverage]` in `languages/python/pyproject.toml` | `uv run pytest -m unit --cov --cov-branch --cov-report=xml && uv run diff-cover coverage.xml --compare-branch origin/main --fail-under 100` | `python-static` job with `--cov-fail-under=90` plus the same diff-cover gate | **90% branch minimum** overall; diff-cover requires **100%** of changed lines vs the merge-base with `main`, making the no-new-uncovered-code policy executable; no generated/vendor code exists to exclude; conformance CLI included |
-| Linting | ruff (pinned) | `[tool.ruff]` in `languages/python/pyproject.toml` | `uv run ruff check` | `python-static` job | rule sets E, F, W, I, UP, B, SIM, RUF; `# noqa` requires rule code + one-line justification |
-| Deterministic formatter check | ruff format (pinned) | `[tool.ruff.format]` | check: `uv run ruff format --check`; write: `uv run ruff format` | `python-static` job (`--check` only) | CI checks without rewriting |
-| Strict static typing | Pyright, strict mode, pinned version | `languages/python/pyrightconfig.json` | `uv run pyright` | `python-static` job | strict across production and tests; a `# pyright: ignore[<rule>]` or `# type: ignore[<code>]` carries its specific code and a one-line justification at the site, as `# noqa` does; `reportUnnecessaryTypeIgnoreComment` (set in `pyrightconfig.json`) reports any idle suppression as an error, so every suppression is load-bearing — removing it fails the gate — and each is a reviewed diff line rather than a spec-maintained list |
-| Import-cycle detection | import-linter generated forbidden contracts | `[tool.importlinter]` | `uv run lint-imports` | `python-static` job | covers all production source scopes; the permitted closure is acyclic, so any cycle necessarily crosses a forbidden edge and fails |
-| Dead code and unused exports | vulture + griffe public-API snapshot test | `[tool.vulture]`; `languages/python/tests/api/` | `uv run vulture && uv run pytest -m api_surface` | `python-static` job | limitation recorded: Python tooling cannot prove an export unused; compensating check is the API-surface snapshot diff, making every public-surface change a reviewed diff |
-| Built-artifact and public-export health | `uv build` + twine check + wheel-content pytest | `languages/python/tests/distribution/` | `uv build && uv run twine check dist/* && uv run pytest -m artifact` | `python-static` job | wheels contain no test or conformance modules, include `py.typed`, declare correct entry points; `parallax-descriptor` contains the authoritative-schema copy and its bytes match `core/schemas/metamodel.schema.json` |
-| Clean-install production smoke tests | uv-venv fixtures | `languages/python/tests/distribution/` | `uv run pytest -m clean_install` | `python-static` job | exercises all four §8 selective topologies in clean environments; presence of any unselected artifact fails |
+| Dependency directions within and across artifacts | import-linter (pinned in `uv.lock`) + `check_dag_sync.py` + `check_scope_ownership.py` | `languages/python/pyproject.toml` `[tool.importlinter]`; `languages/python/tools/check_dag_sync.py`; `languages/python/tools/check_scope_ownership.py` | `just python-check-imports`, whose prerequisites are `python-check-dag-sync` and `python-check-scope-ownership` | `python-check-dbfree` job, same recipe | any production-scope import outside the DAG's transitive closure fails — the forbidden-edge complement generated from `modules.md` rejects illegal non-edges, not just wrong directions, with only the §7 conformance-family importer exemption; generated-contract drift fails, as does any disagreement among the three declarations of the support-scope graph — `check_dag_sync.py`'s support-scope table, the §7 prose rows, and the §7 `support-scope-graph` block — including the case where two of the three are edited consistently and the third is left stale; a production source file owned by no §7 scope (and so covered by no contract), owned by undeclared overlapping scopes, or covered by a stale exemption also fails |
+| Unit tests | pytest (pinned) | `languages/python/pyproject.toml` `[tool.pytest.ini_options]` | `uv run pytest tests/unit` | `python-check-dbfree` job | the internal-behavior surface proves seams, diagnostics, and failure modes with no container or socket I/O; Storage Layout tests pin Rule Set ownership, exact immutable layouts/views, all six tiers, applicability, effective nullability, physical keys, alias de-duplication, unknown lookups, and bounded allocation; any failure blocks |
+| Code coverage | coverage.py via pytest-cov, branch mode + diff-cover (both pinned) | `[tool.coverage]` in `languages/python/pyproject.toml` | `just python-test-dbfree` then `just python-coverage-diff` | `python-check-dbfree` job with `--cov-fail-under=96` plus the same diff-cover gate | **96% branch-mode minimum** overall, re-baselined against the measured database-free selection rather than carried across from a narrower one; diff-cover requires **100%** of changed lines vs the merge-base with `main`, making the no-new-uncovered-code policy executable, and the measurement is the database-free class alone, so a database-backed test cannot satisfy it; no generated/vendor code exists to exclude; conformance CLI included |
+| Linting | ruff (pinned) | `[tool.ruff]` in `languages/python/pyproject.toml` | `uv run ruff check` | `python-check-dbfree` job | rule sets E, F, W, I, UP, B, SIM, RUF; `# noqa` requires rule code + one-line justification |
+| Deterministic formatter check | ruff format (pinned) | `[tool.ruff.format]` | check: `uv run ruff format --check`; write: `uv run ruff format` | `python-check-dbfree` job (`--check` only) | CI checks without rewriting |
+| Strict static typing | Pyright, strict mode, pinned version | `languages/python/pyrightconfig.json` | `uv run pyright` | `python-check-dbfree` job | strict across production and tests; a `# pyright: ignore[<rule>]` or `# type: ignore[<code>]` carries its specific code and a one-line justification at the site, as `# noqa` does; `reportUnnecessaryTypeIgnoreComment` (set in `pyrightconfig.json`) reports any idle suppression as an error, so every suppression is load-bearing — removing it fails the gate — and each is a reviewed diff line rather than a spec-maintained list |
+| Import-cycle detection | import-linter generated forbidden contracts | `[tool.importlinter]` | `uv run lint-imports` | `python-check-dbfree` job | covers all production source scopes; the permitted closure is acyclic, so any cycle necessarily crosses a forbidden edge and fails |
+| Dead code and unused exports | vulture + griffe public-API snapshot test | `[tool.vulture]`; `languages/python/tests/api/` | `uv run vulture && uv run pytest tests/api/test_public_api.py` | `python-check-dbfree` job | limitation recorded: Python tooling cannot prove an export unused; compensating check is the API-surface snapshot diff, making every public-surface change a reviewed diff |
+| Built-artifact and public-export health | `uv build` + twine check + wheel-content pytest | `languages/python/tests/distribution/` | `uv build && uv run twine check dist/* && uv run pytest tests/distribution/test_wheels.py` | `python-check-dbfree` job | wheels contain no test or conformance modules, include `py.typed`, declare correct entry points; `parallax-descriptor` contains the authoritative-schema copy and its bytes match `core/schemas/metamodel.schema.json` |
+| Clean-install production smoke tests | uv-venv fixtures | `languages/python/tests/distribution/` | `uv run pytest tests/distribution/test_clean_install.py` | `python-check-dbfree` job | exercises all four §8 selective topologies in clean environments; presence of any unselected artifact fails |
 | Supported language/runtime versions | CPython; `requires-python >= 3.12` | each distribution's `pyproject.toml` | (local dev on any supported minor) | CI matrix 3.12 / 3.13 / 3.14 | support current + two prior minors; drop on upstream EOL; floor raises are reviewed spec changes |
-| Dependency and supply-chain audit | committed `uv.lock` + `uv lock --check` + pip-audit + scheduled `uv lock --upgrade` refresh | `languages/python/uv.lock` | `uv lock --check && uv run pip-audit` | `python-static` job on every PR, plus a monthly scheduled CI job opening a `uv lock --upgrade` refresh PR | high-severity findings block; exceptions carry owner + expiry inline; lockfile drift fails; freshness: the monthly upgrade PR is human-reviewed like any change and may not be merged red |
-| Compatibility Conformance Suite | pytest conformance runner + jsonschema envelope validation | `languages/python/tests/compatibility/` | `uv run pytest -m compile_sweep` (Docker-free) and `uv run pytest -m conformance` (`pg-full`) | `python-static` (compile sweep) + `python-database` (run sweep) | selection = active slice ∩ capability tags; every envelope validates against `conformance-adapter.schema.json` |
-| API Conformance Suite and Usage Guide | pytest + guide generator | `languages/python/tests/api/`; `languages/python/docs/usage-guide.md` | `uv run pytest -m api_conformance && uv run gen-usage-guide --check` | `python-database` job | coverage partition exact (exercised ∪ reasoned-skips = slice; no stale IDs, no empty reasons); operation, descriptor, and unit-lane copy-to-row no-drift guards green; guide drift fails |
-| Database-backed verification | testcontainers Postgres profiles | §6 profile definitions | `uv run pytest -m "conformance or provider_contract or adapter_smoke"` | `python-database` job | required profiles `pg-full`, provider contract, adapter smoke; every skipped check is reported with a reason in the session summary; silent skips are forbidden and any CI skip fails |
+| Dependency and supply-chain audit | committed `uv.lock` + `uv lock --check` + pip-audit + scheduled `uv lock --upgrade` refresh | `languages/python/uv.lock` | `uv lock --check && uv run pip-audit` | `python-check-dbfree` job on every PR, plus a monthly scheduled CI job opening a `uv lock --upgrade` refresh PR | high-severity findings block; exceptions carry owner + expiry inline; lockfile drift fails; freshness: the monthly upgrade PR is human-reviewed like any change and may not be merged red |
+| Compatibility Conformance Suite | pytest conformance runner + jsonschema envelope validation | `languages/python/tests/compatibility/` | `uv run pytest -m compile_sweep` (Docker-free) and `uv run pytest tests/compatibility/test_run_sweep.py` (`pg-full`) | `python-check-dbfree` (compile sweep) + `python-check-db` (run sweep) | selection = active slice ∩ capability tags; every envelope validates against `conformance-adapter.schema.json` |
+| API Conformance Suite and Usage Guide | pytest + guide generator | `languages/python/tests/api/`; `languages/python/docs/usage-guide.md` | `uv run pytest tests/api && uv run gen-usage-guide --check` | `python-check-dbfree` (partition, no-drift guards, guide drift) + `python-check-db` (story and boundary runs) | coverage partition exact (exercised ∪ reasoned-skips = slice; no stale IDs, no empty reasons); operation, descriptor, and database-free copy-to-row no-drift guards green; guide drift fails |
+| Database-backed verification | testcontainers Postgres profiles | §6 profile definitions | `uv run pytest -m db` | `python-check-db` job | required profiles `pg-full`, provider contract, adapter smoke; every skipped check is reported with a reason in the session summary; silent skips are forbidden and any CI skip fails |
 
 - **Storage Layout contract verification.** Before the target advertises the
   expanded claim, `just core-check-module-graph`, `just core-check-slice-profiles`,
@@ -2435,15 +2439,17 @@ subsection of the template is deleted from this completed spec.
   The reference-harness structural layout tests and corpus layout baseline run
   independently and no Python test satisfies them by importing or serializing
   production layout objects.
-- **Aggregate static-verification command.** `just python-static` — one local
-  command and one blocking CI job running every database-free row above
-  (imports/DAG, unit + coverage, ruff check + format check, Pyright strict,
-  vulture + API surface, artifact + clean-install checks, supply-chain audit,
-  and the Docker-free `compile-sweep`).
-- **Aggregate full verification command.** `just python-verify` — static plus
-  every database-backed row (`pg-full`, provider contract, adapter smoke, API
-  conformance + Usage Guide drift), ending with a summary block listing every
-  check as run, failed, or skipped-with-reason.
+- **Aggregate static-verification command.** `just python-check-dbfree` — one
+  local command and one blocking CI job composing every database-free row above
+  (imports/DAG, the `dbfree` test class + coverage, ruff check + format check,
+  Pyright strict, vulture + API surface, database-access guard, build +
+  distribution metadata, clean-install checks, supply-chain audit, and the
+  Docker-free `compile-sweep`).
+- **Aggregate full verification command.** `just python-check` — the
+  database-free aggregate plus every database-backed row (`pg-full`, provider
+  contract, adapter smoke, API conformance + Usage Guide story runs), ending
+  with a summary block listing every check as run, failed, or
+  skipped-with-reason.
 
 ## Completion check
 

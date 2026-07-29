@@ -34,8 +34,6 @@ from parallax.core.unit_work import (
     run_unit_of_work,
 )
 
-pytestmark = pytest.mark.unit
-
 _MODELS = models.load_models()
 _ACCOUNT = models.accepted_model(_MODELS["account"])
 _BALANCE = models.accepted_model(_MODELS["balance"])

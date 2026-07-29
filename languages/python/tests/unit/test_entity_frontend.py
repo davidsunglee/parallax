@@ -70,8 +70,6 @@ from parallax.core.metamodel import (
 )
 from parallax.core.op_algebra import Comparison, PathSegment, serialize
 
-pytestmark = pytest.mark.unit
-
 
 class Customer(Entity, table="customer", namespace="sales"):
     id: Attr[int] = attr(primary_key=True)

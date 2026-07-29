@@ -14,8 +14,6 @@ from pathlib import Path
 import pytest
 from griffe import GriffeLoader, Module
 
-pytestmark = pytest.mark.api_surface
-
 _SNAPSHOT = Path(__file__).parent / "public_api.json"
 
 

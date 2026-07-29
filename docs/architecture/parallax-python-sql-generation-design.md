@@ -399,7 +399,7 @@ descendants as overlapping packages. Do not add the private modules to
 ## Verification
 
 Run the narrowest affected SQL-generation and consumer suites after every
-phase. Run the DAG-sync check, import-linter, and `just python-static` after
+phase. Run the DAG-sync check, import-linter, and `just python-check-dbfree` after
 each structural phase.
 
 Before completion, run from `languages/python`:
@@ -407,8 +407,8 @@ Before completion, run from `languages/python`:
 ```text
 uv run python tools/check_dag_sync.py
 uv run lint-imports
-just python-static
-just python-verify
+just python-check-dbfree
+just python-check
 ```
 
 The final database-backed verification is mandatory because exact SQL and

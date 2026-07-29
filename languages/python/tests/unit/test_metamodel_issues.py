@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import random
 
-import pytest
-
 from parallax.core.metamodel import (
     MODEL_ROOT,
     AsOfAxisLocation,
@@ -28,8 +26,6 @@ from parallax.core.metamodel import (
     canonical_location_key,
     sort_issues,
 )
-
-pytestmark = pytest.mark.unit
 
 _ALPHA = EntityIdentity("app", "Alpha")
 _BETA = EntityIdentity("app", "Beta")

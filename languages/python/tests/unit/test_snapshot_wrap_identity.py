@@ -30,8 +30,6 @@ from parallax.core.metamodel import ConcreteSubtype, EntityIdentity, ExactEntity
 from parallax.core.op_algebra import PathSegment
 from parallax.snapshot.materialize import Node
 
-pytestmark = pytest.mark.unit
-
 _ORDERS = sm.SNAP_ORDERS_MODEL
 _ANIMAL = sm.ANIMAL_MODEL
 # A model the database DOES declare a concrete "Iguana" family member for (a

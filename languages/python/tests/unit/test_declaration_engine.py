@@ -74,8 +74,6 @@ from parallax.core.metamodel import (
 from parallax.core.metamodel import AbstractSubtype as AcceptedAbstractSubtype
 from parallax.core.metamodel import ConcreteSubtype as AcceptedConcreteSubtype
 
-pytestmark = pytest.mark.unit
-
 
 class Warehouse(
     Entity,

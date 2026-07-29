@@ -22,15 +22,18 @@ languages/python/
     check_untracked_sources.py
                         fails on a Python source file that exists on disk but
                         not in git (the changed-line coverage gate reads git)
+    check_database_access.py
+                        fails when a test can reach a live database outside the
+                        designated fixture the scheduling class is derived from
   packages/
     parallax-core/        the class-free engine spine (production)
     parallax-descriptor/   descriptor ingestion + export (production, optional)
     parallax-snapshot/     snapshot lifecycle + handle (production)
     parallax-postgres/     concrete psycopg adapter (production)
     parallax-conformance/  corpus/case loading + describe/compile/run CLI (dev-only)
-  tests/                unit / dialect / compile_sweep / conformance / provider /
-                        adapter_smoke / api_conformance / artifact / clean_install /
-                        api_surface lanes (pytest markers, §6/§10)
+  tests/                the six semantic surfaces — unit / compatibility / api /
+                        dialect / provider_contract / distribution — plus
+                        _support/ and conftest.py (see TESTING.md)
   docs/adr/             per-language ADRs
 ```
 
@@ -62,21 +65,20 @@ Run from the repo root (via `just`) or from `languages/python` (via `uv`).
 | Purpose | Command |
 |---|---|
 | Install dev environment | `cd languages/python && uv sync` |
-| All database-free gates (§10) | `just python-static` |
-| Static + Docker database lanes | `just python-verify` |
-| Unit tests | `cd languages/python && uv run pytest -m unit` |
+| All database-free gates (§10) | `just python-check-dbfree` |
+| Database-free plus the Docker-backed gates | `just python-check` |
+| One semantic surface | `cd languages/python && uv run pytest tests/<surface>` |
 | Regenerate import-linter complement | `cd languages/python && uv run python tools/check_dag_sync.py --write` |
 | Verify the complement is in sync | `cd languages/python && uv run python tools/check_dag_sync.py` |
 | Verify every production file has a scope owner | `cd languages/python && uv run python tools/check_scope_ownership.py` |
 
-Pytest markers (§6): `unit`, `dialect`, `compile_sweep`, `adapter_smoke`,
-`provider_contract`, `conformance`, `api_conformance`, `artifact`,
-`clean_install`, `api_surface`.
+Pytest markers (§6): the derived scheduling classes `dbfree` and `db`, plus the
+orthogonal focused selectors `compile_sweep` and `adapter_smoke`.
 
 ## Database setup
 
-Database-backed lanes (`conformance`/`pg-full`, `provider_contract`,
-`adapter_smoke`) use testcontainers-python with a `self-managed` Postgres
+The `db` scheduling class (`pg-full` run sweep, provider contract, adapter
+smoke, API-suite story runs) uses testcontainers-python with a `self-managed` Postgres
 container pinned to an exact version **and** sha256 digest in
 `parallax.conformance.constants`. **Docker must be running.** One container per
 test session; per-case isolation is `DROP SCHEMA … CASCADE` → descriptor-derived
@@ -647,6 +649,5 @@ self-contained without a system `libpq`.
 
 ## Blockers
 
-- Docker is required for the database-backed lanes (`just python-verify` /
-  the `python-database` CI job); the database-free lane (`just python-static`,
-  which now includes `-m dialect` and `-m compile_sweep`) needs no Docker.
+- Docker is required for the `db` scheduling class (`just python-check-db` /
+  the `python-check-db` CI job); `just python-check-dbfree` needs no Docker.

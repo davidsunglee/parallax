@@ -53,8 +53,6 @@ from parallax.core.storage_layout._compile import (
     _interned_ordinal_selection,  # pyright: ignore[reportPrivateUsage] - private allocation-policy regression only
 )
 
-pytestmark = pytest.mark.unit
-
 
 def _shape(name: str = "text") -> ValueObjectShapeDeclaration:
     return ValueObjectShapeDeclaration(

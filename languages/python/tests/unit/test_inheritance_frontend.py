@@ -44,8 +44,6 @@ from parallax.core.metamodel import (
 from parallax.core.metamodel import ConcreteSubtype as AcceptedConcreteSubtype
 from parallax.core.model_formation import MetamodelValidationError
 
-pytestmark = pytest.mark.unit
-
 _NS = "parallax.compatibility"
 
 

@@ -32,8 +32,6 @@ from parallax.core.op_algebra import (
     PathSegment,
 )
 
-pytestmark = pytest.mark.unit
-
 
 # --------------------------------------------------------------------------- #
 # .include(...) — deep-fetch path building.                                   #

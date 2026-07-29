@@ -11,8 +11,6 @@ from parallax.conformance import case_format
 from parallax.conformance import models as corpus_models
 from parallax.descriptor._serde import canonicalize, serialize
 
-pytestmark = pytest.mark.unit
-
 _DIR = case_format.find_repo_root() / "core" / "compatibility" / "models"
 
 

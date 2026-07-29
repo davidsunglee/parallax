@@ -53,8 +53,6 @@ from parallax.descriptor._records import Metamodel
 from parallax.snapshot.handle import WriteLoweringError, lower_write
 from parallax.snapshot.handle._keyed_sql import _keys_in_list  # pyright: ignore[reportPrivateUsage]
 
-pytestmark = pytest.mark.unit
-
 _MODELS = models.load_models()
 ACCOUNT = _MODELS["account"]
 ORDERS = _MODELS["orders"]

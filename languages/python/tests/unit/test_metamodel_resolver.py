@@ -75,8 +75,6 @@ from parallax.core.metamodel import (
     ValueObjectShapeKey,
 )
 
-pytestmark = pytest.mark.unit
-
 _ORDER = identity("Order")
 _ITEM = identity("Item")
 _ANIMAL = identity("Animal")

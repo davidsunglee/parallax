@@ -13,8 +13,6 @@ import pytest
 from _support.repo import adapter_schema, canonical_snapshot_claim
 from parallax.conformance import case_format, cli
 
-pytestmark = pytest.mark.unit
-
 _SCHEMA = adapter_schema()
 _READ_CASE = str(case_format.default_cases_dir() / "m-op-algebra-002-eq.yaml")
 

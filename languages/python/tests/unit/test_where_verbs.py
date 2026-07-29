@@ -22,8 +22,6 @@ from parallax.core import Attr, Entity, MetamodelHub, ModelCopyError, TxTemporal
 from parallax.core.entity import AttributeAssignment
 from parallax.core.temporal_read import LATEST, TX_TIME
 
-pytestmark = pytest.mark.unit
-
 _FIXED = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
 
 

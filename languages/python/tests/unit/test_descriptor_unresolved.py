@@ -49,8 +49,6 @@ from parallax.descriptor._errors import DescriptorError
 from parallax.descriptor._serde import deserialize, parse_document
 from parallax.descriptor._type_spelling import parse_type_spelling
 
-pytestmark = pytest.mark.unit
-
 _MODELS = sorted(
     (case_format.find_repo_root() / "core" / "compatibility" / "models").glob("*.yaml")
 )

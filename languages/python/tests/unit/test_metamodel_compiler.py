@@ -44,8 +44,6 @@ from parallax.core.metamodel import (
     compile_metadata,
 )
 
-pytestmark = pytest.mark.unit
-
 _ORDER = identity("Order")
 _ITEM = identity("Item")
 

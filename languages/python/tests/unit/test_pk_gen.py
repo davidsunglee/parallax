@@ -16,8 +16,6 @@ from parallax.core.metamodel import (
     Sequence,
 )
 
-pytestmark = pytest.mark.unit
-
 _MODELS = corpus_models.load_models(
     case_format.find_repo_root() / "core" / "compatibility" / "models"
 )

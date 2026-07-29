@@ -18,8 +18,6 @@ from parallax.core.entity import METAMODEL_STATE_CODES
 from parallax.core.entity._binding import MetamodelBinding, binding_of, claim
 from parallax.core.metamodel import EntityIdentity
 
-pytestmark = pytest.mark.unit
-
 _SPEC_CODES = frozenset({"metamodel-class-not-bound", "metamodel-class-already-bound"})
 _HANDOFF_TIMEOUT: Final = 10.0
 

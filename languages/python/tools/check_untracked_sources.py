@@ -17,8 +17,8 @@ that lets the gate pass — while being absent from the commit and therefore fro
 CI. Both directions let uncommitted work claim coverage it has not earned, so
 both roots are guarded.
 
-``tools/`` is deliberately not guarded: ``python-static`` invokes each tool by
-path, so an untracked gate fails loudly in CI on its own.
+``tools/`` is deliberately not guarded: each tool has its own recipe invoking it
+by path, so an untracked gate fails loudly in CI on its own.
 
 Usage
 -----

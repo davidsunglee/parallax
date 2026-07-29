@@ -19,8 +19,6 @@ from parallax.core.op_algebra import All, Narrow, OperationRejectedError, valida
 from parallax.descriptor import _records as records
 from parallax.descriptor._adapter import unresolved_metamodel
 
-pytestmark = pytest.mark.unit
-
 
 def _entity(name: str, namespace: str) -> records.Entity:
     key = records.Attribute(name="id", type="int64", column="id", primary_key=True)

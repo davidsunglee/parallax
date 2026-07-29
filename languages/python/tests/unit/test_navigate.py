@@ -24,8 +24,6 @@ from parallax.core.navigate import canonicalize, resolve_relationship
 from parallax.core.sql_gen import compile_read
 from parallax.descriptor._serde import deserialize
 
-pytestmark = pytest.mark.unit
-
 ORDERS = accepted_model("orders")
 POLICY = accepted_model("policy")
 LEASE = accepted_model("lease")

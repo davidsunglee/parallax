@@ -28,8 +28,6 @@ from parallax.postgres.adapter import (
     translating_driver_errors,
 )
 
-pytestmark = pytest.mark.unit
-
 
 def test_public_surface_is_the_adapter_alone() -> None:
     assert parallax.postgres.__all__ == ["PostgresAdapter"]

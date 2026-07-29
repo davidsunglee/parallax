@@ -38,8 +38,6 @@ from parallax.core.model_formation import MetamodelValidationError
 from parallax.descriptor._adapter import unresolved_metamodel
 from parallax.descriptor._serde import parse_document
 
-pytestmark = pytest.mark.unit
-
 _ROOT = identity("Ledger")
 _MID = identity("Journal")
 _LEAF = identity("Entry")

@@ -12,12 +12,8 @@ import json
 import subprocess
 from pathlib import Path
 
-import pytest
-
 from _support.distributions import Wheelhouse
 from _support.repo import REPO_ROOT
-
-pytestmark = pytest.mark.clean_install
 
 
 def _make_venv(root: Path) -> Path:

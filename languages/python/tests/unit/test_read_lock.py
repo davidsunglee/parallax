@@ -9,11 +9,7 @@ function itself in isolation.
 
 from __future__ import annotations
 
-import pytest
-
 from parallax.core import read_lock
-
-pytestmark = pytest.mark.unit
 
 
 def test_locking_mode_selects_the_shared_lock() -> None:

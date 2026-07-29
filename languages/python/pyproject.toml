@@ -60,17 +60,15 @@ minversion = "8.0"
 testpaths = ["tests"]
 pythonpath = ["tools", "tests"]
 addopts = "-ra --strict-markers --strict-config"
+# The first two are the scheduling partition and are never authored onto a test:
+# the collection hook in tests/conftest.py derives exactly one of them per item
+# from that item's fixture closure, so zero and both are unrepresentable. The
+# other two are orthogonal focused selectors, authored where they apply.
 markers = [
-    "unit: no container/socket I/O; pure in-process behaviour",
-    "dialect: Docker-free dialect contract suite (pure m-dialect strategy)",
+    "dbfree: requires no live database provider",
+    "db: requires a live database provider",
     "compile_sweep: Docker-free compile of every compile-eligible claimed case",
     "adapter_smoke: real psycopg adapter smoke checks (Docker)",
-    "provider_contract: provider/matrix contract suite (Docker)",
-    "conformance: the pg-full run profile against a real database (Docker)",
-    "api_conformance: API Conformance Suite + Usage Guide (Docker)",
-    "artifact: built-wheel content and public-export health checks",
-    "clean_install: clean-venv production install topology proofs",
-    "api_surface: griffe public-API snapshot diff",
 ]
 
 # ---------------------------------------------------------------------------

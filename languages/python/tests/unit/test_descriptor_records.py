@@ -22,8 +22,6 @@ from parallax.descriptor._records import (
     family_root_name,
 )
 
-pytestmark = pytest.mark.unit
-
 _MODELS = corpus_models.load_models(
     case_format.find_repo_root() / "core" / "compatibility" / "models"
 )

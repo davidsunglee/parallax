@@ -29,8 +29,6 @@ import pytest
 import check_dag_sync as dag
 import check_scope_ownership as own
 
-pytestmark = pytest.mark.unit
-
 PY_ROOT = Path(__file__).resolve().parents[2]
 
 

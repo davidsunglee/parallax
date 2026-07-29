@@ -31,8 +31,6 @@ from parallax.core.temporal_read import Pin, edge_of, pin_of
 from parallax.snapshot.handle import Execution, NoResultFound, Snapshot, TooManyResultsFound
 from parallax.snapshot.materialize import Node
 
-pytestmark = pytest.mark.unit
-
 _ORDERS = sm.SNAP_ORDERS_MODEL
 
 

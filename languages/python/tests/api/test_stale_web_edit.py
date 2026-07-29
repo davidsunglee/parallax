@@ -46,8 +46,6 @@ from parallax.core.entity._hub import sealed_model
 from parallax.snapshot import connect
 from parallax.snapshot.handle import Database, Transaction
 
-pytestmark = pytest.mark.api_conformance
-
 _BALANCE = MODELS["balance"]
 _BRANCH = MODELS["branch"]
 
