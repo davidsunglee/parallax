@@ -526,8 +526,7 @@ mutations, exceptions, or exports.
 
   ```python
   Animal.where(
-      Animal.narrow(Dog, where=Dog.bark_volume > 5)
-      | Animal.narrow(Cat, where=Cat.indoor.is_(True))
+      Animal.narrow(Dog, where=Dog.bark_volume > 5) | Animal.narrow(Cat, where=Cat.indoor.is_(True))
   )
   ```
 
@@ -759,12 +758,16 @@ author as:
 
 ```python
 class Ticket(Entity, table="ticket"):
-    id: Attr[int] = attr(primary_key=Sequence(
-        name="ticket_seq", initial_value=1000, increment_size=5,
-    ))                                     # batch_size takes its semantic default
-    qty: Attr[int] = attr(type=Int32)      # Attr[int] alone is Int64
+    id: Attr[int] = attr(
+        primary_key=Sequence(
+            name="ticket_seq",
+            initial_value=1000,
+            increment_size=5,
+        )
+    )  # batch_size takes its semantic default
+    qty: Attr[int] = attr(type=Int32)  # Attr[int] alone is Int64
     rating: Attr[float] = attr(type=Float32)
-    weight: Attr[float]                    # Float64 by default
+    weight: Attr[float]  # Float64 by default
 
 
 class Widget(Entity, table="widget"):
@@ -895,14 +898,16 @@ class Order(Entity, table="orders"):
     id: Attr[int] = attr(primary_key=True)
     placed_at: Attr[datetime]
 
-    customer_id: Attr[int]                      # 1..1: non-nullable FK
+    customer_id: Attr[int]  # 1..1: non-nullable FK
     customer: Rel[Customer] = rel(
-        cardinality=MANY_TO_ONE, join=("customer_id", "id"),
+        cardinality=MANY_TO_ONE,
+        join=("customer_id", "id"),
     )
 
-    coupon_id: Attr[int | None]                 # 0..1: nullable FK
+    coupon_id: Attr[int | None]  # 0..1: nullable FK
     coupon: Rel["Coupon | None"] = rel(
-        cardinality=MANY_TO_ONE, join=("coupon_id", "id"),
+        cardinality=MANY_TO_ONE,
+        join=("coupon_id", "id"),
     )
     # Spelling coupon as Rel["Coupon"], or customer as Rel[Customer | None],
     # fails hub construction with entity-relationship-annotation-mismatch.
@@ -920,8 +925,9 @@ counterpart row:
 class Account(Entity, table="account"):
     id: Attr[int] = attr(primary_key=True)
     profile_id: Attr[int]
-    profile: Rel["Profile"] = rel(              # defining 1..1
-        cardinality=ONE_TO_ONE, join=("profile_id", "id"),
+    profile: Rel["Profile"] = rel(  # defining 1..1
+        cardinality=ONE_TO_ONE,
+        join=("profile_id", "id"),
     )
 
 
@@ -1088,8 +1094,8 @@ entities:
 ```python
 from parallax.descriptor import hub_from_document, hub_from_json, hub_from_yaml
 
-models = hub_from_yaml(yaml_text)       # or hub_from_json(json_text)
-models = hub_from_document(document)    # e.g. json.loads(json_text)
+models = hub_from_yaml(yaml_text)  # or hub_from_json(json_text)
+models = hub_from_document(document)  # e.g. json.loads(json_text)
 ```
 
 The same package exports a class-backed or descriptor-backed hub
@@ -1170,7 +1176,8 @@ class Book(
     title: Attr[str]
     author_id: Attr[int]
     author: Rel[Author] = rel(
-        cardinality=MANY_TO_ONE, join=("author_id", "id"),
+        cardinality=MANY_TO_ONE,
+        join=("author_id", "id"),
     )
 ```
 
@@ -1198,7 +1205,8 @@ class DigitalPayment(Payment, inheritance=AbstractSubtype):
 
 
 class WalletPayment(
-    DigitalPayment, inheritance=ConcreteSubtype(tag_value="wallet"),
+    DigitalPayment,
+    inheritance=ConcreteSubtype(tag_value="wallet"),
 ):
     wallet_ref: Attr[str]
 ```
@@ -1865,9 +1873,9 @@ or descriptor authoring form and performs no audit stamping.
 
   ```python
   tx.update_where(op, Account.balance.set(Decimal("0.00")))  # non-temporal
-  tx.delete_where(op)                                        # non-temporal
-  tx.terminate_where(op)                                     # Transaction-Time-Only
-  tx.update_where(op, Position.px.set(x), valid_from=v)   # Bitemporal plain
+  tx.delete_where(op)  # non-temporal
+  tx.terminate_where(op)  # Transaction-Time-Only
+  tx.update_where(op, Position.px.set(x), valid_from=v)  # Bitemporal plain
   tx.terminate_where(op, valid_from=v)
   tx.update_until_where(op, Position.px.set(x), valid_from=v, until=u)
   tx.terminate_until_where(op, valid_from=v, until=u)
