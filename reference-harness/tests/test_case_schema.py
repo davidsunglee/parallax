@@ -486,7 +486,7 @@ def _identity_checks_read_case() -> dict[str, Any]:
             "operation": {
                 "deepFetch": {
                     "operand": {"eq": {"attr": "Order.id", "value": 1}},
-                    "paths": [[{"rel": "Order.items"}, {"rel": "OrderItem.order"}]],
+                    "paths": [{"segments": [{"rel": "Order.items"}, {"rel": "OrderItem.order"}]}],
                 }
             },
         },

@@ -36,6 +36,7 @@ from parallax.core.op_algebra import (
     Membership,
     Narrow,
     Navigate,
+    NavigationPath,
     NestedComparison,
     NestedExists,
     NestedMembership,
@@ -106,7 +107,7 @@ def test_referenced_entities_collects_every_class_the_operation_names() -> None:
             dimension="validTime",
             coordinate="latest",
         ),
-        paths=((PathSegment(rel="Root.leaves", narrow=("Leaf",)),),),
+        paths=(NavigationPath(segments=(PathSegment(rel="Root.leaves", narrow=("Leaf",)),)),),
     )
     assert referenced_entities(op) == frozenset(
         {
@@ -312,14 +313,17 @@ def test_not_exists_relationship_target_scope_propagates() -> None:
 def test_deep_fetch_path_narrow_outside_relationship_target_rejects() -> None:
     op = DeepFetch(
         operand=All(),
-        paths=((PathSegment(rel="Person.pets", narrow=("WildBoar",)),),),
+        paths=(NavigationPath(segments=(PathSegment(rel="Person.pets", narrow=("WildBoar",)),)),),
     )
     exc = _rejects(op, _ANIMAL, "Person")
     assert exc.rule == "narrow-outside-relationship-target"
 
 
 def test_deep_fetch_path_narrow_within_relationship_target_accepts() -> None:
-    op = DeepFetch(operand=All(), paths=((PathSegment(rel="Person.pets", narrow=("Dog",)),),))
+    op = DeepFetch(
+        operand=All(),
+        paths=(NavigationPath(segments=(PathSegment(rel="Person.pets", narrow=("Dog",)),)),),
+    )
     _validate("Person", op, _ANIMAL)  # no raise
 
 
@@ -560,13 +564,19 @@ def test_corpus_scoped_where_cases_still_validate_unrejected(case_id: str) -> No
 
 
 def test_deep_fetch_value_object_segment_rejects() -> None:
-    op = DeepFetch(operand=All(), paths=((PathSegment(rel="Customer.address"),),))
+    op = DeepFetch(
+        operand=All(),
+        paths=(NavigationPath(segments=(PathSegment(rel="Customer.address"),)),),
+    )
     exc = _rejects(op, _CUSTOMER, "Customer")
     assert exc.rule == "deep-fetch-value-object-segment"
 
 
 def test_deep_fetch_relationship_path_accepts() -> None:
-    op = DeepFetch(operand=All(), paths=((PathSegment(rel="Customer.locations"),),))
+    op = DeepFetch(
+        operand=All(),
+        paths=(NavigationPath(segments=(PathSegment(rel="Customer.locations"),)),),
+    )
     _validate("Customer", op, _CUSTOMER)  # no raise
 
 

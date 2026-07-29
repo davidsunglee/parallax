@@ -29,7 +29,7 @@ from parallax.core import (
     rel,
 )
 from parallax.core.entity import RelationshipPath, RelationshipRef
-from parallax.core.op_algebra import DeepFetch, PathSegment
+from parallax.core.op_algebra import DeepFetch, NavigationPath, PathSegment
 
 
 class Leaf(Entity, table="leaf", namespace="orchard"):
@@ -126,7 +126,9 @@ def test_an_inherited_deeper_hop_validates_as_an_include_path() -> None:
     operation = statement.operation()
     assert isinstance(operation, DeepFetch)
     assert operation.paths == (
-        (PathSegment(rel="Owner.dogs"), PathSegment(rel="Animal.playthings")),
+        NavigationPath(
+            segments=(PathSegment(rel="Owner.dogs"), PathSegment(rel="Animal.playthings"))
+        ),
     )
 
 
@@ -150,7 +152,9 @@ def test_a_renamed_deeper_hop_validates_as_an_include_path() -> None:
     operation = statement.operation()
     assert isinstance(operation, DeepFetch)
     assert operation.paths == (
-        (PathSegment(rel="Root.branches"), PathSegment(rel="Branch.canopy")),
+        NavigationPath(
+            segments=(PathSegment(rel="Root.branches"), PathSegment(rel="Branch.canopy"))
+        ),
     )
 
 

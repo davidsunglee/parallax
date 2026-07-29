@@ -13,7 +13,7 @@ when:
       operand:
         all: {}
       paths:
-        - [{ rel: OrderStatus.orderItem }]
+        - { segments: [{ rel: OrderStatus.orderItem }] }
 then:
   statements:
     - sql:

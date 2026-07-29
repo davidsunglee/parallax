@@ -24,7 +24,7 @@ when:
           dimension: validTime
           coordinate: "2024-03-01T00:00:00+00:00"
       paths:
-        - [{ rel: Policy.coverages }]
+        - { segments: [{ rel: Policy.coverages }] }
 then:
   statements:
     - sql:

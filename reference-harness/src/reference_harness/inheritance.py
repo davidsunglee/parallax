@@ -1084,7 +1084,8 @@ def _walk_narrow(
         # (`narrow-outside-relationship-target`). The operand is the root query,
         # walked at the queried position.
         for path in body.get("paths", []) or []:
-            for segment in path if isinstance(path, list) else []:
+            segments = path.get("segments") if isinstance(path, dict) else None
+            for segment in segments if isinstance(segments, list) else []:
                 rel = segment.get("rel") if isinstance(segment, dict) else None
                 if isinstance(rel, str) and isinstance(segment.get("narrow"), dict):
                     to_list = segment["narrow"].get("to")

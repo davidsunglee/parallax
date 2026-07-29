@@ -24,7 +24,7 @@ when:
           dimension: validTime
           coordinate: latest
       paths:
-        - [{ rel: Policy.coverages }]
+        - { segments: [{ rel: Policy.coverages }] }
 then:
   statements:
     - sql:

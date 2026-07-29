@@ -25,7 +25,7 @@ when:
           attr: Order.id
           value: 4
       paths:
-        - [{ rel: Order.items }, { rel: OrderItem.statuses }]
+        - { segments: [{ rel: Order.items }, { rel: OrderItem.statuses }] }
 then:
   statements:
     - sql:

@@ -580,12 +580,15 @@ def _resolve_rel_ref(model: Model, rel_ref: str) -> tuple[Entity, dict[str, Any]
 def _deepfetch_paths(case: Case) -> list[list[str]]:
     """The deep-fetch paths as ordered lists of ``Class.relationship`` refs.
 
-    A path segment is a closed object ``{rel, narrow?}`` in the canonical operation
-    (m-op-algebra); this projection keeps only the ``rel`` and is used where narrowing
-    is irrelevant (root-entity resolution). Narrow-aware hop identity is built from
-    :func:`_deepfetch_segments`.
+    A path is a closed object ``{segments}`` whose entries are closed
+    ``{rel, narrow?}`` segments (m-op-algebra); this projection keeps only the ``rel``
+    and is used where narrowing is irrelevant (root-entity resolution). Narrow-aware
+    hop identity is built from :func:`_deepfetch_segments`.
     """
-    return [[segment["rel"] for segment in path] for path in case.operation["deepFetch"]["paths"]]
+    return [
+        [segment["rel"] for segment in path["segments"]]
+        for path in case.operation["deepFetch"]["paths"]
+    ]
 
 
 def _deepfetch_segments(case: Case) -> list[list[dict[str, Any]]]:
@@ -594,7 +597,7 @@ def _deepfetch_segments(case: Case) -> list[list[dict[str, Any]]]:
     Preserves the optional per-hop ``narrow`` so the fetch machinery can derive the
     narrowed view key and dedup identity ``(relationship hop, effective concrete set)``.
     """
-    return [list(path) for path in case.operation["deepFetch"]["paths"]]
+    return [list(path["segments"]) for path in case.operation["deepFetch"]["paths"]]
 
 
 def _deepfetch_root_operand(case: Case) -> dict[str, Any]:

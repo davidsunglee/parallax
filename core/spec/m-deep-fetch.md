@@ -19,7 +19,9 @@ own read (`m-value-object`, "Materialization and navigation contract").
 ## Deep fetch: one query per non-empty relationship level
 
 `deepFetch(operand, paths)` resolves `operand` (the root query), then eagerly
-fetches each navigation `path`. The normative guarantee:
+fetches each navigation `path` — a closed object whose required `segments` member
+is the ordered, non-empty list of hops that path traverses. The normative
+guarantee:
 
 > The number of SQL statements is **at most `1 + L`**, where `L` is the number
 > of **distinct relationship hops** across all declared paths. A level whose
@@ -107,12 +109,13 @@ as an abstract-target flat read (`m-case-format`); a single-concrete narrowed vi
 carries none (the caller fetched a known variant).
 
 **Dedup identity is the pair `(relationship hop, effective concrete set)`**, not
-the relationship alone. Two paths whose segments resolve to the **same** effective
-set deduplicate to **one** hop (one statement) — this is what makes the equivalent
-spellings `[Pet]` and `[Cat, Dog]` converge. A **broad** hop and a **narrowed** hop
-over the same relationship, or two hops narrowed to **different** sets
-(`pets[Dog]` and `pets[Cat]`), are **distinct** hops that each count toward `L`, so
-`1 + L` is preserved with narrowed hops counting as distinct.
+the relationship alone. Two paths whose `segments` resolve to the **same**
+effective set deduplicate to **one** hop (one statement) — this is what makes the
+equivalent spellings `[Pet]` and `[Cat, Dog]` converge. A **broad** hop and a
+**narrowed** hop over the same relationship, or two hops narrowed to
+**different** sets (`pets[Dog]` and `pets[Cat]`), are **distinct** hops that each
+count toward `L`, so `1 + L` is preserved with narrowed hops counting as
+distinct.
 
 **One statement per hop, both strategies.** Under `table-per-hierarchy` a
 polymorphic hop is one shared-table `IN`-keyed read with the effective set's tag

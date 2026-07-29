@@ -16,7 +16,7 @@ when:
       operand:
         all: {}
       paths:
-        - [{ rel: ProfileOwner.details }]
+        - { segments: [{ rel: ProfileOwner.details }] }
 then:
   statements:
     - sql:

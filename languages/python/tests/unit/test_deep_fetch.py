@@ -25,6 +25,7 @@ from parallax.core.op_algebra import (
     DeepFetch,
     Membership,
     Narrow,
+    NavigationPath,
     Operation,
     OrderBy,
     PathSegment,
@@ -40,10 +41,14 @@ def _seg(rel: str, narrow: tuple[str, ...] = ()) -> PathSegment:
     return PathSegment(rel=rel, narrow=narrow)
 
 
+def _path(*segments: PathSegment) -> NavigationPath:
+    return NavigationPath(segments=segments)
+
+
 def _plan(
     model: Metamodel,
     target: str,
-    paths: tuple[tuple[PathSegment, ...], ...],
+    paths: tuple[NavigationPath, ...],
     operand: Operation | None = None,
 ) -> deep_fetch.FetchPlan:
     op = DeepFetch(operand=operand if operand is not None else All(), paths=paths)
@@ -57,7 +62,7 @@ def test_shared_prefix_dedups_to_one_level() -> None:
     plan = _plan(
         ORDERS,
         "Order",
-        ((_seg("Order.items"),), (_seg("Order.items"), _seg("OrderItem.statuses"))),
+        (_path(_seg("Order.items")), _path(_seg("Order.items"), _seg("OrderItem.statuses"))),
     )
     assert len(plan.levels) == 2
     items, statuses = plan.levels
@@ -69,14 +74,16 @@ def test_shared_prefix_dedups_to_one_level() -> None:
 
 
 def test_two_independent_paths_off_root_are_two_levels_both_rooted() -> None:
-    plan = _plan(ORDERS, "Order", ((_seg("Order.items"),), (_seg("Order.itemsByShipDate"),)))
+    plan = _plan(
+        ORDERS, "Order", (_path(_seg("Order.items")), _path(_seg("Order.itemsByShipDate")))
+    )
     assert len(plan.levels) == 2
     assert all(isinstance(level.parent, deep_fetch.RootRef) for level in plan.levels)
     assert {level.attach_key for level in plan.levels} == {"items", "itemsByShipDate"}
 
 
 def test_multi_hop_path_chains_levels_in_declared_order() -> None:
-    plan = _plan(POLICY, "Policy", ((_seg("Policy.coverages"), _seg("Coverage.claims")),))
+    plan = _plan(POLICY, "Policy", (_path(_seg("Policy.coverages"), _seg("Coverage.claims")),))
     assert [level.attach_key for level in plan.levels] == ["coverages", "claims"]
     coverages, claims = plan.levels
     assert isinstance(coverages.parent, deep_fetch.RootRef)
@@ -91,7 +98,7 @@ def test_broad_and_narrowed_over_the_same_relationship_are_distinct_levels() -> 
     plan = _plan(
         ANIMAL,
         "Person",
-        ((_seg("Person.pets"),), (_seg("Person.pets", ("Dog",)),)),
+        (_path(_seg("Person.pets")), _path(_seg("Person.pets", ("Dog",)))),
     )
     assert len(plan.levels) == 2
     keys = {level.attach_key for level in plan.levels}
@@ -104,7 +111,7 @@ def test_equivalent_narrowings_dedup_to_one_hop() -> None:
     plan = _plan(
         ANIMAL,
         "Person",
-        ((_seg("Person.pets", ("Pet",)),), (_seg("Person.pets", ("Cat", "Dog")),)),
+        (_path(_seg("Person.pets", ("Pet",))), _path(_seg("Person.pets", ("Cat", "Dog")))),
     )
     assert len(plan.levels) == 1
     assert plan.levels[0].attach_key == "pets[Cat,Dog]"
@@ -114,14 +121,14 @@ def test_two_different_narrow_sets_are_distinct_levels() -> None:
     plan = _plan(
         ANIMAL,
         "Person",
-        ((_seg("Person.pets", ("Dog",)),), (_seg("Person.pets", ("Cat",)),)),
+        (_path(_seg("Person.pets", ("Dog",))), _path(_seg("Person.pets", ("Cat",)))),
     )
     assert len(plan.levels) == 2
     assert {level.attach_key for level in plan.levels} == {"pets[Dog]", "pets[Cat]"}
 
 
 def test_narrowed_view_key_is_alphabetical_no_spaces() -> None:
-    plan = _plan(ANIMAL, "Person", ((_seg("Person.pets", ("Dog", "Cat")),),))
+    plan = _plan(ANIMAL, "Person", (_path(_seg("Person.pets", ("Dog", "Cat"))),))
     assert plan.levels[0].attach_key == "pets[Cat,Dog]"
 
 
@@ -130,7 +137,7 @@ def test_a_narrow_naming_an_undeclared_subtype_is_rejected() -> None:
     # one belonging to another family) resolves to no position at all rather
     # than silently contributing nothing to the union.
     with pytest.raises(deep_fetch.DeepFetchError, match="does not declare"):
-        _plan(ANIMAL, "Person", ((_seg("Person.pets", ("Ghost",)),),))
+        _plan(ANIMAL, "Person", (_path(_seg("Person.pets", ("Ghost",))),))
 
 
 # --------------------------------------------------------------------------- #
@@ -143,16 +150,18 @@ def test_l_counts_distinct_hops_after_dedup() -> None:
         ORDERS,
         "Order",
         (
-            (_seg("Order.items"),),
-            (_seg("Order.items"), _seg("OrderItem.statuses")),
-            (_seg("Order.itemsByShipDate"),),
+            _path(_seg("Order.items")),
+            _path(_seg("Order.items"), _seg("OrderItem.statuses")),
+            _path(_seg("Order.itemsByShipDate")),
         ),
     )
     assert len(plan.levels) == 3
 
 
 def test_narrow_and_broad_both_count_toward_l() -> None:
-    plan = _plan(ANIMAL, "Person", ((_seg("Person.animals"),), (_seg("Person.pets", ("Dog",)),)))
+    plan = _plan(
+        ANIMAL, "Person", (_path(_seg("Person.animals")), _path(_seg("Person.pets", ("Dog",))))
+    )
     assert len(plan.levels) == 2
 
 
@@ -160,7 +169,7 @@ def test_narrow_and_broad_both_count_toward_l() -> None:
 # Child-operation shape: IN membership + propagated as-of + declared orderBy. #
 # --------------------------------------------------------------------------- #
 def test_child_operation_is_a_plain_in_membership() -> None:
-    plan = _plan(ORDERS, "Order", ((_seg("Order.statuses"),),))
+    plan = _plan(ORDERS, "Order", (_path(_seg("Order.statuses")),))
     target, op = plan.levels[0].child_operation([1, 2, 3])
     assert target == "parallax.compatibility.OrderStatus"
     assert isinstance(op, Membership)
@@ -170,7 +179,7 @@ def test_child_operation_is_a_plain_in_membership() -> None:
 
 
 def test_child_operation_wraps_declared_relationship_order_by() -> None:
-    plan = _plan(ORDERS, "Order", ((_seg("Order.items"),),))
+    plan = _plan(ORDERS, "Order", (_path(_seg("Order.items")),))
     target, op = plan.levels[0].child_operation([1])
     assert target == "parallax.compatibility.OrderItem"
     assert isinstance(op, OrderBy)
@@ -180,7 +189,7 @@ def test_child_operation_wraps_declared_relationship_order_by() -> None:
 
 
 def test_child_operation_multi_key_order_by_preserves_declared_sequence() -> None:
-    plan = _plan(ORDERS, "Order", ((_seg("Order.tags"),),))
+    plan = _plan(ORDERS, "Order", (_path(_seg("Order.tags")),))
     _target, op = plan.levels[0].child_operation([1])
     assert isinstance(op, OrderBy)
     assert [(key.attr, key.direction) for key in op.keys] == [
@@ -190,14 +199,14 @@ def test_child_operation_multi_key_order_by_preserves_declared_sequence() -> Non
 
 
 def test_child_operation_has_no_order_by_when_relationship_declares_none() -> None:
-    plan = _plan(ORDERS, "Order", ((_seg("Order.statuses"),),))
+    plan = _plan(ORDERS, "Order", (_path(_seg("Order.statuses")),))
     _target, op = plan.levels[0].child_operation([1])
     assert isinstance(op, Membership)  # no OrderBy wrapper at all
 
 
 def test_child_operation_appends_propagated_as_of_after_the_in_membership() -> None:
     # every axis defaults to latest (the root operand pins none explicitly)
-    op = DeepFetch(operand=All(), paths=((_seg("Policy.coverages"),),))
+    op = DeepFetch(operand=All(), paths=(_path(_seg("Policy.coverages")),))
     plan = deep_fetch.plan(entity_of(POLICY, "Policy"), op, POLICY)
     _target, child_op = plan.levels[0].child_operation([1, 2])
     assert isinstance(child_op, And)
@@ -208,7 +217,7 @@ def test_child_operation_appends_propagated_as_of_after_the_in_membership() -> N
 
 
 def test_child_operation_raises_on_a_back_reference_level() -> None:
-    plan = _plan(ORDERS, "Order", ((_seg("Order.items"), _seg("OrderItem.order")),))
+    plan = _plan(ORDERS, "Order", (_path(_seg("Order.items"), _seg("OrderItem.order")),))
     back_reference = plan.levels[1]
     assert back_reference.is_back_reference
     with pytest.raises(deep_fetch.DeepFetchError):
@@ -221,7 +230,7 @@ def test_child_operation_raises_on_a_back_reference_level() -> None:
 # projection) — a 2+-concrete resolution DOES wrap Narrow.                    #
 # --------------------------------------------------------------------------- #
 def test_single_concrete_narrow_targets_the_concrete_directly_no_narrow_node() -> None:
-    plan = _plan(ANIMAL, "Person", ((_seg("Person.pets", ("Dog",)),),))
+    plan = _plan(ANIMAL, "Person", (_path(_seg("Person.pets", ("Dog",))),))
     level = plan.levels[0]
     assert level.child_target == "parallax.compatibility.Dog"
     assert level.narrow_to is None
@@ -231,7 +240,7 @@ def test_single_concrete_narrow_targets_the_concrete_directly_no_narrow_node() -
 
 
 def test_multi_concrete_narrow_wraps_a_narrow_node() -> None:
-    plan = _plan(ANIMAL, "Person", ((_seg("Person.pets", ("Cat", "Dog")),),))
+    plan = _plan(ANIMAL, "Person", (_path(_seg("Person.pets", ("Cat", "Dog"))),))
     level = plan.levels[0]
     assert level.child_target == "parallax.compatibility.Pet"
     assert level.narrow_to == ("Cat", "Dog")
@@ -241,14 +250,14 @@ def test_multi_concrete_narrow_wraps_a_narrow_node() -> None:
 
 
 def test_broad_polymorphic_hop_targets_the_relationship_position_no_narrow() -> None:
-    plan = _plan(ANIMAL, "Person", ((_seg("Person.animals"),),))
+    plan = _plan(ANIMAL, "Person", (_path(_seg("Person.animals")),))
     level = plan.levels[0]
     assert level.child_target == "parallax.compatibility.Animal"
     assert level.narrow_to is None
 
 
 def test_non_polymorphic_child_target_is_the_related_entity_itself() -> None:
-    plan = _plan(ORDERS, "Order", ((_seg("Order.items"),),))
+    plan = _plan(ORDERS, "Order", (_path(_seg("Order.items")),))
     assert plan.levels[0].child_target == "parallax.compatibility.OrderItem"
 
 
@@ -256,7 +265,7 @@ def test_non_polymorphic_child_target_is_the_related_entity_itself() -> None:
 # Back-reference (ancestor-revisit) cycle detection.                          #
 # --------------------------------------------------------------------------- #
 def test_back_reference_hop_is_detected() -> None:
-    plan = _plan(ORDERS, "Order", ((_seg("Order.items"), _seg("OrderItem.order")),))
+    plan = _plan(ORDERS, "Order", (_path(_seg("Order.items"), _seg("OrderItem.order")),))
     items, order = plan.levels
     assert not items.is_back_reference
     assert order.is_back_reference
@@ -265,7 +274,7 @@ def test_back_reference_hop_is_detected() -> None:
 
 
 def test_ordinary_deeper_level_is_not_flagged_a_back_reference() -> None:
-    plan = _plan(ORDERS, "Order", ((_seg("Order.items"), _seg("OrderItem.statuses")),))
+    plan = _plan(ORDERS, "Order", (_path(_seg("Order.items"), _seg("OrderItem.statuses")),))
     assert not any(level.is_back_reference for level in plan.levels)
 
 
@@ -274,7 +283,7 @@ def test_a_path_cannot_continue_past_a_back_reference_level() -> None:
         _plan(
             ORDERS,
             "Order",
-            ((_seg("Order.items"), _seg("OrderItem.order"), _seg("Order.items")),),
+            (_path(_seg("Order.items"), _seg("OrderItem.order"), _seg("Order.items")),),
         )
 
 

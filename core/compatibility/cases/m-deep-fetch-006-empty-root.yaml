@@ -11,7 +11,7 @@ when:
       operand:
         eq: { attr: Order.id, value: 999 }
       paths:
-        - [{ rel: Order.items }, { rel: OrderItem.statuses }]
+        - { segments: [{ rel: Order.items }, { rel: OrderItem.statuses }] }
 then:
   statements:
     - sql:

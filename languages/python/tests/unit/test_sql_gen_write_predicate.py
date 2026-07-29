@@ -321,7 +321,10 @@ def test_a_result_shaping_directive_reaching_a_write_predicate_is_refused(
             "temporal wrapper reached",
         ),
         (
-            oa.DeepFetch(operand=oa.All(), paths=((oa.PathSegment(rel="Order.items"),),)),
+            oa.DeepFetch(
+                operand=oa.All(),
+                paths=(oa.NavigationPath(segments=(oa.PathSegment(rel="Order.items"),)),),
+            ),
             "deep fetch .* is not a predicate",
         ),
     ],
