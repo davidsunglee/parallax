@@ -22,6 +22,7 @@ than only on a conforming one.
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
@@ -65,6 +66,7 @@ RUNTIME_CLASSES: tuple[RuntimeClass, ...] = ("fast", "medium", "slow")
 _JUSTFILE_NAME = "justfile"
 _RUNTIME_PREFIX = "runtime:"
 _SCHEDULING_PREFIX = "scheduling:"
+_INTERPOLATION_RE = re.compile(r"\{\{([A-Za-z_][A-Za-z0-9_]*)\}\}")
 
 _OPERATION_TOKENS: tuple[tuple[str, ...], ...] = tuple(
     sorted((tuple(operation.split("-")) for operation in OPERATIONS), key=len, reverse=True)
@@ -210,10 +212,31 @@ class GateGraph:
     """Every recipe in one ``justfile``, addressable by name and resolvable
     together with what its dependency closure implies."""
 
-    def __init__(self, source: Path, recipes: Iterable[Recipe]) -> None:
+    def __init__(
+        self, source: Path, recipes: Iterable[Recipe], assignments: Mapping[str, str]
+    ) -> None:
         self._by_name = {recipe.name: recipe for recipe in recipes}
+        self._assignments = dict(assignments)
         self.source = source
         self.recipes = tuple(sorted(self._by_name.values(), key=lambda recipe: recipe.name))
+
+    @property
+    def assignments(self) -> Mapping[str, str]:
+        """Every variable the file assigns a literal value, by name."""
+        return self._assignments
+
+    def expand(self, text: str) -> str:
+        """*text* with each ``{{name}}`` replaced by the value assigned to
+        *name*.
+
+        A body preserves its source spelling, so the path a recipe runs in is
+        readable only once the file's own variables are substituted. An
+        interpolation naming something other than an assigned variable is left
+        as it stands.
+        """
+        return _INTERPOLATION_RE.sub(
+            lambda match: self._assignments.get(match.group(1), match.group(0)), text
+        )
 
     def recipe(self, name: str) -> Recipe:
         """The recipe called *name*, raising ``GateGraphError`` when the graph
@@ -355,4 +378,9 @@ def load_graph(justfile_dir: Path) -> GateGraph:
         raise GateGraphError(f"{justfile} did not dump: {completed.stderr.strip()}")
     dump: dict[str, Any] = json.loads(completed.stdout)
     recipes: dict[str, Any] = dump.get("recipes", {})
-    return GateGraph(justfile, [_recipe_from_dump(name, entry) for name, entry in recipes.items()])
+    assignments: dict[str, Any] = dump.get("assignments", {})
+    return GateGraph(
+        justfile,
+        [_recipe_from_dump(name, entry) for name, entry in recipes.items()],
+        {name: str(entry["value"]) for name, entry in assignments.items() if "value" in entry},
+    )

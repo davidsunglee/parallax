@@ -12,11 +12,14 @@
 #   harness-   the reference harness's own code health and test suite
 #   python-    the Python implementation (future: java-, rust-, ...)
 #
+# Within a section the order is: aggregates, the scheduling-class test recipes,
+# the semantic-surface recipes, other focused selectors, other execution
+# recipes, then mutating helpers.
+#
 # Every public recipe reads `<scope>-<operation>[-<qualifier>]`, drawing its
 # operation from the closed vocabulary in `core/spec/language-testing.md` — the
 # normative contract for the grammar, the roles, and the scheduling partition.
-# One stands outside it: `default`, the listing entry point rather than a
-# verification command.
+# `just check-gates` fails when this file stops matching it.
 #
 # A scope names the subject under validation, not the module implementing it:
 # the `core-*` tools live in the harness, and `harness-*` is the harness's own
@@ -43,7 +46,9 @@ harness := "reference-harness"
 # Path to the Python implementation module.
 python := "languages/python"
 
-# Default: list available recipes.
+# The bare `just` entry point. Private because it is the listing itself rather
+# than a verification command, and the grammar governs the public interface.
+[private]
 default:
     @just --list
 
@@ -52,8 +57,11 @@ default:
 # that belong to no single scope.
 # ===========================================================================
 
+# The success summary is a terminal dependency rather than a command body: an
+# aggregate carrying a body cannot be composed without re-running it, and a
+# `report` passes no judgement, so it adds output and no second verdict.
 [doc("Complete merge gate: every blocking check in the repository.")]
-check: check-dbfree check-db
+check: check-gates check-dbfree check-db report-check-summary
 
 [doc("Every blocking check that needs no live database.")]
 check-dbfree: core-check lint-markdown harness-check-dbfree python-check-dbfree
@@ -62,13 +70,19 @@ check-dbfree: core-check lint-markdown harness-check-dbfree python-check-dbfree
 check-db: harness-check-db python-check-db
 
 [metadata("runtime:fast")]
+[doc("This file matches the grammar, roles, and composition core/spec/language-testing.md fixes.")]
+check-gates:
+    cd {{harness}} && uv run python -m reference_harness.check_gates ..
+
+[metadata("runtime:fast")]
 [doc("Markdown lint across core/spec, languages/**/spec, and root.")]
 lint-markdown:
     pnpm exec markdownlint-cli2
 
 # ===========================================================================
 # Introspection and reports: non-blocking output that describes the repository
-# rather than judging it, and is therefore reachable from no gate.
+# rather than judging it. A gate may depend on one for its output without
+# acquiring a second verdict.
 # ===========================================================================
 
 [metadata("runtime:fast")]
@@ -80,6 +94,11 @@ show-gates *recipes:
 [doc("Compatibility-matrix report (implementations x databases; Postgres + MariaDB).")]
 report-matrix:
     cd {{harness}} && uv run python -m reference_harness.matrix ../core/compatibility
+
+[metadata("runtime:fast")]
+[doc("The line a complete `just check` ends with when every gate passed.")]
+report-check-summary:
+    @echo "check OK: every blocking check in this repository passed."
 
 # ===========================================================================
 # Core spec: validation of the core specification and compatibility corpus.

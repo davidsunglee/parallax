@@ -29,6 +29,7 @@ src/reference_harness/
 ├── case_runner.py     # the layered assertion engine
 ├── gate_graph.py      # resolve the orchestrator's command graph: roles, classes, closures
 ├── show_gates.py      # render the resolved command graph
+├── check_gates.py     # fail when that graph breaks core/spec/language-testing.md
 ├── check_database_access.py  # live database access stays inside the designated fixture
 └── providers/
     ├── __init__.py    # the DatabaseProvider protocol (the seam)
@@ -57,6 +58,7 @@ uv run pytest -m dbfree   # no database provider is reached
 uv run pytest -m db       # boots Postgres via Testcontainers (Docker required)
 uv run python -m reference_harness.matrix ../core/compatibility
 uv run python -m reference_harness.show_gates ..
+uv run python -m reference_harness.check_gates ..
 ```
 
 The `language_spec_validate` line uses a placeholder path: replace
