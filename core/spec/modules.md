@@ -313,7 +313,7 @@ construction it may reference any behavioral module it harnesses.
 ## Enforcement
 
 - **In core: MUST.** The reference harness enforces the DAG + direction property
-  and the active→deferred rule mechanically (`just core-dep-graph`).
+  and the active→deferred rule mechanically (`just core-check-module-graph`).
 - **Per language: SHOULD.** Each per-language spec SHOULD prescribe a build-time
   mechanism (dependency-cruiser, import-linter, ArchUnit, crate boundaries, …)
   that fails the build on any dependency the graph does not permit — the common

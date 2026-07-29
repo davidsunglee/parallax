@@ -31,8 +31,8 @@ from reference_harness.descriptor_contract_check import (
     violation_sort_key,
 )
 
-# reference-harness/tests/ -> reference-harness/ -> repo root
-_REPO_ROOT = Path(__file__).resolve().parents[2]
+# reference-harness/tests/contract_tools/ -> tests/ -> reference-harness/ -> repo root
+_REPO_ROOT = Path(__file__).resolve().parents[3]
 _COMPATIBILITY_ROOT = _REPO_ROOT / "core" / "compatibility"
 _FIXTURE_DIR = _COMPATIBILITY_ROOT / "descriptor-errors"
 _MODELS_DIR = _COMPATIBILITY_ROOT / "models"

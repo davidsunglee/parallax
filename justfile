@@ -4,13 +4,19 @@
 # together. Each module (core/, reference-harness/, languages/<lang>/) uses its
 # own native toolchain; this file only fans out into them.
 #
-# Recipes are grouped by scope. Repo-wide gates and reports stay bare; every
-# other recipe carries a scope prefix so its category is obvious and future
-# languages slot in cleanly:
-#   (bare)     repo-wide gates and reports
+# Every public recipe reads `<scope>-<operation>[-<qualifier>]`, and the sections
+# below follow the same order every time: configuration, repository-wide gates,
+# introspection and reports, then one section per scope — `core-`, `harness-`,
+# and the language scopes alphabetically.
+#   (bare)     repository-wide gates, reports, and graph introspection
 #   core-      validation of the core spec + compatibility corpus
-#   oracle-    the Python reference harness (its own checks + running the oracle)
+#   harness-   the reference harness's own code health and test suite
 #   python-    the Python implementation (future: java-, rust-, ...)
+#
+# A scope names the subject under validation, not the module implementing it:
+# the `core-*` tools live in the harness, and `harness-*` is the harness's own
+# health. `core/spec/language-testing.md` is the normative contract for the
+# grammar, the roles, and the scheduling partition.
 #
 # Runtime and scheduling classes are declared as `[metadata("runtime:<class>")]`
 # and `[metadata("scheduling:<class>")]`, which `just show-gates` reads.
@@ -18,80 +24,98 @@
 # classifying that way would segregate this listing and repeat every recipe once
 # per class.
 #
-# Database-backed recipes (verify, oracle-test, python-verify) start
-# Testcontainers containers and need a reachable Docker daemon. README.md
-# "Running And Inspecting The Project" has the one-time
-# ~/.testcontainers.properties fix for runtimes other than Docker Desktop.
+# A recipe declaring `[metadata("scheduling:db")]` starts Testcontainers
+# containers and needs a reachable Docker daemon, as does `python-verify`, which
+# declares no scheduling class. README.md "Running And Inspecting The Project"
+# has the one-time ~/.testcontainers.properties fix for runtimes other than
+# Docker Desktop.
+
+# ===========================================================================
+# Configuration: module paths and the recipe listing.
+# ===========================================================================
 
 # Path to the reference harness module.
 harness := "reference-harness"
+
+# Path to the Python implementation module.
+python := "languages/python"
 
 # Default: list available recipes.
 default:
     @just --list
 
 # ===========================================================================
-# Repo-wide: the top-level gates and reports that span every module.
+# Repository-wide: the aggregates every scope composes into, plus the gates
+# that belong to no single scope.
 # ===========================================================================
 
-# Full merge gate: repo lint + core gates + Python lanes + the harness suite (Docker).
-# `python-verify` subsumes `python-static`, so only the aggregate is listed here.
-verify: lint oracle-typecheck core-dep-graph python-verify oracle-test
+[doc("Complete merge gate: every blocking check in the repository.")]
+check: check-dbfree check-db
 
-# Every static check that needs no database: harness ruff, markdown, core schema/SQL,
-# and the language-contract diagnostic tools.
-lint: oracle-lint lint-md core-schemas core-contract-tools
+[doc("Every blocking check that needs no live database.")]
+check-dbfree: core-check lint-markdown harness-check-dbfree python-static
 
-# Markdown lint across core/spec, languages/**/spec, and root.
-lint-md:
+[doc("Every blocking check that needs a live database (Docker).")]
+check-db: harness-check-db python-verify
+
+[metadata("runtime:fast")]
+[doc("Markdown lint across core/spec, languages/**/spec, and root.")]
+lint-markdown:
     pnpm exec markdownlint-cli2
 
-# Compatibility-matrix report (implementations x databases; Postgres + MariaDB).
-matrix:
-    cd {{harness}} && uv run python -m reference_harness.matrix ../core/compatibility
+# ===========================================================================
+# Introspection and reports: non-blocking output that describes the repository
+# rather than judging it, and is therefore reachable from no gate.
+# ===========================================================================
 
 [metadata("runtime:fast")]
 [doc("Resolved gate graph: roles, execution owners, prerequisites, and runtime classes.")]
 show-gates *recipes:
     cd {{harness}} && uv run python -m reference_harness.show_gates .. {{recipes}}
 
+[metadata("runtime:slow")]
+[doc("Compatibility-matrix report (implementations x databases; Postgres + MariaDB).")]
+report-matrix:
+    cd {{harness}} && uv run python -m reference_harness.matrix ../core/compatibility
+
 # ===========================================================================
 # Core spec: validation of the core specification and compatibility corpus.
-#   dep-graph: DAG legality; the coverage gate (every active/cases module from
-#   the modules.md catalog has a tagged fixture) + the active->deferred rule; the
-#   profile gate (every slice's tagged cases match its canonical describe claim
-#   in slices.md). schemas: meta-schema + fixture validation + sqlglot parse
-#   of all golden/reference SQL.
 # ===========================================================================
 
-# Core module DAG + coverage gate + the per-slice profile gate.
-core-dep-graph:
+[doc("Every blocking check over the core spec and compatibility corpus.")]
+core-check: core-check-module-graph core-check-slice-profiles core-check-schemas core-check-contract-tools
+
+[metadata("runtime:fast")]
+[doc("modules.md DAG legality, per-module fixture coverage, and the active-to-deferred rule.")]
+core-check-module-graph:
     cd {{harness}} && uv run python -m reference_harness.dep_graph_check --coverage ../core/spec ../core/compatibility
+
+[metadata("runtime:fast")]
+[doc("Every slice's tagged cases agree with its canonical describe claim in slices.md.")]
+core-check-slice-profiles:
     cd {{harness}} && uv run python -m reference_harness.dep_graph_check --profile ../core/spec ../core/compatibility
 
-# Validate the schemas (meta-schema), every fixture, and all golden/reference SQL.
-core-schemas:
+[metadata("runtime:fast")]
+[doc("The meta-schema, every fixture, and a sqlglot parse of all golden/reference SQL.")]
+core-check-schemas:
     cd {{harness}} && uv run python -m reference_harness.schema_validate ../core/compatibility
     cd {{harness}} && uv run python -m reference_harness.sql_lint ../core/compatibility
 
-# Inspect one canonical slice using the claims, module DAG, and compatibility corpus.
-core-slice-inspect slice:
-    cd {{harness}} && uv run python -m reference_harness.slice_inspect ../core/spec ../core/compatibility {{slice}}
-
-# Validate a completed, root-relative language-spec path against the canonical template.
-core-language-spec-check language_spec:
-    cd {{harness}} && uv run python -m reference_harness.language_spec_validate ../{{language_spec}} ../core/spec
-
-# Docker-free tests and canonical-input smoke check for the language-contract
-# diagnostics, plus the closed-vocabulary drift guards: the m-case-format.md <->
-# compatibility-case.schema.json rejectedRule vocabulary, and the m-core.md <->
-# m-descriptor.md <-> metamodel.schema.json neutral-type vocabulary; plus the
-# m-descriptor ingestion/export contract gate (the descriptor-errors fixture
-# set and corpus-wide byte-deterministic export), the retired-temporal-vocabulary
+# The canonical-input smoke check for the language-contract diagnostics: the
+# slice-report cross-check over every canonical claim, the closed-vocabulary
+# drift guards (the m-case-format.md <-> compatibility-case.schema.json
+# rejectedRule vocabulary, and the m-core.md <-> m-descriptor.md <->
+# metamodel.schema.json neutral-type vocabulary), the m-descriptor
+# ingestion/export contract gate (the descriptor-errors fixture set and
+# corpus-wide byte-deterministic export), the retired-temporal-vocabulary
 # deny-list over the whole active tree, and the case comment-placement gate
 # (header-comment-only compatibility cases).
-core-contract-tools:
-    cd {{harness}} && uv run pytest tests/test_naming.py tests/test_slice_inspect.py tests/test_language_spec_validate.py tests/test_case_format_vocab_check.py tests/test_neutral_type_vocab_check.py tests/test_descriptor_contract_check.py tests/test_retired_vocab_check.py tests/test_case_comment_check.py
+#
+# Each diagnostic's own tests live in the harness suite, so `harness-test-dbfree`
+# owns them and this recipe stays one operation over one subject.
+[metadata("runtime:fast")]
+[doc("Every language-contract diagnostic against the real core spec and corpus.")]
+core-check-contract-tools:
     cd {{harness}} && uv run python -m reference_harness.slice_inspect --check-all ../core/spec ../core/compatibility
     cd {{harness}} && uv run python -m reference_harness.case_format_vocab_check ../core/spec
     cd {{harness}} && uv run python -m reference_harness.neutral_type_vocab_check ../core/spec
@@ -99,35 +123,70 @@ core-contract-tools:
     cd {{harness}} && uv run python -m reference_harness.retired_vocab_check ..
     cd {{harness}} && uv run python -m reference_harness.case_comment_check ../core/compatibility
 
+[metadata("runtime:fast")]
+[doc("Inspect one canonical slice using the claims, module DAG, and compatibility corpus.")]
+core-show-slice slice:
+    cd {{harness}} && uv run python -m reference_harness.slice_inspect ../core/spec ../core/compatibility {{slice}}
+
+[metadata("runtime:fast")]
+[doc("Validate one completed, root-relative language-spec path against the canonical template.")]
+core-show-language-spec language_spec:
+    cd {{harness}} && uv run python -m reference_harness.language_spec_validate ../{{language_spec}} ../core/spec
+
 # ===========================================================================
-# Oracle: the Python reference harness — its own code health, and running it as
-# the executable oracle over the compatibility corpus.
+# Harness: the reference harness's own code health and its test suite, which
+# runs the compatibility corpus as the executable oracle.
 # ===========================================================================
 
-# Static lint of the harness: ruff format check + ruff lint.
-oracle-lint:
+[doc("Every harness check that needs no live database.")]
+harness-check-dbfree: harness-format-check harness-lint harness-typecheck harness-test-dbfree
+
+[doc("Every harness check that needs a live database (Docker).")]
+harness-check-db: harness-test-db
+
+[metadata("runtime:fast")]
+[doc("Harness formatting is deterministic and already applied.")]
+harness-format-check:
     cd {{harness}} && uv run ruff format --check .
+
+[metadata("runtime:fast")]
+[doc("Ruff lint rules over the harness.")]
+harness-lint:
     cd {{harness}} && uv run ruff check .
 
-# Auto-format the harness (mutates in place).
-oracle-format:
+[metadata("runtime:fast")]
+[doc("Format the harness in place (rewrites tracked sources).")]
+harness-format:
     cd {{harness}} && uv run ruff format .
 
-# Typecheck the harness with basedpyright.
-oracle-typecheck:
+[metadata("runtime:fast")]
+[doc("Typecheck the harness with basedpyright.")]
+harness-typecheck:
     cd {{harness}} && uv run basedpyright
 
-# The compatibility suite + the harness's own unit tests (pytest, Testcontainers; Docker).
-oracle-test:
-    cd {{harness}} && uv run pytest
+[metadata("runtime:medium", "scheduling:dbfree")]
+[doc("Every harness test whose fixture closure reaches no database provider.")]
+harness-test-dbfree:
+    cd {{harness}} && uv run pytest -m dbfree
+
+[metadata("runtime:slow", "scheduling:db")]
+[doc("The compatibility corpus against every selected provider (Testcontainers; Docker).")]
+harness-test-db:
+    cd {{harness}} && uv run pytest -m db
+
+# A focused selector for iterating on the language-contract diagnostics, and
+# deliberately no gate's dependency: it cuts across the scheduling partition, so
+# an aggregate composing it would run these tests a second time.
+[metadata("runtime:medium")]
+[doc("Focused: the language-contract diagnostics' own tests.")]
+harness-test-contract-tools:
+    cd {{harness}} && uv run pytest tests/contract_tools
 
 # ===========================================================================
 # Language: Python. The uv workspace lives under languages/python/packages/*;
 # these fan out into it via uv. Recipe names (`python-static`, `python-verify`)
 # are pinned by languages/python/spec/python.md §10.
 # ===========================================================================
-
-python := "languages/python"
 
 # Every database-free §10 row: ruff (lint + format check), Pyright strict, the
 # generated import-linter forbidden-edge complement (DAG-sync check) +
@@ -143,6 +202,7 @@ python := "languages/python"
 # `check_scope_ownership.py` sits beside it and before `lint-imports`, because
 # lint-imports can only judge the files a declared scope covers: a production
 # module outside every §7 scope passes it by never being examined.
+[doc("Every database-free Python quality row.")]
 python-static:
     cd {{python}} && uv run ruff format --check .
     cd {{python}} && uv run ruff check .
@@ -167,5 +227,6 @@ python-static:
 # online in COR-3 Phase 5+ (with the skip-reporting summary block that forbids
 # silent database-backed skips); until then the markers collect nothing and
 # pytest's no-tests exit code (5) is tolerated.
+[doc("Every database-free Python quality row plus the database-backed ones (Docker).")]
 python-verify: python-static
     cd {{python}} && uv run pytest -m "conformance or provider_contract or adapter_smoke or api_conformance" || [ "$?" -eq 5 ]

@@ -561,7 +561,7 @@ def test_schema_rejects_two_optimistic_locking_attributes_on_one_entity() -> Non
     `optimisticLocking: true` (m-descriptor `attribute` / m-opt-lock "The version
     column"; `metamodel.schema.json`'s 2020-12 `contains`/`minContains: 0`/
     `maxContains: 1`). A SCHEMA-level regression pin for that constraint itself:
-    without `maxContains: 1`, this two-flag shape passes `just core-schemas` and
+    without `maxContains: 1`, this two-flag shape passes `just core-check-schemas` and
     only the language-level descriptor validator (`validate_entity`) would catch
     it — reproduced red (the block temporarily removed) before this test was
     authored.

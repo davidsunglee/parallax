@@ -27,8 +27,8 @@ from reference_harness.neutral_type_vocab_check import (
     schema_pattern_variants,
 )
 
-# reference-harness/tests/ -> reference-harness/ -> repo root
-_REPO_ROOT = Path(__file__).resolve().parents[2]
+# reference-harness/tests/contract_tools/ -> tests/ -> reference-harness/ -> repo root
+_REPO_ROOT = Path(__file__).resolve().parents[3]
 _SPEC_DIR = _REPO_ROOT / "core" / "spec"
 _SCHEMA_PATH = _REPO_ROOT / "core" / "schemas" / "metamodel.schema.json"
 

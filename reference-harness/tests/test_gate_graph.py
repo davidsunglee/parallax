@@ -23,18 +23,21 @@ from reference_harness.gate_graph import (
         ("check-dbfree", RecipeName(None, "check", "dbfree")),
         ("show-gates", RecipeName(None, "show", "gates")),
         ("report-matrix", RecipeName(None, "report", "matrix")),
-        ("lint-md", RecipeName(None, "lint", "md")),
+        ("lint-markdown", RecipeName(None, "lint", "markdown")),
         ("harness-format-check", RecipeName("harness", "format-check", None)),
         ("harness-format", RecipeName("harness", "format", None)),
         ("python-check-dbfree", RecipeName("python", "check", "dbfree")),
         ("python-test-provider-contract", RecipeName("python", "test", "provider-contract")),
         ("core-check-slice-profiles", RecipeName("core", "check", "slice-profiles")),
-        ("verify", RecipeName(None, "verify", None)),
-        ("matrix", RecipeName(None, "matrix", None)),
-        ("python-static", RecipeName("python", "static", None)),
-        ("core-dep-graph", RecipeName("core", "dep-graph", None)),
-        ("core-language-spec-check", RecipeName("core", "language-spec-check", None)),
-        ("oracle-typecheck", RecipeName("oracle", "typecheck", None)),
+        ("harness-test-contract-tools", RecipeName("harness", "test", "contract-tools")),
+        # Deliberately not repository recipes: a name outside the grammar must still
+        # decompose, so the caller reports what it found rather than failing to read
+        # the graph containing it.
+        ("smoke", RecipeName(None, "smoke", None)),
+        ("python-smoke", RecipeName("python", "smoke", None)),
+        ("core-model-sweep", RecipeName("core", "model-sweep", None)),
+        ("core-graph-check", RecipeName("core", "graph-check", None)),
+        ("java-typecheck", RecipeName("java", "typecheck", None)),
     ],
 )
 def test_names_decompose_into_scope_operation_and_qualifier(
@@ -229,7 +232,9 @@ def test_the_repository_graph_resolves_every_recipe_it_declares(
     repository_graph: GateGraph, repo_root: Path
 ) -> None:
     assert repository_graph.source == repo_root / "justfile"
-    assert {"show-gates", "verify", "lint"} <= {recipe.name for recipe in repository_graph.recipes}
+    assert {"check", "check-dbfree", "check-db", "show-gates"} <= {
+        recipe.name for recipe in repository_graph.recipes
+    }
     for recipe in repository_graph.recipes:
         closure = repository_graph.closure(recipe.name)
         assert closure[-1] is recipe

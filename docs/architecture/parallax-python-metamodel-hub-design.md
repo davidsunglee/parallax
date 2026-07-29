@@ -2668,7 +2668,7 @@ Acceptance requires:
 - the core `dependency-graph` block no longer contains
   `m-pk-gen --> m-descriptor`, `m-inheritance --> m-descriptor`, or
   `m-value-object --> m-descriptor`, no behavioral module depends on
-  `m-descriptor`, and `just core-dep-graph` stays green;
+  `m-descriptor`, and `just core-check-module-graph` stays green;
 - §7 of the Python spec and the DAG-sync tool map `m-metamodel`,
   `m-model-formation`, and `m-relationship` to `parallax.core.metamodel`,
   `parallax.core.model_formation`, and `parallax.core.relationship`; no
@@ -2919,10 +2919,8 @@ by COR-51. Program-level acceptance requires:
 Run core gates from the repository root:
 
 ```text
-just core-dep-graph
-just core-schemas
-just core-contract-tools
-just lint-md
+just core-check
+just lint-markdown
 ```
 
 After a core module-graph edit, regenerate and verify Python enforcement from

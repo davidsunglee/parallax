@@ -153,7 +153,7 @@ _EXEMPT_TREES = ("docs/research/reladomo", "core/compatibility/descriptor-errors
 # fixtures.
 _EXEMPT_FILES = {
     "reference-harness/src/reference_harness/retired_vocab_check.py",
-    "reference-harness/tests/test_retired_vocab_check.py",
+    "reference-harness/tests/contract_tools/test_retired_vocab_check.py",
 }
 
 

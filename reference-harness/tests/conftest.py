@@ -1,4 +1,4 @@
-"""Fixtures shared across the harness suite."""
+"""Fixtures shared across the harness suite, and the scheduling partition."""
 
 from __future__ import annotations
 
@@ -12,6 +12,24 @@ from reference_harness.gate_graph import GateGraph, load_graph
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _GATE_GRAPH_FIXTURES = Path(__file__).parent / "fixtures" / "gate-graphs"
+
+# The designated entry points to a live database. A test reaching one by any other
+# route would be classified `dbfree` while needing a container.
+_DATABASE_FIXTURES = frozenset({"provider"})
+
+
+def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
+    """Assign each collected item its scheduling class.
+
+    The class is read off the item's resolved fixture closure rather than
+    authored beside the test, so it covers indirect requests, is decided per
+    item rather than per module, and can be neither absent nor doubled. An item
+    that is not a test function requests no fixture and is therefore `dbfree`.
+    """
+    for item in items:
+        closure = item.fixturenames if isinstance(item, pytest.Function) else ()
+        needs_database = bool(_DATABASE_FIXTURES.intersection(closure))
+        item.add_marker(pytest.mark.db if needs_database else pytest.mark.dbfree)
 
 
 @pytest.fixture(scope="session")

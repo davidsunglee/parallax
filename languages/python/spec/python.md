@@ -2426,8 +2426,9 @@ subsection of the template is deleted from this completed spec.
 | Database-backed verification | testcontainers Postgres profiles | §6 profile definitions | `uv run pytest -m "conformance or provider_contract or adapter_smoke"` | `python-database` job | required profiles `pg-full`, provider contract, adapter smoke; every skipped check is reported with a reason in the session summary; silent skips are forbidden and any CI skip fails |
 
 - **Storage Layout contract verification.** Before the target advertises the
-  expanded claim, `just core-dep-graph`, both canonical slice inspections, and
-  `just core-language-spec-check languages/python/spec/python.md` prove the
+  expanded claim, `just core-check-module-graph`, `just core-check-slice-profiles`,
+  both canonical slice inspections, and
+  `just core-show-language-spec languages/python/spec/python.md` prove the
   catalog/manifest/claim boundary; focused unit tests prove the Rule Set,
   compiler, facet, and profile wiring; and compile/conformance intersections
   selected by `--parallax-tags m-storage-layout` prove every physical consumer.

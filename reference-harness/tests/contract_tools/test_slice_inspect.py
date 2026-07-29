@@ -10,7 +10,7 @@ import yaml
 
 from reference_harness.slice_inspect import main
 
-_REPO_ROOT = Path(__file__).resolve().parents[2]
+_REPO_ROOT = Path(__file__).resolve().parents[3]
 _SPEC_DIR = _REPO_ROOT / "core" / "spec"
 _COMPATIBILITY_ROOT = _REPO_ROOT / "core" / "compatibility"
 

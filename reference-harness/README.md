@@ -33,6 +33,8 @@ src/reference_harness/
     ├── __init__.py    # the DatabaseProvider protocol (the seam)
     └── postgres.py    # Testcontainers Postgres provider (dialect = "postgres")
 tests/
+├── conftest.py            # shared fixtures; derives each item's dbfree/db scheduling class
+├── contract_tools/        # the language-contract diagnostics' own tests
 └── test_compatibility.py  # pytest: discover cases, run each through run_case per provider
 ```
 
@@ -49,7 +51,8 @@ uv run python -m reference_harness.language_spec_validate ../languages/<target>/
 uv run ruff format --check .
 uv run ruff check .
 uv run basedpyright
-uv run pytest          # boots Postgres via Testcontainers (Docker required)
+uv run pytest -m dbfree   # no database provider is reached
+uv run pytest -m db       # boots Postgres via Testcontainers (Docker required)
 uv run python -m reference_harness.matrix ../core/compatibility
 uv run python -m reference_harness.show_gates ..
 ```
