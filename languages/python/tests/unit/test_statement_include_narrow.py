@@ -118,15 +118,41 @@ def test_include_of_a_narrowed_path_serializes_the_hop_narrow() -> None:
 def test_reaching_an_inherited_relationship_through_a_subtype_guards_the_path_root() -> None:
     # `owner` is declared once, on the abstract root, so a subtype does not
     # redeclare it: `Dog.owner` keeps the one relationship identity `Animal.owner`
-    # and adds the guard beside `segments`, never a per-subtype relationship and
-    # never a segment narrow.
+    # and records `Dog` as the path's SOURCE, which the query turns into the guard
+    # beside `segments` — never a per-subtype relationship and never a segment
+    # narrow.
     path = Dog.owner
     assert path.segments == (PathSegment(rel="Animal.owner"),)
-    assert path.root_narrow == PathRootNarrow(entity="Animal", to=("Dog",))
+    assert path.source == "Dog"
+    op = Animal.where().include(path).operation()
+    assert isinstance(op, DeepFetch)
+    assert op.paths[0].narrow == PathRootNarrow(entity="Animal", to=("Dog",))
+
+
+def test_a_subtype_declared_relationship_guards_the_path_root_the_same_way() -> None:
+    # `handler` is declared BY `Dog`, so the path's relationship identity and its
+    # access source name the same Entity. The guard follows from the source against
+    # the QUERIED position, not from that comparison, so a subtype-declared path
+    # rooted at the family root guards exactly as an inherited one does.
+    path = sm.Dog.handler
+    assert path.segments == (PathSegment(rel="Dog.handler"),)
+    assert path.source == "Dog"
+    op = sm.Animal.where().include(path).operation()
+    assert isinstance(op, DeepFetch)
+    assert op.paths[0].narrow == PathRootNarrow(entity="Animal", to=("Dog",))
+
+
+def test_a_subtype_declared_relationship_queried_at_its_own_position_guards_nothing() -> None:
+    # The same path rooted at `Dog` starts from every queried object already.
+    op = sm.Dog.where().include(sm.Dog.handler).operation()
+    assert isinstance(op, DeepFetch)
+    assert op.paths[0].narrow is None
 
 
 def test_reaching_a_relationship_through_its_declaring_class_guards_nothing() -> None:
-    assert Animal.owner.root_narrow is None
+    op = Animal.where().include(Animal.owner).operation()
+    assert isinstance(op, DeepFetch)
+    assert op.paths[0].narrow is None
 
 
 def test_include_through_two_subtypes_authors_two_guarded_paths() -> None:
@@ -168,6 +194,16 @@ def test_a_root_guard_outside_the_queried_position_is_rejected_at_build() -> Non
     with pytest.raises(OperationRejectedError) as exc:
         Pet.where().include(WildBoar.owner)
     assert exc.value.rule == "narrow-outside-position"
+
+
+def test_a_statement_narrow_does_not_restrict_which_root_guards_are_legal() -> None:
+    # `.narrow(...)` filters the RESULT while a guard selects sources, so legality
+    # is measured against the queried POSITION. A guard disjoint from the narrowed
+    # result is therefore accepted and simply admits no queried object — the same
+    # observation as a guard no result row happens to match.
+    op = Animal.where().narrow(Cat).include(Dog.owner).operation()
+    assert isinstance(op, DeepFetch)
+    assert op.paths[0].narrow == PathRootNarrow(entity="Animal", to=("Dog",))
 
 
 # --------------------------------------------------------------------------- #

@@ -158,7 +158,7 @@ distinctness rule *falls out* rather than being asserted separately:
 |---|---|---|
 | equal / equivalent | `to: [Pet]` and `to: [Cat, Dog]` over the same family | **1** — they deduplicate |
 | disjoint | `to: [Dog]` and `to: [Cat]` | 2 — neither fills anything the other does |
-| overlapping | `to: [Dog]` and `to: [Cat, Dog]` | 2 — the shared roots' view is filled twice, identically |
+| overlapping | `to: [Dog, WildBoar]` and `to: [Cat, Dog]` | 2 — the shared roots' view is filled twice, identically |
 | containment (including broad) | no guard, and `to: [Dog]` | 2 — the guarded hop fetches nothing new |
 
 Every **proper** guard resolves to a strict subset of the queried position, so

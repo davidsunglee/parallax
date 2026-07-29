@@ -1,0 +1,95 @@
+# Two guarded branches over one relationship DIVERGE at the next level, and each
+# deeper hop descends from its own branch's parents (m-deep-fetch, m-inheritance).
+#
+# Three paths guard `Animal.owner` at the root: to {Dog}, to {WildBoar}, and to
+# {Dog} again continuing through `Person.pets`. The third path's first hop
+# deduplicates onto the first path's, so `1 + L` = 4 — the Dog owners (10, 11), the
+# WildBoar owner (12), and the pets of the DOG branch's owners alone. The semantic
+# distinction the case pins down is branch provenance: the two guarded owner hops
+# fill the same ordinary `owner` view but keep separate parent sets, so the `pets`
+# level is keyed by 10 and 11 — never by 12, the owner the WildBoar branch reached
+# just before it. Alice and Bob therefore carry `pets`, while Carol, reached only
+# through the WildBoar branch, carries none at all: the same relationship, fetched
+# for one branch and not the other, is exactly what the extra statement buys.
+# Whiskers, a Cat, is admitted by neither guard and so carries no `owner` key.
+model: models/animal.yaml
+tags: [m-deep-fetch, m-inheritance, m-op-algebra, m-sql, table-per-hierarchy, narrow, deep-fetch, familyVariant, slice-snapshot-1, slice-managed-1]
+shape: read
+compileEligibility:
+  mode: run-only
+  reason: query-result-dependent
+  note: "deep-fetch child levels - each guarded owner hop binds its person-table IN-list from its own guard's rows of the root query result, and the pets hop binds its animal-table IN-list from the Dog branch's owner ids, so the child emissions depend on a query result"
+when:
+  targetEntity: Animal
+  operation:
+    deepFetch:
+      operand:
+        all: {}
+      paths:
+        - { narrow: { entity: Animal, to: [Dog] }, segments: [{ rel: Animal.owner }] }
+        - { narrow: { entity: Animal, to: [WildBoar] }, segments: [{ rel: Animal.owner }] }
+        - narrow: { entity: Animal, to: [Dog] }
+          segments:
+            - { rel: Animal.owner }
+            - { rel: Person.pets }
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.kind, t0.name, t0.owner_id, t0.license_id, t0.indoor, t0.bark_volume, t0.tusk_length from animal t0
+    - sql:
+        postgres: select t0.id, t0.name from person t0 where t0.id in (?, ?)
+      binds: [10, 11]
+    - sql:
+        postgres: select t0.id, t0.name from person t0 where t0.id in (?)
+      binds: [12]
+    - sql:
+        postgres: select t0.id, t0.kind, t0.name, t0.owner_id, t0.license_id, t0.indoor, t0.bark_volume from animal t0 where t0.owner_id in (?, ?) and t0.kind in (?, ?)
+      binds: [10, 11, cat, dog]
+  referenceSql: select id, kind, name, owner_id, license_id, indoor, bark_volume, tusk_length from animal
+  graph:
+    Animal:
+      - id: 1
+        name: Rex
+        owner_id: 10
+        license_id: L-100
+        bark_volume: 7
+        indoor: null
+        tusk_length: null
+        familyVariant: Dog
+        owner:
+          id: 10
+          name: Alice
+          pets:
+            - { id: 1, name: Rex, owner_id: 10, license_id: L-100, bark_volume: 7, indoor: null, familyVariant: Dog }
+            - { id: 3, name: Whiskers, owner_id: 10, license_id: L-200, bark_volume: null, indoor: true, familyVariant: Cat }
+      - id: 2
+        name: Fido
+        owner_id: 11
+        license_id: L-101
+        bark_volume: 3
+        indoor: null
+        tusk_length: null
+        familyVariant: Dog
+        owner:
+          id: 11
+          name: Bob
+          pets:
+            - { id: 2, name: Fido, owner_id: 11, license_id: L-101, bark_volume: 3, indoor: null, familyVariant: Dog }
+      - id: 3
+        name: Whiskers
+        owner_id: 10
+        license_id: L-200
+        bark_volume: null
+        indoor: true
+        tusk_length: null
+        familyVariant: Cat
+      - id: 4
+        name: Tusker
+        owner_id: 12
+        license_id: null
+        bark_volume: null
+        indoor: null
+        tusk_length: 12.50
+        familyVariant: WildBoar
+        owner: { id: 12, name: Carol }
+  roundTrips: 4

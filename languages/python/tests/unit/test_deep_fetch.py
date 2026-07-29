@@ -378,6 +378,39 @@ def test_back_reference_hop_is_detected() -> None:
     assert order.parent_column == "order_id"
 
 
+def test_the_inverse_edge_is_recognized_below_the_first_level_too() -> None:
+    # `OrderStatus.orderItem` reverses the very hop the path arrived on
+    # (`OrderItem.statuses`), so it lands on that level's own parent row.
+    plan = _plan(
+        ORDERS,
+        "Order",
+        (_path(_seg("Order.items"), _seg("OrderItem.statuses"), _seg("OrderStatus.orderItem")),),
+    )
+    items, statuses, order_item = plan.levels
+    assert not items.is_back_reference
+    assert not statuses.is_back_reference
+    assert order_item.is_back_reference
+    assert order_item.back_reference_family == EntityIdentity("parallax.compatibility", "OrderItem")
+
+
+def test_a_to_one_revisit_over_another_association_is_an_ordinary_queried_level() -> None:
+    # `OrderStatus.order` is to-one and reaches the Order family the path is rooted
+    # at, but it reverses `Order.statuses` — NOT `OrderItem.statuses`, the hop the
+    # path arrived on. It therefore correlates on `order_status.order_id` while the
+    # path descended through `order_status.order_item_id`, so nothing ties the row
+    # it selects to the root order: resolving it from the graph-local identity map
+    # would attach an unmaterialized (or simply different) Order. It is queried.
+    plan = _plan(
+        ORDERS,
+        "Order",
+        (_path(_seg("Order.items"), _seg("OrderItem.statuses"), _seg("OrderStatus.order")),),
+    )
+    assert not any(level.is_back_reference for level in plan.levels)
+    order = plan.levels[2]
+    assert order.child_target == "parallax.compatibility.Order"
+    assert order.related_attr == "parallax.compatibility.Order.id"
+
+
 def test_ordinary_deeper_level_is_not_flagged_a_back_reference() -> None:
     plan = _plan(ORDERS, "Order", (_path(_seg("Order.items"), _seg("OrderItem.statuses")),))
     assert not any(level.is_back_reference for level in plan.levels)
@@ -393,6 +426,17 @@ def test_a_to_many_hop_revisiting_a_family_is_an_ordinary_queried_level() -> Non
     assert not owner.is_back_reference
     assert not pets.is_back_reference
     assert pets.child_target == "parallax.compatibility.Pet"
+
+
+def test_a_to_one_revisit_of_a_one_way_arrival_is_an_ordinary_queried_level() -> None:
+    # `Person.pets` is one-way — no declaration reverses it — so `Animal.owner`,
+    # which reverses `Person.animals`, is a different association reaching the same
+    # family. Nothing in the model pins its row to the person the path arrived from,
+    # so the level is queried rather than shortcut.
+    plan = _plan(ANIMAL, "Person", (_path(_seg("Person.pets"), _seg("Animal.owner")),))
+    pets, owner = plan.levels
+    assert not pets.is_back_reference
+    assert not owner.is_back_reference
 
 
 def test_a_path_cannot_continue_past_a_back_reference_level() -> None:

@@ -24,7 +24,7 @@ from typing import Any
 import pytest
 
 from reference_harness.case import Case, load_model
-from reference_harness.case_runner import CaseFailure, _hop_key_of, _materialize_family_variant
+from reference_harness.case_runner import CaseFailure, _materialize_family_variant, _resolve_hop
 from reference_harness.inheritance import (
     NARROW_EMPTY_EFFECTIVE_SET,
     NARROW_OUTSIDE_POSITION,
@@ -847,17 +847,43 @@ def test_hop_key_separates_a_broad_hop_from_a_redundant_narrow() -> None:
     assert broad_set == redundant_set == ["Cat", "Dog"]
     assert (broad_narrowed, redundant_narrowed) == (False, True)
 
-    broad_key = _hop_key_of(None, "Person.pets", broad_set, broad_narrowed)
-    redundant_key = _hop_key_of(None, "Person.pets", redundant_set, redundant_narrowed)
+    broad_key = _segment_key(family, {"rel": "Person.pets"})
+    redundant_key = _segment_key(family, {"rel": "Person.pets", "narrow": {"to": ["Pet"]}})
     assert broad_key != redundant_key
     assert narrowed_view_key(family, "Person.pets", redundant_set) == "pets[Cat,Dog]"
 
     # Two AUTHORED narrows resolving to that same set still converge on one hop —
     # dedup of equivalent spellings applies between two narrowed hops only.
-    equivalent_set, equivalent_narrowed = resolve_hop_effective_set(
-        family, "Person.pets", ["Cat", "Dog"]
+    equivalent = _segment_key(family, {"rel": "Person.pets", "narrow": {"to": ["Cat", "Dog"]}})
+    assert equivalent == redundant_key
+
+
+def _segment_key(
+    family: Family, segment: dict[str, Any], root_source: tuple[str, ...] | None = None
+) -> Any:
+    return _resolve_hop(family, segment, parent=None, root_source=root_source).key
+
+
+def test_hop_key_separates_two_branches_reaching_one_relationship() -> None:
+    # One relationship reached from two DIFFERENT parents is two hops: each gathers
+    # its keys from its own branch's rows, so they can neither share a statement nor
+    # share a bucket of fetched children (m-deep-fetch branch provenance).
+    family = Family(_animal_defs())
+    dog_branch = _segment_key(family, {"rel": "Animal.owner"}, ("Dog",))
+    boar_branch = _segment_key(family, {"rel": "Animal.owner"}, ("WildBoar",))
+    under_dog = _resolve_hop(
+        family, {"rel": "Person.pets"}, parent=dog_branch, root_source=None
+    ).key
+    under_boar = _resolve_hop(
+        family, {"rel": "Person.pets"}, parent=boar_branch, root_source=None
+    ).key
+    assert under_dog != under_boar
+    # A shared prefix still folds: the same relationship under the same parent is one
+    # hop however many paths walk into it.
+    assert (
+        _resolve_hop(family, {"rel": "Person.pets"}, parent=dog_branch, root_source=None).key
+        == under_dog
     )
-    assert _hop_key_of(None, "Person.pets", equivalent_set, equivalent_narrowed) == redundant_key
 
 
 def test_root_source_set_resolves_a_guard_against_the_queried_position() -> None:
@@ -883,8 +909,8 @@ def test_root_hop_identity_keys_on_the_resolved_source_set() -> None:
     family = Family(_animal_defs())
 
     def key(path: dict[str, Any]) -> Any:
-        return _hop_key_of(
-            resolve_root_source_set(family, "Animal", path), "Animal.owner", None, False
+        return _segment_key(
+            family, {"rel": "Animal.owner"}, resolve_root_source_set(family, "Animal", path)
         )
 
     broad = key({})
@@ -892,12 +918,14 @@ def test_root_hop_identity_keys_on_the_resolved_source_set() -> None:
     concrete_guard = key({"narrow": {"entity": "Animal", "to": ["Cat", "Dog"]}})
     dog_guard = key({"narrow": {"entity": "Animal", "to": ["Dog"]}})
     cat_guard = key({"narrow": {"entity": "Animal", "to": ["Cat"]}})
+    boar_dog_guard = key({"narrow": {"entity": "Animal", "to": ["Dog", "WildBoar"]}})
     whole_guard = key({"narrow": {"entity": "Animal", "to": ["Animal"]}})
 
     assert pet_guard == concrete_guard  # equal / equivalent -> one hop
     assert dog_guard != cat_guard  # disjoint -> two hops
-    assert dog_guard != pet_guard  # overlapping -> two hops
-    assert dog_guard != broad  # containment -> two hops
+    assert boar_dog_guard != pet_guard  # overlapping (shares Dog, neither nests) -> two hops
+    assert dog_guard != pet_guard  # containment (a guard inside a guard) -> two hops
+    assert dog_guard != broad  # containment (a guard inside broad) -> two hops
     assert whole_guard == broad  # a full-set guard IS the broad path
 
 

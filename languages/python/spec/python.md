@@ -226,22 +226,29 @@ mutations, exceptions, or exports.
   valid, while spelling `order_by(...)` before `narrow(Dog)` raises
   `QueryDefinitionError(query-target-mismatch)` immediately; later clauses
   never retroactively legalize an invalid intermediate query.
-  A root `FindQuery.narrow(...)` also authorizes first include hops authored
-  through a subtype, whether the relationship is declared by that subtype or
-  inherited. A path authored through the Find Query target remains broad across
-  the narrowed result. A path authored through a descendant is valid only when
-  its source Entity resolves to a nonempty subset of the already-established
-  root-narrowed set; that subset is the conditional source set. An empty or
-  broader source raises `QueryDefinitionError(query-target-mismatch)`. The
-  planner gathers keys only from matching root objects and populates the
-  ordinary relationship view only on those objects.
+  A first include hop may be authored through any descendant of the Find Query
+  target, whether that Entity declares the relationship or inherits it; the
+  Entity it is authored through is the path's conditional source set. Legality
+  is measured against the query's **effective position** — the target's own
+  position — so the source Entity must resolve to a nonempty subset of it. A
+  broad root therefore admits every descendant of its target, a path authored
+  through the target itself remains broad, and a source outside the position
+  raises `QueryDefinitionError(query-target-mismatch)` immediately; a later
+  clause never repairs it. Thus
+  `Animal.where(Animal.all).include(Dog.doghouse, Cat.ball_of_yarn)` is valid
+  and loads `doghouse` only on Dogs and `ball_of_yarn` only on Cats, while
+  `Pet.where(Pet.all).include(WildBoar.owner)` raises: the query's position is
+  `{Dog, Cat}` and the sibling `WildBoar` lies outside it.
+  A root `FindQuery.narrow(...)` constrains the **result**, not which sources
+  are legal. It narrows the queried objects a path can start from, so a source
+  disjoint from it admits none of them and populates the view nowhere — the
+  same observation as a source no result row happens to match, never an error.
   Thus
   `Animal.where(Animal.all).narrow(Dog, Cat).include(
   Animal.owner, Dog.doghouse, Cat.ball_of_yarn)` loads `owner` for Dogs and
   Cats, `doghouse` only for Dogs, and `ball_of_yarn` only for Cats.
-  `Animal.where(Animal.all).include(Dog.doghouse)` raises
-  `QueryDefinitionError(query-target-mismatch)` immediately; a later narrow
-  never repairs it.
+  The planner gathers keys only from matching root objects and populates the
+  ordinary relationship view only on those objects.
   A path retains the Entity Identity through which its first relationship was
   accessed separately from the canonical Relationship Identity. Consequently
   `Dog.owner` retains relationship identity `Animal.owner` while carrying Dog
