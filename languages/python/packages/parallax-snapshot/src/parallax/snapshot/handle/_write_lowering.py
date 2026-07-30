@@ -27,7 +27,6 @@ keeps its underscores.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Final
 
 from parallax.core import bitemp_write, opt_lock, txtime_write
 from parallax.core.base import INFINITY_LITERAL
@@ -36,12 +35,14 @@ from parallax.core.metamodel import EntityMetadata, Metamodel, TemporalDimension
 from parallax.core.sql_gen import Statement
 from parallax.core.storage_layout import EntityLayoutView
 from parallax.core.unit_work import (
+    LATEST_PINNED,
     Concurrency,
     KeyedWrite,
-    Observation,
     PlannedWrite,
     PredicateWrite,
+    TemporalObservation,
     TransactionInstant,
+    WriteObservation,
 )
 from parallax.snapshot.handle._family import (
     axis_columns,
@@ -53,25 +54,11 @@ from parallax.snapshot.handle._family import (
     version_attribute,
 )
 from parallax.snapshot.handle._finalize import finalize_item
-from parallax.snapshot.handle._keyed_sql import (
-    key_predicate,
-    lower_batched_update,
-    lower_delete,
-    lower_insert,
-    lower_multi_delete,
-    lower_predicate_write,
-    lower_update,
-)
+from parallax.snapshot.handle._keyed_sql import key_predicate, lower_insert
 from parallax.snapshot.handle._step_lowering import lower_step
 from parallax.snapshot.handle._write_types import LoweredStatement, WriteLoweringError
 
 __all__ = ["lower_temporal_close", "lower_write"]
-
-
-# The keyed mutation verbs the write seam lowers (the non-temporal write
-# triad). The temporal `*Until` / `terminate` verbs open / split / close
-# milestones and land with the temporal write path.
-_NON_TEMPORAL_VERBS: Final[frozenset[str]] = frozenset({"insert", "update", "delete"})
 
 
 def _layout(meta: Metamodel, entity: EntityMetadata) -> EntityLayoutView:
@@ -111,8 +98,14 @@ def lower_write(
 
     A write whose family finalizes (:func:`~parallax.snapshot.handle._finalize.
     finalize_item`) is settled into steps first and rendered one statement per
-    step, consulting neither the concurrency mode nor the instant on the way; the
-    dispatch below is what every remaining family still lowers through.
+    step, consulting neither the concurrency mode nor the instant on the way. That
+    is every non-temporal keyed write and every readless predicate write; the
+    dispatch below is what the temporal families still lower through.
+
+    The affected-rows expectation each finalized statement carries is still the
+    PLAN item's own (`m-opt-lock`), not the step's Affected Rows Policy: the
+    policy is settled but not yet enforced, so wiring it here would change
+    outcomes ahead of the enforcer that owns them.
 
     Dispatches on the entity's FAMILY-EFFECTIVE temporal classification (ADR 0026:
     an inheritance participant declares its as-of axes on the root alone, so a
@@ -122,32 +115,30 @@ def lower_write(
     plan with the `m-opt-lock` gate policy and this seam's existing column/tag
     machinery (reused unchanged for every chained INSERT — value objects,
     inheritance tag derivation, pk-gen markers all compose exactly as a non-temporal
-    insert's do, since a chained row is structurally an ordinary full-row insert). A
-    non-temporal entity's write may be single-row or a
-    COLLAPSED multi-row instruction the planner's collapse stage produced
-    (`m-batch-write`): a uniform-value IN-list UPDATE, or a non-versioned IN-list
-    DELETE.
-
-    A :class:`~parallax.core.unit_work.PredicateWrite` lowers READLESS
-    (`m-batch-write.md` "Predicate-selected readless forms") when its target is
-    unversioned and non-temporal — the only shape ever reaches here: a versioned
-    or temporal predicate write MATERIALIZES to per-row keyed writes at BUFFER
-    time (:func:`~parallax.snapshot.handle._predicate_writes.buffer_predicate`,
-    which ``Transaction``'s ``_where`` verbs only delegate to; ADR 0014), before
-    ever entering a :class:`FlushPlan`. An INHERITANCE-FAMILY target is refused
-    the same way — but NOT only upstream: this function is exported, and the
-    conformance engine's readless predicate-write step reaches it straight from
-    a deserialized instruction, so the buffer-time rejection is not on every
-    road. :func:`~parallax.snapshot.handle._keyed_sql.lower_predicate_write`
-    carries its own ``subtype-write-set-based-unsupported`` guard for that
-    reason (`python.md` §5 "rejected before SQL").
+    insert's do, since a chained row is structurally an ordinary full-row insert).
     """
-    steps = finalize_item(planned, meta)
+    steps = finalize_item(planned, meta, concurrency)
     if steps is not None:
-        return [LoweredStatement(lower_step(step, meta, dialect)) for step in steps]
+        # An ungated (locking-mode) shortfall on an observation-requiring write is
+        # the same non-retriable stale outcome an ungated close's is: no gate could
+        # have caused it, so it is a consistency violation rather than a detected
+        # lost update a re-read could resolve (`m-opt-lock`, ADR 0047).
+        expected = planned.expected_affected
+        return [
+            LoweredStatement(
+                lower_step(step, meta, dialect),
+                expected_affected=expected,
+                stale_error=expected is not None and not opt_lock.gates(concurrency),
+            )
+            for step in steps
+        ]
     instruction = planned.instruction
-    if isinstance(instruction, PredicateWrite):
-        return [LoweredStatement(lower_predicate_write(instruction, meta, dialect))]
+    if isinstance(instruction, PredicateWrite):  # pragma: no cover - finalization is total here
+        raise WriteLoweringError(
+            f"{instruction.target.entity!r}: a readless predicate {instruction.mutation!r} is "
+            "settled into a Planned Update or Planned Delete, never lowered from the "
+            "instruction"
+        )
     entity = entity_of(meta, instruction.entity)
     # Temporal classification MUST be the family-EFFECTIVE one (ADR 0026) — see the
     # docstring above.
@@ -170,58 +161,11 @@ def lower_write(
             planned.observation,
             tx_instant,
         )
-    if instruction.mutation not in _NON_TEMPORAL_VERBS:
-        raise WriteLoweringError(
-            f"{instruction.mutation!r} is a temporal milestone verb, and {entity.identity.name!r} "
-            "declares no temporal dimension — a milestone verb never applies to a "
-            "non-temporal entity (m-txtime-write / m-bitemp-write)"
-        )
-    if instruction.mutation == "insert":  # pragma: no cover - settled before this dispatch
-        raise WriteLoweringError(
-            f"insert on {entity.identity.name!r}: a non-temporal insert is settled into a "
-            "Planned Insert and rendered one statement per step, never from the instruction"
-        )
-    version_attr = version_attribute(meta, declaring_entity)
-    # An ungated (locking-mode) shortfall on an observation-requiring write is the
-    # same non-retriable stale outcome an ungated close's is: no gate could have
-    # caused it, so it is a consistency violation rather than a detected lost
-    # update a re-read could resolve (`m-opt-lock`, ADR 0047).
-    ungated_shortfall_is_stale = not opt_lock.gates(concurrency)
-    if instruction.mutation == "update":
-        if len(instruction.rows) > 1:
-            return [
-                LoweredStatement(
-                    lower_batched_update(entity, instruction, dialect, meta, version_attr)
-                )
-            ]
-        return [
-            LoweredStatement(
-                lower_update(
-                    entity,
-                    instruction,
-                    dialect,
-                    meta,
-                    version_attr,
-                    planned.observation,
-                    concurrency,
-                ),
-                expected_affected=planned.expected_affected,
-                stale_error=ungated_shortfall_is_stale,
-            )
-        ]
-    if len(instruction.rows) > 1:
-        return [
-            LoweredStatement(lower_multi_delete(entity, instruction, dialect, meta, version_attr))
-        ]
-    return [
-        LoweredStatement(
-            lower_delete(
-                entity, instruction, dialect, meta, version_attr, planned.observation, concurrency
-            ),
-            expected_affected=planned.expected_affected,
-            stale_error=ungated_shortfall_is_stale,
-        )
-    ]
+    raise WriteLoweringError(
+        f"{instruction.mutation!r} is a temporal milestone verb, and {entity.identity.name!r} "
+        "declares no temporal dimension — a milestone verb never applies to a "
+        "non-temporal entity (m-txtime-write / m-bitemp-write)"
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -242,27 +186,28 @@ def _lower_temporal_write(
     dialect: Dialect,
     meta: Metamodel,
     concurrency: Concurrency,
-    observation: Observation | None,
+    observation: WriteObservation | None,
     tx_instant: TransactionInstant,
 ) -> list[LoweredStatement]:
     # The milestone arithmetic reads the family's axes through the Temporal
     # Facet, so it takes the write's own target position rather than the
     # declaring one this seam resolves for its column machinery.
     target = entity_of(meta, instruction.entity)
+    observed = observation if isinstance(observation, TemporalObservation) else None
     plan_fn = bitemp_write.plan if _is_bitemporal(declaring_entity) else txtime_write.plan
     # Reaching a temporal write is what makes the attempt capture its instant;
     # every milestone bound below, and the close's own new `out_z`, derive from
     # that one value.
-    milestone_plan = plan_fn(instruction, meta, target, tx_instant.value(), observation)
-    if observation is not None:
+    milestone_plan = plan_fn(instruction, meta, target, tx_instant.value(), observed)
+    if observed is not None:
         # The REAL licensing check (`m-opt-lock` "Locking mode additionally
         # requires that the observation be of the current milestone"): every
         # engine-supplied temporal observation is latest-pinned by
-        # construction (a no-op here), but a real `Transaction.find` observes
-        # `observation.latest_pinned` from the read's own Transaction-Time pin
-        # — a locking-mode write whose only observation is historical or
-        # edge-pinned raises `HistoricalObservationError` here.
-        opt_lock.check_locking_license(concurrency, latest_pinned=observation.latest_pinned)
+        # construction (a no-op here), but a real `Transaction.find` records the
+        # read's own Transaction-Time pin as the observation's basis — a
+        # locking-mode write whose only observation is historical or edge-pinned
+        # raises `HistoricalObservationError` here.
+        opt_lock.check_locking_license(concurrency, observed.transaction_time_basis)
     gated = opt_lock.gates(concurrency)
     version_attr = version_attribute(meta, declaring_entity)  # always None for a temporal entity
     statements: list[LoweredStatement] = []
@@ -364,7 +309,7 @@ def lower_temporal_close(
     entity = entity_of(meta, entity_name)
     declaring_entity = declaring(meta, entity)
     if observed_tx_start is not None:
-        opt_lock.check_locking_license(concurrency, latest_pinned=True)
+        opt_lock.check_locking_license(concurrency, LATEST_PINNED)
     step = txtime_write.MilestoneClose(
         identity=identity,
         target_valid_end=observed_valid_end,

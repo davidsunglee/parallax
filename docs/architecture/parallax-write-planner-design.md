@@ -492,9 +492,20 @@ PlannedAssignments(
 ```
 
 Planned Assignments is nonempty, immutable, and duplicate-free. Unlike a
-Planned Row, it contains only concrete replacement values: no authored
-Assignment expressions and no generated-value expressions. Entity Layout
+Planned Row, it names only the members its step changes. Entity Layout
 continues to determine physical `SET` and bind order.
+
+**Amendment (implementation, COR-62).** Planned Assignments originally excluded
+generated-value expressions along with authored Assignment expressions. The
+exclusion of authored Assignment expressions stands. The blanket exclusion of
+generated values does not: `m-pk-gen`'s simulated sequence is a registry counter
+advanced by an ordinary `update`, and the advance is a value the *database*
+computes from the row being written — the same category as the `max` allocation
+an insert folds in, and the same one-key marker vocabulary in the write
+instruction schema. Planned Assignments therefore carry `PlannedValue`, and each
+generated value stays legal only at the statement position that can express it.
+The non-goal above concerns a deferred *mutation family* — an increment verb —
+which remains outside the algebra; the cell marker is not one.
 
 The first Python representation shares:
 

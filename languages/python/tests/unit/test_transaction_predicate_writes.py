@@ -142,7 +142,7 @@ def test_readless_delete_where_buffers_one_statement_no_read() -> None:
 
 def test_readless_update_where_reorders_assignments_to_layout_slot_order() -> None:
     # The SET clause orders by the target's Table Layout slots
-    # (`lower_predicate_write`'s own `_ordered_cells` reuse), never the
+    # (the settled step's own slot-ordered assignment cells), never the
     # AUTHORED assignment order -- reversing the two `.set(...)` calls below
     # (price before name, the opposite of Order's own slot order) emits
     # BYTE-IDENTICAL SQL to the natural order (mirrors `test_full_row_insert_

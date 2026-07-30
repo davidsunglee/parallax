@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import dataclasses
 import datetime as dt
+from collections.abc import Mapping
 
 import pytest
 
@@ -31,10 +32,12 @@ from parallax.core.unit_work import (
     Concurrency,
     FixedClock,
     KeyedWrite,
-    Observation,
     PlannedWrite,
+    PredecessorRow,
+    TemporalObservation,
     TransactionSettings,
     UnitOfWork,
+    WriteObservation,
     run_unit_of_work,
 )
 from parallax.descriptor._records import Metamodel
@@ -69,12 +72,37 @@ SUPPLIER = _MODELS["supplier"]
 BRANCH = _MODELS["branch"]
 
 
+def _observed(
+    *,
+    tx_start: str,
+    tx_end: str = "infinity",
+    valid_start: str | None = None,
+    valid_end: str | None = None,
+    payload: Mapping[str, object] | None = None,
+) -> TemporalObservation:
+    """The predecessor milestone a find would have recorded whole.
+
+    Every corpus model spells its axis bounds `tx_start`/`tx_end` and, when it
+    declares Valid Time, `valid_start`/`valid_end`, so one builder serves them
+    all: the bounds join ``payload`` inside the one Predecessor Row, which is
+    where a close reads its address and its gate from.
+    """
+    members: dict[str, object] = dict(payload or {})
+    members["tx_start"] = tx_start
+    members["tx_end"] = tx_end
+    if valid_start is not None:
+        members["valid_start"] = valid_start
+    if valid_end is not None:
+        members["valid_end"] = valid_end
+    return TemporalObservation(predecessor=PredecessorRow(members=members))
+
+
 def _lower_full(
     instruction: KeyedWrite,
     meta: Metamodel,
     tx_instant: str,
     *,
-    observation: Observation | None = None,
+    observation: WriteObservation | None = None,
     dialect: Dialect = POSTGRES,
     concurrency: Concurrency = "locking",
 ) -> list[LoweredStatement]:
@@ -92,7 +120,7 @@ def _lower(
     meta: Metamodel,
     tx_instant: str,
     *,
-    observation: Observation | None = None,
+    observation: WriteObservation | None = None,
     dialect: Dialect = POSTGRES,
     concurrency: Concurrency = "locking",
 ) -> list[tuple[str, tuple[object, ...]]]:
@@ -126,11 +154,11 @@ def test_audit_only_insert_opens_a_current_milestone() -> None:
 
 def test_audit_only_update_closes_then_chains_the_authored_full_row() -> None:
     # m-txtime-write-002: an ungated (locking-mode) close, then a chain carrying
-    # the instruction's OWN authored FULL row. The observation carries no
-    # `payload`, so merging is an identity and the chain is exactly the
-    # authored row.
+    # the instruction's OWN authored FULL row. The row names every member the
+    # predecessor could have carried forward, so merging is an identity and the
+    # chain is exactly the authored row.
     update = KeyedWrite("update", "Balance", ({"id": 1, "acctNum": "A", "value": 150.00},))
-    observation = Observation(tx_start="2024-01-01T00:00:00+00:00")
+    observation = _observed(tx_start="2024-01-01T00:00:00+00:00")
     statements = _lower(update, BALANCE, "2024-06-01T00:00:00+00:00", observation=observation)
     assert statements == [
         (
@@ -159,7 +187,7 @@ def test_audit_only_terminate_closes_only() -> None:
 def test_audit_only_update_carries_every_new_attribute() -> None:
     # m-txtime-write-004: the chained row carries ALL corrected attributes.
     update = KeyedWrite("update", "Balance", ({"id": 1, "acctNum": "B", "value": 250.00},))
-    observation = Observation(tx_start="2024-01-01T00:00:00+00:00")
+    observation = _observed(tx_start="2024-01-01T00:00:00+00:00")
     statements = _lower(update, BALANCE, "2024-06-01T00:00:00+00:00", observation=observation)
     assert statements[1] == (
         "insert into balance(bal_id, acct_num, val, in_z, out_z) values (?, ?, ?, ?, ?)",
@@ -174,7 +202,7 @@ def test_audit_only_update_merges_a_sparse_row_onto_the_observed_payload() -> No
     # a full row) merges onto the observed payload, so the chained row still
     # carries `acctNum` even though the instruction's own row never named it.
     sparse_update = KeyedWrite("update", "Balance", ({"id": 1, "value": 150.00},))
-    observation = Observation(
+    observation = _observed(
         tx_start="2024-01-01T00:00:00+00:00", payload={"id": 1, "acctNum": "A", "value": 100.00}
     )
     statements = _lower(
@@ -194,7 +222,7 @@ def test_audit_only_plan_merges_the_sparse_row_at_the_planner_seam() -> None:
     from parallax.core import txtime_write
 
     sparse_update = KeyedWrite("update", "Balance", ({"id": 1, "value": 150.00},))
-    observation = Observation(
+    observation = _observed(
         tx_start="2024-01-01T00:00:00+00:00", payload={"id": 1, "acctNum": "A", "value": 100.00}
     )
     model, entity = _accepted("Balance", BALANCE)
@@ -211,13 +239,16 @@ def test_audit_only_plan_merges_the_sparse_row_at_the_planner_seam() -> None:
     }
 
 
-def test_audit_only_plan_carries_a_full_row_unchanged_when_no_payload_is_observed() -> None:
-    # The compile-sweep/case-driven engine never populates `Observation.payload`
-    # for an audit-only write (it authors FULL rows directly, `_strip_
-    # observation`) — the merge is then a strict identity, so no exercised
-    # compile-lane emission can ever change (the Part 2 byte-identical guard).
+def test_audit_only_plan_carries_a_full_authored_row_over_every_observed_member() -> None:
+    # The corpus-driven engine authors FULL rows for an audit-only write, so the
+    # merge onto the predecessor is a strict identity even though the
+    # predecessor carries every member: the authored row overrides each one it
+    # names, and no exercised compile-lane emission can change.
     full_update = KeyedWrite("update", "Balance", ({"id": 1, "acctNum": "A", "value": 150.00},))
-    observation = Observation(tx_start="2024-01-01T00:00:00+00:00")  # no payload at all
+    observation = _observed(
+        tx_start="2024-01-01T00:00:00+00:00",
+        payload={"id": 1, "acctNum": "STALE", "value": 999.00},
+    )
     from parallax.core import txtime_write
 
     model, entity = _accepted("Balance", BALANCE)
@@ -232,7 +263,7 @@ def test_audit_only_close_is_ungated_under_locking_regardless_of_observation() -
     # m-txtime-write-005: a locking-mode close never binds `in_z`, even when one
     # was observed.
     update = KeyedWrite("update", "Balance", ({"id": 1, "acctNum": "A", "value": 175.00},))
-    observation = Observation(tx_start="2024-06-01T00:00:00+00:00")
+    observation = _observed(tx_start="2024-06-01T00:00:00+00:00")
     statements = _lower_full(
         update, BALANCE, "2024-09-01T00:00:00+00:00", observation=observation, concurrency="locking"
     )
@@ -245,7 +276,7 @@ def test_audit_only_close_is_ungated_under_locking_regardless_of_observation() -
 def test_audit_only_close_gates_on_observed_in_z_under_optimistic() -> None:
     # m-txtime-write-006: the gated close binds the observed in_z LAST.
     close_only = KeyedWrite("terminate", "Balance", ({"id": 1},))
-    observation = Observation(tx_start="2024-06-01T00:00:00+00:00")
+    observation = _observed(tx_start="2024-06-01T00:00:00+00:00")
     statements = _lower_full(
         close_only,
         BALANCE,
@@ -293,7 +324,7 @@ def test_bitemporal_update_until_splits_head_middle_tail() -> None:
         valid_from="2024-03-01T00:00:00+00:00",
         until="2024-09-01T00:00:00+00:00",
     )
-    observation = Observation(
+    observation = _observed(
         tx_start="2024-01-01T00:00:00+00:00",
         valid_start="2024-01-01T00:00:00+00:00",
         valid_end="infinity",
@@ -358,7 +389,7 @@ def test_bitemporal_terminate_until_chains_head_and_tail_no_middle() -> None:
         valid_from="2024-03-01T00:00:00+00:00",
         until="2024-09-01T00:00:00+00:00",
     )
-    observation = Observation(
+    observation = _observed(
         tx_start="2024-01-01T00:00:00+00:00",
         valid_start="2024-01-01T00:00:00+00:00",
         valid_end="infinity",
@@ -408,7 +439,7 @@ def test_bitemporal_plain_update_splits_head_and_new_tail_only() -> None:
         ({"id": 1, "value": 200.00},),
         valid_from="2024-06-01T00:00:00+00:00",
     )
-    observation = Observation(
+    observation = _observed(
         tx_start="2024-01-01T00:00:00+00:00",
         valid_start="2024-01-01T00:00:00+00:00",
         valid_end="infinity",
@@ -454,7 +485,7 @@ def test_bitemporal_plain_terminate_chains_head_only() -> None:
     terminate = KeyedWrite(
         "terminate", "Position", ({"id": 1},), valid_from="2024-06-01T00:00:00+00:00"
     )
-    observation = Observation(
+    observation = _observed(
         tx_start="2024-01-01T00:00:00+00:00",
         valid_start="2024-01-01T00:00:00+00:00",
         valid_end="infinity",
@@ -526,7 +557,7 @@ def test_bitemporal_close_addresses_a_finite_observed_valid_end(
     # this close means to close. The bound value is that end — never the
     # rectangle's start, and never `infinity` — in BOTH modes; concurrency decides
     # only whether the `in_z` gate follows it.
-    observed = Observation(
+    observed = _observed(
         tx_start="2023-11-01T00:00:00+00:00",
         valid_start="2024-01-01T00:00:00+00:00",
         valid_end="2024-07-01T00:00:00+00:00",
@@ -547,11 +578,14 @@ def test_bitemporal_close_addresses_a_finite_observed_valid_end(
         ("2024-02-15T00:00:00+00:00", 1, "2024-07-01T00:00:00+00:00", "infinity", *gate_binds),
     )
     addressed_valid_end = close[1][2]
-    assert addressed_valid_end == observed.valid_end
-    assert addressed_valid_end != observed.valid_start
+    assert addressed_valid_end == observed.predecessor.member("valid_end")
+    assert addressed_valid_end != observed.predecessor.member("valid_start")
     # The successors reconstruct exactly the addressed rectangle's window,
     # `[valid_start, valid_end)`, split at the correction's `validFrom`.
-    assert head[1][3:5] == (observed.valid_start, "2024-04-01T00:00:00+00:00")
+    assert head[1][3:5] == (
+        observed.predecessor.member("valid_start"),
+        "2024-04-01T00:00:00+00:00",
+    )
     assert tail[1][3:5] == ("2024-04-01T00:00:00+00:00", addressed_valid_end)
 
 
@@ -684,7 +718,7 @@ def test_a_temporal_concrete_observes_its_own_declared_members_not_the_roots() -
     )
     result = FindResult(nodes=(node,), execution=Execution(()), all_nodes=(("SpotQuote", node),))
 
-    def observe(uow: UnitOfWork) -> Observation | None:
+    def observe(uow: UnitOfWork) -> WriteObservation | None:
         record_observations(uow, model, result, Pin(tx_time=LATEST))
         return uow.observation_for(("SpotQuote", (("id", 1),)))
 
@@ -695,8 +729,14 @@ def test_a_temporal_concrete_observes_its_own_declared_members_not_the_roots() -
         meta=model,
         flush_executor=lambda _plan: None,
     )
-    assert observation is not None
-    assert observation.payload == {"id": 1, "price": 50.00, "symbol": "ACME"}
+    assert isinstance(observation, TemporalObservation)
+    assert dict(observation.predecessor.members) == {
+        "id": 1,
+        "price": 50.00,
+        "symbol": "ACME",
+        "tx_start": "2024-01-01T00:00:00+00:00",
+        "tx_end": "infinity",
+    }
 
     update = KeyedWrite("update", "SpotQuote", ({"id": 1, "price": 60.00},))
     _close, chain = _lower(update, QUOTE, "2024-06-01T00:00:00+00:00", observation=observation)
@@ -722,7 +762,7 @@ def test_milestone_close_selects_operation_identities_not_the_physical_key() -> 
     terminate = KeyedWrite(
         "terminate", "Bond", ({"id": 1},), valid_from="2024-06-01T00:00:00+00:00"
     )
-    observation = Observation(
+    observation = _observed(
         tx_start="2024-01-01T00:00:00+00:00",
         valid_start="2024-01-01T00:00:00+00:00",
         valid_end="infinity",
@@ -783,7 +823,7 @@ def test_tph_bitemporal_terminate_carries_the_tag_guard() -> None:
     terminate = KeyedWrite(
         "terminate", "Bond", ({"id": 1},), valid_from="2024-06-01T00:00:00+00:00"
     )
-    observation = Observation(
+    observation = _observed(
         tx_start="2024-01-01T00:00:00+00:00",
         valid_start="2024-01-01T00:00:00+00:00",
         valid_end="infinity",
@@ -802,7 +842,7 @@ def test_tpcs_bitemporal_terminate_has_no_tag_guard() -> None:
     terminate = KeyedWrite(
         "terminate", "DepositRate", ({"id": 1},), valid_from="2024-06-01T00:00:00+00:00"
     )
-    observation = Observation(
+    observation = _observed(
         tx_start="2024-01-01T00:00:00+00:00",
         valid_start="2024-01-01T00:00:00+00:00",
         valid_end="infinity",
@@ -824,7 +864,7 @@ def test_tph_bitemporal_terminate_until_chains_head_and_tail() -> None:
         valid_from="2024-03-01T00:00:00+00:00",
         until="2024-09-01T00:00:00+00:00",
     )
-    observation = Observation(
+    observation = _observed(
         tx_start="2024-01-01T00:00:00+00:00",
         valid_start="2024-01-01T00:00:00+00:00",
         valid_end="infinity",
@@ -849,7 +889,7 @@ def test_tpcs_bitemporal_terminate_until_chains_head_and_tail() -> None:
         valid_from="2024-03-01T00:00:00+00:00",
         until="2024-09-01T00:00:00+00:00",
     )
-    observation = Observation(
+    observation = _observed(
         tx_start="2024-01-01T00:00:00+00:00",
         valid_start="2024-01-01T00:00:00+00:00",
         valid_end="infinity",
@@ -866,7 +906,7 @@ def test_tpcs_bitemporal_terminate_until_chains_head_and_tail() -> None:
 def test_tph_txtime_optlock_composed_conflict_orders_tag_then_gate_last() -> None:
     # m-inheritance-105: tag guard rides identity predicates, in_z gate LAST.
     close_only = KeyedWrite("terminate", "MeterReading", ({"id": 1},))
-    observation = Observation(tx_start="2024-01-01T00:00:00+00:00")
+    observation = _observed(tx_start="2024-01-01T00:00:00+00:00")
     statements = _lower_full(
         close_only,
         READING,
@@ -899,7 +939,7 @@ def test_audit_only_update_carries_the_value_object_document_on_the_chain() -> N
         "phones": [],
     }
     update = KeyedWrite("update", "Supplier", ({"id": 1, "name": "Nordic Foods", "address": d2},))
-    observation = Observation(tx_start="2024-01-01T00:00:00+00:00")
+    observation = _observed(tx_start="2024-01-01T00:00:00+00:00")
     statements = _lower_full(update, SUPPLIER, "2024-06-01T00:00:00+00:00", observation=observation)
     close, chain = statements
     assert close.statement.sql == "update supplier set out_z = ? where sup_id = ? and out_z = ?"
@@ -927,7 +967,7 @@ def test_bitemporal_update_until_carries_the_value_object_document_on_every_chai
         valid_from="2024-03-01T00:00:00+00:00",
         until="2024-09-01T00:00:00+00:00",
     )
-    observation = Observation(
+    observation = _observed(
         tx_start="2024-01-01T00:00:00+00:00",
         valid_start="2024-01-01T00:00:00+00:00",
         valid_end="infinity",

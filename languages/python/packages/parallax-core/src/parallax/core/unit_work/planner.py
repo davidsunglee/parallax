@@ -64,6 +64,7 @@ from parallax.core.metamodel import (
 )
 from parallax.core.unit_work.clock import TransactionInstant
 from parallax.core.unit_work.instructions import KeyedWrite, PredicateWrite, WriteInstruction
+from parallax.core.unit_work.observe import VersionObservation, WriteObservation
 
 __all__ = [
     "AtomicUnit",
@@ -72,7 +73,6 @@ __all__ = [
     "CollapsePolicy",
     "FlushPlan",
     "ObjectKey",
-    "Observation",
     "PlannedWrite",
     "object_key",
     "plan_flush",
@@ -137,63 +137,6 @@ _DELETE_VERBS: Final[frozenset[str]] = frozenset({"delete", "terminate", "termin
 
 
 @dataclass(frozen=True, slots=True)
-class Observation:
-    """A framework-owned per-object transaction observation (m-opt-lock, ADR 0013).
-
-    The optimistic-lock version and/or observed Transaction-Time start an
-    observation-requiring write retains, attached to a planned write at flush and
-    **never** carried on the durable instruction. It is mandatory in BOTH
-    concurrency modes (`m-opt-lock` "Locking license is validated before
-    planning") — optimistic mode binds it as the gate, locking mode is licensed
-    by the shared read lock the observing read took. Neutral here: this milestone
-    pairs it onto the plan; lowering the version gate or advance into SQL is the
-    composition layer's job.
-
-    ``valid_start`` / ``valid_end`` / ``payload`` extend the vocabulary for a
-    temporal observation (`m-txtime-write` / `m-bitemp-write`): ``valid_start``
-    is the observed rectangle's own Valid-Time
-    lower bound — the Valid-Time lower bound the head rectangle's upper bound derives
-    from (via :mod:`parallax.core.bitemp_write`'s planning), bound by no predicate of
-    the close itself; ``valid_end`` is the observed rectangle's
-    own Valid-Time upper bound — the tail rectangle's own upper bound, and the
-    Valid-Time component of the close's own ADDRESS (ADR 0046); ``payload``
-    is the observed row's OTHER columns (every scalar / value-object member besides
-    the milestone interval bounds) — the "prior rectangle" values a bitemporal split's
-    head/tail carry forward (`m-bitemp-write` "Head/tail old values come from the
-    observed prior rectangle"), and the values an audit-only chaining ``update``
-    merges a sparse authored row onto
-    (`~parallax.core.txtime_write.plan`'s own ``_merged_row``) so an unauthored field
-    is never silently dropped. ``valid_start`` / ``valid_end`` stay ``None`` for
-    a non-temporal or Transaction-Time-Only observation (neither declares Valid Time to
-    bound); all three are ``None`` for a non-temporal observation. This is
-    Python-internal vocabulary, NOT the serialized instruction (ADR 0013 stands): the
-    reserved ``observedVersion`` / ``observedTxStart`` control keys stay forbidden on a
-    write row; an observation attaches per row at flush, never carried on the
-    instruction.
-
-    ``latest_pinned`` (`m-opt-lock` "Locking mode additionally requires that the
-    observation be of the current milestone") is the historical-observation
-    LICENSING bit `~parallax.core.opt_lock.check_locking_license` consumes: a
-    versioned non-temporal observation is trivially latest-pinned (its single
-    row is always current) and every engine-supplied temporal observation is
-    latest-pinned by construction (the conformance engine's case-local shadow
-    tracker only ever tracks the CURRENT milestone) — both default it ``True``
-    without ever setting it explicitly. A REAL `Transaction.find` observation
-    of a TEMPORAL entity sets it from the read's own Transaction-Time pin
-    (`LATEST` or an omitted axis ⇒ ``True``; an explicit as-of instant ⇒
-    ``False``) — the one caller that can ever observe something other than the
-    current milestone.
-    """
-
-    version: int | None = None
-    tx_start: str | None = None
-    valid_start: str | None = None
-    valid_end: str | None = None
-    payload: Mapping[str, object] | None = None
-    latest_pinned: bool = True
-
-
-@dataclass(frozen=True, slots=True)
 class PlannedWrite:
     """One execution-ordered item of the neutral flush plan: a (coalesced) write
     instruction, its bound observation (``None`` when none was recorded), and
@@ -213,7 +156,7 @@ class PlannedWrite:
     """
 
     instruction: WriteInstruction
-    observation: Observation | None = None
+    observation: WriteObservation | None = None
     expected_affected: int | None = None
 
 
@@ -291,7 +234,7 @@ class FlushPlan:
 
 def plan_flush(
     buffer: Sequence[BufferItem],
-    observations: Mapping[ObjectKey, Observation],
+    observations: Mapping[ObjectKey, WriteObservation],
     tx_instant: TransactionInstant,
     model: Metamodel,
     *,
@@ -454,7 +397,7 @@ def _collapse(
     targets: _Targets,
     collapse: CollapsePolicy | None,
     group: CollapseGroupKey | None,
-    observations: Mapping[ObjectKey, Observation],
+    observations: Mapping[ObjectKey, WriteObservation],
 ) -> list[BufferItem]:
     """Merge each ADJACENT run of same-entity, same-mutation, single-row keyed
     writes into one multi-row instruction, per the injected ``collapse`` policy.
@@ -686,7 +629,7 @@ def _is_empty_keyed_update(instruction: WriteInstruction, targets: _Targets) -> 
 # --------------------------------------------------------------------------- #
 def _attach_observation(
     instruction: WriteInstruction,
-    observations: Mapping[ObjectKey, Observation],
+    observations: Mapping[ObjectKey, WriteObservation],
     targets: _Targets,
 ) -> PlannedWrite:
     key = _object_key(instruction, targets)
@@ -699,17 +642,16 @@ def _attach_observation(
 
 
 def _expected_affected(
-    instruction: WriteInstruction, observation: Observation | None
+    instruction: WriteInstruction, observation: WriteObservation | None
 ) -> int | None:
     """The affected-rows expectation `m-opt-lock` attaches at flush.
 
-    ``1`` for a keyed ``update``/``delete`` whose bound observation carries a
-    version (a versioned row this unit of work observed) — in EITHER
-    concurrency mode, so a vanished row is caught even under a locking-mode
-    write the version gate never guards. Nothing else ever carries a version
-    observation (a non-versioned entity's row, or a write whose row
-    carries its version as plain caller-authored data rather than a recorded
-    observation), so this reduces to the single check below without a
+    ``1`` for a keyed ``update``/``delete`` bound to a Version Observation (a
+    versioned row this unit of work observed) — in EITHER concurrency mode, so a
+    vanished row is caught even under a locking-mode write the version gate never
+    guards. Nothing else ever carries one (a non-versioned entity's row, or a
+    write whose row carries its version as plain caller-authored data rather than
+    a recorded observation), so this reduces to the single check below without a
     metamodel lookup of its own.
     """
     if not isinstance(instruction, KeyedWrite) or instruction.mutation not in (
@@ -717,6 +659,6 @@ def _expected_affected(
         *_DELETE_VERBS,
     ):
         return None
-    if observation is None or observation.version is None:
+    if not isinstance(observation, VersionObservation):
         return None
     return 1

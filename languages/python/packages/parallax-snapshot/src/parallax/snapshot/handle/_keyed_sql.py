@@ -1,34 +1,33 @@
 """``parallax.snapshot.handle._keyed_sql`` — SQL DML bodies for keyed writes.
 
-The output side of the write-lowering boundary: everything here RENDERS a
+The output side of the write-lowering boundary for the families still lowered
+from the instruction itself: everything here RENDERS a
 :class:`~parallax.core.sql_gen.Statement` (SQL text plus ordered binds) for one
-already-decided mutation. The deciding — temporal vs plain, single vs collapsed,
-which milestone rows close and which chain — belongs one level up in
+already-decided mutation. The deciding — which milestone rows close and which
+chain — belongs one level up in
 :mod:`parallax.snapshot.handle._write_lowering`, which imports this module; the
-edge runs dispatch → builders and never back.
+edge runs dispatch → builders and never back. A family whose write finalization
+has landed renders through :mod:`parallax.snapshot.handle._step_lowering`
+instead, from a step that carries no undecided fact.
 
 Inside the handle package "write" keeps meaning the NEUTRAL instruction level
 (`m-unit-work`'s :class:`~parallax.core.unit_work.KeyedWrite`, `_write_types`,
 `_write_inputs`, `_write_lowering`); this is the one module named for the SQL
-side. It owns the shared column-ordering, key-predicate, and marker/tag-column
-discipline every builder reuses, so no form reinvents bind order. Every physical
-fact comes from the target's Storage Layout Entity view (`_family.entity_layout`)
-— its Table, its Table-ordered applicable slots, and its derived discriminator
-assignment. Semantic selections stay where they are decided: the family-effective
-primary key (`_family.family_primary_key`) and the version column
-(`OptimisticLockFacet`, resolved through `_family`) name Attribute identities,
-which this module maps onto layout slots rather than reading storage
-declarations of its own.
+side. Every physical fact comes from the target's Storage Layout Entity view
+(`_family.entity_layout`) — its Table, its Table-ordered applicable slots, and
+its derived discriminator assignment. Semantic selections stay where they are
+decided: the family-effective primary key (`_family.family_primary_key`) names
+Attribute identities, which this module maps onto layout slots rather than
+reading storage declarations of its own.
 
 The same slot selection that fixes a statement's column list also fixes which
 buffered rows may share one: `collapse_group_key` answers a row's filtered,
 table-ordered selection for the planner's batch grouping, so a collapsed
-multi-row instruction is same-shaped before any builder sees it.
+multi-row instruction is same-shaped before any step is settled.
 
-The seven builders `_write_lowering` dispatches to are spelled bare, as is
-`collapse_group_key` (the composition root and the conformance engine inject
-it); the helpers they share among themselves keep their leading underscore
-because every one of their call sites is in THIS module.
+The names `_write_lowering` and the composition root read are spelled bare; the
+helpers they share among themselves keep their leading underscore because every
+one of their call sites is in THIS module.
 """
 
 from __future__ import annotations
@@ -36,7 +35,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Final, cast
 
-from parallax.core import inheritance, opt_lock
+from parallax.core import opt_lock
 from parallax.core.db_port import JsonDocument
 from parallax.core.dialect import Dialect
 from parallax.core.metamodel import (
@@ -46,29 +45,20 @@ from parallax.core.metamodel import (
     Metamodel,
     ValueObjectIdentity,
 )
-from parallax.core.sql_gen import Statement, compile_write_predicate
+from parallax.core.sql_gen import Statement
 from parallax.core.storage_layout import ColumnContributor, EntityLayoutView
-from parallax.core.unit_work import Concurrency, KeyedWrite, Observation, PredicateWrite
+from parallax.core.unit_work import KeyedWrite
 from parallax.snapshot.handle._family import (
-    assignment_member,
-    declaring,
     entity_layout,
-    entity_of,
     family_primary_key,
     slot_column,
-    version_attribute,
 )
 from parallax.snapshot.handle._write_types import WriteLoweringError
 
 __all__ = [
     "collapse_group_key",
     "key_predicate",
-    "lower_batched_update",
-    "lower_delete",
     "lower_insert",
-    "lower_multi_delete",
-    "lower_predicate_write",
-    "lower_update",
 ]
 
 
@@ -199,315 +189,6 @@ def _require_max_plus_one(entity: EntityMetadata, column: str, value: object) ->
         )
 
 
-def lower_update(
-    entity: EntityMetadata,
-    instruction: KeyedWrite,
-    dialect: Dialect,
-    meta: Metamodel,
-    version_attr: AttributeMetadata | None,
-    observation: Observation | None,
-    concurrency: Concurrency,
-) -> Statement:
-    """`update <table> set <non-pk columns in Table Layout order> = ?, <version> = ?
-    where <pk> = ? [and <tag.column> = ?] [and <version> = ?]`.
-
-    The domain `SET` columns follow the Table Layout's slot order (not the row's
-    data order); the FRAMEWORK-DERIVED version advance is NEVER one of them — it is
-    appended LAST, after every domain column, unconditionally (`m-value-object-046`:
-    a value-object document occupies the Document tier, after every scalar tier
-    (`m-value-object` "One column"), including the version attribute's own slot,
-    so threading the derived advance through the SAME slot order would
-    wrongly render it BEFORE the document; the version SET position is a
-    framework-owned rendering decision, not a layout fact, mirroring the
-    version GATE's own "binds last" rule one clause family over). The `WHERE`
-    keys on the (family-effective) primary key, then an inheritance-family tag
-    guard (`m-inheritance` / `m-sql` "Opt-lock composition" — the tag guard
-    joins the identity predicates, immediately after the pk), then — LAST, no
-    exception — the optimistic-lock version gate (`m-opt-lock` "the version gate
-    binds last").
-
-    A versioned row's SET carrying an EXPLICIT value for the version attribute
-    is refused outright (`opt_lock.reject_caller_authored_version`): the
-    version is framework-owned end to end (ADR 0013), never caller data, so a
-    row-carried value is never silently double-assigned against the derived
-    advance. Every versioned row's SET derives the advance from this unit of
-    work's own recorded observation (`m-opt-lock.require_observed` /
-    `.advance`), raising before any DML if this unit of work never observed
-    the row's version, and gates on it in optimistic mode only
-    (`m-opt-lock.gates`).
-    """
-    row = dict(instruction.rows[0])
-    layout = _layout(meta, entity)
-    pk_columns = {column for _, column in _key_columns(layout, meta, entity)}
-    if version_attr is not None and version_attr.identity.name in row:
-        opt_lock.reject_caller_authored_version(entity.identity.name, version_attr.identity.name)
-    observed_version: int | None = None
-    version_bind: int | None = None
-    if version_attr is not None:
-        observed_version = opt_lock.require_observed(entity.identity.name, observation)
-        opt_lock.check_locking_license(concurrency, latest_pinned=True)
-        version_bind = opt_lock.advance(observed_version)
-    set_cells = [cell for cell in _ordered_cells(meta, entity, row) if cell[0] not in pk_columns]
-    assignment_parts: list[str] = []
-    binds: list[object] = []
-    for column, value in set_cells:
-        amount = _increment_amount(value)
-        quoted = dialect.quote(column)
-        if amount is not None:
-            assignment_parts.append(f"{quoted} = {quoted} + ?")
-            binds.append(amount)
-        else:
-            _refuse_unrecognized_marker(entity, column, value, "update")
-            assignment_parts.append(f"{quoted} = ?")
-            binds.append(value)
-    if version_bind is not None:
-        assert version_attr is not None  # derived above whenever version_bind is set
-        assignment_parts.append(f"{dialect.quote(_version_column(layout, version_attr))} = ?")
-        binds.append(version_bind)
-    where_sql, key_binds = key_predicate(meta, entity, row, dialect)
-    if version_attr is not None and opt_lock.gates(concurrency):
-        assert observed_version is not None  # derived above whenever version_attr is not None
-        where_sql = f"{where_sql} and {dialect.quote(_version_column(layout, version_attr))} = ?"
-        key_binds = (*key_binds, observed_version)
-    assignments = ", ".join(assignment_parts)
-    return Statement(
-        f"update {layout.layout.table.name} set {assignments} where {where_sql}",
-        (*binds, *key_binds),
-    )
-
-
-def _increment_amount(value: object) -> int | None:
-    if _marker_kind(value) == "increment":
-        return cast("int", cast("Mapping[str, object]", value)["increment"])
-    return None
-
-
-def lower_delete(
-    entity: EntityMetadata,
-    instruction: KeyedWrite,
-    dialect: Dialect,
-    meta: Metamodel,
-    version_attr: AttributeMetadata | None,
-    observation: Observation | None,
-    concurrency: Concurrency,
-) -> Statement:
-    """`delete from <table> where <pk> = ? [and <tag.column> = ?] [and <version> =
-    ?]` — keyed by the (family-effective) primary key, tag-guarded for an
-    inheritance-family concrete.
-
-    A keyed DELETE of a VERSIONED row requires a PRIOR observation, exactly as a
-    keyed UPDATE does (`m-opt-lock`; `python.md` §5 "A keyed update or delete of a
-    versioned row this unit of work never observed raises in either mode"): this
-    unit of work never issues an implicit resolving read on behalf of a keyed
-    write, so with no observed version there is nothing to bind. Unobserved raises
-    `UnobservedVersionError` before any DML, in EITHER concurrency mode
-    (`opt_lock.require_observed`). The observation is what the GATE binds, and the
-    gate is concurrency-driven, never mutation-driven (`m-opt-lock` "Concurrency
-    mode determines the gate uniformly", ADR 0047): optimistic mode renders
-    `and <version> = ?` exactly as a versioned UPDATE does, locking mode renders
-    nothing at all — its shared read lock is what makes the ungated delete
-    correct. Non-versioned deletes never reach this at all (``version_attr is
-    None``).
-    """
-    row = instruction.rows[0]
-    layout = _layout(meta, entity)
-    where_sql, key_binds = key_predicate(meta, entity, row, dialect)
-    if version_attr is not None:
-        observed_version = opt_lock.require_observed(entity.identity.name, observation)
-        if opt_lock.gates(concurrency):
-            where_sql = (
-                f"{where_sql} and {dialect.quote(_version_column(layout, version_attr))} = ?"
-            )
-            key_binds = (*key_binds, observed_version)
-    return Statement(f"delete from {layout.layout.table.name} where {where_sql}", key_binds)
-
-
-# --------------------------------------------------------------------------- #
-# Set-based collapse lowering (m-batch-write "Set-                            #
-# based flush"). `parallax.core.batch_write` decides WHETHER a run of rows    #
-# collapses (the planner's own collapse stage, injected via `Database.        #
-# transact`'s `collapse_policy`); everything here renders the ALREADY-        #
-# collapsed multi-row `KeyedWrite` this seam receives. Reuses `key_predicate` #
-# / `_ordered_cells` / `_tag_guard` exactly as the single-row forms do — no   #
-# reinvented column-order or bind discipline.                                 #
-# --------------------------------------------------------------------------- #
-def lower_batched_update(
-    entity: EntityMetadata,
-    instruction: KeyedWrite,
-    dialect: Dialect,
-    meta: Metamodel,
-    version_attr: AttributeMetadata | None,
-) -> Statement:
-    """`update <table> set <cols> = ?, … where <pk> in (?, …) [and <tag.column> =
-    ?]` — the uniform-value batched UPDATE collapse (`m-batch-write.md` L20-22):
-    every row assigns the IDENTICAL non-key values (the injected
-    `m-batch-write` eligibility check already verified this), so ONE `SET`
-    clause (the first row's own cells, Table Layout order) applies to every
-    key in the `IN`-list, in row order. A VERSIONED entity's update never
-    reaches here — `m-batch-write` never collapses one (the per-row gate binds
-    a per-row observed version no shared statement can carry).
-    """
-    # `m-batch-write.update_collapses` excludes a versioned entity outright, so
-    # this assertion's failure arm is unreachable from any planner-produced
-    # instruction.
-    assert version_attr is None, "a versioned entity's update never collapses (m-batch-write)"
-    layout = _layout(meta, entity)
-    key_columns = _key_columns(layout, meta, entity)
-    pk_columns = {column for _, column in key_columns}
-    first_row = dict(instruction.rows[0])
-    set_cells = [
-        cell for cell in _ordered_cells(meta, entity, first_row) if cell[0] not in pk_columns
-    ]
-    assignment_parts: list[str] = []
-    binds: list[object] = []
-    for column, value in set_cells:
-        _refuse_unrecognized_marker(entity, column, value, "update")
-        assignment_parts.append(f"{dialect.quote(column)} = ?")
-        binds.append(value)
-    in_sql, in_binds = _keys_in_list(key_columns, instruction.rows, dialect)
-    tag_sql, tag_binds = _tag_guard(meta, entity, dialect)
-    assignments_sql = ", ".join(assignment_parts)
-    return Statement(
-        f"update {layout.layout.table.name} set {assignments_sql} where {in_sql}{tag_sql}",
-        (*binds, *in_binds, *tag_binds),
-    )
-
-
-def lower_multi_delete(
-    entity: EntityMetadata,
-    instruction: KeyedWrite,
-    dialect: Dialect,
-    meta: Metamodel,
-    version_attr: AttributeMetadata | None,
-) -> Statement:
-    """`delete from <table> where <pk> in (?, …) [and <tag.column> = ?]` — the
-    IN-list DELETE collapse (`m-batch-write.md` L23-26, "the delete analogue
-    of the multi-row INSERT"). A VERSIONED entity's delete never reaches here —
-    `m-batch-write` never collapses one (each row must be removed under its
-    own observed version, `m-batch-write-004`).
-    """
-    # `m-batch-write.delete_collapses` excludes a versioned entity outright, so
-    # this assertion's failure arm is unreachable from any planner-produced
-    # instruction.
-    assert version_attr is None, "a versioned entity's delete never collapses (m-batch-write)"
-    layout = _layout(meta, entity)
-    in_sql, in_binds = _keys_in_list(_key_columns(layout, meta, entity), instruction.rows, dialect)
-    tag_sql, tag_binds = _tag_guard(meta, entity, dialect)
-    return Statement(
-        f"delete from {layout.layout.table.name} where {in_sql}{tag_sql}",
-        (*in_binds, *tag_binds),
-    )
-
-
-def _keys_in_list(
-    key_columns: Sequence[tuple[AttributeMetadata, str]],
-    rows: Sequence[Mapping[str, object]],
-    dialect: Dialect,
-) -> tuple[str, tuple[object, ...]]:
-    """``<pk> in (?, …)`` (a single-column key) or ``(<pk1>, <pk2>) in ((?, ?),
-    …)`` (a composite key), one entry per row, in row order."""
-    if len(key_columns) == 1:
-        attribute, column = key_columns[0]
-        keys_sql = dialect.quote(column)
-        holes = ", ".join("?" for _ in rows)
-        binds = tuple(row[attribute.identity.name] for row in rows)
-        return f"{keys_sql} in ({holes})", binds
-    keys_sql = f"({', '.join(dialect.quote(column) for _, column in key_columns)})"
-    row_hole = f"({', '.join('?' for _ in key_columns)})"
-    holes = ", ".join(row_hole for _ in rows)
-    binds = tuple(row[attribute.identity.name] for row in rows for attribute, _ in key_columns)
-    return f"{keys_sql} in ({holes})", binds
-
-
-def _tag_guard(
-    meta: Metamodel, entity: EntityMetadata, dialect: Dialect
-) -> tuple[str, tuple[object, ...]]:
-    """`` and <tag.column> = ?`` plus its bind — the SAME inheritance-family
-    tag guard `key_predicate` adds to a single-row identity predicate, reused
-    for a collapsed multi-row statement's shared `IN`-list (every row of one
-    collapsed instruction is the SAME concrete subtype, so the tag value is
-    constant); ``("", ())`` for a non-participant or a table-per-concrete-
-    subtype one (no shared table, no tag)."""
-    tag = _tag(meta, entity)
-    if tag is None:
-        return "", ()
-    return f" and {dialect.quote(tag[0])} = ?", (tag[1],)
-
-
-# --------------------------------------------------------------------------- #
-# Readless predicate-write lowering (ADR 0014's                               #
-# unversioned/non-temporal exception, `m-batch-write.md` "Predicate-selected  #
-# readless forms"). A MATERIALIZING predicate write (versioned or temporal    #
-# target) never reaches here — `_predicate_writes.buffer_predicate` decomposes #
-# it to per-row keyed writes at BUFFER time, before it is ever planned; the   #
-# defensive check below only ever catches a caller wiring defect, never a     #
-# legal readless write.                                                       #
-# --------------------------------------------------------------------------- #
-def lower_predicate_write(
-    instruction: PredicateWrite, meta: Metamodel, dialect: Dialect
-) -> Statement:
-    """`update <table> set <col> = ?, … where <predicate>` / `delete from
-    <table> where <predicate>` — one readless statement, no materialization,
-    no equality-elimination pass (`m-batch-write.md` L59-92). The `SET`
-    columns and their binds follow Table Layout order
-    (`_ordered_cells`, reused unchanged), never the authored assignment order;
-    predicate binds come AFTER assignment binds. The rendered predicate is
-    UNALIASED (`compile_write_predicate`), contrasting the resolving read's
-    `t0`-aliased form.
-
-    Rejects an INHERITANCE-FAMILY target here, at the lowering boundary, BEFORE
-    any SQL (`python.md` §5 "a set-based write whose target entity belongs to an
-    inheritance family is rejected before SQL"; `m-inheritance` "Per-object
-    writes are keyed; set-based inheritance writes are out of scope"), with the
-    SAME ``subtype-write-set-based-unsupported`` classification the buffer-time
-    seams raise (:func:`~parallax.snapshot.handle._predicate_writes.
-    buffer_predicate` / :func:`~parallax.snapshot.handle._predicate_writes.
-    buffer_predicate_instruction`). Those two guard the DEVELOPER `_where` verbs
-    and the engine's own buffering translation, but they are NOT the only road
-    here: `lower_write` is exported (`parallax.snapshot.handle.__all__`), and the
-    conformance engine's readless predicate-write step
-    (`conformance.engine._lower_predicate_write_step`) reaches `lower_write`
-    straight from a deserialized instruction, never through a buffer seam. The
-    rejection therefore belongs on the lowering side of the boundary as well,
-    where EVERY caller passes — the tightest total point, since this function is
-    `compile_write_predicate`'s only production caller. Without it a family
-    target renders its tag guard into unaliased DML (`delete from payment where
-    (card_network = ? and t0.kind = ?)`), naming a `t0` the statement never
-    declares.
-    """
-    entity = entity_of(meta, instruction.target.entity)
-    inheritance.reject_predicate_write(entity)
-    declaring_entity = declaring(meta, entity)
-    if (
-        declaring_entity.declared_as_of_axes
-        or version_attribute(meta, declaring_entity) is not None
-    ):
-        raise WriteLoweringError(
-            f"{instruction.target.entity!r}: a predicate write on a versioned or temporal "
-            "target has no readless template — it must materialize to keyed writes before "
-            "reaching lower_write (m-opt-lock; ADR 0014); this is a caller wiring defect"
-        )
-    predicate = compile_write_predicate(instruction.target.predicate, meta, dialect, entity)
-    where_sql, predicate_binds = predicate.sql, predicate.binds
-    if instruction.mutation == "delete":
-        return Statement(f"delete from {_table(meta, entity)} where {where_sql}", predicate_binds)
-    assignment_row = {
-        assignment_member(assignment.attr): assignment.value
-        for assignment in instruction.assignments
-    }
-    cells = _ordered_cells(meta, entity, assignment_row)
-    assignment_parts: list[str] = []
-    binds: list[object] = []
-    for column, value in cells:
-        assignment_parts.append(f"{dialect.quote(column)} = ?")
-        binds.append(value)
-    assignments_sql = ", ".join(assignment_parts)
-    return Statement(
-        f"update {_table(meta, entity)} set {assignments_sql} where {where_sql}",
-        (*binds, *predicate_binds),
-    )
-
-
 def _member_contributor(contributor: ColumnContributor) -> str | None:
     """The declared member name behind ``contributor``, or ``None`` for the
     framework-owned discriminator (which no write input ever names)."""
@@ -631,11 +312,6 @@ def _key_columns(
         (attribute, slot_column(layout, attribute.identity))
         for attribute in family_primary_key(meta, entity)
     )
-
-
-def _version_column(layout: EntityLayoutView, version_attr: AttributeMetadata) -> str:
-    """The physical Column the optimistic-lock version Attribute's slot occupies."""
-    return slot_column(layout, version_attr.identity)
 
 
 def key_predicate(

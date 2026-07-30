@@ -32,10 +32,11 @@ from parallax.core.unit_work import (
     AtomicUnit,
     FlushPlan,
     KeyedWrite,
-    Observation,
     PredicateWrite,
     TransactionInstant,
+    VersionObservation,
     WriteAssignment,
+    WriteObservation,
     WriteTarget,
     object_key,
     plan_flush,
@@ -391,9 +392,9 @@ def test_recorded_observation_binds_to_its_planned_write() -> None:
     other = KeyedWrite("update", "Account", ({"id": 2, "balance": 0.00},))
     key = object_key(update, _ACCOUNT)
     assert key is not None
-    observation = Observation(version=3)
+    observation = VersionObservation(observed_version=3)
     plan = plan_flush([update, other], {key: observation}, _INSTANT, _ACCOUNT)
-    bound: dict[object, Observation | None] = {}
+    bound: dict[object, WriteObservation | None] = {}
     for planned in plan.writes:
         instruction = planned.instruction
         assert isinstance(instruction, KeyedWrite)
@@ -431,7 +432,7 @@ def test_expected_affected_is_one_for_a_versioned_update_carrying_an_observation
     update = KeyedWrite("update", "Account", ({"id": 1, "balance": 0.00},))
     key = object_key(update, _ACCOUNT)
     assert key is not None
-    plan = plan_flush([update], {key: Observation(version=3)}, _INSTANT, _ACCOUNT)
+    plan = plan_flush([update], {key: VersionObservation(observed_version=3)}, _INSTANT, _ACCOUNT)
     assert plan.writes[0].expected_affected == 1
 
 
@@ -439,7 +440,7 @@ def test_expected_affected_is_one_for_a_versioned_delete_carrying_an_observation
     delete = KeyedWrite("delete", "Account", ({"id": 1},))
     key = object_key(delete, _ACCOUNT)
     assert key is not None
-    plan = plan_flush([delete], {key: Observation(version=3)}, _INSTANT, _ACCOUNT)
+    plan = plan_flush([delete], {key: VersionObservation(observed_version=3)}, _INSTANT, _ACCOUNT)
     assert plan.writes[0].expected_affected == 1
 
 
@@ -457,7 +458,7 @@ def test_expected_affected_is_none_for_an_insert_even_with_a_recorded_observatio
     insert = KeyedWrite("insert", "Account", ({"id": 1, "owner": "Ada", "balance": 0.00},))
     key = object_key(insert, _ACCOUNT)
     assert key is not None
-    plan = plan_flush([insert], {key: Observation(version=3)}, _INSTANT, _ACCOUNT)
+    plan = plan_flush([insert], {key: VersionObservation(observed_version=3)}, _INSTANT, _ACCOUNT)
     assert plan.writes[0].expected_affected is None
 
 
@@ -539,7 +540,7 @@ def test_collapse_never_merges_a_row_carrying_a_recorded_observation() -> None:
     assert key1 is not None
     plan = plan_flush(
         [row1, row2],
-        {key1: Observation(version=1)},
+        {key1: VersionObservation(observed_version=1)},
         _INSTANT,
         _WALLET,
         collapse=batch_write.collapses,
@@ -581,7 +582,7 @@ def test_collapse_never_merges_across_an_intervening_observed_write() -> None:
     ]
     plan = plan_flush(
         buffer,
-        {middle_key: Observation(version=1)},
+        {middle_key: VersionObservation(observed_version=1)},
         _INSTANT,
         _WALLET,
         collapse=batch_write.collapses,
@@ -709,11 +710,16 @@ def test_atomic_unit_member_observations_attach_individually() -> None:
     key2 = object_key(row2, _ACCOUNT)
     assert key1 is not None and key2 is not None
     unit = AtomicUnit(writes=(row1, row2))
-    observations = {key1: Observation(version=1), key2: Observation(version=5)}
+    observations = {
+        key1: VersionObservation(observed_version=1),
+        key2: VersionObservation(observed_version=5),
+    }
     plan = plan_flush([unit], observations, _INSTANT, _ACCOUNT)
     versions = {
         dict(planned.instruction.rows[0])["id"]: (
-            planned.observation.version if planned.observation is not None else None
+            planned.observation.observed_version
+            if isinstance(planned.observation, VersionObservation)
+            else None
         )
         for planned in plan.writes
         if isinstance(planned.instruction, KeyedWrite)

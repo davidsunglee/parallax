@@ -30,6 +30,7 @@ from typing import Literal
 from parallax.core.metamodel import Metamodel
 from parallax.core.unit_work.clock import Clock, TransactionInstant
 from parallax.core.unit_work.instructions import WriteInstruction
+from parallax.core.unit_work.observe import WriteObservation
 from parallax.core.unit_work.planner import (
     AtomicUnit,
     BufferItem,
@@ -37,7 +38,6 @@ from parallax.core.unit_work.planner import (
     CollapsePolicy,
     FlushPlan,
     ObjectKey,
-    Observation,
     plan_flush,
 )
 
@@ -141,7 +141,7 @@ class UnitOfWork:
         # active binding, which `run_outermost` already clears on every exit.
         self.companion: object | None = None
         self._buffer: list[BufferItem] = []
-        self._observations: dict[ObjectKey, Observation] = {}
+        self._observations: dict[ObjectKey, WriteObservation] = {}
         self._frame_depth = 0
         self._rollback_only = False
         self._rollback_cause: BaseException | None = None
@@ -160,12 +160,12 @@ class UnitOfWork:
         self._ensure_open()
         self._buffer.append(instruction)
 
-    def observe(self, key: ObjectKey, observation: Observation) -> None:
+    def observe(self, key: ObjectKey, observation: WriteObservation) -> None:
         """Record the transaction observation for one object (attached at flush)."""
         self._ensure_open()
         self._observations[key] = observation
 
-    def observation_for(self, key: ObjectKey) -> Observation | None:
+    def observation_for(self, key: ObjectKey) -> WriteObservation | None:
         """The transaction observation recorded for one object, if any — the
         read side of :meth:`observe`. `Transaction`'s keyed temporal verbs
         consult it for the `python.md` §5 prior-observation license

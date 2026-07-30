@@ -62,10 +62,11 @@ from parallax.core.unit_work import (
     FixedClock,
     KeyedWrite,
     ObjectKey,
-    Observation,
     PredicateWrite,
     TransactionInstant,
+    VersionObservation,
     WriteAssignment,
+    WriteObservation,
     WriteRejectedError,
     instructions,
     object_key,
@@ -779,26 +780,34 @@ def _scenario_needs_lock(steps: Sequence[Mapping[str, object]], meta: Metamodel)
     return False
 
 
-def _strip_observation(row: Mapping[str, object]) -> tuple[dict[str, object], Observation | None]:
+def _strip_observation(
+    row: Mapping[str, object],
+) -> tuple[dict[str, object], VersionObservation | None]:
     """Strip a case writeRow's reserved ``observedVersion`` / ``observedTxStart``
     control keys (`m-opt-lock`; ADR 0013), returning the DURABLE row (never
     carrying them — the write-instruction schema forbids both,
-    `instructions.deserialize` enforces it) and the :class:`Observation` they
-    describe (``None`` when the row carries neither — an unobserved write, or
-    one whose observation instead comes from this SAME `uow` group's own
-    prior find step, consulted separately via :data:`ScenarioObservations`)."""
+    `instructions.deserialize` enforces it) and the Version Observation
+    ``observedVersion`` describes (``None`` when the row authors none — an
+    unobserved write, or one whose observation instead comes from this SAME
+    `uow` group's own prior find step, consulted separately via
+    :data:`ScenarioObservations`).
+
+    Only a VERSIONED target's row reaches here: a temporal entry resolves through
+    :class:`~parallax.conformance.temporal_state.TemporalShadow`, which holds the
+    whole predecessor milestone a temporal observation needs, and a temporal
+    conflict close names its own gate through ``when.observedTxStart`` rather
+    than a write row. ``observedTxStart`` is nevertheless stripped here, because
+    the durable instruction forbids it on any row.
+    """
     clean = dict(row)
     version = clean.pop("observedVersion", None)
-    tx_start = clean.pop("observedTxStart", None)
-    if version is None and tx_start is None:
+    clean.pop("observedTxStart", None)
+    if version is None:
         return clean, None
-    return clean, Observation(
-        version=cast("int", version) if version is not None else None,
-        tx_start=cast("str", tx_start) if tx_start is not None else None,
-    )
+    return clean, VersionObservation(observed_version=cast("int", version))
 
 
-# An object-key -> Observation map (m-opt-lock; ADR 0013) — the same neutral
+# An object-key -> Write Observation map (m-opt-lock; ADR 0013) — the same neutral
 # shape a REAL `Transaction.find` populates on the production path
 # (`parallax.snapshot.handle` records observations into `uow.observe`).
 # `_write_sequence_lowered` / `run_write_sequence_case` pass a permanently
@@ -813,7 +822,7 @@ def _strip_observation(row: Mapping[str, object]) -> tuple[dict[str, object], Ob
 # transaction records the version at read time ("the shadow value read
 # earlier") and threads it into the UPDATE bind
 # (`docs/research/reladomo/09-transactions-locking.md:55-59`).
-ScenarioObservations = dict[ObjectKey, Observation]
+ScenarioObservations = dict[ObjectKey, WriteObservation]
 
 
 def _versioned_non_temporal_version_attribute(
@@ -894,7 +903,7 @@ def _observe_group_find(
         key = _row_object_key(meta, entity_name, row, by_column=True)
         if key is None or version_attr.column not in row:
             continue
-        observation = Observation(version=cast("int", row[version_attr.column]))
+        observation = VersionObservation(observed_version=cast("int", row[version_attr.column]))
         observations[key] = observation
         tx._uow.observe(key, observation)  # pyright: ignore[reportPrivateUsage] - conformance harness drives the transaction's private unit-of-work seam
 
@@ -921,7 +930,7 @@ def _build_temporal_instruction(
     shadow: TemporalShadow,
     tx_instant: str,
     unit_inserted: set[ObjectKey],
-) -> tuple[WriteInstruction, ObjectKey | None, Observation | None]:
+) -> tuple[WriteInstruction, ObjectKey | None, WriteObservation | None]:
     """One TEMPORAL writeSequence/scenario entry -> its canonical keyed
     instruction plus the shadow-tracked observation its close/chain consumes
     (`m-txtime-write` / `m-bitemp-write` "the engine supplies observed rows
@@ -962,7 +971,7 @@ def _build_temporal_instruction(
     pk_key = object_key(instruction, model)
     is_insert = mutation in _TEMPORAL_INSERT_MUTATIONS
     is_coalescing_candidate = not is_insert and pk_key is not None and pk_key in unit_inserted
-    observation: Observation | None = None
+    observation: WriteObservation | None = None
     if not is_insert and not is_coalescing_candidate:
         observation = shadow.resolve(model, entity_metadata, row)
     key = pk_key if observation is not None else None
@@ -1293,7 +1302,7 @@ def _build_instructions(
     tx_instant: str,
     unit_inserted: set[ObjectKey],
     scenario_observations: ScenarioObservations,
-) -> list[tuple[WriteInstruction, ObjectKey | None, Observation | None]]:
+) -> list[tuple[WriteInstruction, ObjectKey | None, WriteObservation | None]]:
     """One case write entry -> one or more canonical keyed write instructions.
 
     A STRUCTURED PREDICATE-write entry (`target`/`predicate` shaped, no
@@ -1321,7 +1330,7 @@ def _build_instructions(
     statement is the planner's own collapse stage to decide.
 
     What :func:`_binds_row_observations` derives SEMANTICALLY is whether each row
-    binds its OWN object key and :class:`Observation` (its reserved observation
+    binds its OWN object key and Version Observation (its reserved observation
     control keys stripped into one — `m-opt-lock`; ADR 0013), which in turn
     tells the planner to keep that row separately identifiable rather than
     merging it. A row whose own control keys yield NO observation falls back to
@@ -1356,7 +1365,7 @@ def _build_instructions(
     raw_rows = cast("Sequence[Mapping[str, object]]", entry["rows"])
     binds_observations = _binds_row_observations(meta, entity_name, mutation, raw_rows)
     model = case_model(meta)
-    out: list[tuple[WriteInstruction, ObjectKey | None, Observation | None]] = []
+    out: list[tuple[WriteInstruction, ObjectKey | None, WriteObservation | None]] = []
     for raw_row in raw_rows:
         clean_row, observation = _strip_observation(raw_row)
         clean_row = _seed_insert_version(meta, entity_name, mutation, clean_row)
@@ -1383,7 +1392,7 @@ def _resolve_entries(
     shadow: TemporalShadow,
     tx_instant: str,
     scenario_observations: ScenarioObservations,
-) -> list[tuple[WriteInstruction, ObjectKey | None, Observation | None]]:
+) -> list[tuple[WriteInstruction, ObjectKey | None, WriteObservation | None]]:
     """Every entry in one choreography unit's buffer -> its resolved
     instructions (advancing ``shadow`` exactly once per temporal instruction) —
     the shared core both the PURE lowering (:func:`_lower_resolved`) and the
@@ -1398,7 +1407,7 @@ def _resolve_entries(
     `uow` GROUP's own find-derived map (:func:`_run_uow_group`), populated by
     that SAME group's find steps that ran before this unit — never one
     spanning the whole scenario."""
-    resolved: list[tuple[WriteInstruction, ObjectKey | None, Observation | None]] = []
+    resolved: list[tuple[WriteInstruction, ObjectKey | None, WriteObservation | None]] = []
     unit_inserted: set[ObjectKey] = set()
     for entry in entries:
         resolved.extend(
@@ -1410,7 +1419,7 @@ def _resolve_entries(
 
 
 def _lower_resolved(
-    resolved: Sequence[tuple[WriteInstruction, ObjectKey | None, Observation | None]],
+    resolved: Sequence[tuple[WriteInstruction, ObjectKey | None, WriteObservation | None]],
     entries: Sequence[Mapping[str, object]],
     meta: Metamodel,
     dialect: Dialect,
@@ -1433,7 +1442,7 @@ def _lower_resolved(
     the count is never derived from a second, reconstructed plan.
     """
     buffer = [instruction for instruction, _key, _observation in resolved]
-    observations: dict[ObjectKey, Observation] = {
+    observations: dict[ObjectKey, WriteObservation] = {
         key: observation
         for _instruction, key, observation in resolved
         if key is not None and observation is not None
@@ -1971,7 +1980,7 @@ def _execute_write_unit(
     meta: Metamodel,
     dialect: Dialect,
     concurrency: Concurrency,
-    resolved: Sequence[tuple[WriteInstruction, ObjectKey | None, Observation | None]],
+    resolved: Sequence[tuple[WriteInstruction, ObjectKey | None, WriteObservation | None]],
     tx_instant: str,
     *,
     rollback: bool,
@@ -3483,7 +3492,7 @@ def _lower_conflict_write(
     mutation: Literal["update", "delete"],
 ) -> tuple[Statement, ...]:
     """PURE-lower one NON-TEMPORAL conflict attempt's ``write`` row: strip its
-    reserved ``observedVersion`` into an :class:`Observation` (`m-opt-lock`;
+    reserved ``observedVersion`` into a Version Observation (`m-opt-lock`;
     ADR 0013), plan the single-instruction buffer, and lower it. ``mutation`` is
     the case's own ``when.mutation`` verb — a versioned keyed UPDATE or DELETE,
     the two non-temporal shapes whose gate the concurrency mode decides
@@ -3495,7 +3504,7 @@ def _lower_conflict_write(
     )
     model = case_model(meta)
     instructions.validate_instruction(instruction, model)
-    observations: dict[ObjectKey, Observation] = {}
+    observations: dict[ObjectKey, WriteObservation] = {}
     if observation is not None:
         key = object_key(instruction, model)
         if key is not None:

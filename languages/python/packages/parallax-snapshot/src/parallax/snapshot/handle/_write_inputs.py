@@ -52,7 +52,6 @@ from parallax.core.entity import (
     primary_key_row,
 )
 from parallax.core.metamodel import (
-    AsOfAxisMetadata,
     AttributeMetadata,
     EntityMetadata,
     Metamodel,
@@ -62,10 +61,16 @@ from parallax.core.metamodel import (
 from parallax.core.storage_layout import EntityLayoutView
 from parallax.core.temporal_read import LATEST, Latest, Pin
 from parallax.core.unit_work import (
+    HISTORICAL_PINNED,
+    LATEST_PINNED,
     KeyedMutation,
     ObjectKey,
-    Observation,
+    PredecessorRow,
+    TemporalObservation,
+    TransactionTimeBasis,
     UnitOfWork,
+    VersionObservation,
+    WriteObservation,
     instant_literal,
 )
 from parallax.snapshot.handle._family import (
@@ -77,7 +82,6 @@ from parallax.snapshot.handle._family import (
     members,
     slot_column,
     tx_time_axis,
-    valid_time_axis,
     version_attribute,
 )
 from parallax.snapshot.handle._read import FindResult
@@ -174,8 +178,14 @@ def record_observations(uow: UnitOfWork, meta: Metamodel, result: FindResult, pi
     omitted axis or an explicit `LATEST` pin is latest-pinned; an explicit
     as-of instant is not (`~parallax.core.opt_lock.check_locking_license`'s
     own historical-observation rule).
+
+    ``find`` is always INSTANCE-form, which projects every applicable Column, so
+    merging a node's scalar fields with its decoded documents yields the COMPLETE
+    persisted row a Predecessor Row requires. The two categories are kept apart on
+    the node so a document's storage key can equal a relationship name; they are
+    disjoint here because each occupies its own Column slot.
     """
-    latest_pinned = pin.tx_time is None or pin.tx_time is LATEST
+    basis = LATEST_PINNED if pin.tx_time is None or pin.tx_time is LATEST else HISTORICAL_PINNED
     for entity_name, node in result.all_nodes:
         observed_fields = {**node.fields, **node.value_objects}
         entity = entity_of(meta, entity_name)
@@ -200,7 +210,12 @@ def record_observations(uow: UnitOfWork, meta: Metamodel, result: FindResult, pi
         if version_attr is not None:
             version_column = slot_column(layout, version_attr.identity)
             if version_column in observed_fields:
-                uow.observe(key, Observation(version=cast("int", observed_fields[version_column])))
+                uow.observe(
+                    key,
+                    VersionObservation(
+                        observed_version=cast("int", observed_fields[version_column])
+                    ),
+                )
             continue
         if not _is_temporal(declaring_entity):
             continue
@@ -208,112 +223,70 @@ def record_observations(uow: UnitOfWork, meta: Metamodel, result: FindResult, pi
         tx_start_column, _tx_end_column = axis_columns(layout, tx_axis)
         if tx_start_column not in observed_fields:  # pragma: no cover - malformed model/projection
             continue
-        uow.observe(
-            key,
-            _temporal_observation(
-                layout, declaring_entity, observed_fields, tx_axis, latest_pinned
-            ),
-        )
+        uow.observe(key, _temporal_observation(layout, observed_fields, basis))
 
 
 def _temporal_observation(
     layout: EntityLayoutView,
-    declaring_entity: EntityMetadata,
     fields: Mapping[str, object],
-    tx_axis: AsOfAxisMetadata,
-    latest_pinned: bool,
-) -> Observation:
-    """The :class:`Observation` a materialized TEMPORAL row licenses: the
-    observed Transaction-Time start (``in_z``) plus pin provenance always, PLUS the
-    observed payload (every
-    real ``Transaction.find`` of a temporal row carries one, audit-only
-    included) — the same fields temporal lowering (`~parallax.core.
-    txtime_write.plan` / `~parallax.core.bitemp_write.plan`) already consumes,
-    so a transaction-scoped find -> temporal write sequence works end-to-end,
-    not just the licensing check. The observed Valid-Time bounds are Bitemporal-only.
+    basis: TransactionTimeBasis,
+) -> TemporalObservation:
+    """The :class:`TemporalObservation` a materialized TEMPORAL row licenses: its
+    complete Predecessor Row plus the observing read's Transaction-Time Basis.
+
+    The Predecessor Row retains EVERY applicable member ``fields`` carries —
+    scalars, value-object documents, the primary key, and both axis intervals —
+    because temporal expansion carries members the authored mutation never
+    mentioned, and because the close's own address and gate are read off the same
+    observed row rather than from separate per-axis fields. The bounds are the
+    only members every consumer names; the rest ride through as the payload a
+    chained or split successor carries forward (`m-bitemp-write` "head/tail old
+    values"; `m-value-object` "the document rides every chained/split row
+    whole").
 
     ``fields`` is a plain column-keyed mapping — a materialized
-    :class:`~parallax.snapshot.materialize.Node`'s own ``.fields`` (a real
-    ``Transaction.find``), or a raw driver row (the
+    :class:`~parallax.snapshot.materialize.Node`'s own ``.fields`` merged with
+    its documents (a real ``Transaction.find``), or a raw driver row (the
     materializing predicate-write resolve, :func:`materialize_row`) — so both
-    callers share the SAME payload-extraction logic rather than duplicating it.
-    Every extracted value passes through EXACTLY as the port returned it (a
-    real ``timestamptz`` column may be a driver-native ``datetime.datetime``
-    or the native-infinity sentinel, never pre-rendered to a wire string here)
-    — the SAME driver-native-passthrough contract every other temporal bind in
-    this seam already carries; wire-rendering for REPORTING is the conformance
-    ADAPTER's own boundary concern (`parallax.conformance.engine._json_bind`),
-    never this seam's.
-
-    The bitemporal payload KEEPS a value-object document whenever ``fields``
-    carries one (`include_value_objects=True` below): a real
-    ``Transaction.find`` is always INSTANCE-form, which
-    projects every document unconditionally (`m-sql`), so ``fields`` already
-    carries it there; a materializing predicate-write resolve's ROW-form
-    ``fields`` carries one whenever its own need-sensitive projection
-    requested it (`_predicate_writes._materialize_predicate_write`'s
-    ``needs_documents``) — ``column in fields`` still gates every member exactly
-    as it does for scalars, so this is a no-op only for a VO-free entity, and
-    never drops one `bitemp_write.plan`'s head/middle/tail split needs to carry
-    forward whole (`m-bitemp-write` "head/tail old values"; `m-value-object`
-    "the document rides every chained/split row whole").
+    callers share the SAME extraction rather than duplicating it. Every extracted
+    value passes through EXACTLY as the port returned it (a real ``timestamptz``
+    column may be a driver-native ``datetime.datetime`` or the native-infinity
+    sentinel, never pre-rendered to a wire string here) — the SAME
+    driver-native-passthrough contract every other temporal bind in this seam
+    already carries; wire-rendering for REPORTING is the conformance ADAPTER's
+    own boundary concern (`parallax.conformance.engine._json_bind`), never this
+    seam's.
     """
-    tx_start_column, tx_end_column = axis_columns(layout, tx_axis)
-    tx_start = cast("str", fields[tx_start_column])
-    if not _is_bitemporal(declaring_entity):
-        # Audit-only: the observed payload every other member besides
-        # the sole Transaction-Time axis — `txtime_write.plan`'s own update-branch
-        # merge (`_merged_row`) overlays a public `tx.update(copy)`'s SPARSE
-        # row onto it, so an unauthored field carries forward from THIS
-        # observation rather than being silently dropped.
-        payload = _row_payload(
-            layout,
-            fields,
-            {tx_start_column, tx_end_column},
-            include_value_objects=True,
-        )
-        return Observation(tx_start=tx_start, payload=payload, latest_pinned=latest_pinned)
-    valid_axis = valid_time_axis(declaring_entity)
-    valid_start_column, valid_end_column = axis_columns(layout, valid_axis)
-    if valid_start_column not in fields or valid_end_column not in fields:  # pragma: no cover
-        return Observation(
-            tx_start=tx_start, latest_pinned=latest_pinned
-        )  # malformed model/projection
-    excluded = {tx_start_column, tx_end_column, valid_start_column, valid_end_column}
-    payload = _row_payload(layout, fields, excluded, include_value_objects=True)
-    return Observation(
-        tx_start=tx_start,
-        valid_start=cast("str", fields[valid_start_column]),
-        valid_end=cast("str", fields[valid_end_column]),
-        payload=payload,
-        latest_pinned=latest_pinned,
+    return TemporalObservation(
+        predecessor=PredecessorRow(_row_payload(layout, fields, include_value_objects=True)),
+        transaction_time_basis=basis,
     )
 
 
 def _row_payload(
     layout: EntityLayoutView,
     fields: Mapping[str, object],
-    excluded: set[str],
+    excluded: frozenset[str] = frozenset(),
     *,
     include_value_objects: bool = False,
 ) -> dict[str, object]:
     """``fields``'s own payload (every applicable member besides ``excluded``
-    axis-bound columns) — the observed-payload source a real TEMPORAL find's
-    :class:`Observation` (`_temporal_observation`, above — audit-only and
-    bitemporal alike) and an audit-only materializing resolve's CHAINED
-    full row (:func:`materialize_row`) share.
+    columns) — the extraction a real TEMPORAL find's Predecessor Row
+    (`_temporal_observation`, above) and an audit-only materializing resolve's
+    CHAINED full row (:func:`materialize_row`) share. A Predecessor Row excludes
+    nothing; the chained row excludes the axis bounds its own milestone plan
+    stamps afresh.
 
     Value-object columns are OMITTED by default (row-form never projects one,
     `m-value-object-047`'s own byte-identical row-form witness).
     ``include_value_objects`` opts in (`m-case-format.md:727`): its callers —
-    `_temporal_observation`'s audit-only and bitemporal branches alike (every
-    real ``Transaction.find``, always INSTANCE-form, so ``fields`` always
-    carries one; a materializing resolve only when its own need-sensitive
-    projection requested it) and `materialize_row`'s audit-only chain merge
-    (an audit-only materializing resolve, same gate) — so ``column in
-    fields`` still gates every member exactly as it already does for
-    scalars; a VO-free entity's empty ``value_objects`` makes this flag a
-    no-op either way.
+    `_temporal_observation` (every real ``Transaction.find``, always
+    INSTANCE-form, so ``fields`` always carries one; a materializing resolve only
+    when its own need-sensitive projection requested it) and `materialize_row`'s
+    audit-only chain merge (an audit-only materializing resolve, same gate) — so
+    ``column in fields`` still gates every member exactly as it already does for
+    scalars; a VO-free entity's empty ``value_objects`` makes this flag a no-op
+    either way.
     """
     return {
         name: fields[column]
@@ -465,19 +438,22 @@ def materialize_row(
     mutation: KeyedMutation,
     assignments: Mapping[str, object],
     row: Row,
-) -> tuple[ObjectKey, Observation | None, dict[str, object] | None]:
+) -> tuple[ObjectKey, WriteObservation, dict[str, object] | None]:
     """One resolved row's materialized keyed write: its
-    :class:`~parallax.core.unit_work.ObjectKey`, its recorded
-    :class:`Observation` (every branch records one — a versioned row's version,
-    a temporal row's observed Transaction-Time start, `m-opt-lock` "observations are
-    mode-independent; only the gate is mode-dependent"), and the new row a
-    keyed write of ``mutation`` carries — ``None`` for the new row when every
-    assignment already equals the row's own value (`m-opt-lock` "For
-    assignment-bearing mutations, no-op elimination is per resolved row";
-    `delete` / `terminate` / `terminateUntil` always write every resolved row,
-    no assignments to compare). ``row`` is the resolve's OWN row-form row
-    (never an implicit second read), keyed by the physical Columns ``layout``
-    names, which is also where the resulting keyed instruction's own cells land.
+    :class:`~parallax.core.unit_work.ObjectKey`, the observation it licenses
+    (every branch records one — a versioned row's version, a temporal row's whole
+    predecessor milestone, `m-opt-lock` "observations are mode-independent; only
+    the gate is mode-dependent"), and the new row a keyed write of ``mutation``
+    carries — ``None`` for the new row when every assignment already equals the
+    row's own value (`m-opt-lock` "For assignment-bearing mutations, no-op
+    elimination is per resolved row"; `delete` / `terminate` / `terminateUntil`
+    always write every resolved row, no assignments to compare). ``row`` is the
+    resolve's OWN row-form row (never an implicit second read), keyed by the
+    physical Columns ``layout`` names, which is also where the resulting keyed
+    instruction's own cells land.
+
+    A materializing resolve reads the CURRENT milestone by construction, so its
+    temporal observations are latest-pinned.
     """
     pk_attrs = family_primary_key(meta, entity)
     pk_row = {attr.identity.name: row[slot_column(layout, attr.identity)] for attr in pk_attrs}
@@ -485,35 +461,24 @@ def materialize_row(
     assignment_bearing = mutation in ("update", "updateUntil")
 
     if version_attr is not None:
-        observation = Observation(
-            version=cast("int", row[slot_column(layout, version_attr.identity)])
+        observation: WriteObservation = VersionObservation(
+            observed_version=cast("int", row[slot_column(layout, version_attr.identity)])
         )
         if not assignment_bearing:
             return key, observation, dict(pk_row)
         new_row, changed = _apply_assignments(layout, pk_row, row, assignments)
         return key, observation, (new_row if changed else None)
 
-    tx_axis = tx_time_axis(declaring_entity)
-    tx_start_column, tx_end_column = axis_columns(layout, tx_axis)
-    tx_start = cast("str", row[tx_start_column])
+    observation = _temporal_observation(layout, row, LATEST_PINNED)
     if _is_bitemporal(declaring_entity):
         # A SPARSE new row: `bitemp_write.plan` merges it onto the observed
-        # payload itself (`_merged_payload`), the bitemporal analogue of an
+        # predecessor itself (`_merged_payload`), the bitemporal analogue of an
         # edited copy's effective change set.
-        observation = _temporal_observation(
-            layout, declaring_entity, row, tx_axis, latest_pinned=True
-        )
         if not assignment_bearing:
             return key, observation, dict(pk_row)
         new_row, changed = _apply_assignments(layout, pk_row, row, assignments)
         return key, observation, (new_row if changed else None)
 
-    # Audit-only: `txtime_write.plan` chains the instruction's OWN authored
-    # FULL row verbatim (never a separate observed payload), so the full
-    # merge happens HERE — the resolved row's own scalar payload (VO
-    # documents omitted; row-form never projects one) with the assignments
-    # overlaid.
-    observation = Observation(tx_start=tx_start, latest_pinned=True)
     if not assignment_bearing:
         # A plain (chain-free) audit-only `terminate` records its resolved
         # row's observed `in_z` exactly like every other materializing verb
@@ -530,18 +495,22 @@ def materialize_row(
         # recording the observation here never changes locking mode's own
         # ungated shape.
         return key, observation, dict(pk_row)
-    # Reached only for an assignment-bearing (`update`) audit-only mutation —
-    # exactly when `_materialize_predicate_write`'s own resolving read
-    # requested the value-object document column(s) too
-    # (`include_value_objects`, `m-case-format.md:727`), so the merge below
-    # carries forward whichever documents `assignments` does NOT itself
-    # reassign, never dropping them from the chained row.
+    # Audit-only assignment-bearing (`update`): `txtime_write.plan` chains the
+    # instruction's own row merged onto the predecessor, so the row built here
+    # carries the resolved payload with the assignments overlaid. It excludes the
+    # axis bounds the milestone plan stamps afresh. Reached exactly when
+    # `_materialize_predicate_write`'s own resolving read requested the
+    # value-object document column(s) too (`include_value_objects`,
+    # `m-case-format.md:727`), so the merge carries forward whichever documents
+    # `assignments` does NOT itself reassign.
+    tx_axis = tx_time_axis(declaring_entity)
+    tx_start_column, tx_end_column = axis_columns(layout, tx_axis)
     full_row: dict[str, object] = {
         **pk_row,
         **_row_payload(
             layout,
             row,
-            {tx_start_column, tx_end_column},
+            frozenset({tx_start_column, tx_end_column}),
             include_value_objects=True,
         ),
     }

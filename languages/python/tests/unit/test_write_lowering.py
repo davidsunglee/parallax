@@ -45,27 +45,43 @@ from parallax.core.metamodel import AttributeIdentity, EntityIdentity, entity_by
 from parallax.core.model_formation import MetamodelValidationError
 from parallax.core.sql_gen import Statement
 from parallax.core.unit_work import (
+    ANY_COUNT,
     MAX_PLUS_ONE,
+    MISSING_TARGET,
     NEW_LINEAGE,
+    OPTIMISTIC_CONFLICT,
+    STALE_WRITE,
+    UNGATED,
+    UNVERSIONED,
     Concurrency,
+    ExactCount,
     InsertEntry,
     KeyedWrite,
+    KeyTarget,
     ObjectKey,
-    Observation,
+    PlannedAssignments,
+    PlannedDelete,
     PlannedInsert,
     PlannedRow,
+    PlannedUpdate,
     PlannedWrite,
+    PredicateTarget,
     PredicateWrite,
+    SelfIncrement,
+    Versioned,
+    VersionGate,
+    VersionObservation,
     WriteAssignment,
     WriteInstruction,
+    WriteObservation,
     WriteTarget,
     plan_flush,
 )
+from parallax.core.unit_work.planned import PlannedWrite as PlannedStep
 from parallax.descriptor import _records
 from parallax.descriptor._records import Metamodel
 from parallax.snapshot.handle import WriteLoweringError, lower_write
 from parallax.snapshot.handle._finalize import finalize_item
-from parallax.snapshot.handle._keyed_sql import _keys_in_list  # pyright: ignore[reportPrivateUsage]
 from parallax.snapshot.handle._step_lowering import lower_step
 
 _MODELS = models.load_models()
@@ -86,7 +102,7 @@ def _lower(
     instruction: WriteInstruction,
     meta: Metamodel,
     *,
-    observation: Observation | None = None,
+    observation: WriteObservation | None = None,
     dialect: Dialect = POSTGRES,
     concurrency: Concurrency = "locking",
 ) -> list[Statement]:
@@ -108,7 +124,7 @@ def _flush_and_lower(
     meta: Metamodel,
     *,
     concurrency: Concurrency = "locking",
-    observations: Mapping[ObjectKey, Observation] | None = None,
+    observations: Mapping[ObjectKey, WriteObservation] | None = None,
 ) -> list[Statement]:
     model = models.accepted_model(meta)
     instant = inert_instant()
@@ -198,7 +214,7 @@ def test_update_sets_non_pk_columns_in_column_order_keyed_by_pk() -> None:
     statement = _lower(
         KeyedWrite("update", "Account", ({"id": 1, "balance": 175.00},)),
         ACCOUNT,
-        observation=Observation(version=1),
+        observation=VersionObservation(observed_version=1),
     )[0]
     assert statement.sql == "update account set balance = ?, version = ? where id = ?"
     assert statement.binds == (175.00, 2, 1)
@@ -313,9 +329,9 @@ def test_versioned_update_without_a_row_carried_version_requires_observation() -
 def test_versioned_update_derives_the_advance_from_the_observation_locking_mode() -> None:
     # locking mode: version = observed + 1 in the SET, no gate.
     update = KeyedWrite("update", "Account", ({"id": 1, "balance": 50.00},))
-    statement = _lower(update, ACCOUNT, observation=Observation(version=3), concurrency="locking")[
-        0
-    ]
+    statement = _lower(
+        update, ACCOUNT, observation=VersionObservation(observed_version=3), concurrency="locking"
+    )[0]
     assert statement.sql == "update account set balance = ?, version = ? where id = ?"
     assert statement.binds == (50.00, 4, 1)
 
@@ -325,7 +341,10 @@ def test_versioned_update_gates_on_the_observed_version_optimistic_mode() -> Non
     # value LAST.
     update = KeyedWrite("update", "Account", ({"id": 1, "balance": 50.00},))
     statement = _lower(
-        update, ACCOUNT, observation=Observation(version=3), concurrency="optimistic"
+        update,
+        ACCOUNT,
+        observation=VersionObservation(observed_version=3),
+        concurrency="optimistic",
     )[0]
     assert (
         statement.sql == "update account set balance = ?, version = ? where id = ? and version = ?"
@@ -340,7 +359,12 @@ def test_versioned_update_carrying_a_literal_version_is_refused() -> None:
     # against the derived advance, EVEN when an observation is also available.
     update = KeyedWrite("update", "Account", ({"id": 1, "balance": 175.00, "version": 2},))
     with pytest.raises(opt_lock.CallerAuthoredVersionError, match="framework-owned"):
-        _lower(update, ACCOUNT, observation=Observation(version=1), concurrency="optimistic")
+        _lower(
+            update,
+            ACCOUNT,
+            observation=VersionObservation(observed_version=1),
+            concurrency="optimistic",
+        )
 
 
 def test_versioned_delete_gates_on_the_observed_version_optimistic_mode() -> None:
@@ -349,7 +373,10 @@ def test_versioned_delete_gates_on_the_observed_version_optimistic_mode() -> Non
     # mutation-driven.
     delete = KeyedWrite("delete", "Account", ({"id": 3},))
     statement = _lower(
-        delete, ACCOUNT, observation=Observation(version=1), concurrency="optimistic"
+        delete,
+        ACCOUNT,
+        observation=VersionObservation(observed_version=1),
+        concurrency="optimistic",
     )[0]
     assert statement.sql == "delete from account where id = ? and version = ?"
     assert statement.binds == (3, 1)
@@ -360,9 +387,9 @@ def test_versioned_delete_is_ungated_in_locking_mode() -> None:
     # same ungated form a versioned UPDATE and a temporal close take — the shared
     # read lock, not a version predicate, is what makes the write correct.
     delete = KeyedWrite("delete", "Account", ({"id": 3},))
-    statement = _lower(delete, ACCOUNT, observation=Observation(version=1), concurrency="locking")[
-        0
-    ]
+    statement = _lower(
+        delete, ACCOUNT, observation=VersionObservation(observed_version=1), concurrency="locking"
+    )[0]
     assert statement.sql == "delete from account where id = ?"
     assert statement.binds == (3,)
 
@@ -372,7 +399,7 @@ def test_versioned_delete_shortfall_classifies_by_gate_not_by_mutation() -> None
     # ungated close's is; a gated (optimistic) one stays the retriable conflict.
     delete = KeyedWrite("delete", "Account", ({"id": 3},))
     planned = PlannedWrite(
-        instruction=delete, observation=Observation(version=1), expected_affected=1
+        instruction=delete, observation=VersionObservation(observed_version=1), expected_affected=1
     )
     model = models.accepted_model(ACCOUNT)
     locking = lower_write(planned, model, POSTGRES, "locking", inert_instant())[0]
@@ -469,7 +496,10 @@ def test_tph_optlock_composition_tag_rides_identity_gate_binds_last() -> None:
     # THEN the version gate (no inheritance exception to "the gate binds last").
     update = KeyedWrite("update", "Car", ({"id": 1, "name": "Coupe"},))
     statement = _lower(
-        update, VEHICLE, observation=Observation(version=5), concurrency="optimistic"
+        update,
+        VEHICLE,
+        observation=VersionObservation(observed_version=5),
+        concurrency="optimistic",
     )[0]
     assert statement.sql == (
         "update vehicle set name = ?, version = ? where id = ? and kind = ? and version = ?"
@@ -481,7 +511,10 @@ def test_tpcs_optlock_composition_no_tag_guard_gate_binds_last() -> None:
     # m-inheritance-104: the TPCS analogue — no shared table, no tag, own table.
     update = KeyedWrite("update", "Fridge", ({"id": 1, "name": "Chill"},))
     statement = _lower(
-        update, APPLIANCE, observation=Observation(version=5), concurrency="optimistic"
+        update,
+        APPLIANCE,
+        observation=VersionObservation(observed_version=5),
+        concurrency="optimistic",
     )[0]
     assert statement.sql == "update fridge set name = ?, version = ? where id = ? and version = ?"
     assert statement.binds == ("Chill", 6, 1, 5)
@@ -583,8 +616,8 @@ def test_mixed_flush_lowers_insert_then_update_then_delete_in_order() -> None:
         ],
         ACCOUNT,
         observations={
-            ("Account", (("id", 1),)): Observation(version=1),
-            ("Account", (("id", 3),)): Observation(version=1),
+            ("Account", (("id", 1),)): VersionObservation(observed_version=1),
+            ("Account", (("id", 3),)): VersionObservation(observed_version=1),
         },
     )
     assert [(s.sql, s.binds) for s in statements] == [
@@ -787,8 +820,8 @@ def test_batched_writes_on_an_inheritance_participant_carry_the_family_tag_guard
 
 
 # A COMPOSITE-key entity: the corpus declares none, but a composite primary key
-# is an ordinary well-formed model, and `_keys_in_list` renders it as a row-
-# constructor IN-list rather than the single-column form.
+# is an ordinary well-formed model, and a multi-key target renders it as a
+# row-constructor IN-list rather than the single-column form.
 _LEDGER = _records.Metamodel(
     entities=(
         _records.Entity(
@@ -807,29 +840,33 @@ _LEDGER = _records.Metamodel(
 def test_a_composite_primary_key_does_not_form() -> None:
     # The accepted Metamodel admits exactly one primary-key Attribute per
     # standalone Entity (m-metamodel `metamodel-primary-key-multiple`), so a
-    # composite-key entity never forms and never reaches lowering — the
-    # `(<pk1>, <pk2>) in (...)` row-constructor branch `_keyed_sql` keeps is
+    # composite-key entity never forms and never reaches finalization — the
+    # `(<pk1>, <pk2>) in (...)` row-constructor branch lowering keeps is
     # defensive under that contract.
     with pytest.raises(MetamodelValidationError, match="metamodel-primary-key-multiple"):
         models.accepted_model(_LEDGER)
 
 
-def test_a_multi_column_key_in_list_renders_a_row_constructor() -> None:
+def test_a_multi_column_key_target_renders_a_row_constructor() -> None:
     # The form that branch keeps: `(<pk1>, <pk2>) in ((?, ?), …)`, one tuple per
-    # row in row order, key columns in their own declared order. No accepted
-    # Metamodel can reach it through a lowering (the rule above), so the
-    # renderer is driven directly with a two-column key.
-    model = models.accepted_model(WALLET)
-    wallet = entity_by_name(model, "Wallet")
-    assert wallet is not None
-    by_name = {attribute.identity.name: attribute for attribute in wallet.declared_attributes}
-    sql, binds = _keys_in_list(
-        ((by_name["id"], "id"), (by_name["owner"], "owner")),
-        ({"id": 1, "owner": "Ada"}, {"id": 2, "owner": "Bo"}),
-        POSTGRES,
+    # addressed row in planner order, key columns in the target's own order. No
+    # accepted Metamodel can reach it through finalization (the rule above), so
+    # the step is built by hand with a two-Attribute key.
+    step = PlannedDelete(
+        entity=_identity(WALLET, "Wallet"),
+        target=KeyTarget(
+            key_attributes=(
+                _attribute(WALLET, "Wallet", "id"),
+                _attribute(WALLET, "Wallet", "owner"),
+            ),
+            key_values=((1, "Ada"), (2, "Bo")),
+        ),
+        concurrency=UNVERSIONED,
+        affected_rows=ExactCount(expected=2, on_shortfall=MISSING_TARGET),
     )
-    assert sql == "(id, owner) in ((?, ?), (?, ?))"
-    assert binds == (1, "Ada", 2, "Bo")
+    statement = lower_step(step, models.accepted_model(WALLET), POSTGRES)
+    assert statement.sql == "delete from wallet where (id, owner) in ((?, ?), (?, ?))"
+    assert statement.binds == (1, "Ada", 2, "Bo")
 
 
 def test_readless_predicate_delete_lowers_to_one_statement() -> None:
@@ -878,8 +915,18 @@ def test_value_object_document_is_not_mistaken_for_a_marker() -> None:
 # The finalized non-temporal insert: what settles the step, and what renders   #
 # it. Everything above composes the two; these pin the split itself.           #
 # --------------------------------------------------------------------------- #
-def _finalize(instruction: WriteInstruction, meta: Metamodel) -> tuple[PlannedInsert, ...] | None:
-    return finalize_item(PlannedWrite(instruction=instruction), models.accepted_model(meta))
+def _finalize(
+    instruction: WriteInstruction,
+    meta: Metamodel,
+    *,
+    observation: WriteObservation | None = None,
+    concurrency: Concurrency = "locking",
+) -> tuple[PlannedStep, ...] | None:
+    return finalize_item(
+        PlannedWrite(instruction=instruction, observation=observation),
+        models.accepted_model(meta),
+        concurrency,
+    )
 
 
 def _identity(meta: Metamodel, entity: str) -> EntityIdentity:
@@ -932,7 +979,9 @@ def test_finalization_derives_the_initial_version_the_row_never_authors() -> Non
         ACCOUNT,
     )
     assert steps is not None
-    row = steps[0].entries[0].row
+    (step,) = steps
+    assert isinstance(step, PlannedInsert)
+    row = step.entries[0].row
     assert row.attributes[_attribute(ACCOUNT, "Account", "version")] == opt_lock.INITIAL_VERSION
 
 
@@ -945,7 +994,9 @@ def test_finalization_classifies_a_pk_gen_marker_into_a_generated_value() -> Non
         PK_MAX,
     )
     assert steps is not None
-    row = steps[0].entries[0].row
+    (step,) = steps
+    assert isinstance(step, PlannedInsert)
+    row = step.entries[0].row
     assert row.attributes[_attribute(PK_MAX, "Attendee", "id")] == MAX_PLUS_ONE
 
 
@@ -980,17 +1031,119 @@ def test_a_write_row_naming_no_family_member_is_refused_at_finalization() -> Non
 @pytest.mark.parametrize(
     ("instruction", "meta"),
     [
-        (KeyedWrite("update", "Wallet", ({"id": 10, "owner": "Mira"},)), WALLET),
-        (KeyedWrite("delete", "Wallet", ({"id": 10},)), WALLET),
         (KeyedWrite("insert", "Balance", ({"id": 1, "value": 5.00},)), BALANCE),
-        (PredicateWrite("delete", WriteTarget("Wallet", oa.All())), WALLET),
+        (KeyedWrite("terminate", "Balance", ({"id": 1},)), BALANCE),
     ],
-    ids=["keyed-update", "keyed-delete", "temporal-insert", "predicate-write"],
+    ids=["temporal-insert", "temporal-terminate"],
 )
 def test_finalization_declines_a_family_that_still_lowers_from_its_instruction(
     instruction: WriteInstruction, meta: Metamodel
 ) -> None:
     assert _finalize(instruction, meta) is None
+
+
+def test_finalization_settles_an_addressed_update_into_target_gate_and_policy() -> None:
+    # One step carries the whole decision: which rows it addresses, the gate the
+    # mode chose, the advance that rides the assignments, and how a shortfall
+    # against its expected effect classifies.
+    steps = _finalize(
+        KeyedWrite("update", "Account", ({"id": 1, "balance": 175.00},)),
+        ACCOUNT,
+        observation=VersionObservation(observed_version=3),
+        concurrency="optimistic",
+    )
+    assert steps is not None
+    version = _attribute(ACCOUNT, "Account", "version")
+    assert steps == (
+        PlannedUpdate(
+            entity=_identity(ACCOUNT, "Account"),
+            target=KeyTarget(
+                key_attributes=(_attribute(ACCOUNT, "Account", "id"),), key_values=((1,),)
+            ),
+            assignments=PlannedAssignments(
+                attributes={_attribute(ACCOUNT, "Account", "balance"): 175.00, version: 4}
+            ),
+            concurrency=Versioned(gate=VersionGate(attribute=version, observed_version=3)),
+            affected_rows=ExactCount(expected=1, on_shortfall=OPTIMISTIC_CONFLICT),
+        ),
+    )
+
+
+def test_finalization_records_an_explicit_ungated_decision_under_locking() -> None:
+    # Locking mode records `Ungated` rather than a null gate, and the version
+    # still advances — the advance is an assignment, never a gate member — so a
+    # shortfall is the non-retriable stale outcome instead of a conflict.
+    steps = _finalize(
+        KeyedWrite("delete", "Account", ({"id": 1},)),
+        ACCOUNT,
+        observation=VersionObservation(observed_version=3),
+        concurrency="locking",
+    )
+    assert steps == (
+        PlannedDelete(
+            entity=_identity(ACCOUNT, "Account"),
+            target=KeyTarget(
+                key_attributes=(_attribute(ACCOUNT, "Account", "id"),), key_values=((1,),)
+            ),
+            concurrency=Versioned(gate=UNGATED),
+            affected_rows=ExactCount(expected=1, on_shortfall=STALE_WRITE),
+        ),
+    )
+
+
+def test_finalization_gives_an_observation_free_keyed_write_a_missing_target_shortfall() -> None:
+    # An unversioned keyed write observed nothing, so a shortfall says only that
+    # the addressed rows are not there. The policy is carried, not yet enforced.
+    steps = _finalize(KeyedWrite("delete", "Wallet", ({"id": 1}, {"id": 2})), WALLET)
+    assert steps is not None
+    (step,) = steps
+    assert isinstance(step, PlannedDelete)
+    assert step.concurrency == UNVERSIONED
+    assert step.affected_rows == ExactCount(expected=2, on_shortfall=MISSING_TARGET)
+
+
+def test_finalization_gives_a_readless_predicate_write_an_unbounded_expectation() -> None:
+    # A readless predicate write matching zero rows succeeds (`m-batch-write`),
+    # which is what an unbounded expected effect says; it carries the typed
+    # predicate and nothing else.
+    predicate = oa.Comparison(op="lessThan", attr="Wallet.balance", value=200.00)
+    steps = _finalize(PredicateWrite("delete", WriteTarget("Wallet", predicate)), WALLET)
+    assert steps is not None
+    (step,) = steps
+    assert isinstance(step, PlannedDelete)
+    assert step.target == PredicateTarget(predicate=predicate)
+    assert step.affected_rows == ANY_COUNT
+
+
+def test_finalization_declines_a_predicate_verb_with_no_readless_template() -> None:
+    # `terminate` and the `*Until` forms name a milestone, and every temporal
+    # target materializes to keyed writes at buffer time, so no readless
+    # statement shape exists for one — it stays with the instruction path rather
+    # than being settled into a step that could not be rendered.
+    assert _finalize(PredicateWrite("terminate", WriteTarget("Wallet", oa.All())), WALLET) is None
+
+
+def test_a_keyed_write_row_omitting_its_primary_key_addresses_nothing() -> None:
+    # Refused where the target is settled, rather than lowered into an identity
+    # predicate whose bind was never supplied.
+    with pytest.raises(WriteLoweringError, match="omits the primary-key member"):
+        _finalize(KeyedWrite("delete", "Wallet", ({"owner": "Mira"},)), WALLET)
+
+
+def test_finalization_classifies_a_registry_advance_into_a_generated_value() -> None:
+    # The `increment` marker is the update-position `m-pk-gen` allocation: the
+    # database computes the new value from the row being written, so the settled
+    # assignment names the allocation rather than a literal to bind.
+    steps = _finalize(
+        KeyedWrite("update", "PkSequence", ({"name": "badge_seq", "nextVal": {"increment": 3}},)),
+        PK_SEQUENCE,
+    )
+    assert steps is not None
+    (step,) = steps
+    assert isinstance(step, PlannedUpdate)
+    assert step.assignments.attributes[
+        _attribute(PK_SEQUENCE, "PkSequence", "nextVal")
+    ] == SelfIncrement(amount=3)
 
 
 def test_step_lowering_reads_column_participation_and_order_from_the_layout() -> None:

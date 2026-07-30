@@ -102,7 +102,12 @@ def test_advance_replaces_tracked_state_with_the_newly_opened_rows() -> None:
     shadow.advance(POSITION, POSITION_ENTITY, insert, "2024-01-01T00:00:00+00:00", None)
     observation = shadow.resolve(POSITION, POSITION_ENTITY, {"id": 1})
     assert observation is not None
-    assert observation.tx_start == "2024-01-01T00:00:00+00:00"
-    assert observation.valid_start == "2024-01-01T00:00:00+00:00"
-    assert observation.valid_end == "infinity"
-    assert observation.payload == {"id": 1, "acctNum": "A", "value": 100.00}
+    assert dict(observation.predecessor.members) == {
+        "id": 1,
+        "acctNum": "A",
+        "value": 100.00,
+        "valid_start": "2024-01-01T00:00:00+00:00",
+        "valid_end": "infinity",
+        "tx_start": "2024-01-01T00:00:00+00:00",
+        "tx_end": "infinity",
+    }
