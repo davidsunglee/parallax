@@ -121,12 +121,13 @@ def test_update_lowers_to_its_keyed_dml() -> None:
     ]
 
 
-def test_delete_of_an_observed_versioned_row_gates_on_the_observed_version() -> None:
+def test_delete_of_an_observed_versioned_row_is_ungated_in_locking_mode() -> None:
     # m-unit-work-006, migrated to the m-opt-lock observation flow: a keyed
     # DELETE of a versioned row requires
     # a PRIOR observation exactly like a keyed update (python.md §5) — the
-    # deleted row must be fetched INSIDE this transaction first, and the
-    # lowered DELETE binds that observed version.
+    # deleted row must be fetched INSIDE this transaction first, under the
+    # shared read lock. The observation licenses the write; under the default
+    # locking mode it renders no gate, exactly as a keyed update does.
     port = RecordingPort(rows=[{"id": 3, "owner": "Grace", "balance": 10.00, "version": 1}])
 
     def fn(tx: Transaction) -> None:
@@ -137,11 +138,7 @@ def test_delete_of_an_observed_versioned_row_gates_on_the_observed_version() -> 
     assert port.ops == [
         ("begin",),
         ("read", FIND_SQL, (3,)),
-        (
-            "write",
-            POSTGRES.to_driver_sql("delete from account where id = ? and version = ?"),
-            (3, 1),
-        ),
+        ("write", POSTGRES.to_driver_sql("delete from account where id = ?"), (3,)),
         ("commit",),
     ]
 

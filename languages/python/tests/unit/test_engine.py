@@ -1606,12 +1606,12 @@ def test_write_sequence_compile_wraps_a_lowering_failure_as_engine_error() -> No
 # (`_check_statement_count_consistency`). A structured predicate-write        #
 # instruction reaching this seam refuses loudly, never a bare `KeyError`.     #
 # --------------------------------------------------------------------------- #
-def test_versioned_delete_decomposes_per_row_and_gates_each_key() -> None:
+def test_versioned_delete_decomposes_per_row() -> None:
     # m-batch-write-004's own shape: a versioned entity's multi-row delete
-    # decomposes per row and gates on each row's own `observedVersion`,
-    # regardless of the authored `statements` count matching `len(rows)`
-    # (which it does here too — the discriminator does not consult it either
-    # way).
+    # decomposes per row — each row's own `observedVersion` keeps it separately
+    # identifiable — regardless of the authored `statements` count matching
+    # `len(rows)` (which it does here too — the discriminator does not consult
+    # it either way). The default locking mode renders each key ungated.
     case = _synthetic_write(
         "writeSequence",
         {
@@ -1632,9 +1632,9 @@ def test_versioned_delete_decomposes_per_row_and_gates_each_key() -> None:
     )
     emissions, round_trips = engine.compile_write_sequence_case(case, "postgres")
     assert round_trips == 2
-    assert [e.sql for e in emissions] == [
-        "delete from account where id = ? and version = ?",
-        "delete from account where id = ? and version = ?",
+    assert [(e.sql, e.binds) for e in emissions] == [
+        ("delete from account where id = ?", (1,)),
+        ("delete from account where id = ?", (2,)),
     ]
 
 
@@ -2140,7 +2140,7 @@ def test_run_scenario_case_executes_a_materializing_predicate_write_pair() -> No
     emissions, round_trips, _errors = engine.run_scenario_case(case, "postgres", port)
     assert round_trips == 2
     assert [e.case_pointer for e in emissions] == ["/scenario/0/find", "/scenario/1/write"]
-    assert emissions[1].sql == "delete from account where id = ? and version = ?"
+    assert emissions[1].sql == "delete from account where id = ?"
     assert len(port.writes) == 1 and len(port.reads) == 1 and port.commits == 1
 
 
@@ -2216,7 +2216,7 @@ def test_materializing_predicate_write_rollback_aborts_but_counts_the_round_trip
     emissions, round_trips, _errors = engine.run_scenario_case(case, "postgres", port)
     assert round_trips == 2
     assert [e.case_pointer for e in emissions] == ["/scenario/0/find", "/scenario/1/write"]
-    assert emissions[1].sql == "delete from account where id = ? and version = ?"
+    assert emissions[1].sql == "delete from account where id = ?"
     assert len(port.writes) == 1 and len(port.reads) == 1
     assert port.commits == 0 and port.rollbacks == 1
 
@@ -2369,6 +2369,36 @@ def test_run_conflict_case_applies_given_apply_out_of_band_first() -> None:
     assert affected == 1  # the fake port always reports 1; the real 0-row
     # conflict proof runs against a reset database (test_conflict_run_sweep).
     assert table_state is not None
+
+
+class _ZeroAffectedPort(FakeWritePort):
+    """A port whose golden write reports a zero-row shortfall (a concurrent
+    writer already moved or removed the row)."""
+
+    def execute_write(self, sql: str, binds: Sequence[object]) -> int:
+        super().execute_write(sql, binds)
+        return 0 if sql.startswith(("update account set", "delete from account where")) else 1
+
+
+def test_run_conflict_case_renders_an_ungated_zero_row_delete_as_a_stale_write() -> None:
+    # m-opt-lock-016: a locking-mode versioned DELETE renders no gate, so its
+    # zero-row shortfall raises the NON-retriable StaleWriteError rather than an
+    # optimistic conflict. This lane catches either and reports the same
+    # `affectedRows` observation the case asserts.
+    port = _ZeroAffectedPort()
+    emissions, affected, _table_state = engine.run_conflict_case(
+        _load_case("m-opt-lock-016"), "postgres", port
+    )
+    assert [e.sql for e in emissions] == ["delete from account where id = ?"]
+    assert affected == 0
+
+
+def test_run_conflict_case_renders_a_gated_zero_row_update_as_a_conflict() -> None:
+    port = _ZeroAffectedPort()
+    _emissions, affected, _table_state = engine.run_conflict_case(
+        _load_case("m-opt-lock-005"), "postgres", port
+    )
+    assert affected == 0
 
 
 def test_run_conflict_case_attempts_form_scripts_each_attempt_independently() -> None:

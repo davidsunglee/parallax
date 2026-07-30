@@ -150,16 +150,13 @@ def test_read_your_own_writes_delete_scenario_observes_absence() -> None:
     observe, write, find = case.scenario
     assert observe["expectRows"] == [{"id": 3, "owner": "Grace", "balance": 10.00, "version": 1}]
     # The write step carries the structured keyed buffer (D-3 migration): a single
-    # keyed DELETE of account 3, gated on its observed version (unlike a keyed
-    # UPDATE, a keyed DELETE of an observed versioned row gates in EITHER mode).
+    # keyed DELETE of account 3, ungated under the case's default locking mode
+    # (the observation licenses the write; the gate follows the concurrency mode).
     (instruction,) = write["write"]
     assert instruction["mutation"] == "delete"
     assert instruction["entity"] == "Account"
     assert instruction["rows"] == [{"id": 3}]
-    assert (
-        write["statements"][0]["sql"]["postgres"]
-        == "delete from account where id = ? and version = ?"
-    )
+    assert write["statements"][0]["sql"]["postgres"] == "delete from account where id = ?"
     # The dependent find returns ZERO rows — the deletion is visible.
     assert find["expectRows"] == []
     _assert_scenario_count_consistency(case, "postgres")

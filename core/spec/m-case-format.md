@@ -53,9 +53,10 @@ and routing (`model`, `tags`, `lane`) plus the explicit `shape` discriminator st
 - **`when`** — the action under test and how the client performs it. Exactly one
   **action** member per shape (`operation` | `writeSequence` | `scenario` |
   `coherence` | `concurrency` | `boundary` | `attempts`, plus the single-attempt
-  conflict's `write`); the **context** members (`uow`, `at`, `observedTxStart`,
-  `equivalentEncodings`) describe the unit-of-work mode, transaction instant,
-  observed version, and alternate surface encodings.
+  conflict's `write`); the **context** members (`uow`, `mutation`, `at`,
+  `observedTxStart`, `equivalentEncodings`) describe the unit-of-work mode, the
+  written verb, transaction instant, observed version, and alternate surface
+  encodings.
 - **`then`** — everything the case asserts: the golden `statements`, the naive
   `referenceSql`, the observed data (`rows` / `graph` / the per-milestone `graphs` /
   `tableState`), the counts and codes (`affectedRows` / `errorClass` / `nativeCode` /
@@ -78,8 +79,10 @@ A case is one of **nine shapes**, named by the required top-level `shape`:
 - **`scenario`** — a `when.scenario` of ordered read, committed-write, *and*
   lifecycle-**action** steps, golden SQL per step (`m-unit-work` and the
   object-lifecycle modules — see *Lifecycle action steps*).
-- **`conflict`** — an optimistic-lock `UPDATE` asserted by `then.affectedRows` for
-  a single attempt, or an ordered `when.attempts` retry sequence (`m-opt-lock`).
+- **`conflict`** — an observation-requiring keyed write (`when.mutation`:
+  `update`, the default, or `delete`; a temporal target's milestone close)
+  asserted by `then.affectedRows` for a single attempt, or an ordered
+  `when.attempts` retry sequence (`m-opt-lock`).
 - **`coherence`** — a `when.coherence` two-node sequence (`m-coherence`).
 - **`error`** — asserts `then.errorClass` + `then.nativeCode` (`m-db-error`),
   triggered by top-level `then.statements` (single-connection `uniqueViolation`) or
@@ -200,7 +203,7 @@ the open-bound `infinity` as the literal string `infinity`.
 | `lane` | top-level | no | which executor satisfies the case (default `harness`): `harness` — the harness runs it as today; `api-conformance` — schema-validated by the harness but satisfied by each language's API Conformance Suite (see *Case lanes*, below) |
 | `shape` | top-level | yes | the explicit shape discriminator — one of the nine shapes above; the schema `oneOf` keys on this `const` |
 | `given.fixtures` | `given` | no | load the model's fixtures BEFORE the action (default `false`), so a sequence can mutate pre-existing persisted rows |
-| `given.apply` | `given` | conflict | an ordered list of out-of-band **naive statement entries** (`sql` a plain string) the harness applies verbatim after fixtures load and before the golden `UPDATE` — a concurrent transaction's stale-version mutation |
+| `given.apply` | `given` | conflict | an ordered list of out-of-band **naive statement entries** (`sql` a plain string) the harness applies verbatim after fixtures load and before the golden write — a concurrent transaction's stale-version mutation or row removal |
 | `given.fault` | `given` | boundary | an injected portable fault kind (`serialization-failure` / `deadlock` / `lock-wait-timeout` / `optimistic-lock-conflict`) driving the retry loop |
 | `when.operation` | `when` | read | a canonical `m-op-algebra` node, validated against the operation schema (read cases) |
 | `when.targetEntity` | `when` | read | the entity the read TARGETS — the queried position `when.operation` starts from (see *Read targeting*, below); REQUIRED on every read case and every scenario / coherence read step |
@@ -210,7 +213,8 @@ the open-bound `infinity` as the literal string `infinity`.
 | `when.concurrency` | `when` | error / concurrencySuccess | a two-connection, barrier-separated `rounds` choreography; each node step carries per-step golden `statements` |
 | `when.boundary` | `when` | boundary | an ordered list of portable unit-of-work actions (`read` / `create` / `update` / `terminate` / `delete`) |
 | `when.attempts` | `when` | conflict | an ordered retry sequence of optimistic-lock `UPDATE` attempts, each carrying its own `statements` + `affectedRows` + `write` |
-| `when.write` | `when` | conflict / rejected | the single-attempt neutral write input (①): the flat attribute-named row the versioned `UPDATE` (or temporal close) operates on; on a `rejected` case, a value-object write the validator MUST refuse pre-SQL |
+| `when.write` | `when` | conflict / rejected | the single-attempt neutral write input (①): the flat attribute-named row the versioned `UPDATE` / `DELETE` (or temporal close) operates on; on a `rejected` case, a value-object write the validator MUST refuse pre-SQL |
+| `when.mutation` | `when` | conflict | the keyed verb `when.write` names — `update` (default) or `delete`; ignored for a temporal target, whose conflict write is always the milestone close |
 | `when.model` | `when` | rejected | an inline model descriptor whose accepted-model formation is invalid — either a standalone/table-level defect or a cross-entity family invariant a model-aware validator MUST reject pre-SQL; kept inline so the shared `models/` registry stays loadable (see *Rejected cases*) |
 | `when.uow` | `when` | no | unit-of-work configuration (`concurrency: locking \| optimistic`, `retries`, `retryOptimisticConflicts`) the action runs under; descriptive |
 | `when.at` / `when.observedTxStart` | `when` | conflict | the harness-supplied Transaction-Time close instant (→ new `out_z`) and observed `tx_start` / physical `in_z` the optimistic gate binds |
@@ -222,7 +226,7 @@ the open-bound `infinity` as the literal string `infinity`.
 | `then.graphs` | `then` | read | an ORDERED array of per-milestone edge-pinned graphs a `history` / `asOfRange` snapshot read materializes (see *Milestone-set graphs*, below) — each entry `{pin, graph}`; coexists with `then.graph` exactly as `then.rows` does |
 | `then.identityChecks` | `then` | read | declared reference-identity expectations over graph node positions — each `{left, right, same}` with JSON-Pointer `left` / `right` and a boolean `same` — the same-node claim a back-reference cycle's PK-only stub cannot carry by value (see *Back-reference cycles*, below) |
 | `then.tableState` | `then` | writeSequence | the resulting table state a writeSequence (or conflict) case asserts, keyed by table name (REQUIRED for a write case) |
-| `then.affectedRows` | `then` | conflict | the number of rows the golden `UPDATE` must affect (`0` = stale-version conflict, `1` = success) |
+| `then.affectedRows` | `then` | conflict | the number of rows the golden write must affect (`0` = the zero-row shortfall — a gated conflict or an ungated stale write, `1` = success) |
 | `then.errorClass` | `then` | error | the neutral `m-db-error` category a triggered error must classify to (`uniqueViolation` / `deadlock` / `lockWaitTimeout`) |
 | `then.nativeCode` | `then` | error | the per-dialect native code each driver must surface (Postgres SQLSTATE string, MariaDB vendor errno) |
 | `then.outcome` | `then` | boundary | the portable expected outcome (`committed` / `aborted` / a surfaced error kind) |
@@ -618,17 +622,25 @@ table state shows which rows changed or were removed.
 ### Conflict cases (`m-opt-lock`)
 
 A **conflict** case proves optimistic-lock conflict detection by the **affected-
-row count** a golden `UPDATE` leaves behind. The harness loads the model's
+row count** a golden statement leaves behind. The harness loads the model's
 fixtures (the versioned row exists), applies an OPTIONAL out-of-band
 **`given.apply`** (naive statement entries simulating a concurrent transaction
-that bumped the version), runs the golden `UPDATE` (which gates on the version
-the caller read earlier, its neutral write input in `when.write`), and asserts the
-affected-row count equals **`then.affectedRows`** — `0` for a stale version
-(conflict; the `updatedRows != 1` signal) and `1` for a fresh version (success).
-When `then.tableState` is authored it is asserted too, confirming a conflicting
-write did not apply. As with writeSequence cases, only the descriptor serde
-round-trip and the golden-SQL normalization layers apply (there is no
-`when.operation`).
+that bumped the version or removed the row), runs the golden write (whose neutral
+input is `when.write`), and asserts the affected-row count equals
+**`then.affectedRows`** — `0` for the zero-row shortfall (the `updatedRows != 1`
+signal) and `1` for success. When `then.tableState` is authored it is asserted
+too, confirming a conflicting write did not apply. As with writeSequence cases,
+only the descriptor serde round-trip and the golden-SQL normalization layers
+apply (there is no `when.operation`).
+
+The written verb is **`when.mutation`** — `update` (the default) or `delete` —
+for a NON-temporal target; a temporal target's conflict write is always the
+milestone close, so it ignores the field. The verb does not decide whether the
+golden carries a gate: `when.uow.concurrency` does, uniformly across update,
+delete, and close (`m-opt-lock`). A `delete` case therefore pins both halves of
+that rule — the optimistic golden appends `and <version> = ?`, the locking golden
+appends nothing — and a locking-mode zero-row outcome is the non-retriable stale
+write rather than a retriable conflict.
 
 A conflict case MAY instead carry a **`when.attempts`** retry sequence — an ordered
 list of golden `UPDATE`s, each with its own `statements` + `affectedRows` + `write`

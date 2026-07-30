@@ -506,7 +506,10 @@ def test_error_run_sweep(case: case_format.Case, provisioner: Any) -> None:
 # SAME `when.attempts` retry lane `m-opt-lock-007` already exercises (pinned   #
 # semantics #7: the attempts sequence is caller-visible choreography here,    #
 # not the runtime auto-retry loop, which `m-opt-lock-011`'s boundary case      #
-# proves instead).                                                             #
+# proves instead). `m-opt-lock-016` is the non-temporal sibling of the         #
+# locking-mode zero-row close: an UNGATED versioned keyed DELETE whose row a   #
+# concurrent transaction already removed, whose shortfall the executor         #
+# classifies as the never-retriable stale write rather than a conflict.        #
 # --------------------------------------------------------------------------- #
 _CONFLICT_CASES_EXERCISED: Final[frozenset[str]] = frozenset(
     {
@@ -515,6 +518,7 @@ _CONFLICT_CASES_EXERCISED: Final[frozenset[str]] = frozenset(
         "m-opt-lock-007",
         "m-opt-lock-009",
         "m-opt-lock-013",
+        "m-opt-lock-016",
         "m-temporal-read-009",
         "m-temporal-read-010",
         "m-temporal-read-011",

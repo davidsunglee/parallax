@@ -3451,22 +3451,31 @@ def _identity_key(
     return tuple((name, row[name]) for name in pk_names)
 
 
+def _conflict_mutation(when: Mapping[str, object]) -> Literal["update", "delete"]:
+    """A NON-TEMPORAL conflict case's written verb (`m-case-format`
+    ``when.mutation``), defaulting to ``update``. A temporal target ignores it:
+    its conflict write is always the milestone close."""
+    return "delete" if when.get("mutation") == "delete" else "update"
+
+
 def _lower_conflict_write(
     meta: Metamodel,
     dialect: Dialect,
     target: str,
     concurrency: Concurrency,
     write_row: Mapping[str, object],
+    mutation: Literal["update", "delete"],
 ) -> tuple[Statement, ...]:
     """PURE-lower one NON-TEMPORAL conflict attempt's ``write`` row: strip its
     reserved ``observedVersion`` into an :class:`Observation` (`m-opt-lock`;
-    ADR 0013), plan the single-instruction buffer, and lower it. A
-    non-temporal conflict's write is always a versioned keyed UPDATE
-    (`m-case-format`: "an optimistic-lock UPDATE") — a temporal close's own
-    conflict form (`handle.lower_temporal_close`) is a distinct shape."""
+    ADR 0013), plan the single-instruction buffer, and lower it. ``mutation`` is
+    the case's own ``when.mutation`` verb — a versioned keyed UPDATE or DELETE,
+    the two non-temporal shapes whose gate the concurrency mode decides
+    uniformly; a temporal close's own conflict form
+    (`handle.lower_temporal_close`) is a distinct shape."""
     clean_row, observation = _strip_observation(write_row)
     instruction = instructions.deserialize(
-        {"mutation": "update", "entity": target, "rows": [clean_row]}
+        {"mutation": mutation, "entity": target, "rows": [clean_row]}
     )
     model = case_model(meta)
     instructions.validate_instruction(instruction, model)
@@ -3492,16 +3501,19 @@ def _run_conflict_write(
     target: str,
     concurrency: Concurrency,
     write_row: Mapping[str, object],
+    mutation: Literal["update", "delete"],
 ) -> tuple[tuple[Statement, ...], int]:
     """Lower and execute one NON-TEMPORAL conflict attempt's write through
     ``db.transact`` — ONE
     transaction, an inert Clock (never consumed by a non-temporal write).
     Buffers through the neutral ``Transaction._buffer`` route +
     ``UnitOfWork.observe``; the PRODUCTION flush executor's OWN
-    ``expected_affected`` check raises :class:`~parallax.core.opt_lock.
-    OptimisticLockConflictError` on a mismatch,
-    which this lane catches and renders as the ``0`` ``affectedRows``
-    observation.
+    ``expected_affected`` check raises on a mismatch — the retriable
+    :class:`~parallax.core.opt_lock.OptimisticLockConflictError` for a GATED
+    statement, the non-retriable :class:`~parallax.core.opt_lock.StaleWriteError`
+    for an UNGATED one (a locking-mode versioned DELETE) — and this lane catches
+    either, rendering it as the ``0`` ``affectedRows`` observation the case
+    asserts.
 
     ``statements`` (the reported golden-comparable emission) is
     :func:`_lower_conflict_write`'s own SEPARATE, PURE re-lowering of the
@@ -3512,7 +3524,7 @@ def _run_conflict_write(
     without the reported emission's bind ever drifting from the case-authored
     literal.
     """
-    statements = _lower_conflict_write(meta, dialect, target, concurrency, write_row)
+    statements = _lower_conflict_write(meta, dialect, target, concurrency, write_row, mutation)
     clean_row, observation = _strip_observation(write_row)
     model = case_model(meta)
     instant = normalize_instant(dt.datetime.fromisoformat(_INERT_CLOCK_INSTANT))
@@ -3521,7 +3533,7 @@ def _run_conflict_write(
 
     def body(tx: handle.Transaction) -> int:
         instruction = instructions.deserialize(
-            {"mutation": "update", "entity": target, "rows": [clean_row]}
+            {"mutation": mutation, "entity": target, "rows": [clean_row]}
         )
         if observation is not None:
             key = object_key(instruction, case_model(meta))
@@ -3529,13 +3541,13 @@ def _run_conflict_write(
                 # The documented neutral seam (Transaction._buffer route + uow.observe).
                 tx._uow.observe(key, observation)  # pyright: ignore[reportPrivateUsage] - conformance harness drives the transaction's private unit-of-work seam
         tx._buffer(  # pyright: ignore[reportPrivateUsage] - conformance harness drives the transaction's private unit-of-work seam
-            "update", target, decode_write_row(target_metadata, clean_row, model)
+            mutation, target, decode_write_row(target_metadata, clean_row, model)
         )
         return 1  # the expectation machinery already verified this on success (m-opt-lock)
 
     try:
         affected = database.transact(body, concurrency=concurrency)
-    except opt_lock.OptimisticLockConflictError as exc:
+    except (opt_lock.OptimisticLockConflictError, opt_lock.StaleWriteError) as exc:
         affected = exc.actual
     return statements, affected
 
@@ -3605,9 +3617,9 @@ def run_conflict_case(
     sequence — each attempt its OWN `db.transact` unit,
     in order, each with its own statements /
     affected-row count (the case's own `0`-then-`1` retry-contract witness). A
-    NON-temporal target (`m-opt-lock`'s own versioned keyed UPDATE) buffers
-    through the neutral `Transaction._buffer` route;
-    a TEMPORAL target composes `handle.lower_temporal_close` directly.
+    NON-temporal target (`m-opt-lock`'s own versioned keyed UPDATE or DELETE,
+    named by `when.mutation`) buffers through the neutral `Transaction._buffer`
+    route; a TEMPORAL target composes `handle.lower_temporal_close` directly.
 
     Loads no fixtures itself (the caller's own lifecycle does, per
     `m-case-format`'s conflict-shape default); applies `given.apply` verbatim
@@ -3622,6 +3634,7 @@ def run_conflict_case(
     when = _when(case)
     concurrency = _concurrency(case)
     target = _conflict_target(meta)
+    mutation = _conflict_mutation(when)
     is_temporal = _is_temporal_entity(meta, target)
     emissions: list[Emission] = []
     affected = 0
@@ -3639,7 +3652,7 @@ def run_conflict_case(
                     )
                 else:
                     statements, affected = _run_conflict_write(
-                        port, dialect, meta, target, concurrency, write_row
+                        port, dialect, meta, target, concurrency, write_row, mutation
                     )
                 emissions.extend(
                     Emission(f"/when/attempts/{index}/write", s.sql, s.binds) for s in statements
@@ -3654,7 +3667,7 @@ def run_conflict_case(
                 )
             else:
                 statements, affected = _run_conflict_write(
-                    port, dialect, meta, target, concurrency, write_row
+                    port, dialect, meta, target, concurrency, write_row, mutation
                 )
             emissions.extend(Emission("/when/write", s.sql, s.binds) for s in statements)
     except _LOWERING_ERRORS as exc:

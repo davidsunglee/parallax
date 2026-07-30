@@ -94,6 +94,32 @@ integer an implementation **MUST**:
   emitted (the `UPDATE` still advances the version — the `m-detach-002` /
   locking-mode shape).
 
+### Concurrency mode determines the gate uniformly
+
+Whether a write carries its observation-bound gate predicate is decided by the
+**concurrency mode alone**, never by the mutation kind. Optimistic mode emits a
+gate on **every** observation-requiring write — a versioned keyed `UPDATE`, a
+versioned keyed `DELETE`, and a temporal milestone close alike. Locking mode
+emits **none** of them, because the shared read lock the required prior
+observation took is what makes the write correct. The requirement to *hold* an
+observation is unaffected: it is mandatory in **both** modes for all three
+shapes, and only what the statement *renders* differs.
+
+An implementation **MUST NOT** make gate presence depend on the verb. A keyed
+`DELETE` that retained its observed-version predicate under locking mode would
+give the gate two different meanings in one mode and let a locking-mode failure
+surface as an optimistic conflict.
+
+The canonical locking-mode goldens are therefore uniform in shape:
+
+```text
+update account set balance = ?, version = ? where id = ?
+delete from account where id = ?
+```
+
+and their optimistic-mode counterparts each append `and version = ?`, binding
+the observed version last.
+
 ### Version values are framework-owned
 
 The version an implementation binds in the gate **MUST** be the version the unit
@@ -102,13 +128,14 @@ into the identity cache (a detached copy carries the one read at detachment,
 `m-detach`). An implementation **MUST NOT** accept a caller-authored version value
 as the gate or as the new version; the new version is always runtime-computed
 (`observed + 1`). "Caller-driven" refers to conflict *handling* only, never to the
-version *value*. A keyed `UPDATE` of a versioned row the unit of work never
-observed is a **read-before-write** error in **either** mode: the new version is
-computed from the observed one (`observed + 1`), so with no observed version
-there is nothing to advance from — and, in optimistic mode, nothing to gate on —
-so the implementation **MUST** raise rather than write blindly. (Only optimistic
-mode additionally emits the version *gate*; both modes require the observed
-version to advance it.)
+version *value*. A keyed `UPDATE` or `DELETE` of a versioned row the unit of work
+never observed is a **read-before-write** error in **either** mode: the new
+version is computed from the observed one (`observed + 1`), so with no observed
+version there is nothing to advance from — and, in optimistic mode, nothing to
+gate on — so the implementation **MUST** raise rather than write blindly. A
+`DELETE` writes no version, but the observation is still what licenses it: under
+locking mode the read that recorded it is what took the shared lock, and under
+optimistic mode it is what the gate binds.
 
 ### No-op updates issue no DML
 
@@ -213,6 +240,14 @@ conflict (a row that exists but no longer matches the expected version), and
 **MUST NOT** silently succeed. The primary-key row still exists; only its version
 moved, so the count — not an error from the database — is the conflict carrier.
 
+Classification follows the **gate**, uniformly with the temporal close rule
+above. A **gated** (optimistic) shortfall is the retriable conflict. An
+**ungated** (locking-mode) shortfall on a write that still required a prior
+observation — a versioned keyed `DELETE`, a milestone close — is a
+categorically different, **non-retriable** stale/consistency outcome: no gate
+could have caused it, so it is not a detected lost update a re-read could
+resolve.
+
 ## Retry contract
 
 A detected conflict is **retriable**. On conflict an implementation **MUST**:
@@ -268,11 +303,12 @@ The case carries an optional out-of-band **`given.apply`** — naive statement
 entries that simulate a concurrent transaction mutating the row — and a
 **`then.affectedRows`** count:
 
-| Case | Mode | given.apply | Golden UPDATE version | Affected rows |
+| Case | Mode | given.apply | Golden gate | Affected rows |
 |---|---|---|---|---|
 | optimistic-lock conflict | optimistic | bump the row's version out of band | the now-stale observed version | **0** (conflict detected) |
 | optimistic-lock success | optimistic | none | the observed version | **1** (write applied) |
 | versioned update, locking mode | locking | none | none — no gate, version still advances | **1** (write applied) |
+| versioned delete, locking mode | locking | remove the row out of band | none — no gate | **0** (non-retriable stale write) |
 
 A companion **scenario** case pins the no-op rule: a versioned update whose `set`
 changes no attribute declares `roundTrips: 0` and lists no golden DML (no

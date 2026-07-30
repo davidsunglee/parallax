@@ -44,15 +44,14 @@ class LoweredStatement:
     one row" — unconditional on gating), never the whole planned write, since a
     chained INSERT's own affected-row count is meaningless as a conflict signal.
 
-    ``stale_error`` distinguishes the TWO zero-row-close outcomes on a mismatch: a
+    ``stale_error`` distinguishes the TWO shortfall outcomes on a mismatch: a
     GATED (optimistic) mismatch is the retriable ``m-opt-lock`` conflict
-    (:class:`~parallax.core.opt_lock.OptimisticLockConflictError` — every
-    non-temporal expectation and every gated temporal close sets
-    this ``False``); an UNGATED (locking-mode) temporal close's mismatch is the
-    distinct NON-retriable :class:`~parallax.core.opt_lock.StaleWriteError`
-    (``stale_error=True`` — the shared read lock, not a gate, was supposed to make it
-    correct, so a zero-row outcome is a consistency violation, not a detected lost
-    update).
+    (:class:`~parallax.core.opt_lock.OptimisticLockConflictError`, ``False``);
+    an UNGATED (locking-mode) mismatch on an observation-requiring write — a
+    versioned keyed DELETE or a temporal close — is the distinct NON-retriable
+    :class:`~parallax.core.opt_lock.StaleWriteError` (``True``): the shared read
+    lock, not a gate, was supposed to make it correct, so a shortfall is a
+    consistency violation rather than a detected lost update.
     """
 
     statement: Statement

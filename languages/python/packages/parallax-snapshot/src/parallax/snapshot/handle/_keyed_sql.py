@@ -288,6 +288,7 @@ def lower_delete(
     meta: Metamodel,
     version_attr: AttributeMetadata | None,
     observation: Observation | None,
+    concurrency: Concurrency,
 ) -> Statement:
     """`delete from <table> where <pk> = ? [and <tag.column> = ?] [and <version> =
     ?]` — keyed by the (family-effective) primary key, tag-guarded for an
@@ -299,17 +300,24 @@ def lower_delete(
     unit of work never issues an implicit resolving read on behalf of a keyed
     write, so with no observed version there is nothing to bind. Unobserved raises
     `UnobservedVersionError` before any DML, in EITHER concurrency mode
-    (`opt_lock.require_observed`); observed binds the observed version
-    (`m-batch-write-004`'s own default-mode witness). Non-versioned deletes never
-    reach this at all (``version_attr is None``).
+    (`opt_lock.require_observed`). The observation is what the GATE binds, and the
+    gate is concurrency-driven, never mutation-driven (`m-opt-lock` "Concurrency
+    mode determines the gate uniformly", ADR 0047): optimistic mode renders
+    `and <version> = ?` exactly as a versioned UPDATE does, locking mode renders
+    nothing at all — its shared read lock is what makes the ungated delete
+    correct. Non-versioned deletes never reach this at all (``version_attr is
+    None``).
     """
     row = instruction.rows[0]
     layout = _layout(meta, entity)
     where_sql, key_binds = key_predicate(meta, entity, row, dialect)
     if version_attr is not None:
         observed_version = opt_lock.require_observed(entity.identity.name, observation)
-        where_sql = f"{where_sql} and {dialect.quote(_version_column(layout, version_attr))} = ?"
-        key_binds = (*key_binds, observed_version)
+        if opt_lock.gates(concurrency):
+            where_sql = (
+                f"{where_sql} and {dialect.quote(_version_column(layout, version_attr))} = ?"
+            )
+            key_binds = (*key_binds, observed_version)
     return Statement(f"delete from {layout.layout.table.name} where {where_sql}", key_binds)
 
 

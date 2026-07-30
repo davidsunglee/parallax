@@ -327,17 +327,42 @@ def test_versioned_update_carrying_a_literal_version_is_refused() -> None:
         _lower(update, ACCOUNT, observation=Observation(version=1), concurrency="optimistic")
 
 
-def test_versioned_delete_binds_the_observed_version_in_either_mode() -> None:
-    # m-batch-write-004: DELETE binds the observed version whenever one is
-    # recorded, unconditionally in EITHER mode (unlike UPDATE's optimistic-only
-    # gate) — python.md §5's own asymmetric phrasing.
+def test_versioned_delete_gates_on_the_observed_version_optimistic_mode() -> None:
+    # m-opt-lock-015: optimistic mode binds the observed version LAST, exactly as
+    # a versioned UPDATE's own gate does — the gate is concurrency-driven, never
+    # mutation-driven.
     delete = KeyedWrite("delete", "Account", ({"id": 3},))
-    for concurrency in ("locking", "optimistic"):
-        statement = _lower(
-            delete, ACCOUNT, observation=Observation(version=1), concurrency=concurrency
-        )[0]
-        assert statement.sql == "delete from account where id = ? and version = ?"
-        assert statement.binds == (3, 1)
+    statement = _lower(
+        delete, ACCOUNT, observation=Observation(version=1), concurrency="optimistic"
+    )[0]
+    assert statement.sql == "delete from account where id = ? and version = ?"
+    assert statement.binds == (3, 1)
+
+
+def test_versioned_delete_is_ungated_in_locking_mode() -> None:
+    # m-batch-write-004: locking mode renders NO gate on a versioned delete, the
+    # same ungated form a versioned UPDATE and a temporal close take — the shared
+    # read lock, not a version predicate, is what makes the write correct.
+    delete = KeyedWrite("delete", "Account", ({"id": 3},))
+    statement = _lower(delete, ACCOUNT, observation=Observation(version=1), concurrency="locking")[
+        0
+    ]
+    assert statement.sql == "delete from account where id = ?"
+    assert statement.binds == (3,)
+
+
+def test_versioned_delete_shortfall_classifies_by_gate_not_by_mutation() -> None:
+    # An ungated (locking-mode) shortfall is the NON-retriable stale outcome an
+    # ungated close's is; a gated (optimistic) one stays the retriable conflict.
+    delete = KeyedWrite("delete", "Account", ({"id": 3},))
+    planned = PlannedWrite(
+        instruction=delete, observation=Observation(version=1), expected_affected=1
+    )
+    model = models.accepted_model(ACCOUNT)
+    locking = lower_write(planned, model, POSTGRES, "locking")[0]
+    optimistic = lower_write(planned, model, POSTGRES, "optimistic")[0]
+    assert locking.stale_error is True
+    assert optimistic.stale_error is False
 
 
 def test_versioned_delete_without_an_observation_requires_observation() -> None:
@@ -530,7 +555,8 @@ def test_mixed_flush_lowers_insert_then_update_then_delete_in_order() -> None:
     # m-unit-work-009: three objects, one flush, canonical combined order. BOTH
     # the update's and the delete's version (m-opt-lock's own prior-observation
     # requirement) come from THIS unit of work's own recorded observation —
-    # never a row-carried value.
+    # never a row-carried value. Under the default locking mode neither renders
+    # a gate.
     statements = _flush_and_lower(
         [
             KeyedWrite(
@@ -551,7 +577,7 @@ def test_mixed_flush_lowers_insert_then_update_then_delete_in_order() -> None:
             (9, "Noether", 5.00, 1),
         ),
         ("update account set balance = ?, version = ? where id = ?", (20.00, 2, 1)),
-        ("delete from account where id = ? and version = ?", (3, 1)),
+        ("delete from account where id = ?", (3,)),
     ]
 
 

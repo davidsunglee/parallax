@@ -37,9 +37,9 @@ The canonical Postgres golden SQL (`m-sql`), as `then.statements` entries:
 # m-batch-write-003 (batch DELETE collapse) then.statements:
 - sql:
     postgres: delete from wallet where id in (?, ?, ?)
-# m-batch-write-004 (versioned delete materializes per key) then.statements:
+# m-batch-write-004 (versioned delete materializes per key, locking mode) then.statements:
 - sql:
-    postgres: delete from account where id = ? and version = ?
+    postgres: delete from account where id = ?
 ```
 
 The suite proves the batched forms against real data by **applying** the golden

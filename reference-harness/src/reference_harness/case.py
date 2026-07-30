@@ -703,6 +703,16 @@ class Case:
         return self.when.get("write")
 
     @property
+    def conflict_mutation(self) -> str:
+        """The keyed verb a NON-temporal conflict case writes (``when.mutation``).
+
+        ``update`` by default; ``delete`` selects the versioned keyed DELETE,
+        whose golden carries no ``set`` clause. A temporal target ignores this —
+        its conflict write is always the milestone close.
+        """
+        return self.when.get("mutation", "update")
+
+    @property
     def at(self) -> Any:
         """A single-form temporal conflict close's instant (``when.at``)."""
         return self.when.get("at")

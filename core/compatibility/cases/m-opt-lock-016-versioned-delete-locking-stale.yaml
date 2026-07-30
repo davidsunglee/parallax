@@ -1,0 +1,44 @@
+# Zero-row versioned DELETE in LOCKING mode: the ungated delete finds no row and
+# affects 0 rows — the non-retriable stale write (m-opt-lock, ADR 0047).
+#
+# The locking-mode counterpart of m-opt-lock-015's gated per-row delete, and the
+# non-temporal sibling of m-temporal-read-012's ungated zero-row close. The
+# concurrency mode alone decides whether an observation-requiring write renders a
+# gate — uniformly across update, delete, and close — so a locking-mode keyed
+# DELETE emits `delete from account where id = ?` with no `and version = ?`
+# clause, exactly as the locking-mode versioned UPDATE (m-opt-lock-004) emits none.
+# The observation is still mandatory: it is the read that took the m-read-lock
+# shared lock, which is what makes the ungated delete correct in the first place.
+#
+# `given.apply` REMOVES account 2 out of band (a concurrent transaction that
+# committed first), so the keyed delete matches nothing. Because no gate could
+# have caused that shortfall, the zero-row outcome is NOT the retriable
+# optimistic-lock conflict m-opt-lock-005 pins: it is the distinct, never-retriable
+# stale/consistency outcome — the same classification an ungated locking-mode
+# close carries. `then.affectedRows` is 0 and `then.tableState` shows accounts 1
+# and 3 untouched with account 2 already gone (the delete changed nothing).
+model: models/account.yaml
+tags: [m-opt-lock, m-sql, conflict, locking, stale-write, slice-snapshot-1, slice-managed-1]
+shape: conflict
+compileEligibility:
+  mode: run-only
+  reason: single-connection
+  note: "single-connection concurrency/locking intent (given.apply, shape:conflict)"
+given:
+  apply:
+    - sql: delete from account where id = 2
+when:
+  uow:
+    concurrency: locking
+  mutation: delete
+  write: { id: 2, observedVersion: 1 }
+then:
+  statements:
+    - sql:
+        postgres: delete from account where id = ?
+      binds: [2]
+  affectedRows: 0
+  tableState:
+    account:
+      - { id: 1, owner: Ada, balance: 100.00, version: 1 }
+      - { id: 3, owner: Grace, balance: 10.00, version: 1 }

@@ -201,8 +201,9 @@ class OptimisticLockConflictError(RuntimeError):
     """The ``updatedRows != 1`` conflict on a versioned keyed write (`m-opt-lock`).
 
     The retriable-when-opted-in signal: a concurrent write changed the version
-    (or, for a keyed DELETE, the row) first, so the gated/version-bound
-    statement matched zero rows instead of the expected one. Carries the
+    (or, for a keyed DELETE, the row) first, so the GATED statement matched zero
+    rows instead of the expected one. An ungated (locking-mode) shortfall is the
+    sibling :class:`StaleWriteError` instead. Carries the
     context an engine or caller needs to render an ``affectedRows`` observation:
     ``entity`` (the write's target entity name), ``key`` (its object key, the
     same ``(pk attribute name, value)`` pairs `~parallax.core.unit_work.
@@ -229,20 +230,23 @@ class OptimisticLockConflictError(RuntimeError):
 
 
 class StaleWriteError(RuntimeError):
-    """The ``updatedRows != 1`` outcome on an UNGATED (locking-mode) temporal close
-    (`m-txtime-write` "Affected-row conflict contract for closes"; `m-bitemp-write`).
+    """The ``updatedRows != 1`` outcome on an UNGATED (locking-mode) write that
+    still required a prior observation — a temporal close (`m-txtime-write`
+    "Affected-row conflict contract for closes"; `m-bitemp-write`) or a versioned
+    keyed DELETE (`m-opt-lock`).
 
-    A zero-row temporal close is an error in ANY mode, never silent. Under optimistic
-    concurrency the observed-``in_z`` gate (and, bitemporal, the Valid-Time discriminator)
-    makes a stale close a detectable, retriable :class:`OptimisticLockConflictError` —
-    but under locking concurrency the close carries no gate at all (the shared read
-    lock is supposed to make it correct), so a zero-row locking-mode close is a
-    categorically DIFFERENT, NON-retriable outcome: a consistency violation the current-
-    row predicate alone (``pk and out_z = infinity``) could not have prevented, not a
-    lost-update conflict a retry could resolve by re-reading. Carries the SAME context
-    fields as :class:`OptimisticLockConflictError` (``entity`` / ``key`` / ``expected`` /
-    ``actual``) so a caller renders the SAME ``affectedRows`` observation either way;
-    the sibling class is what distinguishes the two outcomes.
+    Such a shortfall is an error in ANY mode, never silent. Under optimistic
+    concurrency the gate — the observed ``in_z`` (plus, bitemporal, the Valid-Time
+    discriminator) for a close, the observed version for a delete — makes a stale
+    write a detectable, retriable :class:`OptimisticLockConflictError`. Under
+    locking concurrency the statement carries no gate at all (the shared read lock
+    is supposed to make it correct), so the shortfall is a categorically DIFFERENT,
+    NON-retriable outcome: a consistency violation the identity predicate alone
+    could not have prevented, not a lost-update conflict a retry could resolve by
+    re-reading. Carries the SAME context fields as
+    :class:`OptimisticLockConflictError` (``entity`` / ``key`` / ``expected`` /
+    ``actual``) so a caller renders the SAME ``affectedRows`` observation either
+    way; the sibling class is what distinguishes the two outcomes.
     """
 
     def __init__(
@@ -316,9 +320,12 @@ def advance(observed: int) -> int:
 
 
 def gates(concurrency: Concurrency) -> bool:
-    """Whether ``concurrency`` emits the ``and <version> = ?`` gate on a
-    versioned UPDATE's ``where`` clause.
+    """Whether ``concurrency`` emits an observation-bound gate predicate.
 
+    The answer is UNIFORM across every observation-requiring write — a
+    versioned keyed UPDATE, a versioned keyed DELETE, and a temporal close all
+    consult this one decision (`m-opt-lock` "Concurrency mode determines the
+    gate uniformly"), so a gate's presence never depends on the mutation kind.
     Optimistic mode only — the version still advances in the ``set`` of BOTH
     modes (`m-opt-lock` "The version column"); locking mode's shared read lock
     is what makes an ungated write correct.

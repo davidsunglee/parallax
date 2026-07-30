@@ -90,8 +90,9 @@ def lower_write(
     ``planned`` is one execution-ordered item of a :class:`FlushPlan`: a (coalesced,
     FK-ordered, elided) write instruction plus its bound transaction observation and
     affected-rows expectation. ``concurrency`` is the owning unit of work's
-    participation mode (m-opt-lock: whether a versioned UPDATE's version gate, or a
-    temporal close's observed Transaction-Time/Valid-Time gate, is emitted).
+    participation mode (m-opt-lock: whether an observation-requiring write's gate —
+    a versioned UPDATE's or DELETE's version gate, a temporal close's observed
+    Transaction-Time/Valid-Time gate — is emitted at all).
     ``tx_instant`` is the flush's Clock-supplied Transaction-Time instant
     (``FlushPlan.tx_instant``) — REQUIRED for a temporal write (bound as the close's
     new ``out_z`` and every chained row's fresh ``in_z``), unused by the non-temporal
@@ -195,10 +196,17 @@ def lower_write(
         return [
             LoweredStatement(lower_multi_delete(entity, instruction, dialect, meta, version_attr))
         ]
+    # An ungated (locking-mode) versioned delete shortfall is the same
+    # non-retriable stale outcome an ungated close's is: no gate could have
+    # prevented it, so it is a consistency violation rather than a detected
+    # lost update (`m-opt-lock`, ADR 0047).
     return [
         LoweredStatement(
-            lower_delete(entity, instruction, dialect, meta, version_attr, planned.observation),
+            lower_delete(
+                entity, instruction, dialect, meta, version_attr, planned.observation, concurrency
+            ),
             expected_affected=planned.expected_affected,
+            stale_error=not opt_lock.gates(concurrency),
         )
     ]
 

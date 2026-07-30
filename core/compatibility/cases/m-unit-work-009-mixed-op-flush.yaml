@@ -11,23 +11,19 @@
 # committed step, after which a dependent find proves the combined net state. All
 # four steps share ONE `uow` group (`mixed-flush`): both observing finds, the
 # flush, and the dependent find run inside the SAME unit of work, which is what
-# lets the update's and delete's version binds be the observing finds' OWN
-# transaction-scoped observations (`m-opt-lock`) rather than oracle values the
-# compile lane could not otherwise derive — the case is therefore
-# `compileEligibility: run-only` (query-result-dependent). Unlike the keyed
-# UPDATE (whose version gate is optimistic-only), the keyed DELETE of an
-# OBSERVED versioned row gates on that observed version in EITHER concurrency
-# mode (`m-batch-write-004`'s own default-mode witness; `python.md` §5's
-# asymmetric phrasing), so the golden DELETE carries `and version = ?` even in
-# the DEFAULT `locking` mode here:
+# lets the update's version advance and the delete's required observation come from
+# the observing finds' OWN transaction-scoped observations (`m-opt-lock`) rather
+# than oracle values the compile lane could not otherwise derive — the case is
+# therefore `compileEligibility: run-only` (query-result-dependent). Whether either
+# write renders a GATE follows the concurrency mode alone (`m-opt-lock`), so under
+# the DEFAULT `locking` mode here the UPDATE and the DELETE are both UNGATED:
 #   step 0 find  : observe account 1 (Ada, 100.00, version 1), 1 round trip.
 #   step 1 find  : observe account 3 (Grace, 10.00, version 1), 1 round trip.
 #   step 2 write : three buffered writes in flush order —
 #                    (1) insert a new account 9 (Noether, 5.00),
 #                    (2) update the OBSERVED account 1's balance 100.00 -> 20.00,
 #                        advancing the observed version 1 -> 2,
-#                    (3) delete the OBSERVED account 3 (Grace, 10.00), gated on
-#                        its observed version 1.
+#                    (3) delete the OBSERVED account 3 (Grace, 10.00), ungated.
 #   step 3 find  : `balance < 50` MUST observe the combined result — account 1 at
 #                  20.00 (the update landed), account 9 at 5.00 (the insert
 #                  landed), and NOT account 3, which qualified at 10.00 before the
@@ -43,7 +39,7 @@ shape: scenario
 compileEligibility:
   mode: run-only
   reason: query-result-dependent
-  note: "the versioned update's version bind is the framework-owned advance of the version its own observing find returned; the versioned delete's version bind is that SAME observed version, not an advance — a query result (m-opt-lock)"
+  note: "the versioned update's version bind is the framework-owned advance of the version its own observing find returned, and the versioned delete requires that find's observation to run at all — a query result (m-opt-lock)"
 given:
   fixtures: true
 when:
@@ -100,8 +96,8 @@ when:
             postgres: update account set balance = ?, version = ? where id = ?
           binds: [20.00, 2, 1]
         - sql:
-            postgres: delete from account where id = ? and version = ?
-          binds: [3, 1]
+            postgres: delete from account where id = ?
+          binds: [3]
     - uow: mixed-flush
       targetEntity: Account
       find:

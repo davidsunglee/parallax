@@ -6,20 +6,19 @@
 # PRIOR observation exactly like a keyed UPDATE (`m-opt-lock`) — the unit of work
 # first OBSERVES account 3 (Grace, balance 10.00, version 1), then commits a DELETE
 # of that SAME observed row, then issues a find that depends on it — the find MUST
-# observe the ABSENCE of the row (zero rows), not the stale fixture. Unlike a keyed
-# UPDATE (whose version gate is optimistic-only), a keyed DELETE of an OBSERVED
-# versioned row gates on that observed version in EITHER concurrency mode
-# (`m-batch-write-004`'s own default-mode witness; `python.md` §5's asymmetric
-# phrasing), so the golden DELETE carries `and version = ?` even in the DEFAULT
-# `locking` mode here. All three steps share ONE `uow` group (`observed-delete`):
-# the observing find, the versioned delete, and the dependent find run inside the
-# SAME unit of work, which is what lets the delete's version bind be the observing
-# find's OWN transaction-scoped observation (`m-opt-lock`) rather than an oracle
-# value the compile lane could not otherwise derive — the case is therefore
-# `compileEligibility: run-only` (query-result-dependent). The scenario:
+# observe the ABSENCE of the row (zero rows), not the stale fixture. The observation
+# LICENSES the delete in either mode, but whether it is GATED follows the
+# concurrency mode alone, exactly as a keyed UPDATE's version gate does
+# (`m-opt-lock`): under the DEFAULT `locking` mode here the golden DELETE is
+# UNGATED — the shared read lock the observing find takes is what makes it correct.
+# All three steps share ONE `uow` group (`observed-delete`): the observing find, the
+# versioned delete, and the dependent find run inside the SAME unit of work, which
+# is what makes the delete's required observation this group's OWN
+# transaction-scoped one (`m-opt-lock`) rather than an oracle value the compile lane
+# could not otherwise derive — the case is therefore `compileEligibility: run-only`
+# (query-result-dependent). The scenario:
 #   step 0 find  : observe account 3 (Grace, 10.00, version 1), 1 round trip.
-#   step 1 write : a DELETE of the observed account 3, gated on its observed
-#                  version 1.
+#   step 1 write : a DELETE of the observed account 3, ungated.
 #   step 2 find  : query account 3 — it MUST observe NO rows (the delete is
 #                  visible). The group COMMITS after this, its last step.
 # Every find is a cache MISS (the write step's forced flush precedes step 2) and, in
@@ -33,7 +32,7 @@ shape: scenario
 compileEligibility:
   mode: run-only
   reason: query-result-dependent
-  note: "the versioned delete's version bind is the OBSERVED version the unit of work's own observing find returned — a DELETE gates on that observation, it never advances it — a query result (m-opt-lock)"
+  note: "the versioned delete's required observation is the one the unit of work's own observing find recorded — a query result the compile lane cannot derive (m-opt-lock)"
 when:
   scenario:
     - uow: observed-delete
@@ -57,11 +56,11 @@ when:
           rows:
             - { id: 3 }
       roundTrips: 1
-      note: buffer a delete of the observed account 3, gated on its observed version 1; the unit of work commits at the group's last step below
+      note: buffer a delete of the observed account 3, ungated under the default locking mode; the unit of work commits at the group's last step below
       statements:
         - sql:
-            postgres: delete from account where id = ? and version = ?
-          binds: [3, 1]
+            postgres: delete from account where id = ?
+          binds: [3]
     - uow: observed-delete
       targetEntity: Account
       find:
