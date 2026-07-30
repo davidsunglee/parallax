@@ -203,6 +203,10 @@ def _case_uses_uow_grouping(case: case_format.Case) -> bool:
 # lowers — the case's own fourth step is not itself a materializing read, but
 # it is run-only and NOT `uow`-grouped, so this explicit admission clause is
 # still the only membership path that reaches it (`_reachable_write_cases`).
+# `m-value-object-066` is its versioned counterpart and reaches membership the
+# same way. Both are graded here precisely BECAUSE this lane compares each
+# emitted statement against its authored golden: the Document slot each
+# resolving read projects is observable nowhere else.
 _MATERIALIZING_PREDICATE_WRITE_SCENARIOS_EXERCISED: Final[frozenset[str]] = frozenset(
     {
         "m-opt-lock-003",
@@ -216,6 +220,7 @@ _MATERIALIZING_PREDICATE_WRITE_SCENARIOS_EXERCISED: Final[frozenset[str]] = froz
         "m-bitemp-write-012",
         "m-bitemp-write-013",
         "m-value-object-047",
+        "m-value-object-066",
     }
 )
 

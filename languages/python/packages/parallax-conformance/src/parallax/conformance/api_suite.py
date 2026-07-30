@@ -875,12 +875,22 @@ _BITEMP_PIN_CONTRAST_REASON: Final[str] = (
 
 _VO_SCENARIO_COMBO_REASON: Final[str] = (
     "a scenario combining a managed (instance-form) find, a MATERIALIZING "
-    "predicate-write resolving read (row-form, the VO document omitted — the "
-    "result-form contrast this case pins), and a txtime-write terminate under an "
+    "predicate-write resolving read (row-form, widened to project the VO document "
+    "because the Temporal Observation it records is a complete Predecessor Row — the "
+    "widening this case pins), and a txtime-write terminate under an "
     "optimistic-lock gate: the materializing predicate-write machinery (m-txtime-write / "
     "m-opt-lock / m-batch-write's readless/materialize split) is run-lane covered "
     "(query-result-dependent, `compileEligibility: run-only`); no idiomatic story was "
     "authored for this multi-capability combination scenario"
+)
+_VO_VERSIONED_RESOLVE_SCENARIO_REASON: Final[str] = (
+    "the versioned counterpart of that scenario: a managed (instance-form) find and a "
+    "MATERIALIZING predicate-write resolving read over the SAME operation, where the "
+    "resolve keeps the row-form default (pk + version only, the VO document omitted) "
+    "because a Version Observation retains no predecessor row, followed by a "
+    "version-gated per-row delete. The same materializing predicate-write machinery is "
+    "run-lane covered (query-result-dependent, `compileEligibility: run-only`); no "
+    "idiomatic story was authored for this multi-capability combination scenario"
 )
 
 CASE_SKIP_REASONS: Final[dict[str, str]] = {
@@ -1062,6 +1072,7 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-value-object-045": _VO_BATCH_WRITE_REASON,
     "m-value-object-046": _VO_OPT_LOCK_CONFLICT_REASON,
     "m-value-object-047": _VO_SCENARIO_COMBO_REASON,
+    "m-value-object-066": _VO_VERSIONED_RESOLVE_SCENARIO_REASON,
     # -- m-bitemp-write: the finite-pin mutation contrast pair ---------------- #
     "m-bitemp-write-015": _BITEMP_PIN_CONTRAST_REASON,
     "m-bitemp-write-016": _BITEMP_PIN_CONTRAST_REASON,

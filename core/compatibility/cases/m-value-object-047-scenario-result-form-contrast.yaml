@@ -14,9 +14,10 @@
 # own topology chains NOTHING and therefore carries no payload forward. Completeness
 # belongs to the OBSERVATION rather than to the topology (ADR 0042: a decorator must
 # distinguish carried from changed state without a second read), so the document is
-# projected even here. The row-form DEFAULT — omitting Document slots — is witnessed
-# at case level instead, by the `then.rows` reads over `customer` (which omit
-# `address`) against that model's own `then.graph` reads (which project it).
+# projected even here. The row-form DEFAULT this widens away from is witnessed by the
+# deliberate counterpart, m-value-object-066: a VERSIONED target (the other, disjoint
+# materializing class) records only a Version Observation, so its resolving read omits
+# the document while the managed find over the same row projects it.
 #
 # Steps (one resolving read PLUS one independent managed find, then the write):
 #   0  find (managed, Baltic Traders) : INSTANCE-FORM — the developer find materializes

@@ -400,19 +400,21 @@ projection over the values lane, `m-sql`). The form is **structural intent** an 
 `compile` MAY consume, exactly like `when.uow.concurrency`; it needs no schema field and
 no case edit. The two forms' Document-slot divergence is witnessed at **case** level, by
 the `then.rows` reads over `customer`, which omit `address`, against the `then.graph`
-reads of that same model, which project it. The supplier witness pins the
-**widening** instead: an
-audit-only close's resolving read projects `address` even though the close copies no
-payload, because the observation it records is a complete Predecessor Row. No scenario
-step yet witnesses the row-form default on a value-object-bearing target; that would
-be a materializing predicate write over `subscriber`, the **versioned**
-value-object-bearing model, whose observation retains only a version.
+reads of that same model, which project it. Two scenario witnesses pin the step-level
+pair, one per materializing target class. The `subscriber` witness pins the row-form
+**default**: a versioned predicate `delete` retains only the observed version, so its
+resolving read omits `address` while the managed find one step earlier — the same
+canonical operation over the same row — projects it, the two goldens differing in that
+one slot.
+The `supplier` witness pins the **widening**: an audit-only close's resolving read
+projects `address` even though the close copies no payload, because the observation it
+records is a complete Predecessor Row.
 The Document-slot delta is not the forms' only divergence overall: the
 abstract-target per-variant materialization narrowing established above (*Read
 targeting*, `then.graph`'s per-variant node shape vs `then.rows`'s concrete-superset
 row) is the other — a graph-assembly-time shape difference over the same
-non-Document Position Layout, not a Document projection difference. The supplier
-witness is **not** the sole value-object-bearing step read either, now that the
+non-Document Position Layout, not a Document projection difference. Neither witness is
+the sole value-object-bearing step read either, now that the
 lifecycle-action `load` / first-`access` witnesses carry value-object-bearing
 instance-form step reads (each projecting its read entity's own `address` Document
 slot). Every other entity read at a step (`balance`, `position`, `account`,

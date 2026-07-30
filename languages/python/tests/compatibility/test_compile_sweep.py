@@ -61,7 +61,7 @@ def _skip_reason(case: case_format.Case, envelope: dict[str, Any]) -> str:
         # Declared `compileEligibility: run-only` covers query-result-dependent
         # reads, pk-gen sequence reservations, and materializing predicate writes:
         # m-txtime-write-007/009, m-bitemp-write-010..-013, m-opt-lock-014/015,
-        # m-value-object-047): `run` (never `compile`) is the ONLY lane that ever
+        # m-value-object-047/066): `run` (never `compile`) is the ONLY lane that ever
         # grades these — the m-conformance-adapter envelope already answers
         # `run-only` without attempting any lowering at all, so this is classified
         # first, shape-agnostically, before any shape-specific fallback text.
