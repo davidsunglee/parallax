@@ -662,7 +662,7 @@
                 "$ref": "#/$defs/goldenStatements"
               },
               "write": {
-                "description": "This attempt's neutral write input (①): the flat attribute-named row (`$defs/writeRow`) the attempt operates on. For a VERSIONED conflict its reserved `observedVersion` is the version THIS attempt gates on; for a TEMPORAL close it carries the milestone pk (+ a Bitemporal Valid-Time discriminator), with the close instant and observed gate in this attempt's `at` / `observedTxStart`. REQUIRED on every retry attempt.",
+                "description": "This attempt's neutral write input (①): the flat attribute-named row (`$defs/writeRow`) the attempt operates on. For a VERSIONED conflict its reserved `observedVersion` is the version THIS attempt gates on; for a TEMPORAL close it carries the milestone pk (+, on a Bitemporal target, `valid_end` — the address's Valid-Time exclusive upper bound), with the close instant and observed gate in this attempt's `at` / `observedTxStart`. REQUIRED on every retry attempt.",
                 "$ref": "#/$defs/writeRow"
               },
               "at": {
@@ -688,7 +688,7 @@
           }
         },
         "write": {
-          "description": "conflict cases (m-opt-lock), single-attempt form. The neutral write input (①) for this conflict's versioned UPDATE or DELETE (or a temporal / bitemporal close), as a flat attribute-named literal (`$defs/writeRow`): the primary-key attribute (classified to the `where` key), every assigned domain attribute (the `set` columns — none for a DELETE), and the reserved `observedVersion` control key. A TEMPORAL / Bitemporal close carries only the milestone pk (+ a Bitemporal Valid-Time discriminator); its close instant and observed gate ride in `when.at` / `when.observedTxStart`. Either way the golden statement + binds become an INDEPENDENT cross-check rather than a golden-parse tautology.",
+          "description": "conflict cases (m-opt-lock), single-attempt form. The neutral write input (①) for this conflict's versioned UPDATE or DELETE (or a temporal / bitemporal close), as a flat attribute-named literal (`$defs/writeRow`): the primary-key attribute (classified to the `where` key), every assigned domain attribute (the `set` columns — none for a DELETE), and the reserved `observedVersion` control key. A TEMPORAL / Bitemporal close carries only the milestone pk (+, on a Bitemporal target, `valid_end` — the address's Valid-Time exclusive upper bound, which the close binds in BOTH concurrency modes and which may be finite or infinity); its close instant and observed gate ride in `when.at` / `when.observedTxStart`. Either way the golden statement + binds become an INDEPENDENT cross-check rather than a golden-parse tautology.",
           "$ref": "#/$defs/writeRow"
         },
         "mutation": {
@@ -697,7 +697,7 @@
           "default": "update"
         },
         "at": {
-          "description": "conflict cases (m-opt-lock), temporal-close form. The close instant a TEMPORAL / bitemporal optimistic conflict close records — the new `out_z` the milestone-closing UPDATE sets, keyed on the still-open current row. A GENERATING adapter DERIVES the close binds from it. Present on a temporal-conflict close; absent on a versioned conflict.",
+          "description": "conflict cases (m-opt-lock), temporal-close form. The close instant a TEMPORAL / bitemporal conflict close records, in either concurrency mode — the new `out_z` the milestone-closing UPDATE sets on the one current milestone its address selects (the pk plus one exclusive upper bound per as-of axis). A GENERATING adapter DERIVES the close binds from it. Present on a temporal-conflict close; absent on a versioned conflict.",
           "type": "string",
           "minLength": 1
         },

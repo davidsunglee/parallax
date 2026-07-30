@@ -4,12 +4,12 @@ Pins ``parallax.snapshot.handle.lower_write``'s TEMPORAL dispatch — audit-only
 close-and-chain (`m-txtime-write`) and the full-bitemporal rectangle split
 (`m-bitemp-write`) — byte-exact against the corpus goldens (``m-txtime-write-001
 ..006``, ``m-bitemp-write-001..003/006..009``, ``m-inheritance-090/091/094..097
-/105``, ``m-value-object-032/033``), the observed-``in_z`` / Valid-Time-
-discriminator gate composed with the ``m-opt-lock`` policy (gated only under
-optimistic concurrency, `~parallax.core.opt_lock.gates`), and the two zero-row-
-close outcomes (:class:`~parallax.core.opt_lock.OptimisticLockConflictError` for a
-gated mismatch, :class:`~parallax.core.opt_lock.StaleWriteError` for an ungated
-one).
+/105``, ``m-value-object-032/033``), the mode-independent close ADDRESS (the key
+plus one exclusive upper bound per As-Of Axis) against the observed-``in_z`` gate
+composed with the ``m-opt-lock`` policy (bound only under optimistic concurrency,
+`~parallax.core.opt_lock.gates`), and the two zero-row-close outcomes
+(:class:`~parallax.core.opt_lock.OptimisticLockConflictError` for a gated
+mismatch, :class:`~parallax.core.opt_lock.StaleWriteError` for an ungated one).
 """
 
 from __future__ import annotations
@@ -303,8 +303,8 @@ def test_bitemporal_update_until_splits_head_middle_tail() -> None:
     )
     assert statements == [
         (
-            "update position set out_z = ? where pos_id = ? and out_z = ?",
-            ("2024-02-15T00:00:00+00:00", 1, "infinity"),
+            "update position set out_z = ? where pos_id = ? and thru_z = ? and out_z = ?",
+            ("2024-02-15T00:00:00+00:00", 1, "infinity", "infinity"),
         ),
         (
             "insert into position(pos_id, acct_num, val, from_z, thru_z, in_z, out_z) "
@@ -416,8 +416,8 @@ def test_bitemporal_plain_update_splits_head_and_new_tail_only() -> None:
     statements = _lower(update, POSITION, "2024-07-01T00:00:00+00:00", observation=observation)
     assert statements == [
         (
-            "update position set out_z = ? where pos_id = ? and out_z = ?",
-            ("2024-07-01T00:00:00+00:00", 1, "infinity"),
+            "update position set out_z = ? where pos_id = ? and thru_z = ? and out_z = ?",
+            ("2024-07-01T00:00:00+00:00", 1, "infinity", "infinity"),
         ),
         (
             "insert into position(pos_id, acct_num, val, from_z, thru_z, in_z, out_z) "
@@ -462,8 +462,8 @@ def test_bitemporal_plain_terminate_chains_head_only() -> None:
     statements = _lower(terminate, POSITION, "2024-07-01T00:00:00+00:00", observation=observation)
     assert statements == [
         (
-            "update position set out_z = ? where pos_id = ? and out_z = ?",
-            ("2024-07-01T00:00:00+00:00", 1, "infinity"),
+            "update position set out_z = ? where pos_id = ? and thru_z = ? and out_z = ?",
+            ("2024-07-01T00:00:00+00:00", 1, "infinity", "infinity"),
         ),
         (
             "insert into position(pos_id, acct_num, val, from_z, thru_z, in_z, out_z) "
@@ -507,11 +507,60 @@ def test_bitemporal_plain_insert_opens_one_fully_current_rectangle() -> None:
     ]
 
 
-def test_bitemporal_close_composes_the_valid_time_discriminator_and_in_z_gate() -> None:
-    # m-bitemp-write-004/008: the gated close binds `from_z` BEFORE `in_z`, LAST.
-    # A standalone close-only probe (the m-opt-lock conflict lane's own shape) is
-    # NOT a real bitemporal mutation (every real close-bearing verb chains at
-    # least a head) — `lower_temporal_close` composes it directly.
+@pytest.mark.parametrize(
+    ("concurrency", "gate_sql", "gate_binds"),
+    [
+        ("locking", "", ()),
+        ("optimistic", " and in_z = ?", ("2023-11-01T00:00:00+00:00",)),
+    ],
+    ids=["locking", "optimistic"],
+)
+def test_bitemporal_close_addresses_a_finite_observed_valid_end(
+    concurrency: Concurrency, gate_sql: str, gate_binds: tuple[str, ...]
+) -> None:
+    # The observed rectangle is bounded on BOTH Valid-Time sides, which is the
+    # shape the Valid-Time component of the address exists for: `out_z = infinity`
+    # holds for every disjoint rectangle a key has current at one Transaction
+    # Time, so only the rectangle's OWN exclusive Valid-Time end picks out the one
+    # this close means to close. The bound value is that end — never the
+    # rectangle's start, and never `infinity` — in BOTH modes; concurrency decides
+    # only whether the `in_z` gate follows it.
+    observed = Observation(
+        tx_start="2023-11-01T00:00:00+00:00",
+        valid_start="2024-01-01T00:00:00+00:00",
+        valid_end="2024-07-01T00:00:00+00:00",
+        payload=_R1_PAYLOAD,
+    )
+    update = KeyedWrite(
+        "update", "Position", ({"id": 1, "value": 200.00},), valid_from="2024-04-01T00:00:00+00:00"
+    )
+    close, head, tail = _lower(
+        update,
+        POSITION,
+        "2024-02-15T00:00:00+00:00",
+        observation=observed,
+        concurrency=concurrency,
+    )
+    assert close == (
+        f"update position set out_z = ? where pos_id = ? and thru_z = ? and out_z = ?{gate_sql}",
+        ("2024-02-15T00:00:00+00:00", 1, "2024-07-01T00:00:00+00:00", "infinity", *gate_binds),
+    )
+    addressed_valid_end = close[1][2]
+    assert addressed_valid_end == observed.valid_end
+    assert addressed_valid_end != observed.valid_start
+    # The successors reconstruct exactly the addressed rectangle's window,
+    # `[valid_start, valid_end)`, split at the correction's `validFrom`.
+    assert head[1][3:5] == (observed.valid_start, "2024-04-01T00:00:00+00:00")
+    assert tail[1][3:5] == ("2024-04-01T00:00:00+00:00", addressed_valid_end)
+
+
+def test_bitemporal_close_addresses_both_axis_ends_then_gates_on_in_z_last() -> None:
+    # m-bitemp-write-004/008: the address is the key then one exclusive upper
+    # bound per axis in canonical order (`thru_z` then `out_z`); the observed
+    # `in_z` gate binds LAST. A standalone close-only probe (the m-opt-lock
+    # conflict lane's own shape) is NOT a real bitemporal mutation (every real
+    # close-bearing verb chains at least a head) — `lower_temporal_close`
+    # composes it directly.
     lowered = lower_temporal_close(
         {"id": 1},
         "Position",
@@ -520,25 +569,25 @@ def test_bitemporal_close_composes_the_valid_time_discriminator_and_in_z_gate() 
         "optimistic",
         "2024-10-01T00:00:00+00:00",
         "2024-04-01T00:00:00+00:00",
-        "2024-06-01T00:00:00+00:00",
+        "infinity",
     )
     assert lowered.statement.sql == (
-        "update position set out_z = ? where pos_id = ? and out_z = ? and from_z = ? and in_z = ?"
+        "update position set out_z = ? where pos_id = ? and thru_z = ? and out_z = ? and in_z = ?"
     )
     assert lowered.statement.binds == (
         "2024-10-01T00:00:00+00:00",
         1,
         "infinity",
-        "2024-06-01T00:00:00+00:00",
+        "infinity",
         "2024-04-01T00:00:00+00:00",
     )
     assert lowered.expected_affected == 1
     assert lowered.stale_error is False
 
 
-def test_bitemporal_close_is_fully_ungated_under_locking() -> None:
-    # m-bitemp-write-001/006/007's own locking-mode closes: neither from_z nor
-    # in_z, regardless of the observation carried.
+def test_bitemporal_close_keeps_its_whole_address_under_locking() -> None:
+    # m-bitemp-write-001/006/007's own locking-mode closes: the address is
+    # unchanged — only the `in_z` gate disappears (ADR 0046).
     lowered = lower_temporal_close(
         {"id": 1},
         "Position",
@@ -547,10 +596,29 @@ def test_bitemporal_close_is_fully_ungated_under_locking() -> None:
         "locking",
         "2024-10-01T00:00:00+00:00",
         "2024-04-01T00:00:00+00:00",
-        "2024-06-01T00:00:00+00:00",
+        "infinity",
     )
-    assert lowered.statement.sql == "update position set out_z = ? where pos_id = ? and out_z = ?"
+    assert lowered.statement.sql == (
+        "update position set out_z = ? where pos_id = ? and thru_z = ? and out_z = ?"
+    )
+    assert lowered.statement.binds == ("2024-10-01T00:00:00+00:00", 1, "infinity", "infinity")
     assert lowered.stale_error is True
+
+
+def test_bitemporal_close_without_an_observed_valid_end_is_refused() -> None:
+    # A Bitemporal address needs one exclusive upper bound per axis, so a caller
+    # supplying none is a wiring defect — refused, never lowered as a
+    # Transaction-Time-only close that could match a sibling rectangle.
+    with pytest.raises(WriteLoweringError, match="no observed Valid-Time end supplied"):
+        lower_temporal_close(
+            {"id": 1},
+            "Position",
+            models.accepted_model(POSITION),
+            POSTGRES,
+            "locking",
+            "2024-10-01T00:00:00+00:00",
+            "2024-04-01T00:00:00+00:00",
+        )
 
 
 def test_temporal_close_requires_an_effective_table() -> None:
@@ -637,12 +705,11 @@ def test_a_temporal_concrete_observes_its_own_declared_members_not_the_roots() -
     )
 
 
-def test_milestone_close_gates_on_operation_identities_not_the_physical_key() -> None:
-    # The physical key spans the model key AND the Transaction-Time start, but a
-    # close still selects its own operation identities — the model key, the
-    # discriminator, the Transaction-Time end, and the observed start gate — and
-    # only maps each one onto its slot. The Valid-Time start it gates on is a
-    # physical-key slot; the Transaction-Time end it sets is not.
+def test_milestone_close_selects_operation_identities_not_the_physical_key() -> None:
+    # The physical key spans the model key AND both axis STARTS, but a close
+    # still selects its own operation identities — the model key, the
+    # discriminator, both axis ENDS, and the observed start gate — and only maps
+    # each one onto its slot. Neither addressed end is a physical-key slot.
     model, entity = _accepted("Bond", INSTRUMENT)
     view = storage_layout.view(model).entity(entity.identity)
     assert view is not None
@@ -669,13 +736,13 @@ def test_milestone_close_gates_on_operation_identities_not_the_physical_key() ->
     )[0]
     assert close == (
         "update instrument set out_z = ? "
-        "where id = ? and kind = ? and out_z = ? and from_z = ? and in_z = ?",
+        "where id = ? and kind = ? and thru_z = ? and out_z = ? and in_z = ?",
         (
             "2024-07-01T00:00:00+00:00",
             1,
             "bond",
             "infinity",
-            "2024-01-01T00:00:00+00:00",
+            "infinity",
             "2024-01-01T00:00:00+00:00",
         ),
     )
@@ -723,8 +790,8 @@ def test_tph_bitemporal_terminate_carries_the_tag_guard() -> None:
     )
     statements = _lower(terminate, INSTRUMENT, "2024-07-01T00:00:00+00:00", observation=observation)
     assert statements[0] == (
-        "update instrument set out_z = ? where id = ? and kind = ? and out_z = ?",
-        ("2024-07-01T00:00:00+00:00", 1, "bond", "infinity"),
+        "update instrument set out_z = ? where id = ? and kind = ? and thru_z = ? and out_z = ?",
+        ("2024-07-01T00:00:00+00:00", 1, "bond", "infinity", "infinity"),
     )
     assert statements[1][1][:3] == (1, "bond", 100.00)
 
@@ -742,8 +809,8 @@ def test_tpcs_bitemporal_terminate_has_no_tag_guard() -> None:
     )
     statements = _lower(terminate, RATE, "2024-07-01T00:00:00+00:00", observation=observation)
     assert statements[0] == (
-        "update deposit_rate set out_z = ? where id = ? and out_z = ?",
-        ("2024-07-01T00:00:00+00:00", 1, "infinity"),
+        "update deposit_rate set out_z = ? where id = ? and thru_z = ? and out_z = ?",
+        ("2024-07-01T00:00:00+00:00", 1, "infinity", "infinity"),
     )
 
 
@@ -767,8 +834,8 @@ def test_tph_bitemporal_terminate_until_chains_head_and_tail() -> None:
     )
     assert len(statements) == 3
     assert statements[0] == (
-        "update instrument set out_z = ? where id = ? and kind = ? and out_z = ?",
-        ("2024-02-15T00:00:00+00:00", 2, "stock", "infinity"),
+        "update instrument set out_z = ? where id = ? and kind = ? and thru_z = ? and out_z = ?",
+        ("2024-02-15T00:00:00+00:00", 2, "stock", "infinity", "infinity"),
     )
 
 
@@ -790,8 +857,8 @@ def test_tpcs_bitemporal_terminate_until_chains_head_and_tail() -> None:
     statements = _lower(terminate_until, RATE, "2024-02-15T00:00:00+00:00", observation=observation)
     assert len(statements) == 3
     assert statements[0] == (
-        "update loan_rate set out_z = ? where id = ? and out_z = ?",
-        ("2024-02-15T00:00:00+00:00", 2, "infinity"),
+        "update loan_rate set out_z = ? where id = ? and thru_z = ? and out_z = ?",
+        ("2024-02-15T00:00:00+00:00", 2, "infinity", "infinity"),
     )
 
 
@@ -869,7 +936,9 @@ def test_bitemporal_update_until_carries_the_value_object_document_on_every_chai
         update_until, BRANCH, "2024-02-15T00:00:00+00:00", observation=observation
     )
     close, head, middle, tail = statements
-    assert close.statement.sql == "update branch set out_z = ? where br_id = ? and out_z = ?"
+    assert close.statement.sql == (
+        "update branch set out_z = ? where br_id = ? and thru_z = ? and out_z = ?"
+    )
     assert head.statement.binds[-1] == JsonDocument(d1)
     assert middle.statement.binds[-1] == JsonDocument(d2)
     assert tail.statement.binds[-1] == JsonDocument(d1)

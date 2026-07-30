@@ -92,7 +92,7 @@ def lower_write(
     affected-rows expectation. ``concurrency`` is the owning unit of work's
     participation mode (m-opt-lock: whether an observation-requiring write's gate —
     a versioned UPDATE's or DELETE's version gate, a temporal close's observed
-    Transaction-Time/Valid-Time gate — is emitted at all).
+    Transaction-Time gate — is emitted at all).
     ``tx_instant`` is the flush's Clock-supplied Transaction-Time instant
     (``FlushPlan.tx_instant``) — REQUIRED for a temporal write (bound as the close's
     new ``out_z`` and every chained row's fresh ``in_z``), unused by the non-temporal
@@ -272,30 +272,41 @@ def _render_close(
     tx_instant: str,
     gated: bool,
 ) -> LoweredStatement:
-    """`update <table> set <out_col> = ? where <pk> [and <tag.column> = ?] and
-    <out_col> = infinity [and <valid.start_col> = ? and <tx.start_col> = ?]`.
+    """`update <table> set <out_col> = ? where <pk> [and <tag.column> = ?]
+    [and <valid.end_col> = ?] and <out_col> = infinity [and <tx.start_col> = ?]`.
 
-    The current-row predicate (``<out_col> = infinity``) and, when gated, the
-    Valid-Time discriminator then the observed-``tx_start`` gate — LAST, no exception,
-    the direct extension of `m-opt-lock`'s "the gate binds last" to a milestone
-    close (`m-txtime-write` "Composed predicate order under optimistic mode"). The
-    identity predicate (pk, inheritance tag guard) reuses `key_predicate`
-    unchanged. Ungated (locking mode) renders neither the Valid-Time discriminator
-    nor the Transaction-Time gate, regardless of whether ``step`` carries candidates for
-    them — gating is concurrency-driven, never data-driven (`m-bitemp-write`
-    "Locking-mode closes are UNGATED").
+    The predicate is the ADDRESS then the gate. The address is the identity
+    predicate (pk, inheritance tag guard — `key_predicate`, unchanged) followed by
+    one exclusive upper bound per As-Of Axis in canonical axis order: the observed
+    rectangle's Valid-Time end where that axis exists, then the invariant
+    ``<out_col> = infinity`` that keeps an operational close on the current
+    milestone. Every component of it renders in BOTH concurrency modes (ADR 0046) —
+    which stored row the close means to close never depends on the mode.
+
+    Only the observed-``tx_start`` gate is mode-dependent, and it binds LAST, no
+    exception — the direct extension of `m-opt-lock`'s "the gate binds last" to a
+    milestone close (`m-txtime-write` "Composed predicate order under optimistic
+    mode"). Ungated (locking mode) renders no gate at all, regardless of whether
+    ``step`` carries a candidate for one: gating is concurrency-driven, never
+    data-driven (`m-bitemp-write` "Locking-mode closes are UNGATED").
     """
     layout = _layout(meta, entity)
     tx_axis = tx_time_axis(declaring_entity)
     tx_start_column, tx_end_column = axis_columns(layout, tx_axis)
     where_sql, key_binds = key_predicate(meta, entity, step.identity, dialect)
+    if _is_bitemporal(declaring_entity):
+        if step.target_valid_end is None:
+            raise WriteLoweringError(
+                f"bitemporal close on {entity.identity.name!r}: no observed Valid-Time end "
+                "supplied — a Bitemporal milestone address needs one exclusive upper bound "
+                "per As-Of Axis (m-bitemp-write 'Address and gate are separate')"
+            )
+        valid_axis = valid_time_axis(declaring_entity)
+        _valid_start_column, valid_end_column = axis_columns(layout, valid_axis)
+        where_sql = f"{where_sql} and {dialect.quote(valid_end_column)} = ?"
+        key_binds = (*key_binds, step.target_valid_end)
     where_sql = f"{where_sql} and {dialect.quote(tx_end_column)} = ?"
     key_binds = (*key_binds, INFINITY_LITERAL)
-    if gated and step.gate_valid_start is not None:
-        valid_axis = valid_time_axis(declaring_entity)
-        valid_start_column, _valid_end_column = axis_columns(layout, valid_axis)
-        where_sql = f"{where_sql} and {dialect.quote(valid_start_column)} = ?"
-        key_binds = (*key_binds, step.gate_valid_start)
     if gated and step.gate_tx_start is not None:
         where_sql = f"{where_sql} and {dialect.quote(tx_start_column)} = ?"
         key_binds = (*key_binds, step.gate_tx_start)
@@ -315,7 +326,7 @@ def lower_temporal_close(
     concurrency: Concurrency,
     tx_instant: str,
     observed_tx_start: str | None,
-    observed_valid_start: str | None = None,
+    observed_valid_end: str | None = None,
 ) -> LoweredStatement:
     """Lower a STANDALONE temporal milestone close — the `m-opt-lock` CONFLICT
     lane's own shape (`m-txtime-write` / `m-bitemp-write`: "a conflict case runs
@@ -328,19 +339,20 @@ def lower_temporal_close(
     plan dispatch.
 
     ``identity`` is the (at minimum, primary-key) row the close's identity
-    predicate keys on; ``observed_tx_start`` / ``observed_valid_start`` are the
-    gate candidates a conflict case authors explicitly (``when.observedTxStart`` /
-    the write row's own ``valid_start``) — never a shadow-tracker lookup, a
-    conflict case tests a KNOWN stale-or-fresh value.
+    predicate keys on, and ``observed_valid_end`` completes its address on a
+    Bitemporal target; ``observed_tx_start`` is the gate candidate. Both observed
+    values are authored explicitly by a conflict case (``when.observedTxStart`` /
+    the write row's own ``valid_end``) — never a shadow-tracker lookup, a conflict
+    case tests a KNOWN stale-or-fresh value.
     """
     entity = entity_of(meta, entity_name)
     declaring_entity = declaring(meta, entity)
-    if observed_tx_start is not None or observed_valid_start is not None:
+    if observed_tx_start is not None:
         opt_lock.check_locking_license(concurrency, latest_pinned=True)
     step = txtime_write.MilestoneClose(
         identity=identity,
+        target_valid_end=observed_valid_end,
         gate_tx_start=observed_tx_start,
-        gate_valid_start=observed_valid_start,
     )
     gated = opt_lock.gates(concurrency)
     return _render_close(step, entity, declaring_entity, dialect, meta, tx_instant, gated)

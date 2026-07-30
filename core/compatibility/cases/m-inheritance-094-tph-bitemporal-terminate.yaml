@@ -7,8 +7,9 @@
 # tail, no middle — so [B, infinity) is left covered by no Transaction-Time-current row
 # (m-bitemp-write). Under table-per-hierarchy the family shares the `instrument` table, so
 # the inactivation carries the tag GUARD `and kind = ?` among the identity predicates,
-# right after the pk: `where id = ? and kind = ? and out_z = ?`, binds [2024-07-01, 1,
-# bond, infinity]; the chained head sets the tag column from Bond's tagValue.
+# right after the pk and before the per-axis upper bounds:
+# `where id = ? and kind = ? and thru_z = ? and out_z = ?`, binds [2024-07-01, 1, bond,
+# infinity, infinity]; the chained head sets the tag column from Bond's tagValue.
 #
 # The MILESTONE SHAPES are IDENTICAL to the standalone m-bitemp-write-007 (same dates,
 # same value, same 2-row result), differing ONLY in table/tag routing — the composition
@@ -48,8 +49,8 @@ then:
         postgres: insert into instrument(id, kind, price, coupon, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?, ?, ?)
       binds: [1, bond, 100.00, 5.00, "2024-01-01T00:00:00+00:00", infinity, "2024-01-01T00:00:00+00:00", infinity]
     - sql:
-        postgres: update instrument set out_z = ? where id = ? and kind = ? and out_z = ?
-      binds: ["2024-07-01T00:00:00+00:00", 1, bond, infinity]
+        postgres: update instrument set out_z = ? where id = ? and kind = ? and thru_z = ? and out_z = ?
+      binds: ["2024-07-01T00:00:00+00:00", 1, bond, infinity, infinity]
     - sql:
         postgres: insert into instrument(id, kind, price, coupon, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?, ?, ?)
       binds: [1, bond, 100.00, 5.00, "2024-01-01T00:00:00+00:00", "2024-06-01T00:00:00+00:00", "2024-07-01T00:00:00+00:00", infinity]

@@ -30,24 +30,26 @@ The split keeps the value unchanged before and after the window and changes it
 original survives as a row closed on Transaction Time — the bitemporal audit
 trail. Key invariants the suite pins down:
 
-- The inactivation `UPDATE` is keyed by the **current-on-Transaction-Time** predicate
-  (`pk and out_z = infinity`), so only the open rectangle is inactivated; the
-  three new rows are inserted **after** it.
+- The inactivation `UPDATE` addresses the **one current rectangle** it means to
+  close: the primary key plus one exclusive upper bound per As-Of Axis
+  (`pk and thru_z = ? and out_z = ?`, binding the observed rectangle's own
+  Valid-Time end and the invariant Transaction-Time infinity). The key together
+  with `out_z = infinity` alone would be ambiguous, because several disjoint
+  Valid-Time rectangles of one key may be current on Transaction Time. The three
+  new rows are inserted **after** it.
 - After an `updateUntil`, the observable current-on-Transaction-Time state is exactly
   the `head` / `middle` / `tail` rectangles; the `middle` carries the new value.
 - After a `terminateUntil`, the window `[validFrom, until)` is covered by **no**
   current-on-Transaction-Time row.
 - The inactivation `UPDATE` **MUST** affect exactly **one** row; a zero-row
   inactivation is an error in any mode (the affected-row conflict contract,
-  `m-txtime-write`). In optimistic mode the inactivation gates on the observed
-  `tx_start` — and, when the key's current rows share an `in_z` (distinct
-  Valid-Time windows current at the same Transaction Time), on the **Valid-Time**
-  discriminator too, to inactivate exactly the observed rectangle:
-  `… and out_z = ? and from_z = ? and in_z = ?`. The observed `in_z` is the
+  `m-txtime-write`). In optimistic mode the inactivation additionally gates on the
+  observed `tx_start`, appended **after** the address:
+  `… and thru_z = ? and out_z = ? and in_z = ?`. The observed `in_z` is the
   version analogue (`m-opt-lock`, `m-opt-lock --> m-temporal-read`); the chained
   `head` / `middle` / `tail` rows are ungated `INSERT`s at the fresh `in_z`. On a
   table-per-hierarchy concrete subtype the tag guard joins the identity
-  predicates immediately after the primary key, before this composed order,
+  predicates immediately after the primary key, before the per-axis upper bounds,
   exactly as it does for a Transaction-Time-Only close (`m-txtime-write` "Composed predicate
   order under optimistic mode") — the observed-`in_z` gate still binds last.
 
@@ -85,13 +87,13 @@ and differ only in the tail — `update` chains a new `tail` carrying the new va
   inactivation and no prior row to close, so the optimistic inactivation gate below
   does **not** apply to it. It is the unbounded degenerate of `insertUntil` and
   shares that mutation's canonical `INSERT` shape.
-- For plain `update` and plain `terminate`, the inactivation `UPDATE` is keyed by
-  the **current-on-Transaction-Time** predicate (`pk and out_z = infinity`), so only the
-  open rectangle is inactivated; the chained rows are inserted **after** it. In
-  optimistic mode the inactivation gains the observed-`tx_start` gate (and,
-  when the key's current rows share an `in_z`, the Valid-Time discriminator too)
-  exactly as the `*Until` inactivation does; the chained `head` / new `tail` are
-  ungated `INSERT`s at the fresh `in_z`.
+- For plain `update` and plain `terminate`, the inactivation `UPDATE` addresses the
+  one current rectangle exactly as the `*Until` inactivation does
+  (`pk and thru_z = ? and out_z = ?`), so only that rectangle is inactivated; the
+  chained rows are inserted **after** it. In optimistic mode the inactivation gains
+  the observed-`tx_start` gate after the address, again exactly as the `*Until`
+  inactivation does; the chained `head` / new `tail` are ungated `INSERT`s at the
+  fresh `in_z`.
 - The inactivation `UPDATE` **MUST** affect exactly **one** row; a zero-row
   inactivation is an error in any mode (the affected-row conflict contract,
   `m-txtime-write`).
@@ -118,9 +120,8 @@ to two axes. The description carries the same three parts:
 
 - the **Close Cause** — `Superseded` for `update` / `updateUntil`, `Terminated`
   for `terminate` / `terminateUntil`;
-- the **gate basis** — the observed `tx_start` (and, when current rows of one key
-  share an `in_z`, the observed Valid-Time discriminator) an optimistic
-  inactivation binds; and
+- the **gate basis** — the observed `tx_start` an optimistic inactivation binds;
+  and
 - the **successors** — the chained rectangles with their Insert Origins.
 
 Origin is per successor, and the rectangle split is exactly where that matters.
@@ -147,11 +148,21 @@ interleaved and no surviving group or identifier.
 
 The rectangle an inactivation means to close and the concurrency condition that
 detects a lost update are **separate** facts (ADR 0046). The **Milestone Target**
-(`m-unit-work`) is the address: the primary key together with the write-required
-exclusive upper bound that keeps an operational close on the **current**
-rectangle. It carries no axis **start**, no Write Observation, no gate, and no
-concurrency mode, and the planner derives it **identically in both concurrency
-modes**.
+(`m-unit-work`) is the address: the primary key together with one write-required
+exclusive upper bound **per As-Of Axis** — the observed predecessor's Valid-Time
+end, and the invariant Transaction-Time `Infinity` that keeps an operational close
+on the **current** rectangle. It carries no axis **start**, no Write Observation,
+no gate, and no concurrency mode, and the planner derives it **identically in both
+concurrency modes**. Two axes are exactly why the Valid-Time end is required: a key
+plus the current Transaction-Time bound may still select several disjoint current
+rectangles.
+
+The two ends are not interchangeable. The Transaction-Time end is invariantly
+`Infinity`, but the Valid-Time end is whatever the observed predecessor carries —
+`Infinity` for the rectangle running to the open Valid-Time bound, and a **finite**
+instant for a bounded one, such as the `head` a prior split left behind. Binding a
+constant `Infinity` on both axes would therefore address the open rectangle and
+silently miss every bounded sibling.
 
 The observed `in_z` rides the **gate**, never the address. That is why an
 optimistic write based on a historical observation still addresses the current

@@ -33,11 +33,11 @@ _ObjectKey = tuple[str, tuple[object, ...]]
 
 
 class AmbiguousObservationError(ValueError):
-    """More than one current milestone is tracked for one (entity, pk) — the
-    Valid-Time-discriminator disambiguation `m-bitemp-write.md` describes for a
-    key whose current rows share an ``in_z`` is not represented by the
-    write-sequence/scenario input handled here, so this tracker refuses rather
-    than silently guessing which candidate a later step means."""
+    """More than one current milestone is tracked for one (entity, pk) — several
+    disjoint Valid-Time rectangles of one key may be current on Transaction Time
+    (`m-bitemp-write.md`), and the write-sequence/scenario input handled here
+    names no rectangle, so this tracker refuses rather than silently guessing
+    which candidate a later step means."""
 
 
 class TemporalShadow:
@@ -89,11 +89,10 @@ class TemporalShadow:
         error at execution).
 
         Raises :class:`AmbiguousObservationError` when more than one current
-        candidate is tracked for this pk — disambiguation by a write's own
-        Valid-Time-start discriminator is a conflict-shape-only mechanism
-        represented by the case's explicit ``observedTxStart`` /
-        ``write.validFrom`` fields, never this tracker (see the module
-        docstring).
+        candidate is tracked for this pk — naming one rectangle explicitly is a
+        conflict-shape-only mechanism, carried by the case's own
+        ``write.valid_end`` / ``observedTxStart`` fields, never this tracker (see
+        the module docstring).
         """
         entity_name = entity.identity.name
         pk_names = _primary_key_names(model, entity)

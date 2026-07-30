@@ -6,9 +6,9 @@
 # window (m-bitemp-write). In a table-per-concrete-subtype family the subtype is selected by
 # WHICH table the DML targets, so terminating a LoanRate inactivates and chains in the
 # concrete `loan_rate` table: the inactivation is `update loan_rate set out_z = ? where
-# id = ? and out_z = ?`, binds [2024-02-15, 2, infinity], with NO tag guard (contrast the
-# table-per-hierarchy inactivation m-inheritance-096, whose `update instrument` carries
-# `and kind = ?`).
+# id = ? and thru_z = ? and out_z = ?`, binds [2024-02-15, 2, infinity, infinity], with NO
+# tag guard (contrast the table-per-hierarchy inactivation m-inheritance-096, whose
+# `update instrument` carries `and kind = ?`).
 #
 # The MILESTONE SHAPES are IDENTICAL to the standalone m-bitemp-write-002 and to the
 # table-per-hierarchy composed variant m-inheritance-096 (same window, same 3-row result),
@@ -47,8 +47,8 @@ then:
         postgres: insert into loan_rate(id, amount, spread, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?, ?)
       binds: [2, 6.75, 1.25, "2024-01-01T00:00:00+00:00", infinity, "2024-01-01T00:00:00+00:00", infinity]
     - sql:
-        postgres: update loan_rate set out_z = ? where id = ? and out_z = ?
-      binds: ["2024-02-15T00:00:00+00:00", 2, infinity]
+        postgres: update loan_rate set out_z = ? where id = ? and thru_z = ? and out_z = ?
+      binds: ["2024-02-15T00:00:00+00:00", 2, infinity, infinity]
     - sql:
         postgres: insert into loan_rate(id, amount, spread, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?, ?)
       binds: [2, 6.75, 1.25, "2024-01-01T00:00:00+00:00", "2024-03-01T00:00:00+00:00", "2024-02-15T00:00:00+00:00", infinity]

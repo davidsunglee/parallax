@@ -23,9 +23,9 @@
 #
 # Resulting state (3 rows): the inactivated original (out_z finite) + head (100,
 # valid [2024-01-01, 2024-06-01)) + new tail (200, valid [2024-06-01, infinity)),
-# the two new rows current on Transaction Time. The close UPDATE is keyed by the
-# Transaction-Time-current predicate (pos_id AND out_z = infinity), never a blind
-# in-place set.
+# the two new rows current on Transaction Time. The close UPDATE addresses the current
+# rectangle by pos_id plus one exclusive upper bound per as-of axis (thru_z = infinity
+# AND out_z = infinity), never a blind in-place set.
 #
 # The goldens carry both dialects. `position` is a reserved function name in MariaDB
 # (`POSITION()`), so its golden quotes the table as `position` — the one divergence
@@ -61,9 +61,9 @@ then:
         mariadb: insert into `position` (pos_id, acct_num, val, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?, ?)
       binds: [1, A, 100.00, "2024-01-01T00:00:00+00:00", infinity, "2024-01-01T00:00:00+00:00", infinity]
     - sql:
-        postgres: update position set out_z = ? where pos_id = ? and out_z = ?
-        mariadb: update `position` set out_z = ? where pos_id = ? and out_z = ?
-      binds: ["2024-07-01T00:00:00+00:00", 1, infinity]
+        postgres: update position set out_z = ? where pos_id = ? and thru_z = ? and out_z = ?
+        mariadb: update `position` set out_z = ? where pos_id = ? and thru_z = ? and out_z = ?
+      binds: ["2024-07-01T00:00:00+00:00", 1, infinity, infinity]
     - sql:
         postgres: insert into position(pos_id, acct_num, val, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?, ?)
         mariadb: insert into `position` (pos_id, acct_num, val, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?, ?)

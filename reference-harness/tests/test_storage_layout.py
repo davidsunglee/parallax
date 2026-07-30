@@ -941,6 +941,7 @@ def test_case_runner_consumes_storage_layout_for_validation_reads_and_observatio
         "PositionColumn",
         "PositionLayoutView",
         "STORAGE_LAYOUT_MODEL_REJECTED_RULES",
+        "TEMPORAL_DIMENSION_RANK",
         "TableLayout",
         "position_projection",
         "position_view",

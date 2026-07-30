@@ -510,6 +510,11 @@ def test_error_run_sweep(case: case_format.Case, provisioner: Any) -> None:
 # locking-mode zero-row close: an UNGATED versioned keyed DELETE whose row a   #
 # concurrent transaction already removed, whose shortfall the executor         #
 # classifies as the never-retriable stale write rather than a conflict.        #
+# `m-bitemp-write-017`/`-018` close the BOUNDED current rectangle whose        #
+# Valid-Time end is finite, in each concurrency mode: only a real execution    #
+# distinguishes an address that binds the observed rectangle's own `thru_z`    #
+# from one that would match both current rectangles of the key, and the        #
+# distinguishing observable is the affected-row count.                         #
 # --------------------------------------------------------------------------- #
 _CONFLICT_CASES_EXERCISED: Final[frozenset[str]] = frozenset(
     {
@@ -526,6 +531,8 @@ _CONFLICT_CASES_EXERCISED: Final[frozenset[str]] = frozenset(
         "m-txtime-write-006",
         "m-bitemp-write-004",
         "m-bitemp-write-005",
+        "m-bitemp-write-017",
+        "m-bitemp-write-018",
         "m-inheritance-105",
         "m-value-object-046",
     }

@@ -3569,16 +3569,17 @@ def _run_conflict_close(
     conflict case's own close-only probe, never a REAL chaining mutation) and
     executes it on the transaction's own connection — a standalone close has
     nothing to coalesce or FK-order with, so it bypasses the buffer/flush
-    pipeline entirely. ``observed_tx_start`` / the write row's own ``valid_start``
-    (the bitemporal Valid-Time discriminator) are the case's EXPLICIT authored
-    fields (`when.observedTxStart` / `when.write.valid_start`) — never a
-    shadow-tracker lookup, a conflict case tests a KNOWN stale-or-fresh value.
+    pipeline entirely. The write row's own ``valid_end`` completes a bitemporal
+    close's ADDRESS and ``observed_tx_start`` supplies its gate candidate; both
+    are the case's EXPLICIT authored fields (`when.write.valid_end` /
+    `when.observedTxStart`) — never a shadow-tracker lookup, a conflict case
+    tests a KNOWN stale-or-fresh value.
     """
     row = dict(write_row)
-    observed_valid_start = cast("str | None", row.pop("valid_start", None))
+    observed_valid_end = cast("str | None", row.pop("valid_end", None))
     model = case_model(meta)
     lowered = handle.lower_temporal_close(
-        row, target, model, dialect, concurrency, at, observed_tx_start, observed_valid_start
+        row, target, model, dialect, concurrency, at, observed_tx_start, observed_valid_end
     )
     instant = normalize_instant(dt.datetime.fromisoformat(at))
     database = handle.Database(port, model, dialect=dialect, clock=FixedClock(instant))

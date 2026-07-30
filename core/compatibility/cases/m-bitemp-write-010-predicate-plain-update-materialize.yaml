@@ -7,8 +7,9 @@
 # (pos 1, value 200, currently open on both axes) a PLAIN update (no `until`) sets
 # value = 300 from validFrom = 2024-07-01 to valid infinity, processed at
 # at = 2024-10-01, in three statements:
-#   1. close the current Transaction-Time row (set out_z = at), gated on key + open out_z +
-#      the observed from_z/in_z — the optimistic coordinate gate (concurrency: optimistic);
+#   1. close the current Transaction-Time row (set out_z = at), addressed by key + the
+#      observed thru_z + the open out_z, then gated on the observed in_z — the
+#      optimistic coordinate gate (concurrency: optimistic);
 #   2. re-insert the OLD payload (value 200) for the pre-split slice [2024-06-01,
 #      2024-07-01) with in_z = at — history preserved before the change;
 #   3. insert the NEW payload (value 300) for [2024-07-01, infinity) with in_z = at.
@@ -57,8 +58,8 @@ when:
       roundTrips: 3
       statements:
         - sql:
-            postgres: update position set out_z = ? where pos_id = ? and out_z = ? and from_z = ? and in_z = ?
-          binds: ["2024-10-01T00:00:00+00:00", 1, infinity, "2024-06-01T00:00:00+00:00", "2024-04-01T00:00:00+00:00"]
+            postgres: update position set out_z = ? where pos_id = ? and thru_z = ? and out_z = ? and in_z = ?
+          binds: ["2024-10-01T00:00:00+00:00", 1, infinity, infinity, "2024-04-01T00:00:00+00:00"]
         - sql:
             postgres: insert into position(pos_id, acct_num, val, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?, ?)
           binds: [1, A, 200.00, "2024-06-01T00:00:00+00:00", "2024-07-01T00:00:00+00:00", "2024-10-01T00:00:00+00:00", infinity]

@@ -1,26 +1,28 @@
 # Write sequence: updateUntil under an OPTIMISTIC gate, asserted END-TO-END — the
 # full bitemporal RECTANGLE SPLIT (-001) whose inactivating close is GATED on the
-# observed rectangle's Transaction-Time start (in_z) AND Valid-Time start (from_z), so the
+# observed rectangle's Transaction-Time start (in_z), so the
 # whole gated split (close + head/middle/tail) is witnessed, not just the single
 # gated UPDATE that -004/-005 pin (m-bitemp-write + m-opt-lock).
 #
 # A bitemporal entity has no version column, so the observed Transaction-Time start (in_z)
-# is the optimistic-lock version analogue; a bitemporal key adds the Valid-Time
-# discriminator (from_z) so the close targets EXACTLY the observed rectangle. Here
+# is the optimistic-lock version analogue. It rides the GATE alone; the close's
+# ADDRESS (pos_id plus one exclusive upper bound per axis, thru_z then out_z) is the
+# SAME one -001 renders under locking mode, so the two goldens differ only by the
+# trailing `and in_z = ?`. Here
 # the sequence opens a single Latest rectangle at valid [2024-01-01, infinity),
 # transaction [2024-01-01, infinity), then an `updateUntil` corrects the value to
 # 200 for the bounded Valid-Time window [2024-03-01, 2024-09-01) at txInstant
-# 2024-02-15. The close is gated on the observed rectangle's
-# (from_z, in_z) = (2024-01-01, 2024-01-01) — NOTE the gate's from_z (2024-01-01,
-# the observed row) is DISTINCT from the window boundary (2024-03-01). It then
-# chains head / middle / tail as in -001.
+# 2024-02-15. The close addresses (thru_z, out_z) = (infinity, infinity) and gates on
+# the observed in_z 2024-01-01 — NOTE the addressed thru_z (infinity, the observed
+# row's own Valid-Time end) is DISTINCT from the window boundaries the split chains
+# (2024-03-01 / 2024-09-01). It then chains head / middle / tail as in -001.
 #
 # The optimistic gate rides the GOLDEN close directly (no `observedTxStart` token on the
 # writeSequence step): the writeSequence steps are identical to -001's, self-
 # describing the optimistic mode via `when.uow.concurrency` (descriptive only —
 # the harness executes the authored golden SQL either way, `compatibility-case.
 # schema.json`); only the close statement in `then.statements` carries the
-# `and from_z = ? and in_z = ?` gate, whose two trailing binds are drawn from the
+# trailing `and in_z = ?` gate, whose bind is drawn from the
 # currently-open row.
 #
 # The sequence (self-contained, from an empty table):
@@ -28,8 +30,9 @@
 #                        valid [2024-01-01, infinity), transaction [2024-01-01, infinity)  (1 statement)
 #   step 2 updateUntil : set value 200 for Valid-Time window [2024-03-01, 2024-09-01)
 #                        at txInstant 2024-02-15 — GATED-inactivate the observed
-#                        rectangle (out_z = 2024-02-15 where from_z = 2024-01-01 and
-#                        in_z = 2024-01-01) and chain head / middle / tail            (4 statements)
+#                        rectangle (out_z = 2024-02-15 where thru_z = infinity and
+#                        out_z = infinity and in_z = 2024-01-01) and chain head /
+#                        middle / tail                                              (4 statements)
 #
 # Resulting state (4 rows): identical to m-bitemp-write-001 — the inactivated
 # original (out_z finite) + head (100) + middle (200) + tail (100).
@@ -64,9 +67,9 @@ then:
         mariadb: insert into `position` (pos_id, acct_num, val, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?, ?)
       binds: [1, A, 100.00, "2024-01-01T00:00:00+00:00", infinity, "2024-01-01T00:00:00+00:00", infinity]
     - sql:
-        postgres: update position set out_z = ? where pos_id = ? and out_z = ? and from_z = ? and in_z = ?
-        mariadb: update `position` set out_z = ? where pos_id = ? and out_z = ? and from_z = ? and in_z = ?
-      binds: ["2024-02-15T00:00:00+00:00", 1, infinity, "2024-01-01T00:00:00+00:00", "2024-01-01T00:00:00+00:00"]
+        postgres: update position set out_z = ? where pos_id = ? and thru_z = ? and out_z = ? and in_z = ?
+        mariadb: update `position` set out_z = ? where pos_id = ? and thru_z = ? and out_z = ? and in_z = ?
+      binds: ["2024-02-15T00:00:00+00:00", 1, infinity, infinity, "2024-01-01T00:00:00+00:00"]
     - sql:
         postgres: insert into position(pos_id, acct_num, val, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?, ?)
         mariadb: insert into `position` (pos_id, acct_num, val, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?, ?)

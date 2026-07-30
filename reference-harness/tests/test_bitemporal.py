@@ -196,9 +196,10 @@ def test_until_write_input_holds_for_authored_cases() -> None:
         "m-bitemp-write-003",
     }
     for case in cases:
-        # Must not raise: the close binds [at, pk, infinity], every chained insert
-        # opens at fresh Transaction Time [at, infinity), and the Valid-Time window bounds
-        # (validFrom / until) appear among the chained inserts' Valid-Time binds.
+        # Must not raise: the close binds [at, pk, observedThruZ, infinity], every
+        # chained insert opens at fresh Transaction Time [at, infinity), and the chained
+        # Valid-Time windows are exactly the head / middle / tail the window
+        # [validFrom, until) splits the reconstructed rectangle into.
         _assert_write_input_columns(case, "postgres")
 
 
@@ -207,9 +208,9 @@ def test_until_write_input_window_corruption_is_rejected() -> None:
         next(c for c in _until_write_cases() if c.path.stem.startswith("m-bitemp-write-001"))
     )
     step = next(s for s in case.write_sequence if s.get("until"))
-    # Corrupt the Valid-Time window end: `until` no longer appears among the
-    # chained inserts' Valid-Time binds, so the `*Until` ① ↔ ② window gate MUST
-    # fail (the window bounds are DERIVED from `at`/`until`, never read from golden).
+    # Corrupt the Valid-Time window end: the derived middle / tail windows no longer
+    # match the chained inserts' Valid-Time binds, so the `*Until` ① ↔ ② window gate
+    # MUST fail (the windows are DERIVED from `until`, never read from the golden).
     step["until"] = "1999-12-31T00:00:00+00:00"
     with pytest.raises(CaseFailure):
         _assert_write_input_columns(case, "postgres")
@@ -236,9 +237,10 @@ def test_plain_split_write_input_holds_for_authored_cases() -> None:
     }
     for case in cases:
         # Must not raise: routed through the rectangle-split cross-check (not the
-        # audit-only close-and-open), the close binds [at, pk, infinity], the chained
-        # head / new-tail open at fresh Transaction Time [at, infinity), and validFrom
-        # appears among the chained inserts' Valid-Time binds (until is absent).
+        # audit-only close-and-open), the close binds [at, pk, observedThruZ, infinity],
+        # the chained head / new-tail open at fresh Transaction Time [at, infinity), and
+        # their Valid-Time windows meet at validFrom and run to the reconstructed
+        # rectangle's own end (until is absent).
         _assert_write_input_columns(case, "postgres")
 
 
@@ -265,26 +267,23 @@ def test_plain_two_way_split_and_plain_terminate_statement_shapes() -> None:
     _assert_write_step_count(terminate, "postgres")
 
 
-def test_plain_close_with_trailing_binds_but_no_gate_predicate_is_rejected() -> None:
-    # The gated branch is decided by the SQL SHAPE, not the bind arity: a PLAIN
-    # (non-gated) close whose golden binds carry spurious trailing values — even ones
-    # that happen to match the observed rectangle's (from_z, in_z) — is a shape mismatch
-    # (3 placeholders, 5 binds), which the loose branch tolerated as "gated". It MUST now
-    # raise rather than reconstruct the open rectangle and pass.
+def test_ungated_close_with_a_trailing_bind_but_no_gate_predicate_is_rejected() -> None:
+    # The gated branch is decided by the SQL SHAPE, not the bind arity: an UNGATED close
+    # whose golden binds carry a spurious trailing value — even one that matches the
+    # observed rectangle's in_z exactly — is a shape mismatch (4 placeholders, 5 binds),
+    # which a branch keyed on bind length would tolerate as "gated". It MUST raise.
     case = copy.deepcopy(
         next(c for c in _plain_split_write_cases() if c.path.stem.startswith("m-bitemp-write-006"))
     )
     # Sanity: as authored the plain split cross-checks cleanly.
     _assert_write_input_columns(case, "postgres")
-    opening = next(s for s in case.write_sequence if s["mutation"] == "insert")
-    observed_from = opening["validFrom"]
-    observed_in = opening["at"]
-    # The plain close is the second golden statement — confirm it is the NON-gated shape
-    # (no `from_z = ?` / `in_z = ?` gate) before corrupting its binds.
+    observed_in = next(s for s in case.write_sequence if s["mutation"] == "insert")["at"]
+    # The close is the second golden statement — confirm it renders the address alone,
+    # with no `in_z = ?` gate, before corrupting its binds.
     close = case.then["statements"][1]
-    assert "from_z" not in close["sql"]["postgres"]
-    assert "in_z" not in close["sql"]["postgres"]
-    close["binds"] = [*close["binds"], observed_from, observed_in]
+    assert "thru_z = ?" in close["sql"]["postgres"]
+    assert "in_z = ?" not in close["sql"]["postgres"]
+    close["binds"] = [*close["binds"], observed_in]
     with pytest.raises(CaseFailure):
         _assert_write_input_columns(case, "postgres")
 
@@ -293,97 +292,108 @@ def _gated_split_case():
     return next(c for c in _until_write_cases() if c.path.stem.startswith("m-bitemp-write-008"))
 
 
-def test_gated_rectangle_split_close_reconstructs_the_observed_open_rectangle() -> None:
-    # The optimistic gated split (`m-bitemp-write-008`) inactivates the observed
-    # rectangle with `... and from_z = ? and in_z = ?`; the two trailing gate binds are
-    # the observed rectangle's (validFrom, in_z), DERIVED from the OPENING insert
-    # step's row + `at` — distinct from the `updateUntil` window boundary (2024-03-01).
+def test_gated_rectangle_split_close_reconstructs_the_observed_rectangle() -> None:
+    # The optimistic gated split (`m-bitemp-write-008`) ADDRESSES the observed rectangle
+    # by its own Valid-Time end then the invariant Transaction-Time infinity, and GATES
+    # on its in_z last. Neither the address's thru_z nor the gate's in_z is in the
+    # closing step's ① row: both are DERIVED from the OPENING insert step, whose
+    # rectangle runs to the open Valid-Time bound and starts at 2024-01-01 — distinct
+    # from the `updateUntil` window boundaries and from the close instant.
     case = _gated_split_case()
     opening = next(s for s in case.write_sequence if s["mutation"] == "insert")
-    open_valid_from = opening["validFrom"]
-    open_at = opening["at"]
+    split = next(s for s in case.write_sequence if s["mutation"] == "updateUntil")
     # The golden close is the second statement (after the opening insert): its binds are
-    # [at, pk, infinity, observedFromZ, observedTxStart].
+    # [at, pk, observedThruZ, infinity, observedTxStart].
     close_binds = case.statement_binds(1)
     assert len(close_binds) == 5
-    assert str(close_binds[3]) == str(open_valid_from)  # observed from_z (not the window)
-    assert str(close_binds[4]) == str(open_at)  # observed in_z
+    assert str(close_binds[2]) == "infinity"  # the observed rectangle's own Valid-Time end
+    assert str(close_binds[2]) not in (str(split["validFrom"]), str(split["until"]))
+    assert str(close_binds[3]) == "infinity"  # the invariant Transaction-Time end
+    assert str(close_binds[4]) == str(opening["at"])  # the observed in_z, gated LAST
+    assert str(close_binds[4]) != str(split["at"])
     # The whole cross-check holds as authored.
     _assert_write_input_columns(case, "postgres")
 
 
 def test_gated_rectangle_split_gate_bind_corruption_is_rejected() -> None:
     case = copy.deepcopy(_gated_split_case())
-    # Corrupt the golden's observed-from_z gate bind so it no longer matches the
-    # reconstructed open rectangle: the gate is cross-checked against the row it
-    # inactivates (drawn from the replayed open row), so the ① ↔ ② gate MUST fail.
-    case.then["statements"][1]["binds"][3] = "1999-12-31T00:00:00+00:00"
+    # Corrupt the golden's observed-in_z gate bind so it no longer matches the
+    # reconstructed rectangle: the gate is cross-checked against the row it inactivates
+    # (drawn from the replayed history), so the ① ↔ ② gate MUST fail.
+    case.then["statements"][1]["binds"][4] = "1999-12-31T00:00:00+00:00"
     with pytest.raises(CaseFailure):
         _assert_write_input_columns(case, "postgres")
 
 
-def test_has_temporal_gate_requires_both_discriminators_word_bounded() -> None:
-    # Direct seam check on the gated-close shape detector: "gated" requires BOTH the
-    # Valid-Time (`from_z = ?`) AND Transaction-Time (`in_z = ?`) discriminators, matched
-    # word-bounded. A close carrying only ONE (a PARTIAL gate) is NOT a valid gated
-    # close; the plain current-row key (`out_z = ?`) alone is likewise not a gate.
-    both = (
-        "update position set out_z = ? where pos_id = ? and out_z = ? and from_z = ? and in_z = ?"
-    )
-    only_from = "update position set out_z = ? where pos_id = ? and out_z = ? and from_z = ?"
-    only_in = "update position set out_z = ? where pos_id = ? and out_z = ? and in_z = ?"
-    plain = "update position set out_z = ? where pos_id = ? and out_z = ?"
-    assert _has_temporal_gate(both, "from_z", "in_z")
-    assert not _has_temporal_gate(only_from, "from_z", "in_z")
-    assert not _has_temporal_gate(only_in, "from_z", "in_z")
-    assert not _has_temporal_gate(plain, "from_z", "in_z")
+def test_gated_rectangle_split_address_bind_corruption_is_rejected() -> None:
+    case = copy.deepcopy(_gated_split_case())
+    # Corrupt the golden's addressed Valid-Time end — the coordinate the pre-ADR-0046
+    # shape never bound at all. It is reconstructed from the same replayed rectangle as
+    # the gate, so an address that names no stored rectangle MUST fail.
+    case.then["statements"][1]["binds"][2] = "1999-12-31T00:00:00+00:00"
+    with pytest.raises(CaseFailure):
+        _assert_write_input_columns(case, "postgres")
 
 
-def test_partial_temporal_gate_missing_transaction_discriminator_is_rejected() -> None:
-    # A PARTIAL gate — only ONE of the two discriminators — must be REJECTED, never
-    # tolerated as a valid gated close. Here the close keeps the Valid-Time predicate
-    # (`from_z = ?`) but drops the Transaction-Time one (`in_z = ?`), swapping in a
-    # `thru_z = ?` decoy so it still declares five placeholders (the gated arity) and
-    # its authored five gated binds still line up. A detector that loosened to accept a
-    # single predicate would treat it as gated, reconstruct the open rectangle, and
-    # PASS; the BOTH-required shape check instead reports the close plain, so its five
-    # placeholders mismatch the derived three-bind plain shape and MUST raise.
+def test_has_temporal_gate_requires_the_transaction_start_word_bounded() -> None:
+    # Direct seam check on the gated-close shape detector. Address and gate are separate
+    # (ADR 0046): every close renders `thru_z = ? and out_z = ?`, so ONLY the trailing
+    # Transaction-Time start (`in_z = ?`) marks a close gated. Matching is word-bounded,
+    # so neither the address's own `out_z = ?` nor a Valid-Time `from_z = ?` decoy — the
+    # coordinate the retired shape gated on — is ever read as the gate.
+    address_only = "update position set out_z = ? where pos_id = ? and thru_z = ? and out_z = ?"
+    gated = f"{address_only} and in_z = ?"
+    valid_start_decoy = f"{address_only} and from_z = ?"
+    assert _has_temporal_gate(gated, "in_z")
+    assert not _has_temporal_gate(address_only, "in_z")
+    assert not _has_temporal_gate(valid_start_decoy, "in_z")
+    assert not _has_temporal_gate(gated, "min_z")  # a longer column is not a substring match
+
+
+def test_close_gating_on_the_valid_time_start_instead_of_in_z_is_rejected() -> None:
+    # The retired shape gated a bitemporal close on the observed Valid-Time START
+    # (`from_z = ?`); under ADR 0046 that coordinate is bound nowhere — the address
+    # carries the Valid-Time END and the gate carries in_z alone. A close that swaps the
+    # gate for a `from_z = ?` decoy still declares five placeholders and lines up with
+    # its five authored gated binds, so a detector that accepted any trailing temporal
+    # discriminator would treat it as gated and PASS. Requiring in_z specifically instead
+    # reports the close ungated, and its five placeholders mismatch the derived four-bind
+    # ungated shape, so it MUST raise.
     case = copy.deepcopy(_gated_split_case())
     _assert_write_input_columns(case, "postgres")  # sanity: valid as authored
     close = case.then["statements"][1]
     authored = close["sql"]["postgres"]
-    assert _has_temporal_gate(authored, "from_z", "in_z")  # authored is the gated shape
-    partial = authored.replace("in_z = ?", "thru_z = ?")
-    assert "in_z = ?" not in partial and "from_z = ?" in partial
-    assert not _has_temporal_gate(partial, "from_z", "in_z")  # partial is NOT gated
-    close["sql"]["postgres"] = partial  # binds unchanged — still the five gated binds
+    assert _has_temporal_gate(authored, "in_z")  # authored is the gated shape
+    decoy = authored.replace("and in_z = ?", "and from_z = ?")
+    assert not _has_temporal_gate(decoy, "in_z")  # the decoy is NOT gated
+    close["sql"]["postgres"] = decoy  # binds unchanged — still the five gated binds
     with pytest.raises(CaseFailure):
         _assert_write_input_columns(case, "postgres")
 
 
 def test_gated_close_with_extra_placeholder_arity_mismatch_is_rejected() -> None:
-    # A WELL-FORMED gated close (both discriminators present, correctly detected as
-    # gated) must ALSO carry EXACTLY the derived gated arity — five placeholders paired
-    # with the five [at, pk, infinity, from_z, in_z] binds. Here the close keeps both
-    # gate predicates but gains a spurious SIXTH `thru_z = ?` placeholder while the binds
-    # stay at the five-value gated shape. The bind-count backstop (`_assert_write_values`)
-    # still sees five == five, so ONLY the placeholder-vs-derived-shape arity check
-    # catches the surplus placeholder — which MUST raise rather than tolerate it.
+    # A WELL-FORMED gated close (correctly detected as gated) must ALSO carry EXACTLY
+    # the derived gated arity — five placeholders paired with the five
+    # [at, pk, thru_z, out_z, in_z] binds. Here the close keeps its gate but gains a
+    # spurious SIXTH `from_z = ?` placeholder while the binds stay at the five-value
+    # gated shape. The bind-count backstop (`_assert_write_values`) still sees five ==
+    # five, so ONLY the placeholder-vs-derived-shape arity check catches the surplus
+    # placeholder — which MUST raise rather than tolerate it.
     case = copy.deepcopy(_gated_split_case())
     _assert_write_input_columns(case, "postgres")  # sanity: valid as authored
     close = case.then["statements"][1]
     authored = close["sql"]["postgres"]
-    assert _has_temporal_gate(authored, "from_z", "in_z")
+    assert _has_temporal_gate(authored, "in_z")
     assert authored.count("?") == 5 and len(close["binds"]) == 5
-    close["sql"]["postgres"] = f"{authored} and thru_z = ?"  # sixth placeholder, binds unchanged
-    assert _has_temporal_gate(close["sql"]["postgres"], "from_z", "in_z")  # still gated-shaped
+    close["sql"]["postgres"] = f"{authored} and from_z = ?"  # sixth placeholder, binds unchanged
+    assert _has_temporal_gate(close["sql"]["postgres"], "in_z")  # still gated-shaped
     with pytest.raises(CaseFailure):
         _assert_write_input_columns(case, "postgres")
 
 
 def _bitemporal_conflict_close_cases():
-    """Bitemporal conflict-close cases (`m-bitemp-write-004` / `m-bitemp-write-005`):
-    a Valid-Time + Transaction-Time dimension."""
+    """Bitemporal conflict-close cases (`m-bitemp-write-004` / `-005` / `-017` /
+    `-018`): a Valid-Time + Transaction-Time dimension."""
     return [
         case
         for case in discover_cases(COMPATIBILITY_ROOT)
@@ -401,25 +411,84 @@ def test_bitemporal_conflict_close_input_holds_for_authored_cases() -> None:
     assert {_case_id(case.path.stem) for case in cases} >= {
         "m-bitemp-write-004",
         "m-bitemp-write-005",
+        "m-bitemp-write-017",
+        "m-bitemp-write-018",
     }
     for case in cases:
-        # Must not raise: the close ① derives [at, pk, infinity, validFrom,
-        # observedTxStart] — the metamodel names the from_z discriminator column, ①
-        # supplies its VALUE (validFrom), which the metamodel cannot know.
+        # Must not raise: the close ① derives [at, pk, valid_end, infinity,
+        # (observedTxStart under optimistic)] — the metamodel names the thru_z address
+        # column, ① supplies its VALUE, which the metamodel cannot know.
         _assert_conflict_input(case, "postgres")
 
 
-def test_bitemporal_conflict_close_valid_from_corruption_is_rejected() -> None:
-    case = copy.deepcopy(
-        next(
-            c
-            for c in _bitemporal_conflict_close_cases()
-            if c.path.stem.startswith("m-bitemp-write-004")
+def _conflict_close_case(stem_prefix: str):
+    cases = _bitemporal_conflict_close_cases()
+    return next(case for case in cases if case.path.stem.startswith(stem_prefix))
+
+
+def test_bitemporal_conflict_close_addresses_a_finite_valid_end() -> None:
+    # m-bitemp-write-017 / -018 are the corpus' only witnesses for the FINITE arm of the
+    # address: fixture rows R2 and R3 share pk, in_z, and the open out_z, so thru_z is
+    # the sole discriminator between them. -017 addresses R2's finite end and -004 the
+    # open one under the same mode, instant, and gate, so the two goldens differ by
+    # exactly that bind — a close binding a constant infinity on both axes would pass
+    # -004 and miss R2 entirely.
+    bounded = _conflict_close_case("m-bitemp-write-017")
+    unbounded = _conflict_close_case("m-bitemp-write-004")
+    assert bounded.when["write"]["valid_end"] == "2024-06-01T00:00:00+00:00"
+    assert unbounded.when["write"]["valid_end"] == "infinity"
+    assert bounded.golden_statements("postgres") == unbounded.golden_statements("postgres")
+    differing = [
+        index
+        for index, (left, right) in enumerate(
+            zip(bounded.statement_binds(0), unbounded.statement_binds(0), strict=True)
         )
-    )
-    # Corrupt the Valid-Time discriminator VALUE: the DERIVED from_z gate bind no longer
-    # matches the golden bind, so the bitemporal close ① ↔ ② gate MUST fail.
-    case.when["write"]["validFrom"] = "1999-12-31T00:00:00+00:00"
+        if str(left) != str(right)
+    ]
+    assert differing == [2]  # the addressed thru_z, between the pk and the invariant out_z
+    _assert_conflict_input(bounded, "postgres")
+
+
+def test_bitemporal_conflict_close_valid_end_corruption_is_rejected() -> None:
+    case = copy.deepcopy(_conflict_close_case("m-bitemp-write-017"))
+    # Corrupt the addressed Valid-Time end VALUE: ①'s address bound no longer matches the
+    # golden bind, so the bitemporal close ① ↔ ② cross-check MUST fail.
+    case.when["write"]["valid_end"] = "1999-12-31T00:00:00+00:00"
+    with pytest.raises(CaseFailure):
+        _assert_conflict_input(case, "postgres")
+
+
+def test_bitemporal_conflict_close_naming_a_second_coordinate_is_rejected() -> None:
+    # A close writes no domain value and names exactly the address bound the metamodel
+    # cannot supply. An ① carrying anything else — here the Valid-Time START the retired
+    # gate shape bound — MUST be rejected rather than silently ordered into the binds.
+    case = copy.deepcopy(_conflict_close_case("m-bitemp-write-004"))
+    case.when["write"]["valid_start"] = "2024-06-01T00:00:00+00:00"
+    with pytest.raises(CaseFailure):
+        _assert_conflict_input(case, "postgres")
+
+
+def test_locking_bitemporal_conflict_close_renders_the_address_and_no_gate() -> None:
+    # m-bitemp-write-018 is -017's locking sibling: the m-read-lock shared read lock,
+    # not an observation, is what makes the write correct, so the golden renders the
+    # SAME address and no `in_z = ?` gate, and the case authors no observedTxStart.
+    locking = _conflict_close_case("m-bitemp-write-018")
+    optimistic = _conflict_close_case("m-bitemp-write-017")
+    (gated_statement,) = optimistic.golden_statements("postgres")
+    assert locking.golden_statements("postgres") == [gated_statement.removesuffix(" and in_z = ?")]
+    assert locking.observed_tx_start is None
+    assert locking.statement_binds(0) == optimistic.statement_binds(0)[:-1]
+    _assert_conflict_input(locking, "postgres")
+
+
+def test_locking_bitemporal_conflict_close_rendering_a_gate_is_rejected() -> None:
+    # Gating is concurrency-driven, never data-driven: a locking-mode close that renders
+    # the observed-in_z gate anyway MUST be rejected, even though its binds line up.
+    case = copy.deepcopy(_conflict_close_case("m-bitemp-write-018"))
+    _assert_conflict_input(case, "postgres")  # sanity: valid as authored
+    close = case.then["statements"][0]
+    close["sql"]["postgres"] = f"{close['sql']['postgres']} and in_z = ?"
+    close["binds"] = [*close["binds"], "2024-04-01T00:00:00+00:00"]
     with pytest.raises(CaseFailure):
         _assert_conflict_input(case, "postgres")
 
@@ -488,10 +557,13 @@ def test_tph_txtime_terminate_close_is_tag_guarded() -> None:
 
 def test_tph_bitemporal_inactivation_is_tag_guarded() -> None:
     # m-inheritance-094: the bitemporal inactivation carries the tag guard right after the
-    # pk; the chained head insert sets the tag column from the subtype's tagValue.
+    # pk and BEFORE the per-axis upper bounds that address the rectangle; the chained head
+    # insert sets the tag column from the subtype's tagValue.
     case = _inheritance_case("m-inheritance-094")
     inactivate = case.golden_statements("postgres")[1]
-    assert inactivate == "update instrument set out_z = ? where id = ? and kind = ? and out_z = ?"
+    assert inactivate == (
+        "update instrument set out_z = ? where id = ? and kind = ? and thru_z = ? and out_z = ?"
+    )
     assert case.statement_binds(1)[1:3] == [1, "bond"]
     _assert_write_input_columns(case, "postgres")
 
@@ -502,7 +574,8 @@ def test_tph_bitemporal_milestones_write_the_layout_slot_sequence() -> None:
     # identity, discriminator, the root-owned then subtype-owned domain slots, and
     # finally the four temporal bounds. The sibling Stock's `ticker` slot is not
     # applicable to a Bond row and never enters the write shape, while the
-    # inactivating close between them touches only the Transaction-Time end column.
+    # inactivating close between them SETS only the Transaction-Time end column and
+    # reads both axes' ends to address its rectangle.
     case = _inheritance_case("m-inheritance-094")
     order = _write_column_order(case, case.model.entity("Bond"))
     assert order == ("id", "kind", "price", "coupon", "from_z", "thru_z", "in_z", "out_z")
@@ -510,7 +583,9 @@ def test_tph_bitemporal_milestones_write_the_layout_slot_sequence() -> None:
     columns = ", ".join(order)
     assert opening.startswith(f"insert into instrument({columns}) values")
     assert head.startswith(f"insert into instrument({columns}) values")
-    assert close == "update instrument set out_z = ? where id = ? and kind = ? and out_z = ?"
+    assert close == (
+        "update instrument set out_z = ? where id = ? and kind = ? and thru_z = ? and out_z = ?"
+    )
     # Every chained INSERT opens at the transaction instant with an open upper bound.
     in_z, out_z = order.index("in_z"), order.index("out_z")
     for index in (0, 2):
@@ -602,7 +677,9 @@ def test_tpcs_temporal_terminate_routes_to_own_table_no_tag() -> None:
     # with NO tag guard (contrast the table-per-hierarchy inactivation above).
     case = _inheritance_case("m-inheritance-095")
     inactivate = case.golden_statements("postgres")[1]
-    assert inactivate == "update deposit_rate set out_z = ? where id = ? and out_z = ?"
+    assert inactivate == (
+        "update deposit_rate set out_z = ? where id = ? and thru_z = ? and out_z = ?"
+    )
     assert "kind" not in inactivate
     _assert_write_input_columns(case, "postgres")
 

@@ -38,12 +38,14 @@ analogue of a non-temporal edited copy's effective change set, since the corpus'
 own bitemporal update rows are SPARSE (pk + the touched fields only, `python.md`
 §5): an unauthored field carries FORWARD from the prior rectangle unchanged.
 
-The close's gate candidates additionally carry the Valid-Time discriminator
-(:attr:`~parallax.core.txtime_write.MilestoneClose.gate_valid_start`) — the observed
-rectangle's own Valid-Time start — composing with the observed ``tx_start``
-exactly as `m-bitemp-write.md` "The inactivation UPDATE" pins: gated ONLY under
-optimistic concurrency (the render seam's decision), never data-dependent on
-whether disambiguation was structurally needed.
+A second axis makes the close's ADDRESS two-dimensional: alongside the key it
+carries the observed rectangle's own Valid-Time end
+(:attr:`~parallax.core.txtime_write.MilestoneClose.target_valid_end`), which is
+what keeps an operational close on the CURRENT rectangle when several disjoint
+rectangles of one key are current on Transaction Time. That address is derived
+identically in both concurrency modes (`m-bitemp-write.md` "Address and gate are
+separate", ADR 0046); only the observed ``tx_start`` gate candidate is
+mode-dependent, and the render seam alone decides whether to bind it.
 
 Prior art (Reladomo; semantics, not idioms): the rectangle dispatch mirrors
 ``GenericBiTemporalDirector.updateUntil`` / ``.splitTailEnd`` (research §6, the
@@ -131,8 +133,8 @@ def plan(
     old_payload = observed.payload or {}
     close = MilestoneClose(
         identity=row,
+        target_valid_end=obs_to,
         gate_tx_start=observed.tx_start,
-        gate_valid_start=obs_from,
     )
 
     if mutation == "terminate":

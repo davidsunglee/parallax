@@ -485,9 +485,14 @@ def _temporal_designations(
     )
 
 
-_TEMPORAL_DIMENSION_RANK: Mapping[str, int] = MappingProxyType(
+TEMPORAL_DIMENSION_RANK: Mapping[str, int] = MappingProxyType(
     {"validTime": 0, "transactionTime": 1}
 )
+"""The canonical order of the As-Of Axis dimensions: Valid Time before Transaction Time.
+
+Every ordered per-axis sequence follows it — the physical primary key's temporal
+start slots, and a milestone close's one exclusive upper bound per axis.
+"""
 
 
 def _temporal_start_designations(
@@ -497,7 +502,7 @@ def _temporal_start_designations(
     starts: list[AttributeContributor] = []
     seen: set[AttributeContributor] = set()
     axes = (axis for axis in root.get("asOfAxes", []) or [] if isinstance(axis, dict))
-    for axis in sorted(axes, key=lambda axis: _TEMPORAL_DIMENSION_RANK[axis["dimension"]]):
+    for axis in sorted(axes, key=lambda axis: TEMPORAL_DIMENSION_RANK[axis["dimension"]]):
         contributor = AttributeContributor(root_identity, axis["startAttribute"])
         if contributor in seen:
             continue

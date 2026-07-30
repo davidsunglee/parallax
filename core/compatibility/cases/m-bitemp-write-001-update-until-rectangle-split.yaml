@@ -22,8 +22,8 @@
 #
 # Resulting state (4 rows): the inactivated original (out_z finite) + head (100) +
 # middle (200) + tail (100), the three new rows current on Transaction Time. The close
-# UPDATE is keyed by the Transaction-Time-current predicate (pos_id AND
-# out_z = infinity), never a blind in-place set.
+# UPDATE addresses the current rectangle by pos_id plus one exclusive upper bound per
+# as-of axis (thru_z = infinity AND out_z = infinity), never a blind in-place set.
 # the inactivated original — closed on the Transaction-Time dimension (out_z finite)
 # head: old value 100 before the Valid-Time window, current on Transaction Time
 # middle: NEW value 200 for the Valid-Time window, current on Transaction Time
@@ -57,9 +57,9 @@ then:
         mariadb: insert into `position` (pos_id, acct_num, val, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?, ?)
       binds: [1, A, 100.00, "2024-01-01T00:00:00+00:00", infinity, "2024-01-01T00:00:00+00:00", infinity]
     - sql:
-        postgres: update position set out_z = ? where pos_id = ? and out_z = ?
-        mariadb: update `position` set out_z = ? where pos_id = ? and out_z = ?
-      binds: ["2024-02-15T00:00:00+00:00", 1, infinity]
+        postgres: update position set out_z = ? where pos_id = ? and thru_z = ? and out_z = ?
+        mariadb: update `position` set out_z = ? where pos_id = ? and thru_z = ? and out_z = ?
+      binds: ["2024-02-15T00:00:00+00:00", 1, infinity, infinity]
     - sql:
         postgres: insert into position(pos_id, acct_num, val, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?, ?)
         mariadb: insert into `position` (pos_id, acct_num, val, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?, ?)

@@ -30,7 +30,11 @@ Three mutations, one shape each (`m-txtime-write.md` "Milestone-chaining writes"
   merge could overlay is already present in the caller's own row). Close-
   before-chain, the pair adjacent (`m-txtime-write.md` L96-109).
 
-The close's gate CANDIDATES (:attr:`MilestoneClose.gate_tx_start`) come straight from
+The close's ADDRESS is the key plus one exclusive upper bound per As-Of Axis, so
+a Transaction-Time-Only close addresses ``out_z = infinity`` alone
+(:attr:`MilestoneClose.target_valid_end` is ``None``) and is identical in both
+concurrency modes (ADR 0046). Only the close's gate CANDIDATE
+(:attr:`MilestoneClose.gate_tx_start`) comes from
 the caller-supplied ``observed`` :class:`~parallax.core.unit_work.Observation` —
 this scope never decides WHETHER to gate (that is the ``opt_lock`` policy
 composed at the render seam) or issues an implicit read to find one (`m-txtime-write`
@@ -86,26 +90,29 @@ class TemporalPlanningError(ValueError):
 @dataclass(frozen=True, slots=True)
 class MilestoneClose:
     """One inactivating/closing ``UPDATE`` the write plans (`m-txtime-write` /
-    `m-bitemp-write`): close the CURRENT (``out_z = infinity``) row identified by
-    ``identity`` (the instruction's own row — at minimum the primary key; the
-    render seam's existing key-predicate derivation resolves it, tag guard
-    included) by setting its Transaction-Time upper bound to the transaction
-    instant.
+    `m-bitemp-write`): close the current milestone the ADDRESS selects by setting
+    its Transaction-Time upper bound to the transaction instant.
 
-    ``gate_tx_start`` / ``gate_valid_start`` are gate CANDIDATES, not a gating decision:
-    ``gate_tx_start`` is the observed Transaction-Time start (``None`` when this write
-    carries no observation — an ungated audit-only locking-mode close needs
-    none, `python.md` §5 "locking-mode audit closes need no observation for
-    SQL"); ``gate_valid_start`` is the bitemporal Valid-Time discriminator (always
-    ``None`` for a Transaction-Time-Only close — it has no Valid-Time
-    coordinate to discriminate on). The render seam decides WHETHER to actually
-    bind them (`~parallax.core.opt_lock.gates`) and always expects the close to
-    affect exactly one row.
+    The address is ``identity`` (the instruction's own row — at minimum the
+    primary key; the render seam's existing key-predicate derivation resolves
+    it, tag guard included) plus one exclusive upper bound per As-Of Axis.
+    Transaction Time is invariantly infinity, so only the Valid-Time bound
+    varies and only it is carried: ``target_valid_end`` is the observed
+    rectangle's own Valid-Time end for a Bitemporal close, and ``None`` for a
+    Transaction-Time-Only close, which has no second axis. The address is
+    identical in both concurrency modes (ADR 0046).
+
+    ``gate_tx_start`` is a gate CANDIDATE, not a gating decision: the observed
+    Transaction-Time start (``None`` when this write carries no observation — an
+    ungated audit-only locking-mode close needs none, `python.md` §5
+    "locking-mode audit closes need no observation for SQL"). The render seam
+    decides WHETHER to actually bind it (`~parallax.core.opt_lock.gates`) and
+    always expects the close to affect exactly one row.
     """
 
     identity: Mapping[str, object]
+    target_valid_end: str | None
     gate_tx_start: str | None
-    gate_valid_start: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -194,6 +201,7 @@ def plan(
         return MilestonePlan(steps=(MilestoneOpen(row=_open_row(model, entity, tx_instant, row)),))
     close = MilestoneClose(
         identity=row,
+        target_valid_end=None,
         gate_tx_start=observed.tx_start if observed is not None else None,
     )
     if mutation in _TERMINATE_MUTATIONS:

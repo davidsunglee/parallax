@@ -6,9 +6,9 @@
 # (m-bitemp-write). In a table-per-concrete-subtype family the concrete subtype is selected
 # by WHICH table the DML targets, so terminating a DepositRate inactivates and chains in the
 # concrete `deposit_rate` table: the inactivation is `update deposit_rate set out_z = ?
-# where id = ? and out_z = ?`, binds [2024-07-01, 1, infinity], with NO tag guard (contrast
-# the table-per-hierarchy inactivation m-inheritance-094, whose `update instrument` carries
-# `and kind = ?`).
+# where id = ? and thru_z = ? and out_z = ?`, binds [2024-07-01, 1, infinity, infinity],
+# with NO tag guard (contrast the table-per-hierarchy inactivation m-inheritance-094,
+# whose `update instrument` carries `and kind = ?`).
 #
 # The MILESTONE SHAPES are IDENTICAL to the standalone m-bitemp-write-007 and to the
 # table-per-hierarchy composed variant m-inheritance-094 (same dates, same 2-row result),
@@ -46,8 +46,8 @@ then:
         postgres: insert into deposit_rate(id, amount, grade, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?, ?)
       binds: [1, 2.50, A, "2024-01-01T00:00:00+00:00", infinity, "2024-01-01T00:00:00+00:00", infinity]
     - sql:
-        postgres: update deposit_rate set out_z = ? where id = ? and out_z = ?
-      binds: ["2024-07-01T00:00:00+00:00", 1, infinity]
+        postgres: update deposit_rate set out_z = ? where id = ? and thru_z = ? and out_z = ?
+      binds: ["2024-07-01T00:00:00+00:00", 1, infinity, infinity]
     - sql:
         postgres: insert into deposit_rate(id, amount, grade, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?, ?)
       binds: [1, 2.50, A, "2024-01-01T00:00:00+00:00", "2024-06-01T00:00:00+00:00", "2024-07-01T00:00:00+00:00", infinity]

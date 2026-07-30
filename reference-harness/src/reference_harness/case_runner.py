@@ -67,6 +67,7 @@ from .storage_layout import (
     MODEL_REJECTED_RULES as STORAGE_LAYOUT_MODEL_REJECTED_RULES,
 )
 from .storage_layout import (
+    TEMPORAL_DIMENSION_RANK,
     ColumnContributor,
     ColumnSlot,
     ColumnTier,
@@ -2607,6 +2608,15 @@ _UNTIL_MUTATIONS = ("insertUntil", "updateUntil", "terminateUntil")
 # the residual window runs to the open bound (thru_z), so ① carries no `until`.
 _PLAIN_SPLIT_MUTATIONS = ("update", "terminate")
 
+# The mutations that OPEN a rectangle with no prior row to close: the unbounded
+# `insert` and its Valid-Time-bounded `insertUntil` sibling.
+_OPENING_MUTATIONS = ("insert", "insertUntil")
+
+# The rectangle-split mutations that END coverage rather than carrying a changed
+# value forward: they re-open the head (and, when windowed, the tail) but no slice
+# for the window itself.
+_TERMINATE_MUTATIONS = ("terminate", "terminateUntil")
+
 
 def _is_bitemporal(entity: Entity) -> bool:
     """Whether an entity carries BOTH as-of axes (Valid Time + Transaction Time) — the
@@ -2614,6 +2624,14 @@ def _is_bitemporal(entity: Entity) -> bool:
     milestone rectangle split (close + chain), not the audit-only close-and-open."""
     axes = {dim.get("dimension") for dim in entity.temporal_runtime_axes}
     return {"validTime", "transactionTime"} <= axes
+
+
+def _as_of_axes(entity: Entity) -> list[dict[str, Any]]:
+    """*entity*'s As-Of Axes in canonical dimension rank (Valid Time first)."""
+    return sorted(
+        entity.temporal_runtime_axes,
+        key=lambda axis: TEMPORAL_DIMENSION_RANK[axis["dimension"]],
+    )
 
 
 def _is_computed_marker(value: Any) -> bool:
@@ -2770,6 +2788,36 @@ def _tag(entity: Entity) -> tuple[str, Any] | None:
     both the resolved root ``tag`` column and the subtype's own ``tagValue``.
     """
     return tag_of(entity.runtime_facts)
+
+
+def _close_address_binds(case: Case, entity: Entity, pk: Any, valid_end: Any) -> list[Any]:
+    """The binds a milestone close's ADDRESS carries, in rendered predicate order.
+
+    A close addresses the ONE stored milestone it means to close, and that address is
+    identical in both concurrency modes: the primary key, the table-per-hierarchy tag
+    GUARD that rides the identity predicates right after it (m-inheritance), then one
+    exclusive upper bound PER As-Of Axis in canonical dimension rank. The
+    Transaction-Time end is invariantly the open bound, because only a
+    Transaction-Time-current milestone is closable; the Valid-Time end is the observed
+    rectangle's OWN end, which may be finite — a key plus the open Transaction-Time
+    bound alone would select every disjoint current rectangle of that key
+    (`m-bitemp-write`). An optimistic gate is appended AFTER the address, never woven
+    into it.
+    """
+    tag = _tag(entity)
+    binds: list[Any] = [pk] if tag is None else [pk, tag[1]]
+    for axis in _as_of_axes(entity):
+        if axis["dimension"] != "validTime":
+            binds.append(axis.get("infinity", "infinity"))
+            continue
+        if valid_end is None:
+            raise CaseFailure(
+                f"{case.path.name}: a Bitemporal close of {entity.name} carries no observed "
+                f"Valid-Time end — the address needs one exclusive upper bound per As-Of "
+                f"Axis, and only the Transaction-Time one is invariant."
+            )
+        binds.append(valid_end)
+    return binds
 
 
 def _primary_key_columns(entity: Entity) -> list[str]:
@@ -3281,9 +3329,14 @@ def _assert_temporal_input(
     discipline stays under test). The gate cross-checks, per statement: an ``insert``
     (open a milestone) writes the full physical row with ``start_column = instant`` and
     ``end_column = infinity``; a close (``update`` step 1 / ``terminate``) binds
-    ``[instant, pk, infinity]`` — sets ``end_column = instant`` keyed on the still-open
-    current row (``pk and end_column = infinity``); an ``update`` chains a second
-    full-row insert carrying the row's columns.
+    ``[instant, pk, infinity]`` — sets ``end_column = instant`` addressed on the one
+    Transaction-Time-current milestone, which on a single axis is the pk plus
+    ``end_column = infinity`` alone (:func:`_close_address_binds`); an ``update``
+    chains a second full-row insert carrying the row's columns.
+
+    A BITEMPORAL step never reaches this cross-check's close: a two-axis
+    ``update`` / ``terminate`` is a rectangle split routed to
+    :func:`_assert_until_input`, and only its opening ``insert`` lands here.
     """
     transaction_time = next(
         (a for a in entity.temporal_runtime_axes if a["dimension"] == "transactionTime"), None
@@ -3344,16 +3397,12 @@ def _assert_temporal_input(
         _assert_write_values(case, expected, binds, statement)
 
     def assert_close(statement: str, binds: list[Any]) -> None:
-        # A close sets `out_z = at` keyed on the still-open current row
-        # (`pk and out_z = infinity`) — no domain values, just the derived bounds. For a
-        # table-per-hierarchy subtype the tag GUARD rides with the identity predicates,
-        # right after the pk and BEFORE the current-row `out_z` predicate (its SQL shape
-        # is cross-checked by _assert_inheritance_write_routing), so its tagValue binds
-        # between the pk and infinity.
-        if tag is not None:
-            _assert_write_values(case, [at, pk, tag[1], infinity], binds, statement)
-        else:
-            _assert_write_values(case, [at, pk, infinity], binds, statement)
+        # A close sets `out_z = at` on the milestone its address selects — no domain
+        # values, just the derived bounds. A Transaction-Time-Only entity has one axis,
+        # so the address supplies no observed Valid-Time end.
+        _assert_write_values(
+            case, [at, *_close_address_binds(case, entity, pk, None)], binds, statement
+        )
 
     mutation = step["mutation"]
     if mutation == "insert":
@@ -3379,38 +3428,40 @@ def _assert_until_input(
 ) -> None:
     """Cross-check a full-bitemporal RECTANGLE-SPLIT step's ① against its golden (②).
 
-    A rectangle-split write inactivates the original on the TRANSACTION-TIME axis at
-    the transaction instant and chains head / (middle) / (new-)tail rows at fresh
-    Transaction Time ``[at, infinity)``, partitioned on the VALID-TIME axis around the
-    mutation instant. Two forms share this cross-check:
+    A rectangle-split write inactivates the observed rectangle on the TRANSACTION-TIME
+    axis at the transaction instant and chains head / (middle) / (new-)tail rows at
+    fresh Transaction Time ``[at, infinity)``, partitioned on the VALID-TIME axis around
+    the mutation instant. Three forms share this cross-check:
 
       * a WINDOWED ``*Until`` write bounds the change to ``[validFrom, until)``
-        (`m-bitemp-write-001` / `-002` / `-003` / `-008`); ① carries both ``at`` and
-        ``until``;
+        (`m-bitemp-write-001` / `-002` / `-008`); ① carries both ``at`` and ``until``;
       * a PLAIN (unbounded) ``update`` / ``terminate`` corrects/ends the value from
         ``validFrom`` ONWARD (`m-bitemp-write-006` / `-007`); ① carries ``at`` but
-        no ``until`` — the residual window runs to the open bound (``thru_z``).
+        no ``until`` — the residual window runs to the open bound (``thru_z``);
+      * an OPENING ``insertUntil`` (`m-bitemp-write-003`) has no prior rectangle to
+        close, so it is the single bounded INSERT the other two chain around.
 
     Like the audit-only close it is Family B (full physical row, metamodel-sourced
     column list), so the cross-check is BINDS-only on the DERIVED coordinates ①
     supplies:
 
-      * the inactivating close (the ``update … set out_z = ? where …`` statement)
-        binds ``[at, pk, infinity]`` — closes the original at the transaction instant.
-        A GATED close (`m-bitemp-write-008`, optimistic) additionally carries the
-        observed rectangle's ``(from_z, in_z)`` as the trailing ``and from_z = ? and
-        in_z = ?`` binds — drawn from the currently-open row (reconstructed by
-        replaying prior insert steps, :func:`_open_rectangle_binds`), NOT the closing
-        step's own ①, and DISTINCT from the window boundary; the gate rides the golden
-        directly (no ``observedTxStart`` token on the writeSequence step);
+      * the inactivating close (the ``update … set out_z = ? where …`` statement) binds
+        ``[at, …address…]`` (:func:`_close_address_binds`) — the observed rectangle's
+        own Valid-Time end then the invariant Transaction-Time infinity, IDENTICAL in
+        both concurrency modes. A GATED close (`m-bitemp-write-008`, optimistic)
+        appends the observed rectangle's ``in_z`` LAST. Neither coordinate is present
+        in the closing step's own ① row, so both are reconstructed from the case's own
+        earlier steps (:func:`_observed_rectangle`); the gate rides the golden directly
+        (no ``observedTxStart`` token on the writeSequence step);
       * every chained INSERT opens a fresh Transaction-Time milestone, so its ``in_z``
         bind equals ``at`` and its ``out_z`` bind equals ``infinity``;
-      * the Valid-Time window bounds — ``validFrom`` (the window start, an ① row
-        attribute) and, for a windowed write, ``until`` (the window end, step-level) —
-        appear among the chained inserts' Valid-Time (``from_z`` / ``thru_z``) binds.
+      * the chained inserts' Valid-Time windows (``from_z`` / ``thru_z``) are EXACTLY
+        the successors the split re-opens (:func:`_split_successors`) from ①'s
+        ``validFrom`` / ``until`` and the reconstructed rectangle's own bounds, in
+        head / middle / tail order.
 
-    The domain values (carried, not derived) and the head/tail residual windows are
-    graded observably by ``then.tableState`` in the run, not restated in ①.
+    The domain values are carried, not derived, so they are graded observably by
+    ``then.tableState`` in the run rather than restated in ①.
     """
     valid_time = next(a for a in entity.temporal_runtime_axes if a["dimension"] == "validTime")
     transaction_time = next(
@@ -3423,7 +3474,8 @@ def _assert_until_input(
     in_z_pos, out_z_pos = full_columns.index(in_z), full_columns.index(out_z)
     from_z_pos, thru_z_pos = full_columns.index(from_z), full_columns.index(thru_z)
 
-    windowed = step["mutation"] in _UNTIL_MUTATIONS
+    mutation = step["mutation"]
+    windowed = mutation in _UNTIL_MUTATIONS
     at = step.get("at")
     until = step.get("until")
     if at is None:
@@ -3438,7 +3490,7 @@ def _assert_until_input(
             f"`until` (the Valid-Time window end → thru_z), which is DERIVED, never read "
             f"from the golden."
         )
-    columns, pk, _set_cols, _observed = classified[0] if classified else ({}, None, {}, None)
+    _columns, pk, _set_cols, _version = classified[0] if classified else ({}, None, {}, None)
     valid_from = step.get("validFrom")
     if valid_from is None:
         raise CaseFailure(
@@ -3446,105 +3498,177 @@ def _assert_until_input(
             f"Valid-Time window start (`validFrom` → {from_z}), which discriminates the "
             f"chained rows."
         )
-    # A TABLE-PER-HIERARCHY concrete subtype guards its inactivation on the framework-
-    # derived tag column right after the pk (m-inheritance), so the tagValue binds
-    # between the pk and the current-row `out_z` predicate; the tag guard's SQL shape is
-    # cross-checked by _assert_inheritance_write_routing. `None` for a table-per-
-    # concrete-subtype / non-inheritance entity (an ordinary own-table inactivation).
-    tag = _tag(entity)
+    if mutation in _OPENING_MUTATIONS:
+        observed = None
+        expected_windows = [(valid_from, until)]
+    else:
+        observed = _observed_rectangle(case, entity, step, pk)
+        expected_windows = [
+            (rectangle.valid_start, rectangle.valid_end)
+            for rectangle in _split_successors(mutation, observed, valid_from, until, at)
+        ]
 
-    valid_binds: list[Any] = []
+    chained_windows: list[tuple[Any, Any]] = []
     for statement, binds in zip(step_statements, step_binds, strict=True):
         if "insert into" in statement.lower():
             # A chained milestone opens at fresh Transaction Time [at, infinity).
             _assert_write_values(case, [at], [binds[in_z_pos]], statement)
             _assert_write_values(case, [infinity], [binds[out_z_pos]], statement)
-            valid_binds.extend([binds[from_z_pos], binds[thru_z_pos]])
-        else:
-            # The inactivating close: out_z = at, keyed on the Transaction-Time-current row.
-            # Whether the close is GATED (optimistic) is decided by the SQL SHAPE — it MUST
-            # carry the observed rectangle's Valid-Time + Transaction-Time gate predicates
-            # (`and from_z = ? and in_z = ?`) — NEVER merely by a longer bind row, so a
-            # plain close with spurious trailing binds fails as a mismatch rather than being
-            # tolerated as gated. A gated close then pairs those two predicates with EXACTLY
-            # two trailing binds — the currently-open row's (from_z, in_z), reconstructed
-            # from prior insert steps and DISTINCT from the window boundary.
-            expected = [at, pk, tag[1], infinity] if tag is not None else [at, pk, infinity]
-            gated = _has_temporal_gate(statement, from_z, in_z)
-            if gated:
-                open_rect = _open_rectangle_binds(case, entity, step, pk, from_z)
-                if open_rect is None:
-                    raise CaseFailure(
-                        f"{case.path.name}: a gated bitemporal close carries the "
-                        f"`and {from_z} = ? and {in_z} = ?` gate, but no prior insert step "
-                        f"opens a rectangle for pk {pk!r} to draw the observed "
-                        f"(from_z, in_z) from."
-                    )
-                expected = [*expected, *open_rect]
-            placeholders = statement.count("?")
-            if placeholders != len(expected) or len(binds) != len(expected):
-                raise CaseFailure(
-                    f"{case.path.name}: the {'gated' if gated else 'plain'} bitemporal close "
-                    f"{statement!r} carries {placeholders} placeholder(s) and {len(binds)} "
-                    f"bind(s), but its derived shape is {len(expected)} — a gated close MUST "
-                    f"pair the `and {from_z} = ? and {in_z} = ?` gate with exactly two "
-                    f"trailing (from_z, in_z) binds; a plain close carries only "
-                    f"`[at, pk, infinity]`."
-                )
-            _assert_write_values(case, expected, binds, statement)
-
-    bounds = [(valid_from, "validFrom")]
-    if until is not None:
-        bounds.append((until, "until"))
-    for bound, label in bounds:
-        if not any(_write_value_equal(bound, value) for value in valid_binds):
+            chained_windows.append((binds[from_z_pos], binds[thru_z_pos]))
+            continue
+        if observed is None:
             raise CaseFailure(
-                f"{case.path.name}: the rectangle-split Valid-Time window bound "
-                f"{label}={bound!r} appears in none of the chained inserts' Valid-Time "
-                f"binds {valid_binds!r}."
+                f"{case.path.name}: an opening `{mutation}` step has no prior rectangle to "
+                f"close, but its golden carries the close {statement!r}."
             )
+        # The inactivation: out_z = at on the ADDRESSED rectangle. Whether the close is
+        # GATED (optimistic) is decided by the SQL SHAPE — never by a longer bind row —
+        # so a close with spurious trailing binds fails as a mismatch rather than being
+        # tolerated as gated, and a gated one pairs its single trailing predicate with
+        # EXACTLY one trailing bind.
+        expected = [at, *_close_address_binds(case, entity, pk, observed.valid_end)]
+        gated = _has_temporal_gate(statement, in_z)
+        if gated:
+            expected.append(observed.tx_start)
+        placeholders = statement.count("?")
+        if placeholders != len(expected) or len(binds) != len(expected):
+            raise CaseFailure(
+                f"{case.path.name}: the {'gated' if gated else 'ungated'} bitemporal close "
+                f"{statement!r} carries {placeholders} placeholder(s) and {len(binds)} "
+                f"bind(s), but its derived shape is {len(expected)} — every close renders "
+                f"the address `pk [and tag = ?] and {thru_z} = ? and {out_z} = ?`, and a "
+                f"gated close appends the single `and {in_z} = ?` gate."
+            )
+        _assert_write_values(case, expected, binds, statement)
+
+    _assert_split_successor_windows(case, expected_windows, chained_windows)
 
 
-def _open_rectangle_binds(
-    case: Case, entity: Entity, current_step: dict[str, Any], pk: Any, from_z: str
-) -> tuple[Any, Any] | None:
-    """Reconstruct the currently-open rectangle's ``(from_z, in_z)`` for a gated close.
+def _assert_split_successor_windows(
+    case: Case,
+    expected_windows: list[tuple[Any, Any]],
+    chained_windows: list[tuple[Any, Any]],
+) -> None:
+    """The chained INSERTs' Valid-Time windows are exactly the derived successors."""
+    matched = len(expected_windows) == len(chained_windows) and all(
+        _write_value_equal(want_start, got_start) and _write_value_equal(want_end, got_end)
+        for (want_start, want_end), (got_start, got_end) in zip(
+            expected_windows, chained_windows, strict=False
+        )
+    )
+    if not matched:
+        raise CaseFailure(
+            f"{case.path.name}: the chained inserts' Valid-Time windows {chained_windows!r} "
+            f"!= the successors the rectangle split re-opens {expected_windows!r} — the "
+            f"head / middle / tail windows are DERIVED from ①'s validFrom / until and the "
+            f"closed rectangle's own bounds, never read from the golden."
+        )
 
-    A gated bitemporal close (`m-bitemp-write-008`) gates on the observed rectangle's
-    Valid-Time and Transaction-Time starts — neither present in the closing step's own ①
-    row (the row carries the NEW value + window start, distinct from the observed
-    ``from_z``). Replay the prior insert / insertUntil steps in the same write sequence
-    and return the last-opened rectangle's ``(validFrom → from_z, at → in_z)`` for
-    ``pk``, so the trailing gate binds cross-check against the row they inactivate
-    rather than being tolerated blind. Returns ``None`` when no prior step opens ``pk``.
+
+class _Rectangle(NamedTuple):
+    """One milestone rectangle: its Valid-Time window and its Transaction-Time start.
+
+    The Transaction-Time END is not carried because only a rectangle still current on
+    that axis is addressable — a closed one is history no later step touches.
     """
-    reconstructed: tuple[Any, Any] | None = None
+
+    valid_start: Any
+    valid_end: Any
+    tx_start: Any
+
+
+def _split_successors(
+    mutation: str, closed: _Rectangle, valid_from: Any, until: Any, at: Any
+) -> tuple[_Rectangle, ...]:
+    """The rectangles a rectangle split re-opens at fresh Transaction Time ``at``.
+
+    Every split re-opens the HEAD ``[closed.valid_start, validFrom)``. An ``update`` /
+    ``updateUntil`` carries the changed slice on from ``validFrom`` — to ``until`` when
+    the write is windowed, otherwise to the closed rectangle's own end — while a
+    ``terminate`` / ``terminateUntil`` ends coverage there instead. A windowed split
+    restores the TAIL ``[until, closed.valid_end)``, so a plain ``terminate`` is the
+    one form that leaves everything from ``validFrom`` onward covered by no current
+    rectangle.
+    """
+    windowed = mutation in _UNTIL_MUTATIONS
+    head = _Rectangle(closed.valid_start, valid_from, at)
+    changed = (
+        ()
+        if mutation in _TERMINATE_MUTATIONS
+        else (_Rectangle(valid_from, until if windowed else closed.valid_end, at),)
+    )
+    tail = (_Rectangle(until, closed.valid_end, at),) if windowed else ()
+    return (head, *changed, *tail)
+
+
+def _observed_rectangle(case: Case, entity: Entity, step: dict[str, Any], pk: Any) -> _Rectangle:
+    """The one current rectangle *step*'s close addresses, reconstructed from ①.
+
+    Neither the address's Valid-Time end nor the optimistic gate's ``in_z`` appears in
+    the closing step's own ① row — that row carries the NEW value and the window start
+    — so both come from the rectangle the case's earlier steps left current.
+    """
+    rectangles = _current_rectangles(case, entity, step, pk)
+    if len(rectangles) != 1:
+        raise CaseFailure(
+            f"{case.path.name}: a bitemporal close of pk {pk!r} inactivates the ONE "
+            f"rectangle current on Transaction Time, but replaying the earlier "
+            f"writeSequence steps leaves {len(rectangles)} — neither its address (the "
+            f"observed Valid-Time end) nor its optimistic gate (the observed in_z) can "
+            f"be derived from the case's own history."
+        )
+    return rectangles[0]
+
+
+def _current_rectangles(
+    case: Case, entity: Entity, current_step: dict[str, Any], pk: Any
+) -> tuple[_Rectangle, ...]:
+    """The rectangles *pk* has current on Transaction Time when *current_step* runs.
+
+    A bitemporal write-sequence case builds its whole history from its own ordered DML
+    — the model's fixture rows belong to the as-of READ cases and are not loaded — so
+    the state a close addresses is REPLAYED from the earlier steps for the same key: an
+    ``insert`` / ``insertUntil`` opens one rectangle over ``[validFrom, until)`` (an
+    absent ``until`` meaning the open Valid-Time bound), and a split closes the current
+    rectangle and re-opens its surviving slices at the step's own instant.
+
+    Replaying a split needs the single rectangle it closed, so the replay yields nothing
+    once a key holds several — the same refusal a step-shaped input forces on any
+    tracker, because such a step names no rectangle of its own.
+    """
+    valid_time = next(a for a in entity.temporal_runtime_axes if a["dimension"] == "validTime")
+    infinity = valid_time.get("infinity", "infinity")
+    rectangles: tuple[_Rectangle, ...] = ()
     for prior in case.write_sequence:
         if prior is current_step:
             break
-        if prior.get("mutation") not in ("insert", "insertUntil"):
+        if prior["entity"] != current_step["entity"]:
             continue
-        for row in prior.get("rows", []):
-            _, prior_pk, prior_set, _ = _classify_write_row(case, entity, row)
-            if _write_value_equal(prior_pk, pk):
-                reconstructed = (prior.get("validFrom"), prior.get("at"))
-    return reconstructed
+        prior_keys = [_classify_write_row(case, entity, row)[1] for row in prior.get("rows", [])]
+        if not any(_write_value_equal(prior_pk, pk) for prior_pk in prior_keys):
+            continue
+        valid_from, until, at = prior.get("validFrom"), prior.get("until"), prior.get("at")
+        if prior["mutation"] in _OPENING_MUTATIONS:
+            opened = _Rectangle(valid_from, infinity if until is None else until, at)
+            rectangles = (*rectangles, opened)
+            continue
+        if len(rectangles) != 1:
+            return ()
+        rectangles = _split_successors(prior["mutation"], rectangles[0], valid_from, until, at)
+    return rectangles
 
 
-def _has_temporal_gate(statement: str, from_z: str, in_z: str) -> bool:
-    """True when a bitemporal close's SQL carries the OPTIMISTIC gate predicates.
+def _has_temporal_gate(statement: str, in_z: str) -> bool:
+    """True when a milestone close's SQL carries the OPTIMISTIC gate predicate.
 
-    A gated (optimistic) bitemporal close (`m-bitemp-write-008`) targets EXACTLY the
-    observed rectangle, so its inactivating ``UPDATE``'s ``WHERE`` adds the Valid-Time +
-    Transaction-Time discriminators — ``and <from_z> = ? and <in_z> = ?`` — beyond the plain
-    ``and <out_z> = ?`` current-row key. BOTH predicates are required, matched
-    word-bounded so ``out_z = ?`` is never mistaken for ``in_z = ?``; a plain close is
-    then never mis-read as gated on the strength of a longer bind row alone.
+    Address and gate are separate facts (`m-bitemp-write` "Address and gate are
+    separate"): every close renders the same address in either mode, and an optimistic
+    one APPENDS the observed Transaction-Time start (``and <in_z> = ?``) last. That one
+    trailing predicate is therefore the whole gate signature, matched word-bounded so
+    the address's own ``<out_z> = ?`` is never mistaken for it; a close is then never
+    mis-read as gated on the strength of a longer bind row alone.
     """
-    return bool(
-        re.search(rf"\b{re.escape(from_z)}\s*=\s*\?", statement)
-        and re.search(rf"\b{re.escape(in_z)}\s*=\s*\?", statement)
-    )
+    return re.search(rf"\b{re.escape(in_z)}\s*=\s*\?", statement) is not None
 
 
 def _conflict_versioned_entity(case: Case) -> Entity | None:
@@ -3735,12 +3859,13 @@ def _assert_temporal_conflict_input(case: Case, dialect: str) -> None:
     on the observed Transaction-Time start (``in_z``) — the version analogue (DQ-C). The
     close is Family B: it always writes the single metamodel-fixed SET column
     (``out_z``), so the cross-check is BINDS-only (OQ3 → Option A). ① carries the
-    milestone pk (→ the ``where`` key), the close instant ``at`` (→ the new
+    milestone pk (→ the address's key), the close instant ``at`` (→ the new
     ``out_z``), and — in optimistic mode — ``observedTxStart`` (the ``and in_z = ?``
-    gate); a BITEMPORAL close additionally carries the Valid-Time discriminator (e.g.
-    ``validFrom`` → the ``from_z = ?`` gate whose VALUE the metamodel cannot know).
-    The single form reads root ``write`` / ``at`` / ``observedTxStart``; the retry form
-    reads them per attempt.
+    gate); a BITEMPORAL close additionally NAMES the rectangle it addresses through the
+    Valid-Time end attribute (``valid_end`` → the ``thru_z = ?`` bound whose VALUE the
+    metamodel cannot know), which a conflict case authors explicitly rather than
+    reconstructing from a history it does not have. The single form reads root
+    ``write`` / ``at`` / ``observedTxStart``; the retry form reads them per attempt.
     """
     entity = _conflict_temporal_entity(case)
     if entity is None:
@@ -3786,20 +3911,19 @@ def _assert_temporal_conflict_close(
 ) -> None:
     """Cross-check one temporal-close attempt's ① binds against the golden UPDATE.
 
-    A close sets ``out_z = at`` keyed on the still-open current row
-    (``pk and out_z = infinity``); an optimistic close adds the ``and in_z = ?`` gate
-    bound to ``observedTxStart``. A TABLE-PER-HIERARCHY concrete subtype's close ALSO
-    carries the tag GUARD among the identity predicates, immediately after the
-    primary key and before the current-row predicate — the SAME composition a
-    keyed update follows (m-inheritance x m-opt-lock "Optimistic locking composes
-    with inheritance", resolved Q9), extended to a temporal close
-    (``m-inheritance-105``): the tag guard rides the identity predicates, the
-    observed-in_z gate still binds LAST. A bitemporal close inserts the Valid-Time
-    discriminator's VALUE (the classified ``set`` coordinate, e.g. ``from_z``)
-    between ``out_z`` and ``in_z`` in Table Layout slot order, so the derived binds are
-    ``[at, pk, (tagValue), infinity, …validTimeCoords, (observedTxStart if gated)]`` —
-    the tag slots right after the pk (a no-op, ``None`` skipped, for a
-    non-inheritance or table-per-concrete-subtype entity).
+    A close sets ``out_z = at`` on the milestone its ADDRESS selects
+    (:func:`_close_address_binds`); an optimistic close appends the ``and in_z = ?``
+    gate bound to ``observedTxStart``, so the derived binds are ``[at, …address…,
+    (observedTxStart if gated)]``. A TABLE-PER-HIERARCHY concrete subtype's close ALSO
+    carries the tag GUARD among the identity predicates, immediately after the primary
+    key — the SAME composition a keyed update follows (m-inheritance x m-opt-lock
+    "Optimistic locking composes with inheritance", resolved Q9), extended to a
+    temporal close (``m-inheritance-105``).
+
+    Because address and gate are separate, ① names EXACTLY the address's per-axis
+    upper bounds it can supply: nothing for a Transaction-Time-Only target, whose only
+    bound is the invariant infinity, and the Valid-Time end alone for a Bitemporal one.
+    A close writes no domain value, so any other ① coordinate is a defect.
     """
     if write is None:
         raise CaseFailure(
@@ -3817,17 +3941,33 @@ def _assert_temporal_conflict_close(
             f"({pointer}) MUST carry `at` (the close instant → out_z), which is DERIVED "
             f"into the close binds, never read from the golden."
         )
-    axis = next(a for a in entity.temporal_runtime_axes if a["dimension"] == "transactionTime")
-    infinity = axis.get("infinity", "infinity")
+    valid_time = next(
+        (a for a in entity.temporal_runtime_axes if a["dimension"] == "validTime"), None
+    )
     _, pk, set_cols, _ = _classify_write_row(case, entity, write)
-    # A bitemporal close's Valid-Time discriminator (e.g. from_z) slots between out_z
-    # and in_z in Table Layout slot order; a Transaction-Time-Only close has none.
-    valid_coords = [
-        set_cols[column] for column in _write_column_order(case, entity) if column in set_cols
-    ]
-    tag = _tag(entity)
-    tag_binds = [tag[1]] if tag is not None else []
-    expected = [at, pk, *tag_binds, infinity, *valid_coords]
+    addressed: set[str] = set() if valid_time is None else {valid_time["end_column"]}
+    if set(set_cols) != addressed:
+        raise CaseFailure(
+            f"{case.path.name}: a temporal conflict close's neutral write input "
+            f"({pointer}) resolves to the coordinate(s) {sorted(set_cols)}, but a close "
+            f"writes no domain value and names exactly the address bound(s) it can "
+            f"supply: {sorted(addressed)}."
+        )
+    valid_end = None if valid_time is None else set_cols[valid_time["end_column"]]
+    expected = [at, *_close_address_binds(case, entity, pk, valid_end)]
+    gate_rendered = _has_temporal_gate(
+        statements[0],
+        next(a for a in entity.temporal_runtime_axes if a["dimension"] == "transactionTime")[
+            "start_column"
+        ],
+    )
+    if gate_rendered != gated:
+        raise CaseFailure(
+            f"{case.path.name}: the golden temporal close ({pointer}) "
+            f"{'renders' if gate_rendered else 'omits'} the observed-in_z gate under "
+            f"{case.concurrency_mode!r} mode — optimistic mode gates, locking mode does "
+            f"not, and the address is the same either way."
+        )
     if gated:
         if observed_tx_start is None:
             raise CaseFailure(

@@ -1760,10 +1760,10 @@ or descriptor authoring form and performs no audit stamping.
   after a concurrent
   writer has chained a replacement: the transaction observes the displayed
   `in_z`, and the concurrent chain leaves a current row whose fresh `in_z`
-  fails the observed-`in_z` gate (a zero-row close — the conflict; for a
-  Bitemporal Entity the gate also binds the Valid-Time discriminator when the
-  key's current rows share an `in_z`, per `m-bitemp-write`, so the close
-  targets exactly the observed rectangle), while an
+  fails the observed-`in_z` gate (a zero-row close — the conflict; a Bitemporal
+  Entity's close additionally *addresses* the observed rectangle's own
+  Valid-Time end, in both modes, so it means exactly that rectangle whether or
+  not it gates, per `m-bitemp-write`), while an
   untouched row succeeds. Weaker transports fail: the `LATEST` sentinel is
   not replayable (it re-resolves to whatever milestone is current at submit
   time), and a wall-clock display instant is racy because Transaction-Time instants
@@ -1892,11 +1892,18 @@ or descriptor authoring form and performs no audit stamping.
   **Clock Strategy** (default system UTC; tests inject a fixed clock) — never
   from callers, with no per-operation overrides. Temporal `update`/`terminate`
   follow the same prior-observation rule as versioned writes (below): the
-  values a bitemporal rectangle split carries forward and, under optimistic
-  mode, the observed `tx_start` (`in_z`) for the gated close (with the Valid-Time
-  discriminator when current rows share an `in_z`, per `m-bitemp-write`) come
+  values a bitemporal rectangle split carries forward, the close's own **address**,
+  and — under optimistic mode only — the observed `tx_start` (`in_z`) its gate
+  binds all come
   from the milestone this unit of work observed via a transaction-scoped
-  read — never from an implicit write-path read.
+  read — never from an implicit write-path read. The **close target is
+  mode-independent** (`m-bitemp-write`, ADR 0046): the lowered `UPDATE` is keyed on
+  the primary key plus one exclusive upper bound per declared as-of axis — the
+  observed rectangle's own `thru_z` for a Bitemporal Entity, then the invariant
+  `out_z = infinity` — in both `locking` and `optimistic` mode, and only the
+  trailing `and in_z = ?` gate varies. A key plus `out_z = infinity` alone would
+  be ambiguous on a Bitemporal Entity, whose one key may have several disjoint
+  Valid-Time rectangles current on Transaction Time.
 - **Versioned keyed writes require prior observation; set-based writes
   materialize.** One observation rule, matching `m-opt-lock` exactly, ordered
   no-op-first. **First**, no-op detection: an update whose effective change

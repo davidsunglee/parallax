@@ -6,8 +6,8 @@
 # infinity, `updateUntil` bounds it to [validFrom, until) = [2024-07-01, 2024-09-01)
 # and RESTORES the old value on either side. The resolved row (pos 1, value 200)
 # materializes to four statements:
-#   1. close the current Transaction-Time row (set out_z = at, gated on the observed
-#      coordinates — optimistic);
+#   1. close the current Transaction-Time row (set out_z = at, addressed by key + the
+#      observed thru_z + the open out_z, then gated on the observed in_z — optimistic);
 #   2. head: re-insert old value 200 for [2024-06-01, 2024-07-01);
 #   3. middle: insert NEW value 300 for [2024-07-01, 2024-09-01) — the bounded window;
 #   4. tail: re-insert old value 200 for [2024-09-01, infinity) — the restored future.
@@ -59,8 +59,8 @@ when:
       roundTrips: 4
       statements:
         - sql:
-            postgres: update position set out_z = ? where pos_id = ? and out_z = ? and from_z = ? and in_z = ?
-          binds: ["2024-10-01T00:00:00+00:00", 1, infinity, "2024-06-01T00:00:00+00:00", "2024-04-01T00:00:00+00:00"]
+            postgres: update position set out_z = ? where pos_id = ? and thru_z = ? and out_z = ? and in_z = ?
+          binds: ["2024-10-01T00:00:00+00:00", 1, infinity, infinity, "2024-04-01T00:00:00+00:00"]
         - sql:
             postgres: insert into position(pos_id, acct_num, val, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?, ?)
           binds: [1, A, 200.00, "2024-06-01T00:00:00+00:00", "2024-07-01T00:00:00+00:00", "2024-10-01T00:00:00+00:00", infinity]
