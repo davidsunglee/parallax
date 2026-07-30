@@ -1,9 +1,12 @@
 # Versioned set-based DELETE materializes per key (m-batch-write + m-opt-lock, ADR 0014).
 #
 # The versioned complement of m-batch-write-003's collapse. A set-based delete
-# targeting a VERSIONED entity (Account) has NO collapsed `id in (...)` template —
-# each row must be removed under its OWN observed version — so it MATERIALIZES:
-# one keyed `delete from account where id = ?` per resolved row, mirroring the
+# targeting a VERSIONED entity (Account) has NO readless predicate template —
+# every write against an existing versioned row requires that row's OWN prior
+# observation in BOTH modes (optimistic binds it as that row's gate; locking needs
+# the read that took its shared lock), and one predicate statement can neither
+# carry nor acquire one — so it MATERIALIZES: one keyed
+# `delete from account where id = ?` per resolved row, mirroring the
 # versioned set-based UPDATE (m-opt-lock-003/004). This case runs in the DEFAULT
 # LOCKING mode, so every per-key delete is UNGATED, exactly as the locking-mode
 # versioned UPDATE (m-opt-lock-004) and the locking-mode temporal close are: the

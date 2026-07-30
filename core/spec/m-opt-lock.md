@@ -356,6 +356,7 @@ entries that simulate a concurrent transaction mutating the row — and a
 | optimistic-lock conflict | optimistic | bump the row's version out of band | the now-stale observed version | **0** (conflict detected) |
 | optimistic-lock success | optimistic | none | the observed version | **1** (write applied) |
 | versioned update, locking mode | locking | none | none — no gate, version still advances | **1** (write applied) |
+| versioned update, locking mode | locking | remove the row out of band | none — no gate | **0** (non-retriable stale write) |
 | versioned delete, locking mode | locking | remove the row out of band | none — no gate | **0** (non-retriable stale write) |
 
 A companion **scenario** case pins the no-op rule: a versioned update whose `set`

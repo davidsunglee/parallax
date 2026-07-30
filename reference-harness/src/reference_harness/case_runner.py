@@ -3714,15 +3714,9 @@ def _conflict_temporal_entity(case: Case) -> Entity | None:
 def _assert_conflict_input(case: Case, dialect: str) -> None:
     """Cross-check a conflict case's neutral input (① ``write``) against its golden.
 
-    A VERSIONED ``update`` conflict's golden SET clause is the domain set columns +
-    ``version`` (advanced ``observedVersion + 1``), and its binds are
-    ``[…set values…, newVersion, pk, observedVersion]`` — the trailing bind being
-    the ``and version = ?`` gate, which every conflict ``update`` in the corpus
-    carries because each declares ``optimistic`` mode. A versioned ``delete``
-    conflict (``when.mutation: delete``) writes no columns at all, so its
-    cross-check is binds-only and reads gate presence from the case's declared mode
-    (`m-opt-lock`: the mode alone decides, uniformly for the update, the delete,
-    and the close): :func:`_assert_versioned_conflict_delete`. The single form reads a root
+    A VERSIONED keyed conflict — an ``update`` or a ``delete``, named by
+    ``when.mutation`` — is cross-checked by
+    :func:`_assert_versioned_conflict_input`. The single form reads a root
     ``write``; the retry form reads a ``write`` per attempt. A temporal-close
     conflict (no version column) carries a close-shaped ① instead, cross-checked by
     :func:`_assert_temporal_conflict_input`. Comparing against the golden is
@@ -3733,29 +3727,25 @@ def _assert_conflict_input(case: Case, dialect: str) -> None:
         _assert_temporal_conflict_input(case, dialect)
         return
     version_col = _version_column(entity)
-    deleting = case.conflict_mutation == "delete"
+    mutation = case.conflict_mutation
     if case.attempts:
         for index, attempt in enumerate(case.attempts):
-            assert_one = (
-                _assert_versioned_conflict_delete if deleting else _assert_versioned_conflict_write
-            )
-            assert_one(
+            _assert_versioned_conflict_input(
                 case,
                 entity,
                 version_col,
+                mutation,
                 attempt.get("write"),
                 _attempt_statements(attempt, dialect),
                 _entry_binds(attempt.get("statements"), 0),
                 f"attempts[{index}].write",
             )
         return
-    assert_single = (
-        _assert_versioned_conflict_delete if deleting else _assert_versioned_conflict_write
-    )
-    assert_single(
+    _assert_versioned_conflict_input(
         case,
         entity,
         version_col,
+        mutation,
         case.write,
         case.golden_statements(dialect),
         case.statement_binds(0),
@@ -3763,22 +3753,27 @@ def _assert_conflict_input(case: Case, dialect: str) -> None:
     )
 
 
-def _assert_versioned_conflict_delete(
+def _assert_versioned_conflict_input(
     case: Case,
     entity: Entity,
     version_col: str | None,
+    mutation: str,
     write: dict[str, Any] | None,
     statements: list[str],
     binds: list[Any],
     pointer: str,
 ) -> None:
-    """Cross-check a versioned keyed DELETE conflict's ① against its golden.
+    """Cross-check one versioned keyed conflict attempt's ① against its golden.
 
-    A DELETE writes no columns, so ① supplies only the pk (the ``where`` key) and
-    the reserved ``observedVersion``. What the golden renders is decided by the
-    concurrency mode alone (`m-opt-lock`: the gate is uniform across update,
-    delete, and close): optimistic binds ``[pk, observedVersion]`` behind
-    ``and <version> = ?``, locking binds ``[pk]`` and renders no gate at all.
+    One derivation serves both keyed verbs, because they differ only in what the
+    golden's SET clause contributes (:func:`_conflict_set_binds`). Everything after
+    that is shared: ① MUST carry ``observedVersion`` — a keyed write against a
+    versioned row requires a prior observation in EITHER mode — and the CONCURRENCY
+    MODE ALONE decides whether the golden appends the ``and <version> = ?`` gate and
+    the trailing observed bind behind it (`m-opt-lock`: the gate is uniform across
+    the update, the delete, and the close, and the verb decides nothing). The derived
+    binds are therefore ``[…set values…, pk]``, extended by ``observedVersion``
+    when gated.
     """
     if write is None:
         raise CaseFailure(
@@ -3792,51 +3787,58 @@ def _assert_versioned_conflict_delete(
         )
     statement = statements[0]
     _, pk, set_cols, observed = _classify_write_row(case, entity, write)
-    if set_cols:
-        raise CaseFailure(
-            f"{case.path.name}: a versioned DELETE conflict's neutral write input "
-            f"({pointer}) assigns {sorted(set_cols)} — a DELETE writes no columns, so ① "
-            f"carries only the pk and observedVersion."
-        )
     if observed is None:
         raise CaseFailure(
             f"{case.path.name}: a versioned conflict's neutral write input ({pointer}) MUST "
-            f"carry observedVersion — a keyed DELETE of a versioned row requires a prior "
-            f"observation in either mode."
+            f"carry observedVersion — a keyed {mutation.upper()} of a versioned row requires "
+            f"a prior observation in either mode, and the advance and gate derive from it."
         )
+    expected = [
+        *_conflict_set_binds(
+            case, entity, version_col, mutation, statement, set_cols, observed, pointer
+        ),
+        pk,
+    ]
     gated = case.concurrency_mode == "optimistic"
-    gate_rendered = version_col is not None and f"{version_col} = ?" in statement
+    gate_rendered = version_col is not None and _has_version_gate(statement, version_col)
     if gate_rendered != gated:
         raise CaseFailure(
-            f"{case.path.name}: the golden DELETE ({pointer}) "
+            f"{case.path.name}: the golden {mutation.upper()} ({pointer}) "
             f"{'renders' if gate_rendered else 'omits'} the version gate under "
             f"{case.concurrency_mode!r} mode — optimistic mode gates, locking mode does not."
         )
-    expected = [pk, observed] if gated else [pk]
+    if gated:
+        expected.append(observed)
     _assert_write_values(case, expected, binds, statement)
 
 
-def _assert_versioned_conflict_write(
+def _conflict_set_binds(
     case: Case,
     entity: Entity,
     version_col: str | None,
-    write: dict[str, Any] | None,
-    statements: list[str],
-    binds: list[Any],
+    mutation: str,
+    statement: str,
+    set_cols: dict[str, Any],
+    observed: Any,
     pointer: str,
-) -> None:
-    if write is None:
-        raise CaseFailure(
-            f"{case.path.name}: a versioned conflict ({pointer}) carries no neutral write "
-            f"input (① `write`) — required on every conflict sub-form."
-        )
-    if len(statements) != 1:
-        raise CaseFailure(
-            f"{case.path.name}: a versioned conflict ({pointer}) has exactly one golden "
-            f"UPDATE, but {len(statements)} were listed."
-        )
-    statement = statements[0]
-    _, pk, set_cols, observed = _classify_write_row(case, entity, write)
+) -> list[Any]:
+    """The binds a versioned keyed conflict's SET clause contributes, in golden order.
+
+    A DELETE writes no column at all, so ① carries only the pk and the reserved
+    ``observedVersion`` and the cross-check downstream is binds-only. An UPDATE
+    writes the domain set columns ① resolves to — in Table Layout order, filtered to
+    the present attributes — followed by the FRAMEWORK-DERIVED version advance
+    (``observedVersion + 1``), which advances in BOTH concurrency modes and so is
+    never conditional on the gate.
+    """
+    if mutation == "delete":
+        if set_cols:
+            raise CaseFailure(
+                f"{case.path.name}: a versioned DELETE conflict's neutral write input "
+                f"({pointer}) assigns {sorted(set_cols)} — a DELETE writes no columns, so ① "
+                f"carries only the pk and observedVersion."
+            )
+        return []
     golden_set = _parse_set_columns(case, statement)
     set_present = [c for c in _write_column_order(case, entity) if c in set_cols]
     expected_cols = [*set_present, version_col]
@@ -3846,16 +3848,7 @@ def _assert_versioned_conflict_write(
             f"domain set columns + version {expected_cols} the neutral write input "
             f"({pointer}) resolves to."
         )
-    if observed is None:
-        raise CaseFailure(
-            f"{case.path.name}: a versioned conflict's neutral write input ({pointer}) MUST "
-            f"carry observedVersion — the advance + gate are derived from it."
-        )
-    set_values = [set_cols[column] for column in set_present]
-    # The gated bind order every authored update conflict takes: [...set, newVersion,
-    # pk, observedVersion].
-    expected = [*set_values, observed + 1, pk, observed]
-    _assert_write_values(case, expected, binds, statement)
+    return [*(set_cols[column] for column in set_present), observed + 1]
 
 
 def _assert_temporal_conflict_input(case: Case, dialect: str) -> None:

@@ -506,10 +506,14 @@ def test_error_run_sweep(case: case_format.Case, provisioner: Any) -> None:
 # SAME `when.attempts` retry lane `m-opt-lock-007` already exercises (pinned   #
 # semantics #7: the attempts sequence is caller-visible choreography here,    #
 # not the runtime auto-retry loop, which `m-opt-lock-011`'s boundary case      #
-# proves instead). `m-opt-lock-016` is the non-temporal sibling of the         #
-# locking-mode zero-row close: an UNGATED versioned keyed DELETE whose row a   #
-# concurrent transaction already removed, whose shortfall the executor         #
-# classifies as the never-retriable stale write rather than a conflict.        #
+# proves instead). `m-opt-lock-016`/`-017` are the non-temporal siblings of    #
+# the locking-mode zero-row close: an UNGATED versioned keyed DELETE and the   #
+# UNGATED versioned keyed UPDATE, each against a row a concurrent transaction  #
+# already removed, whose shortfall the executor classifies as the              #
+# never-retriable stale write rather than a conflict. Only a real execution    #
+# distinguishes the two classes — both render the same `0` count, and the      #
+# case passes only because the run lane catches the class its declared mode    #
+# implies and lets the other propagate.                                        #
 # `m-bitemp-write-017`/`-018` close the BOUNDED current rectangle whose        #
 # Valid-Time end is finite, in each concurrency mode: only a real execution    #
 # distinguishes an address that binds the observed rectangle's own `thru_z`    #
@@ -524,6 +528,7 @@ _CONFLICT_CASES_EXERCISED: Final[frozenset[str]] = frozenset(
         "m-opt-lock-009",
         "m-opt-lock-013",
         "m-opt-lock-016",
+        "m-opt-lock-017",
         "m-temporal-read-009",
         "m-temporal-read-010",
         "m-temporal-read-011",

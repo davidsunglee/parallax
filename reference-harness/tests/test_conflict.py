@@ -148,6 +148,28 @@ def test_conflict_input_observed_version_corruption_is_rejected() -> None:
         _assert_conflict_input(case, "postgres")
 
 
+def test_conflict_input_gate_presence_follows_the_declared_mode() -> None:
+    cases = _versioned_conflict_cases()
+    # Both keyed verbs and both modes must be present, or flipping the mode below
+    # would prove the rule for only half the shapes it governs.
+    assert {c.conflict_mutation for c in cases} == {"update", "delete"}
+    assert {c.concurrency_mode for c in cases} == {"locking", "optimistic"}
+    for case in cases:
+        flipped = copy.deepcopy(case)
+        flipped.when["uow"] = {
+            **flipped.uow,
+            "concurrency": "locking" if case.concurrency_mode == "optimistic" else "optimistic",
+        }
+        # Gate presence is decided by the declared concurrency mode ALONE, uniformly
+        # for the versioned UPDATE and the versioned DELETE, so flipping the mode
+        # desyncs ① from ② for EVERY authored versioned conflict whichever verb it
+        # writes — the golden now renders a gate the mode forbids, or omits one it
+        # requires. A derivation that read gate presence off the verb would leave the
+        # locking-mode UPDATE passing under either mode.
+        with pytest.raises(CaseFailure):
+            _assert_conflict_input(flipped, "postgres")
+
+
 def test_temporal_conflict_close_input_holds_for_authored_cases() -> None:
     cases = _temporal_conflict_close_cases()
     # The Transaction-Time close family all carry ① (write + at [+ observedTxStart]);
