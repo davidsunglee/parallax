@@ -557,7 +557,7 @@ class Case:
         """The setup group: ambient world-state established before the action.
 
         Holds ``fixtures`` (whether to load the model's fixtures), ``apply`` (naive
-        statement entries a conflict case runs verbatim before the golden UPDATE),
+        statement entries a conflict case runs verbatim before the golden write),
         and ``fault`` (a boundary case's injected fault). Absent for a case that
         starts from the model's default fixtures and injects nothing.
         """
@@ -669,17 +669,17 @@ class Case:
         """True for an m-opt-lock optimistic-lock conflict or success case.
 
         A single-attempt conflict carries ``when.write`` + ``then.affectedRows`` (the
-        affected-row count a golden ``UPDATE`` leaves behind) and an OPTIONAL out-of-band
+        affected-row count the golden write leaves behind) and an OPTIONAL out-of-band
         ``given.apply`` (a concurrent mutation, e.g. a version bump) instead of an
         operation + ``then.rows`` — OR an ordered ``when.attempts`` retry sequence
-        (each attempt carrying its own golden UPDATE + affected-row count) that
+        (each attempt carrying its own golden write + affected-row count) that
         proves the stale-then-retry contract.
         """
         return self.shape == "conflict"
 
     @property
     def attempts(self) -> list[dict[str, Any]]:
-        """The ordered optimistic-lock UPDATE attempts of a retry conflict case.
+        """The ordered optimistic-lock write attempts of a retry conflict case.
 
         Empty for the single-attempt conflict form. Each attempt carries its own
         golden ``statements`` entry, its ``write``, and its ``affectedRows`` count.
@@ -689,7 +689,7 @@ class Case:
     @property
     def apply(self) -> list[dict[str, Any]]:
         """The out-of-band naive statement entries a conflict case applies before
-        the golden UPDATE (``given.apply``).
+        the golden write (``given.apply``).
 
         Each entry is a ``{sql, binds}`` statement whose ``sql`` is a plain string
         (dialect-agnostic naive SQL, run verbatim on every dialect); ``binds`` is

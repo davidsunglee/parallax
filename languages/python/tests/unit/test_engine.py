@@ -2112,7 +2112,8 @@ def test_run_scenario_case_executes_a_materializing_predicate_write_pair() -> No
     # A VERSIONED target's predicate delete MATERIALIZES (ADR 0014): the
     # scenario's own preceding find step pairs with it
     # (`_run_materializing_pair`), resolving through the SAME `FakeWritePort`
-    # connection the subsequent gated per-row delete commits on — no Docker.
+    # connection the subsequent per-row delete commits on — no Docker. The
+    # default locking mode renders each key ungated.
     case = _synthetic_write(
         "scenario",
         {
@@ -2184,7 +2185,7 @@ def test_run_scenario_case_readless_predicate_write_rollback_aborts_but_counts_t
 
 def test_materializing_predicate_write_rollback_aborts_but_counts_the_round_trip() -> None:
     # `_run_materializing_pair`'s own abort contract: the resolve AND the
-    # per-row gated DML it licenses still execute (and count their round
+    # per-row DML its observations license still execute (and count their round
     # trips) before the forced flush + intentional abort discards them —
     # `_run_uow_group`'s doomed-group behavior, reproduced for a
     # materializing pair's own single held transaction.

@@ -25,7 +25,7 @@ answers it separately (:func:`parallax.snapshot.handle.collapse_group_key`,
 injected into the planner beside :func:`collapses`), so by the time a run reaches
 a function here its rows already share one physical shape.
 
-Three collapse rules (``m-batch-write.md`` L15-26):
+Three collapse rules (``m-batch-write.md`` "Batching is a membership decision"):
 
 - **insert** — same-entity inserts ALWAYS collapse into one multi-row
   ``INSERT``, UNLESS the entity's primary key is pk-gen **managed** (a
@@ -151,7 +151,8 @@ def _rows_carry_observation_keys(rows: Sequence[Mapping[str, object]]) -> bool:
 
 def insert_collapses(model: Metamodel, entity: EntityMetadata) -> bool:
     """Whether same-entity ``insert`` rows collapse into one multi-row ``INSERT``
-    (`m-batch-write.md` L17-19). ``False`` for a temporal entity (its keyed
+    (`m-batch-write.md` "Batching is a membership decision"). ``False`` for a
+    temporal entity (its keyed
     writes are `m-txtime-write` / `m-bitemp-write` territory, never this
     module's decision) or a pk-gen-**managed** entity; ``True`` otherwise,
     versioned or not (the initial version is a derived constant, never an
@@ -165,7 +166,8 @@ def update_collapses(
     model: Metamodel, entity: EntityMetadata, rows: Sequence[Mapping[str, object]]
 ) -> bool:
     """Whether a run of same-entity ``update`` rows collapses into ONE
-    ``UPDATE ... WHERE id IN (...)`` statement (`m-batch-write.md` L20-22): only
+    ``UPDATE ... WHERE id IN (...)`` statement (`m-batch-write.md` "Batching is a
+    membership decision"): only
     when the target is UNVERSIONED, non-temporal, no row carries an explicit
     observation control key, and every row assigns the IDENTICAL non-key
     values (the uniform-value case; a non-uniform run stays decomposed to one
@@ -194,11 +196,11 @@ def update_collapses(
 
 def delete_collapses(model: Metamodel, entity: EntityMetadata) -> bool:
     """Whether same-entity ``delete`` rows collapse into one
-    ``DELETE ... WHERE id IN (...)`` statement (`m-batch-write.md` L23-26,
-    "the delete analogue of the multi-row INSERT"). ``False`` for a temporal
-    entity (`terminate`/`terminateUntil` are `m-txtime-write` / `m-bitemp-write`
-    territory) or a VERSIONED one — a versioned entity's set-based delete
-    NEVER collapses (`m-batch-write.md` L26): each row is removed under its own
+    ``DELETE ... WHERE id IN (...)`` statement (`m-batch-write.md` "Batching is a
+    membership decision" — the delete analogue of the multi-row INSERT). ``False``
+    for a temporal entity (`terminate`/`terminateUntil` are `m-txtime-write` /
+    `m-bitemp-write` territory) or a VERSIONED one — a versioned entity's set-based
+    delete NEVER collapses: each row is removed under its own
     prior observation and its own exactly-one affected-row expectation, in
     either concurrency mode, and optimistic mode binds that row's version as its
     own gate on top (`m-batch-write-004` is the ungated locking form,

@@ -57,6 +57,7 @@ __all__ = [
     "VersionGate",
     "Versioned",
     "WriteTarget",
+    "shortfall_for",
 ]
 
 
@@ -92,7 +93,9 @@ A generated value is decided during planning, from the target's declared
 primary-key generation strategy, so no consumer re-classifies an authored
 marker document by its shape. Both variants are `m-pk-gen` allocations: one
 allocates at the position an insert opens, the other advances the registry an
-update maintains.
+update maintains. Each is legal only where the statement that renders it can
+express it, and the two carriers enforce that between them: a Planned Row
+admits only :class:`MaxPlusOne`, Planned Assignments only :class:`SelfIncrement`.
 """
 
 type PlannedValue = object
@@ -128,7 +131,8 @@ class PlannedRow:
     framework-owned values the planner derived, which no caller authors — and
     ``value_objects`` holds one complete occurrence per top-level Value Object
     member. Both are frozen at construction; a row carrying no member at all is
-    refused, because it names nothing to write.
+    refused, because it names nothing to write. The only generated value an
+    opening statement can express is the `max` allocation it folds in.
     """
 
     attributes: Mapping[AttributeIdentity, PlannedValue]
@@ -141,6 +145,12 @@ class PlannedRow:
         object.__setattr__(self, "value_objects", MappingProxyType(dict(self.value_objects)))
         if not self.attributes and not self.value_objects:
             raise ValueError("a Planned Row carries at least one member")
+        for identity, value in self.attributes.items():
+            if isinstance(value, SelfIncrement):
+                raise ValueError(
+                    f"{identity.name}: the registry advance is computed from the stored row "
+                    "it revises, so it is a Planned Assignment and never a Planned Row cell"
+                )
 
     @property
     def members(self) -> frozenset[AttributeIdentity | ValueObjectIdentity]:
@@ -205,8 +215,8 @@ class PlannedAssignments:
     the framework-owned advance a versioned update derives; the members it does
     not name keep their stored values. It carries no authored assignment
     expression — nothing a caller composes out of the operation algebra — and the
-    only expressions it admits at all are the `m-pk-gen` generated values, whose
-    result the database computes from the row being written.
+    only expression it admits at all is the `m-pk-gen` registry advance, which a
+    revising statement computes from the very row it is rewriting.
     """
 
     attributes: Mapping[AttributeIdentity, PlannedValue]
@@ -219,6 +229,12 @@ class PlannedAssignments:
         object.__setattr__(self, "value_objects", MappingProxyType(dict(self.value_objects)))
         if not self.attributes and not self.value_objects:
             raise ValueError("Planned Assignments name at least one member to write")
+        for identity, value in self.attributes.items():
+            if isinstance(value, MaxPlusOne):
+                raise ValueError(
+                    f"{identity.name}: the `max` allocation folds into the row an insert "
+                    "opens, so it is a Planned Row cell and never a Planned Assignment"
+                )
 
     @property
     def members(self) -> frozenset[AttributeIdentity | ValueObjectIdentity]:
@@ -385,6 +401,23 @@ type AffectedRows = AnyCount | ExactCount
 carries before lowering."""
 
 
+def shortfall_for(concurrency: NonTemporalConcurrency) -> Shortfall:
+    """How a shortfall against an addressed Non-Temporal write classifies.
+
+    Classification follows the settled **gate**, never the verb (ADR 0044/0047):
+    a gated shortfall is the detected lost update a re-read could resolve; an
+    ungated one on an observation-requiring write is the non-retriable stale
+    outcome, since no gate could have caused it; and an observation-free keyed
+    write observed nothing, so its shortfall says only that the addressed rows
+    are not there. One decision therefore admits exactly one classification,
+    which is why a Planned Update and a Planned Delete derive it here rather
+    than accepting it.
+    """
+    if not isinstance(concurrency, Versioned):
+        return MISSING_TARGET
+    return OPTIMISTIC_CONFLICT if isinstance(concurrency.gate, VersionGate) else STALE_WRITE
+
+
 def _settle(
     entity: EntityIdentity,
     target: WriteTarget,
@@ -407,6 +440,13 @@ def _settle(
                 raise ValueError(
                     f"{entity.canonical}: a Key Target expects exactly as many rows as it "
                     f"addresses ({len(target.key_values)})"
+                )
+            expected = shortfall_for(concurrency)
+            if affected_rows.on_shortfall != expected:
+                raise ValueError(
+                    f"{entity.canonical}: the concurrency decision classifies a shortfall as "
+                    f"{type(expected).__name__}, and this policy says "
+                    f"{type(affected_rows.on_shortfall).__name__}"
                 )
             if (
                 isinstance(concurrency, Versioned)

@@ -40,12 +40,7 @@ from parallax.core.db_port import DbPort, Row
 from parallax.core.dialect import Dialect, LockMode
 from parallax.core.entity import AttributeAssignment
 from parallax.core.entity import Statement as EntityStatement
-from parallax.core.metamodel import (
-    AttributeMetadata,
-    EntityMetadata,
-    Metamodel,
-    TemporalDimension,
-)
+from parallax.core.metamodel import AttributeMetadata, EntityMetadata, Metamodel
 from parallax.core.sql_gen import Statement, compile_read
 from parallax.core.unit_work import (
     AtomicUnit,
@@ -199,7 +194,9 @@ def _materialize_predicate_write(
     (`m-opt-lock` "Predicate-selected writes materialize when observations
     are needed"; ADR 0014): resolve the predicate through a MINIMAL
     row-form read on THIS transaction's own connection (never instance-form
-    — the resolve constructs no object, `m-value-object-047`), record each
+    — the resolve constructs no object, though it projects whichever Document
+    slots the write's own observation and comparison needs require, below),
+    record each
     matched row's observation through ``uow.observe`` (the SAME
     transaction-scoped seam a real
     :meth:`~parallax.snapshot.handle.Transaction.find` uses — never an
@@ -232,57 +229,47 @@ def _materialize_predicate_write(
         for assignment in instruction.assignments
     }
     is_temporal = bool(declaring_entity.declared_as_of_axes)
-    is_bitemporal = declaring_entity.as_of_axis(TemporalDimension.VALID_TIME) is not None
-    # Need-sensitive projection (`m-case-format.md:727`): the resolving
-    # read projects the resolved row's own value-object document(s) for
-    # TWO independent needs, on EVERY target class — never gated on
-    # temporality alone.
+    # Need-sensitive projection (`m-case-format` "Predicate-selected write
+    # instruction"): the resolving read projects the resolved row's own
+    # value-object document(s) for TWO independent needs, on EVERY target
+    # class — never gated on temporality alone.
     #
-    # CHAIN need: the verb's OWN milestone plan writes a CHAINED row
-    # from the resolved one. A BITEMPORAL target's rectangle split
-    # (`bitemp_write.plan`) chains on EVERY close-bearing mutation —
-    # update, updateUntil, terminate, AND terminateUntil alike, since
-    # head (and tail, for the `*Until` forms) always carry the OLD
-    # payload forward, not just an assignment-bearing one
-    # (`m-bitemp-write` "head/tail old values come from the observed
-    # prior rectangle"). An AUDIT-ONLY target's plan (`txtime_write.
-    # plan`) chains ONLY an ASSIGNMENT-BEARING `update`
-    # (`materialize_row`'s own `assignment_bearing` set) — its
-    # `terminate` is close-only, no chained row, so it stays
-    # document-free (`m-value-object-047`'s own row-form-omits-slot-4
-    # witness stays byte-identical); audit-only never reaches the
-    # `*Until` forms (Bitemporal-only, `validate_valid_from`). The
-    # chain need projects EVERY declared document, never just the
-    # assigned ones — a chained row must carry forward whichever
-    # documents the assignments do NOT themselves reassign. Either way,
-    # an AUDIT-ONLY target's own `full_row` merge (`materialize_row`)
-    # reads this read's row directly, while a BITEMPORAL target's split
-    # reads it indirectly, through `_temporal_observation`'s payload,
-    # which keeps a value-object document whenever THIS read actually
-    # projected it (`m-value-object` "the document rides every
-    # chained/split row whole").
+    # OBSERVATION need: a TEMPORAL target's per-row observation retains the
+    # whole predecessor milestone (`m-unit-work` "A Predecessor Row is the
+    # complete, immutable persisted state a Temporal Observation retains"),
+    # so its resolving read projects EVERY declared document whatever the
+    # verb goes on to do with it. Completeness belongs to the OBSERVATION,
+    # not to the topology a verb happens to produce: a decorator must
+    # distinguish carried from changed state without a second read (ADR
+    # 0042), so a close-only shape — an AUDIT-ONLY `terminate`, which chains
+    # nothing — records the same complete predecessor a chain-bearing one
+    # does. This subsumes the carry-forward need: a BITEMPORAL rectangle
+    # split (`bitemp_write.plan`) carries the old payload into its head and
+    # tail on EVERY close-bearing mutation, and an AUDIT-ONLY `update`
+    # (`txtime_write.plan`) carries it into its chained row. It is also why
+    # EVERY declared document is projected rather than only the assigned
+    # ones — a carried row must keep whichever documents the assignments do
+    # NOT themselves reassign. An AUDIT-ONLY target's own `full_row` merge
+    # (`materialize_row`) reads this read's row directly, while a BITEMPORAL
+    # target's split reads it through the Predecessor Row (`m-value-object`
+    # "the document rides every chained/split row whole").
     #
     # COMPARISON need: an assignment-bearing verb's per-row no-op
     # elimination (below, `materialize_row` -> `_apply_assignments`)
     # compares each assigned member's new value against the resolved
     # row's own — a value-object member's comparison can only ever see
     # the STORED document when this read actually projected its column
-    # (`m-opt-lock.md:92-95` "when all assignments already equal that
-    # row's values, it issues no DML, advances no version"). A TEMPORAL
-    # target's chain need above already projects every document
-    # whenever it is assignment-bearing, so this need is a strict no-op
-    # there; a VERSIONED NON-TEMPORAL target never chains (no milestone
-    # to carry a payload across — `m-opt-lock`/`m-descriptor`: versioned
-    # and temporal are mutually exclusive), so it reaches this need
-    # ALONE. Minimal-read discipline (`m-sql`) then projects the
-    # ASSIGNED value-object document(s) only — never every declared
-    # one, matching an ordinary read's own need-driven projection.
+    # (`m-opt-lock` "when all assignments already equal that row's values,
+    # it issues no DML, advances no version"). A VERSIONED NON-TEMPORAL
+    # target reaches this need ALONE: it retains only the observed version,
+    # never a predecessor row (`m-opt-lock`/`m-descriptor`: versioned and
+    # temporal are mutually exclusive). Minimal-read discipline (`m-sql`)
+    # then projects the ASSIGNED value-object document(s) only — never every
+    # declared one, matching an ordinary read's own need-driven projection.
     assignment_bearing = instruction.mutation in ("update", "updateUntil")
-    chain_need = (
-        version_attr is None and is_temporal and (is_bitemporal or instruction.mutation == "update")
-    )
+    predecessor_need = version_attr is None and is_temporal
     needs_documents: bool | frozenset[str]
-    if chain_need:
+    if predecessor_need:
         needs_documents = True
     elif assignment_bearing:
         member_columns = members(layout)

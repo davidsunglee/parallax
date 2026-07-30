@@ -11,8 +11,10 @@ invariant, not a corpus model, is what fails them.
 An addressed step's target, concurrency decision, and expected effect describe
 one row selection together, so the combinations that would describe two — a
 readless predicate carrying a gate, an exact count disagreeing with the number of
-keys addressed, a per-row gate on a multi-key target — are unconstructible too.
-A Temporal Observation's predecessor is likewise complete or absent, never
+keys addressed, a per-row gate on a multi-key target, a shortfall classified
+against what the settled gate implies — are unconstructible too. A generated
+value is likewise unconstructible at the statement position that could not
+express it. A Temporal Observation's predecessor is complete or absent, never
 partial.
 
 The Write Plan's own contract is here too: an empty Planned Steps is the one
@@ -32,6 +34,7 @@ from parallax.core.unit_work import (
     MISSING_TARGET,
     NEW_LINEAGE,
     OPTIMISTIC_CONFLICT,
+    STALE_WRITE,
     UNGATED,
     UNVERSIONED,
     AffectedRows,
@@ -47,9 +50,12 @@ from parallax.core.unit_work import (
     PlannedUpdate,
     PredecessorRow,
     PredicateTarget,
+    SelfIncrement,
+    Shortfall,
     Versioned,
     VersionGate,
     WritePlan,
+    shortfall_for,
 )
 from parallax.core.unit_work.planned import WriteTarget
 
@@ -159,6 +165,26 @@ def test_planned_assignments_naming_no_member_are_refused() -> None:
         PlannedAssignments(attributes={})
 
 
+def test_a_planned_row_refuses_the_generated_value_no_insert_can_express() -> None:
+    # The registry advance reads the stored row it is rewriting; an insert has no
+    # stored row, so the combination names an allocation nothing could render.
+    with pytest.raises(ValueError, match="never a Planned Row cell"):
+        PlannedRow(attributes={_ID: SelfIncrement(amount=1)})
+
+
+def test_planned_assignments_refuse_the_generated_value_no_update_can_express() -> None:
+    # `max` folds into the row an insert opens; a `SET` clause has no position to
+    # fold it into, so it is refused here rather than bound as a literal object.
+    with pytest.raises(ValueError, match="never a Planned Assignment"):
+        PlannedAssignments(attributes={_ID: MAX_PLUS_ONE})
+
+
+def test_each_generated_value_is_constructible_at_its_own_statement_position() -> None:
+    assert PlannedRow(attributes={_ID: MAX_PLUS_ONE}).attributes[_ID] == MAX_PLUS_ONE
+    advance = SelfIncrement(amount=1)
+    assert PlannedAssignments(attributes={_ID: advance}).attributes[_ID] == advance
+
+
 def test_planned_assignments_span_both_scalar_and_value_object_identities() -> None:
     assignments = PlannedAssignments(
         attributes={_OWNER: "Ada"}, value_objects={_ADDRESS: {"city": "Oslo"}}
@@ -249,9 +275,48 @@ def test_an_ungated_versioned_decision_may_address_several_keys() -> None:
     step = _delete(
         _TWO_KEYS,
         Versioned(gate=UNGATED),
-        ExactCount(expected=2, on_shortfall=MISSING_TARGET),
+        ExactCount(expected=2, on_shortfall=STALE_WRITE),
     )
     assert step.target == _TWO_KEYS
+
+
+@pytest.mark.parametrize(
+    ("concurrency", "shortfall"),
+    [
+        (UNVERSIONED, MISSING_TARGET),
+        (Versioned(gate=UNGATED), STALE_WRITE),
+        (Versioned(gate=VersionGate(attribute=_VERSION, observed_version=3)), OPTIMISTIC_CONFLICT),
+    ],
+    ids=["unversioned", "ungated", "gated"],
+)
+def test_one_concurrency_decision_admits_one_shortfall_classification(
+    concurrency: NonTemporalConcurrency, shortfall: Shortfall
+) -> None:
+    # The classification follows the settled gate, never the verb (ADR 0044/0047),
+    # so the step derives it rather than accepting whatever it is handed.
+    assert shortfall_for(concurrency) == shortfall
+    step = _delete(_ONE_KEY, concurrency, ExactCount(expected=1, on_shortfall=shortfall))
+    assert step.affected_rows == ExactCount(expected=1, on_shortfall=shortfall)
+
+
+@pytest.mark.parametrize(
+    ("concurrency", "shortfall"),
+    [
+        (Versioned(gate=UNGATED), MISSING_TARGET),
+        (Versioned(gate=UNGATED), OPTIMISTIC_CONFLICT),
+        (UNVERSIONED, STALE_WRITE),
+        (Versioned(gate=VersionGate(attribute=_VERSION, observed_version=3)), STALE_WRITE),
+    ],
+    ids=["ungated-as-missing", "ungated-as-conflict", "unversioned-as-stale", "gated-as-stale"],
+)
+def test_a_contradictory_shortfall_classification_is_refused(
+    concurrency: NonTemporalConcurrency, shortfall: Shortfall
+) -> None:
+    # An ungated versioned write DID observe, so its shortfall can never be a
+    # missing target, and no gate existed to lose a race against; symmetrically an
+    # observation-free write has nothing to be stale about.
+    with pytest.raises(ValueError, match="classifies a shortfall as"):
+        _delete(_ONE_KEY, concurrency, ExactCount(expected=1, on_shortfall=shortfall))
 
 
 def test_a_planned_update_settles_its_target_the_same_way_a_delete_does() -> None:

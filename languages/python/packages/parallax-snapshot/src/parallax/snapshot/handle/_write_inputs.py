@@ -277,16 +277,15 @@ def _row_payload(
     nothing; the chained row excludes the axis bounds its own milestone plan
     stamps afresh.
 
-    Value-object columns are OMITTED by default (row-form never projects one,
-    `m-value-object-047`'s own byte-identical row-form witness).
-    ``include_value_objects`` opts in (`m-case-format.md:727`): its callers —
-    `_temporal_observation` (every real ``Transaction.find``, always
-    INSTANCE-form, so ``fields`` always carries one; a materializing resolve only
-    when its own need-sensitive projection requested it) and `materialize_row`'s
-    audit-only chain merge (an audit-only materializing resolve, same gate) — so
-    ``column in fields`` still gates every member exactly as it already does for
-    scalars; a VO-free entity's empty ``value_objects`` makes this flag a no-op
-    either way.
+    Value-object columns are OMITTED by default (a plain row-form read projects
+    no `Document` slot, `m-sql` *Read projection*). ``include_value_objects``
+    opts in, and both callers are observation-side: `_temporal_observation`
+    (every real ``Transaction.find``, always INSTANCE-form, and every
+    materializing resolve on a temporal target, whose own projection carries
+    every declared document so the Predecessor Row is complete) and
+    `materialize_row`'s audit-only chain merge (that same resolve). ``column in
+    fields`` still gates every member exactly as it does for scalars; a VO-free
+    entity's empty ``value_objects`` makes this flag a no-op either way.
     """
     return {
         name: fields[column]
@@ -498,11 +497,10 @@ def materialize_row(
     # Audit-only assignment-bearing (`update`): `txtime_write.plan` chains the
     # instruction's own row merged onto the predecessor, so the row built here
     # carries the resolved payload with the assignments overlaid. It excludes the
-    # axis bounds the milestone plan stamps afresh. Reached exactly when
-    # `_materialize_predicate_write`'s own resolving read requested the
-    # value-object document column(s) too (`include_value_objects`,
-    # `m-case-format.md:727`), so the merge carries forward whichever documents
-    # `assignments` does NOT itself reassign.
+    # axis bounds the milestone plan stamps afresh. A temporal target's resolving
+    # read always projects every value-object document column (the Predecessor
+    # Row is complete, `m-unit-work`), so the merge carries forward whichever
+    # documents `assignments` does NOT itself reassign.
     tx_axis = tx_time_axis(declaring_entity)
     tx_start_column, tx_end_column = axis_columns(layout, tx_axis)
     full_row: dict[str, object] = {

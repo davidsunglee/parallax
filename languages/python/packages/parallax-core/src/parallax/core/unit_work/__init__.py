@@ -86,6 +86,7 @@ from parallax.core.unit_work.planned import (
     Unversioned,
     Versioned,
     VersionGate,
+    shortfall_for,
 )
 from parallax.core.unit_work.planner import (
     AtomicUnit,
@@ -191,6 +192,7 @@ __all__ = [
     "plan_flush",
     "run_unit_of_work",
     "serialize",
+    "shortfall_for",
     "validate_instruction",
     "validate_write",
 ]

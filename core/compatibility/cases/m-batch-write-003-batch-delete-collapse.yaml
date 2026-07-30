@@ -6,9 +6,12 @@
 # statement with an `id in (?, ?, ?)` predicate binding every key — never three
 # `delete ... where id = ?` statements (that per-row shape is the FK-ordered
 # m-unit-work-007 direction, where ordering matters). This is honest ONLY for a
-# NON-VERSIONED entity: a versioned entity's set-based delete MUST materialize
-# into per-object version-gated deletes (m-batch-write-004 / m-opt-lock / ADR 0014),
-# so the collapse cannot apply to it.
+# NON-VERSIONED entity: every write against an existing versioned row requires that
+# row's OWN prior observation in BOTH modes, so a versioned entity's set-based delete
+# MUST materialize into per-object deletes (m-batch-write-004 / m-opt-lock / ADR
+# 0014) — optimistic mode then binds each observation as a gate, locking mode needs
+# the read that took the shared lock. One collapsed statement can neither carry nor
+# acquire one, so the collapse cannot apply to a versioned entity in either mode.
 #
 # Fixtures are loaded first (wallets 1/2/3); the collapse deletes all three,
 # leaving the table empty. The harness applies the golden DML and reads the table

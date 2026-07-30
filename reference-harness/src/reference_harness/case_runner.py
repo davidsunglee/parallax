@@ -26,13 +26,14 @@ import functools
 import json
 import re
 import threading
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Any, NamedTuple
 
 import sqlglot
 from sqlglot import exp
+from sqlglot.expressions.core import Expr
 
 from . import errors, serde
 from .case import Case, Entity, Model
@@ -3739,6 +3740,7 @@ def _assert_conflict_input(case: Case, dialect: str) -> None:
                 _attempt_statements(attempt, dialect),
                 _entry_binds(attempt.get("statements"), 0),
                 f"attempts[{index}].write",
+                dialect,
             )
         return
     _assert_versioned_conflict_input(
@@ -3750,6 +3752,7 @@ def _assert_conflict_input(case: Case, dialect: str) -> None:
         case.golden_statements(dialect),
         case.statement_binds(0),
         "write",
+        dialect,
     )
 
 
@@ -3762,6 +3765,7 @@ def _assert_versioned_conflict_input(
     statements: list[str],
     binds: list[Any],
     pointer: str,
+    dialect: str,
 ) -> None:
     """Cross-check one versioned keyed conflict attempt's ① against its golden.
 
@@ -3800,7 +3804,7 @@ def _assert_versioned_conflict_input(
         pk,
     ]
     gated = case.concurrency_mode == "optimistic"
-    gate_rendered = version_col is not None and _has_version_gate(statement, version_col)
+    gate_rendered = version_col is not None and _has_version_gate(statement, version_col, dialect)
     if gate_rendered != gated:
         raise CaseFailure(
             f"{case.path.name}: the golden {mutation.upper()} ({pointer}) "
@@ -3908,7 +3912,7 @@ def _assert_temporal_conflict_close(
     binds: list[Any],
     pointer: str,
 ) -> None:
-    """Cross-check one temporal-close attempt's ① binds against the golden UPDATE.
+    """Cross-check one temporal-close attempt's ① binds against its golden close.
 
     A close sets ``out_z = at`` on the milestone its ADDRESS selects
     (:func:`_close_address_binds`); an optimistic close appends the ``and in_z = ?``
@@ -3932,7 +3936,7 @@ def _assert_temporal_conflict_close(
     if len(statements) != 1:
         raise CaseFailure(
             f"{case.path.name}: a temporal conflict close ({pointer}) has exactly one "
-            f"golden UPDATE, but {len(statements)} were listed."
+            f"golden statement, but {len(statements)} were listed."
         )
     if at is None:
         raise CaseFailure(
@@ -4441,6 +4445,7 @@ def _finish_uow_group(
     index: int,
     label: str | None,
     group_states: dict[str, _UowGroupState],
+    dialect: str,
 ) -> None:
     """Close a `uow` group's held session when *index* is its declared LAST
     step: COMMIT (the default), or — when the group is doomed
@@ -4463,7 +4468,7 @@ def _finish_uow_group(
         # NON-conflicting write fails the case rather than passing on a
         # vacuous abort.
         if case.expected_affected_rows is not None and state.executed:
-            _assert_scenario_conflict_abort(case, index, state.executed)
+            _assert_scenario_conflict_abort(case, index, state.executed, dialect)
         state.session.rollback()
     else:
         state.session.commit()
@@ -4544,7 +4549,7 @@ def _assert_scenario(case: Case, db: DatabaseProvider) -> None:
                         # See the SAME conflict-abort reasoning in
                         # :func:`_finish_uow_group` — the ungrouped, single-step form.
                         if case.expected_affected_rows is not None:
-                            _assert_scenario_conflict_abort(case, index, executed)
+                            _assert_scenario_conflict_abort(case, index, executed, dialect)
                         rb_session.rollback()
                 else:
                     # A committed write between finds (read-your-own-writes / cache
@@ -4557,7 +4562,7 @@ def _assert_scenario(case: Case, db: DatabaseProvider) -> None:
                 # stay aligned. A write observes no rows, so it reads no entity.
                 results.append([])
                 step_entities.append(None)
-                _finish_uow_group(case, index, label, group_states)
+                _finish_uow_group(case, index, label, group_states, dialect)
                 continue
             if "action" in step:
                 # A lifecycle ACTION step (m-case-format, COR-30): execute its golden SQL
@@ -4611,11 +4616,12 @@ def _assert_scenario(case: Case, db: DatabaseProvider) -> None:
                 # project each top-level value-object column into its declared composite
                 # before grading expectRows — exactly as the graph-read path does
                 # (`_materialize_owner_node`). A ROW-FORM read (the materialized-predicate-
-                # write resolving find) omits the document column, and a value-object-free
-                # entity (every scenario read but the supplier result-form witness) declares
-                # no value object, so this leaves those rows byte-identical. The referenceSql
-                # oracle above already ran on the raw rows, so the value-object columns never
-                # route through that identity compare.
+                # write resolving find) projects the document only where the write it serves
+                # needs it, and a value-object-free entity (every scenario read but the
+                # supplier witness) declares no value object, so a row carrying no document
+                # column passes through byte-identical. The referenceSql oracle above already
+                # ran on the raw rows, so the value-object columns never route through that
+                # identity compare.
                 rows = [_materialize_owner_node(read_entity, row) for row in rows]
             else:
                 # A cache hit (or an m-op-list construction that has not resolved yet): no
@@ -4626,29 +4632,71 @@ def _assert_scenario(case: Case, db: DatabaseProvider) -> None:
             _assert_step_row_observables(
                 case, index, step, rows, results, tolerance, default_identity
             )
-            _finish_uow_group(case, index, label, group_states)
+            _finish_uow_group(case, index, label, group_states, dialect)
 
 
-def _has_version_gate(statement: str, version_col: str) -> bool:
-    """True when a versioned write's WHERE clause gates on the optimistic version.
+def _has_version_gate(statement: str, version_col: str, dialect: str) -> bool:
+    """True when a versioned write's OUTER predicate gates on the optimistic version.
 
     The optimistic golden write appends ``and <version> = ?`` to its keyed predicate
-    (m-opt-lock). The version column also appears in an ``UPDATE``'s SET clause, so the
-    gate is matched only in the WHERE clause (after the final ` where `), word-bounded
-    so a longer column ending in the version name is never mistaken for the gate.
+    (m-opt-lock). Two other places name the same column and are NOT that gate: an
+    ``UPDATE``'s own ``SET`` clause, which carries the framework-derived advance in
+    BOTH modes, and any nested ``SELECT``'s own ``WHERE``. Scanning text cannot
+    separate them — the last ` where ` in the statement may belong to a subquery, and
+    a quoted spelling (``"version"``, `` `version` ``) is the same column under a
+    different surface. The statement is therefore PARSED for *dialect* and only the
+    outer ``UPDATE`` / ``DELETE`` predicate's own top-level conjuncts are inspected,
+    so quoting, whitespace, and nesting are decided by the grammar rather than by a
+    pattern. A statement that does not parse, or that is not a keyed write at all,
+    carries no gate.
     """
-    lowered = statement.lower()
-    where_at = lowered.rfind(" where ")
-    if where_at == -1:
+    try:
+        tree = sqlglot.parse_one(statement, read=sqlglot_dialect(dialect))
+    except sqlglot.ParseError:
         return False
-    where_clause = lowered[where_at + len(" where ") :]
-    return bool(re.search(rf"\b{re.escape(version_col.lower())}\s*=\s*\?", where_clause))
+    if not isinstance(tree, (exp.Update, exp.Delete)):
+        return False
+    where = tree.args.get("where")
+    if not isinstance(where, exp.Where):
+        return False
+    return any(_gates_on(operand, version_col) for operand in _conjuncts(where.this))
+
+
+def _conjuncts(predicate: Expr) -> Iterator[Expr]:
+    """*predicate*'s own top-level ``AND`` operands, parentheses flattened.
+
+    A subquery yields as ONE opaque operand: its own predicate is a conjunct of the
+    inner ``SELECT``, never of this one, which is exactly the distinction a text scan
+    cannot make.
+    """
+    if isinstance(predicate, exp.And):
+        yield from _conjuncts(predicate.left)
+        yield from _conjuncts(predicate.right)
+    elif isinstance(predicate, exp.Paren):
+        yield from _conjuncts(predicate.this)
+    else:
+        yield predicate
+
+
+def _gates_on(operand: Expr, column: str) -> bool:
+    """Whether *operand* is the ``<column> = ?`` equality a gate renders."""
+    if not isinstance(operand, exp.EQ):
+        return False
+    left, right = operand.left, operand.right
+    if isinstance(right, exp.Column) and isinstance(left, exp.Placeholder):
+        left, right = right, left
+    return (
+        isinstance(left, exp.Column)
+        and left.name.lower() == column.lower()
+        and isinstance(right, exp.Placeholder)
+    )
 
 
 def _assert_scenario_conflict_abort(
     case: Case,
     index: int,
     executed: list[tuple[str, int]],
+    dialect: str,
 ) -> None:
     """Assert an aborted scenario step aborted BECAUSE a versioned write conflicted.
 
@@ -4679,7 +4727,11 @@ def _assert_scenario_conflict_abort(
             f"{case.path.name}: scenario[{index}] declares a conflict abort but the "
             f"entity carries no optimistic-lock version column to gate on."
         )
-    gated = [(sql, affected) for sql, affected in executed if _has_version_gate(sql, version_col)]
+    gated = [
+        (sql, affected)
+        for sql, affected in executed
+        if _has_version_gate(sql, version_col, dialect)
+    ]
     if len(gated) != 1:
         raise CaseFailure(
             f"{case.path.name}: scenario[{index}] conflict-abort step MUST list exactly "
@@ -4716,16 +4768,18 @@ def _identity_keys(
 
 
 def _assert_conflict(case: Case, db: DatabaseProvider) -> None:
-    """Run the given.apply + golden UPDATE, assert the affected-row count.
+    """Run the given.apply + the golden write, assert the affected-row count.
 
-    This is the observable form of optimistic-lock conflict detection (m-opt-lock).
-    The model's fixtures are loaded (the row exists with its current version),
-    then an OPTIONAL out-of-band ``given.apply`` simulates a concurrent
-    transaction mutating the row (e.g. bumping the version). The golden
-    ``UPDATE … where pk = ? and version = ?`` is then applied with the version
-    the caller read EARLIER; if a concurrent write changed the version, the
-    stale-version predicate matches **zero** rows — the conflict signal
-    (``updatedRows != 1``). A fresh version matches exactly **one** row.
+    This is the observable form of an m-opt-lock shortfall. The model's fixtures are
+    loaded (the row exists with its current version), then an OPTIONAL out-of-band
+    ``given.apply`` simulates a concurrent transaction mutating or removing the row.
+    The golden write is then applied. Under ``optimistic`` mode it renders
+    ``… where pk = ? and version = ?`` and binds the version the caller read EARLIER,
+    so a concurrent version bump makes the stale-version predicate match **zero**
+    rows — the conflict signal (``updatedRows != 1``). Under ``locking`` mode the
+    golden renders no gate at all, and the same zero-row shortfall is instead a stale
+    write, since the shared read lock was what licensed the write. A row still there
+    unchanged matches exactly **one**.
 
     The harness asserts the affected-row count equals ``affectedRows``,
     and (when authored) the resulting table state — so the contract is proven
@@ -4735,11 +4789,11 @@ def _assert_conflict(case: Case, db: DatabaseProvider) -> None:
     statements = case.golden_statements(dialect)
     if len(statements) != 1:
         raise CaseFailure(
-            f"{case.path.name}: a conflict case has exactly one golden UPDATE "
+            f"{case.path.name}: a conflict case has exactly one golden write "
             f"statement, but then.statements ({dialect}) lists {len(statements)}."
         )
 
-    # Apply any out-of-band given.apply setup (a concurrent mutation) before the UPDATE.
+    # Apply any out-of-band given.apply setup (a concurrent mutation) before the write.
     for entry in case.apply:
         db.execute(entry["sql"], list(entry.get("binds", [])))
 
@@ -4747,9 +4801,11 @@ def _assert_conflict(case: Case, db: DatabaseProvider) -> None:
     expected = case.expected_affected_rows
     if affected != expected:
         raise CaseFailure(
-            f"{case.path.name}: golden UPDATE affected {affected} row(s) but "
-            f"affectedRows is {expected}. A stale optimistic-lock version "
-            f"MUST affect 0 rows (conflict); a fresh version MUST affect 1."
+            f"{case.path.name}: the golden write affected {affected} row(s) but "
+            f"affectedRows is {expected}. A row the concurrent mutation moved out "
+            f"from under the write MUST affect 0 rows (an optimistic conflict where "
+            f"the golden gates, a stale write where it does not); an untouched row "
+            f"MUST affect 1."
         )
 
     if case.expected_table_state:
@@ -4769,7 +4825,7 @@ def _assert_conflict(case: Case, db: DatabaseProvider) -> None:
 
 
 def _attempt_statements(attempt: dict[str, Any], dialect: str) -> list[str]:
-    """The golden UPDATE statement(s) a retry attempt lists for *dialect*."""
+    """The golden write statement(s) a retry attempt lists for *dialect*."""
     return _entry_statements(attempt.get("statements"), dialect)
 
 
@@ -5489,7 +5545,7 @@ def run_case(case: Case, db: DatabaseProvider) -> None:
     if case.is_conflict:
         _assert_conflict_input(case, dialect)  # layer 5c (① ↔ ② single form)
         _provision(case, db)  # fixtures loaded: the row to lock exists
-        _assert_conflict(case, db)  # given.apply + golden UPDATE, affected rows
+        _assert_conflict(case, db)  # given.apply + golden write, affected rows
         return
 
     _assert_round_trip_count(case, dialect)  # layer 5 (count)

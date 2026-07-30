@@ -400,13 +400,12 @@ def test_materializing_update_where_audit_only_chains_the_new_value() -> None:
 def test_materializing_update_where_audit_only_carries_the_unassigned_value_object_forward() -> (
     None
 ):
-    # `m-case-format.md:727`: an assignment-bearing `update_where` on an
-    # audit-only, value-object-bearing target must carry
-    # the resolved row's OWN `address` document FORWARD into the chained row
-    # when the caller does not itself reassign it — so the resolving read
-    # must project the document column too (unlike a terminate/delete,
-    # `m-value-object-047`'s own row-form-omits-slot-4 witness, which stays
-    # byte-identical because it never reaches this assignment-bearing branch).
+    # `m-case-format` "Predicate-selected write instruction": an
+    # assignment-bearing `update_where` on an audit-only, value-object-bearing
+    # target must carry the resolved row's OWN `address` document FORWARD into
+    # the chained row when the caller does not itself reassign it. The
+    # projection that makes this possible is the temporal target's own complete
+    # Predecessor Row, which its close-only sibling records just the same.
     port = RecordingPort(
         rows=[
             {
@@ -691,12 +690,14 @@ def test_materializing_terminate_until_where_bitemporal_carries_the_document_on_
     assert tail_binds[-1] == JsonDocument(address)
 
 
-def test_materializing_terminate_where_audit_only_stays_document_free() -> None:
+def test_materializing_terminate_where_audit_only_observes_the_whole_document() -> None:
     # An AUDIT-ONLY terminate is close-only (`txtime_write.plan` — no chained
-    # row, `materialize_row`'s own `assignment_bearing` set excludes it), so
-    # the resolving read stays document-free even on a VALUE-OBJECT-bearing
-    # target — unlike its BITEMPORAL counterpart, above
-    # (`m-value-object-047`'s own row-form-omits-slot-4 witness, unchanged).
+    # row, `materialize_row`'s own `assignment_bearing` set excludes it), so it
+    # carries no payload forward and writes no document. Its resolving read
+    # still projects one, because a Temporal Observation retains a COMPLETE
+    # Predecessor Row (`m-unit-work`) whatever the topology does with it —
+    # completeness is a property of the observation, not of the verb
+    # (`m-value-object-047`, the corpus witness).
     port = RecordingPort(
         rows=[
             {
@@ -716,7 +717,10 @@ def test_materializing_terminate_where_audit_only_stays_document_free() -> None:
         fn, concurrency="optimistic"
     )
     reads = [op for op in port.ops if op[0] == "read"]
-    assert "t0.address" not in cast("str", reads[0][1])
+    writes = [op for op in port.ops if op[0] == "write"]
+    assert "t0.address" in cast("str", reads[0][1])
+    assert len(writes) == 1  # the close alone — nothing carries the document forward
+    assert JsonDocument({"city": "Bergen"}) not in cast("tuple[object, ...]", writes[0][2])
 
 
 # --------------------------------------------------------------------------- #

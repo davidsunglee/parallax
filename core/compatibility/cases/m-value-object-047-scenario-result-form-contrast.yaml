@@ -1,31 +1,41 @@
-# Scenario-step RESULT-FORM contrast over a value-object-bearing entity
-# (m-value-object + m-txtime-write + m-sql "Read result form"): a managed find
-# materializes the owner's `address` Document slot (INSTANCE-FORM) while the
-# internal materialized-predicate-write resolving read observes only pk + gate
-# columns (ROW-FORM, Document slots omitted). Postgres AND MariaDB.
+# Scenario-step PROJECTION WIDENING over a value-object-bearing temporal entity
+# (m-value-object + m-txtime-write + m-unit-work + m-sql "Read result form"): the
+# internal materialized-predicate-write resolving read is ROW-FORM — it constructs
+# no instance — yet it projects the owner's `address` Document slot, because the
+# per-row observation it records is a COMPLETE Predecessor Row (m-unit-work "A
+# Predecessor Row is the complete, immutable persisted state a Temporal Observation
+# retains"). Postgres AND MariaDB.
 #
-# This is the value-object-bearing WITNESS the result-form classification needs: for
-# a value-object-FREE entity (balance, position, account, order_item) the two lanes
-# project identical columns, so no existing scenario step can distinguish them. The
+# This is the value-object-bearing WITNESS that widening rule needs: for a
+# value-object-FREE entity (balance, position, account, order_item) a resolving read
+# projects identical columns either way, so no other scenario step can show it. The
 # Supplier owns the recursive `address` value object on a Transaction-Time-Only
-# (audit-only) axis, so the two forms first diverge here.
+# (audit-only) axis, and the verb here is a close-only `terminate` — the shape whose
+# own topology chains NOTHING and therefore carries no payload forward. Completeness
+# belongs to the OBSERVATION rather than to the topology (ADR 0042: a decorator must
+# distinguish carried from changed state without a second read), so the document is
+# projected even here. The row-form DEFAULT — omitting Document slots — is witnessed
+# at case level instead, by the `then.rows` reads over `customer` (which omit
+# `address`) against that model's own `then.graph` reads (which project it).
 #
 # Steps (one resolving read PLUS one independent managed find, then the write):
 #   0  find (managed, Baltic Traders) : INSTANCE-FORM — the developer find materializes
 #      the owner, so the projection carries the whole `address` document last
 #      (sup_id, name, in_z, out_z, address). The Document slot is present.
 #   1  find (Nordic Foods)            : the materialized-predicate-write RESOLVING read —
-#      ROW-FORM. It observes each matched row's pk + current gate columns to plan the
-#      per-row close (ADR 0014), constructing no instance, so it OMITS `address`
-#      (sup_id, name, in_z, out_z). The Document slot is absent, even though Supplier owns a value
-#      object — the point of the witness.
+#      ROW-FORM. It observes each matched row to plan the per-row close (ADR 0014) and
+#      constructs no instance, yet its projection carries `address` last
+#      (sup_id, name, in_z, out_z, address) because the Temporal Observation it records
+#      retains the whole predecessor row — the point of the witness.
+#      A close-only `terminate` writes no document, so `address` never rides the
+#      close's own binds; it rides the observation the close is planned from.
 #   2  terminate (predicate = name Nordic Foods) : closes the resolved current row
 #      (out_z = at), GATED on the observed in_z step 1's resolving read returned
 #      (2024-06-01) — an OPTIMISTIC audit-only close binds `and in_z = ?` last, the
 #      same gate-last shape a keyed temporal terminate already carries
 #      (m-txtime-write-006, m-opt-lock "the gate binds last"). A Transaction-Time-only close
-#      copies no payload, so no document rides a read here; a reassigned document
-#      would ride the write instruction, not the read.
+#      copies no payload, so no document reaches this write's SET clause; a reassigned
+#      document would ride the write instruction, not the read.
 #   3  find (Nordic Foods, asOf transactionTime = 2024-08-01) : verify — INSTANCE-FORM
 #      managed find, the SAME form as step 0 (projects the `address` Document slot).
 #      asOf-pins the Transaction-Time dimension strictly INSIDE the now-closed window
@@ -42,12 +52,13 @@
 #      latest — so the asOf form is the only vocabulary that reaches a closed
 #      milestone by its own finite instant.
 #
-# The instance-form goldens (the managed finds, steps 0 and 3) project `address`; the
-# row-form goldens (the predicate-write resolving read, step 1) do not. The harness
-# decodes the projected document into its declared composite (the same materialization
-# the graph-read path performs) so the managed find's expectRows compares identically on
-# both dialects; the row-form reads carry no document to decode. Total roundTrips 4 =
-# managed find (1) + resolve read (1) + close (1) + verify read (1).
+# All three read goldens project `address` — the two instance-form managed finds
+# (steps 0 and 3) because materialization requires the document, and the row-form
+# resolving read (step 1) because the observation it records must be complete. The
+# harness decodes each projected document into its declared composite (the same
+# materialization the graph-read path performs) so every expectRows compares
+# identically on both dialects. Total roundTrips 4 = managed find (1) + resolve read
+# (1) + close (1) + verify read (1).
 model: models/supplier.yaml
 tags: [m-value-object, m-txtime-write, m-opt-lock, m-sql, m-unit-work, temporal, audit-only, json, nested, materialize, predicate-write, scenario, slice-snapshot-1]
 shape: scenario
@@ -84,15 +95,25 @@ when:
       find:
         eq: { attr: Supplier.name, value: Nordic Foods }
       roundTrips: 1
-      note: the predicate-write resolving read observes pk + gate columns only — ROW-FORM, no address Document slot
+      note: the predicate-write resolving read is ROW-FORM (no instance constructed) and still projects the address Document slot — the Temporal Observation it records is a complete Predecessor Row
       statements:
         - sql:
-            postgres: select t0.sup_id, t0.name, t0.in_z, t0.out_z from supplier t0 where t0.name = ? and t0.out_z = ?
-            mariadb: select t0.sup_id, t0.name, t0.in_z, t0.out_z from supplier t0 where t0.name = ? and t0.out_z = ?
+            postgres: select t0.sup_id, t0.name, t0.in_z, t0.out_z, t0.address from supplier t0 where t0.name = ? and t0.out_z = ?
+            mariadb: select t0.sup_id, t0.name, t0.in_z, t0.out_z, t0.address from supplier t0 where t0.name = ? and t0.out_z = ?
           binds: [Nordic Foods, infinity]
-      referenceSql: select sup_id, name, in_z, out_z from supplier where name = 'Nordic Foods' and out_z > '9000-01-01'
+      referenceSql: select sup_id, name, in_z, out_z, address from supplier where name = 'Nordic Foods' and out_z > '9000-01-01'
       expectRows:
-        - { sup_id: 1, name: Nordic Foods, in_z: "2024-06-01T00:00:00+00:00", out_z: infinity }
+        - sup_id: 1
+          name: Nordic Foods
+          in_z: "2024-06-01T00:00:00+00:00"
+          out_z: infinity
+          address:
+            street: 2 New Avenue
+            city: Bergen
+            geo:
+              country: "NO"
+            phones:
+              - { type: work, number: '555-0200' }
     - write:
         mutation: terminate
         target:

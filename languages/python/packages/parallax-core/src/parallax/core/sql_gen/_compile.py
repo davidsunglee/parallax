@@ -228,19 +228,19 @@ def _projection(
     m-value-object). A row-form read omits them by default.
 
     ``include_value_objects`` opts a **row-form** read into the `Document` slots
-    too, WITHOUT becoming instance-form (`m-case-format.md:727`): a materializing
-    predicate write's own internal resolving read stays row-form (it constructs
-    no instance, `m-value-object-047`) but an assignment-bearing verb still needs
-    the raw VO document(s) its own no-op comparison or chained/carried-forward
-    row must read — the caller (the
-    materializing predicate-write resolve in `parallax.snapshot.handle`)
-    derives this from the verb's own needs, never from `result_form`. ``True``
-    projects EVERY declared value object (a chain-bearing need, which must
-    carry forward whichever documents the assignments do NOT themselves
+    too, WITHOUT becoming instance-form (`m-case-format` *Predicate-selected
+    write instruction*): a materializing predicate write's own internal
+    resolving read stays row-form (it constructs no instance) but still needs
+    the raw VO document(s) the observation it records, or its own no-op
+    comparison, must read — the caller (the materializing predicate-write
+    resolve in `parallax.snapshot.handle`) derives this from the write's own
+    needs, never from `result_form`. ``True`` projects EVERY declared value
+    object (a temporal target, whose Predecessor Row is complete and whose
+    carried rows keep whichever documents the assignments do NOT themselves
     reassign); a ``frozenset`` of value-object NAMES projects ONLY those (a
-    comparison-only need on a target that never chains — minimal-read
-    discipline, `m-sql`) — in EITHER case the layout's `Document` slot order is
-    preserved, never the caller's own set iteration order.
+    versioned target's comparison-only need — minimal-read discipline,
+    `m-sql`) — in EITHER case the layout's `Document` slot order is preserved,
+    never the caller's own set iteration order.
     """
     declared_vos = entity.declared_value_objects
     if result_form == "instance" or include_value_objects is True:
@@ -294,16 +294,15 @@ def compile_read(
     member (`then.rows` = row-form; `then.graph` / `then.graphs` = instance-form).
 
     ``include_value_objects`` opts a **row-form** read into the value-object
-    document columns too, independent of ``result_form`` (`m-case-format.md:727`
-    — a materializing predicate write's own resolving read projects need-
-    sensitively, on EVERY target class): ``True``
-    projects every declared document (a temporal target's own chain need,
-    which must carry forward whichever documents an assignment-bearing verb
-    does NOT itself reassign — terminate/delete on a target that never
-    chains still passes plain ``False``); a ``frozenset`` of value-object
-    NAMES projects ONLY those (a non-chaining target's own per-row no-op
-    comparison need — minimal-read discipline, never every declared
-    document). An inheritance-family target never reaches this flag (a
+    document columns too, independent of ``result_form`` (`m-case-format`
+    *Predicate-selected write instruction* — a materializing predicate write's
+    own resolving read projects need-sensitively, on EVERY target class):
+    ``True`` projects every declared document (a temporal target, whose
+    observation retains a complete Predecessor Row and whose carried rows keep
+    whichever documents an assignment-bearing verb does NOT itself reassign);
+    a ``frozenset`` of value-object NAMES projects ONLY those (a versioned
+    target's own per-row no-op comparison need — minimal-read discipline,
+    never every declared document). An inheritance-family target never reaches this flag (a
     predicate-selected write on a family is rejected before this compiler,
     `m-inheritance`), so it is not threaded into the inheritance lowering
     below.
