@@ -55,7 +55,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import assert_never
+from typing import Literal, assert_never
 
 from parallax.core.base import NeutralType
 from parallax.core.dialect import Dialect
@@ -92,6 +92,7 @@ from parallax.core.op_algebra import (
     NestedNullCheck,
     NestedRange,
     NestedStringMatch,
+    NestedStringOp,
     NoneOp,
     Not,
     NotExists,
@@ -100,6 +101,7 @@ from parallax.core.op_algebra import (
     Or,
     OrderBy,
     StringMatch,
+    StringOp,
 )
 from parallax.core.sql_gen._context import Ctx as _Ctx
 from parallax.core.sql_gen._context import SqlGenError
@@ -137,7 +139,7 @@ _NESTED_COMPARATORS: dict[str, str] = {
 # Each nested string predicate's scalar twin. The pattern grammar, the escaping, and
 # the case folding are the SAME rule at both levels (m-op-algebra), so the nested
 # family is rendered by mapping onto the scalar kind rather than by a second table.
-_NESTED_STRING_KINDS: dict[str, str] = {
+_NESTED_STRING_KINDS: dict[NestedStringOp, StringOp] = {
     "nestedLike": "like",
     "nestedNotLike": "notLike",
     "nestedStartsWith": "startsWith",
@@ -434,7 +436,7 @@ def _lower_string(op: StringMatch, scope: EntityScope) -> str:
 
 
 def _lower_like(
-    kind: str,
+    kind: StringOp,
     value: str,
     case_insensitive: bool | None,
     subject_sql: str,
@@ -470,14 +472,23 @@ def _lower_like(
     return fragment
 
 
-def _affix_pattern(kind: str, value: str) -> tuple[str, bool]:
+# The three AFFIX kinds, whose `value` is literal text this module wraps in
+# wildcards. `like` / `notLike` are deliberately absent: their value is already a
+# pattern, and `_lower_like` routes them away before any affix rendering — so the
+# narrower domain makes that contract unrepresentable rather than merely documented.
+_AffixOp = Literal["startsWith", "endsWith", "contains"]
+
+
+def _affix_pattern(kind: _AffixOp, value: str) -> tuple[str, bool]:
     escaped = value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
     needs_escape = escaped != value
     if kind == "startsWith":
         return f"{escaped}%", needs_escape
     if kind == "endsWith":
         return f"%{escaped}", needs_escape
-    return f"%{escaped}%", needs_escape
+    if kind == "contains":
+        return f"%{escaped}%", needs_escape
+    assert_never(kind)  # pragma: no cover - exhaustiveness guard
 
 
 # --------------------------------------------------------------------------- #
