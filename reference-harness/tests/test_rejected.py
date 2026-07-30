@@ -53,6 +53,7 @@ from reference_harness.storage_layout import (
     STORAGE_LAYOUT_TABLE_MAPPING_COLLISION,
 )
 from reference_harness.value_object_resolve import (
+    BETWEEN_BOUNDS_INVERTED,
     FIND_ROOT_VALUE_OBJECT,
     NESTED_LITERAL_TYPE_MISMATCH,
     NESTED_PATH_FIRST_SEGMENT_NOT_VALUE_OBJECT,
@@ -79,6 +80,10 @@ def _customer_entity():
 
 def _contact_entity():
     return load_model(_COMPATIBILITY_ROOT, "models/contact.yaml").root_entity
+
+
+def _order_entity():
+    return load_model(_COMPATIBILITY_ROOT, "models/orders.yaml").root_entity
 
 
 # --- the authored corpus runs DB-free and rejects with the named rule -------
@@ -411,13 +416,15 @@ def test_resolve_effective_definition_inherits_temporal_axes_from_the_root_only(
 
 def test_the_authored_corpus_covers_both_operation_and_write_negatives() -> None:
     used = {c.rejected_rule for c in _rejected_cases()}
-    # Operation negatives (the four contract clauses + the typed-literal MUST).
+    # Operation negatives (the four contract clauses, the typed-literal MUST, and
+    # the bound-ordering MUST).
     assert {
         NESTED_PATH_FIRST_SEGMENT_NOT_VALUE_OBJECT,
         "deep-fetch-value-object-segment",
         "navigate-value-object-target",
         "find-root-value-object",
         NESTED_LITERAL_TYPE_MISMATCH,
+        BETWEEN_BOUNDS_INVERTED,
     } <= used
     # Write negatives (required attribute / nested VO / type mismatch).
     assert {
@@ -611,6 +618,67 @@ def test_membership_literal_type_mismatch_rejected() -> None:
             _customer_entity(), {"nestedIn": {"path": "Customer.address.city", "values": [1, 2]}}
         )
     assert exc.value.rule == NESTED_LITERAL_TYPE_MISMATCH
+
+
+# --- range bound ordering (m-op-algebra) -------------------------------------
+#
+# The bounds are compared by LITERAL KIND, so the rule fires on two numbers or two
+# strings and stands aside for every other pairing. It is the one operation rule that
+# consults no declared structure: both operands are authored on the node itself.
+
+
+def _between(lower: Any, upper: Any) -> dict[str, Any]:
+    return {"between": {"attr": "Order.price", "lower": lower, "upper": upper}}
+
+
+@pytest.mark.parametrize(
+    ("lower", "upper"),
+    [(50.75, 20.00), (5, 1), ("2024-05-01", "2024-02-01"), ("b", "a")],
+)
+def test_between_with_inverted_same_kind_bounds_rejected(lower: Any, upper: Any) -> None:
+    with pytest.raises(RejectionError) as exc:
+        validate_operation(_order_entity(), _between(lower, upper))
+    assert exc.value.rule == BETWEEN_BOUNDS_INVERTED
+
+
+@pytest.mark.parametrize(
+    ("lower", "upper"),
+    [
+        (20.00, 50.75),
+        (5, 5),
+        ("a", "a"),
+        ("2024-02-01", "2024-05-01"),
+        (5, "1"),
+        ("5", 1),
+        (None, 1),
+        (5, None),
+        (True, False),
+    ],
+)
+def test_between_bounds_the_rule_stands_aside_for_are_accepted(lower: Any, upper: Any) -> None:
+    # Ordered and equal same-kind bounds are legal ranges; a mixed-kind pair, a null
+    # bound, and a boolean pair are all skipped rather than guessed.
+    validate_operation(_order_entity(), _between(lower, upper))
+
+
+def test_between_bound_ordering_is_checked_at_any_depth() -> None:
+    with pytest.raises(RejectionError) as exc:
+        validate_operation(
+            _order_entity(),
+            {"and": {"operands": [{"all": {}}, _between(50.75, 20.00)]}},
+        )
+    assert exc.value.rule == BETWEEN_BOUNDS_INVERTED
+
+
+def test_between_rooted_at_a_value_object_still_reports_the_find_root_rule() -> None:
+    # The subject is checked before the bounds, so a value-object-rooted range names
+    # the root misuse rather than blaming its (also inverted) bounds.
+    with pytest.raises(RejectionError) as exc:
+        validate_operation(
+            _customer_entity(),
+            {"between": {"attr": "address.city", "lower": "b", "upper": "a"}},
+        )
+    assert exc.value.rule == FIND_ROOT_VALUE_OBJECT
 
 
 def test_deep_fetch_path_root_narrow_naming_a_value_object_rejected() -> None:

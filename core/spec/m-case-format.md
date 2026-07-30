@@ -987,10 +987,14 @@ reverse-navigated); Parallax pins the same "these operations are structurally
 invalid" semantics as a language-neutral pre-SQL rejection.
 
 `then.rejectedRule` is a **closed vocabulary**, each identifier naming a normative
-MUST — the `m-op-algebra` nested-predicate resolver rules, the `m-value-object`
-materialization/navigation and write-validation contracts, and accepted-model
-formation rules. **Operation** rules:
+MUST — the `m-op-algebra` predicate rules (bound ordering, and the
+nested-predicate resolver), the `m-value-object` materialization/navigation and
+write-validation contracts, and accepted-model formation rules. **Operation**
+rules:
 
+- `between-bounds-inverted` — a `between`'s `lower` bound is strictly greater than
+  its `upper`, comparing same-kind literals only (both numbers, or both strings),
+  so the range is empty by construction (`m-op-algebra` bound ordering).
 - `nested-path-first-segment-not-value-object` — a nested path's first segment names
   no value object declared on the queried entity (`m-op-algebra`).
 - `nested-path-unknown-member` — an intermediate segment names no declared nested

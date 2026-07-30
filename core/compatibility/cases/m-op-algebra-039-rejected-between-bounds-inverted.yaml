@@ -1,0 +1,22 @@
+# Negative (m-op-algebra bound-ordering MUST): a `between` whose bounds are INVERTED
+# is refused pre-SQL.
+#
+# The bounds reverse the ones m-op-algebra-008 authors over the same column, so the
+# range is empty by construction. The node is schema-valid — both bounds are
+# polymorphic `literal`s — and it lowers to a perfectly legal
+# `t0.price between ? and ?` that simply returns no rows, so only a resolver
+# enforcing the bound-ordering rule catches it rather than emitting a silently
+# empty predicate. Bounds are compared by LITERAL KIND (both numbers here), and
+# only a STRICTLY greater lower bound is rejected: equal bounds name the
+# single-value range and stay legal.
+model: models/orders.yaml
+tags: [m-op-algebra, rejected, negative, between, slice-snapshot-1, slice-managed-1]
+shape: rejected
+when:
+  operation:
+    between:
+      attr: Order.price
+      lower: 50.75
+      upper: 20.00
+then:
+  rejectedRule: between-bounds-inverted

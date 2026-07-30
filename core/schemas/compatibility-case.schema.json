@@ -810,6 +810,7 @@
         "rejectedRule": {
           "description": "The stable pre-SQL validation rule violated by a rejected case. The closed enum below is authoritative. Model-formation codes distinguish Inheritance-owned TPH/TPCS topology, root-owned temporal/persistence/optimistic facts and materialized-key collisions from Storage Layout-owned independent Table-mapping and within-owner physical-column collisions; operation and write codes retain declaration-owned member identity while validating effective applicability.",
           "enum": [
+            "between-bounds-inverted",
             "nested-path-first-segment-not-value-object",
             "nested-path-unknown-member",
             "nested-literal-type-mismatch",
