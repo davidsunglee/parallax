@@ -83,7 +83,7 @@ depends on both `m-principal` and `m-unit-work`, so the cycle-free direction thi
 ADR establishes is unchanged: identity flows *into* planning as a value, and
 provenance decoration consumes the finalized neutral plan.
 
-The other seven edges recorded above are unaffected. `m-snapshot-read --> m-principal`
+The other ten edges recorded above are unaffected. `m-snapshot-read --> m-principal`
 and `m-op-list --> m-principal` remain, because those surfaces evaluate a
 Principal at a boundary rather than merely accepting an already-normalized value.
 

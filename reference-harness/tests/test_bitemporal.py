@@ -350,6 +350,44 @@ def test_has_temporal_gate_requires_the_transaction_start_word_bounded() -> None
     assert not _has_temporal_gate(gated, "min_z")  # a longer column is not a substring match
 
 
+def test_has_temporal_gate_requires_the_gate_predicate_to_be_TRAILING() -> None:
+    # The gate binds LAST, no exception (`m-opt-lock`), so a close that renders
+    # `in_z = ?` anywhere but at the end is malformed — the observed start woven into
+    # the address rather than appended after it. A detector that searched the whole
+    # statement would accept that shape as a well-formed gated close and grade its five
+    # binds against the five-value gated derivation, silently blessing the wrong
+    # predicate order. Anchoring reports it UNGATED instead, whose four-bind derivation
+    # its five placeholders cannot satisfy.
+    woven = (
+        "update position set out_z = ? where pos_id = ? and in_z = ? and thru_z = ? and out_z = ?"
+    )
+    assert not _has_temporal_gate(woven, "in_z")
+    trailing = (
+        "update position set out_z = ? where pos_id = ? and thru_z = ? and out_z = ? and in_z = ?"
+    )
+    assert _has_temporal_gate(trailing, "in_z")
+
+
+def test_close_weaving_the_gate_into_the_address_is_rejected() -> None:
+    # The corpus-level consequence of the anchored detector: `m-bitemp-write-008`'s
+    # gated close, re-spelled with its `and in_z = ?` moved ahead of the address's own
+    # upper bounds. Placeholders and binds still both number five, so only the
+    # gate-is-trailing rule separates it from the authored shape — it MUST raise.
+    case = copy.deepcopy(_gated_split_case())
+    _assert_write_input_columns(case, "postgres")  # sanity: valid as authored
+    close = case.then["statements"][1]
+    authored = close["sql"]["postgres"]
+    woven = authored.replace(
+        " and thru_z = ? and out_z = ? and in_z = ?",
+        " and in_z = ? and thru_z = ? and out_z = ?",
+    )
+    assert woven != authored
+    assert woven.count("?") == authored.count("?") == 5 == len(close["binds"])
+    close["sql"]["postgres"] = woven
+    with pytest.raises(CaseFailure):
+        _assert_write_input_columns(case, "postgres")
+
+
 def test_close_gating_on_the_valid_time_start_instead_of_in_z_is_rejected() -> None:
     # The retired shape gated a bitemporal close on the observed Valid-Time START
     # (`from_z = ?`); under ADR 0046 that coordinate is bound nowhere — the address
@@ -374,18 +412,20 @@ def test_close_gating_on_the_valid_time_start_instead_of_in_z_is_rejected() -> N
 def test_gated_close_with_extra_placeholder_arity_mismatch_is_rejected() -> None:
     # A WELL-FORMED gated close (correctly detected as gated) must ALSO carry EXACTLY
     # the derived gated arity — five placeholders paired with the five
-    # [at, pk, thru_z, out_z, in_z] binds. Here the close keeps its gate but gains a
-    # spurious SIXTH `from_z = ?` placeholder while the binds stay at the five-value
-    # gated shape. The bind-count backstop (`_assert_write_values`) still sees five ==
-    # five, so ONLY the placeholder-vs-derived-shape arity check catches the surplus
-    # placeholder — which MUST raise rather than tolerate it.
+    # [at, pk, thru_z, out_z, in_z] binds. Here the close keeps its TRAILING gate but
+    # gains a spurious SIXTH `from_z = ?` placeholder ahead of it, while the binds stay
+    # at the five-value gated shape. The bind-count backstop (`_assert_write_values`)
+    # still sees five == five, so ONLY the placeholder-vs-derived-shape arity check
+    # catches the surplus placeholder — which MUST raise rather than tolerate it.
     case = copy.deepcopy(_gated_split_case())
     _assert_write_input_columns(case, "postgres")  # sanity: valid as authored
     close = case.then["statements"][1]
     authored = close["sql"]["postgres"]
     assert _has_temporal_gate(authored, "in_z")
     assert authored.count("?") == 5 and len(close["binds"]) == 5
-    close["sql"]["postgres"] = f"{authored} and from_z = ?"  # sixth placeholder, binds unchanged
+    # The surplus predicate rides BEFORE the gate, so the gate still binds last.
+    close["sql"]["postgres"] = authored.replace(" and in_z = ?", " and from_z = ? and in_z = ?")
+    assert close["sql"]["postgres"].count("?") == 6
     assert _has_temporal_gate(close["sql"]["postgres"], "in_z")  # still gated-shaped
     with pytest.raises(CaseFailure):
         _assert_write_input_columns(case, "postgres")

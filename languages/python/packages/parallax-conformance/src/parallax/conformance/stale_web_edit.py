@@ -105,10 +105,10 @@ def submit_branch_edit(
     re-fetch: ``valid_from`` equal to the displayed rectangle's own
     `from_z` degenerates the head interval to empty and is a build-time
     caller error, out of this recipe's scope). A concurrent split since the
-    render leaves the observed row's ``in_z`` stale (and, when the key's
-    current rows share an ``in_z``, the Valid-Time discriminator too) — the
-    gated close matches zero rows, ``OptimisticLockConflictError``; an
-    untouched rectangle's gate matches, and the edit lands."""
+    render leaves the observed row's ``in_z`` stale — the gated close still
+    addresses the displayed rectangle by its own Valid-Time end, but its gate
+    matches zero rows, ``OptimisticLockConflictError``; an untouched
+    rectangle's gate matches, and the edit lands."""
 
     def fn(tx: Transaction) -> None:
         current = tx.find(

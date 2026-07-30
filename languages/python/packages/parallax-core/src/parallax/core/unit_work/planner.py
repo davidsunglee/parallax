@@ -147,10 +147,11 @@ class Observation:
     ``valid_start`` / ``valid_end`` / ``payload`` extend the vocabulary for a
     temporal observation (`m-txtime-write` / `m-bitemp-write`): ``valid_start``
     is the observed rectangle's own Valid-Time
-    lower bound — the bitemporal optimistic gate's discriminator candidate AND (via
-    :mod:`parallax.core.bitemp_write`'s planning) the Valid-Time lower bound the head
-    rectangle's upper bound derives from; ``valid_end`` is the observed rectangle's
-    own Valid-Time upper bound — the tail rectangle's own upper bound; ``payload``
+    lower bound — the Valid-Time lower bound the head rectangle's upper bound derives
+    from (via :mod:`parallax.core.bitemp_write`'s planning), bound by no predicate of
+    the close itself; ``valid_end`` is the observed rectangle's
+    own Valid-Time upper bound — the tail rectangle's own upper bound, and the
+    Valid-Time component of the close's own ADDRESS (ADR 0046); ``payload``
     is the observed row's OTHER columns (every scalar / value-object member besides
     the milestone interval bounds) — the "prior rectangle" values a bitemporal split's
     head/tail carry forward (`m-bitemp-write` "Head/tail old values come from the

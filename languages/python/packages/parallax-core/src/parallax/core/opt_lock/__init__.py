@@ -46,16 +46,17 @@ m-opt-lock.md`; `python.md` §5 L584-641; ADR 0013):
    edge-pinned genuinely raises here. Typed temporal verbs reach this check
    through their transaction-scoped observations.
 5. **Conflict classification** (:class:`OptimisticLockConflictError`,
-   :class:`StaleWriteError`): the two zero-row-close outcomes `m-opt-lock` /
-   `m-txtime-write` / `m-bitemp-write` distinguish. ``OptimisticLockConflictError``
-   is the retriable-when-opted-in conflict an ``updatedRows != 1`` GATED write
-   raises (a versioned keyed write in either mode, or a temporal close under
-   optimistic concurrency). ``StaleWriteError`` is the distinct NON-retriable
-   sibling a zero-row UNGATED temporal close raises (locking mode, where the
-   shared read lock — not a gate — was supposed to make the write correct):
-   the current-row predicate alone is not a gate, so an ungated mismatch is a
-   consistency violation, not a detected-and-retriable conflict. Neither
-   ``!= 1`` shape ever exceeds 1 (a PK-keyed or milestone-current-row
+   :class:`StaleWriteError`): the two zero-row outcomes `m-opt-lock` /
+   `m-txtime-write` / `m-bitemp-write` distinguish.
+   ``OptimisticLockConflictError`` is the retriable-when-opted-in conflict an
+   ``updatedRows != 1`` GATED write raises — a versioned keyed UPDATE or DELETE,
+   or a temporal close, under optimistic concurrency. ``StaleWriteError`` is the
+   distinct NON-retriable sibling an UNGATED observation-requiring write raises:
+   a locking-mode versioned keyed DELETE, or a locking-mode temporal close, where
+   the shared read lock rather than a gate was supposed to make the write correct.
+   A close's ADDRESS is not a gate, so an ungated mismatch is a consistency
+   violation, not a detected-and-retriable conflict.
+   Neither ``!= 1`` shape ever exceeds 1 (a PK-keyed or milestone-addressing
    statement structurally cannot affect more than one row) — Reladomo's
    separate corruption class for ``> 1`` is deliberately not mirrored.
    ``parallax.snapshot.handle``'s :meth:`Database.transact` passes
@@ -236,12 +237,12 @@ class StaleWriteError(RuntimeError):
     keyed DELETE (`m-opt-lock`).
 
     Such a shortfall is an error in ANY mode, never silent. Under optimistic
-    concurrency the gate — the observed ``in_z`` (plus, bitemporal, the Valid-Time
-    discriminator) for a close, the observed version for a delete — makes a stale
-    write a detectable, retriable :class:`OptimisticLockConflictError`. Under
+    concurrency the gate — the observed ``in_z`` for a close, the observed version
+    for a delete — makes a stale write a detectable, retriable
+    :class:`OptimisticLockConflictError`. Under
     locking concurrency the statement carries no gate at all (the shared read lock
     is supposed to make it correct), so the shortfall is a categorically DIFFERENT,
-    NON-retriable outcome: a consistency violation the identity predicate alone
+    NON-retriable outcome: a consistency violation the write's own address alone
     could not have prevented, not a lost-update conflict a retry could resolve by
     re-reading. Carries the SAME context fields as
     :class:`OptimisticLockConflictError` (``entity`` / ``key`` / ``expected`` /
@@ -261,10 +262,10 @@ class StaleWriteError(RuntimeError):
         self.expected = expected
         self.actual = actual
         super().__init__(
-            f"{entity}: locking-mode (ungated) temporal close affected {actual} row(s), "
-            f"expected {expected} (key={dict(key)!r}) — a non-retriable stale/consistency "
-            "outcome, distinct from a gated optimistic-lock conflict (m-txtime-write / "
-            "m-bitemp-write affected-row conflict contract)"
+            f"{entity}: locking-mode (ungated) observation-requiring write affected "
+            f"{actual} row(s), expected {expected} (key={dict(key)!r}) — a non-retriable "
+            "stale/consistency outcome, distinct from a gated optimistic-lock conflict "
+            "(m-opt-lock / m-txtime-write / m-bitemp-write affected-row conflict contract)"
         )
 
 
@@ -346,14 +347,14 @@ def classify_mismatch(
 
     The single classification both render-seam call sites share: the flush
     executor ``parallax.snapshot.handle`` injects into the unit of work (every
-    non-temporal expectation and every gated temporal close) and the
+    non-temporal expectation and every temporal close) and the
     conformance engine's standalone conflict-close probe
     (``parallax.conformance.engine._run_conflict_close``, the one caller
     outside production that renders a close directly, never through a
     ``FlushPlan``) — so the two error CLASSES this scope owns (the retriable
     :class:`OptimisticLockConflictError` for a GATED mismatch, the
-    non-retriable :class:`StaleWriteError` for an UNGATED temporal close's
-    mismatch) can never drift between the two callers. ``actual`` is ``None``
+    non-retriable :class:`StaleWriteError` for an UNGATED observation-requiring
+    one) can never drift between the two callers. ``actual`` is ``None``
     exactly when the underlying port reported no count at all — normalized to
     ``0`` (a mismatch either way, since ``expected`` is always positive).
     """

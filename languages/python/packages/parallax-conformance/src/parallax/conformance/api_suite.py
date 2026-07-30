@@ -382,7 +382,7 @@ SKIP_REASONS: Final[dict[str, str]] = {
     ),
     "m-bitemp-write": (
         "the rectangle-split write forms (insert / updateUntil / terminateUntil / plain "
-        "update / plain terminate, the optimistic Valid-Time-discriminator gate, and the "
+        "update / plain terminate, the optimistic observed-in_z gate, and the "
         "TPH/TPCS compositions) are graded end-to-end by the compile/run conformance "
         "lanes. Idiomatic stories now exist for the flagship insert / updateUntil "
         "rectangle split (`-001`), `insertUntil` (`-003`), the plain-update two-way "

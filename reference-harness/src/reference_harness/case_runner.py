@@ -3663,12 +3663,15 @@ def _has_temporal_gate(statement: str, in_z: str) -> bool:
 
     Address and gate are separate facts (`m-bitemp-write` "Address and gate are
     separate"): every close renders the same address in either mode, and an optimistic
-    one APPENDS the observed Transaction-Time start (``and <in_z> = ?``) last. That one
-    trailing predicate is therefore the whole gate signature, matched word-bounded so
-    the address's own ``<out_z> = ?`` is never mistaken for it; a close is then never
-    mis-read as gated on the strength of a longer bind row alone.
+    one APPENDS the observed Transaction-Time start (``and <in_z> = ?``) last. The gate
+    signature is therefore that predicate in TRAILING position — matched word-bounded so
+    the address's own ``<out_z> = ?`` is never mistaken for it, and END-ANCHORED so a
+    close that weaves the observed start into the address instead of appending it is
+    reported UNGATED and fails on arity rather than passing as a well-formed gated
+    close. A close is then never mis-read as gated on the strength of a longer bind row
+    alone, nor on a gate predicate that binds anywhere but last.
     """
-    return re.search(rf"\b{re.escape(in_z)}\s*=\s*\?", statement) is not None
+    return re.search(rf"\b{re.escape(in_z)}\s*=\s*\?\s*\Z", statement) is not None
 
 
 def _conflict_versioned_entity(case: Case) -> Entity | None:

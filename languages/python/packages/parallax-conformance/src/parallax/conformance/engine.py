@@ -3494,6 +3494,29 @@ def _lower_conflict_write(
     return tuple(statements)
 
 
+def _conflict_shortfall_error(
+    concurrency: Concurrency,
+) -> type[opt_lock.OptimisticLockConflictError] | type[opt_lock.StaleWriteError]:
+    """The ONE affected-row shortfall class a conflict case's declared concurrency
+    mode implies (`m-opt-lock` "Classification follows the gate").
+
+    Gate presence is decided by the mode alone, and classification follows the gate:
+    a GATED (optimistic) shortfall is the retriable
+    :class:`~parallax.core.opt_lock.OptimisticLockConflictError`, an UNGATED
+    (locking-mode) one the non-retriable
+    :class:`~parallax.core.opt_lock.StaleWriteError`. Both carry the same
+    ``actual`` count, so a lane that caught either would render the case's
+    ``affectedRows`` observation identically whichever class the write raised —
+    and the case would then assert nothing about the classification. Catching only
+    the implied class lets the other one propagate instead.
+    """
+    return (
+        opt_lock.OptimisticLockConflictError
+        if opt_lock.gates(concurrency)
+        else opt_lock.StaleWriteError
+    )
+
+
 def _run_conflict_write(
     port: DbPort,
     dialect: Dialect,
@@ -3508,12 +3531,11 @@ def _run_conflict_write(
     transaction, an inert Clock (never consumed by a non-temporal write).
     Buffers through the neutral ``Transaction._buffer`` route +
     ``UnitOfWork.observe``; the PRODUCTION flush executor's OWN
-    ``expected_affected`` check raises on a mismatch — the retriable
-    :class:`~parallax.core.opt_lock.OptimisticLockConflictError` for a GATED
-    statement, the non-retriable :class:`~parallax.core.opt_lock.StaleWriteError`
-    for an UNGATED one (a locking-mode versioned DELETE) — and this lane catches
-    either, rendering it as the ``0`` ``affectedRows`` observation the case
-    asserts.
+    ``expected_affected`` check raises on a mismatch, and this lane catches only
+    the class the case's own mode implies (:func:`_conflict_shortfall_error`),
+    rendering it as the ``0`` ``affectedRows`` observation the case asserts. A
+    shortfall classified the other way — an ungated locking-mode versioned DELETE
+    surfacing as an optimistic conflict, say — propagates and fails the case.
 
     ``statements`` (the reported golden-comparable emission) is
     :func:`_lower_conflict_write`'s own SEPARATE, PURE re-lowering of the
@@ -3547,7 +3569,7 @@ def _run_conflict_write(
 
     try:
         affected = database.transact(body, concurrency=concurrency)
-    except (opt_lock.OptimisticLockConflictError, opt_lock.StaleWriteError) as exc:
+    except _conflict_shortfall_error(concurrency) as exc:
         affected = exc.actual
     return statements, affected
 
@@ -3574,6 +3596,10 @@ def _run_conflict_close(
     are the case's EXPLICIT authored fields (`when.write.valid_end` /
     `when.observedTxStart`) — never a shadow-tracker lookup, a conflict case
     tests a KNOWN stale-or-fresh value.
+
+    A zero-row close is caught only as the class the case's own mode implies
+    (:func:`_conflict_shortfall_error`); the other class propagates, so the
+    ``affectedRows`` observation can never absorb a misclassified shortfall.
     """
     row = dict(write_row)
     observed_valid_end = cast("str | None", row.pop("valid_end", None))
@@ -3605,7 +3631,7 @@ def _run_conflict_close(
 
     try:
         affected = database.transact(body, concurrency=concurrency)
-    except (opt_lock.OptimisticLockConflictError, opt_lock.StaleWriteError) as exc:
+    except _conflict_shortfall_error(concurrency) as exc:
         affected = exc.actual
     return (lowered.statement,), affected
 

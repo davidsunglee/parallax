@@ -53,10 +53,9 @@ captures the displayed milestone's edge on every declared axis
 `in_z` as a plain `datetime`) at render time, then re-fetches with each
 declared axis pinned at the transported edge
 (`as_of(transaction_time=edge.transaction_time, valid_time=edge.valid_time)` for a
-bitemporal entity) inside an optimistic transaction, where the observed
-`in_z` gate — joined by the Valid-Time discriminator when the key's current
-rows share an `in_z` — rejects concurrent changes and targets exactly the
-displayed rectangle. Weaker transports fail — the LATEST sentinel re-resolves to whatever
+bitemporal entity) inside an optimistic transaction, where the close's own
+address targets exactly the displayed rectangle and the observed `in_z` gate
+rejects concurrent changes. Weaker transports fail — the LATEST sentinel re-resolves to whatever
 milestone is current at replay time, and a wall-clock instant is racy because
 Transaction-Time instants order by assignment, not commit. Edge transport is
 Reladomo's own mechanism (a detached copy carries its milestone `IN_Z`; the

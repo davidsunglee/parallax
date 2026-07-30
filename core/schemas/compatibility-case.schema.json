@@ -787,7 +787,7 @@
           }
         },
         "affectedRows": {
-          "description": "conflict cases (m-opt-lock), single-attempt form. The number of rows the golden UPDATE must affect after any `given.apply` is applied. A stale optimistic-lock version => 0 (conflict detected); a fresh version => 1 (success). This is the observable form of optimistic-lock conflict detection: `updatedRows != 1` is the conflict signal.",
+          "description": "conflict cases (m-opt-lock), single-attempt form. The number of rows the golden write — a versioned keyed UPDATE or DELETE, or a temporal milestone close — must affect after any `given.apply` is applied. 1 => success (the write applied); 0 => the zero-row shortfall, and the concurrency mode names it: a GATED (optimistic) shortfall is the retriable optimistic-lock conflict, an UNGATED (locking-mode) one the non-retriable stale write an observation-requiring write earns when no gate could have caused the shortfall. This is the observable form of both outcomes: `updatedRows != 1` is the signal, and the mode decides which classification it carries.",
           "type": "integer",
           "minimum": 0
         },

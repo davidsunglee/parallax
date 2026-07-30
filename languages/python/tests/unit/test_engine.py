@@ -21,6 +21,7 @@ import pytest
 from _metamodel_support import Declaration, key, source
 
 from parallax.conformance import case_format, engine, sweep
+from parallax.core import opt_lock
 from parallax.core._formation_profile import form_metamodel
 from parallax.core.base import STRING, InstantError
 from parallax.core.db_port import DbPort, Row
@@ -2383,8 +2384,9 @@ class _ZeroAffectedPort(FakeWritePort):
 def test_run_conflict_case_renders_an_ungated_zero_row_delete_as_a_stale_write() -> None:
     # m-opt-lock-016: a locking-mode versioned DELETE renders no gate, so its
     # zero-row shortfall raises the NON-retriable StaleWriteError rather than an
-    # optimistic conflict. This lane catches either and reports the same
-    # `affectedRows` observation the case asserts.
+    # optimistic conflict. The lane catches ONLY the class the case's own mode
+    # implies, so the case's `affectedRows: 0` observation is reachable exactly
+    # when the write classified its shortfall the way the mode requires.
     port = _ZeroAffectedPort()
     emissions, affected, _table_state = engine.run_conflict_case(
         _load_case("m-opt-lock-016"), "postgres", port
@@ -2399,6 +2401,93 @@ def test_run_conflict_case_renders_a_gated_zero_row_update_as_a_conflict() -> No
         _load_case("m-opt-lock-005"), "postgres", port
     )
     assert affected == 0
+
+
+class _ZeroAffectedClosePort(FakeWritePort):
+    """A port whose golden milestone close reports a zero-row shortfall (the
+    case's own `given.apply` already closed the current row out of band).
+
+    Keyed on the DRIVER spelling of the golden close, so the naive literal
+    `given.apply` statements the same lane applies first still report a row."""
+
+    def execute_write(self, sql: str, binds: Sequence[object]) -> int:
+        super().execute_write(sql, binds)
+        return 0 if sql.startswith("update balance set out_z = %s") else 1
+
+
+def test_run_conflict_case_renders_an_ungated_zero_row_close_as_a_stale_write() -> None:
+    # m-temporal-read-012: the locking-mode close renders its address and no gate,
+    # so its shortfall is the non-retriable stale write — the temporal sibling of
+    # the ungated versioned DELETE above, caught by the same one implied class.
+    _emissions, affected, _table_state = engine.run_conflict_case(
+        _load_case("m-temporal-read-012"), "postgres", _ZeroAffectedClosePort()
+    )
+    assert affected == 0
+
+
+def test_run_conflict_case_renders_a_gated_zero_row_close_as_a_conflict() -> None:
+    _emissions, affected, _table_state = engine.run_conflict_case(
+        _load_case("m-temporal-read-010"), "postgres", _ZeroAffectedClosePort()
+    )
+    assert affected == 0
+
+
+def _always_classifying(stale_error: bool) -> Callable[..., BaseException]:
+    """A ``classify_mismatch`` stand-in that ignores the statement's own gate
+    decision — a write that classified its zero-row shortfall the wrong way."""
+    error_cls = opt_lock.StaleWriteError if stale_error else opt_lock.OptimisticLockConflictError
+
+    def classify(
+        entity: str,
+        key: tuple[tuple[str, object], ...],
+        expected: int,
+        actual: int | None,
+        *,
+        stale_error: bool,
+    ) -> BaseException:
+        return error_cls(entity, key, expected, actual if actual is not None else 0)
+
+    return classify
+
+
+class TestConflictShortfallClassification:
+    """The shortfall class each concurrency mode implies, and the lane's refusal to
+    absorb the other one.
+
+    Both classes carry the same ``actual`` count, so a lane catching either would
+    render `then.affectedRows: 0` identically whichever class the write raised, and a
+    zero-row case would assert nothing about the classification (`m-opt-lock`
+    "Classification follows the gate").
+    """
+
+    def test_optimistic_mode_implies_the_retriable_conflict(self) -> None:
+        assert (
+            engine._conflict_shortfall_error("optimistic")  # pyright: ignore[reportPrivateUsage] - the lane's own classification seam
+            is opt_lock.OptimisticLockConflictError
+        )
+
+    def test_locking_mode_implies_the_non_retriable_stale_write(self) -> None:
+        assert (
+            engine._conflict_shortfall_error("locking")  # pyright: ignore[reportPrivateUsage] - the lane's own classification seam
+            is opt_lock.StaleWriteError
+        )
+
+    def test_a_locking_shortfall_raised_as_a_conflict_propagates(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The regression this pins: reclassifying the ungated locking-mode DELETE's
+        # shortfall back to the retriable conflict. The lane must NOT swallow it into
+        # the same `affectedRows: 0` observation m-opt-lock-016 asserts.
+        monkeypatch.setattr(opt_lock, "classify_mismatch", _always_classifying(stale_error=False))
+        with pytest.raises(opt_lock.OptimisticLockConflictError):
+            engine.run_conflict_case(_load_case("m-opt-lock-016"), "postgres", _ZeroAffectedPort())
+
+    def test_a_gated_shortfall_raised_as_a_stale_write_propagates(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(opt_lock, "classify_mismatch", _always_classifying(stale_error=True))
+        with pytest.raises(opt_lock.StaleWriteError):
+            engine.run_conflict_case(_load_case("m-opt-lock-005"), "postgres", _ZeroAffectedPort())
 
 
 def test_run_conflict_case_attempts_form_scripts_each_attempt_independently() -> None:

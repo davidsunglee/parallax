@@ -11,7 +11,7 @@ unit-of-work planner for the coalescing / mixed-flush / cancellation cases
 row-carried version value refused outright, the derived initial version), the
 inheritance tag derivation/guard/opt-lock composition, and the pk-gen
 ``max``/``increment`` marker lowering. The temporal keyed forms—close-and-chain,
-the rectangle split, the observed-``in_z``/Valid-Time-discriminator gate, and
+the rectangle split, the per-axis close address, the observed-``in_z`` gate, and
 `StaleWriteError` versus `OptimisticLockConflictError`—are pinned in
 ``test_temporal_write_lowering.py``. The predicate-selected and multi-row batch
 forms use the same lowering seam. It refuses a materializing predicate write

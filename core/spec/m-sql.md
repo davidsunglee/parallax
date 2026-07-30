@@ -558,13 +558,18 @@ Postgres DML:
 | Mutation | Golden DML |
 |---|---|
 | **insertUntil** | one `insert into position(cols…) values (?, …, ?)` with Valid Time `[vf, until)` and Transaction Time `[txInstant, infinity)` |
-| **updateUntil** (inactivate) | `update position set out_z = ? where pos_id = ? and out_z = ?` — binds `[txInstant, pk, infinity]` (closes Transaction Time of the current rectangle) |
+| **updateUntil** (inactivate) | `update position set out_z = ? where pos_id = ? and thru_z = ? and out_z = ?` — binds `[txInstant, pk, observedValidEnd, infinity]` (closes Transaction Time of the addressed rectangle) |
 | **updateUntil** (head / middle / tail) | three `insert`s at Transaction Time `[txInstant, infinity)` — `head` Valid Time `[from_z, vf)` old value, `middle` Valid Time `[vf, until)` new value, `tail` Valid Time `[until, infinity)` old value |
 | **terminateUntil** | the inactivate `update` + `head` + `tail` inserts only (**no** `middle`) |
 
-The inactivate `update` is keyed by the **current-on-Transaction-Time** predicate
-(`pk and out_z = ?` / `infinity`), so only the open rectangle is closed; the new
-rows are inserted **after** it. The harness **applies** this DML in order to an
+The inactivate `update` **addresses** the one rectangle it closes: the primary key
+plus one exclusive upper bound **per As-Of Axis** — the observed rectangle's own
+`thru_z`, then the invariant `out_z` / `infinity` that keeps the close on a row
+current on Transaction Time. The key and `out_z` alone would be ambiguous, because
+one key may hold several disjoint Valid-Time rectangles current at the same
+Transaction Time. The new rows are inserted **after** it.
+
+The harness **applies** this DML in order to an
 empty table and asserts the resulting `then.tableState` — the inactivated
 original (`out_z` finite) plus the `head` / `middle` / `tail` rectangles current
 on Transaction Time (`out_z = infinity`) — so the rectangle split is proven against real
@@ -582,10 +587,10 @@ plain `update` is the inactivate `update` plus a `head` **and** a new `tail`; pl
 | Mutation | Golden DML | Binds |
 |---|---|---|
 | **insert** (plain) | `insert into position(cols…) values (?, …, ?)` — fully-current row, Valid Time `[V, infinity)`, Transaction Time `[txInstant, infinity)` | `[…row…, V, infinity, txInstant, infinity]` |
-| **update** (inactivate) | `update position set out_z = ? where pos_id = ? and out_z = ?` | `[txInstant, pk, infinity]` |
+| **update** (inactivate) | `update position set out_z = ? where pos_id = ? and thru_z = ? and out_z = ?` | `[txInstant, pk, observedValidEnd, infinity]` |
 | **update** (head) | `insert into position(cols…) values (?, …, ?)` — old value, Valid Time `[from_z, V)`, Transaction Time `[txInstant, infinity)` | `[…row…, from_z, V, txInstant, infinity]` |
 | **update** (new tail) | `insert into position(cols…) values (?, …, ?)` — new value, Valid Time `[V, infinity)`, Transaction Time `[txInstant, infinity)` | `[…row…, V, infinity, txInstant, infinity]` |
-| **terminate** (inactivate) | `update position set out_z = ? where pos_id = ? and out_z = ?` | `[txInstant, pk, infinity]` |
+| **terminate** (inactivate) | `update position set out_z = ? where pos_id = ? and thru_z = ? and out_z = ?` | `[txInstant, pk, observedValidEnd, infinity]` |
 | **terminate** (head) | `insert into position(cols…) values (?, …, ?)` — old value, Valid Time `[from_z, V)`, Transaction Time `[txInstant, infinity)` | `[…row…, from_z, V, txInstant, infinity]` |
 
 Plain `insert` opens a fully-current rectangle (`thru_z = out_z = infinity`) with
@@ -595,20 +600,20 @@ inactivation gate below does not apply to it). Plain `update` is **three** state
 (inactivate + `head` + new `tail`) and plain `terminate` is **two** (inactivate +
 `head`); neither chains a `middle` or an old-`tail`, so a plain `update` runs the new
 value unbounded to infinity and a plain `terminate` leaves `[V, infinity)` covered by
-no current-on-Transaction-Time row. The inactivate `update` for both is the same
-current-on-Transaction-Time statement as the `*Until` inactivate above, so the optimistic
-gate below applies to it verbatim.
+no current-on-Transaction-Time row. The inactivate `update` for both addresses its
+rectangle exactly as the `*Until` inactivate above does, so the optimistic gate below
+applies to it verbatim.
 
-**Optimistic-mode inactivation (`m-opt-lock` × `m-bitemp-write`).** In optimistic
-mode the inactivate `update` gains the observed-`tx_start` gate; when the key's
-current rows share an `in_z` (distinct Valid-Time windows current at the same
-Transaction Time) the gate also carries the Valid-Time discriminator `from_z = ?`
-to inactivate exactly the observed rectangle:
+**Optimistic-mode inactivation (`m-opt-lock` × `m-bitemp-write`).** The address above
+is what the inactivate `update` renders in **both** modes; optimistic mode only
+**appends** the observed-`tx_start` gate, and that gate binds last:
 
 | Mutation | Golden DML | Binds |
 |---|---|---|
-| **inactivate** (optimistic) | `update position set out_z = ? where pos_id = ? and out_z = ? and from_z = ? and in_z = ?` | `[txInstant, pk, infinity, observedValidStart, observedTxStart]` |
+| **inactivate** (optimistic) | `update position set out_z = ? where pos_id = ? and thru_z = ? and out_z = ? and in_z = ?` | `[txInstant, pk, observedValidEnd, infinity, observedTxStart]` |
 
+`observedValidEnd` is the observed rectangle's own exclusive Valid-Time end and is
+**finite** whenever that rectangle is bounded; only `out_z` is invariantly `infinity`.
 The chained `head` / `middle` / `tail` rows stay ungated `INSERT`s at the fresh
 `in_z`. A zero-row inactivation is a conflict (optimistic) or a stale error
 (locking), never silent.
@@ -1027,7 +1032,7 @@ Under `table-per-hierarchy` the whole family shares one milestone table. Every
 temporal statement that targets **existing** rows — the Transaction-Time-Only **close**
 (`m-txtime-write`) and the bitemporal **inactivation** (`m-bitemp-write`) — carries
 the **tag guard** among the identity predicates, immediately **after** the
-primary-key equality and **before** the current-on-Transaction-Time predicate; every
+primary-key equality and **before** the address's per-axis upper bounds; every
 chained **insert** (the Transaction-Time-Only chain, or the bitemporal `head` / `middle` / `tail`)
 sets the tag column from the subtype's `tagValue` in its Entity Layout position,
 exactly as a non-temporal concrete-subtype insert does (above). There is no temporal
@@ -1040,14 +1045,17 @@ predicates; any gate the temporal write already carries (the optimistic
 |---|---|---|
 | **Transaction-Time-Only insert** | `insert into reading(id, kind, celsius, in_z, out_z) values (?, ?, ?, ?, ?)` | `[<pk>, <tagValue>, …row…, <txInstant>, infinity]` |
 | **Transaction-Time-Only close** (`terminate` / `update` step 1) | `update reading set out_z = ? where id = ? and kind = ? and out_z = ?` | `[<txInstant>, <pk>, <tagValue>, infinity]` |
-| **bitemporal inactivation** (`terminate` / `terminateUntil` / `update` / `*Until` step 1) | `update instrument set out_z = ? where id = ? and kind = ? and out_z = ?` | `[<txInstant>, <pk>, <tagValue>, infinity]` |
+| **bitemporal inactivation** (`terminate` / `terminateUntil` / `update` / `*Until` step 1) | `update instrument set out_z = ? where id = ? and kind = ? and thru_z = ? and out_z = ?` | `[<txInstant>, <pk>, <tagValue>, <observedValidEnd>, infinity]` |
 | **bitemporal head / middle / tail insert** | `insert into instrument(id, kind, price, coupon, from_z, thru_z, in_z, out_z) values (?, …, ?)` | `[<pk>, <tagValue>, …domain row…, <from_z>, <thru_z>, <txInstant>, infinity]` |
 
-The close / inactivation is keyed by the **current-on-Transaction-Time** predicate
-(`out_z = ?` / `infinity`) exactly as its standalone form (the Transaction-Time-Only / bitemporal
-write sequences above); the tag guard is inserted **between** the primary key and
-that predicate — `… where id = ? and kind = ? and out_z = ?` — so it touches only
-the subtype's own milestones in the shared table. The chained inserts write the full
+The close / inactivation addresses its milestone exactly as its standalone form does
+(the Transaction-Time-Only / bitemporal write sequences above) — the primary key plus
+one exclusive upper bound per As-Of Axis, which on a single axis is `out_z` /
+`infinity` alone; the tag guard is inserted **between** the primary key and those
+bounds — `… where id = ? and kind = ? and out_z = ?` for a Transaction-Time-Only
+milestone, `… where id = ? and kind = ? and thru_z = ? and out_z = ?` for a
+bitemporal rectangle — so it touches only the subtype's own milestones in the
+shared table. The chained inserts write the full
 physical row (a milestone always writes the whole row) with the tag column slotted
 after the primary key. The corpus witnesses are `m-inheritance-090` (txtime terminate),
 `-094` (bitemporal terminate), `-096` (bitemporal `terminateUntil`).
@@ -1058,7 +1066,9 @@ Under `table-per-concrete-subtype` each concrete subtype owns its milestone tabl
 carries no tag, so a temporal write is the ordinary standalone milestone-chaining
 sequence (`m-txtime-write` / `m-bitemp-write`) targeting **that subtype's own table** —
 no tag guard, no shared table. The close / inactivation is `update <concrete> set
-out_z = ? where <pk> = ? and out_z = ?`; every chained insert writes `<concrete>`.
+out_z = ? where <pk> = ? and out_z = ?` for a Transaction-Time-Only milestone and
+`… where <pk> = ? and thru_z = ? and out_z = ?` for a bitemporal rectangle; every
+chained insert writes `<concrete>`.
 The witnesses are `m-inheritance-091` / `-095` / `-097`.
 
 #### Temporal abstract reads — per-branch as-of
