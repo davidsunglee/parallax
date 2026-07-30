@@ -219,6 +219,22 @@ def test_child_operation_multi_key_order_by_preserves_declared_sequence() -> Non
     ]
 
 
+def test_child_operation_carries_the_declared_null_placement_of_each_key() -> None:
+    # The declaration's placement rides the bare->dotted rewrite: `notesDescNullsFirst`
+    # authors `first` while `items` leaves placement unauthored, which the accepted
+    # model has already normalized to `last`.
+    placed = _plan(ORDERS, "Order", (_path(_seg("Order.notesDescNullsFirst")),))
+    _target, op = placed.levels[0].child_operation([1])
+    assert isinstance(op, OrderBy)
+    assert [(key.attr, key.direction, key.nulls) for key in op.keys] == [
+        ("parallax.compatibility.OrderNote.resolvedOn", "desc", "first")
+    ]
+    defaulted = _plan(ORDERS, "Order", (_path(_seg("Order.items")),))
+    _target, default_op = defaulted.levels[0].child_operation([1])
+    assert isinstance(default_op, OrderBy)
+    assert default_op.keys[0].nulls == "last"
+
+
 def test_child_operation_has_no_order_by_when_relationship_declares_none() -> None:
     plan = _plan(ORDERS, "Order", (_path(_seg("Order.statuses")),))
     _target, op = plan.levels[0].child_operation([1])

@@ -187,14 +187,18 @@ RelationshipJoin
 UnresolvedRelationshipOrder
   attribute: nonempty target-local Attribute name
   direction: SortDirection
+  nulls: NullPlacement
 
 RelationshipOrder
   attribute: AttributeIdentity
   direction: SortDirection
+  nulls: NullPlacement
 ```
 
 `SortDirection = Ascending | Descending`; omission in an authoring frontend
-normalizes to Ascending before the Unresolved boundary. The source Attribute
+normalizes to Ascending before the Unresolved boundary.
+`NullPlacement = NullsFirst | NullsLast` is independent of direction; omission
+normalizes to NullsLast before that same boundary. The source Attribute
 Identity belongs to the declaring Entity. A target-local ordering name repeats
 no Entity Reference because the relationship target supplies its scope.
 

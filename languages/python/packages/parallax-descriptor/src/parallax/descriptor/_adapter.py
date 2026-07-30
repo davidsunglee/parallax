@@ -40,6 +40,7 @@ from parallax.core.metamodel import (
     InheritanceStrategy,
     Multiplicity,
     NestedValueObjectOccurrenceDeclaration,
+    NullPlacement,
     PersistenceMode,
     PkGeneration,
     PrimaryKey,
@@ -80,6 +81,11 @@ _CARDINALITIES: Final[Mapping[_records.RelationshipCardinality, Cardinality]] = 
 _DIRECTIONS: Final[Mapping[str, SortDirection]] = {
     "asc": SortDirection.ASCENDING,
     "desc": SortDirection.DESCENDING,
+}
+
+_PLACEMENTS: Final[Mapping[str, NullPlacement]] = {
+    "first": NullPlacement.NULLS_FIRST,
+    "last": NullPlacement.NULLS_LAST,
 }
 
 _MULTIPLICITIES: Final[Mapping[_records.Multiplicity, Multiplicity]] = {
@@ -291,7 +297,8 @@ def _order_by(
     terms: tuple[_records.OrderByTerm, ...],
 ) -> tuple[UnresolvedRelationshipOrder, ...]:
     return tuple(
-        UnresolvedRelationshipOrder(term.attr, _DIRECTIONS[term.direction]) for term in terms
+        UnresolvedRelationshipOrder(term.attr, _DIRECTIONS[term.direction], _PLACEMENTS[term.nulls])
+        for term in terms
     )
 
 

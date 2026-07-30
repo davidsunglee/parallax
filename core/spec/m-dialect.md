@@ -238,8 +238,10 @@ set-returning unnest is available.
 
 ### `NULL` ordering
 
-An ordering key carries an authored **Null Placement** alongside its direction (the
-operation Sort Key's `nulls` member, `m-op-algebra`); an omitted placement is `last`,
+An ordering key carries an authored **Null Placement** alongside its direction —
+the operation Sort Key's `nulls` member (`m-op-algebra`) and the relationship
+declaration's (`m-relationship`), which lower through this one seam; an omitted
+placement is `last`,
 the canonical dialect-independent default in both directions (`m-deep-fetch`). The two
 dialects reach a requested placement differently, because their native `ORDER BY`
 `NULL` placement diverges:
@@ -268,7 +270,10 @@ plain `t0.c [asc|desc]` term in both dialects under either placement, because th
 are no `NULL`s to place. The compatibility suite proves the compensating and native
 forms yield the identical observable order (case `m-deep-fetch-012` for the
 `asc`/`last` default; `m-op-algebra-035` through `-038` for all four combinations on
-an operation Sort Key).
+an operation Sort Key, and `m-deep-fetch-021` through `-023` for the three a
+relationship declaration can author — canonical descriptor form omits a default, so
+`asc`/`last` on a declaration is exactly the placement-free spelling `m-deep-fetch-012`
+already witnesses).
 
 ## Decision points needed now
 

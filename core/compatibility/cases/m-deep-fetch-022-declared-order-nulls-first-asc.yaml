@@ -1,0 +1,66 @@
+# Deep fetch, DECLARED relationship ordering ASCENDING with `nulls: first` over a
+# NULLABLE key — the placement that is nobody's default, proven on BOTH dialects
+# (m-deep-fetch "Ordered to-many children" + m-dialect NULL ordering).
+#
+# `Order.notesAscNullsFirst` orders notes by the nullable `resolvedOn` ascending but
+# leads with the UNRESOLVED ones, mirroring the canonical Nulls Last default, so the
+# dialect that compensates flips: Postgres treats NULL as largest and must spell an
+# explicit `asc nulls first` suffix, while MariaDB treats it as smallest and already
+# leads with NULLs on `asc`, emitting nothing. Its declaration omits `direction`
+# entirely and carries only `nulls`, which is what makes placement independent of
+# direction observable on the wire. Order 1's bucket therefore starts on the unresolved
+# note 52, which the canonical default would trail (m-deep-fetch-012 over `shippedOn`);
+# order 42's bucket is fully resolved, so it is the no-NULL contrast and sorts the same
+# way under either placement. Both buckets reorder against insertion/id order, so a
+# dropped or mis-placed ORDER BY fails rather than passing by coincidence, and the
+# ordering oracle derives the expectation from the declared key and placement rather
+# than from the authored graph.
+model: models/orders.yaml
+tags: [m-deep-fetch, m-op-list, m-dialect, orderBy, ordering, nulls, nullable, relationship, slice-managed-1]
+shape: read
+when:
+  targetEntity: Order
+  operation:
+    deepFetch:
+      operand:
+        in:
+          attr: Order.id
+          values: [1, 42]
+      paths:
+        - { segments: [{ rel: Order.notesAscNullsFirst }] }
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0 where t0.id in (?, ?)
+        mariadb: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0 where t0.id in (?, ?)
+      binds: [1, 42]
+    - sql:
+        postgres: select t0.id, t0.order_id, t0.body, t0.resolved_on from order_note t0 where t0.order_id in (?, ?) order by t0.resolved_on asc nulls first
+        mariadb: select t0.id, t0.order_id, t0.body, t0.resolved_on from order_note t0 where t0.order_id in (?, ?) order by t0.resolved_on asc
+      binds: [1, 42]
+  referenceSql: select id, name, sku, qty, price, active, ordered_on from orders where id in (1, 42)
+  graph:
+    Order:
+      - id: 1
+        name: Ada
+        sku: A-100
+        qty: 5
+        price: 10.50
+        active: true
+        ordered_on: 2024-01-05
+        notesAscNullsFirst:
+          - { id: 52, order_id: 1, body: address check, resolved_on: null }
+          - { id: 53, order_id: 1, body: fragile handling, resolved_on: 2024-01-15 }
+          - { id: 51, order_id: 1, body: gift wrap, resolved_on: 2024-03-01 }
+      - id: 42
+        name: Grace
+        sku: A-999
+        qty: 30
+        price: 99.99
+        active: true
+        ordered_on: 2024-06-30
+        notesAscNullsFirst:
+          - { id: 54, order_id: 42, body: expedite, resolved_on: 2024-04-04 }
+          - { id: 56, order_id: 42, body: insured, resolved_on: 2024-05-05 }
+          - { id: 55, order_id: 42, body: signature required, resolved_on: 2024-06-06 }
+  roundTrips: 2

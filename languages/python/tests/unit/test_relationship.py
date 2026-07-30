@@ -37,6 +37,7 @@ from parallax.core.metamodel import (
     IssueCode,
     Metamodel,
     MetamodelIssue,
+    NullPlacement,
     PersistenceMode,
     PrimaryKey,
     RelationshipDeclaration,
@@ -698,6 +699,70 @@ def test_an_authored_ordering_without_a_direction_is_ascending() -> None:
         _facet(*_orders((ordered,))), RelationshipIdentity(_ORDER, "items")
     ).order_by
     assert term.direction is SortDirection.ASCENDING
+
+
+def test_an_authored_ordering_without_a_placement_is_nulls_last() -> None:
+    ordered = _defining(
+        _ORDER,
+        "items",
+        target=_ITEM,
+        target_attribute="orderId",
+        order_by=(UnresolvedRelationshipOrder("sku", SortDirection.DESCENDING),),
+    )
+    (term,) = _direction(
+        _facet(*_orders((ordered,))), RelationshipIdentity(_ORDER, "items")
+    ).order_by
+    assert term.nulls is NullPlacement.NULLS_LAST
+
+
+def test_an_authored_nulls_first_placement_survives_compilation_on_either_direction() -> None:
+    ordered = _defining(
+        _ORDER,
+        "items",
+        target=_ITEM,
+        target_attribute="orderId",
+        order_by=(
+            UnresolvedRelationshipOrder("sku", nulls=NullPlacement.NULLS_FIRST),
+            UnresolvedRelationshipOrder("id", SortDirection.DESCENDING, NullPlacement.NULLS_FIRST),
+        ),
+    )
+    assert _direction(
+        _facet(*_orders((ordered,))), RelationshipIdentity(_ORDER, "items")
+    ).order_by == (
+        RelationshipOrder(
+            AttributeIdentity(_ITEM, "sku"), SortDirection.ASCENDING, NullPlacement.NULLS_FIRST
+        ),
+        RelationshipOrder(
+            AttributeIdentity(_ITEM, "id"), SortDirection.DESCENDING, NullPlacement.NULLS_FIRST
+        ),
+    )
+
+
+def test_a_reverse_direction_ordering_keeps_its_authored_placement() -> None:
+    to_one = _defining(
+        _ITEM,
+        "order",
+        cardinality=Cardinality.MANY_TO_ONE,
+        join_source=AttributeIdentity(_ITEM, "orderId"),
+        target=_ORDER,
+        target_attribute="id",
+    )
+    ordered = _reverse(
+        _ORDER,
+        "items",
+        peer=_ITEM,
+        peer_name="order",
+        order_by=(
+            UnresolvedRelationshipOrder("sku", SortDirection.DESCENDING, NullPlacement.NULLS_FIRST),
+        ),
+    )
+    assert _direction(
+        _facet(*_orders((ordered,), (to_one,))), RelationshipIdentity(_ORDER, "items")
+    ).order_by == (
+        RelationshipOrder(
+            AttributeIdentity(_ITEM, "sku"), SortDirection.DESCENDING, NullPlacement.NULLS_FIRST
+        ),
+    )
 
 
 def test_an_ordering_term_naming_no_target_attribute_is_rejected() -> None:

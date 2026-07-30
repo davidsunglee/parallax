@@ -92,6 +92,7 @@ from parallax.core.metamodel import (
     EntityIdentity,
     EntityMetadata,
     Metamodel,
+    NullPlacement,
     RelativeEntityReference,
     SortDirection,
     TemporalDimension,
@@ -585,6 +586,11 @@ _SORT_DIRECTIONS: Final[Mapping[SortDirection, Literal["asc", "desc"]]] = {
     SortDirection.DESCENDING: "desc",
 }
 
+_NULL_PLACEMENTS: Final[Mapping[NullPlacement, Literal["first", "last"]]] = {
+    NullPlacement.NULLS_FIRST: "first",
+    NullPlacement.NULLS_LAST: "last",
+}
+
 
 def _order_keys(direction: RelationshipMetadata, qualifier: str) -> tuple[OrderKey, ...]:
     """The declared relationship ``orderBy``, canonicalized to qualified `OrderKey`s
@@ -593,12 +599,15 @@ def _order_keys(direction: RelationshipMetadata, qualifier: str) -> tuple[OrderK
     name alone) but keeps the reference grammar's shape.
 
     This is the translation boundary between the metamodel's Sort Direction and
-    the operation algebra's own wire vocabulary: an accepted ordering term always
-    carries a direction (an omitted one normalizes to ascending at formation),
-    while an authored sort key may still leave its own unset."""
+    Null Placement and the operation algebra's own wire vocabulary: an accepted
+    ordering term always carries both (an omitted direction normalizes to
+    ascending and an omitted placement to nulls-last at formation), while an
+    authored sort key may still leave either of its own unset."""
     return tuple(
         OrderKey(
-            attr=f"{qualifier}.{term.attribute.name}", direction=_SORT_DIRECTIONS[term.direction]
+            attr=f"{qualifier}.{term.attribute.name}",
+            direction=_SORT_DIRECTIONS[term.direction],
+            nulls=_NULL_PLACEMENTS[term.nulls],
         )
         for term in direction.order_by
     )

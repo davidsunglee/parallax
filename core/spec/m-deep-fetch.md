@@ -60,7 +60,8 @@ inspection.
 ### Ordered to-many children
 
 A to-many relationship MAY declare an `orderBy` — a non-empty list of
-`{attr, direction}` keys (`direction ∈ {asc, desc}`, default `asc`). When it
+`{ attribute, direction?, nulls? }` keys (`direction ∈ {asc, desc}`, default
+`asc`; `nulls ∈ {first, last}`, default `last`). When it
 does, the per-level child query for that relationship **MUST** emit `ORDER BY`
 over the declared keys, in declared sequence, each rendered with its declared
 direction, and the in-memory-assembled to-many list **MUST** preserve that
@@ -70,14 +71,19 @@ order. A relationship with no declared `orderBy` leaves child order
 Ordering is a property of the relationship, not of the query: every deep fetch
 that materializes the relationship emits the same `ORDER BY`. Keys are evaluated
 left to right — the first key is primary, later keys break ties — so a multi-key
-`orderBy` with mixed directions (`[{score, desc}, {name, asc}]`) sorts by `score`
-descending and breaks ties by `name` ascending.
+`orderBy` with mixed directions
+(`[{ attribute: score, direction: desc }, { attribute: name }]`) sorts by
+`score` descending and breaks ties by `name` ascending.
 
-A `NULL` in an `orderBy` key sorts **last** on that key, in both `asc` and
-`desc` — the canonical, dialect-independent rule. The dialects' native `NULL`
-placement differs, so the golden SQL achieves this per dialect (the `m-dialect`
-seam), but the observable order is the same everywhere: non-`NULL` values in the
-declared direction, then `NULL`s.
+A `NULL` in an `orderBy` key sorts where the key's **Null Placement** asks, and
+an omitted placement sorts it **last** on that key in both `asc` and `desc` —
+the canonical, dialect-independent default. Placement is authored per key and is
+independent of direction, so the four direction/placement pairs are four
+distinct observable orders. The dialects' native `NULL` placement differs, so
+the golden SQL achieves the requested placement per dialect (the `m-dialect`
+seam), but the observable order is the same everywhere: under `last`, non-`NULL`
+values in the declared direction, then `NULL`s; under `first`, `NULL`s, then
+the non-`NULL` values in the declared direction.
 
 ## Polymorphic and narrowed deep fetch
 

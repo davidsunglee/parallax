@@ -36,6 +36,7 @@ from parallax.core.metamodel import (
     Metamodel,
     Multiplicity,
     NestedValueObjectMetadata,
+    NullPlacement,
     PersistenceMode,
     PkGeneration,
     PrimaryKey,
@@ -227,6 +228,8 @@ def _order_by(term: RelationshipOrder) -> dict[str, object]:
     out: dict[str, object] = {"attribute": term.attribute.name}
     if term.direction is SortDirection.DESCENDING:
         out["direction"] = "desc"
+    if term.nulls is NullPlacement.NULLS_FIRST:
+        out["nulls"] = "first"
     return out
 
 

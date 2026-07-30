@@ -126,6 +126,7 @@
     "NestedValueObjectMetadata",
     "NestedValueObjectOccurrenceDeclaration",
     "NotPrimaryKey",
+    "NullPlacement",
     "PRIMARY_KEY_MISSING",
     "PRIMARY_KEY_MULTIPLE",
     "PersistenceMode",

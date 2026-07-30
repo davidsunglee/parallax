@@ -1700,23 +1700,25 @@ def _materialize_tpcs_family_variant(
 
 def _sorted_by_order_keys(
     rows: list[dict[str, Any]],
-    sort_spec: list[tuple[str, bool]],
+    sort_spec: list[tuple[str, bool, bool]],
 ) -> list[dict[str, Any]]:
-    """Return *rows* sorted by *sort_spec* — a list of ``(column, descending)``
-    pairs evaluated left to right. Stable: rows tied on every key keep input order.
-    NULL values sort LAST on every key, regardless of ``asc``/``desc`` (m-navigate policy).
+    """Return *rows* sorted by *sort_spec* — a list of
+    ``(column, descending, nulls_first)`` triples evaluated left to right. Stable:
+    rows tied on every key keep input order. A key's Null Placement is
+    independent of its direction (m-deep-fetch), so ``nulls_first`` is not derived
+    from ``descending``; an authored placement is what the caller passes and an
+    omitted one arrives already defaulted to nulls-last.
     """
 
     def compare(row_a: dict[str, Any], row_b: dict[str, Any]) -> int:
-        for column, descending in sort_spec:
+        for column, descending, nulls_first in sort_spec:
             left, right = row_a[column], row_b[column]
             if left == right:
                 continue
-            # NULLs sort last on every key, regardless of asc/desc (m-navigate policy).
             if left is None:
-                return 1
+                return -1 if nulls_first else 1
             if right is None:
-                return -1
+                return 1 if nulls_first else -1
             ordered = -1 if left < right else 1
             return -ordered if descending else ordered
         return 0
@@ -1737,9 +1739,10 @@ def _assert_child_ordering(
     equal those rows sorted by the declared keys/directions. The harness derives
     the expected order from the model (an independent oracle) rather than trusting
     the authored ``then.graph`` order. A relationship with no ``orderBy`` is
-    skipped (its order is unspecified). NULL values sort LAST on every key,
-    regardless of ``asc``/``desc`` (the canonical m-navigate policy); two NULLs are equal
-    and fall through to the next key. Residual ties beyond the declared keys keep
+    skipped (its order is unspecified). NULL values sort where the key's authored
+    ``nulls`` asks, and where it is omitted they sort LAST — the canonical
+    placement in either direction (m-deep-fetch); two NULLs are equal and fall
+    through to the next key. Residual ties beyond the declared keys keep
     their DB order (the sort is stable), which the contract permits. Every
     declared ``orderBy`` key MUST be present in the child query's projection; a
     key absent from the returned rows raises a clean ``CaseFailure`` (the order
@@ -1752,6 +1755,7 @@ def _assert_child_ordering(
             (
                 _column_of(step.child_entity, key["attribute"]),
                 key.get("direction", "asc") == "desc",
+                key.get("nulls", "last") == "first",
             )
             for key in step.order_by
         ]
@@ -1759,7 +1763,7 @@ def _assert_child_ordering(
         for parent_key, rows in bucket.items():
             if not rows:
                 continue
-            missing = [column for column, _ in sort_spec if column not in rows[0]]
+            missing = [column for column, _, _ in sort_spec if column not in rows[0]]
             if missing:
                 raise CaseFailure(
                     f"{case_name}: {step.rel_ref} orderBy column(s) {missing!r} are "
@@ -1768,7 +1772,7 @@ def _assert_child_ordering(
                 )
             expected = _sorted_by_order_keys(rows, sort_spec)
             if rows != expected:
-                cols = [column for column, _ in sort_spec]
+                cols = [column for column, _, _ in sort_spec]
                 got = [[row[c] for c in cols] for row in rows]
                 want = [[row[c] for c in cols] for row in expected]
                 raise CaseFailure(
