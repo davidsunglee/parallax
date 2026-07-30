@@ -341,9 +341,11 @@ elements remain distinct.
 
 **Every** read a case asserts carries a **result form** — the **object lane**
 (**instance-form**) or the **values lane** (**row-form**) of `m-sql`'s *Read result form*
-— and that form fixes the read's Document-slot selection (`m-sql`, *Read
+— and that form fixes the read's **default** Document-slot selection (`m-sql`, *Read
 projection*: instance-form projects every applicable top-level Value Object
-`Document` slot; row-form omits those slots).
+`Document` slot; row-form omits those slots). Exactly one internal read widens that
+default without changing lane — the materialized-predicate-write resolving read
+below, whose need is decided by the write it serves.
 The form follows the read's **nature**, and a case expresses that nature in one of two
 ways, keyed on **where** the read is asserted — never on a bare member name alone:
 
@@ -380,10 +382,15 @@ ways, keyed on **where** the read is asserted — never on a bare member name al
   - The **internal materialized-predicate-write resolving read** — the "materializing
     find" a set-based versioned / temporal predicate write consumes to plan its per-row
     DML, resolving each matched row to its pk and gate values with **no instance
-    constructed** (`m-sql`, ADR 0014) — is the **sole row-form** (values lane) step read;
-    it omits `Document` slots (a reassigned value-object document comes from the write instruction,
-    not the read). A **`distinct` / grouped concurrency-witness read** is likewise a
-    projection over the values lane (`m-sql`), constructing no instance.
+    constructed** (`m-sql`, ADR 0014) — is the **sole row-form** (values lane) step read.
+    It projects only the `Document` slots the write it serves needs: a **temporal**
+    target's resolve projects **every** declared one, because the per-row observation it
+    records is a complete Predecessor Row (`m-unit-work`); a **versioned** target's
+    resolve retains only the observed version, so it projects only the documents its own
+    assignments compare against, and none at all for a `delete`. A reassigned document
+    still comes from the write instruction, never from the read. A **`distinct` / grouped
+    concurrency-witness read** is likewise a projection over the values lane (`m-sql`),
+    constructing no instance.
 
 Row-form is **not a developer surface** — the idiomatic find API is instance-form
 (results always materialize). Row-form is the internal / conformance consumption lane
@@ -391,21 +398,27 @@ Row-form is **not a developer surface** — the idiomatic find API is instance-f
 results — `m-agg`; a `distinct` / grouped concurrency-witness read is likewise a
 projection over the values lane, `m-sql`). The form is **structural intent** an adapter's
 `compile` MAY consume, exactly like `when.uow.concurrency`; it needs no schema field and
-no case edit. The supplier result-form witness is the **sole Document-slot / value-object
-projection** place the two result FORMS **diverge** — a scenario whose managed find
-projects the `address` document (instance-form) while its predicate-write resolving
-read omits it (row-form). It is not the forms' only divergence overall: the
+no case edit. The two forms' Document-slot divergence is witnessed at **case** level, by
+the `then.rows` reads over `customer`, which omit `address`, against the `then.graph`
+reads of that same model, which project it. The supplier witness pins the
+**widening** instead: an
+audit-only close's resolving read projects `address` even though the close copies no
+payload, because the observation it records is a complete Predecessor Row. No scenario
+step yet witnesses the row-form default on a value-object-bearing target; that would
+be a materializing predicate write over `subscriber`, the **versioned**
+value-object-bearing model, whose observation retains only a version.
+The Document-slot delta is not the forms' only divergence overall: the
 abstract-target per-variant materialization narrowing established above (*Read
 targeting*, `then.graph`'s per-variant node shape vs `then.rows`'s concrete-superset
 row) is the other — a graph-assembly-time shape difference over the same
-non-Document Position Layout, not a Document projection difference. It is **no
-longer the sole value-object-bearing step read**, now that the lifecycle-action
-`load` / first-`access` witnesses carry value-object-bearing instance-form step reads
-(each projecting its read entity's own `address` Document slot). Every other entity
-read at a step (`balance`, `position`, `account`, `order_item`, and the rest) declares no
-value object, so instance-form and row-form project the same columns there: the
-classification changes no existing golden and pins the answer for the value-object-bearing
-step reads.
+non-Document Position Layout, not a Document projection difference. The supplier
+witness is **not** the sole value-object-bearing step read either, now that the
+lifecycle-action `load` / first-`access` witnesses carry value-object-bearing
+instance-form step reads (each projecting its read entity's own `address` Document
+slot). Every other entity read at a step (`balance`, `position`, `account`,
+`order_item`, and the rest) declares no value object, so instance-form and row-form
+project the same columns there: the classification pins the answer for the
+value-object-bearing step reads and leaves every other golden untouched.
 
 #### Milestone-set graphs (`then.graphs`)
 
@@ -770,12 +783,16 @@ than inferred from golden SQL. It MUST include identity, an explicit observed
 optimistic version when present, and every current temporal axis boundary. An
 assignment-bearing update also includes the current scalar or whole value-object
 document of every assigned field, so per-row equality/no-op elimination is
-possible. A temporal mutation that chains a successor or preserves a Valid-Time
-head/tail includes every current non-milestone scalar payload column and every
-top-level value-object document column that those rows carry forward. It does not
-project output generated by the framework — for example a bumped version, fresh
-Transaction-Time instant/open bound, or inheritance discriminator. A non-trivial
-scenario read MAY carry `referenceSql`, with the same string-or-dialect-map shape
+possible. A **temporal** target's resolve additionally includes every current
+non-milestone scalar payload column and every top-level value-object document
+column, on **every** verb it reaches — the close-only `terminate` that chains
+nothing included — because the per-row observation it records is a complete
+Predecessor Row (`m-unit-work`). That same observation is what a chained
+successor, or a preserved Valid-Time head or tail, reads its carried-forward
+values from. It does not project output generated by the framework — for example
+a bumped version, fresh Transaction-Time instant/open bound, or inheritance
+discriminator. A non-trivial scenario read MAY carry `referenceSql`,
+with the same string-or-dialect-map shape
 as `then.referenceSql`; it is self-contained (rather than reusing golden binds)
 and must agree with its golden rows as the third oracle.
 

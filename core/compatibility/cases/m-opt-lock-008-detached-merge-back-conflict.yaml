@@ -5,11 +5,10 @@
 # subject — but no case crosses the two. m-opt-lock-005 is a plain in-transaction read-then-
 # write conflict; m-detach-002 is a merge-back with NO concurrent writer. This pins the
 # composition: the version the merge-back gates on is the one SNAPSHOTTED AT
-# DETACHMENT, and a concurrent writer has since advanced it. A conflict is
-# intrinsically optimistic (R4), and gate presence follows the declared
-# concurrency mode alone (m-opt-lock), so the case declares `optimistic` — the
-# `locking` default would render no gate, and an ungated merge-back would
-# overwrite the concurrent writer instead of detecting it.
+# DETACHMENT, and a concurrent writer has since advanced it. This scenario requires
+# optimistic mode because only that mode renders the observed-version gate needed to
+# detect the concurrent writer: an offline detached copy holds no locking-mode shared
+# lock, so an ungated merge-back would silently overwrite that writer instead.
 #
 # Account id 1 (Ada) was detached at version 1. Before the merge-back flushes, a
 # concurrent transaction commits (the `precondition`: balance 888.00, version 2).

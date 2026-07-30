@@ -33,10 +33,7 @@ from parallax.core.metamodel import (
 from parallax.core.unit_work import (
     ANY_COUNT,
     MAX_PLUS_ONE,
-    MISSING_TARGET,
     NEW_LINEAGE,
-    OPTIMISTIC_CONFLICT,
-    STALE_WRITE,
     UNGATED,
     UNVERSIONED,
     Concurrency,
@@ -55,10 +52,10 @@ from parallax.core.unit_work import (
     PredicateTarget,
     PredicateWrite,
     SelfIncrement,
-    Shortfall,
     Versioned,
     VersionGate,
     WriteObservation,
+    shortfall_for,
 )
 from parallax.core.unit_work.planned import PlannedWrite as PlannedStep
 from parallax.snapshot.handle._family import (
@@ -128,7 +125,7 @@ def finalize_item(
     settled = _concurrency(version_attr, observed_version, concurrency)
     key_attributes = tuple(attribute.identity for attribute in family_primary_key(meta, entity))
     target = _key_target(entity, key_attributes, instruction.rows)
-    affected_rows = ExactCount(expected=len(target.key_values), on_shortfall=_shortfall(settled))
+    affected_rows = ExactCount(expected=len(target.key_values), on_shortfall=shortfall_for(settled))
     if instruction.mutation == "delete":
         return (
             PlannedDelete(
@@ -282,21 +279,6 @@ def _concurrency(
     return Versioned(
         gate=VersionGate(attribute=version_attr.identity, observed_version=observed_version)
     )
-
-
-def _shortfall(settled: NonTemporalConcurrency) -> Shortfall:
-    """How a shortfall against an addressed write's expected effect classifies.
-
-    Classification follows the settled GATE, never the verb (ADR 0044/0047): a
-    gated shortfall is the detected lost update a re-read could resolve, while an
-    ungated one on an observation-requiring write is the non-retriable stale
-    outcome — no gate could have caused it, so it is a consistency violation. An
-    observation-free keyed write observed nothing, so its shortfall says only
-    that the addressed rows are not there.
-    """
-    if not isinstance(settled, Versioned):
-        return MISSING_TARGET
-    return OPTIMISTIC_CONFLICT if isinstance(settled.gate, VersionGate) else STALE_WRITE
 
 
 def _members(meta: Metamodel, entity: EntityMetadata) -> _Members:

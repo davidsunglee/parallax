@@ -1564,7 +1564,7 @@ def _lower_find(
     slot 4 included); for a value-object-free entity row-form and instance-form
     are byte-identical, so the default only matters to VO-bearing targets.
     A materializing predicate write's OWN internal resolving read is ROW-form
-    (`m-value-object-047` pins the VO-omission contrast) but is compiled by
+    (`m-value-object-047` pins its need-driven Document projection) but is compiled by
     the materializing predicate-write resolve in `parallax.snapshot.handle`
     directly, never through this function — the RUN lane reports its ACTUAL
     executed SQL via a capturing port
@@ -3543,6 +3543,26 @@ def _conflict_shortfall_error(
     )
 
 
+def _conflict_attempt_affected(
+    database: handle.Database,
+    concurrency: Concurrency,
+    body: Callable[[handle.Transaction], int],
+) -> int:
+    """One conflict attempt's affected-row observation: what ``body`` reports when
+    the write lands, or the ``actual`` count carried by the ONE shortfall class the
+    declared mode implies (:func:`_conflict_shortfall_error`).
+
+    Both conflict lanes — the non-temporal keyed write and the temporal close —
+    make this exact guard, so it lives here once rather than beside each ``body``:
+    a shortfall classified the other way propagates and fails the case instead of
+    being absorbed into an ``affectedRows`` observation that cannot tell them apart.
+    """
+    try:
+        return database.transact(body, concurrency=concurrency)
+    except _conflict_shortfall_error(concurrency) as exc:
+        return exc.actual
+
+
 def _run_conflict_write(
     port: DbPort,
     dialect: Dialect,
@@ -3593,11 +3613,7 @@ def _run_conflict_write(
         )
         return 1  # the expectation machinery already verified this on success (m-opt-lock)
 
-    try:
-        affected = database.transact(body, concurrency=concurrency)
-    except _conflict_shortfall_error(concurrency) as exc:
-        affected = exc.actual
-    return statements, affected
+    return statements, _conflict_attempt_affected(database, concurrency, body)
 
 
 def _run_conflict_close(
@@ -3665,11 +3681,7 @@ def _run_conflict_close(
             )
         return affected
 
-    try:
-        affected = database.transact(body, concurrency=concurrency)
-    except _conflict_shortfall_error(concurrency) as exc:
-        affected = exc.actual
-    return (lowered.statement,), affected
+    return (lowered.statement,), _conflict_attempt_affected(database, concurrency, body)
 
 
 def run_conflict_case(

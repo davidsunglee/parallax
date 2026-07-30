@@ -170,7 +170,7 @@
   ],
   "allOf": [
     {
-      "description": "A temporal optimistic close records `when.at` as the finite Transaction-Time close instant and requires `when.observedTxStart`, the observed Transaction-Time start (`in_z`) used by the optimistic gate. Locking-mode closes omit the observation.",
+      "description": "A temporal optimistic close records `when.at` as the finite Transaction-Time close instant and requires `when.observedTxStart`, the observed Transaction-Time start (`in_z`) the optimistic gate binds. Every close is observation-backed in both modes; a locking-mode close omits only the GATE, so it needs no authored `observedTxStart`.",
       "if": {
         "required": ["when"],
         "properties": {
@@ -253,7 +253,7 @@
           "default": false
         },
         "apply": {
-          "description": "conflict / temporal-conflict cases (m-opt-lock) only. An ordered list of out-of-band naive statement entries the harness applies verbatim AFTER the fixtures load and BEFORE the golden UPDATE, simulating a concurrent transaction that mutated the row (e.g. bumping the optimistic-lock version) so the golden UPDATE's stale-version predicate now matches zero rows. Each entry is a `{sql, binds}` statement whose `sql` is a plain string (dialect-agnostic naive SQL, run on every dialect). Absent for the success case (the version is fresh, so the UPDATE affects one row).",
+          "description": "conflict / temporal-conflict cases (m-opt-lock) only. An ordered list of out-of-band naive statement entries the harness applies verbatim AFTER the fixtures load and BEFORE the golden write, simulating a concurrent transaction that mutated or removed the row so the golden write reaches fewer rows than it addressed. Under `optimistic` mode the shortfall is a conflict the rendered gate detected; under `locking` mode the golden renders no gate and the same shortfall is a stale write. Each entry is a `{sql, binds}` statement whose `sql` is a plain string (dialect-agnostic naive SQL, run on every dialect). Absent for the success case (nothing intervened, so the write affects the row it addressed).",
           "$ref": "#/$defs/naiveStatements"
         },
         "fault": {
@@ -658,7 +658,7 @@
             "required": ["statements", "affectedRows", "write"],
             "properties": {
               "statements": {
-                "description": "This attempt's golden UPDATE, as an ordered list of `{sql, binds}` statement entries (dialect-keyed map form).",
+                "description": "This attempt's golden write statement(s), as an ordered list of `{sql, binds}` entries (dialect-keyed map form).",
                 "$ref": "#/$defs/goldenStatements"
               },
               "write": {

@@ -212,11 +212,14 @@ rather than left true by omission:
    MUST NOT take a lock, populate an identity cache, or emit **any** statement —
    there is no per-value-object fetch, and `m-deep-fetch` never applies. This
    whole-document projection is the owner's applicable Storage Layout
-   `Document` slot (`m-sql`, *Read projection*): it is selected **only on an
-   instance-form read** — one that materializes instances (`then.graph` /
+   `Document` slot (`m-sql`, *Read projection*): it is selected on every
+   **instance-form read** — one that materializes instances (`then.graph` /
    `then.graphs`) — and a plain row-form value
    read (`then.rows`) omits it. Because materialization requires the document, an
-   instance-form read of a value-object-bearing entity always projects it.
+   instance-form read of a value-object-bearing entity always projects it. A
+   row-form read projects it only where its consumer needs the document — the
+   internal materialized-predicate-write resolving read, whose observation on a
+   temporal target retains the whole predecessor row (`m-unit-work`).
 3. **No reverse getters.** A value object has no identity and holds no reference
    back to its owner; a reverse (value-object → owner) getter MUST NOT exist.
 4. **Not a navigation or deep-fetch target.** A `deepFetch` path and a

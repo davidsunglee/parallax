@@ -148,8 +148,11 @@ For each physical branch, SQL selects from the layout values as follows:
    `targetEntity` is abstract, regardless of whether a `narrow` reduces the
    effective set to one concrete. A concrete target uses the same slot for its
    tag predicate but does not project it.
-3. Every applicable top-level Value Object `Document` slot is projected only
-   for an **instance-form** read. A row-form read omits those slots.
+3. Every applicable top-level Value Object `Document` slot is projected for an
+   **instance-form** read. A row-form read omits those slots by default; the
+   internal materialized-predicate-write resolving read is the one row-form read
+   that widens the default, projecting the slots the write it serves needs
+   (*Result form*, below).
 4. A table-per-concrete-subtype abstract read appends the SQL-owned
    `familyVariant` literal to each branch. It is not a layout slot. Typed `NULL`
    placeholders and collision-safe aliases are likewise SQL renderings over a
@@ -186,10 +189,15 @@ whether `Document` slots are selected:
   (its scalars, plus any value-object document columns it declares) — as does a deferred
   `load` / first `access`, which is a child level resolved on demand.
 - **Row-form** (the **values lane**) — the result is consumed as flat values, with no
-  instance constructed. It omits Document slots. The corpus's predicate `read` cases
-  (`then.rows`) and the internal materialized-predicate-write read — which resolves a
-  set-based write to each row's pk and gate values (ADR 0014) — are the values lane; a
-  future aggregation result (`m-agg`) lands here too.
+  instance constructed. It omits Document slots by default. The corpus's predicate
+  `read` cases (`then.rows`) and the internal materialized-predicate-write read —
+  which resolves a set-based write to each row's pk and gate values (ADR 0014) — are
+  the values lane; a future aggregation result (`m-agg`) lands here too. The
+  resolving read is the one row-form read whose consumer can widen the default: it
+  additionally projects the Document slots the write it serves needs, which for a
+  temporal target is every declared one, because the observation it records is a
+  complete Predecessor Row (`m-unit-work`). Widening the projection does not make it
+  instance-form — it still constructs no instance.
 
 Row-form is **not a developer surface**: the idiomatic find API always materializes,
 so the developer path is instance-form; row-form is the internal / conformance

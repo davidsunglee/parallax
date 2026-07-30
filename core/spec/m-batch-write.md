@@ -123,10 +123,12 @@ never an error.** Ordinary SQL set semantics already make `update … where
 <predicate>` and `delete … where <predicate>` no-ops when nothing matches; a
 predicate-selected write that matches nothing simply wrote nothing, the same way
 a materializing verb's resolving read matching zero rows emits zero keyed writes
-and succeeds (`m-opt-lock`). This is categorically distinct from the zero-row
-**conflict** error a *gated* per-row write raises (`m-opt-lock` / `m-txtime-write`):
-that error fires when a row the caller **did** match and observe was concurrently
-changed underneath it — matching nothing is never that.
+and succeeds (`m-opt-lock`). This is categorically distinct from the shortfall an
+**observation-backed** per-row write raises (`m-opt-lock` / `m-txtime-write`),
+which fires when a row the caller **did** match and observe was concurrently
+changed underneath it. Both concurrency modes raise it, and the settled gate
+decides which one it is: a gated shortfall is an Optimistic Conflict, an ungated
+one a Stale Write (`m-unit-work`). Matching nothing is never either.
 
 ### A readless predicate write is an ordering barrier
 

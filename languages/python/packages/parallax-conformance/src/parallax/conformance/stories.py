@@ -31,7 +31,8 @@ every story writing a versioned row fetches it first —
 `aborted_delete_leaves_the_row_standing` (whose force-flushed delete, forced
 onto the wire before the deliberate abort exactly like
 `callback_value_withheld_on_abort`'s own force-flush-then-abort pattern, is
-gated exactly like any other keyed delete) each add that observing fetch.
+observation-backed exactly like any other keyed delete) each add that observing
+fetch.
 `m-unit-work-005/006/009/012` author the SAME observing find(s) before their
 versioned keyed write(s), so every story here grades byte-exact against
 its own mirrored case (`test_write_no_drift.py`) as the plain graded idiom —

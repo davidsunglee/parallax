@@ -15,7 +15,7 @@ goes, while everything here renders a step that carries no undecided fact.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 
 from parallax.core.db_port import JsonDocument
 from parallax.core.dialect import Dialect
@@ -32,10 +32,8 @@ from parallax.core.unit_work.planned import (
     KeyTarget,
     MaxPlusOne,
     NonTemporalConcurrency,
-    PlannedAssignments,
     PlannedDelete,
     PlannedInsert,
-    PlannedRow,
     PlannedUpdate,
     PlannedWrite,
     PredicateTarget,
@@ -82,7 +80,10 @@ def _lower_insert(step: PlannedInsert, meta: Metamodel, dialect: Dialect) -> Sta
     """
     entity = _entity(meta, step.entity)
     view = _layout(meta, entity)
-    rows = [_cells(view, entry.row, entity) for entry in step.entries]
+    rows = [
+        _member_cells(view, entry.row.attributes, entry.row.value_objects, entity, stamp_tag=True)
+        for entry in step.entries
+    ]
     columns = ", ".join(dialect.quote(column) for column, _ in rows[0])
     table = view.layout.table.name
     if not any(isinstance(value, MaxPlusOne) for _, value in rows[0]):
@@ -152,7 +153,13 @@ def _assignment_clause(
 ) -> _Predicate:
     version = version_attribute(meta, declaring(meta, entity))
     version_column = None if version is None else _column(view, version.identity, entity)
-    cells = _assigned_cells(view, step.assignments, entity)
+    cells = _member_cells(
+        view,
+        step.assignments.attributes,
+        step.assignments.value_objects,
+        entity,
+        stamp_tag=False,
+    )
     ordered = [cell for cell in cells if cell[0] != version_column]
     ordered.extend(cell for cell in cells if cell[0] == version_column)
     parts = [_assignment(column, value, dialect) for column, value in ordered]
@@ -243,50 +250,41 @@ def _gate(
     return f" and {dialect.quote(slot.column.name)} = ?", (gate.observed_version,)
 
 
-def _assigned_cells(
-    view: EntityLayoutView, assignments: PlannedAssignments, entity: EntityMetadata
+def _member_cells(
+    view: EntityLayoutView,
+    attributes: Mapping[AttributeIdentity, object],
+    value_objects: Mapping[ValueObjectIdentity, object],
+    entity: EntityMetadata,
+    *,
+    stamp_tag: bool,
 ) -> Sequence[_Cell]:
-    """``assignments`` as ``(column, value)`` pairs, in Table Layout slot order."""
-    cells: list[_Cell] = []
-    matched = 0
-    for slot in view.columns:
-        contributor = slot.contributor
-        if isinstance(contributor, AttributeIdentity) and contributor in assignments.attributes:
-            cells.append((slot.column.name, assignments.attributes[contributor]))
-            matched += 1
-        elif (
-            isinstance(contributor, ValueObjectIdentity)
-            and contributor in assignments.value_objects
-        ):
-            cells.append((slot.column.name, JsonDocument(assignments.value_objects[contributor])))
-            matched += 1
-    _require_placed(matched, len(assignments.members), entity)
-    return cells
-
-
-def _cells(view: EntityLayoutView, row: PlannedRow, entity: EntityMetadata) -> Sequence[_Cell]:
-    """``row``'s members as ``(column, value)`` pairs, in Table Layout slot order.
+    """The named members as ``(column, value)`` pairs, in Table Layout slot order.
 
     The view supplies both the physical Column each member identity occupies and
-    the one order every cell follows, so a row's own member order never reaches
+    the one order every cell follows, so a caller's own member order never reaches
     the statement. A Value Object occurrence binds as one
     :class:`~parallax.core.db_port.JsonDocument` at its Document-tier slot — the
     whole document, never decomposed.
+
+    ``stamp_tag`` additionally emits the table-per-hierarchy discriminator at its
+    own slot. An opening row writes it because the row's concrete subtype is being
+    established; a revising statement leaves it alone, since revising a row never
+    changes what it is.
     """
-    discriminator = view.discriminator
+    discriminator = view.discriminator if stamp_tag else None
     cells: list[_Cell] = []
     matched = 0
     for slot in view.columns:
         contributor = slot.contributor
         if discriminator is not None and slot == discriminator.slot:
             cells.append((slot.column.name, discriminator.value))
-        elif isinstance(contributor, AttributeIdentity) and contributor in row.attributes:
-            cells.append((slot.column.name, row.attributes[contributor]))
+        elif isinstance(contributor, AttributeIdentity) and contributor in attributes:
+            cells.append((slot.column.name, attributes[contributor]))
             matched += 1
-        elif isinstance(contributor, ValueObjectIdentity) and contributor in row.value_objects:
-            cells.append((slot.column.name, JsonDocument(row.value_objects[contributor])))
+        elif isinstance(contributor, ValueObjectIdentity) and contributor in value_objects:
+            cells.append((slot.column.name, JsonDocument(value_objects[contributor])))
             matched += 1
-    _require_placed(matched, len(row.members), entity)
+    _require_placed(matched, len(attributes) + len(value_objects), entity)
     return cells
 
 

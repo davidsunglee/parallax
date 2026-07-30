@@ -468,9 +468,10 @@ class Transaction:
     def delete_where(self, statement: EntityStatement) -> None:
         """A predicate-selected ``delete`` over a NON-temporal target
         (`python.md` §5): readless for an unversioned target; a versioned one
-        MATERIALIZES to one gated per-row delete per resolved row (no
-        no-op elimination — a delete changes a row's existence, never a value,
-        `m-opt-lock`)."""
+        MATERIALIZES to one observation-backed per-row delete per resolved row
+        — in both modes, since each row's write requires that row's own prior
+        observation — with no no-op elimination, because a delete changes a
+        row's existence, never a value (`m-opt-lock`)."""
         buffer_predicate(
             self._uow,
             self._meta,
