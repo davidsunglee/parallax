@@ -41,6 +41,7 @@ BETWEEN_BOUNDS_INVERTED = "between-bounds-inverted"
 NESTED_PATH_FIRST_SEGMENT_NOT_VALUE_OBJECT = "nested-path-first-segment-not-value-object"
 NESTED_PATH_UNKNOWN_MEMBER = "nested-path-unknown-member"
 NESTED_LITERAL_TYPE_MISMATCH = "nested-literal-type-mismatch"
+NESTED_STRING_PREDICATE_NON_STRING_MEMBER = "nested-string-predicate-non-string-member"
 DEEP_FETCH_VALUE_OBJECT_SEGMENT = "deep-fetch-value-object-segment"
 NAVIGATE_VALUE_OBJECT_TARGET = "navigate-value-object-target"
 FIND_ROOT_VALUE_OBJECT = "find-root-value-object"
@@ -56,6 +57,7 @@ REJECTED_RULES: frozenset[str] = frozenset(
         NESTED_PATH_FIRST_SEGMENT_NOT_VALUE_OBJECT,
         NESTED_PATH_UNKNOWN_MEMBER,
         NESTED_LITERAL_TYPE_MISMATCH,
+        NESTED_STRING_PREDICATE_NON_STRING_MEMBER,
         DEEP_FETCH_VALUE_OBJECT_SEGMENT,
         NAVIGATE_VALUE_OBJECT_TARGET,
         FIND_ROOT_VALUE_OBJECT,
@@ -109,6 +111,21 @@ def literal_matches_type(value: Any, neutral_type: str | None) -> bool:
     if kind in _BOOL_TYPES:
         return isinstance(value, bool)
     return True
+
+
+def is_string_member(neutral_type: str | None) -> bool:
+    """Whether a declared member's neutral type is m-core's ``String``.
+
+    The `m-op-algebra` non-string-member rule, which the five nested string
+    predicates are subject to in both scopes. Deliberately STRICTER than
+    :func:`literal_matches_type`'s string grouping: that function answers whether a
+    portable literal can carry a value of the type, and `date` / `time` /
+    `timestamp` / `uuid` / `bytes` all ride a `string` literal, so reusing it would
+    accept `nestedStartsWith` against a `Date` member — the exact hole this rule
+    exists to close. Only the canonical `string` spelling is a string member, and an
+    absent or unknown type is not one.
+    """
+    return neutral_type == "string"
 
 
 def _is_number(value: Any) -> bool:

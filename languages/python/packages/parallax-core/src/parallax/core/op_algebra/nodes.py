@@ -47,6 +47,8 @@ __all__ = [
     "NestedNullCheck",
     "NestedNullOp",
     "NestedRange",
+    "NestedStringMatch",
+    "NestedStringOp",
     "NoneOp",
     "Not",
     "NotExists",
@@ -77,6 +79,9 @@ NestedComparisonOp = Literal[
     "nestedEq", "nestedNotEq", "nestedGt", "nestedGte", "nestedLt", "nestedLte"
 ]
 NestedMembershipOp = Literal["nestedIn", "nestedNotIn"]
+NestedStringOp = Literal[
+    "nestedLike", "nestedNotLike", "nestedStartsWith", "nestedEndsWith", "nestedContains"
+]
 NestedNullOp = Literal["nestedIsNull", "nestedIsNotNull"]
 
 
@@ -325,6 +330,25 @@ class NestedMembership:
 
 
 @dataclass(frozen=True, slots=True)
+class NestedStringMatch:
+    """A value-object inner-attribute string predicate over a ``String`` member.
+
+    Carries :class:`StringMatch`'s semantics against a nested extraction — affix
+    forms escape wildcards, ``nestedLike``/``nestedNotLike`` pass the pattern
+    through, and ``case_insensitive`` follows the same omitted-versus-explicit
+    round-trip rule. It is a node of its own rather than a reuse of
+    :class:`StringMatch` because serialization dispatches on the node class and the
+    two spell their subject differently (``path`` versus ``attr``); one class serves
+    BOTH nested scopes, as every other nested node does.
+    """
+
+    op: NestedStringOp
+    path: str
+    value: str
+    case_insensitive: bool | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class NestedNullCheck:
     """A value-object inner-attribute presence test (absence-collapse rule)."""
 
@@ -461,6 +485,7 @@ Operation = (
     | NestedComparison
     | NestedRange
     | NestedMembership
+    | NestedStringMatch
     | NestedNullCheck
     | NestedExists
     | NestedNotExists

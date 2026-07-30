@@ -58,6 +58,7 @@ from reference_harness.value_object_resolve import (
     NESTED_LITERAL_TYPE_MISMATCH,
     NESTED_PATH_FIRST_SEGMENT_NOT_VALUE_OBJECT,
     NESTED_PATH_UNKNOWN_MEMBER,
+    NESTED_STRING_PREDICATE_NON_STRING_MEMBER,
     WRITE_REQUIRED_ATTRIBUTE_MISSING,
     WRITE_REQUIRED_VALUE_OBJECT_MISSING,
     WRITE_VALUE_TYPE_MISMATCH,
@@ -696,6 +697,61 @@ def test_nested_range_with_inverted_bounds_rejected_in_both_scopes(node: dict[st
     with pytest.raises(RejectionError) as exc:
         validate_operation(_customer_entity(), node)
     assert exc.value.rule == BETWEEN_BOUNDS_INVERTED
+
+
+# --- nested string predicates (m-op-algebra non-string-member rule) -----------
+
+
+@pytest.mark.parametrize(
+    "tag", ["nestedLike", "nestedNotLike", "nestedStartsWith", "nestedEndsWith", "nestedContains"]
+)
+def test_nested_string_predicate_accepts_a_string_member_in_both_scopes(tag: str) -> None:
+    entity = _customer_entity()
+    validate_operation(entity, {tag: {"path": "Customer.address.city", "value": "Os"}})
+    validate_operation(
+        entity, {tag: {"path": "Customer.address.city", "value": "Os", "caseInsensitive": True}}
+    )
+    validate_operation(entity, _element_where({tag: {"path": "number", "value": "555"}}))
+
+
+@pytest.mark.parametrize(
+    "tag", ["nestedLike", "nestedNotLike", "nestedStartsWith", "nestedEndsWith", "nestedContains"]
+)
+def test_nested_string_predicate_on_a_numeric_member_reports_the_member_not_the_literal(
+    tag: str,
+) -> None:
+    # `geo.elevation` is float64 and the literal is a string, so BOTH nested rules
+    # apply — which is what discriminates their order. A validator checking the
+    # literal first would blame the value for the member's problem.
+    with pytest.raises(RejectionError) as exc:
+        validate_operation(
+            _customer_entity(), {tag: {"path": "Customer.address.geo.elevation", "value": "1"}}
+        )
+    assert exc.value.rule == NESTED_STRING_PREDICATE_NON_STRING_MEMBER
+
+
+@pytest.mark.parametrize(
+    "node",
+    [
+        {"nestedStartsWith": {"path": "Contact.address.phones.expires", "value": "2024"}},
+        {
+            "nestedExists": {
+                "path": "Contact.address.phones",
+                "where": {"nestedEndsWith": {"path": "expires", "value": "-01"}},
+            }
+        },
+    ],
+    ids=["path-scoped", "element-scoped"],
+)
+def test_nested_string_predicate_on_a_date_member_rejected_in_both_scopes(
+    node: dict[str, Any],
+) -> None:
+    # The hole the dedicated rule closes: a `date` member carries the portable string
+    # literal, so `literal_matches_type` finds '2024' perfectly well-typed for it and
+    # the typed-literal rule alone would ACCEPT a text pattern over a date.
+    with pytest.raises(RejectionError) as exc:
+        validate_operation(_contact_entity(), node)
+    assert exc.value.rule == NESTED_STRING_PREDICATE_NON_STRING_MEMBER
 
 
 # --- range bound ordering (m-op-algebra) -------------------------------------

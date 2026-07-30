@@ -91,6 +91,7 @@ from parallax.core.op_algebra import (
     NestedNotExists,
     NestedNullCheck,
     NestedRange,
+    NestedStringMatch,
     NoneOp,
     Not,
     NotExists,
@@ -132,6 +133,16 @@ _NESTED_COMPARATORS: dict[str, str] = {
     "nestedGte": ">=",
     "nestedLt": "<",
     "nestedLte": "<=",
+}
+# Each nested string predicate's scalar twin. The pattern grammar, the escaping, and
+# the case folding are the SAME rule at both levels (m-op-algebra), so the nested
+# family is rendered by mapping onto the scalar kind rather than by a second table.
+_NESTED_STRING_KINDS: dict[str, str] = {
+    "nestedLike": "like",
+    "nestedNotLike": "notLike",
+    "nestedStartsWith": "startsWith",
+    "nestedEndsWith": "endsWith",
+    "nestedContains": "contains",
 }
 
 
@@ -313,7 +324,9 @@ _VoContainer = ValueObjectMetadata | NestedValueObjectMetadata
 # path-relatively against an entity's document column or element-relatively against
 # an unnested element. One alias, because every function below takes the whole
 # family and differs only in how it resolved the extraction.
-_FlatNested = NestedComparison | NestedRange | NestedMembership | NestedNullCheck
+_FlatNested = (
+    NestedComparison | NestedRange | NestedMembership | NestedStringMatch | NestedNullCheck
+)
 
 
 # --------------------------------------------------------------------------- #
@@ -347,7 +360,13 @@ def lower_predicate(op: Operation, scope: ResolutionScope) -> str:
             return f"not {lower_predicate(operand, scope)}"
         case Group(operand=operand):
             return f"({lower_predicate(operand, scope)})"
-        case NestedComparison() | NestedRange() | NestedMembership() | NestedNullCheck():
+        case (
+            NestedComparison()
+            | NestedRange()
+            | NestedMembership()
+            | NestedStringMatch()
+            | NestedNullCheck()
+        ):
             if isinstance(scope, ElementScope):
                 return _lower_element_nested(op, scope)
             return _lower_nested(op, scope)
@@ -411,22 +430,40 @@ def lower_predicate(op: Operation, scope: ResolutionScope) -> str:
 
 
 def _lower_string(op: StringMatch, scope: EntityScope) -> str:
-    col = scope.column_of(op.attr)
-    if op.op in ("like", "notLike"):
-        scope.ctx.bind(op.value)
-        col_expr = f"lower({col})" if op.case_insensitive else col
-        rhs = "lower(?)" if op.case_insensitive else "?"
-        fragment = f"{col_expr} like {rhs}"
-        return fragment if op.op == "like" else fragment.replace(" like ", " not like ", 1)
-    # The affix pattern is folded to lower case under case-insensitive matching,
-    # so the pattern bind is already lowercased (the corpus's affix convention);
-    # `like`/`notLike` keep the pattern verbatim and rely on `lower(?)` alone.
-    literal = op.value.lower() if op.case_insensitive else op.value
-    pattern, needs_escape = _affix_pattern(op.op, literal)
-    scope.ctx.bind(pattern)
-    col_expr = f"lower({col})" if op.case_insensitive else col
-    rhs = "lower(?)" if op.case_insensitive else "?"
-    fragment = f"{col_expr} like {rhs}"
+    return _lower_like(op.op, op.value, op.case_insensitive, scope.column_of(op.attr), scope)
+
+
+def _lower_like(
+    kind: str,
+    value: str,
+    case_insensitive: bool | None,
+    subject_sql: str,
+    scope: ResolutionScope,
+) -> str:
+    """Render one string predicate over an ALREADY-RESOLVED subject expression.
+
+    The whole rule lives here once (m-sql "Wildcard / escape rendering"), because a
+    scalar column, a nested extraction, and an unnested element's extraction differ
+    only in how the subject was resolved: `like`/`notLike` bind the pattern verbatim,
+    the affix forms bind an escaped pattern and append `escape ?` plus its bind ONLY
+    when escaping actually changed the literal, `notLike` negates INFIX (the
+    normalizer's fixed point for this operator, unlike membership's leading `not`),
+    and case-insensitive matching folds both sides.
+    """
+    if kind in ("like", "notLike"):
+        scope.ctx.bind(value)
+        needs_escape = False
+    else:
+        # The affix pattern is folded to lower case under case-insensitive matching,
+        # so the pattern bind is already lowercased (the corpus's affix convention);
+        # `like`/`notLike` keep the pattern verbatim and rely on `lower(?)` alone.
+        literal = value.lower() if case_insensitive else value
+        pattern, needs_escape = _affix_pattern(kind, literal)
+        scope.ctx.bind(pattern)
+    subject_expr = f"lower({subject_sql})" if case_insensitive else subject_sql
+    rhs = "lower(?)" if case_insensitive else "?"
+    operator = "not like" if kind == "notLike" else "like"
+    fragment = f"{subject_expr} {operator} {rhs}"
     if needs_escape:
         scope.ctx.bind("\\")
         fragment = f"{fragment} escape ?"
@@ -600,6 +637,12 @@ def _lower_comparator(
         # nestedNotIn lowers to a LEADING `not` (the corpus form), adding no bind.
         fragment = f"{casted} in ({holes})"
         return fragment if op.op == "nestedIn" else f"not {fragment}"
+    if isinstance(op, NestedStringMatch):
+        # No cast: the leaf is a `String` member by the non-string-member rule
+        # (m-op-algebra), so the text extraction IS what the pattern matches.
+        return _lower_like(
+            _NESTED_STRING_KINDS[op.op], op.value, op.case_insensitive, extraction, scope
+        )
     if op.op == "nestedIsNull":
         return f"{extraction} is null"
     return f"not {extraction} is null"

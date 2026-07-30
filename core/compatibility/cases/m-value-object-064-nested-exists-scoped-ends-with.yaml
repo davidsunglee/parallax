@@ -1,0 +1,37 @@
+# valueObject to-many: the suffix affix form in the element scope, the mirror of
+# m-value-object-063 (m-op-algebra elementPredicate + wildcard rule, m-sql). Postgres
+# golden only — a `where` carrying a non-`eq` leaf is outside MariaDB's containment scope
+# (m-dialect, "Scope of the containment golden").
+#
+# nestedExists(Customer.address.phones, where: type = 'home' AND number endsWith '9999')
+# binds the derived '%9999' and matches only Linus (2), whose one element carries both
+# facts. Ada (1) discriminates the readings again: her element carrying the suffix is a
+# `work` phone, so the unscoped AND of the two flat any-element predicates admits her and
+# this scoped form does not.
+#
+# Priya (10) is the trap: her non-array OBJECT `phones` satisfies the compound exactly;
+# the array-type guard collapses it to zero elements along with the JSON null (8) and the
+# scalar (9).
+model: models/customer.yaml
+tags: [m-value-object, m-op-algebra, m-sql, m-dialect, nested, json, to-many, exists, scoped, same-element, string, endsWith, array-traversal, slice-snapshot-1, slice-managed-1]
+shape: read
+when:
+  targetEntity: Customer
+  operation:
+    nestedExists:
+      path: Customer.address.phones
+      where:
+        and:
+          operands:
+            - nestedEq: { path: type, value: home }
+            - nestedEndsWith: { path: number, value: '9999' }
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.name from customer t0 where exists (select 1 from jsonb_array_elements(case when jsonb_typeof(jsonb_extract_path(t0.address, ?)) = ? then jsonb_extract_path(t0.address, ?) else cast(? as jsonb) end) t1 where jsonb_extract_path_text(t1.value, ?) = ? and jsonb_extract_path_text(t1.value, ?) like ?)
+      binds: [phones, 'array', phones, '[]', type, home, number, '%9999']
+  referenceSql:
+    postgres: select id, name from customer where jsonb_typeof(address -> 'phones') = 'array' and exists (select 1 from jsonb_array_elements(address -> 'phones') e where e.value ->> 'type' = 'home' and right(e.value ->> 'number', 4) = '9999')
+  rows:
+    - { id: 2, name: Linus }
+  roundTrips: 1

@@ -290,7 +290,13 @@ For the affix string forms the wildcard chars are placed by the implementation a
 the literal value is escaped: `contains '50%'` lowers to
 `t0.sku like ? escape ?` with binds `['%50\%%', '\\']`, so the embedded `%` is
 matched literally. `like`/`notLike` pass the bind through verbatim (the value is
-already a pattern, no escape clause).
+already a pattern, no escape clause). The `escape ?` clause and its second bind
+appear **only** when escaping actually changed the literal: `startsWith 'A-'`
+lowers to the bare `t0.sku like ?` with a single `'A-%'` bind.
+
+The five **nested** string predicates render identically against the extraction
+their scope resolved (`<extraction> like ?`, a leading `not` for `nestedNotLike`),
+so the rule above is stated once and reused rather than restated per scope.
 
 ### `order by` key terms
 
@@ -1107,6 +1113,10 @@ differ per dialect (`m-dialect`):
 | `nestedBetween(vo.geo.num, lo, hi)` (numeric) | `cast(jsonb_extract_path_text(t0.address, ?, ?) as double precision) between ? and ?` | `cast(json_value(t0.address, ?) as double) between ? and ?` |
 | `nestedIn(vo.field, [v, …])` | `jsonb_extract_path_text(t0.address, ?) in (?, …)` | `json_value(t0.address, ?) in (?, …)` |
 | `nestedNotIn(vo.field, [v, …])` | `not jsonb_extract_path_text(t0.address, ?) in (?, …)` | `not json_value(t0.address, ?) in (?, …)` |
+| `nestedLike(vo.field, p)` | `jsonb_extract_path_text(t0.address, ?) like ?` | `json_value(t0.address, ?) like ?` |
+| `nestedNotLike(vo.field, p)` | `jsonb_extract_path_text(t0.address, ?) not like ?` | `json_value(t0.address, ?) not like ?` |
+| `nestedStartsWith` / `nestedEndsWith` / `nestedContains` | as `nestedLike`, the affix pattern bound (plus `escape ?` when escaping changed it) | as `nestedLike`, identically |
+| `nestedLike(vo.field, p)` (case-insensitive) | `lower(jsonb_extract_path_text(t0.address, ?)) like lower(?)` | `lower(json_value(t0.address, ?)) like lower(?)` |
 | `nestedIsNull(vo.field)` | `jsonb_extract_path_text(t0.address, ?) is null` | `json_value(t0.address, ?) is null` |
 | `nestedIsNotNull(vo.field)` | `not jsonb_extract_path_text(t0.address, ?) is null` | `not json_value(t0.address, ?) is null` |
 
@@ -1159,6 +1169,21 @@ comparisons (`m-op-algebra`) — binding the JSON path first, then `lower`, then
 `upper`. `nestedIn` lowers the membership to `<extraction> in (?, …)` — the JSON
 path bind(s) first, then one bind per list value in `values` order — and
 `nestedNotIn` to the same fragment under a **leading `not`**, adding no bind.
+
+The five string predicates apply **no** cast — their leaf is `String` by the
+non-string-member rule (`m-op-algebra`), so the extraction is already the text they
+match — and lower to `<extraction> like ?`, `nestedNotLike` to
+`<extraction> not like ?` (the **infix** negation the scalar `notLike` renders, not
+the leading `not` the membership and presence forms normalize
+to). The bind order is the JSON path bind(s), then the pattern, then
+the escape character when the affix escaping actually changed the literal; the
+`escape ?` clause and its bind are emitted **only** then, exactly as the scalar
+affix forms do. Under `caseInsensitive` both sides fold —
+`lower(<extraction>) like lower(?)` — which changes no bind count. The worked
+escape example is the scalar one applied to a nested extraction:
+`nestedContains(Customer.address.street, '50%')` binds the path, then `'%50\%%'`,
+then `'\'`.
+
 `nestedIsNull` lowers to `<extraction> is null` and `nestedIsNotNull` to a
 **leading `not`** (`not <extraction> is null`) — the same negation normalization the
 scalar `isNotNull`/`notIn`/`nestedNotEq` forms use. Because every not-present state casts
@@ -1235,6 +1260,7 @@ as an error or a spurious element. So the canonical fragment carries an
 | flat `nestedEq(Class.vo.arr.field, v)` (any-element) | `exists (select 1 from jsonb_array_elements(<arr>) t1 where jsonb_extract_path_text(t1.value, ?) = ?)` | `<g> and json_contains(t0.address, ?, ?)` |
 | flat `nestedBetween(Class.vo.arr.field, lo, hi)` (any-element) | `exists (select 1 from jsonb_array_elements(<arr>) t1 where jsonb_extract_path_text(t1.value, ?) between ? and ?)` | — (deferred, `m-dialect`) |
 | flat `nestedNotIn(Class.vo.arr.field, [v, …])` (any-element) | `exists (select 1 from jsonb_array_elements(<arr>) t1 where not jsonb_extract_path_text(t1.value, ?) in (?, …))` | — (deferred, `m-dialect`) |
+| flat `nestedStartsWith(Class.vo.arr.field, s)` (any-element) | `exists (select 1 from jsonb_array_elements(<arr>) t1 where jsonb_extract_path_text(t1.value, ?) like ?)` | — (deferred, `m-dialect`) |
 | `nestedExists(Class.vo.arr, where: <compound>)` (same-element) | one `exists` with every element predicate on the **same** `t1` | `<g> and json_contains(t0.address, ?, ?)` with a candidate object carrying every field |
 | `nestedNotExists(Class.vo.arr, where: <compound>)` (no element) | `not exists (select 1 from jsonb_array_elements(<arr>) t1 where <compound on t1>)` | `not coalesce(<g> and json_contains(t0.address, ?, ?), ?)` |
 
@@ -1288,12 +1314,14 @@ paths cannot be `?` binds and do not normalize). Corpus `m-value-object-021` /
 `-022` pin that a non-array `phones` collapses even when its scalar value or object
 content collides with the query value.
 
-A range or a negated membership crossing a `many` member composes the same way, in
+A range, a negated membership, or a string predicate crossing a `many` member
+composes the same way, in
 either scope. The bind order is the guarded unnest's own binds first, then the
 element path segment(s), then the predicate's own binds in authored order — `lower`
-then `upper` for a range, one per list value for a membership. Because the whole
-range or list rides **one** element predicate on **one** alias, a single element
-must satisfy it (`m-op-algebra`):
+then `upper` for a range, one per list value for a membership, the pattern (then the
+escape character, when escaping applies) for a string predicate. Because the whole
+range, list, or pattern rides **one** element predicate on **one** alias, a single
+element must satisfy it (`m-op-algebra`):
 
 ```yaml
 # nestedBetween(Customer.address.phones.number, '555-0000', '555-1234') — any-element:
@@ -1301,6 +1329,11 @@ must satisfy it (`m-op-algebra`):
     postgres: select t0.id, t0.name from customer t0 where exists (select 1 from jsonb_array_elements(case when jsonb_typeof(jsonb_extract_path(t0.address, ?)) = ? then jsonb_extract_path(t0.address, ?) else cast(? as jsonb) end) t1 where jsonb_extract_path_text(t1.value, ?) between ? and ?)
   binds:
     postgres: [phones, 'array', phones, '[]', number, '555-0000', '555-1234']
+# nestedStartsWith(Customer.address.phones.number, '555-1') — any-element:
+- sql:
+    postgres: select t0.id, t0.name from customer t0 where exists (select 1 from jsonb_array_elements(case when jsonb_typeof(jsonb_extract_path(t0.address, ?)) = ? then jsonb_extract_path(t0.address, ?) else cast(? as jsonb) end) t1 where jsonb_extract_path_text(t1.value, ?) like ?)
+  binds:
+    postgres: [phones, 'array', phones, '[]', number, '555-1%']
 # nestedExists(Customer.address.phones, where: nestedNotIn(type, [work])) — same-element:
 - sql:
     postgres: select t0.id, t0.name from customer t0 where exists (select 1 from jsonb_array_elements(case when jsonb_typeof(jsonb_extract_path(t0.address, ?)) = ? then jsonb_extract_path(t0.address, ?) else cast(? as jsonb) end) t1 where not jsonb_extract_path_text(t1.value, ?) in (?))
@@ -1311,8 +1344,9 @@ must satisfy it (`m-op-algebra`):
 The MariaDB `json_contains` golden expresses **equality/containment** element
 predicates only (any-element `nestedEq`, same-element equality conjunctions);
 non-equality element predicates through a `many` segment — `nestedGt` / `nestedLt` /
-`nestedNotEq` / `nestedBetween` / `nestedNotIn`, or a `where` compound with a
-range/negated membership/`or`/`not` — need a set-returning
+`nestedNotEq` / `nestedBetween` / `nestedNotIn`, any of the five string predicates,
+or a `where` compound with a
+range/negated membership/string predicate/`or`/`not` — need a set-returning
 unnest and are a **documented deferred limitation on MariaDB** (`m-dialect`,
 "Scope of the containment golden"). Postgres's `jsonb_array_elements` lowering is
 fully general; the corpus's to-many coverage is equality-based accordingly, so

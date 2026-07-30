@@ -1,0 +1,20 @@
+# Negative (m-op-algebra non-string-member MUST): a nested string predicate aimed at a
+# `date` member is refused — the case the typed-literal rule alone cannot catch.
+#
+# `Contact.address.phones.expires` is declared `date`, and the algebra's portable
+# literal vocabulary has no dedicated date carrier: a date literal rides the `string`
+# literal. A resolver that judged only the literal would therefore find `'2024'`
+# perfectly well-typed for the leaf and ACCEPT `nestedStartsWith` over a date, lowering
+# a text pattern against a value that is not text. That silent acceptance is the hole
+# `nested-string-predicate-non-string-member` exists to close, and it is why the rule is
+# stated over the MEMBER's declared type rather than folded into the literal rule. The
+# same hole exists for `time`, `timestamp`, `uuid`, and `bytes`; `date` witnesses them
+# all, since one rule reads the declared type.
+model: models/contact.yaml
+tags: [m-op-algebra, m-value-object, rejected, negative, nested, string, slice-snapshot-1, slice-managed-1]
+shape: rejected
+when:
+  operation:
+    nestedStartsWith: { path: Contact.address.phones.expires, value: '2024' }
+then:
+  rejectedRule: nested-string-predicate-non-string-member

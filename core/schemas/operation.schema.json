@@ -128,6 +128,11 @@
         { "$ref": "#/$defs/nestedBetween" },
         { "$ref": "#/$defs/nestedIn" },
         { "$ref": "#/$defs/nestedNotIn" },
+        { "$ref": "#/$defs/nestedLike" },
+        { "$ref": "#/$defs/nestedNotLike" },
+        { "$ref": "#/$defs/nestedStartsWith" },
+        { "$ref": "#/$defs/nestedEndsWith" },
+        { "$ref": "#/$defs/nestedContains" },
         { "$ref": "#/$defs/nestedIsNull" },
         { "$ref": "#/$defs/nestedIsNotNull" },
         { "$ref": "#/$defs/nestedExists" },
@@ -799,6 +804,17 @@
         }
       }
     },
+    "nestedStringMatch": {
+      "description": "A nested-field string predicate: a valueObject inner attribute (referenced by a dotted path) matched against a pattern or a literal affix. The `path` resolves against the model's declared valueObject structure (as for `nestedComparison`) and its leaf's declared type MUST be `String`; a string predicate aimed at any other member is `nested-string-predicate-non-string-member`, checked BEFORE the typed-literal rule so a `date` / `time` / `timestamp` / `uuid` / `bytes` member — which rides the portable string literal and so would otherwise pass the typed-literal check — is named rather than silently accepted (m-op-algebra). `value` carries the top-level `stringMatch` semantics unchanged: `%` and `_` are wildcards for `nestedLike` / `nestedNotLike`, while the affix forms (`nestedStartsWith` / `nestedEndsWith` / `nestedContains`) treat it as literal text whose wildcards the implementation escapes. `caseInsensitive` defaults to false and otherwise folds BOTH sides with `lower(...)`. Lowers to `<extraction> like ?` — `<extraction> not like ?` for `nestedNotLike`, the same infix negation the scalar `notLike` renders — with the JSON path bind(s) first, then the pattern, then the escape character when escaping actually changed the literal (m-sql/m-dialect).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "value"],
+      "properties": {
+        "path": { "$ref": "#/$defs/nestedRef" },
+        "value": { "type": "string" },
+        "caseInsensitive": { "type": "boolean", "default": false }
+      }
+    },
     "nestedNullCheck": {
       "description": "A nested-field presence test: a valueObject inner attribute referenced by a dotted path, with NO compared value. The `path` resolves against the model's declared valueObject structure (as for `nestedComparison`). Per the absence-collapse rule (m-op-algebra) every 'not present' state — SQL NULL column, missing key, JSON `null`, non-object intermediate segment — yields SQL NULL from the extraction, so `nestedIsNull` matches exactly those rows and `nestedIsNotNull` its complement.",
       "type": "object",
@@ -871,6 +887,41 @@
       "required": ["nestedNotIn"],
       "properties": { "nestedNotIn": { "$ref": "#/$defs/nestedMembership" } }
     },
+    "nestedLike": {
+      "description": "nestedLike(path, value, caseInsensitive?): filter where an embedded valueObject String attribute matches a SQL pattern — `%` and `_` are wildcards and the pattern passes through unescaped.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["nestedLike"],
+      "properties": { "nestedLike": { "$ref": "#/$defs/nestedStringMatch" } }
+    },
+    "nestedNotLike": {
+      "description": "nestedNotLike(path, value, caseInsensitive?): the negation of nestedLike, lowered as the infix `not like`. Through a `many` segment it keeps the uniform any-element reading — SOME element's member does not match the pattern.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["nestedNotLike"],
+      "properties": { "nestedNotLike": { "$ref": "#/$defs/nestedStringMatch" } }
+    },
+    "nestedStartsWith": {
+      "description": "nestedStartsWith(path, value, caseInsensitive?): filter where an embedded valueObject String attribute begins with the LITERAL text `value`, whose own wildcards are escaped before the trailing `%` is appended.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["nestedStartsWith"],
+      "properties": { "nestedStartsWith": { "$ref": "#/$defs/nestedStringMatch" } }
+    },
+    "nestedEndsWith": {
+      "description": "nestedEndsWith(path, value, caseInsensitive?): filter where an embedded valueObject String attribute ends with the LITERAL text `value` (escaped, then prefixed with `%`).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["nestedEndsWith"],
+      "properties": { "nestedEndsWith": { "$ref": "#/$defs/nestedStringMatch" } }
+    },
+    "nestedContains": {
+      "description": "nestedContains(path, value, caseInsensitive?): filter where an embedded valueObject String attribute contains the LITERAL text `value` (escaped, then wrapped in `%`).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["nestedContains"],
+      "properties": { "nestedContains": { "$ref": "#/$defs/nestedStringMatch" } }
+    },
     "nestedIsNull": {
       "description": "nestedIsNull(path): filter where an embedded valueObject attribute is 'not present' (SQL NULL column, missing key, JSON null, or non-object intermediate — all collapsed per m-op-algebra).",
       "type": "object",
@@ -932,6 +983,17 @@
         }
       }
     },
+    "elementStringMatch": {
+      "description": "An element-scoped string predicate: an element-relative `path` whose leaf's declared type MUST be `String`, matched against a pattern (`nestedLike` / `nestedNotLike`) or a literal affix (the three affix forms), with the same wildcard, escaping, and `caseInsensitive` semantics the path-scoped form carries.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "value"],
+      "properties": {
+        "path": { "$ref": "#/$defs/elementRef" },
+        "value": { "type": "string" },
+        "caseInsensitive": { "type": "boolean", "default": false }
+      }
+    },
     "elementNullCheck": {
       "description": "An element-scoped presence test: an element-relative `path` with NO compared value.",
       "type": "object",
@@ -954,6 +1016,11 @@
         { "$ref": "#/$defs/elementNestedBetween" },
         { "$ref": "#/$defs/elementNestedIn" },
         { "$ref": "#/$defs/elementNestedNotIn" },
+        { "$ref": "#/$defs/elementNestedLike" },
+        { "$ref": "#/$defs/elementNestedNotLike" },
+        { "$ref": "#/$defs/elementNestedStartsWith" },
+        { "$ref": "#/$defs/elementNestedEndsWith" },
+        { "$ref": "#/$defs/elementNestedContains" },
         { "$ref": "#/$defs/elementNestedIsNull" },
         { "$ref": "#/$defs/elementNestedIsNotNull" },
         { "$ref": "#/$defs/elementAnd" },
@@ -1015,6 +1082,36 @@
       "additionalProperties": false,
       "required": ["nestedNotIn"],
       "properties": { "nestedNotIn": { "$ref": "#/$defs/elementMembership" } }
+    },
+    "elementNestedLike": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["nestedLike"],
+      "properties": { "nestedLike": { "$ref": "#/$defs/elementStringMatch" } }
+    },
+    "elementNestedNotLike": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["nestedNotLike"],
+      "properties": { "nestedNotLike": { "$ref": "#/$defs/elementStringMatch" } }
+    },
+    "elementNestedStartsWith": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["nestedStartsWith"],
+      "properties": { "nestedStartsWith": { "$ref": "#/$defs/elementStringMatch" } }
+    },
+    "elementNestedEndsWith": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["nestedEndsWith"],
+      "properties": { "nestedEndsWith": { "$ref": "#/$defs/elementStringMatch" } }
+    },
+    "elementNestedContains": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["nestedContains"],
+      "properties": { "nestedContains": { "$ref": "#/$defs/elementStringMatch" } }
     },
     "elementNestedIsNull": {
       "type": "object",

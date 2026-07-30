@@ -206,12 +206,16 @@ candidate object. It **cannot** express any other element predicate, even though
 
 - a **flat any-element** non-equality predicate through a `many` segment —
   `nestedNotEq`, or a range `nestedGt` / `nestedGte` / `nestedLt` / `nestedLte` /
-  `nestedBetween`, or a membership `nestedIn` / `nestedNotIn`, or a presence test
-  `nestedIsNull` / `nestedIsNotNull`;
-- an element-scoped **`where` containing any non-`eq` leaf** — a range
+  `nestedBetween`, or a membership `nestedIn` / `nestedNotIn`, or a string predicate
+  `nestedLike` / `nestedNotLike` / `nestedStartsWith` / `nestedEndsWith` /
+  `nestedContains`, or a presence test `nestedIsNull` / `nestedIsNotNull`;
+- an element-scoped **`where` containing any non-`eq` leaf** — that is, every one of
+  the fifteen element nodes `elementNestedEq` is not: a range
   (`elementNestedGt` / `elementNestedGte` / `elementNestedLt` / `elementNestedLte` /
   `elementNestedBetween`), an `elementNestedNotEq`, a membership
-  (`elementNestedIn` / `elementNestedNotIn`), or an element null check
+  (`elementNestedIn` / `elementNestedNotIn`), a string predicate
+  (`elementNestedLike` / `elementNestedNotLike` / `elementNestedStartsWith` /
+  `elementNestedEndsWith` / `elementNestedContains`), or an element null check
   (`elementNestedIsNull` / `elementNestedIsNotNull`);
 - an element-scoped **`where` whose combinator is not a plain conjunction** — an
   `or`, a `not`, or a `group` around a disjunction (only a flat `and` of equalities

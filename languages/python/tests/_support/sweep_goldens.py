@@ -20,7 +20,7 @@ from parallax.conformance import case_format, engine
 _SCALAR_READS: Final[frozenset[str]] = frozenset({"m-core-001", "m-descriptor-001"})
 # Value-object nested-predicate reads (row-form — the values lane; slot 4 omitted).
 _VALUE_OBJECT_PREDICATE_READS: Final[frozenset[str]] = frozenset(
-    f"m-value-object-{n:03d}" for n in (1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 48, 49)
+    f"m-value-object-{n:03d}" for n in (1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 48, 49, 54, 55)
 )
 # To-many value-object array-traversal reads (`m-sql`, "To-many — exists /
 # notExists and any-element predicates"): guarded-unnest correlated `EXISTS`/`NOT EXISTS`
@@ -28,7 +28,7 @@ _VALUE_OBJECT_PREDICATE_READS: Final[frozenset[str]] = frozenset(
 # any-element `nested*` forms crossing customer.yaml's `address.phones` — row-form,
 # compiled and run below.
 _VALUE_OBJECT_TO_MANY_READS: Final[frozenset[str]] = frozenset(
-    f"m-value-object-{n:03d}" for n in (*range(15, 23), 50, 51, 52, 53)
+    f"m-value-object-{n:03d}" for n in (*range(15, 23), *range(50, 54), *range(56, 66))
 )
 # Orders op-algebra reads use the full declared scalar projection emitted by
 # the default find projection. Case 028 is intentionally absent from the corpus.

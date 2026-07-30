@@ -4,7 +4,7 @@ m-value-object).
 Each rejected rule is pinned with the exact identifier `validate_operation`
 raises, alongside the representative VALID operations that must NOT be
 rejected — including the corpus boundary case (an equivalent-spelling narrow
-that is NOT outside the active position). The 13 in-slice rejected corpus
+that is NOT outside the active position). The 16 in-slice rejected corpus
 cases are additionally round-tripped through the real validator here (not
 just via the engine's rejected sweep), so a regression in either the node
 construction or the model resolution fails at the unit layer first.
@@ -43,6 +43,8 @@ from parallax.core.op_algebra import (
     NestedNotExists,
     NestedNullCheck,
     NestedRange,
+    NestedStringMatch,
+    NestedStringOp,
     NoneOp,
     Not,
     NotExists,
@@ -139,10 +141,12 @@ def test_referenced_entities_collects_every_class_the_operation_names() -> None:
 
 _MODEL_DIR = case_format.find_repo_root() / "core" / "compatibility" / "models"
 _ANIMAL = corpus_models.load_model(_MODEL_DIR / "animal.yaml")
+_CONTACT = corpus_models.load_model(_MODEL_DIR / "contact.yaml")
 _CUSTOMER = corpus_models.load_model(_MODEL_DIR / "customer.yaml")
 _ORDERS = corpus_models.load_model(_MODEL_DIR / "orders.yaml")
 _MODEL_BY_FILE: Mapping[str, Metamodel] = {
     "animal.yaml": _ANIMAL,
+    "contact.yaml": _CONTACT,
     "customer.yaml": _CUSTOMER,
     "orders.yaml": _ORDERS,
 }
@@ -179,7 +183,7 @@ def _rejects(op: Operation, meta: Metamodel, target: str) -> OperationRejectedEr
 
 
 # --------------------------------------------------------------------------- #
-# The 13 in-slice rejected corpus cases, round-tripped end to end.            #
+# The 16 in-slice rejected corpus cases, round-tripped end to end.            #
 # --------------------------------------------------------------------------- #
 _REJECTED_CASE_IDS = (
     "m-inheritance-040",
@@ -190,6 +194,9 @@ _REJECTED_CASE_IDS = (
     "m-op-algebra-039",
     "m-op-algebra-040",
     "m-op-algebra-041",
+    "m-op-algebra-042",
+    "m-op-algebra-043",
+    "m-op-algebra-044",
     "m-value-object-034",
     "m-value-object-035",
     "m-value-object-036",
@@ -586,6 +593,56 @@ def test_nested_path_descends_through_intermediate_nested_value_object() -> None
 def test_nested_exists_short_form_rejects_as_unknown_member() -> None:
     exc = _rejects(NestedExists(path="Customer"), _CUSTOMER, "Customer")
     assert exc.rule == "nested-path-unknown-member"
+
+
+_STRING_TAGS: tuple[NestedStringOp, ...] = (
+    "nestedLike",
+    "nestedNotLike",
+    "nestedStartsWith",
+    "nestedEndsWith",
+    "nestedContains",
+)
+
+
+@pytest.mark.parametrize("tag", _STRING_TAGS)
+def test_nested_string_predicate_on_a_string_member_accepts(tag: NestedStringOp) -> None:
+    _validate(
+        "Customer", NestedStringMatch(op=tag, path="Customer.address.city", value="Os"), _CUSTOMER
+    )
+    _validate(
+        "Customer",
+        NestedExists(
+            path="Customer.address.phones",
+            where=NestedStringMatch(op=tag, path="number", value="555"),
+        ),
+        _CUSTOMER,
+    )
+
+
+@pytest.mark.parametrize("tag", _STRING_TAGS)
+def test_nested_string_predicate_on_a_numeric_member_names_the_member(tag: NestedStringOp) -> None:
+    # `geo.elevation` is float64 and the literal is a string, so BOTH nested rules
+    # apply and their ORDER is what this pins: the member's own type is judged first,
+    # so the diagnostic is not the literal's.
+    op = NestedStringMatch(op=tag, path="Customer.address.geo.elevation", value="1")
+    exc = _rejects(op, _CUSTOMER, "Customer")
+    assert exc.rule == "nested-string-predicate-non-string-member"
+
+
+def test_nested_string_predicate_on_a_date_member_is_rejected_in_both_scopes() -> None:
+    # The hole the dedicated rule closes: `_literal_matches_type` reads a Date leaf
+    # permissively as a `str`, so the typed-literal rule alone would ACCEPT a text
+    # pattern over a date. Same member, both scopes, one rule.
+    path_scoped = NestedStringMatch(
+        op="nestedStartsWith", path="Contact.address.phones.expires", value="2024"
+    )
+    element_scoped = NestedExists(
+        path="Contact.address.phones",
+        where=NestedStringMatch(op="nestedEndsWith", path="expires", value="-01"),
+    )
+    for op in (path_scoped, element_scoped):
+        exc = _rejects(op, _CONTACT, "Contact")
+        assert exc.rule == "nested-string-predicate-non-string-member"
 
 
 _MULTI_TYPE_MODEL = Metamodel(

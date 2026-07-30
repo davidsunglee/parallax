@@ -17,6 +17,10 @@ normative rule:
   or whose intermediate / leaf segment is undeclared (m-op-algebra resolver MUST);
 * a nested-comparison / range / membership **literal** whose type mismatches the leaf
   attribute's declared neutral type (m-op-algebra typed-literal MUST);
+* a nested **string predicate** whose resolved leaf is not a `String` member
+  (m-op-algebra non-string-member MUST) — checked ahead of the typed-literal rule at
+  both nested scopes, because the portable literal carries a `date` / `uuid` /
+  `timestamp` value as a `string` and the literal rule alone would accept it;
 * a **`deepFetch`** path segment or a **relationship navigation** (`navigate` /
   `exists` / `notExists`) aimed at a value object — value objects are reached only
   by value through their owner, never navigated to (m-value-object contract 4,
@@ -64,9 +68,11 @@ from .value_object_resolve import (
     FIND_ROOT_VALUE_OBJECT,
     NAVIGATE_VALUE_OBJECT_TARGET,
     NESTED_LITERAL_TYPE_MISMATCH,
+    NESTED_STRING_PREDICATE_NON_STRING_MEMBER,
     RejectionError,
     bounds_inverted,
     find_top_value_object,
+    is_string_member,
     literal_matches_type,
     resolve_element_ref,
     resolve_nested_ref,
@@ -80,6 +86,12 @@ _NESTED_COMPARISON_TAGS = frozenset(
 # The flat nested membership family (a {path, values} body); the negated form carries
 # the same typed-literal obligation as the positive one.
 _NESTED_MEMBERSHIP_TAGS = frozenset({"nestedIn", "nestedNotIn"})
+# The flat nested string family (a {path, value, caseInsensitive?} body). Pattern
+# grammar and case folding are lowering concerns; what validation owns is the pair of
+# ordered rules below.
+_NESTED_STRING_TAGS = frozenset(
+    {"nestedLike", "nestedNotLike", "nestedStartsWith", "nestedEndsWith", "nestedContains"}
+)
 
 
 def validate_operation(entity: Entity, operation: Any) -> None:
@@ -109,6 +121,10 @@ def _walk(entity: Entity, node: Any) -> None:
         _check_nested_range(entity, body)
     elif tag in _NESTED_MEMBERSHIP_TAGS:
         _check_nested_membership(entity, body)
+    elif tag in _NESTED_STRING_TAGS:
+        _check_string_predicate(
+            resolve_nested_ref(entity, body["path"]), body, subject=body["path"]
+        )
     elif tag in ("nestedIsNull", "nestedIsNotNull"):
         resolve_nested_ref(entity, body["path"])
     elif tag in ("nestedExists", "nestedNotExists"):
@@ -192,6 +208,32 @@ def _check_nested_membership(entity: Entity, body: dict[str, Any]) -> None:
             )
 
 
+def _check_string_predicate(
+    attribute: dict[str, Any], body: dict[str, Any], *, subject: str
+) -> None:
+    """A nested string predicate's two rules, in the order m-op-algebra fixes: the
+    resolved member's own type, then the literal's.
+
+    One function for both scopes, because only the resolution of ``attribute``
+    differs. Ordering the member first is load-bearing: the literal rule reads a
+    `date`/`time`/`timestamp`/`uuid`/`bytes` member permissively as a string, so a
+    string predicate aimed at one would otherwise be accepted rather than named.
+    """
+    declared = attribute.get("type")
+    if not is_string_member(declared):
+        raise RejectionError(
+            NESTED_STRING_PREDICATE_NON_STRING_MEMBER,
+            f"{subject!r}: a string predicate reads text, but the member's declared type "
+            f"is {declared!r}, not 'string'",
+        )
+    value = body.get("value")
+    if not literal_matches_type(value, declared):
+        raise RejectionError(
+            NESTED_LITERAL_TYPE_MISMATCH,
+            f"{subject!r}: literal {value!r} does not match declared type {declared!r}",
+        )
+
+
 def _check_nested_exists(entity: Entity, body: dict[str, Any]) -> None:
     value_object = resolve_value_object_ref(entity, body["path"])
     where = body.get("where")
@@ -232,6 +274,12 @@ def _walk_element(value_object: dict[str, Any], node: Any) -> None:
                     f"element {body['path']!r}: list literal {value!r} does not match "
                     f"declared type {attribute.get('type')!r}",
                 )
+    elif tag in _NESTED_STRING_TAGS:
+        _check_string_predicate(
+            resolve_element_ref(value_object, body["path"]),
+            body,
+            subject=f"element {body['path']}",
+        )
     elif tag in ("nestedIsNull", "nestedIsNotNull"):
         resolve_element_ref(value_object, body["path"])
     elif tag in ("and", "or"):

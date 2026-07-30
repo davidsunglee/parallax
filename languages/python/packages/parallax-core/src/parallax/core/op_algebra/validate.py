@@ -42,6 +42,12 @@ Rule provenance:
   resolve against the entity's **declared** value-object structure, and a
   comparison / range-bound / membership literal MUST match the leaf's declared
   neutral type.
+- `nested-string-predicate-non-string-member` — `m-op-algebra` "Non-string-member
+  rule": a nested string predicate reads text, so its resolved leaf MUST be a
+  `String` member. It is a rule of its own, checked ahead of the typed-literal one,
+  because the portable literal vocabulary carries a `Date` / `Time` / `Timestamp` /
+  `Uuid` / `Bytes` value as a `str` — the literal rule alone would accept the very
+  case this one exists to name.
 - `deep-fetch-value-object-segment` / `navigate-value-object-target` /
   `find-root-value-object` — `m-value-object` "Materialization and navigation
   contract" (points 4 and 5): a value object carries no correlation columns
@@ -100,6 +106,7 @@ from parallax.core.op_algebra.nodes import (
     NestedNotExists,
     NestedNullCheck,
     NestedRange,
+    NestedStringMatch,
     NoneOp,
     Not,
     NotExists,
@@ -149,6 +156,7 @@ def _collect_entities(op: Operation, names: set[str]) -> None:
             NestedComparison(path=path)
             | NestedRange(path=path)
             | NestedMembership(path=path)
+            | NestedStringMatch(path=path)
             | NestedNullCheck(path=path)
         ):
             names.add(_class_of(path))
@@ -249,6 +257,8 @@ def _walk(op: Operation, model: Metamodel, scope: _PositionScope) -> None:
             _check_nested_range(op, model)
         case NestedMembership():
             _check_nested_membership(op, model)
+        case NestedStringMatch():
+            _check_nested_string(op, model)
         case NestedNullCheck():
             _check_nested_null_check(op, model)
         case NestedExists(path=path, where=where) | NestedNotExists(path=path, where=where):
@@ -670,6 +680,30 @@ def _check_nested_membership(node: NestedMembership, model: Metamodel) -> None:
         _check_typed_literal(node.path, value, leaf)
 
 
+def _check_string_member(path: str, leaf: ValueObjectAttributeMetadata) -> None:
+    """Reject a string predicate whose resolved leaf is not a ``String`` member.
+
+    Shared by both nested scopes, and deliberately NOT expressed through
+    :func:`_literal_matches_type`: that function reads a `Date` / `Time` /
+    `Timestamp` / `Uuid` / `Bytes` leaf permissively as a `str`, so the literal rule
+    would accept a string predicate against exactly the members this one rejects.
+    """
+    if not isinstance(leaf.type, String):
+        raise OperationRejectedError(
+            "nested-string-predicate-non-string-member",
+            f"{path!r}: a string predicate reads text, but the member's declared type is "
+            f"{leaf.type!r} (m-op-algebra non-string-member rule)",
+        )
+
+
+def _check_nested_string(node: NestedStringMatch, model: Metamodel) -> None:
+    """A nested string predicate's two checks, in the order `m-op-algebra` fixes:
+    the resolved member's own type, then the literal's."""
+    leaf = _resolve_nested_leaf(node.path, model)
+    _check_string_member(node.path, leaf)
+    _check_typed_literal(node.path, node.value, leaf)
+
+
 def _check_nested_null_check(node: NestedNullCheck, model: Metamodel) -> None:
     _resolve_nested_leaf(node.path, model)
 
@@ -697,6 +731,12 @@ def _check_element_membership(node: NestedMembership, container: _VoContainer) -
         _check_typed_literal(node.path, value, leaf)
 
 
+def _check_element_string(node: NestedStringMatch, container: _VoContainer) -> None:
+    leaf = _resolve_element_leaf(container, node.path)
+    _check_string_member(node.path, leaf)
+    _check_typed_literal(node.path, node.value, leaf)
+
+
 def _check_element_predicate(op: Operation, container: _VoContainer) -> None:
     """Validate a `nestedExists`/`nestedNotExists` `where` against ``container``
     — the TERMINAL value-object descriptor its `path` resolves to.
@@ -714,6 +754,8 @@ def _check_element_predicate(op: Operation, container: _VoContainer) -> None:
             _check_element_range(op, container)
         case NestedMembership():
             _check_element_membership(op, container)
+        case NestedStringMatch():
+            _check_element_string(op, container)
         case NestedNullCheck(path=path):
             _resolve_element_leaf(container, path)
         case And(operands=operands) | Or(operands=operands):

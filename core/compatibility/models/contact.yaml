@@ -59,6 +59,16 @@ entity:
             - name: number
               type: string
               nullable: true
+            # expires is the corpus's only NON-string, NON-numeric value-object
+            # member: a `date`. It exists for the m-op-algebra non-string-member rule,
+            # whose whole point is a member the typed-literal rule cannot catch —
+            # `date` rides the portable `string` literal, so a string predicate aimed
+            # at it satisfies the literal check and is caught only by the dedicated
+            # rule. Reached through the `many` `phones` member so the same member
+            # witnesses the rule at BOTH nested scopes.
+            - name: expires
+              type: date
+              nullable: true
   indices:
     - name: contact_pk
       attributes: [id]

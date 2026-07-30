@@ -1,28 +1,12 @@
 # Parallax Python — Language Spec
 
-**Status:** Completed baseline with accepted COR-50 target-state amendments;
-shared-contract closure pending.
+**Status:** Completed.
 
 This is the per-language spec for the Python implementation of
 Parallax, authored from [`core/spec/language-spec-template.md`](../../../core/spec/language-spec-template.md).
-Except for the explicitly identified COR-50 target-state amendments below,
-nothing here contradicts the core specification, the canonical claim in
+Nothing here contradicts the core specification, the canonical claim in
 [`slices.md`](../../../core/spec/slices.md), or the normative module DAG and
 artifact topology in [`modules.md`](../../../core/spec/modules.md).
-
-The nested Value Object **string** predicate material below
-records the accepted target state for COR-50; it does not
-claim those canonical forms exist in the current core specification, schemas,
-or compatibility corpus. The path-root Narrow material is no longer among them,
-neither is Null Placement on either ordering term, and neither are the nested
-range and negated-membership nodes: all three are landed core
-contract, implemented and lowered. Until COR-50 updates every
-remaining affected core contract,
-schema, model, fixture, case, benchmark, dialect, and claiming frontend
-together, the current core artifacts remain authoritative and the Python
-runtime MUST NOT expose or lower these additions. COR-50 owns that synchronized
-contract catch-up as part of its implementation and cannot restore this
-document to completed/readiness status before the shared closure is green.
 
 Guiding decision: the Python target is **Python-first and SQLModel-inspired**.
 Developers author Pydantic-based entity classes; the canonical YAML/JSON
@@ -168,7 +152,7 @@ mutations, exceptions, or exports.
   lowering/conformance seams: `operation()`, `serialize()`, `is_bare()`,
   `is_milestone_set()`, and equivalent state-inspection helpers are not public
   methods.
-- **Complete fluent surface.** The COR-50 interface consists exactly of
+- **Complete fluent surface.** The Find Query interface consists exactly of
   the class-scoped match-all value `Entity.all`,
   `Entity.where(*predicates)`, and the `FindQuery` methods
   `include(*relationship_paths)`, `order_by(*sort_keys)`, `limit(count)`,
@@ -207,7 +191,7 @@ mutations, exceptions, or exports.
   Attribute is valid after the root narrow that establishes its scope. Nested
   Value Object members, Relationship traversals, computed expressions,
   literals, and arbitrary functions cannot form Sort Keys; attempting to do so
-  raises `QueryDefinitionError(query-expression-invalid)`. COR-50 does not
+  raises `QueryDefinitionError(query-expression-invalid)`. This surface does not
   extend core `orderBy` beyond its Attribute Reference.
   `limit(count)` is
   single-shot: calling it on a Find Query that already carries a limit raises
@@ -271,7 +255,7 @@ mutations, exceptions, or exports.
   populates the `pets[Dog]` view, and continues through `doghouse`; root-source
   guarding does not create a narrowed relationship view.
   `include(Person.pets, Person.pets.narrow(Dog).doghouse)` performs separate
-  broad `pets` and narrowed `pets[Dog]` fetches. COR-50 does not reuse a broad
+  broad `pets` and narrowed `pets[Dog]` fetches. The planner does not reuse a broad
   view for subtype-conditional continuation; branches use separate paths and
   broad versus target-narrowed hops retain their distinct view and round-trip
   semantics. The effective path-root source set is fetch-hop identity at the
@@ -464,13 +448,12 @@ mutations, exceptions, or exports.
   interval APIs such as `as_of_range(...)` keep their own ordered-endpoint
   requirement.
 
-  The expanded family is a cross-core prerequisite rather than Python-only
-  sugar. `m-core`, `m-op-algebra`, `m-value-object`, `m-sql`, `m-dialect`, the
-  canonical operation schema, affected models, fixtures, compatibility cases,
-  benchmarks, dialect renderers, and every claiming frontend must add each node
-  atomically. `nestedBetween` and `nestedNotIn` have landed that way, in both
-  scopes; the five nested string nodes have not, and COR-50 exposes those
-  methods only against that completed shared contract.
+  A nested string predicate is legal only over a `String` member. `Date`, `Time`,
+  `Timestamp`, `Uuid`, and `Bytes` all ride the algebra's portable `string`
+  literal, so a pattern against one would otherwise satisfy the typed-literal
+  check and lower text matching against a value that is not text; the member's own
+  declared type is checked first, and a mismatch raises
+  `OperationRejectedError(nested-string-predicate-non-string-member)` at build.
 
   ```python
   Customer.where(
@@ -509,7 +492,7 @@ mutations, exceptions, or exports.
   same structured path. Separate paths express subtype branches. A broad
   relationship view and a target-narrowed view remain distinct observable
   views and separate fetch hops; the planner does not reuse the broad view for
-  conditional subtype descent in COR-50.
+  conditional subtype descent.
 - **Relationship existence predicates.** A Relationship Path exposes
   `exists(*predicates)` and `not_exists(*predicates)` for either to-one or
   to-many cardinality. Zero arguments mean pure path existence or absence.
@@ -2478,11 +2461,9 @@ subsection of the template is deleted from this completed spec.
 
 ## Completion check
 
-- COR-50's target-state amendments exist in the synchronized core
+- Every surface this document describes exists in the synchronized core
   specifications, schemas, compatibility corpus, dialects, and every claiming
-  frontend. Until that shared-contract closure is green, this completion check
-  is not satisfied and no Python runtime implementation may claim the amended
-  surface.
+  frontend, so nothing here is ahead of the shared contract.
 - No decide-and-record markers or blank required table cells remain.
 - Exactly one §3 lifecycle profile (snapshot) and its matching §4 result
   branch are retained; all managed-object instructions are removed.

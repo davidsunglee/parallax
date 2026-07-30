@@ -295,16 +295,28 @@ def _golden_dialects(entries: list[dict[str, Any]]) -> set[str]:
 # The value-object cases whose golden is Postgres ONLY, because their element
 # predicate is outside MariaDB's containment scope (m-dialect, "Scope of the
 # containment golden"): `json_contains` expresses equality against a fixed candidate,
-# so a range or a negated membership — flat through a `many` segment or inside a
-# scoped `where` — has no MariaDB golden until a set-returning unnest can be
-# normalized. Enumerated rather than inferred, so a case that loses its MariaDB
-# golden by accident still fails; the assertion below is exact in BOTH directions.
+# so a range, a negated membership, or a string predicate — flat through a `many`
+# segment or inside a scoped `where` — has no MariaDB golden until a set-returning
+# unnest can be normalized. Enumerated rather than inferred, so a case that loses its
+# MariaDB golden by accident still fails; the assertion below is exact in BOTH
+# directions. A nested string predicate that does NOT cross a `many` member stays
+# dual-dialect, which is why -054 and -055 are absent from this set.
 _POSTGRES_ONLY_ELEMENT_PREDICATE_CASES = frozenset(
     {
         "m-value-object-050-nested-any-element-between",
         "m-value-object-051-nested-any-element-not-in",
         "m-value-object-052-nested-exists-scoped-between",
         "m-value-object-053-nested-exists-scoped-not-in",
+        "m-value-object-056-nested-any-element-like",
+        "m-value-object-057-nested-any-element-not-like",
+        "m-value-object-058-nested-any-element-starts-with",
+        "m-value-object-059-nested-any-element-ends-with",
+        "m-value-object-060-nested-any-element-contains",
+        "m-value-object-061-nested-exists-scoped-like",
+        "m-value-object-062-nested-exists-scoped-not-like",
+        "m-value-object-063-nested-exists-scoped-starts-with",
+        "m-value-object-064-nested-exists-scoped-ends-with",
+        "m-value-object-065-nested-exists-scoped-contains",
     }
 )
 

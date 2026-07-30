@@ -49,6 +49,8 @@ from parallax.core.op_algebra.nodes import (
     NestedNullCheck,
     NestedNullOp,
     NestedRange,
+    NestedStringMatch,
+    NestedStringOp,
     NoneOp,
     Not,
     NotExists,
@@ -78,6 +80,9 @@ _NESTED_CMP: frozenset[str] = frozenset(
 )
 _NESTED_RANGE: frozenset[str] = frozenset({"nestedBetween"})
 _NESTED_MEMBERSHIPS: frozenset[str] = frozenset({"nestedIn", "nestedNotIn"})
+_NESTED_STRINGS: frozenset[str] = frozenset(
+    {"nestedLike", "nestedNotLike", "nestedStartsWith", "nestedEndsWith", "nestedContains"}
+)
 _NESTED_NULL: frozenset[str] = frozenset({"nestedIsNull", "nestedIsNotNull"})
 
 # Reference-string patterns (operation.schema.json $defs). An attribute and
@@ -103,6 +108,7 @@ _ELEMENT_TAGS: frozenset[str] = (
     _NESTED_CMP
     | _NESTED_RANGE
     | _NESTED_MEMBERSHIPS
+    | _NESTED_STRINGS
     | _NESTED_NULL
     | frozenset({"and", "or", "not", "group"})
 )
@@ -160,6 +166,7 @@ _SHAPES.update({tag: _shape(("attr", "values")) for tag in _MEMBERSHIPS})
 _SHAPES.update({tag: _shape(("path", "value")) for tag in _NESTED_CMP})
 _SHAPES.update({tag: _shape(("path", "lower", "upper")) for tag in _NESTED_RANGE})
 _SHAPES.update({tag: _shape(("path", "values")) for tag in _NESTED_MEMBERSHIPS})
+_SHAPES.update({tag: _shape(("path", "value"), ("caseInsensitive",)) for tag in _NESTED_STRINGS})
 _SHAPES.update({tag: _shape(("path",)) for tag in _NESTED_NULL})
 
 
@@ -481,6 +488,13 @@ def _deserialize(doc: object, *, element_scope: bool) -> Operation:
             path=_ref(body, "path", tag, nested_ref, nested_kind),
             values=_values(body, tag),
         )
+    if tag in _NESTED_STRINGS:
+        return NestedStringMatch(
+            op=cast("NestedStringOp", tag),
+            path=_ref(body, "path", tag, nested_ref, nested_kind),
+            value=_str(body, "value", tag),
+            case_insensitive=_case_insensitive(body, tag),
+        )
     if tag in _NESTED_NULL:
         return NestedNullCheck(
             op=cast("NestedNullOp", tag),
@@ -599,6 +613,11 @@ def serialize(op: Operation) -> dict[str, object]:
             return {"nestedBetween": {"path": path, "lower": lower, "upper": upper}}
         case NestedMembership(op=tag, path=path, values=values):
             return {tag: {"path": path, "values": list(values)}}
+        case NestedStringMatch(op=tag, path=path, value=value, case_insensitive=ci):
+            nested_string: dict[str, object] = {"path": path, "value": value}
+            if ci is not None:
+                nested_string["caseInsensitive"] = ci
+            return {tag: nested_string}
         case NestedNullCheck(op=tag, path=path):
             return {tag: {"path": path}}
         case NestedExists(path=path, where=where):

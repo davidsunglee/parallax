@@ -184,10 +184,17 @@ algebra — one single-key tagged node per operator, each with a closed body:
 | `nestedBetween` | `{ "nestedBetween": { "path", "lower", "upper" } }` | the value at `path` lies in the inclusive range `[lower, upper]` |
 | `nestedIn` | `{ "nestedIn": { "path", "values" } }` | the value at `path` is one of `values` (non-empty list) |
 | `nestedNotIn` | `{ "nestedNotIn": { "path", "values" } }` | the value at `path` is not one of `values` (non-empty list) |
+| `nestedLike` | `{ "nestedLike": { "path", "value", "caseInsensitive"? } }` | the value at `path` matches the pattern `value` |
+| `nestedNotLike` | `{ "nestedNotLike": { "path", "value", "caseInsensitive"? } }` | the value at `path` does not match the pattern `value` |
+| `nestedStartsWith` | `{ "nestedStartsWith": { "path", "value", "caseInsensitive"? } }` | the value at `path` begins with the literal `value` |
+| `nestedEndsWith` | `{ "nestedEndsWith": { "path", "value", "caseInsensitive"? } }` | the value at `path` ends with the literal `value` |
+| `nestedContains` | `{ "nestedContains": { "path", "value", "caseInsensitive"? } }` | the value at `path` contains the literal `value` |
 | `nestedIsNull` | `{ "nestedIsNull": { "path" } }` | the value at `path` is **not present** (see the absence-collapse rule) |
 | `nestedIsNotNull` | `{ "nestedIsNotNull": { "path" } }` | the value at `path` **is present** (the complement) |
 
-The comparison / range / membership `value`(s) are polymorphic `literal`s (`string`
+The five string predicates carry a plain `string` `value` rather than a polymorphic
+literal; the rest of the comparison / range / membership `value`(s) are polymorphic
+`literal`s (`string`
 / `number` / `boolean` / `null`), and each type **MUST** match the leaf attribute's
 declared neutral type; a resolver **MUST** reject a type-mismatched literal (e.g. a
 `number` compared against a `string`-typed attribute). The presence tests
@@ -206,6 +213,40 @@ first, bounds second**: the path resolves and both bounds are type-checked befor
 the bounds are ordered, so a mistyped bound draws `nested-literal-type-mismatch`
 rather than being ordered as a raw literal.
 
+The five nested string predicates carry the **String** section's semantics above
+unchanged, against the nested extraction instead of a column: `nestedLike` /
+`nestedNotLike` take `value` as the SQL pattern with `%` and `_` as wildcards and
+never escape it, the affix forms (`nestedStartsWith` / `nestedEndsWith` /
+`nestedContains`) take it as literal text whose own `%`, `_`, and escape characters
+the implementation **MUST** escape before wrapping with the affix wildcards, and
+`caseInsensitive` folds both sides with `lower(...)`. There is one rule for both
+scopes and for the top level; nothing about the pattern grammar changes because the
+subject is nested. Their `value` is a plain `string` rather than a polymorphic
+literal, which is why the leaf's own type carries the rule below rather than the
+literal's.
+
+**Non-string-member rule.** A string predicate reads text, so its resolved leaf's
+declared neutral type **MUST** be `String`; a resolver **MUST** reject any other
+leaf (`nested-string-predicate-non-string-member`, `m-case-format` rejected
+vocabulary). This is a **separate** rule from the typed-literal one, and the two are
+checked in order — **subject first**, exactly as a range's bound ordering is: the
+path resolves, the leaf's type is checked against the predicate, and only then is
+the literal checked.
+
+```text
+resolve nested member -> leaf
+if the predicate is a string predicate and leaf.type is not String:
+    reject("nested-string-predicate-non-string-member")
+if not literal_matches_type(value, leaf.type):
+    reject("nested-literal-type-mismatch")
+```
+
+Ordering them the other way would blame the literal for the member's problem, and —
+because the algebra's portable literal vocabulary carries `Date` / `Time` /
+`Timestamp` / `Uuid` / `Bytes` as `string`s — would **accept** `nestedStartsWith`
+against a `Date` member rather than reject it. The dedicated rule names the real
+fault and closes that hole.
+
 #### Absence-collapse rule
 
 A nested field is in exactly one of two observable conditions: **present** — the
@@ -220,11 +261,14 @@ every nested predicate:
 
 In every one of these the extraction yields SQL `NULL`, so a comparison
 (`nestedEq` / `nestedNotEq` / `nestedGt` / `nestedGte` / `nestedLt` / `nestedLte`),
-a range (`nestedBetween`), and a membership test (`nestedIn` / `nestedNotIn`) are
+a range (`nestedBetween`), a membership test (`nestedIn` / `nestedNotIn`), and a
+string predicate (`nestedLike` / `nestedNotLike` / `nestedStartsWith` /
+`nestedEndsWith` / `nestedContains`) are
 neither true — the row is **excluded**, exactly as the scalar `notEq`/`notIn` null
-behavior above. The negative forms are not exceptions: `nestedNotEq` and
-`nestedNotIn` over a not-present member yield `NULL`, not true, so absence never
-satisfies a negative predicate. `nestedIsNull` is true **exactly** on the
+behavior above. The negative forms are not exceptions: `nestedNotEq`,
+`nestedNotIn`, and `nestedNotLike` over a not-present member yield `NULL`, not
+true, so absence never satisfies a negative predicate. `nestedIsNull` is true
+**exactly** on the
 rows a comparison excludes for this reason (all four not-present states);
 `nestedIsNotNull` is its complement (the present rows). An implementation **MUST
 NOT** distinguish JSON `null` from a missing key or a null column at the predicate
@@ -260,8 +304,9 @@ through a `many` segment: the two flat comparisons evaluate independently, so tw
 is canonical and never lowered as a pair.
 
 **Any-element is uniform across the whole flat family, negative forms included.**
-`nestedNotEq` and `nestedNotIn` through a `many` segment mean "**some** element's
-member is not equal to / not in the list", never "**no** element's member is". The
+`nestedNotEq`, `nestedNotIn`, and `nestedNotLike` through a `many` segment mean
+"**some** element's member is not equal to / not in the list / not like the
+pattern", never "**no** element's member is". The
 two readings differ on real data, so the choice is observable: with phones
 `[{home, 555-1234}, {work, 555-9999}]`, `nestedNotIn(phones.type, [work])` matches
 that row (its first element's `type` is `home`), while the no-element reading does

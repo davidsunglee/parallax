@@ -141,6 +141,19 @@ def test_every_element_scoped_operator_builds_its_own_nested_node() -> None:
     assert serialize(phone_type.between("a", "z").op) == {
         "nestedBetween": {"path": "type", "lower": "a", "upper": "z"}
     }
+    assert serialize(phone_type.like("ho%").op) == {"nestedLike": {"path": "type", "value": "ho%"}}
+    assert serialize(phone_type.not_like("ho%").op) == {
+        "nestedNotLike": {"path": "type", "value": "ho%"}
+    }
+    assert serialize(phone_type.starts_with("ho").op) == {
+        "nestedStartsWith": {"path": "type", "value": "ho"}
+    }
+    assert serialize(phone_type.ends_with("me").op) == {
+        "nestedEndsWith": {"path": "type", "value": "me"}
+    }
+    assert serialize(phone_type.contains("om", case_insensitive=True).op) == {
+        "nestedContains": {"path": "type", "value": "om", "caseInsensitive": True}
+    }
     assert serialize(phone_type.is_null().op) == {"nestedIsNull": {"path": "type"}}
     assert serialize(phone_type.is_not_null().op) == {"nestedIsNotNull": {"path": "type"}}
 
@@ -187,6 +200,17 @@ def test_a_nested_range_and_negated_membership_stay_nested_rather_than_scalar() 
     }
     assert serialize(vm.Customer.address.city.not_in(["Oslo"]).op) == {
         "nestedNotIn": {"path": "Customer.address.city", "values": ["Oslo"]}
+    }
+    assert serialize(vm.Customer.address.city.starts_with("Os").op) == {
+        "nestedStartsWith": {"path": "Customer.address.city", "value": "Os"}
+    }
+    assert serialize(vm.Customer.address.city.like("OS%", case_insensitive=True).op) == {
+        "nestedLike": {"path": "Customer.address.city", "value": "OS%", "caseInsensitive": True}
+    }
+    # A non-nested attribute on the same Entity keeps the scalar spelling, and the
+    # fluent surface never authors an explicit `caseInsensitive: false`.
+    assert serialize(vm.Customer.name.starts_with("A").op) == {
+        "startsWith": {"attr": "Customer.name", "value": "A"}
     }
     # A non-nested attribute on the same Entity keeps the scalar spellings.
     assert serialize(vm.Customer.name.not_in(["Ada"]).op) == {
