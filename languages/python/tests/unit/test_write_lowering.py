@@ -19,6 +19,13 @@ that reaches it, a mixed-shape
 multi-row instruction, a milestone verb on a non-temporal entity, an unsupported
 DB-computed marker — raises a loud ``WriteLoweringError``, never a wrong
 emission, mirroring the read compiler's forward-error posture.
+
+The final section pins the two halves the non-temporal insert family crosses
+separately: ``_finalize.finalize_item`` settling an instruction into finalized
+steps, and ``_step_lowering.lower_step`` rendering a step built by hand — proving
+that lowering answers a purely physical question and never re-derives a semantic
+one. The composed emissions above are the byte-exact evidence; these are the
+seam itself.
 """
 
 from __future__ import annotations
@@ -34,14 +41,19 @@ from parallax.core import inheritance, opt_lock, storage_layout
 from parallax.core import op_algebra as oa
 from parallax.core.db_port import JsonDocument
 from parallax.core.dialect import POSTGRES, Dialect
-from parallax.core.metamodel import entity_by_name
+from parallax.core.metamodel import AttributeIdentity, EntityIdentity, entity_by_name
 from parallax.core.model_formation import MetamodelValidationError
 from parallax.core.sql_gen import Statement
 from parallax.core.unit_work import (
+    MAX_PLUS_ONE,
+    NEW_LINEAGE,
     Concurrency,
+    InsertEntry,
     KeyedWrite,
     ObjectKey,
     Observation,
+    PlannedInsert,
+    PlannedRow,
     PlannedWrite,
     PredicateWrite,
     WriteAssignment,
@@ -52,7 +64,9 @@ from parallax.core.unit_work import (
 from parallax.descriptor import _records
 from parallax.descriptor._records import Metamodel
 from parallax.snapshot.handle import WriteLoweringError, lower_write
+from parallax.snapshot.handle._finalize import finalize_item
 from parallax.snapshot.handle._keyed_sql import _keys_in_list  # pyright: ignore[reportPrivateUsage]
+from parallax.snapshot.handle._step_lowering import lower_step
 
 _MODELS = models.load_models()
 ACCOUNT = _MODELS["account"]
@@ -65,6 +79,7 @@ DOCUMENT = _MODELS["document"]
 PK_MAX = _MODELS["pk-max"]
 PK_SEQUENCE = _MODELS["pk-sequence"]
 WALLET = _MODELS["wallet"]
+BALANCE = _MODELS["balance"]
 
 
 def _lower(
@@ -654,7 +669,9 @@ def test_multi_row_insert_with_differing_row_shapes_is_refused() -> None:
     # one: the emitted INSERT names the FIRST row's columns, so every later
     # value tuple would bind positionally against a column list it does not
     # match (here `balance`'s hole would take `Omar`'s absent member).
-    # `lower_multi_insert` refuses instead of mis-emitting.
+    # Uniform membership is a Planned Insert's own construction invariant, so
+    # the mixed shape is refused while the step is being settled — before any
+    # column list exists to mis-emit against.
     mixed = KeyedWrite(
         "insert",
         "Wallet",
@@ -663,7 +680,7 @@ def test_multi_row_insert_with_differing_row_shapes_is_refused() -> None:
             {"id": 11, "owner": "Omar"},
         ),
     )
-    with pytest.raises(WriteLoweringError, match="row column sets differ"):
+    with pytest.raises(ValueError, match="names the same members"):
         _lower(mixed, WALLET)
 
 
@@ -846,11 +863,194 @@ def test_readless_predicate_update_follows_the_entity_layout_order() -> None:
 
 
 def test_value_object_document_is_not_mistaken_for_a_marker() -> None:
-    # The marker check classifies by SHAPE (a wrapped JsonDocument is never a
-    # Mapping), not member role: a value-object member's whole-document mapping
-    # still lowers to one JsonDocument bind, even marker-shaped.
+    # A DB-computed marker is a SCALAR cell's shape. A value-object member
+    # resolves to its own Value Object identity, so its whole-document mapping is
+    # never offered to the marker classification at all — it still lowers to one
+    # JsonDocument bind, marker-shaped or not.
     insert = KeyedWrite(
         "insert", "Customer", ({"id": 5, "name": "Vera", "address": {"city": "Berlin"}},)
     )
     statement = _lower(insert, CUSTOMER)[0]
     assert statement.binds[-1] == JsonDocument({"city": "Berlin"})
+
+
+# --------------------------------------------------------------------------- #
+# The finalized non-temporal insert: what settles the step, and what renders   #
+# it. Everything above composes the two; these pin the split itself.           #
+# --------------------------------------------------------------------------- #
+def _finalize(instruction: WriteInstruction, meta: Metamodel) -> tuple[PlannedInsert, ...] | None:
+    return finalize_item(PlannedWrite(instruction=instruction), models.accepted_model(meta))
+
+
+def _identity(meta: Metamodel, entity: str) -> EntityIdentity:
+    metadata = entity_by_name(models.accepted_model(meta), entity)
+    assert metadata is not None
+    return metadata.identity
+
+
+def _attribute(meta: Metamodel, entity: str, member: str) -> AttributeIdentity:
+    """The Attribute identity a write row's ``member`` spelling names — the
+    family-effective one, so an inherited member resolves at its declaring
+    ancestor exactly as the Table Layout slot's own contributor does."""
+    model = models.accepted_model(meta)
+    position = inheritance.view(model).entity(_identity(meta, entity))
+    assert position is not None
+    attribute = position.applicable_attribute(member)
+    assert attribute is not None
+    return attribute.identity
+
+
+def test_finalization_settles_an_insert_into_one_step_of_new_lineage_entries() -> None:
+    steps = _finalize(
+        KeyedWrite("insert", "Wallet", ({"id": 10, "owner": "Mira", "balance": 100.00},)),
+        WALLET,
+    )
+    assert steps is not None
+    (step,) = steps
+    assert step == PlannedInsert(
+        entity=_identity(WALLET, "Wallet"),
+        entries=(
+            InsertEntry(
+                row=PlannedRow(
+                    attributes={
+                        _attribute(WALLET, "Wallet", "id"): 10,
+                        _attribute(WALLET, "Wallet", "owner"): "Mira",
+                        _attribute(WALLET, "Wallet", "balance"): 100.00,
+                    }
+                ),
+                origin=NEW_LINEAGE,
+            ),
+        ),
+    )
+
+
+def test_finalization_derives_the_initial_version_the_row_never_authors() -> None:
+    # The version is framework-owned end to end (ADR 0013): the settled step
+    # already carries it, so nothing downstream re-derives it from the model.
+    steps = _finalize(
+        KeyedWrite("insert", "Account", ({"id": 9, "owner": "Noether", "balance": 5.00},)),
+        ACCOUNT,
+    )
+    assert steps is not None
+    row = steps[0].entries[0].row
+    assert row.attributes[_attribute(ACCOUNT, "Account", "version")] == opt_lock.INITIAL_VERSION
+
+
+def test_finalization_classifies_a_pk_gen_marker_into_a_generated_value() -> None:
+    # The authored marker document is classified ONCE, while the step is being
+    # settled; the rendered statement reads a closed generated-value expression
+    # rather than re-inspecting a mapping's shape.
+    steps = _finalize(
+        KeyedWrite("insert", "Attendee", ({"id": {"computed": "maxPlusOne"}, "name": "Ada"},)),
+        PK_MAX,
+    )
+    assert steps is not None
+    row = steps[0].entries[0].row
+    assert row.attributes[_attribute(PK_MAX, "Attendee", "id")] == MAX_PLUS_ONE
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        {"computed": "maxPlusOne", "extra": True},
+        {"allocated": "maxPlusOne"},
+    ],
+    ids=["two-key", "unrecognized-key"],
+)
+def test_a_mapping_outside_the_marker_shape_stays_an_ordinary_insert_cell(
+    value: dict[str, object],
+) -> None:
+    # Marker classification requires EXACTLY one key naming a recognized marker.
+    # A differently shaped mapping is neither a marker nor a value-object
+    # document (its member is a scalar Attribute), so it stays a literal bind
+    # rather than earning a refusal.
+    statement = _lower(KeyedWrite("insert", "Attendee", ({"id": 1, "name": value},)), PK_MAX)[0]
+    assert statement.sql == "insert into attendee(id, name) values (?, ?)"
+    assert statement.binds == (1, value)
+
+
+def test_a_write_row_naming_no_family_member_is_refused_at_finalization() -> None:
+    # Every member spelling must resolve to a semantic identity before a step
+    # exists, so an unknown one is refused where the resolution happens — never
+    # silently dropped from the emitted column list.
+    with pytest.raises(WriteLoweringError, match="not a member of the Entity's family"):
+        _finalize(KeyedWrite("insert", "Wallet", ({"id": 10, "nickname": "M"},)), WALLET)
+
+
+@pytest.mark.parametrize(
+    ("instruction", "meta"),
+    [
+        (KeyedWrite("update", "Wallet", ({"id": 10, "owner": "Mira"},)), WALLET),
+        (KeyedWrite("delete", "Wallet", ({"id": 10},)), WALLET),
+        (KeyedWrite("insert", "Balance", ({"id": 1, "value": 5.00},)), BALANCE),
+        (PredicateWrite("delete", WriteTarget("Wallet", oa.All())), WALLET),
+    ],
+    ids=["keyed-update", "keyed-delete", "temporal-insert", "predicate-write"],
+)
+def test_finalization_declines_a_family_that_still_lowers_from_its_instruction(
+    instruction: WriteInstruction, meta: Metamodel
+) -> None:
+    assert _finalize(instruction, meta) is None
+
+
+def test_step_lowering_reads_column_participation_and_order_from_the_layout() -> None:
+    # Built by hand, with no instruction and no finalization behind it: the
+    # emitted column list is the target's Table Layout slot selection filtered to
+    # the step's own members, in slot order — never the row's member order.
+    step = PlannedInsert(
+        entity=_identity(ORDERS, "OrderItem"),
+        entries=(
+            InsertEntry(
+                row=PlannedRow(
+                    attributes={
+                        _attribute(ORDERS, "OrderItem", "quantity"): 3,
+                        _attribute(ORDERS, "OrderItem", "id"): 200,
+                        _attribute(ORDERS, "OrderItem", "orderId"): 100,
+                    }
+                ),
+                origin=NEW_LINEAGE,
+            ),
+        ),
+    )
+    statement = lower_step(step, models.accepted_model(ORDERS), POSTGRES)
+    assert statement.sql == "insert into order_item(id, order_id, quantity) values (?, ?, ?)"
+    assert statement.binds == (200, 100, 3)
+
+
+def test_step_lowering_derives_the_table_per_hierarchy_tag_no_entry_names() -> None:
+    # The tag is a layout fact, so it lands at its own slot in every value tuple
+    # while no entry carries it — the one cell lowering adds rather than reads.
+    row = PlannedRow(
+        attributes={
+            _attribute(PAYMENT, "CardPayment", "id"): 1,
+            _attribute(PAYMENT, "CardPayment", "amount"): 10.00,
+            _attribute(PAYMENT, "CardPayment", "cardNetwork"): "Visa",
+        }
+    )
+    step = PlannedInsert(
+        entity=_identity(PAYMENT, "CardPayment"),
+        entries=(InsertEntry(row=row, origin=NEW_LINEAGE),),
+    )
+    statement = lower_step(step, models.accepted_model(PAYMENT), POSTGRES)
+    assert (
+        statement.sql == "insert into payment(id, kind, amount, card_network) values (?, ?, ?, ?)"
+    )
+    assert statement.binds == (1, "card", 10.00, "Visa")
+
+
+def test_step_lowering_refuses_a_multi_entry_generated_value() -> None:
+    # A generated value folds into the statement's own SELECT rather than
+    # binding, and one such statement carries exactly one row — so a step
+    # holding several is refused instead of rendered as a value list that could
+    # not express it. Batch grouping never produces one (a pk-gen-managed target
+    # does not collapse), so this is a hand-built shape.
+    row = PlannedRow(attributes={_attribute(PK_MAX, "Attendee", "id"): MAX_PLUS_ONE})
+    step = PlannedInsert(
+        entity=_identity(PK_MAX, "Attendee"),
+        entries=(
+            InsertEntry(row=row, origin=NEW_LINEAGE),
+            InsertEntry(row=row, origin=NEW_LINEAGE),
+        ),
+    )
+    with pytest.raises(WriteLoweringError, match="one row at a time"):
+        lower_step(step, models.accepted_model(PK_MAX), POSTGRES)

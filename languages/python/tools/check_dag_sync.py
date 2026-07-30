@@ -87,13 +87,13 @@ MODULE_SCOPE: Mapping[str, str] = {
 }
 
 # The write-lowering child cluster (`_family`, `_write_types`, `_keyed_sql`,
-# `_write_lowering`) is enforced as ONE group: the four modules share this grant
-# row rather than each declaring its own. Grouping is deliberate — helpers move
-# between the cluster's modules as the lowering pipeline evolves, and a
-# per-module row would turn every such internal move into a spec edit. The
-# group boundary is what carries the enforcement value: none of the four may
-# reach the read side (`m-snapshot-read`, `m-deep-fetch`, `m-navigate`,
-# `parallax.core.entity`).
+# `_write_lowering`, `_finalize`, `_step_lowering`) is enforced as ONE group: the
+# six modules share this grant row rather than each declaring its own. Grouping
+# is deliberate — helpers move between the cluster's modules as the lowering
+# pipeline evolves, and a per-module row would turn every such internal move
+# into a spec edit. The group boundary is what carries the enforcement value:
+# none of the six may reach the read side (`m-snapshot-read`, `m-deep-fetch`,
+# `m-navigate`, `parallax.core.entity`).
 _LOWERING_GROUP_DEPS: frozenset[str] = frozenset(
     {
         "parallax.core.base",
@@ -179,6 +179,8 @@ SUPPORT_SCOPE_DEPS: Mapping[str, frozenset[str]] = {
     "parallax.snapshot.handle._write_types": _LOWERING_GROUP_DEPS,
     "parallax.snapshot.handle._keyed_sql": _LOWERING_GROUP_DEPS,
     "parallax.snapshot.handle._write_lowering": _LOWERING_GROUP_DEPS,
+    "parallax.snapshot.handle._finalize": _LOWERING_GROUP_DEPS,
+    "parallax.snapshot.handle._step_lowering": _LOWERING_GROUP_DEPS,
     "parallax.postgres": frozenset(
         {
             "parallax.core.base",
@@ -208,6 +210,8 @@ CHILD_SCOPE_PARENT: Mapping[str, str] = {
     "parallax.snapshot.handle._write_types": "parallax.snapshot.handle",
     "parallax.snapshot.handle._keyed_sql": "parallax.snapshot.handle",
     "parallax.snapshot.handle._write_lowering": "parallax.snapshot.handle",
+    "parallax.snapshot.handle._finalize": "parallax.snapshot.handle",
+    "parallax.snapshot.handle._step_lowering": "parallax.snapshot.handle",
 }
 
 # The conformance-family enforcement scopes that carry a module tag and thus
@@ -312,7 +316,7 @@ def _row_scopes(scope_cell: str, owner_cell: str) -> list[str]:
     """The enforcement scopes a §7 row declares.
 
     Normally the "Enforcement scope" cell names them. The write-lowering child
-    group states "those four scopes, sharing one grant row" there and enumerates
+    group states "those six scopes, sharing one grant row" there and enumerates
     them in the "Source owner/path" cell instead, so a scope cell naming none
     falls back to the owner cell. Within a cell, a backticked token starting
     with a dot (``._write_types``) abbreviates a sibling of the preceding full
