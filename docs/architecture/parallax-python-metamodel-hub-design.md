@@ -1,6 +1,6 @@
 # Python Metamodel Hub and Entity frontend design
 
-**Status:** Accepted design; COR-50 shared-contract closure pending
+**Status:** Accepted design; COR-64 execution-seam and COR-50 graph closure pending
 
 **Accepted:** 2026-07-20
 
@@ -47,6 +47,8 @@ The Python assembly decision is recorded in
 [Python ADR 0007](../../languages/python/docs/adr/0007-entity-classes-compose-into-explicit-sealed-metamodel-hubs.md).
 The descriptor-distribution boundary is recorded in
 [Python ADR 0008](../../languages/python/docs/adr/0008-descriptor-interchange-is-separate-from-the-metamodel-hub.md).
+The Snapshot execution-deferral decision is recorded in
+[Python ADR 0009](../../languages/python/docs/adr/0009-deferred-execution-features-are-explicit-snapshot-debt.md).
 
 ## Desired developer surface
 
@@ -782,14 +784,18 @@ only through Entity declarations and is not passed to the hub separately.
   to Entity Class index. The binding module separately retains the concrete
   hub as a private strong owner reference. Every claimed class points to this
   same Metamodel Binding; no metadata is copied per class.
-- Entity frontend internals share the Metamodel Binding; Snapshot never
-  receives it or its bidirectional class index. At connection it receives the
-  narrower immutable Entity Runtime described below, never the concrete
-  `MetamodelHub` or its lifecycle, export, or construction surface. An
-  **Entity Class Binding** is the individual association between a class
-  object and its Entity Identity within the Metamodel Binding, not another
-  value graph or metadata implementation. Descriptor-backed hubs have neither
-  a Metamodel Binding nor an Entity Runtime.
+- Entity frontend internals share the Metamodel Binding. Before graph
+  materialization lands, a Snapshot Database owns a private `_ConnectedHub`
+  containing the accepted Metamodel, opaque exact-hub identity, and the
+  transitional binding required by the existing wrapper. It obtains this state
+  through the private sealed-model seam, never by retaining the concrete
+  `MetamodelHub` lifecycle, export, or construction surface. COR-50 may replace
+  only that transitional materialization dependency with the complete Entity
+  Runtime described below. An **Entity Class Binding** is the individual
+  association between a class object and its Entity Identity within the
+  Metamodel Binding, not another value graph or metadata implementation.
+  Descriptor-backed hubs have neither a Metamodel Binding nor an Entity
+  Runtime.
 
 ### Public error model
 
@@ -868,7 +874,7 @@ only through Entity declarations and is not passed to the hub separately.
   codes. Optional structured `target`, `member`, `path`, and `clause` context
   plus the preserved original cause identify the exact rejection; no literal
   value or opaque hub identity is exposed. `query-hub-mismatch` rejects
-  mixed-hub operation nodes and foreign-hub execution;
+  mixed-hub operation nodes during construction or composition;
   `query-target-mismatch` rejects a same-hub expression or predicate rooted at
   an inapplicable Entity; `query-expression-invalid` covers operator and
   literal-shape defects; `query-path-invalid` covers invalid Value Object or
@@ -880,27 +886,32 @@ only through Entity declarations and is not passed to the hub separately.
   Assignment from another hub or Entity target. These fail before connection,
   SQL, adapter, or Unit of Work mutation. Database and adapter errors remain
   execution errors.
-- `UnsupportedCapabilityError(RuntimeError)` distinguishes a valid operation
-  from a capability unavailable on the connected provider. It has stable code
-  `capability-unsupported` and a canonical core feature-tag `capability` such as
-  `snapshot-history-includes`. The handle raises it after query/hub validation
-  but before SQL generation or adapter access. It is never a
-  `QueryDefinitionError`.
+- `QueryOwnershipError(RuntimeError)` distinguishes a valid query executed by
+  the wrong exact Snapshot Database hub from mixed-hub query composition. It
+  has stable code `query-owner-mismatch`, is raised after lowering but before
+  deferred-feature classification or any I/O, and exposes neither query,
+  Database, hub, nor opaque identity.
+- `DeferredFeatureError(RuntimeError)` distinguishes a valid modeled read whose
+  canonical operation requires execution behavior intentionally deferred by
+  the installed Snapshot package. It has stable code
+  `execution-feature-deferred` and exposes every matching canonical feature tag
+  in sorted `features: tuple[str, ...]`. It is raised after exact query
+  ownership but before SQL generation, connection acquisition, or adapter
+  access. It is never a `QueryDefinitionError` and does not describe provider
+  variability.
 - `SnapshotConnectionError(ValueError)` is exported from
   `parallax.snapshot` and covers a valid Hub that cannot back the Snapshot
   Entity lifecycle. Its sole stable code is
   `snapshot-class-backed-hub-required`. Connecting a descriptor-backed Hub
   raises it before adapter validation or access. The error exposes neither the
-  absent Entity Runtime nor any opaque hub identity and is not an
-  `UnsupportedCapabilityError`, which is reserved for provider features after
-  successful connection.
+  missing class binding nor any opaque hub identity.
 - `EditError(ValueError)` covers invalid `edit(...)` input and active rejection
   of inherited Pydantic copy paths. `Entity.model_copy(...)` always raises
   `EditError(code="edit-use-edit")`; it never creates an Entity value, even
   without an `update=` argument.
 - Registry-collision, copy, provenance, and query-scope exception classes are
-  removed or become private implementation details. Unsupported capability
-  remains a distinct supported public classification.
+  removed or become private implementation details. Database-provider
+  capability is not a public query-execution classification.
 
 ### Metadata contract and descriptor interchange
 
@@ -1558,6 +1569,17 @@ operations here are rationale, not a second surface definition.
 - A Predicate is a non-executable boolean condition. A Find Query adds the
   target, hub identity, predicate, includes, narrowing, ordering, limit, and
   temporal coordinates and is therefore the value accepted by `find`.
+- A Find Query keeps clause-oriented private authoring state: binding,
+  structured target, and independently validated predicate, narrow, temporal,
+  order, limit, and include clauses. It carries no Snapshot feature tags.
+- The advanced first-party `lower_find_query(query)` operation is total for
+  every valid Find Query and introduces no new semantic validation. It returns
+  a fresh frozen, slotted `LoweredFindQuery` containing exactly opaque
+  `hub_identity`, structured `target`, and canonical `operation`. It contains
+  no binding, classes, class index, feature tags, provider state, SQL, or
+  serialization contract. Each `find` call lowers once and retains that local
+  value through execution; later calls recompute it rather than consulting a
+  query cache.
 - Every `AttributeExpr`, `RelationshipPath`, `Predicate`, `Assignment`,
   `SortKey`, and `FindQuery` carries the opaque exact identity of the sealed hub
   that resolved it. Narrowing preserves the path's hub. Neutral literal and
@@ -1609,21 +1631,36 @@ operations here are rationale, not a second surface definition.
 ### Handles and execution
 
 - `Database.connect(adapter, models)` requires a successfully sealed,
-  class-backed hub and permanently pairs the handle with it. It queries
-  `entity_runtime_of(models)` before inspecting the adapter. An absent runtime
-  raises
-  `SnapshotConnectionError(code="snapshot-class-backed-hub-required")`, so a
-  descriptor-backed Hub fails before adapter validation or access.
+  class-backed hub and permanently pairs the handle with it. Its static
+  contract accepts only `MetamodelHub`, and it uses the existing private
+  `sealed_model(models)` seam before inspecting the adapter. A descriptor-backed
+  Hub or legacy bare accepted Metamodel raises
+  `SnapshotConnectionError(code="snapshot-class-backed-hub-required")` before
+  adapter validation or access.
+- The Database owns one private `_ConnectedHub` containing the accepted
+  Metamodel, exact-hub identity, and transitional Metamodel Binding required by
+  the old materializer. COR-64 introduces no partial Entity Runtime.
 - Transactions inherit that hub from their database handle.
-- `find(query)` requires the query's hub to be identical to the handle's hub;
-  structural metadata equality is insufficient.
-- Cross-hub execution fails before adapter access or SQL generation.
-- After query validity and identical-hub checks, execution compares the
-  operation's required canonical core feature tags with the connected
-  provider's captured capability set. A missing capability raises
-  `UnsupportedCapabilityError(capability-unsupported)` naming the feature tag
-  before SQL generation or adapter access. Valid-but-unavailable operations are
-  never reclassified as invalid queries.
+- `Database.find`, `Transaction.find`, and later `Session.find` call
+  `preflight_find(query, expected_hub_identity=...)`. It lowers once, checks the
+  lowered hub identity by identity, classifies the canonical operation against
+  Snapshot's Deferred Execution Features, and returns that same local
+  `LoweredFindQuery`.
+- Cross-hub execution raises
+  `QueryOwnershipError(query-owner-mismatch)` before deferred-feature
+  classification, adapter access, connection acquisition, or SQL generation.
+  Structural metadata equality is insufficient.
+- Snapshot owns one private package-level
+  `_DEFERRED_EXECUTION_FEATURES: frozenset[str]`, initially containing only
+  `snapshot-history-includes`. This fixed installed-package inventory records
+  conformance-slice read features the implementation still owes; its expected
+  completed state is empty. It is not configurable by application,
+  environment, provider, adapter, database port, or dialect.
+- A matching modeled read raises
+  `DeferredFeatureError(execution-feature-deferred)` with every matching
+  feature sorted. The classifier does not apply to predicate-selected writes;
+  read-shaped writes remain
+  `QueryDefinitionError(query-not-mutation-compatible)`.
 - Handles never infer model scope from a query and never consult ambient state.
 
 ### Transaction demarcation ownership
@@ -1765,22 +1802,26 @@ refer to that contract and do not redefine it.
   entity_runtime_of(hub: MetamodelHub) -> EntityRuntime | absent
   ```
 
-  `entity_runtime_of(...)` is a nonthrowing advanced first-party query and
-  returns the same Entity Runtime object for every call on one class-backed
-  hub. It returns absent for a descriptor-backed hub. The runtime references
-  the one accepted Metamodel and exact identity already owned by the binding;
-  it copies no model fact and exposes neither the Metamodel Binding nor its
-  Entity Identity/Class index. It is not a registry, extension map, protocol
-  with third-party adapters, or generic capability bag, and neither it nor its
-  query is re-exported from top-level `parallax.core`.
-- At connection time, Snapshot obtains the Entity Runtime before adapter work
-  and constructs and stores its own materializer with
-  `graph_construction`, beside the runtime's Metamodel Interface and Entity Row
-  Codec.
+  `entity_runtime_of(...)` is a nonthrowing advanced first-party query and,
+  once COR-50 installs the complete runtime, returns the same Entity Runtime
+  object for every call on one class-backed hub. It returns absent for a
+  descriptor-backed hub. The runtime references the one accepted Metamodel and
+  exact identity already owned by the binding; it copies no model fact and
+  exposes neither the Metamodel Binding nor its Entity Identity/Class index. It
+  is not a registry, extension map, protocol with third-party adapters, or
+  generic capability bag, and neither it nor its query is re-exported from
+  top-level `parallax.core`.
+- Entity Runtime is atomic: the accepted Metamodel, opaque exact-hub identity,
+  Entity Graph Construction, and Entity Row Codec appear together or not at
+  all. COR-64 neither constructs nor exposes a partial runtime. When COR-50
+  lands, Snapshot obtains the complete runtime before adapter work and replaces
+  only `_ConnectedHub`'s transitional materialization dependency with its Graph
+  Construction and Row Codec. The connected model and identity contract does
+  not change.
 - Snapshot connection does not use `model_of(...)` as an executability test.
-  A descriptor-backed hub remains readable by `model_of(...)`, but
-  `entity_runtime_of(...)` returns absent and it cannot construct Entity
-  instances.
+  A descriptor-backed hub remains readable by `model_of(...)`, but the private
+  sealed-model seam rejects it for Snapshot. After COR-50, it also has no
+  Entity Runtime and cannot construct Entity instances.
 - Read materialization crosses only Entity Graph Construction; transaction
   write preparation crosses only the Entity Row Codec. Snapshot imports the
   advanced Entity construction interface but no registry, concrete Entity
@@ -1918,16 +1959,16 @@ additional caller seams.
 | `entity._hub` | `MetamodelHub`, public fixed-class construction, private first-party Unresolved-source construction, the constructor's formation and realization sequence, delegation to the one accepted Metamodel, class binding when applicable, and introspection. It owns no descriptor behavior, accepted Metadata/facet copies, or independent normalized accepted-metadata indexes. |
 | `entity._entity` | The small frozen `Entity` façade built on `_declaration`, plus delegation to Find Query and Edited Copy behavior. |
 | `entity._expressions` | Pure immutable, hub-tagged operation nodes: Attribute Expressions, Relationship Paths including narrowing, Predicates, Assignments, and Sort Keys. Nodes receive hub identity and structured member identities explicitly, reject mixed-hub children, and perform no class lookup. |
-| `entity._query` | `FindQuery`, its chainable clauses, hub-identity checks, canonical operation construction, mutation-compatibility validation, and private ephemeral Predicate Selection normalization. |
+| `entity._query` | `FindQuery`, its clause-oriented private authoring state, hub-identity checks, fresh `LoweredFindQuery` construction, mutation-compatibility validation, and private ephemeral Predicate Selection normalization. |
 | `entity._graph_construction` | The concrete callback-scoped Entity Graph Construction capability, opaque Node Handles, two-phase structural allocation/population, deferred opaque lifecycle-state creation, atomic publication, concrete class selection, Pydantic mechanics, recursive Value Object construction, broad relationship-slot installation, and raw relationship/lifecycle-state access for first-party collaborators. It owns no lifecycle-specific graph semantics. |
 | `entity._rows` | Entity-to-row translation, Edited Copy construction, Change Record merging, and effective-change calculation. |
 | `entity._members` | Public `Attr`/`Rel` annotations, `attr`/`rel` declaration values, and the installed class/instance descriptors that turn bound members into operation nodes. It is the only runtime module in this cluster that touches owner classes. |
 | `entity._value_object` | The frozen Value Object frontend built on the shared `_declaration` metaclass engine. |
 | `entity._errors` | Entity declaration, hub lifecycle, binding, query-scope, graph-construction, and edited-copy errors. It is a strict leaf within the Entity cluster and accepts only structured error data. |
-| `snapshot._errors` | Snapshot-owned public materialization and inspection errors. It is a strict Snapshot-package leaf, retains structured data and causes, and imports no Entity implementation module. |
+| `snapshot._errors` | Snapshot-owned public connection, query-ownership, deferred-feature, transaction-ownership, materialization, and inspection errors. It is a strict Snapshot-package leaf, retains only the specified structured data and causes, and imports no Entity implementation module. |
 | `snapshot._graph` | Snapshot Graph Input and Materializer, graph-local identity/projection merging, broad and narrowed loaded-state decisions, whole-graph pin and milestone-edge decisions, and direct emission through Entity Graph Construction. |
 | `snapshot._state` | Private Snapshot Node State plus Snapshot-owned `is_view_loaded`, `view`, `pin_of`, and `edge_of`; it interprets only Snapshot state obtained through the advanced Entity collaboration seam. |
-| `snapshot.handle._database` | Database connection identity, exact-owner transaction demarcation, same-owner joining, and the outermost commit/abort/retry boundary. |
+| `snapshot.handle._database` | Private connected-hub state, shared read preflight, exact-owner transaction demarcation, same-owner joining, and the outermost commit/abort/retry boundary. |
 
 ### Enforced direction
 
@@ -2058,19 +2099,19 @@ EntityIdentity, EntityMetadata, MetamodelIssue
 ModelLocation
 EntityDefinitionError, MetamodelDefinitionError, FormationContractError,
 MetamodelValidationError, MetamodelStateError
-MetamodelLookupError, QueryDefinitionError, UnsupportedCapabilityError,
-EditError
+MetamodelLookupError, QueryDefinitionError, EditError
 LATEST, VALID_TIME, TX_TIME, Pin, Edge
 TemporalReadError, UndeclaredAxisError
 ```
 
 `parallax.core.entity` additionally exposes the advanced typing and first-party
 collaboration values `Assignment`, `AttributeExpr`, `RelationshipPath`,
-`SortKey`, `EntityGraphConstruction`, `EntityGraphWriter`,
+`SortKey`, `LoweredFindQuery`, `EntityGraphConstruction`, `EntityGraphWriter`,
 `EntityGraphResolution`, `NodeHandle`, `ValueObjectRecord`,
 `ValueObjectAttributeInput`, `ValueObjectOccurrenceInput`,
 `GraphConstructionError`, `UnloadedRelationshipError`, and `EntityRowCodec`, plus
-`relationship_value_of` and `lifecycle_state_of`. The graph writer, graph
+`lower_find_query`, `relationship_value_of`, and `lifecycle_state_of`. The
+lowered query has no public serialization contract. The graph writer, graph
 resolution view, and node handles are usable only inside a single
 `EntityGraphConstruction.construct(...)` callback. The two inspection
 operations are the only supported raw-state access for first-party lifecycle
@@ -2086,7 +2127,9 @@ Snapshot-node inspection functions and re-exports the Entity-defined
 codes `snapshot-node-required`, `snapshot-hub-mismatch`,
 `snapshot-pin-unavailable`, and
 `snapshot-edge-unavailable`. It also exposes `SnapshotConnectionError` with
-stable code `snapshot-class-backed-hub-required` and
+stable code `snapshot-class-backed-hub-required`,
+`QueryOwnershipError` with stable code `query-owner-mismatch`,
+`DeferredFeatureError` with stable code `execution-feature-deferred`, and
 `TransactionOwnershipError` with stable code `transaction-owner-mismatch`.
 
 The dependency-free `parallax.core.base` seam implements `m-core` and exposes
@@ -2803,11 +2846,21 @@ by COR-51. Program-level acceptance requires:
   the §7/§8 enforcement and four clean-install topologies prove that boundary;
 - Find Queries, Predicates, direct class expressions, Edited Copies, and
   cross-hub rejection behave as specified;
-- intrinsically invalid operations raise `QueryDefinitionError`, while a valid
-  operation whose canonical feature tag is absent from the connected provider
-  raises `UnsupportedCapabilityError(capability-unsupported)` with that tag
-  after hub validation but before SQL/adapter access; staged
-  `snapshot-history-includes` proves the distinction;
+- mixed-hub construction raises `QueryDefinitionError(query-hub-mismatch)`,
+  while a valid query executed through a different exact Database hub raises
+  `QueryOwnershipError(query-owner-mismatch)` before deferred-feature
+  classification or I/O;
+- `FindQuery` owns clause-oriented private authoring state and no Snapshot
+  feature tags; `lower_find_query` returns a fresh frozen, slotted
+  `LoweredFindQuery` containing exactly hub identity, structured target, and
+  canonical operation, and each read execution lowers once without memoizing
+  across calls;
+- a valid modeled read whose canonical operation intersects Snapshot's fixed
+  private Deferred Execution Features raises
+  `DeferredFeatureError(execution-feature-deferred)` with every match sorted
+  after ownership validation but before SQL, connection, or adapter access;
+  staged `snapshot-history-includes` proves the distinction without introducing
+  provider capabilities;
 - every Attribute Expression, Relationship Path including narrowed paths,
   Predicate, Assignment, Sort Key, and Find Query carries exact hub identity;
   literal values remain neutral, every mixed-hub composition fails immediately
@@ -2830,11 +2883,15 @@ by COR-51. Program-level acceptance requires:
   `TransactionOwnershipError(transaction-owner-mismatch)` without closure,
   Unit of Work, SQL, or adapter work; after owner success, existing
   rollback-only and option-conflict behavior remains unchanged;
-- `Database.connect` requires the identical sealed class-backed hub, obtains
-  its `EntityRuntime`, and explicitly composes Snapshot's materializer from
-  `EntityGraphConstruction` and `EntityRowCodec`; a descriptor-backed hub
+- `Database.connect` requires the identical sealed class-backed hub and first
+  owns a private `_ConnectedHub` containing accepted model, exact identity, and
+  transitional binding; a descriptor-backed hub or legacy bare Metamodel
   raises `SnapshotConnectionError(snapshot-class-backed-hub-required)` before
   adapter validation or work;
+- Entity Runtime remains atomic. COR-64 introduces no partial runtime; COR-50
+  later replaces only the transitional materialization dependency with the
+  complete runtime's `EntityGraphConstruction` and `EntityRowCodec` while
+  preserving the connected model and identity contract;
 - Snapshot graph state is owned by the Snapshot slice and no generic
   `entity._graph_state` module exists; a future managed-object slice defines a
   separate lifecycle state model rather than extending Snapshot state;
@@ -2856,7 +2913,7 @@ by COR-51. Program-level acceptance requires:
   lifecycle build, and opaque-state factory failure becomes exactly one
   `SnapshotMaterializationError(snapshot-materialization-failed)` at the public
   Snapshot read boundary with the original `.cause` and exception chain, no
-  partial result, and no double wrapping; query, capability, transaction,
+  partial result, and no double wrapping; query, deferred-feature, transaction,
   adapter, and SQL errors retain their own classifications; malformed Value
   Object documents raise unchanged
   `SnapshotDecodingError(snapshot-decoding-failed)` with structured Entity and

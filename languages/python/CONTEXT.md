@@ -80,10 +80,10 @@ _Avoid_: bound model, runtime model, model context, metadata copy
 
 **Entity Runtime**:
 The narrow immutable first-party execution view a class-backed Metamodel Hub
-supplies to Snapshot: its accepted Metamodel, opaque exact-hub identity, Entity
-Graph Construction capability, and Entity Row Codec. It exposes neither the
-Metamodel Binding nor its Entity Class index and is absent for a
-descriptor-backed Hub.
+supplies to Snapshot as one atomic value: its accepted Metamodel, opaque
+exact-hub identity, Entity Graph Construction capability, and Entity Row Codec.
+No partial Entity Runtime exists; it exposes neither the Metamodel Binding nor
+its Entity Class index and is absent for a descriptor-backed Hub.
 _Avoid_: raw binding, sealed model pair, runtime registry, capability bag
 
 **Entity Class Binding**:
@@ -102,6 +102,14 @@ clauses return new values, and first-party lowering converts it to one
 canonical operation for execution by a handle or transaction.
 _Avoid_: find statement, statement, query builder, queryset, cursor, lazy result
 
+**Lowered Find Query**:
+The immutable first-party collaboration value produced from one valid Find
+Query after its independently authored clauses are placed in canonical
+operation order. It carries exact hub identity, structured target Entity
+Identity, and one canonical Operation; it is neither SQL nor a public query
+representation.
+_Avoid_: canonical Find Query, query plan, SQL AST, serialized query
+
 **Match-All Predicate**:
 The non-callable `Entity.all` value spelling an explicitly unfiltered Find
 Query as `Entity.where(Entity.all)`. It is bound to that Entity Class's exact
@@ -116,6 +124,20 @@ composing, or refining an invalid expression, relationship path, predicate,
 assignment, sort key, or Find Query. Behavioral owner modules retain their
 native errors behind this translation seam.
 _Avoid_: statement error, query-scope error, leaked validator error
+
+**Query Ownership Error**:
+The Snapshot execution-preflight error raised when an ordinary valid Find Query
+belongs to a different exact Metamodel Hub than the Database asked to execute
+it. It exposes neither hub identity and is distinct from mixed-hub query
+composition, which is a Query Definition Error.
+_Avoid_: query definition error, structural model mismatch, provider error
+
+**Deferred Feature Error**:
+The Snapshot execution-preflight error raised when an ordinary valid Find Query
+matches one of the installed implementation's Deferred Execution Features. It
+names every matching canonical Feature in sorted order and is neither a Query
+Definition Error nor a database-provider failure.
+_Avoid_: unsupported capability, invalid query, adapter limitation
 
 **Snapshot**:
 The fully materialized container returned by `find`, reifying one core
@@ -156,6 +178,15 @@ The per-query-execution provenance carried by a Snapshot — placeholder SQL, bi
 informational duration, and the round-trip count — mirroring the
 conformance-adapter emission convention.
 _Avoid_: query log, debug trace, profiler output
+
+**Deferred Execution Features**:
+The private immutable set of canonical Feature tags for valid, specified query
+forms that Snapshot explicitly does not yet execute. Its expected completed
+state is empty; every entry is reviewable implementation debt outside the
+active Conformance Slice's claim, never an excuse for claimed-but-missing
+behavior. One installed Snapshot package has one fixed set shared by every
+Database; applications and providers cannot configure it.
+_Avoid_: provider capabilities, optional adapter features, skipped tests, supported features
 
 **Narrowed View**:
 The distinct relationship view a narrowed include populates on a node, keyed

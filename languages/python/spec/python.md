@@ -21,7 +21,7 @@ never something an application developer hand-writes.
 | Exact `describe` claim | The complete canonical `describeOk` envelope below; structurally equal to the canonical claim after JSON parsing, except for the `adapter` identity. |
 | Claimed capability coverage | Copied verbatim from the canonical claim: the 27 `modules` below, `dialects: ["postgres"]`, the eight `caseShapes`, `caseTags.include: ["slice-snapshot-1"]`, `commands: ["describe", "compile", "run"]`, `provisioning: "self-managed"`. `modules` is the tagged-case union of the slice, **not** a dependency closure and not a packaging plan. |
 | Unclaimed implementation prerequisites | `m-db-port` — reached via `m-unit-work` and `m-db-error`; abstract port supplied by the `parallax.core.db_port` scope, concrete adapter by `parallax-postgres`; contract-covered, never case-advertised. |
-| Deferred capabilities | MariaDB (dialect); `benchmark` command and `m-perf-bench`; `m-agg` / `m-sql-agg`; Valid-Time-Only models; `m-process-cache` / `m-coherence`; `m-cascade-delete`; the `snapshot-history-includes` feature; the managed-object lifecycle (`m-identity-map`, `m-detach`, public operation-backed lists); an async developer surface; MAY-tier mutations (`insertWithIncrement`, `incrementUntil`, `purge`, `inactivateForArchiving`); template-database reset optimization; isolation-level configuration; handle-level default concurrency override; Find Query `where`-refinement chaining and `as_of` re-pinning; the class-header temporal-axis column-mapping override. Deferral is roadmap intent; **unsupported classification** is the adapter's wire behavior for out-of-claim requests — the two are recorded separately and never conflated. |
+| Deferred capabilities | MariaDB (dialect); `benchmark` command and `m-perf-bench`; `m-agg` / `m-sql-agg`; Valid-Time-Only models; `m-process-cache` / `m-coherence`; `m-cascade-delete`; the `snapshot-history-includes` feature; the managed-object lifecycle (`m-identity-map`, `m-detach`, public operation-backed lists); an async developer surface; MAY-tier mutations (`insertWithIncrement`, `incrementUntil`, `purge`, `inactivateForArchiving`); template-database reset optimization; isolation-level configuration; handle-level default concurrency override; Find Query `where`-refinement chaining and `as_of` re-pinning; the class-header temporal-axis column-mapping override. Deferral is roadmap intent. The conformance adapter's `unsupported` result remains wire behavior for out-of-claim requests, while Snapshot's `DeferredFeatureError` is the separate runtime preflight for query Features listed in `_DEFERRED_EXECUTION_FEATURES`; neither is a database-provider capability. |
 | Supported dialects and commands | Postgres only; `describe`, `compile`, `run`. Exercised locally and in CI by `uv run pytest -m compile_sweep` (Docker-free compile of every compile-eligible claimed case) and `uv run pytest tests/compatibility/test_run_sweep.py` (the `pg-full` run profile, every claimed case), aggregated by `just python-check-dbfree` and `just python-check-db`. |
 
 ```json
@@ -106,8 +106,8 @@ mutations, exceptions, or exports.
   deep-fetch, or temporal-read semantic rejection exactly once and preserves
   its cause; an incoming `QueryDefinitionError` passes through unchanged.
   Direct callers of those behavioral modules continue to receive their native
-  error families. Unbound Entity Classes, valid-but-unsupported provider
-  features, and execution failures retain their separate classifications.
+  error families. Unbound Entity Classes, Deferred Execution Features, and
+  execution failures retain their separate classifications.
   The closed stable code set is
   `query-hub-mismatch`, `query-target-mismatch`,
   `query-expression-invalid`, `query-path-invalid`,
@@ -123,6 +123,13 @@ mutations, exceptions, or exports.
   inapplicable Entity uses `query-target-mismatch`; and non-assignable members
   or values use `query-assignment-invalid`. The remaining three codes retain
   their exact hub, Assignment-target, and predicate-selected-write meanings.
+- **Separate execution ownership error.** A valid Find Query executed through a
+  Database connected to another exact Metamodel Hub raises exported
+  `QueryOwnershipError(RuntimeError)` with sole stable code
+  `query-owner-mismatch`. It retains and exposes neither hub identity, Database,
+  nor query. Mixed-hub query construction and composition remain
+  `QueryDefinitionError(query-hub-mismatch)`; structural Metamodel equality and
+  equal canonical Entity identities never substitute for exact hub ownership.
 - **Assignment construction validates immediately.**
   An Attribute Expression's `.set(value)` constructs an immutable Assignment and
   applies the member's assignability, declared neutral-type, and nullability
@@ -152,6 +159,23 @@ mutations, exceptions, or exports.
   lowering/conformance seams: `operation()`, `serialize()`, `is_bare()`,
   `is_milestone_set()`, and equivalent state-inspection helpers are not public
   methods.
+  The advanced first-party `lower_find_query(query) -> LoweredFindQuery` seam
+  is total for every constructed Find Query and introduces no new semantic
+  validation. `FindQuery` privately retains independently authored, already
+  validated predicate, root-narrow, temporal, ordering, limit, and include
+  clauses plus its structured target Entity Identity and Metamodel Binding.
+  Lowering places those clauses in the fixed canonical order and returns one
+  frozen slotted value containing exactly
+  `hub_identity: object`, `target: EntityIdentity`, and
+  `operation: Operation`. The result contains no Metamodel Binding, Entity
+  Class, class index, Snapshot feature tags, provider state, SQL, serialization
+  method, or public execution surface. `LoweredFindQuery` is not a
+  `CanonicalFindQuery`: only its Operation is canonical, while its exact hub
+  identity is deliberately process-local. Neither `LoweredFindQuery` nor
+  `lower_find_query` is re-exported from top-level `parallax.core`. Each call
+  returns a fresh lowering. `FindQuery` stores no cached lowering, and no global
+  memoization retains one; one execution keeps its result locally through
+  preflight, planning, and execution.
 - **Complete fluent surface.** The Find Query interface consists exactly of
   the class-scoped match-all value `Entity.all`,
   `Entity.where(*predicates)`, and the `FindQuery` methods
@@ -1127,33 +1151,95 @@ descriptor-backed hubs, and exposes no Entity Class binding or construction
 capability. It belongs to the advanced `parallax.core.entity` interface and is
 not re-exported from `parallax.core`; there is no `MetamodelHub.model`
 property. Ordinary application code uses `models.meta(...)`, `models.entities`,
-or the public Descriptor Frontend export functions. Snapshot connection uses a
-separate class-backed Entity-capability query and never treats successful
-`model_of(...)` access as proof that a hub can materialize Entity instances.
+or the public Descriptor Frontend export functions.
 
-That class-backed query is
-`parallax.core.entity.entity_runtime_of(hub) -> EntityRuntime | None`.
-`EntityRuntime` is a frozen slotted value containing exactly the accepted
-`Metamodel`, opaque exact-hub identity, `EntityGraphConstruction`, and
-`EntityRowCodec`. One instance is created during each successful class-backed
-Hub construction and every query for that Hub returns the same object.
-Descriptor-backed Hubs return `None`. The runtime references rather than copies
-the accepted model and exact identity, and it exposes neither
-`MetamodelBinding` nor the bidirectional Entity Identity/Class index. It is a
-closed first-party collaboration value, not a registry, extension map,
-third-party adapter interface, or generic capability bag. Neither
-`EntityRuntime` nor `entity_runtime_of` is re-exported from top-level
-`parallax.core`.
-
-`Database.connect(adapter, models)` queries `entity_runtime_of(models)` before
-inspecting `adapter`. When `models` is a descriptor-backed Hub, the absent
-runtime raises exported
+Snapshot connection instead reads the hub through the private first-party
+`sealed_model(hub) -> SealedModel` seam. `SealedModel` contains the same
+accepted Metamodel and the hub's `MetamodelBinding | None`; the binding is
+present exactly for a class-backed Hub. `Database.connect(adapter, models)`
+has a static `models: MetamodelHub` input and accepts no bare-Metamodel
+overload. At runtime it rejects a bare accepted Metamodel before calling this
+seam; otherwise it queries the seam before inspecting `adapter`. A bare
+Metamodel or absent binding raises the same exported
 `SnapshotConnectionError(ValueError)` with sole stable code
 `snapshot-class-backed-hub-required`. The error exposes neither an Entity
-Runtime nor opaque hub identity. It is not
-`UnsupportedCapabilityError(capability-unsupported)`, which is reserved for a
-valid operation requiring a feature unavailable on an already connected
-provider.
+Runtime, Metamodel Binding, nor opaque hub identity. It is not
+`DeferredFeatureError(execution-feature-deferred)`, which is reserved for a
+valid operation whose execution feature is explicitly deferred.
+
+After class-backed validation, Snapshot constructs one private `_ConnectedHub`
+owned by the Database. It contains the accepted Metamodel, the binding's opaque
+exact-hub identity, and the transitional Metamodel Binding required by Snapshot
+materialization. It is handle state rather than a Core runtime value and is
+neither exported nor shared through the hub.
+
+Snapshot owns `_DEFERRED_EXECUTION_FEATURES: frozenset[str]`, the private
+immutable set of canonical Feature tags whose operation shapes are valid but
+whose execution is explicitly deferred by this implementation. Its initial
+entry is `snapshot-history-includes`. It is one package-owned module constant
+shared by every Database in the installed implementation; no constructor
+argument, environment setting, provider, adapter, or application hook can add
+or remove entries. After privately lowering a Find Query,
+Snapshot classifies the canonical operation for its own execution features and
+compares those tags with the deferral set after exact-hub validation and before
+SQL generation, Database Port access, or connection acquisition. An
+intersection raises exported `DeferredFeatureError(RuntimeError)` with stable code
+`execution-feature-deferred` and every matching canonical deferred Feature in
+its nonempty, ascending `features: tuple[str, ...]` attribute. The expected
+completed state is an empty set; every nonempty entry is
+an explicit, reviewable implementation deferral. A Feature claimed by the
+active Conformance Slice but not implemented is a defect and cannot be made
+permissible by listing it here. This set belongs neither to the connected
+provider, `_ConnectedHub`, `Dialect`, nor a leased `DbPort`.
+
+Exact-hub ownership always precedes this classification. A foreign-hub Find
+Query whose lowered operation would match one or more Deferred Execution
+Features raises `QueryOwnershipError(query-owner-mismatch)` and exposes no
+deferral result; neither path reaches SQL, a Database Port, or connection
+acquisition.
+
+One private Snapshot seam centralizes the complete read preflight:
+`preflight_find(query, *, expected_hub_identity) -> LoweredFindQuery`. It lowers
+the query once for that execution, compares exact hub identity, classifies the
+lowered canonical Operation against `_DEFERRED_EXECUTION_FEATURES`, and returns
+the same local lowering when both checks succeed. It performs no SQL, Database
+Port access, connection acquisition, materialization, or transaction work.
+`Database.find`, `Transaction.find`, and the later Session read boundary call
+this seam rather than reimplementing any step.
+
+Deferred Execution Features apply only to modeled read execution through
+`Database.find`, `Transaction.find`, and the later Session read boundary.
+Predicate-selected write methods never invoke this classifier. They first
+require a mutation-compatible Find Query, so a read-shaped query matching a
+deferral still raises `QueryDefinitionError(query-not-mutation-compatible)`
+before Unit of Work mutation or I/O.
+
+Adding an entry is one atomic contract change: core defines the valid behavior
+and canonical Feature tag, the active Conformance Slice explicitly leaves it
+unclaimed, the Python deferred-capabilities list names it, Snapshot classifies
+it with zero-I/O execution coverage, and the implementation's deferred ledger
+records it only when the deferral would otherwise lack a canonical home.
+Removing an entry is likewise atomic: execution support, Compatibility and API
+Conformance coverage, the active slice claim, the Python deferred list,
+`_DEFERRED_EXECUTION_FEATURES`, and any applicable ledger entry advance
+together.
+
+The separate `EntityRuntime` is a frozen slotted value containing exactly the
+accepted `Metamodel`, opaque exact-hub identity, `EntityGraphConstruction`, and
+`EntityRowCodec`. It exists only as that complete four-part value: there is no
+partial Entity Runtime with absent capabilities. It references rather than
+copies the accepted model and exact identity, exposes neither
+`MetamodelBinding` nor the bidirectional Entity Identity/Class index, and is a
+closed first-party collaboration value rather than a registry, extension map,
+third-party adapter interface, or generic capability bag. It is not re-exported
+from top-level `parallax.core`. COR-50 owns constructing one complete runtime
+per class-backed Hub and the advanced first-party
+`entity_runtime_of(hub) -> EntityRuntime | None` query; descriptor-backed Hubs
+return `None`, while repeat calls for one class-backed Hub return the same
+runtime. COR-64 neither constructs nor calls this seam. Snapshot may replace
+`_ConnectedHub`'s transitional materialization dependency with the complete
+Entity Runtime without changing the connected Metamodel or exact-hub identity
+contract.
 
 `parallax.descriptor` publicly exports the ingestion base
 `DescriptorError(ValueError)` and its `DescriptorSyntaxError`,
@@ -1563,10 +1649,12 @@ or descriptor authoring form and performs no audit stamping.
   passes it straight to `as_of(...)` (the stale-web-edit recipe below). The
   `snapshot-history-includes` feature
   is **deferred, not invalid**: combining `.history()` with `.include()`
-  builds a valid Find Query tagged with that required capability. After exact
-  hub validation, executing it against a provider that lacks the tag raises
-  `UnsupportedCapabilityError(capability-unsupported)` before SQL generation
-  or adapter access. It never raises `QueryDefinitionError`.
+  builds an ordinary valid Find Query with no Snapshot feature metadata. After
+  exact hub validation, Snapshot recognizes the privately lowered
+  `DeepFetch(History(...))` or `DeepFetch(AsOfRange(...))` operation as matching
+  its Deferred Execution Feature and raises
+  `DeferredFeatureError(execution-feature-deferred)` before SQL generation
+  or Database Port access. It never raises `QueryDefinitionError`.
 - **Closed-world relationships.** An included to-one is the related node or
   `None` (loaded-null); an included to-many is a `tuple` (possibly empty —
   loaded-empty is `()`). A relationship outside the include set is
@@ -2366,7 +2454,7 @@ hatchling.
 |---|---|---|---|---|---|
 | `parallax-core` (the common runtime) | production | all `parallax.core.*` scopes of §7 (behavioral modules, Entity/Find Query frontend, driver-free postgres dialect strategy) | `pydantic` | (none) | `parallax.core`: the `Entity`/`TxTemporal`/`Bitemporal`/`ValueObject` bases, `Attr`, `Rel`, `attr`, `rel`, `index`, `desc`, `asc`, `Int32`, `Float32`, `MAX`, `Sequence`, the cardinality, persistence, inheritance role and strategy values, `MetamodelHub`, `FindQuery`, `Predicate`, `LATEST`, `VALID_TIME`, `TX_TIME`, `Pin`, `Edge`, and its documented errors |
 | `parallax-descriptor` (descriptor interchange) | production, optional | `parallax.descriptor` (`m-descriptor` plus its private Hub orchestration) | `pyyaml`, `jsonschema` | `parallax-core` | `parallax.descriptor`: `hub_from_document`, `hub_from_json`, `hub_from_yaml`, `export_document`, `export_json`, `export_yaml`, `DescriptorError`, `DescriptorSyntaxError`, `DescriptorSchemaError`, `DescriptorValueError`, `DescriptorSchemaViolation`, `DescriptorValueViolation`, `DescriptorExportError` |
-| `parallax-snapshot` (snapshot lifecycle extension) | production | `parallax.snapshot.*` (`materialize`, `handle`) | (none beyond core) | `parallax-core` | `parallax.snapshot`: `connect()`, `Snapshot[T]`, `Execution`, `is_view_loaded`, `view`, `pin_of`, `edge_of`, `UnloadedRelationshipError`, `SnapshotConnectionError`, `SnapshotDecodingError`, `SnapshotMaterializationError`, `SnapshotInspectionError`, `TransactionOwnershipError` |
+| `parallax-snapshot` (snapshot lifecycle extension) | production | `parallax.snapshot.*` (`materialize`, `handle`) | (none beyond core) | `parallax-core` | `parallax.snapshot`: `connect()`, `Snapshot[T]`, `Execution`, `is_view_loaded`, `view`, `pin_of`, `edge_of`, `UnloadedRelationshipError`, `QueryOwnershipError`, `DeferredFeatureError`, `SnapshotConnectionError`, `SnapshotDecodingError`, `SnapshotMaterializationError`, `SnapshotInspectionError`, `TransactionOwnershipError` |
 | `parallax-postgres` (Postgres database adapter) | production | `parallax.postgres.*` (concrete port over psycopg) | `psycopg[binary]` (sole declarer) | `parallax-core` | `parallax.postgres`: `PostgresAdapter` |
 | `parallax-conformance` | development-only | `parallax.conformance.*` (CLI, case format, corpus loading, provider harness) | `testcontainers`, `jsonschema` | `parallax-core`, `parallax-descriptor`, `parallax-snapshot`, `parallax-postgres` | `parallax-conformance` console script (`describe` / `compile` / `run`) |
 
