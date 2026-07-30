@@ -64,3 +64,30 @@ m-audit-provenance --> m-unit-work
 Both modules are active, case-covered common-runtime behavior claimed by
 `slice-snapshot-1` and `slice-managed-1`. SQL, dialect, temporal, and batch
 planning modules remain independent of Audit Provenance.
+
+## Amendment (2026-07): `m-unit-work --> m-principal` is not a required edge
+
+The edge list above records `m-unit-work --> m-principal` because Unit Work needs
+a Subject Identity to plan an audited write. That requirement is real; the edge
+is not the only way to satisfy it.
+
+**Superseding decision:** the edge is **not required** while `m-unit-work` owns
+the `SubjectIdentity` **value type** and `m-principal` owns the **behavior** —
+obtaining and validating one Subject Identity at an outer database operation
+boundary, propagating it through joined scopes and automatic retries, and
+comparing it verbatim. Unit Work already owns the write-planning value
+vocabulary, so owning one more opaque value type introduces no new concept, and a
+planning request stays well-typed with no dependency on the boundary that filled
+it in. `m-principal` still depends on `m-core`, and `m-audit-provenance` still
+depends on both `m-principal` and `m-unit-work`, so the cycle-free direction this
+ADR establishes is unchanged: identity flows *into* planning as a value, and
+provenance decoration consumes the finalized neutral plan.
+
+The other seven edges recorded above are unaffected. `m-snapshot-read --> m-principal`
+and `m-op-list --> m-principal` remain, because those surfaces evaluate a
+Principal at a boundary rather than merely accepting an already-normalized value.
+
+This amendment removes one declared edge from an accepted decision. It changes no
+provenance semantics, no disposition interpretation, and no ownership of
+decoration. A later decision may re-home `SubjectIdentity` into `m-principal`
+when that module is implemented; nothing here forecloses it.

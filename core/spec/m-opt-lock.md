@@ -120,6 +120,49 @@ delete from account where id = ?
 and their optimistic-mode counterparts each append `and version = ?`, binding
 the observed version last.
 
+### A gate carries only its equality predicate
+
+The gate decision is settled **during planning**, and what survives onto the
+planned write is only what the statement still has to render (`m-unit-work`'s
+Write Gate):
+
+```text
+VersionGate(attribute: AttributeIdentity, observed_version: PositiveInt)
+TemporalGate(start_attribute: AttributeIdentity, observed_start: Instant)
+Ungated
+```
+
+- The **advanced** version (`observed + 1`) and the close's Transaction-Time end
+  are **assignments**, not gate members. A gate answers "which extra equality
+  must hold", never "what does this write set".
+- A gate repeats **neither** the full Write Observation **nor** the transaction's
+  concurrency mode. Both are consumed while planning: the mode selects
+  `VersionGate` / `TemporalGate` or `Ungated`, and the observation supplies the
+  bound value. Neither survives into the plan, so nothing downstream can
+  re-derive a gate or reach a different answer than the planner did.
+- `Ungated` is an **explicit** locking-mode decision, not a null gate. Gate
+  applicability is therefore structural rather than a nullable field every
+  consumer must re-check.
+- A Version Gate applies to exactly **one** row: it binds that row's observed
+  version, so it is legal only on a single-key target. This is the same fact that
+  forbids a versioned readless predicate template.
+
+### Locking license is validated before planning
+
+An observation is mandatory for a gated *and* an ungated observation-requiring
+write, but the two modes accept different observations. Locking mode's ungated
+write is licensed by the **shared read lock** the observing read took, so an
+observation that did not take that lock cannot license it: a locking-mode write
+whose temporal observation is historically pinned rather than latest-pinned
+(`m-temporal-read`) **MUST** be rejected **before** planning, not detected
+afterwards by an affected-row count. Optimistic mode MAY accept the same
+observation and let its gate detect that it is stale.
+
+Validation therefore happens on the input side of planning, where refusing is
+still cheap and the diagnostic still names the read. By the time a write is a
+planned step its concurrency decision is already final and no further license
+check applies.
+
 ### Version values are framework-owned
 
 The version an implementation binds in the gate **MUST** be the version the unit

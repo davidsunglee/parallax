@@ -203,6 +203,37 @@ Unit Work must not:
 This direction is the decision in
 [ADR 0041](../adr/0041-write-finalization-is-centralized-behind-a-typed-planner.md).
 
+### Subject Identity ownership and the module catalog
+
+Unit Work also owns the `SubjectIdentity` **value type** that
+`PlanningRequest.subject_identity` is typed as, exactly as it already owns the
+Write Observation vocabulary. `m-principal` owns the **behavior**: obtaining and
+validating one Subject Identity at an outer database operation boundary,
+propagating it through joined scopes and automatic retries, and comparing it
+verbatim.
+
+Splitting ownership that way means no `m-unit-work --> m-principal` edge is
+required. [ADR 0037](../adr/0037-audit-provenance-decorates-finalized-neutral-write-plans.md)
+declares that edge, and its amendment records this narrowing; the cycle-free
+direction is unchanged, because identity enters planning as an already
+normalized value and provenance decoration still consumes the finalized neutral
+plan.
+
+The consequence for COR-62 is concrete: it adds **no** module catalog row, **no**
+`dependency-graph` fence edge, **no** slice claim, and **no** Python
+`MODULE_SCOPE` entry. `m-principal` and `m-audit-provenance` stay undeclared
+until the work that implements them declares them together with the fixtures the
+catalog's coverage rule requires. A diff in `core/spec/modules.md`,
+`core/spec/slices.md`, `languages/python/tools/check_dag_sync.py`, or the
+generated contracts block in `languages/python/pyproject.toml` during this work
+is therefore a signal that something crossed a boundary it should not have —
+apart from support-scope membership changes inside `parallax.snapshot.handle`,
+which move files between existing scopes without adding a module or an edge.
+
+A later decision may re-home `SubjectIdentity` into `m-principal` once that
+module exists. Nothing here forecloses it, and no temporary identity provider
+port or compatibility overload is introduced in the meantime.
+
 ## Planner boundary
 
 One Write Planner is constructed per connected Metamodel:

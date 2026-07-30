@@ -12,6 +12,31 @@ locking, conflict abort, and temporal chaining belong respectively to `m-opt-loc
 `m-read-lock`, `m-txtime-write`, and `m-bitemp-write`. The canonical golden SQL is
 fixed by `m-sql`.
 
+`m-batch-write` decides only **compatibility**: whether two buffered writes may
+share one step. The Planned Write algebra, the flush's stage order, and the
+affected-row policy that step then carries are `m-unit-work`'s; this module
+reaches planning through the strategy port that module declares.
+
+## Batching is a membership decision
+
+Batching is expressed by **membership in one Planned Write**, not by a marker on
+several. Compatible inserts become one Planned Insert with several entries;
+compatible uniform keyed updates or deletes become one Planned Update or Planned
+Delete whose Key Target holds several key tuples.
+
+- An implementation **MUST NOT** introduce a batch flag, batch identifier, group
+  wrapper, or per-row batch annotation. Two writes either share a step or they do
+  not, and that is the whole of the decision.
+- Incompatible writes remain **separate logical steps**. In particular a
+  **per-row gated** write (`m-opt-lock`) can never join another: its gate binds
+  one row's observed version, so each stays its own step even where a driver
+  later transmits several in one batch.
+- Batching shares the canonical member shape and uniform values across the step;
+  it **MUST NOT** deep-copy one assignment payload per addressed row.
+- Membership does not change semantics. One multi-key Key Target owns **one
+  aggregate** affected-row expectation for the rows it names (`m-unit-work`);
+  collapsing writes together never weakens or discards that expectation.
+
 ## Set-based flush
 
 - Multiple inserts of the same entity collapse into a **single multi-row
@@ -55,6 +80,14 @@ observed version cannot ride one statement — so predicate update and delete
 materialize to keyed writes (`m-opt-lock`). Transaction-Time temporal predicate
 writes likewise materialize so each observed milestone can close/chain
 (`m-txtime-write` / `m-bitemp-write`). Those are not buffered-batch collapse rules.
+
+A materializing predicate write resolves **before** planning and enters it as one
+**Materialized Write Group** (`m-unit-work`) — one authored mutation, one shared
+key shape, aligned key and observation columns. Batching treats that group as
+**indivisible**: it is never split across steps, never merged with an unrelated
+buffered instruction, and never regrouped by statement kind, and it survives no
+further than finalization. It is an input to planning, not a member of a Write
+Plan, so no group wrapper or identifier reaches the flush.
 
 ## Predicate-selected readless forms
 

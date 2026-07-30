@@ -110,6 +110,54 @@ is the separate MAY-tier `purge`. The plain writes mirror `GenericBiTemporalDire
 unbounded `insert` / `update` / `terminate` (research §6), the open-window / tailless
 companions of the `*Until` trio.
 
+## What this module contributes to planning
+
+Like `m-txtime-write`, this module does not emit its own statements: it describes
+one authored mutation's **topology** to `m-unit-work`'s Write Planner, extended
+to two axes. The description carries the same three parts:
+
+- the **Close Cause** — `Superseded` for `update` / `updateUntil`, `Terminated`
+  for `terminate` / `terminateUntil`;
+- the **gate basis** — the observed `tx_start` (and, when current rows of one key
+  share an `in_z`, the observed Valid-Time discriminator) an optimistic
+  inactivation binds; and
+- the **successors** — the chained rectangles with their Insert Origins.
+
+Origin is per successor, and the rectangle split is exactly where that matters.
+A bounded `updateUntil` yields three successors: the `head` and the `tail` carry
+the predecessor's represented state and are therefore `CarriedFrom` it, while the
+`middle` carries the new value and is `ChangedFrom` it. A plain `update` yields a
+`CarriedFrom` head and a `ChangedFrom` tail. A `terminate` or `terminateUntil`
+yields only carried survivors: the **cause** records the absence, so a surviving
+head or tail remains `CarriedFrom` and is never itself marked terminated. A plain
+`insert` / `insertUntil` has no predecessor and its single row is `NewLineage`.
+
+The description is neutral and names no SQL, dialect, or physical column, and it
+is scoped to **one authored mutation** rather than to one resolved row — a
+predicate-selected mutation resolving many rows yields one description the
+planner applies across the resolved group. An implementation **MUST NOT** expose
+a milestone plan, milestone step, or per-row expansion value on any cross-module
+interface. The planner expands the description in place at the mutation's
+already-decided position (ADR 0045) into one Planned Close followed immediately
+by its Planned Insert successors in the facet's canonical order — inactivation,
+then `head`, `middle`, `tail` where each exists — with no unrelated step
+interleaved and no surviving group or identifier.
+
+### Address and gate are separate
+
+The rectangle an inactivation means to close and the concurrency condition that
+detects a lost update are **separate** facts (ADR 0046). The **Milestone Target**
+(`m-unit-work`) is the address: the primary key together with the write-required
+exclusive upper bound that keeps an operational close on the **current**
+rectangle. It carries no axis **start**, no Write Observation, no gate, and no
+concurrency mode, and the planner derives it **identically in both concurrency
+modes**.
+
+The observed `in_z` rides the **gate**, never the address. That is why an
+optimistic write based on a historical observation still addresses the current
+slot rather than copying a finite historical end into it: closed history is never
+mutated, and the stale gate reports the conflict instead (`m-txtime-write`).
+
 ## Composition with inheritance
 
 A rectangle-split write on an inheritance participant (a concrete subtype of a family

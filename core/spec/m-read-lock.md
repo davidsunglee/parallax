@@ -29,6 +29,30 @@ shared-row-lock form appended (Postgres `for share of t0`; MariaDB `lock in shar
 mode`) and a projection/aggregation read unchanged. `m-unit-work` contains no
 dialect-specific SQL shaping.
 
+### What one temporal observation locks
+
+A lock is taken on the **physical rows the read selected** — nothing wider. For a
+temporal entity this bears repeating, because the vocabulary invites a stronger
+reading than the lock supports: locking the current milestone a read selected
+does **not** lock the milestone chain's edge, the Provenance Lineage behind it,
+every row sharing that primary key, or every Valid-Time rectangle current at the
+same Transaction Time. Exactly one physical row per selected milestone is locked.
+
+Two consequences follow, and `m-unit-work`'s Write Observation vocabulary depends
+on both:
+
+- A mutation that can change **several** current rectangles of one key must
+  resolve and observe **every** rectangle it can change, materializing per row
+  (`m-opt-lock`). Observing one rectangle licenses closing that rectangle alone.
+- The Transaction-Time Basis a temporal observation carries
+  (`LatestPinned | HistoricalPinned`) is **licensing metadata, not a description
+  of lock scope**. It records only whether the read that produced the observation
+  can license an ungated locking-mode write. A finite **Valid-Time** pin may
+  still select a current Transaction-Time row and so remains compatible with
+  locking; a **historical Transaction-Time** pin is not, because that read locked
+  no current row, and locking mode therefore rejects it before planning
+  (`m-opt-lock`).
+
 The canonical Postgres golden SQL for an object find appends the suffix to the
 otherwise-ordinary read (`m-sql`), as a `then.statements` entry:
 

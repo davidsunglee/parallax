@@ -638,7 +638,7 @@ Transaction-Time Basis, or observation-free variant. An empty resolution
 produces no group. For an assignment-bearing mutation, input materialization
 uses Unit Work's equality rules while streaming and retains only rows with an
 effective change; delete and terminate mutations retain every resolved row.
-_Avoid_: list of observed writes, result collection, public plan group
+_Avoid_: list of observed writes, result collection, public plan group, Atomic Unit, atomic planned unit
 
 **Write Planner**:
 The model-scoped, stateless Unit Work module whose single pure planning
@@ -646,13 +646,16 @@ operation converts one flush's boundary-captured Subject Identity, lazy
 Transaction Instant, concurrency mode, buffered writes, and observations into a
 Write Plan. Its planning strategies are wired at construction; it retains no
 attempt state and performs no database, clock, SQL, dialect, or driver work.
-_Avoid_: flush coordinator, SQL planner, mutable transaction planner
+_Avoid_: flush coordinator, SQL planner, mutable transaction planner, Final Write Planner
 
 **Planned Write**:
-One semantic execution step within a Write Plan. It may address one row or
-multiple rows, but its target, row topology, concurrency decision, expected
-effect, and Finalized Write Dispositions are settled before SQL lowering.
-_Avoid_: authored mutation, buffered instruction, SQL statement
+One semantic execution step within a Write Plan: a planned insert, update,
+close, or delete. It may address one row or multiple rows, but its target, row
+topology, concurrency decision, and expected effect are settled before SQL
+lowering. Insert Origin lives only on an insert entry and Close Cause only on a
+close, so the variant carries every semantic fact a later decorator needs and no
+separate label can contradict it.
+_Avoid_: authored mutation, buffered instruction, SQL statement, Final Write, Finalized Write Disposition, In-Place Revision, generic disposition field, mutation-kind tag
 
 **Planned Row**:
 The immutable, duplicate-free semantic contents of one planned insert, keyed by
@@ -688,7 +691,7 @@ elimination, with temporal topology and correctness semantics decided. Derived
 instants and other planning context are materialized into those writes rather
 than retained beside them. It is the semantic handoff through Audit Provenance
 decoration to SQL lowering, not a mutation log or SQL batch.
-_Avoid_: write queue, mutation history, statement list
+_Avoid_: write queue, mutation history, statement list, Flush Plan, Final Write Plan
 
 **Write Cardinality**:
 The number of existing rows a non-insert Write Target claims: exactly the
@@ -751,44 +754,29 @@ _Avoid_: optimistic conflict, stale write, retryable database error
 **Temporal Write Topology**:
 The ordered close-and-successor shape produced by one surviving temporal
 mutation. It remains one semantic unit even when its close and successor rows
-become separate Planned Writes.
-_Avoid_: SQL batch, statement group, independent row mutations
+become separate Planned Writes, and adjacency in Planned Steps is its only
+surviving evidence.
+_Avoid_: SQL batch, statement group, independent row mutations, Milestone Plan, Milestone Open, Milestone Close, Milestone Step
 
-**Finalized Write Disposition**:
-A provenance-neutral semantic label attached to a row or assignment in a
-nonempty finalized write plan. It tells later decorators what the plan does to a
-stored lineage without exposing audit vocabulary to mutation planners. It is
-neither a public mutation verb nor a persisted event.
-_Avoid_: audit event, user operation, SQL statement kind
+**Insert Origin**:
+The closed, provenance-neutral origin carried by each entry of a planned insert:
+New Lineage, Carried From a retained predecessor, or Changed From a retained
+predecessor. New Lineage begins a Provenance Lineage; Carried From preserves a
+temporal predecessor's represented state, including a surviving head or tail
+rectangle around a Bitemporal change or termination; Changed From changes that
+represented state. Origin belongs to one insert entry rather than to a whole
+step or a parallel array, so entries of different origins may share one planned
+insert. A planned insert admits no other origin, and no other Planned Write
+admits one at all.
+_Avoid_: Finalized Write Disposition, Lineage Start, Carried-State Successor, Changed-State Successor, disposition tag
 
-**Lineage Start**:
-The Finalized Write Disposition for an inserted row that begins a new
-Provenance Lineage.
-_Avoid_: first-ever primary key, revision successor
-
-**In-Place Revision**:
-The Finalized Write Disposition for a Non-Temporal update that emits DML against
-an existing row. A readless predicate update receives it even when an assignment
-happens to equal stored data; a known canceled, coalesced, or net-zero write does
-not.
-_Avoid_: insert, temporal successor, changed-value proof
-
-**Carried-State Successor**:
-The Finalized Write Disposition for a temporal successor whose represented
-state is carried unchanged from its predecessor, including surviving head or
-tail rectangles around a Bitemporal change or termination.
-_Avoid_: unchanged transaction, no-op write, revision close
-
-**Changed-State Successor**:
-The Finalized Write Disposition for a temporal successor whose represented
-state changes relative to its predecessor.
-_Avoid_: any new temporal row, carried successor, revision close
-
-**Ordinary Revision Close**:
-The Finalized Write Disposition for closing a temporal predecessor because a
-new database revision supersedes it. It is distinct from State Termination,
-which represents explicit absence.
-_Avoid_: termination, physical delete, successor
+**Close Cause**:
+The closed, provenance-neutral reason a planned close closes its temporal
+predecessor: Superseded when a new database revision replaces it, or Terminated
+when the mutation makes represented state explicitly absent. A terminate verb
+produces Terminated even where head or tail successors survive; those successors
+are independently Carried From. Only a planned close carries a cause.
+_Avoid_: Finalized Write Disposition, Ordinary Revision Close, row inactivation, disposition tag
 
 **Optimistic Lock Conflict**:
 A detected gated-write shortfall because another transaction changed the

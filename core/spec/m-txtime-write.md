@@ -60,6 +60,53 @@ There is no inheritance exception to *the gate binds last* for a temporal close
 either — one absolute ordering holds whether the write is a keyed update or a
 milestone close. The corpus pins this composed order (`m-inheritance-105`).
 
+## What this module contributes to planning
+
+A milestone-chaining write is finalized by `m-unit-work`'s Write Planner. This
+module does not emit it; it describes the **topology** of one authored mutation
+to that planner:
+
+- the **Close Cause** — `Superseded` for an `update`, `Terminated` for a
+  `terminate`;
+- the **gate basis** — the observed `tx_start` an optimistic close binds, which
+  the planner renders as a Temporal Gate or discards for the explicit `Ungated`
+  decision according to the transaction's concurrency mode (`m-opt-lock`); and
+- the **successors** — the chained current rows, each with its Insert Origin: a
+  successor carrying the predecessor's represented state is `CarriedFrom` it, and
+  one carrying the mutation's new state is `ChangedFrom` it. An `insert` has no
+  predecessor and its single row is a `NewLineage` origin.
+
+The description is **neutral**: it names no SQL, dialect, physical column, or
+statement and takes no dialect argument. That is exactly what lets temporal
+expansion live inside the planner while column participation and quoting stay in
+lowering.
+
+The description is scoped to **one authored mutation**, not to one resolved row.
+A predicate-selected mutation resolving many rows yields one description that the
+planner applies across the resolved group, so the description's size does not
+grow with the result set. An implementation **MUST NOT** expose a milestone plan,
+a milestone step, or a per-row expansion value on any cross-module interface: the
+planner expands the description in place, at the mutation's already-decided
+position (ADR 0045), into one Planned Close followed immediately by its Planned
+Insert successors. Adjacency in the Write Plan is the only surviving evidence
+that those steps belong together — there is no group, wrapper, or identifier.
+
+## The close addresses a Milestone Target
+
+A close addresses `m-unit-work`'s **Milestone Target**: the primary key plus one
+write-required **exclusive upper bound per As-Of Axis**. For Transaction-Time-Only
+data that is the single `out_z = infinity` bound. The target carries no axis
+start, no observation, no gate, and no concurrency mode, and it is **identical in
+both concurrency modes** (ADR 0046) — only the gate differs.
+
+That separation is what makes an observation of a *historical* milestone safe.
+Such a write still targets `out_z = infinity`; it never copies a finite
+historical end into the target, so closed history is never mutated. In optimistic
+mode the stale observed `in_z` rides the gate, matches zero rows against the newer
+current milestone, and reports the conflict. Locking mode rejects that historical
+observation **before** planning, because its read lock did not license the current
+milestone (`m-opt-lock`).
+
 ## Affected-row conflict contract for closes
 
 The close `UPDATE` **MUST** affect exactly **one** row. A close that affects
