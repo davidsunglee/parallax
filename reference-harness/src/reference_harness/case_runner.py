@@ -4618,10 +4618,10 @@ def _assert_scenario(case: Case, db: DatabaseProvider) -> None:
                 # (`_materialize_owner_node`). A ROW-FORM read (the materialized-predicate-
                 # write resolving find) projects the document only where the write it serves
                 # needs it, and a value-object-free entity (every scenario read but the
-                # supplier witness) declares no value object, so a row carrying no document
-                # column passes through byte-identical. The referenceSql oracle above already
-                # ran on the raw rows, so the value-object columns never route through that
-                # identity compare.
+                # supplier and subscriber witnesses) declares no value object, so a row
+                # carrying no document column passes through byte-identical. The referenceSql
+                # oracle above already ran on the raw rows, so the value-object columns never
+                # route through that identity compare.
                 rows = [_materialize_owner_node(read_entity, row) for row in rows]
             else:
                 # A cache hit (or an m-op-list construction that has not resolved yet): no

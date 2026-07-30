@@ -95,9 +95,13 @@ def validate_predicate_write_materialization(
     That resolving "materializing find" is the internal materialized-predicate-write
     read — the values-lane / ROW-FORM read of m-case-format's *Read result form* (m-sql
     *Read projection*): it observes each matched row's pk and gate/current-scalar values
-    to plan per-row DML without constructing an instance, so it omits slot 4's value-object
-    document columns (a reassigned document comes from the write instruction, not the read).
-    A managed-object find/refresh step is instead instance-form (the object lane).
+    to plan per-row DML without constructing an instance. Slot 4's value-object document
+    columns follow the observation it records rather than the lane: a temporal target's
+    resolve projects every declared one (its Predecessor Row is complete), while a
+    versioned target's retains only the observed version and so projects only the
+    documents its own assignments compare against. A reassigned document comes from the
+    write instruction, never from the read. A managed-object find/refresh step is instead
+    instance-form (the object lane).
     """
     if not _requires_materialization(entity):
         return

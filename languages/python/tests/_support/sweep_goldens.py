@@ -334,9 +334,9 @@ _SNAPSHOT_MUTATE_SCENARIOS: Final[frozenset[str]] = frozenset({"m-snapshot-read-
 # txtime and bitemporal composition (090/091/094-097), and the value-object
 # carry-through witnesses (m-value-object-032/033). The materializing predicate
 # forms (m-txtime-write-007/009, m-bitemp-write-010-013), the conflict-shape
-# close-only witnesses (run-only, graded by `test_run_sweep.py`), and
-# `m-value-object-047` stays skipped here because each such case is
-# `compileEligibility: run-only`
+# close-only witnesses (run-only, graded by `test_run_sweep.py`), and the two
+# result-form witnesses (`m-value-object-047`/`-066`) stay skipped here because
+# each such case is `compileEligibility: run-only`
 # (query-result-dependent, materializing), so `compile` structurally never
 # grades them. The run lane exercises all of them, including
 # `m-value-object-047`, whose trailing verification is an `asOf` read,

@@ -1,0 +1,121 @@
+# Scenario-step ROW-FORM DEFAULT over a value-object-bearing VERSIONED entity
+# (m-value-object + m-opt-lock + m-unit-work + m-sql "Read result form"): the internal
+# materialized-predicate-write resolving read OMITS the owner's `address` Document
+# slot, while the managed find one step earlier — the SAME operation over the SAME
+# row — projects it. Postgres AND MariaDB.
+#
+# The deliberate counterpart of m-value-object-047, which pins the one WIDENING of
+# that default. There the target is TEMPORAL, so its per-row observation is a complete
+# Predecessor Row (m-unit-work) and the resolve projects every declared document even
+# for a close that copies no payload. Here the target is VERSIONED: Subscriber owns an
+# `optimisticLocking` version AND a recursive `address` value object, and the
+# metamodel forbids a version and asOfAxes on one entity — so versioned and temporal
+# are the two DISJOINT classes of materializing predicate write (ADR 0014), and this
+# case is the other one. A versioned resolve records only a Version Observation, so
+# the one current value it must observe is the version; a `delete` assigns nothing, so
+# nothing widens the projection past it. Read the pair together: what the write
+# OBSERVES — not the read's lane, and not the verb's own topology — is what selects
+# the Document slot, upward in -047 and downward here.
+#
+# The predicate is `all` deliberately. Subscriber's only members are its key, the
+# framework-owned version, and the document, so there is no domain scalar to filter on
+# and an unfiltered set delete is the honest set-based shape here — and it leaves steps
+# 0 and 1 issuing the IDENTICAL operation, so their goldens differ in exactly one token,
+# `, t0.address`. That one token is the whole observable content of the row-form
+# default: nothing else about the two reads varies. Subscriber's fixture holds a single
+# row (the model's own optimistic-conflict case, m-value-object-046, owns it), so the
+# set resolves to exactly one match; resolved cardinality is not what this case pins.
+#   0  find (managed, all) : INSTANCE-FORM — the developer find materializes the owner,
+#      so its projection carries the whole `address` document last (id, version,
+#      address), which the harness decodes into its declared composite on both
+#      dialects.
+#   1  find (the SAME operation) : the materialized-predicate-write RESOLVING read —
+#      ROW-FORM. It observes each matched row's pk + version to plan the per-row delete
+#      (ADR 0014) and constructs no instance, so it projects (id, version) and OMITS
+#      `address`, even though Subscriber owns a value object — the point of the
+#      witness. Its `expectRows` carry the same two columns and no document: what the
+#      write's planner sees is exactly what this read returned.
+#   2  delete (predicate = all) : the resolved row is removed under its OWN observed
+#      version — `delete from subscriber where id = ? and version = ?`, the gate binding
+#      last (m-opt-lock "the gate binds last"). The per-key, version-gated shape itself
+#      belongs to m-opt-lock-015, whose two resolved rows prove it never collapses to
+#      `id in (...)`; what this case adds is that BOTH binds come from step 1's two
+#      columns, so the write is planned ENTIRELY from that narrow read — had planning
+#      needed the document, these binds could not have been produced from it. That is
+#      what makes the narrow projection load-bearing rather than merely permitted.
+#   3  find (the SAME operation) : verify — INSTANCE-FORM again, the same form and the
+#      same golden as step 0. The row is gone, so it returns nothing: an empty read
+#      that asserts the gated delete landed (a gate matching no row would leave the
+#      subscriber behind and fail here).
+#
+# The golden SQL is dialect-identical throughout — no JSON extraction is rendered
+# anywhere, since the document is projected or omitted rather than filtered on — so
+# every statement carries the shared flat bind form. Total roundTrips 4 = managed find
+# (1) + resolve read (1) + keyed delete (1) + verify read (1).
+model: models/subscriber.yaml
+tags: [m-value-object, m-opt-lock, m-sql, m-unit-work, json, materialize, predicate-write, scenario, slice-snapshot-1]
+shape: scenario
+compileEligibility:
+  mode: run-only
+  reason: query-result-dependent
+  note: "predicate write materializes per-row from a resolving read - per-row binds (matched keys / observed version) depend on the query result"
+when:
+  uow:
+    concurrency: optimistic
+  scenario:
+    - targetEntity: Subscriber
+      find:
+        all: {}
+      roundTrips: 1
+      note: managed find materializes the owner WITH its address Document slot — INSTANCE-FORM
+      statements:
+        - sql:
+            postgres: select t0.id, t0.version, t0.address from subscriber t0
+            mariadb: select t0.id, t0.version, t0.address from subscriber t0
+      referenceSql: select id, version, address from subscriber
+      expectRows:
+        - id: 1
+          version: 1
+          address:
+            street: 1 Elm St
+            city: Rome
+            geo:
+              country: IT
+    - targetEntity: Subscriber
+      find:
+        all: {}
+      roundTrips: 1
+      note: the predicate-write resolving read is ROW-FORM and projects pk + version only — a Version Observation retains no predecessor row, so the address Document slot stays out
+      statements:
+        - sql:
+            postgres: select t0.id, t0.version from subscriber t0
+            mariadb: select t0.id, t0.version from subscriber t0
+      referenceSql: select id, version from subscriber
+      expectRows:
+        - { id: 1, version: 1 }
+    - write:
+        mutation: delete
+        target:
+          entity: Subscriber
+          predicate:
+            all: {}
+      roundTrips: 1
+      note: remove the resolved row under its own observed version — one keyed, version-gated delete per resolved row, planned from step 1's two columns alone
+      statements:
+        - sql:
+            postgres: delete from subscriber where id = ? and version = ?
+            mariadb: delete from subscriber where id = ? and version = ?
+          binds: [1, 1]
+    - targetEntity: Subscriber
+      find:
+        all: {}
+      roundTrips: 1
+      note: verify (INSTANCE-FORM, the same golden as step 0) — the gated delete removed the row, so the read returns nothing
+      statements:
+        - sql:
+            postgres: select t0.id, t0.version, t0.address from subscriber t0
+            mariadb: select t0.id, t0.version, t0.address from subscriber t0
+      referenceSql: select id, version, address from subscriber
+      expectRows: []
+then:
+  roundTrips: 4
