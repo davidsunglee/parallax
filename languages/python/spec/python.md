@@ -1944,12 +1944,14 @@ or descriptor authoring form and performs no audit stamping.
   add the `and version = ?` gate binding the observed version in
   **optimistic mode only** — the gate follows the concurrency mode
   uniformly, never the mutation kind, exactly as a temporal close's gate
-  does. A gated statement affecting zero rows is the optimistic conflict —
-  surfaced always, retriable only via `retry_optimistic_conflicts=True`. An
-  **ungated** locking-mode `DELETE` affecting zero rows is instead the
-  never-retriable stale-write outcome an ungated close already carries: no
-  gate could have caused the shortfall, so it is a consistency violation
-  rather than a detected lost update. **Set-based** writes — selecting rows by
+  does. The zero-row outcome follows that same gate, never the verb: a
+  **gated** statement affecting zero rows is the optimistic conflict —
+  surfaced always, retriable only via `retry_optimistic_conflicts=True` —
+  while an **ungated** locking-mode statement that still required a prior
+  observation affecting zero rows is the never-retriable stale-write outcome,
+  identically for the keyed `UPDATE`, the keyed `DELETE`, and the temporal
+  close: no gate could have caused the shortfall, so it is a consistency
+  violation rather than a detected lost update. **Set-based** writes — selecting rows by
   predicate rather than key — are the one path where the framework itself
   materializes observations: one real read resolves the predicate to rows,
   recording each matched row's observed version (locked in `locking` mode),

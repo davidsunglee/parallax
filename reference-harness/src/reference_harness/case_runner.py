@@ -3714,13 +3714,15 @@ def _conflict_temporal_entity(case: Case) -> Entity | None:
 def _assert_conflict_input(case: Case, dialect: str) -> None:
     """Cross-check a conflict case's neutral input (① ``write``) against its golden.
 
-    A VERSIONED ``update`` conflict is intrinsically optimistic (R4) — always
-    gated: the golden SET clause is the domain set columns + ``version`` (advanced
-    ``observedVersion + 1``), and the binds are ``[…set values…, newVersion, pk,
-    observedVersion]`` (the trailing bind is the ``and version = ?`` gate). A
-    versioned ``delete`` conflict (``when.mutation: delete``) writes no columns at
-    all, so its cross-check is binds-only and mode-sensitive:
-    :func:`_assert_versioned_conflict_delete`. The single form reads a root
+    A VERSIONED ``update`` conflict's golden SET clause is the domain set columns +
+    ``version`` (advanced ``observedVersion + 1``), and its binds are
+    ``[…set values…, newVersion, pk, observedVersion]`` — the trailing bind being
+    the ``and version = ?`` gate, which every conflict ``update`` in the corpus
+    carries because each declares ``optimistic`` mode. A versioned ``delete``
+    conflict (``when.mutation: delete``) writes no columns at all, so its
+    cross-check is binds-only and reads gate presence from the case's declared mode
+    (`m-opt-lock`: the mode alone decides, uniformly for the update, the delete,
+    and the close): :func:`_assert_versioned_conflict_delete`. The single form reads a root
     ``write``; the retry form reads a ``write`` per attempt. A temporal-close
     conflict (no version column) carries a close-shaped ① instead, cross-checked by
     :func:`_assert_temporal_conflict_input`. Comparing against the golden is
@@ -3850,7 +3852,8 @@ def _assert_versioned_conflict_write(
             f"carry observedVersion — the advance + gate are derived from it."
         )
     set_values = [set_cols[column] for column in set_present]
-    # A conflict is intrinsically gated (R4): [...set, newVersion, pk, observedVersion].
+    # The gated bind order every authored update conflict takes: [...set, newVersion,
+    # pk, observedVersion].
     expected = [*set_values, observed + 1, pk, observed]
     _assert_write_values(case, expected, binds, statement)
 

@@ -42,8 +42,11 @@ Three collapse rules (``m-batch-write.md`` L15-26):
   statement cannot carry (``m-opt-lock``, ADR 0014); it always decomposes to
   per-row keyed updates.
 - **delete** — same-entity, NON-VERSIONED deletes collapse into one ``DELETE``
-  with an ``IN`` predicate; a VERSIONED entity's delete never collapses (each
-  row's own observed version must gate its own statement).
+  with an ``IN`` predicate; a VERSIONED entity's delete never collapses. Every
+  row requires its own prior observation and owns its own exactly-one
+  affected-row expectation in BOTH concurrency modes, and optimistic mode
+  additionally binds that row's version as its own gate — none of which one
+  shared statement carries.
 
 Every one of those facts is family-wide — a version Attribute, an As-Of Axis,
 and the primary key are all root-owned — so each is read off the family-effective
@@ -195,8 +198,11 @@ def delete_collapses(model: Metamodel, entity: EntityMetadata) -> bool:
     "the delete analogue of the multi-row INSERT"). ``False`` for a temporal
     entity (`terminate`/`terminateUntil` are `m-txtime-write` / `m-bitemp-write`
     territory) or a VERSIONED one — a versioned entity's set-based delete
-    NEVER collapses (`m-batch-write.md` L26): each row must be removed under
-    its own observed version (`m-batch-write-004`)."""
+    NEVER collapses (`m-batch-write.md` L26): each row is removed under its own
+    prior observation and its own exactly-one affected-row expectation, in
+    either concurrency mode, and optimistic mode binds that row's version as its
+    own gate on top (`m-batch-write-004` is the ungated locking form,
+    `m-opt-lock-015` the gated one)."""
     if _is_temporal(model, entity):
         return False
     return not _is_versioned(model, entity)

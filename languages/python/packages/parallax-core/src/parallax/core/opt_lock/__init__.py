@@ -199,12 +199,15 @@ class HistoricalObservationError(RuntimeError):
 
 
 class OptimisticLockConflictError(RuntimeError):
-    """The ``updatedRows != 1`` conflict on a versioned keyed write (`m-opt-lock`).
+    """The ``updatedRows != 1`` conflict on a GATED write (`m-opt-lock`).
 
-    The retriable-when-opted-in signal: a concurrent write changed the version
-    (or, for a keyed DELETE, the row) first, so the GATED statement matched zero
-    rows instead of the expected one. An ungated (locking-mode) shortfall is the
-    sibling :class:`StaleWriteError` instead. Carries the
+    The retriable-when-opted-in signal: a concurrent write moved what the gate
+    binds — the version for a keyed UPDATE, the row itself for a keyed DELETE,
+    the current milestone's ``in_z`` for a temporal close — so the GATED
+    statement matched zero rows instead of the expected one. Classification
+    follows the gate, not the mutation kind, so an ungated (locking-mode)
+    shortfall on any of those shapes is the sibling
+    :class:`StaleWriteError` instead. Carries the
     context an engine or caller needs to render an ``affectedRows`` observation:
     ``entity`` (the write's target entity name), ``key`` (its object key, the
     same ``(pk attribute name, value)`` pairs `~parallax.core.unit_work.

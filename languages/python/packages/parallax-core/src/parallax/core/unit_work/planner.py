@@ -139,10 +139,14 @@ _DELETE_VERBS: Final[frozenset[str]] = frozenset({"delete", "terminate", "termin
 class Observation:
     """A framework-owned per-object transaction observation (m-opt-lock, ADR 0013).
 
-    The optimistic-lock version and/or observed Transaction-Time start a gated write binds,
-    attached to a planned write at flush and **never** carried on the durable
-    instruction. Neutral here: this milestone pairs it onto the plan; lowering the
-    version gate or advance into SQL is the composition layer's job.
+    The optimistic-lock version and/or observed Transaction-Time start an
+    observation-requiring write retains, attached to a planned write at flush and
+    **never** carried on the durable instruction. It is mandatory in BOTH
+    concurrency modes (`m-opt-lock` "Locking license is validated before
+    planning") — optimistic mode binds it as the gate, locking mode is licensed
+    by the shared read lock the observing read took. Neutral here: this milestone
+    pairs it onto the plan; lowering the version gate or advance into SQL is the
+    composition layer's job.
 
     ``valid_start`` / ``valid_end`` / ``payload`` extend the vocabulary for a
     temporal observation (`m-txtime-write` / `m-bitemp-write`): ``valid_start``
@@ -197,8 +201,10 @@ class PlannedWrite:
     ``expected_affected`` is ``1`` for every keyed ``update``/``delete`` whose
     bound observation carries a version (a versioned row this unit of work
     observed) — the composition layer's shell compares the port's own
-    ``execute_write`` count against it, raising the optimistic-lock conflict on
-    a mismatch and aborting the whole unit of work (`parallax.core.opt_lock`).
+    ``execute_write`` count against it and, on a mismatch, raises the outcome the
+    statement's GATE implies (the retriable optimistic-lock conflict when it
+    gated, the non-retriable stale write when it did not), aborting the whole
+    unit of work (`parallax.core.opt_lock`).
     ``None`` for every other write (an unversioned write, or one whose row
     carries its version as plain caller-authored data rather than a recorded
     observation; corpus cases without an observation never use this

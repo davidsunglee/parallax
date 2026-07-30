@@ -75,9 +75,12 @@ DML and asserting the resulting table state — the write-sequence machinery
 per-key delete). So "buffered writes flush as set-based SQL" is verified by the
 rows it leaves behind, not merely asserted.
 
-A **versioned** entity has no readless predicate-write template — a per-row
-observed version cannot ride one statement — so predicate update and delete
-materialize to keyed writes (`m-opt-lock`). Transaction-Time temporal predicate
+A **versioned** entity has no readless predicate-write template. Every one of its
+writes against an existing row requires that row's own prior observation, in
+**both** concurrency modes — optimistic mode binds it as that row's gate, locking
+mode needs the read that took its shared lock — and one predicate statement can
+neither carry nor acquire one. Predicate update and delete therefore materialize
+to keyed writes (`m-opt-lock`). Transaction-Time temporal predicate
 writes likewise materialize so each observed milestone can close/chain
 (`m-txtime-write` / `m-bitemp-write`). Those are not buffered-batch collapse rules.
 

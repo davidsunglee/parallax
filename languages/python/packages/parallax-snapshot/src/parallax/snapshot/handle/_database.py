@@ -369,10 +369,10 @@ def _flush_executor(
     close carries an expectation (always ``1``), so a mismatch there raises and
     ABORTS BEFORE the chained rows ever execute (`m-txtime-write` "MUST NOT silently
     succeed and proceed to chain"). ``LoweredStatement.stale_error`` picks the raised
-    class: the non-retriable :class:`~parallax.core.opt_lock.StaleWriteError` for an
-    UNGATED (locking-mode) observation-requiring mismatch — a versioned keyed DELETE
-    or a temporal close — and the retriable
-    :class:`~parallax.core.opt_lock.OptimisticLockConflictError` otherwise.
+    class by the GATE, never by the mutation kind: the non-retriable
+    :class:`~parallax.core.opt_lock.StaleWriteError` for an UNGATED (locking-mode)
+    mismatch on a write that still required a prior observation, and the retriable
+    :class:`~parallax.core.opt_lock.OptimisticLockConflictError` for a gated one.
     """
 
     def execute(plan: FlushPlan) -> None:
@@ -394,9 +394,9 @@ def _conflict_error(
     lowered: LoweredStatement,
 ) -> opt_lock.OptimisticLockConflictError | opt_lock.StaleWriteError:
     """The affected-row-mismatch error for one lowered statement — the retriable
-    gated conflict, or (``lowered.stale_error``) the non-retriable outcome an
-    ungated observation-requiring write earns, a versioned keyed DELETE or a
-    temporal close (`m-opt-lock` / `m-txtime-write` / `m-bitemp-write`). Resolves this
+    gated conflict, or (``lowered.stale_error``) the non-retriable outcome ANY
+    ungated write that still required a prior observation earns
+    (`m-opt-lock` / `m-txtime-write` / `m-bitemp-write`). Resolves this
     seam's own identifying context (the instruction's object key) and defers
     the actual classification to :func:`~parallax.core.opt_lock.classify_mismatch`
     — the one place that decision is made, shared with the conformance
