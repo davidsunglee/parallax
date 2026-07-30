@@ -118,7 +118,11 @@ def _walk(entity: Entity, node: Any) -> None:
     if tag in _NESTED_COMPARISON_TAGS:
         _check_nested_comparison(entity, body)
     elif tag == "nestedBetween":
-        _check_nested_range(entity, body)
+        _check_range_predicate(
+            resolve_nested_ref(entity, body["path"]),
+            body,
+            subject=body["path"],
+        )
     elif tag in _NESTED_MEMBERSHIP_TAGS:
         _check_nested_membership(entity, body)
     elif tag in _NESTED_STRING_TAGS:
@@ -182,19 +186,25 @@ def _check_nested_comparison(entity: Entity, body: dict[str, Any]) -> None:
         )
 
 
-def _check_nested_range(entity: Entity, body: dict[str, Any]) -> None:
-    """A nested range's three checks, in the order m-op-algebra fixes: the path, both
-    typed bounds, then the bound ordering."""
-    attribute = resolve_nested_ref(entity, body["path"])
+def _check_range_predicate(
+    attribute: dict[str, Any], body: dict[str, Any], *, subject: str
+) -> None:
+    """A nested range's bound checks, in the order m-op-algebra fixes: both typed
+    bounds, then the bound ordering — the path having already resolved ``attribute``.
+
+    One function for both scopes, because only the resolution of ``attribute``
+    differs. Ordering the bounds last is load-bearing: a mistyped bound is named as a
+    type mismatch rather than ordered as a raw literal of some unrelated kind.
+    """
     lower, upper = body.get("lower"), body.get("upper")
     for bound_name, value in (("lower", lower), ("upper", upper)):
         if not literal_matches_type(value, attribute.get("type")):
             raise RejectionError(
                 NESTED_LITERAL_TYPE_MISMATCH,
-                f"{body['path']!r}: {bound_name} bound {value!r} does not match declared type "
+                f"{subject!r}: {bound_name} bound {value!r} does not match declared type "
                 f"{attribute.get('type')!r}",
             )
-    _check_bound_ordering(body["path"], lower, upper)
+    _check_bound_ordering(subject, lower, upper)
 
 
 def _check_nested_membership(entity: Entity, body: dict[str, Any]) -> None:
@@ -255,16 +265,11 @@ def _walk_element(value_object: dict[str, Any], node: Any) -> None:
                 f"declared type {attribute.get('type')!r}",
             )
     elif tag == "nestedBetween":
-        attribute = resolve_element_ref(value_object, body["path"])
-        lower, upper = body.get("lower"), body.get("upper")
-        for bound_name, value in (("lower", lower), ("upper", upper)):
-            if not literal_matches_type(value, attribute.get("type")):
-                raise RejectionError(
-                    NESTED_LITERAL_TYPE_MISMATCH,
-                    f"element {body['path']!r}: {bound_name} bound {value!r} does not match "
-                    f"declared type {attribute.get('type')!r}",
-                )
-        _check_bound_ordering(body["path"], lower, upper)
+        _check_range_predicate(
+            resolve_element_ref(value_object, body["path"]),
+            body,
+            subject=f"element {body['path']}",
+        )
     elif tag in _NESTED_MEMBERSHIP_TAGS:
         attribute = resolve_element_ref(value_object, body["path"])
         for value in body.get("values", []):

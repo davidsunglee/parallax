@@ -663,15 +663,21 @@ def _check_nested_comparison(node: NestedComparison, model: Metamodel) -> None:
     _check_typed_literal(node.path, node.value, leaf)
 
 
-def _check_nested_range(node: NestedRange, model: Metamodel) -> None:
-    """A nested range's three checks in the order `m-op-algebra` fixes: the path,
-    both typed bounds, then the bound ordering. Ordering the bounds LAST is what
-    makes a mistyped bound report the type mismatch rather than an accidental
-    inversion between two literals of unrelated kinds."""
-    leaf = _resolve_nested_leaf(node.path, model)
+def _check_range_bounds(node: NestedRange, leaf: ValueObjectAttributeMetadata) -> None:
+    """A nested range's bound checks in the order `m-op-algebra` fixes: both typed
+    bounds, then the bound ordering — the path having already resolved ``leaf``.
+
+    Shared by both nested scopes, so the order is stated once. Ordering the bounds
+    LAST is what makes a mistyped bound report the type mismatch rather than an
+    accidental inversion between two literals of unrelated kinds.
+    """
     _check_typed_literal(node.path, node.lower, leaf)
     _check_typed_literal(node.path, node.upper, leaf)
     _check_bound_ordering(node.path, node.lower, node.upper)
+
+
+def _check_nested_range(node: NestedRange, model: Metamodel) -> None:
+    _check_range_bounds(node, _resolve_nested_leaf(node.path, model))
 
 
 def _check_nested_membership(node: NestedMembership, model: Metamodel) -> None:
@@ -719,10 +725,7 @@ def _check_element_comparison(node: NestedComparison, container: _VoContainer) -
 
 
 def _check_element_range(node: NestedRange, container: _VoContainer) -> None:
-    leaf = _resolve_element_leaf(container, node.path)
-    _check_typed_literal(node.path, node.lower, leaf)
-    _check_typed_literal(node.path, node.upper, leaf)
-    _check_bound_ordering(node.path, node.lower, node.upper)
+    _check_range_bounds(node, _resolve_element_leaf(container, node.path))
 
 
 def _check_element_membership(node: NestedMembership, container: _VoContainer) -> None:
