@@ -11,13 +11,13 @@ This module owns three things:
 * :class:`RejectionError` — raised by a validator with the ``rule`` it violated.
 * The closed **rule vocabulary** (:data:`REJECTED_RULES`) — the small set of
   ``then.rejectedRule`` identifiers, each naming a normative MUST from
-  ``m-op-algebra`` (the nested-predicate resolver) or the ``m-value-object``
-  materialization/navigation contract. The schema pins the SAME vocabulary in the
-  ``then.rejectedRule`` enum; the two MUST agree.
+  ``m-op-algebra`` (predicate bound ordering and the nested-predicate resolver) or
+  the ``m-value-object`` materialization/navigation contract. The schema pins the
+  SAME vocabulary in the ``then.rejectedRule`` enum; the two MUST agree.
 * The **member resolvers** — resolve a dotted nested path / value-object-terminated
   path / element-relative path against an entity's *declared* recursive value-object
   structure, raising :class:`RejectionError` on the first undeclared segment, plus
-  the typed-literal check.
+  the literal-level checks (declared-type match, and range-bound ordering).
 
 These are non-normative grading machinery: they let the reference harness make the
 reference implementation actually reject what the ``rejected`` cases pin, exactly as
@@ -35,8 +35,9 @@ from .case import Entity
 # The closed set of `then.rejectedRule` identifiers. Kept in lockstep with the
 # `then.rejectedRule` enum in compatibility-case.schema.json (m-case-format).
 
-# Operation rules (m-op-algebra nested-predicate resolver MUSTs + m-value-object
-# materialization/navigation contract clauses 4/5).
+# Operation rules (m-op-algebra bound-ordering + nested-predicate resolver MUSTs,
+# m-value-object materialization/navigation contract clauses 4/5).
+BETWEEN_BOUNDS_INVERTED = "between-bounds-inverted"
 NESTED_PATH_FIRST_SEGMENT_NOT_VALUE_OBJECT = "nested-path-first-segment-not-value-object"
 NESTED_PATH_UNKNOWN_MEMBER = "nested-path-unknown-member"
 NESTED_LITERAL_TYPE_MISMATCH = "nested-literal-type-mismatch"
@@ -51,6 +52,7 @@ WRITE_VALUE_TYPE_MISMATCH = "write-value-type-mismatch"
 
 REJECTED_RULES: frozenset[str] = frozenset(
     {
+        BETWEEN_BOUNDS_INVERTED,
         NESTED_PATH_FIRST_SEGMENT_NOT_VALUE_OBJECT,
         NESTED_PATH_UNKNOWN_MEMBER,
         NESTED_LITERAL_TYPE_MISMATCH,
@@ -107,6 +109,27 @@ def literal_matches_type(value: Any, neutral_type: str | None) -> bool:
     if kind in _BOOL_TYPES:
         return isinstance(value, bool)
     return True
+
+
+def _is_number(value: Any) -> bool:
+    """Whether *value* is a JSON ``number`` — a bool is its own kind, never one."""
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def bounds_inverted(lower: Any, upper: Any) -> bool:
+    """Whether a range's ``lower`` bound is strictly greater than its ``upper``.
+
+    The `m-op-algebra` bound-ordering MUST, shared by every range predicate. Bounds
+    are compared by LITERAL KIND rather than by resolved attribute type: only two
+    numbers or two strings are ordered against each other, and a differing pair or a
+    ``null`` bound is skipped rather than guessed. Equal bounds name the single-value
+    range and are never inverted.
+    """
+    if _is_number(lower) and _is_number(upper):
+        return lower > upper
+    if isinstance(lower, str) and isinstance(upper, str):
+        return lower > upper
+    return False
 
 
 # --- declared-structure lookups --------------------------------------------

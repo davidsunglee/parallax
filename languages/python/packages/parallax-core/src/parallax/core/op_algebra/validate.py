@@ -5,13 +5,20 @@ specific metamodel: a `narrow` that broadens past the polymorphic position in
 scope, a predicate that reaches a concrete-subtype attribute nobody in the
 active position declares, a navigation / deep-fetch path aimed at a value
 object rather than a relationship, or a `find()` rooted at a value object
-rather than a queryable entity. `m-case-format`'s `rejected` case shape requires
+rather than a queryable entity. It can also be invalid on its own authored
+terms, needing no model at all: a range predicate whose two bounds are
+inverted. `m-case-format`'s `rejected` case shape requires
 these refusals to happen **before any SQL is emitted**. This module is the
 single validator used by the corpus-facing conformance engine for the
 `when.operation` rejected lane.
 
 Rule provenance:
 
+- `between-bounds-inverted` — `m-op-algebra` "Bound-ordering rule": a range
+  predicate whose `lower` bound is strictly greater than its `upper` names an
+  empty range, and is refused rather than lowered into a predicate that
+  silently matches nothing. Bounds are compared by literal kind (two numbers or
+  two strings), so this rule alone needs no model resolution.
 - `narrow-outside-position` / `narrow-empty-effective-set` /
   `subtype-attribute-outside-narrow-scope` — `m-op-algebra` "Subtype narrowing"
   / "The four-step validation rule": a `narrow` node's resolved concrete set is
@@ -218,12 +225,14 @@ def _walk(op: Operation, model: Metamodel, scope: _PositionScope) -> None:
             return
         case (
             Comparison(attr=attr)
-            | Between(attr=attr)
             | NullCheck(attr=attr)
             | StringMatch(attr=attr)
             | Membership(attr=attr)
         ):
             _check_attr_ref(attr, model, scope)
+        case Between(attr=attr, lower=lower, upper=upper):
+            _check_attr_ref(attr, model, scope)
+            _check_bound_ordering(attr, lower, upper)
         case NestedComparison():
             _check_nested_comparison(op, model)
         case NestedMembership():
@@ -272,6 +281,38 @@ def _walk(op: Operation, model: Metamodel, scope: _PositionScope) -> None:
                 _check_deep_fetch_path(path, model, scope)
         case _:  # pragma: no cover - exhaustiveness guard
             assert_never(op)
+
+
+# --------------------------------------------------------------------------- #
+# Range bound ordering (m-op-algebra "Bound-ordering rule").                  #
+# --------------------------------------------------------------------------- #
+def _bounds_inverted(lower: Scalar, upper: Scalar) -> bool:
+    """Whether a range's ``lower`` bound is strictly greater than its ``upper``.
+
+    Bounds are compared by LITERAL KIND rather than by the subject's resolved
+    type: only two numbers or two strings are ordered against each other, and a
+    differing pair or a ``null`` bound is skipped rather than guessed. A ``bool``
+    is its own literal kind — never a number — even though Python's ``bool``
+    subclasses ``int``. Equal bounds name the single-value range and are never
+    inverted.
+    """
+    if isinstance(lower, bool) or isinstance(upper, bool):
+        return False
+    if isinstance(lower, (int, float)) and isinstance(upper, (int, float)):
+        return lower > upper
+    if isinstance(lower, str) and isinstance(upper, str):
+        return lower > upper
+    return False
+
+
+def _check_bound_ordering(subject: str, lower: Scalar, upper: Scalar) -> None:
+    """Reject a range predicate over ``subject`` whose two bounds are inverted."""
+    if _bounds_inverted(lower, upper):
+        raise OperationRejectedError(
+            "between-bounds-inverted",
+            f"{subject!r}: lower bound {lower!r} is greater than upper bound {upper!r}, "
+            "so the range is empty and no row can satisfy it (m-op-algebra bound ordering)",
+        )
 
 
 # --------------------------------------------------------------------------- #

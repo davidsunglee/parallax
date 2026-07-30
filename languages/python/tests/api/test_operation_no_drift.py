@@ -203,6 +203,7 @@ def test_expression_rejects_bool_misuse() -> None:
 # `OperationRejectedError` naming the EXACT `then.rejectedRule`.               #
 # --------------------------------------------------------------------------- #
 REJECTED_BUILDERS: dict[str, Callable[[], Predicate]] = {
+    "m-op-algebra-039": lambda: Order.price.between(50.75, 20.00),
     "m-value-object-038": lambda: vm.Customer.address.city == 42,
     "m-inheritance-040": lambda: sm.Pet.narrow(sm.WildBoar),
     "m-inheritance-041": lambda: sm.Dog.bark_volume > 5,
@@ -222,6 +223,7 @@ REJECTED_BUILDERS: dict[str, Callable[[], Predicate]] = {
 # about `Person.pets`, and `Person`'s own registry scope is the one that
 # resolves BOTH `Person` and `Pet`/`WildBoar`/`Animal` coherently).
 REJECTED_TARGETS: dict[str, type[Entity]] = {
+    "m-op-algebra-039": Order,
     "m-value-object-038": vm.Customer,
     "m-inheritance-040": sm.Animal,
     "m-inheritance-041": sm.Animal,

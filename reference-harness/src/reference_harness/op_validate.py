@@ -2,11 +2,14 @@
 
 An operation `rejected` case (m-case-format, resolved Q7) carries a SCHEMA-VALID
 `m-op-algebra` node that a model-aware resolver MUST refuse **before any SQL is
-emitted**. This module walks the operation tree against the queried entity's
-declared value-object structure and raises
+emitted**. This module walks the operation tree — mostly against the queried
+entity's declared value-object structure — and raises
 :class:`~reference_harness.value_object_resolve.RejectionError` naming the violated
 normative rule:
 
+* a **range** predicate whose `lower` bound is strictly greater than its `upper`,
+  comparing same-kind literals only (m-op-algebra bound ordering); this one needs no
+  model, since the two authored literals carry everything the rule compares;
 * a nested-predicate **path** whose first segment is not a declared value object,
   or whose intermediate / leaf segment is undeclared (m-op-algebra resolver MUST);
 * a nested-comparison / membership **literal** whose type mismatches the leaf
@@ -53,11 +56,13 @@ from typing import Any
 from .case import Entity
 from .operation_references import ATTRIBUTE_REFERENCE_TAGS
 from .value_object_resolve import (
+    BETWEEN_BOUNDS_INVERTED,
     DEEP_FETCH_VALUE_OBJECT_SEGMENT,
     FIND_ROOT_VALUE_OBJECT,
     NAVIGATE_VALUE_OBJECT_TARGET,
     NESTED_LITERAL_TYPE_MISMATCH,
     RejectionError,
+    bounds_inverted,
     find_top_value_object,
     literal_matches_type,
     resolve_element_ref,
@@ -100,6 +105,8 @@ def _walk(entity: Entity, node: Any) -> None:
         resolve_nested_ref(entity, body["path"])
     elif tag in ("nestedExists", "nestedNotExists"):
         _check_nested_exists(entity, body)
+    elif tag == "between":
+        _check_between(entity, body)
     elif tag in ("navigate", "exists", "notExists"):
         _check_navigation(entity, body)
     elif tag == "deepFetch":
@@ -122,6 +129,22 @@ def _walk(entity: Entity, node: Any) -> None:
     elif tag in ("asOf", "asOfRange", "history"):
         _walk(entity, body.get("operand"))
     # all / none / aggregation nodes carry no value-object reference to validate.
+
+
+def _check_between(entity: Entity, body: dict[str, Any]) -> None:
+    """A range predicate's own two checks: its subject, then its bound ordering."""
+    _check_find_root(entity, body.get("attr"))
+    _check_bound_ordering(body.get("attr"), body.get("lower"), body.get("upper"))
+
+
+def _check_bound_ordering(subject: Any, lower: Any, upper: Any) -> None:
+    """Reject a range whose bounds are inverted (m-op-algebra bound ordering)."""
+    if bounds_inverted(lower, upper):
+        raise RejectionError(
+            BETWEEN_BOUNDS_INVERTED,
+            f"{subject!r}: lower bound {lower!r} is greater than upper bound {upper!r}, "
+            f"so the range is empty and no row can satisfy it",
+        )
 
 
 def _check_nested_comparison(entity: Entity, body: dict[str, Any]) -> None:

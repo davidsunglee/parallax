@@ -139,6 +139,12 @@ def test_referenced_entities_collects_every_class_the_operation_names() -> None:
 _MODEL_DIR = case_format.find_repo_root() / "core" / "compatibility" / "models"
 _ANIMAL = corpus_models.load_model(_MODEL_DIR / "animal.yaml")
 _CUSTOMER = corpus_models.load_model(_MODEL_DIR / "customer.yaml")
+_ORDERS = corpus_models.load_model(_MODEL_DIR / "orders.yaml")
+_MODEL_BY_FILE: Mapping[str, Metamodel] = {
+    "animal.yaml": _ANIMAL,
+    "customer.yaml": _CUSTOMER,
+    "orders.yaml": _ORDERS,
+}
 # The animal family plus one abstract subtype with no concrete descendants — the
 # only way a `to` list resolves to the empty set.
 _ANIMAL_WITH_A_CHILDLESS_SUBTYPE = Metamodel(
@@ -172,7 +178,7 @@ def _rejects(op: Operation, meta: Metamodel, target: str) -> OperationRejectedEr
 
 
 # --------------------------------------------------------------------------- #
-# The 10 in-slice rejected corpus cases, round-tripped end to end.            #
+# The 11 in-slice rejected corpus cases, round-tripped end to end.            #
 # --------------------------------------------------------------------------- #
 _REJECTED_CASE_IDS = (
     "m-inheritance-040",
@@ -180,6 +186,7 @@ _REJECTED_CASE_IDS = (
     "m-inheritance-042",
     "m-inheritance-064",
     "m-inheritance-072",
+    "m-op-algebra-039",
     "m-value-object-034",
     "m-value-object-035",
     "m-value-object-036",
@@ -205,11 +212,62 @@ def test_corpus_rejected_case_classifies_to_its_own_rejected_rule(case_id: str) 
     case = _load_rejected_case(case_id)
     when = cast("Mapping[str, Any]", case.document["when"])
     then = cast("Mapping[str, Any]", case.document["then"])
-    meta = _ANIMAL if "animal" in case.model else _CUSTOMER
+    meta = _MODEL_BY_FILE[Path(case.model).name]
     op = deserialize(cast("Mapping[str, object]", when["operation"]))
     target = _rejected_target(meta)
     exc = _rejects(op, meta, target)
     assert exc.rule == then["rejectedRule"]
+
+
+# --------------------------------------------------------------------------- #
+# between-bounds-inverted (m-op-algebra "Bound-ordering rule").               #
+# --------------------------------------------------------------------------- #
+def _between(lower: Scalar, upper: Scalar) -> Between:
+    return Between(attr="Order.price", lower=lower, upper=upper)
+
+
+@pytest.mark.parametrize(
+    ("lower", "upper"),
+    [(50.75, 20.00), (5, 1), ("2024-05-01", "2024-02-01"), ("b", "a")],
+)
+def test_between_with_inverted_same_kind_bounds_rejects(lower: Scalar, upper: Scalar) -> None:
+    exc = _rejects(_between(lower, upper), _ORDERS, "Order")
+    assert exc.rule == "between-bounds-inverted"
+
+
+@pytest.mark.parametrize(
+    ("lower", "upper"),
+    [
+        (20.00, 50.75),
+        (5, 5),
+        ("a", "a"),
+        ("2024-02-01", "2024-05-01"),
+        (5, "1"),
+        ("5", 1),
+        (None, 1),
+        (5, None),
+        (True, False),
+    ],
+)
+def test_between_bounds_the_rule_stands_aside_for_accept(lower: Scalar, upper: Scalar) -> None:
+    # Ordered and equal same-kind bounds are legal ranges; a mixed-kind pair, a null
+    # bound, and a boolean pair are all skipped rather than guessed — the comparison
+    # is by literal kind, so a bool is never read as the number 1 or 0.
+    _validate("Order", _between(lower, upper), _ORDERS)
+
+
+def test_between_bound_ordering_is_checked_wherever_the_node_sits() -> None:
+    op = And(operands=(All(), Not(operand=_between(50.75, 20.00))))
+    exc = _rejects(op, _ORDERS, "Order")
+    assert exc.rule == "between-bounds-inverted"
+
+
+def test_between_subject_is_resolved_before_its_bounds_are_ordered() -> None:
+    # A value-object-rooted range names the root misuse rather than blaming its
+    # (also inverted) bounds.
+    op = Between(attr="address.city", lower="b", upper="a")
+    exc = _rejects(op, _CUSTOMER, "Customer")
+    assert exc.rule == "find-root-value-object"
 
 
 # --------------------------------------------------------------------------- #

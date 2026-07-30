@@ -453,10 +453,15 @@ mutations, exceptions, or exports.
   `nestedBetween` is a dedicated canonical node and never lowers to two
   independent flat comparisons that different elements could satisfy.
   Top-level and nested `between(lower, upper)` validate both literals against
-  the Attribute's neutral type but do not compare the bounds during
-  construction. A reversed pair is valid and naturally matches no rows under
-  SQL `BETWEEN`; only semantic interval APIs such as `as_of_range(...)` require
-  ordered endpoints.
+  the Attribute's neutral type and compare the two bounds as the Predicate is
+  built into a Statement: a `lower` strictly greater than its `upper` names an
+  empty range and raises
+  `OperationRejectedError(between-bounds-inverted)` rather than compiling to a
+  `BETWEEN` that silently matches nothing. The comparison is by literal kind —
+  two numbers or two strings, skipped for a mixed-kind or null pair — and equal
+  bounds stay legal, so only a pair no row could satisfy is refused. Semantic
+  interval APIs such as `as_of_range(...)` keep their own ordered-endpoint
+  requirement.
 
   The expanded family is a cross-core prerequisite rather than Python-only
   sugar. `m-core`, `m-op-algebra`, `m-value-object`, `m-sql`, `m-dialect`, the

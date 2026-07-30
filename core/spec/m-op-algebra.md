@@ -101,6 +101,17 @@ a bind placeholder in the golden SQL.
 `{ "attr", "lower", "upper" }`; it lowers to `attr between ? and ?` (two ordered
 binds: lower, then upper) and is equivalent to `>= lower AND <= upper`.
 
+**Bound-ordering rule.** The two bounds describe a range, so a `lower` strictly
+greater than its `upper` names an empty range no row can satisfy; a resolver
+**MUST** reject it (`between-bounds-inverted`) rather than emit a predicate that
+silently matches nothing (`m-case-format` rejected vocabulary). Bounds are
+compared by **literal kind**: the rule applies only when both bounds are the same
+kind — both `number`s, or both `string`s — and is skipped when the kinds differ
+or either bound is `null`. Only a **strictly** greater `lower` is rejected; equal
+bounds name the single-value range `>= v AND <= v` and are legal. Comparing by
+literal kind keeps the rule free of attribute-type resolution, and ISO-8601
+`date` / `timestamp` literals order correctly under string comparison.
+
 ### Null
 
 `isNull` / `isNotNull` take `{ "attr": "Class.attribute" }`. Per SQL three-valued
