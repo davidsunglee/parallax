@@ -131,6 +131,13 @@ class OrderTerm:
     direction. Only a term created by :func:`asc` or :func:`desc` can carry a
     placement, because a bare member name in an ``order_by=`` tuple has nowhere
     to hang the modifier.
+
+    This term declares part of a model, not part of a query, so a rejected
+    placement composition raises a plain :class:`ValueError` and stays outside the
+    query-definition error family. An operation Sort Key
+    (``op_algebra.OrderKey``) carries the same single-shot rule and does belong to
+    that family, so it raises ``QueryDefinitionError`` instead; the two spellings
+    differ because the surfaces do, not by accident.
     """
 
     member: str

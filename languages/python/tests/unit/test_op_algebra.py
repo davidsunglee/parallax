@@ -17,7 +17,11 @@ import pytest
 from _support.corpus import case_document
 from parallax.conformance import case_format
 from parallax.core import op_algebra
-from parallax.core.op_algebra import OperationError
+from parallax.core.op_algebra import (
+    QUERY_DEFINITION_CODES,
+    OperationError,
+    QueryDefinitionError,
+)
 
 
 def _operations() -> list[tuple[str, dict[str, Any]]]:
@@ -208,8 +212,34 @@ def test_order_key_omitted_null_placement_stays_distinct_from_explicit_last() ->
 def test_order_key_null_placement_is_single_shot() -> None:
     key = op_algebra.OrderKey(attr="Order.sku", direction="desc")
     assert key.nulls_first().nulls == "first"
-    with pytest.raises(ValueError, match="single-shot"):
+    with pytest.raises(QueryDefinitionError, match="single-shot") as caught:
         key.nulls_first().nulls_last()
+    assert caught.value.code == "query-expression-invalid"
+
+
+_QUERY_SPEC_CODES = frozenset(
+    {
+        "query-hub-mismatch",
+        "query-target-mismatch",
+        "query-expression-invalid",
+        "query-path-invalid",
+        "query-clause-invalid",
+        "query-assignment-invalid",
+        "query-assignment-target-mismatch",
+        "query-not-mutation-compatible",
+    }
+)
+
+
+def test_the_query_definition_code_set_is_exactly_the_eight_spec_codes() -> None:
+    assert QUERY_DEFINITION_CODES == _QUERY_SPEC_CODES
+    assert len(QUERY_DEFINITION_CODES) == 8
+
+
+def test_a_code_outside_the_closed_query_set_cannot_be_raised() -> None:
+    with pytest.raises(ValueError, match="not a query definition code") as caught:
+        QueryDefinitionError(code="query-made-up", message="nope")
+    assert not isinstance(caught.value, QueryDefinitionError)
 
 
 @pytest.mark.parametrize(

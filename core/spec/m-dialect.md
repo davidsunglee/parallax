@@ -270,10 +270,10 @@ plain `t0.c [asc|desc]` term in both dialects under either placement, because th
 are no `NULL`s to place. The compatibility suite proves the compensating and native
 forms yield the identical observable order (case `m-deep-fetch-012` for the
 `asc`/`last` default; `m-op-algebra-035` through `-038` for all four combinations on
-an operation Sort Key, and `m-deep-fetch-021` through `-023` for the three a
-relationship declaration can author — canonical descriptor form omits a default, so
-`asc`/`last` on a declaration is exactly the placement-free spelling `m-deep-fetch-012`
-already witnesses).
+an operation Sort Key, and `m-deep-fetch-021` through `-023` for the three a canonical
+relationship declaration spells distinctly — canonical descriptor form omits a `nulls`
+equal to the default, so an explicit `asc`/`last` on a declaration canonicalizes to the
+placement-free spelling `m-deep-fetch-012` already witnesses).
 
 ## Decision points needed now
 

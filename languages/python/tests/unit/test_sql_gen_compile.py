@@ -13,6 +13,7 @@ have their own suite.
 from __future__ import annotations
 
 import copy
+import inspect
 import pickle
 from collections.abc import Callable
 from typing import Literal, cast
@@ -159,9 +160,9 @@ def test_nullable_order_key_lowers_through_the_placement_seam(
 
 @pytest.mark.parametrize("placement", [None, "first", "last"])
 def test_non_nullable_order_key_ignores_placement(placement: str | None) -> None:
-    # `Order.qty` is non-nullable: there are no NULLs to place, so both placements
-    # denote the same order and the plain term is emitted under either — the guard
-    # that keeps every pre-existing golden byte-identical.
+    # `Order.qty` is non-nullable, so placement is observationally irrelevant on it:
+    # there are no NULLs to place, both placements denote the same order, and the
+    # plain term is emitted under either.
     op = oa.OrderBy(
         operand=oa.All(),
         keys=(
@@ -212,6 +213,26 @@ def test_the_package_exports_exactly_the_seven_supported_names() -> None:
     assert sql_gen.Statement is Statement
     assert sql_gen.compile_read is compile_read
     assert sql_gen.compile_write_predicate is compile_write_predicate
+
+
+def test_compile_read_accepts_exactly_the_supported_call_shape() -> None:
+    # The export assertion above pins NAMES; a supported entry point's call shape
+    # is a second contract nothing else covers, so adding, renaming, or removing a
+    # parameter — or turning a keyword-only one positional — is caught here rather
+    # than at a caller.
+    parameters = inspect.signature(compile_read).parameters
+    assert [
+        (name, parameter.kind, parameter.default is not inspect.Parameter.empty)
+        for name, parameter in parameters.items()
+    ] == [
+        ("op", inspect.Parameter.POSITIONAL_OR_KEYWORD, False),
+        ("model", inspect.Parameter.POSITIONAL_OR_KEYWORD, False),
+        ("dialect", inspect.Parameter.POSITIONAL_OR_KEYWORD, False),
+        ("target", inspect.Parameter.POSITIONAL_OR_KEYWORD, False),
+        ("result_form", inspect.Parameter.KEYWORD_ONLY, True),
+        ("lock", inspect.Parameter.KEYWORD_ONLY, True),
+        ("include_value_objects", inspect.Parameter.KEYWORD_ONLY, True),
+    ]
 
 
 def test_compiled_read_is_an_equatable_hashable_value() -> None:

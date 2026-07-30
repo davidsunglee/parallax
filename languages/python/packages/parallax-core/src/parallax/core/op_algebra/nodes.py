@@ -6,14 +6,20 @@ value-only (metamodel binding is validated by the serde/statement layers, not in
 ``__init__``). The union :data:`Operation` is the exhaustive read-path algebra
 this phase lowers; ``m-sql`` dispatches over it with ``match`` and
 ``assert_never``. Aggregation (``groupBy``) and the write side are out of scope.
+
+A node that doubles as a Python authoring surface — one a caller composes by
+method call rather than by deserializing a document — rejects an illegal
+composition through :class:`QueryDefinitionError`, which lives here beside the
+rules that raise it.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import Final, Literal
 
 __all__ = [
+    "QUERY_DEFINITION_CODES",
     "All",
     "And",
     "AsOf",
@@ -49,6 +55,7 @@ __all__ = [
     "OrderBy",
     "OrderKey",
     "PathSegment",
+    "QueryDefinitionError",
     "Scalar",
     "StringMatch",
     "StringOp",
@@ -68,6 +75,47 @@ NestedComparisonOp = Literal[
     "nestedEq", "nestedNotEq", "nestedGt", "nestedGte", "nestedLt", "nestedLte"
 ]
 NestedNullOp = Literal["nestedIsNull", "nestedIsNotNull"]
+
+
+QUERY_DEFINITION_CODES: Final[frozenset[str]] = frozenset(
+    {
+        "query-hub-mismatch",
+        "query-target-mismatch",
+        "query-expression-invalid",
+        "query-path-invalid",
+        "query-clause-invalid",
+        "query-assignment-invalid",
+        "query-assignment-target-mismatch",
+        "query-not-mutation-compatible",
+    }
+)
+"""The closed query-definition rejection vocabulary (Python spec §2).
+
+That section fixes which rule draws which code; an invalid expression — a Sort
+Key composition included — draws ``query-expression-invalid``.
+"""
+
+
+class QueryDefinitionError(ValueError):
+    """An invalid Python query construction, composition, or refinement.
+
+    ``code`` is a member of :data:`QUERY_DEFINITION_CODES`; constructing one with
+    any other code is an implementation defect and raises :class:`ValueError`. A
+    caller therefore branches on the rule that fired rather than on a message
+    substring.
+
+    This is the query-authoring family, disjoint by the question it answers from
+    the two wire-and-model families beside it: ``OperationError`` says a
+    serialized operation is malformed, and ``OperationRejectedError`` says a
+    well-formed operation is illegal against a model.
+    """
+
+    def __init__(self, *, code: str, message: str) -> None:
+        if code not in QUERY_DEFINITION_CODES:
+            raise ValueError(f"{code!r} is not a query definition code")
+        super().__init__(f"{code}: {message}")
+        self.code = code
+        self.message = message
 
 
 @dataclass(frozen=True, slots=True)
@@ -170,6 +218,13 @@ class OrderKey:
     omitted the Null Placement (schema default ``last``). Serde round-trips both
     absences faithfully — an omitted member serializes back omitted — while SQL
     lowering treats them as the ``asc`` and ``last`` defaults.
+
+    A Sort Key is a query-definition construct, so a rejected placement
+    composition raises :class:`QueryDefinitionError`. The relationship-declaration
+    ordering term (``OrderTerm``) carries the same single-shot placement rule but
+    is part of a model declaration rather than of a query, so it stays outside
+    that family and raises a plain :class:`ValueError`; the two spellings differ
+    because the surfaces do, not by accident.
     """
 
     attr: str
@@ -186,9 +241,12 @@ class OrderKey:
 
     def _with_placement(self, placement: Literal["first", "last"]) -> OrderKey:
         if self.nulls is not None:
-            raise ValueError(
-                f"{self.attr}: null placement is single-shot and is already "
-                f"{self.nulls!r}; derive the key from the unplaced base"
+            raise QueryDefinitionError(
+                code="query-expression-invalid",
+                message=(
+                    f"{self.attr}: null placement is single-shot and is already "
+                    f"{self.nulls!r}; derive the key from the unplaced base"
+                ),
             )
         return OrderKey(attr=self.attr, direction=self.direction, nulls=placement)
 

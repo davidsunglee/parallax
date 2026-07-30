@@ -441,9 +441,9 @@ def _order_term(scope: _EntityScope, key: OrderKey) -> str:
     """One ``order by`` term: the dialect's Null Placement term for a NULLABLE key,
     else the plain form (`m-sql` "``order by`` key terms").
 
-    A non-nullable key has no NULLs to place, so both placements denote the same
-    order and it renders plain without consulting the dialect — which is why no
-    existing golden moves as placement becomes authorable.
+    Placement is observationally irrelevant on a non-nullable key — there are no
+    NULLs to place, so both placements denote the same order — and such a key
+    therefore renders plain without consulting the dialect at all.
     """
     direction = key.direction or "asc"
     column_sql = scope.column_of(key.attr)
