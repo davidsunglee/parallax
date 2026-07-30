@@ -18,19 +18,45 @@ from types import MappingProxyType
 from typing import Final
 
 from parallax.core.metamodel import AttributeIdentity, EntityIdentity, ValueObjectIdentity
+from parallax.core.op_algebra import Operation
 
 __all__ = [
+    "ANY_COUNT",
     "MAX_PLUS_ONE",
+    "MISSING_TARGET",
     "NEW_LINEAGE",
+    "OPTIMISTIC_CONFLICT",
+    "STALE_WRITE",
+    "UNGATED",
+    "UNVERSIONED",
+    "AffectedRows",
+    "AnyCount",
+    "ExactCount",
     "GeneratedValueExpression",
     "InsertEntry",
     "InsertOrigin",
+    "KeyTarget",
     "MaxPlusOne",
+    "MissingTarget",
     "NewLineage",
+    "NonTemporalConcurrency",
+    "OptimisticConflict",
+    "PlannedAssignments",
+    "PlannedDelete",
     "PlannedInsert",
     "PlannedRow",
+    "PlannedUpdate",
     "PlannedValue",
     "PlannedWrite",
+    "PredicateTarget",
+    "SelfIncrement",
+    "Shortfall",
+    "StaleWrite",
+    "Ungated",
+    "Unversioned",
+    "VersionGate",
+    "Versioned",
+    "WriteTarget",
 ]
 
 
@@ -46,12 +72,27 @@ class MaxPlusOne:
 
 MAX_PLUS_ONE: Final[MaxPlusOne] = MaxPlusOne()
 
-type GeneratedValueExpression = MaxPlusOne
-"""The closed set of database-computed cell values a Planned Row may carry.
+
+@dataclass(frozen=True, slots=True)
+class SelfIncrement:
+    """The `sequence` registry advance (m-pk-gen), as a planned cell value.
+
+    The new value is the stored one plus ``amount``, computed by the database
+    from the row it is advancing, so no reader supplies a prior value and no
+    literal is bound for the result.
+    """
+
+    amount: int
+
+
+type GeneratedValueExpression = MaxPlusOne | SelfIncrement
+"""The closed set of database-computed cell values a planned cell may carry.
 
 A generated value is decided during planning, from the target's declared
 primary-key generation strategy, so no consumer re-classifies an authored
-marker document by its shape.
+marker document by its shape. Both variants are `m-pk-gen` allocations: one
+allocates at the position an insert opens, the other advances the registry an
+update maintains.
 """
 
 type PlannedValue = object
@@ -152,9 +193,268 @@ def _generated_values(row: PlannedRow) -> dict[AttributeIdentity, GeneratedValue
     return {
         identity: value
         for identity, value in row.attributes.items()
-        if isinstance(value, MaxPlusOne)
+        if isinstance(value, (MaxPlusOne, SelfIncrement))
     }
 
 
-type PlannedWrite = PlannedInsert
+@dataclass(frozen=True, slots=True)
+class PlannedAssignments:
+    """The immutable, duplicate-free replacement values one revising step writes.
+
+    Unlike a Planned Row this names only the members the step changes, including
+    the framework-owned advance a versioned update derives; the members it does
+    not name keep their stored values. It carries no authored assignment
+    expression — nothing a caller composes out of the operation algebra — and the
+    only expressions it admits at all are the `m-pk-gen` generated values, whose
+    result the database computes from the row being written.
+    """
+
+    attributes: Mapping[AttributeIdentity, PlannedValue]
+    value_objects: Mapping[ValueObjectIdentity, object] = field(
+        default_factory=dict[ValueObjectIdentity, object]
+    )
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "attributes", MappingProxyType(dict(self.attributes)))
+        object.__setattr__(self, "value_objects", MappingProxyType(dict(self.value_objects)))
+        if not self.attributes and not self.value_objects:
+            raise ValueError("Planned Assignments name at least one member to write")
+
+    @property
+    def members(self) -> frozenset[AttributeIdentity | ValueObjectIdentity]:
+        """Every member identity this step assigns, scalar and Value Object alike."""
+        return frozenset(self.attributes) | frozenset(self.value_objects)
+
+
+@dataclass(frozen=True, slots=True)
+class KeyTarget:
+    """A selection of whole rows by primary key.
+
+    The canonical key shape is stored once and each addressed row contributes one
+    aligned value tuple, in planner order. A singleton and a compatible multi-key
+    selection are cardinalities of one target kind, not two.
+    """
+
+    key_attributes: tuple[AttributeIdentity, ...]
+    key_values: tuple[tuple[object, ...], ...]
+
+    def __post_init__(self) -> None:
+        if not self.key_attributes:
+            raise ValueError("a Key Target names at least one primary-key Attribute")
+        if not self.key_values:
+            raise ValueError("a Key Target addresses at least one row")
+        arity = len(self.key_attributes)
+        for values in self.key_values:
+            if len(values) != arity:
+                raise ValueError(
+                    f"a Key Target's every value tuple is complete: expected {arity} value(s), "
+                    f"got {len(values)}"
+                )
+            for value in values:
+                if value is None or isinstance(value, Mapping):
+                    raise ValueError(
+                        f"a Key Target's key values are concrete and non-null, and {value!r} is not"
+                    )
+        if len(set(self.key_values)) != len(self.key_values):
+            raise ValueError(
+                "a Key Target's addressed rows are distinct — a repeated authored key is "
+                "invalid rather than silently deduplicated"
+            )
+
+
+@dataclass(frozen=True, slots=True)
+class PredicateTarget:
+    """A readless selection of every row matching one typed predicate.
+
+    It carries the predicate and nothing else: the enclosing step already names
+    the Entity, and a Predicate Target's presence already implies an unversioned
+    Non-Temporal step, an unbounded expected effect, and ordering-barrier
+    behavior.
+    """
+
+    predicate: Operation
+
+
+type WriteTarget = KeyTarget | PredicateTarget
+"""The semantic row selection of a Planned Write, distinct from observed
+predecessor state and from any concurrency condition."""
+
+
+@dataclass(frozen=True, slots=True)
+class VersionGate:
+    """The extra equality predicate an optimistic-mode versioned write renders.
+
+    It carries only what the predicate binds. The advanced version is an
+    assignment, not a gate member, and the transaction's concurrency mode is
+    consumed while the gate is being decided rather than repeated here.
+    """
+
+    attribute: AttributeIdentity
+    observed_version: int
+
+
+@dataclass(frozen=True, slots=True)
+class Ungated:
+    """The explicit decision that a step renders no gate predicate.
+
+    Locking mode records this rather than a null gate, which is what makes gate
+    applicability structural.
+    """
+
+
+UNGATED: Final[Ungated] = Ungated()
+
+
+@dataclass(frozen=True, slots=True)
+class Unversioned:
+    """The target declares no optimistic-lock version, so no gate can apply."""
+
+
+UNVERSIONED: Final[Unversioned] = Unversioned()
+
+
+@dataclass(frozen=True, slots=True)
+class Versioned:
+    """The target declares an optimistic-lock version, and the mode decided the
+    gate."""
+
+    gate: VersionGate | Ungated
+
+
+type NonTemporalConcurrency = Unversioned | Versioned
+"""The settled concurrency decision a Planned Update or Planned Delete carries."""
+
+
+@dataclass(frozen=True, slots=True)
+class MissingTarget:
+    """The addressed rows do not all exist."""
+
+
+MISSING_TARGET: Final[MissingTarget] = MissingTarget()
+
+
+@dataclass(frozen=True, slots=True)
+class StaleWrite:
+    """An ungated observation-requiring write reached fewer rows than it observed."""
+
+
+STALE_WRITE: Final[StaleWrite] = StaleWrite()
+
+
+@dataclass(frozen=True, slots=True)
+class OptimisticConflict:
+    """A gated write's condition no longer holds."""
+
+
+OPTIMISTIC_CONFLICT: Final[OptimisticConflict] = OptimisticConflict()
+
+type Shortfall = MissingTarget | StaleWrite | OptimisticConflict
+"""The neutral outcome class a shortfall against an exact count names.
+
+The plan names an outcome class, never a language's exception type.
+"""
+
+
+@dataclass(frozen=True, slots=True)
+class AnyCount:
+    """No expectation: any number of affected rows, zero included, succeeds."""
+
+
+ANY_COUNT: Final[AnyCount] = AnyCount()
+
+
+@dataclass(frozen=True, slots=True)
+class ExactCount:
+    """Exactly ``expected`` rows must be affected.
+
+    ``on_shortfall`` classifies a smaller count. An excess is always Cardinality
+    Corruption — an invariant failure rather than a concurrency outcome — so it
+    is not one of the shortfall tags and is never carried here.
+    """
+
+    expected: int
+    on_shortfall: Shortfall
+
+    def __post_init__(self) -> None:
+        if self.expected < 1:
+            raise ValueError(f"an exact affected-row count is positive, got {self.expected}")
+
+
+type AffectedRows = AnyCount | ExactCount
+"""The fully resolved Affected Rows Policy every surviving non-insert step
+carries before lowering."""
+
+
+def _settle(
+    entity: EntityIdentity,
+    target: WriteTarget,
+    concurrency: NonTemporalConcurrency,
+    affected_rows: AffectedRows,
+) -> None:
+    """Refuse a target, concurrency decision, and expected effect that cannot
+    describe one row selection together."""
+    match target:
+        case PredicateTarget():
+            if not isinstance(concurrency, Unversioned) or not isinstance(affected_rows, AnyCount):
+                raise ValueError(
+                    f"{entity.canonical}: a Predicate Target is readless, so it implies "
+                    "Unversioned concurrency and an unbounded expected effect"
+                )
+        case KeyTarget():
+            if not isinstance(affected_rows, ExactCount) or affected_rows.expected != len(
+                target.key_values
+            ):
+                raise ValueError(
+                    f"{entity.canonical}: a Key Target expects exactly as many rows as it "
+                    f"addresses ({len(target.key_values)})"
+                )
+            if (
+                isinstance(concurrency, Versioned)
+                and isinstance(concurrency.gate, VersionGate)
+                and len(target.key_values) != 1
+            ):
+                raise ValueError(
+                    f"{entity.canonical}: a Version Gate binds one row's observed version, so "
+                    "it requires a singleton Key Target"
+                )
+
+
+@dataclass(frozen=True, slots=True)
+class PlannedUpdate:
+    """A revision of existing Non-Temporal rows in place.
+
+    Its assignments are uniform across every row its target selects; differing
+    per-key assignments remain distinct steps. Being a Planned Update already
+    carries the fact that existing rows were revised, so there is nothing to
+    label.
+    """
+
+    entity: EntityIdentity
+    target: WriteTarget
+    assignments: PlannedAssignments
+    concurrency: NonTemporalConcurrency
+    affected_rows: AffectedRows
+
+    def __post_init__(self) -> None:
+        _settle(self.entity, self.target, self.concurrency, self.affected_rows)
+
+
+@dataclass(frozen=True, slots=True)
+class PlannedDelete:
+    """A physical removal of existing Non-Temporal rows.
+
+    It carries no row, assignments, predecessor, Insert Origin, or Close Cause:
+    represented-state absence on a temporal target is a close, not a delete.
+    """
+
+    entity: EntityIdentity
+    target: WriteTarget
+    concurrency: NonTemporalConcurrency
+    affected_rows: AffectedRows
+
+    def __post_init__(self) -> None:
+        _settle(self.entity, self.target, self.concurrency, self.affected_rows)
+
+
+type PlannedWrite = PlannedInsert | PlannedUpdate | PlannedDelete
 """The closed algebra of finalized semantic execution steps."""

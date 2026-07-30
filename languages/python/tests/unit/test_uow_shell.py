@@ -26,11 +26,11 @@ from parallax.core.unit_work import (
     FlushExecutor,
     FlushPlan,
     KeyedWrite,
-    Observation,
     RollbackOnlyError,
     SystemClock,
     TransactionSettings,
     UnitOfWork,
+    VersionObservation,
     active_unit_of_work,
     run_unit_of_work,
 )
@@ -209,7 +209,7 @@ def test_system_clock_reads_an_aware_utc_instant() -> None:
 
 def test_observe_binds_the_recorded_observation_into_the_flush_plan() -> None:
     recorder = _Recorder()
-    observation = Observation(version=7)
+    observation = VersionObservation(observed_version=7)
 
     def body(tx: UnitOfWork) -> None:
         tx.observe(("Account", (("id", 1),)), observation)
@@ -345,7 +345,7 @@ def test_escaped_reference_raises_on_every_use() -> None:
     with pytest.raises(EscapedTransactionError):
         tx.buffer(_account_insert(1))
     with pytest.raises(EscapedTransactionError):
-        tx.observe(("Account", (("id", 1),)), Observation())
+        tx.observe(("Account", (("id", 1),)), VersionObservation(observed_version=1))
     with pytest.raises(EscapedTransactionError):
         tx.flush()
     with pytest.raises(EscapedTransactionError):

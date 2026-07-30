@@ -61,8 +61,14 @@ from typing import Final
 
 from parallax.core.base import INFINITY_LITERAL
 from parallax.core.metamodel import EntityMetadata, Metamodel, TemporalDimension
-from parallax.core.txtime_write import MilestoneClose, MilestoneOpen, MilestonePlan, axis_attr_names
-from parallax.core.unit_work import KeyedWrite, Observation
+from parallax.core.txtime_write import (
+    MilestoneClose,
+    MilestoneOpen,
+    MilestonePlan,
+    axis_attr_names,
+    observed_bound,
+)
+from parallax.core.unit_work import KeyedWrite, TemporalObservation
 
 __all__ = ["MilestoneClose", "MilestoneOpen", "MilestonePlan", "plan"]
 
@@ -93,10 +99,10 @@ def _open(
     return MilestoneOpen(row=row)
 
 
-def _merged_payload(observed: Observation, row: Mapping[str, object]) -> dict[str, object]:
+def _merged_payload(observed: TemporalObservation, row: Mapping[str, object]) -> dict[str, object]:
     """The chained rectangle's NEW payload: the observed row's own values, with the
     instruction's own (sparse, pk-plus-touched-fields) row overlaid on top."""
-    return {**(observed.payload or {}), **row}
+    return {**observed.predecessor.members, **row}
 
 
 def plan(
@@ -104,7 +110,7 @@ def plan(
     model: Metamodel,
     entity: EntityMetadata,
     tx_instant: str,
-    observed: Observation | None,
+    observed: TemporalObservation | None,
 ) -> MilestonePlan:
     """Plan one full-bitemporal keyed write: the rectangle split or one of its
     unbounded/insert degenerates.
@@ -127,14 +133,13 @@ def plan(
         return MilestonePlan(steps=(_open(model, entity, tx_instant, valid_from, valid_end, row),))
 
     assert observed is not None  # every close-bearing mutation needs the observed rectangle
-    obs_from = observed.valid_start
-    obs_to = observed.valid_end
-    assert obs_from is not None and obs_to is not None
-    old_payload = observed.payload or {}
+    obs_from = observed_bound(model, entity, observed, TemporalDimension.VALID_TIME)
+    obs_to = observed_bound(model, entity, observed, TemporalDimension.VALID_TIME, upper=True)
+    old_payload = dict(observed.predecessor.members)
     close = MilestoneClose(
         identity=row,
         target_valid_end=obs_to,
-        gate_tx_start=observed.tx_start,
+        gate_tx_start=observed_bound(model, entity, observed, TemporalDimension.TRANSACTION_TIME),
     )
 
     if mutation == "terminate":

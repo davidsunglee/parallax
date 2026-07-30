@@ -304,7 +304,7 @@ PlannedRow(
 )
 
 PlannedAssignments(
-    attributes:    AttributeIdentity     -> NeutralValue | Null,
+    attributes:    AttributeIdentity     -> PlannedValue,
     value_objects: ValueObjectIdentity   -> StructuredOccurrence | Null,
 )
 ```
@@ -312,9 +312,19 @@ PlannedAssignments(
 A **Planned Row** is the immutable, duplicate-free complete semantic contents of
 one insert entry, including framework-owned version, temporal, and audit
 attributes the planner derived. **Planned Assignments** is nonempty, immutable,
-and duplicate-free, and unlike a Planned Row it holds only concrete replacement
-values — no authored assignment expression and no generated-value expression.
-Entity Layout continues to decide physical `SET` and bind order (`m-sql`).
+and duplicate-free, and unlike a Planned Row it names only the members its step
+changes. Entity Layout continues to decide physical `SET` and bind order
+(`m-sql`).
+
+A **Generated Value Expression** is the closed set of cell values the *database*
+computes from the row being written rather than binding as a literal, and
+`m-pk-gen` is its only source: the `max` allocation an insert folds into its own
+statement, and the registry advance an update applies to the stored value. Each
+is legal only where the statement that renders it can express it, so a Planned
+Row and Planned Assignments admit different members of the set rather than
+different value vocabularies. What neither admits is an **authored assignment
+expression** — anything a caller composes out of the operation algebra — because
+the planner resolves every caller-supplied value before a step is settled.
 
 ### Write Target
 

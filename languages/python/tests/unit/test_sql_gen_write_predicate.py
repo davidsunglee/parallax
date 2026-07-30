@@ -4,7 +4,8 @@
 `balance < ?`, never the resolving read's `t0.balance < ?` — for the readless
 `update`/`delete` templates in `parallax.snapshot.handle`.
 
-Its single production caller (`lower_predicate_write`) is exercised indirectly
+Its single production caller (`_step_lowering`'s Predicate Target arm) is
+exercised indirectly
 by `test_where_verbs.py`, `test_batch_write.py`, and
 `test_transaction_predicate_writes.py`, but nothing pins this function BY NAME.
 That matters structurally: the unaliased lane reaches the SAME predicate
@@ -243,7 +244,7 @@ def test_inheritance_tag_guard_renders_unaliased() -> None:
     #
     # This is a STRUCTURAL pin, deliberately independent of the write lane's own
     # `subtype-write-set-based-unsupported` rejection
-    # (`_keyed_sql.lower_predicate_write`, pinned in `test_write_lowering.py`):
+    # (write finalization's predicate arm, pinned in `test_write_lowering.py`):
     # that rejection is policy and lives at the write boundary; `sql_gen` is a
     # pure renderer that must not depend on some caller having applied it. The
     # previous unreachability argument for this site — "every predicate-write

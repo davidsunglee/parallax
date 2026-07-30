@@ -40,8 +40,8 @@ m-opt-lock.md`; `python.md` §5 L584-641; ADR 0013):
    conformance engine's case-local shadow tracker only ever tracks the
    CURRENT milestone), so this stays a no-op there — but a REAL
    `Transaction.find` observation of a temporal entity threads the read's own
-   Transaction-Time pin through :attr:`~parallax.core.unit_work.Observation.
-   latest_pinned`, so a locking-mode
+   Transaction-Time pin through :data:`~parallax.core.unit_work.
+   TransactionTimeBasis`, so a locking-mode
    write whose only transaction-scoped observation is historical or
    edge-pinned genuinely raises here. Typed temporal verbs reach this check
    through their transaction-scoped observations.
@@ -99,7 +99,14 @@ from parallax.core.opt_lock._rules import (
     OptimisticLockRuleSet,
     validate_optimistic_locking,
 )
-from parallax.core.unit_work import Concurrency, Observation
+from parallax.core.unit_work import (
+    Concurrency,
+    HistoricalPinned,
+    TemporalObservation,
+    TransactionTimeBasis,
+    VersionObservation,
+    WriteObservation,
+)
 
 __all__ = [
     "FACET_KEY",
@@ -272,26 +279,25 @@ class StaleWriteError(RuntimeError):
         )
 
 
-def require_observed(entity: str, observation: Observation | None) -> int:
+def require_observed(entity: str, observation: WriteObservation | None) -> int:
     """The version a keyed update/delete of a versioned row advances from.
 
-    Raises :class:`UnobservedVersionError` when ``observation`` carries no
-    version — this unit of work never observed the row (`m-opt-lock` "Version
-    values are framework-owned"). A row that itself carries an explicit
-    version value is refused earlier, by :func:`reject_caller_authored_version`
-    (`parallax.snapshot.handle`'s `lower_update`) — this function's own row is
-    always the framework-derived one, never a caller-authored version.
+    Raises :class:`UnobservedVersionError` when this unit of work recorded no
+    Version Observation for the row (`m-opt-lock` "Version values are
+    framework-owned"). A row that itself carries an explicit version value is
+    refused earlier, by :func:`reject_caller_authored_version` — this function's
+    own row is always the framework-derived one, never a caller-authored version.
     """
-    if observation is None or observation.version is None:
+    if not isinstance(observation, VersionObservation):
         raise UnobservedVersionError(
             f"{entity}: a keyed update/delete of a versioned row requires a version this "
             "unit of work already observed (a prior transaction-scoped find) — the "
             "framework never issues an implicit resolving read on behalf of a keyed write"
         )
-    return observation.version
+    return observation.observed_version
 
 
-def require_observed_milestone(entity: str, observation: Observation | None) -> None:
+def require_observed_milestone(entity: str, observation: WriteObservation | None) -> None:
     """The transaction-scoped-observation license for a keyed temporal
     update/terminate (`python.md` §5 "Temporal `update`/`terminate` follow the
     same prior-observation rule as versioned writes").
@@ -305,7 +311,7 @@ def require_observed_milestone(entity: str, observation: Observation | None) -> 
     ``observedTxStart`` control key, or none), and its choreography is graded
     against its own goldens.
     """
-    if observation is None or observation.tx_start is None:
+    if not isinstance(observation, TemporalObservation):
         raise UnobservedMilestoneError(
             f"{entity}: a keyed temporal update/terminate requires a milestone this "
             "unit of work already observed (a prior transaction-scoped find) — the "
@@ -365,21 +371,20 @@ def classify_mismatch(
     return error_cls(entity, key, expected, actual if actual is not None else 0)
 
 
-def check_locking_license(concurrency: Concurrency, *, latest_pinned: bool) -> None:
+def check_locking_license(concurrency: Concurrency, basis: TransactionTimeBasis) -> None:
     """Raise :class:`HistoricalObservationError` when a locking-mode write's
     observation was not read latest-pinned on the written Transaction-Time axis.
 
-    A no-op in optimistic mode (the observed gate detects staleness instead)
-    and for a trivially latest-pinned observation (``latest_pinned=True`` —
-    every versioned non-temporal row, and every engine-supplied temporal
-    observation, which is latest-pinned by construction: the
-    conformance engine's case-local temporal tracker only ever tracks the
-    CURRENT milestone, never a historical or edge-pinned one). A genuinely
-    non-latest-pinned observation reaching a locking-mode write — a
-    developer-driven historical or edge-pinned read — is the case this check
-    exists to catch.
+    Only a Temporal Observation can answer anything but latest-pinned: a
+    versioned non-temporal row is always the current one, which is why its
+    observation carries no basis to check at all. A no-op in optimistic mode (the
+    observed gate detects staleness instead) and for an engine-supplied temporal
+    observation, which is latest-pinned by construction — the conformance
+    engine's case-local temporal tracker only ever tracks the CURRENT milestone.
+    A genuinely historical or edge-pinned developer read reaching a locking-mode
+    write is the case this check exists to catch.
     """
-    if concurrency == "locking" and not latest_pinned:
+    if concurrency == "locking" and isinstance(basis, HistoricalPinned):
         raise HistoricalObservationError(
             "a locking-mode write's only transaction-scoped observation is historical or "
             "edge-pinned (not latest-pinned on the written Transaction-Time dimension) — "

@@ -25,7 +25,7 @@ from collections.abc import Mapping, Sequence
 
 from parallax.core import bitemp_write, inheritance, temporal_read, txtime_write
 from parallax.core.metamodel import EntityMetadata, Metamodel, PrimaryKey, TemporalDimension
-from parallax.core.unit_work import KeyedWrite, Observation
+from parallax.core.unit_work import KeyedWrite, PredecessorRow, TemporalObservation
 
 __all__ = ["AmbiguousObservationError", "TemporalShadow"]
 
@@ -47,41 +47,35 @@ class TemporalShadow:
     __slots__ = ("_current",)
 
     def __init__(self) -> None:
-        self._current: dict[_ObjectKey, list[Observation]] = {}
+        self._current: dict[_ObjectKey, list[TemporalObservation]] = {}
 
     def seed_fixtures(
         self, model: Metamodel, entity: EntityMetadata, rows: Sequence[Mapping[str, object]]
     ) -> None:
         """Seed the tracker from a case's loaded fixture rows for ``entity``
         (`given.fixtures: true`, or a scenario/conflict case's own default
-        lifecycle load). A non-temporal entity's rows are a no-op."""
+        lifecycle load). A non-temporal entity's rows are a no-op.
+
+        A fixture row is already the whole persisted milestone, Attribute-named,
+        so it IS the Predecessor Row a later close addresses, gates on, and
+        carries state forward from.
+        """
         shape = temporal_read.view(model).shape(entity.identity)
         if shape is None or isinstance(shape, temporal_read.NonTemporal):
             return
         entity_name = entity.identity.name
-        tx_start, tx_end = _axis_names(model, entity, TemporalDimension.TRANSACTION_TIME)
-        is_bitemporal = isinstance(shape, temporal_read.Bitemporal)
-        valid_start, valid_end = (
-            _axis_names(model, entity, TemporalDimension.VALID_TIME)
-            if is_bitemporal
-            else (None, None)
-        )
+        _tx_start, tx_end = _axis_names(model, entity, TemporalDimension.TRANSACTION_TIME)
         pk_names = _primary_key_names(model, entity)
         for row in rows:
             if row.get(tx_end) != "infinity":
                 continue  # not current on Transaction Time
             key = self._key(entity_name, pk_names, row)
-            observation = Observation(
-                tx_start=_as_str(row[tx_start]),
-                valid_start=_as_str(row[valid_start]) if valid_start is not None else None,
-                valid_end=_as_str(row[valid_end]) if valid_end is not None else None,
-                payload=_payload(row, {tx_start, tx_end, valid_start, valid_end}),
-            )
+            observation = TemporalObservation(predecessor=PredecessorRow(members=row))
             self._current.setdefault(key, []).append(observation)
 
     def resolve(
         self, model: Metamodel, entity: EntityMetadata, row: Mapping[str, object]
-    ) -> Observation | None:
+    ) -> TemporalObservation | None:
         """The tracked observation a temporal update/terminate/updateUntil/
         terminateUntil instruction's close/chain consumes, or ``None`` for a
         pk this tracker has never seen open (an insert, or a genuinely
@@ -114,7 +108,7 @@ class TemporalShadow:
         entity: EntityMetadata,
         instruction: KeyedWrite,
         tx_instant: str,
-        observed: Observation | None,
+        observed: TemporalObservation | None,
     ) -> None:
         """Replace this pk's tracked current milestone(s) with the newly OPENED
         rows the SAME planning function (:mod:`parallax.core.txtime_write` /
@@ -136,20 +130,10 @@ class TemporalShadow:
         if not opened:
             self._current.pop(key, None)  # a terminate/terminateUntil closes with no chain
             return
-        valid_start, valid_end = (
-            _axis_names(model, entity, TemporalDimension.VALID_TIME)
-            if is_bitemporal
-            else (None, None)
-        )
-        tx_start, tx_end = _axis_names(model, entity, TemporalDimension.TRANSACTION_TIME)
+        # An opened row is the whole milestone the plan just wrote, axis bounds
+        # included, so it is exactly the Predecessor Row a later step observes.
         self._current[key] = [
-            Observation(
-                tx_start=_as_str(step.row[tx_start]),
-                valid_start=(_as_str(step.row[valid_start]) if valid_start is not None else None),
-                valid_end=_as_str(step.row[valid_end]) if valid_end is not None else None,
-                payload=_payload(step.row, {tx_start, tx_end, valid_start, valid_end}),
-            )
-            for step in opened
+            TemporalObservation(predecessor=PredecessorRow(members=step.row)) for step in opened
         ]
 
     @staticmethod
@@ -177,13 +161,3 @@ def _primary_key_names(model: Metamodel, entity: EntityMetadata) -> list[str]:
         for attribute in members
         if isinstance(attribute.primary_key, PrimaryKey)
     ]
-
-
-def _as_str(value: object) -> str:
-    if not isinstance(value, str):  # pragma: no cover - defends a malformed fixture/plan row
-        raise TypeError(f"expected an instant string, got {type(value).__name__}")
-    return value
-
-
-def _payload(row: Mapping[str, object], excluded: set[str | None]) -> dict[str, object]:
-    return {key: value for key, value in row.items() if key not in excluded}

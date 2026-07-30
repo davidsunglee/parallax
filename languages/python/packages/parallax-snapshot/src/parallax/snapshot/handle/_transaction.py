@@ -333,8 +333,8 @@ class Transaction:
     ) -> None:
         """The `python.md` §5 prior-observation license for a keyed TEMPORAL
         update/terminate (:func:`opt_lock.require_observed_milestone` — the
-        temporal sibling of the versioned ``require_observed`` seam in
-        ``_keyed_sql.lower_update``): the close must target a milestone THIS
+        temporal sibling of the versioned ``require_observed`` seam write
+        finalization runs): the close must target a milestone THIS
         unit of work observed via a transaction-scoped find. Enforced HERE at
         the developer verb, never in
         ``_write_lowering._lower_temporal_write`` — the shared
@@ -371,8 +371,8 @@ class Transaction:
         update/delete of that SAME object derives its version advance (and,
         under optimistic concurrency, its gate) from THIS observation, never
         from an implicit resolving read at write time. Every materialized node
-        of a TEMPORAL entity likewise records its observed Transaction-Time start
-        (`in_z`) plus PIN PROVENANCE (`Observation.latest_pinned`, derived from
+        of a TEMPORAL entity likewise records its whole observed predecessor
+        milestone plus PIN PROVENANCE (its Transaction-Time Basis, derived from
         this statement's own Transaction-Time pin below): a later temporal
         write's close/chain, or a locking-mode write's historical-observation
         license (`~parallax.core.opt_lock.check_locking_license`), derives from

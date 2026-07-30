@@ -51,7 +51,13 @@ from parallax.core.entity import (
     effective_change_set,
     primary_key_row,
 )
-from parallax.core.unit_work import KeyedWrite, Observation, PlannedWrite
+from parallax.core.unit_work import (
+    KeyedWrite,
+    PlannedWrite,
+    PredecessorRow,
+    TemporalObservation,
+    VersionObservation,
+)
 from parallax.snapshot.handle import lower_write
 
 _MODELS = models.load_models()
@@ -70,7 +76,7 @@ def _edited_account_row(*, version: int = 1) -> dict[str, object]:
 def test_copy_to_row_non_temporal_update_binds_the_observed_version() -> None:
     instruction = KeyedWrite("update", "Account", (_edited_account_row(),))
     statement = lower_write(
-        PlannedWrite(instruction=instruction, observation=Observation(version=7)),
+        PlannedWrite(instruction=instruction, observation=VersionObservation(observed_version=7)),
         _ACCOUNT,
         POSTGRES,
         "locking",
@@ -89,7 +95,7 @@ def test_copy_to_row_non_temporal_update_tracks_a_different_observation() -> Non
     # itself carries.
     instruction = KeyedWrite("update", "Account", (_edited_account_row(),))
     statement = lower_write(
-        PlannedWrite(instruction=instruction, observation=Observation(version=41)),
+        PlannedWrite(instruction=instruction, observation=VersionObservation(observed_version=41)),
         _ACCOUNT,
         POSTGRES,
         "locking",
@@ -133,6 +139,22 @@ def _edited_balance_row() -> dict[str, object]:
     return row
 
 
+def _observed_balance(tx_start: str) -> TemporalObservation:
+    # The predecessor milestone a real find would have recorded whole: the
+    # close reads its own gate off the Transaction-Time start below.
+    return TemporalObservation(
+        predecessor=PredecessorRow(
+            members={
+                "id": 1,
+                "acctNum": "A",
+                "value": Decimal("100.00"),
+                "tx_start": tx_start,
+                "tx_end": "infinity",
+            }
+        )
+    )
+
+
 def test_copy_to_row_temporal_update_gates_the_close_on_observed_tx_start() -> None:
     # The close (the milestone plan's FIRST statement, `txtime_write.plan`)
     # binds the OBSERVATION's own Transaction-Time start as its optimistic gate -- never a
@@ -141,7 +163,7 @@ def test_copy_to_row_temporal_update_gates_the_close_on_observed_tx_start() -> N
     # exclusion). Optimistic concurrency renders the gate at all
     # (`~parallax.core.opt_lock.gates`); locking mode never does.
     instruction = KeyedWrite("update", "Balance", (_edited_balance_row(),))
-    observed = Observation(tx_start="2024-01-01T00:00:00+00:00")
+    observed = _observed_balance("2024-01-01T00:00:00+00:00")
     close = lower_write(
         PlannedWrite(instruction=instruction, observation=observed),
         _BALANCE,
@@ -163,7 +185,7 @@ def test_copy_to_row_temporal_update_tracks_a_different_observed_tx_start() -> N
     # binds a DIFFERENT gate value -- the bound value tracks the observation,
     # never anything the copy or its row carries.
     instruction = KeyedWrite("update", "Balance", (_edited_balance_row(),))
-    observed = Observation(tx_start="2024-06-01T00:00:00+00:00")
+    observed = _observed_balance("2024-06-01T00:00:00+00:00")
     close = lower_write(
         PlannedWrite(instruction=instruction, observation=observed),
         _BALANCE,

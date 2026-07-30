@@ -26,10 +26,25 @@ from parallax.core.metamodel import (
     Metamodel,
     ValueObjectIdentity,
 )
-from parallax.core.sql_gen import Statement
+from parallax.core.sql_gen import Statement, compile_write_predicate
 from parallax.core.storage_layout import EntityLayoutView
-from parallax.core.unit_work.planned import MaxPlusOne, PlannedInsert, PlannedRow, PlannedWrite
-from parallax.snapshot.handle._family import entity_layout
+from parallax.core.unit_work.planned import (
+    KeyTarget,
+    MaxPlusOne,
+    NonTemporalConcurrency,
+    PlannedAssignments,
+    PlannedDelete,
+    PlannedInsert,
+    PlannedRow,
+    PlannedUpdate,
+    PlannedWrite,
+    PredicateTarget,
+    SelfIncrement,
+    Versioned,
+    VersionGate,
+    WriteTarget,
+)
+from parallax.snapshot.handle._family import declaring, entity_layout, version_attribute
 from parallax.snapshot.handle._write_types import WriteLoweringError
 
 __all__ = ["lower_step"]
@@ -38,12 +53,19 @@ __all__ = ["lower_step"]
 # there — a bind, or the generated-value expression the statement folds in.
 type _Cell = tuple[str, object]
 
+# One rendered predicate: its SQL text and the binds it contributes, in order.
+type _Predicate = tuple[str, tuple[object, ...]]
+
 
 def lower_step(step: PlannedWrite, meta: Metamodel, dialect: Dialect) -> Statement:
     """Lower one finalized step to its single DML statement."""
     match step:
         case PlannedInsert():
             return _lower_insert(step, meta, dialect)
+        case PlannedUpdate():
+            return _lower_update(step, meta, dialect)
+        case PlannedDelete():
+            return _lower_delete(step, meta, dialect)
 
 
 def _lower_insert(step: PlannedInsert, meta: Metamodel, dialect: Dialect) -> Statement:
@@ -87,6 +109,161 @@ def _lower_insert(step: PlannedInsert, meta: Metamodel, dialect: Dialect) -> Sta
     )
 
 
+def _lower_update(step: PlannedUpdate, meta: Metamodel, dialect: Dialect) -> Statement:
+    """`update <table> set <assigned columns> = ?, … where <target>[ and <gate>]`.
+
+    The assigned columns follow the Table Layout's slot order, with one
+    exception: the optimistic-lock version renders LAST, after every other
+    column, because a value-object document occupies the Document tier — after
+    every scalar tier, the version's own slot included (`m-value-object` "One
+    column") — so threading the advance through slot order would wrongly render
+    it before the document. That position is a rendering fact, not a layout one,
+    mirroring the version gate's own "binds last" rule one clause family over.
+    """
+    entity = _entity(meta, step.entity)
+    view = _layout(meta, entity)
+    assignment_sql, assignment_binds = _assignment_clause(view, step, meta, entity, dialect)
+    where_sql, where_binds = _target_predicate(view, step.target, entity, meta, dialect)
+    gate_sql, gate_binds = _gate(view, step.concurrency, dialect)
+    return Statement(
+        f"update {view.layout.table.name} set {assignment_sql} where {where_sql}{gate_sql}",
+        (*assignment_binds, *where_binds, *gate_binds),
+    )
+
+
+def _lower_delete(step: PlannedDelete, meta: Metamodel, dialect: Dialect) -> Statement:
+    """`delete from <table> where <target>[ and <gate>]`."""
+    entity = _entity(meta, step.entity)
+    view = _layout(meta, entity)
+    where_sql, where_binds = _target_predicate(view, step.target, entity, meta, dialect)
+    gate_sql, gate_binds = _gate(view, step.concurrency, dialect)
+    return Statement(
+        f"delete from {view.layout.table.name} where {where_sql}{gate_sql}",
+        (*where_binds, *gate_binds),
+    )
+
+
+def _assignment_clause(
+    view: EntityLayoutView,
+    step: PlannedUpdate,
+    meta: Metamodel,
+    entity: EntityMetadata,
+    dialect: Dialect,
+) -> _Predicate:
+    version = version_attribute(meta, declaring(meta, entity))
+    version_column = None if version is None else _column(view, version.identity, entity)
+    cells = _assigned_cells(view, step.assignments, entity)
+    ordered = [cell for cell in cells if cell[0] != version_column]
+    ordered.extend(cell for cell in cells if cell[0] == version_column)
+    parts = [_assignment(column, value, dialect) for column, value in ordered]
+    binds = tuple(_assignment_bind(value) for _, value in ordered)
+    return ", ".join(parts), binds
+
+
+def _assignment(column: str, value: object, dialect: Dialect) -> str:
+    quoted = dialect.quote(column)
+    if isinstance(value, SelfIncrement):
+        return f"{quoted} = {quoted} + ?"
+    return f"{quoted} = ?"
+
+
+def _assignment_bind(value: object) -> object:
+    return value.amount if isinstance(value, SelfIncrement) else value
+
+
+def _target_predicate(
+    view: EntityLayoutView,
+    target: WriteTarget,
+    entity: EntityMetadata,
+    meta: Metamodel,
+    dialect: Dialect,
+) -> _Predicate:
+    """The row selection ``target`` names, rendered against this Table Layout.
+
+    A singleton Key Target keys by equality and a multi-key one by an `IN` list —
+    two renderings of one selection, chosen by cardinality alone. Either way the
+    table-per-hierarchy tag guard follows the key, because every addressed row of
+    one step is the same concrete subtype.
+    """
+    match target:
+        case PredicateTarget(predicate):
+            compiled = compile_write_predicate(predicate, meta, dialect, entity)
+            return compiled.sql, compiled.binds
+        case KeyTarget():
+            key_sql, key_binds = _key_predicate(view, target, entity, dialect)
+            tag_sql, tag_binds = _tag_guard(view, dialect)
+            return f"{key_sql}{tag_sql}", (*key_binds, *tag_binds)
+
+
+def _key_predicate(
+    view: EntityLayoutView, target: KeyTarget, entity: EntityMetadata, dialect: Dialect
+) -> _Predicate:
+    columns = [_column(view, attribute, entity) for attribute in target.key_attributes]
+    if len(target.key_values) == 1:
+        predicate = " and ".join(f"{dialect.quote(column)} = ?" for column in columns)
+        return predicate, target.key_values[0]
+    if len(columns) == 1:
+        holes = ", ".join("?" for _ in target.key_values)
+        binds = tuple(values[0] for values in target.key_values)
+        return f"{dialect.quote(columns[0])} in ({holes})", binds
+    keys_sql = f"({', '.join(dialect.quote(column) for column in columns)})"
+    row_hole = f"({', '.join('?' for _ in columns)})"
+    holes = ", ".join(row_hole for _ in target.key_values)
+    binds = tuple(value for values in target.key_values for value in values)
+    return f"{keys_sql} in ({holes})", binds
+
+
+def _tag_guard(view: EntityLayoutView, dialect: Dialect) -> _Predicate:
+    """`` and <tag.column> = ?`` plus its bind for a table-per-hierarchy concrete,
+    else nothing — the guard joins the identity predicates immediately after the
+    key (`m-inheritance` / `m-sql`)."""
+    discriminator = view.discriminator
+    if discriminator is None:
+        return "", ()
+    return f" and {dialect.quote(discriminator.slot.column.name)} = ?", (discriminator.value,)
+
+
+def _gate(
+    view: EntityLayoutView, concurrency: NonTemporalConcurrency, dialect: Dialect
+) -> _Predicate:
+    """`` and <version> = ?`` for a gated step, else nothing.
+
+    The gate binds LAST, no exception (`m-opt-lock` "the version gate binds
+    last"). Whether one exists at all was decided during planning, so nothing
+    here consults a mode.
+    """
+    if not isinstance(concurrency, Versioned) or not isinstance(concurrency.gate, VersionGate):
+        return "", ()
+    gate = concurrency.gate
+    slot = view.layout.contribution(gate.attribute)
+    if slot is None:  # pragma: no cover - a gate names the target's own version Attribute
+        raise WriteLoweringError(
+            f"{view.entity.canonical}: the version gate's Attribute occupies no Column"
+        )
+    return f" and {dialect.quote(slot.column.name)} = ?", (gate.observed_version,)
+
+
+def _assigned_cells(
+    view: EntityLayoutView, assignments: PlannedAssignments, entity: EntityMetadata
+) -> Sequence[_Cell]:
+    """``assignments`` as ``(column, value)`` pairs, in Table Layout slot order."""
+    cells: list[_Cell] = []
+    matched = 0
+    for slot in view.columns:
+        contributor = slot.contributor
+        if isinstance(contributor, AttributeIdentity) and contributor in assignments.attributes:
+            cells.append((slot.column.name, assignments.attributes[contributor]))
+            matched += 1
+        elif (
+            isinstance(contributor, ValueObjectIdentity)
+            and contributor in assignments.value_objects
+        ):
+            cells.append((slot.column.name, JsonDocument(assignments.value_objects[contributor])))
+            matched += 1
+    _require_placed(matched, len(assignments.members), entity)
+    return cells
+
+
 def _cells(view: EntityLayoutView, row: PlannedRow, entity: EntityMetadata) -> Sequence[_Cell]:
     """``row``'s members as ``(column, value)`` pairs, in Table Layout slot order.
 
@@ -109,12 +286,26 @@ def _cells(view: EntityLayoutView, row: PlannedRow, entity: EntityMetadata) -> S
         elif isinstance(contributor, ValueObjectIdentity) and contributor in row.value_objects:
             cells.append((slot.column.name, JsonDocument(row.value_objects[contributor])))
             matched += 1
-    if matched != len(row.members):  # pragma: no cover - finalization resolves against this view
+    _require_placed(matched, len(row.members), entity)
+    return cells
+
+
+def _require_placed(matched: int, named: int, entity: EntityMetadata) -> None:
+    if matched != named:  # pragma: no cover - finalization resolves against this view
         raise WriteLoweringError(
             f"{entity.identity.name!r}: a planned member occupies no Column of the target's "
             "Table Layout"
         )
-    return cells
+
+
+def _column(view: EntityLayoutView, attribute: AttributeIdentity, entity: EntityMetadata) -> str:
+    slot = view.layout.contribution(attribute)
+    if slot is None:  # pragma: no cover - a planned Attribute always occupies a Column
+        raise WriteLoweringError(
+            f"{entity.identity.name!r}: {attribute.name!r} occupies no Column of the target's "
+            "Table Layout"
+        )
+    return slot.column.name
 
 
 def _entity(meta: Metamodel, identity: EntityIdentity) -> EntityMetadata:

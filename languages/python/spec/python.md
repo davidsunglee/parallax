@@ -1878,6 +1878,28 @@ or descriptor authoring form and performs no audit stamping.
   coherent within the transaction. A retry is a new attempt with its own
   uncaptured instant and reads the clock again only if it independently reaches
   temporal work.
+- **Write finalization settles a step before lowering.** A buffered write that
+  survives planning is settled into one **Planned Write** — the closed
+  `m-unit-work` algebra — before any SQL exists, and lowering then answers a
+  purely physical question about it: which Columns participate, in which order,
+  quoted for which dialect. A settled step carries its **Write Target** (the
+  primary keys it addresses, or a readless predicate), its **concurrency
+  decision** (an explicit version gate, an explicit ungated decision, or no
+  version at all), its assignments including the framework-derived version
+  advance, and its **Affected Rows Policy** — the expected effect plus the
+  neutral outcome class a shortfall names. Whether a gate applies is decided
+  while the step is being settled, from the transaction's mode, so no lowering
+  reads that mode; a missing required observation is likewise a planning error
+  raised there, never a null value that reaches SQL.
+- **Observations are a closed algebra with structural absence.** A read records
+  either the optimistic-lock **version** a versioned non-temporal row was read
+  at, or the whole **predecessor milestone** a temporal row was read as — its
+  complete persisted state plus whether the read was latest-pinned on
+  Transaction Time. Inserts and unversioned non-temporal writes record nothing
+  at all rather than an empty observation, so "a version and a predecessor" and
+  "neither" are both unrepresentable. Only a temporal observation can answer
+  anything but latest-pinned, which is why the locking-mode historical check
+  below concerns temporal writes alone.
 - **Write verbs and temporal spellings.** Verb names: `insert`, `update`,
   `delete` (non-temporal), `terminate` (temporal), and the bitemporal
   `insert_until`, `update_until`, `terminate_until`. Inputs are entity

@@ -34,8 +34,8 @@ The close's ADDRESS is the key plus one exclusive upper bound per As-Of Axis, so
 a Transaction-Time-Only close addresses ``out_z = infinity`` alone
 (:attr:`MilestoneClose.target_valid_end` is ``None``) and is identical in both
 concurrency modes (ADR 0046). Only the close's gate CANDIDATE
-(:attr:`MilestoneClose.gate_tx_start`) comes from
-the caller-supplied ``observed`` :class:`~parallax.core.unit_work.Observation` —
+(:attr:`MilestoneClose.gate_tx_start`) comes from the caller-supplied
+``observed`` :class:`~parallax.core.unit_work.TemporalObservation` —
 this scope never decides WHETHER to gate (that is the ``opt_lock`` policy
 composed at the render seam) or issues an implicit read to find one (`m-txtime-write`
 "Affected-row conflict contract for closes": the observed ``in_z`` is the version
@@ -59,12 +59,12 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Final
+from typing import Final, cast
 
 from parallax.core import temporal_read
 from parallax.core.base import INFINITY_LITERAL
 from parallax.core.metamodel import EntityMetadata, Metamodel, TemporalDimension
-from parallax.core.unit_work import KeyedWrite, Observation
+from parallax.core.unit_work import KeyedWrite, TemporalObservation
 
 __all__ = [
     "MilestoneClose",
@@ -73,6 +73,8 @@ __all__ = [
     "MilestoneStep",
     "TemporalPlanningError",
     "axis_attr_names",
+    "observed_bound",
+    "observed_tx_start",
     "plan",
 ]
 
@@ -159,6 +161,36 @@ def axis_attr_names(
     return axis.start_attribute.name, axis.end_attribute.name
 
 
+def observed_bound(
+    model: Metamodel,
+    entity: EntityMetadata,
+    observed: TemporalObservation,
+    dimension: TemporalDimension,
+    *,
+    upper: bool = False,
+) -> str:
+    """One axis bound of the observed predecessor milestone.
+
+    The predecessor retains the whole row it was read as, so an axis bound is
+    read off it by the same Attribute name the milestone rows this scope opens
+    write it under — never re-derived from a separate field per axis. The value
+    rides through exactly as the port returned it, which for a real read may be a
+    driver-native instant rather than a wire string.
+    """
+    names = axis_attr_names(model, entity, dimension)
+    return cast("str", observed.predecessor.member(names[1] if upper else names[0]))
+
+
+def observed_tx_start(
+    model: Metamodel, entity: EntityMetadata, observed: TemporalObservation | None
+) -> str | None:
+    """The observed Transaction-Time start a close may gate on, or ``None`` when
+    this write carries no observation to gate from."""
+    if observed is None:
+        return None
+    return observed_bound(model, entity, observed, TemporalDimension.TRANSACTION_TIME)
+
+
 def _open_row(
     model: Metamodel, entity: EntityMetadata, tx_instant: str, payload: Mapping[str, object]
 ) -> dict[str, object]:
@@ -168,16 +200,18 @@ def _open_row(
     return {**payload, in_name: tx_instant, out_name: INFINITY_LITERAL}
 
 
-def _merged_row(observed: Observation | None, row: Mapping[str, object]) -> Mapping[str, object]:
+def _merged_row(
+    observed: TemporalObservation | None, row: Mapping[str, object]
+) -> Mapping[str, object]:
     """The chained current row an audit-only ``update`` opens: the
     instruction's own (possibly SPARSE) row overlaid onto the observed
-    payload — the audit-only analogue of
-    :func:`~parallax.core.bitemp_write._merged_payload`. ``None`` when this
-    write carries no observation (nothing to merge onto — the instruction's
-    row rides through unchanged)."""
-    if observed is None or observed.payload is None:
+    predecessor — the audit-only analogue of
+    :func:`~parallax.core.bitemp_write._merged_payload`. The instruction's row
+    rides through unchanged when this write carries no observation, which leaves
+    nothing to merge onto."""
+    if observed is None:
         return row
-    return {**observed.payload, **row}
+    return {**observed.predecessor.members, **row}
 
 
 def plan(
@@ -185,7 +219,7 @@ def plan(
     model: Metamodel,
     entity: EntityMetadata,
     tx_instant: str,
-    observed: Observation | None,
+    observed: TemporalObservation | None,
 ) -> MilestonePlan:
     """Plan one Transaction-Time-Only keyed temporal write.
 
@@ -202,7 +236,7 @@ def plan(
     close = MilestoneClose(
         identity=row,
         target_valid_end=None,
-        gate_tx_start=observed.tx_start if observed is not None else None,
+        gate_tx_start=observed_tx_start(model, entity, observed),
     )
     if mutation in _TERMINATE_MUTATIONS:
         return MilestonePlan(steps=(close,))

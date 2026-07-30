@@ -51,10 +51,10 @@ from parallax.core.unit_work import (
     AtomicUnit,
     KeyedWrite,
     ObjectKey,
-    Observation,
     PredicateMutation,
     PredicateWrite,
     UnitOfWork,
+    WriteObservation,
     instructions,
 )
 from parallax.snapshot.handle._family import (
@@ -304,7 +304,7 @@ def _materialize_predicate_write(
     ).statement
     rows = uow.read(lambda: _resolve_rows(conn, dialect, statement))
     writes: list[KeyedWrite] = []
-    pending: list[tuple[ObjectKey, Observation | None]] = []
+    pending: list[tuple[ObjectKey, WriteObservation]] = []
     for row in rows:
         key, observation, new_row = materialize_row(
             meta,
@@ -331,8 +331,7 @@ def _materialize_predicate_write(
     if not writes:
         return
     for key, observation in pending:
-        if observation is not None:
-            uow.observe(key, observation)
+        uow.observe(key, observation)
     uow.buffer(AtomicUnit(writes=tuple(writes)))
 
 
