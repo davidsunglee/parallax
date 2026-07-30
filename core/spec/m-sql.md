@@ -295,8 +295,9 @@ appear **only** when escaping actually changed the literal: `startsWith 'A-'`
 lowers to the bare `t0.sku like ?` with a single `'A-%'` bind.
 
 The five **nested** string predicates render identically against the extraction
-their scope resolved (`<extraction> like ?`, a leading `not` for `nestedNotLike`),
-so the rule above is stated once and reused rather than restated per scope.
+their scope resolved (`<extraction> like ?`, and the infix
+`<extraction> not like ?` for `nestedNotLike`), so the rule above is stated once
+and reused rather than restated per scope.
 
 ### `order by` key terms
 
@@ -1258,9 +1259,9 @@ as an error or a spurious element. So the canonical fragment carries an
 | `nestedExists(Class.vo.arr)` (non-empty) | `exists (select 1 from jsonb_array_elements(<arr>) t1)` | `<g> and json_length(t0.address, ?) > ?` |
 | `nestedNotExists(Class.vo.arr)` (empty-or-absent) | `not exists (select 1 from jsonb_array_elements(<arr>) t1)` | `not coalesce(<g> and json_length(t0.address, ?) > ?, ?)` |
 | flat `nestedEq(Class.vo.arr.field, v)` (any-element) | `exists (select 1 from jsonb_array_elements(<arr>) t1 where jsonb_extract_path_text(t1.value, ?) = ?)` | `<g> and json_contains(t0.address, ?, ?)` |
-| flat `nestedBetween(Class.vo.arr.field, lo, hi)` (any-element) | `exists (select 1 from jsonb_array_elements(<arr>) t1 where jsonb_extract_path_text(t1.value, ?) between ? and ?)` | — (deferred, `m-dialect`) |
-| flat `nestedNotIn(Class.vo.arr.field, [v, …])` (any-element) | `exists (select 1 from jsonb_array_elements(<arr>) t1 where not jsonb_extract_path_text(t1.value, ?) in (?, …))` | — (deferred, `m-dialect`) |
-| flat `nestedStartsWith(Class.vo.arr.field, s)` (any-element) | `exists (select 1 from jsonb_array_elements(<arr>) t1 where jsonb_extract_path_text(t1.value, ?) like ?)` | — (deferred, `m-dialect`) |
+| flat `nestedBetween(Class.vo.arr.field, lo, hi)` (any-element) | `exists (select 1 from jsonb_array_elements(<arr>) t1 where jsonb_extract_path_text(t1.value, ?) between ? and ?)` | — not expressible by the `json_contains` containment seam; reject per `m-dialect` |
+| flat `nestedNotIn(Class.vo.arr.field, [v, …])` (any-element) | `exists (select 1 from jsonb_array_elements(<arr>) t1 where not jsonb_extract_path_text(t1.value, ?) in (?, …))` | — not expressible by the `json_contains` containment seam; reject per `m-dialect` |
+| flat `nestedStartsWith(Class.vo.arr.field, s)` (any-element) | `exists (select 1 from jsonb_array_elements(<arr>) t1 where jsonb_extract_path_text(t1.value, ?) like ?)` | — not expressible by the `json_contains` containment seam; reject per `m-dialect` |
 | `nestedExists(Class.vo.arr, where: <compound>)` (same-element) | one `exists` with every element predicate on the **same** `t1` | `<g> and json_contains(t0.address, ?, ?)` with a candidate object carrying every field |
 | `nestedNotExists(Class.vo.arr, where: <compound>)` (no element) | `not exists (select 1 from jsonb_array_elements(<arr>) t1 where <compound on t1>)` | `not coalesce(<g> and json_contains(t0.address, ?, ?), ?)` |
 
@@ -1347,10 +1348,12 @@ non-equality element predicates through a `many` segment — `nestedGt` / `neste
 `nestedNotEq` / `nestedBetween` / `nestedNotIn`, any of the five string predicates,
 or a `where` compound with a
 range/negated membership/string predicate/`or`/`not` — need a set-returning
-unnest and are a **documented deferred limitation on MariaDB** (`m-dialect`,
-"Scope of the containment golden"). Postgres's `jsonb_array_elements` lowering is
-fully general; the corpus's to-many coverage is equality-based accordingly, so
-these forms carry a Postgres golden only.
+unnest, which lies **outside what the MariaDB containment seam can express**; a
+MariaDB implementation rejects them with a capability diagnostic rather than
+lowering them (`m-dialect`, "Scope of the containment golden"). Postgres's
+`jsonb_array_elements` lowering is fully general; the corpus's **dual-dialect**
+to-many coverage is equality-based accordingly, so these forms carry a Postgres
+golden only.
 
 #### valueObject — atomic document write
 
