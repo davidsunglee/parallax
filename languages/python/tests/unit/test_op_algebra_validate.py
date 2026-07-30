@@ -4,7 +4,7 @@ m-value-object).
 Each rejected rule is pinned with the exact identifier `validate_operation`
 raises, alongside the representative VALID operations that must NOT be
 rejected — including the corpus boundary case (an equivalent-spelling narrow
-that is NOT outside the active position). The 10 in-slice rejected corpus
+that is NOT outside the active position). The 13 in-slice rejected corpus
 cases are additionally round-tripped through the real validator here (not
 just via the engine's rejected sweep), so a regression in either the node
 construction or the model resolution fails at the unit layer first.
@@ -42,6 +42,7 @@ from parallax.core.op_algebra import (
     NestedMembership,
     NestedNotExists,
     NestedNullCheck,
+    NestedRange,
     NoneOp,
     Not,
     NotExists,
@@ -98,7 +99,7 @@ def test_referenced_entities_collects_every_class_the_operation_names() -> None:
                     ),
                     Exists(rel="Owner.kennels", op=None),
                     NotExists(rel="Kennel.owners", op=None),
-                    NestedMembership(path="Order.address.zip", values=("1",)),
+                    NestedMembership(op="nestedIn", path="Order.address.zip", values=("1",)),
                     NestedNullCheck(op="nestedIsNull", path="Item.meta.flag"),
                     NestedExists(path="Status.tags", where=None),
                     NestedNotExists(path="Status.notes", where=None),
@@ -178,7 +179,7 @@ def _rejects(op: Operation, meta: Metamodel, target: str) -> OperationRejectedEr
 
 
 # --------------------------------------------------------------------------- #
-# The 11 in-slice rejected corpus cases, round-tripped end to end.            #
+# The 13 in-slice rejected corpus cases, round-tripped end to end.            #
 # --------------------------------------------------------------------------- #
 _REJECTED_CASE_IDS = (
     "m-inheritance-040",
@@ -187,6 +188,8 @@ _REJECTED_CASE_IDS = (
     "m-inheritance-064",
     "m-inheritance-072",
     "m-op-algebra-039",
+    "m-op-algebra-040",
+    "m-op-algebra-041",
     "m-value-object-034",
     "m-value-object-035",
     "m-value-object-036",
@@ -268,6 +271,76 @@ def test_between_subject_is_resolved_before_its_bounds_are_ordered() -> None:
     op = Between(attr="address.city", lower="b", upper="a")
     exc = _rejects(op, _CUSTOMER, "Customer")
     assert exc.rule == "find-root-value-object"
+
+
+def _nested_range_scopes(
+    lower: Scalar, upper: Scalar, *, path: str, element: str
+) -> tuple[Operation, Operation]:
+    """The same range, once path-scoped and once element-scoped, so a rule can be
+    asserted at both scopes from one expectation."""
+    return (
+        NestedRange(path=path, lower=lower, upper=upper),
+        NestedExists(
+            path="Customer.address.phones",
+            where=NestedRange(path=element, lower=lower, upper=upper),
+        ),
+    )
+
+
+def test_nested_range_inverted_bounds_reject_in_both_scopes() -> None:
+    # The nested ranges reuse the shared bound-ordering rule rather than restating
+    # the literal-kind logic, so both scopes classify identically to top-level
+    # `between`.
+    numeric, _ = _nested_range_scopes(
+        12, 5, path="Customer.address.geo.elevation", element="number"
+    )
+    _, textual = _nested_range_scopes("work", "home", path="Customer.address.city", element="type")
+    for op in (numeric, textual):
+        assert _rejects(op, _CUSTOMER, "Customer").rule == "between-bounds-inverted"
+
+
+def test_nested_range_typed_bounds_are_checked_before_the_ordering_in_both_scopes() -> None:
+    # Both bounds mistype a `string` leaf AND are inverted as raw numbers. Ordering
+    # first would report `between-bounds-inverted` and blame the ordering for what is
+    # really the bounds' types, so this pins the order the two checks run in.
+    for op in _nested_range_scopes(42, 7, path="Customer.address.city", element="type"):
+        assert _rejects(op, _CUSTOMER, "Customer").rule == "nested-literal-type-mismatch"
+
+
+def test_nested_range_ordered_typed_bounds_accept_in_both_scopes() -> None:
+    _validate(
+        "Customer",
+        NestedRange(path="Customer.address.geo.elevation", lower=5, upper=12),
+        _CUSTOMER,
+    )
+    _validate(
+        "Customer",
+        NestedExists(
+            path="Customer.address.phones",
+            where=NestedRange(path="number", lower="555-9000", upper="555-9999"),
+        ),
+        _CUSTOMER,
+    )
+
+
+def test_nested_range_unknown_path_rejects_before_any_bound_check() -> None:
+    op = NestedRange(path="Customer.address.bogus", lower=12, upper=5)
+    assert _rejects(op, _CUSTOMER, "Customer").rule == "nested-path-unknown-member"
+
+
+def test_nested_negated_membership_type_checks_its_values_in_both_scopes() -> None:
+    flat = NestedMembership(op="nestedNotIn", path="Customer.address.city", values=("Oslo", 42))
+    scoped = NestedExists(
+        path="Customer.address.phones",
+        where=NestedMembership(op="nestedNotIn", path="type", values=(42,)),
+    )
+    for op in (flat, scoped):
+        assert _rejects(op, _CUSTOMER, "Customer").rule == "nested-literal-type-mismatch"
+    _validate(
+        "Customer",
+        NestedMembership(op="nestedNotIn", path="Customer.address.city", values=("Oslo",)),
+        _CUSTOMER,
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -489,7 +562,7 @@ def test_nested_comparison_null_literal_always_matches() -> None:
 
 
 def test_nested_membership_all_valid_literals_accepts() -> None:
-    op = NestedMembership(path="Customer.address.city", values=("Oslo", "Bergen"))
+    op = NestedMembership(op="nestedIn", path="Customer.address.city", values=("Oslo", "Bergen"))
     _validate("Customer", op, _CUSTOMER)  # no raise
 
 
@@ -579,7 +652,7 @@ def test_literal_matches_type_string_and_portable_fallback() -> None:
 
 
 def test_nested_membership_literal_type_mismatch_rejects() -> None:
-    op = NestedMembership(path="Customer.address.city", values=("Oslo", 42))
+    op = NestedMembership(op="nestedIn", path="Customer.address.city", values=("Oslo", 42))
     exc = _rejects(op, _CUSTOMER, "Customer")
     assert exc.rule == "nested-literal-type-mismatch"
 
@@ -641,7 +714,7 @@ def test_nested_exists_scoped_where_literal_type_mismatch_rejects() -> None:
 def test_nested_exists_scoped_where_membership_literal_type_mismatch_rejects() -> None:
     op = NestedExists(
         path="Customer.address.phones",
-        where=NestedMembership(path="number", values=("555-9999", 42)),
+        where=NestedMembership(op="nestedIn", path="number", values=("555-9999", 42)),
     )
     exc = _rejects(op, _CUSTOMER, "Customer")
     assert exc.rule == "nested-literal-type-mismatch"

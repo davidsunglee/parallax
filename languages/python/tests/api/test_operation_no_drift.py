@@ -204,6 +204,8 @@ def test_expression_rejects_bool_misuse() -> None:
 # --------------------------------------------------------------------------- #
 REJECTED_BUILDERS: dict[str, Callable[[], Predicate]] = {
     "m-op-algebra-039": lambda: Order.price.between(50.75, 20.00),
+    "m-op-algebra-040": lambda: vm.Customer.address.geo.elevation.between(12, 5),
+    "m-op-algebra-041": lambda: vm.Customer.address.phones.any(vm.Phone.number.between(42, 7)),
     "m-value-object-038": lambda: vm.Customer.address.city == 42,
     "m-inheritance-040": lambda: sm.Pet.narrow(sm.WildBoar),
     "m-inheritance-041": lambda: sm.Dog.bark_volume > 5,
@@ -224,6 +226,8 @@ REJECTED_BUILDERS: dict[str, Callable[[], Predicate]] = {
 # resolves BOTH `Person` and `Pet`/`WildBoar`/`Animal` coherently).
 REJECTED_TARGETS: dict[str, type[Entity]] = {
     "m-op-algebra-039": Order,
+    "m-op-algebra-040": vm.Customer,
+    "m-op-algebra-041": vm.Customer,
     "m-value-object-038": vm.Customer,
     "m-inheritance-040": sm.Animal,
     "m-inheritance-041": sm.Animal,

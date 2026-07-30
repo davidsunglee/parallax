@@ -90,6 +90,7 @@ from parallax.core.op_algebra import (
     NestedMembership,
     NestedNotExists,
     NestedNullCheck,
+    NestedRange,
     NoneOp,
     Not,
     NotExists,
@@ -308,6 +309,12 @@ ResolutionScope = EntityScope | ElementScope
 # takes the union rather than branching on depth.
 _VoContainer = ValueObjectMetadata | NestedValueObjectMetadata
 
+# The flat `nested*` family — the sub-grammar legal in EITHER scope, resolved
+# path-relatively against an entity's document column or element-relatively against
+# an unnested element. One alias, because every function below takes the whole
+# family and differs only in how it resolved the extraction.
+_FlatNested = NestedComparison | NestedRange | NestedMembership | NestedNullCheck
+
 
 # --------------------------------------------------------------------------- #
 # The dispatcher.                                                              #
@@ -340,7 +347,7 @@ def lower_predicate(op: Operation, scope: ResolutionScope) -> str:
             return f"not {lower_predicate(operand, scope)}"
         case Group(operand=operand):
             return f"({lower_predicate(operand, scope)})"
-        case NestedComparison() | NestedMembership() | NestedNullCheck():
+        case NestedComparison() | NestedRange() | NestedMembership() | NestedNullCheck():
             if isinstance(scope, ElementScope):
                 return _lower_element_nested(op, scope)
             return _lower_nested(op, scope)
@@ -514,9 +521,7 @@ def _hop_where(
 # so a dotted path resolves through the Metamodel Interface here rather than   #
 # through m-value-object, which the DAG forbids m-sql from importing.          #
 # --------------------------------------------------------------------------- #
-def _lower_nested(
-    op: NestedComparison | NestedMembership | NestedNullCheck, scope: EntityScope
-) -> str:
+def _lower_nested(op: _FlatNested, scope: EntityScope) -> str:
     """Lower a flat `nested*` predicate (m-op-algebra "Nested value-object
     predicates"): a scalar extraction against the scope's own alias when the path
     stays within `one`-multiplicity members, or — when it crosses a `multiplicity:
@@ -534,9 +539,7 @@ def _lower_nested(
     return _lower_comparator(op, extraction, leaf.type, scope)
 
 
-def _lower_element_nested(
-    op: NestedComparison | NestedMembership | NestedNullCheck, scope: ElementScope
-) -> str:
+def _lower_element_nested(op: _FlatNested, scope: ElementScope) -> str:
     """The same flat `nested*` family, resolved ELEMENT-relatively (m-op-algebra
     `elementPredicate`; m-value-object same-element semantics): the path carries
     no `Class.valueObject` prefix, resolves against the scope's container, and
@@ -562,7 +565,7 @@ def _flat_vo_path(path: str, entity: EntityMetadata) -> tuple[ValueObjectMetadat
 
 
 def _lower_comparator(
-    op: NestedComparison | NestedMembership | NestedNullCheck,
+    op: _FlatNested,
     extraction: str,
     leaf_type: NeutralType,
     scope: ResolutionScope,
@@ -581,12 +584,22 @@ def _lower_comparator(
         if op.op == "nestedNotEq":
             return f"not {casted} = ?"
         return f"{casted} {_NESTED_COMPARATORS[op.op]} ?"
+    if isinstance(op, NestedRange):
+        casted = scope.dialect.nested_cast(extraction, leaf_type)
+        scope.ctx.bind(op.lower)
+        scope.ctx.bind(op.upper)
+        # One `between`, never two comparisons: through a `many` member the flat
+        # family is any-element, so a lowered pair could be satisfied by two
+        # DIFFERENT elements (m-op-algebra).
+        return f"{casted} between ? and ?"
     if isinstance(op, NestedMembership):
         casted = scope.dialect.nested_cast(extraction, leaf_type)
         holes = ", ".join("?" for _ in op.values)
         for value in op.values:
             scope.ctx.bind(value)
-        return f"{casted} in ({holes})"
+        # nestedNotIn lowers to a LEADING `not` (the corpus form), adding no bind.
+        fragment = f"{casted} in ({holes})"
+        return fragment if op.op == "nestedIn" else f"not {fragment}"
     if op.op == "nestedIsNull":
         return f"{extraction} is null"
     return f"not {extraction} is null"
@@ -617,7 +630,7 @@ def _split_at_many(
 
 
 def _lower_any_element(
-    op: NestedComparison | NestedMembership | NestedNullCheck,
+    op: _FlatNested,
     vo: ValueObjectMetadata,
     crossing: tuple[_VoContainer, tuple[str, ...], tuple[str, ...]],
     scope: EntityScope,

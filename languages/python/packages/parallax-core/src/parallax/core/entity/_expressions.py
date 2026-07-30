@@ -41,12 +41,15 @@ from parallax.core.op_algebra import (
     Exists,
     Group,
     Membership,
+    MembershipOp,
     NestedComparison,
     NestedComparisonOp,
     NestedExists,
     NestedMembership,
+    NestedMembershipOp,
     NestedNotExists,
     NestedNullCheck,
+    NestedRange,
     Not,
     NotExists,
     NullCheck,
@@ -280,14 +283,23 @@ class AttributeExpr:
         return self._cmp("eq", value)
 
     def in_(self, values: list[Scalar]) -> Predicate:
-        if self._path:
-            return Predicate(NestedMembership(path=self._dotted(), values=tuple(values)))
-        return Predicate(Membership(op="in", attr=str(self.ref), values=tuple(values)))
+        return self._membership("nestedIn", "in", values)
 
     def not_in(self, values: list[Scalar]) -> Predicate:
-        return Predicate(Membership(op="notIn", attr=str(self.ref), values=tuple(values)))
+        return self._membership("nestedNotIn", "notIn", values)
+
+    def _membership(
+        self, nested_op: NestedMembershipOp, scalar_op: MembershipOp, values: list[Scalar]
+    ) -> Predicate:
+        if self._path:
+            return Predicate(
+                NestedMembership(op=nested_op, path=self._dotted(), values=tuple(values))
+            )
+        return Predicate(Membership(op=scalar_op, attr=str(self.ref), values=tuple(values)))
 
     def between(self, lower: Scalar, upper: Scalar) -> Predicate:
+        if self._path:
+            return Predicate(NestedRange(path=self._dotted(), lower=lower, upper=upper))
         return Predicate(Between(attr=str(self.ref), lower=lower, upper=upper))
 
     def is_null(self) -> Predicate:
@@ -477,7 +489,15 @@ class ElementAttributeExpr:
         return self._cmp("eq", value)
 
     def in_(self, values: list[Scalar]) -> Predicate:
-        return Predicate(NestedMembership(path=self._dotted(), values=tuple(values)))
+        return Predicate(NestedMembership(op="nestedIn", path=self._dotted(), values=tuple(values)))
+
+    def not_in(self, values: list[Scalar]) -> Predicate:
+        return Predicate(
+            NestedMembership(op="nestedNotIn", path=self._dotted(), values=tuple(values))
+        )
+
+    def between(self, lower: Scalar, upper: Scalar) -> Predicate:
+        return Predicate(NestedRange(path=self._dotted(), lower=lower, upper=upper))
 
     def is_null(self) -> Predicate:
         return Predicate(NestedNullCheck(op="nestedIsNull", path=self._dotted()))

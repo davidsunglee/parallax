@@ -8,11 +8,14 @@ entity's declared value-object structure — and raises
 normative rule:
 
 * a **range** predicate whose `lower` bound is strictly greater than its `upper`,
-  comparing same-kind literals only (m-op-algebra bound ordering); this one needs no
-  model, since the two authored literals carry everything the rule compares;
+  comparing same-kind literals only (m-op-algebra bound ordering) — at the top level
+  and at both nested scopes. At the top level the rule needs no model, since the two
+  authored literals carry everything it compares; nested, the path and both typed
+  bounds resolve FIRST, so a mistyped bound is named as a type mismatch rather than
+  ordered as a raw literal;
 * a nested-predicate **path** whose first segment is not a declared value object,
   or whose intermediate / leaf segment is undeclared (m-op-algebra resolver MUST);
-* a nested-comparison / membership **literal** whose type mismatches the leaf
+* a nested-comparison / range / membership **literal** whose type mismatches the leaf
   attribute's declared neutral type (m-op-algebra typed-literal MUST);
 * a **`deepFetch`** path segment or a **relationship navigation** (`navigate` /
   `exists` / `notExists`) aimed at a value object — value objects are reached only
@@ -74,6 +77,9 @@ from .value_object_resolve import (
 _NESTED_COMPARISON_TAGS = frozenset(
     {"nestedEq", "nestedNotEq", "nestedGt", "nestedGte", "nestedLt", "nestedLte"}
 )
+# The flat nested membership family (a {path, values} body); the negated form carries
+# the same typed-literal obligation as the positive one.
+_NESTED_MEMBERSHIP_TAGS = frozenset({"nestedIn", "nestedNotIn"})
 
 
 def validate_operation(entity: Entity, operation: Any) -> None:
@@ -99,7 +105,9 @@ def _walk(entity: Entity, node: Any) -> None:
     tag, body = next(iter(node.items()))
     if tag in _NESTED_COMPARISON_TAGS:
         _check_nested_comparison(entity, body)
-    elif tag == "nestedIn":
+    elif tag == "nestedBetween":
+        _check_nested_range(entity, body)
+    elif tag in _NESTED_MEMBERSHIP_TAGS:
         _check_nested_membership(entity, body)
     elif tag in ("nestedIsNull", "nestedIsNotNull"):
         resolve_nested_ref(entity, body["path"])
@@ -158,6 +166,21 @@ def _check_nested_comparison(entity: Entity, body: dict[str, Any]) -> None:
         )
 
 
+def _check_nested_range(entity: Entity, body: dict[str, Any]) -> None:
+    """A nested range's three checks, in the order m-op-algebra fixes: the path, both
+    typed bounds, then the bound ordering."""
+    attribute = resolve_nested_ref(entity, body["path"])
+    lower, upper = body.get("lower"), body.get("upper")
+    for bound_name, value in (("lower", lower), ("upper", upper)):
+        if not literal_matches_type(value, attribute.get("type")):
+            raise RejectionError(
+                NESTED_LITERAL_TYPE_MISMATCH,
+                f"{body['path']!r}: {bound_name} bound {value!r} does not match declared type "
+                f"{attribute.get('type')!r}",
+            )
+    _check_bound_ordering(body["path"], lower, upper)
+
+
 def _check_nested_membership(entity: Entity, body: dict[str, Any]) -> None:
     attribute = resolve_nested_ref(entity, body["path"])
     for value in body.get("values", []):
@@ -189,7 +212,18 @@ def _walk_element(value_object: dict[str, Any], node: Any) -> None:
                 f"element {body['path']!r}: literal {body.get('value')!r} does not match "
                 f"declared type {attribute.get('type')!r}",
             )
-    elif tag == "nestedIn":
+    elif tag == "nestedBetween":
+        attribute = resolve_element_ref(value_object, body["path"])
+        lower, upper = body.get("lower"), body.get("upper")
+        for bound_name, value in (("lower", lower), ("upper", upper)):
+            if not literal_matches_type(value, attribute.get("type")):
+                raise RejectionError(
+                    NESTED_LITERAL_TYPE_MISMATCH,
+                    f"element {body['path']!r}: {bound_name} bound {value!r} does not match "
+                    f"declared type {attribute.get('type')!r}",
+                )
+        _check_bound_ordering(body["path"], lower, upper)
+    elif tag in _NESTED_MEMBERSHIP_TAGS:
         attribute = resolve_element_ref(value_object, body["path"])
         for value in body.get("values", []):
             if not literal_matches_type(value, attribute.get("type")):

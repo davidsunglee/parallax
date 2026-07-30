@@ -135,6 +135,12 @@ def test_every_element_scoped_operator_builds_its_own_nested_node() -> None:
     assert serialize(phone_type.in_(["home", "work"]).op) == {
         "nestedIn": {"path": "type", "values": ["home", "work"]}
     }
+    assert serialize(phone_type.not_in(["work"]).op) == {
+        "nestedNotIn": {"path": "type", "values": ["work"]}
+    }
+    assert serialize(phone_type.between("a", "z").op) == {
+        "nestedBetween": {"path": "type", "lower": "a", "upper": "z"}
+    }
     assert serialize(phone_type.is_null().op) == {"nestedIsNull": {"path": "type"}}
     assert serialize(phone_type.is_not_null().op) == {"nestedIsNotNull": {"path": "type"}}
 
@@ -169,6 +175,25 @@ def test_an_entity_rooted_nested_predicate_carries_the_dotted_canonical_path() -
     assert isinstance(predicate, Predicate)
     assert serialize(predicate.op) == {
         "nestedEq": {"path": "Customer.address.geo.country", "value": "DE"}
+    }
+
+
+def test_a_nested_range_and_negated_membership_stay_nested_rather_than_scalar() -> None:
+    # `.between(...)` / `.not_in(...)` follow `.in_(...)`: on a value-object path they
+    # build the NESTED node carrying the whole dotted path, not the scalar node over a
+    # truncated `Class.member` reference.
+    assert serialize(vm.Customer.address.geo.elevation.between(5, 12).op) == {
+        "nestedBetween": {"path": "Customer.address.geo.elevation", "lower": 5, "upper": 12}
+    }
+    assert serialize(vm.Customer.address.city.not_in(["Oslo"]).op) == {
+        "nestedNotIn": {"path": "Customer.address.city", "values": ["Oslo"]}
+    }
+    # A non-nested attribute on the same Entity keeps the scalar spellings.
+    assert serialize(vm.Customer.name.not_in(["Ada"]).op) == {
+        "notIn": {"attr": "Customer.name", "values": ["Ada"]}
+    }
+    assert serialize(vm.Customer.id.between(1, 3).op) == {
+        "between": {"attr": "Customer.id", "lower": 1, "upper": 3}
     }
 
 
