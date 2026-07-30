@@ -435,7 +435,8 @@ A typed expression that describes which rows or objects an entity operation targ
 _Avoid_: where object, filter object
 
 **Assignment**:
-A typed expression that describes a value change for one mapped attribute in a set-based update.
+A typed authored expression that describes a value change for one assignable
+mapped scalar attribute or whole Value Object occurrence in a set-based update.
 _Avoid_: setter call, update object
 
 **Sort Key**:
@@ -552,6 +553,207 @@ _Avoid_: session, session cache, first-level cache
 An update or delete expressed over a predicate or an unresolved result collection, intended to operate on the matching set rather than by materializing each object.
 _Avoid_: mass operation, list setter
 
+**Readless Write**:
+A Set-Based Write whose Write Target remains a Predicate through execution, so
+its exact row set is not materialized or known during planning.
+_Avoid_: materialized write, bulk write, batch
+
+**Write Target**:
+The semantic row selection of a Planned Write: one Key Target, every row
+matching a Predicate, or one Milestone Target. It is distinct from both
+observed predecessor state and a concurrency condition.
+_Avoid_: SQL where clause, observation, optimistic-lock predicate
+
+**Key Target**:
+The nonempty planner-ordered sequence of distinct complete primary-key tuples
+addressed by one Planned Update or Planned Delete. A singleton and a compatible
+multi-key selection are cardinalities of the same target kind; repeated
+authored keys are invalid rather than silently deduplicated. Its compact shape
+stores the canonical nonempty primary-key Attribute Identity sequence once and
+an aligned nonempty sequence of concrete, non-null value tuples.
+_Avoid_: Key Set Target, unordered key set, key predicate
+
+**Predicate Target**:
+The bare typed Predicate retained by a readless Planned Update or Planned
+Delete. The enclosing Planned Write owns its Entity Identity; the target carries
+no materialized keys, observation, pin, concurrency data, or redundant barrier
+flag.
+_Avoid_: result collection, materialized predicate, entity predicate pair
+
+**Milestone Target**:
+The current temporal milestone slot addressed by a primary-key tuple and one
+write-required exclusive upper bound per As-Of Axis: the observed predecessor's
+Valid-Time end when present, and invariant Infinity for Transaction Time. It is
+derived independently of any optimistic concurrency gate. Its compact shape
+aligns one complete primary-key value tuple and one upper-bound value per
+canonical axis with their Attribute Identities; it contains no axis starts.
+_Avoid_: current-row predicate, temporal gate, key-only target
+
+**Temporal Upper Bound**:
+The closed value of an As-Of Axis exclusive end in a Milestone Target: either a
+finite normalized Instant or the dialect-neutral Infinity sentinel.
+_Avoid_: nullable instant, database max timestamp, raw infinity string
+
+**Write Observation**:
+The database evidence retained for a surviving write against existing state: an
+observed positive version for a versioned Non-Temporal Entity, or one Temporal
+Observation containing a complete immutable Predecessor Row and its
+Transaction-Time Basis. The Temporal Facet, not a separate observation variant,
+distinguishes Transaction-Time-only from Bitemporal expansion. Inserts and
+unversioned Non-Temporal writes have no Write Observation by construction.
+_Avoid_: optional row bag, no-observation value, write target
+
+**Predecessor Row**:
+The complete, immutable, concrete persisted state retained by a Temporal
+Observation, including every applicable scalar attribute, Value Object
+occurrence, primary-key value, temporal bound, and audit value. It contains no
+generated-value expression and may be shared by every successor derived from
+it. In bulk materialization this is a logical row view over Predecessor Columns,
+not a requirement to allocate one row object per observation.
+_Avoid_: Planned Row, sparse observation, copied successor state
+
+**Predecessor Columns**:
+The compact immutable bulk representation of complete Predecessor Rows: one
+shared row shape plus aligned Attribute and Value Object value columns with the
+same positive row count. It can expose a logical Predecessor Row view without
+eagerly allocating a row wrapper for every selected predecessor.
+_Avoid_: predecessor object array, sparse observation columns, managed objects
+
+**Transaction-Time Basis**:
+The closed classification on a Temporal Observation:
+`LatestPinned | HistoricalPinned`. It records only whether the read can license
+an ungated locking-mode write; it does not claim that an entire temporal edge,
+lineage, or set of Valid-Time rectangles was locked.
+_Avoid_: full Pin, lock scope, Valid-Time pin
+
+**Materialized Write Group**:
+The private compact result of resolving one observation-requiring predicate
+write before pure planning. It retains the authored mutation, one shared
+primary-key shape, one immutable value column per key attribute, and either
+an aligned version column or complete Predecessor Columns with one group-wide
+Transaction-Time Basis. Every value column has the same positive row count. It
+contains no managed Entity objects, composite-key object per selected row,
+eager Predecessor Row object per selected row, per-row planning wrapper, mixed
+Transaction-Time Basis, or observation-free variant. An empty resolution
+produces no group. For an assignment-bearing mutation, input materialization
+uses Unit Work's equality rules while streaming and retains only rows with an
+effective change; delete and terminate mutations retain every resolved row.
+_Avoid_: list of observed writes, result collection, public plan group
+
+**Write Planner**:
+The model-scoped, stateless Unit Work module whose single pure planning
+operation converts one flush's boundary-captured Subject Identity, lazy
+Transaction Instant, concurrency mode, buffered writes, and observations into a
+Write Plan. Its planning strategies are wired at construction; it retains no
+attempt state and performs no database, clock, SQL, dialect, or driver work.
+_Avoid_: flush coordinator, SQL planner, mutable transaction planner
+
+**Planned Write**:
+One semantic execution step within a Write Plan. It may address one row or
+multiple rows, but its target, row topology, concurrency decision, expected
+effect, and Finalized Write Dispositions are settled before SQL lowering.
+_Avoid_: authored mutation, buffered instruction, SQL statement
+
+**Planned Row**:
+The immutable, duplicate-free semantic contents of one planned insert, keyed by
+Attribute Identities and Value Object Identities. It may contain neutral or null
+values, structured Value Object occurrences, closed generated-value
+expressions, and planner-derived framework attributes, but no property names,
+physical columns, SQL, dialect objects, or driver values.
+_Avoid_: Attribute Row, Entity Row, database row
+
+**Planned Assignments**:
+The nonempty, immutable, duplicate-free logical value changes of one Planned
+Update or Planned Close: one Attribute-Identity-keyed collection of concrete
+neutral or null values and one Value-Object-Identity-keyed collection of
+complete structured occurrences or null. It contains no authored Assignment
+expressions, generated-value expressions, physical columns, or SQL ordering.
+_Avoid_: assignment wrappers, mutable map, SET clause, sparse Planned Row
+
+**Planned Steps**:
+The immutable ordered logical sequence exposed by a Write Plan. Its semantic
+elements are Planned Writes, while its representation may pack homogeneous
+runs and produce logical views during iteration instead of allocating one
+per-step container eagerly. Planning strategies preserve compact segments and
+structural sharing; temporal expansion, provenance decoration, and lowering do
+not require an eager row-wrapper graph. Every exposed Planned Write and nested
+target is an immutable stable view; iteration never reuses a mutable flyweight.
+Equal views need not have object identity.
+_Avoid_: concrete tuple contract, statement list, eager wrapper array
+
+**Write Plan**:
+The possibly empty immutable description whose Planned Steps contain all
+Planned Writes that survive coalescing, cancellation, and known no-op
+elimination, with temporal topology and correctness semantics decided. Derived
+instants and other planning context are materialized into those writes rather
+than retained beside them. It is the semantic handoff through Audit Provenance
+decoration to SQL lowering, not a mutation log or SQL batch.
+_Avoid_: write queue, mutation history, statement list
+
+**Write Cardinality**:
+The number of existing rows a non-insert Write Target claims: exactly the
+number of keys in a Key Target, exactly one for a Milestone Target, and an
+unconstrained count for a Predicate.
+_Avoid_: database row count, batch size, optimistic-lock gate
+
+**Affected Rows Policy**:
+The fully resolved non-insert execution policy carried by a Planned Write:
+`AnyCount`, or `ExactCount` with a positive expected count and the already
+classified neutral shortfall tag: Missing Target, Stale Write, or Optimistic
+Conflict. An excess over an exact count is always Cardinality Corruption.
+Planned Inserts do not carry this policy. A driver batch containing multiple
+Exact Count steps is valid only when it reports one aligned count per logical
+step; one aggregate count is sufficient only for one step whose own Key Target
+contains multiple keys.
+_Avoid_: inferred row-count check, effect policy, optional expected count
+
+**Write Gate**:
+An optimistic-mode concurrency condition derived from a required Write
+Observation and added to a keyed update, delete, or temporal close. Locking mode
+records an explicit ungated decision and relies on the shared read lock instead.
+The closed payloads are a Version Gate containing its Attribute Identity and
+observed integer, or a Temporal Gate containing its Transaction-Time start
+Attribute Identity and observed Instant; neither repeats assignments, the full
+observation, or concurrency mode.
+_Avoid_: Write Target, affected-row policy, locking predicate
+
+**Non-Temporal Concurrency**:
+The closed concurrency decision on a Planned Update or Planned Delete:
+`Unversioned`, or `Versioned` containing either a Version Gate or the explicit
+locking-mode `Ungated` decision. It makes gate applicability structural instead
+of representing it with a nullable gate.
+_Avoid_: optional gate, universal Ungated, No Observation
+
+**Write Effect Error**:
+The closed Unit Work-owned failure raised by the authoritative affected-row
+enforcer: Missing Target Error, Stale Write Error, Optimistic Lock Conflict
+Error, or Cardinality Corruption Error. The Write Plan carries neutral
+shortfall tags rather than exception classes.
+_Avoid_: adapter row-count error, SQL lowering error, database error
+
+**Missing Target**:
+A non-retriable keyed-write failure in which fewer rows exist than the Write
+Cardinality promised and no optimistic or stale-write classification applies.
+_Avoid_: optimistic conflict, successful idempotent delete, empty predicate result
+
+**Stale Write**:
+A non-retriable consistency failure in which an observation-requiring
+locking-mode write affects fewer rows than its Write Cardinality promised
+despite the shared read lock that licensed its ungated execution.
+_Avoid_: Optimistic Lock Conflict, Missing Target, retryable failure
+
+**Cardinality Corruption**:
+A non-retriable correctness failure in which a write affects more rows than its
+Write Cardinality permits, indicating that accepted identity, storage, or
+lowering invariants do not hold.
+_Avoid_: optimistic conflict, stale write, retryable database error
+
+**Temporal Write Topology**:
+The ordered close-and-successor shape produced by one surviving temporal
+mutation. It remains one semantic unit even when its close and successor rows
+become separate Planned Writes.
+_Avoid_: SQL batch, statement group, independent row mutations
+
 **Finalized Write Disposition**:
 A provenance-neutral semantic label attached to a row or assignment in a
 nonempty finalized write plan. It tells later decorators what the plan does to a
@@ -589,7 +791,9 @@ which represents explicit absence.
 _Avoid_: termination, physical delete, successor
 
 **Optimistic Lock Conflict**:
-A detected write conflict where a versioned update affected no rows because another transaction advanced the version first.
+A detected gated-write shortfall because another transaction changed the
+observed version or temporal milestone first. It is eligible for automatic retry
+only when the surrounding transaction policy enables that retry.
 _Avoid_: transient failure, automatic retry
 
 **Audit Provenance**:
