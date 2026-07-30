@@ -814,6 +814,7 @@
             "nested-path-first-segment-not-value-object",
             "nested-path-unknown-member",
             "nested-literal-type-mismatch",
+            "nested-string-predicate-non-string-member",
             "deep-fetch-value-object-segment",
             "navigate-value-object-target",
             "find-root-value-object",

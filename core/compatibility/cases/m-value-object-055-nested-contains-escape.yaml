@@ -1,0 +1,33 @@
+# valueObject string filter + wildcard escape: an affix form treats its `value` as
+# LITERAL text, so a `%` inside it is escaped rather than left to act as a wildcard
+# (m-op-algebra wildcard/escape rule, m-sql), on Postgres AND MariaDB.
+#
+# `nestedContains(Customer.address.street, '%')` lowers to `like '%\%%' escape '\'`:
+# the inner `\%` is a literal percent, wrapped in `%...%` for the contains semantics.
+# The EMPTY result is the assertion. No street contains a literal `%`, so a correct
+# escape returns nothing; a missing escape leaves the pattern `'%%%'`, which matches
+# every one of the nine rows carrying a street — the loudest possible failure, and one
+# the independent `position` / `locate` oracle re-derives without a pattern at all.
+# The `escape ?` clause and its second bind appear only because escaping CHANGED the
+# literal; the affix cases beside this one bind a single unchanged pattern and emit no
+# clause.
+model: models/customer.yaml
+tags: [m-value-object, m-op-algebra, m-sql, m-dialect, nested, json, string, contains, escape, slice-snapshot-1, slice-managed-1]
+shape: read
+when:
+  targetEntity: Customer
+  operation:
+    nestedContains: { path: Customer.address.street, value: '%' }
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.name from customer t0 where jsonb_extract_path_text(t0.address, ?) like ? escape ?
+        mariadb: select t0.id, t0.name from customer t0 where json_value(t0.address, ?) like ? escape ?
+      binds:
+        postgres: [street, "%\\%%", "\\"]
+        mariadb: ['$.street', "%\\%%", "\\"]
+  referenceSql:
+    postgres: select id, name from customer where position('%' in address ->> 'street') > 0
+    mariadb: select id, name from customer where locate('%', nullif(json_unquote(json_extract(address, '$.street')), 'null')) > 0
+  rows: []
+  roundTrips: 1

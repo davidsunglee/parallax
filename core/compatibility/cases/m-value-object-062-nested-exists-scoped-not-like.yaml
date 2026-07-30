@@ -1,0 +1,41 @@
+# valueObject to-many: a NEGATED string pattern inside a scoped `where` negates within
+# the element, not around the existence test (m-op-algebra elementPredicate, m-sql).
+# Postgres golden only — a `where` carrying a non-`eq` leaf is outside MariaDB's
+# containment scope (m-dialect, "Scope of the containment golden").
+#
+# nestedExists(Customer.address.phones, where: type = 'work' AND number not like
+# '555-9999') asks for one element that is a work phone whose number is something else.
+# Only Nils (7) has one ({work, 555-0000}).
+#
+# Ada (1) is the discriminating row: her `work` element IS 555-9999, so she fails the
+# same-element compound — yet the unscoped AND of the two flat any-element predicates
+# would admit her, since her `work` element satisfies the equality and her `home` element
+# (555-1234) satisfies the negated pattern. Linus (2) has no `work` element at all.
+# Reading the negation as "no element matches the pattern" would also be wrong: it would
+# drop Nils only if some OTHER element matched, and would admit every element-free row.
+#
+# The negation renders INFIX (`not like`) on the same alias t1 the equality uses, never
+# as a `not` around the `exists` — that spelling is nestedNotExists, a different node.
+model: models/customer.yaml
+tags: [m-value-object, m-op-algebra, m-sql, m-dialect, nested, json, to-many, exists, scoped, same-element, string, notLike, array-traversal, slice-snapshot-1, slice-managed-1]
+shape: read
+when:
+  targetEntity: Customer
+  operation:
+    nestedExists:
+      path: Customer.address.phones
+      where:
+        and:
+          operands:
+            - nestedEq: { path: type, value: work }
+            - nestedNotLike: { path: number, value: '555-9999' }
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.name from customer t0 where exists (select 1 from jsonb_array_elements(case when jsonb_typeof(jsonb_extract_path(t0.address, ?)) = ? then jsonb_extract_path(t0.address, ?) else cast(? as jsonb) end) t1 where jsonb_extract_path_text(t1.value, ?) = ? and jsonb_extract_path_text(t1.value, ?) not like ?)
+      binds: [phones, 'array', phones, '[]', type, work, number, '555-9999']
+  referenceSql:
+    postgres: select id, name from customer where jsonb_typeof(address -> 'phones') = 'array' and exists (select 1 from jsonb_array_elements(address -> 'phones') e where e.value ->> 'type' = 'work' and not (e.value ->> 'number' like '555-9999'))
+  rows:
+    - { id: 7, name: Nils }
+  roundTrips: 1

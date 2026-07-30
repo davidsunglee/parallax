@@ -63,7 +63,14 @@ from parallax.conformance.read_models import (
 )
 from parallax.conformance.read_stories import READ_STORIES
 from parallax.conformance.story_models import Order
-from parallax.conformance.vo_models import Branch, Customer, CustomerPhone, Supplier
+from parallax.conformance.vo_models import (
+    Branch,
+    Contact,
+    ContactPhone,
+    Customer,
+    CustomerPhone,
+    Supplier,
+)
 from parallax.core import Entity, OperationRejectedError, Predicate, Statement
 from parallax.core.op_algebra import serialize
 from parallax.core.temporal_read import LATEST
@@ -206,6 +213,9 @@ REJECTED_BUILDERS: dict[str, Callable[[], Predicate]] = {
     "m-op-algebra-039": lambda: Order.price.between(50.75, 20.00),
     "m-op-algebra-040": lambda: vm.Customer.address.geo.elevation.between(12, 5),
     "m-op-algebra-041": lambda: vm.Customer.address.phones.any(vm.Phone.number.between(42, 7)),
+    "m-op-algebra-042": lambda: vm.Customer.address.geo.elevation.starts_with("1"),
+    "m-op-algebra-043": lambda: Contact.address.phones.expires.starts_with("2024"),
+    "m-op-algebra-044": lambda: Contact.address.phones.any(ContactPhone.expires.ends_with("-01")),
     "m-value-object-038": lambda: vm.Customer.address.city == 42,
     "m-inheritance-040": lambda: sm.Pet.narrow(sm.WildBoar),
     "m-inheritance-041": lambda: sm.Dog.bark_volume > 5,
@@ -228,6 +238,9 @@ REJECTED_TARGETS: dict[str, type[Entity]] = {
     "m-op-algebra-039": Order,
     "m-op-algebra-040": vm.Customer,
     "m-op-algebra-041": vm.Customer,
+    "m-op-algebra-042": vm.Customer,
+    "m-op-algebra-043": Contact,
+    "m-op-algebra-044": Contact,
     "m-value-object-038": vm.Customer,
     "m-inheritance-040": sm.Animal,
     "m-inheritance-041": sm.Animal,

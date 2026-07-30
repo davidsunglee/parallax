@@ -39,7 +39,8 @@ ATTRIBUTE_REFERENCE_TAGS = frozenset(
 
 # Every path-bearing tag exposes the queried class as the FIRST segment of
 # ``body["path"]``, which is why one extraction serves the whole set. The flat
-# nested comparisons / ranges / memberships / null-checks carry a ``Class.valueObject.attr``
+# nested comparisons / ranges / memberships / string predicates / null-checks carry a
+# ``Class.valueObject.attr``
 # path; ``nestedExists`` / ``nestedNotExists`` carry a ``Class.valueObject`` path
 # plus an OPTIONAL element-scoped ``where``. That ``where`` uses element-relative
 # refs (no leading class), so it names no queried class and is intentionally NOT
@@ -55,6 +56,11 @@ PATH_REFERENCE_TAGS = frozenset(
         "nestedBetween",
         "nestedIn",
         "nestedNotIn",
+        "nestedLike",
+        "nestedNotLike",
+        "nestedStartsWith",
+        "nestedEndsWith",
+        "nestedContains",
         "nestedIsNull",
         "nestedIsNotNull",
         "nestedExists",

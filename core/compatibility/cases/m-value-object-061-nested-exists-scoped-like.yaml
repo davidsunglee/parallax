@@ -1,0 +1,46 @@
+# valueObject to-many: a string pattern inside a scoped `where` is SAME-element — one
+# element must carry both the equality and the match (m-op-algebra elementPredicate +
+# nested string predicates, m-sql). Postgres golden only — a `where` carrying a non-`eq`
+# leaf is outside MariaDB's containment scope (m-dialect, "Scope of the containment
+# golden").
+#
+# nestedExists(Customer.address.phones, where: type = 'home' AND number like '555-%99')
+# matches only Linus (2), whose single element {home, 555-9999} carries both. The
+# pattern's INTERIOR `%` is what makes it a `like` rather than an affix form — no
+# startsWith / endsWith / contains can express a wildcard in the middle — and it passes
+# through unescaped.
+#
+# Ada (1) is the discriminating row: her `home` element's number is 555-1234, while the
+# number that matches the pattern (555-9999) sits on her `work` element, so the unscoped
+# AND of the two flat any-element predicates would match her and this scoped form does
+# not — the same contrast m-value-object-018 draws against -019, now with a pattern on
+# one side. Priya (10) is the trap: her non-array OBJECT `phones` is exactly
+# {type: home, number: '555-9999'}, which satisfies the whole compound; the array-type
+# guard collapses her to not-present, with the empty array (3), the null column (4), the
+# missing keys (5, 6) and the other non-array states (8, 9).
+#
+# Both element predicates lower against the SAME unnested alias t1, the structural signal
+# of same-element matching.
+model: models/customer.yaml
+tags: [m-value-object, m-op-algebra, m-sql, m-dialect, nested, json, to-many, exists, scoped, same-element, string, like, array-traversal, slice-snapshot-1, slice-managed-1]
+shape: read
+when:
+  targetEntity: Customer
+  operation:
+    nestedExists:
+      path: Customer.address.phones
+      where:
+        and:
+          operands:
+            - nestedEq: { path: type, value: home }
+            - nestedLike: { path: number, value: '555-%99' }
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.name from customer t0 where exists (select 1 from jsonb_array_elements(case when jsonb_typeof(jsonb_extract_path(t0.address, ?)) = ? then jsonb_extract_path(t0.address, ?) else cast(? as jsonb) end) t1 where jsonb_extract_path_text(t1.value, ?) = ? and jsonb_extract_path_text(t1.value, ?) like ?)
+      binds: [phones, 'array', phones, '[]', type, home, number, '555-%99']
+  referenceSql:
+    postgres: select id, name from customer where jsonb_typeof(address -> 'phones') = 'array' and exists (select 1 from jsonb_array_elements(address -> 'phones') e where e.value ->> 'type' = 'home' and e.value ->> 'number' like '555-%99')
+  rows:
+    - { id: 2, name: Linus }
+  roundTrips: 1

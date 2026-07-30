@@ -1,0 +1,20 @@
+# Negative (m-op-algebra non-string-member MUST, element scope): the same rule fires
+# inside a scoped `where`, on an element-relative path.
+#
+# The element scope is a second family of nodes over the same predicates, so a rule
+# implemented only on the path-scoped dispatcher would leave `nestedEndsWith` over a
+# `date` element member accepted here while rejected one line away. The path resolves
+# element-relatively against `Contact.address.phones` (no leading `Class.valueObject`),
+# and `expires` is the same `date` member m-op-algebra-043 aims at path-scoped — so
+# the pair differs in nothing but scope, which is exactly the asymmetry it pins.
+model: models/contact.yaml
+tags: [m-op-algebra, m-value-object, rejected, negative, nested, string, scoped, slice-snapshot-1, slice-managed-1]
+shape: rejected
+when:
+  operation:
+    nestedExists:
+      path: Contact.address.phones
+      where:
+        nestedEndsWith: { path: expires, value: '-01' }
+then:
+  rejectedRule: nested-string-predicate-non-string-member

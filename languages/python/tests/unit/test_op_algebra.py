@@ -147,6 +147,63 @@ def test_nested_negated_membership_keeps_its_own_tag_through_serialization() -> 
     assert next(iter(op_algebra.serialize(node))) == "nestedNotIn"
 
 
+def test_nested_string_predicates_round_trip_in_both_scopes() -> None:
+    # The five string tags are spelled identically in both scopes, so the single
+    # scope-flagged dispatcher parses them from one body table and one node class.
+    path_scoped: dict[str, Any] = {
+        "and": {
+            "operands": [
+                {"nestedLike": {"path": "Customer.address.city", "value": "Os%"}},
+                {"nestedNotLike": {"path": "Customer.address.city", "value": "B%"}},
+                {"nestedStartsWith": {"path": "Customer.address.street", "value": "1 "}},
+                {"nestedEndsWith": {"path": "Customer.address.street", "value": "Ave"}},
+                {
+                    "nestedContains": {
+                        "path": "Customer.address.geo.country",
+                        "value": "N",
+                        "caseInsensitive": True,
+                    }
+                },
+            ]
+        }
+    }
+    element_scoped: dict[str, Any] = {
+        "nestedExists": {
+            "path": "Customer.address.phones",
+            "where": {
+                "and": {
+                    "operands": [
+                        {"nestedLike": {"path": "number", "value": "555-%"}},
+                        {"nestedNotLike": {"path": "number", "value": "555-9999"}},
+                        {"nestedStartsWith": {"path": "type", "value": "ho"}},
+                        {"nestedEndsWith": {"path": "number", "value": "9999"}},
+                        {"nestedContains": {"path": "geo.country", "value": "N"}},
+                    ]
+                }
+            },
+        }
+    }
+    for doc in (path_scoped, element_scoped):
+        assert op_algebra.serialize(op_algebra.deserialize(doc)) == doc
+
+
+def test_nested_string_predicate_keeps_its_own_tag_and_omitted_case_flag() -> None:
+    # One `NestedStringMatch` class carries all five tags, so a lost `op` would
+    # silently serialize `nestedNotLike` back as `nestedLike` — the complement. The
+    # omitted `caseInsensitive` stays omitted and an explicit `false` round-trips,
+    # exactly as the scalar `StringMatch` does.
+    node = op_algebra.deserialize(
+        {"nestedNotLike": {"path": "Customer.address.city", "value": "B"}}
+    )
+    assert cast("op_algebra.NestedStringMatch", node).op == "nestedNotLike"
+    assert cast("op_algebra.NestedStringMatch", node).case_insensitive is None
+    assert next(iter(op_algebra.serialize(node))) == "nestedNotLike"
+    explicit: dict[str, Any] = {
+        "nestedLike": {"path": "Customer.address.city", "value": "B", "caseInsensitive": False}
+    }
+    assert op_algebra.serialize(op_algebra.deserialize(explicit)) == explicit
+
+
 def test_scoped_where_element_predicate_round_trips() -> None:
     # A nestedExists `where` is an element predicate: the nested* family over
     # ELEMENT-relative paths (`type`, `number` — no `Class.valueObject` prefix)
@@ -329,6 +386,10 @@ def test_a_code_outside_the_closed_query_set_cannot_be_raised() -> None:
                     }
                 },
                 "`direction` must be 'asc' or 'desc'",
+            ),
+            (
+                {"orderBy": {"operand": {"all": {}}, "keys": ["Order.sku"]}},
+                "each key must be a mapping",
             ),
             (
                 {
@@ -582,6 +643,29 @@ def test_a_code_outside_the_closed_query_set_cannot_be_raised() -> None:
             (
                 {"nestedNotIn": {"path": "Customer.address.city", "values": []}},
                 "`values` must be a non-empty list",
+            ),
+            (
+                {"nestedStartsWith": {"path": "Customer.address.city", "value": 42}},
+                "`value` must be a string",
+            ),
+            (
+                {
+                    "nestedContains": {
+                        "path": "Customer.address.city",
+                        "value": "a",
+                        "caseInsensitive": "yes",
+                    }
+                },
+                "`caseInsensitive` must be a boolean",
+            ),
+            (
+                {
+                    "nestedExists": {
+                        "path": "Customer.address.phones",
+                        "where": {"nestedLike": {"path": "Customer.address.city", "value": "Os%"}},
+                    }
+                },
+                "not a valid element-relative path",
             ),
         ],
     ),

@@ -35,6 +35,8 @@ cases pin, since decoding a Depot row with Customer's recursive descriptor would
 yield observably wrong keys.
 """
 
+import datetime as dt
+
 from parallax.core import (
     ONE_TO_MANY,
     Attr,
@@ -156,6 +158,7 @@ class ContactGeo(ValueObject):
 class ContactPhone(ValueObject):
     type: Attr[str | None]
     number: Attr[str | None]
+    expires: Attr[dt.date | None]
 
 
 class ContactAddress(ValueObject):

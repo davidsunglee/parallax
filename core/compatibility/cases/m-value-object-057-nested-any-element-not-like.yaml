@@ -1,0 +1,37 @@
+# valueObject to-many negated string match: nestedNotLike through a `many` segment keeps
+# the uniform ANY-ELEMENT reading — SOME element's member does not match — never "no
+# element's does" (m-op-algebra any-element, m-sql). Postgres golden only — a
+# non-equality element predicate is outside MariaDB's containment scope (m-dialect,
+# "Scope of the containment golden").
+#
+# nestedNotLike(Customer.address.phones.number, '555-9999') matches Ada (1), whose first
+# element is 555-1234, and Nils (7), whose only element is 555-0000. Linus (2) is the
+# discriminating row: his single element IS 555-9999, so he satisfies the any-element
+# reading nowhere and falls out — while the no-element reading (spelled
+# nestedNotExists(phones, where: nestedLike(number, '555-9999'))) would ADMIT every row
+# with no elements at all, which is a different question. The negation renders INFIX
+# (`not like`), the normalizer's fixed point for this operator, unlike the leading `not`
+# membership and presence tests normalize to.
+#
+# Omar (9) is the trap: his non-array scalar "555-0000" does not match the pattern, so
+# an unguarded traversal would wrongly admit him; the array-type guard gives him zero
+# elements, together with the JSON null (8), the object (10), the empty array (3), the
+# null column (4), and the missing keys (5, 6).
+model: models/customer.yaml
+tags: [m-value-object, m-op-algebra, m-sql, m-dialect, nested, json, to-many, any-element, string, notLike, array-traversal, slice-snapshot-1, slice-managed-1]
+shape: read
+when:
+  targetEntity: Customer
+  operation:
+    nestedNotLike: { path: Customer.address.phones.number, value: '555-9999' }
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.name from customer t0 where exists (select 1 from jsonb_array_elements(case when jsonb_typeof(jsonb_extract_path(t0.address, ?)) = ? then jsonb_extract_path(t0.address, ?) else cast(? as jsonb) end) t1 where jsonb_extract_path_text(t1.value, ?) not like ?)
+      binds: [phones, 'array', phones, '[]', number, '555-9999']
+  referenceSql:
+    postgres: select id, name from customer where jsonb_typeof(address -> 'phones') = 'array' and exists (select 1 from jsonb_array_elements(address -> 'phones') e where not (e.value ->> 'number' like '555-9999'))
+  rows:
+    - { id: 1, name: Ada }
+    - { id: 7, name: Nils }
+  roundTrips: 1

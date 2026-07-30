@@ -38,16 +38,17 @@ def test_real_prose_and_schema_vocabularies_match() -> None:
     assert check(_real_markdown(), _real_schema()) == []
 
 
-def test_real_prose_vocabulary_is_the_full_thirty_seven_rule_set() -> None:
+def test_real_prose_vocabulary_is_the_full_thirty_eight_rule_set() -> None:
     # A sanity floor: the parser found every bulleted group PLUS the
     # comma-separated Model-rules paragraph, not an accidentally-truncated
     # subset (a parsing-anchor regression would silently shrink this).
     prose = prose_rejected_rules(_real_markdown())
-    assert len(prose) == 37
+    assert len(prose) == 38
     assert "inheritance-temporal-axes-not-root-owned" in prose  # the residual-round rule
     assert "inheritance-optimistic-locking-not-root-owned" in prose  # the D-25 rule
     assert "nested-path-first-segment-not-value-object" in prose  # an Operation-rule bullet
     assert "between-bounds-inverted" in prose  # the bound-ordering Operation rule
+    assert "nested-string-predicate-non-string-member" in prose  # the non-string-member rule
     assert "subtype-write-sibling-attribute" in prose  # a Subtype-write-rule bullet
     assert "inheritance-missing-root" in prose  # a Model-rules paragraph entry
     assert "storage-layout-table-mapping-collision" in prose
@@ -57,10 +58,11 @@ def test_real_prose_vocabulary_is_the_full_thirty_seven_rule_set() -> None:
     assert "inheritance-materialization-key-collision" in prose
 
 
-def test_real_schema_enum_is_the_full_thirty_seven_rule_set() -> None:
+def test_real_schema_enum_is_the_full_thirty_eight_rule_set() -> None:
     rules = schema_rejected_rules(_real_schema())
-    assert len(rules) == 37
+    assert len(rules) == 38
     assert "between-bounds-inverted" in rules
+    assert "nested-string-predicate-non-string-member" in rules
     assert "storage-layout-table-mapping-collision" in rules
     assert "storage-layout-column-collision" in rules
     assert "storage-layout-table-boundary-collision" not in rules

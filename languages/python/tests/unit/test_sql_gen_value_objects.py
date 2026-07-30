@@ -137,6 +137,115 @@ def test_nested_range_and_negated_membership_lower_inside_a_scoped_where() -> No
     )
 
 
+@pytest.mark.parametrize(
+    ("tag", "value", "expected_fragment", "expected_pattern"),
+    [
+        ("nestedLike", "Os%", "like ?", "Os%"),
+        ("nestedNotLike", "Os%", "not like ?", "Os%"),
+        ("nestedStartsWith", "Os", "like ?", "Os%"),
+        ("nestedEndsWith", "lo", "like ?", "%lo"),
+        ("nestedContains", "sl", "like ?", "%sl%"),
+    ],
+)
+def test_nested_string_predicates_reuse_the_scalar_pattern_rules(
+    tag: oa.NestedStringOp, value: str, expected_fragment: str, expected_pattern: str
+) -> None:
+    # `nestedLike`/`nestedNotLike` bind the pattern verbatim while the affix forms
+    # derive it; the negation is INFIX (the normalizer's fixed point for `like`),
+    # unlike the leading `not` membership and presence tests take. No cast is applied
+    # — the leaf is a String member by the non-string-member rule.
+    compiled = compile_read(
+        oa.NestedStringMatch(op=tag, path="Customer.address.city", value=value),
+        CUSTOMER,
+        POSTGRES,
+        target(CUSTOMER, "Customer"),
+    )
+    assert compiled.statement.sql.endswith(
+        f"where jsonb_extract_path_text(t0.address, ?) {expected_fragment}"
+    )
+    assert compiled.statement.binds == ("city", expected_pattern)
+
+
+def test_a_nested_affix_pattern_escapes_only_when_the_literal_carries_a_wildcard() -> None:
+    # The `escape ?` clause and its second bind ride the escaping, not the affix form:
+    # a literal whose wildcards needed no escaping emits neither.
+    escaped = compile_read(
+        oa.NestedStringMatch(op="nestedContains", path="Customer.address.street", value="50%"),
+        CUSTOMER,
+        POSTGRES,
+        target(CUSTOMER, "Customer"),
+    )
+    assert escaped.statement.sql.endswith("like ? escape ?")
+    assert escaped.statement.binds == ("street", "%50\\%%", "\\")
+    plain = compile_read(
+        oa.NestedStringMatch(op="nestedContains", path="Customer.address.street", value="50"),
+        CUSTOMER,
+        POSTGRES,
+        target(CUSTOMER, "Customer"),
+    )
+    assert plain.statement.sql.endswith("like ?")
+    assert plain.statement.binds == ("street", "%50%")
+
+
+def test_a_case_insensitive_nested_string_predicate_folds_both_sides() -> None:
+    compiled = compile_read(
+        oa.NestedStringMatch(
+            op="nestedLike", path="Customer.address.city", value="OSLO", case_insensitive=True
+        ),
+        CUSTOMER,
+        POSTGRES,
+        target(CUSTOMER, "Customer"),
+    )
+    assert compiled.statement.sql.endswith(
+        "where lower(jsonb_extract_path_text(t0.address, ?)) like lower(?)"
+    )
+    assert compiled.statement.binds == ("city", "OSLO")
+
+
+def test_nested_string_predicates_lower_in_both_to_many_scopes() -> None:
+    # Any-element: one guarded unnest per flat predicate, the pattern on the element
+    # alias. Same-element: the pattern joins the equality on the SAME alias.
+    any_element = compile_read(
+        oa.NestedStringMatch(
+            op="nestedStartsWith", path="Customer.address.phones.number", value="555-1"
+        ),
+        CUSTOMER,
+        POSTGRES,
+        target(CUSTOMER, "Customer"),
+    )
+    assert any_element.statement.sql.endswith("where jsonb_extract_path_text(t1.value, ?) like ?)")
+    assert any_element.statement.binds == ("phones", "array", "phones", "[]", "number", "555-1%")
+    scoped = compile_read(
+        oa.NestedExists(
+            path="Customer.address.phones",
+            where=oa.And(
+                operands=(
+                    oa.NestedComparison(op="nestedEq", path="type", value="home"),
+                    oa.NestedStringMatch(op="nestedEndsWith", path="number", value="9999"),
+                )
+            ),
+        ),
+        CUSTOMER,
+        POSTGRES,
+        target(CUSTOMER, "Customer"),
+    )
+    assert scoped.statement.sql.count("jsonb_array_elements(") == 1
+    assert scoped.statement.sql.endswith(
+        "where jsonb_extract_path_text(t1.value, ?) = ? "
+        "and jsonb_extract_path_text(t1.value, ?) like ?)"
+    )
+    assert scoped.statement.binds == (
+        "phones",
+        "array",
+        "phones",
+        "[]",
+        "type",
+        "home",
+        "number",
+        "%9999",
+    )
+
+
 def test_malformed_value_object_paths() -> None:
     with pytest.raises(SqlGenError, match=r"needs Class\.valueObject\.attribute"):
         compile_read(
@@ -393,6 +502,9 @@ def test_nested_exists_scoped_where_composes_or_not_and_group() -> None:
         pytest.param(oa.Between(attr="Customer.name", lower="a", upper="b"), id="between"),
         pytest.param(oa.NullCheck(op="isNull", attr="Customer.name"), id="nullCheck"),
         pytest.param(oa.StringMatch(op="like", attr="Customer.name", value="a%"), id="stringMatch"),
+        pytest.param(
+            oa.StringMatch(op="startsWith", attr="Customer.name", value="a"), id="affixStringMatch"
+        ),
         pytest.param(oa.Membership(op="in", attr="Customer.name", values=("a",)), id="membership"),
         pytest.param(
             oa.Membership(op="notIn", attr="Customer.name", values=("a",)), id="notMembership"

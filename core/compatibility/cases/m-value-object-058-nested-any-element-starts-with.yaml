@@ -1,0 +1,35 @@
+# valueObject to-many affix match: nestedStartsWith through a `many` segment places the
+# trailing wildcard itself, so the authored value stays LITERAL text (m-op-algebra
+# wildcard rule + any-element, m-sql). Postgres golden only — a non-equality element
+# predicate is outside MariaDB's containment scope (m-dialect, "Scope of the containment
+# golden").
+#
+# nestedStartsWith(Customer.address.phones.type, 'ho') binds the derived pattern 'ho%'
+# and emits NO `escape` clause, because escaping changed nothing in the literal — the
+# paired contrast with m-value-object-055, whose literal carried a wildcard. Ada (1) and
+# Linus (2) each carry a `home` element. Priya (10) is the trap: her non-array OBJECT
+# `phones` is exactly `{type: home, number: '555-9999'}`, so an unguarded traversal
+# would match her and Postgres `jsonb_array_elements` would ERROR on it; the array-type
+# guard collapses her to zero elements, with the JSON null (8) and the scalar (9).
+#
+# The oracle expresses the affix semantics without a pattern at all — `left(..., 2)` —
+# so a mis-derived pattern shows up as a row difference rather than as two spellings of
+# the same mistake.
+model: models/customer.yaml
+tags: [m-value-object, m-op-algebra, m-sql, m-dialect, nested, json, to-many, any-element, string, startsWith, array-traversal, slice-snapshot-1, slice-managed-1]
+shape: read
+when:
+  targetEntity: Customer
+  operation:
+    nestedStartsWith: { path: Customer.address.phones.type, value: ho }
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.name from customer t0 where exists (select 1 from jsonb_array_elements(case when jsonb_typeof(jsonb_extract_path(t0.address, ?)) = ? then jsonb_extract_path(t0.address, ?) else cast(? as jsonb) end) t1 where jsonb_extract_path_text(t1.value, ?) like ?)
+      binds: [phones, 'array', phones, '[]', type, 'ho%']
+  referenceSql:
+    postgres: select id, name from customer where jsonb_typeof(address -> 'phones') = 'array' and exists (select 1 from jsonb_array_elements(address -> 'phones') e where left(e.value ->> 'type', 2) = 'ho')
+  rows:
+    - { id: 1, name: Ada }
+    - { id: 2, name: Linus }
+  roundTrips: 1

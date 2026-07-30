@@ -1002,6 +1002,13 @@ rules:
 - `nested-literal-type-mismatch` — a nested comparison / membership literal's type
   differs from the leaf attribute's declared neutral type (`m-op-algebra` typed
   literals).
+- `nested-string-predicate-non-string-member` — a nested string predicate
+  (`nestedLike` / `nestedNotLike` / `nestedStartsWith` / `nestedEndsWith` /
+  `nestedContains`, in either nested scope) resolves to a leaf whose declared neutral
+  type is not `String` (`m-op-algebra` non-string-member rule). Checked **before**
+  the typed-literal rule, so a `date` / `time` / `timestamp` / `uuid` / `bytes`
+  member — which carries the portable `string` literal and so satisfies the
+  typed-literal check — is named here rather than silently accepted.
 - `deep-fetch-value-object-segment` — a `deepFetch` path segment names a value
   object (`m-value-object` contract 4, `m-deep-fetch`).
 - `navigate-value-object-target` — a `navigate` / `exists` / `notExists` targets a

@@ -50,6 +50,8 @@ from parallax.core.op_algebra import (
     NestedNotExists,
     NestedNullCheck,
     NestedRange,
+    NestedStringMatch,
+    NestedStringOp,
     Not,
     NotExists,
     NullCheck,
@@ -126,6 +128,16 @@ _NESTED_CMP: dict[str, NestedComparisonOp] = {
     "ge": "nestedGte",
     "lt": "nestedLt",
     "le": "nestedLte",
+}
+# Each scalar string predicate's nested tag: one fluent method serves both, so the
+# same call spells the scalar node on an Attribute and the nested one on a Value
+# Object member path.
+_NESTED_STRINGS: dict[StringOp, NestedStringOp] = {
+    "like": "nestedLike",
+    "notLike": "nestedNotLike",
+    "startsWith": "nestedStartsWith",
+    "endsWith": "nestedEndsWith",
+    "contains": "nestedContains",
 }
 
 
@@ -329,14 +341,17 @@ class AttributeExpr:
         # omits `caseInsensitive` (None), a set flag emits `true`. It never
         # authors an explicit `false` — that only arises from deserializing a
         # document that spelled it out (round-trip fidelity lives in the serde).
-        return Predicate(
-            StringMatch(
-                op=op,
-                attr=str(self.ref),
-                value=value,
-                case_insensitive=True if case_insensitive else None,
+        flag = True if case_insensitive else None
+        if self._path:
+            return Predicate(
+                NestedStringMatch(
+                    op=_NESTED_STRINGS[op],
+                    path=self._dotted(),
+                    value=value,
+                    case_insensitive=flag,
+                )
             )
-        )
+        return Predicate(StringMatch(op=op, attr=str(self.ref), value=value, case_insensitive=flag))
 
     def like(self, value: str, *, case_insensitive: bool = False) -> Predicate:
         return self._string("like", value, case_insensitive)
@@ -498,6 +513,31 @@ class ElementAttributeExpr:
 
     def between(self, lower: Scalar, upper: Scalar) -> Predicate:
         return Predicate(NestedRange(path=self._dotted(), lower=lower, upper=upper))
+
+    def _string(self, op: StringOp, value: str, case_insensitive: bool) -> Predicate:
+        return Predicate(
+            NestedStringMatch(
+                op=_NESTED_STRINGS[op],
+                path=self._dotted(),
+                value=value,
+                case_insensitive=True if case_insensitive else None,
+            )
+        )
+
+    def like(self, value: str, *, case_insensitive: bool = False) -> Predicate:
+        return self._string("like", value, case_insensitive)
+
+    def not_like(self, value: str, *, case_insensitive: bool = False) -> Predicate:
+        return self._string("notLike", value, case_insensitive)
+
+    def starts_with(self, value: str, *, case_insensitive: bool = False) -> Predicate:
+        return self._string("startsWith", value, case_insensitive)
+
+    def ends_with(self, value: str, *, case_insensitive: bool = False) -> Predicate:
+        return self._string("endsWith", value, case_insensitive)
+
+    def contains(self, value: str, *, case_insensitive: bool = False) -> Predicate:
+        return self._string("contains", value, case_insensitive)
 
     def is_null(self) -> Predicate:
         return Predicate(NestedNullCheck(op="nestedIsNull", path=self._dotted()))

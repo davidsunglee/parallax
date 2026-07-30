@@ -1,0 +1,38 @@
+# valueObject to-many: an affix form inside a scoped `where` derives its pattern in the
+# element scope exactly as it does path-scoped (m-op-algebra elementPredicate + wildcard
+# rule, m-sql). Postgres golden only — a `where` carrying a non-`eq` leaf is outside
+# MariaDB's containment scope (m-dialect, "Scope of the containment golden").
+#
+# nestedExists(Customer.address.phones, where: type = 'home' AND number startsWith
+# '555-9') binds the derived '555-9%' with no `escape` clause and matches only Linus (2).
+# Ada (1) is the discriminating row: her `home` element is 555-1234 and her 555-9 number
+# rides a `work` element, so the unscoped AND of the two flat predicates would match her
+# while the same-element form does not.
+#
+# Priya (10) is the trap: her non-array OBJECT `phones` satisfies the whole compound
+# ({type: home, number: '555-9999'}); the array-type guard reads it as zero elements,
+# with the empty array (3), the null column (4), the missing keys (5, 6), and the other
+# non-array states (8, 9).
+model: models/customer.yaml
+tags: [m-value-object, m-op-algebra, m-sql, m-dialect, nested, json, to-many, exists, scoped, same-element, string, startsWith, array-traversal, slice-snapshot-1, slice-managed-1]
+shape: read
+when:
+  targetEntity: Customer
+  operation:
+    nestedExists:
+      path: Customer.address.phones
+      where:
+        and:
+          operands:
+            - nestedEq: { path: type, value: home }
+            - nestedStartsWith: { path: number, value: '555-9' }
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.name from customer t0 where exists (select 1 from jsonb_array_elements(case when jsonb_typeof(jsonb_extract_path(t0.address, ?)) = ? then jsonb_extract_path(t0.address, ?) else cast(? as jsonb) end) t1 where jsonb_extract_path_text(t1.value, ?) = ? and jsonb_extract_path_text(t1.value, ?) like ?)
+      binds: [phones, 'array', phones, '[]', type, home, number, '555-9%']
+  referenceSql:
+    postgres: select id, name from customer where jsonb_typeof(address -> 'phones') = 'array' and exists (select 1 from jsonb_array_elements(address -> 'phones') e where e.value ->> 'type' = 'home' and left(e.value ->> 'number', 5) = '555-9')
+  rows:
+    - { id: 2, name: Linus }
+  roundTrips: 1
