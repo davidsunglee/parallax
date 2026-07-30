@@ -437,10 +437,11 @@ mutations, exceptions, or exports.
   semantics, but one element must satisfy the complete operator:
   `nestedBetween` is a dedicated canonical node and never lowers to two
   independent flat comparisons that different elements could satisfy.
-  Top-level and nested `between(lower, upper)` validate both literals against
-  the Attribute's neutral type and compare the two bounds as the Predicate is
-  built into a Statement: a `lower` strictly greater than its `upper` names an
-  empty range and raises
+  A nested `between(lower, upper)` validates both bounds against the leaf's
+  declared neutral type, exactly as every other nested literal is validated.
+  Top-level and nested `between` alike then compare the two bounds as the
+  Predicate is built into a Statement: a `lower` strictly greater than its
+  `upper` names an empty range and raises
   `OperationRejectedError(between-bounds-inverted)` rather than compiling to a
   `BETWEEN` that silently matches nothing. The comparison is by literal kind —
   two numbers or two strings, skipped for a mixed-kind or null pair — and equal

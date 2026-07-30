@@ -999,9 +999,9 @@ rules:
   no value object declared on the queried entity (`m-op-algebra`).
 - `nested-path-unknown-member` — an intermediate segment names no declared nested
   value object, or the leaf names no declared attribute (`m-op-algebra`).
-- `nested-literal-type-mismatch` — a nested comparison / membership literal's type
-  differs from the leaf attribute's declared neutral type (`m-op-algebra` typed
-  literals).
+- `nested-literal-type-mismatch` — a nested comparison / range / membership
+  literal's type differs from the leaf attribute's declared neutral type
+  (`m-op-algebra` typed literals).
 - `nested-string-predicate-non-string-member` — a nested string predicate
   (`nestedLike` / `nestedNotLike` / `nestedStartsWith` / `nestedEndsWith` /
   `nestedContains`, in either nested scope) resolves to a leaf whose declared neutral
