@@ -25,6 +25,7 @@ from parallax.core import (
     Entity,
     EntityDefinitionError,
     MetamodelStateError,
+    QueryDefinitionError,
     Rel,
     TxTemporal,
     asc,
@@ -466,8 +467,13 @@ def test_only_an_explicit_direction_term_can_choose_a_null_placement() -> None:
 
 
 def test_a_null_placement_is_single_shot_on_an_ordering_term() -> None:
-    with pytest.raises(ValueError, match="single-shot"):
+    # A declaration term is not a query construct, so its rejection stays a plain
+    # ValueError rather than joining the query-definition family an operation Sort
+    # Key's identical single-shot rule raises.
+    with pytest.raises(ValueError, match="single-shot") as caught:
         desc("id").nulls_first().nulls_last()
+    assert type(caught.value) is ValueError
+    assert not isinstance(caught.value, QueryDefinitionError)
 
 
 def test_a_one_to_one_join_names_members_by_their_python_spelling() -> None:

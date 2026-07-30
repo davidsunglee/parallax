@@ -33,8 +33,11 @@ and `attribute` on a declaration — because the spelling tracks a scoping
 difference the placement field does not change. They also normalize differently,
 and deliberately: an operation Sort Key preserves omitted-versus-explicit `last`
 through canonical round-trip, while the Metamodel term normalizes omission to
-Nulls Last at the accepted boundary and canonical descriptor form omits it again,
-so a declaration cannot spell the default at all.
+Nulls Last at the accepted boundary and canonical descriptor form omits a `nulls`
+equal to the default again on export. A declaration may therefore spell `last`
+explicitly, in the schema and through the language frontends alike; what canonical
+descriptor form cannot preserve is the distinction between that spelling and
+omission.
 
 The contract change lands atomically across the Metamodel and operation
 schemas, specifications, compatibility cases, dialect renderers, and claiming

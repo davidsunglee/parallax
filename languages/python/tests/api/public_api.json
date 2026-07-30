@@ -25,6 +25,7 @@
     "Pin",
     "Predicate",
     "ProvenanceError",
+    "QueryDefinitionError",
     "READ_ONLY",
     "READ_WRITE",
     "Rel",

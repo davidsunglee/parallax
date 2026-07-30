@@ -67,7 +67,7 @@ from parallax.core.entity import (
     narrowed,
     rel,
 )
-from parallax.core.op_algebra import OperationRejectedError
+from parallax.core.op_algebra import OperationRejectedError, QueryDefinitionError
 from parallax.core.temporal_read import (
     LATEST,
     TX_TIME,
@@ -111,6 +111,7 @@ __all__ = [
     "Pin",
     "Predicate",
     "ProvenanceError",
+    "QueryDefinitionError",
     "Rel",
     "RelationshipPath",
     "Sequence",

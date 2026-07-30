@@ -9,6 +9,7 @@ SQL lowering lives above it in ``m-sql``.
 from __future__ import annotations
 
 from parallax.core.op_algebra.nodes import (
+    QUERY_DEFINITION_CODES,
     All,
     And,
     AsOf,
@@ -45,6 +46,7 @@ from parallax.core.op_algebra.nodes import (
     OrderKey,
     PathRootNarrow,
     PathSegment,
+    QueryDefinitionError,
     Scalar,
     StringMatch,
     StringOp,
@@ -57,6 +59,7 @@ from parallax.core.op_algebra.validate import (
 )
 
 __all__ = [
+    "QUERY_DEFINITION_CODES",
     "All",
     "And",
     "AsOf",
@@ -95,6 +98,7 @@ __all__ = [
     "OrderKey",
     "PathRootNarrow",
     "PathSegment",
+    "QueryDefinitionError",
     "Scalar",
     "StringMatch",
     "StringOp",

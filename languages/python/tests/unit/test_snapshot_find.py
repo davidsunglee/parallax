@@ -174,6 +174,49 @@ def test_find_back_reference_level_issues_no_additional_statement() -> None:
     assert _kid(item, "order") is result.nodes[0]
 
 
+@pytest.mark.parametrize(
+    ("relationship", "term"),
+    [
+        ("itemsByShipDate", "t0.shipped_on asc"),
+        ("notesDescNullsLast", "t0.resolved_on desc nulls last"),
+        ("notesAscNullsFirst", "t0.resolved_on asc nulls first"),
+        ("notesDescNullsFirst", "t0.resolved_on desc"),
+    ],
+)
+def test_find_carries_a_declared_null_placement_into_child_level_sql(
+    relationship: str, term: str
+) -> None:
+    # A placement authored on a relationship declaration has to survive the whole
+    # executor path — descriptor ingestion, the accepted model, the deep-fetch
+    # order-key rewrite, and the m-dialect seam — before it reaches the child
+    # level's own ORDER BY. Each pairing renders differently on Postgres because
+    # the dialect compensates only where its native placement is wrong: an
+    # unauthored placement and `desc`/`first` already hold, so both render plain.
+    root: list[Row] = [
+        {
+            "id": 1,
+            "name": "Ada",
+            "sku": "A",
+            "qty": 1,
+            "price": Decimal("1"),
+            "active": True,
+            "ordered_on": dt.date(2024, 1, 1),
+        }
+    ]
+    port = QueuePort([root, []])
+    op = deserialize(
+        {
+            "deepFetch": {
+                "operand": {"eq": {"attr": "Order.id", "value": 1}},
+                "paths": [{"segments": [{"rel": f"Order.{relationship}"}]}],
+            }
+        }
+    )
+    handle.find(op, ORDERS, POSTGRES, "Order", port)
+    child_sql, _binds = port.executed[1]
+    assert child_sql.endswith(f" order by {term}")
+
+
 def test_find_materializes_family_variant_on_child_level_rows() -> None:
     port = QueuePort(
         [
