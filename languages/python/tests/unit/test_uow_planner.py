@@ -3,8 +3,9 @@
 Exercises the three planner stages independently of the compile/run sweeps and of
 any SQL lowering (the planner emits a neutral plan, never DML): same-transaction
 coalescing (insert-then-update in place per temporal flavor; insert-then-delete
-cancellation), foreign-key ordering over the descriptor graph, empty-change-set
-elision, object identity, and the neutral observation binding.
+cancellation), foreign-key ordering over the descriptor graph and the readless
+predicate-write barriers that partition it, empty-change-set elision, object
+identity, and the neutral observation binding.
 """
 
 from __future__ import annotations
@@ -30,6 +31,7 @@ from parallax.core.unit_work import (
     KeyedWrite,
     Observation,
     PredicateWrite,
+    WriteAssignment,
     WriteTarget,
     object_key,
     plan_flush,
@@ -236,6 +238,81 @@ def test_an_instruction_naming_an_undeclared_entity_ranks_first_and_passes_throu
     ]
     plan = plan_flush(buffer, {}, None, _ORDERS)
     assert _entities(plan) == ["Gadget", "OrderItem", "Gadget"]
+
+
+# --------------------------------------------------------------------------- #
+# Readless predicate-write ordering barriers.                                  #
+# --------------------------------------------------------------------------- #
+def _predicate_update(entity: str) -> PredicateWrite:
+    return PredicateWrite(
+        "update",
+        WriteTarget(entity, op_algebra.Comparison("eq", f"{entity}.id", 1)),
+        assignments=(WriteAssignment(f"{entity}.name", "Z"),),
+    )
+
+
+def _shape(plan: FlushPlan) -> list[tuple[str, str]]:
+    out: list[tuple[str, str]] = []
+    for planned in plan.writes:
+        instruction = planned.instruction
+        entity = (
+            instruction.entity if isinstance(instruction, KeyedWrite) else instruction.target.entity
+        )
+        out.append((instruction.mutation, entity))
+    return out
+
+
+def test_no_keyed_write_crosses_a_readless_predicate_write_in_either_direction() -> None:
+    # The bucket sort alone would hoist the trailing insert to the front and
+    # push the leading delete to the back, moving BOTH across the predicate
+    # write — a readless predicate does not reveal which rows it matches, so
+    # either move could change what it writes. The barrier pins all three.
+    buffer = [
+        KeyedWrite("delete", "OrderItem", ({"id": 10},)),
+        _predicate_update("Order"),
+        KeyedWrite("insert", "Order", ({"id": 2},)),
+    ]
+    plan = plan_flush(buffer, {}, None, _ORDERS)
+    assert _shape(plan) == [
+        ("delete", "OrderItem"),
+        ("update", "Order"),
+        ("insert", "Order"),
+    ]
+
+
+def test_fk_ordering_still_applies_independently_within_each_barrier_region() -> None:
+    # Ordering is unconstrained WITHIN a region: each side is bucketed and
+    # FK-sorted on its own (parents before children), and the two sorts never
+    # see each other's items.
+    buffer = [
+        KeyedWrite("insert", "OrderItem", ({"id": 10},)),
+        KeyedWrite("insert", "Order", ({"id": 1},)),
+        _predicate_update("OrderTag"),
+        KeyedWrite("insert", "OrderTag", ({"id": 1000},)),
+        KeyedWrite("insert", "OrderStatus", ({"id": 100},)),
+    ]
+    plan = plan_flush(buffer, {}, None, _ORDERS)
+    assert _entities(plan) == ["Order", "OrderItem", "OrderTag", "OrderStatus", "OrderTag"]
+
+
+def test_two_readless_predicate_writes_partition_the_buffer_into_three_regions() -> None:
+    buffer = [
+        KeyedWrite("delete", "Order", ({"id": 1},)),
+        _predicate_update("Order"),
+        KeyedWrite("delete", "OrderItem", ({"id": 10},)),
+        KeyedWrite("insert", "Order", ({"id": 2},)),
+        _predicate_update("OrderItem"),
+        KeyedWrite("insert", "OrderItem", ({"id": 11},)),
+    ]
+    plan = plan_flush(buffer, {}, None, _ORDERS)
+    assert _shape(plan) == [
+        ("delete", "Order"),
+        ("update", "Order"),
+        ("insert", "Order"),
+        ("delete", "OrderItem"),
+        ("update", "OrderItem"),
+        ("insert", "OrderItem"),
+    ]
 
 
 # --------------------------------------------------------------------------- #

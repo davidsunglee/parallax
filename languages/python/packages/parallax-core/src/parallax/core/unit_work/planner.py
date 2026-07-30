@@ -35,8 +35,12 @@ The stages, in order (``m-unit-work`` "Same-transaction write coalescing" /
   instruction or an :class:`AtomicUnit` boundary.
 - **FK-order** — a topological order over the declared foreign-key graph:
   inserts parent-first, deletes child-first, updates between (the canonical
-  INSERT -> UPDATE -> DELETE flush order). An :class:`AtomicUnit` moves as ONE
-  block (ranked by its own target entity), its internal row order untouched.
+  INSERT -> UPDATE -> DELETE flush order). A readless :class:`~parallax.core.
+  unit_work.PredicateWrite` is a hard BARRIER: it keeps its authored position
+  and partitions the sequence into regions ordered independently, so no write
+  crosses it in either direction. An :class:`AtomicUnit` moves as ONE block
+  within its region (ranked by its own target entity), its internal row order
+  untouched.
 - **elide** — a keyed update whose effective change set is empty (a row carrying
   only its primary key) emits no instruction; a net-zero coalescing chain
   (insert-then-delete) already emitted nothing in coalesce.
@@ -58,7 +62,7 @@ from parallax.core.metamodel import (
     Metamodel,
     PrimaryKey,
 )
-from parallax.core.unit_work.instructions import KeyedWrite, WriteInstruction
+from parallax.core.unit_work.instructions import KeyedWrite, PredicateWrite, WriteInstruction
 
 __all__ = [
     "AtomicUnit",
@@ -536,6 +540,16 @@ def _fk_order(items: Sequence[BufferItem], targets: _Targets) -> list[WriteInstr
     """Order writes so a parent row inserts before a child that references it and
     deletes after: inserts parent-first, deletes child-first, updates between.
 
+    A READLESS :class:`~parallax.core.unit_work.PredicateWrite` is an ORDERING
+    BARRIER: it stays at its authored position and partitions the pending
+    sequence into independently reorderable REGIONS, with the bucket sort below
+    applied WITHIN each region alone. Nothing crosses it in either direction.
+    Unlike a keyed or materialized write, a readless predicate does not reveal
+    which rows it touches, so moving another write across it could change which
+    rows it matches — a reordering the planner cannot prove safe. The barrier is
+    private planning structure: it produces no group, wrapper, or flag in the
+    result, only a position nothing may pass.
+
     An :class:`AtomicUnit` participates as ONE pseudo-instruction — ranked and
     bucketed by its own first member write (every member shares the SAME
     mutation and target entity, since a predicate write's materialization is
@@ -555,12 +569,25 @@ def _fk_order(items: Sequence[BufferItem], targets: _Targets) -> list[WriteInstr
     def mutation(item: BufferItem) -> str:
         return representative(item).mutation
 
-    inserts = [i for i in items if mutation(i) in _INSERT_VERBS]
-    updates = [i for i in items if mutation(i) in _UPDATE_VERBS]
-    deletes = [i for i in items if mutation(i) in _DELETE_VERBS]
-    inserts.sort(key=rank)  # ascending rank: referenced entities (parents) first
-    deletes.sort(key=lambda i: -rank(i))  # descending rank: referencing entities (children) first
-    ordered: list[BufferItem] = [*inserts, *updates, *deletes]
+    def order_region(region: Sequence[BufferItem]) -> list[BufferItem]:
+        inserts = [i for i in region if mutation(i) in _INSERT_VERBS]
+        updates = [i for i in region if mutation(i) in _UPDATE_VERBS]
+        deletes = [i for i in region if mutation(i) in _DELETE_VERBS]
+        inserts.sort(key=rank)  # ascending rank: referenced entities (parents) first
+        # descending rank: referencing entities (children) first
+        deletes.sort(key=lambda i: -rank(i))
+        return [*inserts, *updates, *deletes]
+
+    ordered: list[BufferItem] = []
+    region: list[BufferItem] = []
+    for item in items:
+        if isinstance(item, PredicateWrite):
+            ordered.extend(order_region(region))
+            ordered.append(item)
+            region = []
+        else:
+            region.append(item)
+    ordered.extend(order_region(region))
     return [
         write
         for item in ordered

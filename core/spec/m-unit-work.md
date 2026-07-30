@@ -96,6 +96,15 @@ wherever possible:
 - Operations are **ordered** so that a parent row is inserted before a child
   that references it (and deleted after), honoring foreign-key constraints.
 
+Ordering is otherwise **unconstrained**, with one exception: a **readless
+predicate write** (`m-batch-write`) is a hard **ordering barrier**. It keeps its
+authored position and partitions the buffer into independently reorderable
+**regions**; collapse and foreign-key ordering apply within a region alone, and
+no write crosses the barrier in either direction. A readless predicate does not
+reveal which rows it matches, so moving a write across it could change what it
+writes. The barrier is planning structure only — it produces no group, wrapper,
+or flag in the flush, just a position nothing passes.
+
 ## Write instruction vocabulary
 
 Every write a unit of work buffers — from any frontend, keyed or predicate-selected

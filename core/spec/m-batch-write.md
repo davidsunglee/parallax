@@ -92,6 +92,26 @@ and succeeds (`m-opt-lock`). This is categorically distinct from the zero-row
 that error fires when a row the caller **did** match and observe was concurrently
 changed underneath it — matching nothing is never that.
 
+### A readless predicate write is an ordering barrier
+
+A readless predicate write **MUST** keep its authored position in the flush. It
+partitions the buffered sequence into **regions**: the writes before it and the
+writes after it. Batching and dependency ordering (`m-unit-work`) apply freely
+**within** each region — order there is unconstrained, so the collapse and
+foreign-key rules operate exactly as they otherwise would — but **no write may
+cross the barrier in either direction**.
+
+Unlike a keyed or materialized write, a readless predicate never reveals which
+rows it touches: its read/write set is whatever the predicate matches at
+execution time. Moving another write across it could therefore change which rows
+it matches, and so change what the transaction wrote. Treating the whole buffer
+as globally reorderable could produce larger batches, but only by assuming a
+non-overlap no implementation can prove.
+
+The barrier is **planning structure only**. It introduces no group, wrapper,
+flag, or identifier into the emitted result; the sole observable is that the
+emitted statement order never carries a write past a readless predicate write.
+
 ## What the suite pins down
 
 The existing `m-batch-write-001`–`-004` cases prove only **buffered tracked-row
