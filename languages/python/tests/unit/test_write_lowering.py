@@ -28,6 +28,7 @@ from collections.abc import Mapping
 
 import pytest
 
+from _support.clock_probes import inert_instant
 from parallax.conformance import models
 from parallax.core import inheritance, opt_lock, storage_layout
 from parallax.core import op_algebra as oa
@@ -73,7 +74,6 @@ def _lower(
     observation: Observation | None = None,
     dialect: Dialect = POSTGRES,
     concurrency: Concurrency = "locking",
-    tx_instant: str | None = None,
 ) -> list[Statement]:
     model = models.accepted_model(meta)
     return [
@@ -83,7 +83,7 @@ def _lower(
             model,
             dialect,
             concurrency,
-            tx_instant,
+            inert_instant(),
         )
     ]
 
@@ -96,11 +96,12 @@ def _flush_and_lower(
     observations: Mapping[ObjectKey, Observation] | None = None,
 ) -> list[Statement]:
     model = models.accepted_model(meta)
-    plan = plan_flush(buffer, observations or {}, None, model)
+    instant = inert_instant()
+    plan = plan_flush(buffer, observations or {}, instant, model)
     return [
         lowered.statement
         for planned in plan.writes
-        for lowered in lower_write(planned, model, POSTGRES, concurrency)
+        for lowered in lower_write(planned, model, POSTGRES, concurrency, instant)
     ]
 
 
@@ -359,8 +360,8 @@ def test_versioned_delete_shortfall_classifies_by_gate_not_by_mutation() -> None
         instruction=delete, observation=Observation(version=1), expected_affected=1
     )
     model = models.accepted_model(ACCOUNT)
-    locking = lower_write(planned, model, POSTGRES, "locking")[0]
-    optimistic = lower_write(planned, model, POSTGRES, "optimistic")[0]
+    locking = lower_write(planned, model, POSTGRES, "locking", inert_instant())[0]
+    optimistic = lower_write(planned, model, POSTGRES, "optimistic", inert_instant())[0]
     assert locking.stale_error is True
     assert optimistic.stale_error is False
 

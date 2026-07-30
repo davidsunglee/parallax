@@ -64,6 +64,7 @@ from parallax.core.unit_work import (
     ObjectKey,
     Observation,
     PredicateWrite,
+    TransactionInstant,
     WriteAssignment,
     WriteRejectedError,
     instructions,
@@ -690,6 +691,17 @@ _LOWERING_ERRORS: Final[tuple[type[Exception], ...]] = (
 # unit), so a fixed, deterministic instant stands in (`m-txtime-write` / ADR 0010:
 # "a non-temporal entry's clock value is inert, pick something deterministic").
 _INERT_CLOCK_INSTANT: Final[str] = "1970-01-01T00:00:00+00:00"
+
+
+def _pinned_instant(tx_instant: str) -> TransactionInstant:
+    """The lazy Transaction Instant a pure lowering runs at.
+
+    The compile lane has no unit of work to own one, so it pins the entry's own
+    ``at`` through the SAME ``FixedClock`` the run lane hands ``db.transact`` —
+    the two lanes therefore capture the identical literal, and an entry whose
+    lowering needs no Transaction-Time boundary captures nothing at all.
+    """
+    return TransactionInstant(FixedClock(dt.datetime.fromisoformat(tx_instant)))
 
 
 class _RollbackStep(Exception):
@@ -1427,10 +1439,11 @@ def _lower_resolved(
         if key is not None and observation is not None
     }
     model = case_model(meta)
+    instant = _pinned_instant(tx_instant)
     plan = plan_flush(
         buffer,
         observations,
-        tx_instant,
+        instant,
         model,
         collapse=batch_write.collapses,
         collapse_group=collapse_group_key,
@@ -1439,7 +1452,7 @@ def _lower_resolved(
     for planned in plan.writes:
         statements.extend(
             lowered.statement
-            for lowered in lower_write(planned, model, dialect, concurrency, tx_instant)
+            for lowered in lower_write(planned, model, dialect, concurrency, instant)
         )
     _check_statement_count_consistency(entries, len(statements))
     return tuple(statements)
@@ -1492,10 +1505,13 @@ def _lower_predicate_write_step(
     assert isinstance(instruction, PredicateWrite)  # a predicate-shaped step always builds this
     model = case_model(meta)
     instructions.validate_instruction(_decoded_predicate_write(instruction, meta, model), model)
+    # A readless predicate write declares no Transaction-Time boundary, so the
+    # inert instant it carries is never captured (ADR 0010).
+    instant = _pinned_instant(_INERT_CLOCK_INSTANT)
     plan = plan_flush(
         [instruction],
         {},
-        None,
+        instant,
         model,
         collapse=batch_write.collapses,
         collapse_group=collapse_group_key,
@@ -1503,7 +1519,7 @@ def _lower_predicate_write_step(
     statements = [
         lowered.statement
         for planned in plan.writes
-        for lowered in lower_write(planned, model, dialect, concurrency, None)
+        for lowered in lower_write(planned, model, dialect, concurrency, instant)
     ]
     assert len(statements) == 1  # a readless predicate write is always exactly one statement
     return statements[0]
@@ -3484,12 +3500,13 @@ def _lower_conflict_write(
         key = object_key(instruction, model)
         if key is not None:
             observations[key] = observation
-    plan = plan_flush([instruction], observations, _INERT_CLOCK_INSTANT, model)
+    instant = _pinned_instant(_INERT_CLOCK_INSTANT)
+    plan = plan_flush([instruction], observations, instant, model)
     statements: list[Statement] = []
     for planned in plan.writes:
         statements.extend(
             lowered.statement
-            for lowered in lower_write(planned, model, dialect, concurrency, _INERT_CLOCK_INSTANT)
+            for lowered in lower_write(planned, model, dialect, concurrency, instant)
         )
     return tuple(statements)
 
@@ -3604,11 +3621,21 @@ def _run_conflict_close(
     row = dict(write_row)
     observed_valid_end = cast("str | None", row.pop("valid_end", None))
     model = case_model(meta)
+    # The standalone close is lowered outside any unit of work, so it is handed
+    # its own Transaction Instant over the SAME clock the transaction below runs
+    # on — the two can never derive different instants from one `at`.
+    clock = FixedClock(normalize_instant(dt.datetime.fromisoformat(at)))
     lowered = handle.lower_temporal_close(
-        row, target, model, dialect, concurrency, at, observed_tx_start, observed_valid_end
+        row,
+        target,
+        model,
+        dialect,
+        concurrency,
+        TransactionInstant(clock),
+        observed_tx_start,
+        observed_valid_end,
     )
-    instant = normalize_instant(dt.datetime.fromisoformat(at))
-    database = handle.Database(port, model, dialect=dialect, clock=FixedClock(instant))
+    database = handle.Database(port, model, dialect=dialect, clock=clock)
 
     def body(tx: handle.Transaction) -> int:
         # The neutral connection seam.

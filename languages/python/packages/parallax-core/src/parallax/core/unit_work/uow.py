@@ -28,7 +28,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 from parallax.core.metamodel import Metamodel
-from parallax.core.unit_work.clock import Clock, instant_literal
+from parallax.core.unit_work.clock import Clock, TransactionInstant
 from parallax.core.unit_work.instructions import WriteInstruction
 from parallax.core.unit_work.planner import (
     AtomicUnit,
@@ -145,7 +145,11 @@ class UnitOfWork:
         self._frame_depth = 0
         self._rollback_only = False
         self._rollback_cause: BaseException | None = None
-        self._transaction_instant: str | None = None
+        # One attempt, one lazy instant: constructing it reads no clock, and
+        # every flush this scope plans carries the SAME holder, so all
+        # timestamp-requiring work in the attempt shares one captured value
+        # while work that needs none never captures at all (ADR 0010).
+        self._transaction_instant = TransactionInstant(clock)
         self._closed = False
 
     # --- caller surface --------------------------------------------------- #
@@ -190,7 +194,7 @@ class UnitOfWork:
         plan = plan_flush(
             tuple(self._buffer),
             self._observations,
-            self._transaction_instant_literal(),
+            self._transaction_instant,
             self.meta,
             collapse=self._collapse_policy,
             collapse_group=self._collapse_group,
@@ -215,13 +219,6 @@ class UnitOfWork:
         return self._frame_depth > 0
 
     # --- internals -------------------------------------------------------- #
-    def _transaction_instant_literal(self) -> str:
-        # One Transaction-Time instant per transaction (Reladomo's per-transaction
-        # timestamp): captured once from the Clock, shared by every flush.
-        if self._transaction_instant is None:
-            self._transaction_instant = instant_literal(self.clock.now())
-        return self._transaction_instant
-
     def _ensure_open(self) -> None:
         if self._closed:
             raise EscapedTransactionError(

@@ -1,7 +1,7 @@
 """The pure flush planner (m-unit-work).
 
 Given a unit of work's buffered write instructions, the observations it recorded,
-the Clock-supplied Transaction-Time instant, and the metamodel, :func:`plan_flush`
+the attempt's lazy Transaction Instant, and the metamodel, :func:`plan_flush`
 produces a **neutral, execution-ordered intermediate plan** — the coalesced,
 collapsed, FK-ordered, elision-applied sequence of write instructions with each
 keyed instruction's bound observation attached. It is a **pure** function of its
@@ -62,6 +62,7 @@ from parallax.core.metamodel import (
     Metamodel,
     PrimaryKey,
 )
+from parallax.core.unit_work.clock import TransactionInstant
 from parallax.core.unit_work.instructions import KeyedWrite, PredicateWrite, WriteInstruction
 
 __all__ = [
@@ -273,21 +274,25 @@ class FlushPlan:
     ``writes`` is the coalesced, collapsed, FK-ordered, elision-applied
     sequence — always FLAT (an :class:`AtomicUnit` never survives past
     FK-ordering; its member writes are inlined, adjacent, in their own
-    resolved-row order). ``tx_instant`` is the Clock-supplied Transaction-Time
-    instant carried as flush **context** — never an instruction field — that
-    the composition layer binds as ``in_z`` when it lowers a temporal write.
-    The composition layer lowers this plan to DML SQL through ``m-sql`` /
-    ``m-dialect``; this scope neither takes a dialect nor emits SQL.
+    resolved-row order). ``tx_instant`` is the attempt's lazy
+    :class:`~parallax.core.unit_work.TransactionInstant`, carried as flush
+    **context** — never an instruction field — which the composition layer binds
+    as ``in_z`` when it lowers a temporal write. It is always present and never
+    consulted here: a plan whose surviving writes need no Transaction-Time
+    boundary leaves it uncaptured, so an empty or fully coalesced-away flush
+    reads no clock (ADR 0010). The composition layer lowers this plan to DML SQL
+    through ``m-sql`` / ``m-dialect``; this scope neither takes a dialect nor
+    emits SQL.
     """
 
-    writes: tuple[PlannedWrite, ...] = ()
-    tx_instant: str | None = None
+    writes: tuple[PlannedWrite, ...]
+    tx_instant: TransactionInstant
 
 
 def plan_flush(
     buffer: Sequence[BufferItem],
     observations: Mapping[ObjectKey, Observation],
-    tx_instant: str | None,
+    tx_instant: TransactionInstant,
     model: Metamodel,
     *,
     collapse: CollapsePolicy | None = None,
@@ -298,7 +303,9 @@ def plan_flush(
 
     Pure. Returns the neutral :class:`FlushPlan` the composition layer lowers to
     DML; this function renders no SQL and takes no dialect (the ``m-unit-work``
-    seam is DML-neutral by DAG design). ``collapse`` is the injected
+    seam is DML-neutral by DAG design). ``tx_instant`` is threaded onto the
+    result untouched — planning never captures it, so cancellation and elision
+    decide whether a clock is read at all. ``collapse`` is the injected
     ``m-batch-write`` vocabulary (omitted: the collapse stage is a no-op) and
     ``collapse_group`` the injected physical-shape grouping key a run's rows must
     share (omitted: rows group by entity, mutation, and Valid-Time bounds alone).

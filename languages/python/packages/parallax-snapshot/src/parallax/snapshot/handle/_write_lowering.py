@@ -34,6 +34,7 @@ from parallax.core.unit_work import (
     Observation,
     PlannedWrite,
     PredicateWrite,
+    TransactionInstant,
 )
 from parallax.snapshot.handle._family import (
     axis_columns,
@@ -83,7 +84,7 @@ def lower_write(
     meta: Metamodel,
     dialect: Dialect,
     concurrency: Concurrency,
-    tx_instant: str | None = None,
+    tx_instant: TransactionInstant,
 ) -> list[LoweredStatement]:
     """Lower one planned write to its ordered DML statements (m-sql write DML).
 
@@ -93,10 +94,12 @@ def lower_write(
     participation mode (m-opt-lock: whether an observation-requiring write's gate —
     a versioned UPDATE's or DELETE's version gate, a temporal close's observed
     Transaction-Time gate — is emitted at all).
-    ``tx_instant`` is the flush's Clock-supplied Transaction-Time instant
-    (``FlushPlan.tx_instant``) — REQUIRED for a temporal write (bound as the close's
-    new ``out_z`` and every chained row's fresh ``in_z``), unused by the non-temporal
-    forms.
+    ``tx_instant`` is the attempt's lazy Transaction Instant
+    (``FlushPlan.tx_instant``). Only a temporal write consults it, binding the
+    close's new ``out_z`` and every chained row's fresh ``in_z``; the
+    non-temporal forms leave it uncaptured, which is how a flush that declares no
+    Transaction-Time boundary completes without reading the Clock Strategy at all
+    (ADR 0010).
 
     Dispatches on the entity's FAMILY-EFFECTIVE temporal classification (ADR 0026:
     an inheritance participant declares its as-of axes on the root alone, so a
@@ -140,11 +143,6 @@ def lower_write(
                 f"({len(instruction.rows)} rows): a temporal keyed write lowers one row at a "
                 "time (m-txtime-write / m-bitemp-write) — the set-based batch collapse never "
                 "applies to a temporal entity's own milestone chain (m-batch-write)"
-            )
-        if tx_instant is None:
-            raise WriteLoweringError(
-                f"temporal write on {entity.identity.name!r}: no transaction instant supplied "
-                "(FlushPlan.tx_instant) — a temporal write cannot lower without one"
             )
         return _lower_temporal_write(
             entity,
@@ -232,14 +230,17 @@ def _lower_temporal_write(
     meta: Metamodel,
     concurrency: Concurrency,
     observation: Observation | None,
-    tx_instant: str,
+    tx_instant: TransactionInstant,
 ) -> list[LoweredStatement]:
     # The milestone arithmetic reads the family's axes through the Temporal
     # Facet, so it takes the write's own target position rather than the
     # declaring one this seam resolves for its column machinery.
     target = entity_of(meta, instruction.entity)
     plan_fn = bitemp_write.plan if _is_bitemporal(declaring_entity) else txtime_write.plan
-    milestone_plan = plan_fn(instruction, meta, target, tx_instant, observation)
+    # Reaching a temporal write is what makes the attempt capture its instant;
+    # every milestone bound below, and the close's own new `out_z`, derive from
+    # that one value.
+    milestone_plan = plan_fn(instruction, meta, target, tx_instant.value(), observation)
     if observation is not None:
         # The REAL licensing check (`m-opt-lock` "Locking mode additionally
         # requires that the observation be of the current milestone"): every
@@ -271,7 +272,7 @@ def _render_close(
     declaring_entity: EntityMetadata,
     dialect: Dialect,
     meta: Metamodel,
-    tx_instant: str,
+    tx_instant: TransactionInstant,
     gated: bool,
 ) -> LoweredStatement:
     """`update <table> set <out_col> = ? where <pk> [and <tag.column> = ?]
@@ -315,7 +316,7 @@ def _render_close(
     statement = Statement(
         f"update {layout.layout.table.name} set {dialect.quote(tx_end_column)} = ? "
         f"where {where_sql}",
-        (tx_instant, *key_binds),
+        (tx_instant.value(), *key_binds),
     )
     return LoweredStatement(statement, expected_affected=1, stale_error=not gated)
 
@@ -326,7 +327,7 @@ def lower_temporal_close(
     meta: Metamodel,
     dialect: Dialect,
     concurrency: Concurrency,
-    tx_instant: str,
+    tx_instant: TransactionInstant,
     observed_tx_start: str | None,
     observed_valid_end: str | None = None,
 ) -> LoweredStatement:

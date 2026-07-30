@@ -16,7 +16,13 @@ seams, not part of the developer surface — nothing here is re-exported from
 
 from __future__ import annotations
 
-from parallax.core.unit_work.clock import Clock, FixedClock, SystemClock, instant_literal
+from parallax.core.unit_work.clock import (
+    Clock,
+    FixedClock,
+    SystemClock,
+    TransactionInstant,
+    instant_literal,
+)
 from parallax.core.unit_work.instructions import (
     KeyedMutation,
     KeyedWrite,
@@ -75,6 +81,7 @@ __all__ = [
     "PredicateWrite",
     "RollbackOnlyError",
     "SystemClock",
+    "TransactionInstant",
     "TransactionSettings",
     "UnitOfWork",
     "UnitOfWorkError",

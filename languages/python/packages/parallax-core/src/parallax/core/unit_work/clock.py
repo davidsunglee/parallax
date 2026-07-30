@@ -10,18 +10,22 @@ The clock yields a normalized ``timestamp`` (aware UTC, microsecond) via
 :meth:`Clock.now`; :func:`instant_literal` renders it to the canonical neutral
 instant string the flush plan carries as context (the write-instruction
 ``instant`` wire form, matching the ISO instants the corpus authors and the read
-path binds). ``m-unit-work`` depends only on ``m-op-algebra`` / ``m-db-port`` and,
-transitively, ``m-core`` — from which the normalization rule comes.
+path binds). :class:`TransactionInstant` is the attempt-owned lazy holder of that
+string — the value a flush plan carries, so that whether the clock is read at all
+follows from the work that survives planning. ``m-unit-work`` depends only on
+``m-op-algebra`` / ``m-db-port`` and, transitively, ``m-core`` — from which the
+normalization rule comes.
 """
 
 from __future__ import annotations
 
 import datetime as _dt
+from dataclasses import dataclass, field
 from typing import Protocol, runtime_checkable
 
 from parallax.core.base import normalize_instant
 
-__all__ = ["Clock", "FixedClock", "SystemClock", "instant_literal"]
+__all__ = ["Clock", "FixedClock", "SystemClock", "TransactionInstant", "instant_literal"]
 
 
 @runtime_checkable
@@ -67,3 +71,33 @@ def instant_literal(value: _dt.datetime) -> str:
     authors (`2024-06-01T00:00:00+00:00`) and the read path binds.
     """
     return normalize_instant(value).isoformat()
+
+
+@dataclass(slots=True)
+class TransactionInstant:
+    """One attempt's lazily captured, memoized Transaction Instant (ADR 0010).
+
+    Constructing one reads no clock. :meth:`value` captures on first call and
+    memoizes, so *whether* the Clock Strategy is consulted follows from the work
+    that survives planning rather than from the buffer being nonempty: an empty
+    flush, a buffer that coalescing cancels, a net-zero edit, and a flush whose
+    surviving writes need no Transaction-Time boundary all leave the clock
+    untouched. Every timestamp-requiring write in one attempt — across a forced
+    read-your-own-writes flush and the commit flush alike — shares the one
+    captured literal, because the attempt's unit of work owns one instance. A
+    retry is a new attempt with a new instance and captures afresh, but only if
+    it independently reaches timestamp-requiring work.
+
+    Equality ignores whether the value has been captured: memoization is an
+    implementation of the contract, never part of the identity of the flush
+    context a plan carries.
+    """
+
+    clock: Clock
+    _captured: str | None = field(default=None, init=False, repr=False, compare=False)
+
+    def value(self) -> str:
+        """This attempt's Transaction Instant literal, capturing it on first call."""
+        if self._captured is None:
+            self._captured = instant_literal(self.clock.now())
+        return self._captured
