@@ -25,7 +25,7 @@ buffered rows may share one: `collapse_group_key` answers a row's filtered,
 table-ordered selection for the planner's batch grouping, so a collapsed
 multi-row instruction is same-shaped before any builder sees it.
 
-The eight builders `_write_lowering` dispatches to are spelled bare, as is
+The seven builders `_write_lowering` dispatches to are spelled bare, as is
 `collapse_group_key` (the composition root and the conformance engine inject
 it); the helpers they share among themselves keep their leading underscore
 because every one of their call sites is in THIS module.
@@ -67,7 +67,6 @@ __all__ = [
     "lower_delete",
     "lower_insert",
     "lower_multi_delete",
-    "lower_multi_insert",
     "lower_predicate_write",
     "lower_update",
 ]
@@ -143,7 +142,9 @@ def lower_insert(
 ) -> Statement:
     """`insert into <table>(<present columns in Table Layout order>) values (?, …)`,
     or the pk-gen `max` INSERT…SELECT form when a scalar cell carries the
-    `{computed: "maxPlusOne"}` marker (`m-pk-gen`).
+    `{computed: "maxPlusOne"}` marker (`m-pk-gen`) — the row form a temporal
+    write's chained/opened milestone rows take, which is structurally an
+    ordinary full-row insert.
 
     Only the columns the write input names are emitted — a row omitting a nullable
     column produces a narrower `INSERT` (never an explicit `NULL` bind), matching the
@@ -326,64 +327,10 @@ def lower_delete(
 # based flush"). `parallax.core.batch_write` decides WHETHER a run of rows    #
 # collapses (the planner's own collapse stage, injected via `Database.        #
 # transact`'s `collapse_policy`); everything here renders the ALREADY-        #
-# collapsed multi-row `KeyedWrite` this seam receives. Reuses `_ordered_cells` #
-# / `key_predicate` / `_tag_guard` exactly as the single-row forms do — no    #
+# collapsed multi-row `KeyedWrite` this seam receives. Reuses `key_predicate` #
+# / `_ordered_cells` / `_tag_guard` exactly as the single-row forms do — no   #
 # reinvented column-order or bind discipline.                                 #
 # --------------------------------------------------------------------------- #
-def lower_multi_insert(
-    entity: EntityMetadata,
-    instruction: KeyedWrite,
-    dialect: Dialect,
-    meta: Metamodel,
-    version_attr: AttributeMetadata | None,
-) -> Statement:
-    """`insert into <table>(<cols>) values (?, …), (?, …), …` — the multi-row
-    INSERT collapse (`m-batch-write.md` L17-19): every row's cells in the SAME
-    Table Layout order (`_ordered_cells`, unchanged), one value tuple per row,
-    in buffer order. A versioned entity's row derives the SAME
-    `opt_lock.INITIAL_VERSION` at its own slot position as the single-row
-    form — the initial version is a constant, never observed, so it is exactly
-    as safe to batch as any other column (`m-opt-lock`).
-
-    Batch grouping (:func:`collapse_group_key`) already keeps differing slot
-    selections in separate runs, so the mixed-shape refusal below can only fire
-    for a hand-built instruction — where refusing beats binding a later row's
-    values positionally against the first row's column list.
-    """
-    columns: list[str] | None = None
-    rows_cells: list[list[tuple[str, object]]] = []
-    for raw_row in instruction.rows:
-        row = dict(raw_row)
-        if version_attr is not None:
-            row[version_attr.identity.name] = opt_lock.INITIAL_VERSION
-        cells = _ordered_cells(meta, entity, row, discriminator=True)
-        row_columns = [column for column, _ in cells]
-        if columns is None:
-            columns = row_columns
-        elif row_columns != columns:
-            raise WriteLoweringError(
-                f"multi-row insert on {entity.identity.name!r}: row column sets differ within one "
-                f"collapsed instruction ({columns} vs {row_columns}) — a batch collapse "
-                "requires every row to carry the same members"
-            )
-        rows_cells.append(cells)
-    assert columns is not None  # `instruction.rows` is schema-required non-empty
-    quoted_columns = ", ".join(dialect.quote(column) for column in columns)
-    binds: list[object] = []
-    value_groups: list[str] = []
-    for cells in rows_cells:
-        holes: list[str] = []
-        for column, value in cells:
-            _refuse_unrecognized_marker(entity, column, value, "insert")
-            holes.append("?")
-            binds.append(value)
-        value_groups.append(f"({', '.join(holes)})")
-    return Statement(
-        f"insert into {_table(meta, entity)}({quoted_columns}) values {', '.join(value_groups)}",
-        tuple(binds),
-    )
-
-
 def lower_batched_update(
     entity: EntityMetadata,
     instruction: KeyedWrite,

@@ -245,15 +245,17 @@ def test_parse_support_scope_table_reads_the_prose_rows() -> None:
 
 
 def test_parse_support_scope_table_expands_the_child_group_row() -> None:
-    # The write-lowering row names four scopes in the *owner* cell, three of
+    # The write-lowering row names six scopes in the *owner* cell, five of
     # them abbreviated (`._write_types`), because its enforcement-scope cell
-    # says "those four scopes". All four must resolve, sharing one grant row.
+    # says "those six scopes". All six must resolve, sharing one grant row.
     prose = dag.parse_support_scope_table(dag.PYTHON_MD.read_text())
     group = [
         "parallax.snapshot.handle._family",
         "parallax.snapshot.handle._write_types",
         "parallax.snapshot.handle._keyed_sql",
         "parallax.snapshot.handle._write_lowering",
+        "parallax.snapshot.handle._finalize",
+        "parallax.snapshot.handle._step_lowering",
     ]
     assert set(group) <= set(prose)
     assert len({prose[scope] for scope in group}) == 1
@@ -523,6 +525,8 @@ def test_scope_descendants_inverts_the_child_chain() -> None:
             "parallax.snapshot.handle._write_types",
             "parallax.snapshot.handle._keyed_sql",
             "parallax.snapshot.handle._write_lowering",
+            "parallax.snapshot.handle._finalize",
+            "parallax.snapshot.handle._step_lowering",
         }
     )
     assert dag.scope_descendants("parallax.core.base") == frozenset()

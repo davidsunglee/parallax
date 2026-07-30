@@ -1,9 +1,12 @@
 """``parallax.core.unit_work`` enforcement scope (m-unit-work).
 
-The transaction scope: the unit of work that **buffers, orders, and flushes**
+The transaction scope: the unit of work that **buffers, finalizes, and flushes**
 writes, the write-instruction IR it buffers, the Clock Strategy that supplies the
-Transaction-Time instant at flush, and the **pure planner** that turns a buffer into a
-neutral, execution-ordered intermediate flush plan (coalesce -> FK-order -> elide).
+Transaction-Time instant at flush, the **pure planner** that turns a buffer into a
+neutral, execution-ordered intermediate flush plan (coalesce -> FK-order -> elide),
+and the finalized **Planned Write** algebra those writes settle into — one
+closed semantic step per execution, delivered as an immutable, execution-ordered
+:class:`WritePlan`.
 
 The module DAG pins ``m-unit-work -> m-op-algebra`` and ``m-unit-work -> m-db-port``
 **only** — there is deliberately **no** edge to ``m-sql`` or ``m-dialect``. So this
@@ -36,6 +39,19 @@ from parallax.core.unit_work.instructions import (
     serialize,
     validate_instruction,
 )
+from parallax.core.unit_work.plan import PlannedSteps, WritePlan
+from parallax.core.unit_work.planned import (
+    MAX_PLUS_ONE,
+    NEW_LINEAGE,
+    GeneratedValueExpression,
+    InsertEntry,
+    InsertOrigin,
+    MaxPlusOne,
+    NewLineage,
+    PlannedInsert,
+    PlannedRow,
+    PlannedValue,
+)
 from parallax.core.unit_work.planner import (
     AtomicUnit,
     BufferItem,
@@ -62,6 +78,8 @@ from parallax.core.unit_work.uow import (
 from parallax.core.unit_work.write_validate import WriteRejectedError, validate_write
 
 __all__ = [
+    "MAX_PLUS_ONE",
+    "NEW_LINEAGE",
     "AtomicUnit",
     "BufferItem",
     "Clock",
@@ -72,10 +90,19 @@ __all__ = [
     "FixedClock",
     "FlushExecutor",
     "FlushPlan",
+    "GeneratedValueExpression",
+    "InsertEntry",
+    "InsertOrigin",
     "KeyedMutation",
     "KeyedWrite",
+    "MaxPlusOne",
+    "NewLineage",
     "ObjectKey",
     "Observation",
+    "PlannedInsert",
+    "PlannedRow",
+    "PlannedSteps",
+    "PlannedValue",
     "PlannedWrite",
     "PredicateMutation",
     "PredicateWrite",
@@ -88,6 +115,7 @@ __all__ = [
     "WriteAssignment",
     "WriteInstruction",
     "WriteInstructionError",
+    "WritePlan",
     "WriteRejectedError",
     "WriteTarget",
     "active_unit_of_work",

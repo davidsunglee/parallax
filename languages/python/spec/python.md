@@ -2258,7 +2258,7 @@ legalizes a forbidden edge.
 | `m-snapshot-read` | `parallax.snapshot.materialize` | `parallax.snapshot.materialize` | `m-deep-fetch` | generated forbidden contracts + cross-package contract |
 | Snapshot handle and composition surface (support) | `parallax.snapshot.handle` | `parallax.snapshot.handle` | `parallax.snapshot.materialize`, `parallax.core.entity`, `m-core`, `m-metamodel`, `m-op-algebra`, `m-inheritance`, `m-storage-layout`, `m-temporal-read`, `m-deep-fetch`, `m-navigate`, `m-dialect`, `m-db-port`, `m-sql`, `m-unit-work`, `m-read-lock`, `m-auto-retry`, `m-opt-lock`, `m-batch-write`, `m-txtime-write`, `m-bitemp-write` | generated forbidden contracts + cross-package contract |
 | Snapshot handle wrapping (support, child of `parallax.snapshot.handle`) | `parallax.snapshot.handle._wrap` | `parallax.snapshot.handle._wrap` | `parallax.snapshot.materialize`, `parallax.core.entity`, `m-metamodel`, `m-relationship`, `m-inheritance`, `m-temporal-read` | generated forbidden contracts |
-| Snapshot handle write lowering (support, child group of `parallax.snapshot.handle`) | `parallax.snapshot.handle._family`, `._write_types`, `._keyed_sql`, `._write_lowering` | those four scopes, sharing one grant row | `m-core`, `m-metamodel`, `m-inheritance`, `m-storage-layout`, `m-temporal-read`, `m-dialect`, `m-db-port`, `m-sql`, `m-unit-work`, `m-opt-lock`, `m-txtime-write`, `m-bitemp-write` | generated forbidden contracts |
+| Snapshot handle write lowering (support, child group of `parallax.snapshot.handle`) | `parallax.snapshot.handle._family`, `._write_types`, `._keyed_sql`, `._write_lowering`, `._finalize`, `._step_lowering` | those six scopes, sharing one grant row | `m-core`, `m-metamodel`, `m-inheritance`, `m-storage-layout`, `m-temporal-read`, `m-dialect`, `m-db-port`, `m-sql`, `m-unit-work`, `m-opt-lock`, `m-txtime-write`, `m-bitemp-write` | generated forbidden contracts |
 | `m-case-format` | `parallax.conformance.case_format` (dev-only) | `parallax.conformance.case_format` | `m-core` | generated forbidden contracts (dev tree) |
 | `m-conformance-adapter` | `parallax.conformance.cli` (dev-only) | `parallax.conformance.cli` | `m-case-format`, plus any claimed behavioral or support scope it harnesses — the core conformance-family exception | generated forbidden contracts (dev tree) |
 | `m-api-conformance` | `languages/python/tests/api` (dev-only) | `tests.api` | `m-case-format` (harnesses the public surface) | pytest collection boundary |
@@ -2378,6 +2378,30 @@ parallax.snapshot.handle._write_lowering --> parallax.core.unit_work
 parallax.snapshot.handle._write_lowering --> parallax.core.opt_lock
 parallax.snapshot.handle._write_lowering --> parallax.core.txtime_write
 parallax.snapshot.handle._write_lowering --> parallax.core.bitemp_write
+parallax.snapshot.handle._finalize --> parallax.core.base
+parallax.snapshot.handle._finalize --> parallax.core.metamodel
+parallax.snapshot.handle._finalize --> parallax.core.inheritance
+parallax.snapshot.handle._finalize --> parallax.core.storage_layout
+parallax.snapshot.handle._finalize --> parallax.core.temporal_read
+parallax.snapshot.handle._finalize --> parallax.core.dialect
+parallax.snapshot.handle._finalize --> parallax.core.db_port
+parallax.snapshot.handle._finalize --> parallax.core.sql_gen
+parallax.snapshot.handle._finalize --> parallax.core.unit_work
+parallax.snapshot.handle._finalize --> parallax.core.opt_lock
+parallax.snapshot.handle._finalize --> parallax.core.txtime_write
+parallax.snapshot.handle._finalize --> parallax.core.bitemp_write
+parallax.snapshot.handle._step_lowering --> parallax.core.base
+parallax.snapshot.handle._step_lowering --> parallax.core.metamodel
+parallax.snapshot.handle._step_lowering --> parallax.core.inheritance
+parallax.snapshot.handle._step_lowering --> parallax.core.storage_layout
+parallax.snapshot.handle._step_lowering --> parallax.core.temporal_read
+parallax.snapshot.handle._step_lowering --> parallax.core.dialect
+parallax.snapshot.handle._step_lowering --> parallax.core.db_port
+parallax.snapshot.handle._step_lowering --> parallax.core.sql_gen
+parallax.snapshot.handle._step_lowering --> parallax.core.unit_work
+parallax.snapshot.handle._step_lowering --> parallax.core.opt_lock
+parallax.snapshot.handle._step_lowering --> parallax.core.txtime_write
+parallax.snapshot.handle._step_lowering --> parallax.core.bitemp_write
 parallax.postgres --> parallax.core.base
 parallax.postgres --> parallax.core.db_port
 parallax.postgres --> parallax.core.db_error

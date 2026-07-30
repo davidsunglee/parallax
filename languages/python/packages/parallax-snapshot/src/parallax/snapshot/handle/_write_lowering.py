@@ -3,18 +3,25 @@
 :func:`lower_write` is the single write-lowering seam: both the developer
 transaction path (the ``FlushExecutor`` :meth:`Database.transact` injects) and
 the conformance engine call THIS function, so there is exactly one place a
-neutral :class:`~parallax.core.unit_work.PlannedWrite` becomes DML. It dispatches
-on the entity's FAMILY-EFFECTIVE temporal classification (ADR 0026), composing
+neutral :class:`~parallax.core.unit_work.PlannedWrite` becomes DML.
+
+A family whose write finalization has landed crosses TWO seams here rather than
+one: :func:`~parallax.snapshot.handle._finalize.finalize_item` settles it into
+finalized steps, and :func:`~parallax.snapshot.handle._step_lowering.lower_step`
+renders each step physically. What remains in this module is the dispatch for
+every family still lowered from the instruction itself — it dispatches on the
+entity's FAMILY-EFFECTIVE temporal classification (ADR 0026), composing
 `parallax.core.txtime_write` / `.bitemp_write`'s neutral milestone plans with the
 `m-opt-lock` gate policy this seam owns, and hands the actual SQL rendering to
 :mod:`parallax.snapshot.handle._keyed_sql`. :func:`lower_temporal_close` is the
 `m-opt-lock` CONFLICT lane's standalone close, rendered through the same seam.
 
 This module sits ABOVE the builders and below nothing else in the package: it
-imports `_family`, `_write_types`, and `_keyed_sql`, and none of those imports
-back. Its two public names are re-exported through the package's frozen
-``__all__``; the temporal-close rendering (`_lower_temporal_write`,
-`_render_close`) is read only from here and keeps its underscores.
+imports `_family`, `_write_types`, `_keyed_sql`, `_finalize`, and
+`_step_lowering`, and none of those imports back. Its two public names are
+re-exported through the package's frozen ``__all__``; the temporal-close
+rendering (`_lower_temporal_write`, `_render_close`) is read only from here and
+keeps its underscores.
 """
 
 from __future__ import annotations
@@ -45,16 +52,17 @@ from parallax.snapshot.handle._family import (
     valid_time_axis,
     version_attribute,
 )
+from parallax.snapshot.handle._finalize import finalize_item
 from parallax.snapshot.handle._keyed_sql import (
     key_predicate,
     lower_batched_update,
     lower_delete,
     lower_insert,
     lower_multi_delete,
-    lower_multi_insert,
     lower_predicate_write,
     lower_update,
 )
+from parallax.snapshot.handle._step_lowering import lower_step
 from parallax.snapshot.handle._write_types import LoweredStatement, WriteLoweringError
 
 __all__ = ["lower_temporal_close", "lower_write"]
@@ -101,6 +109,11 @@ def lower_write(
     Transaction-Time boundary completes without reading the Clock Strategy at all
     (ADR 0010).
 
+    A write whose family finalizes (:func:`~parallax.snapshot.handle._finalize.
+    finalize_item`) is settled into steps first and rendered one statement per
+    step, consulting neither the concurrency mode nor the instant on the way; the
+    dispatch below is what every remaining family still lowers through.
+
     Dispatches on the entity's FAMILY-EFFECTIVE temporal classification (ADR 0026:
     an inheritance participant declares its as-of axes on the root alone, so a
     bare, non-flattening LOCAL view would silently miss a temporal-family concrete's
@@ -112,8 +125,8 @@ def lower_write(
     insert's do, since a chained row is structurally an ordinary full-row insert). A
     non-temporal entity's write may be single-row or a
     COLLAPSED multi-row instruction the planner's collapse stage produced
-    (`m-batch-write`): a multi-row INSERT, a uniform-value
-    IN-list UPDATE, or a non-versioned IN-list DELETE.
+    (`m-batch-write`): a uniform-value IN-list UPDATE, or a non-versioned IN-list
+    DELETE.
 
     A :class:`~parallax.core.unit_work.PredicateWrite` lowers READLESS
     (`m-batch-write.md` "Predicate-selected readless forms") when its target is
@@ -129,6 +142,9 @@ def lower_write(
     carries its own ``subtype-write-set-based-unsupported`` guard for that
     reason (`python.md` §5 "rejected before SQL").
     """
+    steps = finalize_item(planned, meta)
+    if steps is not None:
+        return [LoweredStatement(lower_step(step, meta, dialect)) for step in steps]
     instruction = planned.instruction
     if isinstance(instruction, PredicateWrite):
         return [LoweredStatement(lower_predicate_write(instruction, meta, dialect))]
@@ -160,20 +176,17 @@ def lower_write(
             "declares no temporal dimension — a milestone verb never applies to a "
             "non-temporal entity (m-txtime-write / m-bitemp-write)"
         )
+    if instruction.mutation == "insert":  # pragma: no cover - settled before this dispatch
+        raise WriteLoweringError(
+            f"insert on {entity.identity.name!r}: a non-temporal insert is settled into a "
+            "Planned Insert and rendered one statement per step, never from the instruction"
+        )
     version_attr = version_attribute(meta, declaring_entity)
     # An ungated (locking-mode) shortfall on an observation-requiring write is the
     # same non-retriable stale outcome an ungated close's is: no gate could have
     # caused it, so it is a consistency violation rather than a detected lost
     # update a re-read could resolve (`m-opt-lock`, ADR 0047).
     ungated_shortfall_is_stale = not opt_lock.gates(concurrency)
-    if instruction.mutation == "insert":
-        if len(instruction.rows) > 1:
-            return [
-                LoweredStatement(
-                    lower_multi_insert(entity, instruction, dialect, meta, version_attr)
-                )
-            ]
-        return [LoweredStatement(lower_insert(entity, instruction, dialect, meta, version_attr))]
     if instruction.mutation == "update":
         if len(instruction.rows) > 1:
             return [

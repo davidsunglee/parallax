@@ -30,7 +30,9 @@ public-surface check promises. Where the exported names live:
   :class:`FindResult`, :class:`HistoryFindResult`, :class:`MilestoneGraph`,
   :class:`NoResultFound`, :class:`TooManyResultsFound`).
 - :mod:`~parallax.snapshot.handle._write_lowering` — :func:`lower_write` and the
-  ``m-opt-lock`` conflict lane's :func:`lower_temporal_close`.
+  ``m-opt-lock`` conflict lane's :func:`lower_temporal_close`. A family whose
+  write finalization has landed crosses ``_finalize`` and ``_step_lowering``
+  from here instead of the instruction-shaped dispatch.
 - :mod:`~parallax.snapshot.handle._write_types` — :class:`WriteLoweringError` and
   :class:`LoweredStatement`.
 - :mod:`~parallax.snapshot.handle._write_inputs` —
@@ -42,9 +44,10 @@ public-surface check promises. Where the exported names live:
   physical-shape batch-grouping key the composition root and the conformance
   engine inject into ``plan_flush`` beside ``m-batch-write``'s collapse policy.
 
-The three modules behind no exported name (``_wrap``, ``_family``,
-``_predicate_writes``) are reached only through the modules above; each
-documents its own place in the package's acyclic internal graph.
+The five modules behind no exported name (``_wrap``, ``_family``,
+``_predicate_writes``, ``_finalize``, ``_step_lowering``) are reached only
+through the modules above; each documents its own place in the package's acyclic
+internal graph.
 """
 
 from __future__ import annotations
