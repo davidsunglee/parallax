@@ -1,4 +1,4 @@
-# Orders model: three related non-temporal entities.
+# Orders model: five related non-temporal entities.
 #
 # This file is a model descriptor — an instance of
 # core/schemas/metamodel.schema.json. It is intentionally pure metadata: no
@@ -6,19 +6,23 @@
 # metamodel schema forbids extra top-level keys). Row data for a model lives in
 # the sibling core/compatibility/fixtures/<model-stem>.yaml file.
 #
-# Phase 2 grew the Order entity with string / decimal / nullable / boolean
-# columns so the operation algebra's range, null, string, and membership
-# predicates have attributes to exercise.
-#
-# Phase 3 expands the descriptor to MULTIPLE entities so relationships, navigate
-# / exists predicates, and deep fetch have something to traverse:
-#   - Order        — the root entity (unchanged columns, so every Phase 1/2 case
-#                    keeps passing).
+# Order carries string / decimal / nullable / boolean columns so the operation
+# algebra's range, null, string, and membership predicates have attributes to
+# exercise, and the other four give relationships, navigate / exists predicates,
+# and deep fetch something to traverse:
+#   - Order        — the root entity.
 #   - OrderItem    — line items; many belong to one Order (one-to-many `items`).
 #   - OrderStatus  — status events; each belongs to an Order, and OPTIONALLY to a
 #                    specific OrderItem. This lets one entity serve both the
 #                    to-one `Order.status`-style lookup and the multi-hop
 #                    `Order.items -> OrderItem.statuses` deep-fetch path.
+#   - OrderTag     — labels carrying a priority, so one relationship can declare a
+#                    MULTI-KEY ordering whose second key breaks the first's ties.
+#   - OrderNote    — notes with an optional resolution date, so each authorable
+#                    direction/Null-Placement pair of a DECLARED ordering gets its
+#                    own relationship over one nullable key. There are three, not
+#                    four: canonical form omits a default, so `asc` with Nulls Last
+#                    is exactly the placement-free `Order.itemsByShipDate`.
 #
 # The multi-hop `Order.items -> OrderItem.statuses` path is the 1 -> N -> N case
 # that MUST resolve in exactly three statements (root + items + statuses), never
@@ -76,6 +80,27 @@ entities:
           target: { entity: parallax.compatibility.OrderItem, attribute: orderId }
         orderBy:
           - { attribute: shippedOn }
+      - name: notesAscNullsFirst
+        cardinality: one-to-many
+        join:
+          source: id
+          target: { entity: parallax.compatibility.OrderNote, attribute: orderId }
+        orderBy:
+          - { attribute: resolvedOn, nulls: first }
+      - name: notesDescNullsLast
+        cardinality: one-to-many
+        join:
+          source: id
+          target: { entity: parallax.compatibility.OrderNote, attribute: orderId }
+        orderBy:
+          - { attribute: resolvedOn, direction: desc }
+      - name: notesDescNullsFirst
+        cardinality: one-to-many
+        join:
+          source: id
+          target: { entity: parallax.compatibility.OrderNote, attribute: orderId }
+        orderBy:
+          - { attribute: resolvedOn, direction: desc, nulls: first }
     indices:
       - name: orders_pk
         attributes: [id]
@@ -164,4 +189,25 @@ entities:
         attributes: [id]
         unique: true
       - name: order_tag_order_id
+        attributes: [orderId]
+  - name: OrderNote
+    namespace: parallax.compatibility
+    table: order_note
+    attributes:
+      - name: id
+        type: int64
+        primaryKey: true
+      - name: orderId
+        type: int64
+      - name: body
+        type: string
+        maxLength: 32
+      - name: resolvedOn
+        type: date
+        nullable: true
+    indices:
+      - name: order_note_pk
+        attributes: [id]
+        unique: true
+      - name: order_note_order_id
         attributes: [orderId]

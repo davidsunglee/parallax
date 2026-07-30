@@ -10,13 +10,12 @@ nothing here contradicts the core specification, the canonical claim in
 [`slices.md`](../../../core/spec/slices.md), or the normative module DAG and
 artifact topology in [`modules.md`](../../../core/spec/modules.md).
 
-The relationship-declaration Null Placement and complete nested Value Object
-predicate material below
+The complete nested Value Object predicate material below
 records the accepted target state for COR-50; it does not
 claim those canonical forms exist in the current core specification, schemas,
 or compatibility corpus. The path-root Narrow material is no longer among them,
-and neither is Sort Key Null Placement: both are landed core contract,
-implemented and lowered. Until COR-50 updates every
+and neither is Null Placement on either ordering term: both are landed core
+contract, implemented and lowered. Until COR-50 updates every
 remaining affected core contract,
 schema, model, fixture, case, benchmark, dialect, and claiming frontend
 together, the current core artifacts remain authoritative and the Python
@@ -895,7 +894,8 @@ rel(reverse_of=target_relationship_name, order_by=(...), name=...)
   string means ascending with nulls last; `desc("name")` marks descending,
   with an `asc()` twin for symmetry. Either helper returns an immutable term
   supporting `.nulls_first()` and `.nulls_last()`; omitted placement remains
-  nulls last in either direction, and placement is single-shot. A bare string
+  nulls last in either direction, and placement is single-shot — a second
+  modifier raises `ValueError`. A bare string
   cannot customize null placement because doing so requires an explicit
   `asc(...)` or `desc(...)` term. Ordering is legal only on a to-many direction; an
   unknown member is the formation-time `relationship-order-attribute-invalid`

@@ -37,6 +37,7 @@ from parallax.core.metamodel import (
     AttributePrimaryKey,
     Cardinality,
     Max,
+    NullPlacement,
     PersistenceMode,
     PrimaryKey,
     Sequence,
@@ -123,10 +124,34 @@ type InheritanceRole = AbstractRoot | AbstractSubtype | ConcreteSubtype
 
 @dataclass(frozen=True, slots=True)
 class OrderTerm:
-    """One target-local ordering term: a member name and its direction."""
+    """One target-local ordering term: a member name, direction, and Null Placement.
+
+    ``nulls`` is ``None`` when the term left placement unauthored, which the
+    accepted model normalizes to Nulls Last — the canonical placement in either
+    direction. Only a term created by :func:`asc` or :func:`desc` can carry a
+    placement, because a bare member name in an ``order_by=`` tuple has nowhere
+    to hang the modifier.
+    """
 
     member: str
     direction: SortDirection = SortDirection.ASCENDING
+    nulls: NullPlacement | None = None
+
+    def nulls_first(self) -> OrderTerm:
+        """This term with NULLs placed first. Single-shot (`m-relationship`)."""
+        return self._with_placement(NullPlacement.NULLS_FIRST)
+
+    def nulls_last(self) -> OrderTerm:
+        """This term with NULLs placed last — the default, stated explicitly."""
+        return self._with_placement(NullPlacement.NULLS_LAST)
+
+    def _with_placement(self, placement: NullPlacement) -> OrderTerm:
+        if self.nulls is not None:
+            raise ValueError(
+                f"{self.member}: null placement is single-shot and is already "
+                f"{self.nulls.name}; derive the term from the unplaced base"
+            )
+        return OrderTerm(member=self.member, direction=self.direction, nulls=placement)
 
 
 @dataclass(frozen=True, slots=True)
@@ -291,8 +316,9 @@ def _flag(value: object, option: str) -> bool:
 def _order_by(terms: object) -> tuple[OrderTerm, ...]:
     """The ordering terms an ``order_by=`` tuple denotes.
 
-    A bare string is ascending; :func:`asc` and :func:`desc` spell either
-    direction explicitly.
+    A bare string is ascending with the canonical Nulls Last placement;
+    :func:`asc` and :func:`desc` spell either direction explicitly and are the
+    only spellings that can then choose a placement.
     """
     if terms is None:
         return ()
@@ -310,12 +336,17 @@ def _order_by(terms: object) -> tuple[OrderTerm, ...]:
 
 
 def asc(member: str) -> OrderTerm:
-    """An ascending ordering term — the explicit twin of a bare member name."""
+    """An ascending ordering term — the explicit twin of a bare member name.
+
+    Only the term these helpers return carries the single-shot
+    ``.nulls_first()`` / ``.nulls_last()`` placement modifiers, so placement is
+    authorable exactly where a direction is.
+    """
     return OrderTerm(_required_name(member, "asc"), SortDirection.ASCENDING)
 
 
 def desc(member: str) -> OrderTerm:
-    """A descending ordering term."""
+    """A descending ordering term (see :func:`asc`)."""
     return OrderTerm(_required_name(member, "desc"), SortDirection.DESCENDING)
 
 

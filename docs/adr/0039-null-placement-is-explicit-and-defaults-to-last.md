@@ -8,9 +8,9 @@ for either direction.
 The values are shared across canonical operation Sort Keys and declared
 relationship ordering. The operation `orderBy` key and the Metamodel
 relationship-order term both admit an optional `nulls: first | last` field.
-Omission retains the default while an explicit field preserves the authored
-choice. Language frontends may provide idiomatic builders, but they do not
-define provider-specific placement rules.
+Omission retains the default while an explicitly requested placement is what
+the query observes. Language frontends may provide idiomatic builders, but they
+do not define provider-specific placement rules.
 
 SQL lowering makes placement portable. A dialect with native `NULLS
 FIRST`/`NULLS LAST` syntax uses it; another dialect emits an equivalent
@@ -28,12 +28,16 @@ Keeping one normalized value pair prevents query ordering and relationship
 collection ordering from drifting while allowing callers to request either
 portable placement without introducing raw SQL or dialect branches.
 
+The two terms keep their own member spellings — `attr` on an operation Sort Key
+and `attribute` on a declaration — because the spelling tracks a scoping
+difference the placement field does not change. They also normalize differently,
+and deliberately: an operation Sort Key preserves omitted-versus-explicit `last`
+through canonical round-trip, while the Metamodel term normalizes omission to
+Nulls Last at the accepted boundary and canonical descriptor form omits it again,
+so a declaration cannot spell the default at all.
+
 The contract change lands atomically across the Metamodel and operation
 schemas, specifications, compatibility cases, dialect renderers, and claiming
-language frontends. No frontend introduces an interim private field or
-provider-specific behavior before the shared contract is complete.
-
-This ADR records COR-50's accepted target state; it does not amend the current
-core contract by itself. Until COR-50 completes that atomic shared-contract
-update, the existing core specifications, schemas, and corpus remain
-authoritative and Python does not expose Null Placement.
+language frontends — no intermediate state exists in which a schema admits a
+placement that a frontend does not author or a dialect does not lower, and no
+frontend introduces an interim private field or provider-specific behavior.

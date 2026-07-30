@@ -780,7 +780,9 @@ def _resolve_defining(
         if unresolvable(term.attribute):
             continue
         order_by.append(
-            RelationshipOrder(AttributeIdentity(target_identity, term.attribute), term.direction)
+            RelationshipOrder(
+                AttributeIdentity(target_identity, term.attribute), term.direction, term.nulls
+            )
         )
     if issues:
         return None, issues
@@ -833,7 +835,9 @@ def _resolve_reverse(
         if unresolvable(term.attribute):
             continue
         order_by.append(
-            RelationshipOrder(AttributeIdentity(peer_entity, term.attribute), term.direction)
+            RelationshipOrder(
+                AttributeIdentity(peer_entity, term.attribute), term.direction, term.nulls
+            )
         )
     if issues:
         return None, issues

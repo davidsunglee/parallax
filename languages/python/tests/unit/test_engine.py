@@ -1507,7 +1507,13 @@ def test_run_write_sequence_case_executes_each_entry_as_its_own_transaction() ->
     # The committed table state is read back for every model table (the
     # m-conformance-adapter write-sequence observation); the read-back is an
     # observation, so it never counts toward the case's round trips.
-    assert set(table_state) == {"orders", "order_item", "order_status", "order_tag"}
+    assert set(table_state) == {
+        "orders",
+        "order_item",
+        "order_status",
+        "order_tag",
+        "order_note",
+    }
 
 
 def test_run_write_sequence_case_records_the_temporal_observation_on_the_unit_of_work() -> None:
@@ -2748,6 +2754,56 @@ def test_run_graph_case_renders_root_class_keyed_graph_with_relationships() -> N
     assert identity_checks is None
     assert [item["id"] for item in _rows(graph["Order"][0], "items")] == [12, 11]
     assert _rows(graph["Order"][0], "itemsByShipDate")[0]["shipped_on"] == "2024-02-15"
+
+
+@pytest.mark.parametrize("case_id", ["m-deep-fetch-021", "m-deep-fetch-022", "m-deep-fetch-023"])
+def test_run_graph_case_emits_the_declared_null_placement_of_a_child_level(case_id: str) -> None:
+    # A declared placement has to survive the whole path — descriptor ingestion, the
+    # accepted model, the deep-fetch order-key rewrite, and the m-dialect seam — before
+    # it reaches child-level SQL text. These three cases carry the only authorable
+    # direction/placement pairs of a declared ordering, and they sit outside the
+    # snapshot slice the sweeps grade, so this is where their Postgres golden is
+    # compared byte for byte.
+    order_rows: list[Row] = [
+        {
+            "id": 1,
+            "name": "Ada",
+            "sku": "A-100",
+            "qty": 5,
+            "price": decimal.Decimal("10.50"),
+            "active": True,
+            "ordered_on": dt.date(2024, 1, 5),
+        },
+        {
+            "id": 42,
+            "name": "Grace",
+            "sku": "A-999",
+            "qty": 30,
+            "price": decimal.Decimal("99.99"),
+            "active": True,
+            "ordered_on": dt.date(2024, 6, 30),
+        },
+    ]
+    note_rows: list[Row] = [
+        {"id": 52, "order_id": 1, "body": "address check", "resolved_on": None},
+        {"id": 51, "order_id": 1, "body": "gift wrap", "resolved_on": dt.date(2024, 3, 1)},
+        {
+            "id": 55,
+            "order_id": 42,
+            "body": "signature required",
+            "resolved_on": dt.date(2024, 6, 6),
+        },
+    ]
+    case = _load_case(case_id)
+    emissions, _graph, round_trips, _checks = engine.run_graph_case(
+        case, "postgres", QueueDbPort([order_rows, note_rows])
+    )
+    assert round_trips == 2
+    document = cast("dict[str, Any]", dict(case.document))
+    goldens = cast("list[dict[str, Any]]", document["then"]["statements"])
+    assert [emission.sql for emission in emissions] == [
+        golden["sql"]["postgres"] for golden in goldens
+    ]
 
 
 def test_run_graph_case_evaluates_identity_checks_over_the_assembled_graph() -> None:

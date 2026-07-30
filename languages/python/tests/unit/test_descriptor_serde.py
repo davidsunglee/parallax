@@ -551,6 +551,73 @@ def test_bad_axis_reference_and_direction_are_rejected() -> None:
         )
 
 
+def test_bad_order_by_null_placement_is_rejected() -> None:
+    with pytest.raises(DescriptorError, match="nulls"):
+        deserialize(
+            {
+                "entities": [
+                    {
+                        "name": "A",
+                        "attributes": [{"name": "id", "type": "int64", "primaryKey": True}],
+                        "relationships": [
+                            {
+                                "name": "rs",
+                                "cardinality": "one-to-many",
+                                "join": {
+                                    "source": "id",
+                                    "target": {"entity": "B", "attribute": "aId"},
+                                },
+                                "orderBy": [{"attribute": "id", "nulls": "middle"}],
+                            }
+                        ],
+                    },
+                    {
+                        "name": "B",
+                        "attributes": [
+                            {"name": "id", "type": "int64"},
+                            {"name": "aId", "type": "int64"},
+                        ],
+                    },
+                ]
+            }
+        )
+
+
+def test_an_order_by_null_placement_round_trips_and_canonicalizes_its_default() -> None:
+    def document(term: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "entities": [
+                {
+                    "name": "A",
+                    "attributes": [{"name": "id", "type": "int64", "primaryKey": True}],
+                    "relationships": [
+                        {
+                            "name": "rs",
+                            "cardinality": "one-to-many",
+                            "join": {
+                                "source": "id",
+                                "target": {"entity": "B", "attribute": "aId"},
+                            },
+                            "orderBy": [term],
+                        }
+                    ],
+                },
+                {
+                    "name": "B",
+                    "attributes": [
+                        {"name": "id", "type": "int64"},
+                        {"name": "aId", "type": "int64"},
+                    ],
+                },
+            ]
+        }
+
+    first = document({"attribute": "id", "direction": "desc", "nulls": "first"})
+    assert serialize(deserialize(first)) == first
+    authored_last = document({"attribute": "id", "nulls": "last"})
+    assert serialize(deserialize(authored_last)) == document({"attribute": "id"})
+
+
 def test_non_mapping_and_non_list_shapes_are_rejected() -> None:
     with pytest.raises(DescriptorError):
         deserialize({"entity": "not a mapping"})

@@ -141,3 +141,36 @@ OrderTag:
     orderId: 1
     label: fragile
     priority: 5
+
+# Notes on orders 1 and 42, reached through the three `notes*` relationships that
+# each declare one direction/Null-Placement pair over the nullable `resolvedOn`.
+# Order 1's bucket carries an UNRESOLVED note whose id sits BETWEEN two resolved
+# ones whose dates run counter to id order, so every declared ordering sorts the
+# bucket differently from insertion/id order — a dropped or mis-placed ORDER BY
+# cannot pass by coincidence. Order 42's bucket is fully resolved, so it is the
+# no-NULL contrast, and its dates are likewise non-monotonic in id.
+OrderNote:
+  - id: 51
+    orderId: 1
+    body: gift wrap
+    resolvedOn: 2024-03-01
+  - id: 52
+    orderId: 1
+    body: address check
+    resolvedOn: null
+  - id: 53
+    orderId: 1
+    body: fragile handling
+    resolvedOn: 2024-01-15
+  - id: 54
+    orderId: 42
+    body: expedite
+    resolvedOn: 2024-04-04
+  - id: 55
+    orderId: 42
+    body: signature required
+    resolvedOn: 2024-06-06
+  - id: 56
+    orderId: 42
+    body: insured
+    resolvedOn: 2024-05-05

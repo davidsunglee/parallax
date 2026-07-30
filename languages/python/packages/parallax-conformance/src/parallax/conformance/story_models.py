@@ -2,7 +2,8 @@
 
 Mirrors ``models/account.yaml``, ``models/wallet.yaml``, ``models/position.yaml``
 and the FULL ``models/orders.yaml`` family (``Order`` / ``OrderItem`` /
-``OrderStatus`` / ``OrderTag``, every declared relationship included), each
+``OrderStatus`` / ``OrderTag`` / ``OrderNote``, every declared relationship
+included), each
 composed into the sealed hub named for its corpus model. ``Order`` / ``OrderItem``
 carry the family's full relationship set so the SAME classes serve the API
 Conformance Suite's navigate / deep-fetch / snapshot-graph examples and stories.
@@ -29,6 +30,7 @@ from parallax.core import (
     Int32,
     MetamodelHub,
     Rel,
+    asc,
     attr,
     desc,
     index,
@@ -45,6 +47,7 @@ __all__ = [
     "Account",
     "Order",
     "OrderItem",
+    "OrderNote",
     "OrderStatus",
     "OrderTag",
     "Position",
@@ -121,7 +124,10 @@ class Order(
 ):
     """Mirror of the ``Order`` entity of ``models/orders.yaml`` (the full
     relationship set: to-many ``items``/``statuses``/``tags`` plus the
-    alternate-ordering ``itemsByShipDate`` path over the same join)."""
+    alternate-ordering ``itemsByShipDate`` path over the same join and the three
+    ``notes*`` paths, one per authorable direction/Null-Placement pair over one
+    nullable key — ``asc`` with Nulls Last is unauthorable because canonical form
+    omits a default, and ``itemsByShipDate`` already spells it)."""
 
     id: Attr[int] = attr(primary_key=True)
     name: Attr[str] = attr(max_length=255)
@@ -146,6 +152,21 @@ class Order(
     )
     items_by_ship_date: Rel[tuple["OrderItem", ...]] = rel(
         cardinality=ONE_TO_MANY, join=("id", "order_id"), order_by=("shipped_on",)
+    )
+    notes_asc_nulls_first: Rel[tuple["OrderNote", ...]] = rel(
+        cardinality=ONE_TO_MANY,
+        join=("id", "order_id"),
+        order_by=(asc("resolved_on").nulls_first(),),
+    )
+    notes_desc_nulls_last: Rel[tuple["OrderNote", ...]] = rel(
+        cardinality=ONE_TO_MANY,
+        join=("id", "order_id"),
+        order_by=(desc("resolved_on"),),
+    )
+    notes_desc_nulls_first: Rel[tuple["OrderNote", ...]] = rel(
+        cardinality=ONE_TO_MANY,
+        join=("id", "order_id"),
+        order_by=(desc("resolved_on").nulls_first(),),
     )
 
 
@@ -214,4 +235,24 @@ class OrderTag(
     order: Rel[Order | None] = rel(reverse_of="tags")
 
 
-ORDERS_MODEL = MetamodelHub(Order, OrderItem, OrderStatus, OrderTag)
+class OrderNote(
+    Entity,
+    table="order_note",
+    namespace=_NS,
+    indices=(
+        index("order_note_pk", "id", unique=True),
+        index("order_note_order_id", "order_id"),
+    ),
+):
+    """Mirror of the ``OrderNote`` entity of ``models/orders.yaml``.
+
+    It declares no reverse direction: three defining relationships reach it over
+    one join, so no single one of them is the peer a reverse could name."""
+
+    id: Attr[int] = attr(primary_key=True)
+    order_id: Attr[int]
+    body: Attr[str] = attr(max_length=32)
+    resolved_on: Attr[dt.date | None]
+
+
+ORDERS_MODEL = MetamodelHub(Order, OrderItem, OrderStatus, OrderTag, OrderNote)

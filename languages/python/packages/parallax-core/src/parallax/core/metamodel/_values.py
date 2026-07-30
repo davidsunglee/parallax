@@ -48,6 +48,7 @@ __all__ = [
     "Multiplicity",
     "NestedValueObjectOccurrenceDeclaration",
     "NotPrimaryKey",
+    "NullPlacement",
     "PersistenceMode",
     "PkGeneration",
     "PrimaryKey",
@@ -99,6 +100,18 @@ class SortDirection(enum.Enum):
 
     ASCENDING = enum.auto()
     DESCENDING = enum.auto()
+
+
+class NullPlacement(enum.Enum):
+    """Where NULLs sort on one ordering key, independent of its Sort Direction.
+
+    NULLS_LAST is the canonical placement in either direction, so an authoring
+    frontend that omits placement normalizes to it. The two members denote an
+    observable order only on a nullable Attribute.
+    """
+
+    NULLS_FIRST = enum.auto()
+    NULLS_LAST = enum.auto()
 
 
 class TemporalDimension(enum.Enum):
@@ -404,6 +417,7 @@ class RelationshipOrder:
 
     attribute: AttributeIdentity
     direction: SortDirection = SortDirection.ASCENDING
+    nulls: NullPlacement = NullPlacement.NULLS_LAST
 
 
 @dataclass(frozen=True, slots=True)
@@ -416,6 +430,7 @@ class UnresolvedRelationshipOrder:
 
     attribute: str
     direction: SortDirection = SortDirection.ASCENDING
+    nulls: NullPlacement = NullPlacement.NULLS_LAST
 
     def __post_init__(self) -> None:
         if not self.attribute:

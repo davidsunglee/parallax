@@ -1630,6 +1630,53 @@
         0
       ]
     },
+    "order_note": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "parallax.compatibility.OrderNote"
+          ],
+          "column": "id",
+          "contributor": "attribute:parallax.compatibility.OrderNote.id",
+          "declaringOwner": "parallax.compatibility.OrderNote",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.OrderNote"
+          ],
+          "column": "order_id",
+          "contributor": "attribute:parallax.compatibility.OrderNote.orderId",
+          "declaringOwner": "parallax.compatibility.OrderNote",
+          "effectiveNullable": false,
+          "tier": "domain"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.OrderNote"
+          ],
+          "column": "body",
+          "contributor": "attribute:parallax.compatibility.OrderNote.body",
+          "declaringOwner": "parallax.compatibility.OrderNote",
+          "effectiveNullable": false,
+          "tier": "domain"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.OrderNote"
+          ],
+          "column": "resolved_on",
+          "contributor": "attribute:parallax.compatibility.OrderNote.resolvedOn",
+          "declaringOwner": "parallax.compatibility.OrderNote",
+          "effectiveNullable": true,
+          "tier": "domain"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0
+      ]
+    },
     "order_status": {
       "columns": [
         {

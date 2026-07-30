@@ -58,7 +58,10 @@ copies or replaces the accepted local Relationship Declarations. The target is
 `join.target.entity` and is not repeated. No `relatedEntity`, `foreignKey`, or
 parallel reverse-pair map exists.
 
-`RelationshipOrder` contains one target Attribute Identity and Ascending or
-Descending Sort Direction. An omitted authored direction normalizes to
-Ascending. Direct many-to-many is invalid; applications use an explicit
-association Entity.
+`RelationshipOrder` contains one target Attribute Identity, Ascending or
+Descending Sort Direction, and NullsFirst or NullsLast Null Placement. An
+omitted authored direction normalizes to Ascending and an omitted authored
+placement to NullsLast, which is the canonical placement in either direction.
+Placement is independent of direction and is observable only on a nullable
+Attribute (`m-dialect`). Direct many-to-many is invalid; applications use an
+explicit association Entity.

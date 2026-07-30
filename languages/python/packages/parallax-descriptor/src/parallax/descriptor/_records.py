@@ -130,10 +130,16 @@ class Attribute:
 
 @dataclass(frozen=True, slots=True)
 class OrderByTerm:
-    """One ordering term of a to-many relationship."""
+    """One ordering term of a to-many relationship.
+
+    ``nulls`` is the authored Null Placement, independent of ``direction``; the
+    descriptor's omitted spelling normalizes to ``last`` here, so a canonical
+    export omits it again.
+    """
 
     attr: str
     direction: Literal["asc", "desc"] = "asc"
+    nulls: Literal["first", "last"] = "last"
 
 
 @dataclass(frozen=True, slots=True)

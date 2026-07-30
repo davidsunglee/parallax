@@ -400,6 +400,15 @@
       },
       "valueObject": {}
     },
+    "parallax.compatibility.OrderNote": {
+      "attribute": {
+        "body": "body",
+        "id": "id",
+        "orderId": "order_id",
+        "resolvedOn": "resolved_on"
+      },
+      "valueObject": {}
+    },
     "parallax.compatibility.OrderStatus": {
       "attribute": {
         "code": "code",

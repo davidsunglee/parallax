@@ -260,7 +260,7 @@ The defining form is:
 | `cardinality` | `one-to-one` \| `many-to-one` \| `one-to-many` (REQUIRED) |
 | `join` | `{ source: <local attribute>, target: { entity: <entity reference>, attribute: <target-local attribute> } }` (REQUIRED) |
 | `dependent` | bool, default `false` — target is owned and participates in cascade (`m-cascade-delete`) |
-| `orderBy` | optional target-attribute ordering for a to-many direction; each item is `{ attribute, direction? }` |
+| `orderBy` | optional target-attribute ordering for a to-many direction; each item is `{ attribute, direction?, nulls? }` |
 
 The reverse form is:
 
@@ -285,10 +285,11 @@ namespaced.
 
 `join.source` is local to the declaring Entity. `join.target.attribute` and
 each `orderBy.attribute` are local to the target Entity. Omitted ordering
-direction normalizes to `asc`; ordering is valid only for a direction whose
-target multiplicity is Many. Both SQL correlation and deep-fetch keys derive
-from the resolved structured join. Behavioral consumers never parse descriptor
-strings or infer a foreign key.
+direction normalizes to `asc` and omitted `orderBy.nulls` to `last` — the
+canonical Null Placement in either direction (`m-relationship`); ordering is
+valid only for a direction whose target multiplicity is Many. Both SQL
+correlation and deep-fetch keys derive from the resolved structured join.
+Behavioral consumers never parse descriptor strings or infer a foreign key.
 
 ## `valueObject` — an embedded composite
 
@@ -406,6 +407,7 @@ import, so its explicit spelling carries no information:
 | `primaryKey`, `nullable`, `readOnly`, `optimisticLocking`, `dependent`, `unique` | equal to the schema-declared default `false` |
 | `multiplicity` | equal to the default `one` |
 | an `orderBy` entry's `direction` | equal to the default `asc` |
+| an `orderBy` entry's `nulls` | equal to the default `last` |
 
 A one-Entity model's canonical spelling is the single-`entity` form;
 `entities` is canonical exactly for a multi-Entity model.

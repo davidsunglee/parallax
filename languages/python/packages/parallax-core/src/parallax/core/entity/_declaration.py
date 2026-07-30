@@ -61,6 +61,7 @@ from parallax.core.metamodel import (
     Max,
     Multiplicity,
     NestedValueObjectOccurrenceDeclaration,
+    NullPlacement,
     PersistenceMode,
     RelationshipIdentity,
     RelationshipReference,
@@ -1325,7 +1326,11 @@ def _relationship(
     target = _entity_reference(shape, where)
     relationship = RelationshipIdentity(identity, canonical)
     order_by = tuple(
-        UnresolvedRelationshipOrder(snake_to_camel(term.member), term.direction)
+        UnresolvedRelationshipOrder(
+            snake_to_camel(term.member),
+            term.direction,
+            term.nulls if term.nulls is not None else NullPlacement.NULLS_LAST,
+        )
         for term in spec.order_by
     )
     if isinstance(spec, ReverseRelSpec):

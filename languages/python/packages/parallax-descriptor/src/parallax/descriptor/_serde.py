@@ -198,11 +198,14 @@ def _attribute_from(value: object, where: str) -> Attribute:
 
 def _order_by_from(value: object, where: str) -> OrderByTerm:
     m = _mapping(value, where)
-    _closed(m, frozenset({"attribute", "direction"}), where)
+    _closed(m, frozenset({"attribute", "direction", "nulls"}), where)
     direction = m.get("direction", "asc")
     if direction not in ("asc", "desc"):
         raise DescriptorError(f"{where}: `direction` must be 'asc' or 'desc'")
-    return OrderByTerm(attr=_str(m, "attribute", where), direction=direction)
+    nulls = m.get("nulls", "last")
+    if nulls not in ("first", "last"):
+        raise DescriptorError(f"{where}: `nulls` must be 'first' or 'last'")
+    return OrderByTerm(attr=_str(m, "attribute", where), direction=direction, nulls=nulls)
 
 
 def _relationship_from(value: object, where: str) -> RelationshipDeclaration:
@@ -643,6 +646,8 @@ def _order_by_to_json(term: OrderByTerm) -> dict[str, object]:
     out: dict[str, object] = {"attribute": term.attr}
     if term.direction != "asc":
         out["direction"] = term.direction
+    if term.nulls != "last":
+        out["nulls"] = term.nulls
     return out
 
 

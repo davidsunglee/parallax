@@ -58,6 +58,7 @@ from parallax.core.metamodel import (
     EntityIdentity,
     ExactEntityReference,
     Max,
+    NullPlacement,
     PrimaryKey,
     RelativeEntityReference,
     Sequence,
@@ -443,6 +444,30 @@ def test_a_dependent_ordered_defining_relationship_records_both_facts() -> None:
     assert declaration.identity.name == "basketLines"
     assert declaration.dependent is True
     assert declaration.order_by[0].direction is SortDirection.ASCENDING
+
+
+def test_only_an_explicit_direction_term_can_choose_a_null_placement() -> None:
+    class Basket(Entity, table="basket"):
+        id: Attr[int] = attr(primary_key=True)
+        lines: Rel[tuple[Line, ...]] = rel(
+            cardinality=ONE_TO_MANY,
+            join=("id", "basket_id"),
+            order_by=("id", asc("id").nulls_first(), desc("id").nulls_last()),
+        )
+
+    bare, placed_asc, placed_desc = Basket.relationships[0].order_by
+    assert bare.nulls is NullPlacement.NULLS_LAST
+    assert placed_asc == UnresolvedRelationshipOrder(
+        "id", SortDirection.ASCENDING, NullPlacement.NULLS_FIRST
+    )
+    assert placed_desc == UnresolvedRelationshipOrder(
+        "id", SortDirection.DESCENDING, NullPlacement.NULLS_LAST
+    )
+
+
+def test_a_null_placement_is_single_shot_on_an_ordering_term() -> None:
+    with pytest.raises(ValueError, match="single-shot"):
+        desc("id").nulls_first().nulls_last()
 
 
 def test_a_one_to_one_join_names_members_by_their_python_spelling() -> None:

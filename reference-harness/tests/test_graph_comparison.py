@@ -267,11 +267,69 @@ def test_child_ordering_places_nulls_last_descending():
     _assert_child_ordering("unit", [step], buckets)  # no raise
 
 
-def test_child_ordering_rejects_nulls_first():
+def test_child_ordering_rejects_nulls_first_when_placement_is_omitted():
     step = _items_step([{"attribute": "id", "direction": "asc"}])
     buckets = {_hop_key("Order.items"): {1: [{"id": None}, {"id": 10}, {"id": 20}]}}
     with pytest.raises(CaseFailure):
         _assert_child_ordering("unit", [step], buckets)
+
+
+def test_child_ordering_accepts_authored_nulls_last_like_omission():
+    step = _items_step([{"attribute": "id", "direction": "asc", "nulls": "last"}])
+    buckets = {_hop_key("Order.items"): {1: [{"id": 10}, {"id": 20}, {"id": None}]}}
+    _assert_child_ordering("unit", [step], buckets)  # no raise
+
+
+def test_child_ordering_places_authored_nulls_first_ascending():
+    step = _items_step([{"attribute": "id", "direction": "asc", "nulls": "first"}])
+    buckets = {_hop_key("Order.items"): {1: [{"id": None}, {"id": 10}, {"id": 20}]}}
+    _assert_child_ordering("unit", [step], buckets)  # no raise
+
+
+def test_child_ordering_places_authored_nulls_first_descending():
+    # Placement is independent of direction, so `first` leads on desc too.
+    step = _items_step([{"attribute": "id", "direction": "desc", "nulls": "first"}])
+    buckets = {_hop_key("Order.items"): {1: [{"id": None}, {"id": 20}, {"id": 10}]}}
+    _assert_child_ordering("unit", [step], buckets)  # no raise
+
+
+def test_child_ordering_rejects_trailing_nulls_when_first_is_authored():
+    step = _items_step([{"attribute": "id", "direction": "desc", "nulls": "first"}])
+    buckets = {_hop_key("Order.items"): {1: [{"id": 20}, {"id": 10}, {"id": None}]}}
+    with pytest.raises(CaseFailure):
+        _assert_child_ordering("unit", [step], buckets)
+
+
+def test_child_ordering_places_each_key_by_its_own_placement():
+    step = _items_step(
+        [
+            {"attribute": "quantity", "direction": "asc", "nulls": "first"},
+            {"attribute": "sku", "direction": "asc", "nulls": "last"},
+        ]
+    )
+    # quantity NULLs lead; within the NULL-quantity tie, sku NULLs trail.
+    buckets = {
+        _hop_key("Order.items"): {
+            1: [
+                {"quantity": None, "sku": "A-100"},
+                {"quantity": None, "sku": None},
+                {"quantity": 5, "sku": "B-200"},
+            ]
+        }
+    }
+    _assert_child_ordering("unit", [step], buckets)  # no raise
+
+    bad = {
+        _hop_key("Order.items"): {
+            1: [
+                {"quantity": None, "sku": None},
+                {"quantity": None, "sku": "A-100"},
+                {"quantity": 5, "sku": "B-200"},
+            ]
+        }
+    }
+    with pytest.raises(CaseFailure):
+        _assert_child_ordering("unit", [step], bad)
 
 
 def test_child_ordering_null_vs_null_tiebreak_by_next_key():

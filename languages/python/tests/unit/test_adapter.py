@@ -216,8 +216,8 @@ def test_run_case_scenario_reports_round_trips_only() -> None:
 def test_run_case_write_sequence_reports_table_state_and_round_trips() -> None:
     # The write-sequence observation reads back every model table after commit
     # (m-conformance-adapter "write-sequence cases report tableState"); the fake
-    # port answers every read with its canned row, so both orders-model tables
-    # report it here — the run sweep grades real state against then.tableState.
+    # port answers every read with its canned row, so every orders-model table
+    # reports it here — the run sweep grades real state against then.tableState.
     envelope = adapter.run_case(_WRITE_SEQUENCE_CASE, "postgres", _WritePort())
     jsonschema.validate(envelope, _SCHEMA)
     assert envelope["status"] == "ok"
@@ -225,6 +225,7 @@ def test_run_case_write_sequence_reports_table_state_and_round_trips() -> None:
         "tableState": {
             "orders": [{"id": 7}],
             "order_item": [{"id": 7}],
+            "order_note": [{"id": 7}],
             "order_status": [{"id": 7}],
             "order_tag": [{"id": 7}],
         },
