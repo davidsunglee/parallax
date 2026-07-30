@@ -19,6 +19,7 @@ import datetime as dt
 
 import pytest
 
+from _support.clock_probes import instant_at
 from parallax.conformance import models
 from parallax.core import storage_layout
 from parallax.core.db_port import JsonDocument
@@ -82,7 +83,7 @@ def _lower_full(
         models.accepted_model(meta),
         dialect,
         concurrency,
-        tx_instant,
+        instant_at(tx_instant),
     )
 
 
@@ -567,7 +568,7 @@ def test_bitemporal_close_addresses_both_axis_ends_then_gates_on_in_z_last() -> 
         models.accepted_model(POSITION),
         POSTGRES,
         "optimistic",
-        "2024-10-01T00:00:00+00:00",
+        instant_at("2024-10-01T00:00:00+00:00"),
         "2024-04-01T00:00:00+00:00",
         "infinity",
     )
@@ -594,7 +595,7 @@ def test_bitemporal_close_keeps_its_whole_address_under_locking() -> None:
         models.accepted_model(POSITION),
         POSTGRES,
         "locking",
-        "2024-10-01T00:00:00+00:00",
+        instant_at("2024-10-01T00:00:00+00:00"),
         "2024-04-01T00:00:00+00:00",
         "infinity",
     )
@@ -616,7 +617,7 @@ def test_bitemporal_close_without_an_observed_valid_end_is_refused() -> None:
             models.accepted_model(POSITION),
             POSTGRES,
             "locking",
-            "2024-10-01T00:00:00+00:00",
+            instant_at("2024-10-01T00:00:00+00:00"),
             "2024-04-01T00:00:00+00:00",
         )
 
@@ -631,7 +632,7 @@ def test_temporal_close_requires_an_effective_table() -> None:
             models.accepted_model(malformed),
             POSTGRES,
             "locking",
-            "2024-10-01T00:00:00+00:00",
+            instant_at("2024-10-01T00:00:00+00:00"),
             None,
         )
 
@@ -961,16 +962,6 @@ def test_multi_row_temporal_write_is_refused() -> None:
     )
     with pytest.raises(WriteLoweringError, match="multi-row temporal 'update' on 'Balance'"):
         _lower(batched, BALANCE, "2024-02-15T00:00:00+00:00")
-
-
-def test_temporal_write_requires_a_transaction_instant() -> None:
-    # A defensive backstop (`FlushPlan.tx_instant` is always populated by a real
-    # flush; no reachable case skips it) — never a wrong emission.
-    insert = KeyedWrite("insert", "Balance", ({"id": 1, "acctNum": "A", "value": 100.00},))
-    with pytest.raises(WriteLoweringError, match="no transaction instant supplied"):
-        lower_write(
-            PlannedWrite(instruction=insert), models.accepted_model(BALANCE), POSTGRES, "locking"
-        )
 
 
 # --------------------------------------------------------------------------- #

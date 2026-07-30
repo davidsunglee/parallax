@@ -13,6 +13,7 @@ Table Layout slot selections match (`m-sql` "Physical DML ordering").
 
 from __future__ import annotations
 
+from _support.clock_probes import inert_instant
 from parallax.conformance import models
 from parallax.core import batch_write
 from parallax.core.dialect import POSTGRES
@@ -40,10 +41,11 @@ POSITION = _target("position", "Position")
 
 def _flush_and_lower(buffer: list[BufferItem], model: Metamodel) -> list[Statement]:
     """Plan ``buffer`` with the production collapse wiring, then lower the plan."""
+    instant = inert_instant()
     plan = plan_flush(
         buffer,
         {},
-        None,
+        instant,
         model,
         collapse=batch_write.collapses,
         collapse_group=collapse_group_key,
@@ -51,7 +53,7 @@ def _flush_and_lower(buffer: list[BufferItem], model: Metamodel) -> list[Stateme
     return [
         lowered.statement
         for planned in plan.writes
-        for lowered in lower_write(planned, model, POSTGRES, "locking")
+        for lowered in lower_write(planned, model, POSTGRES, "locking", instant)
     ]
 
 

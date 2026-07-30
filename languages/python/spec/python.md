@@ -1865,6 +1865,19 @@ or descriptor authoring form and performs no audit stamping.
   still-open atomic scope first (read-your-own-writes); aborts discard
   buffered, force-flushed, and cached effects alike. No public explicit
   `flush()` control is offered in v1.
+- **The attempt owns one lazy Transaction Instant.** Each outermost attempt holds
+  one uncaptured instant, and a flush plan carries that holder rather than a
+  captured literal, so the **Clock Strategy is consulted only when a surviving
+  write actually needs a Transaction-Time boundary** (ADR 0010). An empty
+  transaction, a read-only one, a buffer that same-transaction coalescing cancels
+  to nothing, an update whose effective change set is empty, and a flush whose
+  every surviving write is non-temporal all complete with **zero** clock reads.
+  The first temporal write in an attempt captures one instant; every later
+  temporal write in that attempt — across a forced read-your-own-writes flush and
+  the commit flush alike — binds the same value, so `in_z` and `out_z` stay
+  coherent within the transaction. A retry is a new attempt with its own
+  uncaptured instant and reads the clock again only if it independently reaches
+  temporal work.
 - **Write verbs and temporal spellings.** Verb names: `insert`, `update`,
   `delete` (non-temporal), `terminate` (temporal), and the bitemporal
   `insert_until`, `update_until`, `terminate_until`. Inputs are entity

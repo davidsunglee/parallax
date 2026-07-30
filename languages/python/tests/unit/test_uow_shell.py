@@ -16,6 +16,7 @@ from collections.abc import Callable
 
 import pytest
 
+from _support.clock_probes import CountingClock
 from parallax.conformance import models
 from parallax.core.metamodel import Metamodel
 from parallax.core.unit_work import (
@@ -48,18 +49,6 @@ class _Recorder:
 
     def __call__(self, plan: FlushPlan) -> None:
         self.plans.append(plan)
-
-
-class _CountingClock:
-    """A clock that yields a scripted instant per call and counts its calls."""
-
-    def __init__(self, instants: list[dt.datetime]) -> None:
-        self._instants = instants
-        self.calls = 0
-
-    def now(self) -> dt.datetime:
-        self.calls += 1
-        return self._instants[self.calls - 1]
 
 
 def _noop(plan: FlushPlan) -> None:
@@ -209,7 +198,7 @@ def test_clock_supplies_the_flush_transaction_time_instant() -> None:
         tx.buffer(KeyedWrite("insert", "Balance", ({"id": 9, "acctNum": "D", "value": 100.00},)))
 
     _run(body, clock=FixedClock(_FIXED), executor=recorder, meta=_BALANCE)
-    assert recorder.plans[0].tx_instant == "2024-06-01T00:00:00+00:00"
+    assert recorder.plans[0].tx_instant.value() == "2024-06-01T00:00:00+00:00"
 
 
 def test_system_clock_reads_an_aware_utc_instant() -> None:
@@ -231,9 +220,9 @@ def test_observe_binds_the_recorded_observation_into_the_flush_plan() -> None:
 
 
 def test_a_fully_empty_transaction_never_touches_the_clock() -> None:
-    # `flush()` returns before computing `_transaction_instant_literal()` when
-    # the buffer is empty, so a read-only transaction never calls `Clock.now()`.
-    clock = _CountingClock([dt.datetime(2024, 6, 1, tzinfo=dt.UTC)])
+    # `flush()` returns on an empty buffer before it even builds a plan, so a
+    # read-only transaction never calls `Clock.now()`.
+    clock = CountingClock([dt.datetime(2024, 6, 1, tzinfo=dt.UTC)])
 
     def body(tx: UnitOfWork) -> str:
         return tx.read(lambda: "row")
@@ -242,8 +231,22 @@ def test_a_fully_empty_transaction_never_touches_the_clock() -> None:
     assert clock.calls == 0
 
 
+def test_planning_a_flush_leaves_the_transaction_instant_uncaptured() -> None:
+    # The shell hands the plan a holder, not a literal: an executor that lowers
+    # nothing needing a Transaction-Time boundary leaves the clock untouched
+    # (ADR 0010), which is what lets canceled and timestamp-free work skip it.
+    clock = CountingClock([dt.datetime(2024, 6, 1, tzinfo=dt.UTC)])
+    recorder = _Recorder()
+
+    def body(tx: UnitOfWork) -> None:
+        tx.buffer(KeyedWrite("insert", "Balance", ({"id": 9, "acctNum": "D", "value": 1.00},)))
+
+    _run(body, clock=clock, executor=recorder, meta=_BALANCE)
+    assert clock.calls == 0
+
+
 def test_transaction_time_instant_is_captured_once_per_transaction() -> None:
-    clock = _CountingClock(
+    clock = CountingClock(
         [dt.datetime(2024, 6, 1, tzinfo=dt.UTC), dt.datetime(2025, 1, 1, tzinfo=dt.UTC)]
     )
     recorder = _Recorder()
@@ -254,8 +257,11 @@ def test_transaction_time_instant_is_captured_once_per_transaction() -> None:
         tx.buffer(KeyedWrite("insert", "Balance", ({"id": 10, "acctNum": "E", "value": 2.00},)))
 
     _run(body, clock=clock, executor=recorder, meta=_BALANCE)
-    assert clock.calls == 1  # one Transaction-Time instant per transaction (Reladomo's timestamp)
-    assert [p.tx_instant for p in recorder.plans] == ["2024-06-01T00:00:00+00:00"] * 2
+    # The forced flush and the commit flush carry the SAME holder, so consuming
+    # either yields one Transaction-Time instant for the whole transaction
+    # (Reladomo's per-transaction timestamp).
+    assert [p.tx_instant.value() for p in recorder.plans] == ["2024-06-01T00:00:00+00:00"] * 2
+    assert clock.calls == 1
 
 
 # --------------------------------------------------------------------------- #
