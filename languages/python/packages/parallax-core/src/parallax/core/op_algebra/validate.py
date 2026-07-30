@@ -18,7 +18,10 @@ Rule provenance:
   predicate whose `lower` bound is strictly greater than its `upper` names an
   empty range, and is refused rather than lowered into a predicate that
   silently matches nothing. Bounds are compared by literal kind (two numbers or
-  two strings), so this rule alone needs no model resolution.
+  two strings), so the top-level `between` needs no model resolution at all. The
+  two nested ranges share the identical rule, but resolve their subject and
+  type-check both bounds FIRST, so a mistyped bound is named as a type mismatch
+  rather than ordered as a raw literal.
 - `narrow-outside-position` / `narrow-empty-effective-set` /
   `subtype-attribute-outside-narrow-scope` — `m-op-algebra` "Subtype narrowing"
   / "The four-step validation rule": a `narrow` node's resolved concrete set is
@@ -37,7 +40,8 @@ Rule provenance:
   `nested-literal-type-mismatch` — `m-op-algebra` "Nested value-object
   predicates": a dotted `Class.valueObject(.valueObject)*.attribute` path MUST
   resolve against the entity's **declared** value-object structure, and a
-  comparison/membership literal MUST match the leaf's declared neutral type.
+  comparison / range-bound / membership literal MUST match the leaf's declared
+  neutral type.
 - `deep-fetch-value-object-segment` / `navigate-value-object-target` /
   `find-root-value-object` — `m-value-object` "Materialization and navigation
   contract" (points 4 and 5): a value object carries no correlation columns
@@ -95,6 +99,7 @@ from parallax.core.op_algebra.nodes import (
     NestedMembership,
     NestedNotExists,
     NestedNullCheck,
+    NestedRange,
     NoneOp,
     Not,
     NotExists,
@@ -140,7 +145,12 @@ def _collect_entities(op: Operation, names: set[str]) -> None:
             | Membership(attr=attr)
         ):
             names.add(_class_of(attr))
-        case NestedComparison(path=path) | NestedMembership(path=path) | NestedNullCheck(path=path):
+        case (
+            NestedComparison(path=path)
+            | NestedRange(path=path)
+            | NestedMembership(path=path)
+            | NestedNullCheck(path=path)
+        ):
             names.add(_class_of(path))
         case NestedExists(path=path) | NestedNotExists(path=path):
             names.add(_class_of(path))
@@ -235,6 +245,8 @@ def _walk(op: Operation, model: Metamodel, scope: _PositionScope) -> None:
             _check_bound_ordering(attr, lower, upper)
         case NestedComparison():
             _check_nested_comparison(op, model)
+        case NestedRange():
+            _check_nested_range(op, model)
         case NestedMembership():
             _check_nested_membership(op, model)
         case NestedNullCheck():
@@ -641,6 +653,17 @@ def _check_nested_comparison(node: NestedComparison, model: Metamodel) -> None:
     _check_typed_literal(node.path, node.value, leaf)
 
 
+def _check_nested_range(node: NestedRange, model: Metamodel) -> None:
+    """A nested range's three checks in the order `m-op-algebra` fixes: the path,
+    both typed bounds, then the bound ordering. Ordering the bounds LAST is what
+    makes a mistyped bound report the type mismatch rather than an accidental
+    inversion between two literals of unrelated kinds."""
+    leaf = _resolve_nested_leaf(node.path, model)
+    _check_typed_literal(node.path, node.lower, leaf)
+    _check_typed_literal(node.path, node.upper, leaf)
+    _check_bound_ordering(node.path, node.lower, node.upper)
+
+
 def _check_nested_membership(node: NestedMembership, model: Metamodel) -> None:
     leaf = _resolve_nested_leaf(node.path, model)
     for value in node.values:
@@ -659,6 +682,13 @@ def _check_nested_null_check(node: NestedNullCheck, model: Metamodel) -> None:
 def _check_element_comparison(node: NestedComparison, container: _VoContainer) -> None:
     leaf = _resolve_element_leaf(container, node.path)
     _check_typed_literal(node.path, node.value, leaf)
+
+
+def _check_element_range(node: NestedRange, container: _VoContainer) -> None:
+    leaf = _resolve_element_leaf(container, node.path)
+    _check_typed_literal(node.path, node.lower, leaf)
+    _check_typed_literal(node.path, node.upper, leaf)
+    _check_bound_ordering(node.path, node.lower, node.upper)
 
 
 def _check_element_membership(node: NestedMembership, container: _VoContainer) -> None:
@@ -680,6 +710,8 @@ def _check_element_predicate(op: Operation, container: _VoContainer) -> None:
     match op:
         case NestedComparison():
             _check_element_comparison(op, container)
+        case NestedRange():
+            _check_element_range(op, container)
         case NestedMembership():
             _check_element_membership(op, container)
         case NestedNullCheck(path=path):

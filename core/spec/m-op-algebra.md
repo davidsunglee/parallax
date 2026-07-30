@@ -181,12 +181,14 @@ algebra — one single-key tagged node per operator, each with a closed body:
 | `nestedGte` | `{ "nestedGte": { "path", "value" } }` | the value at `path` is greater than or equal to `value` |
 | `nestedLt` | `{ "nestedLt": { "path", "value" } }` | the value at `path` is less than `value` |
 | `nestedLte` | `{ "nestedLte": { "path", "value" } }` | the value at `path` is less than or equal to `value` |
+| `nestedBetween` | `{ "nestedBetween": { "path", "lower", "upper" } }` | the value at `path` lies in the inclusive range `[lower, upper]` |
 | `nestedIn` | `{ "nestedIn": { "path", "values" } }` | the value at `path` is one of `values` (non-empty list) |
+| `nestedNotIn` | `{ "nestedNotIn": { "path", "values" } }` | the value at `path` is not one of `values` (non-empty list) |
 | `nestedIsNull` | `{ "nestedIsNull": { "path" } }` | the value at `path` is **not present** (see the absence-collapse rule) |
 | `nestedIsNotNull` | `{ "nestedIsNotNull": { "path" } }` | the value at `path` **is present** (the complement) |
 
-The comparison / membership `value`(s) are polymorphic `literal`s (`string` /
-`number` / `boolean` / `null`), and each type **MUST** match the leaf attribute's
+The comparison / range / membership `value`(s) are polymorphic `literal`s (`string`
+/ `number` / `boolean` / `null`), and each type **MUST** match the leaf attribute's
 declared neutral type; a resolver **MUST** reject a type-mismatched literal (e.g. a
 `number` compared against a `string`-typed attribute). The presence tests
 (`nestedIsNull` / `nestedIsNotNull`) carry a `path` only. `m-sql` lowers a nested
@@ -195,6 +197,14 @@ read to a dialect-specific extraction from the structured-document column and
 typed-cast form, and the **bind order** (per-segment JSON keys vs a single path
 bind) are all `m-dialect` decisions (`m-sql`, `m-dialect`), not fixed by this
 algebra.
+
+`nestedBetween` is **one** canonical node — it is never rewritten into a pair of
+comparisons, because the two forms diverge through a `many` segment (below). Both
+its bounds are typed literals against the same leaf, and the bound-ordering rule
+above governs it unchanged. Within a range node the checks are ordered **subject
+first, bounds second**: the path resolves and both bounds are type-checked before
+the bounds are ordered, so a mistyped bound draws `nested-literal-type-mismatch`
+rather than being ordered as a raw literal.
 
 #### Absence-collapse rule
 
@@ -209,9 +219,12 @@ every nested predicate:
 - an **intermediate segment is a non-object** (a scalar or array blocks descent).
 
 In every one of these the extraction yields SQL `NULL`, so a comparison
-(`nestedEq` / `nestedNotEq` / `nestedGt` / `nestedGte` / `nestedLt` / `nestedLte`)
-and `nestedIn` are neither true — the row is **excluded**, exactly as the scalar
-`notEq`/`notIn` null behavior above. `nestedIsNull` is true **exactly** on the
+(`nestedEq` / `nestedNotEq` / `nestedGt` / `nestedGte` / `nestedLt` / `nestedLte`),
+a range (`nestedBetween`), and a membership test (`nestedIn` / `nestedNotIn`) are
+neither true — the row is **excluded**, exactly as the scalar `notEq`/`notIn` null
+behavior above. The negative forms are not exceptions: `nestedNotEq` and
+`nestedNotIn` over a not-present member yield `NULL`, not true, so absence never
+satisfies a negative predicate. `nestedIsNull` is true **exactly** on the
 rows a comparison excludes for this reason (all four not-present states);
 `nestedIsNotNull` is its complement (the present rows). An implementation **MUST
 NOT** distinguish JSON `null` from a missing key or a null column at the predicate
@@ -237,6 +250,42 @@ JSON scalar, or a JSON object — anything that is not a JSON array collapses to
 **zero elements**), or an element whose leaf is not present contributes no matching
 element. A non-array value is read as not-present even when its own scalar value or
 object content would match the predicate.
+
+**A range still binds one element.** Because `nestedBetween` is one node rather
+than two comparisons, a row matches it iff **some single element** satisfies
+`>= lower AND <= upper` together. Rewriting it as
+`and(nestedGte(…, lower), nestedLte(…, upper))` would be a *different* predicate
+through a `many` segment: the two flat comparisons evaluate independently, so two
+*different* elements could satisfy one bound each. That is precisely why the node
+is canonical and never lowered as a pair.
+
+**Any-element is uniform across the whole flat family, negative forms included.**
+`nestedNotEq` and `nestedNotIn` through a `many` segment mean "**some** element's
+member is not equal to / not in the list", never "**no** element's member is". The
+two readings differ on real data, so the choice is observable: with phones
+`[{home, 555-1234}, {work, 555-9999}]`, `nestedNotIn(phones.type, [work])` matches
+that row (its first element's `type` is `home`), while the no-element reading does
+not. The no-element reading is already spellable, and that is why it is not
+overloaded onto `nestedNotIn`:
+
+```yaml
+# any-element — the meaning of nestedNotIn: SOME element's type is not `work`
+nestedNotIn: { path: Customer.address.phones.type, values: [work] }
+
+# no-element — spelled with nestedNotExists: NO element's type is `work`
+nestedNotExists:
+  path: Customer.address.phones
+  where:
+    nestedIn: { path: type, values: [work] }
+```
+
+**The absence rule inside an element.** An element that does not carry the member
+at all — a missing key, an explicit JSON `null`, or a non-object blocking descent —
+extracts SQL `NULL`, so ordinary three-valued logic excludes it: that element
+satisfies neither the positive nor the negative form and contributes no matching
+element. A row therefore matches `nestedNotIn` only when some element **has** the
+member and its value is outside the list, exactly as it matches `nestedIn` only
+when some element has the member and its value is inside it.
 
 **`nestedExists` / `nestedNotExists` test the member itself**, over a
 **value-object-terminated** path (`Class.valueObject(.valueObject)*`, ending at a

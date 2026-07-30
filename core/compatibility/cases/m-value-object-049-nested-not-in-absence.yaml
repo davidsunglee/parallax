@@ -1,0 +1,40 @@
+# valueObject negated membership: nestedNotIn excludes every not-present row rather
+# than treating absence as "not in the list" (m-op-algebra nested membership +
+# absence collapse, m-sql), on Postgres AND MariaDB.
+#
+# nestedNotIn(Customer.address.city, [Oslo]) lowers the extraction into a LEADING
+# `not` over the same `in (?)` fragment nestedIn emits, adding no bind. Boston (3)
+# and Berlin (6) are present and outside the list, so they match. The semantic this
+# case exists to pin is the negative half of the absence collapse: a reader can
+# reasonably expect "city is not Oslo" to hold for a row with no city at all, and it
+# does NOT — the extraction is SQL NULL, `not NULL in ('Oslo')` is NULL rather than
+# true, and the row is excluded. All four not-present states are witnessed doing
+# that: the null column (4), the missing key (5), the explicit JSON `null` leaf (7),
+# and 8/9/10 which carry no `city` key either. Only a row that HAS the member and
+# whose value is outside the list matches.
+#
+# Postgres binds the JSON key then the single list value; MariaDB binds one '$.city'
+# path then the value. The oracle spells the negation with the native `not in`
+# infix over an independently formulated extraction per dialect.
+model: models/customer.yaml
+tags: [m-value-object, m-op-algebra, m-sql, m-dialect, nested, json, notIn, absence-collapse, slice-snapshot-1, slice-managed-1]
+shape: read
+when:
+  targetEntity: Customer
+  operation:
+    nestedNotIn: { path: Customer.address.city, values: [Oslo] }
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.name from customer t0 where not jsonb_extract_path_text(t0.address, ?) in (?)
+        mariadb: select t0.id, t0.name from customer t0 where not json_value(t0.address, ?) in (?)
+      binds:
+        postgres: [city, Oslo]
+        mariadb: ['$.city', Oslo]
+  referenceSql:
+    postgres: select id, name from customer where address ->> 'city' not in ('Oslo')
+    mariadb: select id, name from customer where nullif(json_unquote(json_extract(address, '$.city')), 'null') not in ('Oslo')
+  rows:
+    - { id: 3, name: Grace }
+    - { id: 6, name: Rin }
+  roundTrips: 1

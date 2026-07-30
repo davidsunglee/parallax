@@ -10,11 +10,12 @@ nothing here contradicts the core specification, the canonical claim in
 [`slices.md`](../../../core/spec/slices.md), or the normative module DAG and
 artifact topology in [`modules.md`](../../../core/spec/modules.md).
 
-The complete nested Value Object predicate material below
+The nested Value Object **string** predicate material below
 records the accepted target state for COR-50; it does not
 claim those canonical forms exist in the current core specification, schemas,
 or compatibility corpus. The path-root Narrow material is no longer among them,
-and neither is Null Placement on either ordering term: both are landed core
+neither is Null Placement on either ordering term, and neither are the nested
+range and negated-membership nodes: all three are landed core
 contract, implemented and lowered. Until COR-50 updates every
 remaining affected core contract,
 schema, model, fixture, case, benchmark, dialect, and claiming frontend
@@ -466,9 +467,10 @@ mutations, exceptions, or exports.
   The expanded family is a cross-core prerequisite rather than Python-only
   sugar. `m-core`, `m-op-algebra`, `m-value-object`, `m-sql`, `m-dialect`, the
   canonical operation schema, affected models, fixtures, compatibility cases,
-  benchmarks, dialect renderers, and every claiming frontend must add
-  `nestedBetween`, `nestedNotIn`, and the five nested string nodes atomically.
-  COR-50 exposes the methods only against that completed shared contract.
+  benchmarks, dialect renderers, and every claiming frontend must add each node
+  atomically. `nestedBetween` and `nestedNotIn` have landed that way, in both
+  scopes; the five nested string nodes have not, and COR-50 exposes those
+  methods only against that completed shared contract.
 
   ```python
   Customer.where(

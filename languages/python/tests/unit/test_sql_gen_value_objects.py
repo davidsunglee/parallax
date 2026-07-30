@@ -34,13 +34,107 @@ def test_nested_null_check_and_membership() -> None:
     )
     assert "jsonb_extract_path_text(t0.address, ?) is null" in is_null.statement.sql
     membership = compile_read(
-        oa.NestedMembership(path="Customer.address.city", values=("Oslo", "Boston")),
+        oa.NestedMembership(op="nestedIn", path="Customer.address.city", values=("Oslo", "Boston")),
         CUSTOMER,
         POSTGRES,
         target(CUSTOMER, "Customer"),
     )
     assert membership.statement.sql.endswith("in (?, ?)")
     assert membership.statement.binds == ("city", "Oslo", "Boston")
+
+
+def test_nested_range_lowers_to_one_between_with_the_typed_cast() -> None:
+    # ONE `between` with the leaf's cast applied once, binding the path then `lower`
+    # then `upper` — never two comparisons, which through a `many` member would be a
+    # different predicate (m-op-algebra).
+    compiled = compile_read(
+        oa.NestedRange(path="Customer.address.geo.elevation", lower=5, upper=12),
+        CUSTOMER,
+        POSTGRES,
+        target(CUSTOMER, "Customer"),
+    )
+    assert compiled.statement.sql == (
+        "select t0.id, t0.name from customer t0 where "
+        "cast(jsonb_extract_path_text(t0.address, ?, ?) as double precision) between ? and ?"
+    )
+    assert compiled.statement.binds == ("geo", "elevation", 5, 12)
+
+
+def test_nested_negated_membership_lowers_to_a_leading_not_with_no_extra_bind() -> None:
+    # The corpus negation form: a LEADING `not` over the identical `in (…)` fragment
+    # the positive tag emits, with the same bind list (m-sql).
+    positive = compile_read(
+        oa.NestedMembership(op="nestedIn", path="Customer.address.city", values=("Oslo",)),
+        CUSTOMER,
+        POSTGRES,
+        target(CUSTOMER, "Customer"),
+    )
+    negated = compile_read(
+        oa.NestedMembership(op="nestedNotIn", path="Customer.address.city", values=("Oslo",)),
+        CUSTOMER,
+        POSTGRES,
+        target(CUSTOMER, "Customer"),
+    )
+    where = "where jsonb_extract_path_text(t0.address, ?) in (?)"
+    assert positive.statement.sql.endswith(where)
+    assert negated.statement.sql.endswith(f"where not {where.removeprefix('where ')}")
+    assert negated.statement.binds == positive.statement.binds == ("city", "Oslo")
+
+
+def test_nested_range_through_a_many_member_binds_one_element() -> None:
+    # Any-element, but the WHOLE range rides one element predicate on one alias, so a
+    # single element must satisfy both bounds.
+    compiled = compile_read(
+        oa.NestedRange(path="Customer.address.phones.number", lower="555-0000", upper="555-1234"),
+        CUSTOMER,
+        POSTGRES,
+        target(CUSTOMER, "Customer"),
+    )
+    assert compiled.statement.sql.count("jsonb_array_elements(") == 1
+    assert compiled.statement.sql.endswith(
+        "where jsonb_extract_path_text(t1.value, ?) between ? and ?)"
+    )
+    assert compiled.statement.binds == (
+        "phones",
+        "array",
+        "phones",
+        "[]",
+        "number",
+        "555-0000",
+        "555-1234",
+    )
+
+
+def test_nested_range_and_negated_membership_lower_inside_a_scoped_where() -> None:
+    # The element scope reaches the same two arms through the ONE dispatcher: the
+    # element-relative path resolves against the unnested alias, and both new nodes
+    # join the equality conjunct on that same alias (same-element).
+    op = oa.NestedExists(
+        path="Customer.address.phones",
+        where=oa.And(
+            operands=(
+                oa.NestedRange(path="number", lower="555-9000", upper="555-9999"),
+                oa.NestedMembership(op="nestedNotIn", path="type", values=("work",)),
+            )
+        ),
+    )
+    compiled = compile_read(op, CUSTOMER, POSTGRES, target(CUSTOMER, "Customer"))
+    assert compiled.statement.sql.count("jsonb_array_elements(") == 1
+    assert compiled.statement.sql.endswith(
+        "where jsonb_extract_path_text(t1.value, ?) between ? and ? "
+        "and not jsonb_extract_path_text(t1.value, ?) in (?))"
+    )
+    assert compiled.statement.binds == (
+        "phones",
+        "array",
+        "phones",
+        "[]",
+        "number",
+        "555-9000",
+        "555-9999",
+        "type",
+        "work",
+    )
 
 
 def test_malformed_value_object_paths() -> None:
@@ -300,6 +394,9 @@ def test_nested_exists_scoped_where_composes_or_not_and_group() -> None:
         pytest.param(oa.NullCheck(op="isNull", attr="Customer.name"), id="nullCheck"),
         pytest.param(oa.StringMatch(op="like", attr="Customer.name", value="a%"), id="stringMatch"),
         pytest.param(oa.Membership(op="in", attr="Customer.name", values=("a",)), id="membership"),
+        pytest.param(
+            oa.Membership(op="notIn", attr="Customer.name", values=("a",)), id="notMembership"
+        ),
         pytest.param(oa.NestedExists(path="Customer.address.phones"), id="nestedExists"),
         pytest.param(oa.NestedNotExists(path="Customer.address.phones"), id="nestedNotExists"),
         pytest.param(oa.Narrow(entity="Customer", to=("Customer",), operand=oa.All()), id="narrow"),

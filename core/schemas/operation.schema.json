@@ -125,7 +125,9 @@
         { "$ref": "#/$defs/nestedGte" },
         { "$ref": "#/$defs/nestedLt" },
         { "$ref": "#/$defs/nestedLte" },
+        { "$ref": "#/$defs/nestedBetween" },
         { "$ref": "#/$defs/nestedIn" },
+        { "$ref": "#/$defs/nestedNotIn" },
         { "$ref": "#/$defs/nestedIsNull" },
         { "$ref": "#/$defs/nestedIsNotNull" },
         { "$ref": "#/$defs/nestedExists" },
@@ -772,8 +774,19 @@
         "value": { "$ref": "#/$defs/literal" }
       }
     },
+    "nestedRange": {
+      "description": "A nested-field range test: a valueObject inner attribute (referenced by a dotted path) bounded below and above by TYPED literals. The `path` resolves against the model's declared valueObject structure (as for `nestedComparison`); BOTH bounds are `literal`s whose type MUST match the leaf attribute's declared type (m-op-algebra). A `lower` strictly greater than its `upper` names an empty range and MUST be rejected (m-op-algebra bound-ordering rule), checked AFTER the typed-literal rule so a mistyped bound is named as such. Lowers to one `<extraction> between ? and ?` — never two comparisons — with the JSON path bind(s) first, then `lower`, then `upper` (m-sql/m-dialect).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "lower", "upper"],
+      "properties": {
+        "path": { "$ref": "#/$defs/nestedRef" },
+        "lower": { "$ref": "#/$defs/literal" },
+        "upper": { "$ref": "#/$defs/literal" }
+      }
+    },
     "nestedMembership": {
-      "description": "A nested-field membership test: a valueObject inner attribute (referenced by a dotted path) tested against a non-empty list of TYPED literals. The `path` resolves against the model's declared valueObject structure (as for `nestedComparison`); each list value is a `literal` whose type MUST match the leaf attribute's declared type (m-op-algebra). Lowers to `<extraction> in (?, ?, …)` with the JSON path bind(s) first, then one bind per list value in order (m-sql/m-dialect).",
+      "description": "A nested-field membership test: a valueObject inner attribute (referenced by a dotted path) tested against a non-empty list of TYPED literals. The `path` resolves against the model's declared valueObject structure (as for `nestedComparison`); each list value is a `literal` whose type MUST match the leaf attribute's declared type (m-op-algebra). Lowers to `<extraction> in (?, ?, …)` — negated with a leading `not` for `nestedNotIn` — with the JSON path bind(s) first, then one bind per list value in order (m-sql/m-dialect).",
       "type": "object",
       "additionalProperties": false,
       "required": ["path", "values"],
@@ -837,12 +850,26 @@
       "required": ["nestedLte"],
       "properties": { "nestedLte": { "$ref": "#/$defs/nestedComparison" } }
     },
+    "nestedBetween": {
+      "description": "nestedBetween(path, lower, upper): filter where an embedded valueObject attribute lies within an inclusive range of two typed literals. One canonical node, never two comparisons — through a `many` segment a SINGLE element must satisfy the whole range.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["nestedBetween"],
+      "properties": { "nestedBetween": { "$ref": "#/$defs/nestedRange" } }
+    },
     "nestedIn": {
       "description": "nestedIn(path, values): filter where an embedded valueObject attribute is one of a non-empty list of typed literals.",
       "type": "object",
       "additionalProperties": false,
       "required": ["nestedIn"],
       "properties": { "nestedIn": { "$ref": "#/$defs/nestedMembership" } }
+    },
+    "nestedNotIn": {
+      "description": "nestedNotIn(path, values): filter where an embedded valueObject attribute is NOT one of a non-empty list of typed literals. Through a `many` segment this keeps the uniform any-element reading — SOME element's member is not in the list — exactly as nestedNotEq does; the no-element reading is spelled nestedNotExists(path, where: nestedIn(…)).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["nestedNotIn"],
+      "properties": { "nestedNotIn": { "$ref": "#/$defs/nestedMembership" } }
     },
     "nestedIsNull": {
       "description": "nestedIsNull(path): filter where an embedded valueObject attribute is 'not present' (SQL NULL column, missing key, JSON null, or non-object intermediate — all collapsed per m-op-algebra).",
@@ -880,6 +907,17 @@
         "value": { "$ref": "#/$defs/literal" }
       }
     },
+    "elementRange": {
+      "description": "An element-scoped nested range test: an element-relative `path` bounded below and above by TYPED literals whose type MUST match the leaf attribute's declared type. One element must satisfy the WHOLE range, and the bound-ordering rule applies exactly as it does path-scoped.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "lower", "upper"],
+      "properties": {
+        "path": { "$ref": "#/$defs/elementRef" },
+        "lower": { "$ref": "#/$defs/literal" },
+        "upper": { "$ref": "#/$defs/literal" }
+      }
+    },
     "elementMembership": {
       "description": "An element-scoped membership test: an element-relative `path` tested against a non-empty list of typed literals.",
       "type": "object",
@@ -913,7 +951,9 @@
         { "$ref": "#/$defs/elementNestedGte" },
         { "$ref": "#/$defs/elementNestedLt" },
         { "$ref": "#/$defs/elementNestedLte" },
+        { "$ref": "#/$defs/elementNestedBetween" },
         { "$ref": "#/$defs/elementNestedIn" },
+        { "$ref": "#/$defs/elementNestedNotIn" },
         { "$ref": "#/$defs/elementNestedIsNull" },
         { "$ref": "#/$defs/elementNestedIsNotNull" },
         { "$ref": "#/$defs/elementAnd" },
@@ -958,11 +998,23 @@
       "required": ["nestedLte"],
       "properties": { "nestedLte": { "$ref": "#/$defs/elementComparison" } }
     },
+    "elementNestedBetween": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["nestedBetween"],
+      "properties": { "nestedBetween": { "$ref": "#/$defs/elementRange" } }
+    },
     "elementNestedIn": {
       "type": "object",
       "additionalProperties": false,
       "required": ["nestedIn"],
       "properties": { "nestedIn": { "$ref": "#/$defs/elementMembership" } }
+    },
+    "elementNestedNotIn": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["nestedNotIn"],
+      "properties": { "nestedNotIn": { "$ref": "#/$defs/elementMembership" } }
     },
     "elementNestedIsNull": {
       "type": "object",

@@ -1,0 +1,46 @@
+# valueObject to-many: a negated membership inside a scoped `where` is SAME-element —
+# the element that carries the equality is the element whose member must be outside
+# the list (m-op-algebra elementPredicate + nested membership, m-sql, m-dialect
+# array-traversal form). Postgres golden only — a `where` carrying a non-`eq` leaf is
+# outside MariaDB's containment scope (m-dialect, "Scope of the containment golden").
+#
+# nestedExists(Customer.address.phones, where: number = '555-9999' AND type not in
+# [work]) matches only Linus (id 2): his single element {home, 555-9999} carries the
+# number and a type outside the list. Ada is the discriminating row — her 555-9999
+# lives on a `work` element and her non-`work` element carries 555-1234 — so the
+# unscoped AND of the two flat any-element predicates matches her while this scoped
+# form does not. Nils's element carries neither.
+#
+# Priya (10) is the trap: her non-array OBJECT `phones` is {type: home, number:
+# '555-9999'}, which satisfies both element predicates, so an unguarded traversal
+# would match it; the array-type guard collapses it to not-present along with the
+# empty array (3), the null column (4), the missing keys (5, 6) and the other
+# non-array states (8, 9).
+#
+# Both element predicates lower against the SAME unnested alias t1, and the negation
+# is a LEADING `not` over the same `in (?)` fragment the positive form emits, adding
+# no bind. The oracle guards with an outer `jsonb_typeof` rather than the golden's
+# inline `case` and states the absence rule explicitly with `is not null`.
+model: models/customer.yaml
+tags: [m-value-object, m-op-algebra, m-sql, m-dialect, nested, json, to-many, exists, scoped, same-element, notIn, array-traversal, slice-snapshot-1, slice-managed-1]
+shape: read
+when:
+  targetEntity: Customer
+  operation:
+    nestedExists:
+      path: Customer.address.phones
+      where:
+        and:
+          operands:
+            - nestedEq: { path: number, value: '555-9999' }
+            - nestedNotIn: { path: type, values: [work] }
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.name from customer t0 where exists (select 1 from jsonb_array_elements(case when jsonb_typeof(jsonb_extract_path(t0.address, ?)) = ? then jsonb_extract_path(t0.address, ?) else cast(? as jsonb) end) t1 where jsonb_extract_path_text(t1.value, ?) = ? and not jsonb_extract_path_text(t1.value, ?) in (?))
+      binds: [phones, 'array', phones, '[]', number, '555-9999', type, work]
+  referenceSql:
+    postgres: select id, name from customer where jsonb_typeof(address -> 'phones') = 'array' and exists (select 1 from jsonb_array_elements(address -> 'phones') e where e.value ->> 'number' = '555-9999' and e.value ->> 'type' is not null and e.value ->> 'type' <> 'work')
+  rows:
+    - { id: 2, name: Linus }
+  roundTrips: 1

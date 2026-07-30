@@ -1033,6 +1033,12 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-value-object-020": _VO_PREDICATE_SIBLING_REASON,
     "m-value-object-021": _VO_PREDICATE_SIBLING_REASON,
     "m-value-object-022": _VO_PREDICATE_SIBLING_REASON,
+    "m-value-object-048": _VO_PREDICATE_SIBLING_REASON,
+    "m-value-object-049": _VO_PREDICATE_SIBLING_REASON,
+    "m-value-object-050": _VO_PREDICATE_SIBLING_REASON,
+    "m-value-object-051": _VO_PREDICATE_SIBLING_REASON,
+    "m-value-object-052": _VO_PREDICATE_SIBLING_REASON,
+    "m-value-object-053": _VO_PREDICATE_SIBLING_REASON,
     # -- m-value-object: structural rejects (no idiomatic spelling exists) --- #
     "m-value-object-034": _VO_UNKNOWN_NESTED_FIELD_REASON,
     "m-value-object-035": _VO_DEEPFETCH_SEGMENT_REASON,

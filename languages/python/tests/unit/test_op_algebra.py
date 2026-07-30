@@ -101,6 +101,52 @@ def test_string_match_omitted_case_insensitive_round_trips_omitted() -> None:
     assert op_algebra.serialize(node) == doc
 
 
+def test_nested_range_and_negated_membership_round_trip_in_both_scopes() -> None:
+    # `nestedBetween` / `nestedNotIn` carry the SAME wire tag in both scopes — the
+    # element `$def`s differ only in which body their `path` points at — so one pair
+    # of node classes serves both, distinguished by the path grammar alone.
+    path_scoped: dict[str, Any] = {
+        "and": {
+            "operands": [
+                {
+                    "nestedBetween": {
+                        "path": "Customer.address.geo.elevation",
+                        "lower": 5,
+                        "upper": 12,
+                    }
+                },
+                {"nestedNotIn": {"path": "Customer.address.city", "values": ["Oslo"]}},
+            ]
+        }
+    }
+    element_scoped: dict[str, Any] = {
+        "nestedExists": {
+            "path": "Customer.address.phones",
+            "where": {
+                "and": {
+                    "operands": [
+                        {"nestedBetween": {"path": "number", "lower": "555-9000", "upper": "5"}},
+                        {"nestedNotIn": {"path": "type", "values": ["work"]}},
+                    ]
+                }
+            },
+        }
+    }
+    for doc in (path_scoped, element_scoped):
+        assert op_algebra.serialize(op_algebra.deserialize(doc)) == doc
+
+
+def test_nested_negated_membership_keeps_its_own_tag_through_serialization() -> None:
+    # One `NestedMembership` class carries both tags, so a lost `op` would silently
+    # serialize `nestedNotIn` back as `nestedIn` — the same predicate with the
+    # opposite meaning.
+    node = op_algebra.deserialize(
+        {"nestedNotIn": {"path": "Customer.address.city", "values": ["Oslo"]}}
+    )
+    assert cast("op_algebra.NestedMembership", node).op == "nestedNotIn"
+    assert next(iter(op_algebra.serialize(node))) == "nestedNotIn"
+
+
 def test_scoped_where_element_predicate_round_trips() -> None:
     # A nestedExists `where` is an element predicate: the nested* family over
     # ELEMENT-relative paths (`type`, `number` — no `Class.valueObject` prefix)
@@ -274,6 +320,15 @@ def test_a_code_outside_the_closed_query_set_cannot_be_raised() -> None:
             (
                 {"orderBy": {"operand": {"all": {}}, "keys": [{"attr": "Order.id", "x": 1}]}},
                 r"orderBy key: unexpected key\(s\) \['x'\]",
+            ),
+            (
+                {
+                    "orderBy": {
+                        "operand": {"all": {}},
+                        "keys": [{"attr": "Order.sku", "direction": "up"}],
+                    }
+                },
+                "`direction` must be 'asc' or 'desc'",
             ),
             (
                 {
@@ -504,6 +559,29 @@ def test_a_code_outside_the_closed_query_set_cannot_be_raised() -> None:
                     }
                 },
                 "not a valid element-relative path",
+            ),
+            (
+                {
+                    "nestedExists": {
+                        "path": "Customer.address.phones",
+                        "where": {
+                            "nestedBetween": {
+                                "path": "Customer.address.geo.elevation",
+                                "lower": 1,
+                                "upper": 2,
+                            }
+                        },
+                    }
+                },
+                "not a valid element-relative path",
+            ),
+            (
+                {"nestedBetween": {"path": "Customer.address.city", "lower": "a"}},
+                r"missing required key\(s\) \['upper'\]",
+            ),
+            (
+                {"nestedNotIn": {"path": "Customer.address.city", "values": []}},
+                "`values` must be a non-empty list",
             ),
         ],
     ),

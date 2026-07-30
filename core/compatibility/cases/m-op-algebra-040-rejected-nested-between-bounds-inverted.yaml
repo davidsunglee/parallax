@@ -1,0 +1,22 @@
+# Negative (m-op-algebra bound-ordering MUST): a nested range whose bounds are
+# INVERTED is refused pre-SQL, by the same rule the top-level `between` obeys.
+#
+# The bounds reverse the ones m-value-object-048 authors over the same nested path,
+# so the range is empty by construction. The node is schema-valid — both bounds are
+# polymorphic `literal`s of the leaf's own numeric kind — and it lowers to a
+# perfectly legal `cast(...) between ? and ?` that simply returns no rows, so only a
+# resolver enforcing the bound-ordering rule catches it. There is ONE rule shared by
+# every range node rather than a nested variant: bounds are compared by LITERAL KIND
+# (both numbers here) and only a STRICTLY greater lower bound is rejected, so equal
+# bounds still name the legal single-value range.
+model: models/customer.yaml
+tags: [m-op-algebra, m-value-object, rejected, negative, nested, between, slice-snapshot-1, slice-managed-1]
+shape: rejected
+when:
+  operation:
+    nestedBetween:
+      path: Customer.address.geo.elevation
+      lower: 12
+      upper: 5
+then:
+  rejectedRule: between-bounds-inverted

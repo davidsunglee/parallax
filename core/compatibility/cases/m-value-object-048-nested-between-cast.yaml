@@ -1,0 +1,41 @@
+# valueObject numeric range: nestedBetween is ONE canonical node with a typed cast
+# (m-op-algebra nested range, m-sql, m-dialect typed cast form), on Postgres AND
+# MariaDB.
+#
+# `geo.elevation` is a float64 attribute, so nestedBetween(Customer.address.geo.
+# elevation, 5, 12) casts the text extraction to the declared type once and lowers
+# to a SINGLE `between ? and ?` — never a lowered pair of comparisons — binding the
+# JSON path first, then `lower`, then `upper`. Both bounds are inclusive: Ada (10.5)
+# sits inside and Grace (5.0) sits exactly on the lower bound, so a strict `>` would
+# drop her; Linus (20.0) is above the upper bound. Every not-present row casts SQL
+# NULL and is excluded — the null column (4), the missing key (5), the non-object
+# intermediate (6), and the explicit JSON `null` leaf (7), plus 8/9/10 which carry
+# no `geo` at all.
+#
+# Postgres binds one path segment per hop (['geo','elevation']) then the two bounds;
+# MariaDB binds one '$.geo.elevation' path then the two bounds, so the hole
+# structure diverges and `binds` is a per-dialect map. The oracle coerces a
+# different way per dialect and spells the range as two comparisons on the same
+# extraction, which is what a single-valued path makes equivalent.
+model: models/customer.yaml
+tags: [m-value-object, m-op-algebra, m-sql, m-dialect, nested, json, between, cast, numeric, slice-snapshot-1, slice-managed-1]
+shape: read
+when:
+  targetEntity: Customer
+  operation:
+    nestedBetween: { path: Customer.address.geo.elevation, lower: 5, upper: 12 }
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.name from customer t0 where cast(jsonb_extract_path_text(t0.address, ?, ?) as double precision) between ? and ?
+        mariadb: select t0.id, t0.name from customer t0 where cast(json_value(t0.address, ?) as double) between ? and ?
+      binds:
+        postgres: [geo, elevation, 5, 12]
+        mariadb: ['$.geo.elevation', 5, 12]
+  referenceSql:
+    postgres: select id, name from customer where (address -> 'geo' ->> 'elevation')::double precision >= 5 and (address -> 'geo' ->> 'elevation')::double precision <= 12
+    mariadb: select id, name from customer where nullif(json_unquote(json_extract(address, '$.geo.elevation')), 'null') + 0 >= 5 and nullif(json_unquote(json_extract(address, '$.geo.elevation')), 'null') + 0 <= 12
+  rows:
+    - { id: 1, name: Ada }
+    - { id: 3, name: Grace }
+  roundTrips: 1

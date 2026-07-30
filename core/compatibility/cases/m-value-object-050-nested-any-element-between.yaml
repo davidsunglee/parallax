@@ -1,0 +1,39 @@
+# valueObject to-many range: nestedBetween through a `many` segment is ANY-ELEMENT,
+# and ONE element must satisfy the WHOLE range (m-op-algebra nested range +
+# any-element, m-sql, m-dialect array-traversal form). Postgres golden only — a
+# non-equality element predicate is outside MariaDB's containment scope (m-dialect,
+# "Scope of the containment golden").
+#
+# nestedBetween(Customer.address.phones.number, '555-0000', '555-1234') matches a row
+# iff SOME element's number lies in the inclusive range. Ada's first element
+# ('555-1234') sits exactly on the upper bound and Nils's only element ('555-0000')
+# exactly on the lower, so both inclusive edges are witnessed; Linus ('555-9999') is
+# above. The trap is Omar (id 9): his `phones` is the JSON scalar STRING "555-0000",
+# the exact lower bound, and it must NOT match, because a non-array `phones` has no
+# elements — the array-type guard collapses it, along with the JSON-null (8) and the
+# object (10), exactly as m-value-object-021 pins for equality.
+#
+# The range rides ONE element predicate on ONE unnested alias, which is what makes
+# `nestedBetween` a canonical node rather than a lowered pair: two independent flat
+# comparisons through the same array could be satisfied by two DIFFERENT elements.
+# The oracle guards with an outer `jsonb_typeof` instead of the golden's inline
+# `case`, reads the element field with `->>` instead of jsonb_extract_path_text, and
+# spells the range as two comparisons on the SAME element.
+model: models/customer.yaml
+tags: [m-value-object, m-op-algebra, m-sql, m-dialect, nested, json, to-many, any-element, between, array-traversal, slice-snapshot-1, slice-managed-1]
+shape: read
+when:
+  targetEntity: Customer
+  operation:
+    nestedBetween: { path: Customer.address.phones.number, lower: '555-0000', upper: '555-1234' }
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.name from customer t0 where exists (select 1 from jsonb_array_elements(case when jsonb_typeof(jsonb_extract_path(t0.address, ?)) = ? then jsonb_extract_path(t0.address, ?) else cast(? as jsonb) end) t1 where jsonb_extract_path_text(t1.value, ?) between ? and ?)
+      binds: [phones, 'array', phones, '[]', number, '555-0000', '555-1234']
+  referenceSql:
+    postgres: select id, name from customer where jsonb_typeof(address -> 'phones') = 'array' and exists (select 1 from jsonb_array_elements(address -> 'phones') e where e.value ->> 'number' >= '555-0000' and e.value ->> 'number' <= '555-1234')
+  rows:
+    - { id: 1, name: Ada }
+    - { id: 7, name: Nils }
+  roundTrips: 1

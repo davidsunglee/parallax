@@ -16,8 +16,9 @@ database:
 * the frozen ``m-value-object-*`` corpus authors its binds by whether the golden SQL
   DIVERGES per dialect: a per-dialect binds map exactly when the SQL diverges (the
   nested-extraction reads), and the flat shared-hole form when it is dialect-identical
-  (every atomic-document write, and the temporal projection reads whose bare-column SQL
-  is the same on both dialects).
+  (every atomic-document write, the temporal projection reads whose bare-column SQL
+  is the same on both dialects, and the enumerated Postgres-only element predicates
+  whose single golden shares its holes trivially).
 """
 
 from __future__ import annotations
@@ -291,13 +292,39 @@ def _golden_dialects(entries: list[dict[str, Any]]) -> set[str]:
     return set.intersection(*dialect_sets) if dialect_sets else set()
 
 
+# The value-object cases whose golden is Postgres ONLY, because their element
+# predicate is outside MariaDB's containment scope (m-dialect, "Scope of the
+# containment golden"): `json_contains` expresses equality against a fixed candidate,
+# so a range or a negated membership — flat through a `many` segment or inside a
+# scoped `where` — has no MariaDB golden until a set-returning unnest can be
+# normalized. Enumerated rather than inferred, so a case that loses its MariaDB
+# golden by accident still fails; the assertion below is exact in BOTH directions.
+_POSTGRES_ONLY_ELEMENT_PREDICATE_CASES = frozenset(
+    {
+        "m-value-object-050-nested-any-element-between",
+        "m-value-object-051-nested-any-element-not-in",
+        "m-value-object-052-nested-exists-scoped-between",
+        "m-value-object-053-nested-exists-scoped-not-in",
+    }
+)
+
+
 def test_value_object_cases_carry_both_dialects_and_per_dialect_binds() -> None:
     cases = _value_object_cases()
     assert cases, "no m-value-object cases discovered"
+    assert _POSTGRES_ONLY_ELEMENT_PREDICATE_CASES <= {c.path.stem for c in cases}, (
+        "every enumerated containment-limitation case must still exist in the corpus"
+    )
     for case in cases:
         entries = _golden_entries(case)
-        assert _golden_dialects(entries) == {"postgres", "mariadb"}, (
-            f"{case.path.name}: expected postgres+mariadb golden, got {_golden_dialects(entries)}"
+        expected = (
+            {"postgres"}
+            if case.path.stem in _POSTGRES_ONLY_ELEMENT_PREDICATE_CASES
+            else {"postgres", "mariadb"}
+        )
+        assert _golden_dialects(entries) == expected, (
+            f"{case.path.name}: expected {sorted(expected)} golden, "
+            f"got {sorted(_golden_dialects(entries))}"
         )
         # The keys-match invariant holds for every value-object case, for both the
         # per-dialect binds and the per-dialect referenceSql oracle. (The helpers key

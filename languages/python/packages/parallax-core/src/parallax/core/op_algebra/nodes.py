@@ -42,9 +42,11 @@ __all__ = [
     "NestedComparisonOp",
     "NestedExists",
     "NestedMembership",
+    "NestedMembershipOp",
     "NestedNotExists",
     "NestedNullCheck",
     "NestedNullOp",
+    "NestedRange",
     "NoneOp",
     "Not",
     "NotExists",
@@ -74,6 +76,7 @@ MembershipOp = Literal["in", "notIn"]
 NestedComparisonOp = Literal[
     "nestedEq", "nestedNotEq", "nestedGt", "nestedGte", "nestedLt", "nestedLte"
 ]
+NestedMembershipOp = Literal["nestedIn", "nestedNotIn"]
 NestedNullOp = Literal["nestedIsNull", "nestedIsNotNull"]
 
 
@@ -293,9 +296,30 @@ class NestedComparison:
 
 
 @dataclass(frozen=True, slots=True)
-class NestedMembership:
-    """A value-object inner-attribute membership test over typed literals."""
+class NestedRange:
+    """A value-object inner-attribute range test against two typed literal bounds.
 
+    One canonical node, never a pair of comparisons: through a Many occurrence the
+    flat family is any-element, so `>= lower` and `<= upper` as two nodes could be
+    satisfied by two *different* elements, while this node requires one element to
+    satisfy the whole range (`m-op-algebra`).
+    """
+
+    path: str
+    lower: Scalar
+    upper: Scalar
+
+
+@dataclass(frozen=True, slots=True)
+class NestedMembership:
+    """A value-object inner-attribute membership test over typed literals.
+
+    The negated form keeps the uniform any-element reading through a Many
+    occurrence — some element's member is not in the list — which is why it is one
+    node with the positive form rather than a negation of existence.
+    """
+
+    op: NestedMembershipOp
     path: str
     values: tuple[Scalar, ...]
 
@@ -435,6 +459,7 @@ Operation = (
     | Distinct
     | Narrow
     | NestedComparison
+    | NestedRange
     | NestedMembership
     | NestedNullCheck
     | NestedExists

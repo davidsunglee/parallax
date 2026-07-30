@@ -44,9 +44,11 @@ from parallax.core.op_algebra.nodes import (
     NestedComparisonOp,
     NestedExists,
     NestedMembership,
+    NestedMembershipOp,
     NestedNotExists,
     NestedNullCheck,
     NestedNullOp,
+    NestedRange,
     NoneOp,
     Not,
     NotExists,
@@ -74,6 +76,8 @@ _MEMBERSHIPS: frozenset[str] = frozenset({"in", "notIn"})
 _NESTED_CMP: frozenset[str] = frozenset(
     {"nestedEq", "nestedNotEq", "nestedGt", "nestedGte", "nestedLt", "nestedLte"}
 )
+_NESTED_RANGE: frozenset[str] = frozenset({"nestedBetween"})
+_NESTED_MEMBERSHIPS: frozenset[str] = frozenset({"nestedIn", "nestedNotIn"})
 _NESTED_NULL: frozenset[str] = frozenset({"nestedIsNull", "nestedIsNotNull"})
 
 # Reference-string patterns (operation.schema.json $defs). An attribute and
@@ -96,7 +100,11 @@ _ELEMENT_REF = re.compile(r"^[a-z][A-Za-z0-9]*(\.[a-z][A-Za-z0-9]*)*$")
 # other kind — a result directive, a top-level predicate, navigation, a temporal
 # wrapper, `all`/`none` — is illegal there and rejected before construction.
 _ELEMENT_TAGS: frozenset[str] = (
-    _NESTED_CMP | _NESTED_NULL | frozenset({"nestedIn", "and", "or", "not", "group"})
+    _NESTED_CMP
+    | _NESTED_RANGE
+    | _NESTED_MEMBERSHIPS
+    | _NESTED_NULL
+    | frozenset({"and", "or", "not", "group"})
 )
 
 
@@ -135,7 +143,6 @@ _SHAPES: dict[str, _Shape] = {
     "orderBy": _shape(("operand", "keys")),
     "limit": _shape(("operand", "count")),
     "narrow": _shape(("entity", "to", "operand")),
-    "nestedIn": _shape(("path", "values")),
     "nestedExists": _shape(("path",), ("where",)),
     "nestedNotExists": _shape(("path",), ("where",)),
     "navigate": _shape(("rel",), ("op",)),
@@ -151,6 +158,8 @@ _SHAPES.update({tag: _shape(("attr",)) for tag in _NULLS})
 _SHAPES.update({tag: _shape(("attr", "value"), ("caseInsensitive",)) for tag in _STRINGS})
 _SHAPES.update({tag: _shape(("attr", "values")) for tag in _MEMBERSHIPS})
 _SHAPES.update({tag: _shape(("path", "value")) for tag in _NESTED_CMP})
+_SHAPES.update({tag: _shape(("path", "lower", "upper")) for tag in _NESTED_RANGE})
+_SHAPES.update({tag: _shape(("path", "values")) for tag in _NESTED_MEMBERSHIPS})
 _SHAPES.update({tag: _shape(("path",)) for tag in _NESTED_NULL})
 
 
@@ -460,9 +469,17 @@ def _deserialize(doc: object, *, element_scope: bool) -> Operation:
             path=_ref(body, "path", tag, nested_ref, nested_kind),
             value=_scalar(body.get("value"), tag),
         )
-    if tag == "nestedIn":
+    if tag in _NESTED_RANGE:
+        return NestedRange(
+            path=_ref(body, "path", tag, nested_ref, nested_kind),
+            lower=_scalar(body.get("lower"), tag),
+            upper=_scalar(body.get("upper"), tag),
+        )
+    if tag in _NESTED_MEMBERSHIPS:
         return NestedMembership(
-            path=_ref(body, "path", tag, nested_ref, nested_kind), values=_values(body, tag)
+            op=cast("NestedMembershipOp", tag),
+            path=_ref(body, "path", tag, nested_ref, nested_kind),
+            values=_values(body, tag),
         )
     if tag in _NESTED_NULL:
         return NestedNullCheck(
@@ -578,8 +595,10 @@ def serialize(op: Operation) -> dict[str, object]:
             return {"narrow": {"entity": entity, "to": list(to), "operand": serialize(operand)}}
         case NestedComparison(op=tag, path=path, value=value):
             return {tag: {"path": path, "value": value}}
-        case NestedMembership(path=path, values=values):
-            return {"nestedIn": {"path": path, "values": list(values)}}
+        case NestedRange(path=path, lower=lower, upper=upper):
+            return {"nestedBetween": {"path": path, "lower": lower, "upper": upper}}
+        case NestedMembership(op=tag, path=path, values=values):
+            return {tag: {"path": path, "values": list(values)}}
         case NestedNullCheck(op=tag, path=path):
             return {tag: {"path": path}}
         case NestedExists(path=path, where=where):

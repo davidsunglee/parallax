@@ -205,11 +205,13 @@ candidate object. It **cannot** express any other element predicate, even though
 `nested*` family through a `many` segment. Concretely, `json_contains` cannot lower:
 
 - a **flat any-element** non-equality predicate through a `many` segment —
-  `nestedNotEq`, or a range `nestedGt` / `nestedGte` / `nestedLt` / `nestedLte`, or
-  `nestedIn`, or a presence test `nestedIsNull` / `nestedIsNotNull`;
+  `nestedNotEq`, or a range `nestedGt` / `nestedGte` / `nestedLt` / `nestedLte` /
+  `nestedBetween`, or a membership `nestedIn` / `nestedNotIn`, or a presence test
+  `nestedIsNull` / `nestedIsNotNull`;
 - an element-scoped **`where` containing any non-`eq` leaf** — a range
-  (`elementNestedGt` / `elementNestedGte` / `elementNestedLt` / `elementNestedLte`),
-  an `elementNestedNotEq`, an `elementNestedIn`, or an element null check
+  (`elementNestedGt` / `elementNestedGte` / `elementNestedLt` / `elementNestedLte` /
+  `elementNestedBetween`), an `elementNestedNotEq`, a membership
+  (`elementNestedIn` / `elementNestedNotIn`), or an element null check
   (`elementNestedIsNull` / `elementNestedIsNotNull`);
 - an element-scoped **`where` whose combinator is not a plain conjunction** — an
   `or`, a `not`, or a `group` around a disjunction (only a flat `and` of equalities
@@ -223,7 +225,8 @@ therefore a documented deferred limitation**: the algebra and the Postgres lower
 element predicate and combinator) support them; the MariaDB **golden** does not until
 a set-returning unnest can be normalized (or a set-returning dialect such as
 Snowflake `LATERAL FLATTEN` supplies one behind this seam). The compatibility
-corpus's to-many coverage is equality-based, consistent with this scope.
+corpus's **dual-dialect** to-many coverage is equality-based, consistent with this
+scope; a case exercising one of the forms above carries a Postgres golden only.
 
 **MariaDB-lowering flag.** Because the schema (`operation.schema.json`)
 *admits* these forms — the scoped `nested*` family and the flat `many`-crossing

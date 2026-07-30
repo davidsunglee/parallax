@@ -560,6 +560,35 @@ def test_validate_operation_accepts_valid_nested_predicates() -> None:
             }
         },
     )
+    validate_operation(
+        entity,
+        {"nestedBetween": {"path": "Customer.address.geo.elevation", "lower": 5, "upper": 12}},
+    )
+    validate_operation(
+        entity, {"nestedNotIn": {"path": "Customer.address.city", "values": ["Oslo"]}}
+    )
+    validate_operation(
+        entity,
+        {
+            "nestedExists": {
+                "path": "Customer.address.phones",
+                "where": {
+                    "and": {
+                        "operands": [
+                            {
+                                "nestedBetween": {
+                                    "path": "number",
+                                    "lower": "555-9000",
+                                    "upper": "555-9999",
+                                }
+                            },
+                            {"nestedNotIn": {"path": "type", "values": ["work"]}},
+                        ]
+                    }
+                },
+            }
+        },
+    )
     # A normal scalar predicate rooted at the ENTITY is not a find-root misuse.
     validate_operation(entity, {"eq": {"attr": "Customer.name", "value": "Ada"}})
 
@@ -618,6 +647,55 @@ def test_membership_literal_type_mismatch_rejected() -> None:
             _customer_entity(), {"nestedIn": {"path": "Customer.address.city", "values": [1, 2]}}
         )
     assert exc.value.rule == NESTED_LITERAL_TYPE_MISMATCH
+
+
+def test_negated_membership_literal_type_mismatch_rejected() -> None:
+    # The negated form carries the identical typed-literal obligation; the two share
+    # one arm rather than the negation reaching an untyped shortcut.
+    with pytest.raises(RejectionError) as exc:
+        validate_operation(
+            _customer_entity(), {"nestedNotIn": {"path": "Customer.address.city", "values": [42]}}
+        )
+    assert exc.value.rule == NESTED_LITERAL_TYPE_MISMATCH
+
+
+def _element_where(where: dict[str, Any]) -> dict[str, Any]:
+    return {"nestedExists": {"path": "Customer.address.phones", "where": where}}
+
+
+@pytest.mark.parametrize(
+    "node",
+    [
+        {"nestedBetween": {"path": "Customer.address.city", "lower": 42, "upper": 7}},
+        _element_where({"nestedBetween": {"path": "number", "lower": 42, "upper": 7}}),
+    ],
+    ids=["path-scoped", "element-scoped"],
+)
+def test_nested_range_bound_type_mismatch_is_reported_before_the_ordering(
+    node: dict[str, Any],
+) -> None:
+    # Both bounds mistype a `string` leaf AND are inverted as raw numbers, so this
+    # discriminates the check order: a validator that ordered the bounds before
+    # resolving the subject would report the inversion and blame the wrong thing.
+    with pytest.raises(RejectionError) as exc:
+        validate_operation(_customer_entity(), node)
+    assert exc.value.rule == NESTED_LITERAL_TYPE_MISMATCH
+
+
+@pytest.mark.parametrize(
+    "node",
+    [
+        {"nestedBetween": {"path": "Customer.address.geo.elevation", "lower": 12, "upper": 5}},
+        _element_where({"nestedBetween": {"path": "type", "lower": "work", "upper": "home"}}),
+    ],
+    ids=["path-scoped", "element-scoped"],
+)
+def test_nested_range_with_inverted_bounds_rejected_in_both_scopes(node: dict[str, Any]) -> None:
+    # Correctly typed bounds, so resolution passes and the shared bound-ordering rule
+    # is what fires — the same rule the top-level `between` obeys, at both scopes.
+    with pytest.raises(RejectionError) as exc:
+        validate_operation(_customer_entity(), node)
+    assert exc.value.rule == BETWEEN_BOUNDS_INVERTED
 
 
 # --- range bound ordering (m-op-algebra) -------------------------------------
