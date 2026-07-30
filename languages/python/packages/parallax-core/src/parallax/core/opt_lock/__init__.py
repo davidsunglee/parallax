@@ -52,8 +52,8 @@ m-opt-lock.md`; `python.md` §5 L584-641; ADR 0013):
    ``updatedRows != 1`` GATED write raises — a versioned keyed UPDATE or DELETE,
    or a temporal close, under optimistic concurrency. ``StaleWriteError`` is the
    distinct NON-retriable sibling an UNGATED observation-requiring write raises:
-   a locking-mode versioned keyed DELETE, or a locking-mode temporal close, where
-   the shared read lock rather than a gate was supposed to make the write correct.
+   the same three shapes under locking mode, where the shared read lock rather
+   than a gate was supposed to make the write correct.
    A close's ADDRESS is not a gate, so an ungated mismatch is a consistency
    violation, not a detected-and-retriable conflict.
    Neither ``!= 1`` shape ever exceeds 1 (a PK-keyed or milestone-addressing
@@ -234,11 +234,11 @@ class StaleWriteError(RuntimeError):
     """The ``updatedRows != 1`` outcome on an UNGATED (locking-mode) write that
     still required a prior observation — a temporal close (`m-txtime-write`
     "Affected-row conflict contract for closes"; `m-bitemp-write`) or a versioned
-    keyed DELETE (`m-opt-lock`).
+    keyed UPDATE or DELETE (`m-opt-lock`).
 
     Such a shortfall is an error in ANY mode, never silent. Under optimistic
     concurrency the gate — the observed ``in_z`` for a close, the observed version
-    for a delete — makes a stale write a detectable, retriable
+    for a keyed write — makes a stale write a detectable, retriable
     :class:`OptimisticLockConflictError`. Under
     locking concurrency the statement carries no gate at all (the shared read lock
     is supposed to make it correct), so the shortfall is a categorically DIFFERENT,

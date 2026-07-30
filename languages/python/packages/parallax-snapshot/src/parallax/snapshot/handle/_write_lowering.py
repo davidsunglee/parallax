@@ -163,6 +163,11 @@ def lower_write(
             "non-temporal entity (m-txtime-write / m-bitemp-write)"
         )
     version_attr = version_attribute(meta, declaring_entity)
+    # An ungated (locking-mode) shortfall on an observation-requiring write is the
+    # same non-retriable stale outcome an ungated close's is: no gate could have
+    # caused it, so it is a consistency violation rather than a detected lost
+    # update a re-read could resolve (`m-opt-lock`, ADR 0047).
+    ungated_shortfall_is_stale = not opt_lock.gates(concurrency)
     if instruction.mutation == "insert":
         if len(instruction.rows) > 1:
             return [
@@ -190,23 +195,20 @@ def lower_write(
                     concurrency,
                 ),
                 expected_affected=planned.expected_affected,
+                stale_error=ungated_shortfall_is_stale,
             )
         ]
     if len(instruction.rows) > 1:
         return [
             LoweredStatement(lower_multi_delete(entity, instruction, dialect, meta, version_attr))
         ]
-    # An ungated (locking-mode) versioned delete shortfall is the same
-    # non-retriable stale outcome an ungated close's is: no gate could have
-    # prevented it, so it is a consistency violation rather than a detected
-    # lost update (`m-opt-lock`, ADR 0047).
     return [
         LoweredStatement(
             lower_delete(
                 entity, instruction, dialect, meta, version_attr, planned.observation, concurrency
             ),
             expected_affected=planned.expected_affected,
-            stale_error=not opt_lock.gates(concurrency),
+            stale_error=ungated_shortfall_is_stale,
         )
     ]
 

@@ -159,12 +159,32 @@ def test_delete_of_a_versioned_row_never_observed_raises() -> None:
     assert not any(op[0] == "write" for op in port.ops)
 
 
-def test_versioned_update_conflict_aborts_the_whole_unit_of_work() -> None:
-    # m-opt-lock's `updatedRows != 1` conflict signal, at the production
-    # developer surface: the gated UPDATE's port-reported affected count (0,
-    # simulating a concurrent writer) disagrees with the flush plan's
-    # exactly-one expectation, so `OptimisticLockConflictError` raises and the
-    # whole unit of work rolls back.
+def test_versioned_update_shortfall_in_locking_mode_is_a_stale_write() -> None:
+    # m-opt-lock's `updatedRows != 1` signal at the production developer
+    # surface, in the DEFAULT locking mode: the UPDATE is ungated there, so its
+    # zero-row shortfall is the non-retriable stale write rather than the
+    # retriable optimistic conflict — classification follows the gate, uniformly
+    # across update, delete, and close. The whole unit of work still rolls back.
+    port = RecordingPort(
+        rows=[{"id": 1, "owner": "Ada", "balance": 100.00, "version": 1}], write_affected=0
+    )
+
+    def fn(tx: Transaction) -> None:
+        fetched = tx.find(mm.Account.where(mm.Account.id == 1)).result()
+        tx.update(fetched.model_copy(update={"balance": Decimal("175.00")}))
+
+    with pytest.raises(opt_lock.StaleWriteError, match="Account"):
+        account_db(port).transact(fn)
+    assert ("rollback",) in port.ops
+    write_ops = [op for op in port.ops if op[0] == "write"]
+    assert len(write_ops) == 1  # the ungated update, attempted once, then aborted
+
+
+def test_versioned_update_shortfall_in_optimistic_mode_is_a_lock_conflict() -> None:
+    # The gated counterpart of the locking-mode shortfall above, pinning the
+    # other direction of the same rule: optimistic mode renders the version
+    # gate, so a zero-row shortfall IS a detected lost update and raises the
+    # retriable `OptimisticLockConflictError`.
     port = RecordingPort(
         rows=[{"id": 1, "owner": "Ada", "balance": 100.00, "version": 1}], write_affected=0
     )
@@ -174,10 +194,8 @@ def test_versioned_update_conflict_aborts_the_whole_unit_of_work() -> None:
         tx.update(fetched.model_copy(update={"balance": Decimal("175.00")}))
 
     with pytest.raises(opt_lock.OptimisticLockConflictError, match="Account"):
-        account_db(port).transact(fn)
+        account_db(port).transact(fn, concurrency="optimistic")
     assert ("rollback",) in port.ops
-    write_ops = [op for op in port.ops if op[0] == "write"]
-    assert len(write_ops) == 1  # the gated update, attempted once, then aborted
 
 
 # --------------------------------------------------------------------------- #

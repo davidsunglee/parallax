@@ -286,10 +286,15 @@ moved, so the count — not an error from the database — is the conflict carri
 Classification follows the **gate**, uniformly with the temporal close rule
 above. A **gated** (optimistic) shortfall is the retriable conflict. An
 **ungated** (locking-mode) shortfall on a write that still required a prior
-observation — a versioned keyed `DELETE`, a milestone close — is a
-categorically different, **non-retriable** stale/consistency outcome: no gate
-could have caused it, so it is not a detected lost update a re-read could
-resolve.
+observation — a versioned keyed `UPDATE`, a versioned keyed `DELETE`, a
+milestone close alike — is a categorically different, **non-retriable**
+stale/consistency outcome: no gate could have caused it, so it is not a detected
+lost update a re-read could resolve.
+
+An implementation **MUST NOT** classify by verb here either. A locking-mode
+`UPDATE` whose shortfall surfaced as the retriable conflict would be retried
+against an unchanged cause, since re-reading cannot supply a gate the mode never
+rendered.
 
 ## Retry contract
 
