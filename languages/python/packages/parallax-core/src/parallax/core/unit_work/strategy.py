@@ -31,6 +31,7 @@ from parallax.core.metamodel import (
     Metamodel,
     TemporalDimension,
 )
+from parallax.core.unit_work.clock import TransactionInstant
 from parallax.core.unit_work.observe import TransactionTimeBasis, WriteObservation
 from parallax.core.unit_work.planned import CloseCause, PlannedWrite
 
@@ -59,11 +60,13 @@ __all__ = [
     "OpenEnd",
     "PredecessorEnd",
     "PredecessorStart",
+    "SubjectIdentity",
     "SuccessorState",
     "TemporalStrategy",
     "UndecoratedAudit",
     "ValidTimeBound",
     "ValidTimeWindow",
+    "capture_subject_identity",
 ]
 
 # The per-unit-of-work participation mode (`m-unit-work` "Strategy selection").
@@ -72,6 +75,39 @@ __all__ = [
 # (`uow.py`) and the planner (`write_planner.py`) need the same value: defining
 # it in either would make the other import back.
 Concurrency = Literal["locking", "optimistic"]
+
+
+@dataclass(frozen=True, slots=True)
+class SubjectIdentity:
+    """The stable, opaque planning-input identifying the Principal captured at
+    the outer database operation boundary (ADR 0034).
+
+    Unit Work owns this value type exactly as it already owns the Write
+    Observation vocabulary, so a Planning Request is well-typed before any
+    provenance behavior exists. Construction performs no validation: an
+    audit-neutral implementation MUST NOT inspect, validate, retain,
+    serialize, persist, lower, or bind the supplied value, and two planning
+    calls differing only in Subject Identity MUST produce equal Write Plans
+    and identical emitted SQL and binds —
+    ``test_subject_identity_neutrality.py`` demonstrates this. The nonempty
+    requirement `m-unit-work.md` states is enforced where a raw value is
+    captured (:func:`capture_subject_identity`), not by this type.
+    """
+
+    value: str
+
+
+def capture_subject_identity(value: str) -> SubjectIdentity:
+    """Construct a Subject Identity from a freshly captured value.
+
+    Capture belongs to the Principal boundary, not to Write Planning
+    (`m-unit-work.md` "Subject Identity") — this is where the boundary's
+    nonempty check runs, once, at the moment a raw value becomes a Subject
+    Identity, so the value type itself stays inert.
+    """
+    if not value:
+        raise ValueError("a Subject Identity is nonempty")
+    return SubjectIdentity(value)
 
 
 @dataclass(frozen=True, slots=True)
@@ -283,17 +319,41 @@ class AuditStrategy(Protocol):
 
     Decoration consumes the settled Insert Origins and Close Causes and adds
     ordinary planned values; it changes no topology, classifies no gate, and
-    emits no SQL.
+    emits no SQL. ``subject_identity`` and ``transaction_instant`` are the
+    request-scoped inputs a real provenance adapter needs — the identity to
+    stamp and the shared instant to stamp it at — passed through unevaluated:
+    an implementation that never resolves ``transaction_instant`` costs the
+    surviving flush no clock access beyond what its own topology already
+    required (`m-unit-work` "The Transaction Instant").
+
+    Only eagerly settled steps reach this port. A Materialized Write Group's
+    rows are rebuilt on demand from a segment holding no strategy object and
+    no unevaluated instant, so they cannot be decorated one step at a time;
+    every row of one group shares one authored mutation, one Subject Identity,
+    and one instant, so a group's provenance is one overlay resolved at settle
+    time rather than a per-row decoration.
     """
 
-    def decorate(self, step: PlannedWrite) -> PlannedWrite: ...
+    def decorate(
+        self,
+        step: PlannedWrite,
+        *,
+        subject_identity: SubjectIdentity,
+        transaction_instant: TransactionInstant,
+    ) -> PlannedWrite: ...
 
 
 @dataclass(frozen=True, slots=True)
 class UndecoratedAudit:
     """The audit-neutral default: every step passes through unchanged."""
 
-    def decorate(self, step: PlannedWrite) -> PlannedWrite:
+    def decorate(
+        self,
+        step: PlannedWrite,
+        *,
+        subject_identity: SubjectIdentity,
+        transaction_instant: TransactionInstant,
+    ) -> PlannedWrite:
         return step
 
 

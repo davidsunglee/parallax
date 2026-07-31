@@ -25,7 +25,7 @@ from _metamodel_support import Declaration, attribute, identity, key, source
 from _support.clock_probes import CountingClock, inert_instant, instant_at
 from _support.planner_probes import TEST_SUBJECT_IDENTITY
 from parallax.conformance import models
-from parallax.core import op_algebra
+from parallax.core import op_algebra, opt_lock
 from parallax.core._formation_profile import form_metamodel
 from parallax.core.metamodel import (
     AttributeIdentity,
@@ -670,6 +670,24 @@ def test_batching_merges_uniform_updates_but_not_a_lone_row() -> None:
     assert len(_key_values(step)) == 1  # a single row is never a "run"
 
 
+def test_a_known_no_op_between_two_uniform_updates_does_not_prevent_their_batch() -> None:
+    # No-op elimination (m-unit-work stage 2) precedes batching (stage 4): a
+    # buffered update naming only its own primary key is eliminated before
+    # `_form_batches` ever sees the buffer, so it cannot occupy the run
+    # boundary between the two uniform updates surrounding it. Batching first
+    # would instead leave the no-op splitting the run, and the two survivors
+    # would settle as two separate singleton steps rather than one batch.
+    buffer: list[BufferItem] = [
+        KeyedWrite("update", "Wallet", ({"id": 1, "balance": 5.00},)),
+        KeyedWrite("update", "Wallet", ({"id": 2},)),  # a known no-op: only the PK
+        KeyedWrite("update", "Wallet", ({"id": 3, "balance": 5.00},)),
+    ]
+    plan = _plan(buffer, _WALLET)
+    (step,) = plan.steps
+    assert isinstance(step, PlannedUpdate)
+    assert _key_values(step) == ((1,), (3,))
+
+
 def test_batching_declines_a_non_uniform_update_run_leaving_rows_separate() -> None:
     buffer: list[BufferItem] = [
         KeyedWrite("update", "Wallet", ({"id": 1, "balance": 111.00},)),
@@ -765,6 +783,18 @@ def test_materialized_group_settles_to_one_step_per_resolved_row_in_order() -> N
         assert isinstance(step, PlannedUpdate)
         ids.append(_single_key(step))
     assert ids == [1, 2]
+
+
+def test_materialized_group_rejects_an_authored_version_assignment() -> None:
+    # A materializing predicate update's own assignment can never author the
+    # version attribute — the version is framework-owned end to end (`m-opt-
+    # lock` "Version values are framework-owned") — checked once for the
+    # whole group, since every resolved row shares the same assignment.
+    group = _version_group(
+        "Account", "update", "id", [(1, 1)], [WriteAssignment("Account.version", 9)]
+    )
+    with pytest.raises(opt_lock.CallerAuthoredVersionError, match="framework-owned"):
+        _plan([group], _ACCOUNT)
 
 
 def test_materialized_group_is_exempt_from_same_object_coalescing() -> None:

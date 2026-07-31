@@ -18,23 +18,23 @@ composition layer that legally sees both (``parallax.snapshot.handle``).
 Stage grouping. ``core/spec/m-unit-work.md`` describes the pipeline as nine
 named stages; this is an ordering CONTRACT, not a mandate for nine methods.
 Four orderings are normative and this implementation preserves each:
-coalescing and no-op elimination precede the lazy instant resolution inside
-:meth:`_settle`; a required observation is validated before the gate decision
-that consumes it, inside the same :meth:`_settle` call; a surviving temporal
-mutation stays one indivisible unit through batching and ordering and expands
-only after :meth:`_order` has fixed its position; and provenance decoration
-(:meth:`plan`'s own trailing pass) runs after every step's topology is settled
-and before the Write Plan freezes. Within those constraints, :meth:`plan`
-keeps today's proven-safe relative stage order — coalesce, form batches, order,
-eliminate no-ops, settle — the same sequence the pre-Phase-8 split pipeline
-already exercised end to end against the whole compatibility corpus, rather
-than re-deriving an equivalent order this phase has no golden-byte budget to
-re-verify.
+coalescing and known no-op elimination precede batching, ordering, and the
+lazy instant resolution inside :meth:`_settle` — a known net-zero edit is
+never merged into a batch, never dependency-ordered, and never the reason a
+timestamp is captured; a required observation is validated before the gate
+decision that consumes it, inside the same :meth:`_settle` call; a surviving
+temporal mutation stays one indivisible unit through batching and ordering and
+expands only after :meth:`_order` has fixed its position; and provenance
+decoration (:meth:`plan`'s own trailing pass) runs after every step's topology
+is settled and before the Write Plan freezes. :meth:`plan` therefore runs
+coalesce, eliminate no-ops, form batches, order, settle, in that order —
+eliminating a no-op ahead of batching is what lets two writes a no-op
+separates in the buffer still merge into one batch.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Final, cast
 
@@ -52,21 +52,21 @@ from parallax.core.metamodel import (
     ValueObjectIdentity,
 )
 from parallax.core.unit_work.clock import TransactionInstant
+from parallax.core.unit_work.columns import ColumnSlice, PredecessorColumns
 from parallax.core.unit_work.instructions import (
     KeyedWrite,
     PredicateWrite,
     WriteInstruction,
 )
 from parallax.core.unit_work.materialized import (
-    GroupObservations,
     MaterializedWriteGroup,
+    TemporalColumns,
     VersionColumns,
 )
 from parallax.core.unit_work.observe import (
     LATEST_PINNED,
     PredecessorRow,
     TemporalObservation,
-    VersionObservation,
     WriteObservation,
 )
 from parallax.core.unit_work.plan import PlannedSteps, StepSegment, WritePlan, eager_segment
@@ -78,6 +78,7 @@ from parallax.core.unit_work.planned import (
     SUPERSEDED,
     UNGATED,
     UNVERSIONED,
+    AffectedRows,
     CloseCause,
     ExactCount,
     Finite,
@@ -114,6 +115,8 @@ from parallax.core.unit_work.strategy import (
     BatchingStrategy,
     Concurrency,
     ConcurrencyStrategy,
+    MilestoneTopology,
+    SubjectIdentity,
     TemporalStrategy,
 )
 from parallax.core.unit_work.temporal import TemporalAxes, expand_milestone
@@ -152,27 +155,6 @@ class WritePlanningError(ValueError):
     wiring defect the planner refuses loudly rather than settling wrongly
     (e.g. a materializing predicate write that reached planning un-decomposed,
     or a row naming a member outside its Entity's family)."""
-
-
-@dataclass(frozen=True, slots=True)
-class SubjectIdentity:
-    """The stable, nonempty planning-input identifying the Principal captured
-    at the outer database operation boundary (ADR 0034).
-
-    Unit Work owns this value type exactly as it already owns the Write
-    Observation vocabulary, so a Planning Request is well-typed before any
-    provenance behavior exists. Until provenance decoration is implemented, an
-    implementation MUST NOT inspect, validate, retain, serialize, persist,
-    lower, or bind the supplied value, and two planning calls differing only in
-    Subject Identity MUST produce equal Write Plans and identical emitted SQL
-    and binds — ``test_subject_identity_neutrality.py`` demonstrates this.
-    """
-
-    value: str
-
-    def __post_init__(self) -> None:
-        if not self.value:
-            raise ValueError("a Subject Identity is nonempty")
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -218,25 +200,36 @@ class WritePlanner:
         self._audit = audit
 
     def plan(self, request: PlanningRequest) -> WritePlan:
-        """Plan one flush: coalesce, batch, order, eliminate no-ops, settle
-        every surviving item, decorate, and freeze.
+        """Plan one flush: coalesce, eliminate no-ops, batch, order, settle
+        every surviving item, decorate the eagerly settled steps, and freeze.
 
         Pure with respect to its inputs — no database I/O, no direct clock
         access, no SQL. ``request.subject_identity`` is accepted and never
         inspected. ``request.transaction_instant`` is threaded unevaluated
         until a surviving temporal mutation needs it.
 
-        A Materialized Write Group settles into its own lazily-materialized
-        segment (:meth:`_settle_group`) rather than into the eagerly-built
-        run: its steps are rebuilt one at a time, on demand, directly from the
-        group's own compact columns, so a large materialized run never forces
-        a parallel `PlannedWrite`-per-row object graph merely by being
-        planned. An ordinary (non-materialized) run settles eagerly, exactly
-        as before, into one shared segment.
+        A Materialized Write Group settles every group-wide semantic fact —
+        temporal topology, the gate/concurrency decision, the affected-row
+        policy, the assignment shape, and the resolved instant if the group
+        needs one — into its own segment (:meth:`_settle_group`) before
+        ``plan`` returns; the segment itself, and the ``WritePlan`` it becomes
+        part of, retain no group, concurrency mode, Transaction Instant, or
+        strategy object. Only the PER-ROW data stays as the group's own
+        compact columns, and a row's ``PlannedWrite`` is rebuilt from those
+        columns and the already-settled facts one at a time, on demand, so a
+        large materialized run never forces a parallel `PlannedWrite`-per-row
+        object graph merely by being planned. An ordinary (non-materialized)
+        run settles eagerly, exactly as before, into one shared segment.
         """
         resolved = targets(self._model)
         coalesced = self._coalesce(request.buffered_writes, resolved)
-        batched = self._form_batches(coalesced, resolved, request.observations)
+        survivors = [
+            item
+            for item in coalesced
+            if isinstance(item, MaterializedWriteGroup)
+            or not _is_empty_keyed_update(item, resolved)
+        ]
+        batched = self._form_batches(survivors, resolved, request.observations)
         ordered = self._order(batched, resolved)
         segments: list[StepSegment] = []
         pending: list[PlannedStep] = []
@@ -255,8 +248,6 @@ class WritePlanner:
                     )
                 )
                 continue
-            if _is_empty_keyed_update(item, resolved):
-                continue
             for step in self._settle(
                 item,
                 resolved,
@@ -264,7 +255,13 @@ class WritePlanner:
                 request.concurrency,
                 request.transaction_instant,
             ):
-                pending.append(self._audit.decorate(step))
+                pending.append(
+                    self._audit.decorate(
+                        step,
+                        subject_identity=request.subject_identity,
+                        transaction_instant=request.transaction_instant,
+                    )
+                )
         flush_pending()
         return WritePlan(steps=PlannedSteps(tuple(segments)))
 
@@ -396,9 +393,10 @@ class WritePlanner:
         return ordered
 
     # ----------------------------------------------------------------- #
-    # Stage 2 (known cancellation and no-op work) is checked inline in    #
-    # `plan`'s own loop via `_is_empty_keyed_update`, ahead of this call, #
-    # so a no-op instruction is never settled at all.                    #
+    # Stage 2 (known cancellation and no-op work) is filtered in         #
+    # `plan`'s own comprehension via `_is_empty_keyed_update`, BEFORE    #
+    # batching and ordering, so a no-op instruction never occupies a     #
+    # batch run or a dependency-ordered position and is never settled.   #
     #                                                                     #
     # Stages 3, 6, 7: bind and validate observations, resolve the         #
     # Transaction Instant lazily, and expand temporal topology in place.  #
@@ -440,7 +438,9 @@ class WritePlanner:
         key = resolve_object_key(instruction, resolved)
         observation = observations.get(key) if key is not None else None
         observed_version = self._observed_version(entity, instruction, version_attr, observation)
-        settled = self._settle_concurrency(version_attr, observed_version, concurrency)
+        settled = _non_temporal_concurrency(
+            version_attr, observed_version, self._concurrency.gates(concurrency)
+        )
         key_attributes = tuple(a.identity for a in resolved.family_primary_key(entity))
         target = _key_target(entity, key_attributes, instruction.rows)
         affected_rows = ExactCount(
@@ -518,7 +518,7 @@ class WritePlanner:
             PlannedUpdate(
                 entity=entity.identity,
                 target=target,
-                assignments=self._assignments(entity, members, assignment_row),
+                assignments=_assignments(entity, members, assignment_row),
                 concurrency=UNVERSIONED,
                 affected_rows=ANY_COUNT,
             ),
@@ -531,10 +531,11 @@ class WritePlanner:
         instruction: KeyedWrite,
         version_attr: AttributeIdentity | None,
     ) -> PlannedInsert:
+        version = (
+            None if version_attr is None else (version_attr, self._concurrency.initial_version())
+        )
         entries = tuple(
-            InsertEntry(
-                row=self._planned_row(entity, members, row, version_attr), origin=NEW_LINEAGE
-            )
+            InsertEntry(row=_planned_row(entity, members, row, version), origin=NEW_LINEAGE)
             for row in instruction.rows
         )
         return PlannedInsert(entity=entity.identity, entries=entries)
@@ -593,7 +594,12 @@ class WritePlanner:
         steps: list[PlannedStep] = []
         if topology.closure is not None:
             assert observed is not None  # refused above
-            gate = self._gate(declaring_entity, topology.closure.gate_basis, observed, concurrency)
+            gate = _temporal_gate(
+                declaring_entity,
+                topology.closure.gate_basis,
+                observed.predecessor,
+                self._concurrency.gates(concurrency),
+            )
             steps.append(
                 _close(
                     entity,
@@ -615,7 +621,7 @@ class WritePlanner:
                 entity=entity.identity,
                 entries=(
                     InsertEntry(
-                        row=self._planned_row(entity, members, milestone.members, None),
+                        row=_planned_row(entity, members, milestone.members, None),
                         origin=milestone.origin,
                     ),
                 ),
@@ -631,28 +637,6 @@ class WritePlanner:
             )
         )
         return tuple(steps)
-
-    def _gate(
-        self,
-        declaring_entity: EntityMetadata,
-        gate_basis: TemporalDimension,
-        observed: TemporalObservation,
-        concurrency: Concurrency,
-    ) -> TemporalConcurrency:
-        """The settled gate decision one close carries.
-
-        Optimistic mode binds the observed start of the axis the facet names
-        as its gate basis — the version analogue for an entity carrying no
-        version column. Locking mode records the explicit ungated decision,
-        whose shared read lock is what makes the close correct instead.
-        """
-        if not self._concurrency.gates(concurrency):
-            return UNGATED
-        axis = next(axis for axis in _as_of_axes(declaring_entity) if axis.dimension is gate_basis)
-        return TemporalGate(
-            start_attribute=axis.start_attribute,
-            observed_start=observed.predecessor.member(axis.start_attribute.name),
-        )
 
     def _observed_version(
         self,
@@ -676,47 +660,6 @@ class WritePlanner:
             self._concurrency.reject_authored_version(entity.identity, version_attr)
         return self._concurrency.require_version(entity.identity, observation)
 
-    def _settle_concurrency(
-        self,
-        version_attr: AttributeIdentity | None,
-        observed_version: int | None,
-        concurrency: Concurrency,
-    ) -> NonTemporalConcurrency:
-        """The settled concurrency decision one addressed non-temporal write
-        carries.
-
-        An unversioned target has nothing to gate on. A versioned one binds
-        its observation as a gate under optimistic mode and records an
-        explicit `Ungated` decision under locking, whose shared read lock is
-        what makes the write correct instead (ADR 0047).
-        """
-        if version_attr is None or observed_version is None:
-            return UNVERSIONED
-        if not self._concurrency.gates(concurrency):
-            return Versioned(gate=UNGATED)
-        return Versioned(
-            gate=VersionGate(attribute=version_attr, observed_version=observed_version)
-        )
-
-    def _planned_row(
-        self,
-        entity: EntityMetadata,
-        members: Mapping[str, AttributeIdentity | ValueObjectIdentity],
-        row: Mapping[str, object],
-        version_attr: AttributeIdentity | None,
-    ) -> PlannedRow:
-        """One write row as its finalized semantic contents.
-
-        A versioned Entity's row derives the INITIAL version at its own
-        Attribute (`m-opt-lock`), ignoring any value the row carries: the
-        version is framework-owned end to end (ADR 0013), and the initial
-        value is a constant rather than an observation.
-        """
-        attributes, value_objects = self._resolve(entity, members, row, context="insert")
-        if version_attr is not None:
-            attributes[version_attr] = self._concurrency.initial_version()
-        return PlannedRow(attributes=attributes, value_objects=value_objects)
-
     def _update_assignments(
         self,
         entity: EntityMetadata,
@@ -738,7 +681,7 @@ class WritePlanner:
         key_names = frozenset(attribute.name for attribute in key_attributes)
         row = instruction.rows[0]
         assigned = {name: value for name, value in row.items() if name not in key_names}
-        assignments = self._assignments(entity, members, assigned)
+        assignments = _assignments(entity, members, assigned)
         if version_attr is None or observed_version is None:
             return assignments
         return PlannedAssignments(
@@ -749,41 +692,9 @@ class WritePlanner:
             value_objects=assignments.value_objects,
         )
 
-    def _assignments(
-        self,
-        entity: EntityMetadata,
-        members: Mapping[str, AttributeIdentity | ValueObjectIdentity],
-        row: Mapping[str, object],
-    ) -> PlannedAssignments:
-        attributes, value_objects = self._resolve(entity, members, row, context="update")
-        return PlannedAssignments(attributes=attributes, value_objects=value_objects)
-
-    def _resolve(
-        self,
-        entity: EntityMetadata,
-        members: Mapping[str, AttributeIdentity | ValueObjectIdentity],
-        row: Mapping[str, object],
-        *,
-        context: str,
-    ) -> tuple[dict[AttributeIdentity, PlannedValue], dict[ValueObjectIdentity, object]]:
-        """``row``'s cells under their resolved member identities."""
-        attributes: dict[AttributeIdentity, PlannedValue] = {}
-        value_objects: dict[ValueObjectIdentity, object] = {}
-        for name, value in row.items():
-            member = members.get(name)
-            if member is None:
-                raise WritePlanningError(
-                    f"{entity.identity.name!r}: write row names {name!r}, which is not a member "
-                    "of the Entity's family"
-                )
-            if isinstance(member, ValueObjectIdentity):
-                value_objects[member] = value
-            else:
-                attributes[member] = _cell(entity, name, value, context)
-        return attributes, value_objects
-
     # ----------------------------------------------------------------- #
-    # A Materialized Write Group's compact rows, settled lazily.          #
+    # A Materialized Write Group's compact rows, settled ONCE HERE (in    #
+    # `plan`), never re-derived at step access.                          #
     # ----------------------------------------------------------------- #
     def _settle_group(
         self,
@@ -792,110 +703,384 @@ class WritePlanner:
         concurrency: Concurrency,
         tx_instant: TransactionInstant,
     ) -> StepSegment:
-        """One Materialized Write Group as one lazily-materialized segment.
+        """One Materialized Write Group as one already-settled segment.
 
-        Every row of one group shares the SAME authored mutation and
-        therefore the SAME temporal topology — selected once, by entity and
-        verb, never per resolved row — so every row settles into the same
-        fixed number of steps and a flat step index maps to (row, sub-step)
-        by simple division. Constructing the segment settles nothing; each
-        row is rebuilt only when :meth:`~parallax.core.unit_work.plan.
-        StepSegment.step` asks for it.
+        Every group-wide semantic fact — the temporal topology, the gate and
+        concurrency decision, the affected-row policy, the assignment shape,
+        and (only when the surviving group needs one) the concrete Transaction
+        Instant literal — is decided HERE, once, before this method returns.
+        The returned segment carries none of the group, the concurrency mode,
+        the Transaction Instant, or a strategy object: its ``step`` rebuilds
+        one row's Planned Write from these already-decided facts and the
+        group's own compact columns alone.
         """
         entity = _require_entity(resolved, group.mutation.target.entity)
         declaring_entity = resolved.declaring(entity)
-        steps_per_row = 1
         if declaring_entity.declared_as_of_axes:
-            topology = self._temporal.topology(declaring_entity, group.mutation.mutation)
-            steps_per_row = (1 if topology.closure is not None else 0) + len(topology.successors)
+            return self._settle_temporal_group(
+                group, entity, declaring_entity, resolved, concurrency, tx_instant
+            )
+        return self._settle_versioned_group(group, entity, resolved, concurrency)
 
-        def settle_row(row: int) -> tuple[PlannedStep, ...]:
-            return self._settle_group_row(group, resolved, concurrency, tx_instant, row)
-
-        return _MaterializedSegment(
-            settle_row=settle_row,
-            steps_per_row=steps_per_row,
-            length=len(group) * steps_per_row,
-        )
-
-    def _settle_group_row(
+    def _settle_versioned_group(
         self,
         group: MaterializedWriteGroup,
+        entity: EntityMetadata,
+        resolved: Targets,
+        concurrency: Concurrency,
+    ) -> StepSegment:
+        """A versioned (non-temporal) Materialized Write Group's segment.
+
+        Every row shares the SAME gate/ungated decision and the SAME
+        assignment overlay (`m-batch-write`'s set-based semantics extended to
+        the materializing case); only the observed and advanced version
+        differ per row, which is why those alone stay per-row columns rather
+        than a per-row object. An entity this group's own Concurrency Strategy
+        does not recognize as versioned settles Unversioned regardless of the
+        group's recorded observation, mirroring an ordinary keyed write.
+        """
+        assert isinstance(group.observations, VersionColumns)
+        declaring_entity = resolved.declaring(entity)
+        version_attr = self._concurrency.version_attribute(declaring_entity)
+        key_attributes = tuple(a.identity for a in resolved.family_primary_key(entity))
+        gated = self._concurrency.gates(concurrency)
+        versions = group.observations.versions
+        mutation = group.mutation.mutation
+        base_assignments: PlannedAssignments | None = None
+        advanced_versions: tuple[int, ...] = ()
+        if mutation != "delete":
+            assignment_row = {
+                _assignment_member(assignment.attr): assignment.value
+                for assignment in group.mutation.assignments
+            }
+            if version_attr is not None and version_attr.name in assignment_row:
+                self._concurrency.reject_authored_version(entity.identity, version_attr)
+            members = resolved.applicable_members(entity)
+            base_assignments = _assignments(entity, members, assignment_row)
+            if version_attr is not None:
+                advanced_versions = tuple(self._concurrency.advance(value) for value in versions)
+        shortfall = shortfall_for(_non_temporal_concurrency(version_attr, versions[0], gated))
+        return _MaterializedNonTemporalSegment(
+            entity=entity,
+            key_attributes=key_attributes,
+            key_attribute_names=group.key_attributes,
+            key_columns=group.key_columns,
+            mutation=mutation,
+            version_attribute=version_attr,
+            versions=versions,
+            advanced_versions=advanced_versions,
+            base_assignments=base_assignments,
+            gated=gated,
+            affected_rows=ExactCount(expected=1, on_shortfall=shortfall),
+        )
+
+    def _settle_temporal_group(
+        self,
+        group: MaterializedWriteGroup,
+        entity: EntityMetadata,
+        declaring_entity: EntityMetadata,
         resolved: Targets,
         concurrency: Concurrency,
         tx_instant: TransactionInstant,
-        row: int,
-    ) -> tuple[PlannedStep, ...]:
-        """One Materialized Write Group's resolved row, settled through the
-        SAME seam a lone keyed write settles through.
+    ) -> StepSegment:
+        """A temporal Materialized Write Group's segment.
 
-        A transient keyed instruction and a transient single-entry
-        observation mapping are built from the group's own columns, fed
-        through :meth:`_settle` unchanged, and discarded once this call
-        returns — no per-row instruction or observation is retained between
-        calls, and repeated calls for the same row rebuild an equal but
-        distinct result. The authored assignments are uniform across every
-        row (`m-batch-write` "readless predicate write" set-based semantics
-        extended to the materializing case), so overlaying them once here
-        reproduces exactly the merged row a per-row materialize used to
-        retain — every key member the assigned columns never name, and every
-        assigned member at its authored value.
+        The temporal topology, the locking license, the gate decision, and
+        (because every temporal mutation needs one) the concrete Transaction
+        Instant are all decided once, here — the only clock consultation this
+        group's whole flush makes, however many rows it resolved.
         """
-        predicate = group.mutation
-        key_row = dict(
-            zip(group.key_attributes, (column[row] for column in group.key_columns), strict=True)
+        assert isinstance(group.observations, TemporalColumns)
+        topology = self._temporal.topology(declaring_entity, group.mutation.mutation)
+        self._concurrency.check_locking_license(
+            concurrency, group.observations.transaction_time_basis
+        )
+        gated = self._concurrency.gates(concurrency)
+        steps_per_row = (1 if topology.closure is not None else 0) + len(topology.successors)
+        # Reaching a temporal group is what makes the attempt capture its
+        # instant; every row's close end and every successor's fresh start
+        # derive from this one value.
+        instant = tx_instant.value()
+        valid_axis = declaring_entity.as_of_axis(TemporalDimension.VALID_TIME)
+        tx_axis = _tx_time_axis(declaring_entity)
+        axes = TemporalAxes(
+            transaction_start=tx_axis.start_attribute.name,
+            transaction_end=tx_axis.end_attribute.name,
+            valid_start=None if valid_axis is None else valid_axis.start_attribute.name,
+            valid_end=None if valid_axis is None else valid_axis.end_attribute.name,
         )
         assignment_row = {
             _assignment_member(assignment.attr): assignment.value
-            for assignment in predicate.assignments
+            for assignment in group.mutation.assignments
         }
-        instruction = KeyedWrite(
-            mutation=predicate.mutation,
-            entity=predicate.target.entity,
-            rows=({**key_row, **assignment_row},),
-            valid_from=predicate.valid_from,
-            until=predicate.until,
+        return _MaterializedTemporalSegment(
+            entity=entity,
+            declaring_entity=declaring_entity,
+            resolved=resolved,
+            key_attributes=tuple(a.identity for a in resolved.family_primary_key(entity)),
+            key_attribute_names=group.key_attributes,
+            key_columns=group.key_columns,
+            predecessors=group.observations.predecessors,
+            topology=topology,
+            axes=axes,
+            instant=instant,
+            gated=gated,
+            assignment_row=assignment_row,
+            valid_from=group.mutation.valid_from,
+            until=group.mutation.until,
+            steps_per_row=steps_per_row,
         )
-        key = resolve_object_key(instruction, resolved)
-        assert key is not None  # every group row carries its own complete key
-        observations = {key: _observation_at(group.observations, row)}
-        steps = self._settle(instruction, resolved, observations, concurrency, tx_instant)
-        return tuple(self._audit.decorate(step) for step in steps)
 
 
 @dataclass(frozen=True, slots=True)
-class _MaterializedSegment:
-    """A Materialized Write Group's steps, rebuilt one at a time on demand.
+class _MaterializedNonTemporalSegment:
+    """A versioned Materialized Write Group's rows: one Planned Update or
+    Planned Delete per resolved row, assembled on demand from already-decided,
+    group-wide facts and the group's own compact columns alone.
 
-    ``settle_row`` recomputes one resolved row's whole step tuple from the
-    owning :class:`WritePlanner`'s own strategies and the group's retained
-    columns; no per-row Planned Write is retained between accesses, so
-    repeated indexing of the same position may return an equal but distinct
-    object. :class:`~parallax.core.unit_work.plan.PlannedSteps` compares its
-    logical step sequence rather than its segments, so this segment's own
-    identity-based equality is never consulted.
+    No group, concurrency mode, Transaction Instant, or strategy object is
+    reachable here — every value :meth:`step` reads is either a static field
+    or an aligned column lookup by row index — and two calls for the same
+    index return equal but distinct objects, never a shared mutable flyweight.
     """
 
-    settle_row: Callable[[int], tuple[PlannedStep, ...]]
-    steps_per_row: int
-    length: int
+    entity: EntityMetadata
+    key_attributes: tuple[AttributeIdentity, ...]
+    key_attribute_names: tuple[str, ...]
+    key_columns: tuple[ColumnSlice[object], ...]
+    mutation: str
+    version_attribute: AttributeIdentity | None
+    versions: ColumnSlice[int]
+    advanced_versions: tuple[int, ...]
+    base_assignments: PlannedAssignments | None
+    gated: bool
+    affected_rows: AffectedRows
 
     def __len__(self) -> int:
-        return self.length
+        return len(self.versions)
+
+    def step(self, index: int) -> PlannedStep:
+        key_row = dict(
+            zip(
+                self.key_attribute_names,
+                (column[index] for column in self.key_columns),
+                strict=True,
+            )
+        )
+        target = _key_target(self.entity, self.key_attributes, (key_row,))
+        concurrency = _non_temporal_concurrency(
+            self.version_attribute, self.versions[index], self.gated
+        )
+        if self.mutation == "delete":
+            return PlannedDelete(
+                entity=self.entity.identity,
+                target=target,
+                concurrency=concurrency,
+                affected_rows=self.affected_rows,
+            )
+        assert self.base_assignments is not None  # every update's overlay is settled up front
+        assignments = self.base_assignments
+        if self.version_attribute is not None:
+            assignments = PlannedAssignments(
+                attributes={
+                    **assignments.attributes,
+                    self.version_attribute: self.advanced_versions[index],
+                },
+                value_objects=assignments.value_objects,
+            )
+        return PlannedUpdate(
+            entity=self.entity.identity,
+            target=target,
+            assignments=assignments,
+            concurrency=concurrency,
+            affected_rows=self.affected_rows,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class _MaterializedTemporalSegment:
+    """A temporal Materialized Write Group's rows: one close plus its
+    successors per resolved row, assembled on demand from already-decided,
+    group-wide facts and the group's own compact columns alone.
+
+    ``steps_per_row`` is invariant across the group — every row shares the
+    same authored mutation and therefore the same topology — so a flat step
+    index maps to (row, sub-step) by simple division, and nothing here is
+    cached between accesses.
+    """
+
+    entity: EntityMetadata
+    declaring_entity: EntityMetadata
+    resolved: Targets
+    key_attributes: tuple[AttributeIdentity, ...]
+    key_attribute_names: tuple[str, ...]
+    key_columns: tuple[ColumnSlice[object], ...]
+    predecessors: PredecessorColumns
+    topology: MilestoneTopology
+    axes: TemporalAxes
+    instant: str
+    gated: bool
+    assignment_row: Mapping[str, object]
+    valid_from: str | None
+    until: str | None
+    steps_per_row: int
+
+    def __len__(self) -> int:
+        return len(self.key_columns[0]) * self.steps_per_row
 
     def step(self, index: int) -> PlannedStep:
         row, sub_step = divmod(index, self.steps_per_row)
-        return self.settle_row(row)[sub_step]
+        return self._settle_row(row)[sub_step]
+
+    def _settle_row(self, row: int) -> tuple[PlannedStep, ...]:
+        key_row = dict(
+            zip(
+                self.key_attribute_names,
+                (column[row] for column in self.key_columns),
+                strict=True,
+            )
+        )
+        predecessor = PredecessorRow(self.predecessors.row(row))
+        members = self.resolved.applicable_members(self.entity)
+        steps: list[PlannedStep] = []
+        if self.topology.closure is not None:
+            gate = _temporal_gate(
+                self.declaring_entity, self.topology.closure.gate_basis, predecessor, self.gated
+            )
+            valid_axis = self.declaring_entity.as_of_axis(TemporalDimension.VALID_TIME)
+            observed_valid_end = (
+                None if valid_axis is None else predecessor.member(valid_axis.end_attribute.name)
+            )
+            steps.append(
+                _close(
+                    self.entity,
+                    self.declaring_entity,
+                    self.resolved,
+                    identity=key_row,
+                    observed_valid_end=observed_valid_end,
+                    cause=self.topology.closure.cause,
+                    gate=gate,
+                    instant=self.instant,
+                )
+            )
+        authored = {**key_row, **self.assignment_row}
+        steps.extend(
+            PlannedInsert(
+                entity=self.entity.identity,
+                entries=(
+                    InsertEntry(
+                        row=_planned_row(self.entity, members, milestone.members, None),
+                        origin=milestone.origin,
+                    ),
+                ),
+            )
+            for milestone in expand_milestone(
+                self.topology,
+                self.axes,
+                transaction_instant=self.instant,
+                authored=authored,
+                valid_from=self.valid_from,
+                until=self.until,
+                predecessor=predecessor,
+            )
+        )
+        return tuple(steps)
 
 
-def _observation_at(observations: GroupObservations, row: int) -> WriteObservation:
-    """One resolved row's Write Observation, read off the group's own columns."""
-    if isinstance(observations, VersionColumns):
-        return VersionObservation(observed_version=observations.versions[row])
-    return TemporalObservation(
-        predecessor=PredecessorRow(observations.predecessors.row(row)),
-        transaction_time_basis=observations.transaction_time_basis,
+def _non_temporal_concurrency(
+    version_attr: AttributeIdentity | None, observed_version: int | None, gated: bool
+) -> NonTemporalConcurrency:
+    """The settled concurrency decision one addressed non-temporal write
+    carries, given the already-decided ``gated`` fact — the version analogue
+    of :func:`_temporal_gate`.
+
+    An unversioned target has nothing to gate on. A versioned one binds its
+    observation as a gate when gated and records an explicit `Ungated`
+    decision otherwise, whose shared read lock is what makes the write correct
+    instead (ADR 0047).
+    """
+    if version_attr is None or observed_version is None:
+        return UNVERSIONED
+    if not gated:
+        return Versioned(gate=UNGATED)
+    return Versioned(gate=VersionGate(attribute=version_attr, observed_version=observed_version))
+
+
+def _temporal_gate(
+    declaring_entity: EntityMetadata,
+    gate_basis: TemporalDimension,
+    predecessor: PredecessorRow,
+    gated: bool,
+) -> TemporalConcurrency:
+    """The settled gate decision one close carries, given the already-decided
+    ``gated`` fact.
+
+    Optimistic mode binds the observed start of the axis the facet names as
+    its gate basis — the version analogue for an entity carrying no version
+    column. Locking mode records the explicit ungated decision, whose shared
+    read lock is what makes the close correct instead.
+    """
+    if not gated:
+        return UNGATED
+    axis = next(axis for axis in _as_of_axes(declaring_entity) if axis.dimension is gate_basis)
+    return TemporalGate(
+        start_attribute=axis.start_attribute,
+        observed_start=predecessor.member(axis.start_attribute.name),
     )
+
+
+def _planned_row(
+    entity: EntityMetadata,
+    members: Mapping[str, AttributeIdentity | ValueObjectIdentity],
+    row: Mapping[str, object],
+    version: tuple[AttributeIdentity, int] | None,
+) -> PlannedRow:
+    """One write row as its finalized semantic contents.
+
+    A versioned Entity's row derives the INITIAL version at its own Attribute
+    (`m-opt-lock`), ignoring any value the row carries — the version is
+    framework-owned end to end (ADR 0013), and the initial value the caller
+    already resolved is a constant rather than an observation. ``version`` is
+    absent for a temporal successor row, which carries no version column.
+    """
+    attributes, value_objects = _resolve(entity, members, row, context="insert")
+    if version is not None:
+        attribute, initial_value = version
+        attributes[attribute] = initial_value
+    return PlannedRow(attributes=attributes, value_objects=value_objects)
+
+
+def _assignments(
+    entity: EntityMetadata,
+    members: Mapping[str, AttributeIdentity | ValueObjectIdentity],
+    row: Mapping[str, object],
+) -> PlannedAssignments:
+    attributes, value_objects = _resolve(entity, members, row, context="update")
+    return PlannedAssignments(attributes=attributes, value_objects=value_objects)
+
+
+def _resolve(
+    entity: EntityMetadata,
+    members: Mapping[str, AttributeIdentity | ValueObjectIdentity],
+    row: Mapping[str, object],
+    *,
+    context: str,
+) -> tuple[dict[AttributeIdentity, PlannedValue], dict[ValueObjectIdentity, object]]:
+    """``row``'s cells under their resolved member identities."""
+    attributes: dict[AttributeIdentity, PlannedValue] = {}
+    value_objects: dict[ValueObjectIdentity, object] = {}
+    for name, value in row.items():
+        member = members.get(name)
+        if member is None:
+            raise WritePlanningError(
+                f"{entity.identity.name!r}: write row names {name!r}, which is not a member "
+                "of the Entity's family"
+            )
+        if isinstance(member, ValueObjectIdentity):
+            value_objects[member] = value
+        else:
+            attributes[member] = _cell(entity, name, value, context)
+    return attributes, value_objects
 
 
 def plan_temporal_close(

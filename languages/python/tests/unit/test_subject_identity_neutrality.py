@@ -38,6 +38,7 @@ from parallax.core.unit_work import (
     VersionObservation,
     WriteObservation,
     WritePlan,
+    capture_subject_identity,
     object_key,
 )
 from parallax.snapshot.handle import build_write_planner, stream_lowered
@@ -53,9 +54,15 @@ _SUBJECT_A = SubjectIdentity("subject-alpha")
 _SUBJECT_B = SubjectIdentity("subject-beta-differs")
 
 
-def test_a_subject_identity_is_nonempty() -> None:
+def test_capturing_a_subject_identity_requires_a_nonempty_value() -> None:
+    # Nonemptiness is enforced at capture (the Principal boundary), not by
+    # the value type itself, which an audit-neutral plan must never inspect.
     with pytest.raises(ValueError, match="nonempty"):
-        SubjectIdentity("")
+        capture_subject_identity("")
+
+
+def test_the_subject_identity_type_itself_performs_no_validation() -> None:
+    assert SubjectIdentity("").value == ""
 
 
 def _plan_under(

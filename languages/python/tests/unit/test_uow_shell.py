@@ -17,7 +17,7 @@ from collections.abc import Callable, Mapping
 import pytest
 
 from _support.clock_probes import CountingClock
-from _support.planner_probes import TEST_SUBJECT_IDENTITY, planner_for
+from _support.planner_probes import TEST_SUBJECT_IDENTITY
 from parallax.conformance import models
 from parallax.core.metamodel import AttributeIdentity, Metamodel
 from parallax.core.unit_work import (
@@ -37,6 +37,7 @@ from parallax.core.unit_work import (
     active_unit_of_work,
     run_unit_of_work,
 )
+from parallax.snapshot.handle import build_write_planner
 
 _MODELS = models.load_models()
 _ACCOUNT = models.accepted_model(_MODELS["account"])
@@ -73,7 +74,7 @@ def _run[T](
         clock=clock or FixedClock(_FIXED),
         meta=resolved_meta,
         flush_executor=executor or _noop,
-        planner=planner_for(resolved_meta),
+        planner=build_write_planner(resolved_meta),
         subject_identity=TEST_SUBJECT_IDENTITY,
     )
 

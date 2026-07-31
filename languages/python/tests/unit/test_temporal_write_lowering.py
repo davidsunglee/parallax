@@ -26,7 +26,7 @@ import pytest
 
 from _support.clock_probes import instant_at
 from _support.lowering_probes import lower_instruction, lower_instruction_steps
-from _support.planner_probes import TEST_SUBJECT_IDENTITY, planner_for
+from _support.planner_probes import TEST_SUBJECT_IDENTITY
 from parallax.conformance import models
 from parallax.core import bitemp_write, storage_layout, txtime_write
 from parallax.core.db_port import JsonDocument
@@ -68,6 +68,7 @@ from parallax.snapshot.handle import (
     Execution,
     FindResult,
     WriteLoweringError,
+    build_write_planner,
     lower_step,
     plan_temporal_close,
 )
@@ -845,7 +846,7 @@ def test_a_temporal_concrete_observes_its_own_declared_members_not_the_roots() -
         clock=FixedClock(dt.datetime(2024, 6, 1, tzinfo=dt.UTC)),
         meta=model,
         flush_executor=lambda _plan: None,
-        planner=planner_for(model),
+        planner=build_write_planner(model),
         subject_identity=TEST_SUBJECT_IDENTITY,
     )
     assert isinstance(observation, TemporalObservation)

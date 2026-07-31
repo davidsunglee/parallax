@@ -34,6 +34,8 @@ from typing import cast
 
 import pytest
 
+from _support.clock_probes import inert_instant
+from _support.planner_probes import TEST_SUBJECT_IDENTITY
 from parallax.core.metamodel import AttributeIdentity, EntityIdentity, ValueObjectIdentity
 from parallax.core.op_algebra import All
 from parallax.core.unit_work import (
@@ -566,5 +568,8 @@ def test_the_audit_port_decorates_nothing_by_default() -> None:
     # Pipeline stage 8 exists as a seam from the start, so provenance decoration
     # becomes a change of injected adapter rather than a change of interface.
     step = PlannedInsert(entity=_ACCOUNT, entries=(_entry(PlannedRow(attributes={_ID: 1})),))
-    assert NO_AUDIT.decorate(step) == step
+    decorated = NO_AUDIT.decorate(
+        step, subject_identity=TEST_SUBJECT_IDENTITY, transaction_instant=inert_instant()
+    )
+    assert decorated == step
     assert isinstance(NO_AUDIT, AuditStrategy)
