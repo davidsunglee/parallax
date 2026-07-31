@@ -1866,9 +1866,9 @@ or descriptor authoring form and performs no audit stamping.
   buffered, force-flushed, and cached effects alike. No public explicit
   `flush()` control is offered in v1.
 - **The attempt owns one lazy Transaction Instant.** Each outermost attempt holds
-  one uncaptured instant, and a flush plan carries that holder rather than a
-  captured literal, so the **Clock Strategy is consulted only when a surviving
-  write actually needs a Transaction-Time boundary** (ADR 0010). An empty
+  one uncaptured instant, and the Planning Request carries that holder rather
+  than a captured literal, so the **Clock Strategy is consulted only when a
+  surviving write actually needs a Transaction-Time boundary** (ADR 0010). An empty
   transaction, a read-only one, a buffer that same-transaction coalescing cancels
   to nothing, an update whose effective change set is empty, and a flush whose
   every surviving write is non-temporal all complete with **zero** clock reads.
@@ -2105,6 +2105,27 @@ or descriptor authoring form and performs no audit stamping.
   predicates, multiple assignable fields, and every valid temporal bound are
   validated and documented by the implementation/API suite — but no covered
   mutation flavor is a language-local semantic extension.
+- **Affected-row enforcement is target-driven, and an excess is always
+  non-retriable.** Every non-insert step's execution result is checked
+  against its Write Cardinality — one row per key for a Key Target (one
+  **aggregate** expectation for a collapsed multi-key statement, `m-batch-write-008`), one
+  row for a Milestone Target — and a shortfall raises the classification the
+  concurrency decision already fixed while the step was settled, never the
+  verb: the never-retriable `StaleWriteError` for the ungated
+  observation-requiring shortfall described above; `OptimisticLockConflictError`
+  for a gated shortfall, retriable only via `retry_optimistic_conflicts=True`;
+  and the never-retriable `MissingTargetError` for an **unversioned** keyed
+  `update`/`delete` whose row does not exist — behavior a prior implementation
+  committed as a silent zero-row no-op (`m-unit-work-013` / `-014`). A result
+  reporting **more** rows than its target's cardinality permits — an accepted
+  identity, storage, or lowering invariant broken, never a concurrency outcome
+  — raises the never-retriable `CardinalityCorruptionError` in either mode,
+  for a keyed write or a temporal close alike (`m-unit-work-015`). The four
+  classes — `MissingTargetError`, `StaleWriteError`,
+  `OptimisticLockConflictError`, `CardinalityCorruptionError` — are the public
+  Write Effect Error family `parallax.core.unit_work` owns; each carries only
+  the Entity Identity, the Write Target (retained by reference), and the
+  expected and actual counts — no SQL, statement index, or driver exception.
 
 ## 6. Database support and compatibility proof
 

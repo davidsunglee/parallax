@@ -72,11 +72,11 @@ from parallax.core.unit_work import (
     Versioned,
     VersionGate,
     WritePlan,
+    WriteTarget,
     eager_segment,
     planned_steps,
     shortfall_for,
 )
-from parallax.core.unit_work.planned import WriteTarget
 
 _ACCOUNT = EntityIdentity(None, "Account")
 _ID = AttributeIdentity(_ACCOUNT, "id")

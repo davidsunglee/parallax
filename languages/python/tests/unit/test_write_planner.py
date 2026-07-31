@@ -63,6 +63,7 @@ from parallax.core.unit_work import (
     PlanningRequest,
     PredecessorRow,
     PredicateMutation,
+    PredicateSelection,
     PredicateTarget,
     PredicateWrite,
     TemporalObservation,
@@ -75,7 +76,6 @@ from parallax.core.unit_work import (
     WriteObservation,
     WritePlan,
     WritePlanningError,
-    WriteTarget,
     object_key,
     whole,
 )
@@ -182,7 +182,9 @@ def _version_group(
         versions.append(version)
     predicate = PredicateWrite(
         mutation,
-        WriteTarget(entity, op_algebra.Comparison("lessThan", f"{entity}.balance", 1_000_000.0)),
+        PredicateSelection(
+            entity, op_algebra.Comparison("lessThan", f"{entity}.balance", 1_000_000.0)
+        ),
         assignments=tuple(assignments),
     )
     return MaterializedWriteGroup(
@@ -278,7 +280,7 @@ def test_multi_row_and_unkeyed_and_predicate_writes_do_not_coalesce() -> None:
     multi = KeyedWrite("insert", "Wallet", ({"id": 8, "balance": 1.00}, {"id": 9, "balance": 2.00}))
     unkeyed = KeyedWrite("insert", "Wallet", ({"owner": "Ada", "balance": 1.00},))  # no PK in row
     predicate = PredicateWrite(
-        "delete", WriteTarget("Wallet", op_algebra.Comparison("eq", "Wallet.id", 1))
+        "delete", PredicateSelection("Wallet", op_algebra.Comparison("eq", "Wallet.id", 1))
     )
     plan = _plan([multi, unkeyed, predicate], _WALLET)
     # None is a single-object keyed write, so none coalesces — all pass through
@@ -384,15 +386,24 @@ def test_an_instruction_naming_an_undeclared_entity_is_a_planning_error() -> Non
     # Every settled step needs its Entity resolved (`_require_entity`), so an
     # instruction naming one the accepted Metamodel does not declare is refused
     # as a caller wiring defect during planning — never silently ranked first
-    # by the ordering stage's own defensive fallback and lowered anyway. An
-    # undeclared entity is also unresolvable for elision (its effective change
-    # set cannot be proven empty), so its keyed update survives elision and
-    # reaches the SAME refusal rather than being silently dropped first.
+    # by the ordering stage's own defensive fallback and lowered anyway.
     buffer: list[BufferItem] = [
         KeyedWrite("insert", "OrderItem", ({"id": 10, "orderId": 1, "sku": "A", "quantity": 1},)),
         KeyedWrite("insert", "Gadget", ({"id": 1, "name": "G"},)),
-        KeyedWrite("update", "Gadget", ({"id": 1},)),
     ]
+    with pytest.raises(WritePlanningError, match="Gadget"):
+        _plan(buffer, _ORDERS)
+
+
+def test_an_undeclared_entitys_keyed_update_survives_elision_to_the_same_refusal() -> None:
+    # An undeclared entity is unresolvable for elision (its effective change set
+    # cannot be proven empty), so a keyed update naming one is never silently
+    # dropped as a no-op — it survives to the SAME planning refusal an insert of
+    # an undeclared entity reaches. Isolated from the sibling test above (which
+    # pairs an undeclared insert with a resolvable one): pairing this update with
+    # any undeclared insert of the same entity would let the insert's own
+    # refusal fire first and leave elision's behavior unobserved.
+    buffer: list[BufferItem] = [KeyedWrite("update", "Gadget", ({"id": 1},))]
     with pytest.raises(WritePlanningError, match="Gadget"):
         _plan(buffer, _ORDERS)
 
@@ -409,7 +420,7 @@ def _predicate_update(entity: str) -> PredicateWrite:
     member = _ASSIGNABLE_MEMBER[entity]
     return PredicateWrite(
         "update",
-        WriteTarget(entity, op_algebra.Comparison("eq", f"{entity}.id", 1)),
+        PredicateSelection(entity, op_algebra.Comparison("eq", f"{entity}.id", 1)),
         assignments=(WriteAssignment(f"{entity}.{member}", "Z"),),
     )
 
@@ -518,7 +529,7 @@ def test_object_key_of_a_single_row_keyed_write() -> None:
 def test_object_key_is_none_for_unidentifiable_writes() -> None:
     assert object_key(KeyedWrite("insert", "Account", ({"id": 1}, {"id": 2})), _ACCOUNT) is None
     assert object_key(KeyedWrite("insert", "Account", ({"owner": "Ada"},)), _ACCOUNT) is None
-    predicate = PredicateWrite("delete", WriteTarget("Account", op_algebra.All()))
+    predicate = PredicateWrite("delete", PredicateSelection("Account", op_algebra.All()))
     assert object_key(predicate, _ACCOUNT) is None
 
 
@@ -627,7 +638,8 @@ def test_an_observation_free_multi_key_delete_carries_the_aggregate_missing_targ
 
 def test_a_readless_predicate_write_carries_an_unbounded_expectation() -> None:
     predicate = PredicateWrite(
-        "delete", WriteTarget("Wallet", op_algebra.Comparison("lessThan", "Wallet.balance", 200.00))
+        "delete",
+        PredicateSelection("Wallet", op_algebra.Comparison("lessThan", "Wallet.balance", 200.00)),
     )
     plan = _plan([predicate], _WALLET)
     (step,) = plan.steps
@@ -726,7 +738,8 @@ def test_batching_never_merges_across_an_intervening_materialized_write_group() 
 
 def test_batching_never_touches_a_predicate_write() -> None:
     predicate = PredicateWrite(
-        "delete", WriteTarget("Wallet", op_algebra.Comparison("lessThan", "Wallet.balance", 1.0))
+        "delete",
+        PredicateSelection("Wallet", op_algebra.Comparison("lessThan", "Wallet.balance", 1.0)),
     )
     plan = _plan([predicate], _WALLET)
     (step,) = plan.steps

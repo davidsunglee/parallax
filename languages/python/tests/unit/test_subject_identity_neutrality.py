@@ -30,6 +30,7 @@ from parallax.core.unit_work import (
     ObjectKey,
     PlanningRequest,
     PredecessorRow,
+    PredicateSelection,
     PredicateWrite,
     SubjectIdentity,
     TemporalObservation,
@@ -37,7 +38,6 @@ from parallax.core.unit_work import (
     VersionObservation,
     WriteObservation,
     WritePlan,
-    WriteTarget,
     object_key,
 )
 from parallax.snapshot.handle import build_write_planner, stream_lowered
@@ -145,7 +145,8 @@ def test_a_keyed_delete_is_audit_neutral() -> None:
 
 def test_a_readless_predicate_write_is_audit_neutral() -> None:
     predicate = PredicateWrite(
-        "delete", WriteTarget("Wallet", op_algebra.Comparison("lessThan", "Wallet.balance", 200.00))
+        "delete",
+        PredicateSelection("Wallet", op_algebra.Comparison("lessThan", "Wallet.balance", 200.00)),
     )
     _assert_neutral([predicate], _WALLET)
 

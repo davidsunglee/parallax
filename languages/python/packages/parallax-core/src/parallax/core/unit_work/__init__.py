@@ -49,11 +49,11 @@ from parallax.core.unit_work.instructions import (
     KeyedMutation,
     KeyedWrite,
     PredicateMutation,
+    PredicateSelection,
     PredicateWrite,
     WriteAssignment,
     WriteInstruction,
     WriteInstructionError,
-    WriteTarget,
     deserialize,
     serialize,
     validate_instruction,
@@ -134,6 +134,7 @@ from parallax.core.unit_work.planned import (
     Unversioned,
     Versioned,
     VersionGate,
+    WriteTarget,
     shortfall_for,
 )
 from parallax.core.unit_work.planner import BufferItem, ObjectKey, object_key
@@ -278,6 +279,7 @@ __all__ = [
     "PredecessorShape",
     "PredecessorStart",
     "PredicateMutation",
+    "PredicateSelection",
     "PredicateTarget",
     "PredicateWrite",
     "RollbackOnlyError",

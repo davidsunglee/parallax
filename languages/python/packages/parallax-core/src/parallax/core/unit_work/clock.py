@@ -8,13 +8,13 @@ conformance runs and unit tests.
 
 The clock yields a normalized ``timestamp`` (aware UTC, microsecond) via
 :meth:`Clock.now`; :func:`instant_literal` renders it to the canonical neutral
-instant string the flush plan carries as context (the write-instruction
+instant string the Planning Request carries as context (the write-instruction
 ``instant`` wire form, matching the ISO instants the corpus authors and the read
 path binds). :class:`TransactionInstant` is the attempt-owned lazy holder of that
-string — the value a flush plan carries, so that whether the clock is read at all
-follows from the work that survives planning. ``m-unit-work`` depends only on
-``m-op-algebra`` / ``m-db-port`` and, transitively, ``m-core`` — from which the
-normalization rule comes.
+string — the value the Planning Request carries, so that whether the clock is
+read at all follows from the work that survives planning. ``m-unit-work`` depends
+only on ``m-op-algebra`` / ``m-db-port`` and, transitively, ``m-core`` — from
+which the normalization rule comes.
 """
 
 from __future__ import annotations
@@ -66,9 +66,10 @@ class FixedClock:
 def instant_literal(value: _dt.datetime) -> str:
     """Render a Transaction-Time instant to the canonical neutral instant string.
 
-    The plan carries the Transaction-Time instant as context (never as an instruction
-    field); this is its wire form — the same ISO-8601 UTC spelling the corpus
-    authors (`2024-06-01T00:00:00+00:00`) and the read path binds.
+    The Planning Request carries the Transaction-Time instant as context (never
+    as an instruction field, and never retained in the settled Write Plan); this
+    is its wire form — the same ISO-8601 UTC spelling the corpus authors
+    (`2024-06-01T00:00:00+00:00`) and the read path binds.
     """
     return normalize_instant(value).isoformat()
 

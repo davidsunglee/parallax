@@ -50,11 +50,11 @@ __all__ = [
     "KeyedMutation",
     "KeyedWrite",
     "PredicateMutation",
+    "PredicateSelection",
     "PredicateWrite",
     "WriteAssignment",
     "WriteInstruction",
     "WriteInstructionError",
-    "WriteTarget",
     "deserialize",
     "serialize",
     "validate_instruction",
@@ -128,9 +128,14 @@ class WriteAssignment:
 
 
 @dataclass(frozen=True, slots=True)
-class WriteTarget:
+class PredicateSelection:
     """The entity a predicate-selected write begins from plus its bare
-    ``m-op-algebra`` predicate (a canonical operation node)."""
+    ``m-op-algebra`` predicate (a canonical operation node).
+
+    This is the instruction-level carrier a buffered :class:`PredicateWrite`
+    authors, distinct from the finalized :class:`~parallax.core.unit_work.
+    planned.WriteTarget` a Planned Write settles into.
+    """
 
     entity: str
     predicate: Operation
@@ -142,7 +147,7 @@ class PredicateWrite:
     ``target`` matching its predicate, with ``assignments`` on the update forms."""
 
     mutation: PredicateMutation
-    target: WriteTarget
+    target: PredicateSelection
     assignments: tuple[WriteAssignment, ...] = ()
     valid_from: str | None = None
     until: str | None = None
@@ -283,7 +288,7 @@ def _keyed(node: Mapping[str, object]) -> KeyedWrite:
     )
 
 
-def _target(node: Mapping[str, object]) -> WriteTarget:
+def _target(node: Mapping[str, object]) -> PredicateSelection:
     raw = node.get("target")
     if not isinstance(raw, Mapping):
         raise WriteInstructionError("predicate write: `target` must be a mapping")
@@ -297,7 +302,7 @@ def _target(node: Mapping[str, object]) -> WriteTarget:
     # The embedded predicate is a canonical m-op-algebra node — the sole write-side
     # reach into the algebra; op_algebra rejects a malformed one.
     predicate = op_algebra.deserialize(cast("Mapping[str, object]", predicate_doc))
-    return WriteTarget(entity=entity, predicate=predicate)
+    return PredicateSelection(entity=entity, predicate=predicate)
 
 
 def _assignments(node: Mapping[str, object]) -> tuple[WriteAssignment, ...]:
