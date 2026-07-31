@@ -20,9 +20,10 @@ column itself, and no full-size list-to-tuple copy happens at the end.
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Final
+from types import MappingProxyType
+from typing import Final, cast
 
 __all__ = [
     "ChunkedColumn",
@@ -136,6 +137,33 @@ def whole[T](column: ChunkedColumn[T]) -> ColumnSlice[T]:
     return ColumnSlice(column=column, start=0, stop=column.length)
 
 
+def freeze_retained_value(value: object) -> object:
+    """Recursively snapshot JSON-shaped containers retained across step access."""
+    if isinstance(value, Mapping):
+        mapping = cast("Mapping[object, object]", value)
+        return MappingProxyType(
+            {key: freeze_retained_value(nested) for key, nested in mapping.items()}
+        )
+    if isinstance(value, (list, tuple)):
+        sequence = cast("Sequence[object]", value)
+        return tuple(freeze_retained_value(nested) for nested in sequence)
+    return value
+
+
+def _freeze_column(column: ColumnSlice[object]) -> ColumnSlice[object]:
+    builder: ChunkedColumnBuilder[object] | None = None
+    for index, value in enumerate(column):
+        frozen = freeze_retained_value(value)
+        if builder is None:
+            if frozen is value:
+                continue
+            builder = ChunkedColumnBuilder()
+            for prior in range(index):
+                builder.append(column[prior])
+        builder.append(frozen)
+    return column if builder is None else whole(builder.build())
+
+
 @dataclass(frozen=True, slots=True)
 class PredecessorShape:
     """The member-name shape one resolving read's Predecessor Rows share.
@@ -179,6 +207,11 @@ class PredecessorColumns:
         length = next(iter(lengths), 0)
         if length == 0:
             raise ValueError("Predecessor Columns carries at least one row")
+        object.__setattr__(
+            self,
+            "value_object_columns",
+            tuple(_freeze_column(column) for column in self.value_object_columns),
+        )
         object.__setattr__(self, "length", length)
 
     def row(self, index: int) -> dict[str, object]:

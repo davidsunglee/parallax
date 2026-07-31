@@ -7,9 +7,8 @@ lengths, Materialized Write Group's own aligned key/observation columns and
 one group-wide Transaction-Time Basis, Planned Steps' segmented backing —
 stable view equality with no object-identity promise, and no mutable
 flyweight reused across iterations — and structural sharing carried all the
-way through temporal expansion and lowering. ``test_planned_allocation_shape.py``
-is the dedicated regression check for wrapper *count*; this suite is about
-storage *shape and correctness*.
+way through temporal expansion and lowering. Bounded wrapper allocation is a
+separate invariant from storage shape and correctness.
 """
 
 from __future__ import annotations
@@ -34,8 +33,11 @@ from _support.clock_probes import CountingClock, inert_instant
 from _support.planner_probes import TEST_SUBJECT_IDENTITY
 from parallax.conformance import models
 from parallax.core import op_algebra
+from parallax.core.db_port import JsonDocument
+from parallax.core.dialect import POSTGRES
 from parallax.core.unit_work import (
     LATEST_PINNED,
+    ChangedFrom,
     ChunkedColumn,
     ChunkedColumnBuilder,
     ColumnSlice,
@@ -62,11 +64,12 @@ from parallax.core.unit_work.columns import (
     _CHUNK_SIZE,  # pyright: ignore[reportPrivateUsage] - bounded-chunking regression only
 )
 from parallax.core.unit_work.planner import Targets  # forbidden-plan-context regression only
-from parallax.snapshot.handle import Database, Transaction, build_write_planner
+from parallax.snapshot.handle import Database, Transaction, build_write_planner, lower_step
 
 _MODELS = models.load_models()
 _ACCOUNT = models.accepted_model(_MODELS["account"])
 _BALANCE = models.accepted_model(_MODELS["balance"])
+_BRANCH = models.accepted_model(_MODELS["branch"])
 
 
 # --------------------------------------------------------------------------- #
@@ -141,15 +144,20 @@ def test_a_column_slice_refuses_an_out_of_range_index() -> None:
 # --------------------------------------------------------------------------- #
 # Predecessor Columns: aligned member lengths, on-demand row materialization. #
 # --------------------------------------------------------------------------- #
-def _predecessor_columns(rows: Sequence[Mapping[str, object]]) -> PredecessorColumns:
-    names = tuple(rows[0])
-    builders = {name: ChunkedColumnBuilder[object]() for name in names}
+def _predecessor_columns(
+    rows: Sequence[Mapping[str, object]],
+    *,
+    value_objects: tuple[str, ...] = (),
+) -> PredecessorColumns:
+    attribute_names = tuple(name for name in rows[0] if name not in value_objects)
+    builders = {name: ChunkedColumnBuilder[object]() for name in rows[0]}
     for row in rows:
-        for name in names:
+        for name in builders:
             builders[name].append(row[name])
     return PredecessorColumns(
-        shape=PredecessorShape(attributes=names),
-        attribute_columns=tuple(whole(builders[name].build()) for name in names),
+        shape=PredecessorShape(attributes=attribute_names, value_objects=value_objects),
+        attribute_columns=tuple(whole(builders[name].build()) for name in attribute_names),
+        value_object_columns=tuple(whole(builders[name].build()) for name in value_objects),
     )
 
 
@@ -173,6 +181,28 @@ def test_predecessor_columns_materializes_one_complete_row_view_per_index() -> N
     # independently allocated view, never a shared mutable flyweight.
     assert predecessors.row(0) == predecessors.row(0)
     assert predecessors.row(0) is not predecessors.row(0)
+
+
+def test_predecessor_columns_freezes_nested_documents_after_an_immutable_prefix() -> None:
+    address = {"geo": {"country": "FI"}, "phones": [{"number": "111"}]}
+    predecessors = _predecessor_columns(
+        [{"id": 1, "address": None}, {"id": 2, "address": address}],
+        value_objects=("address",),
+    )
+    planned = cast("Mapping[str, object]", predecessors.row(1)["address"])
+    geo = cast("Mapping[str, object]", planned["geo"])
+    phones = cast("Sequence[Mapping[str, object]]", planned["phones"])
+
+    cast("dict[str, object]", address["geo"])["country"] = "SE"
+    cast("list[dict[str, object]]", address["phones"])[0]["number"] = "999"
+
+    assert predecessors.row(0)["address"] is None
+    assert geo["country"] == "FI"
+    assert phones[0]["number"] == "111"
+    with pytest.raises(TypeError):
+        cast("dict[str, object]", geo)["country"] = "SE"
+    with pytest.raises(TypeError):
+        cast("dict[str, object]", phones[0])["number"] = "999"
 
 
 def test_predecessor_columns_refuses_misaligned_member_column_lengths() -> None:
@@ -600,12 +630,9 @@ def test_a_materialized_temporal_groups_expansion_resolves_during_plan_not_on_st
 
 
 def test_no_materialized_segments_mapping_field_is_a_plain_mutable_dict() -> None:
-    # Sweep for the class of defect `assignment_row` had, rather than pinning
-    # only that one field: any Step Segment field that is itself a `Mapping`
-    # is retained across every later `step()` call instead of being copied
-    # fresh, so a plain `dict` there would let a caller reaching a segment
-    # through `plan.steps.segments` mutate what every subsequent access
-    # reads. Every such field must be read-only.
+    # Any mapping stored on a Step Segment is retained across later `step()`
+    # calls rather than copied afresh. It must therefore be read-only so every
+    # subsequent access observes the same planned values.
     versioned_plan = build_write_planner(_ACCOUNT).plan(
         PlanningRequest(
             subject_identity=TEST_SUBJECT_IDENTITY,
@@ -701,6 +728,98 @@ def test_mutating_a_materialized_groups_assignment_row_leaves_steps_unaffected()
     (entry,) = cast("PlannedInsert", after).entries
     value_attribute = next(a for a in entry.row.attributes if a.name == "value")
     assert entry.row.attributes[value_attribute] == 9.0
+
+
+def test_a_materialized_plan_deeply_freezes_an_assigned_value_object_document() -> None:
+    prior_address: dict[str, object] = {
+        "street": "10 Old Road",
+        "city": "Helsinki",
+        "geo": {"country": "FI"},
+        "phones": [{"type": "mobile", "number": "111"}],
+    }
+    assigned_address: dict[str, object] = {
+        "street": "30 New Road",
+        "city": "Tampere",
+        "geo": {"country": "FI"},
+        "phones": [{"type": "mobile", "number": "222"}],
+    }
+    rows = [
+        {
+            "id": 1,
+            "name": "Central Branch",
+            "valid_start": "2024-01-01T00:00:00+00:00",
+            "valid_end": "infinity",
+            "tx_start": "2024-01-01T00:00:00+00:00",
+            "tx_end": "infinity",
+            "address": prior_address,
+        }
+    ]
+    keys: ChunkedColumnBuilder[object] = ChunkedColumnBuilder()
+    keys.append(1)
+    group = MaterializedWriteGroup(
+        mutation=PredicateWrite(
+            "update",
+            PredicateSelection("Branch", op_algebra.Comparison("eq", "Branch.id", 1)),
+            assignments=(WriteAssignment("Branch.address", assigned_address),),
+            valid_from="2024-07-01T00:00:00+00:00",
+        ),
+        key_attributes=("id",),
+        key_columns=(whole(keys.build()),),
+        observations=TemporalColumns(
+            predecessors=_predecessor_columns(rows, value_objects=("address",)),
+            transaction_time_basis=LATEST_PINNED,
+        ),
+    )
+    plan = build_write_planner(_BRANCH).plan(
+        PlanningRequest(
+            subject_identity=TEST_SUBJECT_IDENTITY,
+            transaction_instant=inert_instant(),
+            concurrency="optimistic",
+            buffered_writes=[group],
+            observations={},
+        )
+    )
+    changed = cast("PlannedInsert", plan.steps[2])
+    (entry,) = changed.entries
+    assert isinstance(entry.origin, ChangedFrom)
+    address_identity = next(iter(entry.row.value_objects))
+    address = cast("Mapping[str, object]", entry.row.value_objects[address_identity])
+    geo = cast("Mapping[str, object]", address["geo"])
+    phones = cast("Sequence[Mapping[str, object]]", address["phones"])
+    predecessor_address = cast("Mapping[str, object]", entry.origin.predecessor.member("address"))
+    predecessor_geo = cast("Mapping[str, object]", predecessor_address["geo"])
+    predecessor_phones = cast("Sequence[Mapping[str, object]]", predecessor_address["phones"])
+
+    cast("dict[str, object]", assigned_address["geo"])["country"] = "SE"
+    cast("list[dict[str, object]]", assigned_address["phones"])[0]["number"] = "999"
+    cast("dict[str, object]", prior_address["geo"])["country"] = "SE"
+    cast("list[dict[str, object]]", prior_address["phones"])[0]["number"] = "999"
+
+    assert geo["country"] == "FI"
+    assert phones[0]["number"] == "222"
+    assert predecessor_geo["country"] == "FI"
+    assert predecessor_phones[0]["number"] == "111"
+    with pytest.raises(TypeError):
+        cast("dict[str, object]", geo)["country"] = "SE"
+    with pytest.raises(TypeError):
+        cast("dict[str, object]", phones[0])["number"] = "999"
+    with pytest.raises(TypeError):
+        cast("list[Mapping[str, object]]", phones)[0] = {"type": "mobile", "number": "999"}
+    with pytest.raises(TypeError):
+        cast("dict[str, object]", predecessor_geo)["country"] = "SE"
+    with pytest.raises(TypeError):
+        cast("dict[str, object]", predecessor_phones[0])["number"] = "999"
+
+    assert plan.steps[2] == changed
+    statement = lower_step(plan.steps[2], _BRANCH, POSTGRES)
+    assert statement.binds[-1] == JsonDocument(
+        {
+            "street": "30 New Road",
+            "city": "Tampere",
+            "geo": {"country": "FI"},
+            "phones": [{"type": "mobile", "number": "222"}],
+        }
+    )
 
 
 def test_a_materialized_groups_planned_writes_are_constructed_only_on_step_access(
