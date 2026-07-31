@@ -1,7 +1,7 @@
 """``parallax.core.opt_lock`` enforcement scope (m-opt-lock).
 
 The optimistic-locking POLICY scope: this module never renders SQL (`m-sql` /
-`parallax.snapshot.handle.lower_write` is the one seam that does) — it owns the
+`parallax.snapshot.handle` is the one seam that does) — it owns the
 version arithmetic, the observation-licensing rules, and the conflict/historical
 error vocabulary the write seam consumes. It also owns the formation half of the
 same concern: the Rule Set that keeps a family's version source unambiguous, and

@@ -244,8 +244,9 @@
     "connect",
     "find",
     "find_history",
-    "lower_temporal_close",
-    "lower_write",
+    "lower_step",
+    "plan_temporal_close",
+    "stream_lowered",
     "validate_source_pin"
   ]
 }

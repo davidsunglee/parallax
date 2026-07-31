@@ -63,6 +63,7 @@ from parallax.core.unit_work import (
     KeyedWrite,
     ObjectKey,
     PredicateWrite,
+    StaleWrite,
     TransactionInstant,
     VersionObservation,
     WriteAssignment,
@@ -84,7 +85,7 @@ from parallax.snapshot.handle import (
     collapse_group_key,
     find,
     find_history,
-    lower_write,
+    stream_lowered,
     validate_source_pin,
 )
 
@@ -640,8 +641,8 @@ def _resolve_graph_pointer(
 # --------------------------------------------------------------------------- #
 # A write step is one unit of work: its buffered keyed writes are planned
 # (coalesce -> FK-order -> elide, ``m-unit-work``) and each surviving
-# :class:`PlannedWrite` is lowered to DML by the shared
-# ``snapshot.handle.lower_write`` seam — the deliberate ``m-sql`` write edge the
+# :class:`PlannedWrite` is settled and lowered to DML by the shared
+# ``snapshot.handle.stream_lowered`` seam — the deliberate ``m-sql`` write edge the
 # conformance family may compose (the import-side DAG exemption). A **scenario** is
 # a *sequence* of units of work: a write step commits (or, ``rollback: true``,
 # aborts) its coalesced DML, then a ``find`` reads committed state through the read
@@ -657,7 +658,7 @@ def _resolve_graph_pointer(
 # through the neutral ``Transaction._buffer`` route + ``UnitOfWork.observe`` (never
 # the typed instance verbs, which this engine's case-driven metamodel has no
 # compiled classes for). The COMPILE lane still lowers PURELY (no database,
-# ``plan_flush`` / ``lower_write``) — that pure lowering is ALSO what the RUN
+# ``plan_flush`` / ``stream_lowered``) — that pure lowering is ALSO what the RUN
 # lane's emissions/round-trips observation grades against, since both are the
 # SAME deterministic computation over the SAME instructions/observations/instant
 # (`_resolve_entries` / `_lower_resolved` below are the shared core).
@@ -946,7 +947,7 @@ def _build_temporal_instruction(
     (`m-unit-work` same-transaction coalescing, `m-txtime-write-008` /
     `m-bitemp-write-014`): a later entry targeting one of them is a
     same-buffer coalescing candidate whose OWN close/chain arithmetic never
-    runs (the planner folds it into the pending insert before `lower_write`
+    runs (the planner folds it into the pending insert before finalization
     ever sees it) — its observation is forced to `None` and the shadow tracker
     is left untouched (advanced once, by the insert, which is what the
     eventual coalesced write's tracked state approximates; no reachable case
@@ -1269,10 +1270,9 @@ def _seed_insert_version(
     (`opt_lock.INITIAL_VERSION`) — a no-op for every other mutation/entity/row
     shape.
 
-    `parallax.snapshot.handle`'s `lower_insert` / `lower_multi_insert`, the
-    keyed builders `lower_write` dispatches to, derive the
-    INITIAL version at the version column's own Table Layout slot
-    UNCONDITIONALLY, "ignoring any row-carried value" (their own docstrings)
+    `parallax.snapshot.handle`'s own write finalization derives the INITIAL
+    version at the version Attribute UNCONDITIONALLY, ignoring any row-carried
+    value
     — every reachable insert witness already authors an explicit `version`
     matching this SAME constant (`m-unit-work-001`/`-008`), coincidentally
     satisfying `~parallax.core.unit_work.write_validate.validate_write`'s
@@ -1457,12 +1457,9 @@ def _lower_resolved(
         collapse=batch_write.collapses,
         collapse_group=collapse_group_key,
     )
-    statements: list[Statement] = []
-    for planned in plan.writes:
-        statements.extend(
-            lowered.statement
-            for lowered in lower_write(planned, model, dialect, concurrency, instant)
-        )
+    statements = [
+        lowered.statement for _step, lowered in stream_lowered(plan, model, dialect, concurrency)
+    ]
     _check_statement_count_consistency(entries, len(statements))
     return tuple(statements)
 
@@ -1491,7 +1488,7 @@ def _lower_predicate_write_step(
     """Lower a READLESS scenario predicate-write step (`m-batch-write-005`/
     ``-006``) to its ONE statement — PURE, no database. Deserializes +
     validates the canonical instruction, then reuses the SAME
-    ``plan_flush`` -> ``lower_write`` seam every other write path does
+    ``plan_flush`` -> ``stream_lowered`` seam every other write path does
     (`collapse=batch_write.collapses` injected identically, though the
     collapse stage is a structural no-op for a lone predicate write).
 
@@ -1502,13 +1499,13 @@ def _lower_predicate_write_step(
     itself, the one this function actually lowers, stays exactly as authored:
     this is a compile-time PURE re-lowering whose emitted bind is graded
     byte-exact against the case's own golden, so decoding must never leak
-    into the value that reaches ``lower_write``.
+    into the value that reaches finalization.
 
     A MATERIALIZING predicate write never reaches here: its case carries
     ``compileEligibility: run-only``, which short-circuits at
     :func:`eligibility` before the compile lane ever calls this — reaching
-    ``lower_write`` with one is therefore always a caller wiring defect,
-    surfaced as ``lower_write``'s own defensive :class:`WriteLoweringError`.
+    this seam with one is therefore always a caller wiring defect, surfaced as
+    finalization's own defensive :class:`WriteLoweringError`.
     """
     instruction = instructions.deserialize(_canonical_predicate_doc(raw_write))
     assert isinstance(instruction, PredicateWrite)  # a predicate-shaped step always builds this
@@ -1526,9 +1523,7 @@ def _lower_predicate_write_step(
         collapse_group=collapse_group_key,
     )
     statements = [
-        lowered.statement
-        for planned in plan.writes
-        for lowered in lower_write(planned, model, dialect, concurrency, instant)
+        lowered.statement for _step, lowered in stream_lowered(plan, model, dialect, concurrency)
     ]
     assert len(statements) == 1  # a readless predicate write is always exactly one statement
     return statements[0]
@@ -1685,6 +1680,11 @@ def _write_sequence_lowered(
     dialect = dialect_for(dialect_name)
     concurrency = _concurrency(case)
     shadow = TemporalShadow()
+    # The same seeding the RUN lane applies: a case opting into `given.fixtures`
+    # starts from persisted history, and its first temporal close observes a
+    # fixture milestone rather than one an earlier entry opened. Both lanes must
+    # start from the same tracked state or they are not the same computation.
+    _seed_shadow_from_fixtures(case, meta, shadow)
     scenario_observations: ScenarioObservations = {}
     try:
         return [
@@ -3279,7 +3279,7 @@ def run_scenario_case(
                 # A materializing write reaching HERE (rather than being
                 # consumed by the look-ahead pairing above) was not preceded
                 # by a matching find — a malformed corpus case per
-                # `m-case-format`'s own validation requirement; `lower_write`'s
+                # `m-case-format`'s own validation requirement; finalization's
                 # defensive refusal surfaces it loudly rather than silently
                 # mishandling it. A READLESS write needs no pairing at all.
                 raw_predicate_write = cast("Mapping[str, object]", raw_write)
@@ -3397,7 +3397,7 @@ def _execute_reads(port: DbPort, dialect: Dialect, statements: Sequence[Statemen
 # A non-temporal attempt (the versioned keyed                                  #
 # UPDATE) buffers through the neutral `Transaction._buffer` route, exactly     #
 # like any other keyed write; a TEMPORAL attempt (`m-txtime-write` /            #
-# `m-bitemp-write`) composes `handle.lower_temporal_close` directly — a        #
+# `m-bitemp-write`) composes `handle.plan_temporal_close` directly — a         #
 # conflict case tests ONLY the close, never a chain, a shape no REAL temporal  #
 # mutation verb produces on its own.                                          #
 # --------------------------------------------------------------------------- #
@@ -3497,7 +3497,7 @@ def _lower_conflict_write(
     the case's own ``when.mutation`` verb — a versioned keyed UPDATE or DELETE,
     the two non-temporal shapes whose gate the concurrency mode decides
     uniformly; a temporal close's own conflict form
-    (`handle.lower_temporal_close`) is a distinct shape."""
+    (`handle.plan_temporal_close`) is a distinct shape."""
     clean_row, observation = _strip_observation(write_row)
     instruction = instructions.deserialize(
         {"mutation": mutation, "entity": target, "rows": [clean_row]}
@@ -3511,13 +3511,9 @@ def _lower_conflict_write(
             observations[key] = observation
     instant = _pinned_instant(_INERT_CLOCK_INSTANT)
     plan = plan_flush([instruction], observations, instant, model)
-    statements: list[Statement] = []
-    for planned in plan.writes:
-        statements.extend(
-            lowered.statement
-            for lowered in lower_write(planned, model, dialect, concurrency, instant)
-        )
-    return tuple(statements)
+    return tuple(
+        lowered.statement for _step, lowered in stream_lowered(plan, model, dialect, concurrency)
+    )
 
 
 def _conflict_shortfall_error(
@@ -3628,10 +3624,11 @@ def _run_conflict_close(
 ) -> tuple[tuple[Statement, ...], int]:
     """Lower and execute one TEMPORAL conflict attempt's close through
     ``db.transact`` — ONE
-    transaction, ``clock=FixedClock(at)``. Composes
-    :func:`~parallax.snapshot.handle.lower_temporal_close` directly (a
-    conflict case's own close-only probe, never a REAL chaining mutation) and
-    executes it on the transaction's own connection — a standalone close has
+    transaction, ``clock=FixedClock(at)``. Composes the SAME two halves
+    production does — :func:`~parallax.snapshot.handle.plan_temporal_close`
+    settles the step, :func:`~parallax.snapshot.handle.lower_step` renders it —
+    for a conflict case's own close-only probe, never a REAL chaining mutation,
+    and executes it on the transaction's own connection; a standalone close has
     nothing to coalesce or FK-order with, so it bypasses the buffer/flush
     pipeline entirely. The write row's own ``valid_end`` completes a bitemporal
     close's ADDRESS and ``observed_tx_start`` supplies its gate candidate; both
@@ -3646,42 +3643,42 @@ def _run_conflict_close(
     row = dict(write_row)
     observed_valid_end = cast("str | None", row.pop("valid_end", None))
     model = case_model(meta)
-    # The standalone close is lowered outside any unit of work, so it is handed
+    # The standalone close is settled outside any unit of work, so it is handed
     # its own Transaction Instant over the SAME clock the transaction below runs
     # on — the two can never derive different instants from one `at`.
     clock = FixedClock(normalize_instant(dt.datetime.fromisoformat(at)))
-    lowered = handle.lower_temporal_close(
+    step = handle.plan_temporal_close(
         row,
         target,
         model,
-        dialect,
         concurrency,
         TransactionInstant(clock),
         observed_tx_start,
         observed_valid_end,
     )
+    statement = handle.lower_step(step, model, dialect)
     database = handle.Database(port, model, dialect=dialect, clock=clock)
 
     def body(tx: handle.Transaction) -> int:
         # The neutral connection seam.
         affected = tx._conn.execute_write(  # pyright: ignore[reportPrivateUsage] - conformance harness drives the transaction's private connection seam
-            dialect.to_driver_sql(lowered.statement.sql), list(lowered.statement.binds)
+            dialect.to_driver_sql(statement.sql), list(statement.binds)
         )
-        if lowered.expected_affected is not None and affected != lowered.expected_affected:
+        if affected != step.affected_rows.expected:
             # Shared classification (`parallax.core.opt_lock.classify_mismatch`):
-            # the SAME gate/mode-driven decision `parallax.snapshot.handle`'s own
+            # the SAME gate-driven decision `parallax.snapshot.handle`'s own
             # flush executor applies, so the two callers can never disagree on
             # which error class a mismatch raises.
             raise opt_lock.classify_mismatch(
                 target,
                 _identity_key(meta, target, row),
-                lowered.expected_affected,
+                step.affected_rows.expected,
                 affected,
-                stale_error=lowered.stale_error,
+                stale_error=isinstance(step.affected_rows.on_shortfall, StaleWrite),
             )
         return affected
 
-    return (lowered.statement,), _conflict_attempt_affected(database, concurrency, body)
+    return (statement,), _conflict_attempt_affected(database, concurrency, body)
 
 
 def run_conflict_case(
@@ -3694,7 +3691,7 @@ def run_conflict_case(
     affected-row count (the case's own `0`-then-`1` retry-contract witness). A
     NON-temporal target (`m-opt-lock`'s own versioned keyed UPDATE or DELETE,
     named by `when.mutation`) buffers through the neutral `Transaction._buffer`
-    route; a TEMPORAL target composes `handle.lower_temporal_close` directly.
+    route; a TEMPORAL target composes `handle.plan_temporal_close` directly.
 
     Loads no fixtures itself (the caller's own lifecycle does, per
     `m-case-format`'s conflict-shape default); applies `given.apply` verbatim

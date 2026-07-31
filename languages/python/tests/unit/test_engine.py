@@ -2520,10 +2520,10 @@ def test_run_conflict_case_wraps_a_lowering_failure_as_engine_error() -> None:
         engine.run_conflict_case(case, "postgres", FakeWritePort())
 
 
-def test_run_conflict_case_temporal_close_form_composes_lower_temporal_close() -> None:
+def test_run_conflict_case_temporal_close_form_composes_plan_temporal_close() -> None:
     # m-txtime-write-006: a temporal optimistic-lock CLOSE conflict (`when.at` /
     # `when.observedTxStart`, no `observedVersion`) is driven through
-    # `handle.lower_temporal_close`, not the non-temporal versioned-UPDATE path.
+    # `handle.plan_temporal_close`, not the non-temporal versioned-UPDATE path.
     (case,) = [c for c in case_format.load_cases() if c.case_id == "m-txtime-write-006"]
     port = FakeWritePort()
     emissions, affected, table_state = engine.run_conflict_case(case, "postgres", port)
@@ -2555,7 +2555,7 @@ def test_run_conflict_case_resolves_target_from_the_inheritance_family() -> None
 
 def test_run_conflict_case_temporal_attempts_form_retries_the_gated_close() -> None:
     # m-temporal-read-011: a TEMPORAL `when.attempts` retry — each attempt its
-    # own `db.transact` unit composing `handle.lower_temporal_close` directly
+    # own `db.transact` unit composing `handle.plan_temporal_close` directly
     # (the `is_temporal` branch of the attempts loop, distinct from the
     # non-temporal versioned-UPDATE retry `m-opt-lock-007` already covers).
     (case,) = [c for c in case_format.load_cases() if c.case_id == "m-temporal-read-011"]

@@ -249,7 +249,7 @@ def test_inheritance_tag_guard_renders_unaliased() -> None:
     # pure renderer that must not depend on some caller having applied it. The
     # previous unreachability argument for this site — "every predicate-write
     # entry point rejects inheritance families first" — was WRONG (the exported
-    # `lower_write` and `engine._lower_predicate_write_step` both bypassed the
+    # write finalization and `engine._lower_predicate_write_step` both bypassed the
     # buffer-time guards), which is the whole reason this renders through
     # `EntityScope.own_column` now rather than trusting a caller.
     op = oa.Narrow(

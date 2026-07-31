@@ -186,7 +186,7 @@ class Transaction:
         any, is never authored here — it is framework-owned end to end
         (`m-opt-lock`; ADR 0013): the write seam derives its advance from this
         unit of work's own recorded observation at lowering
-        (`parallax.snapshot.handle.lower_write`), never from the edited copy.
+        (`parallax.snapshot.handle`'s write finalization), never from the edited copy.
 
         ``valid_from`` is the plain Bitemporal correction's Valid-Time instant
         (`m-bitemp-write-006` "plain-update-split" — inactivates the original on
@@ -336,11 +336,11 @@ class Transaction:
         temporal sibling of the versioned ``require_observed`` seam write
         finalization runs): the close must target a milestone THIS
         unit of work observed via a transaction-scoped find. Enforced HERE at
-        the developer verb, never in
-        ``_write_lowering._lower_temporal_write`` — the shared
-        lowering also serves the neutral engine lane, whose case documents
-        author their observation control keys (or legitimately none) and are
-        graded against their own goldens. An object this SAME transaction
+        the developer verb, never in ``_finalize._finalize_temporal`` — the
+        shared finalization also serves the neutral engine lane, and demands
+        only the observation a close structurally needs to address, gate, and
+        carry state forward from, which that lane supplies from its own tracked
+        milestone state rather than from a developer's find. An object this SAME transaction
         buffered an insert for is exempt (read-your-own-writes: the buffered
         insert IS the provenance; the planner coalesces or orders the pair,
         `m-unit-work`). Callers invoke this AFTER a sparse update's

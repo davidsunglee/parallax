@@ -6,7 +6,7 @@ simulated sequence registry table hands out reserved blocks). This scope carries
 the pure strategy classification and the block-allocation arithmetic; the actual
 DML (the ``max`` INSERT's ``coalesce(max(...), ?) + ?`` fragment, the registry
 ``update ... set next_val = next_val + ?``) is lowered at the write seam
-(``parallax.snapshot.handle.lower_write``) from the
+(``parallax.snapshot.handle``) from the
 neutral ``{computed: "maxPlusOne"}`` / ``{increment: n}`` DB-computed markers a
 write row carries; :func:`allocate_block` is the block arithmetic the
 ``sequence`` strategy's registry choreography derives its ids from.

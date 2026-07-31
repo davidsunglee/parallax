@@ -52,7 +52,7 @@ from parallax.snapshot.handle import Database, Transaction, TransactionTimePinRe
 
 
 # --------------------------------------------------------------------------- #
-# Wiring: buffer -> flush -> lower_write -> execute_write on the connection.   #
+# Wiring: buffer -> flush -> stream_lowered -> execute_write on the connection.#
 # --------------------------------------------------------------------------- #
 def test_commit_flushes_the_buffer_through_the_lowering_seam() -> None:
     port = RecordingPort()
