@@ -18,12 +18,17 @@ import dataclasses
 import datetime as dt
 from collections.abc import Mapping, Sequence
 from decimal import Decimal
+from types import MappingProxyType
 from typing import Any, cast
 
 import pytest
 from _transact_support import BALANCE as BALANCE_HUB
 from _transact_support import WHERE_POSITION_META, RecordingPort, WherePosition, db_for
 
+# The module itself, not a name from it: the call-count regression below
+# monkeypatches `resolve_successors` where `_settle_temporal_group` looks it
+# up, which is this module's own namespace rather than `unit_work.temporal`'s.
+import parallax.core.unit_work.write_planner as write_planner
 from _support import mirrored_models as mm
 from _support.clock_probes import CountingClock, inert_instant
 from _support.planner_probes import TEST_SUBJECT_IDENTITY
@@ -36,6 +41,7 @@ from parallax.core.unit_work import (
     ColumnSlice,
     FixedClock,
     MaterializedWriteGroup,
+    MilestoneTopology,
     PlannedClose,
     PlannedInsert,
     PlannedUpdate,
@@ -55,6 +61,7 @@ from parallax.core.unit_work import (
 from parallax.core.unit_work.columns import (
     _CHUNK_SIZE,  # pyright: ignore[reportPrivateUsage] - bounded-chunking regression only
 )
+from parallax.core.unit_work.planner import Targets  # forbidden-plan-context regression only
 from parallax.snapshot.handle import Database, Transaction, build_write_planner
 
 _MODELS = models.load_models()
@@ -431,10 +438,17 @@ def test_a_temporal_materialized_groups_close_and_chain_are_equal_but_not_identi
 
 # --------------------------------------------------------------------------- #
 # Finalization: a Materialized Write Group's segment carries no group,        #
-# Transaction Instant, or Write Planner past `plan()`, and a temporal         #
-# group's one instant is resolved during `plan()`, never on step access.      #
+# Transaction Instant, Write Planner, entity-resolution context, or          #
+# temporal-strategy answer past `plan()`, and a temporal group's topology     #
+# and instant are both resolved during `plan()`, never on step access.        #
 # --------------------------------------------------------------------------- #
-_FORBIDDEN_PLAN_CONTEXT = (MaterializedWriteGroup, TransactionInstant, WritePlanner)
+_FORBIDDEN_PLAN_CONTEXT = (
+    MaterializedWriteGroup,
+    TransactionInstant,
+    WritePlanner,
+    Targets,
+    MilestoneTopology,
+)
 
 
 def _segment_field_values(segment: object) -> list[object]:
@@ -498,12 +512,10 @@ def test_a_materialized_plans_segments_retain_no_group_instant_or_planner() -> N
 
 def test_a_materialized_temporal_groups_instant_resolves_during_plan_not_on_step_access() -> None:
     # Reaching a temporal Materialized Write Group is what makes the attempt
-    # capture its instant (ADR 0010) — but the capture must happen while
-    # `plan()` runs, not lazily on a later `steps[i]` access: the old shape
-    # rebuilt each row through a closure that re-consulted `TransactionInstant
-    # .value()` (harmlessly memoized) on first access, leaving the group,
-    # concurrency mode, and the instant itself reachable from the plan the
-    # whole time. Three rows would settle to three closes if the instant were
+    # capture its instant (ADR 0010), and the capture happens while `plan()`
+    # runs rather than lazily on a later `steps[i]` access, so the group, the
+    # concurrency mode, and the instant itself are never reachable from the
+    # plan. Three rows would settle to three closes if the instant were
     # captured per row rather than once for the whole surviving group.
     clock = CountingClock([dt.datetime(2024, 6, 1, tzinfo=dt.UTC)])
     rows = [
@@ -535,6 +547,160 @@ def test_a_materialized_temporal_groups_instant_resolves_during_plan_not_on_step
     _ = list(plan.steps)
     # No step access — repeated, out of order, or iterated — reads the clock.
     assert clock.calls == 1
+
+
+def test_a_materialized_temporal_groups_expansion_resolves_during_plan_not_on_step_access(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # `resolve_successors` decides which successors exist, each one's
+    # represented-state kind, and which Valid-Time bound expression applies —
+    # the semantic content of temporal expansion (`m-unit-work` stage 7) —
+    # from the group's own topology alone, before any row is in hand. It must
+    # run once, while `plan()` settles the segment, and never again on a
+    # later `steps[i]` access, however many times or in what order that
+    # access repeats: a Write Plan is frozen, and re-running a planning
+    # decision at consumption is the same defect as re-capturing the instant
+    # there.
+    calls: list[object] = []
+    original = write_planner.resolve_successors  # pyright: ignore[reportPrivateImportUsage]
+
+    def counting_resolve(*args: object, **kwargs: object) -> object:
+        calls.append(None)
+        return original(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(write_planner, "resolve_successors", counting_resolve)
+    rows = [
+        (
+            row_id,
+            {
+                "id": row_id,
+                "acctNum": "A",
+                "value": 1.00 * row_id,
+                "tx_start": "2024-01-01T00:00:00+00:00",
+                "tx_end": "infinity",
+            },
+        )
+        for row_id in (1, 2, 3)
+    ]
+    plan = build_write_planner(_BALANCE).plan(
+        PlanningRequest(
+            subject_identity=TEST_SUBJECT_IDENTITY,
+            transaction_instant=inert_instant(),
+            concurrency="optimistic",
+            buffered_writes=[_temporal_group("Balance", "id", rows)],
+            observations={},
+        )
+    )
+    assert len(calls) == 1
+    _ = plan.steps[0]
+    _ = plan.steps[0]
+    _ = list(plan.steps)
+    # No step access — first, repeated, or iterated — re-resolves the topology.
+    assert len(calls) == 1
+
+
+def test_no_materialized_segments_mapping_field_is_a_plain_mutable_dict() -> None:
+    # Sweep for the class of defect `assignment_row` had, rather than pinning
+    # only that one field: any Step Segment field that is itself a `Mapping`
+    # is retained across every later `step()` call instead of being copied
+    # fresh, so a plain `dict` there would let a caller reaching a segment
+    # through `plan.steps.segments` mutate what every subsequent access
+    # reads. Every such field must be read-only.
+    versioned_plan = build_write_planner(_ACCOUNT).plan(
+        PlanningRequest(
+            subject_identity=TEST_SUBJECT_IDENTITY,
+            transaction_instant=inert_instant(),
+            concurrency="optimistic",
+            buffered_writes=[_version_group("Account", "id", [(1, 1)], assigned=9.0)],
+            observations={},
+        )
+    )
+    rows = [
+        (
+            1,
+            {
+                "id": 1,
+                "acctNum": "A",
+                "value": 1.00,
+                "tx_start": "2024-01-01T00:00:00+00:00",
+                "tx_end": "infinity",
+            },
+        )
+    ]
+    temporal_plan = build_write_planner(_BALANCE).plan(
+        PlanningRequest(
+            subject_identity=TEST_SUBJECT_IDENTITY,
+            transaction_instant=inert_instant(),
+            concurrency="optimistic",
+            buffered_writes=[_temporal_group("Balance", "id", rows)],
+            observations={},
+        )
+    )
+    for plan in (versioned_plan, temporal_plan):
+        for segment in plan.steps.segments:
+            for field in dataclasses.fields(cast("Any", segment)):
+                value = getattr(segment, field.name)
+                if isinstance(value, Mapping):
+                    assert isinstance(value, MappingProxyType), (
+                        f"{type(segment).__name__}.{field.name} is a plain mutable mapping"
+                    )
+
+
+def test_mutating_a_materialized_groups_assignment_row_leaves_steps_unaffected() -> None:
+    # `_MaterializedTemporalSegment.assignment_row` retains the group's own
+    # authored overlay across every resolved row, so a caller reaching it
+    # through `plan.steps.segments` and mutating it in place must never
+    # change what a subsequently retrieved step carries — a Write Plan is
+    # immutable and its views are stable.
+    rows = [
+        (
+            1,
+            {
+                "id": 1,
+                "acctNum": "A",
+                "value": 1.00,
+                "tx_start": "2024-01-01T00:00:00+00:00",
+                "tx_end": "infinity",
+            },
+        )
+    ]
+    predicate = PredicateWrite(
+        "update",
+        PredicateSelection(
+            "Balance", op_algebra.Comparison("lessThan", "Balance.value", 1_000_000.0)
+        ),
+        assignments=(WriteAssignment("Balance.value", 9.0),),
+    )
+    keys: ChunkedColumnBuilder[object] = ChunkedColumnBuilder()
+    keys.append(1)
+    group = MaterializedWriteGroup(
+        mutation=predicate,
+        key_attributes=("id",),
+        key_columns=(whole(keys.build()),),
+        observations=TemporalColumns(
+            predecessors=_predecessor_columns([members for _key, members in rows]),
+            transaction_time_basis=LATEST_PINNED,
+        ),
+    )
+    plan = build_write_planner(_BALANCE).plan(
+        PlanningRequest(
+            subject_identity=TEST_SUBJECT_IDENTITY,
+            transaction_instant=inert_instant(),
+            concurrency="optimistic",
+            buffered_writes=[group],
+            observations={},
+        )
+    )
+    before = plan.steps[1]
+    assert isinstance(before, PlannedInsert)
+    segment = cast("Any", plan.steps.segments[0])
+    with pytest.raises(TypeError):
+        cast("dict[str, object]", segment.assignment_row)["value"] = 777.0
+    after = plan.steps[1]
+    assert after == before
+    (entry,) = cast("PlannedInsert", after).entries
+    value_attribute = next(a for a in entry.row.attributes if a.name == "value")
+    assert entry.row.attributes[value_attribute] == 9.0
 
 
 def test_a_materialized_groups_planned_writes_are_constructed_only_on_step_access(
