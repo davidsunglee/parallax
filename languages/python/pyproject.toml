@@ -1014,27 +1014,6 @@ forbidden_modules = [
 ]
 
 [[tool.importlinter.contracts]]
-name = "parallax.snapshot.handle._finalize may import only its permitted dependencies"
-type = "forbidden"
-source_modules = ["parallax.snapshot.handle._finalize"]
-forbidden_modules = [
-    "parallax.conformance",
-    "parallax.core._formation_profile",
-    "parallax.core.auto_retry",
-    "parallax.core.batch_write",
-    "parallax.core.db_error",
-    "parallax.core.deep_fetch",
-    "parallax.core.entity",
-    "parallax.core.navigate",
-    "parallax.core.pk_gen",
-    "parallax.core.read_lock",
-    "parallax.core.value_object",
-    "parallax.descriptor",
-    "parallax.postgres",
-    "parallax.snapshot.materialize",
-]
-
-[[tool.importlinter.contracts]]
 name = "parallax.snapshot.handle._keyed_sql may import only its permitted dependencies"
 type = "forbidden"
 source_modules = ["parallax.snapshot.handle._keyed_sql"]

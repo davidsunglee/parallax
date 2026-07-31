@@ -3,24 +3,27 @@ collapse-eligibility vocabulary) and for the composition layer's own batch
 grouping.
 
 Direct, focused tests over the pure decision functions — independent of the
-planner's own collapse-stage adjacency logic (pinned in ``test_planner.py``)
-and the rendered SQL (pinned in ``test_write_lowering.py`` /
-``test_engine.py``). The final section composes the two: it drives the planner
-with the SAME vocabulary the composition layer injects in production and lowers
-the resulting plan, pinning that a run only ever collapses rows whose filtered
-Table Layout slot selections match (`m-sql` "Physical DML ordering").
+Write Planner's own batching-stage adjacency logic (pinned in
+``test_write_planner.py``) and the rendered SQL (pinned in
+``test_write_lowering.py`` / ``test_engine.py``). The final section composes
+the two: it plans through the SAME production wiring
+(``parallax.snapshot.handle.build_write_planner``) and lowers the resulting
+plan, pinning that a run only ever collapses rows whose filtered Table Layout
+slot selections match (`m-sql` "Physical DML ordering").
 """
 
 from __future__ import annotations
 
 from _support.clock_probes import inert_instant
+from _support.planner_probes import TEST_SUBJECT_IDENTITY
 from parallax.conformance import models
 from parallax.core import batch_write
 from parallax.core.dialect import POSTGRES
 from parallax.core.metamodel import EntityIdentity, EntityMetadata, Metamodel
 from parallax.core.sql_gen import Statement
-from parallax.core.unit_work import BufferItem, KeyedWrite, plan_flush
-from parallax.snapshot.handle import collapse_group_key, stream_lowered
+from parallax.core.unit_work import BufferItem, KeyedWrite, PlanningRequest
+from parallax.snapshot.handle import build_write_planner, stream_lowered
+from parallax.snapshot.handle._keyed_sql import collapse_group_key
 
 _MODELS = models.load_models()
 
@@ -40,17 +43,18 @@ POSITION = _target("position", "Position")
 
 
 def _flush_and_lower(buffer: list[BufferItem], model: Metamodel) -> list[Statement]:
-    """Plan ``buffer`` with the production collapse wiring, then lower the plan."""
+    """Plan ``buffer`` with the production wiring, then lower the plan."""
     instant = inert_instant()
-    plan = plan_flush(
-        buffer,
-        {},
-        instant,
-        model,
-        collapse=batch_write.collapses,
-        collapse_group=collapse_group_key,
+    plan = build_write_planner(model).plan(
+        PlanningRequest(
+            subject_identity=TEST_SUBJECT_IDENTITY,
+            transaction_instant=instant,
+            concurrency="locking",
+            buffered_writes=buffer,
+            observations={},
+        )
     )
-    return [statement for _step, statement in stream_lowered(plan, model, POSTGRES, "locking")]
+    return [statement for _step, statement in stream_lowered(plan, model, POSTGRES)]
 
 
 def test_insert_collapses_for_an_unversioned_non_pk_gen_entity() -> None:

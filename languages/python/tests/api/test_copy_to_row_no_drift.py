@@ -43,7 +43,7 @@ import pytest
 
 from _support import mirrored_models as mm
 from _support.clock_probes import instant_at
-from _support.lowering_probes import lower_planned
+from _support.lowering_probes import lower_instruction
 from parallax.conformance import models
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity import (
@@ -54,7 +54,6 @@ from parallax.core.entity import (
 )
 from parallax.core.unit_work import (
     KeyedWrite,
-    PlannedWrite,
     PredecessorRow,
     TemporalObservation,
     VersionObservation,
@@ -75,11 +74,12 @@ def _edited_account_row(*, version: int = 1) -> dict[str, object]:
 
 def test_copy_to_row_non_temporal_update_binds_the_observed_version() -> None:
     instruction = KeyedWrite("update", "Account", (_edited_account_row(),))
-    statement = lower_planned(
-        PlannedWrite(instruction=instruction, observation=VersionObservation(observed_version=7)),
+    statement = lower_instruction(
+        instruction,
         _ACCOUNT,
         POSTGRES,
         "locking",
+        observation=VersionObservation(observed_version=7),
     )[0]
     assert statement.sql == "update account set balance = ?, version = ? where id = ?"
     # 8 = the OBSERVED version (7) + 1 -- never the copy's own carried version
@@ -93,11 +93,12 @@ def test_copy_to_row_non_temporal_update_tracks_a_different_observation() -> Non
     # proving the bound value tracks the observation, never anything the copy
     # itself carries.
     instruction = KeyedWrite("update", "Account", (_edited_account_row(),))
-    statement = lower_planned(
-        PlannedWrite(instruction=instruction, observation=VersionObservation(observed_version=41)),
+    statement = lower_instruction(
+        instruction,
         _ACCOUNT,
         POSTGRES,
         "locking",
+        observation=VersionObservation(observed_version=41),
     )[0]
     assert statement.binds == (175.00, 42, 1)
 
@@ -162,12 +163,13 @@ def test_copy_to_row_temporal_update_gates_the_close_on_observed_tx_start() -> N
     # (`~parallax.core.opt_lock.gates`); locking mode never does.
     instruction = KeyedWrite("update", "Balance", (_edited_balance_row(),))
     observed = _observed_balance("2024-01-01T00:00:00+00:00")
-    close = lower_planned(
-        PlannedWrite(instruction=instruction, observation=observed),
+    close = lower_instruction(
+        instruction,
         _BALANCE,
         POSTGRES,
         "optimistic",
         instant_at("2024-09-01T00:00:00+00:00"),
+        observation=observed,
     )[0]
     assert close.sql == "update balance set out_z = ? where bal_id = ? and out_z = ? and in_z = ?"
     assert close.binds == (
@@ -184,12 +186,13 @@ def test_copy_to_row_temporal_update_tracks_a_different_observed_tx_start() -> N
     # never anything the copy or its row carries.
     instruction = KeyedWrite("update", "Balance", (_edited_balance_row(),))
     observed = _observed_balance("2024-06-01T00:00:00+00:00")
-    close = lower_planned(
-        PlannedWrite(instruction=instruction, observation=observed),
+    close = lower_instruction(
+        instruction,
         _BALANCE,
         POSTGRES,
         "optimistic",
         instant_at("2024-09-01T00:00:00+00:00"),
+        observation=observed,
     )[0]
     assert close.binds == (
         "2024-09-01T00:00:00+00:00",

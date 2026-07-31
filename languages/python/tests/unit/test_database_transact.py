@@ -35,13 +35,13 @@ from _transact_support import (
 )
 
 from _support import mirrored_models as mm
+from _support.planner_probes import TEST_SUBJECT_IDENTITY, planner_for
 from parallax.core.db_error import DatabaseError
 from parallax.core.entity._hub import sealed_model
 from parallax.core.unit_work import (
     CardinalityCorruptionError,
     EscapedTransactionError,
     FixedClock,
-    FlushPlan,
     MissingTargetError,
     OptimisticLockConflictError,
     RollbackOnlyError,
@@ -49,6 +49,7 @@ from parallax.core.unit_work import (
     TransactionSettings,
     UnitOfWork,
     UnitOfWorkError,
+    WritePlan,
     run_unit_of_work,
 )
 from parallax.snapshot.handle import Database, Transaction, TransactionOptionConflictError
@@ -171,19 +172,22 @@ def test_bare_unit_of_work_on_the_thread_is_refused() -> None:
     port = RecordingPort()
     db = account_db(port)
 
-    def executor(_plan: FlushPlan) -> None:  # pragma: no cover - never flushed
+    def executor(_plan: WritePlan) -> None:  # pragma: no cover - never flushed
         raise AssertionError("no flush expected")
 
     def body(_uow: UnitOfWork) -> None:
         with pytest.raises(UnitOfWorkError, match="bare unit of work"):
             db.transact(lambda _tx: None)
 
+    model = sealed_model(ACCOUNT).model
     run_unit_of_work(
         body,
         settings=TransactionSettings(),
         clock=FixedClock(FIXED),
-        meta=sealed_model(ACCOUNT).model,
+        meta=model,
         flush_executor=executor,
+        planner=planner_for(model),
+        subject_identity=TEST_SUBJECT_IDENTITY,
     )
 
 

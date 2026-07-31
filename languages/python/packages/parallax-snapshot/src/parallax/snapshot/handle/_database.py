@@ -8,9 +8,9 @@ check, the ``m-auto-retry`` bounded retry loop, and the flush executor it inject
 into the unit of work.
 
 That injected executor is where the package's two halves meet: it lowers the
-flush plan through
-:func:`~parallax.snapshot.handle._write_lowering.stream_lowered` and runs each
-statement on the transaction's own connection, so an abort rolls back
+Write Plan the injected :class:`~parallax.core.unit_work.WritePlanner` produces
+through :func:`~parallax.snapshot.handle._write_lowering.stream_lowered` and runs
+each statement on the transaction's own connection, so an abort rolls back
 force-flushed writes with everything else. ``parallax.core.auto_retry`` may not
 import ``parallax.core.opt_lock``, so the ``retry_optimistic_conflicts`` opt-in's
 classification branch (``_optimistic_conflict_retriable``) is composed here too.
@@ -18,10 +18,10 @@ classification branch (``_optimistic_conflict_retriable``) is composed here too.
 This is the TOP of the package's internal graph: it imports
 :mod:`parallax.snapshot.handle._read`, :mod:`~parallax.snapshot.handle._transaction`,
 :mod:`~parallax.snapshot.handle._write_lowering`,
-:mod:`~parallax.snapshot.handle._write_types`, and — for the batch-grouping key
-it injects into the unit of work beside the collapse policy —
-:mod:`~parallax.snapshot.handle._keyed_sql`, and nothing in the package imports
-it except ``handle/__init__.py``, which re-exports its three public names
+:mod:`~parallax.snapshot.handle._write_types`, and
+:mod:`~parallax.snapshot.handle._planning` for the one Write Planner it builds
+once per connected Metamodel, and nothing in the package imports it except
+``handle/__init__.py``, which re-exports its three public names
 (:class:`Database`, :func:`connect`, :class:`TransactionOptionConflictError`)
 through the frozen ``__all__``. Because only those three cross the boundary,
 every helper here keeps its leading underscore — the cross-module bare-name
@@ -32,9 +32,8 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Final
 
-from parallax.core import batch_write
 from parallax.core.auto_retry import run_with_retry
 from parallax.core.db_port import DbPort
 from parallax.core.dialect import POSTGRES, Dialect
@@ -56,18 +55,20 @@ from parallax.core.unit_work import (
     Clock,
     Concurrency,
     FlushExecutor,
-    FlushPlan,
     OptimisticLockConflictError,
     RollbackOnlyError,
+    SubjectIdentity,
     SystemClock,
     TransactionSettings,
     UnitOfWork,
     UnitOfWorkError,
+    WritePlan,
+    WritePlanner,
     active_unit_of_work,
     enforce_affected_rows,
     run_unit_of_work,
 )
-from parallax.snapshot.handle._keyed_sql import collapse_group_key
+from parallax.snapshot.handle._planning import build_write_planner
 from parallax.snapshot.handle._read import (
     Snapshot,
     declaring_metadata,
@@ -82,6 +83,15 @@ from parallax.snapshot.handle._transaction import Transaction
 from parallax.snapshot.handle._write_lowering import stream_lowered
 
 __all__ = ["Database", "TransactionOptionConflictError", "connect"]
+
+# The transitional audit-neutral Subject Identity every production planning
+# request carries until COR-55 implements the Principal boundary. Private,
+# module-local, and nonempty: not a Principal implementation, a default
+# identity, or a public caller option — COR-55 deletes this constant and
+# threads a real captured Subject Identity through in its place.
+_TRANSITIONAL_SUBJECT_IDENTITY: Final[SubjectIdentity] = SubjectIdentity(
+    "cor-62-transitional-subject"
+)
 
 
 class TransactionOptionConflictError(ValueError):
@@ -130,7 +140,7 @@ class _Demarcation:
 class Database:
     """A connected Parallax database handle: one adapter, one metamodel (spec §5)."""
 
-    __slots__ = ("_binding", "_clock", "_dialect", "_meta", "_port")
+    __slots__ = ("_binding", "_clock", "_dialect", "_meta", "_planner", "_port")
 
     def __init__(
         self,
@@ -150,6 +160,10 @@ class Database:
             self._meta, self._binding = meta, None
         self._dialect = dialect
         self._clock: Clock = clock if clock is not None else SystemClock()
+        # One Write Planner per connected Metamodel, reused across every
+        # `transact()` attempt (`m-unit-work`: the planner is constructed once
+        # per accepted Metamodel with its strategy adapters already wired).
+        self._planner: WritePlanner = build_write_planner(self._meta)
 
     @classmethod
     def connect(
@@ -240,6 +254,8 @@ class Database:
                 clock=active.clock,
                 meta=active.meta,
                 flush_executor=active.flush_executor,
+                planner=self._planner,
+                subject_identity=_TRANSITIONAL_SUBJECT_IDENTITY,
             )
         options = _ResolvedOptions(
             retries=retries if retries is not None else 10,
@@ -267,16 +283,15 @@ class Database:
                     settings=TransactionSettings(concurrency=options.concurrency),
                     clock=self._clock,
                     meta=model,
-                    flush_executor=_flush_executor(conn, model, self._dialect, options.concurrency),
-                    # The injected `m-batch-write` collapse vocabulary and its
-                    # physical-shape grouping key — `parallax.snapshot.handle`
+                    flush_executor=_flush_executor(conn, model, self._dialect),
+                    # The injected Write Planner — `parallax.snapshot.handle`
                     # is the sole module cleared to import both `batch_write`
-                    # and `m-unit-work`, and the only one that can resolve a
-                    # row against its Storage Layout, so it supplies the SAME
-                    # pair the conformance compile lane injects into its own
-                    # direct `plan_flush` calls (`parallax.conformance.engine`).
-                    collapse_policy=batch_write.collapses,
-                    collapse_group=collapse_group_key,
+                    # and `m-unit-work`, so it alone builds the strategy
+                    # adapters `build_write_planner` wires. The conformance
+                    # compile lane calls the SAME factory, so the two lanes
+                    # plan through one deterministic computation.
+                    planner=self._planner,
+                    subject_identity=_TRANSITIONAL_SUBJECT_IDENTITY,
                 )
 
             return self._port.transaction(in_txn)
@@ -345,12 +360,7 @@ def _refuse_conflict(name: str, explicit: object | None, active_value: object) -
         )
 
 
-def _flush_executor(
-    conn: DbPort,
-    model: Metamodel,
-    dialect: Dialect,
-    concurrency: Concurrency,
-) -> FlushExecutor:
+def _flush_executor(conn: DbPort, model: Metamodel, dialect: Dialect) -> FlushExecutor:
     """The unit of work's injected flush sink: lower each planned step, execute
     every statement in order, and hand each result back to the unit of work to
     interpret.
@@ -362,13 +372,15 @@ def _flush_executor(
     precedes the rows it chains, so a failure on the close aborts BEFORE those
     rows ever execute.
 
-    This executor performs NO classification of its own: it reports the driver's
-    count to :func:`~parallax.core.unit_work.enforce_affected_rows`, which owns
-    the authoritative reading of the step's Affected Rows Policy (ADR 0048).
+    This executor performs NO classification of its own: the injected Write
+    Planner already spent the concurrency mode while settling each step, and
+    this reports only the driver's count to
+    :func:`~parallax.core.unit_work.enforce_affected_rows`, which owns the
+    authoritative reading of the step's Affected Rows Policy (ADR 0048).
     """
 
-    def execute(plan: FlushPlan) -> None:
-        for step, statement in stream_lowered(plan, model, dialect, concurrency):
+    def execute(plan: WritePlan) -> None:
+        for step, statement in stream_lowered(plan, model, dialect):
             affected = conn.execute_write(
                 dialect.to_driver_sql(statement.sql), list(statement.binds)
             )

@@ -5,7 +5,7 @@ the developer transaction path and the conformance engine reuse. These tests pin
 its byte-exact non-temporal keyed emissions against the corpus goldens
 (``m-unit-work-001/003/005``, ``m-opt-lock-002/005/006/013``,
 ``m-inheritance-007/008/009/010/084/104``, ``m-pk-gen-001``), compose it with the
-unit-of-work planner for the coalescing / mixed-flush / cancellation cases
+Write Planner for the coalescing / mixed-flush / cancellation cases
 (``-008/-009/-010``), pin the ``m-opt-lock`` version gate/advance/shortfall
 policy (observation-required for BOTH update and delete, gate-optimistic-only, a
 row-carried version value refused outright, the derived initial version), the
@@ -14,18 +14,19 @@ inheritance tag derivation/guard/opt-lock composition, and the pk-gen
 the rectangle split, the per-axis close address, the observed-``in_z`` gate, and
 the settled ``StaleWrite`` versus ``OptimisticConflict`` shortfall tag—are pinned
 in ``test_temporal_write_lowering.py``. The predicate-selected and multi-row batch
-forms use the same lowering seam. It refuses a materializing predicate write
-that reaches it, a mixed-shape
-multi-row instruction, a milestone verb on a non-temporal entity, an unsupported
-DB-computed marker — raises a loud ``WriteLoweringError``, never a wrong
-emission, mirroring the read compiler's forward-error posture.
+forms use the same lowering seam. Planning refuses a materializing predicate write
+that reaches it, a mixed-shape multi-row instruction, a milestone verb on a
+non-temporal entity, and an unsupported DB-computed marker with a loud
+``WritePlanningError``; lowering separately refuses a target with no effective
+table with ``WriteLoweringError`` — each a forward-error posture, never a wrong
+emission, mirroring the read compiler's own.
 
 The final section pins the two halves the non-temporal insert family crosses
-separately: ``_finalize.finalize_item`` settling an instruction into finalized
-steps, and ``_step_lowering.lower_step`` rendering a step built by hand — proving
-that lowering answers a purely physical question and never re-derives a semantic
-one. The composed emissions above are the byte-exact evidence; these are the
-seam itself.
+separately: the Write Planner settling an instruction into finalized steps, and
+``_step_lowering.lower_step`` rendering a step built by hand — proving that
+lowering answers a purely physical question and never re-derives a semantic one.
+The composed emissions above are the byte-exact evidence; these are the seam
+itself.
 """
 
 from __future__ import annotations
@@ -36,7 +37,8 @@ from collections.abc import Mapping
 import pytest
 
 from _support.clock_probes import inert_instant
-from _support.lowering_probes import lower_planned, lower_planned_steps
+from _support.lowering_probes import lower_instruction, lower_instruction_steps
+from _support.planner_probes import TEST_SUBJECT_IDENTITY
 from parallax.conformance import models
 from parallax.core import inheritance, opt_lock, storage_layout
 from parallax.core import op_algebra as oa
@@ -65,7 +67,7 @@ from parallax.core.unit_work import (
     PlannedInsert,
     PlannedRow,
     PlannedUpdate,
-    PlannedWrite,
+    PlanningRequest,
     PredicateTarget,
     PredicateWrite,
     SelfIncrement,
@@ -75,14 +77,13 @@ from parallax.core.unit_work import (
     WriteAssignment,
     WriteInstruction,
     WriteObservation,
+    WritePlanningError,
     WriteTarget,
-    plan_flush,
 )
 from parallax.core.unit_work.planned import PlannedWrite as PlannedStep
 from parallax.descriptor import _records
 from parallax.descriptor._records import Metamodel
-from parallax.snapshot.handle import WriteLoweringError, stream_lowered
-from parallax.snapshot.handle._finalize import finalize_item
+from parallax.snapshot.handle import WriteLoweringError, build_write_planner, stream_lowered
 from parallax.snapshot.handle._step_lowering import lower_step
 
 _MODELS = models.load_models()
@@ -108,12 +109,7 @@ def _lower(
     concurrency: Concurrency = "locking",
 ) -> list[Statement]:
     model = models.accepted_model(meta)
-    return lower_planned(
-        PlannedWrite(instruction=instruction, observation=observation),
-        model,
-        dialect,
-        concurrency,
-    )
+    return lower_instruction(instruction, model, dialect, concurrency, observation=observation)
 
 
 def _flush_and_lower(
@@ -125,8 +121,16 @@ def _flush_and_lower(
 ) -> list[Statement]:
     model = models.accepted_model(meta)
     instant = inert_instant()
-    plan = plan_flush(buffer, observations or {}, instant, model)
-    return [statement for _step, statement in stream_lowered(plan, model, POSTGRES, concurrency)]
+    plan = build_write_planner(model).plan(
+        PlanningRequest(
+            subject_identity=TEST_SUBJECT_IDENTITY,
+            transaction_instant=instant,
+            concurrency=concurrency,
+            buffered_writes=buffer,
+            observations=observations or {},
+        )
+    )
+    return [statement for _step, statement in stream_lowered(plan, model, POSTGRES)]
 
 
 def _layout_columns(meta: Metamodel, entity_name: str) -> tuple[str, ...]:
@@ -391,12 +395,14 @@ def test_versioned_delete_shortfall_classifies_by_gate_not_by_mutation() -> None
     # An ungated (locking-mode) shortfall is the NON-retriable stale outcome an
     # ungated close's is; a gated (optimistic) one stays the retriable conflict.
     delete = KeyedWrite("delete", "Account", ({"id": 3},))
-    planned = PlannedWrite(
-        instruction=delete, observation=VersionObservation(observed_version=1), expected_affected=1
-    )
+    observation = VersionObservation(observed_version=1)
     model = models.accepted_model(ACCOUNT)
-    locking, _ = lower_planned_steps(planned, model, concurrency="locking")[0]
-    optimistic, _ = lower_planned_steps(planned, model, concurrency="optimistic")[0]
+    locking, _ = lower_instruction_steps(
+        delete, model, concurrency="locking", observation=observation
+    )[0]
+    optimistic, _ = lower_instruction_steps(
+        delete, model, concurrency="optimistic", observation=observation
+    )[0]
     assert isinstance(locking, PlannedDelete)
     assert isinstance(optimistic, PlannedDelete)
     assert locking.affected_rows == ExactCount(1, STALE_WRITE)
@@ -542,13 +548,13 @@ def test_increment_marker_reaching_an_insert_is_refused() -> None:
     insert = KeyedWrite(
         "insert", "PkSequence", ({"name": "badge_seq", "nextVal": {"increment": 1}},)
     )
-    with pytest.raises(WriteLoweringError, match=r"unsupported DB-computed marker.*'increment'"):
+    with pytest.raises(WritePlanningError, match=r"unsupported DB-computed marker.*'increment'"):
         _lower(insert, PK_SEQUENCE)
 
 
 def test_computed_marker_reaching_an_update_is_refused() -> None:
     update = KeyedWrite("update", "Attendee", ({"id": 1, "name": {"computed": "maxPlusOne"}},))
-    with pytest.raises(WriteLoweringError, match=r"unsupported DB-computed marker.*'computed'"):
+    with pytest.raises(WritePlanningError, match=r"unsupported DB-computed marker.*'computed'"):
         _lower(update, PK_MAX)
 
 
@@ -556,7 +562,7 @@ def test_unrecognized_computed_strategy_is_refused() -> None:
     insert = KeyedWrite(
         "insert", "Attendee", ({"id": {"computed": "somethingElse"}, "name": "Ada"},)
     )
-    with pytest.raises(WriteLoweringError, match="not a recognized `computed` strategy"):
+    with pytest.raises(WritePlanningError, match="not a recognized `computed` strategy"):
         _lower(insert, PK_MAX)
 
 
@@ -648,7 +654,7 @@ def test_materializing_predicate_write_reaching_finalization_is_refused() -> Non
     # before it is ever planned. Reaching here with one is a caller wiring
     # defect this seam still refuses loudly, never mis-emits.
     predicate = PredicateWrite("delete", WriteTarget("Account", oa.All()))
-    with pytest.raises(WriteLoweringError, match="materialize to keyed writes"):
+    with pytest.raises(WritePlanningError, match="materialize to keyed writes"):
         _lower(predicate, ACCOUNT)
 
 
@@ -716,7 +722,7 @@ def test_milestone_verb_on_a_non_temporal_entity_is_refused() -> None:
     # The temporal milestone verb set (terminate / *Until) stays refused on a
     # NON-temporal entity — permanently: `Account` has no Transaction-/Valid-Time
     # axis to close, so a milestone verb aimed at it is never sensible.
-    with pytest.raises(WriteLoweringError, match="temporal milestone verb"):
+    with pytest.raises(WritePlanningError, match="temporal milestone verb"):
         _lower(KeyedWrite("terminate", "Account", ({"id": 1},)), ACCOUNT)
 
 
@@ -917,12 +923,13 @@ def _finalize(
     observation: WriteObservation | None = None,
     concurrency: Concurrency = "locking",
 ) -> tuple[PlannedStep, ...]:
-    return finalize_item(
-        PlannedWrite(instruction=instruction, observation=observation),
+    steps = lower_instruction_steps(
+        instruction,
         models.accepted_model(meta),
-        concurrency,
-        inert_instant(),
+        concurrency=concurrency,
+        observation=observation,
     )
+    return tuple(step for step, _statement in steps)
 
 
 def _identity(meta: Metamodel, entity: str) -> EntityIdentity:
@@ -1020,7 +1027,7 @@ def test_a_write_row_naming_no_family_member_is_refused_at_finalization() -> Non
     # Every member spelling must resolve to a semantic identity before a step
     # exists, so an unknown one is refused where the resolution happens — never
     # silently dropped from the emitted column list.
-    with pytest.raises(WriteLoweringError, match="not a member of the Entity's family"):
+    with pytest.raises(WritePlanningError, match="not a member of the Entity's family"):
         _finalize(KeyedWrite("insert", "Wallet", ({"id": 10, "nickname": "M"},)), WALLET)
 
 
@@ -1028,7 +1035,7 @@ def test_a_milestone_verb_on_a_non_temporal_entity_is_refused_at_finalization() 
     # A milestone verb opens, splits, or closes a milestone, and an Entity
     # declaring no as-of axis has none — refused where the target's family is
     # resolved, never rendered as an ordinary keyed write.
-    with pytest.raises(WriteLoweringError, match="declares no temporal dimension"):
+    with pytest.raises(WritePlanningError, match="declares no temporal dimension"):
         _finalize(KeyedWrite("terminate", "Account", ({"id": 1},)), ACCOUNT)
 
 
@@ -1110,14 +1117,14 @@ def test_a_predicate_verb_with_no_readless_template_is_refused() -> None:
     # target materializes to keyed writes at buffer time, so no readless
     # statement shape exists for one — refused rather than settled into a step
     # no statement could render.
-    with pytest.raises(WriteLoweringError, match="names a milestone"):
+    with pytest.raises(WritePlanningError, match="names a milestone"):
         _finalize(PredicateWrite("terminate", WriteTarget("Wallet", oa.All())), WALLET)
 
 
 def test_a_keyed_write_row_omitting_its_primary_key_addresses_nothing() -> None:
     # Refused where the target is settled, rather than lowered into an identity
     # predicate whose bind was never supplied.
-    with pytest.raises(WriteLoweringError, match="omits the primary-key member"):
+    with pytest.raises(WritePlanningError, match="omits the primary-key member"):
         _finalize(KeyedWrite("delete", "Wallet", ({"owner": "Mira"},)), WALLET)
 
 

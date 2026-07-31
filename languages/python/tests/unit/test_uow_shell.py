@@ -12,25 +12,28 @@ from __future__ import annotations
 
 import contextlib
 import datetime as dt
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 
 import pytest
 
 from _support.clock_probes import CountingClock
+from _support.planner_probes import TEST_SUBJECT_IDENTITY, planner_for
 from parallax.conformance import models
-from parallax.core.metamodel import Metamodel
+from parallax.core.metamodel import AttributeIdentity, Metamodel
 from parallax.core.unit_work import (
     Clock,
     EscapedTransactionError,
     FixedClock,
     FlushExecutor,
-    FlushPlan,
     KeyedWrite,
+    PlannedInsert,
+    PlannedUpdate,
     RollbackOnlyError,
     SystemClock,
     TransactionSettings,
     UnitOfWork,
     VersionObservation,
+    WritePlan,
     active_unit_of_work,
     run_unit_of_work,
 )
@@ -42,16 +45,16 @@ _FIXED = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
 
 
 class _Recorder:
-    """Records each flush plan the shell hands the executor."""
+    """Records each Write Plan the shell hands the executor."""
 
     def __init__(self) -> None:
-        self.plans: list[FlushPlan] = []
+        self.plans: list[WritePlan] = []
 
-    def __call__(self, plan: FlushPlan) -> None:
+    def __call__(self, plan: WritePlan) -> None:
         self.plans.append(plan)
 
 
-def _noop(plan: FlushPlan) -> None:
+def _noop(plan: WritePlan) -> None:
     return None
 
 
@@ -63,17 +66,29 @@ def _run[T](
     settings: TransactionSettings | None = None,
     meta: Metamodel | None = None,
 ) -> T:
+    resolved_meta = meta or _ACCOUNT
     return run_unit_of_work(
         body,
         settings=settings or TransactionSettings(),
         clock=clock or FixedClock(_FIXED),
-        meta=meta or _ACCOUNT,
+        meta=resolved_meta,
         flush_executor=executor or _noop,
+        planner=planner_for(resolved_meta),
+        subject_identity=TEST_SUBJECT_IDENTITY,
     )
 
 
 def _account_insert(account_id: int) -> KeyedWrite:
     return KeyedWrite("insert", "Account", ({"id": account_id, "owner": "N", "balance": 5.00},))
+
+
+def _member_value(attributes: Mapping[AttributeIdentity, object], name: str) -> object:
+    """The planned value carried under the Attribute spelled ``name``, from a
+    Planned Row's or Planned Assignments' own ``attributes`` mapping."""
+    for identity, value in attributes.items():
+        if identity.name == name:
+            return value
+    raise AssertionError(f"no attribute named {name!r} in {attributes!r}")  # pragma: no cover
 
 
 # --------------------------------------------------------------------------- #
@@ -88,7 +103,7 @@ def test_outermost_commit_flushes_and_returns_value() -> None:
 
     assert _run(body, executor=recorder) == "ok"
     assert len(recorder.plans) == 1
-    assert len(recorder.plans[0].writes) == 1
+    assert len(recorder.plans[0].steps) == 1
 
 
 def test_active_unit_of_work_tracks_the_scope() -> None:
@@ -163,7 +178,7 @@ def test_read_force_flushes_pending_writes_first() -> None:
     order: list[str] = []
     recorder = _Recorder()
 
-    def executor(plan: FlushPlan) -> None:
+    def executor(plan: WritePlan) -> None:
         order.append("flush")
         recorder(plan)
 
@@ -192,13 +207,19 @@ def test_read_without_pending_writes_does_not_flush() -> None:
 # Clock injection.                                                             #
 # --------------------------------------------------------------------------- #
 def test_clock_supplies_the_flush_transaction_time_instant() -> None:
+    # `WritePlan` retains no Transaction Instant of its own (`m-unit-work`):
+    # the captured value survives only where a settled step already carries
+    # it, so the audit-only insert's own `tx_start` cell is the observable.
     recorder = _Recorder()
 
     def body(tx: UnitOfWork) -> None:
         tx.buffer(KeyedWrite("insert", "Balance", ({"id": 9, "acctNum": "D", "value": 100.00},)))
 
     _run(body, clock=FixedClock(_FIXED), executor=recorder, meta=_BALANCE)
-    assert recorder.plans[0].tx_instant.value() == "2024-06-01T00:00:00+00:00"
+    (step,) = recorder.plans[0].steps
+    assert isinstance(step, PlannedInsert)
+    (entry,) = step.entries
+    assert _member_value(entry.row.attributes, "tx_start") == "2024-06-01T00:00:00+00:00"
 
 
 def test_system_clock_reads_an_aware_utc_instant() -> None:
@@ -207,7 +228,9 @@ def test_system_clock_reads_an_aware_utc_instant() -> None:
     assert instant.utcoffset() == dt.timedelta(0)
 
 
-def test_observe_binds_the_recorded_observation_into_the_flush_plan() -> None:
+def test_observe_binds_the_recorded_observation_into_the_settled_step() -> None:
+    # `PlannedUpdate` carries no raw observation either — the recorded version
+    # survives only as the settled step's own advanced assignment.
     recorder = _Recorder()
     observation = VersionObservation(observed_version=7)
 
@@ -216,7 +239,9 @@ def test_observe_binds_the_recorded_observation_into_the_flush_plan() -> None:
         tx.buffer(KeyedWrite("update", "Account", ({"id": 1, "balance": 0.00},)))
 
     _run(body, executor=recorder)
-    assert recorder.plans[0].writes[0].observation == observation
+    (step,) = recorder.plans[0].steps
+    assert isinstance(step, PlannedUpdate)
+    assert _member_value(step.assignments.attributes, "version") == 8
 
 
 def test_a_fully_empty_transaction_never_touches_the_clock() -> None:
@@ -228,20 +253,6 @@ def test_a_fully_empty_transaction_never_touches_the_clock() -> None:
         return tx.read(lambda: "row")
 
     assert _run(body, clock=clock) == "row"
-    assert clock.calls == 0
-
-
-def test_planning_a_flush_leaves_the_transaction_instant_uncaptured() -> None:
-    # The shell hands the plan a holder, not a literal: an executor that lowers
-    # nothing needing a Transaction-Time boundary leaves the clock untouched
-    # (ADR 0010), which is what lets canceled and timestamp-free work skip it.
-    clock = CountingClock([dt.datetime(2024, 6, 1, tzinfo=dt.UTC)])
-    recorder = _Recorder()
-
-    def body(tx: UnitOfWork) -> None:
-        tx.buffer(KeyedWrite("insert", "Balance", ({"id": 9, "acctNum": "D", "value": 1.00},)))
-
-    _run(body, clock=clock, executor=recorder, meta=_BALANCE)
     assert clock.calls == 0
 
 
@@ -259,8 +270,16 @@ def test_transaction_time_instant_is_captured_once_per_transaction() -> None:
     _run(body, clock=clock, executor=recorder, meta=_BALANCE)
     # The forced flush and the commit flush carry the SAME holder, so consuming
     # either yields one Transaction-Time instant for the whole transaction
-    # (Reladomo's per-transaction timestamp).
-    assert [p.tx_instant.value() for p in recorder.plans] == ["2024-06-01T00:00:00+00:00"] * 2
+    # (Reladomo's per-transaction timestamp) — observable only through the
+    # settled step's own stamped `tx_start`, since a Write Plan retains no
+    # Transaction Instant of its own.
+    tx_starts: list[object] = []
+    for plan in recorder.plans:
+        (step,) = plan.steps
+        assert isinstance(step, PlannedInsert)
+        (entry,) = step.entries
+        tx_starts.append(_member_value(entry.row.attributes, "tx_start"))
+    assert tx_starts == ["2024-06-01T00:00:00+00:00"] * 2
     assert clock.calls == 1
 
 
@@ -290,7 +309,13 @@ def test_nested_transaction_joins_the_active_one() -> None:
     assert seen["inner_ret"] == "inner-result"  # a joined body returns immediately
     assert inner_exec.plans == []  # the joined call's executor is ignored
     assert len(outer_exec.plans) == 1  # one flush at the outermost boundary
-    assert len(outer_exec.plans[0].writes) == 2  # both buffered writes
+    # Both buffered writes reached the SAME outermost flush — the production
+    # planner's own batching then collapses the two uniform Account inserts
+    # into one multi-row step, so the entry count is the observable, not the
+    # step count.
+    (step,) = outer_exec.plans[0].steps
+    assert isinstance(step, PlannedInsert)
+    assert len(step.entries) == 2
 
 
 def test_inner_failure_dooms_the_transaction_even_if_caught() -> None:

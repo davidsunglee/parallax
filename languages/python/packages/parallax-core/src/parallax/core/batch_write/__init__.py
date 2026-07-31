@@ -10,20 +10,21 @@ module DAG pins it to ``base`` / ``db_port`` / ``metamodel`` / ``inheritance`` /
 ``m-batch-write --> m-unit-work``); the composition layer
 (:mod:`parallax.snapshot.handle`, the sole module cleared to import both this
 scope and ``m-sql``/``m-dialect``) renders the collapsed instruction's DML, and
-the same layer injects this module's decision functions into
-:func:`~parallax.core.unit_work.planner.plan_flush`'s optional collapse-policy
-parameter — the injection the ``m-unit-work ↛ m-batch-write`` contract demands
-(``m-unit-work`` MUST NOT import this scope). The planner resolves the write
-IR's own entity spelling once per flush, so every entry point below takes the
-already-resolved Entity Metadata rather than a name.
+the same layer injects this module's decision functions into the
+:class:`~parallax.core.unit_work.WritePlanner`'s ``BatchingStrategy`` port — the
+injection the ``m-unit-work ↛ m-batch-write`` contract demands (``m-unit-work``
+MUST NOT import this scope). The planner resolves the write IR's own entity
+spelling once per flush, so every entry point below takes the already-resolved
+Entity Metadata rather than a name.
 
 What this module decides is **eligibility**, never **grouping**. Whether a run's
 rows are shaped alike enough to share one statement is a physical question — it
 compares filtered Table Layout slot selections (`m-sql` "Physical DML ordering")
 — and this scope has no edge to ``m-storage-layout``; the composition layer
-answers it separately (:func:`parallax.snapshot.handle.collapse_group_key`,
-injected into the planner beside :func:`collapses`), so by the time a run reaches
-a function here its rows already share one physical shape.
+answers it separately (:func:`parallax.snapshot.handle._keyed_sql.collapse_group_key`,
+injected into the same ``BatchingStrategy`` port beside :func:`collapses`), so
+by the time a run reaches a function here its rows already share one physical
+shape.
 
 Three collapse rules (``m-batch-write.md`` "Batching is a membership decision"):
 
@@ -217,11 +218,12 @@ def collapses(
     rows: Sequence[Mapping[str, object]],
 ) -> bool:
     """The single ``(model, entity, mutation, rows) -> bool`` entry point
-    (`~parallax.core.unit_work.planner.CollapsePolicy`'s own shape) — the
-    function :mod:`parallax.snapshot.handle` and the conformance engine inject
-    into :func:`~parallax.core.unit_work.planner.plan_flush` IDENTICALLY,
-    dispatching to :func:`insert_collapses` / :func:`update_collapses` /
-    :func:`delete_collapses` by ``mutation``.
+    (``BatchingStrategy.collapses``'s own shape) — the function
+    :mod:`parallax.snapshot.handle` wires into the
+    :class:`~parallax.core.unit_work.WritePlanner` and the conformance engine
+    reaches through the SAME ``build_write_planner`` factory, dispatching to
+    :func:`insert_collapses` / :func:`update_collapses` / :func:`delete_collapses`
+    by ``mutation``.
 
     Insert and delete eligibility is a property of the TARGET alone, so only the
     update branch consults ``rows``: whether the rows are shaped alike is the

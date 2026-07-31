@@ -82,7 +82,7 @@ def test_every_exemption_is_genuinely_unowned_today() -> None:
 
 def test_declared_child_scope_files_are_owned_twice() -> None:
     # The check does NOT promise one owner per file. It promises one
-    # most-specific owner plus declared ancestors, and these eight files are the
+    # most-specific owner plus declared ancestors, and these seven files are the
     # intended two-owner state child scopes exist to create — not a defect and
     # not something to weaken the check into forbidding.
     scopes = own.declared_scopes()
@@ -93,7 +93,6 @@ def test_declared_child_scope_files_are_owned_twice() -> None:
     }
     assert sorted(Path(path).name for path in doubled) == [
         "_family.py",
-        "_finalize.py",
         "_hub.py",
         "_keyed_sql.py",
         "_step_lowering.py",

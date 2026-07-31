@@ -22,11 +22,17 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Final, Protocol, runtime_checkable
+from typing import Final, Literal, Protocol, runtime_checkable
 
-from parallax.core.metamodel import EntityMetadata, Metamodel, TemporalDimension
+from parallax.core.metamodel import (
+    AttributeIdentity,
+    EntityIdentity,
+    EntityMetadata,
+    Metamodel,
+    TemporalDimension,
+)
+from parallax.core.unit_work.observe import TransactionTimeBasis, WriteObservation
 from parallax.core.unit_work.planned import CloseCause, PlannedWrite
-from parallax.core.unit_work.uow import Concurrency
 
 __all__ = [
     "AUTHORED_FROM",
@@ -45,6 +51,7 @@ __all__ = [
     "BatchingStrategy",
     "CarriedState",
     "ChangedState",
+    "Concurrency",
     "ConcurrencyStrategy",
     "MilestoneClosure",
     "MilestoneSuccessor",
@@ -58,6 +65,13 @@ __all__ = [
     "ValidTimeBound",
     "ValidTimeWindow",
 ]
+
+# The per-unit-of-work participation mode (`m-unit-work` "Strategy selection").
+# Declared here, rather than on the unit-of-work shell that names it first in
+# prose, because every strategy port switches on it and both the shell
+# (`uow.py`) and the planner (`write_planner.py`) need the same value: defining
+# it in either would make the other import back.
+Concurrency = Literal["locking", "optimistic"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -188,9 +202,16 @@ class MilestoneTopology:
 
 @runtime_checkable
 class TemporalStrategy(Protocol):
-    """How one temporal facet describes an authored mutation's topology."""
+    """How one temporal facet describes an authored mutation's topology.
 
-    def topology(self, mutation: str) -> MilestoneTopology: ...
+    ``entity`` is the declaring root: selecting the Transaction-Time-Only facet
+    versus the Bitemporal one is itself part of "how a temporal facet describes
+    a mutation" (the two facet modules are optional policy this scope cannot
+    import), so the injected adapter dispatches on the entity's own declared
+    As-Of Axes rather than the caller doing so.
+    """
+
+    def topology(self, entity: EntityMetadata, mutation: str) -> MilestoneTopology: ...
 
 
 @runtime_checkable
@@ -221,9 +242,39 @@ class BatchingStrategy(Protocol):
 
 @runtime_checkable
 class ConcurrencyStrategy(Protocol):
-    """Whether a transaction's mode renders gates (`m-opt-lock`)."""
+    """How one transaction's concurrency mode settles a versioned write's gate
+    and version arithmetic, and what a temporal observation's basis licenses
+    (`m-opt-lock`).
+
+    Every method mirrors one `m-opt-lock` policy question the planner cannot
+    answer itself, because the module DAG runs `m-opt-lock --> m-unit-work`:
+    which Attribute (if any) carries an entity's optimistic version, whether
+    the mode renders a gate at all, the derived initial and advanced version
+    values, whether a required version was actually observed, whether a row
+    still authors an explicit version value, and whether a locking-mode write's
+    Transaction-Time Basis licenses it. Each raises the policy's own error on
+    refusal; the planner never inspects or re-raises a specific type.
+    """
+
+    def version_attribute(self, entity: EntityMetadata) -> AttributeIdentity | None: ...
 
     def gates(self, concurrency: Concurrency) -> bool: ...
+
+    def initial_version(self) -> int: ...
+
+    def advance(self, observed_version: int) -> int: ...
+
+    def require_version(
+        self, entity: EntityIdentity, observation: WriteObservation | None
+    ) -> int: ...
+
+    def reject_authored_version(
+        self, entity: EntityIdentity, attribute: AttributeIdentity
+    ) -> None: ...
+
+    def check_locking_license(
+        self, concurrency: Concurrency, basis: TransactionTimeBasis
+    ) -> None: ...
 
 
 @runtime_checkable
