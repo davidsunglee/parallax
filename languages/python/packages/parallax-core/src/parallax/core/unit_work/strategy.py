@@ -88,10 +88,9 @@ class SubjectIdentity:
     audit-neutral implementation MUST NOT inspect, validate, retain,
     serialize, persist, lower, or bind the supplied value, and two planning
     calls differing only in Subject Identity MUST produce equal Write Plans
-    and identical emitted SQL and binds —
-    ``test_subject_identity_neutrality.py`` demonstrates this. The nonempty
-    requirement `m-unit-work.md` states is enforced where a raw value is
-    captured (:func:`capture_subject_identity`), not by this type.
+    and identical emitted SQL and binds. The nonempty requirement
+    `m-unit-work.md` states is enforced where a raw value is captured
+    (:func:`capture_subject_identity`), not by this type.
     """
 
     value: str
