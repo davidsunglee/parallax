@@ -35,6 +35,7 @@ __all__ = [
     "UNVERSIONED",
     "AffectedRows",
     "AnyCount",
+    "AssignmentShape",
     "CarriedFrom",
     "ChangedFrom",
     "CloseCause",
@@ -248,6 +249,21 @@ def _generated_values(row: PlannedRow) -> dict[AttributeIdentity, GeneratedValue
 
 
 @dataclass(frozen=True, slots=True)
+class AssignmentShape:
+    """The ordered member-identity shape one or more Planned Assignments share.
+
+    Two steps that assign the same members — the uniform domain columns a
+    materializing predicate write's own authored assignments carry to every
+    resolved row, for instance — carry equal shapes even though their bound
+    values differ, so a consumer packing compatible steps into one run can
+    detect and reuse the shape without comparing bound values.
+    """
+
+    attributes: tuple[AttributeIdentity, ...]
+    value_objects: tuple[ValueObjectIdentity, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
 class PlannedAssignments:
     """The immutable, duplicate-free replacement values one revising step writes.
 
@@ -263,6 +279,7 @@ class PlannedAssignments:
     value_objects: Mapping[ValueObjectIdentity, object] = field(
         default_factory=dict[ValueObjectIdentity, object]
     )
+    shape: AssignmentShape = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "attributes", MappingProxyType(dict(self.attributes)))
@@ -275,6 +292,13 @@ class PlannedAssignments:
                     f"{identity.name}: the `max` allocation folds into the row an insert "
                     "opens, so it is a Planned Row cell and never a Planned Assignment"
                 )
+        object.__setattr__(
+            self,
+            "shape",
+            AssignmentShape(
+                attributes=tuple(self.attributes), value_objects=tuple(self.value_objects)
+            ),
+        )
 
     @property
     def members(self) -> frozenset[AttributeIdentity | ValueObjectIdentity]:

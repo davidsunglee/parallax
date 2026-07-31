@@ -34,7 +34,7 @@ re-verify.
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Final, cast
 
@@ -57,8 +57,19 @@ from parallax.core.unit_work.instructions import (
     PredicateWrite,
     WriteInstruction,
 )
-from parallax.core.unit_work.observe import LATEST_PINNED, TemporalObservation, WriteObservation
-from parallax.core.unit_work.plan import PlannedSteps, WritePlan
+from parallax.core.unit_work.materialized import (
+    GroupObservations,
+    MaterializedWriteGroup,
+    VersionColumns,
+)
+from parallax.core.unit_work.observe import (
+    LATEST_PINNED,
+    PredecessorRow,
+    TemporalObservation,
+    VersionObservation,
+    WriteObservation,
+)
+from parallax.core.unit_work.plan import PlannedSteps, StepSegment, WritePlan, eager_segment
 from parallax.core.unit_work.planned import (
     ANY_COUNT,
     INFINITY,
@@ -92,7 +103,6 @@ from parallax.core.unit_work.planned import (
 )
 from parallax.core.unit_work.planned import PlannedWrite as PlannedStep
 from parallax.core.unit_work.planner import (
-    AtomicUnit,
     BufferItem,
     ObjectKey,
     Targets,
@@ -215,25 +225,48 @@ class WritePlanner:
         access, no SQL. ``request.subject_identity`` is accepted and never
         inspected. ``request.transaction_instant`` is threaded unevaluated
         until a surviving temporal mutation needs it.
+
+        A Materialized Write Group settles into its own lazily-materialized
+        segment (:meth:`_settle_group`) rather than into the eagerly-built
+        run: its steps are rebuilt one at a time, on demand, directly from the
+        group's own compact columns, so a large materialized run never forces
+        a parallel `PlannedWrite`-per-row object graph merely by being
+        planned. An ordinary (non-materialized) run settles eagerly, exactly
+        as before, into one shared segment.
         """
         resolved = targets(self._model)
         coalesced = self._coalesce(request.buffered_writes, resolved)
         batched = self._form_batches(coalesced, resolved, request.observations)
         ordered = self._order(batched, resolved)
-        survivors = self._eliminate_no_ops(ordered, resolved)
-        steps: list[PlannedStep] = []
-        for instruction in survivors:
-            steps.extend(
-                self._settle(
-                    instruction,
-                    resolved,
-                    request.observations,
-                    request.concurrency,
-                    request.transaction_instant,
+        segments: list[StepSegment] = []
+        pending: list[PlannedStep] = []
+
+        def flush_pending() -> None:
+            if pending:
+                segments.append(eager_segment(tuple(pending)))
+                pending.clear()
+
+        for item in ordered:
+            if isinstance(item, MaterializedWriteGroup):
+                flush_pending()
+                segments.append(
+                    self._settle_group(
+                        item, resolved, request.concurrency, request.transaction_instant
+                    )
                 )
-            )
-        decorated = tuple(self._audit.decorate(step) for step in steps)
-        return WritePlan(steps=PlannedSteps(decorated))
+                continue
+            if _is_empty_keyed_update(item, resolved):
+                continue
+            for step in self._settle(
+                item,
+                resolved,
+                request.observations,
+                request.concurrency,
+                request.transaction_instant,
+            ):
+                pending.append(self._audit.decorate(step))
+        flush_pending()
+        return WritePlan(steps=PlannedSteps(tuple(segments)))
 
     # ----------------------------------------------------------------- #
     # Stage 1: resolve identities and coalesce buffered intent.          #
@@ -244,7 +277,7 @@ class WritePlanner:
         result: list[BufferItem | None] = []
         pending_insert: dict[ObjectKey, int] = {}
         for item in buffer:
-            if isinstance(item, AtomicUnit):
+            if isinstance(item, MaterializedWriteGroup):
                 result.append(item)
                 continue
             instruction = item
@@ -329,11 +362,11 @@ class WritePlanner:
     # predicate write is a hard ordering barrier partitioning the         #
     # sequence into independently reorderable regions.                    #
     # ----------------------------------------------------------------- #
-    def _order(self, items: Sequence[BufferItem], resolved: Targets) -> list[WriteInstruction]:
+    def _order(self, items: Sequence[BufferItem], resolved: Targets) -> list[BufferItem]:
         ranks = _fk_ranks(self._model)
 
         def representative(item: BufferItem) -> WriteInstruction:
-            return item.writes[0] if isinstance(item, AtomicUnit) else item
+            return item.mutation if isinstance(item, MaterializedWriteGroup) else item
 
         def rank(item: BufferItem) -> int:
             entity = resolved.entity(_instruction_entity(representative(item)))
@@ -360,22 +393,13 @@ class WritePlanner:
             else:
                 region.append(item)
         ordered.extend(order_region(region))
-        return [
-            write
-            for item in ordered
-            for write in (item.writes if isinstance(item, AtomicUnit) else (item,))
-        ]
+        return ordered
 
     # ----------------------------------------------------------------- #
-    # Stage 2: eliminate known cancellation and no-op work. A keyed        #
-    # update whose effective change set is empty emits no instruction.    #
-    # ----------------------------------------------------------------- #
-    def _eliminate_no_ops(
-        self, instructions: Sequence[WriteInstruction], resolved: Targets
-    ) -> list[WriteInstruction]:
-        return [i for i in instructions if not _is_empty_keyed_update(i, resolved)]
-
-    # ----------------------------------------------------------------- #
+    # Stage 2 (known cancellation and no-op work) is checked inline in    #
+    # `plan`'s own loop via `_is_empty_keyed_update`, ahead of this call, #
+    # so a no-op instruction is never settled at all.                    #
+    #                                                                     #
     # Stages 3, 6, 7: bind and validate observations, resolve the         #
     # Transaction Instant lazily, and expand temporal topology in place.  #
     # ----------------------------------------------------------------- #
@@ -758,6 +782,121 @@ class WritePlanner:
                 attributes[member] = _cell(entity, name, value, context)
         return attributes, value_objects
 
+    # ----------------------------------------------------------------- #
+    # A Materialized Write Group's compact rows, settled lazily.          #
+    # ----------------------------------------------------------------- #
+    def _settle_group(
+        self,
+        group: MaterializedWriteGroup,
+        resolved: Targets,
+        concurrency: Concurrency,
+        tx_instant: TransactionInstant,
+    ) -> StepSegment:
+        """One Materialized Write Group as one lazily-materialized segment.
+
+        Every row of one group shares the SAME authored mutation and
+        therefore the SAME temporal topology — selected once, by entity and
+        verb, never per resolved row — so every row settles into the same
+        fixed number of steps and a flat step index maps to (row, sub-step)
+        by simple division. Constructing the segment settles nothing; each
+        row is rebuilt only when :meth:`~parallax.core.unit_work.plan.
+        StepSegment.step` asks for it.
+        """
+        entity = _require_entity(resolved, group.mutation.target.entity)
+        declaring_entity = resolved.declaring(entity)
+        steps_per_row = 1
+        if declaring_entity.declared_as_of_axes:
+            topology = self._temporal.topology(declaring_entity, group.mutation.mutation)
+            steps_per_row = (1 if topology.closure is not None else 0) + len(topology.successors)
+
+        def settle_row(row: int) -> tuple[PlannedStep, ...]:
+            return self._settle_group_row(group, resolved, concurrency, tx_instant, row)
+
+        return _MaterializedSegment(
+            settle_row=settle_row,
+            steps_per_row=steps_per_row,
+            length=len(group) * steps_per_row,
+        )
+
+    def _settle_group_row(
+        self,
+        group: MaterializedWriteGroup,
+        resolved: Targets,
+        concurrency: Concurrency,
+        tx_instant: TransactionInstant,
+        row: int,
+    ) -> tuple[PlannedStep, ...]:
+        """One Materialized Write Group's resolved row, settled through the
+        SAME seam a lone keyed write settles through.
+
+        A transient keyed instruction and a transient single-entry
+        observation mapping are built from the group's own columns, fed
+        through :meth:`_settle` unchanged, and discarded once this call
+        returns — no per-row instruction or observation is retained between
+        calls, and repeated calls for the same row rebuild an equal but
+        distinct result. The authored assignments are uniform across every
+        row (`m-batch-write` "readless predicate write" set-based semantics
+        extended to the materializing case), so overlaying them once here
+        reproduces exactly the merged row a per-row materialize used to
+        retain — every key member the assigned columns never name, and every
+        assigned member at its authored value.
+        """
+        predicate = group.mutation
+        key_row = dict(
+            zip(group.key_attributes, (column[row] for column in group.key_columns), strict=True)
+        )
+        assignment_row = {
+            _assignment_member(assignment.attr): assignment.value
+            for assignment in predicate.assignments
+        }
+        instruction = KeyedWrite(
+            mutation=predicate.mutation,
+            entity=predicate.target.entity,
+            rows=({**key_row, **assignment_row},),
+            valid_from=predicate.valid_from,
+            until=predicate.until,
+        )
+        key = resolve_object_key(instruction, resolved)
+        assert key is not None  # every group row carries its own complete key
+        observations = {key: _observation_at(group.observations, row)}
+        steps = self._settle(instruction, resolved, observations, concurrency, tx_instant)
+        return tuple(self._audit.decorate(step) for step in steps)
+
+
+@dataclass(frozen=True, slots=True)
+class _MaterializedSegment:
+    """A Materialized Write Group's steps, rebuilt one at a time on demand.
+
+    ``settle_row`` recomputes one resolved row's whole step tuple from the
+    owning :class:`WritePlanner`'s own strategies and the group's retained
+    columns; no per-row Planned Write is retained between accesses, so
+    repeated indexing of the same position may return an equal but distinct
+    object. :class:`~parallax.core.unit_work.plan.PlannedSteps` compares its
+    logical step sequence rather than its segments, so this segment's own
+    identity-based equality is never consulted.
+    """
+
+    settle_row: Callable[[int], tuple[PlannedStep, ...]]
+    steps_per_row: int
+    length: int
+
+    def __len__(self) -> int:
+        return self.length
+
+    def step(self, index: int) -> PlannedStep:
+        row, sub_step = divmod(index, self.steps_per_row)
+        return self.settle_row(row)[sub_step]
+
+
+def _observation_at(observations: GroupObservations, row: int) -> WriteObservation:
+    """One resolved row's Write Observation, read off the group's own columns."""
+    if isinstance(observations, VersionColumns):
+        return VersionObservation(observed_version=observations.versions[row])
+    return TemporalObservation(
+        predecessor=PredecessorRow(observations.predecessors.row(row)),
+        transaction_time_basis=observations.transaction_time_basis,
+    )
+
 
 def plan_temporal_close(
     identity: Mapping[str, object],
@@ -1068,9 +1207,10 @@ def _instruction_entity(instruction: WriteInstruction) -> str:
     if isinstance(instruction, KeyedWrite):
         return instruction.entity
     # A readless predicate write is always a barrier in `_order`, never a
-    # region member `rank`/`mutation` resolves against, so this arm exists
-    # only to keep the match exhaustive over the closed WriteInstruction type.
-    return instruction.target.entity  # pragma: no cover
+    # region member `rank`/`mutation` resolves against — but a Materialized
+    # Write Group's own `mutation` IS a `PredicateWrite`, and a group ranks
+    # as an ordinary region member, so this arm is reached for one.
+    return instruction.target.entity
 
 
 def _is_empty_keyed_update(instruction: WriteInstruction, resolved: Targets) -> bool:

@@ -4,8 +4,8 @@ The set-based half of the spec §5 write surface, as
 free functions rather than :class:`~parallax.snapshot.handle.Transaction`
 methods: bare-statement and Valid-Time-window validation into a canonical
 :class:`~parallax.core.unit_work.PredicateWrite`, the readless-vs-materialize
-dispatch, the minimal resolving read, per-row no-op elimination, observation
-recording, and atomic keyed-unit buffering.
+dispatch, the minimal resolving read, per-row no-op elimination, and
+Materialized Write Group buffering.
 
 Every entry point threads ``(uow, meta, conn, dialect)`` — the four pieces of
 transaction state this lane actually reads — mirroring
@@ -13,7 +13,8 @@ transaction state this lane actually reads — mirroring
 ``meta`` is the accepted Metamodel; family shape comes from the Inheritance,
 Temporal, and Optimistic Lock facets through :mod:`parallax.snapshot.handle._family`,
 and every physical column comes from the target's Storage Layout view, resolved
-once here and carried into the per-row materialization.
+once here and carried into the per-row column builders
+:func:`_materialize_predicate_write` streams into.
 ``Transaction`` keeps five thin ``_where`` delegates plus the frozen
 ``_buffer_predicate_instruction`` seam the conformance engine calls, so this
 module buffers through ``uow.buffer`` directly and never reaches back into
@@ -22,7 +23,7 @@ module buffers through ``uow.buffer`` directly and never reaches back into
 Depends on :mod:`parallax.snapshot.handle._family` (the declaring root, version
 attribute, and the layout member-to-column map) and
 :mod:`parallax.snapshot.handle._write_inputs` (window validation and the per-row
-materialization).
+column contributions).
 
 Names crossing a module boundary are spelled bare; a helper whose every caller
 lives here keeps its underscore. Privacy is carried by this MODULE's leading
@@ -34,6 +35,7 @@ from __future__ import annotations
 
 import datetime as dt
 from collections.abc import Sequence
+from typing import cast
 
 from parallax.core import deep_fetch, inheritance, op_algebra, read_lock
 from parallax.core.db_port import DbPort, Row
@@ -43,25 +45,33 @@ from parallax.core.entity import Statement as EntityStatement
 from parallax.core.metamodel import AttributeMetadata, EntityMetadata, Metamodel
 from parallax.core.sql_gen import Statement, compile_read
 from parallax.core.unit_work import (
-    AtomicUnit,
-    KeyedWrite,
-    ObjectKey,
+    LATEST_PINNED,
+    ChunkedColumnBuilder,
+    MaterializedWriteGroup,
+    PredecessorColumns,
+    PredecessorShape,
     PredicateMutation,
     PredicateWrite,
+    TemporalColumns,
     UnitOfWork,
-    WriteObservation,
+    VersionColumns,
     instructions,
+    whole,
 )
 from parallax.snapshot.handle._family import (
     assignment_member,
     declaring,
     entity_layout,
     entity_of,
+    family_primary_key,
     members,
+    slot_column,
     version_attribute,
 )
 from parallax.snapshot.handle._write_inputs import (
-    materialize_row,
+    is_no_op_assignment,
+    key_column_values,
+    predecessor_payload,
     validate_until,
     validate_valid_from,
 )
@@ -196,17 +206,16 @@ def _materialize_predicate_write(
     row-form read on THIS transaction's own connection (never instance-form
     — the resolve constructs no object, though it projects whichever Document
     slots the write's own observation and comparison needs require, below),
-    record each
-    matched row's observation through ``uow.observe`` (the SAME
-    transaction-scoped seam a real
-    :meth:`~parallax.snapshot.handle.Transaction.find` uses — never an
-    engine-side map), then buffer one keyed per-row write per row the verb
-    WRITES (the per-row no-op elimination below) as an ORDERED ATOMIC PLANNED
-    UNIT (`m-unit-work`, :class:`AtomicUnit`) at the call position. Zero
-    resolved rows -> zero keyed writes, success (no unit buffered at all).
-    The lock suffix on the resolve derives from the transaction's own
-    concurrency mode (``locking`` ⇒ the shared read lock, ``optimistic`` ⇒
-    none) — the SAME rule a real ``Transaction.find`` applies.
+    then stream each matched row's key and observation values directly into
+    bounded column builders — never a per-row keyed-write wrapper, never a
+    parallel pending-observation list — and buffer the sealed result as one
+    compact :class:`~parallax.core.unit_work.MaterializedWriteGroup` (`m-unit-
+    work` "Materialized Write Groups") at the call position. Zero resolved
+    rows, or every resolved row eliminated as a no-op, means no group is
+    buffered at all. The lock suffix on the resolve derives from the
+    transaction's own concurrency mode (``locking`` ⇒ the shared read lock,
+    ``optimistic`` ⇒ none) — the SAME rule a real ``Transaction.find``
+    applies.
 
     A TEMPORAL target's raw predicate carries no as-of wrapper (a bare
     statement forbids ``.as_of()``/``.history()``, python.md §5) — exactly
@@ -249,13 +258,12 @@ def _materialize_predicate_write(
     # (`txtime_write.plan`) carries it into its chained row. It is also why
     # EVERY declared document is projected rather than only the assigned
     # ones — a carried row must keep whichever documents the assignments do
-    # NOT themselves reassign. An AUDIT-ONLY target's own `full_row` merge
-    # (`materialize_row`) reads this read's row directly, while a BITEMPORAL
-    # target's split reads it through the Predecessor Row (`m-value-object`
-    # "the document rides every chained/split row whole").
+    # NOT themselves reassign. Every target's carried state reads through the
+    # SAME Predecessor Row (`predecessor_payload`, below); there is no
+    # separate audit-only merge.
     #
     # COMPARISON need: an assignment-bearing verb's per-row no-op
-    # elimination (below, `materialize_row` -> `_apply_assignments`)
+    # elimination (below, `is_no_op_assignment`)
     # compares each assigned member's new value against the resolved
     # row's own — a value-object member's comparison can only ever see
     # the STORED document when this read actually projected its column
@@ -290,36 +298,75 @@ def _materialize_predicate_write(
         include_value_objects=needs_documents,
     ).statement
     rows = uow.read(lambda: _resolve_rows(conn, dialect, statement))
-    writes: list[KeyedWrite] = []
-    pending: list[tuple[ObjectKey, WriteObservation]] = []
-    for row in rows:
-        key, observation, new_row = materialize_row(
-            meta,
-            layout,
-            entity,
-            declaring_entity,
-            version_attr,
-            instruction.mutation,
-            assignments,
-            row,
-        )
-        if new_row is None:
-            continue  # per-row no-op elimination (assignment-bearing verbs only)
-        writes.append(
-            KeyedWrite(
-                mutation=instruction.mutation,
-                entity=instruction.target.entity,
-                rows=(new_row,),
-                valid_from=instruction.valid_from,
-                until=instruction.until,
+    if not rows:
+        return
+    pk_attrs = family_primary_key(meta, entity)
+    key_attributes = tuple(attr.identity.name for attr in pk_attrs)
+    key_builders = tuple(ChunkedColumnBuilder[object]() for _ in pk_attrs)
+    matched = 0
+
+    def append_key(row: Row) -> None:
+        for builder, value in zip(
+            key_builders, key_column_values(pk_attrs, layout, row), strict=True
+        ):
+            builder.append(value)
+
+    if version_attr is not None:
+        version_builder: ChunkedColumnBuilder[int] = ChunkedColumnBuilder()
+        for row in rows:
+            if assignment_bearing and is_no_op_assignment(layout, assignments, row):
+                continue  # per-row no-op elimination (assignment-bearing verbs only)
+            append_key(row)
+            version_builder.append(cast("int", row[slot_column(layout, version_attr.identity)]))
+            matched += 1
+        if matched == 0:
+            return
+        uow.buffer(
+            MaterializedWriteGroup(
+                mutation=instruction,
+                key_attributes=key_attributes,
+                key_columns=tuple(whole(builder.build()) for builder in key_builders),
+                observations=VersionColumns(versions=whole(version_builder.build())),
             )
         )
-        pending.append((key, observation))
-    if not writes:
         return
-    for key, observation in pending:
-        uow.observe(key, observation)
-    uow.buffer(AtomicUnit(writes=tuple(writes)))
+
+    member_columns = members(layout)
+    attribute_names = tuple(name for name, (_column, is_vo) in member_columns.items() if not is_vo)
+    value_object_names = tuple(name for name, (_column, is_vo) in member_columns.items() if is_vo)
+    attribute_builders = {name: ChunkedColumnBuilder[object]() for name in attribute_names}
+    value_object_builders = {name: ChunkedColumnBuilder[object]() for name in value_object_names}
+    for row in rows:
+        if assignment_bearing and is_no_op_assignment(layout, assignments, row):
+            continue  # per-row no-op elimination (assignment-bearing verbs only)
+        append_key(row)
+        payload = predecessor_payload(layout, row)
+        for name in attribute_names:
+            attribute_builders[name].append(payload[name])
+        for name in value_object_names:
+            value_object_builders[name].append(payload[name])
+        matched += 1
+    if matched == 0:
+        return
+    predecessors = PredecessorColumns(
+        shape=PredecessorShape(attributes=attribute_names, value_objects=value_object_names),
+        attribute_columns=tuple(
+            whole(attribute_builders[name].build()) for name in attribute_names
+        ),
+        value_object_columns=tuple(
+            whole(value_object_builders[name].build()) for name in value_object_names
+        ),
+    )
+    uow.buffer(
+        MaterializedWriteGroup(
+            mutation=instruction,
+            key_attributes=key_attributes,
+            key_columns=tuple(whole(builder.build()) for builder in key_builders),
+            observations=TemporalColumns(
+                predecessors=predecessors, transaction_time_basis=LATEST_PINNED
+            ),
+        )
+    )
 
 
 def _resolve_rows(conn: DbPort, dialect: Dialect, statement: Statement) -> list[Row]:

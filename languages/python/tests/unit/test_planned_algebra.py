@@ -72,6 +72,8 @@ from parallax.core.unit_work import (
     Versioned,
     VersionGate,
     WritePlan,
+    eager_segment,
+    planned_steps,
     shortfall_for,
 )
 from parallax.core.unit_work.planned import WriteTarget
@@ -364,10 +366,32 @@ def test_an_empty_write_plan_is_the_canonical_cancelled_result() -> None:
 def test_planned_steps_expose_their_writes_in_execution_order() -> None:
     first = PlannedInsert(entity=_ACCOUNT, entries=(_entry(PlannedRow(attributes={_ID: 1})),))
     second = PlannedInsert(entity=_ACCOUNT, entries=(_entry(PlannedRow(attributes={_ID: 2})),))
-    plan = WritePlan(steps=PlannedSteps((first, second)))
+    plan = WritePlan(steps=planned_steps((first, second)))
     assert len(plan.steps) == 2
     assert plan.steps[0] == first
     assert list(plan.steps) == [first, second]
+
+
+def test_planned_steps_of_no_steps_is_the_canonical_empty_value() -> None:
+    assert planned_steps(()) == PlannedSteps()
+
+
+def test_an_eager_segment_refuses_zero_steps() -> None:
+    with pytest.raises(ValueError, match="at least one step"):
+        eager_segment(())
+
+
+def test_planned_steps_indexing_out_of_range_raises() -> None:
+    step = PlannedInsert(entity=_ACCOUNT, entries=(_entry(PlannedRow(attributes={_ID: 1})),))
+    steps = planned_steps((step,))
+    with pytest.raises(IndexError):
+        steps[5]
+
+
+def test_planned_steps_compares_unequal_to_a_non_planned_steps_value() -> None:
+    step = PlannedInsert(entity=_ACCOUNT, entries=(_entry(PlannedRow(attributes={_ID: 1})),))
+    steps = planned_steps((step,))
+    assert steps != "not a Planned Steps value"
 
 
 # --------------------------------------------------------------------------- #

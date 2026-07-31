@@ -9,14 +9,15 @@ builds — asserting complete ``PlannedWrite`` shapes and plan-wide ordering,
 never a private stage function: same-transaction coalescing (insert-then-update
 in place per temporal flavor; insert-then-delete cancellation), dependency
 ordering over the descriptor graph and the readless-predicate-write barriers
-that partition it, empty-change-set elision, batching (`m-batch-write`), the
-Materialized Write Group's `AtomicUnit` input, optimistic-mode gates, and
-temporal in-place adjacency.
+that partition it, empty-change-set elision, batching (`m-batch-write`),
+Materialized Write Group settlement, optimistic-mode gates, and temporal
+in-place adjacency.
 """
 
 from __future__ import annotations
 
 import datetime as dt
+from collections.abc import Sequence
 
 import pytest
 from _metamodel_support import Declaration, attribute, identity, key, source
@@ -45,12 +46,13 @@ from parallax.core.unit_work import (
     OPTIMISTIC_CONFLICT,
     STALE_WRITE,
     UNGATED,
-    AtomicUnit,
     BufferItem,
+    ChunkedColumnBuilder,
     Concurrency,
     ExactCount,
     KeyedWrite,
     KeyTarget,
+    MaterializedWriteGroup,
     ObjectKey,
     PlannedClose,
     PlannedDelete,
@@ -60,10 +62,12 @@ from parallax.core.unit_work import (
     PlannedWrite,
     PlanningRequest,
     PredecessorRow,
+    PredicateMutation,
     PredicateTarget,
     PredicateWrite,
     TemporalObservation,
     TransactionInstant,
+    VersionColumns,
     Versioned,
     VersionGate,
     VersionObservation,
@@ -73,6 +77,7 @@ from parallax.core.unit_work import (
     WritePlanningError,
     WriteTarget,
     object_key,
+    whole,
 )
 from parallax.descriptor._records import Metamodel as DescriptorMetamodel
 from parallax.snapshot.handle import build_write_planner
@@ -153,6 +158,39 @@ def _single_key(step: PlannedUpdate | PlannedDelete) -> object:
     (values,) = _key_values(step)
     (value,) = values
     return value
+
+
+def _version_group(
+    entity: str,
+    mutation: PredicateMutation,
+    key_name: str,
+    rows: Sequence[tuple[object, int]],
+    assignments: Sequence[WriteAssignment] = (),
+) -> MaterializedWriteGroup:
+    """A minimal Materialized Write Group for planner-seam tests.
+
+    ``rows`` is ``(key value, observed version)`` per resolved row; every row
+    shares ``assignments`` uniformly, the real shape a materializing predicate
+    write settles to (`m-unit-work` "Materialized Write Groups") — a
+    Materialized Write Group carries no per-row assigned value, only per-row
+    key and observation columns.
+    """
+    keys: ChunkedColumnBuilder[object] = ChunkedColumnBuilder()
+    versions: ChunkedColumnBuilder[int] = ChunkedColumnBuilder()
+    for key_value, version in rows:
+        keys.append(key_value)
+        versions.append(version)
+    predicate = PredicateWrite(
+        mutation,
+        WriteTarget(entity, op_algebra.Comparison("lessThan", f"{entity}.balance", 1_000_000.0)),
+        assignments=tuple(assignments),
+    )
+    return MaterializedWriteGroup(
+        mutation=predicate,
+        key_attributes=(key_name,),
+        key_columns=(whole(keys.build()),),
+        observations=VersionColumns(versions=whole(versions.build())),
+    )
 
 
 def _shape(plan: WritePlan) -> list[tuple[str, str]]:
@@ -665,15 +703,17 @@ def test_batching_never_merges_a_row_carrying_a_recorded_observation() -> None:
     assert len(plan.steps) == 2
 
 
-def test_batching_never_merges_across_an_intervening_atomic_unit() -> None:
-    # An AtomicUnit is opaque to batching AND a hard run boundary: the two
-    # surrounding uniform updates are individually batch-eligible, but merging
-    # them would emit the caller's second update BEFORE the unit the caller
-    # buffered between them.
-    unit = AtomicUnit(writes=(KeyedWrite("update", "Wallet", ({"id": 9, "balance": 5.00},)),))
+def test_batching_never_merges_across_an_intervening_materialized_write_group() -> None:
+    # A Materialized Write Group is opaque to batching AND a hard run
+    # boundary: the two surrounding uniform updates are individually
+    # batch-eligible, but merging them would emit the caller's second update
+    # BEFORE the group the caller buffered between them.
+    group = _version_group(
+        "Wallet", "update", "id", [(9, 1)], [WriteAssignment("Wallet.balance", 5.00)]
+    )
     buffer: list[BufferItem] = [
         KeyedWrite("update", "Wallet", ({"id": 1, "balance": 5.00},)),
-        unit,
+        group,
         KeyedWrite("update", "Wallet", ({"id": 2, "balance": 5.00},)),
     ]
     plan = _plan(buffer, _WALLET)
@@ -697,28 +737,15 @@ def test_batching_never_touches_a_predicate_write() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# AtomicUnit (a Materialized Write Group's own planned input, ADR 0014):      #
-# exempt from coalescing and from batching; dependency ordering moves it as   #
-# ONE block; flattened to plain per-row `PlannedWrite` steps by `plan`.       #
+# Materialized Write Group (`m-unit-work` "Materialized Write Groups", ADR    #
+# 0014): exempt from coalescing and from batching; dependency ordering moves  #
+# it as ONE block; settles lazily into one `PlannedWrite` per resolved row.   #
 # --------------------------------------------------------------------------- #
-def test_atomic_unit_flattens_to_its_member_writes_in_order() -> None:
-    unit = AtomicUnit(
-        writes=(
-            KeyedWrite("update", "Account", ({"id": 1, "balance": 10.00},)),
-            KeyedWrite("update", "Account", ({"id": 2, "balance": 20.00},)),
-        )
+def test_materialized_group_settles_to_one_step_per_resolved_row_in_order() -> None:
+    group = _version_group(
+        "Account", "update", "id", [(1, 1), (2, 1)], [WriteAssignment("Account.balance", 10.00)]
     )
-    key1 = object_key(unit.writes[0], _ACCOUNT)
-    key2 = object_key(unit.writes[1], _ACCOUNT)
-    assert key1 is not None and key2 is not None
-    plan = _plan(
-        [unit],
-        _ACCOUNT,
-        observations={
-            key1: VersionObservation(observed_version=1),
-            key2: VersionObservation(observed_version=1),
-        },
-    )
+    plan = _plan([group], _ACCOUNT)
     assert len(plan.steps) == 2
     ids: list[object] = []
     for step in plan.steps:
@@ -727,62 +754,52 @@ def test_atomic_unit_flattens_to_its_member_writes_in_order() -> None:
     assert ids == [1, 2]
 
 
-def test_atomic_unit_is_exempt_from_same_object_coalescing() -> None:
-    # An AtomicUnit's own row is never folded with an unrelated buffered
-    # insert of the SAME object identity — it passes through coalesce opaque.
+def test_materialized_group_is_exempt_from_same_object_coalescing() -> None:
+    # A group's own row is never folded with an unrelated buffered insert of
+    # the SAME object identity — it passes through coalesce opaque.
     insert = KeyedWrite("insert", "Account", ({"id": 1, "owner": "Ada", "balance": 1.00},))
-    unit = AtomicUnit(writes=(KeyedWrite("update", "Account", ({"id": 1, "balance": 2.00},)),))
-    key1 = object_key(unit.writes[0], _ACCOUNT)
-    assert key1 is not None
-    plan = _plan(
-        [insert, unit],
-        _ACCOUNT,
-        observations={key1: VersionObservation(observed_version=1)},
+    group = _version_group(
+        "Account", "update", "id", [(1, 1)], [WriteAssignment("Account.balance", 2.00)]
     )
+    plan = _plan([insert, group], _ACCOUNT)
     assert _shape(plan) == [("insert", "Account"), ("update", "Account")]
 
 
-def test_atomic_unit_is_exempt_from_batching() -> None:
-    # An AtomicUnit's OWN member writes never re-batch into a multi-row
-    # instruction, even when they would otherwise be eligible (adjacent, same
-    # entity/mutation, uniform values).
-    unit = AtomicUnit(
-        writes=(
-            KeyedWrite("update", "Wallet", ({"id": 1, "balance": 5.00},)),
-            KeyedWrite("update", "Wallet", ({"id": 2, "balance": 5.00},)),
-        )
+def test_materialized_group_is_exempt_from_batching() -> None:
+    # A group's OWN member rows never re-batch into a multi-row instruction,
+    # even when they would otherwise be eligible (adjacent, same entity/
+    # mutation, uniform values) — each per-row gated write stays its own step
+    # (`m-batch-write`).
+    group = _version_group(
+        "Wallet", "update", "id", [(1, 1), (2, 1)], [WriteAssignment("Wallet.balance", 5.00)]
     )
-    plan = _plan([unit], _WALLET)
+    plan = _plan([group], _WALLET)
     assert len(plan.steps) == 2
 
 
-def test_atomic_unit_moves_as_one_block_under_dependency_ordering() -> None:
-    # The unit's own rows (Order, an FK-referenced parent's later rank) stay
-    # ADJACENT and in their OWN resolved-row order, moved as a whole relative
-    # to the OTHER buffered instruction (an OrderItem insert, a child) —
-    # ordering alone would otherwise put child-then-parent updates in a
-    # DIFFERENT relative position than the unit's own internal order.
-    unit = AtomicUnit(
-        writes=(
-            KeyedWrite("update", "Order", ({"id": 2, "name": "Y"},)),
-            KeyedWrite("update", "Order", ({"id": 1, "name": "X"},)),
-        )
-    )
+def test_materialized_group_moves_as_one_block_under_dependency_ordering() -> None:
+    # The group's own rows (Order, an FK-referenced parent) stay ADJACENT and
+    # in their OWN resolved-row order, moved as a whole relative to the OTHER
+    # buffered instruction (an OrderItem insert, a child) — ordering alone
+    # would otherwise put child-then-parent writes in a DIFFERENT relative
+    # position than the group's own internal order. Order is unversioned, so
+    # a plain delete carries no assignment to keep uniform across rows.
+    group = _version_group("Order", "delete", "id", [(2, 1), (1, 1)])
     other = KeyedWrite(
         "insert", "OrderItem", ({"id": 10, "orderId": 1, "sku": "A", "quantity": 1},)
     )
-    plan = _plan([unit, other], _ORDERS)
+    plan = _plan([group, other], _ORDERS)
     shapes: list[tuple[str, str, object]] = []
     for step in plan.steps:
         if isinstance(step, PlannedInsert):
             shapes.append(("insert", "OrderItem", _insert_rows(step)[0]["id"]))
         else:
-            assert isinstance(step, PlannedUpdate)
-            shapes.append(("update", "Order", _single_key(step)))
-    # inserts before updates — the canonical INSERT -> UPDATE -> DELETE order;
-    # the unit's OWN two rows stay adjacent and in their OWN authored order (2
-    # then 1), never re-sorted by id.
-    assert shapes == [("insert", "OrderItem", 10), ("update", "Order", 2), ("update", "Order", 1)]
+            assert isinstance(step, PlannedDelete)
+            shapes.append(("delete", "Order", _single_key(step)))
+    # inserts before updates/deletes — the canonical INSERT -> UPDATE -> DELETE
+    # order; the group's OWN two rows stay adjacent and in their OWN resolved
+    # order (2 then 1), never re-sorted by id.
+    assert shapes == [("insert", "OrderItem", 10), ("delete", "Order", 2), ("delete", "Order", 1)]
 
 
 # --------------------------------------------------------------------------- #
