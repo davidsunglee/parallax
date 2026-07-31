@@ -1,11 +1,14 @@
-"""``parallax.snapshot.handle`` — the composition surface (connect / transact / lowering).
+"""``parallax.snapshot.handle`` — the composition surface (connect / transact / plan / lowering).
 
 This is the layer that legally sees **both** the neutral write-instruction IR /
-flush planner (``m-unit-work``) **and** SQL generation (``m-sql`` / ``m-dialect``):
+Write Planner (``m-unit-work``) **and** SQL generation (``m-sql`` / ``m-dialect``):
 the module DAG forbids ``m-unit-work`` from importing ``m-sql`` (why the planner
-emits a neutral :class:`~parallax.core.unit_work.FlushPlan`) and forbids ``m-sql``
+emits a neutral :class:`~parallax.core.unit_work.WritePlan`) and forbids ``m-sql``
 from importing ``m-unit-work``, so the write-DML → SQL lowering — the deliberate
-``m-sql`` edge M3 deferred — is composed **here**. :func:`stream_lowered` is the
+``m-sql`` edge M3 deferred — is composed **here**. It is also the sole module
+cleared to import both ``m-batch-write`` and ``m-unit-work``, which is why the
+Write Planner's strategy adapters are wired here (:func:`build_write_planner`)
+rather than in either optional policy module. :func:`stream_lowered` is the
 single lowering function; both the developer transaction path (the injected
 ``FlushExecutor``) and the conformance engine reuse it (the conformance family is
 the import-side DAG exemption), so there is exactly one write-lowering seam.
@@ -21,6 +24,11 @@ public-surface check promises. Where the exported names live:
   :class:`TransactionOptionConflictError`: the composition root and the spec §5
   callback demarcation (sentinel-backed options, join with the option-conflict
   check, the ``m-auto-retry`` bounded retry loop, and the injected flush executor).
+- :mod:`~parallax.snapshot.handle._planning` — :func:`build_write_planner`, the
+  one factory that wires ``m-batch-write``, ``m-opt-lock``, ``m-txtime-write``,
+  and ``m-bitemp-write`` into a :class:`~parallax.core.unit_work.WritePlanner`'s
+  strategy ports, and :func:`plan_temporal_close`, the ``m-opt-lock`` conflict
+  lane's standalone close probe wired with the same concurrency adapter.
 - :mod:`~parallax.snapshot.handle._transaction` — :class:`Transaction`: the
   developer verbs a ``db.transact`` closure drives, and the participating
   :meth:`Transaction.find`.
@@ -29,27 +37,21 @@ public-surface check promises. Where the exported names live:
   (:class:`Snapshot`, :class:`Execution`, :class:`ExecutedStatement`,
   :class:`FindResult`, :class:`HistoryFindResult`, :class:`MilestoneGraph`,
   :class:`NoResultFound`, :class:`TooManyResultsFound`).
-- :mod:`~parallax.snapshot.handle._write_lowering` — :func:`stream_lowered`, which
-  composes ``_finalize`` and ``_step_lowering`` into the one seam a flush plan
-  becomes DML through.
+- :mod:`~parallax.snapshot.handle._write_lowering` — :func:`stream_lowered`,
+  which lowers an already-settled Write Plan's steps into the one seam DML
+  becomes through.
 - :mod:`~parallax.snapshot.handle._step_lowering` — :func:`lower_step`, the
-  physical half on its own, for the ``m-opt-lock`` conflict lane's standalone
-  close probe.
-- :mod:`~parallax.snapshot.handle._finalize` — :func:`plan_temporal_close`, the
-  semantic half of that same probe.
+  physical lowering of one settled step on its own, for the ``m-opt-lock``
+  conflict lane's standalone close probe.
 - :mod:`~parallax.snapshot.handle._write_types` — :class:`WriteLoweringError`.
 - :mod:`~parallax.snapshot.handle._write_inputs` —
   :class:`TransactionTimePinReadOnlyError` and :func:`validate_source_pin`, the
   finite-Transaction-Time-pin refusal the keyed verbs and the conformance
   engine's scenario grading share.
 
-- :mod:`~parallax.snapshot.handle._keyed_sql` — :func:`collapse_group_key`, the
-  physical-shape batch-grouping key the composition root and the conformance
-  engine inject into ``plan_flush`` beside ``m-batch-write``'s collapse policy.
-
-The three modules behind no exported name (``_wrap``, ``_family``,
-``_predicate_writes``) are reached only through the modules above; each documents
-its own place in the package's acyclic internal graph.
+The modules behind no exported name (``_wrap``, ``_family``, ``_keyed_sql``,
+``_predicate_writes``) are reached only through the modules above; each
+documents its own place in the package's acyclic internal graph.
 """
 
 from __future__ import annotations
@@ -59,8 +61,7 @@ from parallax.snapshot.handle._database import (
     TransactionOptionConflictError,
     connect,
 )
-from parallax.snapshot.handle._finalize import plan_temporal_close
-from parallax.snapshot.handle._keyed_sql import collapse_group_key
+from parallax.snapshot.handle._planning import build_write_planner, plan_temporal_close
 from parallax.snapshot.handle._read import (
     ExecutedStatement,
     Execution,
@@ -96,7 +97,7 @@ __all__ = [
     "TransactionOptionConflictError",
     "TransactionTimePinReadOnlyError",
     "WriteLoweringError",
-    "collapse_group_key",
+    "build_write_planner",
     "connect",
     "find",
     "find_history",

@@ -21,12 +21,12 @@ from __future__ import annotations
 import dataclasses
 import datetime as dt
 from collections.abc import Mapping
-from typing import cast
 
 import pytest
 
 from _support.clock_probes import instant_at
-from _support.lowering_probes import lower_planned, lower_planned_steps
+from _support.lowering_probes import lower_instruction, lower_instruction_steps
+from _support.planner_probes import TEST_SUBJECT_IDENTITY, planner_for
 from parallax.conformance import models
 from parallax.core import bitemp_write, storage_layout, txtime_write
 from parallax.core.db_port import JsonDocument
@@ -53,14 +53,13 @@ from parallax.core.unit_work import (
     NewLineage,
     PlannedClose,
     PlannedInsert,
-    PlannedWrite,
     PredecessorRow,
     TemporalGate,
     TemporalObservation,
-    TemporalStrategy,
     TransactionSettings,
     UnitOfWork,
     WriteObservation,
+    WritePlanningError,
     run_unit_of_work,
 )
 from parallax.core.unit_work.planned import PlannedWrite as PlannedStep
@@ -72,7 +71,6 @@ from parallax.snapshot.handle import (
     lower_step,
     plan_temporal_close,
 )
-from parallax.snapshot.handle._finalize import finalize_item
 from parallax.snapshot.handle._write_inputs import record_observations
 from parallax.snapshot.materialize import Node
 
@@ -130,12 +128,13 @@ def _lower_full(
     dialect: Dialect = POSTGRES,
     concurrency: Concurrency = "locking",
 ) -> list[Statement]:
-    return lower_planned(
-        PlannedWrite(instruction=instruction, observation=observation),
+    return lower_instruction(
+        instruction,
         models.accepted_model(meta),
         dialect,
         concurrency,
         instant_at(tx_instant),
+        observation=observation,
     )
 
 
@@ -149,12 +148,13 @@ def _lower_steps(
     concurrency: Concurrency = "locking",
 ) -> list[tuple[PlannedStep, Statement]]:
     """The same statements, paired with the settled step each came from."""
-    return lower_planned_steps(
-        PlannedWrite(instruction=instruction, observation=observation),
+    return lower_instruction_steps(
+        instruction,
         models.accepted_model(meta),
         dialect,
         concurrency,
         instant_at(tx_instant),
+        observation=observation,
     )
 
 
@@ -166,12 +166,15 @@ def _finalize(
     observation: WriteObservation | None = None,
     concurrency: Concurrency = "locking",
 ) -> tuple[PlannedStep, ...]:
-    return finalize_item(
-        PlannedWrite(instruction=instruction, observation=observation),
+    steps = lower_instruction_steps(
+        instruction,
         models.accepted_model(meta),
+        POSTGRES,
         concurrency,
         instant_at(tx_instant),
+        observation=observation,
     )
+    return tuple(step for step, _statement in steps)
 
 
 def _lower(
@@ -354,13 +357,13 @@ def test_a_close_without_an_observation_is_a_finalization_error() -> None:
     # milestone it observed, so a missing observation is refused while the step
     # is settled rather than lowered as an unaddressed statement.
     terminate = KeyedWrite("terminate", "Balance", ({"id": 1},))
-    with pytest.raises(WriteLoweringError, match="every close requires the Temporal Observation"):
+    with pytest.raises(WritePlanningError, match="every close requires the Temporal Observation"):
         _finalize(terminate, BALANCE, "2024-08-01T00:00:00+00:00")
 
 
 def test_a_milestone_verb_on_a_non_temporal_entity_is_refused() -> None:
     terminate = KeyedWrite("terminate", "Account", ({"id": 1},))
-    with pytest.raises(WriteLoweringError, match="declares no temporal dimension"):
+    with pytest.raises(WritePlanningError, match="declares no temporal dimension"):
         _finalize(terminate, _MODELS["account"], "2024-08-01T00:00:00+00:00")
 
 
@@ -772,7 +775,7 @@ def test_bitemporal_close_without_an_observed_valid_end_is_refused() -> None:
     # A Bitemporal address needs one exclusive upper bound per axis, so a caller
     # supplying none is a wiring defect — refused, never settled as a
     # Transaction-Time-only close that could match a sibling rectangle.
-    with pytest.raises(WriteLoweringError, match="no observed Valid-Time end supplied"):
+    with pytest.raises(WritePlanningError, match="no observed Valid-Time end supplied"):
         _probe("locking", observed_valid_end=None)
 
 
@@ -842,6 +845,8 @@ def test_a_temporal_concrete_observes_its_own_declared_members_not_the_roots() -
         clock=FixedClock(dt.datetime(2024, 6, 1, tzinfo=dt.UTC)),
         meta=model,
         flush_executor=lambda _plan: None,
+        planner=planner_for(model),
+        subject_identity=TEST_SUBJECT_IDENTITY,
     )
     assert isinstance(observation, TemporalObservation)
     assert dict(observation.predecessor.members) == {
@@ -1122,7 +1127,7 @@ def test_multi_row_temporal_write_is_refused() -> None:
         "Balance",
         ({"id": 1, "value": 100.00}, {"id": 2, "value": 200.00}),
     )
-    with pytest.raises(WriteLoweringError, match="multi-row temporal 'update' on 'Balance'"):
+    with pytest.raises(WritePlanningError, match="multi-row temporal 'update' on 'Balance'"):
         _lower(batched, BALANCE, "2024-02-15T00:00:00+00:00")
 
 
@@ -1256,9 +1261,14 @@ def test_axis_attr_names_refuses_an_axis_the_entity_does_not_declare() -> None:
     ],
     ids=["txtime", "bitemporal"],
 )
-def test_a_facet_refuses_a_verb_it_owns_no_topology_for(strategy: object, facet: str) -> None:
+def test_a_facet_refuses_a_verb_it_owns_no_topology_for(
+    strategy: txtime_write.TransactionTimeChaining | bitemp_write.RectangleSplit, facet: str
+) -> None:
     # A facet answers the topology of the milestone verbs it owns; anything else
     # is a caller wiring defect this pure seam refuses rather than describing as
-    # the nearest verb it does recognize.
+    # the nearest verb it does recognize. Each facet's OWN `topology(mutation)`
+    # is single-param — the entity-aware dispatch between the two facets is the
+    # composition root's `TemporalStrategy` adapter, one layer up, not a fact
+    # either facet itself carries.
     with pytest.raises(txtime_write.TemporalPlanningError, match=facet):
-        cast("TemporalStrategy", strategy).topology("delete")
+        strategy.topology("delete")

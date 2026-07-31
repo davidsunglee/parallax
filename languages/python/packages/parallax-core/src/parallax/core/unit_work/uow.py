@@ -1,16 +1,17 @@
 """The unit-of-work shell (m-unit-work).
 
-The transaction scope's stateful machinery around the pure planner: the frame
-stack (a nested scope joins the active transaction, ADR 0005), the write buffer,
-the recorded observations, call-time reads that force-flush pending writes so a
-dependent read observes them (read-your-own-writes), and abort — which discards
-buffered effects and **withholds** the callback value (ADR 0006).
+The transaction scope's stateful machinery around the pure :class:`~parallax.
+core.unit_work.write_planner.WritePlanner`: the frame stack (a nested scope
+joins the active transaction, ADR 0005), the write buffer, the recorded
+observations, call-time reads that force-flush pending writes so a dependent
+read observes them (read-your-own-writes), and abort — which discards buffered
+effects and **withholds** the callback value (ADR 0006).
 
 This is deliberately **not** ``db.transact``: there is no public sentinel-backed
 option surface and no bounded-retry loop. The shell exposes the
 primitives ``db.transact`` composes — :func:`run_unit_of_work` decides join vs. a
 new outermost frame, and the outermost frame commits (flushes) or aborts. Because
-lowering a flush plan to DML needs ``m-sql`` (which the DAG forbids ``m-unit-work``
+lowering a Write Plan to DML needs ``m-sql`` (which the DAG forbids ``m-unit-work``
 from importing), the shell **delegates** the flush to an injected
 :data:`FlushExecutor` supplied by the composition layer that legally sees both;
 here it is a neutral callable, so the shell stays DML-free and testable.
@@ -25,21 +26,15 @@ from __future__ import annotations
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Literal
 
 from parallax.core.metamodel import Metamodel
 from parallax.core.unit_work.clock import Clock, TransactionInstant
 from parallax.core.unit_work.instructions import WriteInstruction
 from parallax.core.unit_work.observe import WriteObservation
-from parallax.core.unit_work.planner import (
-    AtomicUnit,
-    BufferItem,
-    CollapseGroupKey,
-    CollapsePolicy,
-    FlushPlan,
-    ObjectKey,
-    plan_flush,
-)
+from parallax.core.unit_work.plan import WritePlan
+from parallax.core.unit_work.planner import AtomicUnit, BufferItem, ObjectKey
+from parallax.core.unit_work.strategy import Concurrency
+from parallax.core.unit_work.write_planner import PlanningRequest, SubjectIdentity, WritePlanner
 
 __all__ = [
     "Concurrency",
@@ -53,12 +48,9 @@ __all__ = [
     "run_unit_of_work",
 ]
 
-# The composition-layer sink a flush plan is handed to for lowering and execution.
-# It is neutral because m-unit-work takes no m-sql edge.
-FlushExecutor = Callable[[FlushPlan], None]
-
-# The per-transaction participation mode (m-unit-work strategy selection).
-Concurrency = Literal["locking", "optimistic"]
+# The composition-layer sink a Write Plan is handed to for lowering and
+# execution. It is neutral because m-unit-work takes no m-sql edge.
+FlushExecutor = Callable[[WritePlan], None]
 
 
 class UnitOfWorkError(RuntimeError):
@@ -97,12 +89,12 @@ class UnitOfWork:
     __slots__ = (
         "_buffer",
         "_closed",
-        "_collapse_group",
-        "_collapse_policy",
         "_frame_depth",
         "_observations",
+        "_planner",
         "_rollback_cause",
         "_rollback_only",
+        "_subject_identity",
         "_transaction_instant",
         "clock",
         "companion",
@@ -118,22 +110,25 @@ class UnitOfWork:
         clock: Clock,
         meta: Metamodel,
         flush_executor: FlushExecutor,
-        collapse_policy: CollapsePolicy | None = None,
-        collapse_group: CollapseGroupKey | None = None,
+        planner: WritePlanner,
+        subject_identity: SubjectIdentity,
     ) -> None:
         self.settings = settings
         self.clock = clock
         self.meta = meta
         self.flush_executor = flush_executor
-        # The injected `m-batch-write` collapse vocabulary (`plan_flush`'s own
-        # optional parameter) — this scope takes no edge to `m-batch-write`
-        # itself, so the composition layer (`parallax.snapshot.handle.Database.
-        # transact`) supplies it here, identically for production and the
-        # conformance engine (both drive writes through this SAME shell).
-        self._collapse_policy = collapse_policy
-        # Its grouping companion: the physical shape a run's rows must share
-        # before the policy is even asked (`plan_flush`'s own optional pair).
-        self._collapse_group = collapse_group
+        # The injected Write Planner (`m-unit-work`'s single finalization
+        # authority) — constructed once per accepted Metamodel by the
+        # composition layer (`parallax.snapshot.handle.build_write_planner`),
+        # which alone may wire the optional policy modules the planner reaches
+        # only through its strategy ports. Production and the conformance
+        # engine both drive writes through this SAME shell.
+        self._planner = planner
+        # The boundary-captured Subject Identity every flush this attempt
+        # plans with (`m-principal`'s eventual capture point; a transitional
+        # constant until then). Reused unchanged by a forced flush; a retry
+        # attempt receives its own new `UnitOfWork` and therefore its own copy.
+        self._subject_identity = subject_identity
         # An opaque demarcation-layer companion (the `db.transact` transaction
         # facade), published for the scope's duration so a joining call recovers
         # it via `active_unit_of_work()`. The shell never reads it, and it needs
@@ -191,14 +186,14 @@ class UnitOfWork:
         self._ensure_open()
         if not self._buffer:
             return
-        plan = plan_flush(
-            tuple(self._buffer),
-            self._observations,
-            self._transaction_instant,
-            self.meta,
-            collapse=self._collapse_policy,
-            collapse_group=self._collapse_group,
+        request = PlanningRequest(
+            subject_identity=self._subject_identity,
+            transaction_instant=self._transaction_instant,
+            concurrency=self.settings.concurrency,
+            buffered_writes=tuple(self._buffer),
+            observations=self._observations,
         )
+        plan = self._planner.plan(request)
         self._buffer.clear()
         self.flush_executor(plan)
 
@@ -307,22 +302,22 @@ def run_unit_of_work[T](
     clock: Clock,
     meta: Metamodel,
     flush_executor: FlushExecutor,
-    collapse_policy: CollapsePolicy | None = None,
-    collapse_group: CollapseGroupKey | None = None,
+    planner: WritePlanner,
+    subject_identity: SubjectIdentity,
 ) -> T:
     """Run ``body`` in a unit of work — joining the active one or opening a new frame.
 
     A call while a transaction is active on the current thread **joins** it: the
     body receives the same unit of work and its return value is returned
     immediately (commit and abort belong to the outermost frame), and the passed
-    ``settings`` / ``clock`` / ``meta`` / ``flush_executor`` / ``collapse_policy`` /
-    ``collapse_group``
-    are ignored in favor of the active transaction's (``db.transact`` performs
-    the option-conflict check before calling). Otherwise a new outermost frame is
-    opened, and its value is returned only after a durable flush; an abort
-    withholds it. ``collapse_policy`` and ``collapse_group`` are the injected
-    ``m-batch-write`` vocabulary and physical-shape grouping key consulted by a
-    new outermost frame's flushes.
+    ``settings`` / ``clock`` / ``meta`` / ``flush_executor`` / ``planner`` /
+    ``subject_identity`` are ignored in favor of the active transaction's
+    (``db.transact`` performs the option-conflict check before calling).
+    Otherwise a new outermost frame is opened, and its value is returned only
+    after a durable flush; an abort withholds it. ``planner`` is the injected
+    Write Planner a new outermost frame's flushes call, and ``subject_identity``
+    the boundary-captured Subject Identity every one of its Planning Requests
+    carries.
     """
     active = active_unit_of_work()
     if active is not None:
@@ -332,7 +327,7 @@ def run_unit_of_work[T](
         clock=clock,
         meta=meta,
         flush_executor=flush_executor,
-        collapse_policy=collapse_policy,
-        collapse_group=collapse_group,
+        planner=planner,
+        subject_identity=subject_identity,
     )
     return uow.run_outermost(body)

@@ -17,10 +17,9 @@ m-opt-lock.md`; `python.md` §5 L584-641; ADR 0013):
    before any observation or locking concern — no observation read, no DML,
    zero round trips. Already enforced upstream of this scope, by construction:
    ``Transaction.update`` returns before buffering an empty ``effective_change_set``
-   (`parallax.snapshot.handle`), and ``m-unit-work``'s own flush-planner elision
-   (:func:`~parallax.core.unit_work.planner._elide`) drops an empty keyed update
-   BEFORE observations ever attach (:func:`~parallax.core.unit_work.planner.plan_flush`
-   coalesce -> FK-order -> elide -> attach). This module has nothing to add to an
+   (`parallax.snapshot.handle`), and the Write Planner's own no-op elimination
+   stage (:class:`~parallax.core.unit_work.WritePlanner`) drops an empty keyed
+   update before it is ever settled. This module has nothing to add to an
    ordering its two callers already establish structurally.
 2. **Prior-observation rule** (:func:`require_observed`): the version driving a
    keyed update/delete of a versioned row must already have been observed by

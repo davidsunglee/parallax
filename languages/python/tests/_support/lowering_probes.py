@@ -1,60 +1,88 @@
-"""Lowering one plan item, for suites that pin a single write's DML.
+"""Planning and lowering one write instruction, for suites that pin a single
+write's DML.
 
 The shipped seam (:func:`~parallax.snapshot.handle.stream_lowered`) is
-plan-scoped, because a flush plan is what the executor holds. A unit test
-usually pins the statements of one instruction, so this wraps that instruction
-in the one-item plan it means and hands back the lowered statements in order.
+plan-scoped, because a Write Plan is what the executor holds. A unit test
+usually pins the statements of one instruction, so this plans it — through the
+SAME production wiring :func:`~parallax.snapshot.handle.build_write_planner`
+builds — as the one-instruction buffer it means, and hands back the lowered
+statements in order.
 """
 
 from __future__ import annotations
 
 from _support.clock_probes import inert_instant
+from _support.planner_probes import TEST_SUBJECT_IDENTITY
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.metamodel import Metamodel
 from parallax.core.sql_gen import Statement
 from parallax.core.unit_work import (
     Concurrency,
-    FlushPlan,
-    PlannedWrite,
+    ObjectKey,
+    PlanningRequest,
     TransactionInstant,
+    WriteInstruction,
+    WriteObservation,
+    object_key,
 )
 from parallax.core.unit_work.planned import PlannedWrite as PlannedStep
-from parallax.snapshot.handle import stream_lowered
+from parallax.snapshot.handle import build_write_planner, stream_lowered
 
-__all__ = ["lower_planned", "lower_planned_steps"]
+__all__ = ["lower_instruction", "lower_instruction_steps"]
 
 
-def lower_planned(
-    planned: PlannedWrite,
+def lower_instruction(
+    instruction: WriteInstruction,
     model: Metamodel,
     dialect: Dialect = POSTGRES,
     concurrency: Concurrency = "locking",
     tx_instant: TransactionInstant | None = None,
+    *,
+    observation: WriteObservation | None = None,
 ) -> list[Statement]:
-    """Every statement one plan item lowers to, in execution order."""
+    """Every statement one instruction plans and lowers to, in execution order."""
     return [
-        statement for _step, statement in _stream(planned, model, dialect, concurrency, tx_instant)
+        statement
+        for _step, statement in _stream(
+            instruction, model, dialect, concurrency, tx_instant, observation
+        )
     ]
 
 
-def lower_planned_steps(
-    planned: PlannedWrite,
+def lower_instruction_steps(
+    instruction: WriteInstruction,
     model: Metamodel,
     dialect: Dialect = POSTGRES,
     concurrency: Concurrency = "locking",
     tx_instant: TransactionInstant | None = None,
+    *,
+    observation: WriteObservation | None = None,
 ) -> list[tuple[PlannedStep, Statement]]:
     """The same, paired with the settled step each statement came from."""
-    return list(_stream(planned, model, dialect, concurrency, tx_instant))
+    return list(_stream(instruction, model, dialect, concurrency, tx_instant, observation))
 
 
 def _stream(
-    planned: PlannedWrite,
+    instruction: WriteInstruction,
     model: Metamodel,
     dialect: Dialect,
     concurrency: Concurrency,
     tx_instant: TransactionInstant | None,
+    observation: WriteObservation | None,
 ) -> list[tuple[PlannedStep, Statement]]:
     instant = inert_instant() if tx_instant is None else tx_instant
-    plan = FlushPlan(writes=(planned,), tx_instant=instant)
-    return list(stream_lowered(plan, model, dialect, concurrency))
+    observations: dict[ObjectKey, WriteObservation] = {}
+    if observation is not None:
+        key = object_key(instruction, model)
+        assert key is not None  # every probed observation names an identifiable object
+        observations[key] = observation
+    plan = build_write_planner(model).plan(
+        PlanningRequest(
+            subject_identity=TEST_SUBJECT_IDENTITY,
+            transaction_instant=instant,
+            concurrency=concurrency,
+            buffered_writes=[instruction],
+            observations=observations,
+        )
+    )
+    return list(stream_lowered(plan, model, dialect))

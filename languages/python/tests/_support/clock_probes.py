@@ -1,8 +1,8 @@
 """Clock Strategy probes for the write-path suites.
 
 A real flush gets its :class:`~parallax.core.unit_work.TransactionInstant` from
-the unit of work that owns the attempt. A suite that calls ``plan_flush`` or
-the lowering seam directly builds one here instead, over the same ``FixedClock`` a
+the unit of work that owns the attempt. A suite that plans or lowers directly —
+bypassing the shell — builds one here instead, over the same ``FixedClock`` a
 deterministic ``Database`` is built with — so an assertion over rendered SQL sees
 exactly the literal a production flush at that instant would bind.
 

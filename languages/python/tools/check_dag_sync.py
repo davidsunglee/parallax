@@ -87,12 +87,12 @@ MODULE_SCOPE: Mapping[str, str] = {
 }
 
 # The write-lowering child cluster (`_family`, `_write_types`, `_keyed_sql`,
-# `_write_lowering`, `_finalize`, `_step_lowering`) is enforced as ONE group: the
-# six modules share this grant row rather than each declaring its own. Grouping
+# `_write_lowering`, `_step_lowering`) is enforced as ONE group: the five
+# modules share this grant row rather than each declaring its own. Grouping
 # is deliberate — helpers move between the cluster's modules as the lowering
 # pipeline evolves, and a per-module row would turn every such internal move
 # into a spec edit. The group boundary is what carries the enforcement value:
-# none of the six may reach the read side (`m-snapshot-read`, `m-deep-fetch`,
+# none of the five may reach the read side (`m-snapshot-read`, `m-deep-fetch`,
 # `m-navigate`, `parallax.core.entity`).
 _LOWERING_GROUP_DEPS: frozenset[str] = frozenset(
     {
@@ -179,7 +179,6 @@ SUPPORT_SCOPE_DEPS: Mapping[str, frozenset[str]] = {
     "parallax.snapshot.handle._write_types": _LOWERING_GROUP_DEPS,
     "parallax.snapshot.handle._keyed_sql": _LOWERING_GROUP_DEPS,
     "parallax.snapshot.handle._write_lowering": _LOWERING_GROUP_DEPS,
-    "parallax.snapshot.handle._finalize": _LOWERING_GROUP_DEPS,
     "parallax.snapshot.handle._step_lowering": _LOWERING_GROUP_DEPS,
     "parallax.postgres": frozenset(
         {
@@ -210,7 +209,6 @@ CHILD_SCOPE_PARENT: Mapping[str, str] = {
     "parallax.snapshot.handle._write_types": "parallax.snapshot.handle",
     "parallax.snapshot.handle._keyed_sql": "parallax.snapshot.handle",
     "parallax.snapshot.handle._write_lowering": "parallax.snapshot.handle",
-    "parallax.snapshot.handle._finalize": "parallax.snapshot.handle",
     "parallax.snapshot.handle._step_lowering": "parallax.snapshot.handle",
 }
 

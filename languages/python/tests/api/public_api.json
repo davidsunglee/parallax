@@ -239,7 +239,7 @@
     "TransactionOptionConflictError",
     "TransactionTimePinReadOnlyError",
     "WriteLoweringError",
-    "collapse_group_key",
+    "build_write_planner",
     "connect",
     "find",
     "find_history",

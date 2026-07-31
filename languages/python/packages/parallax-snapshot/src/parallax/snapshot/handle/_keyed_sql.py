@@ -1,33 +1,23 @@
-"""``parallax.snapshot.handle._keyed_sql`` — SQL DML bodies for keyed writes.
+"""``parallax.snapshot.handle._keyed_sql`` — physical-shape batch grouping.
 
-The output side of the write-lowering boundary for the families still lowered
-from the instruction itself: everything here RENDERS a
-:class:`~parallax.core.sql_gen.Statement` (SQL text plus ordered binds) for one
-already-decided mutation. The deciding — which milestone rows close and which
-chain — belongs one level up in
-:mod:`parallax.snapshot.handle._write_lowering`, which imports this module; the
-edge runs dispatch → builders and never back. A family whose write finalization
-has landed renders through :mod:`parallax.snapshot.handle._step_lowering`
-instead, from a step that carries no undecided fact.
+Every write family now finalizes into a settled step before lowering
+(:class:`~parallax.core.unit_work.WritePlanner`) and renders through
+:mod:`parallax.snapshot.handle._step_lowering` from that already-decided step.
+:func:`collapse_group_key` is this module's one live seam: the same physical
+slot selection that fixes a statement's column list also fixes which buffered
+rows may share one, so it answers a row's filtered, table-ordered selection for
+the Write Planner's own ``BatchingStrategy`` port — a collapsed multi-row
+instruction is same-shaped before any step is ever settled. Every physical
+fact comes from the target's Storage Layout Entity view (`_family.entity_layout`)
+— its Table, its Table-ordered applicable slots, and its derived discriminator
+assignment. Semantic selections stay where they are decided: the
+family-effective primary key (`_family.family_primary_key`) names Attribute
+identities, which this module maps onto layout slots rather than reading
+storage declarations of its own.
 
-Inside the handle package "write" keeps meaning the NEUTRAL instruction level
-(`m-unit-work`'s :class:`~parallax.core.unit_work.KeyedWrite`, `_write_types`,
-`_write_inputs`, `_write_lowering`); this is the one module named for the SQL
-side. Every physical fact comes from the target's Storage Layout Entity view
-(`_family.entity_layout`) — its Table, its Table-ordered applicable slots, and
-its derived discriminator assignment. Semantic selections stay where they are
-decided: the family-effective primary key (`_family.family_primary_key`) names
-Attribute identities, which this module maps onto layout slots rather than
-reading storage declarations of its own.
-
-The same slot selection that fixes a statement's column list also fixes which
-buffered rows may share one: `collapse_group_key` answers a row's filtered,
-table-ordered selection for the planner's batch grouping, so a collapsed
-multi-row instruction is same-shaped before any step is settled.
-
-The names `_write_lowering` and the composition root read are spelled bare; the
-helpers they share among themselves keep their leading underscore because every
-one of their call sites is in THIS module.
+The name the composition root reads is spelled bare; the helpers this module
+keeps to itself keep their leading underscore because every one of their call
+sites is in THIS module.
 """
 
 from __future__ import annotations

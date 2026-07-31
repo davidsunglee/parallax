@@ -333,11 +333,11 @@ class Transaction:
     ) -> None:
         """The `python.md` §5 prior-observation license for a keyed TEMPORAL
         update/terminate (:func:`opt_lock.require_observed_milestone` — the
-        temporal sibling of the versioned ``require_observed`` seam write
-        finalization runs): the close must target a milestone THIS
+        temporal sibling of the versioned ``require_observed`` seam the Write
+        Planner's own settling consults): the close must target a milestone THIS
         unit of work observed via a transaction-scoped find. Enforced HERE at
-        the developer verb, never in ``_finalize._finalize_temporal`` — the
-        shared finalization also serves the neutral engine lane, and demands
+        the developer verb, never inside the planner's own temporal settling —
+        the shared planner also serves the neutral engine lane, and demands
         only the observation a close structurally needs to address, gate, and
         carry state forward from, which that lane supplies from its own tracked
         milestone state rather than from a developer's find. An object this SAME transaction

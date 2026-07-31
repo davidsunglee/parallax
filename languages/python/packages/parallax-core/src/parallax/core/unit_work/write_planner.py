@@ -1,0 +1,1083 @@
+"""The Write Planner: the single finalization authority (m-unit-work).
+
+:class:`WritePlanner` turns one flush's boundary-captured Subject Identity,
+lazy Transaction Instant, concurrency mode, buffered writes, and observations
+into a :class:`~parallax.core.unit_work.plan.WritePlan`. It is model-scoped,
+constructed once per accepted Metamodel with its batching, concurrency,
+temporal, and audit strategies already wired, and it exposes exactly one
+planning operation, :meth:`WritePlanner.plan`.
+
+**It emits no SQL.** The module DAG pins ``m-unit-work -> m-op-algebra`` and
+``m-unit-work -> m-db-port`` only — there is deliberately **no** edge to
+``m-sql``, ``m-dialect``, or any optional policy module (``m-batch-write``,
+``m-opt-lock``, ``m-txtime-write``, ``m-bitemp-write``, ``m-read-lock``). This
+module reaches those policies only through the strategy ports
+:mod:`~parallax.core.unit_work.strategy` declares, injected once by the
+composition layer that legally sees both (``parallax.snapshot.handle``).
+
+Stage grouping. ``core/spec/m-unit-work.md`` describes the pipeline as nine
+named stages; this is an ordering CONTRACT, not a mandate for nine methods.
+Four orderings are normative and this implementation preserves each:
+coalescing and no-op elimination precede the lazy instant resolution inside
+:meth:`_settle`; a required observation is validated before the gate decision
+that consumes it, inside the same :meth:`_settle` call; a surviving temporal
+mutation stays one indivisible unit through batching and ordering and expands
+only after :meth:`_order` has fixed its position; and provenance decoration
+(:meth:`plan`'s own trailing pass) runs after every step's topology is settled
+and before the Write Plan freezes. Within those constraints, :meth:`plan`
+keeps today's proven-safe relative stage order — coalesce, form batches, order,
+eliminate no-ops, settle — the same sequence the pre-Phase-8 split pipeline
+already exercised end to end against the whole compatibility corpus, rather
+than re-deriving an equivalent order this phase has no golden-byte budget to
+re-verify.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
+from typing import Final, cast
+
+from parallax.core import inheritance
+from parallax.core.base import INFINITY_LITERAL
+from parallax.core.metamodel import (
+    AsOfAxisMetadata,
+    AttributeIdentity,
+    Cardinality,
+    DefiningRelationshipDeclaration,
+    EntityIdentity,
+    EntityMetadata,
+    Metamodel,
+    TemporalDimension,
+    ValueObjectIdentity,
+)
+from parallax.core.unit_work.clock import TransactionInstant
+from parallax.core.unit_work.instructions import (
+    KeyedWrite,
+    PredicateWrite,
+    WriteInstruction,
+)
+from parallax.core.unit_work.observe import LATEST_PINNED, TemporalObservation, WriteObservation
+from parallax.core.unit_work.plan import PlannedSteps, WritePlan
+from parallax.core.unit_work.planned import (
+    ANY_COUNT,
+    INFINITY,
+    MAX_PLUS_ONE,
+    NEW_LINEAGE,
+    SUPERSEDED,
+    UNGATED,
+    UNVERSIONED,
+    CloseCause,
+    ExactCount,
+    Finite,
+    InsertEntry,
+    KeyTarget,
+    MilestoneTarget,
+    NonTemporalConcurrency,
+    PlannedAssignments,
+    PlannedClose,
+    PlannedDelete,
+    PlannedInsert,
+    PlannedRow,
+    PlannedUpdate,
+    PlannedValue,
+    PredicateTarget,
+    SelfIncrement,
+    TemporalConcurrency,
+    TemporalGate,
+    TemporalUpperBound,
+    Versioned,
+    VersionGate,
+    shortfall_for,
+)
+from parallax.core.unit_work.planned import PlannedWrite as PlannedStep
+from parallax.core.unit_work.planner import (
+    AtomicUnit,
+    BufferItem,
+    ObjectKey,
+    Targets,
+    resolve_object_key,
+    targets,
+)
+from parallax.core.unit_work.strategy import (
+    AuditStrategy,
+    BatchingStrategy,
+    Concurrency,
+    ConcurrencyStrategy,
+    TemporalStrategy,
+)
+from parallax.core.unit_work.temporal import TemporalAxes, expand_milestone
+
+__all__ = ["PlanningRequest", "SubjectIdentity", "WritePlanner", "plan_temporal_close"]
+
+type BufferedWrites = Sequence[BufferItem]
+type Observations = Mapping[ObjectKey, WriteObservation]
+
+# The keyed mutation verbs finalized directly into a row write — the
+# non-temporal write triad. The milestone verbs open, split, or close a
+# milestone rather than write a row outright, and a temporal entity's own
+# `insert` opens one too, so neither is this shape.
+_FINALIZED_VERBS: Final[frozenset[str]] = frozenset({"insert", "update", "delete"})
+
+# The predicate-selected verbs a readless template exists for. A `terminate`
+# or `*Until` predicate write names a milestone, so its only legal targets
+# materialize to keyed writes long before finalization.
+_READLESS_VERBS: Final[frozenset[str]] = frozenset({"update", "delete"})
+
+_INSERT_VERBS: Final[frozenset[str]] = frozenset({"insert", "insertUntil"})
+_UPDATE_VERBS: Final[frozenset[str]] = frozenset({"update", "updateUntil"})
+_DELETE_VERBS: Final[frozenset[str]] = frozenset({"delete", "terminate", "terminateUntil"})
+
+# A scalar cell's recognized DB-computed marker kinds
+# (`write-instruction.schema.json#/$defs/writeComputedMarker`), classified by
+# SHAPE — a one-key mapping naming one of them. A Value Object occurrence never
+# reaches this classification: its member resolves to a ValueObjectIdentity, so
+# a marker-shaped document stays a document (m-value-object "Writing" marker
+# disambiguation).
+_MARKER_KEYS: Final[frozenset[str]] = frozenset({"computed", "increment"})
+
+
+class WritePlanningError(ValueError):
+    """A buffered write cannot be settled into a Planned Write — a caller
+    wiring defect the planner refuses loudly rather than settling wrongly
+    (e.g. a materializing predicate write that reached planning un-decomposed,
+    or a row naming a member outside its Entity's family)."""
+
+
+@dataclass(frozen=True, slots=True)
+class SubjectIdentity:
+    """The stable, nonempty planning-input identifying the Principal captured
+    at the outer database operation boundary (ADR 0034).
+
+    Unit Work owns this value type exactly as it already owns the Write
+    Observation vocabulary, so a Planning Request is well-typed before any
+    provenance behavior exists. Until provenance decoration is implemented, an
+    implementation MUST NOT inspect, validate, retain, serialize, persist,
+    lower, or bind the supplied value, and two planning calls differing only in
+    Subject Identity MUST produce equal Write Plans and identical emitted SQL
+    and binds — ``test_subject_identity_neutrality.py`` demonstrates this.
+    """
+
+    value: str
+
+    def __post_init__(self) -> None:
+        if not self.value:
+            raise ValueError("a Subject Identity is nonempty")
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class PlanningRequest:
+    """One flush's complete planning input.
+
+    Keyword-only and Subject Identity first: planning occurs inside an already
+    established Principal boundary, and field order emphasizes that without
+    making it a positional API.
+    """
+
+    subject_identity: SubjectIdentity
+    transaction_instant: TransactionInstant
+    concurrency: Concurrency
+    buffered_writes: BufferedWrites
+    observations: Observations
+
+
+class WritePlanner:
+    """The model-scoped, stateless Write Planner (`m-unit-work`).
+
+    Constructed once per accepted Metamodel with its strategy adapters already
+    wired; :meth:`plan` is its entire caller-visible surface. No caller
+    sequences coalescing, batching, ordering, temporal expansion, observation
+    binding, instant acquisition, or provenance decoration by hand.
+    """
+
+    __slots__ = ("_audit", "_batching", "_concurrency", "_model", "_temporal")
+
+    def __init__(
+        self,
+        model: Metamodel,
+        *,
+        batching: BatchingStrategy,
+        concurrency: ConcurrencyStrategy,
+        temporal: TemporalStrategy,
+        audit: AuditStrategy,
+    ) -> None:
+        self._model = model
+        self._batching = batching
+        self._concurrency = concurrency
+        self._temporal = temporal
+        self._audit = audit
+
+    def plan(self, request: PlanningRequest) -> WritePlan:
+        """Plan one flush: coalesce, batch, order, eliminate no-ops, settle
+        every surviving item, decorate, and freeze.
+
+        Pure with respect to its inputs — no database I/O, no direct clock
+        access, no SQL. ``request.subject_identity`` is accepted and never
+        inspected. ``request.transaction_instant`` is threaded unevaluated
+        until a surviving temporal mutation needs it.
+        """
+        resolved = targets(self._model)
+        coalesced = self._coalesce(request.buffered_writes, resolved)
+        batched = self._form_batches(coalesced, resolved, request.observations)
+        ordered = self._order(batched, resolved)
+        survivors = self._eliminate_no_ops(ordered, resolved)
+        steps: list[PlannedStep] = []
+        for instruction in survivors:
+            steps.extend(
+                self._settle(
+                    instruction,
+                    resolved,
+                    request.observations,
+                    request.concurrency,
+                    request.transaction_instant,
+                )
+            )
+        decorated = tuple(self._audit.decorate(step) for step in steps)
+        return WritePlan(steps=PlannedSteps(decorated))
+
+    # ----------------------------------------------------------------- #
+    # Stage 1: resolve identities and coalesce buffered intent.          #
+    # A same-transaction keyed insert-then-update of one object folds     #
+    # into a single final-value write; insert-then-delete cancels.        #
+    # ----------------------------------------------------------------- #
+    def _coalesce(self, buffer: BufferedWrites, resolved: Targets) -> list[BufferItem]:
+        result: list[BufferItem | None] = []
+        pending_insert: dict[ObjectKey, int] = {}
+        for item in buffer:
+            if isinstance(item, AtomicUnit):
+                result.append(item)
+                continue
+            instruction = item
+            key = resolve_object_key(instruction, resolved)
+            if not isinstance(instruction, KeyedWrite) or key is None:
+                result.append(instruction)
+                continue
+            verb = instruction.mutation
+            if verb in _INSERT_VERBS:
+                result.append(instruction)
+                pending_insert[key] = len(result) - 1
+            elif verb in _UPDATE_VERBS and key in pending_insert:
+                index = pending_insert[key]
+                base = result[index]
+                assert isinstance(base, KeyedWrite)  # a pending-insert slot is always KeyedWrite
+                result[index] = _merge_update_into_insert(base, instruction, resolved)
+            elif verb in _DELETE_VERBS and key in pending_insert:
+                result[pending_insert.pop(key)] = None
+            else:
+                result.append(instruction)
+        return [item for item in result if item is not None]
+
+    # ----------------------------------------------------------------- #
+    # Stage 4: form compatible batches. Same-entity, same-mutation,       #
+    # ADJACENT single-row keyed writes merge when the injected batching   #
+    # strategy says the run collapses.                                    #
+    # ----------------------------------------------------------------- #
+    def _form_batches(
+        self, buffer: Sequence[BufferItem], resolved: Targets, observations: Observations
+    ) -> list[BufferItem]:
+        result: list[BufferItem] = []
+        run: list[KeyedWrite] = []
+        run_group: object = None
+
+        def group_key(item: KeyedWrite) -> object:
+            entity = resolved.entity(item.entity)
+            if entity is None:
+                return None
+            return self._batching.group_key(self._model, entity, item.mutation, item.rows[0])
+
+        def flush_run() -> None:
+            if not run:
+                return
+            entity = resolved.entity(run[0].entity)
+            rows = [row for w in run for row in w.rows]
+            if len(run) == 1 or entity is None:
+                result.extend(run)
+            elif self._batching.collapses(self._model, entity, run[0].mutation, rows):
+                result.append(_merge_rows(run))
+            else:
+                result.extend(run)
+            run.clear()
+
+        def observed(item: KeyedWrite) -> bool:
+            key = resolve_object_key(item, resolved)
+            return key is not None and key in observations
+
+        for item in buffer:
+            if isinstance(item, KeyedWrite) and len(item.rows) == 1 and not observed(item):
+                item_group = group_key(item)
+                if (
+                    run
+                    and run[-1].entity == item.entity
+                    and run[-1].mutation == item.mutation
+                    and run[-1].valid_from == item.valid_from
+                    and run[-1].until == item.until
+                    and item_group == run_group
+                ):
+                    run.append(item)
+                    continue
+                flush_run()
+                run.append(item)
+                run_group = item_group
+            else:
+                flush_run()
+                result.append(item)
+        flush_run()
+        return result
+
+    # ----------------------------------------------------------------- #
+    # Stage 5: dependency-order within barrier regions. A readless        #
+    # predicate write is a hard ordering barrier partitioning the         #
+    # sequence into independently reorderable regions.                    #
+    # ----------------------------------------------------------------- #
+    def _order(self, items: Sequence[BufferItem], resolved: Targets) -> list[WriteInstruction]:
+        ranks = _fk_ranks(self._model)
+
+        def representative(item: BufferItem) -> WriteInstruction:
+            return item.writes[0] if isinstance(item, AtomicUnit) else item
+
+        def rank(item: BufferItem) -> int:
+            entity = resolved.entity(_instruction_entity(representative(item)))
+            return 0 if entity is None else ranks.get(entity.identity, 0)
+
+        def mutation(item: BufferItem) -> str:
+            return representative(item).mutation
+
+        def order_region(region: Sequence[BufferItem]) -> list[BufferItem]:
+            inserts = [i for i in region if mutation(i) in _INSERT_VERBS]
+            updates = [i for i in region if mutation(i) in _UPDATE_VERBS]
+            deletes = [i for i in region if mutation(i) in _DELETE_VERBS]
+            inserts.sort(key=rank)
+            deletes.sort(key=lambda i: -rank(i))
+            return [*inserts, *updates, *deletes]
+
+        ordered: list[BufferItem] = []
+        region: list[BufferItem] = []
+        for item in items:
+            if isinstance(item, PredicateWrite):
+                ordered.extend(order_region(region))
+                ordered.append(item)
+                region = []
+            else:
+                region.append(item)
+        ordered.extend(order_region(region))
+        return [
+            write
+            for item in ordered
+            for write in (item.writes if isinstance(item, AtomicUnit) else (item,))
+        ]
+
+    # ----------------------------------------------------------------- #
+    # Stage 2: eliminate known cancellation and no-op work. A keyed        #
+    # update whose effective change set is empty emits no instruction.    #
+    # ----------------------------------------------------------------- #
+    def _eliminate_no_ops(
+        self, instructions: Sequence[WriteInstruction], resolved: Targets
+    ) -> list[WriteInstruction]:
+        return [i for i in instructions if not _is_empty_keyed_update(i, resolved)]
+
+    # ----------------------------------------------------------------- #
+    # Stages 3, 6, 7: bind and validate observations, resolve the         #
+    # Transaction Instant lazily, and expand temporal topology in place.  #
+    # ----------------------------------------------------------------- #
+    def _settle(
+        self,
+        instruction: WriteInstruction,
+        resolved: Targets,
+        observations: Observations,
+        concurrency: Concurrency,
+        tx_instant: TransactionInstant,
+    ) -> tuple[PlannedStep, ...]:
+        if isinstance(instruction, PredicateWrite):
+            return self._settle_predicate(instruction, resolved)
+        entity = _require_entity(resolved, instruction.entity)
+        declaring_entity = resolved.declaring(entity)
+        if declaring_entity.declared_as_of_axes:
+            key = resolve_object_key(instruction, resolved)
+            observation = observations.get(key) if key is not None else None
+            return self._settle_temporal(
+                entity,
+                declaring_entity,
+                instruction,
+                resolved,
+                observation,
+                concurrency,
+                tx_instant,
+            )
+        if instruction.mutation not in _FINALIZED_VERBS:
+            raise WritePlanningError(
+                f"{instruction.mutation!r} is a temporal milestone verb, and "
+                f"{entity.identity.name!r} declares no temporal dimension — a milestone verb "
+                "never applies to a non-temporal entity (m-txtime-write / m-bitemp-write)"
+            )
+        version_attr = self._concurrency.version_attribute(declaring_entity)
+        members = resolved.applicable_members(entity)
+        if instruction.mutation == "insert":
+            return (self._settle_insert(entity, members, instruction, version_attr),)
+        key = resolve_object_key(instruction, resolved)
+        observation = observations.get(key) if key is not None else None
+        observed_version = self._observed_version(entity, instruction, version_attr, observation)
+        settled = self._settle_concurrency(version_attr, observed_version, concurrency)
+        key_attributes = tuple(a.identity for a in resolved.family_primary_key(entity))
+        target = _key_target(entity, key_attributes, instruction.rows)
+        affected_rows = ExactCount(
+            expected=len(target.key_values), on_shortfall=shortfall_for(settled)
+        )
+        if instruction.mutation == "delete":
+            return (
+                PlannedDelete(
+                    entity=entity.identity,
+                    target=target,
+                    concurrency=settled,
+                    affected_rows=affected_rows,
+                ),
+            )
+        return (
+            PlannedUpdate(
+                entity=entity.identity,
+                target=target,
+                assignments=self._update_assignments(
+                    entity, members, instruction, key_attributes, version_attr, observed_version
+                ),
+                concurrency=settled,
+                affected_rows=affected_rows,
+            ),
+        )
+
+    def _settle_predicate(
+        self, instruction: PredicateWrite, resolved: Targets
+    ) -> tuple[PlannedStep, ...]:
+        """One readless predicate-selected write as its single step.
+
+        The refusals live here, on the semantic side, because they answer what
+        a write MEANS rather than how it reads: an inheritance-family target
+        has no per-object write to select (`m-inheritance`), and a versioned
+        or temporal target has no readless template at all — it materializes
+        to keyed writes at buffer time (ADR 0014), so reaching this stage is a
+        caller wiring defect. Both guards are total rather than upstream-only:
+        this seam is reached straight from a deserialized instruction as well
+        as from the developer verbs.
+        """
+        entity = _require_entity(resolved, instruction.target.entity)
+        inheritance.reject_predicate_write(entity)
+        declaring_entity = resolved.declaring(entity)
+        if (
+            declaring_entity.declared_as_of_axes
+            or self._concurrency.version_attribute(declaring_entity) is not None
+        ):
+            raise WritePlanningError(
+                f"{instruction.target.entity!r}: a predicate write on a versioned or temporal "
+                "target has no readless template — it must materialize to keyed writes before "
+                "reaching planning (m-opt-lock; ADR 0014); this is a caller wiring defect"
+            )
+        if instruction.mutation not in _READLESS_VERBS:
+            raise WritePlanningError(
+                f"{instruction.target.entity!r}: a readless predicate {instruction.mutation!r} "
+                "names a milestone, and every legal milestone target materializes to keyed "
+                "writes before planning (m-batch-write 'Predicate-selected readless forms')"
+            )
+        target = PredicateTarget(predicate=instruction.target.predicate)
+        if instruction.mutation == "delete":
+            return (
+                PlannedDelete(
+                    entity=entity.identity,
+                    target=target,
+                    concurrency=UNVERSIONED,
+                    affected_rows=ANY_COUNT,
+                ),
+            )
+        members = resolved.applicable_members(entity)
+        assignment_row = {
+            _assignment_member(assignment.attr): assignment.value
+            for assignment in instruction.assignments
+        }
+        return (
+            PlannedUpdate(
+                entity=entity.identity,
+                target=target,
+                assignments=self._assignments(entity, members, assignment_row),
+                concurrency=UNVERSIONED,
+                affected_rows=ANY_COUNT,
+            ),
+        )
+
+    def _settle_insert(
+        self,
+        entity: EntityMetadata,
+        members: Mapping[str, AttributeIdentity | ValueObjectIdentity],
+        instruction: KeyedWrite,
+        version_attr: AttributeIdentity | None,
+    ) -> PlannedInsert:
+        entries = tuple(
+            InsertEntry(
+                row=self._planned_row(entity, members, row, version_attr), origin=NEW_LINEAGE
+            )
+            for row in instruction.rows
+        )
+        return PlannedInsert(entity=entity.identity, entries=entries)
+
+    def _settle_temporal(
+        self,
+        entity: EntityMetadata,
+        declaring_entity: EntityMetadata,
+        instruction: KeyedWrite,
+        resolved: Targets,
+        observation: WriteObservation | None,
+        concurrency: Concurrency,
+        tx_instant: TransactionInstant,
+    ) -> tuple[PlannedStep, ...]:
+        """One temporal mutation as its close and its successors, in that order.
+
+        Each row of a milestone chain opens its own successors, so a temporal
+        write settles one row at a time: `m-batch-write` never collapses a
+        temporal entity, and reaching here with several rows is a caller
+        wiring defect.
+        """
+        if len(instruction.rows) != 1:
+            raise WritePlanningError(
+                f"multi-row temporal {instruction.mutation!r} on {entity.identity.name!r} "
+                f"({len(instruction.rows)} rows): a temporal keyed write settles one row at a "
+                "time (m-txtime-write / m-bitemp-write) — the set-based batch collapse never "
+                "applies to a temporal entity's own milestone chain (m-batch-write)"
+            )
+        topology = self._temporal.topology(declaring_entity, instruction.mutation)
+        observed = observation if isinstance(observation, TemporalObservation) else None
+        if topology.closure is not None and observed is None:
+            raise WritePlanningError(
+                f"{entity.identity.name!r}: a temporal {instruction.mutation!r} closes the "
+                "current milestone, and every close requires the Temporal Observation it "
+                "addresses, gates on, and carries state forward from (m-unit-work; m-opt-lock)"
+            )
+        if observed is not None:
+            # The REAL licensing check: an engine-supplied observation is
+            # latest-pinned by construction, but a developer's own historical
+            # or edge-pinned `Transaction.find` took its read lock on a row a
+            # locking-mode close would never reach.
+            self._concurrency.check_locking_license(concurrency, observed.transaction_time_basis)
+        valid_axis = declaring_entity.as_of_axis(TemporalDimension.VALID_TIME)
+        tx_axis = _tx_time_axis(declaring_entity)
+        axes = TemporalAxes(
+            transaction_start=tx_axis.start_attribute.name,
+            transaction_end=tx_axis.end_attribute.name,
+            valid_start=None if valid_axis is None else valid_axis.start_attribute.name,
+            valid_end=None if valid_axis is None else valid_axis.end_attribute.name,
+        )
+        # Reaching a temporal mutation is what makes the attempt capture its
+        # instant; the close's new Transaction-Time end and every successor's
+        # fresh start derive from that one value.
+        instant = tx_instant.value()
+        members = resolved.applicable_members(entity)
+        steps: list[PlannedStep] = []
+        if topology.closure is not None:
+            assert observed is not None  # refused above
+            gate = self._gate(declaring_entity, topology.closure.gate_basis, observed, concurrency)
+            steps.append(
+                _close(
+                    entity,
+                    declaring_entity,
+                    resolved,
+                    identity=instruction.rows[0],
+                    observed_valid_end=(
+                        None
+                        if valid_axis is None
+                        else observed.predecessor.member(valid_axis.end_attribute.name)
+                    ),
+                    cause=topology.closure.cause,
+                    gate=gate,
+                    instant=instant,
+                )
+            )
+        steps.extend(
+            PlannedInsert(
+                entity=entity.identity,
+                entries=(
+                    InsertEntry(
+                        row=self._planned_row(entity, members, milestone.members, None),
+                        origin=milestone.origin,
+                    ),
+                ),
+            )
+            for milestone in expand_milestone(
+                topology,
+                axes,
+                transaction_instant=instant,
+                authored=instruction.rows[0],
+                valid_from=instruction.valid_from,
+                until=instruction.until,
+                predecessor=None if observed is None else observed.predecessor,
+            )
+        )
+        return tuple(steps)
+
+    def _gate(
+        self,
+        declaring_entity: EntityMetadata,
+        gate_basis: TemporalDimension,
+        observed: TemporalObservation,
+        concurrency: Concurrency,
+    ) -> TemporalConcurrency:
+        """The settled gate decision one close carries.
+
+        Optimistic mode binds the observed start of the axis the facet names
+        as its gate basis — the version analogue for an entity carrying no
+        version column. Locking mode records the explicit ungated decision,
+        whose shared read lock is what makes the close correct instead.
+        """
+        if not self._concurrency.gates(concurrency):
+            return UNGATED
+        axis = next(axis for axis in _as_of_axes(declaring_entity) if axis.dimension is gate_basis)
+        return TemporalGate(
+            start_attribute=axis.start_attribute,
+            observed_start=observed.predecessor.member(axis.start_attribute.name),
+        )
+
+    def _observed_version(
+        self,
+        entity: EntityMetadata,
+        instruction: KeyedWrite,
+        version_attr: AttributeIdentity | None,
+        observation: WriteObservation | None,
+    ) -> int | None:
+        """The version an addressed write against a versioned row advances
+        from, or ``None`` for an unversioned target.
+
+        A row-carried version value is refused BEFORE the observation is even
+        required: the version is framework-owned end to end, so it is never an
+        alternative source, observed or not. The observation itself is
+        required in both concurrency modes, because the framework never
+        issues a resolving read on behalf of a keyed write.
+        """
+        if version_attr is None:
+            return None
+        if instruction.mutation == "update" and version_attr.name in instruction.rows[0]:
+            self._concurrency.reject_authored_version(entity.identity, version_attr)
+        return self._concurrency.require_version(entity.identity, observation)
+
+    def _settle_concurrency(
+        self,
+        version_attr: AttributeIdentity | None,
+        observed_version: int | None,
+        concurrency: Concurrency,
+    ) -> NonTemporalConcurrency:
+        """The settled concurrency decision one addressed non-temporal write
+        carries.
+
+        An unversioned target has nothing to gate on. A versioned one binds
+        its observation as a gate under optimistic mode and records an
+        explicit `Ungated` decision under locking, whose shared read lock is
+        what makes the write correct instead (ADR 0047).
+        """
+        if version_attr is None or observed_version is None:
+            return UNVERSIONED
+        if not self._concurrency.gates(concurrency):
+            return Versioned(gate=UNGATED)
+        return Versioned(
+            gate=VersionGate(attribute=version_attr, observed_version=observed_version)
+        )
+
+    def _planned_row(
+        self,
+        entity: EntityMetadata,
+        members: Mapping[str, AttributeIdentity | ValueObjectIdentity],
+        row: Mapping[str, object],
+        version_attr: AttributeIdentity | None,
+    ) -> PlannedRow:
+        """One write row as its finalized semantic contents.
+
+        A versioned Entity's row derives the INITIAL version at its own
+        Attribute (`m-opt-lock`), ignoring any value the row carries: the
+        version is framework-owned end to end (ADR 0013), and the initial
+        value is a constant rather than an observation.
+        """
+        attributes, value_objects = self._resolve(entity, members, row, context="insert")
+        if version_attr is not None:
+            attributes[version_attr] = self._concurrency.initial_version()
+        return PlannedRow(attributes=attributes, value_objects=value_objects)
+
+    def _update_assignments(
+        self,
+        entity: EntityMetadata,
+        members: Mapping[str, AttributeIdentity | ValueObjectIdentity],
+        instruction: KeyedWrite,
+        key_attributes: tuple[AttributeIdentity, ...],
+        version_attr: AttributeIdentity | None,
+        observed_version: int | None,
+    ) -> PlannedAssignments:
+        """The replacement values an addressed update writes.
+
+        Key members address the write rather than change it, so they never
+        appear among the assignments. A collapsed multi-row update assigns
+        identical values to every key it addresses (`m-batch-write` refuses to
+        collapse anything else), so the first row settles the whole step's
+        assignments. A versioned target advances the version in BOTH modes,
+        which is why the advance is an assignment rather than a gate member.
+        """
+        key_names = frozenset(attribute.name for attribute in key_attributes)
+        row = instruction.rows[0]
+        assigned = {name: value for name, value in row.items() if name not in key_names}
+        assignments = self._assignments(entity, members, assigned)
+        if version_attr is None or observed_version is None:
+            return assignments
+        return PlannedAssignments(
+            attributes={
+                **assignments.attributes,
+                version_attr: self._concurrency.advance(observed_version),
+            },
+            value_objects=assignments.value_objects,
+        )
+
+    def _assignments(
+        self,
+        entity: EntityMetadata,
+        members: Mapping[str, AttributeIdentity | ValueObjectIdentity],
+        row: Mapping[str, object],
+    ) -> PlannedAssignments:
+        attributes, value_objects = self._resolve(entity, members, row, context="update")
+        return PlannedAssignments(attributes=attributes, value_objects=value_objects)
+
+    def _resolve(
+        self,
+        entity: EntityMetadata,
+        members: Mapping[str, AttributeIdentity | ValueObjectIdentity],
+        row: Mapping[str, object],
+        *,
+        context: str,
+    ) -> tuple[dict[AttributeIdentity, PlannedValue], dict[ValueObjectIdentity, object]]:
+        """``row``'s cells under their resolved member identities."""
+        attributes: dict[AttributeIdentity, PlannedValue] = {}
+        value_objects: dict[ValueObjectIdentity, object] = {}
+        for name, value in row.items():
+            member = members.get(name)
+            if member is None:
+                raise WritePlanningError(
+                    f"{entity.identity.name!r}: write row names {name!r}, which is not a member "
+                    "of the Entity's family"
+                )
+            if isinstance(member, ValueObjectIdentity):
+                value_objects[member] = value
+            else:
+                attributes[member] = _cell(entity, name, value, context)
+        return attributes, value_objects
+
+
+def plan_temporal_close(
+    identity: Mapping[str, object],
+    entity_name: str,
+    model: Metamodel,
+    concurrency: Concurrency,
+    concurrency_strategy: ConcurrencyStrategy,
+    tx_instant: TransactionInstant,
+    observed_tx_start: object | None,
+    observed_valid_end: object | None = None,
+) -> PlannedClose:
+    """A STANDALONE temporal milestone close — the `m-opt-lock` conflict lane's
+    own probe.
+
+    Every real close-bearing mutation chains at least one successor, and a
+    conflict probe deliberately runs only the close, so it settles one here
+    directly rather than through a full :class:`WritePlanner` pipeline.
+    ``identity`` is the row the address keys on, ``observed_valid_end``
+    completes that address on a Bitemporal target, and ``observed_tx_start``
+    is the gate candidate; a probe names all three explicitly rather than
+    reading them from a tracked milestone. The cause it records is
+    supersession — what a real mutation's own close performs, and whose
+    successors the probe deliberately does not run.
+
+    Structurally separate from :meth:`WritePlanner.plan` (which stays the
+    entire caller-visible *pipeline* surface): this is one atomic close
+    settlement with no coalescing, batching, or ordering to do, callable
+    without a full flush. ``concurrency_strategy`` is the SAME adapter a
+    production ``WritePlanner`` was constructed with, so the two can never
+    disagree about a gate decision.
+    """
+    resolved = targets(model)
+    entity = _require_entity(resolved, entity_name)
+    declaring_entity = resolved.declaring(entity)
+    gate: TemporalConcurrency = UNGATED
+    if observed_tx_start is not None:
+        concurrency_strategy.check_locking_license(concurrency, LATEST_PINNED)
+        if concurrency_strategy.gates(concurrency):
+            gate = TemporalGate(
+                start_attribute=_tx_time_axis(declaring_entity).start_attribute,
+                observed_start=observed_tx_start,
+            )
+    return _close(
+        entity,
+        declaring_entity,
+        resolved,
+        identity=identity,
+        observed_valid_end=observed_valid_end,
+        cause=SUPERSEDED,
+        gate=gate,
+        instant=tx_instant.value(),
+    )
+
+
+def _close(
+    entity: EntityMetadata,
+    declaring_entity: EntityMetadata,
+    resolved: Targets,
+    *,
+    identity: Mapping[str, object],
+    observed_valid_end: object | None,
+    cause: CloseCause,
+    gate: TemporalConcurrency,
+    instant: str,
+) -> PlannedClose:
+    """One settled close of the current milestone ``identity`` addresses.
+
+    Its assignments carry the Transaction-Time end alone — a close ends a
+    milestone's currency and revises no represented value — and it expects
+    exactly one row in every mode: a close reaching none would otherwise chain
+    a duplicate or an orphaned current row, so the shortfall is an outcome
+    rather than a silent success.
+    """
+    key_attributes = tuple(a.identity for a in resolved.family_primary_key(entity))
+    return PlannedClose(
+        entity=entity.identity,
+        target=MilestoneTarget(
+            key_attributes=key_attributes,
+            key_values=_key_tuple(entity, key_attributes, identity),
+            end_attributes=tuple(axis.end_attribute for axis in _as_of_axes(declaring_entity)),
+            end_values=_end_values(entity, declaring_entity, observed_valid_end),
+        ),
+        assignments=PlannedAssignments(
+            attributes={_tx_time_axis(declaring_entity).end_attribute: instant}
+        ),
+        cause=cause,
+        concurrency=gate,
+        affected_rows=ExactCount(expected=1, on_shortfall=shortfall_for(gate)),
+    )
+
+
+def _end_values(
+    entity: EntityMetadata, declaring_entity: EntityMetadata, observed_valid_end: object | None
+) -> tuple[TemporalUpperBound, ...]:
+    """One exclusive upper bound per As-Of Axis, in canonical order.
+
+    Transaction Time is invariantly `Infinity`, which is what keeps an
+    operational close on a row still current. Valid Time is whatever the
+    observed predecessor carries — `Infinity` for a rectangle running to the
+    open bound, and a finite instant for a bounded one a prior split left
+    behind, so binding a constant on both axes would silently miss every
+    bounded sibling.
+    """
+    values: list[TemporalUpperBound] = []
+    for axis in _as_of_axes(declaring_entity):
+        if axis.dimension is TemporalDimension.TRANSACTION_TIME:
+            values.append(INFINITY)
+        elif observed_valid_end is None:
+            raise WritePlanningError(
+                f"bitemporal close on {entity.identity.name!r}: no observed Valid-Time end "
+                "supplied — a Bitemporal milestone address needs one exclusive upper bound "
+                "per As-Of Axis (m-bitemp-write 'Address and gate are separate')"
+            )
+        elif observed_valid_end == INFINITY_LITERAL:
+            values.append(INFINITY)
+        else:
+            values.append(Finite(instant=observed_valid_end))
+    return tuple(values)
+
+
+def _as_of_axes(declaring_entity: EntityMetadata) -> tuple[AsOfAxisMetadata, ...]:
+    """``declaring_entity``'s declared As-Of Axes in canonical order."""
+    valid_axis = declaring_entity.as_of_axis(TemporalDimension.VALID_TIME)
+    tx_axis = _tx_time_axis(declaring_entity)
+    return (tx_axis,) if valid_axis is None else (valid_axis, tx_axis)
+
+
+def _tx_time_axis(declaring_entity: EntityMetadata) -> AsOfAxisMetadata:
+    axis = declaring_entity.as_of_axis(TemporalDimension.TRANSACTION_TIME)
+    if axis is None:  # pragma: no cover - callers guard on a temporal declaring Entity
+        raise WritePlanningError(f"{declaring_entity.identity.canonical}: no Transaction-Time axis")
+    return axis
+
+
+def _require_entity(resolved: Targets, spelling: str) -> EntityMetadata:
+    entity = resolved.entity(spelling)
+    if entity is None:
+        raise WritePlanningError(f"{spelling!r}: not a declared Entity of the accepted Metamodel")
+    return entity
+
+
+def _key_target(
+    entity: EntityMetadata,
+    key_attributes: tuple[AttributeIdentity, ...],
+    rows: Sequence[Mapping[str, object]],
+) -> KeyTarget:
+    """The rows an addressed keyed write selects, one aligned value tuple each."""
+    return KeyTarget(
+        key_attributes=key_attributes,
+        key_values=tuple(_key_tuple(entity, key_attributes, row) for row in rows),
+    )
+
+
+def _key_tuple(
+    entity: EntityMetadata,
+    key_attributes: tuple[AttributeIdentity, ...],
+    row: Mapping[str, object],
+) -> tuple[object, ...]:
+    """One addressed row's aligned primary-key values.
+
+    A row that omits a key member addresses nothing, so it is refused here
+    rather than settled into a target with a missing value.
+    """
+    values: list[object] = []
+    for attribute in key_attributes:
+        if attribute.name not in row:
+            raise WritePlanningError(
+                f"{entity.identity.name!r}: an addressed write row omits the primary-key "
+                f"member {attribute.name!r}, so it selects no row"
+            )
+        values.append(row[attribute.name])
+    return tuple(values)
+
+
+def _cell(entity: EntityMetadata, name: str, value: object, context: str) -> PlannedValue:
+    """``value`` as a planned cell: an ordinary literal, or the closed
+    generated-value expression its DB-computed marker names.
+
+    Each `m-pk-gen` allocation is legal only where the statement that renders
+    it can express it: `max` folds into the row an insert opens, and the
+    registry advance reads the very row an update revises. Reaching the other
+    position names no allocation this target supports, and is refused here
+    rather than settled wrongly.
+    """
+    marker = _marker(value)
+    if marker is None:
+        return value
+    kind, payload = marker
+    if kind == "computed" and context == "insert":
+        if payload != "maxPlusOne":
+            raise WritePlanningError(
+                f"unsupported DB-computed marker on {entity.identity.name!r}.{name}: "
+                f"{payload!r} is not a recognized `computed` strategy (m-pk-gen)"
+            )
+        return MAX_PLUS_ONE
+    if kind == "increment" and context == "update":
+        return SelfIncrement(amount=cast("int", payload))
+    raise WritePlanningError(
+        f"unsupported DB-computed marker on {entity.identity.name!r}.{name}: a {kind!r} "
+        f"marker is not recognized for {context} planning"
+    )
+
+
+def _marker(value: object) -> tuple[str, object] | None:
+    """``value``'s ``(marker key, payload)`` when it is shaped as a DB-computed
+    marker, else ``None``. A differently shaped mapping is an ordinary literal."""
+    if not isinstance(value, Mapping):
+        return None
+    marker = cast("Mapping[str, object]", value)
+    if len(marker) != 1:
+        return None
+    key = next(iter(marker))
+    return (key, marker[key]) if key in _MARKER_KEYS else None
+
+
+def _assignment_member(attr: str) -> str:
+    """The declared member name of an assignment's ``Class.member`` reference."""
+    _, _, member = attr.rpartition(".")
+    return member
+
+
+def _merge_update_into_insert(
+    insert: KeyedWrite, update: KeyedWrite, resolved: Targets
+) -> KeyedWrite:
+    """Overlay ``update``'s non-key row fields onto ``insert``'s row.
+
+    The coalesced write keeps the insert's mutation verb and Valid-Time bounds
+    (so it still opens a current milestone / fully-current rectangle at
+    settling per temporal flavor) but carries the FINAL values — no
+    ``INSERT`` + ``UPDATE``.
+    """
+    entity = resolved.entity(insert.entity)
+    pk_names: set[str] = (
+        set() if entity is None else {a.identity.name for a in resolved.family_primary_key(entity)}
+    )
+    merged = dict(insert.rows[0])
+    for name, value in update.rows[0].items():
+        if name not in pk_names:
+            merged[name] = value
+    return KeyedWrite(
+        mutation=insert.mutation,
+        entity=insert.entity,
+        rows=(merged,),
+        valid_from=insert.valid_from,
+        until=insert.until,
+    )
+
+
+def _merge_rows(run: Sequence[KeyedWrite]) -> KeyedWrite:
+    """One multi-row :class:`KeyedWrite` carrying every row of ``run``'s
+    single-row instructions, in run (buffer) order — the same
+    entity/mutation/Valid-Time bounds every member of the run already shares."""
+    first = run[0]
+    return KeyedWrite(
+        mutation=first.mutation,
+        entity=first.entity,
+        rows=tuple(row for w in run for row in w.rows),
+        valid_from=first.valid_from,
+        until=first.until,
+    )
+
+
+def _fk_ranks(model: Metamodel) -> dict[EntityIdentity, int]:
+    """A topological rank per entity: a referenced entity ranks before its
+    referencer.
+
+    A ``many-to-one`` relationship means the source holds the foreign key
+    (source after related); a ``one-to-many`` means the related entity holds
+    it (related after source). ``one-to-one`` contributes no FK-order edge
+    because its storage owner is ambiguous. Ties break by the accepted
+    model's own canonical Entity order; a (defensive) cycle falls back to it
+    too.
+
+    Only DEFINING declarations contribute: a reverse declaration names a
+    defining one rather than repeating it, and the inverted direction it
+    denotes yields the very edge the defining side already contributed, so
+    reading both would add nothing and would need the paired cardinality this
+    scope cannot see. Every declared target is an accepted Entity of this
+    model, so an edge always lands on a ranked position.
+    """
+    identities = [entity.identity for entity in model.entities]
+    prereqs: dict[EntityIdentity, set[EntityIdentity]] = {
+        identity: set() for identity in identities
+    }
+    for entity in model.entities:
+        for declaration in entity.declared_relationships:
+            if not isinstance(declaration, DefiningRelationshipDeclaration):
+                continue
+            related = declaration.join.target.entity
+            if declaration.cardinality is Cardinality.MANY_TO_ONE:
+                prereqs[entity.identity].add(related)
+            elif declaration.cardinality is Cardinality.ONE_TO_MANY:
+                prereqs[related].add(entity.identity)
+    remaining = set(identities)
+    order: list[EntityIdentity] = []
+    while remaining:
+        ready = [i for i in identities if i in remaining and not (prereqs[i] & remaining)]
+        if not ready:
+            # Defensive: reachable models are acyclic; a cycle keeps declaration order.
+            order.extend(i for i in identities if i in remaining)  # pragma: no cover
+            break  # pragma: no cover
+        order.append(ready[0])
+        remaining.discard(ready[0])
+    return {identity: rank for rank, identity in enumerate(order)}
+
+
+def _instruction_entity(instruction: WriteInstruction) -> str:
+    if isinstance(instruction, KeyedWrite):
+        return instruction.entity
+    # A readless predicate write is always a barrier in `_order`, never a
+    # region member `rank`/`mutation` resolves against, so this arm exists
+    # only to keep the match exhaustive over the closed WriteInstruction type.
+    return instruction.target.entity  # pragma: no cover
+
+
+def _is_empty_keyed_update(instruction: WriteInstruction, resolved: Targets) -> bool:
+    if not isinstance(instruction, KeyedWrite) or instruction.mutation not in _UPDATE_VERBS:
+        return False
+    entity = resolved.entity(instruction.entity)
+    if entity is None:
+        return False
+    pk_names = {a.identity.name for a in resolved.family_primary_key(entity)}
+    return all(all(key in pk_names for key in row) for row in instruction.rows)

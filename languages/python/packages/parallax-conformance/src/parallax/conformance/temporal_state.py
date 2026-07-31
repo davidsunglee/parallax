@@ -32,7 +32,6 @@ from parallax.core.unit_work import (
     PredecessorRow,
     TemporalAxes,
     TemporalObservation,
-    TemporalStrategy,
     expand_milestone,
 )
 
@@ -132,9 +131,12 @@ class TemporalShadow:
         is_bitemporal = isinstance(
             temporal_read.view(model).shape(entity.identity), temporal_read.Bitemporal
         )
-        strategy: TemporalStrategy = (
-            bitemp_write.RECTANGLE_SPLIT if is_bitemporal else txtime_write.MILESTONE_CHAIN
-        )
+        # Each facet's own `topology(mutation)` is single-param — the
+        # entity-aware dispatch between the two facets belongs to the
+        # composition root's `TemporalStrategy` adapter, which this
+        # engine-internal tracker performs itself since it already has the
+        # entity in hand.
+        strategy = bitemp_write.RECTANGLE_SPLIT if is_bitemporal else txtime_write.MILESTONE_CHAIN
         topology = strategy.topology(instruction.mutation)
         opened = expand_milestone(
             topology,

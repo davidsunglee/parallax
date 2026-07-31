@@ -65,18 +65,20 @@ from parallax.core.unit_work import (
     MissingTargetError,
     ObjectKey,
     OptimisticLockConflictError,
+    PlanningRequest,
     PredicateWrite,
     StaleWriteError,
+    SubjectIdentity,
     TransactionInstant,
     VersionObservation,
     WriteAssignment,
     WriteEffectError,
     WriteObservation,
+    WritePlanningError,
     WriteRejectedError,
     enforce_affected_rows,
     instructions,
     object_key,
-    plan_flush,
     validate_write,
 )
 from parallax.core.unit_work.instructions import WriteInstruction
@@ -87,7 +89,7 @@ from parallax.snapshot import handle, materialize
 from parallax.snapshot.handle import (
     TransactionTimePinReadOnlyError,
     WriteLoweringError,
-    collapse_group_key,
+    build_write_planner,
     find,
     find_history,
     stream_lowered,
@@ -644,17 +646,17 @@ def _resolve_graph_pointer(
 # --------------------------------------------------------------------------- #
 # Scenario / writeSequence — the unit-of-work write lanes (m-unit-work).       #
 # --------------------------------------------------------------------------- #
-# A write step is one unit of work: its buffered keyed writes are planned
-# (coalesce -> FK-order -> elide, ``m-unit-work``) and each surviving
-# :class:`PlannedWrite` is settled and lowered to DML by the shared
-# ``snapshot.handle.stream_lowered`` seam — the deliberate ``m-sql`` write edge the
-# conformance family may compose (the import-side DAG exemption). A **scenario** is
-# a *sequence* of units of work: a write step commits (or, ``rollback: true``,
-# aborts) its coalesced DML, then a ``find`` reads committed state through the read
-# path. A **writeSequence** lowers each entry independently — no cross-entry
-# coalescing (an insert-then-delete pair across two entries is two round trips, not
-# a cancellation) — and each entry is its OWN
-# transaction (not "the whole sequence in one transaction").
+# A write step is one unit of work: its buffered keyed writes are planned by
+# the SAME ``build_write_planner`` factory production uses (``m-unit-work``)
+# and each surviving :class:`~parallax.core.unit_work.PlannedWrite` is lowered
+# to DML by the shared ``snapshot.handle.stream_lowered`` seam — the deliberate
+# ``m-sql`` write edge the conformance family may compose (the import-side DAG
+# exemption). A **scenario** is a *sequence* of units of work: a write step
+# commits (or, ``rollback: true``, aborts) its coalesced DML, then a ``find``
+# reads committed state through the read path. A **writeSequence** lowers each
+# entry independently — no cross-entry coalescing (an insert-then-delete pair
+# across two entries is two round trips, not a cancellation) — and each entry
+# is its OWN transaction (not "the whole sequence in one transaction").
 #
 # The RUN lane executes
 # every write choreography unit — a writeSequence entry, a scenario write step, a
@@ -663,10 +665,11 @@ def _resolve_graph_pointer(
 # through the neutral ``Transaction._buffer`` route + ``UnitOfWork.observe`` (never
 # the typed instance verbs, which this engine's case-driven metamodel has no
 # compiled classes for). The COMPILE lane still lowers PURELY (no database,
-# ``plan_flush`` / ``stream_lowered``) — that pure lowering is ALSO what the RUN
-# lane's emissions/round-trips observation grades against, since both are the
-# SAME deterministic computation over the SAME instructions/observations/instant
-# (`_resolve_entries` / `_lower_resolved` below are the shared core).
+# ``build_write_planner(...).plan`` / ``stream_lowered``) — that pure lowering is
+# ALSO what the RUN lane's emissions/round-trips observation grades against,
+# since both are the SAME deterministic computation over the SAME
+# instructions/observations/instant (`_resolve_entries` / `_lower_resolved`
+# below are the shared core).
 
 # The lowering failures the write lanes convert to a neutral :class:`EngineError`,
 # so the adapter reports a ``*-failed`` diagnostic rather than leaking a lower-layer
@@ -681,6 +684,7 @@ def _resolve_graph_pointer(
 _LOWERING_ERRORS: Final[tuple[type[Exception], ...]] = (
     instructions.WriteInstructionError,
     WriteLoweringError,
+    WritePlanningError,
     inheritance.InheritanceError,
     opt_lock.UnobservedVersionError,
     opt_lock.HistoricalObservationError,
@@ -698,6 +702,12 @@ _LOWERING_ERRORS: Final[tuple[type[Exception], ...]] = (
 # unit), so a fixed, deterministic instant stands in (`m-txtime-write` / ADR 0010:
 # "a non-temporal entry's clock value is inert, pick something deterministic").
 _INERT_CLOCK_INSTANT: Final[str] = "1970-01-01T00:00:00+00:00"
+
+# The compile lane's own audit-neutral Subject Identity: this lane never opens
+# a real Principal boundary, and a Planning Request requires one regardless
+# (`m-unit-work`) — the harness proves the value is never inspected, so any
+# nonempty constant serves every pure re-lowering call below identically.
+_PLANNING_SUBJECT: Final[SubjectIdentity] = SubjectIdentity("conformance-compile-lane")
 
 
 def _pinned_instant(tx_instant: str) -> TransactionInstant:
@@ -1431,11 +1441,9 @@ def _lower_resolved(
     concurrency: Concurrency,
     tx_instant: str,
 ) -> tuple[Statement, ...]:
-    """Plan one write buffer (coalesce / collapse / FK-order / elide) and lower
-    each survivor — PURE, no database. ``collapse=batch_write.collapses`` and
-    ``collapse_group=collapse_group_key`` are injected identically to the
-    composition layer's own production wiring
-    (`parallax.snapshot.handle.Database.transact`), so the planner is the ONE
+    """Plan one write buffer through the SAME ``build_write_planner`` factory
+    the composition layer uses (`parallax.snapshot.handle.Database.transact`)
+    and lower each survivor — PURE, no database. The planner is the ONE
     authority that merges a case entry's rows: every entry arrives as its own
     per-row instructions, and which of them share a statement is decided HERE,
     per physical shape, by the same `batch_write.collapses` eligibility answer
@@ -1454,17 +1462,16 @@ def _lower_resolved(
     }
     model = case_model(meta)
     instant = _pinned_instant(tx_instant)
-    plan = plan_flush(
-        buffer,
-        observations,
-        instant,
-        model,
-        collapse=batch_write.collapses,
-        collapse_group=collapse_group_key,
+    plan = build_write_planner(model).plan(
+        PlanningRequest(
+            subject_identity=_PLANNING_SUBJECT,
+            transaction_instant=instant,
+            concurrency=concurrency,
+            buffered_writes=buffer,
+            observations=observations,
+        )
     )
-    statements = [
-        statement for _step, statement in stream_lowered(plan, model, dialect, concurrency)
-    ]
+    statements = [statement for _step, statement in stream_lowered(plan, model, dialect)]
     _check_statement_count_consistency(entries, len(statements))
     return tuple(statements)
 
@@ -1493,9 +1500,8 @@ def _lower_predicate_write_step(
     """Lower a READLESS scenario predicate-write step (`m-batch-write-005`/
     ``-006``) to its ONE statement — PURE, no database. Deserializes +
     validates the canonical instruction, then reuses the SAME
-    ``plan_flush`` -> ``stream_lowered`` seam every other write path does
-    (`collapse=batch_write.collapses` injected identically, though the
-    collapse stage is a structural no-op for a lone predicate write).
+    ``build_write_planner`` -> ``stream_lowered`` seam every other write path
+    does (batching is a structural no-op for a lone predicate write).
 
     Validation runs against a DECODED copy of the instruction
     (:func:`_decoded_predicate_write`) — an assignment value may carry a case
@@ -1504,13 +1510,13 @@ def _lower_predicate_write_step(
     itself, the one this function actually lowers, stays exactly as authored:
     this is a compile-time PURE re-lowering whose emitted bind is graded
     byte-exact against the case's own golden, so decoding must never leak
-    into the value that reaches finalization.
+    into the value that reaches planning.
 
     A MATERIALIZING predicate write never reaches here: its case carries
     ``compileEligibility: run-only``, which short-circuits at
     :func:`eligibility` before the compile lane ever calls this — reaching
     this seam with one is therefore always a caller wiring defect, surfaced as
-    finalization's own defensive :class:`WriteLoweringError`.
+    planning's own defensive :class:`~parallax.core.unit_work.WritePlanningError`.
     """
     instruction = instructions.deserialize(_canonical_predicate_doc(raw_write))
     assert isinstance(instruction, PredicateWrite)  # a predicate-shaped step always builds this
@@ -1519,17 +1525,16 @@ def _lower_predicate_write_step(
     # A readless predicate write declares no Transaction-Time boundary, so the
     # inert instant it carries is never captured (ADR 0010).
     instant = _pinned_instant(_INERT_CLOCK_INSTANT)
-    plan = plan_flush(
-        [instruction],
-        {},
-        instant,
-        model,
-        collapse=batch_write.collapses,
-        collapse_group=collapse_group_key,
+    plan = build_write_planner(model).plan(
+        PlanningRequest(
+            subject_identity=_PLANNING_SUBJECT,
+            transaction_instant=instant,
+            concurrency=concurrency,
+            buffered_writes=[instruction],
+            observations={},
+        )
     )
-    statements = [
-        statement for _step, statement in stream_lowered(plan, model, dialect, concurrency)
-    ]
+    statements = [statement for _step, statement in stream_lowered(plan, model, dialect)]
     assert len(statements) == 1  # a readless predicate write is always exactly one statement
     return statements[0]
 
@@ -3553,27 +3558,24 @@ def _lower_conflict_write(
     resolved: Sequence[_ConflictWrite],
 ) -> tuple[Statement, ...]:
     """PURE-lower one NON-TEMPORAL conflict attempt's resolved ``write`` rows:
-    plan the whole buffer and lower every survivor.
-
-    ``collapse=batch_write.collapses`` and ``collapse_group=collapse_group_key``
-    are injected identically to the composition layer's own production wiring
-    (`parallax.snapshot.handle.Database.transact`), so a MULTI-KEY attempt
-    reports the ONE set-based statement its real execution emits rather than the
-    per-row statements an uncollapsed plan would have rendered.
+    plan the whole buffer through the SAME ``build_write_planner`` factory the
+    composition layer uses (`parallax.snapshot.handle.Database.transact`) and
+    lower every survivor, so a MULTI-KEY attempt reports the ONE set-based
+    statement its real execution emits rather than the per-row statements an
+    uncollapsed plan would have rendered.
     """
     model = case_model(meta)
     instant = _pinned_instant(_INERT_CLOCK_INSTANT)
-    plan = plan_flush(
-        [write.instruction for write in resolved],
-        _conflict_write_observations(resolved),
-        instant,
-        model,
-        collapse=batch_write.collapses,
-        collapse_group=collapse_group_key,
+    plan = build_write_planner(model).plan(
+        PlanningRequest(
+            subject_identity=_PLANNING_SUBJECT,
+            transaction_instant=instant,
+            concurrency=concurrency,
+            buffered_writes=[write.instruction for write in resolved],
+            observations=_conflict_write_observations(resolved),
+        )
     )
-    return tuple(
-        statement for _step, statement in stream_lowered(plan, model, dialect, concurrency)
-    )
+    return tuple(statement for _step, statement in stream_lowered(plan, model, dialect))
 
 
 def _implied_shortfall_error(
