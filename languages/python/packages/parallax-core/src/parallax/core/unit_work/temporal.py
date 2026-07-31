@@ -40,7 +40,7 @@ from parallax.core.unit_work.strategy import (
     ValidTimeWindow,
 )
 
-__all__ = ["OpenedMilestone", "TemporalAxes", "expand_milestone"]
+__all__ = ["SuccessorRow", "TemporalAxes", "expand_milestone"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -58,8 +58,8 @@ class TemporalAxes:
 
 
 @dataclass(frozen=True, slots=True)
-class OpenedMilestone:
-    """One successor resolved into the whole milestone row it opens.
+class SuccessorRow:
+    """One Milestone Successor resolved into its concrete row and Insert Origin.
 
     ``members`` is Attribute-named and complete — every carried member, every
     authored change, and every axis bound the mutation stamps — so it is both
@@ -80,7 +80,7 @@ def expand_milestone(
     valid_from: object | None = None,
     until: object | None = None,
     predecessor: PredecessorRow | None = None,
-) -> tuple[OpenedMilestone, ...]:
+) -> tuple[SuccessorRow, ...]:
     """The milestones ``topology`` opens for one predecessor and authored row.
 
     Every opened row carries the fresh Transaction-Time interval
@@ -88,7 +88,7 @@ def expand_milestone(
     is written, whatever Valid-Time window it covers.
     """
     return tuple(
-        OpenedMilestone(
+        SuccessorRow(
             origin=_origin(successor.state, predecessor),
             members=_members(
                 successor.state,
