@@ -153,7 +153,7 @@ from parallax.core.unit_work.strategy import (
     ValidTimeBound,
     ValidTimeWindow,
 )
-from parallax.core.unit_work.temporal import OpenedMilestone, TemporalAxes, expand_milestone
+from parallax.core.unit_work.temporal import SuccessorRow, TemporalAxes, expand_milestone
 from parallax.core.unit_work.uow import (
     Concurrency,
     EscapedTransactionError,
@@ -237,7 +237,6 @@ __all__ = [
     "NonTemporalConcurrency",
     "ObjectKey",
     "OpenEnd",
-    "OpenedMilestone",
     "OptimisticConflict",
     "OptimisticLockConflictError",
     "PlannedAssignments",
@@ -260,6 +259,7 @@ __all__ = [
     "Shortfall",
     "StaleWrite",
     "StaleWriteError",
+    "SuccessorRow",
     "SuccessorState",
     "Superseded",
     "SystemClock",
