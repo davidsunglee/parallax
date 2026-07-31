@@ -5,9 +5,9 @@ topology, concurrency decision, and expected effect are all settled, so SQL
 lowering answers a purely physical question about it. The algebra is **closed**
 and **semantic** — it carries Attribute and Value Object identities, never a
 physical column, dialect object, driver value, or SQL fragment — and it admits
-no generic disposition field: an Insert Origin exists only on an insert entry,
-so a label a variant could contradict is unrepresentable rather than merely
-invalid.
+no generic disposition field: an Insert Origin exists only on an insert entry
+and a Close Cause only on a close, so a termination cause on an inserted row and
+a lineage-start origin on a close are unrepresentable rather than merely invalid.
 """
 
 from __future__ import annotations
@@ -19,29 +19,40 @@ from typing import Final
 
 from parallax.core.metamodel import AttributeIdentity, EntityIdentity, ValueObjectIdentity
 from parallax.core.op_algebra import Operation
+from parallax.core.unit_work.observe import PredecessorRow
 
 __all__ = [
     "ANY_COUNT",
+    "INFINITY",
     "MAX_PLUS_ONE",
     "MISSING_TARGET",
     "NEW_LINEAGE",
     "OPTIMISTIC_CONFLICT",
     "STALE_WRITE",
+    "SUPERSEDED",
+    "TERMINATED",
     "UNGATED",
     "UNVERSIONED",
     "AffectedRows",
     "AnyCount",
+    "CarriedFrom",
+    "ChangedFrom",
+    "CloseCause",
     "ExactCount",
+    "Finite",
     "GeneratedValueExpression",
+    "Infinity",
     "InsertEntry",
     "InsertOrigin",
     "KeyTarget",
     "MaxPlusOne",
+    "MilestoneTarget",
     "MissingTarget",
     "NewLineage",
     "NonTemporalConcurrency",
     "OptimisticConflict",
     "PlannedAssignments",
+    "PlannedClose",
     "PlannedDelete",
     "PlannedInsert",
     "PlannedRow",
@@ -52,6 +63,11 @@ __all__ = [
     "SelfIncrement",
     "Shortfall",
     "StaleWrite",
+    "Superseded",
+    "TemporalConcurrency",
+    "TemporalGate",
+    "TemporalUpperBound",
+    "Terminated",
     "Ungated",
     "Unversioned",
     "VersionGate",
@@ -115,7 +131,31 @@ class NewLineage:
 
 NEW_LINEAGE: Final[NewLineage] = NewLineage()
 
-type InsertOrigin = NewLineage
+
+@dataclass(frozen=True, slots=True)
+class CarriedFrom:
+    """An insert whose represented state is its predecessor's, unchanged.
+
+    A Bitemporal head or tail survivor and the surviving rectangles of a
+    terminate all carry state this way: the mutation moved where the state
+    applies without altering it.
+    """
+
+    predecessor: PredecessorRow
+
+
+@dataclass(frozen=True, slots=True)
+class ChangedFrom:
+    """An insert whose represented state revises its predecessor's.
+
+    The authored change set is overlaid on the predecessor, so the entry retains
+    both what changed and what it changed from.
+    """
+
+    predecessor: PredecessorRow
+
+
+type InsertOrigin = NewLineage | CarriedFrom | ChangedFrom
 """Where one insert entry's represented state came from.
 
 Origin belongs to each entry rather than to the whole step or to a parallel
@@ -291,7 +331,73 @@ class PredicateTarget:
     predicate: Operation
 
 
-type WriteTarget = KeyTarget | PredicateTarget
+@dataclass(frozen=True, slots=True)
+class Finite:
+    """A finite exclusive upper bound on one As-Of Axis."""
+
+    instant: object
+
+
+@dataclass(frozen=True, slots=True)
+class Infinity:
+    """The open exclusive upper bound: the axis runs on without end."""
+
+
+INFINITY: Final[Infinity] = Infinity()
+
+type TemporalUpperBound = Finite | Infinity
+"""One axis's write-required exclusive upper bound in a Milestone Target."""
+
+
+@dataclass(frozen=True, slots=True)
+class MilestoneTarget:
+    """The current milestone slot one close addresses.
+
+    The address is one complete key tuple plus one exclusive upper bound per
+    As-Of Axis, in canonical axis order: the observed predecessor's Valid-Time
+    end where that axis exists, and the invariant `Infinity` for Transaction
+    Time. The Valid-Time end may be finite — a bounded rectangle a prior split
+    left behind — and binding a constant `Infinity` on both axes would address
+    the open rectangle and silently miss every bounded sibling.
+
+    It carries no axis start, gate, observation, or concurrency mode, and it is
+    derived identically in both concurrency modes; only the gate differs.
+    """
+
+    key_attributes: tuple[AttributeIdentity, ...]
+    key_values: tuple[object, ...]
+    end_attributes: tuple[AttributeIdentity, ...]
+    end_values: tuple[TemporalUpperBound, ...]
+
+    def __post_init__(self) -> None:
+        if not self.key_attributes:
+            raise ValueError("a Milestone Target names at least one primary-key Attribute")
+        if len(self.key_values) != len(self.key_attributes):
+            raise ValueError(
+                "a Milestone Target addresses one complete key tuple: expected "
+                f"{len(self.key_attributes)} value(s), got {len(self.key_values)}"
+            )
+        for value in self.key_values:
+            if value is None or isinstance(value, Mapping):
+                raise ValueError(
+                    f"a Milestone Target's key values are concrete and non-null, and {value!r} "
+                    "is not"
+                )
+        if not self.end_attributes:
+            raise ValueError(
+                "a Milestone Target names one exclusive upper bound per As-Of Axis, and a "
+                "temporal target declares at least one"
+            )
+        if len(set(self.end_attributes)) != len(self.end_attributes):
+            raise ValueError("a Milestone Target names each As-Of Axis end at most once")
+        if len(self.end_values) != len(self.end_attributes):
+            raise ValueError(
+                "a Milestone Target binds one upper bound per named axis end: expected "
+                f"{len(self.end_attributes)} value(s), got {len(self.end_values)}"
+            )
+
+
+type WriteTarget = KeyTarget | PredicateTarget | MilestoneTarget
 """The semantic row selection of a Planned Write, distinct from observed
 predecessor state and from any concurrency condition."""
 
@@ -310,6 +416,20 @@ class VersionGate:
 
 
 @dataclass(frozen=True, slots=True)
+class TemporalGate:
+    """The extra equality predicate an optimistic-mode close renders.
+
+    A temporal Entity carries no version column, so the observed
+    Transaction-Time start of the milestone being closed is the version
+    analogue: a concurrently chained current row carries a newer start and the
+    gate matches nothing.
+    """
+
+    start_attribute: AttributeIdentity
+    observed_start: object
+
+
+@dataclass(frozen=True, slots=True)
 class Ungated:
     """The explicit decision that a step renders no gate predicate.
 
@@ -319,6 +439,13 @@ class Ungated:
 
 
 UNGATED: Final[Ungated] = Ungated()
+
+type TemporalConcurrency = TemporalGate | Ungated
+"""The settled concurrency decision a Planned Close carries.
+
+Every close requires a temporal observation, so a close has no unversioned case
+and carries the gate decision directly.
+"""
 
 
 @dataclass(frozen=True, slots=True)
@@ -401,8 +528,8 @@ type AffectedRows = AnyCount | ExactCount
 carries before lowering."""
 
 
-def shortfall_for(concurrency: NonTemporalConcurrency) -> Shortfall:
-    """How a shortfall against an addressed Non-Temporal write classifies.
+def shortfall_for(concurrency: NonTemporalConcurrency | TemporalConcurrency) -> Shortfall:
+    """How a shortfall against an addressed write classifies.
 
     Classification follows the settled **gate**, never the verb (ADR 0044/0047):
     a gated shortfall is the detected lost update a re-read could resolve; an
@@ -410,12 +537,20 @@ def shortfall_for(concurrency: NonTemporalConcurrency) -> Shortfall:
     outcome, since no gate could have caused it; and an observation-free keyed
     write observed nothing, so its shortfall says only that the addressed rows
     are not there. One decision therefore admits exactly one classification,
-    which is why a Planned Update and a Planned Delete derive it here rather
-    than accepting it.
+    which is why every addressed step derives it here rather than accepting it.
+
+    The rule is uniform across update, delete, and close, so a versioned write's
+    decision and a close's bare gate decision answer through one function.
     """
-    if not isinstance(concurrency, Versioned):
-        return MISSING_TARGET
-    return OPTIMISTIC_CONFLICT if isinstance(concurrency.gate, VersionGate) else STALE_WRITE
+    match concurrency:
+        case Unversioned():
+            return MISSING_TARGET
+        case Versioned(gate):
+            return OPTIMISTIC_CONFLICT if isinstance(gate, VersionGate) else STALE_WRITE
+        case TemporalGate():
+            return OPTIMISTIC_CONFLICT
+        case Ungated():
+            return STALE_WRITE
 
 
 def _settle(
@@ -427,6 +562,13 @@ def _settle(
     """Refuse a target, concurrency decision, and expected effect that cannot
     describe one row selection together."""
     match target:
+        case MilestoneTarget():
+            raise ValueError(
+                f"{entity.canonical}: a Milestone Target addresses a temporal milestone, so it "
+                "belongs to a Planned Close — a temporal change expands into a close plus its "
+                "Planned Insert successors and never survives as an in-place revision or a "
+                "physical deletion"
+            )
         case PredicateTarget():
             if not isinstance(concurrency, Unversioned) or not isinstance(affected_rows, AnyCount):
                 raise ValueError(
@@ -496,5 +638,62 @@ class PlannedDelete:
         _settle(self.entity, self.target, self.concurrency, self.affected_rows)
 
 
-type PlannedWrite = PlannedInsert | PlannedUpdate | PlannedDelete
+@dataclass(frozen=True, slots=True)
+class Superseded:
+    """The closed milestone was replaced by newer represented state."""
+
+
+SUPERSEDED: Final[Superseded] = Superseded()
+
+
+@dataclass(frozen=True, slots=True)
+class Terminated:
+    """The closed milestone's represented state ended.
+
+    A Bitemporal terminate may still leave head or tail survivors; the cause
+    records the absence the mutation created, and each survivor is
+    independently carried.
+    """
+
+
+TERMINATED: Final[Terminated] = Terminated()
+
+type CloseCause = Superseded | Terminated
+"""Why one current milestone stopped being current."""
+
+
+@dataclass(frozen=True, slots=True)
+class PlannedClose:
+    """The close of one current temporal milestone.
+
+    Its assignments carry the Transaction-Time end alone: a close ends a
+    milestone's currency and revises no represented value, because the new state
+    arrives as its Planned Insert successors. Its expected effect is always
+    exactly one row — a close that reaches none would otherwise chain a
+    duplicate or an orphaned current row.
+    """
+
+    entity: EntityIdentity
+    target: MilestoneTarget
+    assignments: PlannedAssignments
+    cause: CloseCause
+    concurrency: TemporalConcurrency
+    affected_rows: ExactCount
+
+    def __post_init__(self) -> None:
+        if self.affected_rows.expected != 1:
+            raise ValueError(
+                f"{self.entity.canonical}: a Planned Close addresses one current milestone, so "
+                f"it expects exactly one row and this policy expects {self.affected_rows.expected}"
+            )
+        expected = shortfall_for(self.concurrency)
+        if self.affected_rows.on_shortfall != expected:
+            raise ValueError(
+                f"{self.entity.canonical}: the concurrency decision classifies a shortfall as "
+                f"{type(expected).__name__}, and this policy says "
+                f"{type(self.affected_rows.on_shortfall).__name__}"
+            )
+
+
+type PlannedWrite = PlannedInsert | PlannedUpdate | PlannedClose | PlannedDelete
 """The closed algebra of finalized semantic execution steps."""

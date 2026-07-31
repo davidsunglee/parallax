@@ -273,7 +273,7 @@ _OPT_LOCK_AND_PK_GEN_WRITE_SEQUENCES: Final[frozenset[str]] = frozenset(
 # one UPDATE per distinct key, `batch_write.update_collapses`'s own
 # uniform-value check). It compiles as two
 # independent single-row keyed updates, neither versioned nor pk-gen-managed,
-# so neither needs `lower_write`'s multi-row refusal.
+# so neither needs finalization's multi-row refusal.
 #
 # Batch-collapse write sequences (`m-batch-write`, "Set-based flush") cover the
 # multi-row INSERT and uniform-value

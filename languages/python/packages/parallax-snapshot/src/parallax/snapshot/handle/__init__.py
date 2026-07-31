@@ -5,8 +5,8 @@ flush planner (``m-unit-work``) **and** SQL generation (``m-sql`` / ``m-dialect`
 the module DAG forbids ``m-unit-work`` from importing ``m-sql`` (why the planner
 emits a neutral :class:`~parallax.core.unit_work.FlushPlan`) and forbids ``m-sql``
 from importing ``m-unit-work``, so the write-DML → SQL lowering — the deliberate
-``m-sql`` edge M3 deferred — is composed **here**. :func:`lower_write` is the single
-lowering function; both the developer transaction path (the injected
+``m-sql`` edge M3 deferred — is composed **here**. :func:`stream_lowered` is the
+single lowering function; both the developer transaction path (the injected
 ``FlushExecutor``) and the conformance engine reuse it (the conformance family is
 the import-side DAG exemption), so there is exactly one write-lowering seam.
 
@@ -29,10 +29,14 @@ public-surface check promises. Where the exported names live:
   (:class:`Snapshot`, :class:`Execution`, :class:`ExecutedStatement`,
   :class:`FindResult`, :class:`HistoryFindResult`, :class:`MilestoneGraph`,
   :class:`NoResultFound`, :class:`TooManyResultsFound`).
-- :mod:`~parallax.snapshot.handle._write_lowering` — :func:`lower_write` and the
-  ``m-opt-lock`` conflict lane's :func:`lower_temporal_close`. A family whose
-  write finalization has landed crosses ``_finalize`` and ``_step_lowering``
-  from here instead of the instruction-shaped dispatch.
+- :mod:`~parallax.snapshot.handle._write_lowering` — :func:`stream_lowered`, which
+  composes ``_finalize`` and ``_step_lowering`` into the one seam a flush plan
+  becomes DML through.
+- :mod:`~parallax.snapshot.handle._step_lowering` — :func:`lower_step`, the
+  physical half on its own, for the ``m-opt-lock`` conflict lane's standalone
+  close probe.
+- :mod:`~parallax.snapshot.handle._finalize` — :func:`plan_temporal_close`, the
+  semantic half of that same probe.
 - :mod:`~parallax.snapshot.handle._write_types` — :class:`WriteLoweringError` and
   :class:`LoweredStatement`.
 - :mod:`~parallax.snapshot.handle._write_inputs` —
@@ -44,10 +48,9 @@ public-surface check promises. Where the exported names live:
   physical-shape batch-grouping key the composition root and the conformance
   engine inject into ``plan_flush`` beside ``m-batch-write``'s collapse policy.
 
-The five modules behind no exported name (``_wrap``, ``_family``,
-``_predicate_writes``, ``_finalize``, ``_step_lowering``) are reached only
-through the modules above; each documents its own place in the package's acyclic
-internal graph.
+The three modules behind no exported name (``_wrap``, ``_family``,
+``_predicate_writes``) are reached only through the modules above; each documents
+its own place in the package's acyclic internal graph.
 """
 
 from __future__ import annotations
@@ -57,6 +60,7 @@ from parallax.snapshot.handle._database import (
     TransactionOptionConflictError,
     connect,
 )
+from parallax.snapshot.handle._finalize import plan_temporal_close
 from parallax.snapshot.handle._keyed_sql import collapse_group_key
 from parallax.snapshot.handle._read import (
     ExecutedStatement,
@@ -70,12 +74,13 @@ from parallax.snapshot.handle._read import (
     find,
     find_history,
 )
+from parallax.snapshot.handle._step_lowering import lower_step
 from parallax.snapshot.handle._transaction import Transaction
 from parallax.snapshot.handle._write_inputs import (
     TransactionTimePinReadOnlyError,
     validate_source_pin,
 )
-from parallax.snapshot.handle._write_lowering import lower_temporal_close, lower_write
+from parallax.snapshot.handle._write_lowering import stream_lowered
 from parallax.snapshot.handle._write_types import LoweredStatement, WriteLoweringError
 
 __all__ = [
@@ -97,7 +102,8 @@ __all__ = [
     "connect",
     "find",
     "find_history",
-    "lower_temporal_close",
-    "lower_write",
+    "lower_step",
+    "plan_temporal_close",
+    "stream_lowered",
     "validate_source_pin",
 ]

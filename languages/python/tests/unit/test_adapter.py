@@ -827,7 +827,7 @@ def test_run_case_runs_a_genuine_batch_collapse_write() -> None:
     # `m-batch-write` "Set-based flush") and whose SECOND entry batches a
     # uniform-value UPDATE over an `IN`-list: the
     # engine passes each row list through as one multi-row instruction, and
-    # `lower_write` renders it end to end — two `execute_write` calls total.
+    # the lowering seam renders it end to end — two `execute_write` calls total.
     case_path = case_format.default_cases_dir() / "m-batch-write-001-set-based-flush.yaml"
     port = _WriteAndReadBackPort()
     envelope = adapter.run_case(case_path, "postgres", port)

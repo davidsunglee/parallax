@@ -20,9 +20,17 @@ partial.
 The Write Plan's own contract is here too: an empty Planned Steps is the one
 canonical result for a flush that survives nothing, and Planned Steps is a
 logical sequence whose views compare by value rather than by object identity.
+
+The temporal slice adds its own: a Milestone Target belongs to a Planned Close
+alone, a close expects exactly one row, and the address it names is complete —
+one exclusive upper bound per As-Of Axis, in canonical order, independent of the
+gate the concurrency mode decided.
 """
 
 from __future__ import annotations
+
+from collections.abc import Callable
+from typing import cast
 
 import pytest
 
@@ -30,19 +38,26 @@ from parallax.core.metamodel import AttributeIdentity, EntityIdentity, ValueObje
 from parallax.core.op_algebra import All
 from parallax.core.unit_work import (
     ANY_COUNT,
+    INFINITY,
     MAX_PLUS_ONE,
     MISSING_TARGET,
     NEW_LINEAGE,
+    NO_AUDIT,
     OPTIMISTIC_CONFLICT,
     STALE_WRITE,
+    SUPERSEDED,
     UNGATED,
     UNVERSIONED,
     AffectedRows,
+    AuditStrategy,
     ExactCount,
+    Finite,
     InsertEntry,
     KeyTarget,
+    MilestoneTarget,
     NonTemporalConcurrency,
     PlannedAssignments,
+    PlannedClose,
     PlannedDelete,
     PlannedInsert,
     PlannedRow,
@@ -52,6 +67,8 @@ from parallax.core.unit_work import (
     PredicateTarget,
     SelfIncrement,
     Shortfall,
+    TemporalConcurrency,
+    TemporalGate,
     Versioned,
     VersionGate,
     WritePlan,
@@ -351,3 +368,179 @@ def test_planned_steps_expose_their_writes_in_execution_order() -> None:
     assert len(plan.steps) == 2
     assert plan.steps[0] == first
     assert list(plan.steps) == [first, second]
+
+
+# --------------------------------------------------------------------------- #
+# The temporal slice: the milestone slot a close addresses, and its effect.    #
+# --------------------------------------------------------------------------- #
+_TX_START = AttributeIdentity(_ACCOUNT, "tx_start")
+_TX_END = AttributeIdentity(_ACCOUNT, "tx_end")
+_VALID_END = AttributeIdentity(_ACCOUNT, "valid_end")
+
+_CURRENT_SLOT = MilestoneTarget(
+    key_attributes=(_ID,),
+    key_values=(1,),
+    end_attributes=(_TX_END,),
+    end_values=(INFINITY,),
+)
+_CLOSES_AT = PlannedAssignments(attributes={_TX_END: "2024-09-01T00:00:00+00:00"})
+
+
+def _close(
+    target: MilestoneTarget = _CURRENT_SLOT,
+    concurrency: TemporalConcurrency = UNGATED,
+    affected_rows: ExactCount | None = None,
+) -> PlannedClose:
+    return PlannedClose(
+        entity=_ACCOUNT,
+        target=target,
+        assignments=_CLOSES_AT,
+        cause=SUPERSEDED,
+        concurrency=concurrency,
+        affected_rows=affected_rows
+        or ExactCount(expected=1, on_shortfall=shortfall_for(concurrency)),
+    )
+
+
+@pytest.mark.parametrize(
+    "step",
+    [PlannedUpdate, PlannedDelete],
+    ids=["update", "delete"],
+)
+def test_an_in_place_step_may_not_address_a_milestone(step: object) -> None:
+    # A temporal change expands into a close plus its Planned Insert successors,
+    # so a Milestone Target on an in-place revision or a physical deletion is
+    # unconstructible rather than merely unusual.
+    kwargs: dict[str, object] = {
+        "entity": _ACCOUNT,
+        "target": _CURRENT_SLOT,
+        "concurrency": UNVERSIONED,
+        "affected_rows": ExactCount(expected=1, on_shortfall=MISSING_TARGET),
+    }
+    if step is PlannedUpdate:
+        kwargs["assignments"] = _BALANCE_SET
+    with pytest.raises(ValueError, match="belongs to a Planned Close"):
+        cast("Callable[..., object]", step)(**kwargs)
+
+
+def test_a_close_expects_exactly_one_row() -> None:
+    with pytest.raises(ValueError, match="addresses one current milestone"):
+        _close(affected_rows=ExactCount(expected=2, on_shortfall=STALE_WRITE))
+
+
+@pytest.mark.parametrize(
+    ("concurrency", "expected"),
+    [
+        (UNGATED, STALE_WRITE),
+        (TemporalGate(start_attribute=_TX_START, observed_start="2024-01-01"), OPTIMISTIC_CONFLICT),
+    ],
+    ids=["ungated", "gated"],
+)
+def test_a_close_classifies_its_shortfall_by_the_settled_gate(
+    concurrency: TemporalConcurrency, expected: Shortfall
+) -> None:
+    settled = _close(concurrency=concurrency)
+    assert settled.affected_rows == ExactCount(expected=1, on_shortfall=expected)
+    with pytest.raises(ValueError, match="classifies a shortfall as"):
+        _close(
+            concurrency=concurrency,
+            affected_rows=ExactCount(
+                expected=1,
+                on_shortfall=STALE_WRITE if expected is OPTIMISTIC_CONFLICT else MISSING_TARGET,
+            ),
+        )
+
+
+def test_a_historical_optimistic_close_still_addresses_the_current_slot() -> None:
+    # The address and the concurrency condition are separate facts: an
+    # optimistic write based on a historical observation keeps Transaction-Time
+    # `Infinity` in its target — copying the finite historical end there would
+    # mutate already-closed history — while the stale observed start rides the
+    # gate and matches nothing.
+    step = _close(
+        concurrency=TemporalGate(
+            start_attribute=_TX_START, observed_start="2023-01-01T00:00:00+00:00"
+        )
+    )
+    assert step.target.end_values == (INFINITY,)
+    assert step.target == _CURRENT_SLOT
+    assert step.affected_rows.on_shortfall == OPTIMISTIC_CONFLICT
+
+
+def test_a_bitemporal_target_binds_one_upper_bound_per_axis_in_canonical_order() -> None:
+    target = MilestoneTarget(
+        key_attributes=(_ID,),
+        key_values=(1,),
+        end_attributes=(_VALID_END, _TX_END),
+        end_values=(Finite(instant="2024-06-01T00:00:00+00:00"), INFINITY),
+    )
+    assert target.end_attributes[-1] == _TX_END
+    assert target.end_values[-1] == INFINITY
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "match"),
+    [
+        (
+            {
+                "key_attributes": (),
+                "key_values": (),
+                "end_attributes": (_TX_END,),
+                "end_values": (INFINITY,),
+            },
+            "at least one primary-key Attribute",
+        ),
+        (
+            {
+                "key_attributes": (_ID, _OWNER),
+                "key_values": (1,),
+                "end_attributes": (_TX_END,),
+                "end_values": (INFINITY,),
+            },
+            "one complete key tuple",
+        ),
+        (
+            {
+                "key_attributes": (_ID,),
+                "key_values": (None,),
+                "end_attributes": (_TX_END,),
+                "end_values": (INFINITY,),
+            },
+            "concrete and non-null",
+        ),
+        (
+            {"key_attributes": (_ID,), "key_values": (1,), "end_attributes": (), "end_values": ()},
+            "one exclusive upper bound per As-Of Axis",
+        ),
+        (
+            {
+                "key_attributes": (_ID,),
+                "key_values": (1,),
+                "end_attributes": (_TX_END, _TX_END),
+                "end_values": (INFINITY, INFINITY),
+            },
+            "each As-Of Axis end at most once",
+        ),
+        (
+            {
+                "key_attributes": (_ID,),
+                "key_values": (1,),
+                "end_attributes": (_TX_END,),
+                "end_values": (),
+            },
+            "one upper bound per named axis end",
+        ),
+    ],
+    ids=["no-key", "incomplete-key", "null-key", "no-axis", "repeated-axis", "unbound-axis"],
+)
+def test_an_incomplete_milestone_address_is_refused(kwargs: dict[str, object], match: str) -> None:
+    with pytest.raises(ValueError, match=match):
+        cast("Callable[..., object]", MilestoneTarget)(**kwargs)
+
+
+def test_the_audit_port_decorates_nothing_by_default() -> None:
+    # Pipeline stage 8 exists as a seam from the start, so provenance decoration
+    # becomes a change of injected adapter rather than a change of interface.
+    step = PlannedInsert(entity=_ACCOUNT, entries=(_entry(PlannedRow(attributes={_ID: 1})),))
+    assert NO_AUDIT.decorate(step) == step
+    assert isinstance(NO_AUDIT, AuditStrategy)

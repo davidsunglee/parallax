@@ -20,7 +20,7 @@ from parallax.core.dialect import POSTGRES
 from parallax.core.metamodel import EntityIdentity, EntityMetadata, Metamodel
 from parallax.core.sql_gen import Statement
 from parallax.core.unit_work import BufferItem, KeyedWrite, plan_flush
-from parallax.snapshot.handle import collapse_group_key, lower_write
+from parallax.snapshot.handle import collapse_group_key, stream_lowered
 
 _MODELS = models.load_models()
 
@@ -51,9 +51,7 @@ def _flush_and_lower(buffer: list[BufferItem], model: Metamodel) -> list[Stateme
         collapse_group=collapse_group_key,
     )
     return [
-        lowered.statement
-        for planned in plan.writes
-        for lowered in lower_write(planned, model, POSTGRES, "locking", instant)
+        lowered.statement for _step, lowered in stream_lowered(plan, model, POSTGRES, "locking")
     ]
 
 

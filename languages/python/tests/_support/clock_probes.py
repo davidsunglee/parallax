@@ -2,7 +2,7 @@
 
 A real flush gets its :class:`~parallax.core.unit_work.TransactionInstant` from
 the unit of work that owns the attempt. A suite that calls ``plan_flush`` or
-``lower_write`` directly builds one here instead, over the same ``FixedClock`` a
+the lowering seam directly builds one here instead, over the same ``FixedClock`` a
 deterministic ``Database`` is built with — so an assertion over rendered SQL sees
 exactly the literal a production flush at that instant would bind.
 

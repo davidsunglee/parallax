@@ -7,10 +7,12 @@ close/chain consumes, but the framework itself never issues an implicit resolvin
 read for one (`core/spec/m-txtime-write.md` / `m-bitemp-write.md`: "the engine
 supplies observed rows from case state"). This module is the engine-side tracker
 that makes that observation available WITHOUT a database round trip — fixtures (for
-a case that loads them) seed it, and each temporal write's own neutral milestone
-plan (:mod:`parallax.core.txtime_write` / :mod:`parallax.core.bitemp_write`, the SAME
-pure planning functions the production render seam calls) advances it, so COMPILE
-and RUN consume the identical in-memory state.
+a case that loads them) seed it, and each temporal write advances it through the
+SAME neutral topology (:mod:`parallax.core.txtime_write` /
+:mod:`parallax.core.bitemp_write`) and the SAME expansion
+(:func:`~parallax.core.unit_work.expand_milestone`) production finalization uses,
+so COMPILE and RUN consume the identical in-memory state and the tracker can never
+disagree with the rendered SQL.
 
 Non-normative engine-internal bookkeeping: never serialized, never a
 :class:`~parallax.core.unit_work.WriteInstruction` field, never consulted by
@@ -25,7 +27,14 @@ from collections.abc import Mapping, Sequence
 
 from parallax.core import bitemp_write, inheritance, temporal_read, txtime_write
 from parallax.core.metamodel import EntityMetadata, Metamodel, PrimaryKey, TemporalDimension
-from parallax.core.unit_work import KeyedWrite, PredecessorRow, TemporalObservation
+from parallax.core.unit_work import (
+    KeyedWrite,
+    PredecessorRow,
+    TemporalAxes,
+    TemporalObservation,
+    TemporalStrategy,
+    expand_milestone,
+)
 
 __all__ = ["AmbiguousObservationError", "TemporalShadow"]
 
@@ -111,29 +120,40 @@ class TemporalShadow:
         observed: TemporalObservation | None,
     ) -> None:
         """Replace this pk's tracked current milestone(s) with the newly OPENED
-        rows the SAME planning function (:mod:`parallax.core.txtime_write` /
-        :mod:`parallax.core.bitemp_write`) the render seam calls computes —
-        never a separately re-derived arithmetic, so the tracker and the
-        rendered SQL can never disagree (m-txtime-write.md / m-bitemp-write.md
-        "the engine supplies observed rows from case state")."""
+        rows the SAME topology (:mod:`parallax.core.txtime_write` /
+        :mod:`parallax.core.bitemp_write`) and the SAME expansion production
+        finalization applies compute — never a separately re-derived arithmetic,
+        so the tracker and the rendered SQL can never disagree (m-txtime-write.md
+        / m-bitemp-write.md "the engine supplies observed rows from case
+        state")."""
         entity_name = entity.identity.name
         pk_names = _primary_key_names(model, entity)
         key = self._key(entity_name, pk_names, instruction.rows[0])
         is_bitemporal = isinstance(
             temporal_read.view(model).shape(entity.identity), temporal_read.Bitemporal
         )
-        plan_fn = bitemp_write.plan if is_bitemporal else txtime_write.plan
-        milestone_plan = plan_fn(instruction, model, entity, tx_instant, observed)
-        opened = [
-            step for step in milestone_plan.steps if isinstance(step, txtime_write.MilestoneOpen)
-        ]
+        strategy: TemporalStrategy = (
+            bitemp_write.RECTANGLE_SPLIT if is_bitemporal else txtime_write.MILESTONE_CHAIN
+        )
+        topology = strategy.topology(instruction.mutation)
+        opened = expand_milestone(
+            topology,
+            _axes(model, entity, bitemporal=is_bitemporal),
+            transaction_instant=tx_instant,
+            authored=instruction.rows[0],
+            valid_from=instruction.valid_from,
+            until=instruction.until,
+            predecessor=None if observed is None else observed.predecessor,
+        )
         if not opened:
             self._current.pop(key, None)  # a terminate/terminateUntil closes with no chain
             return
-        # An opened row is the whole milestone the plan just wrote, axis bounds
-        # included, so it is exactly the Predecessor Row a later step observes.
+        # An opened row is the whole milestone the mutation just wrote, axis
+        # bounds included, so it is exactly the Predecessor Row a later step
+        # observes.
         self._current[key] = [
-            TemporalObservation(predecessor=PredecessorRow(members=step.row)) for step in opened
+            TemporalObservation(predecessor=PredecessorRow(members=milestone.members))
+            for milestone in opened
         ]
 
     @staticmethod
@@ -146,6 +166,20 @@ def _axis_names(
 ) -> tuple[str, str]:
     """``entity``'s family-effective Attribute names for one temporal dimension."""
     return txtime_write.axis_attr_names(model, entity, dimension)
+
+
+def _axes(model: Metamodel, entity: EntityMetadata, *, bitemporal: bool) -> TemporalAxes:
+    """The Attribute names ``entity``'s family bounds its milestone intervals with."""
+    tx_start, tx_end = _axis_names(model, entity, TemporalDimension.TRANSACTION_TIME)
+    if not bitemporal:
+        return TemporalAxes(transaction_start=tx_start, transaction_end=tx_end)
+    valid_start, valid_end = _axis_names(model, entity, TemporalDimension.VALID_TIME)
+    return TemporalAxes(
+        transaction_start=tx_start,
+        transaction_end=tx_end,
+        valid_start=valid_start,
+        valid_end=valid_end,
+    )
 
 
 def _primary_key_names(model: Metamodel, entity: EntityMetadata) -> list[str]:

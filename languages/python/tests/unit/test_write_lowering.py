@@ -1,6 +1,6 @@
 """Write-DML lowering unit tests (the composition seam, m-sql write DML).
 
-``parallax.snapshot.handle.lower_write`` is the single write-lowering function both
+``parallax.snapshot.handle.stream_lowered`` is the single write-lowering seam both
 the developer transaction path and the conformance engine reuse. These tests pin
 its byte-exact non-temporal keyed emissions against the corpus goldens
 (``m-unit-work-001/003/005``, ``m-opt-lock-002/005/006/013``,
@@ -36,6 +36,7 @@ from collections.abc import Mapping
 import pytest
 
 from _support.clock_probes import inert_instant
+from _support.lowering_probes import lower_planned
 from parallax.conformance import models
 from parallax.core import inheritance, opt_lock, storage_layout
 from parallax.core import op_algebra as oa
@@ -80,7 +81,7 @@ from parallax.core.unit_work import (
 from parallax.core.unit_work.planned import PlannedWrite as PlannedStep
 from parallax.descriptor import _records
 from parallax.descriptor._records import Metamodel
-from parallax.snapshot.handle import WriteLoweringError, lower_write
+from parallax.snapshot.handle import WriteLoweringError, stream_lowered
 from parallax.snapshot.handle._finalize import finalize_item
 from parallax.snapshot.handle._step_lowering import lower_step
 
@@ -109,12 +110,11 @@ def _lower(
     model = models.accepted_model(meta)
     return [
         lowered.statement
-        for lowered in lower_write(
+        for lowered in lower_planned(
             PlannedWrite(instruction=instruction, observation=observation),
             model,
             dialect,
             concurrency,
-            inert_instant(),
         )
     ]
 
@@ -130,9 +130,7 @@ def _flush_and_lower(
     instant = inert_instant()
     plan = plan_flush(buffer, observations or {}, instant, model)
     return [
-        lowered.statement
-        for planned in plan.writes
-        for lowered in lower_write(planned, model, POSTGRES, concurrency, instant)
+        lowered.statement for _step, lowered in stream_lowered(plan, model, POSTGRES, concurrency)
     ]
 
 
@@ -402,8 +400,8 @@ def test_versioned_delete_shortfall_classifies_by_gate_not_by_mutation() -> None
         instruction=delete, observation=VersionObservation(observed_version=1), expected_affected=1
     )
     model = models.accepted_model(ACCOUNT)
-    locking = lower_write(planned, model, POSTGRES, "locking", inert_instant())[0]
-    optimistic = lower_write(planned, model, POSTGRES, "optimistic", inert_instant())[0]
+    locking = lower_planned(planned, model, concurrency="locking")[0]
+    optimistic = lower_planned(planned, model, concurrency="optimistic")[0]
     assert locking.stale_error is True
     assert optimistic.stale_error is False
 
@@ -645,9 +643,9 @@ def test_insert_then_delete_cancels_to_no_dml() -> None:
 # --------------------------------------------------------------------------- #
 # Forward-error posture — every not-yet-lowered form refused loudly.           #
 # --------------------------------------------------------------------------- #
-def test_materializing_predicate_write_reaching_lower_write_is_refused() -> None:
+def test_materializing_predicate_write_reaching_finalization_is_refused() -> None:
     # A predicate write on a VERSIONED (or temporal) target never reaches
-    # `lower_write` directly in production — materialization decomposes it to
+    # finalization directly in production — materialization decomposes it to
     # per-row keyed writes at BUFFER time (`parallax.snapshot.handle`'s
     # `buffer_predicate`, which the `_where` verbs only delegate to; ADR 0014),
     # before it is ever planned. Reaching here with one is a caller wiring
@@ -683,7 +681,7 @@ def test_inheritance_family_predicate_write_is_rejected_before_sql(
     # The buffer-time seams (`_predicate_writes.buffer_predicate` /
     # `buffer_predicate_instruction`) guard the developer `_where` verbs and the
     # engine's buffering translation — but they are NOT on every road here.
-    # `lower_write` is EXPORTED (`parallax.snapshot.handle.__all__`,
+    # `stream_lowered` is EXPORTED (`parallax.snapshot.handle.__all__`,
     # `tests/api/public_api.json`), and the conformance engine's readless
     # predicate-write step (`engine._lower_predicate_write_step`) reaches it
     # straight from a deserialized instruction. The lowering-side guard must
@@ -728,7 +726,7 @@ def test_milestone_verb_on_a_non_temporal_entity_is_refused() -> None:
 def test_multi_row_insert_collapses_to_one_statement_many_value_tuples() -> None:
     # m-batch-write-001's own insert entry: the multi-row INSERT collapse
     # renders ONE statement with one value tuple per row, in row order —
-    # `lower_multi_insert`'s own m-batch-write set-based flush.
+    # the m-batch-write set-based flush's own multi-entry insert.
     insert = KeyedWrite(
         "insert",
         "Wallet",
@@ -743,7 +741,7 @@ def test_multi_row_insert_collapses_to_one_statement_many_value_tuples() -> None
 
 
 def test_multi_row_insert_on_a_versioned_entity_derives_initial_version_per_row() -> None:
-    # `lower_multi_insert`'s versioned-entity branch mirrors `lower_insert`'s
+    # the multi-entry insert's versioned-entity behavior mirrors the single row's
     # single-row one (`parallax.snapshot.handle`'s keyed-SQL builders): every
     # collapsed row derives the SAME `opt_lock.INITIAL_VERSION` at the version
     # column's own Table Layout slot position, ignoring any row-carried value — a
@@ -921,11 +919,12 @@ def _finalize(
     *,
     observation: WriteObservation | None = None,
     concurrency: Concurrency = "locking",
-) -> tuple[PlannedStep, ...] | None:
+) -> tuple[PlannedStep, ...]:
     return finalize_item(
         PlannedWrite(instruction=instruction, observation=observation),
         models.accepted_model(meta),
         concurrency,
+        inert_instant(),
     )
 
 
@@ -1028,18 +1027,12 @@ def test_a_write_row_naming_no_family_member_is_refused_at_finalization() -> Non
         _finalize(KeyedWrite("insert", "Wallet", ({"id": 10, "nickname": "M"},)), WALLET)
 
 
-@pytest.mark.parametrize(
-    ("instruction", "meta"),
-    [
-        (KeyedWrite("insert", "Balance", ({"id": 1, "value": 5.00},)), BALANCE),
-        (KeyedWrite("terminate", "Balance", ({"id": 1},)), BALANCE),
-    ],
-    ids=["temporal-insert", "temporal-terminate"],
-)
-def test_finalization_declines_a_family_that_still_lowers_from_its_instruction(
-    instruction: WriteInstruction, meta: Metamodel
-) -> None:
-    assert _finalize(instruction, meta) is None
+def test_a_milestone_verb_on_a_non_temporal_entity_is_refused_at_finalization() -> None:
+    # A milestone verb opens, splits, or closes a milestone, and an Entity
+    # declaring no as-of axis has none — refused where the target's family is
+    # resolved, never rendered as an ordinary keyed write.
+    with pytest.raises(WriteLoweringError, match="declares no temporal dimension"):
+        _finalize(KeyedWrite("terminate", "Account", ({"id": 1},)), ACCOUNT)
 
 
 def test_finalization_settles_an_addressed_update_into_target_gate_and_policy() -> None:
@@ -1115,12 +1108,13 @@ def test_finalization_gives_a_readless_predicate_write_an_unbounded_expectation(
     assert step.affected_rows == ANY_COUNT
 
 
-def test_finalization_declines_a_predicate_verb_with_no_readless_template() -> None:
+def test_a_predicate_verb_with_no_readless_template_is_refused() -> None:
     # `terminate` and the `*Until` forms name a milestone, and every temporal
     # target materializes to keyed writes at buffer time, so no readless
-    # statement shape exists for one — it stays with the instruction path rather
-    # than being settled into a step that could not be rendered.
-    assert _finalize(PredicateWrite("terminate", WriteTarget("Wallet", oa.All())), WALLET) is None
+    # statement shape exists for one — refused rather than settled into a step
+    # no statement could render.
+    with pytest.raises(WriteLoweringError, match="names a milestone"):
+        _finalize(PredicateWrite("terminate", WriteTarget("Wallet", oa.All())), WALLET)
 
 
 def test_a_keyed_write_row_omitting_its_primary_key_addresses_nothing() -> None:

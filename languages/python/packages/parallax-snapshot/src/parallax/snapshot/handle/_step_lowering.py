@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 
+from parallax.core.base import INFINITY_LITERAL
 from parallax.core.db_port import JsonDocument
 from parallax.core.dialect import Dialect
 from parallax.core.metamodel import (
@@ -29,15 +30,22 @@ from parallax.core.metamodel import (
 from parallax.core.sql_gen import Statement, compile_write_predicate
 from parallax.core.storage_layout import EntityLayoutView
 from parallax.core.unit_work.planned import (
+    Finite,
     KeyTarget,
     MaxPlusOne,
+    MilestoneTarget,
     NonTemporalConcurrency,
+    PlannedAssignments,
+    PlannedClose,
     PlannedDelete,
     PlannedInsert,
     PlannedUpdate,
     PlannedWrite,
     PredicateTarget,
     SelfIncrement,
+    TemporalConcurrency,
+    TemporalGate,
+    TemporalUpperBound,
     Versioned,
     VersionGate,
     WriteTarget,
@@ -62,6 +70,8 @@ def lower_step(step: PlannedWrite, meta: Metamodel, dialect: Dialect) -> Stateme
             return _lower_insert(step, meta, dialect)
         case PlannedUpdate():
             return _lower_update(step, meta, dialect)
+        case PlannedClose():
+            return _lower_close(step, meta, dialect)
         case PlannedDelete():
             return _lower_delete(step, meta, dialect)
 
@@ -123,9 +133,33 @@ def _lower_update(step: PlannedUpdate, meta: Metamodel, dialect: Dialect) -> Sta
     """
     entity = _entity(meta, step.entity)
     view = _layout(meta, entity)
-    assignment_sql, assignment_binds = _assignment_clause(view, step, meta, entity, dialect)
+    assignment_sql, assignment_binds = _assignment_clause(
+        view, step.assignments, meta, entity, dialect
+    )
     where_sql, where_binds = _target_predicate(view, step.target, entity, meta, dialect)
     gate_sql, gate_binds = _gate(view, step.concurrency, dialect)
+    return Statement(
+        f"update {view.layout.table.name} set {assignment_sql} where {where_sql}{gate_sql}",
+        (*assignment_binds, *where_binds, *gate_binds),
+    )
+
+
+def _lower_close(step: PlannedClose, meta: Metamodel, dialect: Dialect) -> Statement:
+    """`update <table> set <axis end> = ? where <milestone target>[ and <gate>]`.
+
+    Physically this is an update whose target happens to be a milestone slot:
+    the address renders the key, then the table-per-hierarchy tag guard, then
+    one exclusive upper bound per As-Of Axis in canonical order, and only the
+    gate follows — binding last, exactly as a version gate does one clause
+    family over.
+    """
+    entity = _entity(meta, step.entity)
+    view = _layout(meta, entity)
+    assignment_sql, assignment_binds = _assignment_clause(
+        view, step.assignments, meta, entity, dialect
+    )
+    where_sql, where_binds = _target_predicate(view, step.target, entity, meta, dialect)
+    gate_sql, gate_binds = _temporal_gate(view, step.concurrency, entity, dialect)
     return Statement(
         f"update {view.layout.table.name} set {assignment_sql} where {where_sql}{gate_sql}",
         (*assignment_binds, *where_binds, *gate_binds),
@@ -146,7 +180,7 @@ def _lower_delete(step: PlannedDelete, meta: Metamodel, dialect: Dialect) -> Sta
 
 def _assignment_clause(
     view: EntityLayoutView,
-    step: PlannedUpdate,
+    assignments: PlannedAssignments,
     meta: Metamodel,
     entity: EntityMetadata,
     dialect: Dialect,
@@ -155,8 +189,8 @@ def _assignment_clause(
     version_column = None if version is None else _column(view, version.identity, entity)
     cells = _member_cells(
         view,
-        step.assignments.attributes,
-        step.assignments.value_objects,
+        assignments.attributes,
+        assignments.value_objects,
         entity,
         stamp_tag=False,
     )
@@ -190,7 +224,8 @@ def _target_predicate(
     A singleton Key Target keys by equality and a multi-key one by an `IN` list —
     two renderings of one selection, chosen by cardinality alone. Either way the
     table-per-hierarchy tag guard follows the key, because every addressed row of
-    one step is the same concrete subtype.
+    one step is the same concrete subtype. A Milestone Target adds its axis upper
+    bounds after that guard, so the whole address renders before any gate.
     """
     match target:
         case PredicateTarget(predicate):
@@ -200,6 +235,31 @@ def _target_predicate(
             key_sql, key_binds = _key_predicate(view, target, entity, dialect)
             tag_sql, tag_binds = _tag_guard(view, dialect)
             return f"{key_sql}{tag_sql}", (*key_binds, *tag_binds)
+        case MilestoneTarget():
+            columns = [_column(view, attribute, entity) for attribute in target.key_attributes]
+            key_sql = " and ".join(f"{dialect.quote(column)} = ?" for column in columns)
+            tag_sql, tag_binds = _tag_guard(view, dialect)
+            end_sql, end_binds = _axis_ends(view, target, entity, dialect)
+            return (
+                f"{key_sql}{tag_sql}{end_sql}",
+                (*target.key_values, *tag_binds, *end_binds),
+            )
+
+
+def _axis_ends(
+    view: EntityLayoutView, target: MilestoneTarget, entity: EntityMetadata, dialect: Dialect
+) -> _Predicate:
+    """`` and <axis end> = ?`` per As-Of Axis, in the order the target names them."""
+    parts: list[str] = []
+    binds: list[object] = []
+    for attribute, bound in zip(target.end_attributes, target.end_values, strict=True):
+        parts.append(f" and {dialect.quote(_column(view, attribute, entity))} = ?")
+        binds.append(_upper_bound_bind(bound))
+    return "".join(parts), tuple(binds)
+
+
+def _upper_bound_bind(bound: TemporalUpperBound) -> object:
+    return bound.instant if isinstance(bound, Finite) else INFINITY_LITERAL
 
 
 def _key_predicate(
@@ -248,6 +308,24 @@ def _gate(
             f"{view.entity.canonical}: the version gate's Attribute occupies no Column"
         )
     return f" and {dialect.quote(slot.column.name)} = ?", (gate.observed_version,)
+
+
+def _temporal_gate(
+    view: EntityLayoutView,
+    concurrency: TemporalConcurrency,
+    entity: EntityMetadata,
+    dialect: Dialect,
+) -> _Predicate:
+    """`` and <axis start> = ?`` for a gated close, else nothing.
+
+    The gate binds LAST, after the whole address — the same absolute rule a
+    version gate follows, with no inheritance exception for the tag guard the
+    address already rendered.
+    """
+    if not isinstance(concurrency, TemporalGate):
+        return "", ()
+    column = _column(view, concurrency.start_attribute, entity)
+    return f" and {dialect.quote(column)} = ?", (concurrency.observed_start,)
 
 
 def _member_cells(

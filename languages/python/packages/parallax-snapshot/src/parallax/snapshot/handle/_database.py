@@ -7,9 +7,10 @@ callback demarcation — sentinel-backed options, join with the option-conflict
 check, the ``m-auto-retry`` bounded retry loop, and the flush executor it injects
 into the unit of work.
 
-That injected executor is where the package's two halves meet: it lowers each
-planned write through :func:`~parallax.snapshot.handle._write_lowering.lower_write`
-and runs the result on the transaction's own connection, so an abort rolls back
+That injected executor is where the package's two halves meet: it lowers the
+flush plan through
+:func:`~parallax.snapshot.handle._write_lowering.stream_lowered` and runs each
+statement on the transaction's own connection, so an abort rolls back
 force-flushed writes with everything else. ``parallax.core.auto_retry`` may not
 import ``parallax.core.opt_lock``, so the ``retry_optimistic_conflicts`` opt-in's
 classification branch (``_optimistic_conflict_retriable``) is composed here too.
@@ -56,17 +57,19 @@ from parallax.core.unit_work import (
     Concurrency,
     FlushExecutor,
     FlushPlan,
-    KeyedWrite,
-    PlannedWrite,
+    KeyTarget,
+    MilestoneTarget,
+    PlannedInsert,
     RollbackOnlyError,
     SystemClock,
     TransactionSettings,
     UnitOfWork,
     UnitOfWorkError,
     active_unit_of_work,
-    object_key,
     run_unit_of_work,
 )
+from parallax.core.unit_work.planned import PlannedWrite as PlannedStep
+from parallax.core.unit_work.planned import WriteTarget as PlannedTarget
 from parallax.snapshot.handle._keyed_sql import collapse_group_key
 from parallax.snapshot.handle._read import (
     Snapshot,
@@ -79,7 +82,7 @@ from parallax.snapshot.handle._read import (
     snapshot_from_history_result,
 )
 from parallax.snapshot.handle._transaction import Transaction
-from parallax.snapshot.handle._write_lowering import lower_write
+from parallax.snapshot.handle._write_lowering import stream_lowered
 from parallax.snapshot.handle._write_types import LoweredStatement
 
 __all__ = ["Database", "TransactionOptionConflictError", "connect"]
@@ -356,19 +359,17 @@ def _flush_executor(
     dialect: Dialect,
     concurrency: Concurrency,
 ) -> FlushExecutor:
-    """The unit of work's injected flush sink: lower each planned write, execute
-    every lowered statement in order, and enforce each STATEMENT's own
-    affected-rows expectation (`m-opt-lock`; `m-txtime-write`; `m-bitemp-write`).
+    """The unit of work's injected flush sink: lower each planned step, execute
+    every statement in order, and enforce each STEP's own affected-rows
+    expectation (`m-opt-lock`; `m-txtime-write`; `m-bitemp-write`).
 
-    The single write-lowering seam (:func:`lower_write`) run on the transaction's
-    own connection, inside the still-open ``port.transaction`` scope — so an
-    abort rolls back force-flushed writes with everything else. Checking is
-    PER-STATEMENT, not per-planned-write: a non-temporal keyed write lowers to
-    exactly one statement (its own expectation), while
-    a temporal write lowers to a close then zero-to-three chained opens — only the
-    close carries an expectation (always ``1``), so a mismatch there raises and
-    ABORTS BEFORE the chained rows ever execute (`m-txtime-write` "MUST NOT silently
-    succeed and proceed to chain"). ``LoweredStatement.stale_error`` picks the raised
+    The single write-lowering seam (:func:`stream_lowered`) run on the
+    transaction's own connection, inside the still-open ``port.transaction``
+    scope — so an abort rolls back force-flushed writes with everything else.
+    Every step lowers to exactly one statement, and a temporal mutation's close
+    precedes the rows it chains, so a mismatch on the close raises and ABORTS
+    BEFORE those rows ever execute (`m-txtime-write` "MUST NOT silently succeed
+    and proceed to chain"). ``LoweredStatement.stale_error`` picks the raised
     class by the GATE, never by the mutation kind: the non-retriable
     :class:`~parallax.core.opt_lock.StaleWriteError` for an UNGATED (locking-mode)
     mismatch on a write that still required a prior observation, and the retriable
@@ -376,40 +377,49 @@ def _flush_executor(
     """
 
     def execute(plan: FlushPlan) -> None:
-        for planned in plan.writes:
-            for lowered in lower_write(planned, model, dialect, concurrency, plan.tx_instant):
-                affected = conn.execute_write(
-                    dialect.to_driver_sql(lowered.statement.sql), list(lowered.statement.binds)
-                )
-                if lowered.expected_affected is not None and affected != lowered.expected_affected:
-                    raise _conflict_error(planned, model, affected, lowered)
+        for step, lowered in stream_lowered(plan, model, dialect, concurrency):
+            affected = conn.execute_write(
+                dialect.to_driver_sql(lowered.statement.sql), list(lowered.statement.binds)
+            )
+            if lowered.expected_affected is not None and affected != lowered.expected_affected:
+                raise _conflict_error(step, affected, lowered)
 
     return execute
 
 
 def _conflict_error(
-    planned: PlannedWrite,
-    model: Metamodel,
+    step: PlannedStep,
     actual: int | None,
     lowered: LoweredStatement,
 ) -> opt_lock.OptimisticLockConflictError | opt_lock.StaleWriteError:
-    """The affected-row-mismatch error for one lowered statement — the retriable
+    """The affected-row-mismatch error for one executed step — the retriable
     gated conflict, or (``lowered.stale_error``) the non-retriable outcome ANY
     ungated write that still required a prior observation earns
-    (`m-opt-lock` / `m-txtime-write` / `m-bitemp-write`). Resolves this
-    seam's own identifying context (the instruction's object key) and defers
-    the actual classification to :func:`~parallax.core.opt_lock.classify_mismatch`
-    — the one place that decision is made, shared with the conformance
-    engine's standalone conflict-close probe."""
-    instruction = planned.instruction
-    assert isinstance(instruction, KeyedWrite)  # only a keyed write ever carries an expectation
-    key = object_key(instruction, model)
-    assert key is not None  # an expectation is attached only alongside a resolved object key
+    (`m-opt-lock` / `m-txtime-write` / `m-bitemp-write`). Resolves the
+    identifying context off the step's own addressed key and defers the
+    classification to :func:`~parallax.core.opt_lock.classify_mismatch` — the one
+    place that decision is made, shared with the conformance engine's standalone
+    conflict-close probe."""
+    assert not isinstance(step, PlannedInsert)  # an insert carries no expectation
     assert lowered.expected_affected is not None  # the caller's own guard
     return opt_lock.classify_mismatch(
-        instruction.entity,
-        key[1],
+        step.entity.name,
+        _addressed_key(step.target),
         lowered.expected_affected,
         actual,
         stale_error=lowered.stale_error,
+    )
+
+
+def _addressed_key(target: PlannedTarget) -> tuple[tuple[str, object], ...]:
+    """The one addressed row's primary-key pairs, for the failure's own payload.
+
+    Only an addressed write carries an expectation, and only a singleton one can
+    attribute a shortfall to a row, so this reads the sole key tuple the target
+    names."""
+    assert isinstance(target, (KeyTarget, MilestoneTarget))  # a readless write expects no count
+    values = target.key_values if isinstance(target, MilestoneTarget) else target.key_values[0]
+    return tuple(
+        (attribute.name, value)
+        for attribute, value in zip(target.key_attributes, values, strict=True)
     )

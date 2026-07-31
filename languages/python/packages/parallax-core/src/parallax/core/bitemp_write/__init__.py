@@ -1,51 +1,40 @@
 """``parallax.core.bitemp_write`` enforcement scope (m-bitemp-write).
 
 The Bitemporal (Valid Time + Transaction Time) RECTANGLE-SPLIT planning scope: it
-reuses :mod:`parallax.core.txtime_write`'s close-and-chain machinery (the
-``MilestoneClose`` / ``MilestoneOpen`` shapes and Transaction-Time Attribute
-lookup), extended to Valid Time. Like its sibling, this module
-never renders SQL and never imports ``opt_lock`` / ``dialect`` / ``sql_gen`` — the
-render seam (``parallax.snapshot.handle``) composes its neutral
-:class:`~parallax.core.txtime_write.MilestonePlan` with the ``opt_lock`` gate policy
-and the descriptor-driven column/tag machinery.
+extends :mod:`parallax.core.txtime_write`'s close-and-chain arithmetic to a second
+axis. Like its sibling it renders no SQL, takes no dialect, and contributes its
+arithmetic to write finalization as a neutral topology description
+(`m-bitemp-write.md` "What this module contributes to planning").
 
-Six mutations (`m-bitemp-write.md`), all expressed as an ``inactivate`` (a close,
-reusing :class:`~parallax.core.txtime_write.MilestoneClose`) plus zero-to-three
-opened rectangles (each an :class:`~parallax.core.txtime_write.MilestoneOpen`):
+Six mutations, each a closure (the inactivation) plus zero-to-three opened
+rectangles, in the facet's canonical order — head, middle, tail where each
+exists:
 
-- **insert** / **insertUntil** — a single open rectangle, no close: the Valid-Time
-  window is ``[validFrom, infinity)`` (plain) or the bounded
-  ``[validFrom, until)`` (``*Until``).
-- **updateUntil** — close + **head** ``[obsStart, validFrom)`` (OLD payload) +
-  **middle** ``[validFrom, until)`` (the caller's new values, MERGED onto
-  the observed payload) + **tail** ``[until, obsEnd)`` (OLD payload).
-- **terminateUntil** — close + head + tail, **no middle** — the window is left
-  covered by no current-on-Transaction-Time row.
-- **update** (plain) — the two-way degenerate of ``updateUntil``: close + head
-  ``[obsFrom, B)`` (OLD) + a NEW tail ``[B, obsTo)`` (the merged new payload) — no
-  old tail, since the correction runs unbounded from ``B``.
-- **terminate** (plain) — close + head ``[obsFrom, B)`` (OLD) only — no tail, no
-  middle: the value is absent from ``B`` onward.
+- **insert** / **insertUntil** — no closure and one rectangle carrying the
+  authored row alone, over ``[validFrom, infinity)`` or the bounded
+  ``[validFrom, until)``.
+- **updateUntil** — `Superseded`, then the **head** ``[obsStart, validFrom)``
+  carrying the predecessor's state, the **middle** ``[validFrom, until)``
+  carrying it changed, and the **tail** ``[until, obsEnd)`` carrying it again.
+- **terminateUntil** — `Terminated`, then head and tail only: the window between
+  them is left covered by no current-on-Transaction-Time rectangle.
+- **update** — the two-way degenerate of ``updateUntil``: `Superseded`, a carried
+  head ``[obsStart, validFrom)``, and a changed tail ``[validFrom, obsEnd)``
+  running unbounded from the correction.
+- **terminate** — `Terminated` and a carried head only: the value is absent from
+  ``validFrom`` onward.
 
-Every opened rectangle's Valid-Time bounds and old/new payload composition come from
-the caller-supplied ``observed`` :class:`~parallax.core.unit_work.Observation` (the
-CURRENT rectangle this write's close targets) and the instruction's own authored
-fields — this scope issues no implicit read and performs no observation lookup of
-its own (`m-bitemp-write` "The engine supplies observed rows from case state").
-The MERGE that produces a chained row's NEW payload (``middle`` / the new ``tail``)
-overlays the instruction's own row onto the observed payload — the bitemporal
-analogue of a non-temporal edited copy's effective change set, since the corpus's
-own bitemporal update rows are SPARSE (pk + the touched fields only, `python.md`
-§5): an unauthored field carries FORWARD from the prior rectangle unchanged.
+A terminate's surviving head and tail are carried from their predecessor, never
+themselves terminated: the closure's cause records the absence.
 
-A second axis makes the close's ADDRESS two-dimensional: alongside the key it
-carries the observed rectangle's own Valid-Time end
-(:attr:`~parallax.core.txtime_write.MilestoneClose.target_valid_end`), which is
-what keeps an operational close on the CURRENT rectangle when several disjoint
-rectangles of one key are current on Transaction Time. That address is derived
-identically in both concurrency modes (`m-bitemp-write.md` "Address and gate are
-separate", ADR 0046); only the observed ``tx_start`` gate candidate is
-mode-dependent, and the render seam alone decides whether to bind it.
+The description names no bound value, payload, or observation — only where each
+bound comes from — so one description serves every rectangle a predicate-selected
+mutation resolves. Finalization applies it
+(:func:`~parallax.core.unit_work.temporal.expand_milestone`), and the two-axis
+address the inactivation needs is the Milestone Target it settles alongside: the
+observed rectangle's own Valid-Time end is what keeps the close on the intended
+rectangle when several disjoint rectangles of one key are current on Transaction
+Time, while the observed Transaction-Time start rides the gate alone.
 
 Prior art (Reladomo; semantics, not idioms): the rectangle dispatch mirrors
 ``GenericBiTemporalDirector.updateUntil`` / ``.splitTailEnd`` (research §6, the
@@ -56,112 +45,79 @@ tailless degenerate of the same director's unbounded ``insert`` / ``update`` /
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from dataclasses import dataclass
 from typing import Final
 
-from parallax.core.base import INFINITY_LITERAL
-from parallax.core.metamodel import EntityMetadata, Metamodel, TemporalDimension
-from parallax.core.txtime_write import (
-    MilestoneClose,
-    MilestoneOpen,
-    MilestonePlan,
-    axis_attr_names,
-    observed_bound,
+from parallax.core.metamodel import TemporalDimension
+from parallax.core.txtime_write import TemporalPlanningError
+from parallax.core.unit_work import (
+    AUTHORED_FROM,
+    AUTHORED_STATE,
+    AUTHORED_UNTIL,
+    CARRIED_STATE,
+    CHANGED_STATE,
+    OPEN_END,
+    PREDECESSOR_END,
+    PREDECESSOR_START,
+    SUPERSEDED,
+    TERMINATED,
+    MilestoneClosure,
+    MilestoneSuccessor,
+    MilestoneTopology,
+    ValidTimeWindow,
 )
-from parallax.core.unit_work import KeyedWrite, TemporalObservation
 
-__all__ = ["MilestoneClose", "MilestoneOpen", "MilestonePlan", "plan"]
+__all__ = ["RECTANGLE_SPLIT", "RectangleSplit"]
 
-_INSERT_MUTATIONS: Final[frozenset[str]] = frozenset({"insert", "insertUntil"})
-_UPDATE_MUTATIONS: Final[frozenset[str]] = frozenset({"update", "updateUntil"})
-_BOUNDED_MUTATIONS: Final[frozenset[str]] = frozenset(
-    {"insertUntil", "updateUntil", "terminateUntil"}
+# The inactivation gates on the observed Transaction-Time start exactly as a
+# single-axis close does: the Valid-Time end addresses the rectangle, and the
+# concurrency condition is a separate fact (ADR 0046).
+_SUPERSEDES: Final = MilestoneClosure(
+    cause=SUPERSEDED, gate_basis=TemporalDimension.TRANSACTION_TIME
+)
+_TERMINATES: Final = MilestoneClosure(
+    cause=TERMINATED, gate_basis=TemporalDimension.TRANSACTION_TIME
 )
 
+_HEAD: Final = MilestoneSuccessor(
+    state=CARRIED_STATE, valid_window=ValidTimeWindow(start=PREDECESSOR_START, end=AUTHORED_FROM)
+)
+_OLD_TAIL: Final = MilestoneSuccessor(
+    state=CARRIED_STATE, valid_window=ValidTimeWindow(start=AUTHORED_UNTIL, end=PREDECESSOR_END)
+)
+_MIDDLE: Final = MilestoneSuccessor(
+    state=CHANGED_STATE, valid_window=ValidTimeWindow(start=AUTHORED_FROM, end=AUTHORED_UNTIL)
+)
+_NEW_TAIL: Final = MilestoneSuccessor(
+    state=CHANGED_STATE, valid_window=ValidTimeWindow(start=AUTHORED_FROM, end=PREDECESSOR_END)
+)
+_OPEN_RECTANGLE: Final = MilestoneSuccessor(
+    state=AUTHORED_STATE, valid_window=ValidTimeWindow(start=AUTHORED_FROM, end=OPEN_END)
+)
+_BOUNDED_RECTANGLE: Final = MilestoneSuccessor(
+    state=AUTHORED_STATE, valid_window=ValidTimeWindow(start=AUTHORED_FROM, end=AUTHORED_UNTIL)
+)
 
-def _open(
-    model: Metamodel,
-    entity: EntityMetadata,
-    tx_instant: str,
-    valid_from: str,
-    valid_end: str,
-    payload: Mapping[str, object],
-) -> MilestoneOpen:
-    tx_start, tx_end = axis_attr_names(model, entity, TemporalDimension.TRANSACTION_TIME)
-    valid_start, valid_end_attribute = axis_attr_names(model, entity, TemporalDimension.VALID_TIME)
-    row = {
-        **payload,
-        valid_start: valid_from,
-        valid_end_attribute: valid_end,
-        tx_start: tx_instant,
-        tx_end: INFINITY_LITERAL,
-    }
-    return MilestoneOpen(row=row)
+_TOPOLOGIES: Final[dict[str, MilestoneTopology]] = {
+    "insert": MilestoneTopology(closure=None, successors=(_OPEN_RECTANGLE,)),
+    "insertUntil": MilestoneTopology(closure=None, successors=(_BOUNDED_RECTANGLE,)),
+    "update": MilestoneTopology(closure=_SUPERSEDES, successors=(_HEAD, _NEW_TAIL)),
+    "updateUntil": MilestoneTopology(closure=_SUPERSEDES, successors=(_HEAD, _MIDDLE, _OLD_TAIL)),
+    "terminate": MilestoneTopology(closure=_TERMINATES, successors=(_HEAD,)),
+    "terminateUntil": MilestoneTopology(closure=_TERMINATES, successors=(_HEAD, _OLD_TAIL)),
+}
 
 
-def _merged_payload(observed: TemporalObservation, row: Mapping[str, object]) -> dict[str, object]:
-    """The chained rectangle's NEW payload: the observed row's own values, with the
-    instruction's own (sparse, pk-plus-touched-fields) row overlaid on top."""
-    return {**observed.predecessor.members, **row}
+@dataclass(frozen=True, slots=True)
+class RectangleSplit:
+    """The Bitemporal facet's topology answer."""
+
+    def topology(self, mutation: str) -> MilestoneTopology:
+        """``mutation``'s neutral rectangle split, or one of its degenerates."""
+        described = _TOPOLOGIES.get(mutation)
+        if described is None:
+            raise TemporalPlanningError(f"{mutation!r} is not a Bitemporal milestone mutation")
+        return described
 
 
-def plan(
-    instruction: KeyedWrite,
-    model: Metamodel,
-    entity: EntityMetadata,
-    tx_instant: str,
-    observed: TemporalObservation | None,
-) -> MilestonePlan:
-    """Plan one full-bitemporal keyed write: the rectangle split or one of its
-    unbounded/insert degenerates.
-
-    Pure: renders no SQL, takes no dialect. ``entity`` is the write's own target
-    position; its family's axes are resolved through the Temporal Facet.
-    ``observed`` is
-    REQUIRED for every close-bearing mutation (update / updateUntil / terminate /
-    terminateUntil) — the head/tail rectangles' old Valid-Time bounds and payload
-    come from it, unconditionally of concurrency mode (`m-bitemp-write` "Head/tail
-    old values come from the observed prior rectangle").
-    """
-    mutation = instruction.mutation
-    row = instruction.rows[0]
-    valid_from = instruction.valid_from
-    assert valid_from is not None  # every Bitemporal mutation carries one
-
-    if mutation in _INSERT_MUTATIONS:
-        valid_end = instruction.until if instruction.until is not None else INFINITY_LITERAL
-        return MilestonePlan(steps=(_open(model, entity, tx_instant, valid_from, valid_end, row),))
-
-    assert observed is not None  # every close-bearing mutation needs the observed rectangle
-    obs_from = observed_bound(model, entity, observed, TemporalDimension.VALID_TIME)
-    obs_to = observed_bound(model, entity, observed, TemporalDimension.VALID_TIME, upper=True)
-    old_payload = dict(observed.predecessor.members)
-    close = MilestoneClose(
-        identity=row,
-        target_valid_end=obs_to,
-        gate_tx_start=observed_bound(model, entity, observed, TemporalDimension.TRANSACTION_TIME),
-    )
-
-    if mutation == "terminate":
-        head = _open(model, entity, tx_instant, obs_from, valid_from, old_payload)
-        return MilestonePlan(steps=(close, head))
-    if mutation == "terminateUntil":
-        until = instruction.until
-        assert until is not None
-        head = _open(model, entity, tx_instant, obs_from, valid_from, old_payload)
-        tail = _open(model, entity, tx_instant, until, obs_to, old_payload)
-        return MilestonePlan(steps=(close, head, tail))
-    if mutation in _UPDATE_MUTATIONS:
-        new_payload = _merged_payload(observed, row)
-        head = _open(model, entity, tx_instant, obs_from, valid_from, old_payload)
-        if mutation in _BOUNDED_MUTATIONS:
-            until = instruction.until
-            assert until is not None
-            middle = _open(model, entity, tx_instant, valid_from, until, new_payload)
-            tail = _open(model, entity, tx_instant, until, obs_to, old_payload)
-            return MilestonePlan(steps=(close, head, middle, tail))
-        new_tail = _open(model, entity, tx_instant, valid_from, obs_to, new_payload)
-        return MilestonePlan(steps=(close, head, new_tail))
-    raise ValueError(  # pragma: no cover - defends an unrecognized mutation
-        f"bitemp_write.plan: unrecognized temporal mutation {mutation!r}"
-    )
+RECTANGLE_SPLIT: Final[RectangleSplit] = RectangleSplit()

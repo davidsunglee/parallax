@@ -386,8 +386,8 @@ self-contained without a system `libpq`.
   fixed here.
 - **Phase 8 increment 4 COMPLETE — temporal writes: audit-only close-and-chain
   and full-bitemporal rectangle splits.** `parallax.core.txtime_write` /
-  `.bitemp_write` (pure milestone planning: `MilestoneClose`/`MilestoneOpen`
-  steps) composed at the SAME `lower_write` seam with the `m-opt-lock` gate
+  `.bitemp_write` (pure milestone planning: which rows close and which chain)
+  composed at the SAME write seam with the `m-opt-lock` gate
   policy: `insert`/`update`/`terminate` and the bounded `insertUntil`/
   `updateUntil`/`terminateUntil` trio all lower, TPH/TPCS inheritance
   composition included. The conformance engine's write lanes re-route through

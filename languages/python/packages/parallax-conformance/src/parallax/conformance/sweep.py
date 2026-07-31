@@ -53,7 +53,7 @@ IMPLEMENTED_MODULES: Final[frozenset[str]] = frozenset(
         "m-auto-retry",
         # `m-batch-write-004` tags both `m-batch-write` and `m-opt-lock`, so the
         # reachability intersection requires both. Buffered-batch cases use
-        # `lower_write`'s multi-row collapse, while predicate-selected cases
+        # the planner's multi-row collapse, while predicate-selected cases
         # use the readless predicate-write path.
         "m-batch-write",
     }

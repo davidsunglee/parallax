@@ -19,7 +19,7 @@ non-temporal (versioned) update and a keyed temporal (audit-only) update. It
 builds a fixture instance, edits a copy through ``model_copy``, derives the
 row through the SAME helpers ``Transaction.update`` calls
 (``primary_key_row`` / ``canonical_row`` / ``effective_change_set``), and
-lowers it through ``lower_write`` with a SYNTHETIC observation — proving the
+lowers it through the shipped seam with a SYNTHETIC observation — proving the
 lowered statement binds exactly that observation's value, and a companion
 assertion with a DIFFERENT observation proves the bound value tracks the
 observation every time, never a value the copy itself happens to carry
@@ -42,7 +42,8 @@ from decimal import Decimal
 import pytest
 
 from _support import mirrored_models as mm
-from _support.clock_probes import inert_instant, instant_at
+from _support.clock_probes import instant_at
+from _support.lowering_probes import lower_planned
 from parallax.conformance import models
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity import (
@@ -58,7 +59,6 @@ from parallax.core.unit_work import (
     TemporalObservation,
     VersionObservation,
 )
-from parallax.snapshot.handle import lower_write
 
 _MODELS = models.load_models()
 _ACCOUNT = models.accepted_model(_MODELS["account"])
@@ -75,12 +75,11 @@ def _edited_account_row(*, version: int = 1) -> dict[str, object]:
 
 def test_copy_to_row_non_temporal_update_binds_the_observed_version() -> None:
     instruction = KeyedWrite("update", "Account", (_edited_account_row(),))
-    statement = lower_write(
+    statement = lower_planned(
         PlannedWrite(instruction=instruction, observation=VersionObservation(observed_version=7)),
         _ACCOUNT,
         POSTGRES,
         "locking",
-        inert_instant(),
     )[0].statement
     assert statement.sql == "update account set balance = ?, version = ? where id = ?"
     # 8 = the OBSERVED version (7) + 1 -- never the copy's own carried version
@@ -94,19 +93,18 @@ def test_copy_to_row_non_temporal_update_tracks_a_different_observation() -> Non
     # proving the bound value tracks the observation, never anything the copy
     # itself carries.
     instruction = KeyedWrite("update", "Account", (_edited_account_row(),))
-    statement = lower_write(
+    statement = lower_planned(
         PlannedWrite(instruction=instruction, observation=VersionObservation(observed_version=41)),
         _ACCOUNT,
         POSTGRES,
         "locking",
-        inert_instant(),
     )[0].statement
     assert statement.binds == (175.00, 42, 1)
 
 
 def test_copy_to_row_never_reaches_a_caller_authored_version() -> None:
     # `reject_caller_authored_version` (`~parallax.core.opt_lock`) is a
-    # row-level backstop for a version-carrying row reaching `lower_write`
+    # row-level backstop for a version-carrying row reaching finalization
     # directly (the raw-document/rejected-write route, pinned by
     # `test_write_lowering.test_versioned_update_carrying_a_literal_version_
     # is_refused`) -- but the copy-to-row seam THIS guard exercises cannot
@@ -164,7 +162,7 @@ def test_copy_to_row_temporal_update_gates_the_close_on_observed_tx_start() -> N
     # (`~parallax.core.opt_lock.gates`); locking mode never does.
     instruction = KeyedWrite("update", "Balance", (_edited_balance_row(),))
     observed = _observed_balance("2024-01-01T00:00:00+00:00")
-    close = lower_write(
+    close = lower_planned(
         PlannedWrite(instruction=instruction, observation=observed),
         _BALANCE,
         POSTGRES,
@@ -186,7 +184,7 @@ def test_copy_to_row_temporal_update_tracks_a_different_observed_tx_start() -> N
     # never anything the copy or its row carries.
     instruction = KeyedWrite("update", "Balance", (_edited_balance_row(),))
     observed = _observed_balance("2024-06-01T00:00:00+00:00")
-    close = lower_write(
+    close = lower_planned(
         PlannedWrite(instruction=instruction, observation=observed),
         _BALANCE,
         POSTGRES,

@@ -1883,14 +1883,26 @@ or descriptor authoring form and performs no audit stamping.
   `m-unit-work` algebra — before any SQL exists, and lowering then answers a
   purely physical question about it: which Columns participate, in which order,
   quoted for which dialect. A settled step carries its **Write Target** (the
-  primary keys it addresses, or a readless predicate), its **concurrency
-  decision** (an explicit version gate, an explicit ungated decision, or no
-  version at all), its assignments including the framework-derived version
-  advance, and its **Affected Rows Policy** — the expected effect plus the
-  neutral outcome class a shortfall names. Whether a gate applies is decided
-  while the step is being settled, from the transaction's mode, so no lowering
-  reads that mode; a missing required observation is likewise a planning error
-  raised there, never a null value that reaches SQL.
+  primary keys it addresses, a readless predicate, or the milestone slot a close
+  addresses), its **concurrency decision** (an explicit version gate, an explicit
+  temporal gate, an explicit ungated decision, or no version at all), its
+  assignments including the framework-derived version advance, and its
+  **Affected Rows Policy** — the expected effect plus the neutral outcome class a
+  shortfall names. Whether a gate applies is decided while the step is being
+  settled, from the transaction's mode, so no lowering reads that mode; a missing
+  required observation is likewise a planning error raised there, never a null
+  value that reaches SQL.
+- **Temporal topology is settled, not lowered.** A temporal mutation expands
+  during finalization into one **Planned Close** followed immediately by its
+  zero-to-three **Planned Insert** successors, in the facet's canonical order —
+  inactivation, then head, middle, tail where each exists — with no unrelated
+  step interleaved. `parallax.core.txtime_write` and `parallax.core.bitemp_write`
+  answer only the neutral topology of one authored mutation (its close cause, the
+  axis whose observed start an optimistic close gates on, and each successor's
+  interval and represented state); finalization resolves that description against
+  the observed predecessor, the authored row, and the attempt's Transaction
+  Instant. Expansion is legal there precisely because it needs no dialect, and it
+  is why lowering never reads a milestone plan, an observation, or an instant.
 - **Observations are a closed algebra with structural absence.** A read records
   either the optimistic-lock **version** a versioned non-temporal row was read
   at, or the whole **predecessor milestone** a temporal row was read as — its

@@ -1,13 +1,17 @@
-"""Temporal keyed-write DML lowering unit tests.
+"""Temporal write finalization and lowering unit tests.
 
-Pins ``parallax.snapshot.handle.lower_write``'s TEMPORAL dispatch — audit-only
-close-and-chain (`m-txtime-write`) and the full-bitemporal rectangle split
-(`m-bitemp-write`) — byte-exact against the corpus goldens (``m-txtime-write-001
+Pins the two halves a temporal mutation crosses — the finalized Planned Close and
+Planned Insert successors it expands into, and the DML each of those steps lowers
+to — for audit-only close-and-chain (`m-txtime-write`) and the full-bitemporal
+rectangle split (`m-bitemp-write`).
+
+The statements stay byte-exact against the corpus goldens (``m-txtime-write-001
 ..006``, ``m-bitemp-write-001..003/006..009``, ``m-inheritance-090/091/094..097
-/105``, ``m-value-object-032/033``), the mode-independent close ADDRESS (the key
-plus one exclusive upper bound per As-Of Axis) against the observed-``in_z`` gate
-composed with the ``m-opt-lock`` policy (bound only under optimistic concurrency,
-`~parallax.core.opt_lock.gates`), and the two zero-row-close outcomes
+/105``, ``m-value-object-032/033``). Alongside them the settled steps pin what
+lowering can no longer see: the mode-independent Milestone Target (the key plus
+one exclusive upper bound per As-Of Axis) against the observed-``in_z`` gate the
+concurrency mode decides, each successor's Insert Origin, each close's Close
+Cause, and the two zero-row-close outcomes
 (:class:`~parallax.core.opt_lock.OptimisticLockConflictError` for a gated
 mismatch, :class:`~parallax.core.opt_lock.StaleWriteError` for an ungated one).
 """
@@ -17,38 +21,55 @@ from __future__ import annotations
 import dataclasses
 import datetime as dt
 from collections.abc import Mapping
+from typing import cast
 
 import pytest
 
 from _support.clock_probes import instant_at
+from _support.lowering_probes import lower_planned
 from parallax.conformance import models
-from parallax.core import storage_layout
+from parallax.core import bitemp_write, storage_layout, txtime_write
 from parallax.core.db_port import JsonDocument
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.metamodel import EntityIdentity, EntityMetadata, TemporalDimension
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
 from parallax.core.temporal_read import LATEST, Pin
 from parallax.core.unit_work import (
+    INFINITY,
+    SUPERSEDED,
+    TERMINATED,
+    UNGATED,
+    CarriedFrom,
+    ChangedFrom,
     Concurrency,
+    Finite,
     FixedClock,
+    KeyedMutation,
     KeyedWrite,
+    NewLineage,
+    PlannedClose,
+    PlannedInsert,
     PlannedWrite,
     PredecessorRow,
+    TemporalGate,
     TemporalObservation,
+    TemporalStrategy,
     TransactionSettings,
     UnitOfWork,
     WriteObservation,
     run_unit_of_work,
 )
+from parallax.core.unit_work.planned import PlannedWrite as PlannedStep
 from parallax.descriptor._records import Metamodel
 from parallax.snapshot.handle import (
     Execution,
     FindResult,
     LoweredStatement,
     WriteLoweringError,
-    lower_temporal_close,
-    lower_write,
+    lower_step,
+    plan_temporal_close,
 )
+from parallax.snapshot.handle._finalize import finalize_item
 from parallax.snapshot.handle._write_inputs import record_observations
 from parallax.snapshot.materialize import Node
 
@@ -106,10 +127,26 @@ def _lower_full(
     dialect: Dialect = POSTGRES,
     concurrency: Concurrency = "locking",
 ) -> list[LoweredStatement]:
-    return lower_write(
+    return lower_planned(
         PlannedWrite(instruction=instruction, observation=observation),
         models.accepted_model(meta),
         dialect,
+        concurrency,
+        instant_at(tx_instant),
+    )
+
+
+def _finalize(
+    instruction: KeyedWrite,
+    meta: Metamodel,
+    tx_instant: str,
+    *,
+    observation: WriteObservation | None = None,
+    concurrency: Concurrency = "locking",
+) -> tuple[PlannedStep, ...]:
+    return finalize_item(
+        PlannedWrite(instruction=instruction, observation=observation),
+        models.accepted_model(meta),
         concurrency,
         instant_at(tx_instant),
     )
@@ -175,7 +212,12 @@ def test_audit_only_update_closes_then_chains_the_authored_full_row() -> None:
 def test_audit_only_terminate_closes_only() -> None:
     # m-txtime-write-003: terminate = close, chain nothing.
     terminate = KeyedWrite("terminate", "Balance", ({"id": 1},))
-    statements = _lower(terminate, BALANCE, "2024-08-01T00:00:00+00:00")
+    statements = _lower(
+        terminate,
+        BALANCE,
+        "2024-08-01T00:00:00+00:00",
+        observation=_observed(tx_start="2024-01-01T00:00:00+00:00"),
+    )
     assert statements == [
         (
             "update balance set out_z = ? where bal_id = ? and out_z = ?",
@@ -214,32 +256,41 @@ def test_audit_only_update_merges_a_sparse_row_onto_the_observed_payload() -> No
     )
 
 
-def test_audit_only_plan_merges_the_sparse_row_at_the_planner_seam() -> None:
-    # The same merge is pinned directly at the pure planning seam
-    # (`parallax.core.txtime_write.plan`) rather than through the full
-    # `lower_write` composition — `MilestoneOpen.row` carries the merged
-    # payload, never the caller's sparse row alone.
-    from parallax.core import txtime_write
+def _member_values(step: PlannedStep) -> dict[str, object]:
+    """One single-entry Planned Insert's row, keyed by declared member name."""
+    assert isinstance(step, PlannedInsert)
+    (entry,) = step.entries
+    return {identity.name: value for identity, value in entry.row.attributes.items()} | {
+        identity.path[-1]: value for identity, value in entry.row.value_objects.items()
+    }
 
+
+def test_audit_only_update_merges_the_sparse_row_at_the_finalization_seam() -> None:
+    # The merge is pinned directly on the settled successor rather than through
+    # the rendered statement: the chained row carries the merged payload, never
+    # the caller's sparse row alone, and its origin names the predecessor it
+    # changed.
     sparse_update = KeyedWrite("update", "Balance", ({"id": 1, "value": 150.00},))
     observation = _observed(
         tx_start="2024-01-01T00:00:00+00:00", payload={"id": 1, "acctNum": "A", "value": 100.00}
     )
-    model, entity = _accepted("Balance", BALANCE)
-    plan = txtime_write.plan(sparse_update, model, entity, "2024-06-01T00:00:00+00:00", observation)
-    close, opened = plan.steps
-    assert isinstance(close, txtime_write.MilestoneClose)
-    assert isinstance(opened, txtime_write.MilestoneOpen)
-    assert opened.row == {
+    close, opened = _finalize(
+        sparse_update, BALANCE, "2024-06-01T00:00:00+00:00", observation=observation
+    )
+    assert isinstance(close, PlannedClose)
+    assert close.cause == SUPERSEDED
+    assert _member_values(opened) == {
         "id": 1,
         "acctNum": "A",
         "value": 150.00,
         "tx_start": "2024-06-01T00:00:00+00:00",
         "tx_end": "infinity",
     }
+    assert isinstance(opened, PlannedInsert)
+    assert opened.entries[0].origin == ChangedFrom(predecessor=observation.predecessor)
 
 
-def test_audit_only_plan_carries_a_full_authored_row_over_every_observed_member() -> None:
+def test_audit_only_update_carries_a_full_authored_row_over_every_observed_member() -> None:
     # The corpus-driven engine authors FULL rows for an audit-only write, so the
     # merge onto the predecessor is a strict identity even though the
     # predecessor carries every member: the authored row overrides each one it
@@ -249,14 +300,46 @@ def test_audit_only_plan_carries_a_full_authored_row_over_every_observed_member(
         tx_start="2024-01-01T00:00:00+00:00",
         payload={"id": 1, "acctNum": "STALE", "value": 999.00},
     )
-    from parallax.core import txtime_write
+    _close, opened = _finalize(
+        full_update, BALANCE, "2024-06-01T00:00:00+00:00", observation=observation
+    )
+    row = _member_values(opened)
+    assert row["acctNum"] == "A"
+    assert row["value"] == 150.00
 
-    model, entity = _accepted("Balance", BALANCE)
-    plan = txtime_write.plan(full_update, model, entity, "2024-06-01T00:00:00+00:00", observation)
-    _close, opened = plan.steps
-    assert isinstance(opened, txtime_write.MilestoneOpen)
-    assert opened.row["acctNum"] == "A"
-    assert opened.row["value"] == 150.00
+
+def test_audit_only_insert_begins_a_lineage_and_closes_nothing() -> None:
+    insert = KeyedWrite("insert", "Balance", ({"id": 1, "acctNum": "A", "value": 100.00},))
+    (opened,) = _finalize(insert, BALANCE, "2024-01-01T00:00:00+00:00")
+    assert isinstance(opened, PlannedInsert)
+    assert opened.entries[0].origin == NewLineage()
+
+
+def test_audit_only_terminate_records_termination_and_chains_nothing() -> None:
+    terminate = KeyedWrite("terminate", "Balance", ({"id": 1},))
+    (close,) = _finalize(
+        terminate,
+        BALANCE,
+        "2024-08-01T00:00:00+00:00",
+        observation=_observed(tx_start="2024-01-01T00:00:00+00:00"),
+    )
+    assert isinstance(close, PlannedClose)
+    assert close.cause == TERMINATED
+
+
+def test_a_close_without_an_observation_is_a_finalization_error() -> None:
+    # Every close addresses, gates on, and carries state forward from the
+    # milestone it observed, so a missing observation is refused while the step
+    # is settled rather than lowered as an unaddressed statement.
+    terminate = KeyedWrite("terminate", "Balance", ({"id": 1},))
+    with pytest.raises(WriteLoweringError, match="every close requires the Temporal Observation"):
+        _finalize(terminate, BALANCE, "2024-08-01T00:00:00+00:00")
+
+
+def test_a_milestone_verb_on_a_non_temporal_entity_is_refused() -> None:
+    terminate = KeyedWrite("terminate", "Account", ({"id": 1},))
+    with pytest.raises(WriteLoweringError, match="declares no temporal dimension"):
+        _finalize(terminate, _MODELS["account"], "2024-08-01T00:00:00+00:00")
 
 
 def test_audit_only_close_is_ungated_under_locking_regardless_of_observation() -> None:
@@ -589,86 +672,94 @@ def test_bitemporal_close_addresses_a_finite_observed_valid_end(
     assert tail[1][3:5] == ("2024-04-01T00:00:00+00:00", addressed_valid_end)
 
 
+def _probe(
+    concurrency: Concurrency,
+    *,
+    entity: str = "Position",
+    meta: Metamodel = POSITION,
+    observed_tx_start: str | None = "2024-04-01T00:00:00+00:00",
+    observed_valid_end: str | None = "infinity",
+) -> PlannedClose:
+    """The m-opt-lock conflict lane's own standalone close-only probe.
+
+    It is NOT a real bitemporal mutation — every real close-bearing verb chains
+    at least a head — so the lane settles the close directly instead of
+    authoring one.
+    """
+    return plan_temporal_close(
+        {"id": 1},
+        entity,
+        models.accepted_model(meta),
+        concurrency,
+        instant_at("2024-10-01T00:00:00+00:00"),
+        observed_tx_start,
+        observed_valid_end,
+    )
+
+
 def test_bitemporal_close_addresses_both_axis_ends_then_gates_on_in_z_last() -> None:
     # m-bitemp-write-004/008: the address is the key then one exclusive upper
     # bound per axis in canonical order (`thru_z` then `out_z`); the observed
-    # `in_z` gate binds LAST. A standalone close-only probe (the m-opt-lock
-    # conflict lane's own shape) is NOT a real bitemporal mutation (every real
-    # close-bearing verb chains at least a head) — `lower_temporal_close`
-    # composes it directly.
-    lowered = lower_temporal_close(
-        {"id": 1},
-        "Position",
-        models.accepted_model(POSITION),
-        POSTGRES,
-        "optimistic",
-        instant_at("2024-10-01T00:00:00+00:00"),
-        "2024-04-01T00:00:00+00:00",
-        "infinity",
-    )
-    assert lowered.statement.sql == (
+    # `in_z` gate binds LAST.
+    step = _probe("optimistic")
+    statement = lower_step(step, models.accepted_model(POSITION), POSTGRES)
+    assert statement.sql == (
         "update position set out_z = ? where pos_id = ? and thru_z = ? and out_z = ? and in_z = ?"
     )
-    assert lowered.statement.binds == (
+    assert statement.binds == (
         "2024-10-01T00:00:00+00:00",
         1,
         "infinity",
         "infinity",
         "2024-04-01T00:00:00+00:00",
     )
-    assert lowered.expected_affected == 1
-    assert lowered.stale_error is False
+    assert step.affected_rows.expected == 1
+    assert isinstance(step.concurrency, TemporalGate)
 
 
 def test_bitemporal_close_keeps_its_whole_address_under_locking() -> None:
     # m-bitemp-write-001/006/007's own locking-mode closes: the address is
     # unchanged — only the `in_z` gate disappears (ADR 0046).
-    lowered = lower_temporal_close(
-        {"id": 1},
-        "Position",
-        models.accepted_model(POSITION),
-        POSTGRES,
-        "locking",
-        instant_at("2024-10-01T00:00:00+00:00"),
-        "2024-04-01T00:00:00+00:00",
-        "infinity",
-    )
-    assert lowered.statement.sql == (
+    step = _probe("locking")
+    statement = lower_step(step, models.accepted_model(POSITION), POSTGRES)
+    assert statement.sql == (
         "update position set out_z = ? where pos_id = ? and thru_z = ? and out_z = ?"
     )
-    assert lowered.statement.binds == ("2024-10-01T00:00:00+00:00", 1, "infinity", "infinity")
-    assert lowered.stale_error is True
+    assert statement.binds == ("2024-10-01T00:00:00+00:00", 1, "infinity", "infinity")
+    assert step.concurrency == UNGATED
+    assert step.target.end_values == (INFINITY, INFINITY)
+
+
+def test_a_probe_addressing_a_bounded_rectangle_binds_its_finite_valid_end() -> None:
+    # m-bitemp-write-017/-018: the bounded arm of the same address. A finite
+    # Valid-Time end is the only thing separating two current rectangles that
+    # share `in_z` and `out_z`.
+    step = _probe("locking", observed_valid_end="2024-06-01T00:00:00+00:00")
+    assert step.target.end_values == (Finite(instant="2024-06-01T00:00:00+00:00"), INFINITY)
+    statement = lower_step(step, models.accepted_model(POSITION), POSTGRES)
+    assert statement.binds == (
+        "2024-10-01T00:00:00+00:00",
+        1,
+        "2024-06-01T00:00:00+00:00",
+        "infinity",
+    )
 
 
 def test_bitemporal_close_without_an_observed_valid_end_is_refused() -> None:
     # A Bitemporal address needs one exclusive upper bound per axis, so a caller
-    # supplying none is a wiring defect — refused, never lowered as a
+    # supplying none is a wiring defect — refused, never settled as a
     # Transaction-Time-only close that could match a sibling rectangle.
     with pytest.raises(WriteLoweringError, match="no observed Valid-Time end supplied"):
-        lower_temporal_close(
-            {"id": 1},
-            "Position",
-            models.accepted_model(POSITION),
-            POSTGRES,
-            "locking",
-            instant_at("2024-10-01T00:00:00+00:00"),
-            "2024-04-01T00:00:00+00:00",
-        )
+        _probe("locking", observed_valid_end=None)
 
 
 def test_temporal_close_requires_an_effective_table() -> None:
     balance = dataclasses.replace(BALANCE.entity("Balance"), table=None)
     malformed = Metamodel(entities=(balance,))
-    with pytest.raises(WriteLoweringError, match="temporal write target has no effective table"):
-        lower_temporal_close(
-            {"id": 1},
-            "Balance",
-            models.accepted_model(malformed),
-            POSTGRES,
-            "locking",
-            instant_at("2024-10-01T00:00:00+00:00"),
-            None,
-        )
+    model = models.accepted_model(malformed)
+    step = _probe("locking", entity="Balance", meta=malformed, observed_valid_end=None)
+    with pytest.raises(WriteLoweringError, match="write target has no effective table"):
+        lower_step(step, model, POSTGRES)
 
 
 # --------------------------------------------------------------------------- #
@@ -796,7 +887,12 @@ def test_tph_txtime_terminate_carries_the_tag_guard() -> None:
     # m-inheritance-090: the tag guard rides the identity predicates, before
     # the current-row predicate.
     terminate = KeyedWrite("terminate", "MeterReading", ({"id": 1},))
-    statements = _lower(terminate, READING, "2024-08-01T00:00:00+00:00")
+    statements = _lower(
+        terminate,
+        READING,
+        "2024-08-01T00:00:00+00:00",
+        observation=_observed(tx_start="2024-01-01T00:00:00+00:00"),
+    )
     assert statements == [
         (
             "update reading set out_z = ? where id = ? and kind = ? and out_z = ?",
@@ -809,7 +905,12 @@ def test_tpcs_txtime_terminate_has_no_tag_guard() -> None:
     # m-inheritance-091: table-per-concrete-subtype routes to the concrete's
     # own table, no tag.
     terminate = KeyedWrite("terminate", "SpotQuote", ({"id": 1},))
-    statements = _lower(terminate, QUOTE, "2024-08-01T00:00:00+00:00")
+    statements = _lower(
+        terminate,
+        QUOTE,
+        "2024-08-01T00:00:00+00:00",
+        observation=_observed(tx_start="2024-01-01T00:00:00+00:00"),
+    )
     assert statements == [
         (
             "update spot_quote set out_z = ? where id = ? and out_z = ?",
@@ -1005,6 +1106,115 @@ def test_multi_row_temporal_write_is_refused() -> None:
 
 
 # --------------------------------------------------------------------------- #
+# The rectangle split's own successor origins and causes.                     #
+# --------------------------------------------------------------------------- #
+def _origins(steps: tuple[PlannedStep, ...]) -> list[object]:
+    return [
+        entry.origin for step in steps if isinstance(step, PlannedInsert) for entry in step.entries
+    ]
+
+
+_R1_OBSERVED = _observed(
+    tx_start="2024-01-01T00:00:00+00:00",
+    valid_start="2024-01-01T00:00:00+00:00",
+    valid_end="infinity",
+    payload=_R1_PAYLOAD,
+)
+
+
+@pytest.mark.parametrize(
+    ("mutation", "until", "cause", "changed_positions"),
+    [
+        ("updateUntil", "2024-09-01T00:00:00+00:00", SUPERSEDED, (1,)),
+        ("terminateUntil", "2024-09-01T00:00:00+00:00", TERMINATED, ()),
+        ("update", None, SUPERSEDED, (1,)),
+        ("terminate", None, TERMINATED, ()),
+    ],
+    ids=["updateUntil", "terminateUntil", "update", "terminate"],
+)
+def test_bitemporal_successor_origins_follow_the_split(
+    mutation: KeyedMutation,
+    until: str | None,
+    cause: object,
+    changed_positions: tuple[int, ...],
+) -> None:
+    # A head or tail carries the predecessor's represented state and is
+    # therefore `CarriedFrom` it; only the range the correction covers is
+    # `ChangedFrom`. A terminate records the absence on the CAUSE, so its
+    # survivors stay carried and are never themselves marked terminated.
+    row: dict[str, object] = (
+        {"id": 1}
+        if mutation.startswith("terminate")
+        else {
+            "id": 1,
+            "value": 200.00,
+        }
+    )
+    steps = _finalize(
+        KeyedWrite(
+            mutation,
+            "Position",
+            (row,),
+            valid_from="2024-03-01T00:00:00+00:00",
+            until=until,
+        ),
+        POSITION,
+        "2024-02-15T00:00:00+00:00",
+        observation=_R1_OBSERVED,
+    )
+    close = steps[0]
+    assert isinstance(close, PlannedClose)
+    assert close.cause == cause
+    origins = _origins(steps)
+    for position, origin in enumerate(origins):
+        expected = (
+            ChangedFrom(predecessor=_R1_OBSERVED.predecessor)
+            if position in changed_positions
+            else CarriedFrom(predecessor=_R1_OBSERVED.predecessor)
+        )
+        assert origin == expected
+
+
+def test_bitemporal_insert_successor_begins_a_lineage() -> None:
+    steps = _finalize(
+        KeyedWrite(
+            "insertUntil",
+            "Position",
+            ({"id": 1, "acctNum": "A", "value": 100.00},),
+            valid_from="2024-03-01T00:00:00+00:00",
+            until="2024-09-01T00:00:00+00:00",
+        ),
+        POSITION,
+        "2024-01-01T00:00:00+00:00",
+    )
+    assert _origins(steps) == [NewLineage()]
+
+
+def test_bitemporal_close_target_is_mode_independent() -> None:
+    # Only the gate moves between modes; the addressed rectangle never does.
+    targets = [
+        _finalize(
+            KeyedWrite(
+                "terminate", "Position", ({"id": 1},), valid_from="2024-06-01T00:00:00+00:00"
+            ),
+            POSITION,
+            "2024-07-01T00:00:00+00:00",
+            observation=_R1_OBSERVED,
+            concurrency=mode,
+        )[0]
+        for mode in ("locking", "optimistic")
+    ]
+    locking, optimistic = targets
+    assert isinstance(locking, PlannedClose) and isinstance(optimistic, PlannedClose)
+    assert locking.target == optimistic.target
+    assert locking.concurrency == UNGATED
+    gate = optimistic.concurrency
+    assert isinstance(gate, TemporalGate)
+    assert gate.start_attribute.name == "tx_start"
+    assert gate.observed_start == "2024-01-01T00:00:00+00:00"
+
+
+# --------------------------------------------------------------------------- #
 # txtime_write.axis_attr_names: the declared-axis lookup, direct.              #
 # --------------------------------------------------------------------------- #
 def test_axis_attr_names_refuses_an_axis_the_entity_does_not_declare() -> None:
@@ -1012,8 +1222,22 @@ def test_axis_attr_names_refuses_an_axis_the_entity_does_not_declare() -> None:
     # lookup for its (undeclared) Valid-Time dimension is a defensive backstop the
     # render seam is responsible for never reaching with a well-formed
     # instruction (`txtime_write._axis`), not a normal-path outcome.
-    from parallax.core import txtime_write
-
     model, entity = _accepted("Balance", BALANCE)
     with pytest.raises(txtime_write.TemporalPlanningError, match="declares no VALID_TIME"):
         txtime_write.axis_attr_names(model, entity, TemporalDimension.VALID_TIME)
+
+
+@pytest.mark.parametrize(
+    ("strategy", "facet"),
+    [
+        (txtime_write.MILESTONE_CHAIN, "Transaction-Time-Only"),
+        (bitemp_write.RECTANGLE_SPLIT, "Bitemporal"),
+    ],
+    ids=["txtime", "bitemporal"],
+)
+def test_a_facet_refuses_a_verb_it_owns_no_topology_for(strategy: object, facet: str) -> None:
+    # A facet answers the topology of the milestone verbs it owns; anything else
+    # is a caller wiring defect this pure seam refuses rather than describing as
+    # the nearest verb it does recognize.
+    with pytest.raises(txtime_write.TemporalPlanningError, match=facet):
+        cast("TemporalStrategy", strategy).topology("delete")
