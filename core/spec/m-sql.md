@@ -125,11 +125,15 @@ invariant while each dialect emits its own optimized SQL:
 The predicate fragments in this module fix a read's **`where` clause**; this section
 fixes its **`select` list**. A read's projected column list is a **pure function of
 the model and the read's target (`when.targetEntity`, `m-case-format`) plus its result
-form — never of the predicate**. The operation algebra deliberately carries **no
-projection node** (`m-op-algebra`): no read may project a proper subset of the derived
-list, and a column-subset result is expressible **only** through the aggregation
-algebra (`m-agg`, deferred). The directives `distinct`, `orderBy`, and `limit` never
-change the list.
+form — never of the predicate**. Exactly one read takes a fourth input: the internal
+materialized-predicate-write resolving read derives its `Document` slots from the
+**declared needs of the write it serves** — that write's target designation and its
+declared assignments — and from nothing else, its own predicate included (the
+`Document` slot rule and *Result form*, below). The operation algebra deliberately
+carries **no projection node** (`m-op-algebra`): no read may project a proper subset of
+the derived list, and a column-subset result is expressible **only** through the
+aggregation algebra (`m-agg`, deferred). The directives `distinct`, `orderBy`, and
+`limit` never change the list.
 
 Inheritance first resolves the target and every `narrow` to one canonical
 effective concrete-Entity sequence. `StorageLayoutFacet.position(...)` then
