@@ -1,0 +1,46 @@
+# An UNVERSIONED keyed DELETE whose addressed row is gone: the write affects 0
+# rows and is refused as a missing target (m-unit-work, ADR 0044).
+#
+# The delete arm of the rule m-unit-work-013 pins for the update, and the
+# unversioned counterpart of m-opt-lock-016's locking-mode versioned delete.
+# Target cardinality decides the expectation uniformly across the verbs: a Key
+# Target naming one key expects exactly one row whether the statement is an
+# UPDATE or a DELETE, so neither verb may reach nothing and still commit.
+#
+# The delete arm matters on its own because a delete is where a silent no-op is
+# easiest to mistake for success: the caller asked for the row to be gone, and
+# it is gone. But the unit of work did not do it, and the row it believed it was
+# removing may have been replaced by a different one since. Wallet declares no
+# version column, so no gate and no shared read lock is in play, and the
+# shortfall is the never-retriable missing target rather than a conflict a
+# re-read could resolve.
+#
+# `given.apply` REMOVES wallet 2 out of band, so the keyed delete matches
+# nothing. The golden SQL is unchanged by the correction, and
+# `then.affectedRows` is 0 with `then.tableState` showing wallets 1 and 3
+# untouched and wallet 2 already gone.
+model: models/wallet.yaml
+tags: [m-unit-work, m-sql, conflict, missing-target, slice-snapshot-1, slice-managed-1]
+shape: conflict
+compileEligibility:
+  mode: run-only
+  reason: single-connection
+  note: "single-connection concurrency/locking intent (given.apply, shape:conflict)"
+given:
+  apply:
+    - sql: delete from wallet where id = 2
+when:
+  uow:
+    concurrency: locking
+  mutation: delete
+  write: { id: 2 }
+then:
+  statements:
+    - sql:
+        postgres: delete from wallet where id = ?
+      binds: [2]
+  affectedRows: 0
+  tableState:
+    wallet:
+      - { id: 1, owner: Ada, balance: 100.00 }
+      - { id: 3, owner: Grace, balance: 10.00 }

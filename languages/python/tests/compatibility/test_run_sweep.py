@@ -524,6 +524,24 @@ def test_error_run_sweep(case: case_format.Case, provisioner: Any) -> None:
 # distinguishes an address that binds the observed rectangle's own `thru_z`    #
 # from one that would match both current rectangles of the key, and the        #
 # distinguishing observable is the affected-row count.                         #
+# `m-unit-work-013`/`-014` are the first UNVERSIONED keyed shortfalls: the     #
+# target of a keyed UPDATE and of a keyed DELETE is simply gone, and since     #
+# the model declares no version, no gate could have failed and no shared read  #
+# lock was holding anything still. Only a real execution tells that            #
+# never-retriable missing target apart from the stale write the versioned      #
+# `m-opt-lock-016`/`-017` earn — the counts are identical and only the class   #
+# differs. `m-batch-write-008` is the MULTI-KEY form of the same shortfall:    #
+# `when.write` names three keys, one unit of work buffers them, the batching   #
+# rule collapses them into one `delete ... where id in (?, ?, ?)`, and the     #
+# aggregate that ONE complete Key Target owns is what the count is held to —   #
+# a partial match is refused rather than accepted on the grounds that the      #
+# statement was set-based. `m-unit-work-015` drives the other direction: a     #
+# close whose key holds two current milestones matches 2 where its Milestone   #
+# Target addresses 1, and an excess is invariantly cardinality corruption      #
+# rather than any concurrency outcome. Neither of the last two authors         #
+# `then.tableState`: their write is refused, so this lane's unit of work rolls #
+# back where the reference harness's bare golden does not, and the two lanes   #
+# legitimately disagree on the rows that remain.                               #
 # --------------------------------------------------------------------------- #
 _CONFLICT_CASES_EXERCISED: Final[frozenset[str]] = frozenset(
     {
@@ -534,6 +552,10 @@ _CONFLICT_CASES_EXERCISED: Final[frozenset[str]] = frozenset(
         "m-opt-lock-013",
         "m-opt-lock-016",
         "m-opt-lock-017",
+        "m-unit-work-013",
+        "m-unit-work-014",
+        "m-unit-work-015",
+        "m-batch-write-008",
         "m-temporal-read-009",
         "m-temporal-read-010",
         "m-temporal-read-011",
@@ -569,14 +591,16 @@ def _conflict_golden_statements(then: dict[str, Any]) -> list[tuple[str, list[An
 
 @pytest.mark.parametrize("case", _CONFLICT_CASES, ids=[c.case_id for c in _CONFLICT_CASES])
 def test_conflict_run_sweep(case: case_format.Case, provisioner: Any) -> None:
-    """Run each `conflict`-shape case (m-opt-lock) against a reset real database.
+    """Run each `conflict`-shape case against a reset real database.
 
-    The single-attempt form (`m-opt-lock-005/006/013`) grades the golden UPDATE's
-    emissions and `then.affectedRows` — `0` for the stale-version conflict, `1` for
-    a fresh gate. The `when.attempts` retry form (`m-opt-lock-007`) grades each
-    attempt's own statements flattened in order (proving the `0`-then-`1` transition
-    through each attempt's own distinct gate bind) and the FINAL affected-row count.
-    Every case that authors `then.tableState` grades the committed table contents.
+    The single-attempt form (`m-opt-lock-005/006/013`) grades the golden write's
+    emissions and `then.affectedRows` — the count the write's own target expects,
+    or the count a refused write reached instead. The `when.attempts` retry form
+    (`m-opt-lock-007`) grades each attempt's own statements flattened in order
+    (proving the `0`-then-`1` transition through each attempt's own distinct gate
+    bind) and the FINAL affected-row count. Every case that authors
+    `then.tableState` grades the committed table contents; a case whose write is
+    refused authors none, since the unit of work rolls back.
     """
     meta = engine.load_case_metamodel(case)
     provisioner.reset(meta, case_fixtures(case))

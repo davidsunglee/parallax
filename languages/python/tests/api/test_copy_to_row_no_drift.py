@@ -80,7 +80,7 @@ def test_copy_to_row_non_temporal_update_binds_the_observed_version() -> None:
         _ACCOUNT,
         POSTGRES,
         "locking",
-    )[0].statement
+    )[0]
     assert statement.sql == "update account set balance = ?, version = ? where id = ?"
     # 8 = the OBSERVED version (7) + 1 -- never the copy's own carried version
     # (1) + 1 = 2, even though the copy itself still holds `version=1`.
@@ -98,7 +98,7 @@ def test_copy_to_row_non_temporal_update_tracks_a_different_observation() -> Non
         _ACCOUNT,
         POSTGRES,
         "locking",
-    )[0].statement
+    )[0]
     assert statement.binds == (175.00, 42, 1)
 
 
@@ -168,7 +168,7 @@ def test_copy_to_row_temporal_update_gates_the_close_on_observed_tx_start() -> N
         POSTGRES,
         "optimistic",
         instant_at("2024-09-01T00:00:00+00:00"),
-    )[0].statement
+    )[0]
     assert close.sql == "update balance set out_z = ? where bal_id = ? and out_z = ? and in_z = ?"
     assert close.binds == (
         "2024-09-01T00:00:00+00:00",
@@ -190,7 +190,7 @@ def test_copy_to_row_temporal_update_tracks_a_different_observed_tx_start() -> N
         POSTGRES,
         "optimistic",
         instant_at("2024-09-01T00:00:00+00:00"),
-    )[0].statement
+    )[0]
     assert close.binds == (
         "2024-09-01T00:00:00+00:00",
         1,

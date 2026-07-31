@@ -22,8 +22,8 @@ from parallax.conformance import boundary_runner, case_format, engine
 from parallax.conformance.boundary_runner import BoundaryAbort, FaultInjectingPort
 from parallax.conformance.class_models import MODELS
 from parallax.conformance.story_models import Account
-from parallax.core import opt_lock
 from parallax.core.db_error import DatabaseError
+from parallax.core.unit_work import OptimisticLockConflictError
 from parallax.snapshot import connect
 from parallax.snapshot.handle import Transaction
 
@@ -31,7 +31,8 @@ _CASES = boundary_runner.reachable_boundary_cases()
 _CASE_IDS = [case.case_id for case in _CASES]
 
 # `then.outcome` -> the neutral error category / type the case's failure kind
-# surfaces as (m-db-error vocabulary; `opt_lock` for the conflict kind).
+# surfaces as (m-db-error vocabulary; the Write Effect Error family for the
+# conflict kind).
 _FAILURE_CATEGORY: dict[str, str] = {
     "deadlock": "deadlock",
     "serialization-failure": "deadlock",
@@ -102,7 +103,7 @@ def test_boundary_case_runs_through_the_shipped_surface(
             "the withheld, force-flushed write must never persist"
         )
     elif outcome == "optimistic-lock-conflict":
-        with pytest.raises(opt_lock.OptimisticLockConflictError):
+        with pytest.raises(OptimisticLockConflictError):
             run()
     else:
         category = _FAILURE_CATEGORY[outcome]

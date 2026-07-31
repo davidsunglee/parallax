@@ -44,6 +44,8 @@ from parallax.core.db_port import Row
 from parallax.core.dialect import POSTGRES
 from parallax.core.unit_work import (
     FixedClock,
+    OptimisticLockConflictError,
+    StaleWriteError,
     WriteInstructionError,
     WriteRejectedError,
     validate_write,
@@ -173,7 +175,7 @@ def test_versioned_update_shortfall_in_locking_mode_is_a_stale_write() -> None:
         fetched = tx.find(mm.Account.where(mm.Account.id == 1)).result()
         tx.update(fetched.model_copy(update={"balance": Decimal("175.00")}))
 
-    with pytest.raises(opt_lock.StaleWriteError, match="Account"):
+    with pytest.raises(StaleWriteError, match="Account"):
         account_db(port).transact(fn)
     assert ("rollback",) in port.ops
     write_ops = [op for op in port.ops if op[0] == "write"]
@@ -193,7 +195,7 @@ def test_versioned_update_shortfall_in_optimistic_mode_is_a_lock_conflict() -> N
         fetched = tx.find(mm.Account.where(mm.Account.id == 1)).result()
         tx.update(fetched.model_copy(update={"balance": Decimal("175.00")}))
 
-    with pytest.raises(opt_lock.OptimisticLockConflictError, match="Account"):
+    with pytest.raises(OptimisticLockConflictError, match="Account"):
         account_db(port).transact(fn, concurrency="optimistic")
     assert ("rollback",) in port.ops
 

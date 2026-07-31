@@ -26,21 +26,26 @@ from _transact_support import (
     ACCOUNT,
     FIXED,
     NEW_ROW,
+    PERSON,
     RecordingPort,
     account_db,
+    db_for,
     deadlock,
     new_account,
 )
 
 from _support import mirrored_models as mm
-from parallax.core import opt_lock
 from parallax.core.db_error import DatabaseError
 from parallax.core.entity._hub import sealed_model
 from parallax.core.unit_work import (
+    CardinalityCorruptionError,
     EscapedTransactionError,
     FixedClock,
     FlushPlan,
+    MissingTargetError,
+    OptimisticLockConflictError,
     RollbackOnlyError,
+    StaleWriteError,
     TransactionSettings,
     UnitOfWork,
     UnitOfWorkError,
@@ -259,9 +264,10 @@ def test_rollback_only_refusal_keeps_the_original_retriability() -> None:
 # --------------------------------------------------------------------------- #
 # Optimistic-lock conflict opt-in (m-opt-lock "Retry contract";               #
 # m-auto-retry): `retry_optimistic_conflicts` joins                           #
-# `OptimisticLockConflictError` to the retriable set — the SAME `0`-then-`1`  #
-# affected-rows transition `m-opt-lock-009` witnesses against real Postgres,  #
-# reproduced here with a scripted `write_affected_queue` fake port.           #
+# `OptimisticLockConflictError` — and no other Write Effect Error — to the    #
+# retriable set, the SAME `0`-then-`1` affected-rows transition               #
+# `m-opt-lock-009` witnesses against real Postgres, reproduced here with a    #
+# scripted `write_affected_queue` fake port.                                  #
 # --------------------------------------------------------------------------- #
 def _observe_and_update(tx: Transaction) -> None:
     current = tx.find(mm.Account.where(mm.Account.id == 3)).result()
@@ -271,7 +277,7 @@ def _observe_and_update(tx: Transaction) -> None:
 def test_optimistic_conflict_surfaces_after_one_attempt_without_the_opt_in() -> None:
     port = RecordingPort(rows=[{"id": 3, "owner": "Grace", "balance": 10.00, "version": 1}])
     port.write_affected_queue = [0]
-    with pytest.raises(opt_lock.OptimisticLockConflictError):
+    with pytest.raises(OptimisticLockConflictError):
         account_db(port).transact(_observe_and_update, concurrency="optimistic")
     assert port.begins == 1
 
@@ -288,7 +294,7 @@ def test_optimistic_conflict_is_auto_retried_to_success_with_the_opt_in() -> Non
 def test_optimistic_conflict_opt_in_exhausts_its_bound() -> None:
     port = RecordingPort(rows=[{"id": 3, "owner": "Grace", "balance": 10.00, "version": 1}])
     port.write_affected_queue = [0, 0, 0]  # persistent — every attempt conflicts
-    with pytest.raises(opt_lock.OptimisticLockConflictError) as excinfo:
+    with pytest.raises(OptimisticLockConflictError) as excinfo:
         account_db(port).transact(
             _observe_and_update,
             concurrency="optimistic",
@@ -341,6 +347,50 @@ def test_optimistic_conflict_opt_in_is_inert_in_locking_mode() -> None:
     assert port.begins == 1
 
 
+# Every sibling below scripts `[0, 1]` (or `[2, 1]`): a second attempt WOULD
+# have succeeded, so `begins == 1` is evidence the opt-in refused to widen
+# rather than an artifact of a persistently failing port.
+def test_stale_write_is_never_retried_even_with_the_opt_in() -> None:
+    # A locking-mode versioned UPDATE renders no gate, so its zero-row shortfall
+    # is the stale write: the shared read lock should have made it impossible,
+    # which makes it a consistency failure no re-read resolves.
+    port = RecordingPort(rows=[{"id": 3, "owner": "Grace", "balance": 10.00, "version": 1}])
+    port.write_affected_queue = [0, 1]
+    with pytest.raises(StaleWriteError):
+        account_db(port).transact(
+            _observe_and_update, concurrency="locking", retry_optimistic_conflicts=True
+        )
+    assert port.begins == 1
+
+
+def _rename_person(tx: Transaction) -> None:
+    tx.update(mm.Person(id=1, name="Ada").model_copy(update={"name": "Grace"}))
+
+
+def test_missing_target_is_never_retried_even_with_the_opt_in() -> None:
+    # An observation-free keyed write against an unversioned Entity: a shortfall
+    # says only that the addressed rows are not there, and re-executing cannot
+    # bring them into being.
+    port = RecordingPort()
+    port.write_affected_queue = [0, 1]
+    with pytest.raises(MissingTargetError):
+        db_for(PERSON, port).transact(_rename_person, retry_optimistic_conflicts=True)
+    assert port.begins == 1
+
+
+def test_cardinality_corruption_is_never_retried_even_with_the_opt_in() -> None:
+    # An EXCESS over the exact count means an accepted identity, storage, or
+    # lowering invariant does not hold — an invariant failure rather than a
+    # concurrency outcome, so the opt-in never widens to it either.
+    port = RecordingPort(rows=[{"id": 3, "owner": "Grace", "balance": 10.00, "version": 1}])
+    port.write_affected_queue = [2, 1]
+    with pytest.raises(CardinalityCorruptionError):
+        account_db(port).transact(
+            _observe_and_update, concurrency="optimistic", retry_optimistic_conflicts=True
+        )
+    assert port.begins == 1
+
+
 def _observe_update_then_force_flush(tx: Transaction) -> None:
     current = tx.find(mm.Account.where(mm.Account.id == 3)).result()
     tx.update(current.model_copy(update={"balance": Decimal("20.00")}))
@@ -360,7 +410,7 @@ def test_optimistic_conflict_rollback_only_cause_is_retried_with_the_opt_in() ->
     db = account_db(port)
 
     def outer(_tx: Transaction) -> str:
-        with contextlib.suppress(opt_lock.OptimisticLockConflictError):
+        with contextlib.suppress(OptimisticLockConflictError):
             db.transact(_observe_update_then_force_flush)  # joins; conflicts mid-scope
         return "caught"
 

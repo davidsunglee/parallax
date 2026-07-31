@@ -45,24 +45,15 @@ m-opt-lock.md`; `python.md` §5 L584-641; ADR 0013):
    write whose only transaction-scoped observation is historical or
    edge-pinned genuinely raises here. Typed temporal verbs reach this check
    through their transaction-scoped observations.
-5. **Conflict classification** (:class:`OptimisticLockConflictError`,
-   :class:`StaleWriteError`): the two zero-row outcomes `m-opt-lock` /
-   `m-txtime-write` / `m-bitemp-write` distinguish.
-   ``OptimisticLockConflictError`` is the retriable-when-opted-in conflict an
-   ``updatedRows != 1`` GATED write raises — a versioned keyed UPDATE or DELETE,
-   or a temporal close, under optimistic concurrency. ``StaleWriteError`` is the
-   distinct NON-retriable sibling an UNGATED observation-requiring write raises:
-   the same three shapes under locking mode, where the shared read lock rather
-   than a gate was supposed to make the write correct.
-   A close's ADDRESS is not a gate, so an ungated mismatch is a consistency
-   violation, not a detected-and-retriable conflict.
-   Neither ``!= 1`` shape ever exceeds 1 (a PK-keyed or milestone-addressing
-   statement structurally cannot affect more than one row) — Reladomo's
-   separate corruption class for ``> 1`` is deliberately not mirrored.
-   ``parallax.snapshot.handle``'s :meth:`Database.transact` passes
-   ``OptimisticLockConflictError`` and the resolved
-   ``retry_optimistic_conflicts`` verdict into
-   :func:`~parallax.core.auto_retry.run_with_retry`.
+5. **Conflict classification policy**: this module decides only which shortfall
+   tag a write's settled gate earns — a GATED write's shortfall is the
+   retriable-when-opted-in optimistic conflict, an UNGATED
+   observation-requiring one the distinct non-retriable stale write, because a
+   close's ADDRESS is not a gate and so an ungated mismatch is a consistency
+   violation rather than a detected-and-retriable conflict. Carrying that
+   decision to execution is not this module's concern: a step records the tag,
+   and ``m-unit-work``'s affected-row enforcer raises the Write Effect Error it
+   names (ADR 0048).
 
 Prior art (Reladomo; semantics, not idioms): the gate plus the
 ``updatedRows != 1`` conflict mirrors ``MithraAbstractDatabaseObject.
@@ -122,18 +113,15 @@ __all__ = [
     "ExplicitVersion",
     "HistoricalObservationError",
     "OptimisticKey",
-    "OptimisticLockConflictError",
     "OptimisticLockFacet",
     "OptimisticLockModelCompiler",
     "OptimisticLockRuleSet",
-    "StaleWriteError",
     "TransactionTimeDerived",
     "UnobservedMilestoneError",
     "UnobservedVersionError",
     "Unversioned",
     "advance",
     "check_locking_license",
-    "classify_mismatch",
     "compile_facet",
     "gates",
     "reject_caller_authored_version",
@@ -205,80 +193,6 @@ class HistoricalObservationError(RuntimeError):
     """
 
 
-class OptimisticLockConflictError(RuntimeError):
-    """The ``updatedRows != 1`` conflict on a GATED write (`m-opt-lock`).
-
-    The retriable-when-opted-in signal: a concurrent write moved what the gate
-    binds — the version for a keyed UPDATE, the row itself for a keyed DELETE,
-    the current milestone's ``in_z`` for a temporal close — so the GATED
-    statement matched zero rows instead of the expected one. Classification
-    follows the gate, not the mutation kind, so an ungated (locking-mode)
-    shortfall on any of those shapes is the sibling
-    :class:`StaleWriteError` instead. Carries the
-    context an engine or caller needs to render an ``affectedRows`` observation:
-    ``entity`` (the write's target entity name), ``key`` (its object key, the
-    same ``(pk attribute name, value)`` pairs `~parallax.core.unit_work.
-    ObjectKey` carries), ``expected`` (always ``1``), and
-    ``actual`` (the port's own reported affected-row count).
-    """
-
-    def __init__(
-        self,
-        entity: str,
-        key: tuple[tuple[str, object], ...],
-        expected: int,
-        actual: int,
-    ) -> None:
-        self.entity = entity
-        self.key = key
-        self.expected = expected
-        self.actual = actual
-        super().__init__(
-            f"{entity}: versioned write affected {actual} row(s), expected {expected} "
-            f"(key={dict(key)!r}) — a concurrent write changed the version first "
-            "(m-opt-lock optimistic-lock conflict)"
-        )
-
-
-class StaleWriteError(RuntimeError):
-    """The ``updatedRows != 1`` outcome on an UNGATED (locking-mode) write that
-    still required a prior observation — a temporal close (`m-txtime-write`
-    "Affected-row conflict contract for closes"; `m-bitemp-write`) or a versioned
-    keyed UPDATE or DELETE (`m-opt-lock`).
-
-    Such a shortfall is an error in ANY mode, never silent. Under optimistic
-    concurrency the gate — the observed ``in_z`` for a close, the observed version
-    for a keyed write — makes a stale write a detectable, retriable
-    :class:`OptimisticLockConflictError`. Under
-    locking concurrency the statement carries no gate at all (the shared read lock
-    is supposed to make it correct), so the shortfall is a categorically DIFFERENT,
-    NON-retriable outcome: a consistency violation the write's own address alone
-    could not have prevented, not a lost-update conflict a retry could resolve by
-    re-reading. Carries the SAME context fields as
-    :class:`OptimisticLockConflictError` (``entity`` / ``key`` / ``expected`` /
-    ``actual``) so a caller renders the SAME ``affectedRows`` observation either
-    way; the sibling class is what distinguishes the two outcomes.
-    """
-
-    def __init__(
-        self,
-        entity: str,
-        key: tuple[tuple[str, object], ...],
-        expected: int,
-        actual: int,
-    ) -> None:
-        self.entity = entity
-        self.key = key
-        self.expected = expected
-        self.actual = actual
-        super().__init__(
-            f"{entity}: locking-mode (ungated) observation-requiring write affected "
-            f"{actual} row(s), expected {expected} (key={dict(key)!r}) — a non-retriable "
-            "stale/consistency outcome, distinct from a gated optimistic-lock conflict "
-            "(m-opt-lock / m-txtime-write / m-bitemp-write affected-row conflict contract)"
-        )
-
-
 def require_observed(entity: str, observation: WriteObservation | None) -> int:
     """The version a keyed update/delete of a versioned row advances from.
 
@@ -341,34 +255,6 @@ def gates(concurrency: Concurrency) -> bool:
     is what makes an ungated write correct.
     """
     return concurrency == "optimistic"
-
-
-def classify_mismatch(
-    entity: str,
-    key: tuple[tuple[str, object], ...],
-    expected: int,
-    actual: int | None,
-    *,
-    stale_error: bool,
-) -> OptimisticLockConflictError | StaleWriteError:
-    """The affected-row-mismatch error for one lowered statement whose actual
-    ``execute_write`` count disagreed with its ``expected_affected`` count.
-
-    The single classification both render-seam call sites share: the flush
-    executor ``parallax.snapshot.handle`` injects into the unit of work (every
-    non-temporal expectation and every temporal close) and the
-    conformance engine's standalone conflict-close probe
-    (``parallax.conformance.engine._run_conflict_close``, the one caller
-    outside production that renders a close directly, never through a
-    ``FlushPlan``) — so the two error CLASSES this scope owns (the retriable
-    :class:`OptimisticLockConflictError` for a GATED mismatch, the
-    non-retriable :class:`StaleWriteError` for an UNGATED observation-requiring
-    one) can never drift between the two callers. ``actual`` is ``None``
-    exactly when the underlying port reported no count at all — normalized to
-    ``0`` (a mismatch either way, since ``expected`` is always positive).
-    """
-    error_cls = StaleWriteError if stale_error else OptimisticLockConflictError
-    return error_cls(entity, key, expected, actual if actual is not None else 0)
 
 
 def check_locking_license(concurrency: Concurrency, basis: TransactionTimeBasis) -> None:

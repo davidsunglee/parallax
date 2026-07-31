@@ -21,7 +21,6 @@ import pytest
 from _metamodel_support import Declaration, key, source
 
 from parallax.conformance import case_format, engine, sweep
-from parallax.core import opt_lock
 from parallax.core._formation_profile import form_metamodel
 from parallax.core.base import STRING, InstantError
 from parallax.core.db_port import DbPort, Row
@@ -37,6 +36,13 @@ from parallax.core.metamodel import (
     ValueObjectOccurrenceDeclaration,
     ValueObjectShapeDeclaration,
     ValueObjectShapeKey,
+)
+from parallax.core.unit_work import (
+    Concurrency,
+    MissingTargetError,
+    OptimisticLockConflictError,
+    StaleWriteError,
+    WriteEffectError,
 )
 
 
@@ -2433,62 +2439,117 @@ def test_run_conflict_case_renders_a_gated_zero_row_close_as_a_conflict() -> Non
     assert affected == 0
 
 
-def _always_classifying(stale_error: bool) -> Callable[..., BaseException]:
-    """A ``classify_mismatch`` stand-in that ignores the statement's own gate
-    decision — a write that classified its zero-row shortfall the wrong way."""
-    error_cls = opt_lock.StaleWriteError if stale_error else opt_lock.OptimisticLockConflictError
+def _always_implying(
+    error_cls: type[WriteEffectError],
+) -> Callable[[bool, Concurrency], type[WriteEffectError]]:
+    """An ``_implied_shortfall_error`` stand-in that ignores the case's own
+    declared facts — a lane admitting the wrong shortfall class."""
 
-    def classify(
-        entity: str,
-        key: tuple[tuple[str, object], ...],
-        expected: int,
-        actual: int | None,
-        *,
-        stale_error: bool,
-    ) -> BaseException:
-        return error_cls(entity, key, expected, actual if actual is not None else 0)
+    def implied(_observation_requiring: bool, _concurrency: Concurrency) -> type[WriteEffectError]:
+        return error_cls
 
-    return classify
+    return implied
 
 
 class TestConflictShortfallClassification:
-    """The shortfall class each concurrency mode implies, and the lane's refusal to
-    absorb the other one.
+    """The shortfall class a conflict case's declared facts imply, and the lane's
+    refusal to absorb any other one.
 
-    Both classes carry the same ``actual`` count, so a lane catching either would
-    render `then.affectedRows: 0` identically whichever class the write raised, and a
-    zero-row case would assert nothing about the classification (`m-opt-lock`
-    "Classification follows the gate").
+    Every member of the Write Effect Error family carries the same ``actual``
+    count, so a lane catching the whole family would render `then.affectedRows: 0`
+    identically whichever class the write raised, and a zero-row case would assert
+    nothing about the classification (`m-opt-lock` "Classification follows the
+    gate").
     """
 
     def test_optimistic_mode_implies_the_retriable_conflict(self) -> None:
         assert (
-            engine._conflict_shortfall_error("optimistic")  # pyright: ignore[reportPrivateUsage] - the lane's own classification seam
-            is opt_lock.OptimisticLockConflictError
+            engine._implied_shortfall_error(True, "optimistic")  # pyright: ignore[reportPrivateUsage] - the lane's own classification seam
+            is OptimisticLockConflictError
         )
 
     def test_locking_mode_implies_the_non_retriable_stale_write(self) -> None:
         assert (
-            engine._conflict_shortfall_error("locking")  # pyright: ignore[reportPrivateUsage] - the lane's own classification seam
-            is opt_lock.StaleWriteError
+            engine._implied_shortfall_error(True, "locking")  # pyright: ignore[reportPrivateUsage] - the lane's own classification seam
+            is StaleWriteError
         )
 
-    def test_a_locking_shortfall_raised_as_a_conflict_propagates(
+    @pytest.mark.parametrize("concurrency", ["locking", "optimistic"])
+    def test_an_observation_free_write_implies_a_missing_target_in_either_mode(
+        self, concurrency: Concurrency
+    ) -> None:
+        # A write that observed nothing has no gate to classify by, so its
+        # shortfall says only that the addressed rows are not there.
+        assert (
+            engine._implied_shortfall_error(False, concurrency)  # pyright: ignore[reportPrivateUsage] - the lane's own classification seam
+            is MissingTargetError
+        )
+
+    def test_a_locking_shortfall_admitted_as_a_conflict_propagates(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        # The regression this pins: reclassifying the ungated locking-mode DELETE's
-        # shortfall back to the retriable conflict. The lane must NOT swallow it into
-        # the same `affectedRows: 0` observation m-opt-lock-016 asserts.
-        monkeypatch.setattr(opt_lock, "classify_mismatch", _always_classifying(stale_error=False))
-        with pytest.raises(opt_lock.OptimisticLockConflictError):
+        # The regression this pins: a lane admitting the retriable conflict where
+        # the ungated locking-mode DELETE's shortfall is the stale write. The real
+        # failure must NOT be swallowed into the same `affectedRows: 0`
+        # observation m-opt-lock-016 asserts.
+        monkeypatch.setattr(
+            engine, "_implied_shortfall_error", _always_implying(OptimisticLockConflictError)
+        )
+        with pytest.raises(StaleWriteError):
             engine.run_conflict_case(_load_case("m-opt-lock-016"), "postgres", _ZeroAffectedPort())
 
-    def test_a_gated_shortfall_raised_as_a_stale_write_propagates(
+    def test_a_gated_shortfall_admitted_as_a_stale_write_propagates(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setattr(opt_lock, "classify_mismatch", _always_classifying(stale_error=True))
-        with pytest.raises(opt_lock.StaleWriteError):
+        monkeypatch.setattr(engine, "_implied_shortfall_error", _always_implying(StaleWriteError))
+        with pytest.raises(OptimisticLockConflictError):
             engine.run_conflict_case(_load_case("m-opt-lock-005"), "postgres", _ZeroAffectedPort())
+
+
+class _CollapsedDeletePort(FakeWritePort):
+    """A port whose collapsed multi-key DELETE reports every key the statement
+    named, so the write lands and the lane reports its own aggregate."""
+
+    def execute_write(self, sql: str, binds: Sequence[object]) -> int:
+        super().execute_write(sql, binds)
+        return len(binds) if sql.startswith("delete from wallet where id in") else 1
+
+
+def test_run_conflict_case_collapses_a_multi_key_write_into_one_statement() -> None:
+    # m-batch-write-008 authors `when.write` as an ORDERED ARRAY of keyed rows.
+    # One unit of work buffers all three and the batching rule collapses them
+    # into ONE set-based DELETE — so the lane's own pure re-lowering must inject
+    # the same collapse policy the execution runs under, or it would report three
+    # statements where one was emitted. The count it reports is the aggregate the
+    # single complete Key Target owns, never a per-row 1.
+    emissions, affected, _table_state = engine.run_conflict_case(
+        _load_case("m-batch-write-008"), "postgres", _CollapsedDeletePort()
+    )
+    assert [e.sql for e in emissions] == ["delete from wallet where id in (?, ?, ?)"]
+    assert [e.binds for e in emissions] == [(1, 2, 3)]
+    assert affected == 3
+
+
+def test_run_conflict_case_refuses_a_multi_key_write_against_a_temporal_target() -> None:
+    # A temporal target's write expands into a close plus its successors per key
+    # and never collapses into one set-based statement, so the multi-key `write`
+    # array — keyed and non-temporal — names no single milestone for the close to
+    # address. It is refused rather than reduced to a row the case never chose.
+    from pathlib import Path
+
+    case = case_format.Case(
+        path=Path("m-unit-work-999-synthetic.yaml"),
+        case_id="m-unit-work-999",
+        shape="conflict",
+        tags=("m-unit-work", "slice-snapshot-1"),
+        model="models/balance.yaml",
+        document={
+            "model": "models/balance.yaml",
+            "when": {"write": [{"id": 1}, {"id": 2}], "at": "2024-10-01T00:00:00+00:00"},
+        },
+    )
+    with pytest.raises(engine.EngineError, match="closes one milestone row"):
+        engine.run_conflict_case(case, "postgres", FakeWritePort())
 
 
 def test_run_conflict_case_attempts_form_scripts_each_attempt_independently() -> None:

@@ -50,9 +50,7 @@ def _flush_and_lower(buffer: list[BufferItem], model: Metamodel) -> list[Stateme
         collapse=batch_write.collapses,
         collapse_group=collapse_group_key,
     )
-    return [
-        lowered.statement for _step, lowered in stream_lowered(plan, model, POSTGRES, "locking")
-    ]
+    return [statement for _step, statement in stream_lowered(plan, model, POSTGRES, "locking")]
 
 
 def test_insert_collapses_for_an_unversioned_non_pk_gen_entity() -> None:

@@ -231,7 +231,6 @@
     "Execution",
     "FindResult",
     "HistoryFindResult",
-    "LoweredStatement",
     "MilestoneGraph",
     "NoResultFound",
     "Snapshot",

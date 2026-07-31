@@ -542,6 +542,22 @@ class Model:
         return self.root_entity.rows
 
 
+def conflict_write_rows(attempt: dict[str, Any]) -> list[dict[str, Any]]:
+    """The ordered neutral write rows one conflict attempt authors (``write``).
+
+    A lone row object is the one-element case of the MULTI-KEY array form, whose
+    rows one unit of work buffers together and the batching rule may collapse
+    into a single set-based statement carrying one Key Target. Empty when the
+    attempt authors no ``write`` at all.
+    """
+    raw = attempt.get("write")
+    if raw is None:
+        return []
+    if isinstance(raw, list):
+        return list(raw)
+    return [raw]
+
+
 @dataclass(frozen=True)
 class Case:
     """A parsed compatibility case bound to its model + fixtures."""
@@ -698,9 +714,25 @@ class Case:
         return self.given.get("apply", [])
 
     @property
+    def write_rows(self) -> list[dict[str, Any]]:
+        """The single-attempt conflict's neutral write input (``when.write``) as the
+        ordered row list both authored forms denote.
+
+        Empty for the retry form, whose rows live per attempt
+        (:func:`conflict_write_rows` reads those).
+        """
+        return conflict_write_rows(self.when)
+
+    @property
     def write(self) -> dict[str, Any] | None:
-        """The single-attempt conflict's neutral write input (``when.write``)."""
-        return self.when.get("write")
+        """The single-attempt conflict's SOLE neutral write row (``when.write``).
+
+        ``None`` when the case authors no ``when.write``, and also for the
+        multi-key array form, which no single-row reader can answer for — those
+        read :attr:`write_rows` instead.
+        """
+        rows = self.write_rows
+        return rows[0] if len(rows) == 1 else None
 
     @property
     def conflict_mutation(self) -> str:

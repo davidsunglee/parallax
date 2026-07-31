@@ -4,11 +4,10 @@ Direct, isolated pins for the pure policy scope ``parallax.snapshot.handle``'s
 write-lowering seam consumes: the observed-version requirement
 (:func:`require_observed`), the runtime-computed advance (:func:`advance`), the
 optimistic-only gate decision (:func:`gates`), the historical-observation
-licensing check (:func:`check_locking_license`) and its error class, the
-derived initial version, and the conflict error's own carried context. The
-corpus-level composition (the gate/advance/conflict wired through real DML) is
-pinned in ``test_write_lowering.py``; this file is the policy scope's own,
-narrower unit boundary.
+licensing check (:func:`check_locking_license`) and its error class, and the
+derived initial version. The corpus-level composition (the gate and advance
+wired through real DML) is pinned in ``test_write_lowering.py``; this file is
+the policy scope's own, narrower unit boundary.
 """
 
 from __future__ import annotations
@@ -72,40 +71,3 @@ class TestCheckLockingLicense:
     def test_locking_mode_with_a_historical_observation_raises(self) -> None:
         with pytest.raises(opt_lock.HistoricalObservationError, match="latest-pinned"):
             opt_lock.check_locking_license("locking", HISTORICAL_PINNED)
-
-
-def test_optimistic_lock_conflict_error_carries_its_context() -> None:
-    key = (("id", 2),)
-    error = opt_lock.OptimisticLockConflictError("Account", key, 1, 0)
-    assert error.entity == "Account"
-    assert error.key == key
-    assert error.expected == 1
-    assert error.actual == 0
-    assert "Account" in str(error)
-    assert "concurrent write changed the version first" in str(error)
-
-
-class TestClassifyMismatch:
-    """The single mismatch-to-error classification both render-seam call sites
-    (`parallax.snapshot.handle`'s flush executor,
-    `parallax.conformance.engine`'s standalone conflict-close probe) share."""
-
-    def test_gated_mismatch_is_the_retriable_conflict(self) -> None:
-        key = (("id", 2),)
-        error = opt_lock.classify_mismatch("Account", key, 1, 0, stale_error=False)
-        assert isinstance(error, opt_lock.OptimisticLockConflictError)
-        assert error.entity == "Account"
-        assert error.key == key
-        assert error.expected == 1
-        assert error.actual == 0
-
-    def test_ungated_mismatch_is_the_non_retriable_stale_write(self) -> None:
-        key = (("id", 2),)
-        error = opt_lock.classify_mismatch("Balance", key, 1, 0, stale_error=True)
-        assert isinstance(error, opt_lock.StaleWriteError)
-        assert error.entity == "Balance"
-        assert error.key == key
-
-    def test_a_none_actual_count_normalizes_to_zero(self) -> None:
-        error = opt_lock.classify_mismatch("Account", (("id", 1),), 1, None, stale_error=False)
-        assert error.actual == 0

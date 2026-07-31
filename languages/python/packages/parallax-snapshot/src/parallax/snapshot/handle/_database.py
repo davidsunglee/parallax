@@ -34,7 +34,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
-from parallax.core import batch_write, opt_lock
+from parallax.core import batch_write
 from parallax.core.auto_retry import run_with_retry
 from parallax.core.db_port import DbPort
 from parallax.core.dialect import POSTGRES, Dialect
@@ -57,19 +57,16 @@ from parallax.core.unit_work import (
     Concurrency,
     FlushExecutor,
     FlushPlan,
-    KeyTarget,
-    MilestoneTarget,
-    PlannedInsert,
+    OptimisticLockConflictError,
     RollbackOnlyError,
     SystemClock,
     TransactionSettings,
     UnitOfWork,
     UnitOfWorkError,
     active_unit_of_work,
+    enforce_affected_rows,
     run_unit_of_work,
 )
-from parallax.core.unit_work.planned import PlannedWrite as PlannedStep
-from parallax.core.unit_work.planned import WriteTarget as PlannedTarget
 from parallax.snapshot.handle._keyed_sql import collapse_group_key
 from parallax.snapshot.handle._read import (
     Snapshot,
@@ -83,7 +80,6 @@ from parallax.snapshot.handle._read import (
 )
 from parallax.snapshot.handle._transaction import Transaction
 from parallax.snapshot.handle._write_lowering import stream_lowered
-from parallax.snapshot.handle._write_types import LoweredStatement
 
 __all__ = ["Database", "TransactionOptionConflictError", "connect"]
 
@@ -288,7 +284,6 @@ class Database:
         return run_with_retry(
             attempt,
             retries=options.retries,
-            extra_retriable_types=(opt_lock.OptimisticLockConflictError,),
             extra_retriable=(
                 _optimistic_conflict_retriable if options.retry_optimistic_conflicts else None
             ),
@@ -303,25 +298,22 @@ def _optimistic_conflict_retriable(exc: BaseException) -> bool:
     ``extra_retriable`` extension ONLY when the resolved option is set
     (:meth:`Database.transact`, above).
 
-    ``parallax.core.auto_retry`` may not import ``parallax.core.opt_lock``
-    (the import-linter contract fixes the `m-auto-retry` DAG edges at
-    ``m-unit-work`` / ``m-db-error`` only), so this composed, opt-in-gated
-    branch lives HERE, the one seam that legally sees both — the SAME two
-    raise shapes :func:`~parallax.core.auto_retry._retriable_failure`
-    already distinguishes for a transient database failure: the conflict
-    itself (a direct :class:`~parallax.core.opt_lock.OptimisticLockConflictError`),
-    or the rollback-only refusal whose ``__cause__`` preserves it (the JOIN
-    case — an inner joined scope's own conflict marks the root
-    rollback-only, and the outermost retry loop still applies per the
-    original failure's category, spec §5). :class:`~parallax.core.opt_lock.
-    StaleWriteError` (the distinct, NON-retriable locking-mode sibling,
-    `m-opt-lock` "Conflict classification") is never named here — it stays
-    outside the retriable set unconditionally, opt-in or not.
+    The retry loop already recognizes the canonical conflict; what stays
+    caller policy is whether a recognized conflict is RETRIED, which is what
+    this predicate answers. It covers the SAME two raise shapes
+    :func:`~parallax.core.auto_retry._retriable_failure` already distinguishes
+    for a transient database failure: the conflict itself, or the rollback-only
+    refusal whose ``__cause__`` preserves it (the JOIN case — an inner joined
+    scope's own conflict marks the root rollback-only, and the outermost retry
+    loop still applies per the original failure's category, spec §5). The
+    remaining Write Effect Errors are never named here: a Stale Write, a Missing
+    Target, and a Cardinality Corruption stay outside the retriable set
+    unconditionally, opt-in or not.
     """
-    if isinstance(exc, opt_lock.OptimisticLockConflictError):
+    if isinstance(exc, OptimisticLockConflictError):
         return True
     if isinstance(exc, RollbackOnlyError):
-        return isinstance(exc.__cause__, opt_lock.OptimisticLockConflictError)
+        return isinstance(exc.__cause__, OptimisticLockConflictError)
     return False
 
 
@@ -360,66 +352,26 @@ def _flush_executor(
     concurrency: Concurrency,
 ) -> FlushExecutor:
     """The unit of work's injected flush sink: lower each planned step, execute
-    every statement in order, and enforce each STEP's own affected-rows
-    expectation (`m-opt-lock`; `m-txtime-write`; `m-bitemp-write`).
+    every statement in order, and hand each result back to the unit of work to
+    interpret.
 
     The single write-lowering seam (:func:`stream_lowered`) run on the
     transaction's own connection, inside the still-open ``port.transaction``
     scope — so an abort rolls back force-flushed writes with everything else.
     Every step lowers to exactly one statement, and a temporal mutation's close
-    precedes the rows it chains, so a mismatch on the close raises and ABORTS
-    BEFORE those rows ever execute (`m-txtime-write` "MUST NOT silently succeed
-    and proceed to chain"). ``LoweredStatement.stale_error`` picks the raised
-    class by the GATE, never by the mutation kind: the non-retriable
-    :class:`~parallax.core.opt_lock.StaleWriteError` for an UNGATED (locking-mode)
-    mismatch on a write that still required a prior observation, and the retriable
-    :class:`~parallax.core.opt_lock.OptimisticLockConflictError` for a gated one.
+    precedes the rows it chains, so a failure on the close aborts BEFORE those
+    rows ever execute.
+
+    This executor performs NO classification of its own: it reports the driver's
+    count to :func:`~parallax.core.unit_work.enforce_affected_rows`, which owns
+    the authoritative reading of the step's Affected Rows Policy (ADR 0048).
     """
 
     def execute(plan: FlushPlan) -> None:
-        for step, lowered in stream_lowered(plan, model, dialect, concurrency):
+        for step, statement in stream_lowered(plan, model, dialect, concurrency):
             affected = conn.execute_write(
-                dialect.to_driver_sql(lowered.statement.sql), list(lowered.statement.binds)
+                dialect.to_driver_sql(statement.sql), list(statement.binds)
             )
-            if lowered.expected_affected is not None and affected != lowered.expected_affected:
-                raise _conflict_error(step, affected, lowered)
+            enforce_affected_rows(step, affected)
 
     return execute
-
-
-def _conflict_error(
-    step: PlannedStep,
-    actual: int | None,
-    lowered: LoweredStatement,
-) -> opt_lock.OptimisticLockConflictError | opt_lock.StaleWriteError:
-    """The affected-row-mismatch error for one executed step — the retriable
-    gated conflict, or (``lowered.stale_error``) the non-retriable outcome ANY
-    ungated write that still required a prior observation earns
-    (`m-opt-lock` / `m-txtime-write` / `m-bitemp-write`). Resolves the
-    identifying context off the step's own addressed key and defers the
-    classification to :func:`~parallax.core.opt_lock.classify_mismatch` — the one
-    place that decision is made, shared with the conformance engine's standalone
-    conflict-close probe."""
-    assert not isinstance(step, PlannedInsert)  # an insert carries no expectation
-    assert lowered.expected_affected is not None  # the caller's own guard
-    return opt_lock.classify_mismatch(
-        step.entity.name,
-        _addressed_key(step.target),
-        lowered.expected_affected,
-        actual,
-        stale_error=lowered.stale_error,
-    )
-
-
-def _addressed_key(target: PlannedTarget) -> tuple[tuple[str, object], ...]:
-    """The one addressed row's primary-key pairs, for the failure's own payload.
-
-    Only an addressed write carries an expectation, and only a singleton one can
-    attribute a shortfall to a row, so this reads the sole key tuple the target
-    names."""
-    assert isinstance(target, (KeyTarget, MilestoneTarget))  # a readless write expects no count
-    values = target.key_values if isinstance(target, MilestoneTarget) else target.key_values[0]
-    return tuple(
-        (attribute.name, value)
-        for attribute, value in zip(target.key_attributes, values, strict=True)
-    )

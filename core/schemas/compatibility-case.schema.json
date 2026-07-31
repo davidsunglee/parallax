@@ -688,8 +688,15 @@
           }
         },
         "write": {
-          "description": "conflict cases (m-opt-lock), single-attempt form. The neutral write input (①) for this conflict's versioned UPDATE or DELETE (or a temporal / bitemporal close), as a flat attribute-named literal (`$defs/writeRow`): the primary-key attribute (classified to the `where` key), every assigned domain attribute (the `set` columns — none for a DELETE), and the reserved `observedVersion` control key. A TEMPORAL / Bitemporal close carries only the milestone pk (+, on a Bitemporal target, `valid_end` — the address's Valid-Time exclusive upper bound, which the close binds in BOTH concurrency modes and which may be finite or infinity); its close instant and observed gate ride in `when.at` / `when.observedTxStart`. Either way the golden statement + binds become an INDEPENDENT cross-check rather than a golden-parse tautology.",
-          "$ref": "#/$defs/writeRow"
+          "description": "conflict cases, single-attempt form. The neutral write input (①) for this conflict's keyed UPDATE or DELETE (or a temporal / bitemporal close), as a flat attribute-named literal (`$defs/writeRow`): the primary-key attribute (classified to the `where` key), every assigned domain attribute (the `set` columns — none for a DELETE), and the reserved `observedVersion` control key. A TEMPORAL / Bitemporal close carries only the milestone pk (+, on a Bitemporal target, `valid_end` — the address's Valid-Time exclusive upper bound, which the close binds in BOTH concurrency modes and which may be finite or infinity); its close instant and observed gate ride in `when.at` / `when.observedTxStart`. Either way the golden statement + binds become an INDEPENDENT cross-check rather than a golden-parse tautology. An ORDERED ARRAY of rows is the MULTI-KEY form: one unit of work buffers every row and the batching rule collapses them into a single set-based statement whose one Key Target holds every key, so `then.affectedRows` is the AGGREGATE that complete target owns (m-batch-write; m-unit-work affected-row attribution). The array form is keyed and non-temporal — a versioned or temporal target materializes to per-row writes instead of collapsing.",
+          "oneOf": [
+            { "$ref": "#/$defs/writeRow" },
+            {
+              "type": "array",
+              "minItems": 1,
+              "items": { "$ref": "#/$defs/writeRow" }
+            }
+          ]
         },
         "mutation": {
           "description": "conflict cases (m-opt-lock), NON-temporal form. The keyed verb `when.write` names, defaulting to `update`. `delete` selects the versioned keyed DELETE instead, whose golden carries no `set` clause. The verb decides neither gate presence nor shortfall classification — `when.uow.concurrency` decides both, uniformly for the versioned UPDATE, the versioned DELETE, and the temporal close: a `locking`-mode golden renders no gate at all, so its zero-row outcome is the non-retriable stale write rather than an optimistic conflict. A TEMPORAL target ignores this field: its conflict write is always the milestone close.",
@@ -787,7 +794,7 @@
           }
         },
         "affectedRows": {
-          "description": "conflict cases (m-opt-lock), single-attempt form. The number of rows the golden write — a versioned keyed UPDATE or DELETE, or a temporal milestone close — must affect after any `given.apply` is applied. 1 => success (the write applied); 0 => the zero-row shortfall, and the concurrency mode names it: a GATED (optimistic) shortfall is the retriable optimistic-lock conflict, an UNGATED (locking-mode) one the non-retriable stale write an observation-requiring write earns when no gate could have caused the shortfall. This is the observable form of both outcomes: `updatedRows != 1` is the signal, and the mode decides which classification it carries.",
+          "description": "conflict cases, single-attempt form. The number of rows the golden write — a keyed UPDATE or DELETE, or a temporal milestone close — must affect after any `given.apply` is applied. The EXPECTATION it is graded against follows the write's TARGET, not whether optimistic locking applies: a Key Target expects exactly its key count (the AGGREGATE, for the multi-key `when.write` array form), a milestone close exactly 1. Meeting the expectation is success. A SHORTFALL is classified by the write's already-decided concurrency: a GATED (optimistic) shortfall is the retriable optimistic-lock conflict, an UNGATED (locking-mode) observation-requiring one the non-retriable stale write, and a shortfall on a target that required no observation at all (an UNVERSIONED keyed write) the non-retriable missing target — the rows addressed do not exist. An EXCESS over the expectation is invariant and never a concurrency outcome: it is always the non-retriable cardinality corruption, since no concurrent writer can make a correctly addressed target match more rows than it names. A case whose write is REFUSED reaches no committed state, so it asserts this count and its golden statement rather than `then.tableState`.",
           "type": "integer",
           "minimum": 0
         },

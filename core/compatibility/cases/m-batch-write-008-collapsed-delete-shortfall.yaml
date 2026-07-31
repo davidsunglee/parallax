@@ -1,0 +1,47 @@
+# A COLLAPSED multi-key DELETE reaching fewer rows than it addressed: one
+# aggregate expectation over the whole Key Target, short by one (m-batch-write +
+# m-unit-work, ADR 0044).
+#
+# m-batch-write-003 collapses three buffered deletes into one
+# `delete ... where id in (?, ?, ?)`. Collapsing does not weaken what the write
+# claims: the collapsed statement carries ONE Key Target holding three keys, and
+# therefore ONE expectation of three rows. The semantic distinction this case
+# pins down is that the aggregate is the whole expectation — an implementation
+# may not accept a partial match on the grounds that the statement was set-based,
+# and may not attribute the shortfall to a particular key it cannot identify.
+# One aggregate count suffices precisely because one complete Key Target owns it.
+#
+# `given.apply` REMOVES wallet 2 out of band, so the collapsed DELETE matches 2
+# of the 3 keys it named. Wallet declares no version column, so the shortfall
+# carries no gate and no observation: it is the never-retriable missing target,
+# the multi-key form of m-unit-work-014. The golden SQL is unchanged — the
+# collapse still happens, and it is the expectation riding on it that this case
+# adds.
+#
+# `then.tableState` is deliberately absent. The write is refused, so its unit of
+# work reaches no committed state to assert; the claim is the emitted statement
+# and the aggregate count it must be held to.
+model: models/wallet.yaml
+tags: [m-batch-write, m-unit-work, m-sql, conflict, missing-target, slice-snapshot-1, slice-managed-1]
+shape: conflict
+compileEligibility:
+  mode: run-only
+  reason: single-connection
+  note: "single-connection concurrency/locking intent (given.apply, shape:conflict)"
+given:
+  apply:
+    - sql: delete from wallet where id = 2
+when:
+  uow:
+    concurrency: locking
+  mutation: delete
+  write:
+    - { id: 1 }
+    - { id: 2 }
+    - { id: 3 }
+then:
+  statements:
+    - sql:
+        postgres: delete from wallet where id in (?, ?, ?)
+      binds: [1, 2, 3]
+  affectedRows: 2

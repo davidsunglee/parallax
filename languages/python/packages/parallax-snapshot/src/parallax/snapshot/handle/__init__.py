@@ -37,8 +37,7 @@ public-surface check promises. Where the exported names live:
   close probe.
 - :mod:`~parallax.snapshot.handle._finalize` — :func:`plan_temporal_close`, the
   semantic half of that same probe.
-- :mod:`~parallax.snapshot.handle._write_types` — :class:`WriteLoweringError` and
-  :class:`LoweredStatement`.
+- :mod:`~parallax.snapshot.handle._write_types` — :class:`WriteLoweringError`.
 - :mod:`~parallax.snapshot.handle._write_inputs` —
   :class:`TransactionTimePinReadOnlyError` and :func:`validate_source_pin`, the
   finite-Transaction-Time-pin refusal the keyed verbs and the conformance
@@ -81,7 +80,7 @@ from parallax.snapshot.handle._write_inputs import (
     validate_source_pin,
 )
 from parallax.snapshot.handle._write_lowering import stream_lowered
-from parallax.snapshot.handle._write_types import LoweredStatement, WriteLoweringError
+from parallax.snapshot.handle._write_types import WriteLoweringError
 
 __all__ = [
     "Database",
@@ -89,7 +88,6 @@ __all__ = [
     "Execution",
     "FindResult",
     "HistoryFindResult",
-    "LoweredStatement",
     "MilestoneGraph",
     "NoResultFound",
     "Snapshot",

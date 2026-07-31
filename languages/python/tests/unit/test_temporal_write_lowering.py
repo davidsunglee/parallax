@@ -11,9 +11,9 @@ The statements stay byte-exact against the corpus goldens (``m-txtime-write-001
 lowering can no longer see: the mode-independent Milestone Target (the key plus
 one exclusive upper bound per As-Of Axis) against the observed-``in_z`` gate the
 concurrency mode decides, each successor's Insert Origin, each close's Close
-Cause, and the two zero-row-close outcomes
-(:class:`~parallax.core.opt_lock.OptimisticLockConflictError` for a gated
-mismatch, :class:`~parallax.core.opt_lock.StaleWriteError` for an ungated one).
+Cause, and the two zero-row-close shortfall tags
+(:class:`~parallax.core.unit_work.OptimisticConflict` for a gated mismatch,
+:class:`~parallax.core.unit_work.StaleWrite` for an ungated one).
 """
 
 from __future__ import annotations
@@ -26,22 +26,26 @@ from typing import cast
 import pytest
 
 from _support.clock_probes import instant_at
-from _support.lowering_probes import lower_planned
+from _support.lowering_probes import lower_planned, lower_planned_steps
 from parallax.conformance import models
 from parallax.core import bitemp_write, storage_layout, txtime_write
 from parallax.core.db_port import JsonDocument
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.metamodel import EntityIdentity, EntityMetadata, TemporalDimension
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
+from parallax.core.sql_gen import Statement
 from parallax.core.temporal_read import LATEST, Pin
 from parallax.core.unit_work import (
     INFINITY,
+    OPTIMISTIC_CONFLICT,
+    STALE_WRITE,
     SUPERSEDED,
     TERMINATED,
     UNGATED,
     CarriedFrom,
     ChangedFrom,
     Concurrency,
+    ExactCount,
     Finite,
     FixedClock,
     KeyedMutation,
@@ -64,7 +68,6 @@ from parallax.descriptor._records import Metamodel
 from parallax.snapshot.handle import (
     Execution,
     FindResult,
-    LoweredStatement,
     WriteLoweringError,
     lower_step,
     plan_temporal_close,
@@ -126,8 +129,27 @@ def _lower_full(
     observation: WriteObservation | None = None,
     dialect: Dialect = POSTGRES,
     concurrency: Concurrency = "locking",
-) -> list[LoweredStatement]:
+) -> list[Statement]:
     return lower_planned(
+        PlannedWrite(instruction=instruction, observation=observation),
+        models.accepted_model(meta),
+        dialect,
+        concurrency,
+        instant_at(tx_instant),
+    )
+
+
+def _lower_steps(
+    instruction: KeyedWrite,
+    meta: Metamodel,
+    tx_instant: str,
+    *,
+    observation: WriteObservation | None = None,
+    dialect: Dialect = POSTGRES,
+    concurrency: Concurrency = "locking",
+) -> list[tuple[PlannedStep, Statement]]:
+    """The same statements, paired with the settled step each came from."""
+    return lower_planned_steps(
         PlannedWrite(instruction=instruction, observation=observation),
         models.accepted_model(meta),
         dialect,
@@ -162,8 +184,8 @@ def _lower(
     concurrency: Concurrency = "locking",
 ) -> list[tuple[str, tuple[object, ...]]]:
     return [
-        (lowered.statement.sql, lowered.statement.binds)
-        for lowered in _lower_full(
+        (statement.sql, statement.binds)
+        for statement in _lower_full(
             instruction,
             meta,
             tx_instant,
@@ -347,49 +369,50 @@ def test_audit_only_close_is_ungated_under_locking_regardless_of_observation() -
     # was observed.
     update = KeyedWrite("update", "Balance", ({"id": 1, "acctNum": "A", "value": 175.00},))
     observation = _observed(tx_start="2024-06-01T00:00:00+00:00")
-    statements = _lower_full(
+    step, close = _lower_steps(
         update, BALANCE, "2024-09-01T00:00:00+00:00", observation=observation, concurrency="locking"
-    )
-    close = statements[0]
-    assert close.statement.sql == "update balance set out_z = ? where bal_id = ? and out_z = ?"
-    assert close.expected_affected == 1
-    assert close.stale_error is True  # ungated: a mismatch is the non-retriable StaleWriteError
+    )[0]
+    assert close.sql == "update balance set out_z = ? where bal_id = ? and out_z = ?"
+    assert isinstance(step, PlannedClose)
+    # ungated: a shortfall is the non-retriable stale write
+    assert step.affected_rows == ExactCount(1, STALE_WRITE)
 
 
 def test_audit_only_close_gates_on_observed_in_z_under_optimistic() -> None:
     # m-txtime-write-006: the gated close binds the observed in_z LAST.
     close_only = KeyedWrite("terminate", "Balance", ({"id": 1},))
     observation = _observed(tx_start="2024-06-01T00:00:00+00:00")
-    statements = _lower_full(
+    steps = _lower_steps(
         close_only,
         BALANCE,
         "2024-09-01T00:00:00+00:00",
         observation=observation,
         concurrency="optimistic",
     )
-    assert len(statements) == 1
-    lowered = statements[0]
-    assert lowered.statement.sql == (
+    assert len(steps) == 1
+    step, lowered = steps[0]
+    assert lowered.sql == (
         "update balance set out_z = ? where bal_id = ? and out_z = ? and in_z = ?"
     )
-    assert lowered.statement.binds == (
+    assert lowered.binds == (
         "2024-09-01T00:00:00+00:00",
         1,
         "infinity",
         "2024-06-01T00:00:00+00:00",
     )
-    assert lowered.expected_affected == 1
-    assert (
-        lowered.stale_error is False
-    )  # gated: a mismatch is the retriable OptimisticLockConflictError
+    assert isinstance(step, PlannedClose)
+    # gated: a shortfall is the retriable optimistic conflict
+    assert step.affected_rows == ExactCount(1, OPTIMISTIC_CONFLICT)
 
 
 def test_audit_only_insert_is_never_gated() -> None:
-    # An INSERT never consults an observation — no close, nothing to gate.
+    # An INSERT never consults an observation — no close, nothing to gate. A
+    # Planned Insert carries neither a gate nor an Affected Rows Policy at all,
+    # so the absence is structural rather than a null expectation.
     insert = KeyedWrite("insert", "Balance", ({"id": 9, "acctNum": "D", "value": 100.00},))
-    statements = _lower_full(insert, BALANCE, "2024-06-01T00:00:00+00:00", concurrency="optimistic")
-    assert len(statements) == 1
-    assert statements[0].expected_affected is None
+    steps = _lower_steps(insert, BALANCE, "2024-06-01T00:00:00+00:00", concurrency="optimistic")
+    assert len(steps) == 1
+    assert isinstance(steps[0][0], PlannedInsert)
 
 
 # --------------------------------------------------------------------------- #
@@ -1016,10 +1039,10 @@ def test_tph_txtime_optlock_composed_conflict_orders_tag_then_gate_last() -> Non
         concurrency="optimistic",
     )
     lowered = statements[0]
-    assert lowered.statement.sql == (
+    assert lowered.sql == (
         "update reading set out_z = ? where id = ? and kind = ? and out_z = ? and in_z = ?"
     )
-    assert lowered.statement.binds == (
+    assert lowered.binds == (
         "2024-09-01T00:00:00+00:00",
         1,
         "meter",
@@ -1043,8 +1066,8 @@ def test_audit_only_update_carries_the_value_object_document_on_the_chain() -> N
     observation = _observed(tx_start="2024-01-01T00:00:00+00:00")
     statements = _lower_full(update, SUPPLIER, "2024-06-01T00:00:00+00:00", observation=observation)
     close, chain = statements
-    assert close.statement.sql == "update supplier set out_z = ? where sup_id = ? and out_z = ?"
-    assert chain.statement.binds[-1] == JsonDocument(d2)
+    assert close.sql == "update supplier set out_z = ? where sup_id = ? and out_z = ?"
+    assert chain.binds[-1] == JsonDocument(d2)
 
 
 def test_bitemporal_update_until_carries_the_value_object_document_on_every_chain() -> None:
@@ -1078,12 +1101,10 @@ def test_bitemporal_update_until_carries_the_value_object_document_on_every_chai
         update_until, BRANCH, "2024-02-15T00:00:00+00:00", observation=observation
     )
     close, head, middle, tail = statements
-    assert close.statement.sql == (
-        "update branch set out_z = ? where br_id = ? and thru_z = ? and out_z = ?"
-    )
-    assert head.statement.binds[-1] == JsonDocument(d1)
-    assert middle.statement.binds[-1] == JsonDocument(d2)
-    assert tail.statement.binds[-1] == JsonDocument(d1)
+    assert close.sql == ("update branch set out_z = ? where br_id = ? and thru_z = ? and out_z = ?")
+    assert head.binds[-1] == JsonDocument(d1)
+    assert middle.binds[-1] == JsonDocument(d2)
+    assert tail.binds[-1] == JsonDocument(d1)
 
 
 # --------------------------------------------------------------------------- #

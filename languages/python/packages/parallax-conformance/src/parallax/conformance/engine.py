@@ -58,17 +58,22 @@ from parallax.core.temporal_read import (
     statement_pin,
 )
 from parallax.core.unit_work import (
+    CardinalityCorruptionError,
     Concurrency,
     FixedClock,
     KeyedWrite,
+    MissingTargetError,
     ObjectKey,
+    OptimisticLockConflictError,
     PredicateWrite,
-    StaleWrite,
+    StaleWriteError,
     TransactionInstant,
     VersionObservation,
     WriteAssignment,
+    WriteEffectError,
     WriteObservation,
     WriteRejectedError,
+    enforce_affected_rows,
     instructions,
     object_key,
     plan_flush,
@@ -1458,7 +1463,7 @@ def _lower_resolved(
         collapse_group=collapse_group_key,
     )
     statements = [
-        lowered.statement for _step, lowered in stream_lowered(plan, model, dialect, concurrency)
+        statement for _step, statement in stream_lowered(plan, model, dialect, concurrency)
     ]
     _check_statement_count_consistency(entries, len(statements))
     return tuple(statements)
@@ -1523,7 +1528,7 @@ def _lower_predicate_write_step(
         collapse_group=collapse_group_key,
     )
     statements = [
-        lowered.statement for _step, lowered in stream_lowered(plan, model, dialect, concurrency)
+        statement for _step, statement in stream_lowered(plan, model, dialect, concurrency)
     ]
     assert len(statements) == 1  # a readless predicate write is always exactly one statement
     return statements[0]
@@ -2531,7 +2536,7 @@ def _run_interleaved_group(
 
     The group's OWN LAST step forces an explicit flush (never deferred to
     end-of-scope auto-flush): a WRITE step's flush may itself raise
-    :class:`~parallax.core.opt_lock.OptimisticLockConflictError` (the SAME
+    :class:`~parallax.core.unit_work.OptimisticLockConflictError` (the SAME
     signal a caller-driven retry catches, `_run_conflict_write`'s own
     precedent) — caught HERE, its ``actual`` recorded, and the transaction
     aborts (never retried: `m-opt-lock-012`'s own `when.uow` sets no
@@ -2615,7 +2620,7 @@ def _run_interleaved_group(
     try:
         database.transact(body, concurrency=concurrency)
         committed = True
-    except opt_lock.OptimisticLockConflictError as exc:
+    except OptimisticLockConflictError as exc:
         result.conflict_actual = exc.actual
     except BaseException as exc:  # re-raised on the main thread below
         result.failure = exc
@@ -3391,12 +3396,12 @@ def _execute_reads(port: DbPort, dialect: Dialect, statements: Sequence[Statemen
 
 
 # --------------------------------------------------------------------------- #
-# Conflict — the optimistic-lock run lane (m-opt-lock).                        #
+# Conflict — the write-effect run lane (m-opt-lock / m-unit-work).             #
 # Single-attempt (`when.write`) and retry                                      #
 # (`when.attempts`) forms both drive ONE `db.transact` call per attempt.       #
-# A non-temporal attempt (the versioned keyed                                  #
-# UPDATE) buffers through the neutral `Transaction._buffer` route, exactly     #
-# like any other keyed write; a TEMPORAL attempt (`m-txtime-write` /            #
+# A non-temporal attempt (a keyed UPDATE or DELETE over one row or the         #
+# multi-key array) buffers through the neutral `Transaction._buffer` route,    #
+# exactly like any other keyed write; a TEMPORAL attempt (`m-txtime-write` /   #
 # `m-bitemp-write`) composes `handle.plan_temporal_close` directly — a         #
 # conflict case tests ONLY the close, never a chain, a shape no REAL temporal  #
 # mutation verb produces on its own.                                          #
@@ -3467,15 +3472,6 @@ def _conflict_target(meta: Metamodel) -> str:
     return concretes[0]
 
 
-def _identity_key(
-    meta: Metamodel, entity_name: str, row: Mapping[str, object]
-) -> tuple[tuple[str, object], ...]:
-    pk_names = [
-        attr.name for attr in _descriptor_family.family_primary_key(meta, meta.entity(entity_name))
-    ]
-    return tuple((name, row[name]) for name in pk_names)
-
-
 def _conflict_mutation(when: Mapping[str, object]) -> Literal["update", "delete"]:
     """A NON-TEMPORAL conflict case's written verb (`m-case-format`
     ``when.mutation``), defaulting to ``update``. A temporal target ignores it:
@@ -3483,79 +3479,151 @@ def _conflict_mutation(when: Mapping[str, object]) -> Literal["update", "delete"
     return "delete" if when.get("mutation") == "delete" else "update"
 
 
+@dataclass(frozen=True, slots=True)
+class _ConflictWrite:
+    """One row of a NON-TEMPORAL conflict attempt's ``write``, resolved once for
+    both the pure re-lowering and the real execution: the durable row, the
+    single-row instruction a unit of work buffers for it, that instruction's
+    coalescing identity, and the Version Observation the row's reserved
+    ``observedVersion`` described."""
+
+    row: dict[str, object]
+    instruction: WriteInstruction
+    key: ObjectKey | None
+    observation: VersionObservation | None
+
+
+def _resolve_conflict_writes(
+    meta: Metamodel,
+    target: str,
+    mutation: Literal["update", "delete"],
+    write_rows: Sequence[Mapping[str, object]],
+) -> tuple[_ConflictWrite, ...]:
+    """Resolve a NON-TEMPORAL conflict attempt's ``write`` rows: strip each row's
+    reserved ``observedVersion`` into a Version Observation (`m-opt-lock`;
+    ADR 0013) and validate the durable instruction it leaves. ``mutation`` is the
+    case's own ``when.mutation`` verb — a keyed UPDATE or DELETE, the two
+    non-temporal shapes whose gate the concurrency mode decides uniformly; a
+    temporal close's own conflict form (`handle.plan_temporal_close`) is a
+    distinct shape.
+
+    Every row becomes its OWN single-row instruction, exactly as a unit of work
+    buffers it. Which of them end up sharing a statement is the planner's
+    decision alone, so the MULTI-KEY ``write`` array reaches the collapse rule
+    rather than a pre-merged instruction this function invented.
+    """
+    model = case_model(meta)
+    resolved: list[_ConflictWrite] = []
+    for raw_row in write_rows:
+        clean_row, observation = _strip_observation(raw_row)
+        instruction = instructions.deserialize(
+            {"mutation": mutation, "entity": target, "rows": [clean_row]}
+        )
+        instructions.validate_instruction(instruction, model)
+        resolved.append(
+            _ConflictWrite(clean_row, instruction, object_key(instruction, model), observation)
+        )
+    return tuple(resolved)
+
+
+def _conflict_write_observations(
+    resolved: Sequence[_ConflictWrite],
+) -> dict[ObjectKey, WriteObservation]:
+    """The observations an attempt's resolved rows bind, keyed by object identity."""
+    return {
+        write.key: write.observation
+        for write in resolved
+        if write.key is not None and write.observation is not None
+    }
+
+
+def _landed_conflict_rows(resolved: Sequence[_ConflictWrite]) -> int:
+    """The aggregate row count a conflict attempt affects when its write LANDS:
+    one per DISTINCT addressed key, since same-key rows coalesce into a single
+    addressed row before any target is built. A row whose identity does not
+    resolve coalesces with nothing and stands for itself."""
+    keyed = {write.key for write in resolved if write.key is not None}
+    return len(keyed) + sum(1 for write in resolved if write.key is None)
+
+
 def _lower_conflict_write(
     meta: Metamodel,
     dialect: Dialect,
-    target: str,
     concurrency: Concurrency,
-    write_row: Mapping[str, object],
-    mutation: Literal["update", "delete"],
+    resolved: Sequence[_ConflictWrite],
 ) -> tuple[Statement, ...]:
-    """PURE-lower one NON-TEMPORAL conflict attempt's ``write`` row: strip its
-    reserved ``observedVersion`` into a Version Observation (`m-opt-lock`;
-    ADR 0013), plan the single-instruction buffer, and lower it. ``mutation`` is
-    the case's own ``when.mutation`` verb — a versioned keyed UPDATE or DELETE,
-    the two non-temporal shapes whose gate the concurrency mode decides
-    uniformly; a temporal close's own conflict form
-    (`handle.plan_temporal_close`) is a distinct shape."""
-    clean_row, observation = _strip_observation(write_row)
-    instruction = instructions.deserialize(
-        {"mutation": mutation, "entity": target, "rows": [clean_row]}
-    )
-    model = case_model(meta)
-    instructions.validate_instruction(instruction, model)
-    observations: dict[ObjectKey, WriteObservation] = {}
-    if observation is not None:
-        key = object_key(instruction, model)
-        if key is not None:
-            observations[key] = observation
-    instant = _pinned_instant(_INERT_CLOCK_INSTANT)
-    plan = plan_flush([instruction], observations, instant, model)
-    return tuple(
-        lowered.statement for _step, lowered in stream_lowered(plan, model, dialect, concurrency)
-    )
+    """PURE-lower one NON-TEMPORAL conflict attempt's resolved ``write`` rows:
+    plan the whole buffer and lower every survivor.
 
-
-def _conflict_shortfall_error(
-    concurrency: Concurrency,
-) -> type[opt_lock.OptimisticLockConflictError] | type[opt_lock.StaleWriteError]:
-    """The ONE affected-row shortfall class a conflict case's declared concurrency
-    mode implies (`m-opt-lock` "Classification follows the gate").
-
-    Gate presence is decided by the mode alone, and classification follows the gate:
-    a GATED (optimistic) shortfall is the retriable
-    :class:`~parallax.core.opt_lock.OptimisticLockConflictError`, an UNGATED
-    (locking-mode) one the non-retriable
-    :class:`~parallax.core.opt_lock.StaleWriteError`. Both carry the same
-    ``actual`` count, so a lane that caught either would render the case's
-    ``affectedRows`` observation identically whichever class the write raised —
-    and the case would then assert nothing about the classification. Catching only
-    the implied class lets the other one propagate instead.
+    ``collapse=batch_write.collapses`` and ``collapse_group=collapse_group_key``
+    are injected identically to the composition layer's own production wiring
+    (`parallax.snapshot.handle.Database.transact`), so a MULTI-KEY attempt
+    reports the ONE set-based statement its real execution emits rather than the
+    per-row statements an uncollapsed plan would have rendered.
     """
-    return (
-        opt_lock.OptimisticLockConflictError
-        if opt_lock.gates(concurrency)
-        else opt_lock.StaleWriteError
+    model = case_model(meta)
+    instant = _pinned_instant(_INERT_CLOCK_INSTANT)
+    plan = plan_flush(
+        [write.instruction for write in resolved],
+        _conflict_write_observations(resolved),
+        instant,
+        model,
+        collapse=batch_write.collapses,
+        collapse_group=collapse_group_key,
     )
+    return tuple(
+        statement for _step, statement in stream_lowered(plan, model, dialect, concurrency)
+    )
+
+
+def _implied_shortfall_error(
+    observation_requiring: bool, concurrency: Concurrency
+) -> type[WriteEffectError]:
+    """The ONE shortfall class a conflict case's declared facts imply.
+
+    Derived from the case, never from the plan the implementation settled, so a
+    write whose policy was settled wrongly cannot also move the expectation it is
+    graded against. An OBSERVATION-REQUIRING write — a versioned keyed UPDATE or
+    DELETE, or a temporal close — classifies by its gate, which the concurrency
+    mode alone decides: a GATED (optimistic) shortfall is the retriable
+    optimistic-lock conflict, an UNGATED (locking-mode) one the non-retriable
+    stale write. Anything else is an observation-free keyed write, whose
+    shortfall means the addressed rows are simply not there.
+    """
+    if not observation_requiring:
+        return MissingTargetError
+    return OptimisticLockConflictError if opt_lock.gates(concurrency) else StaleWriteError
 
 
 def _conflict_attempt_affected(
     database: handle.Database,
     concurrency: Concurrency,
+    implied: type[WriteEffectError],
     body: Callable[[handle.Transaction], int],
 ) -> int:
     """One conflict attempt's affected-row observation: what ``body`` reports when
-    the write lands, or the ``actual`` count carried by the ONE shortfall class the
-    declared mode implies (:func:`_conflict_shortfall_error`).
+    the write lands, or the ``actual`` count carried by the ONE Write Effect Error
+    the case's own declared facts admit.
 
     Both conflict lanes — the non-temporal keyed write and the temporal close —
-    make this exact guard, so it lives here once rather than beside each ``body``:
-    a shortfall classified the other way propagates and fails the case instead of
-    being absorbed into an ``affectedRows`` observation that cannot tell them apart.
+    make this exact guard, so it lives here once rather than beside each ``body``.
+    Every member of the family renders the same ``actual`` count, so a lane that
+    caught the whole family would report an identical ``affectedRows`` observation
+    whichever class the write raised, and the case would then assert nothing about
+    the classification. Admitting only the implied class lets every other one
+    propagate and fail the case instead.
+
+    An EXCESS is invariant: whatever a shortfall would have classified as, more
+    rows than the target addresses is always Cardinality Corruption, so the
+    direction the raised error itself reports — not the declared mode — selects
+    that arm.
     """
     try:
         return database.transact(body, concurrency=concurrency)
-    except _conflict_shortfall_error(concurrency) as exc:
+    except WriteEffectError as exc:
+        admitted = CardinalityCorruptionError if exc.actual > exc.expected else implied
+        if type(exc) is not admitted:
+            raise
         return exc.actual
 
 
@@ -3565,51 +3633,54 @@ def _run_conflict_write(
     meta: Metamodel,
     target: str,
     concurrency: Concurrency,
-    write_row: Mapping[str, object],
+    write_rows: Sequence[Mapping[str, object]],
     mutation: Literal["update", "delete"],
 ) -> tuple[tuple[Statement, ...], int]:
     """Lower and execute one NON-TEMPORAL conflict attempt's write through
     ``db.transact`` — ONE
     transaction, an inert Clock (never consumed by a non-temporal write).
-    Buffers through the neutral ``Transaction._buffer`` route +
-    ``UnitOfWork.observe``; the PRODUCTION flush executor's OWN
-    ``expected_affected`` check raises on a mismatch, and this lane catches only
-    the class the case's own mode implies (:func:`_conflict_shortfall_error`),
-    rendering it as the ``0`` ``affectedRows`` observation the case asserts. A
-    shortfall classified the other way — an ungated locking-mode versioned DELETE
-    surfacing as an optimistic conflict, say — propagates and fails the case.
+    Buffers EVERY row through the neutral ``Transaction._buffer`` route +
+    ``UnitOfWork.observe``, so a MULTI-KEY attempt reaches the flush the same way
+    a unit of work's own buffered writes do and the batching rule — not this
+    function — decides how many statements they become; the PRODUCTION flush
+    executor's OWN affected-row enforcer raises on a violation, and this lane
+    admits only the class the case's own declared facts imply
+    (:func:`_implied_shortfall_error`), rendering it as the ``affectedRows``
+    observation the case asserts. A failure classified any other way — an ungated
+    locking-mode versioned DELETE surfacing as an optimistic conflict, or an
+    unversioned keyed UPDATE against a missing row surfacing as anything but a
+    missing target — propagates and fails the case.
 
     ``statements`` (the reported golden-comparable emission) is
     :func:`_lower_conflict_write`'s own SEPARATE, PURE re-lowering of the
-    ORIGINAL, undecoded ``write_row`` — the row this function actually
-    buffers is decoded to native carriers (:func:`decode_write_row`) only for
+    ORIGINAL, undecoded rows — the rows this function actually
+    buffers are decoded to native carriers (:func:`decode_write_row`) only for
     THIS real execution, so a case-authored wire spelling (`m-opt-lock-013`'s
     own decimal `balance`) validates at the coercion-only developer boundary
     without the reported emission's bind ever drifting from the case-authored
     literal.
     """
-    statements = _lower_conflict_write(meta, dialect, target, concurrency, write_row, mutation)
-    clean_row, observation = _strip_observation(write_row)
+    resolved = _resolve_conflict_writes(meta, target, mutation, write_rows)
+    statements = _lower_conflict_write(meta, dialect, concurrency, resolved)
     model = case_model(meta)
     instant = normalize_instant(dt.datetime.fromisoformat(_INERT_CLOCK_INSTANT))
     database = handle.Database(port, model, dialect=dialect, clock=FixedClock(instant))
     target_metadata = case_entity(model, meta.entity(target))
+    landed = _landed_conflict_rows(resolved)
 
     def body(tx: handle.Transaction) -> int:
-        instruction = instructions.deserialize(
-            {"mutation": mutation, "entity": target, "rows": [clean_row]}
-        )
-        if observation is not None:
-            key = object_key(instruction, case_model(meta))
-            if key is not None:
+        for write in resolved:
+            if write.observation is not None and write.key is not None:
                 # The documented neutral seam (Transaction._buffer route + uow.observe).
-                tx._uow.observe(key, observation)  # pyright: ignore[reportPrivateUsage] - conformance harness drives the transaction's private unit-of-work seam
-        tx._buffer(  # pyright: ignore[reportPrivateUsage] - conformance harness drives the transaction's private unit-of-work seam
-            mutation, target, decode_write_row(target_metadata, clean_row, model)
-        )
-        return 1  # the expectation machinery already verified this on success (m-opt-lock)
+                tx._uow.observe(write.key, write.observation)  # pyright: ignore[reportPrivateUsage] - conformance harness drives the transaction's private unit-of-work seam
+            tx._buffer(  # pyright: ignore[reportPrivateUsage] - conformance harness drives the transaction's private unit-of-work seam
+                mutation, target, decode_write_row(target_metadata, write.row, model)
+            )
+        return landed  # the expectation machinery already verified this on success
 
-    return statements, _conflict_attempt_affected(database, concurrency, body)
+    observation_requiring = _versioned_non_temporal_version_attribute(meta, target) is not None
+    implied = _implied_shortfall_error(observation_requiring, concurrency)
+    return statements, _conflict_attempt_affected(database, concurrency, implied, body)
 
 
 def _run_conflict_close(
@@ -3637,8 +3708,8 @@ def _run_conflict_close(
     tests a KNOWN stale-or-fresh value.
 
     A zero-row close is caught only as the class the case's own mode implies
-    (:func:`_conflict_shortfall_error`); the other class propagates, so the
-    ``affectedRows`` observation can never absorb a misclassified shortfall.
+    (:func:`_implied_shortfall_error`); every other class propagates, so the
+    ``affectedRows`` observation can never absorb a misclassified failure.
     """
     row = dict(write_row)
     observed_valid_end = cast("str | None", row.pop("valid_end", None))
@@ -3664,21 +3735,44 @@ def _run_conflict_close(
         affected = tx._conn.execute_write(  # pyright: ignore[reportPrivateUsage] - conformance harness drives the transaction's private connection seam
             dialect.to_driver_sql(statement.sql), list(statement.binds)
         )
-        if affected != step.affected_rows.expected:
-            # Shared classification (`parallax.core.opt_lock.classify_mismatch`):
-            # the SAME gate-driven decision `parallax.snapshot.handle`'s own
-            # flush executor applies, so the two callers can never disagree on
-            # which error class a mismatch raises.
-            raise opt_lock.classify_mismatch(
-                target,
-                _identity_key(meta, target, row),
-                step.affected_rows.expected,
-                affected,
-                stale_error=isinstance(step.affected_rows.on_shortfall, StaleWrite),
-            )
+        # The SAME authoritative interpreter `parallax.snapshot.handle`'s own
+        # flush executor asks, so the two callers can never disagree on what a
+        # count means.
+        enforce_affected_rows(step, affected)
         return affected
 
-    return (statement,), _conflict_attempt_affected(database, concurrency, body)
+    implied = _implied_shortfall_error(True, concurrency)
+    return (statement,), _conflict_attempt_affected(database, concurrency, implied, body)
+
+
+def _conflict_write_rows(attempt: Mapping[str, object]) -> tuple[Mapping[str, object], ...]:
+    """One conflict attempt's authored ``write`` as the ordered row sequence both
+    forms denote: a lone object is the one-element case of the multi-key array
+    (`m-case-format`), so the single seam here spares every lane downstream from
+    knowing which spelling the case chose."""
+    raw = attempt["write"]
+    if isinstance(raw, list):
+        return tuple(cast("list[Mapping[str, object]]", raw))
+    return (cast("Mapping[str, object]", raw),)
+
+
+def _conflict_close_row(
+    case: case_format.Case, attempt: Mapping[str, object]
+) -> Mapping[str, object]:
+    """The ONE milestone row a temporal conflict attempt closes.
+
+    The multi-key ``write`` array is a keyed, NON-temporal form — a temporal
+    target's write expands into a close plus its successors per key and never
+    collapses into one set-based statement — so an array reaching a close is
+    refused rather than silently reduced to a row the case did not single out.
+    """
+    raw = attempt["write"]
+    if isinstance(raw, list):
+        raise EngineError(
+            f"{case.path.name}: a temporal conflict attempt closes one milestone row, and "
+            "the multi-key `write` array form is keyed and non-temporal"
+        )
+    return cast("Mapping[str, object]", raw)
 
 
 def run_conflict_case(
@@ -3689,9 +3783,11 @@ def run_conflict_case(
     sequence — each attempt its OWN `db.transact` unit,
     in order, each with its own statements /
     affected-row count (the case's own `0`-then-`1` retry-contract witness). A
-    NON-temporal target (`m-opt-lock`'s own versioned keyed UPDATE or DELETE,
-    named by `when.mutation`) buffers through the neutral `Transaction._buffer`
-    route; a TEMPORAL target composes `handle.plan_temporal_close` directly.
+    NON-temporal target (a keyed UPDATE or DELETE, named by `when.mutation`)
+    buffers every row of its `write` — one row, or the multi-key array whose
+    rows the batching rule may collapse into a single set-based statement —
+    through the neutral `Transaction._buffer` route; a TEMPORAL target composes
+    `handle.plan_temporal_close` directly, one milestone row at a time.
 
     Loads no fixtures itself (the caller's own lifecycle does, per
     `m-case-format`'s conflict-shape default); applies `given.apply` verbatim
@@ -3712,36 +3808,38 @@ def run_conflict_case(
     affected = 0
     try:
         _apply_given_apply(case, dialect, port)
-        attempts = when.get("attempts")
-        if isinstance(attempts, list):
-            for index, attempt in enumerate(cast("list[Mapping[str, object]]", attempts)):
-                write_row = cast("Mapping[str, object]", attempt["write"])
-                if is_temporal:
-                    at = cast("str", attempt["at"])
-                    observed_tx_start = cast("str | None", attempt.get("observedTxStart"))
-                    statements, affected = _run_conflict_close(
-                        port, dialect, meta, target, concurrency, write_row, at, observed_tx_start
-                    )
-                else:
-                    statements, affected = _run_conflict_write(
-                        port, dialect, meta, target, concurrency, write_row, mutation
-                    )
-                emissions.extend(
-                    Emission(f"/when/attempts/{index}/write", s.sql, s.binds) for s in statements
-                )
-        else:
-            write_row = cast("Mapping[str, object]", when["write"])
+        raw_attempts = when.get("attempts")
+        attempts: list[tuple[str, Mapping[str, object]]] = (
+            [
+                (f"/when/attempts/{index}/write", attempt)
+                for index, attempt in enumerate(cast("list[Mapping[str, object]]", raw_attempts))
+            ]
+            if isinstance(raw_attempts, list)
+            else [("/when/write", when)]
+        )
+        for pointer, attempt in attempts:
             if is_temporal:
-                at = cast("str", when["at"])
-                observed_tx_start = cast("str | None", when.get("observedTxStart"))
                 statements, affected = _run_conflict_close(
-                    port, dialect, meta, target, concurrency, write_row, at, observed_tx_start
+                    port,
+                    dialect,
+                    meta,
+                    target,
+                    concurrency,
+                    _conflict_close_row(case, attempt),
+                    cast("str", attempt["at"]),
+                    cast("str | None", attempt.get("observedTxStart")),
                 )
             else:
                 statements, affected = _run_conflict_write(
-                    port, dialect, meta, target, concurrency, write_row, mutation
+                    port,
+                    dialect,
+                    meta,
+                    target,
+                    concurrency,
+                    _conflict_write_rows(attempt),
+                    mutation,
                 )
-            emissions.extend(Emission("/when/write", s.sql, s.binds) for s in statements)
+            emissions.extend(Emission(pointer, s.sql, s.binds) for s in statements)
     except _LOWERING_ERRORS as exc:
         raise EngineError(f"{case.path.name}: {exc}") from exc
     then = case.document.get("then")

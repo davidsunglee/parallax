@@ -121,6 +121,22 @@ def test_conflict_case_apply_is_optional_but_present_for_the_conflict() -> None:
     assert not success.apply
 
 
+def test_conflict_write_rows_normalizes_both_authored_forms() -> None:
+    multi = [c for c in _conflict_cases() if isinstance(c.when.get("write"), list)]
+    assert multi, "no multi-key (array-form) conflict case discovered"
+    for case in multi:
+        # The array form denotes an ORDERED row list one unit of work buffers
+        # together and the batching rule may collapse into one statement. No
+        # single row stands for it, so `write` answers None and readers that need
+        # the input take `write_rows`.
+        assert case.write is None
+        assert case.write_rows == list(case.when["write"])
+    single = [c for c in _conflict_cases() if isinstance(c.when.get("write"), dict)]
+    assert single, "no single-row conflict case discovered"
+    for case in single:
+        assert case.write_rows == [case.write]
+
+
 def test_conflict_input_holds_for_authored_versioned_cases() -> None:
     cases = _versioned_conflict_cases()
     assert cases, "no versioned conflict (m-opt-lock) case discovered"
