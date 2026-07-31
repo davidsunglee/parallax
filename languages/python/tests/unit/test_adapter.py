@@ -804,17 +804,23 @@ def test_run_case_graphs_observation_reports_ordered_milestone_pin_graphs() -> N
 class _WriteAndReadBackPort:
     """A no-Docker port that accepts writes (never raising) and answers every
     read with empty rows — enough for a writeSequence case's trailing
-    ``read_table_state`` call-back, which this test does not inspect."""
+    ``read_table_state`` call-back, which this test does not inspect.
 
-    def __init__(self) -> None:
+    ``affected`` scripts the row count each successive write reports, defaulting
+    to one. A batched keyed write expects every row its target addresses, so a
+    collapsed statement that reported a single row would read as a shortfall.
+    """
+
+    def __init__(self, affected: Sequence[int] = ()) -> None:
         self.writes = 0
+        self._affected = list(affected)
 
     def execute(self, sql: str, binds: Sequence[object]) -> list[Row]:
         return []
 
     def execute_write(self, sql: str, binds: Sequence[object]) -> int:
         self.writes += 1
-        return 1
+        return self._affected.pop(0) if self._affected else 1
 
     def transaction[T](self, body: Callable[[DbPort], T]) -> T:  # pragma: no cover
         return body(self)
@@ -827,9 +833,10 @@ def test_run_case_runs_a_genuine_batch_collapse_write() -> None:
     # `m-batch-write` "Set-based flush") and whose SECOND entry batches a
     # uniform-value UPDATE over an `IN`-list: the
     # engine passes each row list through as one multi-row instruction, and
-    # the lowering seam renders it end to end — two `execute_write` calls total.
+    # the lowering seam renders it end to end — two `execute_write` calls total,
+    # reporting the three and two rows their targets respectively address.
     case_path = case_format.default_cases_dir() / "m-batch-write-001-set-based-flush.yaml"
-    port = _WriteAndReadBackPort()
+    port = _WriteAndReadBackPort([3, 2])
     envelope = adapter.run_case(case_path, "postgres", port)
     assert envelope["status"] == "ok", envelope
     assert envelope["observations"]["roundTrips"] == 2

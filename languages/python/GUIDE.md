@@ -466,8 +466,8 @@ self-contained without a system `libpq`.
   skip treatment as `m-unit-work-005`/`-006`/`-009`. The predicate-write
   refusal wording duplicated between `parallax.snapshot.handle.lower_write`
   and `parallax.conformance.engine`'s structural pre-check now shared one
-  source, `handle.predicate_write_refusal` (the same move as
-  `opt_lock.classify_mismatch`, increment above) — that refusal, and its
+  source, `handle.predicate_write_refusal` (the same de-duplication move the
+  increment above made for shortfall classification) — that refusal, and its
   named source, no longer exist: increment 5 (below) replaced the refusal
   with real predicate-write execution. Measured post-round: unit
   lane (`pytest -m unit`) 1822 passed / 92 skipped (unchanged); compile-sweep

@@ -36,7 +36,7 @@ from sqlglot import exp
 from sqlglot.expressions.core import Expr
 
 from . import errors, serde
-from .case import Case, Entity, Model
+from .case import Case, Entity, Model, conflict_write_rows
 from .data_loader import load_model
 from .ddl_builder import (
     contributor_types,
@@ -3712,6 +3712,28 @@ def _conflict_temporal_entity(case: Case) -> Entity | None:
     return None
 
 
+def _sole_conflict_write(
+    case: Case, attempt: dict[str, Any], pointer: str
+) -> dict[str, Any] | None:
+    """The ONE ① row a versioned or temporal conflict's cross-check derives from.
+
+    Both derivations read a single row's key, set columns, and observation
+    against ONE golden statement. The multi-key ``write`` array is neither: a
+    versioned or temporal target materializes per-row writes rather than
+    collapsing, so a multi-key array authored against one is refused rather than
+    cross-checked against a golden that cannot describe it.
+    """
+    rows = conflict_write_rows(attempt)
+    if len(rows) > 1:
+        raise CaseFailure(
+            f"{case.path.name}: a versioned or temporal conflict ({pointer}) authors "
+            f"{len(rows)} write rows — the multi-key `write` array is keyed and "
+            f"non-temporal, since a versioned or temporal target materializes per-row "
+            f"writes rather than collapsing into one statement."
+        )
+    return rows[0] if rows else None
+
+
 def _assert_conflict_input(case: Case, dialect: str) -> None:
     """Cross-check a conflict case's neutral input (① ``write``) against its golden.
 
@@ -3720,8 +3742,11 @@ def _assert_conflict_input(case: Case, dialect: str) -> None:
     :func:`_assert_versioned_conflict_input`. The single form reads a root
     ``write``; the retry form reads a ``write`` per attempt. A temporal-close
     conflict (no version column) carries a close-shaped ① instead, cross-checked by
-    :func:`_assert_temporal_conflict_input`. Comparing against the golden is
-    legitimate — two AUTHORED representations, never grading generated output.
+    :func:`_assert_temporal_conflict_input`. An UNVERSIONED, non-temporal
+    conflict has neither derivation to make — its golden carries no gate and no
+    version advance — so it is left to the execution assertion alone. Comparing
+    against the golden is legitimate — two AUTHORED representations, never
+    grading generated output.
     """
     entity = _conflict_versioned_entity(case)
     if entity is None:
@@ -3731,15 +3756,16 @@ def _assert_conflict_input(case: Case, dialect: str) -> None:
     mutation = case.conflict_mutation
     if case.attempts:
         for index, attempt in enumerate(case.attempts):
+            pointer = f"attempts[{index}].write"
             _assert_versioned_conflict_input(
                 case,
                 entity,
                 version_col,
                 mutation,
-                attempt.get("write"),
+                _sole_conflict_write(case, attempt, pointer),
                 _attempt_statements(attempt, dialect),
                 _entry_binds(attempt.get("statements"), 0),
-                f"attempts[{index}].write",
+                pointer,
                 dialect,
             )
         return
@@ -3748,7 +3774,7 @@ def _assert_conflict_input(case: Case, dialect: str) -> None:
         entity,
         version_col,
         mutation,
-        case.write,
+        _sole_conflict_write(case, case.when, "write"),
         case.golden_statements(dialect),
         case.statement_binds(0),
         "write",
@@ -3876,22 +3902,23 @@ def _assert_temporal_conflict_input(case: Case, dialect: str) -> None:
     gated = case.concurrency_mode == "optimistic"
     if case.attempts:
         for index, attempt in enumerate(case.attempts):
+            pointer = f"attempts[{index}]"
             _assert_temporal_conflict_close(
                 case,
                 entity,
-                attempt.get("write"),
+                _sole_conflict_write(case, attempt, pointer),
                 attempt.get("at"),
                 attempt.get("observedTxStart"),
                 gated,
                 _attempt_statements(attempt, dialect),
                 _entry_binds(attempt.get("statements"), 0),
-                f"attempts[{index}]",
+                pointer,
             )
         return
     _assert_temporal_conflict_close(
         case,
         entity,
-        case.write,
+        _sole_conflict_write(case, case.when, "write"),
         case.at,
         case.observed_tx_start,
         gated,
@@ -4770,20 +4797,22 @@ def _identity_keys(
 def _assert_conflict(case: Case, db: DatabaseProvider) -> None:
     """Run the given.apply + the golden write, assert the affected-row count.
 
-    This is the observable form of an m-opt-lock shortfall. The model's fixtures are
-    loaded (the row exists with its current version), then an OPTIONAL out-of-band
-    ``given.apply`` simulates a concurrent transaction mutating or removing the row.
-    The golden write is then applied. Under ``optimistic`` mode it renders
-    ``… where pk = ? and version = ?`` and binds the version the caller read EARLIER,
-    so a concurrent version bump makes the stale-version predicate match **zero**
-    rows — the conflict signal (``updatedRows != 1``). Under ``locking`` mode the
-    golden renders no gate at all, and the same zero-row shortfall is instead a stale
-    write, since the shared read lock was what licensed the write. A row still there
-    unchanged matches exactly **one**.
+    This is the observable form of a write's affected-row outcome. The model's
+    fixtures are loaded (the addressed rows exist), then an OPTIONAL out-of-band
+    ``given.apply`` simulates a concurrent transaction mutating, removing, or
+    duplicating them. The golden write is then applied. Under ``optimistic`` mode
+    a versioned golden renders ``… where pk = ? and version = ?`` and binds the
+    version the caller read EARLIER, so a concurrent version bump makes the
+    stale-version predicate match zero rows; under ``locking`` mode it renders no
+    gate at all, and the shared read lock is what licensed the write. Either way
+    the count the golden reaches — short of, equal to, or beyond what its target
+    addresses — is the observable, and the case's own ``affectedRows`` names it.
 
-    The harness asserts the affected-row count equals ``affectedRows``,
-    and (when authored) the resulting table state — so the contract is proven
-    against real data, not merely asserted in prose.
+    This harness runs the golden statement directly rather than through a unit of
+    work, so it never refuses a write and never rolls one back. A case whose write
+    a unit of work WOULD refuse therefore authors no ``then.tableState``: the two
+    lanes legitimately disagree on the resulting rows, and only the count and the
+    statement are common ground.
     """
     dialect = db.dialect
     statements = case.golden_statements(dialect)
@@ -4802,10 +4831,10 @@ def _assert_conflict(case: Case, db: DatabaseProvider) -> None:
     if affected != expected:
         raise CaseFailure(
             f"{case.path.name}: the golden write affected {affected} row(s) but "
-            f"affectedRows is {expected}. A row the concurrent mutation moved out "
-            f"from under the write MUST affect 0 rows (an optimistic conflict where "
-            f"the golden gates, a stale write where it does not); an untouched row "
-            f"MUST affect 1."
+            f"affectedRows is {expected}. The count a golden reaches after the "
+            f"concurrent mutation is the whole claim: a row moved out from under it "
+            f"is not matched, a row left alone is, and a target the concurrent "
+            f"mutation duplicated is matched more than once."
         )
 
     if case.expected_table_state:

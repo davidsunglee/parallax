@@ -43,6 +43,7 @@ from parallax.conformance.stale_web_edit import (
 from parallax.conformance.vo_models import Address, Branch, Geo
 from parallax.core import opt_lock
 from parallax.core.entity._hub import sealed_model
+from parallax.core.unit_work import OptimisticLockConflictError
 from parallax.snapshot import connect
 from parallax.snapshot.handle import Database, Transaction
 
@@ -153,7 +154,7 @@ def test_bitemporal_stale_web_edit_optimistic_conflict_surfaces(provisioner: Any
 
     peer_db.transact(concurrent_write)
 
-    with pytest.raises(opt_lock.OptimisticLockConflictError):
+    with pytest.raises(OptimisticLockConflictError):
         # SUBMIT time — the correction was never applied (the close never
         # affects any row), so its own `valid_from` value is immaterial to
         # the conflict; any instant distinct from the rectangle's own start.

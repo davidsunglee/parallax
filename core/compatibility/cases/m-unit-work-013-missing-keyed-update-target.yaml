@@ -1,0 +1,46 @@
+# An UNVERSIONED keyed UPDATE whose addressed row is gone: the write affects 0
+# rows and is refused as a missing target (m-unit-work, ADR 0044).
+#
+# Affected-row validation follows the write's TARGET, not whether optimistic
+# locking happens to apply. A Key Target naming one key expects exactly one row
+# in every mode, so an unversioned keyed UPDATE that reaches nothing is an error
+# rather than a silent no-op — the behavior an expectation attached only to
+# version-observing writes used to allow.
+#
+# The shortfall's classification is the semantic distinction this case pins
+# down. Wallet declares no version column, so this write required no prior
+# observation at all: no gate could have failed (m-opt-lock-005's retriable
+# conflict) and no shared read lock was supposed to hold the row still
+# (m-opt-lock-017's non-retriable stale write). What remains is the third
+# classification — the addressed row simply does not exist. It is never
+# retriable, because re-reading cannot conjure a row that was deleted.
+#
+# `given.apply` REMOVES wallet 2 out of band, so the keyed update matches
+# nothing. The golden SQL is unchanged by the correction — an unversioned keyed
+# UPDATE renders exactly what it always did — and `then.affectedRows` is 0 with
+# `then.tableState` showing wallets 1 and 3 untouched and wallet 2 already gone.
+model: models/wallet.yaml
+tags: [m-unit-work, m-sql, conflict, missing-target, slice-snapshot-1, slice-managed-1]
+shape: conflict
+compileEligibility:
+  mode: run-only
+  reason: single-connection
+  note: "single-connection concurrency/locking intent (given.apply, shape:conflict)"
+given:
+  apply:
+    - sql: delete from wallet where id = 2
+when:
+  uow:
+    concurrency: locking
+  mutation: update
+  write: { id: 2, balance: 250.00 }
+then:
+  statements:
+    - sql:
+        postgres: update wallet set balance = ? where id = ?
+      binds: [250.00, 2]
+  affectedRows: 0
+  tableState:
+    wallet:
+      - { id: 1, owner: Ada, balance: 100.00 }
+      - { id: 3, owner: Grace, balance: 10.00 }

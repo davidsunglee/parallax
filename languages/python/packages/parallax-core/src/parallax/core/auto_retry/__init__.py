@@ -23,24 +23,25 @@ state rather than replaying a stale shadow. No cached state currently exists
 to invalidate; an identity map, if one is added, must hook its invalidation
 into this path.
 
-**Optimistic-lock conflicts** (`m-opt-lock`):
-``OptimisticLockConflictError`` (`parallax.core.opt_lock`) is a plain
-``RuntimeError``, not a :class:`~parallax.core.db_error.DatabaseError` — the
-``updatedRows != 1`` gate mismatch is a STRUCTURALLY different signal from a
-transient database failure, never forced into that hierarchy just to reuse
-one predicate (`m-opt-lock` "Conflict detection"). This module's own DAG edges
-name ``m-db-error`` and ``m-unit-work`` only — never ``m-opt-lock`` (the
-import-linter contract forbids the edge) — so :func:`run_with_retry` cannot
-name that type directly; it instead accepts an OPTIONAL, injected retriability
-extension (``extra_retriable_types`` / ``extra_retriable``) the demarcation
-layer supplies (`parallax.snapshot.handle.Database.transact`, which legally
-imports both this module and ``opt_lock``): a SECOND classification branch
-composed alongside :func:`_retriable_failure`, never an inheritance change to
-:class:`~parallax.core.opt_lock.OptimisticLockConflictError` itself. The
-opt-in (``retry_optimistic_conflicts``) gates the EXTENSION's own verdict —
-this module's transient-failure branch never consults it, so a deadlock or
-serialization failure stays retriable regardless of the flag
-(`m-auto-retry.md` "Which failures are retriable").
+**Optimistic-lock conflicts**:
+:class:`~parallax.core.unit_work.OptimisticLockConflictError` is a Write Effect
+Error the affected-row enforcer raises, not a
+:class:`~parallax.core.db_error.DatabaseError` — a gate mismatch is a
+STRUCTURALLY different signal from a transient database failure, never forced
+into that hierarchy just to reuse one predicate. The Write Effect Error family
+is owned by ``m-unit-work``, which this module already depends on, so the
+canonical conflict is named DIRECTLY here rather than injected by a composition
+root whose only purpose would be carrying a type across a module boundary
+(ADR 0048). Recognizing it is not the same as retrying it: a conflict is caught
+so the caller's ``extra_retriable`` opt-in can be consulted, and stays
+non-retriable when that opt-in is absent.
+
+The remaining Write Effect Errors — Missing Target, Stale Write, and Cardinality
+Corruption — are **never** retriable under any option, so this module never
+names them and they propagate untouched. The opt-in
+(``retry_optimistic_conflicts``) gates only the EXTENSION's verdict; this
+module's transient-failure branch never consults it, so a deadlock or
+serialization failure stays retriable regardless of the flag.
 """
 
 from __future__ import annotations
@@ -48,7 +49,7 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from parallax.core.db_error import DatabaseError
-from parallax.core.unit_work import RollbackOnlyError
+from parallax.core.unit_work import OptimisticLockConflictError, RollbackOnlyError
 
 __all__ = ["run_with_retry"]
 
@@ -71,7 +72,6 @@ def run_with_retry[T](
     attempt: Callable[[], T],
     *,
     retries: int,
-    extra_retriable_types: tuple[type[BaseException], ...] = (),
     extra_retriable: Callable[[BaseException], bool] | None = None,
 ) -> T:
     """Run ``attempt`` under the m-auto-retry bounded re-execution loop.
@@ -86,11 +86,7 @@ def run_with_retry[T](
     so the surfaced error is still the failure itself (same type, same
     category) and carries its retry history diagnosably.
 
-    ``extra_retriable_types`` widens the caught set beyond this module's own
-    :class:`DatabaseError` / :class:`RollbackOnlyError` (e.g. the demarcation
-    layer's own :class:`~parallax.core.opt_lock.OptimisticLockConflictError`,
-    a plain ``RuntimeError`` this module may not import — see the module
-    docstring); ``extra_retriable`` is consulted ONLY for an exception this
+    ``extra_retriable`` is consulted ONLY for an exception this
     module's own :func:`_retriable_failure` calls non-retriable, so the two
     predicates compose as an OR, never override one another (a transient
     database failure's retriability is decided here, unconditionally on the
@@ -101,7 +97,7 @@ def run_with_retry[T](
     exception_types: tuple[type[BaseException], ...] = (
         DatabaseError,
         RollbackOnlyError,
-        *extra_retriable_types,
+        OptimisticLockConflictError,
     )
     attempts = 0
     while True:

@@ -11,6 +11,7 @@ from __future__ import annotations
 from _support.clock_probes import inert_instant
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.metamodel import Metamodel
+from parallax.core.sql_gen import Statement
 from parallax.core.unit_work import (
     Concurrency,
     FlushPlan,
@@ -18,7 +19,7 @@ from parallax.core.unit_work import (
     TransactionInstant,
 )
 from parallax.core.unit_work.planned import PlannedWrite as PlannedStep
-from parallax.snapshot.handle import LoweredStatement, stream_lowered
+from parallax.snapshot.handle import stream_lowered
 
 __all__ = ["lower_planned", "lower_planned_steps"]
 
@@ -29,9 +30,11 @@ def lower_planned(
     dialect: Dialect = POSTGRES,
     concurrency: Concurrency = "locking",
     tx_instant: TransactionInstant | None = None,
-) -> list[LoweredStatement]:
+) -> list[Statement]:
     """Every statement one plan item lowers to, in execution order."""
-    return [lowered for _step, lowered in _stream(planned, model, dialect, concurrency, tx_instant)]
+    return [
+        statement for _step, statement in _stream(planned, model, dialect, concurrency, tx_instant)
+    ]
 
 
 def lower_planned_steps(
@@ -40,7 +43,7 @@ def lower_planned_steps(
     dialect: Dialect = POSTGRES,
     concurrency: Concurrency = "locking",
     tx_instant: TransactionInstant | None = None,
-) -> list[tuple[PlannedStep, LoweredStatement]]:
+) -> list[tuple[PlannedStep, Statement]]:
     """The same, paired with the settled step each statement came from."""
     return list(_stream(planned, model, dialect, concurrency, tx_instant))
 
@@ -51,7 +54,7 @@ def _stream(
     dialect: Dialect,
     concurrency: Concurrency,
     tx_instant: TransactionInstant | None,
-) -> list[tuple[PlannedStep, LoweredStatement]]:
+) -> list[tuple[PlannedStep, Statement]]:
     instant = inert_instant() if tx_instant is None else tx_instant
     plan = FlushPlan(writes=(planned,), tx_instant=instant)
     return list(stream_lowered(plan, model, dialect, concurrency))

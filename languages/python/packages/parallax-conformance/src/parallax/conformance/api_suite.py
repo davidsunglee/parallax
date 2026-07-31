@@ -438,6 +438,21 @@ _COALESCING_WITNESS_REASON: Final[str] = (
     "own reason above"
 )
 
+# The classifications a write earns when the rows it addressed are not the rows
+# it found. Every one of them needs a second writer to reach, so the spelling a
+# story could show is the ordinary keyed verb it already shows; what these add
+# is the refusal riding on it.
+_WRITE_EFFECT_CLASSIFICATION_REASON: Final[str] = (
+    "an affected-row classification witness (an unversioned keyed update or delete whose "
+    "addressed row is gone earns the never-retriable missing target; a close matching "
+    "more milestones than its target addresses earns cardinality corruption): each is "
+    "reachable only through an out-of-band concurrent mutation (`given.apply`) and is "
+    "graded end-to-end by the run conformance lane, whose `conflict` shape admits only "
+    "the class the case's own declared facts imply. The developer spelling is the "
+    "ordinary keyed update / delete / chaining update an idiomatic story already shows — "
+    "what these add is a refusal no single-session story can stage"
+)
+
 # Remaining active cases under graph and inheritance modules use case-scoped
 # reasons grouped by identical justification.
 
@@ -896,6 +911,9 @@ _VO_VERSIONED_RESOLVE_SCENARIO_REASON: Final[str] = (
 CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-unit-work-008": _COALESCING_WITNESS_REASON,
     "m-unit-work-010": _COALESCING_WITNESS_REASON,
+    "m-unit-work-013": _WRITE_EFFECT_CLASSIFICATION_REASON,
+    "m-unit-work-014": _WRITE_EFFECT_CLASSIFICATION_REASON,
+    "m-unit-work-015": _WRITE_EFFECT_CLASSIFICATION_REASON,
     # -- m-opt-lock: non-temporal write family, conformance-lane covered ----- #
     # (the locking-mode advance has an idiomatic story, m-opt-lock-002)        #
     "m-opt-lock-005": _OPT_LOCK_WRITE_CONFORMANCE_LANE_REASON,

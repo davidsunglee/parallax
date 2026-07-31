@@ -40,6 +40,7 @@ from parallax.core.dialect import POSTGRES
 from parallax.core.metamodel import EntityIdentity
 from parallax.core.unit_work import (
     FixedClock,
+    OptimisticLockConflictError,
 )
 from parallax.snapshot.handle import Database, Transaction
 
@@ -408,7 +409,7 @@ def test_stale_web_edit_balance_submit_conflict_raises_optimistic_lock_conflict(
     db = db_for(BALANCE, port)
     _node, edge = stale_web_edit.render_balance_milestone(db, id=1)
 
-    with pytest.raises(opt_lock.OptimisticLockConflictError):
+    with pytest.raises(OptimisticLockConflictError):
         stale_web_edit.submit_balance_edit(db, id=1, edge=edge, fields={"value": Decimal("9.00")})
 
 

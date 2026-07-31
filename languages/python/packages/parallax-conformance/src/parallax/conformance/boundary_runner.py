@@ -222,7 +222,7 @@ class FaultInjectingPort:
     fire ONCE only, so the retry succeeds. ``optimistic-lock-conflict``
     never raises from here — it returns ``0`` from the gated update's
     ``execute_write`` (the concurrent-writer simulation), letting the real
-    ``expected_affected`` mismatch -> ``classify_mismatch`` ->
+    Affected Rows Policy shortfall -> ``enforce_affected_rows`` ->
     ``OptimisticLockConflictError`` fire through the genuine write-seam
     code path.
     """

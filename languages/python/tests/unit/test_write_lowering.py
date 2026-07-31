@@ -6,14 +6,14 @@ its byte-exact non-temporal keyed emissions against the corpus goldens
 (``m-unit-work-001/003/005``, ``m-opt-lock-002/005/006/013``,
 ``m-inheritance-007/008/009/010/084/104``, ``m-pk-gen-001``), compose it with the
 unit-of-work planner for the coalescing / mixed-flush / cancellation cases
-(``-008/-009/-010``), pin the ``m-opt-lock`` version gate/advance/conflict policy
-(observation-required for BOTH update and delete, gate-optimistic-only, a
+(``-008/-009/-010``), pin the ``m-opt-lock`` version gate/advance/shortfall
+policy (observation-required for BOTH update and delete, gate-optimistic-only, a
 row-carried version value refused outright, the derived initial version), the
 inheritance tag derivation/guard/opt-lock composition, and the pk-gen
 ``max``/``increment`` marker lowering. The temporal keyed forms—close-and-chain,
 the rectangle split, the per-axis close address, the observed-``in_z`` gate, and
-`StaleWriteError` versus `OptimisticLockConflictError`—are pinned in
-``test_temporal_write_lowering.py``. The predicate-selected and multi-row batch
+the settled ``StaleWrite`` versus ``OptimisticConflict`` shortfall tag—are pinned
+in ``test_temporal_write_lowering.py``. The predicate-selected and multi-row batch
 forms use the same lowering seam. It refuses a materializing predicate write
 that reaches it, a mixed-shape
 multi-row instruction, a milestone verb on a non-temporal entity, an unsupported
@@ -36,7 +36,7 @@ from collections.abc import Mapping
 import pytest
 
 from _support.clock_probes import inert_instant
-from _support.lowering_probes import lower_planned
+from _support.lowering_probes import lower_planned, lower_planned_steps
 from parallax.conformance import models
 from parallax.core import inheritance, opt_lock, storage_layout
 from parallax.core import op_algebra as oa
@@ -108,15 +108,12 @@ def _lower(
     concurrency: Concurrency = "locking",
 ) -> list[Statement]:
     model = models.accepted_model(meta)
-    return [
-        lowered.statement
-        for lowered in lower_planned(
-            PlannedWrite(instruction=instruction, observation=observation),
-            model,
-            dialect,
-            concurrency,
-        )
-    ]
+    return lower_planned(
+        PlannedWrite(instruction=instruction, observation=observation),
+        model,
+        dialect,
+        concurrency,
+    )
 
 
 def _flush_and_lower(
@@ -129,9 +126,7 @@ def _flush_and_lower(
     model = models.accepted_model(meta)
     instant = inert_instant()
     plan = plan_flush(buffer, observations or {}, instant, model)
-    return [
-        lowered.statement for _step, lowered in stream_lowered(plan, model, POSTGRES, concurrency)
-    ]
+    return [statement for _step, statement in stream_lowered(plan, model, POSTGRES, concurrency)]
 
 
 def _layout_columns(meta: Metamodel, entity_name: str) -> tuple[str, ...]:
@@ -400,10 +395,12 @@ def test_versioned_delete_shortfall_classifies_by_gate_not_by_mutation() -> None
         instruction=delete, observation=VersionObservation(observed_version=1), expected_affected=1
     )
     model = models.accepted_model(ACCOUNT)
-    locking = lower_planned(planned, model, concurrency="locking")[0]
-    optimistic = lower_planned(planned, model, concurrency="optimistic")[0]
-    assert locking.stale_error is True
-    assert optimistic.stale_error is False
+    locking, _ = lower_planned_steps(planned, model, concurrency="locking")[0]
+    optimistic, _ = lower_planned_steps(planned, model, concurrency="optimistic")[0]
+    assert isinstance(locking, PlannedDelete)
+    assert isinstance(optimistic, PlannedDelete)
+    assert locking.affected_rows == ExactCount(1, STALE_WRITE)
+    assert optimistic.affected_rows == ExactCount(1, OPTIMISTIC_CONFLICT)
 
 
 def test_versioned_delete_without_an_observation_requires_observation() -> None:
