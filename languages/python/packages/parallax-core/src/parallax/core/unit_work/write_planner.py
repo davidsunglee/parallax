@@ -53,7 +53,11 @@ from parallax.core.metamodel import (
     ValueObjectIdentity,
 )
 from parallax.core.unit_work.clock import TransactionInstant
-from parallax.core.unit_work.columns import ColumnSlice, PredecessorColumns
+from parallax.core.unit_work.columns import (
+    ColumnSlice,
+    PredecessorColumns,
+    freeze_retained_value,
+)
 from parallax.core.unit_work.instructions import (
     KeyedWrite,
     PredicateWrite,
@@ -954,7 +958,13 @@ class _MaterializedTemporalSegment:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "members", MappingProxyType(dict(self.members)))
-        object.__setattr__(self, "assignment_row", MappingProxyType(dict(self.assignment_row)))
+        object.__setattr__(
+            self,
+            "assignment_row",
+            MappingProxyType(
+                {name: freeze_retained_value(value) for name, value in self.assignment_row.items()}
+            ),
+        )
 
     def __len__(self) -> int:
         return len(self.key_columns[0]) * self.steps_per_row

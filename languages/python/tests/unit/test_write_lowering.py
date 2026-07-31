@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import dataclasses
 from collections.abc import Mapping
+from types import MappingProxyType
 
 import pytest
 
@@ -44,7 +45,12 @@ from parallax.core import inheritance, opt_lock, storage_layout
 from parallax.core import op_algebra as oa
 from parallax.core.db_port import JsonDocument
 from parallax.core.dialect import POSTGRES, Dialect
-from parallax.core.metamodel import AttributeIdentity, EntityIdentity, entity_by_name
+from parallax.core.metamodel import (
+    AttributeIdentity,
+    EntityIdentity,
+    ValueObjectIdentity,
+    entity_by_name,
+)
 from parallax.core.model_formation import MetamodelValidationError
 from parallax.core.sql_gen import Statement
 from parallax.core.unit_work import (
@@ -952,6 +958,38 @@ def _attribute(meta: Metamodel, entity: str, member: str) -> AttributeIdentity:
     attribute = position.applicable_attribute(member)
     assert attribute is not None
     return attribute.identity
+
+
+def _value_object(meta: Metamodel, entity: str, member: str) -> ValueObjectIdentity:
+    model = models.accepted_model(meta)
+    position = inheritance.view(model).entity(_identity(meta, entity))
+    assert position is not None
+    value_object = position.applicable_value_object(member)
+    assert value_object is not None
+    return value_object.identity
+
+
+def test_step_lowering_restores_an_immutable_value_object_array_to_json() -> None:
+    row = PlannedRow(
+        attributes={
+            _attribute(CUSTOMER, "Customer", "id"): 1,
+            _attribute(CUSTOMER, "Customer", "name"): "Ada",
+        },
+        value_objects={
+            _value_object(CUSTOMER, "Customer", "address"): (
+                MappingProxyType({"city": "Oslo"}),
+                MappingProxyType({"city": "Bergen"}),
+            )
+        },
+    )
+    step = PlannedInsert(
+        entity=_identity(CUSTOMER, "Customer"),
+        entries=(InsertEntry(row=row, origin=NEW_LINEAGE),),
+    )
+
+    statement = lower_step(step, models.accepted_model(CUSTOMER), POSTGRES)
+
+    assert statement.binds[-1] == JsonDocument([{"city": "Oslo"}, {"city": "Bergen"}])
 
 
 def test_finalization_settles_an_insert_into_one_step_of_new_lineage_entries() -> None:

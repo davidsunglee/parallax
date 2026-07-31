@@ -16,6 +16,8 @@ goes, while everything here renders a step that carries no undecided fact.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from types import MappingProxyType
+from typing import cast
 
 from parallax.core.base import INFINITY_LITERAL
 from parallax.core.db_port import JsonDocument
@@ -360,10 +362,31 @@ def _member_cells(
             cells.append((slot.column.name, attributes[contributor]))
             matched += 1
         elif isinstance(contributor, ValueObjectIdentity) and contributor in value_objects:
-            cells.append((slot.column.name, JsonDocument(value_objects[contributor])))
+            cells.append(
+                (
+                    slot.column.name,
+                    JsonDocument(_document_bind_value(value_objects[contributor])),
+                )
+            )
             matched += 1
     _require_placed(matched, len(attributes) + len(value_objects), entity)
     return cells
+
+
+def _document_bind_value(value: object) -> object:
+    if isinstance(value, (MappingProxyType, tuple)):
+        return _mutable_document(cast("object", value))
+    return value
+
+
+def _mutable_document(value: object) -> object:
+    if isinstance(value, Mapping):
+        mapping = cast("Mapping[object, object]", value)
+        return {key: _mutable_document(nested) for key, nested in mapping.items()}
+    if isinstance(value, tuple):
+        sequence = cast("Sequence[object]", value)
+        return [_mutable_document(nested) for nested in sequence]
+    return value
 
 
 def _require_placed(matched: int, named: int, entity: EntityMetadata) -> None:
