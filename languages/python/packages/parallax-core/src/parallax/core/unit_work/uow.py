@@ -30,9 +30,10 @@ from dataclasses import dataclass
 from parallax.core.metamodel import Metamodel
 from parallax.core.unit_work.clock import Clock, TransactionInstant
 from parallax.core.unit_work.instructions import WriteInstruction
+from parallax.core.unit_work.materialized import MaterializedWriteGroup
 from parallax.core.unit_work.observe import WriteObservation
 from parallax.core.unit_work.plan import WritePlan
-from parallax.core.unit_work.planner import AtomicUnit, BufferItem, ObjectKey
+from parallax.core.unit_work.planner import BufferItem, ObjectKey
 from parallax.core.unit_work.strategy import Concurrency
 from parallax.core.unit_work.write_planner import PlanningRequest, SubjectIdentity, WritePlanner
 
@@ -148,10 +149,10 @@ class UnitOfWork:
         self._closed = False
 
     # --- caller surface --------------------------------------------------- #
-    def buffer(self, instruction: WriteInstruction | AtomicUnit) -> None:
-        """Buffer a write instruction (or a materialized predicate write's
-        :class:`~parallax.core.unit_work.planner.AtomicUnit`) for flush at the
-        unit-of-work boundary."""
+    def buffer(self, instruction: WriteInstruction | MaterializedWriteGroup) -> None:
+        """Buffer a write instruction (or a materializing predicate write's
+        :class:`~parallax.core.unit_work.materialized.MaterializedWriteGroup`)
+        for flush at the unit-of-work boundary."""
         self._ensure_open()
         self._buffer.append(instruction)
 

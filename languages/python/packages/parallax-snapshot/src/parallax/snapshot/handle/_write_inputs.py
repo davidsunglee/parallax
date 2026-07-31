@@ -12,9 +12,12 @@ plus the observation machinery a read leaves behind for it:
 * instance -> accepted-Metadata resolution (:func:`metadata_of_instance`) and the
   verb-time license key (:func:`observation_key`);
 * observation recording after a real :func:`~parallax.snapshot.handle.find`
-  (:func:`record_observations`) and its row-form twin for a materializing
-  predicate-write resolve (:func:`materialize_row`), which share their payload
-  extraction through the module-local ``_temporal_observation`` / ``_row_payload``.
+  (:func:`record_observations`), and the per-row column contributions a
+  materializing predicate-write resolve streams into its
+  :class:`~parallax.core.unit_work.MaterializedWriteGroup`
+  (:func:`is_no_op_assignment`, :func:`key_column_values`,
+  :func:`predecessor_payload`), which share their payload extraction with
+  :func:`record_observations` through the module-local ``_row_payload``.
 
 Semantic family facts come from the accepted Metamodel and its facets, resolved
 through :mod:`parallax.snapshot.handle._family` (the declaring root,
@@ -39,7 +42,7 @@ scenario grading shares the exact validator the developer verbs run).
 from __future__ import annotations
 
 import datetime as dt
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Final, cast
 
 from parallax.core.base import normalize_instant
@@ -70,7 +73,6 @@ from parallax.core.unit_work import (
     TransactionTimeBasis,
     UnitOfWork,
     VersionObservation,
-    WriteObservation,
     instant_literal,
 )
 from parallax.snapshot.handle._family import (
@@ -78,7 +80,6 @@ from parallax.snapshot.handle._family import (
     declaring,
     entity_layout,
     entity_of,
-    family_primary_key,
     members,
     slot_column,
     tx_time_axis,
@@ -88,9 +89,11 @@ from parallax.snapshot.handle._read import FindResult
 
 __all__ = [
     "TransactionTimePinReadOnlyError",
-    "materialize_row",
+    "is_no_op_assignment",
+    "key_column_values",
     "metadata_of_instance",
     "observation_key",
+    "predecessor_payload",
     "prepare_sparse_row",
     "record_observations",
     "source_pin",
@@ -302,9 +305,11 @@ def _row_payload(
 # ADR 0014) — plus the build-time window/no-op validators every keyed AND     #
 # `_where` temporal verb shares (`validate_valid_from` / `validate_until`#
 # / `prepare_sparse_row`).                                                    #
-# `materialize_row`/`_apply_assignments` below are pure functions the SOLE   #
-# caller (`_predicate_writes._materialize_predicate_write`) drives against    #
-# its OWN resolved rows — never an implicit read of their own.               #
+# `is_no_op_assignment` / `key_column_values` / `predecessor_payload` below   #
+# are pure per-row functions the SOLE caller                                  #
+# (`_predicate_writes._materialize_predicate_write`) drives against its OWN   #
+# resolved rows while streaming them into column builders — never an         #
+# implicit read of their own, and never a merged per-row dict of their own.   #
 # --------------------------------------------------------------------------- #
 # The private slot `parallax.snapshot.handle._wrap` attaches a materialized
 # temporal node's whole-graph Pin under — the same spelling
@@ -428,116 +433,42 @@ def validate_until(
     return until_normalized.isoformat()
 
 
-def materialize_row(
-    meta: Metamodel,
-    layout: EntityLayoutView,
-    entity: EntityMetadata,
-    declaring_entity: EntityMetadata,
-    version_attr: AttributeMetadata | None,
-    mutation: KeyedMutation,
-    assignments: Mapping[str, object],
-    row: Row,
-) -> tuple[ObjectKey, WriteObservation, dict[str, object] | None]:
-    """One resolved row's materialized keyed write: its
-    :class:`~parallax.core.unit_work.ObjectKey`, the observation it licenses
-    (every branch records one — a versioned row's version, a temporal row's whole
-    predecessor milestone, `m-opt-lock` "observations are mode-independent; only
-    the gate is mode-dependent"), and the new row a keyed write of ``mutation``
-    carries — ``None`` for the new row when every assignment already equals the
-    row's own value (`m-opt-lock` "For assignment-bearing mutations, no-op
-    elimination is per resolved row"; `delete` / `terminate` / `terminateUntil`
-    always write every resolved row, no assignments to compare). ``row`` is the
-    resolve's OWN row-form row (never an implicit second read), keyed by the
-    physical Columns ``layout`` names, which is also where the resulting keyed
-    instruction's own cells land.
+def is_no_op_assignment(
+    layout: EntityLayoutView, assignments: Mapping[str, object], row: Row
+) -> bool:
+    """Whether EVERY assigned member's new value already equals ``row``'s own
+    (`m-opt-lock` per-row no-op elimination — structural equality, the SAME
+    comparison a keyed no-op's effective-change-set test uses).
 
-    A materializing resolve reads the CURRENT milestone by construction, so its
-    temporal observations are latest-pinned.
+    This is the ONE narrow result-dependent normalization a materializing
+    resolve performs while streaming: a resolved row an assignment-bearing
+    verb would leave unchanged never joins its Materialized Write Group.
+    ``delete`` / ``terminate`` / ``terminateUntil`` have no assignments to
+    compare and therefore never call this — every resolved row is retained.
     """
-    pk_attrs = family_primary_key(meta, entity)
-    pk_row = {attr.identity.name: row[slot_column(layout, attr.identity)] for attr in pk_attrs}
-    key: ObjectKey = (entity.identity.name, tuple(pk_row.items()))
-    assignment_bearing = mutation in ("update", "updateUntil")
-
-    if version_attr is not None:
-        observation: WriteObservation = VersionObservation(
-            observed_version=cast("int", row[slot_column(layout, version_attr.identity)])
-        )
-        if not assignment_bearing:
-            return key, observation, dict(pk_row)
-        new_row, changed = _apply_assignments(layout, pk_row, row, assignments)
-        return key, observation, (new_row if changed else None)
-
-    observation = _temporal_observation(layout, row, LATEST_PINNED)
-    if _is_bitemporal(declaring_entity):
-        # A SPARSE new row: `bitemp_write.plan` merges it onto the observed
-        # predecessor itself (`_merged_payload`), the bitemporal analogue of an
-        # edited copy's effective change set.
-        if not assignment_bearing:
-            return key, observation, dict(pk_row)
-        new_row, changed = _apply_assignments(layout, pk_row, row, assignments)
-        return key, observation, (new_row if changed else None)
-
-    if not assignment_bearing:
-        # A plain (chain-free) audit-only `terminate` records its resolved
-        # row's observed `in_z` exactly like every other materializing verb
-        # (`m-opt-lock` "Predicate-selected writes materialize when
-        # observations are needed" — observations are MODE-INDEPENDENT; only
-        # the GATE is mode-dependent, `m-txtime-write.md:65`). The observed
-        # `in_z` is the temporal analogue of a versioned optimistic gate, so
-        # an OPTIMISTIC-mode close binds it (`and in_z = ?`), gate-last,
-        # exactly as a keyed temporal terminate already does — `txtime_write.
-        # plan` composes the gate candidate straight from this SAME
-        # observation, no separate branch. A LOCKING-mode close still renders
-        # ungated (the render seam only ever BINDS the candidate under
-        # optimistic concurrency, `~parallax.core.opt_lock.gates`), so
-        # recording the observation here never changes locking mode's own
-        # ungated shape.
-        return key, observation, dict(pk_row)
-    # Audit-only assignment-bearing (`update`): `txtime_write.plan` chains the
-    # instruction's own row merged onto the predecessor, so the row built here
-    # carries the resolved payload with the assignments overlaid. It excludes the
-    # axis bounds the milestone plan stamps afresh. A temporal target's resolving
-    # read always projects every value-object document column (the Predecessor
-    # Row is complete, `m-unit-work`), so the merge carries forward whichever
-    # documents `assignments` does NOT itself reassign.
-    tx_axis = tx_time_axis(declaring_entity)
-    tx_start_column, tx_end_column = axis_columns(layout, tx_axis)
-    full_row: dict[str, object] = {
-        **pk_row,
-        **_row_payload(
-            layout,
-            row,
-            frozenset({tx_start_column, tx_end_column}),
-            include_value_objects=True,
-        ),
-    }
-    new_row, changed = _apply_assignments(layout, full_row, row, assignments)
-    return key, observation, (new_row if changed else None)
-
-
-def _apply_assignments(
-    layout: EntityLayoutView,
-    base_row: Mapping[str, object],
-    row: Row,
-    assignments: Mapping[str, object],
-) -> tuple[dict[str, object], bool]:
-    """Overlay ``assignments`` (declared member name -> new value) onto
-    ``base_row``, reporting whether at least one assigned member's value
-    genuinely DIFFERS from ``row``'s own resolved value (`m-opt-lock` per-row
-    no-op elimination — structural equality, the SAME comparison a keyed
-    no-op's effective-change-set test uses). ``row`` is the row-form RESOLVED
-    row the comparison reads from; ``base_row`` is what the eventual keyed
-    write carries."""
     member_columns = members(layout)
-    new_row = dict(base_row)
-    changed = False
-    for member, value in assignments.items():
-        column = member_columns[member][0]
-        if value != row.get(column):
-            changed = True
-        new_row[member] = value
-    return new_row, changed
+    return all(value == row.get(member_columns[member][0]) for member, value in assignments.items())
+
+
+def key_column_values(
+    pk_attrs: Sequence[AttributeMetadata], layout: EntityLayoutView, row: Row
+) -> tuple[object, ...]:
+    """One resolved row's aligned primary-key value tuple, in ``pk_attrs``
+    order — a Materialized Write Group's own per-row key-column contribution.
+    """
+    return tuple(row[slot_column(layout, attr.identity)] for attr in pk_attrs)
+
+
+def predecessor_payload(layout: EntityLayoutView, row: Row) -> dict[str, object]:
+    """One resolved row's COMPLETE Predecessor Row payload — every applicable
+    member, value-object documents included — the SAME complete extraction
+    :func:`record_observations` retains for a real find (`m-unit-work` "A
+    Predecessor Row is the complete, immutable persisted state"), applied to a
+    materializing resolve's own row-form row. A materializing resolve reads
+    the CURRENT milestone by construction, so every predecessor it retains is
+    latest-pinned.
+    """
+    return _row_payload(layout, row, include_value_objects=True)
 
 
 def metadata_of_instance(meta: Metamodel, instance: EntityBase) -> EntityMetadata:

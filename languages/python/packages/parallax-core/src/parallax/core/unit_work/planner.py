@@ -5,8 +5,10 @@ shapes (m-unit-work).
 entity spellings and family membership, computed once per flush and threaded
 through every stage that needs it — :mod:`~parallax.core.unit_work.
 write_planner`'s coalescing, batching, ordering, and finalization stages, and
-this module's own :func:`object_key`. :class:`AtomicUnit` and
-:data:`BufferItem` are the buffered-write shapes those stages consume.
+this module's own :func:`object_key`. :data:`BufferItem` is the buffered-write
+shape those stages consume: an ordinary write instruction, or a materializing
+predicate write's compact
+:class:`~parallax.core.unit_work.materialized.MaterializedWriteGroup`.
 
 Bare (non-underscored) names here are intra-package shared infrastructure —
 privacy is carried by ``__all__`` and by this being an internal engine seam
@@ -31,9 +33,9 @@ from parallax.core.metamodel import (
     ValueObjectIdentity,
 )
 from parallax.core.unit_work.instructions import KeyedWrite, WriteInstruction
+from parallax.core.unit_work.materialized import MaterializedWriteGroup
 
 __all__ = [
-    "AtomicUnit",
     "BufferItem",
     "ObjectKey",
     "Targets",
@@ -143,33 +145,18 @@ def targets(model: Metamodel) -> Targets:
     return Targets(model=model, by_spelling=by_spelling, families=inheritance.view(model))
 
 
-@dataclass(frozen=True, slots=True)
-class AtomicUnit:
-    """A materialized predicate write's ORDERED, INDIVISIBLE planned unit
-    (`m-unit-work` "Materialized Write Groups", ADR 0014): the per-row keyed
-    writes a versioned or temporal predicate-selected write materializes to, in
-    the resolving read's OWN resolved-row order.
-
-    Buffered as ONE opaque item at the call position (never split, never
-    reordered internally) — EXEMPT from same-object coalescing (its rows are
-    never folded with an unrelated buffered instruction: a materializing
-    resolve only ever matches EXISTING rows, which read-your-own-writes has
-    already flushed past any pending same-key insert, so no coalescing
-    candidate can structurally arise) and from cross-unit reordering (dependency
-    ordering moves it as ONE block, ranked by its own target entity, never
-    reordering its internal rows). Each member write's own observation still
-    flows through the SAME ``uow.observe`` seam as any other keyed write (never
-    carried on this wrapper), so it binds exactly as it would a lone keyed write
-    — the "atomic" property is CONFINED to coalescing, batching, and ordering; a
-    frozen Write Plan never carries this type at all.
-    """
-
-    writes: tuple[KeyedWrite, ...]
-
-
-# One buffer item: an ordinary write instruction, or a materialized predicate
-# write's atomic planned unit.
-BufferItem = WriteInstruction | AtomicUnit
+# One buffer item: an ordinary write instruction, or a materializing predicate
+# write's compact Materialized Write Group (`m-unit-work` "Materialized Write
+# Groups", ADR 0014). A group is buffered as ONE opaque item at the call
+# position (never split, never reordered internally) — EXEMPT from same-object
+# coalescing (a materializing resolve only ever matches EXISTING rows, which
+# read-your-own-writes has already flushed past any pending same-key insert,
+# so no coalescing candidate can structurally arise) and from cross-unit
+# reordering (dependency ordering moves it as ONE block, ranked by its own
+# target entity, never reordering its rows internally). It settles directly
+# into Planned Steps at finalization; a frozen Write Plan never carries this
+# type at all.
+BufferItem = WriteInstruction | MaterializedWriteGroup
 
 
 def object_key(instruction: WriteInstruction, model: Metamodel) -> ObjectKey | None:

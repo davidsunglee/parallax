@@ -28,6 +28,14 @@ from parallax.core.unit_work.clock import (
     TransactionInstant,
     instant_literal,
 )
+from parallax.core.unit_work.columns import (
+    ChunkedColumn,
+    ChunkedColumnBuilder,
+    ColumnSlice,
+    PredecessorColumns,
+    PredecessorShape,
+    whole,
+)
 from parallax.core.unit_work.effects import (
     AddressedTarget,
     CardinalityCorruptionError,
@@ -50,6 +58,12 @@ from parallax.core.unit_work.instructions import (
     serialize,
     validate_instruction,
 )
+from parallax.core.unit_work.materialized import (
+    GroupObservations,
+    MaterializedWriteGroup,
+    TemporalColumns,
+    VersionColumns,
+)
 from parallax.core.unit_work.observe import (
     HISTORICAL_PINNED,
     LATEST_PINNED,
@@ -61,7 +75,13 @@ from parallax.core.unit_work.observe import (
     VersionObservation,
     WriteObservation,
 )
-from parallax.core.unit_work.plan import PlannedSteps, WritePlan
+from parallax.core.unit_work.plan import (
+    PlannedSteps,
+    StepSegment,
+    WritePlan,
+    eager_segment,
+    planned_steps,
+)
 from parallax.core.unit_work.planned import (
     ANY_COUNT,
     INFINITY,
@@ -76,6 +96,7 @@ from parallax.core.unit_work.planned import (
     UNVERSIONED,
     AffectedRows,
     AnyCount,
+    AssignmentShape,
     CarriedFrom,
     ChangedFrom,
     CloseCause,
@@ -115,7 +136,7 @@ from parallax.core.unit_work.planned import (
     VersionGate,
     shortfall_for,
 )
-from parallax.core.unit_work.planner import AtomicUnit, BufferItem, ObjectKey, object_key
+from parallax.core.unit_work.planner import BufferItem, ObjectKey, object_key
 from parallax.core.unit_work.strategy import (
     AUTHORED_FROM,
     AUTHORED_STATE,
@@ -193,7 +214,7 @@ __all__ = [
     "AddressedTarget",
     "AffectedRows",
     "AnyCount",
-    "AtomicUnit",
+    "AssignmentShape",
     "AuditStrategy",
     "AuthoredFrom",
     "AuthoredState",
@@ -205,8 +226,11 @@ __all__ = [
     "CarriedState",
     "ChangedFrom",
     "ChangedState",
+    "ChunkedColumn",
+    "ChunkedColumnBuilder",
     "Clock",
     "CloseCause",
+    "ColumnSlice",
     "Concurrency",
     "ConcurrencyStrategy",
     "EscapedTransactionError",
@@ -215,6 +239,7 @@ __all__ = [
     "FixedClock",
     "FlushExecutor",
     "GeneratedValueExpression",
+    "GroupObservations",
     "HistoricalPinned",
     "Infinity",
     "InsertEntry",
@@ -223,6 +248,7 @@ __all__ = [
     "KeyedMutation",
     "KeyedWrite",
     "LatestPinned",
+    "MaterializedWriteGroup",
     "MaxPlusOne",
     "MilestoneClosure",
     "MilestoneSuccessor",
@@ -246,8 +272,10 @@ __all__ = [
     "PlannedValue",
     "PlannedWrite",
     "PlanningRequest",
+    "PredecessorColumns",
     "PredecessorEnd",
     "PredecessorRow",
+    "PredecessorShape",
     "PredecessorStart",
     "PredicateMutation",
     "PredicateTarget",
@@ -257,12 +285,14 @@ __all__ = [
     "Shortfall",
     "StaleWrite",
     "StaleWriteError",
+    "StepSegment",
     "SubjectIdentity",
     "SuccessorRow",
     "SuccessorState",
     "Superseded",
     "SystemClock",
     "TemporalAxes",
+    "TemporalColumns",
     "TemporalConcurrency",
     "TemporalGate",
     "TemporalObservation",
@@ -279,6 +309,7 @@ __all__ = [
     "Unversioned",
     "ValidTimeBound",
     "ValidTimeWindow",
+    "VersionColumns",
     "VersionGate",
     "VersionObservation",
     "Versioned",
@@ -294,14 +325,17 @@ __all__ = [
     "WriteTarget",
     "active_unit_of_work",
     "deserialize",
+    "eager_segment",
     "enforce_affected_rows",
     "expand_milestone",
     "instant_literal",
     "object_key",
     "plan_temporal_close",
+    "planned_steps",
     "run_unit_of_work",
     "serialize",
     "shortfall_for",
     "validate_instruction",
     "validate_write",
+    "whole",
 ]
