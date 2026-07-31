@@ -36,6 +36,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from types import MappingProxyType
 from typing import Final, cast
 
 from parallax.core import inheritance
@@ -115,11 +116,16 @@ from parallax.core.unit_work.strategy import (
     BatchingStrategy,
     Concurrency,
     ConcurrencyStrategy,
-    MilestoneTopology,
     SubjectIdentity,
     TemporalStrategy,
 )
-from parallax.core.unit_work.temporal import TemporalAxes, expand_milestone
+from parallax.core.unit_work.temporal import (
+    ResolvedSuccessor,
+    TemporalAxes,
+    bind_successor,
+    expand_milestone,
+    resolve_successors,
+)
 
 __all__ = ["PlanningRequest", "SubjectIdentity", "WritePlanner", "plan_temporal_close"]
 
@@ -595,8 +601,7 @@ class WritePlanner:
         if topology.closure is not None:
             assert observed is not None  # refused above
             gate = _temporal_gate(
-                declaring_entity,
-                topology.closure.gate_basis,
+                _gate_axis(declaring_entity, topology.closure.gate_basis).start_attribute,
                 observed.predecessor,
                 self._concurrency.gates(concurrency),
             )
@@ -604,7 +609,7 @@ class WritePlanner:
                 _close(
                     entity,
                     declaring_entity,
-                    resolved,
+                    key_attributes=tuple(a.identity for a in resolved.family_primary_key(entity)),
                     identity=instruction.rows[0],
                     observed_valid_end=(
                         None
@@ -785,10 +790,12 @@ class WritePlanner:
     ) -> StepSegment:
         """A temporal Materialized Write Group's segment.
 
-        The temporal topology, the locking license, the gate decision, and
-        (because every temporal mutation needs one) the concrete Transaction
-        Instant are all decided once, here — the only clock consultation this
-        group's whole flush makes, however many rows it resolved.
+        The temporal topology, the locking license, the gate decision, the
+        successor expansion shape, and (because every temporal mutation needs
+        one) the concrete Transaction Instant are all decided once, here —
+        the only clock consultation this group's whole flush makes, however
+        many rows it resolved. Only a row's own predecessor and key values
+        remain for :meth:`_MaterializedTemporalSegment.step` to bind.
         """
         assert isinstance(group.observations, TemporalColumns)
         topology = self._temporal.topology(declaring_entity, group.mutation.mutation)
@@ -813,21 +820,33 @@ class WritePlanner:
             _assignment_member(assignment.attr): assignment.value
             for assignment in group.mutation.assignments
         }
+        close_cause: CloseCause | None = None
+        gate_start_attribute: AttributeIdentity | None = None
+        if topology.closure is not None:
+            close_cause = topology.closure.cause
+            gate_start_attribute = _gate_axis(
+                declaring_entity, topology.closure.gate_basis
+            ).start_attribute
+        resolved_successors = resolve_successors(
+            topology.successors,
+            valid_from=group.mutation.valid_from,
+            until=group.mutation.until,
+        )
         return _MaterializedTemporalSegment(
             entity=entity,
             declaring_entity=declaring_entity,
-            resolved=resolved,
+            members=resolved.applicable_members(entity),
             key_attributes=tuple(a.identity for a in resolved.family_primary_key(entity)),
             key_attribute_names=group.key_attributes,
             key_columns=group.key_columns,
             predecessors=group.observations.predecessors,
-            topology=topology,
+            resolved_successors=resolved_successors,
+            close_cause=close_cause,
+            gate_start_attribute=gate_start_attribute,
             axes=axes,
             instant=instant,
             gated=gated,
             assignment_row=assignment_row,
-            valid_from=group.mutation.valid_from,
-            until=group.mutation.until,
             steps_per_row=steps_per_row,
         )
 
@@ -903,6 +922,14 @@ class _MaterializedTemporalSegment:
     successors per resolved row, assembled on demand from already-decided,
     group-wide facts and the group's own compact columns alone.
 
+    Every semantic decision the group's authored mutation settles — which
+    successors exist, each one's represented-state kind, which Valid-Time
+    bound expression applies, the close's cause, and its gate basis's
+    Attribute — is resolved once, when the segment is built
+    (:meth:`WritePlanner._settle_temporal_group`). ``step`` only binds one
+    row's own predecessor and key values into that already-decided shape; it
+    never re-derives a decision a strategy already made.
+
     ``steps_per_row`` is invariant across the group — every row shares the
     same authored mutation and therefore the same topology — so a flat step
     index maps to (row, sub-step) by simple division, and nothing here is
@@ -911,19 +938,23 @@ class _MaterializedTemporalSegment:
 
     entity: EntityMetadata
     declaring_entity: EntityMetadata
-    resolved: Targets
+    members: Mapping[str, AttributeIdentity | ValueObjectIdentity]
     key_attributes: tuple[AttributeIdentity, ...]
     key_attribute_names: tuple[str, ...]
     key_columns: tuple[ColumnSlice[object], ...]
     predecessors: PredecessorColumns
-    topology: MilestoneTopology
+    resolved_successors: tuple[ResolvedSuccessor, ...]
+    close_cause: CloseCause | None
+    gate_start_attribute: AttributeIdentity | None
     axes: TemporalAxes
     instant: str
     gated: bool
     assignment_row: Mapping[str, object]
-    valid_from: str | None
-    until: str | None
     steps_per_row: int
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "members", MappingProxyType(dict(self.members)))
+        object.__setattr__(self, "assignment_row", MappingProxyType(dict(self.assignment_row)))
 
     def __len__(self) -> int:
         return len(self.key_columns[0]) * self.steps_per_row
@@ -941,24 +972,21 @@ class _MaterializedTemporalSegment:
             )
         )
         predecessor = PredecessorRow(self.predecessors.row(row))
-        members = self.resolved.applicable_members(self.entity)
         steps: list[PlannedStep] = []
-        if self.topology.closure is not None:
-            gate = _temporal_gate(
-                self.declaring_entity, self.topology.closure.gate_basis, predecessor, self.gated
-            )
-            valid_axis = self.declaring_entity.as_of_axis(TemporalDimension.VALID_TIME)
+        if self.close_cause is not None:
+            assert self.gate_start_attribute is not None  # settled alongside close_cause
+            gate = _temporal_gate(self.gate_start_attribute, predecessor, self.gated)
             observed_valid_end = (
-                None if valid_axis is None else predecessor.member(valid_axis.end_attribute.name)
+                None if self.axes.valid_end is None else predecessor.member(self.axes.valid_end)
             )
             steps.append(
                 _close(
                     self.entity,
                     self.declaring_entity,
-                    self.resolved,
+                    key_attributes=self.key_attributes,
                     identity=key_row,
                     observed_valid_end=observed_valid_end,
-                    cause=self.topology.closure.cause,
+                    cause=self.close_cause,
                     gate=gate,
                     instant=self.instant,
                 )
@@ -969,19 +997,20 @@ class _MaterializedTemporalSegment:
                 entity=self.entity.identity,
                 entries=(
                     InsertEntry(
-                        row=_planned_row(self.entity, members, milestone.members, None),
-                        origin=milestone.origin,
+                        row=_planned_row(self.entity, self.members, successor.members, None),
+                        origin=successor.origin,
                     ),
                 ),
             )
-            for milestone in expand_milestone(
-                self.topology,
-                self.axes,
-                transaction_instant=self.instant,
-                authored=authored,
-                valid_from=self.valid_from,
-                until=self.until,
-                predecessor=predecessor,
+            for successor in (
+                bind_successor(
+                    resolved,
+                    self.axes,
+                    transaction_instant=self.instant,
+                    authored=authored,
+                    predecessor=predecessor,
+                )
+                for resolved in self.resolved_successors
             )
         )
         return tuple(steps)
@@ -1007,13 +1036,12 @@ def _non_temporal_concurrency(
 
 
 def _temporal_gate(
-    declaring_entity: EntityMetadata,
-    gate_basis: TemporalDimension,
+    start_attribute: AttributeIdentity,
     predecessor: PredecessorRow,
     gated: bool,
 ) -> TemporalConcurrency:
     """The settled gate decision one close carries, given the already-decided
-    ``gated`` fact.
+    ``gated`` fact and the gate basis's already-resolved Attribute.
 
     Optimistic mode binds the observed start of the axis the facet names as
     its gate basis — the version analogue for an entity carrying no version
@@ -1022,10 +1050,9 @@ def _temporal_gate(
     """
     if not gated:
         return UNGATED
-    axis = next(axis for axis in _as_of_axes(declaring_entity) if axis.dimension is gate_basis)
     return TemporalGate(
-        start_attribute=axis.start_attribute,
-        observed_start=predecessor.member(axis.start_attribute.name),
+        start_attribute=start_attribute,
+        observed_start=predecessor.member(start_attribute.name),
     )
 
 
@@ -1127,7 +1154,7 @@ def plan_temporal_close(
     return _close(
         entity,
         declaring_entity,
-        resolved,
+        key_attributes=tuple(a.identity for a in resolved.family_primary_key(entity)),
         identity=identity,
         observed_valid_end=observed_valid_end,
         cause=SUPERSEDED,
@@ -1139,8 +1166,8 @@ def plan_temporal_close(
 def _close(
     entity: EntityMetadata,
     declaring_entity: EntityMetadata,
-    resolved: Targets,
     *,
+    key_attributes: tuple[AttributeIdentity, ...],
     identity: Mapping[str, object],
     observed_valid_end: object | None,
     cause: CloseCause,
@@ -1155,7 +1182,6 @@ def _close(
     a duplicate or an orphaned current row, so the shortfall is an outcome
     rather than a silent success.
     """
-    key_attributes = tuple(a.identity for a in resolved.family_primary_key(entity))
     return PlannedClose(
         entity=entity.identity,
         target=MilestoneTarget(
@@ -1207,6 +1233,11 @@ def _as_of_axes(declaring_entity: EntityMetadata) -> tuple[AsOfAxisMetadata, ...
     valid_axis = declaring_entity.as_of_axis(TemporalDimension.VALID_TIME)
     tx_axis = _tx_time_axis(declaring_entity)
     return (tx_axis,) if valid_axis is None else (valid_axis, tx_axis)
+
+
+def _gate_axis(declaring_entity: EntityMetadata, gate_basis: TemporalDimension) -> AsOfAxisMetadata:
+    """The As-Of Axis a close's optimistic gate binds, by the topology's declared basis."""
+    return next(axis for axis in _as_of_axes(declaring_entity) if axis.dimension is gate_basis)
 
 
 def _tx_time_axis(declaring_entity: EntityMetadata) -> AsOfAxisMetadata:
