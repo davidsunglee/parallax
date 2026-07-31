@@ -91,3 +91,26 @@ This amendment removes one declared edge from an accepted decision. It changes n
 provenance semantics, no disposition interpretation, and no ownership of
 decoration. A later decision may re-home `SubjectIdentity` into `m-principal`
 when that module is implemented; nothing here forecloses it.
+
+## Amendment (2026-07): the closed algebra superseded this ADR's own disposition vocabulary
+
+COR-62's finalized `m-unit-work` algebra closed over Insert Origin and Close
+Cause and, in doing so, retired the free-floating disposition vocabulary this
+ADR's body coined and used throughout: a "disposition" is no longer a
+free-floating label at all, but a value that lives only inside the Planned
+Write variant that admits it. The semantics this ADR fixes are unchanged; only
+the names are superseded, one for one:
+
+| This ADR's original term | Current term |
+|---|---|
+| Lineage Start | Insert Origin `NewLineage` |
+| In-Place Revision | Planned Update (a Non-Temporal update needs no label; being a Planned Update already says so) |
+| Carried-State Successor | Insert Origin `CarriedFrom` |
+| Changed-State Successor | Insert Origin `ChangedFrom` |
+| Ordinary Revision Close | Close Cause `Superseded` |
+| State Termination | State Termination (unchanged) |
+| "disposition" (as a free-floating label) | retired outright — Insert Origin exists only on an insert entry, Close Cause only on a close |
+
+A future reader should read this ADR's body with that substitution; the
+decorator behavior each row describes — what each variant preserves, replaces,
+or assigns — is exactly what COR-62 shipped.

@@ -42,11 +42,11 @@ from parallax.core.unit_work import (
     PredecessorColumns,
     PredecessorShape,
     PredicateMutation,
+    PredicateSelection,
     PredicateWrite,
     TemporalColumns,
     VersionColumns,
     WriteAssignment,
-    WriteTarget,
     whole,
 )
 from parallax.core.unit_work.columns import (
@@ -212,7 +212,9 @@ def test_predecessor_columns_refuses_zero_length_member_columns() -> None:
 def _predicate(entity: str, mutation: PredicateMutation) -> PredicateWrite:
     return PredicateWrite(
         mutation,
-        WriteTarget(entity, op_algebra.Comparison("lessThan", f"{entity}.balance", 1_000_000.0)),
+        PredicateSelection(
+            entity, op_algebra.Comparison("lessThan", f"{entity}.balance", 1_000_000.0)
+        ),
     )
 
 
@@ -317,7 +319,9 @@ def _version_group(
         versions.append(version)
     predicate = PredicateWrite(
         "update",
-        WriteTarget(entity, op_algebra.Comparison("lessThan", f"{entity}.balance", 1_000_000.0)),
+        PredicateSelection(
+            entity, op_algebra.Comparison("lessThan", f"{entity}.balance", 1_000_000.0)
+        ),
         assignments=(WriteAssignment(f"{entity}.balance", assigned),),
     )
     return MaterializedWriteGroup(
@@ -369,7 +373,9 @@ def _temporal_group(
     predecessors = _predecessor_columns([members for _key, members in rows])
     predicate = PredicateWrite(
         "terminate",
-        WriteTarget(entity, op_algebra.Comparison("lessThan", f"{entity}.value", 1_000_000.0)),
+        PredicateSelection(
+            entity, op_algebra.Comparison("lessThan", f"{entity}.value", 1_000_000.0)
+        ),
     )
     return MaterializedWriteGroup(
         mutation=predicate,

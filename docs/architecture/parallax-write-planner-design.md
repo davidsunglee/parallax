@@ -552,16 +552,17 @@ CloseCause = Superseded | Terminated
 ```
 
 Origin belongs to each insert entry, not to the whole batch and not to a
-parallel array. It is the provenance-neutral disposition Audit Provenance
-consumes:
+parallel array. It is the provenance-neutral fact Audit Provenance consumes:
 
-- `NewLineage` is a Lineage Start;
-- `CarriedFrom` is a Carried-State Successor; and
-- `ChangedFrom` is a Changed-State Successor.
+- `NewLineage` begins a Provenance Lineage;
+- `CarriedFrom` preserves a temporal predecessor's represented state
+  unchanged; and
+- `ChangedFrom` changes that represented state.
 
-A Planned Update implies In-Place Revision. `Superseded` implies Ordinary
-Revision Close; `Terminated` implies State Termination. Planned Delete has no
-row to decorate.
+A Planned Update needs no separate label: being a Planned Update already
+carries the fact that an existing row was revised in place. `Superseded` means
+a new database revision replaces the closed predecessor; `Terminated` means
+State Termination. Planned Delete has no row to decorate.
 
 ### Targets
 
@@ -815,7 +816,8 @@ The Write Planner privately owns this order:
 Entity spellings and family-effective members resolve once against the connected
 Metamodel. Same-attempt writes obey [ADR 0023](../adr/0023-same-transaction-writes-coalesce-in-the-unit-of-work.md):
 
-- insert then update becomes one final-value Lineage Start; and
+- insert then update becomes one final-value insert that begins a Provenance
+  Lineage; and
 - insert then delete cancels completely.
 
 A state never made durable to another reader does not manufacture history.
@@ -1212,7 +1214,7 @@ door while keeping COR-62 focused.
 Implementation should proceed in dependency order while keeping the repository
 green between migrations.
 
-### 1. Establish the normative contract
+### 1. Establish the normative contract — delivered
 
 - Update `m-unit-work` and affected temporal, batching, concurrency, and Audit
   Provenance specifications to use the finalized algebra.
@@ -1224,7 +1226,7 @@ green between migrations.
 The ADRs and this document explain the design, but specifications and cases
 remain the product contract.
 
-### 2. Introduce the new Unit Work values
+### 2. Introduce the new Unit Work values — delivered
 
 - Add identity-based targets, observations, gates, affected-row policies, and
   Planned Write variants under `parallax.core.unit_work`.
@@ -1233,14 +1235,29 @@ remain the product contract.
 - Add `enforce_affected_rows` and move canonical Write Effect Errors to Unit
   Work, retaining temporary re-exports only where compatibility requires them.
 
-### 3. Add compact storage
+Divergence: no temporary re-export of the Write Effect Errors was needed or
+added — the tree had no external consumer of the `m-opt-lock`-hosted classes,
+so the move landed as a clean deletion with a reviewed public-API diff instead.
+
+### 3. Add compact storage — delivered, with one recorded divergence
 
 - Implement private chunked columns, column slices, shared row and assignment
   shapes, Predecessor Columns, Step Segments, and Planned Steps.
 - Test logical sequence behavior independently from physical representation.
 - Make all exposed views frozen and stable.
 
-### 4. Replace the planner
+Divergence: this lands over the existing `DbPort.execute` returning
+`list[Row]`, not over a new streaming port operation. The planner-side
+materializer itself never retains a full `fetchall()` array or builds a
+result-set-sized parallel object graph, but the single concrete adapter still
+calls `cursor.fetchall()` beneath that seam, so the "without `fetchall()`"
+requirement below is met one layer higher than the adapter boundary. This is
+the accepted, ticketed deferral D-40 in the deferred-work ledger, resolved by
+design discussion question 2 (Option C): the avoidable cost this document
+names — a million input wrappers plus a second million output wrappers — is
+eliminated; the driver-level bound is not.
+
+### 4. Replace the planner — delivered
 
 - Replace the current function-level `plan_flush` orchestration with one
   model-scoped `WritePlanner`.
@@ -1250,7 +1267,7 @@ remain the product contract.
 - Remove legacy `FlushPlan.tx_instant`, optional `Observation`, and
   `expected_affected` fields once all consumers use the finalized values.
 
-### 5. Migrate write-input preparation
+### 5. Migrate write-input preparation — delivered
 
 - Resolve observation-requiring predicate writes into chunked columns directly
   from cursor iteration.
@@ -1260,7 +1277,7 @@ remain the product contract.
   Unit Work equality rules; retain every delete and terminate row.
 - Avoid managed object materialization and row-wise intermediate collections.
 
-### 6. Migrate temporal and provenance strategies
+### 6. Migrate temporal and provenance strategies — temporal topology delivered; provenance is COR-56/COR-57 scope
 
 - Keep temporal mutations private and indivisible through ordering.
 - Expand them in place into close and successor segments.
@@ -1268,7 +1285,14 @@ remain the product contract.
 - Apply Audit Provenance as shared or columnar overlays after topology is
   settled.
 
-### 7. Migrate lowering and execution
+Divergence: COR-62 delivers only the seam the last bullet needs — the
+`AuditStrategy` port and its Unit Work-owned no-op default (`UndecoratedAudit`)
+— so pipeline stage 8 exists and runs on every step. Audit Provenance itself
+(a real decorating adapter that reads Subject Identity and produces provenance
+values) is explicitly out of this claim's scope and belongs to COR-56 and
+COR-57, which change only the injected adapter.
+
+### 7. Migrate lowering and execution — delivered
 
 - Lower only Planned Write values.
 - Remove raw transaction mode, observation, instant, and audit interpretation
@@ -1278,7 +1302,7 @@ remain the product contract.
 - Use driver batching only when count attribution satisfies the Exact Count
   rule.
 
-### 8. Remove transitional seams
+### 8. Remove transitional seams — delivered
 
 - Remove obsolete Atomic Unit, old Planned Write, and old Flush Plan shapes
   after production, conformance, and direct planner callers migrate.
@@ -1364,6 +1388,15 @@ Python memory representation.
 Implementation must begin by making the authoritative specifications and cases
 match these accepted decisions, then migrate the runtime through the staged
 plan above.
+
+**Delivered.** All eight implementation-plan stages above landed on the Python
+target through COR-62. The one accepted divergence from this document's literal
+prescription is D-40 (stage 3): the compact representation lands over the
+existing `DbPort.execute`, so the adapter boundary still calls `fetchall()`
+beneath the planner's own non-retaining materializer. Provenance decoration
+(stage 6's last bullet) is deliberately unimplemented — COR-62 delivers the
+audit-neutral seam only, per this document's own goals, and COR-56/COR-57 add
+the real `AuditStrategy` adapter without further planner-interface change.
 
 ## Related decisions
 

@@ -5,7 +5,7 @@ and applicable Write Observations into an ordered Write Plan. It is the sole
 authority for coalescing and cancellation, no-op elimination possible from
 buffered planning data, target and observation binding, batching and dependency
 ordering, temporal topology, concurrency gates, affected-row expectations, and
-Finalized Write Dispositions. Result-dependent no-op filtering for an
+each Planned Write's Insert Origin or Close Cause. Result-dependent no-op filtering for an
 observation-requiring predicate mutation is the one narrow pre-planning
 exception: Unit Work's write-input materializer compares assigned values while
 streaming the resolving cursor and contributes only effective rows. Delete and

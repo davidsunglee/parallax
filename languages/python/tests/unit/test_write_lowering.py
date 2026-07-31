@@ -68,6 +68,7 @@ from parallax.core.unit_work import (
     PlannedRow,
     PlannedUpdate,
     PlanningRequest,
+    PredicateSelection,
     PredicateTarget,
     PredicateWrite,
     SelfIncrement,
@@ -78,7 +79,6 @@ from parallax.core.unit_work import (
     WriteInstruction,
     WriteObservation,
     WritePlanningError,
-    WriteTarget,
 )
 from parallax.core.unit_work.planned import PlannedWrite as PlannedStep
 from parallax.descriptor import _records
@@ -567,8 +567,8 @@ def test_unrecognized_computed_strategy_is_refused() -> None:
 
 
 def test_a_mapping_that_does_not_match_the_one_key_marker_shape_binds_literally() -> None:
-    # `_marker_kind`'s SHAPE classification (m-value-object "Writing" marker
-    # disambiguation) requires EXACTLY one key naming a recognized marker —
+    # `write_planner._marker`'s SHAPE classification (m-value-object "Writing"
+    # marker disambiguation) requires EXACTLY one key naming a recognized marker —
     # a differently-shaped mapping (here, two keys) is neither a marker nor a
     # value-object document (which would already be JsonDocument-wrapped by
     # this point), so it is bound as an ordinary literal, never refused.
@@ -653,7 +653,7 @@ def test_materializing_predicate_write_reaching_finalization_is_refused() -> Non
     # `buffer_predicate`, which the `_where` verbs only delegate to; ADR 0014),
     # before it is ever planned. Reaching here with one is a caller wiring
     # defect this seam still refuses loudly, never mis-emits.
-    predicate = PredicateWrite("delete", WriteTarget("Account", oa.All()))
+    predicate = PredicateWrite("delete", PredicateSelection("Account", oa.All()))
     with pytest.raises(WritePlanningError, match="materialize to keyed writes"):
         _lower(predicate, ACCOUNT)
 
@@ -690,7 +690,7 @@ def test_inheritance_family_predicate_write_is_rejected_before_sql(
     # straight from a deserialized instruction. The lowering-side guard must
     # reject the `narrow` case before it can introduce an alias that unaliased
     # DML never declares (`m-sql` rule 1).
-    write = PredicateWrite("delete", WriteTarget("CardPayment", predicate))
+    write = PredicateWrite("delete", PredicateSelection("CardPayment", predicate))
     with pytest.raises(inheritance.InheritanceError) as excinfo:
         _lower(write, PAYMENT)
     assert excinfo.value.rule == "subtype-write-set-based-unsupported"
@@ -876,7 +876,9 @@ def test_readless_predicate_delete_lowers_to_one_statement() -> None:
     # predicate rendering (contrast the resolving read's `t0`-aliased form).
     predicate = PredicateWrite(
         "delete",
-        WriteTarget("Wallet", oa.Comparison(op="lessThan", attr="Wallet.balance", value=200.00)),
+        PredicateSelection(
+            "Wallet", oa.Comparison(op="lessThan", attr="Wallet.balance", value=200.00)
+        ),
     )
     statement = _lower(predicate, WALLET)[0]
     assert statement.sql == "delete from wallet where balance < ?"
@@ -889,7 +891,9 @@ def test_readless_predicate_update_follows_the_entity_layout_order() -> None:
     # assignment binds in emitted column order, predicate binds after.
     predicate = PredicateWrite(
         "update",
-        WriteTarget("Wallet", oa.Comparison(op="lessThan", attr="Wallet.balance", value=200.00)),
+        PredicateSelection(
+            "Wallet", oa.Comparison(op="lessThan", attr="Wallet.balance", value=200.00)
+        ),
         assignments=(
             WriteAssignment(attr="Wallet.balance", value=150.00),
             WriteAssignment(attr="Wallet.owner", value="Updated"),
@@ -1104,7 +1108,7 @@ def test_finalization_gives_a_readless_predicate_write_an_unbounded_expectation(
     # which is what an unbounded expected effect says; it carries the typed
     # predicate and nothing else.
     predicate = oa.Comparison(op="lessThan", attr="Wallet.balance", value=200.00)
-    steps = _finalize(PredicateWrite("delete", WriteTarget("Wallet", predicate)), WALLET)
+    steps = _finalize(PredicateWrite("delete", PredicateSelection("Wallet", predicate)), WALLET)
     assert steps is not None
     (step,) = steps
     assert isinstance(step, PlannedDelete)
@@ -1118,7 +1122,7 @@ def test_a_predicate_verb_with_no_readless_template_is_refused() -> None:
     # statement shape exists for one — refused rather than settled into a step
     # no statement could render.
     with pytest.raises(WritePlanningError, match="names a milestone"):
-        _finalize(PredicateWrite("terminate", WriteTarget("Wallet", oa.All())), WALLET)
+        _finalize(PredicateWrite("terminate", PredicateSelection("Wallet", oa.All())), WALLET)
 
 
 def test_a_keyed_write_row_omitting_its_primary_key_addresses_nothing() -> None:
