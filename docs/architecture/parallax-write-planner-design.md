@@ -1287,10 +1287,22 @@ eliminated; the driver-level bound is not.
 
 Divergence: COR-62 delivers only the seam the last bullet needs — the
 `AuditStrategy` port and its Unit Work-owned no-op default (`UndecoratedAudit`)
-— so pipeline stage 8 exists and runs on every step. Audit Provenance itself
-(a real decorating adapter that reads Subject Identity and produces provenance
-values) is explicitly out of this claim's scope and belongs to COR-56 and
-COR-57, which change only the injected adapter.
+— so pipeline stage 8 exists and runs on every eagerly settled step. Audit
+Provenance itself (a real decorating adapter that reads Subject Identity and
+produces provenance values) is explicitly out of this claim's scope and belongs
+to COR-56 and COR-57.
+
+That seam is **not** complete for a Materialized Write Group. A group is
+finalized eagerly into a compact segment whose per-row Planned Writes are
+rebuilt on demand from columns plus already-settled facts, and the segment
+deliberately retains no strategy object — retaining one would also require
+retaining the unevaluated Transaction Instant that `m-unit-work` forbids from
+surviving in a Write Plan. So a group's rows reach no decorator, and injecting
+a real adapter is not by itself sufficient. The last bullet's own wording is
+the resolution: every row of one group shares one authored mutation, one
+Subject Identity, and one instant, so its provenance is a **shared or columnar
+overlay** resolved once at settle time, not a per-step decoration. COR-56 owns
+that design and records it as an inherited constraint.
 
 ### 7. Migrate lowering and execution — delivered
 

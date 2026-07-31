@@ -35,7 +35,7 @@ from _transact_support import (
 )
 
 from _support import mirrored_models as mm
-from _support.planner_probes import TEST_SUBJECT_IDENTITY, planner_for
+from _support.planner_probes import TEST_SUBJECT_IDENTITY
 from parallax.core.db_error import DatabaseError
 from parallax.core.entity._hub import sealed_model
 from parallax.core.unit_work import (
@@ -52,7 +52,12 @@ from parallax.core.unit_work import (
     WritePlan,
     run_unit_of_work,
 )
-from parallax.snapshot.handle import Database, Transaction, TransactionOptionConflictError
+from parallax.snapshot.handle import (
+    Database,
+    Transaction,
+    TransactionOptionConflictError,
+    build_write_planner,
+)
 
 
 def test_abort_discards_the_buffer_and_withholds_the_value() -> None:
@@ -186,7 +191,7 @@ def test_bare_unit_of_work_on_the_thread_is_refused() -> None:
         clock=FixedClock(FIXED),
         meta=model,
         flush_executor=executor,
-        planner=planner_for(model),
+        planner=build_write_planner(model),
         subject_identity=TEST_SUBJECT_IDENTITY,
     )
 

@@ -12,7 +12,7 @@ than parallel wiring that could drift.
 :func:`plan_temporal_close` re-wires the SAME concurrency adapter into
 :func:`~parallax.core.unit_work.plan_temporal_close`, the `m-opt-lock`
 conflict-probe's standalone close settlement — preserving its existing
-signature so every caller of the pre-Phase-8 seam is unaffected.
+signature so every caller stays unaffected.
 
 The three adapter classes translate this scope's own optional-policy calls
 into the neutral vocabulary the planner's strategy Protocols declare;

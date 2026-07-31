@@ -167,6 +167,7 @@ from parallax.core.unit_work.strategy import (
     UndecoratedAudit,
     ValidTimeBound,
     ValidTimeWindow,
+    capture_subject_identity,
 )
 from parallax.core.unit_work.temporal import SuccessorRow, TemporalAxes, expand_milestone
 from parallax.core.unit_work.uow import (
@@ -326,6 +327,7 @@ __all__ = [
     "WriteRejectedError",
     "WriteTarget",
     "active_unit_of_work",
+    "capture_subject_identity",
     "deserialize",
     "eager_segment",
     "enforce_affected_rows",
