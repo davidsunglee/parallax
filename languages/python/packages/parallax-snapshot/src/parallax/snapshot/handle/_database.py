@@ -85,13 +85,10 @@ from parallax.snapshot.handle._write_lowering import stream_lowered
 
 __all__ = ["Database", "TransactionOptionConflictError", "connect"]
 
-# The transitional audit-neutral Subject Identity every production planning
-# request carries while no real Principal boundary module exists yet.
-# Private, module-local, and captured through the boundary's own nonempty
-# check (`capture_subject_identity`) — not a Principal implementation, a
-# default identity, or a public caller option. A real Principal boundary
-# replaces this constant with a captured Subject Identity threaded through
-# in its place.
+# The audit-neutral Subject Identity every production planning request
+# carries: private, module-local, and captured through the boundary's own
+# nonempty check (`capture_subject_identity`) — never a Principal
+# implementation, a default identity, or a public caller option.
 _TRANSITIONAL_SUBJECT_IDENTITY: Final[SubjectIdentity] = capture_subject_identity(
     "cor-62-transitional-subject"
 )
