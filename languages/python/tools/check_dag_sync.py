@@ -22,8 +22,8 @@ A forbidden row is the complement of a *closure*, so a scope is never forbidden
 what its own grants reach transitively. A scope that exists in order to stay
 clear of some boundary therefore has to be granted narrowly enough that the
 boundary falls outside its closure — the read preflight seam grants the Entity
-statement submodule rather than the whole frontend for exactly that reason —
-rather than granted widely and excepted afterwards.
+frontend's Find Query submodule rather than the whole frontend for exactly that
+reason — rather than granted widely and excepted afterwards.
 
 The core conformance-family exception (``modules.md``) is encoded structurally:
 conformance scopes (``parallax.conformance.*``) are exempt on the *importing*
@@ -148,13 +148,13 @@ SUPPORT_SCOPE_DEPS: Mapping[str, frozenset[str]] = {
             "parallax.core._formation_profile",
         }
     ),
-    # The statement surface is scoped apart from the rest of the Entity frontend
-    # so a consumer that needs only `Statement` can grant only this, rather than
-    # the whole frontend and everything model formation drags behind it. The
-    # invariant this scope carries is that the statement surface preflight needs
-    # does not reach the Hub-construction boundary: nothing here reaches
-    # `parallax.core._formation_profile`, and therefore nothing here reaches a
-    # Database Port.
+    # The Find Query surface is scoped apart from the rest of the Entity frontend
+    # so a consumer that needs only `FindQuery` and its lowering can grant only
+    # this, rather than the whole frontend and everything model formation drags
+    # behind it. The invariant this scope carries is that the query surface
+    # preflight needs does not reach the Hub-construction boundary: nothing here
+    # reaches `parallax.core._formation_profile`, and therefore nothing here
+    # reaches a Database Port.
     "parallax.core.entity._query": frozenset(
         {
             "parallax.core.base",
@@ -209,7 +209,7 @@ SUPPORT_SCOPE_DEPS: Mapping[str, frozenset[str]] = {
     # contract proves what its module docstring claims: a preflight that resolves
     # a target and validates an operation names no SQL generation, no dialect, no
     # Database Port, no deep-fetch planning and no materialization. The grant is
-    # the statement submodule rather than the whole Entity frontend precisely so
+    # the Find Query submodule rather than the whole Entity frontend precisely so
     # the Database Port falls OUTSIDE this row's closure: the frontend package
     # reaches one through `_formation_profile -> opt_lock -> unit_work ->
     # db_port`, and a forbidden row is the complement of a closure, so a grant

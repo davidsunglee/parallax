@@ -315,6 +315,10 @@ class Position(Bitemporal, table="position", namespace=_NS):
     id: Attr[int] = attr(primary_key=True)
 
 
+class _WindowSubclass(tuple[dt.datetime, ...]):
+    """A `tuple` subclass, which a scan window is required NOT to be."""
+
+
 def test_as_of_latest_serializes_the_current_pin_wrapper() -> None:
     assert lowered_document(Balance.where(Balance.all).as_of(tx_time=LATEST)) == {
         "asOf": {"operand": {"all": {}}, "dimension": "transactionTime", "coordinate": "latest"}
@@ -373,6 +377,58 @@ def test_as_of_range_on_valid_time() -> None:
             "end": "2024-06-01T00:00:00+00:00",
         }
     }
+
+
+def test_as_of_range_refuses_a_window_that_does_not_advance() -> None:
+    # A scan is the half-open `[start, end)`, so a reversed pair names the
+    # window's complement and an equal pair names nothing at all. Both are
+    # refused where the clause is authored: neither ever becomes an `asOfRange`,
+    # because the overlap predicate `in_z < end and out_z > start` compiles from
+    # either without complaint and answers the wrong rows.
+    earlier = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
+    later = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
+    for window in ((later, earlier), (earlier, earlier)):
+        with pytest.raises(QueryDefinitionError, match="start < end") as caught:
+            Balance.where(Balance.all).as_of_range(tx_time=window)
+        assert caught.value.code == "query-clause-invalid"
+
+
+def test_as_of_range_refuses_a_latest_endpoint() -> None:
+    # LATEST PINS an axis; an `asOfRange` bound is a finite instant
+    # (`operation.schema.json`), so the sentinel is refused rather than lowered
+    # as the literal `"latest"` — which would reach SQL as a text bind against a
+    # timestamp column.
+    earlier = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
+    for window in ((LATEST, earlier), (earlier, LATEST)):
+        with pytest.raises(QueryDefinitionError, match="finite instants") as caught:
+            Balance.where(Balance.all).as_of_range(tx_time=window)  # type: ignore[arg-type] - a deliberate LATEST endpoint drives the finiteness rule
+        assert caught.value.code == "query-clause-invalid"
+
+
+@pytest.mark.parametrize(
+    "window",
+    [
+        [dt.datetime(2024, 1, 1, tzinfo=dt.UTC), dt.datetime(2024, 6, 1, tzinfo=dt.UTC)],
+        _WindowSubclass(
+            (dt.datetime(2024, 1, 1, tzinfo=dt.UTC), dt.datetime(2024, 6, 1, tzinfo=dt.UTC))
+        ),
+        (dt.datetime(2024, 1, 1, tzinfo=dt.UTC),),
+        (
+            dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+            dt.datetime(2024, 6, 1, tzinfo=dt.UTC),
+            dt.datetime(2024, 7, 1, tzinfo=dt.UTC),
+        ),
+        ("2024-01-01T00:00:00+00:00", "2024-06-01T00:00:00+00:00"),
+    ],
+    ids=["list", "tuple-subclass", "one-item", "three-item", "strings"],
+)
+def test_as_of_range_refuses_a_window_that_is_not_an_exact_instant_pair(window: Any) -> None:
+    # The window is judged as a SHAPE and nothing is coerced into it, so a
+    # dynamically composed argument meets the same rule a literal one does
+    # rather than unpacking into whatever two values it happens to yield.
+    with pytest.raises(QueryDefinitionError) as caught:
+        Balance.where(Balance.all).as_of_range(tx_time=window)
+    assert caught.value.code == "query-clause-invalid"
 
 
 def test_history_wraps_the_predicate() -> None:

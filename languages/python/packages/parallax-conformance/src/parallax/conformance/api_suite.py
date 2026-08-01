@@ -792,15 +792,27 @@ _ORDERS_GRAPH_SIBLING_REASON: Final[str] = (
 # `animal_owner.ANIMAL_MODEL`), so both flip to executable graph stories
 # (`graph_stories.py`) and no case-scoped reason remains for either.
 #
-# `.history()`/`.as_of_range()` combined with `.include(...)` is an EXPLICIT,
-# documented deferral (spec §3 `snapshot-history-includes`): the combination
-# builds as an ordinary valid Find Query and the read preflight refuses it by
-# name. Not a gap — a designed-in refusal, at execution rather than at build.
-_SNAPSHOT_HISTORY_INCLUDES_UNSUPPORTED_REASON: Final[str] = (
-    "`.history()`/`.as_of_range()` combined with `.include(...)` is an EXPLICIT, "
-    "designed-in deferral (spec §3 `snapshot-history-includes`): the query builds and "
-    "the read preflight refuses it as `DeferredFeatureError(execution-feature-deferred)` "
-    "naming the Feature — not a capability gap, a documented refusal"
+# Milestone-set GRAPH siblings of the executed history proof. `history` /
+# `as_of_range` over a Transaction-Time entity answers one edge-pinned graph per
+# milestone (`then.graphs`), and the shipped-surface half of that — a real
+# `db.find(... .history(TX_TIME))` against Postgres resolving two milestones of
+# one domain key as distinct edge-pinned nodes — is executed and graded as the
+# supplemental `graph_stories.history_of_a_concrete_temporal_node_
+# distinguishes_milestones`. The wire half is graded for these two cases
+# THEMSELVES: both are compile-exercised and run-exercised
+# (`sweep_goldens._SNAPSHOT_READ_MILESTONE_SET_READS`), materializing and
+# grading their own `then.graphs`. Neither case combines a scan with an include
+# — neither operation carries a `deepFetch` at all — so the deferred
+# `snapshot-history-includes` Feature says nothing about them.
+_MILESTONE_SET_GRAPH_SIBLING_REASON: Final[str] = (
+    "a representative sibling of the executed milestone-set graph proof "
+    "(`graph_stories.history_of_a_concrete_temporal_node_distinguishes_milestones`, "
+    "real-Postgres via `parallax.snapshot.connect` + `db.find(....history(TX_TIME))`, "
+    "resolving one key's two milestones as distinct edge-pinned nodes): the SAME "
+    "per-milestone partition and edge pin over a different model, and — for "
+    "`m-snapshot-read-014` — with `as_of_range`'s overlap window in place of the full "
+    "chain; both cases are themselves graded end-to-end by the compile AND run sweeps, "
+    "which materialize their own `then.graphs`"
 )
 
 # Value-object nested/absence/cast/array-traversal PREDICATE reads: rows-form,
@@ -1058,9 +1070,9 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-snapshot-read-003": _ORDERS_GRAPH_SIBLING_REASON,
     "m-snapshot-read-006": _ORDERS_GRAPH_SIBLING_REASON,
     "m-snapshot-read-008": _ORDERS_GRAPH_SIBLING_REASON,
-    # -- m-snapshot-read: history+include (an explicit, designed-in deferral) #
-    "m-snapshot-read-013": _SNAPSHOT_HISTORY_INCLUDES_UNSUPPORTED_REASON,
-    "m-snapshot-read-014": _SNAPSHOT_HISTORY_INCLUDES_UNSUPPORTED_REASON,
+    # -- m-snapshot-read: milestone-set graph siblings ----------------------- #
+    "m-snapshot-read-013": _MILESTONE_SET_GRAPH_SIBLING_REASON,
+    "m-snapshot-read-014": _MILESTONE_SET_GRAPH_SIBLING_REASON,
     # -- m-value-object: predicate-read representative siblings ------------- #
     "m-value-object-004": _VO_PREDICATE_SIBLING_REASON,
     "m-value-object-005": _VO_PREDICATE_SIBLING_REASON,

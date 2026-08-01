@@ -23,9 +23,9 @@ importer exemption), and the support-scope additions:
   child scope inside it, the half a package-scoped row can only reach by naming
   siblings as targets; and
 * a child scope named as another scope's GRANT, which is how the read-preflight
-  seam takes the Entity statement surface without taking what the rest of the
-  frontend reaches — with two canaries, one importing the Database Port into the
-  seam directly and one reaching it through a chain.
+  seam takes the Entity frontend's Find Query surface without taking what the
+  rest of the frontend reaches — with two canaries, one importing the Database
+  Port into the seam directly and one reaching it through a chain.
 """
 
 from __future__ import annotations
@@ -703,12 +703,12 @@ def test_parse_support_scope_graph_rejects_no_grants_beside_a_real_grant() -> No
 # --------------------------------------------------------------------------
 # A child scope as a GRANT: the narrow part of a wide package.
 # --------------------------------------------------------------------------
-def test_the_preflight_seam_grants_the_statement_scope_not_the_frontend() -> None:
+def test_the_preflight_seam_grants_the_query_scope_not_the_frontend() -> None:
     # The whole point of the narrowing: the frontend PACKAGE reaches the port
     # (`_formation_profile -> opt_lock -> unit_work -> db_port`), and a forbidden
     # row is the complement of a closure, so granting the package would put the
-    # port permanently out of the row's reach. The statement child scope does not
-    # reach it, so the ordinary row forbids it.
+    # port permanently out of the row's reach. The Find Query child scope does
+    # not reach it, so the ordinary row forbids it.
     adjacency = dag.build_adjacency(dag.parse_dependency_graph(dag.MODULES_MD.read_text()))
     scope = "parallax.snapshot.handle._preflight"
     assert dag.SUPPORT_SCOPE_DEPS[scope] == frozenset(
@@ -747,7 +747,7 @@ def test_granting_a_child_scope_omits_that_childs_ancestors_from_the_row() -> No
     assert "parallax.core.entity" in forbidden["parallax.descriptor"]
 
 
-def test_the_statement_scope_is_narrower_than_the_frontend_it_sits_in() -> None:
+def test_the_query_scope_is_narrower_than_the_frontend_it_sits_in() -> None:
     adjacency = dag.build_adjacency(dag.parse_dependency_graph(dag.MODULES_MD.read_text()))
     forbidden = dag.compute_forbidden(adjacency)
     assert dag.CHILD_SCOPE_PARENT["parallax.core.entity._query"] == "parallax.core.entity"

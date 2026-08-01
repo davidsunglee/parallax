@@ -506,6 +506,15 @@ def test_a_refusal_reports_every_matching_feature_in_ascending_order() -> None:
     assert "a-staged-feature, snapshot-history-includes" in str(error)
 
 
+def test_a_refusal_naming_no_feature_cannot_be_constructed() -> None:
+    # `features` is nonempty by construction, not merely by the seam's own
+    # guard: the class is exported, so a caller reaches the constructor
+    # directly, and an empty match set is the answer for a query this
+    # implementation EXECUTES — a refusal built from one would name no reason.
+    with pytest.raises(ValueError, match="at least one Feature"):
+        DeferredFeatureError(frozenset())
+
+
 def test_two_executions_of_one_query_lower_it_twice(monkeypatch: pytest.MonkeyPatch) -> None:
     # Lowering is memoized nowhere: a Find Query caches no lowering and the seam
     # holds no global memo, so each execution builds its own value and keeps it

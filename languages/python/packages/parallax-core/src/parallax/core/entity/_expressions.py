@@ -386,11 +386,13 @@ def _or_terms(pred: Predicate[Any]) -> tuple[Operation, ...]:
     return (pred.op,)
 
 
-def conjoin(predicates: Sequence[Predicate[Any]]) -> Operation | None:
+def conjoin(predicates: Sequence[Predicate[Any] | AllPredicate[Any]]) -> Operation | None:
     """The big-AND of ``predicates`` (flattened, order-preserving), or ``None``
     for zero arguments — the shared builder behind every variadic predicate
     scope, so a bare presence test, a single predicate, and a conjunction can
-    never drift from the whole-statement combination."""
+    never drift from the whole-query combination ``Entity.where`` builds. It
+    accepts whatever :func:`and_terms` does, which is what lets the unfiltered
+    ``Entity.all`` reach it as a sole argument."""
     if not predicates:
         return None
     if len(predicates) == 1:
