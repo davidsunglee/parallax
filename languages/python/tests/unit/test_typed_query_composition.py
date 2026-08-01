@@ -4,9 +4,20 @@
 rule-coded suppression asserts in both directions: the expression must produce
 exactly that diagnostic, and an ignore that goes idle fails `just
 python-typecheck`. That inversion is this repository's only way to assert a type
-error, which is why every case below carries its suppression and its runtime
+error, which is why a case below carries its suppression and its runtime
 rejection in ONE test — static and runtime agreement proved by construction
 rather than in two processes that never meet.
+
+Exactly one suppression here has no runtime twin, and it is deliberate:
+`test_a_subtype_spelling_of_an_inherited_member_is_narrower_than_the_model_is`
+asserts a SUCCESSFUL serialization under a `reportArgumentType` ignore. The
+parameter comes from the class an access went through and the wire keeps the
+class that declares the member, so `Animal.where(Dog.name == …)` reads as
+`Predicate[Dog]` statically while emitting the `Animal.name` every concrete
+under `Animal` answers. No type the checker can see separates it from the
+rejection that IS wanted — `Animal.where(Dog.bark_volume > …)`, where the member
+really is the subtype's — so the parameter is strictly narrower than the model
+there, and that test is where the asymmetry is recorded rather than discovered.
 
 The mechanism under test is variance. `Predicate[E]` holds only a canonical
 operation node, so `E` appears in no field and inference would read it as
@@ -114,6 +125,78 @@ def test_a_conjunction_addresses_the_position_both_of_its_operands_address() -> 
     }
 
 
+def test_a_mixed_conjunction_reads_the_same_in_the_other_operand_order() -> None:
+    # The same combination with the NARROWER term on the left. A combinator
+    # that took the left operand's position would accept exactly one of these
+    # two spellings, so both orders are pinned: the position a combination
+    # addresses is the meet, which no operand order can move.
+    assert Dog.where((Dog.bark_volume > 3) & (Animal.name == "Ada")).serialize() == {
+        "and": {
+            "operands": [
+                {"greaterThan": {"attr": "Dog.barkVolume", "value": 3}},
+                {"eq": {"attr": "Animal.name", "value": "Ada"}},
+            ]
+        }
+    }
+
+
+def test_a_mixed_conjunction_never_launders_the_descendants_term_upward() -> None:
+    # The rejection half of the meet, and the laundering a left-biased
+    # combinator admits: the ancestor's term is on the LEFT, so reading the
+    # combination as the left operand's position would let a `Dog` member into
+    # an `Animal` query with no diagnostic at all.
+    with pytest.raises(OperationRejectedError) as caught:
+        Animal.where(
+            (Animal.name == "Ada") & (Dog.bark_volume > 3)  # pyright: ignore[reportArgumentType]
+        )
+    assert caught.value.rule == "subtype-attribute-outside-narrow-scope"
+
+
+def test_the_same_laundering_is_refused_in_the_other_operand_order_too() -> None:
+    # Its commuted twin, refused identically — the property that makes the
+    # rejection a rule about the terms rather than about which one was typed
+    # first.
+    with pytest.raises(OperationRejectedError) as caught:
+        Animal.where(
+            (Dog.bark_volume > 3) & (Animal.name == "Ada")  # pyright: ignore[reportArgumentType]
+        )
+    assert caught.value.rule == "subtype-attribute-outside-narrow-scope"
+
+
+def test_a_disjunction_addresses_the_meet_in_either_operand_order() -> None:
+    # `|` carries the identical parameter, so the acceptance half holds for it
+    # in both orders too — the combinator, not the combination, is what the
+    # position comes from.
+    ancestor_first = Dog.where((Animal.name == "Ada") | (Dog.bark_volume > 3)).serialize()
+    descendant_first = Dog.where((Dog.bark_volume > 3) | (Animal.name == "Ada")).serialize()
+    assert ancestor_first == {
+        "or": {
+            "operands": [
+                {"eq": {"attr": "Animal.name", "value": "Ada"}},
+                {"greaterThan": {"attr": "Dog.barkVolume", "value": 3}},
+            ]
+        }
+    }
+    assert descendant_first == {
+        "or": {
+            "operands": [
+                {"greaterThan": {"attr": "Dog.barkVolume", "value": 3}},
+                {"eq": {"attr": "Animal.name", "value": "Ada"}},
+            ]
+        }
+    }
+
+
+def test_a_disjunction_launders_no_more_than_a_conjunction_does() -> None:
+    # And the rejection half for `|`, on the operand order a left-biased
+    # combinator would have admitted.
+    with pytest.raises(OperationRejectedError) as caught:
+        Animal.where(
+            (Animal.name == "Ada") | (Dog.bark_volume > 3)  # pyright: ignore[reportArgumentType]
+        )
+    assert caught.value.rule == "subtype-attribute-outside-narrow-scope"
+
+
 def test_a_conjunction_of_one_positions_terms_keeps_that_position() -> None:
     # The composition does not launder a subtype's terms into an ancestor
     # position: two `Dog` terms combine to a `Dog` predicate, which the `Animal`
@@ -170,6 +253,12 @@ def test_an_equality_literal_is_judged_by_the_model_rather_than_by_the_signature
 def test_the_variance_phantom_exists_for_the_checker_alone() -> None:
     # Declared under `TYPE_CHECKING`, so it shapes inference and is absent from
     # every value that ships: nothing can call it, and no runtime behaviour turns
-    # on a member whose only purpose is a variance answer.
+    # on a member whose only purpose is a variance answer. The reflected
+    # combinators are the same kind of declaration — they exist so the checker
+    # can solve the meet from the narrower operand — and Python never consults a
+    # reflected operator whose left operand already defines the forward one, so
+    # the tree a combination builds is always the left-to-right one.
     predicate: Predicate[Animal] = Predicate(All())
     assert not hasattr(predicate, "_addresses")
+    assert not hasattr(predicate, "__rand__")
+    assert not hasattr(predicate, "__ror__")

@@ -14,7 +14,7 @@ exactly the state in which ``check_dag_sync`` would emit it into its own
 parent's forbidden row, where import-linter silently skips it.
 
 The guarantee under test is **one most-specific owner plus any declared
-ancestor scopes**, not one owner outright: six committed files legitimately
+ancestor scopes**, not one owner outright: nine committed files legitimately
 match both a child scope and its parent, which is what child scopes are for.
 ``test_declared_child_scope_files_are_owned_twice`` pins that, so the
 documented claim and the implemented behaviour cannot drift apart again.
@@ -82,7 +82,7 @@ def test_every_exemption_is_genuinely_unowned_today() -> None:
 
 def test_declared_child_scope_files_are_owned_twice() -> None:
     # The check does NOT promise one owner per file. It promises one
-    # most-specific owner plus declared ancestors, and these eight files are the
+    # most-specific owner plus declared ancestors, and these nine files are the
     # intended two-owner state child scopes exist to create — not a defect and
     # not something to weaken the check into forbidding.
     scopes = own.declared_scopes()
@@ -92,6 +92,7 @@ def test_declared_child_scope_files_are_owned_twice() -> None:
         if len(own.owning_scopes(own.module_path(path), scopes)) > 1
     }
     assert sorted(Path(path).name for path in doubled) == [
+        "_errors.py",
         "_family.py",
         "_hub.py",
         "_keyed_sql.py",
@@ -121,7 +122,7 @@ def test_the_success_message_states_the_guarantee_it_actually_proves(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     # The message is the only thing most readers of this gate ever see, so it
-    # must not promise one owner per file when six files have two.
+    # must not promise one owner per file when nine files have two.
     scopes = own.declared_scopes()
     nested = sum(
         1
