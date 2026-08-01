@@ -670,9 +670,9 @@ def test_a_zero_grant_scope_is_forbidden_every_first_party_scope() -> None:
 def test_a_zero_grant_row_also_forbids_every_sibling_child_scope() -> None:
     # The half a scope-outside-the-package row cannot state: the shared parent
     # package overlaps the source and is skipped, but a sibling is neither
-    # ancestor nor descendant, so it is a target the row can name. That plus
-    # `check_scope_ownership.py`'s refusal of an import-free undeclared sibling
-    # is what makes this module's emptiness a gate rather than a convention.
+    # ancestor nor descendant, so it is a target the row can name — which makes
+    # importing a declared sibling a gate failure rather than a convention.
+    # `check_scope_ownership.py` covers the undeclared import-free sibling.
     adjacency = dag.build_adjacency(dag.parse_dependency_graph(dag.MODULES_MD.read_text()))
     forbidden = dag.compute_forbidden(adjacency)
     scope = "parallax.snapshot.handle._errors"

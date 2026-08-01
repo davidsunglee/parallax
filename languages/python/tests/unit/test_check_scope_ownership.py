@@ -6,8 +6,8 @@ non-zero exit, because a gate that runs but cannot block buys nothing:
 * an unowned production file (the ``parallax/snapshot/wrap.py`` shape the check
   exists for) is written to disk for real;
 * an undeclared nested scope produces overlapping owners;
-* an import-free module written beside a zero-grant scope, which is the one
-  shape that escapes both halves of that scope's forbidden row;
+* an import-free module written beside a zero-grant scope, a shape neither half
+  of that scope's forbidden row names;
 * an exemption that stops describing the tree — in both directions.
 
 plus the coupling that makes the overlap arm load-bearing: a nested scope
@@ -219,10 +219,10 @@ _FIRST_PARTY = (
 def test_import_free_module_beside_a_zero_grant_scope_fails(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    # The one shape that escapes both halves of a zero-grant scope's forbidden
-    # row: it is not a declared sibling scope, so the row cannot name it, and it
-    # reaches nothing outside the package, so no indirect chain catches it
-    # either. Written to disk for real, like canary 1.
+    # A shape neither half of a zero-grant scope's forbidden row names: it is not
+    # a declared sibling scope, so the row cannot name it, and it reaches nothing
+    # outside the package, so no indirect chain catches it either. Written to
+    # disk for real, like canary 1.
     _STDLIB_LEAF.write_text(_IMPORT_FREE)
     try:
         assert own.main([]) == 1
@@ -235,10 +235,10 @@ def test_import_free_module_beside_a_zero_grant_scope_fails(
 
 
 def test_a_sibling_that_imports_first_party_is_left_to_the_import_gate() -> None:
-    # The same undeclared module, with one first-party import, passes: importing
-    # it from the refusal leaf is caught by `lint-imports` on the chain through
-    # it, so this check would be duplicating a gate that already holds. What the
-    # check refuses is import-freedom, not the module's existence.
+    # What this check refuses is import-freedom, not the module's existence. The
+    # same undeclared module with one first-party import passes here and is left
+    # to `lint-imports`, which reports an import of it wherever the chain through
+    # it leaves the package — as this module's import of `parallax.core` does.
     _STDLIB_LEAF.write_text(_FIRST_PARTY)
     try:
         assert own.main([]) == 0
@@ -264,6 +264,55 @@ def test_the_rule_applies_only_where_a_zero_grant_scope_exists(
         assert own.main([]) == 0
     finally:
         _STDLIB_LEAF.unlink()
+
+
+_NEST = PY_ROOT / "packages/parallax-snapshot/src/parallax/snapshot/handle/_nest"
+_NESTED = '"""Declared beneath a sibling scope, and import-free."""\n'
+
+
+def test_a_declared_grandchild_beside_a_zero_grant_scope_is_accepted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A forbidden target is package-scoped, so the zero-grant row's entry for the
+    # sibling `_nest` covers everything declared beneath it — an import of
+    # `_nest._leaf` is reported against `_nest`. Reading only the most-specific
+    # owner would reject this import-free grandchild although the row reaches it,
+    # so ANY nameable owner in the chain settles the module, at any depth.
+    monkeypatch.setattr(
+        dag,
+        "SUPPORT_SCOPE_DEPS",
+        {
+            **dag.SUPPORT_SCOPE_DEPS,
+            "parallax.snapshot.handle._nest": frozenset({"parallax.core.base"}),
+            "parallax.snapshot.handle._nest._leaf": frozenset({"parallax.core.base"}),
+        },
+    )
+    monkeypatch.setattr(
+        dag,
+        "CHILD_SCOPE_PARENT",
+        {
+            **dag.CHILD_SCOPE_PARENT,
+            "parallax.snapshot.handle._nest": "parallax.snapshot.handle",
+            "parallax.snapshot.handle._nest._leaf": "parallax.snapshot.handle._nest",
+        },
+    )
+    assert "parallax.snapshot.handle._nest" in dag.scope_siblings(
+        "parallax.snapshot.handle._errors"
+    )
+    _NEST.mkdir()
+    (_NEST / "__init__.py").write_text(_NESTED)
+    (_NEST / "_leaf.py").write_text(_NESTED)
+    try:
+        assert own.owning_scopes("parallax.snapshot.handle._nest._leaf", own.declared_scopes()) == [
+            "parallax.snapshot.handle",
+            "parallax.snapshot.handle._nest",
+            "parallax.snapshot.handle._nest._leaf",
+        ]
+        assert own.main([]) == 0
+    finally:
+        (_NEST / "_leaf.py").unlink()
+        (_NEST / "__init__.py").unlink()
+        _NEST.rmdir()
 
 
 def test_first_party_imports_sees_every_import_form() -> None:

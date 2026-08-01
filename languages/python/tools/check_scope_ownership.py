@@ -36,23 +36,27 @@ Zero-grant scopes
 
 A scope §7 grants nothing may import nothing, and its generated row says so by
 forbidding every scope outside its own package plus its declared *sibling*
-child scopes. Two module shapes are outside that row's reach: the shared parent
+child scopes. Two module shapes lie outside that row: the shared parent
 package, which a package-scoped ``forbidden`` row can never name from inside,
 and a sibling module over which §7 declares no child scope. The second one is
-reachable here, and it is only invisible when it imports nothing first-party:
-importing a sibling that has first-party imports of its own breaks the row on
-an indirect chain to whatever that sibling reaches. So the invariant that turns
-the zero-grant row into a complete gate is that **every module inside such a
-package either resolves to a scope the row can name or carries a first-party
-import** — and that is a fact about files, which is why it is checked here and
-not in ``check_dag_sync.py``, whose inputs are scopes.
+reachable here, so this check puts a floor under it: **every module inside such
+a package either resolves to a scope the row names — that scope, one of its
+declared siblings, or anything declared beneath them — or carries a first-party
+import**, which is what lets an import of it be reported wherever the chain
+through it leaves the package. That is a fact about files, which is why it is
+checked here and not in ``check_dag_sync.py``, whose inputs are scopes.
 
-The rule is derived from the scope tables (every declared child scope granted
-nothing, and the package holding it), not written against one package; today it
-selects ``parallax.snapshot.handle``, the only package with a zero-grant scope.
-The parent package's own interface module is outside the rule because no scope
-declaration could bring it inside a row that structurally cannot name its own
-ancestor.
+What makes a zero-grant module's isolation matter is a property of its
+CONSUMERS, not of this rule: two scopes granting disjoint dependencies may both
+name it because each consumer's own forbidden row governs everything reached
+through it, so a dependency added to the zero-grant module breaks the row of any
+consumer not already granted it.
+
+The rule is derived from the scope tables — every declared child scope granted
+nothing, and the package holding it — rather than written against a package
+name. The parent package's own interface module is outside the rule because no
+scope declaration could bring it inside a row that structurally cannot name its
+own ancestor.
 
 The scope inventory is *imported* from ``check_dag_sync`` rather than restated,
 so §7 stays declared exactly once. This check and
@@ -172,10 +176,13 @@ def zero_grant_scopes() -> Mapping[str, str]:
 def modules_escaping_a_zero_grant_row(paths: list[str], scopes: frozenset[str]) -> list[str]:
     """Import-free modules a zero-grant scope's forbidden row cannot reach.
 
-    Such a module is named by no contract and reaches nothing that is, so
-    importing it from the zero-grant module would pass ``lint-imports``. Sibling
-    modules that do carry first-party imports need no entry in the row: the
-    import is caught on the chain through them.
+    A module the row names is one resolving to the zero-grant scope itself or to
+    one of its declared siblings — or to any scope declared beneath them, since a
+    ``forbidden`` target is package-scoped and covers its whole subtree. So it is
+    enough for ANY of a module's owners to be nameable, not just the most
+    specific one. Every other module must at least carry a first-party import,
+    which is what lets an import of it be reported wherever the chain through it
+    leaves the package.
     """
     found: set[str] = set()
     for scope, parent in zero_grant_scopes().items():
@@ -184,8 +191,7 @@ def modules_escaping_a_zero_grant_row(paths: list[str], scopes: frozenset[str]) 
             module = module_path(relative)
             if not module.startswith(f"{parent}."):
                 continue
-            owners = owning_scopes(module, scopes)
-            if owners and owners[-1] in nameable:
+            if any(owner in nameable for owner in owning_scopes(module, scopes)):
                 continue
             if first_party_imports((PACKAGES / relative).read_text()):
                 continue
@@ -218,9 +224,9 @@ def audit(
     chain: a file inside a declared child scope legitimately matches the child
     and every ancestor above it.
 
-    Ownership alone does not settle a package holding a zero-grant scope, whose
-    row is only complete while every module beside it is either nameable in that
-    row or reachable through a first-party import, so that arm runs here too.
+    Ownership alone does not settle a package holding a zero-grant scope, where
+    every module must also be one that row names or carry a first-party import,
+    so that arm runs here too.
     """
     unowned: list[str] = []
     overlapping: list[str] = []
@@ -280,7 +286,7 @@ def main(argv: list[str] | None = None) -> int:
         "  agrees on, and a child scope missing from CHILD_SCOPE_PARENT generates a\n"
         "  contract import-linter silently skips. An import-free module beside a\n"
         "  zero-grant scope is reached by neither that scope's forbidden row nor any\n"
-        "  chain out of it, so the row would stop proving the scope imports nothing.",
+        "  chain out of it, so no gate would report an import of it.",
         file=sys.stderr,
     )
     for label in sorted(findings):
