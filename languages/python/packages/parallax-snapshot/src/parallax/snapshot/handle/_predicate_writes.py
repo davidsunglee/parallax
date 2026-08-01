@@ -35,8 +35,7 @@ from __future__ import annotations
 
 import datetime as dt
 from collections.abc import Sequence
-from dataclasses import replace
-from typing import Any, Final, cast
+from typing import Any, cast
 
 from parallax.core import deep_fetch, inheritance, op_algebra, read_lock
 from parallax.core.db_port import DbPort, Row
@@ -77,20 +76,6 @@ from parallax.snapshot.handle._write_inputs import (
     validate_valid_from,
 )
 
-# What a typed Valid-Time bound occupies its instruction slot with WHILE the
-# predicate rules run (:func:`buffer_predicate` step 3). The pairing rule
-# `deserialize` enforces — a bounded `*Until` carries BOTH `validFrom` and
-# `until` (`write-instruction.schema.json`) — is structural, so presence is the
-# whole of a bound the predicate rules can be shown, and this stands in for
-# EVERY typed bound, whatever its value: deriving the slot's content from the
-# `dt.datetime` is exactly what would run UTC normalization ahead of the
-# predicate rejection `m-case-format` orders first. Deliberately not
-# instant-shaped, and it reaches no buffer: step 4 replaces both slots with the
-# canonical literals before :func:`buffer_predicate_instruction` is called, so a
-# bound that survives to a buffer is always one `validate_valid_from` /
-# `validate_until` rendered.
-_BOUND_PENDING_RENDER: Final = "<bound pending render>"
-
 
 def buffer_predicate(
     uow: UnitOfWork,
@@ -111,20 +96,11 @@ def buffer_predicate(
     builds directly from a case document, then hands it to the shared
     :func:`buffer_predicate_instruction` seam.
 
-    Steps 1 and 4 are TYPED-ONLY — they judge inputs the canonical instruction
+    Steps 1 and 3 are TYPED-ONLY — they judge inputs the canonical instruction
     has no way to carry (a statement's clauses, a ``dt.datetime`` bound). Every
     rule that measures the INSTRUCTION itself is stated in
-    ``validate_instruction`` (step 3), which the conformance engine calls too,
+    ``validate_instruction`` (step 4), which the conformance engine calls too,
     so the two ingresses classify one instruction identically.
-
-    `m-case-format` orders the predicate rules BEFORE the temporal coordinates
-    ("The model-aware validator validates the predicate ..., checks entity scope
-    and bare-predicate rules, ... and requires only the temporal coordinates the
-    target profile uses"), so the WHOLE of what this ingress does with a
-    ``dt.datetime`` — normalizing it to UTC, rendering its literal, and judging
-    it — happens at step 4, after step 3. Step 3 carries only the bound's
-    PRESENCE (:data:`_BOUND_PENDING_RENDER`); the instruction that reaches the
-    seam carries step 4's own canonical literals.
 
     1. **Bare-statement guard** (`python.md` §5 "A statement becomes a
        write target only as a bare statement") — one carrying nothing but
@@ -136,7 +112,22 @@ def buffer_predicate(
        (:func:`entity_of`, ``query-target-not-in-model``): a Find Query the
        connected model declares no Entity for is refused as a query, before
        anything is built from it.
-    3. **Build + validate the canonical instruction** (the SAME
+    3. **Valid-Time-bound validation and rendering** — a Bitemporal target
+       requires ``valid_from``; a Transaction-Time-Only or non-temporal target
+       takes none; the ``*Until`` forms additionally require ``until``, with
+       ``valid_from < until`` — an equal or reversed window rejects HERE, at
+       build, before any buffering (:func:`validate_until`). Typed-only: only
+       this ingress takes ``dt.datetime`` arguments, and this step is the sole
+       place one is touched — :func:`validate_valid_from` and
+       :func:`validate_until` normalize each bound to UTC and RETURN the
+       canonical instant literal step 4 writes into the instruction. It runs
+       BEFORE that build so a :class:`~parallax.core.unit_work.PredicateWrite`
+       is canonical from the moment it exists: a bound slot only ever holds
+       what `write-instruction.schema.json` defines an instant to be — an
+       ISO-8601 UTC timestamp, or the open-bound sentinel — so nothing
+       downstream of this lane, the buffering seam and the planner and SQL
+       generation alike, has to defend against anything else.
+    4. **Build + validate the canonical instruction** (the SAME
        deserialize/`validate_instruction` round trip a keyed write buys in
        ``Transaction._buffer`` — non-empty/no-duplicate assignments are the
        schema's own check). ``validate_instruction`` measures the selecting
@@ -146,21 +137,14 @@ def buffer_predicate(
        the active position, a result modifier, or a set-based family write is
        refused here, at build, before every buffer and before the resolving
        read's own force-flush.
-    4. **Valid-Time-bound validation and rendering** — a Bitemporal target
-       requires ``valid_from``; a Transaction-Time-Only or non-temporal target
-       takes none; the ``*Until`` forms additionally require ``until``, with
-       ``valid_from < until`` — an equal or reversed window rejects HERE, at
-       build, before any buffering (:func:`validate_until`). Typed-only: only
-       this ingress takes ``dt.datetime`` arguments, and this step is the sole
-       place one is touched — :func:`validate_valid_from` and
-       :func:`validate_until` normalize each bound to UTC and RETURN the
-       canonical instant literal, which replaces the step-3 placeholder in the
-       instruction handed on. A naive value and a UTC normalization that
-       overflows the representable range are both this step's rejections, and
-       both therefore come after the predicate's.
     5. **Hand off** to :func:`buffer_predicate_instruction`, which dispatches
        READLESS (one statement, `m-batch-write`) or MATERIALIZING
        (``_materialize_predicate_write``, ADR 0014).
+
+    Steps 3 and 4 both refuse a write, so a call carrying an invalid bound AND
+    an invalid predicate classifies by its bound. Either refusal is correct;
+    only which one surfaces first is fixed here, and it is fixed in favour of
+    never constructing a non-canonical instruction.
     """
     if not statement.is_bare():
         raise ValueError(
@@ -169,6 +153,12 @@ def buffer_predicate(
             "as_of_range / narrow / include are all rejected on a write target (python.md §5)"
         )
     entity = entity_of(meta, statement.target)
+    declaring_entity = declaring(meta, entity)
+    valid_from_literal = validate_valid_from(declaring_entity, mutation, valid_from)
+    until_literal: str | None = None
+    if until is not None:
+        assert valid_from is not None  # `*_until_where` verbs require both together
+        until_literal = validate_until(declaring_entity, mutation, valid_from, until)
 
     doc: dict[str, object] = {
         "mutation": mutation,
@@ -179,27 +169,14 @@ def buffer_predicate(
     }
     if assignments:
         doc["assignments"] = [{"attr": str(a.attr), "value": a.value} for a in assignments]
-    if valid_from is not None:
-        doc["validFrom"] = _BOUND_PENDING_RENDER
-    if until is not None:
-        doc["until"] = _BOUND_PENDING_RENDER
+    if valid_from_literal is not None:
+        doc["validFrom"] = valid_from_literal
+    if until_literal is not None:
+        doc["until"] = until_literal
     instruction = instructions.deserialize(doc)
     assert isinstance(instruction, PredicateWrite)  # this seam always builds the predicate shape
     instructions.validate_instruction(instruction, meta)
-
-    declaring_entity = declaring(meta, entity)
-    valid_from_literal = validate_valid_from(declaring_entity, mutation, valid_from)
-    until_literal: str | None = None
-    if until is not None:
-        assert valid_from is not None  # `*_until_where` verbs require both together
-        until_literal = validate_until(declaring_entity, mutation, valid_from, until)
-    buffer_predicate_instruction(
-        uow,
-        meta,
-        conn,
-        dialect,
-        replace(instruction, valid_from=valid_from_literal, until=until_literal),
-    )
+    buffer_predicate_instruction(uow, meta, conn, dialect, instruction)
 
 
 def buffer_predicate_instruction(
@@ -224,11 +201,8 @@ def buffer_predicate_instruction(
 
     **Every caller passes ``instruction`` through
     :func:`~parallax.core.unit_work.instructions.validate_instruction` against
-    ``meta`` first** — :func:`buffer_predicate` at its step 3, the engine before
-    it opens the transaction. What that call validated and what arrives here are
-    the same instruction: a typed ingress renders its Valid-Time bounds into it
-    afterwards, and ``validate_instruction`` reads no bound at all. EVERY
-    model-aware rule is stated there, in the
+    ``meta`` first** — :func:`buffer_predicate` at its step 4, the engine before
+    it opens the transaction. EVERY model-aware rule is stated there, in the
     order `m-case-format` fixes: the whole ``validate_operation`` vocabulary and
     the bare-predicate rule over the selecting predicate, the
     inheritance-family rejection, then member-name honesty and assignability.
