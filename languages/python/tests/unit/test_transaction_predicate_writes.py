@@ -35,8 +35,10 @@ from _transact_support import (
 from _support import inheritance_models as im
 from _support import mirrored_models as mm
 from parallax.conformance import case_format, engine
+from parallax.conformance.graph_models import POLICY_MODEL, Policy
 from parallax.conformance.story_models import Order
 from parallax.core import (
+    TX_TIME,
     Attr,
     Bitemporal,
     DomainModel,
@@ -920,6 +922,22 @@ def test_delete_where_rejects_an_ordered_query_end_to_end() -> None:
 
     with pytest.raises(QueryDefinitionError) as caught:
         Database.connect(NoIoPort(), PERSON, clock=FixedClock(FIXED)).transact(fn)
+    assert caught.value.code == "query-not-mutation-compatible"
+
+
+def test_a_where_verb_never_classifies_deferred_execution_features() -> None:
+    # Deferred Execution Feature classification belongs to modeled READ
+    # execution. A predicate-selected write requires a mutation-compatible query
+    # first, so the read-shaped clauses a deferral is recognized from are what
+    # refuses this one — `query-not-mutation-compatible`, never
+    # `execution-feature-deferred`, whichever the query would also have matched.
+    query = Policy.where(Policy.all).history(TX_TIME).include(Policy.coverages)
+
+    def fn(tx: Transaction) -> None:
+        tx.delete_where(query)
+
+    with pytest.raises(QueryDefinitionError) as caught:
+        Database.connect(NoIoPort(), POLICY_MODEL, clock=FixedClock(FIXED)).transact(fn)
     assert caught.value.code == "query-not-mutation-compatible"
 
 

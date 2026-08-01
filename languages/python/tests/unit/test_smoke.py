@@ -35,6 +35,7 @@ def test_top_package_public_surfaces() -> None:
         "connect",
         "Snapshot",
         "Execution",
+        "DeferredFeatureError",
         "NoResultFound",
         "QueryTargetError",
         "SnapshotConnectionError",

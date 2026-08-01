@@ -24,7 +24,7 @@ from _support import snapshot_models as sm
 from _support.query_probes import lowered_operation
 from parallax.conformance import read_models
 from parallax.conformance.animal_owner import ANIMAL_MODEL as _ANIMAL_MODEL
-from parallax.conformance.graph_models import Policy
+from parallax.conformance.graph_models import POLICY_MODEL, Policy
 from parallax.conformance.read_models import Animal, Cat, Dog, Pet, WildBoar
 from parallax.core import (
     MANY_TO_ONE,
@@ -37,7 +37,6 @@ from parallax.core import (
     QueryDefinitionError,
     Rel,
     TablePerHierarchy,
-    UnsupportedFeatureError,
     attr,
     rel,
 )
@@ -47,8 +46,10 @@ from parallax.core.entity._query import build_find_query
 from parallax.core.metamodel import EntityIdentity
 from parallax.core.op_algebra import (
     All,
+    AsOfRange,
     DeepFetch,
     Exists,
+    History,
     Limit,
     Narrow,
     NavigationPath,
@@ -57,6 +58,7 @@ from parallax.core.op_algebra import (
     PathRootNarrow,
     PathSegment,
 )
+from parallax.snapshot import DeferredFeatureError
 from parallax.snapshot.handle._preflight import preflight_find
 
 # The animal family's model composes its own polymorphic owner alongside it, so
@@ -427,29 +429,59 @@ def test_the_narrow_clauses_no_retroactive_scope_rule_is_static_only() -> None:
 
 # --------------------------------------------------------------------------- #
 # .history() / .as_of_range() + .include(...): the snapshot-history-includes  #
-# deferral (spec §3) — UnsupportedFeatureError, distinct from a validation     #
-# error, in both call orders.                                                 #
+# Feature is DEFERRED, not invalid (m-snapshot-read forbids any case mandating #
+# its refusal), so the combination builds an ordinary Find Query in either     #
+# call order and lowers to the canonical operation the wire already defines.   #
+# Its refusal is Snapshot's, at execution, and is pinned there                 #
+# (test_snapshot_find.py / test_transaction_reads.py).                         #
 # --------------------------------------------------------------------------- #
-def test_history_then_include_is_deferred() -> None:
-    with pytest.raises(UnsupportedFeatureError, match="snapshot-history-includes"):
-        Policy.where(Policy.all).history(TX_TIME).include(Policy.coverages)
+_WINDOW = (dt.datetime(2024, 1, 1, tzinfo=dt.UTC), dt.datetime(2024, 6, 1, tzinfo=dt.UTC))
+_COVERAGES = (NavigationPath(segments=(PathSegment(rel="Policy.coverages"),)),)
 
 
-def test_include_then_history_is_deferred() -> None:
-    with pytest.raises(UnsupportedFeatureError, match="snapshot-history-includes"):
-        Policy.where(Policy.all).include(Policy.coverages).history(TX_TIME)
+@pytest.mark.parametrize(
+    "query",
+    [
+        Policy.where(Policy.all).history(TX_TIME).include(Policy.coverages),
+        Policy.where(Policy.all).include(Policy.coverages).history(TX_TIME),
+    ],
+    ids=["history-then-include", "include-then-history"],
+)
+def test_history_with_includes_builds_in_either_order(query: FindQuery[Any, Any]) -> None:
+    assert lowered_operation(query) == DeepFetch(
+        operand=History(operand=All(), dimension="transactionTime"), paths=_COVERAGES
+    )
 
 
-def test_as_of_range_then_include_is_deferred() -> None:
-    window = (dt.datetime(2024, 1, 1, tzinfo=dt.UTC), dt.datetime(2024, 6, 1, tzinfo=dt.UTC))
-    with pytest.raises(UnsupportedFeatureError, match="snapshot-history-includes"):
-        Policy.where(Policy.all).as_of_range(valid_time=window).include(Policy.coverages)
+@pytest.mark.parametrize(
+    "query",
+    [
+        Policy.where(Policy.all).as_of_range(valid_time=_WINDOW).include(Policy.coverages),
+        Policy.where(Policy.all).include(Policy.coverages).as_of_range(valid_time=_WINDOW),
+    ],
+    ids=["range-then-include", "include-then-range"],
+)
+def test_as_of_range_with_includes_builds_in_either_order(query: FindQuery[Any, Any]) -> None:
+    start, end = _WINDOW
+    assert lowered_operation(query) == DeepFetch(
+        operand=AsOfRange(
+            operand=All(),
+            dimension="validTime",
+            start=start.isoformat(),
+            end=end.isoformat(),
+        ),
+        paths=_COVERAGES,
+    )
 
 
-def test_include_then_as_of_range_is_deferred() -> None:
-    window = (dt.datetime(2024, 1, 1, tzinfo=dt.UTC), dt.datetime(2024, 6, 1, tzinfo=dt.UTC))
-    with pytest.raises(UnsupportedFeatureError, match="snapshot-history-includes"):
-        Policy.where(Policy.all).include(Policy.coverages).as_of_range(valid_time=window)
+def test_a_deferred_combination_is_a_valid_operation_the_gate_refuses_by_name() -> None:
+    # The gate validates before it classifies, so reaching the deferral at all
+    # proves the operation is legal against the model: an invalid one would have
+    # drawn `OperationRejectedError` one step earlier.
+    query = Policy.where(Policy.all).history(TX_TIME).include(Policy.coverages)
+    with pytest.raises(DeferredFeatureError) as caught:
+        preflight_find(query, model=model_of(POLICY_MODEL))
+    assert caught.value.features == ("snapshot-history-includes",)
 
 
 def test_a_narrow_clause_requires_at_least_one_subtype() -> None:

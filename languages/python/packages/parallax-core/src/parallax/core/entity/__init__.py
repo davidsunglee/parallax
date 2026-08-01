@@ -82,7 +82,7 @@ from parallax.core.entity._members import (
     rel,
 )
 from parallax.core.entity._model import DomainModel
-from parallax.core.entity._query import FindQuery, UnsupportedFeatureError
+from parallax.core.entity._query import FindQuery
 from parallax.core.entity._value_object import ValueObject, ValueObjectMeta, to_document
 from parallax.core.entity.graph_state import is_loaded, narrowed
 
@@ -135,7 +135,6 @@ __all__ = [
     "TablePerHierarchy",
     "TxTemporal",
     "UnloadedRelationshipError",
-    "UnsupportedFeatureError",
     "ValueObject",
     "ValueObjectMeta",
     "WireNames",

@@ -36,6 +36,7 @@ from _support import inheritance_models as im
 from _support import mirrored_models as mm
 from parallax.conformance import stale_web_edit
 from parallax.conformance.class_models import MODELS
+from parallax.conformance.graph_models import POLICY_MODEL, Policy
 from parallax.core import TX_TIME, opt_lock
 from parallax.core.db_port import JsonDocument, Row
 from parallax.core.dialect import POSTGRES
@@ -44,7 +45,7 @@ from parallax.core.unit_work import (
     FixedClock,
     OptimisticLockConflictError,
 )
-from parallax.snapshot import QueryTargetError
+from parallax.snapshot import DeferredFeatureError, QueryTargetError
 from parallax.snapshot.handle import Database, Transaction
 
 # `_pin_from_milestone` stays private because production callers are confined to
@@ -477,6 +478,19 @@ def test_tx_find_refuses_a_foreign_target_with_no_adapter_activity() -> None:
     with pytest.raises(QueryTargetError) as caught:
         Database.connect(NoIoPort(), ACCOUNT, clock=FixedClock(FIXED)).transact(fn)
     assert caught.value.code == "query-target-not-in-model"
+
+
+def test_tx_find_refuses_a_deferred_execution_feature_with_no_adapter_activity() -> None:
+    # The participating path classifies through the SAME seam, so a deferred
+    # Feature is refused there too — and before `uow.read`, which is what keeps
+    # `NoIoPort` untouched: a refused read never force-flushes.
+    def fn(tx: Transaction) -> None:
+        tx.find(Policy.where(Policy.all).history(TX_TIME).include(Policy.coverages))
+
+    with pytest.raises(DeferredFeatureError) as caught:
+        Database.connect(NoIoPort(), POLICY_MODEL, clock=FixedClock(FIXED)).transact(fn)
+    assert caught.value.code == "execution-feature-deferred"
+    assert caught.value.features == ("snapshot-history-includes",)
 
 
 def test_tx_find_preflight_rejects_before_a_pending_write_can_flush() -> None:
