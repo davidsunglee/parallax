@@ -744,3 +744,19 @@ def test_a_narrow_to_a_class_the_position_excludes_is_refused_at_the_gate() -> N
     with pytest.raises(OperationRejectedError) as caught:
         preflighted(Animal.where(Animal.narrow(AnimalOwner)))
     assert caught.value.rule == "narrow-outside-position"
+
+
+def test_the_narrow_clause_erases_relatedness_for_the_same_reason() -> None:
+    # The clause form keeps only the same runtime rejection, and no suppression
+    # belongs on this line — the erasure is what makes it accepted statically.
+    # The parameter a narrow solves from its subtypes is spent on what the
+    # narrowing PRODUCES: `Entity.narrow`'s on the scoped `where=`, and the
+    # clause's on the result the sort keys are then measured against. It cannot
+    # also constrain what the narrowing starts FROM, because `type[...]` is
+    # covariant — a parameter naming the position accepts a descendant and
+    # refuses an unrelated class but cannot name the result, and one naming the
+    # result carries it and accepts anything. A hop narrow escapes the trade
+    # only because its bound sits on the RECEIVER (see the hop case above).
+    with pytest.raises(OperationRejectedError) as caught:
+        preflighted(Animal.where().narrow(AnimalOwner))
+    assert caught.value.rule == "narrow-outside-position"
