@@ -102,6 +102,7 @@ __all__ = [
     "milestone_edge",
     "pin_of",
     "resolve_pinned_instants",
+    "scans_an_axis",
     "statement_pin",
     "view",
 ]
@@ -584,11 +585,37 @@ def statement_pin(op: Operation, entity: EntityMetadata) -> Pin:
     return Pin(tx_time=tx_time, valid_time=valid_time)
 
 
+def scans_an_axis(op: Operation) -> bool:
+    """Whether ``op`` SCANS a temporal axis (``asOfRange`` / ``history``) rather
+    than pinning it — the milestone-set read shape, and the negative half of
+    :func:`statement_pin`'s "a scan is not a pin" rule.
+
+    The sole answer to this question in the tree: the read executors dispatch a
+    milestone-set find on it, and the Snapshot deferred-feature seam classifies
+    ``snapshot-history-includes`` on it, so those two can never disagree about
+    which reads scan.
+
+    Directives are peeled first, so a scan stays a scan under any result-shaping
+    wrapper. An outer ``deepFetch`` is deliberately NOT peeled: this scope takes
+    no ``m-deep-fetch`` edge, and the callers that must see through one hold the
+    graph-shaping question themselves.
+    """
+    core, _directives = _peel_directives(op)
+    return isinstance(core, (AsOfRange, History))
+
+
 def _peel_directives(op: Operation) -> tuple[Operation, list[Limit | OrderBy | Distinct]]:
     """Split leading result-shaping directives off the temporal/predicate core.
 
     Returns the inner core and the peeled directive nodes outermost-first, so they
     can be rebuilt around the rewritten predicate.
+
+    The peeled set is ``m-op-algebra``'s row-preserving result directives —
+    ``limit`` / ``orderBy`` / ``distinct`` — read off the algebra rather than off
+    whichever clauses one authoring surface happens to offer. ``distinct`` is
+    peeled for that reason alone: the Python Find Query surface authors none
+    today, while a deserialized operation carries one, so dropping it would make
+    this walk answer a canonical operation wrongly.
     """
     directives: list[Limit | OrderBy | Distinct] = []
     current = op

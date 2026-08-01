@@ -1697,7 +1697,14 @@ or descriptor authoring form and performs no audit stamping.
   `DeepFetch(History(...))` or `DeepFetch(AsOfRange(...))` operation as matching
   its Deferred Execution Feature and raises
   `DeferredFeatureError(execution-feature-deferred)` before SQL generation
-  or Database Port access. It never raises `QueryDefinitionError`.
+  or Database Port access. It never raises `QueryDefinitionError`. Whether an
+  operation **scans an axis** is one `m-temporal-read` question with one
+  answer, asked here and again by the executor dispatch that sends a scan to
+  the milestone-set read: a result-shaping directive lowering between the deep
+  fetch and the temporal wrapper — `.history().order_by(...).limit(...)
+  .include(...)` — is peeled by the same recognizer, so a directive can neither
+  hide the deferred Feature from this seam nor divert a scan away from the
+  milestone-set executor.
 - **Closed-world relationships.** An included to-one is the related node or
   `None` (loaded-null); an included to-many is a `tuple` (possibly empty —
   loaded-empty is `()`). A relationship outside the include set is

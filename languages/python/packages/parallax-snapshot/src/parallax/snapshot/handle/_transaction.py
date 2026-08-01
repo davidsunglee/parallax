@@ -38,6 +38,7 @@ from parallax.core.entity import AttributeAssignment, FindQuery, full_row, prima
 from parallax.core.entity import Entity as EntityBase
 from parallax.core.entity._model import ClassIndex
 from parallax.core.metamodel import EntityMetadata, Metamodel, entity_by_name
+from parallax.core.temporal_read import scans_an_axis
 from parallax.core.unit_work import (
     KeyedMutation,
     ObjectKey,
@@ -65,7 +66,6 @@ from parallax.snapshot.handle._read import (
     deep_fetch_statement_pin,
     find,
     find_history,
-    is_milestone_set_op,
     snapshot_from_find_result,
     snapshot_from_history_result,
 )
@@ -392,7 +392,7 @@ class Transaction:
         target, op = lowered.target.name, lowered.operation
         pin = deep_fetch_statement_pin(op, declaring_metadata(self._meta, lowered.target))
         lock = read_lock.mode_for(self._uow.settings.concurrency)
-        if is_milestone_set_op(op):
+        if scans_an_axis(op):
             history_result = self._uow.read(
                 lambda: find_history(op, self._meta, self._dialect, target, self._conn)
             )

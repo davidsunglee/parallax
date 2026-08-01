@@ -542,16 +542,6 @@ def deep_fetch_statement_pin(op: op_algebra.Operation, entity: EntityMetadata) -
     return statement_pin(pin_op, entity)
 
 
-def is_milestone_set_op(op: op_algebra.Operation) -> bool:
-    """Whether ``op``'s temporal wrapper SCANS an axis (``history`` /
-    ``as_of_range``) rather than pinning it — the milestone-set find shape
-    (spec §3 "one root per milestone")."""
-    current: op_algebra.Operation = op
-    while isinstance(current, (op_algebra.Limit, op_algebra.OrderBy, op_algebra.Distinct)):
-        current = current.operand
-    return isinstance(current, (op_algebra.AsOfRange, op_algebra.History))
-
-
 def _pin_from_milestone(entity: EntityMetadata, milestone_pin: Mapping[str, object]) -> Pin:
     """One milestone's own edge, rendered as a :class:`Pin` (spec §3: each
     milestone-set root is edge-pinned at its own milestone's from-instant)."""
