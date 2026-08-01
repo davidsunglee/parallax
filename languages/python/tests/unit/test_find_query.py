@@ -136,10 +136,16 @@ def test_where_conjoins_and_flattens() -> None:
 def test_where_requires_at_least_one_predicate() -> None:
     # `where`'s first predicate is a required positional, so `Widget.where()` is
     # a static error and Python's own call binding refuses it before the body.
-    # The coded rule is the seam's, where a dynamically composed argument list
-    # can still arrive empty.
+    # A dynamic expansion is no different: expansion precedes binding, so an
+    # empty sequence binds no first argument and raises the same TypeError.
     with pytest.raises(TypeError, match="required positional argument"):
         Widget.where()  # pyright: ignore[reportCallIssue] - where() takes at least one predicate
+    empty: tuple[Predicate[Widget], ...] = ()
+    with pytest.raises(TypeError, match="required positional argument"):
+        Widget.where(*empty)  # pyright: ignore[reportCallIssue] - an unpacked sequence of unknown length satisfies no required positional either
+    # The coded refusal is the internal builder's own precondition, reachable
+    # only by calling it directly — `Entity.where` cannot deliver it an empty
+    # tuple.
     with pytest.raises(QueryDefinitionError) as caught:
         build_find_query(Widget.identity, ())
     assert caught.value.code == "query-clause-invalid"

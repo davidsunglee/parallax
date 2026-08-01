@@ -27,6 +27,7 @@ from parallax.core.temporal_read import (
     TemporalReadError,
     inject_as_of,
     milestone_edge,
+    scans_an_axis,
     statement_pin,
 )
 
@@ -309,6 +310,51 @@ def test_statement_pin_is_absent_for_a_scanned_asof_range_or_history_axis() -> N
 
     scanned = oa.History(operand=oa.All(), dimension="transactionTime")
     assert statement_pin(scanned, POSITION) == Pin()
+
+
+def test_scans_an_axis_sees_a_scan_under_a_pinned_outer_dimension() -> None:
+    # A bitemporal read nests one wrapper per dimension (m-op-algebra, canonical
+    # Valid-Time-outer order), so pinning Valid Time around a Transaction-Time
+    # scan still answers a milestone set: the whole nest decides, not the
+    # outermost wrapper's kind.
+    pinned_over_history = oa.AsOf(
+        operand=oa.History(operand=oa.All(), dimension="transactionTime"),
+        dimension="validTime",
+        coordinate=_B,
+    )
+    assert scans_an_axis(pinned_over_history)
+
+    pinned_over_range = oa.AsOf(
+        operand=oa.AsOfRange(operand=oa.All(), dimension="transactionTime", start=_P, end=_D),
+        dimension="validTime",
+        coordinate="latest",
+    )
+    assert scans_an_axis(pinned_over_range)
+
+    both_pinned = oa.AsOf(
+        operand=oa.AsOf(operand=oa.All(), dimension="transactionTime", coordinate="latest"),
+        dimension="validTime",
+        coordinate=_B,
+    )
+    assert not scans_an_axis(both_pinned)
+    assert not scans_an_axis(oa.All())
+
+
+def test_scans_an_axis_peels_result_shaping_directives_off_a_nested_scan() -> None:
+    # The directive peel and the nest walk compose: a lowering that stacks
+    # `orderBy` / `limit` over a bitemporal nest must not hide the inner scan.
+    op = oa.Limit(
+        operand=oa.OrderBy(
+            operand=oa.AsOf(
+                operand=oa.History(operand=oa.All(), dimension="transactionTime"),
+                dimension="validTime",
+                coordinate=_B,
+            ),
+            keys=(oa.OrderKey(attr="Position.qty"),),
+        ),
+        count=5,
+    )
+    assert scans_an_axis(op)
 
 
 class _TemporalNode:
