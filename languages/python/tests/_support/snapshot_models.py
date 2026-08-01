@@ -4,16 +4,15 @@ narrowed-view unit tests.
 Shaped after ``models/orders.yaml`` (relationships, deep-fetch paths) and
 ``models/animal.yaml`` (table-per-hierarchy inheritance, a polymorphic owner,
 narrowed views) closely enough to drive ``parallax.snapshot.handle._wrap``
-against corpus-shaped rows, and composed into the two sealed hubs those tests
+against corpus-shaped rows, and composed into the two Domain Models those tests
 connect with.
 
 Both families are declared here rather than borrowed from
-``parallax.conformance``: an Entity Class belongs to exactly one hub for its
-lifetime, and the installed mirrors are already composed into the hubs that prove
-them against the corpus. These are structural fixtures for the wrap mechanics, so
-they carry the shapes without the corpus's own indices, and ``SnapOrder`` and its
-siblings keep names distinct from the mirrors to make the two easy to tell apart
-in a failure.
+``parallax.conformance``: these are structural fixtures for the wrap mechanics,
+so they carry the shapes without the corpus's own indices, and the installed
+mirrors carry those indices because the no-drift guard measures them. ``SnapOrder``
+and its siblings keep names distinct from the mirrors to make the two easy to
+tell apart in a failure.
 
 This module deliberately avoids ``from __future__ import annotations`` so the
 engine reads the live ``Attr[T]`` / ``Rel[T]`` objects directly.

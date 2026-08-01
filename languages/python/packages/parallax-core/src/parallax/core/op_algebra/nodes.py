@@ -87,7 +87,6 @@ NestedNullOp = Literal["nestedIsNull", "nestedIsNotNull"]
 
 QUERY_DEFINITION_CODES: Final[frozenset[str]] = frozenset(
     {
-        "query-hub-mismatch",
         "query-target-mismatch",
         "query-expression-invalid",
         "query-path-invalid",
@@ -100,7 +99,9 @@ QUERY_DEFINITION_CODES: Final[frozenset[str]] = frozenset(
 """The closed query-definition rejection vocabulary (Python spec §2).
 
 That section fixes which rule draws which code; an invalid expression — a Sort
-Key composition included — draws ``query-expression-invalid``.
+Key composition included — draws ``query-expression-invalid``. A query names no
+model, so there is no model-mismatch member here: a target the connected model
+does not declare is an execution refusal rather than an authoring one.
 """
 
 

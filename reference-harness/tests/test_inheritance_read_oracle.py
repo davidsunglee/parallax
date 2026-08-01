@@ -387,6 +387,40 @@ _AMBIGUOUS_BY_POSITION: dict[str, dict[str, Any]] = {
         "orderBy": {"operand": {"all": {}}, "keys": [{"attr": "SharedVariant.archiveLabel"}]}
     },
     "rel": {"exists": {"rel": "SharedVariant.register", "op": {"all": {}}}},
+    # A nested path spells its entity as its FIRST segment, so its resolution is
+    # asked of a different split than an `attr`'s and needs its own position here.
+    "nested path": {"nestedEq": {"path": "SharedVariant.spec.label", "value": "A-1"}},
+    "nestedExists path": {"nestedExists": {"path": "SharedVariant.spec"}},
+    # Aggregation is a harness-only surface (the Python slice defers it), but the
+    # rule governs every position that names an entity, so the implementation
+    # that HAS these positions must enforce it in them.
+    "groupBy.keys": {
+        "groupBy": {
+            "operand": {"all": {}},
+            "keys": ["SharedVariant.archiveLabel"],
+            "aggregates": [{"count": {"attr": "Register.id", "as": "n"}}],
+        }
+    },
+    "groupBy.aggregates.attr": {
+        "groupBy": {
+            "operand": {"all": {}},
+            "keys": ["Register.id"],
+            "aggregates": [{"count": {"attr": "SharedVariant.archiveLabel", "as": "n"}}],
+        }
+    },
+    "groupBy.having.agg.attr": {
+        "groupBy": {
+            "operand": {"all": {}},
+            "keys": ["Register.id"],
+            "aggregates": [{"count": {"attr": "Register.id", "as": "n"}}],
+            "having": {
+                "gt": {
+                    "agg": {"count": {"attr": "SharedVariant.archiveLabel", "as": "n"}},
+                    "value": 1,
+                }
+            },
+        }
+    },
     "narrow.entity": {
         "narrow": {"entity": "SharedVariant", "to": ["Register"], "operand": {"all": {}}}
     },
@@ -447,6 +481,19 @@ def test_an_unambiguous_bare_name_still_resolves_in_a_two_namespace_model() -> N
     defs = _shared_local_name_defs()
     validate_operation_inheritance(defs, {"eq": {"attr": "Register.id", "value": 1}})
     validate_operation_inheritance(defs, {"exists": {"rel": "Register.variant", "op": {"all": {}}}})
+    validate_operation_inheritance(
+        defs,
+        {
+            "groupBy": {
+                "operand": {"all": {}},
+                "keys": ["Register.variantId"],
+                "aggregates": [{"count": {"attr": "Register.id", "as": "n"}}],
+                "having": {
+                    "gt": {"agg": {"count": {"attr": "Register.id", "as": "n"}}, "value": 1}
+                },
+            }
+        },
+    )
 
 
 def test_an_unrelated_entitys_attribute_is_outside_the_active_position() -> None:

@@ -106,30 +106,32 @@ mutations, exceptions, or exports.
   deep-fetch, or temporal-read semantic rejection exactly once and preserves
   its cause; an incoming `QueryDefinitionError` passes through unchanged.
   Direct callers of those behavioral modules continue to receive their native
-  error families. Unbound Entity Classes, Deferred Execution Features, and
-  execution failures retain their separate classifications.
+  error families. Deferred Execution Features and execution failures retain
+  their separate classifications.
   The closed stable code set is
-  `query-hub-mismatch`, `query-target-mismatch`,
+  `query-target-mismatch`,
   `query-expression-invalid`, `query-path-invalid`,
   `query-clause-invalid`, `query-assignment-invalid`,
   `query-assignment-target-mismatch`, and
   `query-not-mutation-compatible`. Optional structured `target`, `member`,
   `path`, and `clause` context plus the preserved cause identify the exact
-  rejection; errors expose neither literal values nor opaque hub identities.
+  rejection; errors expose neither literal values nor internal model state.
   Invalid operators and literals use `query-expression-invalid`; invalid Value
   Object or relationship hops, quantifiers, and narrowing use
   `query-path-invalid`; invalid, repeated, or conflicting Find Query clauses
-  use `query-clause-invalid`; a same-hub expression or Predicate rooted at an
+  use `query-clause-invalid`; an expression or Predicate rooted at an
   inapplicable Entity uses `query-target-mismatch`; and non-assignable members
-  or values use `query-assignment-invalid`. The remaining three codes retain
-  their exact hub, Assignment-target, and predicate-selected-write meanings.
-- **Separate execution ownership error.** A valid Find Query executed through a
-  Database connected to another exact Metamodel Hub raises exported
-  `QueryOwnershipError(RuntimeError)` with sole stable code
-  `query-owner-mismatch`. It retains and exposes neither hub identity, Database,
-  nor query. Mixed-hub query construction and composition remain
-  `QueryDefinitionError(query-hub-mismatch)`; structural Metamodel equality and
-  equal canonical Entity identities never substitute for exact hub ownership.
+  or values use `query-assignment-invalid`. The remaining two codes retain
+  their Assignment-target and predicate-selected-write meanings.
+- **Separate execution target error.** Query authoring reaches no model, so a
+  Find Query carries no model identity and every model-aware rule is stated at
+  execution instead. A Find Query executed through a Database whose connected
+  model declares no Entity for the query's target raises exported
+  `QueryTargetError(RuntimeError)` with sole stable code
+  `query-target-not-in-model`, before any I/O. It retains and exposes neither
+  the query, the model, nor the Database. There is no ownership relation
+  between a query and a model: one Entity Class participates in any number of
+  Domain Models and one Domain Model serves any number of Databases.
 - **Assignment construction validates immediately.**
   An Attribute Expression's `.set(value)` constructs an immutable Assignment and
   applies the member's assignability, declared neutral-type, and nullability
@@ -141,13 +143,13 @@ mutations, exceptions, or exports.
   itself; it is never postponed until a Transaction mutation method, write
   boundary, or database call. Assignment-list validation remains separate:
   an assignment-bearing mutation checks nonemptiness, duplicates, and exact
-  hub/target compatibility when combining already-valid Assignments with its
+  target compatibility when combining already-valid Assignments with its
   Find Query.
 - **Opaque immutable Find Query.** `FindQuery[T]` is exported for annotations
   and fluent use, but direct `FindQuery(...)` construction is unsupported;
   `Entity.where(...)` is its sole public constructor. Every clause returns a
-  new value and leaves its receiver unchanged. Target, Predicate, include,
-  temporal, and opaque-hub representation fields are not public attributes.
+  new value and leaves its receiver unchanged. Target, Predicate, include, and
+  temporal representation fields are not public attributes.
   Find Queries define no structural equality or semantic hash: ordinary
   object-identity equality and hashing apply, so independently authored queries
   compare unequal even when they lower to identical operations. Conformance
@@ -163,15 +165,15 @@ mutations, exceptions, or exports.
   is total for every constructed Find Query and introduces no new semantic
   validation. `FindQuery` privately retains independently authored, already
   validated predicate, root-narrow, temporal, ordering, limit, and include
-  clauses plus its structured target Entity Identity and Metamodel Binding.
+  clauses plus its structured target Entity Identity. It retains no model.
   Lowering places those clauses in the fixed canonical order and returns one
   frozen slotted value containing exactly
-  `hub_identity: object`, `target: EntityIdentity`, and
-  `operation: Operation`. The result contains no Metamodel Binding, Entity
+  `target: EntityIdentity` and
+  `operation: Operation`. The result contains no model, Entity
   Class, class index, Snapshot feature tags, provider state, SQL, serialization
   method, or public execution surface. `LoweredFindQuery` is not a
-  `CanonicalFindQuery`: only its Operation is canonical, while its exact hub
-  identity is deliberately process-local. Neither `LoweredFindQuery` nor
+  `CanonicalFindQuery`: only its Operation is canonical, while its target is a
+  position the connected model resolves at execution. Neither `LoweredFindQuery` nor
   `lower_find_query` is re-exported from top-level `parallax.core`. Each call
   returns a fresh lowering. `FindQuery` stores no cached lowering, and no global
   memoization retains one; one execution keeps its result locally through
@@ -298,7 +300,7 @@ mutations, exceptions, or exports.
   compatibility cases, and claiming frontends atomically.
   `Entity.where(...)` requires at least one Predicate; zero arguments raise
   `QueryDefinitionError(query-clause-invalid)`. `Entity.all` is the
-  non-callable, exact-hub-and-target-bound Predicate spelling an explicitly
+  non-callable, target-bound Predicate spelling an explicitly
   unfiltered query and lowers to the canonical `all` operation:
   `Animal.where(Animal.all)`. It is legal only as the sole `where(...)`
   argument. Combining it with another Predicate, whether variadically or
@@ -634,10 +636,10 @@ mutations, exceptions, or exports.
 ### Declaration and descriptor-input grammar
 
 A model enters the runtime through exactly two fixed sources: Python Entity
-Classes composed into a `MetamodelHub(*classes)`, or a canonical descriptor
+Classes composed into a `DomainModel(*classes)`, or a canonical descriptor
 through the optional `parallax.descriptor` Descriptor Frontend. That frontend
-creates a Hub through a private first-party source seam; descriptor ingestion
-and export are not `MetamodelHub` methods. Sources are never mixed. Entity
+creates a Domain Model through a private first-party source seam; descriptor
+ingestion and export are not `DomainModel` methods. Sources are never mixed. Entity
 Classes are implicitly frozen Pydantic classes built by the Parallax
 metaclass; `frozen=True`, `EntityConfig`, `__parallax__`, `Field`,
 `Relationship`, `VoField`, and every registry surface are removed, not
@@ -862,7 +864,7 @@ An attribute fallback answers only names the class object does not otherwise
 carry, so this last family is what keeps the declaration surface reachable at
 all: any class-body name taking one of the nine — a declared member, a class
 variable, or a method — wins the lookup, and the class then presents something
-other than its declaration to every reader, including hub construction. The
+other than its declaration to every reader, including Domain Model construction. The
 rejection therefore covers every binding a class body makes, not only declared
 members.
 
@@ -887,7 +889,7 @@ rel(reverse_of=target_relationship_name, order_by=(...), name=...)
 - `Rel[Target]` names the target: a class object or qualified string
   (`Rel["crm.Customer"]`) is Exact; a bare string (`Rel["Customer"]`) is
   Relative to the declaring class's namespace. Resolution is confined to the
-  hub candidate set — never module globals or `eval`.
+  Domain Model's candidate set — never module globals or `eval`.
 - **Multiplicity by annotation.** `Rel[T]` and `Rel[T | None]` are to-one;
   `Rel[tuple[T, ...]]` is to-many. A to-many is never `| None`: loaded-empty
   is `()`.
@@ -897,11 +899,11 @@ rel(reverse_of=target_relationship_name, order_by=(...), name=...)
   `Rel[T | None]`; and scalar optionality follows the loaded-null rule —
   `Rel[T | None]` exactly where a loaded-null answer is possible (a defining
   to-one whose join source attribute is nullable, and every reverse to-one),
-  forbidden elsewhere. The rule is checked in the hub constructor's Python
+  forbidden elsewhere. The rule is checked in the Domain Model constructor's Python
   realization phase from the accepted model; every mismatch — multiplicity
   and optionality alike — is reported together, in canonical order, as
   `EntityDefinitionError(code=
-  "entity-relationship-annotation-mismatch")`, and no hub is created. The
+  "entity-relationship-annotation-mismatch")`, and no model is created. The
   annotation never absorbs the *unloaded* state, which always raises
   (`UnloadedRelationshipError`); `None` means exactly "loaded, and there is
   none".
@@ -941,7 +943,7 @@ class Order(Entity, table="orders"):
         join=("coupon_id", "id"),
     )
     # Spelling coupon as Rel["Coupon"], or customer as Rel[Customer | None],
-    # fails hub construction with entity-relationship-annotation-mismatch.
+    # fails Domain Model construction with entity-relationship-annotation-mismatch.
 ```
 
 At runtime on a Snapshot node the three relationship states stay distinct:
@@ -972,7 +974,7 @@ class Profile(Entity, table="profile"):
 A Value Object class extends `ValueObject`, is inherently frozen, and uses
 the same `Attr[T]` / `attr(...)` vocabulary. A single-use shape may be
 declared lexically inside its owner; a reusable shape is a standalone class
-referenced by each occurrence's annotation. Neither form is a hub candidate
+referenced by each occurrence's annotation. Neither form is a Domain Model candidate
 or requires registration — occurrences are reached only through Entity
 declarations. `Attr[Address]` is a One occurrence, `Attr[Address | None]` is
 One-nullable, `Attr[tuple[Address, ...]]` is Many (never nullable; a
@@ -994,7 +996,7 @@ and empty composites are the
 formation-time `value-object-*` issues shared with the descriptor frontend.
 Distinct scalar Attributes, top-level Value Object occurrences, and a
 table-per-hierarchy tag also declare distinct physical columns within each
-physical table; hub construction reports
+physical table; Domain Model construction reports
 `storage-layout-column-collision` rather than allowing a row mapping to
 infer which member a duplicate column key denotes.
 Because `Table(name)` identity is name-only, each structural Table accepts
@@ -1008,18 +1010,18 @@ model primary keys into one layout that each Entity can only partially supply.
 Neutral materialization preserves scalar, Value Object, relationship, and
 `familyVariant` provenance until wrapping/rendering. A Value Object storage
 column may therefore equal a differently named relationship without either
-value overwriting or renaming the other. Hub construction separately reports
+value overwriting or renaming the other. Domain Model construction separately reports
 `inheritance-materialization-key-collision` when keys that actually coexist in
 one rendered node remain ambiguous. A polymorphic node's `familyVariant` uses a
 bare concrete class name when family-unique and the canonical qualified Entity
 spelling when duplicate local concrete names make the bare spelling ambiguous.
 
-#### Class creation versus hub construction
+#### Class creation versus Domain Model construction
 
 Class creation (and the `attr`/`rel`/`index` factory calls themselves) rejects
 only what prevents a coherent Python class or candidate declaration; every
 model-semantic rule — cross-member, cross-class, family, index, ordering, and
-reference resolution — fails during hub construction through the same
+reference resolution — fails during Domain Model construction through the same
 `MetamodelIssue` codes the descriptor frontend produces, so the two frontends
 report equivalent outcomes for models both can author. The Python realization
 phase that follows formation inside the same constructor adds only
@@ -1042,12 +1044,12 @@ set is:
 | `entity-option-context-invalid` | factory call / class creation | an option illegal in context: mixed defining/reverse `rel(...)` forms, Entity-only options on a Value Object member, an empty `index(...)` member list, a `MAX`/`Sequence(...)` generation on a non-integer member |
 | `entity-reserved-member-name` | class creation | a reserved query-root or introspection name, a `model_*` name, a framework-temporal member name, or one of the nine declaration member names |
 | `entity-canonical-name-collision` | class creation | two members converting to one canonical name |
-| `entity-relationship-annotation-mismatch` | hub construction (realization) | a `Rel` annotation shape — multiplicity or optionality — disagreeing with the accepted model; all mismatches reported together in canonical order |
+| `entity-relationship-annotation-mismatch` | Domain Model construction (realization) | a `Rel` annotation shape — multiplicity or optionality — disagreeing with the accepted model; all mismatches reported together in canonical order |
 
 #### Canonical descriptor input
 
 The optional `parallax-descriptor` distribution exposes three module-level
-functions that create descriptor-backed hubs. There is no format sniffing
+functions that create descriptor-backed Domain Models. There is no format sniffing
 (JSON is a YAML subset, so sniffing is unsound) and no filesystem or stream
 I/O — acquisition and persistence belong to the caller:
 
@@ -1060,20 +1062,20 @@ I/O — acquisition and persistence belong to the caller:
 After every ingestion phase succeeds, the Descriptor Frontend adapts its
 immutable records to `UnresolvedMetamodel` and calls the private, versioned
 first-party seam
-`MetamodelHub._from_unresolved(source: UnresolvedMetamodel)`. That seam creates
-a fixed-source hub with no Entity Class binding inputs. It is not exported as
+`DomainModel._from_unresolved(source: UnresolvedMetamodel)`. That seam creates
+a fixed-source Domain Model composing no Entity Class. It is not exported as
 a supported third-party frontend extension point, and there is no registration,
 discovery, or lazy-import mechanism.
 
-All three yield the same sealed fixed-source hub on success — the seam seals in
-the constructor, so a returned hub is always authoritative. The phase
+All three yield the same fixed-source Domain Model on success — construction is
+construct-or-raise, so a returned model is always authoritative. The phase
 boundaries are exact: syntax failures raise
-`DescriptorSyntaxError(descriptor-invalid-syntax)` before a hub exists;
+`DescriptorSyntaxError(descriptor-invalid-syntax)` before a model exists;
 canonical-schema violations raise
-`DescriptorSchemaError(descriptor-schema-invalid)` before a hub exists;
+`DescriptorSchemaError(descriptor-schema-invalid)` before a model exists;
 value-phase rejections (`m-descriptor` "Type spellings" — e.g. the
 schema-valid but unconstructible `decimal(0,9)`) raise
-`DescriptorValueError(descriptor-value-invalid)` before a hub exists; every
+`DescriptorValueError(descriptor-value-invalid)` before a model exists; every
 semantic model rule fails last, still inside the same call, as
 `MetamodelValidationError`. Each `hub_from_*` function therefore raises both
 families in that fixed phase order: `DescriptorError` for representation
@@ -1129,49 +1131,59 @@ models = hub_from_yaml(yaml_text)  # or hub_from_json(json_text)
 models = hub_from_document(document)  # e.g. json.loads(json_text)
 ```
 
-The same package exports a class-backed or descriptor-backed hub
+The same package exports a class-backed or descriptor-backed Domain Model
 through `export_document(hub) -> dict[str, object]`,
 `export_json(hub) -> str`, or `export_yaml(hub) -> str`.
 `export_document` returns a fresh tree of ordinary mappings, lists, and
-JSON-compatible scalar values. Every hub is sealed by construction, so export
-performs no hub-state check and has no state failure to propagate; it renews no
+JSON-compatible scalar values. A Domain Model is accepted by construction and
+carries no lifecycle state, so export performs no model-state check and has no
+state failure to propagate; it renews no
 validation, performs no state change, and retains no descriptor cache. Repeated
 document results are structurally equal and repeated text results
 byte-identical. Unexpected
 conversion or serialization defects raise
 `DescriptorExportError(code="descriptor-export-failed")` with target
 `document`, `json`, or `yaml` and the original cause, return no partial output,
-and leave the hub unchanged.
+and leave the model unchanged.
 
-The separately distributed Descriptor Frontend reads the hub through the
+The separately distributed Descriptor Frontend reads the model through the
 durable first-party collaboration seam
-`parallax.core.entity.model_of(hub) -> Metamodel`. It returns the same accepted
+`parallax.core.entity.model_of(model) -> Metamodel`. It returns the same accepted
 immutable Metamodel without copying, works for class-backed and
-descriptor-backed hubs, and exposes no Entity Class binding or construction
-capability. It belongs to the advanced `parallax.core.entity` interface and is
-not re-exported from `parallax.core`; there is no `MetamodelHub.model`
+descriptor-backed models, and exposes no Entity Class composition or
+construction capability. It belongs to the advanced `parallax.core.entity`
+interface and is
+not re-exported from `parallax.core`; there is no `DomainModel.model`
 property. Ordinary application code uses `models.meta(...)`, `models.entities`,
 or the public Descriptor Frontend export functions.
 
-Snapshot connection instead reads the hub through the private first-party
-`sealed_model(hub) -> SealedModel` seam. `SealedModel` contains the same
-accepted Metamodel and the hub's `MetamodelBinding | None`; the binding is
-present exactly for a class-backed Hub. `Database.connect(adapter, models)`
-has a static `models: MetamodelHub` input and accepts no bare-Metamodel
-overload. At runtime it rejects a bare accepted Metamodel before calling this
-seam; otherwise it queries the seam before inspecting `adapter`. A bare
-Metamodel or absent binding raises the same exported
-`SnapshotConnectionError(ValueError)` with sole stable code
-`snapshot-class-backed-hub-required`. The error exposes neither an Entity
-Runtime, Metamodel Binding, nor opaque hub identity. It is not
+Snapshot connection instead reads the model through the private first-party
+`model_of(model) -> Metamodel` and `class_index(model) -> ClassIndex | None`
+pair. The class index is present exactly for a class-backed Domain Model and
+absent for a descriptor-backed one; it is a bidirectional Entity
+Identity/Entity Class map and carries no per-model identity of its own.
+`Database.connect(adapter, model)` has a static `model: DomainModel` input and
+accepts no bare-Metamodel overload. At runtime it narrows the same way: a value
+that is not a Domain Model at all, and a Domain Model composing no Entity
+Class, are both rejected before `adapter` is inspected, with the same exported
+`SnapshotConnectionError(ValueError)` under the sole stable code
+`snapshot-class-backed-model-required`. The error exposes neither an Entity
+Runtime nor a class index. It is not
 `DeferredFeatureError(execution-feature-deferred)`, which is reserved for a
 valid operation whose execution feature is explicitly deferred.
 
-After class-backed validation, Snapshot constructs one private `_ConnectedHub`
-owned by the Database. It contains the accepted Metamodel, the binding's opaque
-exact-hub identity, and the transitional Metamodel Binding required by Snapshot
-materialization. It is handle state rather than a Core runtime value and is
-neither exported nor shared through the hub.
+After class-backed validation, Snapshot constructs one private `_ConnectedModel`
+owned by the Database. It contains the accepted Metamodel and the class index
+Snapshot materialization requires, and no identity. It is handle state rather
+than a Core runtime value and is neither exported nor shared through the model.
+
+`Database(port, model)` itself admits a bare accepted Metamodel, the neutral
+form the conformance adapter constructs for the write lanes, which name
+Entities rather than classes. Such a connection composes no class and can never
+materialize a Snapshot, so `Database.find` and `Transaction.find` refuse it with
+the same `SnapshotConnectionError(snapshot-class-backed-model-required)` — on
+both entry points before target resolution, and on the participating one before
+the unit of work's force-flush, so a refused read flushes no pending write.
 
 Snapshot owns `_DEFERRED_EXECUTION_FEATURES: frozenset[str]`, the private
 immutable set of canonical Feature tags whose operation shapes are valid but
@@ -1181,8 +1193,9 @@ shared by every Database in the installed implementation; no constructor
 argument, environment setting, provider, adapter, or application hook can add
 or remove entries. After privately lowering a Find Query,
 Snapshot classifies the canonical operation for its own execution features and
-compares those tags with the deferral set after exact-hub validation and before
-SQL generation, Database Port access, or connection acquisition. An
+compares those tags with the deferral set after target resolution and operation
+validation and before SQL generation, Database Port access, or connection
+acquisition. An
 intersection raises exported `DeferredFeatureError(RuntimeError)` with stable code
 `execution-feature-deferred` and every matching canonical deferred Feature in
 its nonempty, ascending `features: tuple[str, ...]` attribute. The expected
@@ -1190,19 +1203,21 @@ completed state is an empty set; every nonempty entry is
 an explicit, reviewable implementation deferral. A Feature claimed by the
 active Conformance Slice but not implemented is a defect and cannot be made
 permissible by listing it here. This set belongs neither to the connected
-provider, `_ConnectedHub`, `Dialect`, nor a leased `DbPort`.
+provider, `_ConnectedModel`, `Dialect`, nor a leased `DbPort`.
 
-Exact-hub ownership always precedes this classification. A foreign-hub Find
-Query whose lowered operation would match one or more Deferred Execution
-Features raises `QueryOwnershipError(query-owner-mismatch)` and exposes no
-deferral result; neither path reaches SQL, a Database Port, or connection
+Target resolution always precedes this classification. A Find Query whose
+target the connected model does not declare raises
+`QueryTargetError(query-target-not-in-model)` and exposes no deferral result
+even when its lowered operation would match one or more Deferred Execution
+Features; neither path reaches SQL, a Database Port, or connection
 acquisition.
 
 One private Snapshot seam centralizes the complete read preflight:
-`preflight_find(query, *, expected_hub_identity) -> LoweredFindQuery`. It lowers
-the query once for that execution, compares exact hub identity, classifies the
-lowered canonical Operation against `_DEFERRED_EXECUTION_FEATURES`, and returns
-the same local lowering when both checks succeed. It performs no SQL, Database
+`preflight_find(query, *, model) -> LoweredFindQuery`. It resolves the query's
+target in the connected model, validates the lowered canonical Operation from
+that resolved root, classifies it against `_DEFERRED_EXECUTION_FEATURES`, and
+returns the same local lowering when every step succeeds — in that order, which
+is the contract rather than an implementation detail. It performs no SQL, Database
 Port access, connection acquisition, materialization, or transaction work.
 `Database.find`, `Transaction.find`, and the later Session read boundary call
 this seam rather than reimplementing any step.
@@ -1225,21 +1240,20 @@ Conformance coverage, the active slice claim, the Python deferred list,
 together.
 
 The separate `EntityRuntime` is a frozen slotted value containing exactly the
-accepted `Metamodel`, opaque exact-hub identity, `EntityGraphConstruction`, and
-`EntityRowCodec`. It exists only as that complete four-part value: there is no
+accepted `Metamodel`, `EntityGraphConstruction`, and
+`EntityRowCodec`. It exists only as that complete three-part value: there is no
 partial Entity Runtime with absent capabilities. It references rather than
-copies the accepted model and exact identity, exposes neither
-`MetamodelBinding` nor the bidirectional Entity Identity/Class index, and is a
+copies the accepted model, exposes no
+bidirectional Entity Identity/Entity Class index, and is a
 closed first-party collaboration value rather than a registry, extension map,
 third-party adapter interface, or generic capability bag. It is not re-exported
 from top-level `parallax.core`. COR-50 owns constructing one complete runtime
-per class-backed Hub and the advanced first-party
-`entity_runtime_of(hub) -> EntityRuntime | None` query; descriptor-backed Hubs
-return `None`, while repeat calls for one class-backed Hub return the same
-runtime. COR-64 neither constructs nor calls this seam. Snapshot may replace
-`_ConnectedHub`'s transitional materialization dependency with the complete
-Entity Runtime without changing the connected Metamodel or exact-hub identity
-contract.
+per class-backed Domain Model and the advanced first-party
+`entity_runtime_of(model) -> EntityRuntime | None` query; descriptor-backed
+models return `None`, while repeat calls for one class-backed model return the
+same runtime. COR-64 neither constructs nor calls this seam. Snapshot may
+replace `_ConnectedModel`'s transitional materialization dependency with the
+complete Entity Runtime without changing the connected Metamodel contract.
 
 `parallax.descriptor` publicly exports the ingestion base
 `DescriptorError(ValueError)` and its `DescriptorSyntaxError`,
@@ -1376,9 +1390,9 @@ or descriptor authoring form and performs no audit stamping.
   declaration, and indices in declaration order. It never flattens inherited
   members and exposes no effective `table`, `temporal`, relationship-target,
   family, or similar convenience aliases. Owner-specific derived behavior is
-  obtained from the hub's compiled facets. Canonical descriptor export is a
-  Descriptor Frontend operation over a sealed hub, not a hub or Entity
-  metadata method. Class-backed and descriptor-backed hubs return the same
+  obtained from the model's compiled facets. Canonical descriptor export is a
+  Descriptor Frontend operation over an accepted Domain Model, not a model or
+  Entity metadata method. Class-backed and descriptor-backed models return the same
   compiler-owned objects; there is no package-global `meta(...)` registry
   lookup or parallel `EntityMeta` graph.
 - **Neutral scalar type mapping.** No lossy coercions; validation at build
@@ -1650,7 +1664,7 @@ or descriptor authoring form and performs no audit stamping.
   `snapshot-history-includes` feature
   is **deferred, not invalid**: combining `.history()` with `.include()`
   builds an ordinary valid Find Query with no Snapshot feature metadata. After
-  exact hub validation, Snapshot recognizes the privately lowered
+  target resolution and operation validation, Snapshot recognizes the privately lowered
   `DeepFetch(History(...))` or `DeepFetch(AsOfRange(...))` operation as matching
   its Deferred Execution Feature and raises
   `DeferredFeatureError(execution-feature-deferred)` before SQL generation
@@ -1663,20 +1677,18 @@ or descriptor authoring form and performs no audit stamping.
   `parallax.snapshot.is_view_loaded(node, Owner.items)`
   answers without raising. Access never issues SQL — there is no lazy loading
   in this lifecycle.
-- **Exact-hub inspection keys.** `is_view_loaded` and `view` first require
-  private `SnapshotNodeState`. Both accept only a class-derived, hub-bound
+- **Structured inspection keys.** `is_view_loaded` and `view` first require
+  private `SnapshotNodeState`. Both accept only a class-derived
   Relationship Path; bare relationship-name strings are not accepted. They
-  form one private bound key per segment from the Relationship Path's opaque
-  exact-hub sentinel and that segment's structured Broad or Narrowed
-  Relationship View identity, and require identity with the sentinel stored
-  in the node state. A path from another hub raises
-  `SnapshotInspectionError(snapshot-hub-mismatch)` with the operation and
-  structured path, but neither sentinel, even when every structured view is
-  equal. This check precedes relationship-owner and loaded-state validation.
-- **Relationship-path owner.** After exact-hub validation, the path's starting
+  form one private key per segment from that segment's structured Broad or
+  Narrowed Relationship View identity. A Relationship Path carries no model and
+  no process-local identity, so there is no ownership relation to check here:
+  a path naming a relationship the node's model does not declare is answered by
+  the owner rule below rather than by an identity comparison.
+- **Relationship-path owner.** The path's starting
   owner must apply to the supplied node's concrete Entity Identity. A
   relationship declared by an accepted ancestor applies to its concrete
-  subtype. An unrelated same-hub owner raises
+  subtype. An unrelated owner raises
   `SnapshotInspectionError(snapshot-view-owner-mismatch)` with the operation,
   node Entity Identity, and structured path. `is_view_loaded` raises this
   error rather than returning `False`. Path construction guarantees that each
@@ -2270,11 +2282,11 @@ the metamodel it needs through `m-metamodel` and the typed owner facets.
 `m-descriptor` maps to the separate `parallax.descriptor` scope and imports the
 common runtime only through its language-neutral `m-core` and `m-metamodel`
 edges. Its private child support scope `parallax.descriptor._hub` alone imports
-the Python-specific Hub construction and accepted-model read seams in
+the Python-specific Domain Model construction and accepted-model read seams in
 `parallax.core.entity`. This direct support edge is required because the class
-and Descriptor Frontends deliberately return one concrete `MetamodelHub` type,
-while the Hub's class-backed constructor owns Python realization and atomic
-Entity Class binding and therefore does not belong to the
+and Descriptor Frontends deliberately return one concrete `DomainModel` type,
+while the Domain Model's class-backed constructor owns Python realization and
+therefore does not belong to the
 representation-independent `parallax.core.metamodel` module. No
 common-runtime, Snapshot, or Postgres scope imports the descriptor package.
 import-linter forbids every production scope-pair import the DAG does not
@@ -2510,8 +2522,8 @@ parallax.postgres --> parallax.core.dialect
   `parallax.snapshot.handle` are the narrower wrapping and read-preflight
   scopes, the write-lowering scopes, and the zero-grant refusal leaf.
   `parallax.descriptor._hub` is the additive case: its sole extra grant is the
-  first-party Entity Hub seam required to construct and read the one concrete
-  Hub type. `parallax.snapshot.handle._errors` is the empty case: the
+  first-party Entity frontend seam required to construct and read the one
+  concrete `DomainModel` type. `parallax.snapshot.handle._errors` is the empty case: the
   read-preflight and write-lowering scopes raise one error class while granting
   disjoint dependencies, so the module holding it may reach nothing at all. A
   grant row of `(none)` forbids it every scope outside its own package **and**
@@ -2576,8 +2588,8 @@ parallax.postgres --> parallax.core.dialect
   forbidden entry naming the ancestor package would also forbid the granted
   child inside it. Only the ancestor's **name** is given up: what the rest of
   that package reaches stays forbidden and is reported as an indirect chain, so
-  `_preflight` naming `parallax.core.entity._hub` still breaks the gate on
-  `_hub`'s own edge to `parallax.core._formation_profile`.
+  `_preflight` naming `parallax.core.entity._model` still breaks the gate on
+  `_model`'s own edge to `parallax.core._formation_profile`.
 - **Filesystem ownership.** `languages/python/tools/check_scope_ownership.py`
   walks every `packages/*/src/**/*.py` file in the production distributions and
   proves it resolves to exactly one **most-specific** enforcement scope of this
@@ -2624,9 +2636,9 @@ hatchling.
 
 | Artifact/package | Production or development-only | Included source scopes | External runtime dependencies | Depends on artifacts | Public exports/entry points |
 |---|---|---|---|---|---|
-| `parallax-core` (the common runtime) | production | all `parallax.core.*` scopes of §7 (behavioral modules, Entity/Find Query frontend, driver-free postgres dialect strategy) | `pydantic` | (none) | `parallax.core`: the `Entity`/`TxTemporal`/`Bitemporal`/`ValueObject` bases, `Attr`, `Rel`, `attr`, `rel`, `index`, `desc`, `asc`, `Int32`, `Float32`, `MAX`, `Sequence`, the cardinality, persistence, inheritance role and strategy values, `MetamodelHub`, `FindQuery`, `Predicate`, `LATEST`, `VALID_TIME`, `TX_TIME`, `Pin`, `Edge`, and its documented errors |
+| `parallax-core` (the common runtime) | production | all `parallax.core.*` scopes of §7 (behavioral modules, Entity/Find Query frontend, driver-free postgres dialect strategy) | `pydantic` | (none) | `parallax.core`: the `Entity`/`TxTemporal`/`Bitemporal`/`ValueObject` bases, `Attr`, `Rel`, `attr`, `rel`, `index`, `desc`, `asc`, `Int32`, `Float32`, `MAX`, `Sequence`, the cardinality, persistence, inheritance role and strategy values, `DomainModel`, `FindQuery`, `Predicate`, `LATEST`, `VALID_TIME`, `TX_TIME`, `Pin`, `Edge`, and its documented errors |
 | `parallax-descriptor` (descriptor interchange) | production, optional | `parallax.descriptor` (`m-descriptor` plus its private Hub orchestration) | `pyyaml`, `jsonschema` | `parallax-core` | `parallax.descriptor`: `hub_from_document`, `hub_from_json`, `hub_from_yaml`, `export_document`, `export_json`, `export_yaml`, `DescriptorError`, `DescriptorSyntaxError`, `DescriptorSchemaError`, `DescriptorValueError`, `DescriptorSchemaViolation`, `DescriptorValueViolation`, `DescriptorExportError` |
-| `parallax-snapshot` (snapshot lifecycle extension) | production | `parallax.snapshot.*` (`materialize`, `handle`) | (none beyond core) | `parallax-core` | `parallax.snapshot`: `connect()`, `Snapshot[T]`, `Execution`, `is_view_loaded`, `view`, `pin_of`, `edge_of`, `UnloadedRelationshipError`, `QueryOwnershipError`, `DeferredFeatureError`, `SnapshotConnectionError`, `SnapshotDecodingError`, `SnapshotMaterializationError`, `SnapshotInspectionError`, `TransactionOwnershipError`, `QueryTargetError` |
+| `parallax-snapshot` (snapshot lifecycle extension) | production | `parallax.snapshot.*` (`materialize`, `handle`) | (none beyond core) | `parallax-core` | `parallax.snapshot`: `connect()`, `Snapshot[T]`, `Execution`, `is_view_loaded`, `view`, `pin_of`, `edge_of`, `UnloadedRelationshipError`, `DeferredFeatureError`, `SnapshotConnectionError`, `SnapshotDecodingError`, `SnapshotMaterializationError`, `SnapshotInspectionError`, `TransactionOwnershipError`, `QueryTargetError` |
 | `parallax-postgres` (Postgres database adapter) | production | `parallax.postgres.*` (concrete port over psycopg) | `psycopg[binary]` (sole declarer) | `parallax-core` | `parallax.postgres`: `PostgresAdapter` |
 | `parallax-conformance` | development-only | `parallax.conformance.*` (CLI, case format, corpus loading, provider harness) | `testcontainers`, `jsonschema` | `parallax-core`, `parallax-descriptor`, `parallax-snapshot`, `parallax-postgres` | `parallax-conformance` console script (`describe` / `compile` / `run`) |
 

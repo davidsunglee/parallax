@@ -328,11 +328,11 @@ def test_two_narrowed_views_coexist_independently_on_one_node() -> None:
 
 # --------------------------------------------------------------------------- #
 # A narrowed view is keyed by the path's own segments, and a `RelationshipPath`
-# is a frozen value: a `copy` or `deepcopy` — each reconstructing the path from
-# its own stored state rather than through `__init__` — keys the same view, and
-# a deep copy shares the one Binding rather than minting a second identity for
-# one hub. Pickling refuses, because hub identity deliberately cannot cross a
-# wire.
+# is a frozen value carrying nothing but those segments, its target spelling and
+# its source: a `copy` or `deepcopy` — each reconstructing the path from its own
+# stored state rather than through `__init__` — keys the same view, and so does
+# a path built directly from the same segments. There is no model and no
+# process-local identity on a path for a copy to duplicate or share.
 # --------------------------------------------------------------------------- #
 def test_a_directly_built_relationship_path_keys_the_same_narrowed_view() -> None:
     owner = Node(

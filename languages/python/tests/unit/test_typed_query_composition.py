@@ -55,6 +55,7 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
+from pydantic import PydanticUserError
 
 from _support import snapshot_models
 from _support.snapshot_models import (
@@ -145,8 +146,13 @@ class Keeper(Entity, table="typed_keeper", namespace=_NS):
 _BESTIARY = DomainModel(Keeper, Badge, Beast, Hound, Feline)
 
 
-def gated(statement: Statement, models: DomainModel = _ANIMALS) -> Statement:
-    """``statement`` through the shared read gate, as executing it would run it."""
+def preflighted(statement: Statement, models: DomainModel = _ANIMALS) -> Statement:
+    """``statement`` after the shared read preflight accepted it against ``models``.
+
+    Runs exactly what executing the statement would run before any I/O, and
+    answers the statement itself so a case can go on to assert its canonical
+    lowering. A rejection propagates.
+    """
     preflight_find(statement, model=model_of(models))
     return statement
 
@@ -161,7 +167,7 @@ def test_a_subtype_predicate_never_addresses_an_ancestor_position() -> None:
     # not available to every concrete the position resolves to, and narrowing is
     # the remedy the runtime rule names (see the narrow case below).
     with pytest.raises(OperationRejectedError) as caught:
-        gated(Animal.where(Dog.bark_volume > 3))  # pyright: ignore[reportArgumentType]
+        preflighted(Animal.where(Dog.bark_volume > 3))  # pyright: ignore[reportArgumentType]
     assert caught.value.rule == "subtype-attribute-outside-narrow-scope"
 
 
@@ -170,7 +176,7 @@ def test_an_unrelated_entitys_predicate_never_addresses_the_queried_position() -
     # one model and no inheritance family, so no narrow could rescue it — which
     # is exactly the distinction between this rule and the one above.
     with pytest.raises(OperationRejectedError) as caught:
-        gated(Animal.where(AnimalOwner.name == "Ada"))  # pyright: ignore[reportArgumentType]
+        preflighted(Animal.where(AnimalOwner.name == "Ada"))  # pyright: ignore[reportArgumentType]
     assert caught.value.rule == "attribute-outside-active-position"
 
 
@@ -178,7 +184,7 @@ def test_an_unrelated_entitys_predicate_is_refused_from_the_other_side_too() -> 
     # The same rule with the positions swapped, so neither direction is accepted
     # by an accident of which Entity happens to declare the member.
     with pytest.raises(OperationRejectedError) as caught:
-        gated(AnimalOwner.where(Animal.name == "Ada"))  # pyright: ignore[reportArgumentType]
+        preflighted(AnimalOwner.where(Animal.name == "Ada"))  # pyright: ignore[reportArgumentType]
     assert caught.value.rule == "attribute-outside-active-position"
 
 
@@ -191,7 +197,7 @@ def test_an_ancestors_predicate_addresses_every_descendant_position() -> None:
     # The acceptance half of the same mechanism, and the case an INVARIANT
     # parameter would break: `Predicate[Animal]` lands in a `Dog` position
     # because a root-declared member is available to every concrete under it.
-    assert gated(Dog.where(Animal.name == "Ada")).serialize() == {
+    assert preflighted(Dog.where(Animal.name == "Ada")).serialize() == {
         "eq": {"attr": "Animal.name", "value": "Ada"}
     }
 
@@ -201,7 +207,7 @@ def test_an_inherited_member_is_parameterized_by_the_class_it_is_reached_through
     # `Dog`-positioned predicate while the wire keeps the DECLARING Entity — the
     # spelling that makes the reference applicable to every concrete under
     # `Animal`. The two are different questions and the two answers differ.
-    assert gated(Dog.where(Dog.name == "Ada")).serialize() == {
+    assert preflighted(Dog.where(Dog.name == "Ada")).serialize() == {
         "eq": {"attr": "Animal.name", "value": "Ada"}
     }
 
@@ -214,7 +220,7 @@ def test_a_subtype_spelling_of_an_inherited_member_is_narrower_than_the_model_is
     # under `Animal` answers. The remedy is to spell the member through the class
     # that declares it, and the suppression records the asymmetry rather than
     # leaving it to be discovered.
-    assert gated(Animal.where(Dog.name == "Ada")).serialize() == {  # pyright: ignore[reportArgumentType]
+    assert preflighted(Animal.where(Dog.name == "Ada")).serialize() == {  # pyright: ignore[reportArgumentType]
         "eq": {"attr": "Animal.name", "value": "Ada"}
     }
 
@@ -223,7 +229,7 @@ def test_a_conjunction_addresses_the_position_both_of_its_operands_address() -> 
     # An ancestor's term and a descendant's term compose, and the combination
     # lands in the descendant's query — the case a combinator demanding one
     # shared parameter would refuse for a reason no rule states.
-    assert gated(Dog.where((Animal.name == "Ada") & (Dog.bark_volume > 3))).serialize() == {
+    assert preflighted(Dog.where((Animal.name == "Ada") & (Dog.bark_volume > 3))).serialize() == {
         "and": {
             "operands": [
                 {"eq": {"attr": "Animal.name", "value": "Ada"}},
@@ -238,7 +244,7 @@ def test_a_mixed_conjunction_reads_the_same_in_the_other_operand_order() -> None
     # that took the left operand's position would accept exactly one of these
     # two spellings, so both orders are pinned: the position a combination
     # addresses is the meet, which no operand order can move.
-    assert gated(Dog.where((Dog.bark_volume > 3) & (Animal.name == "Ada"))).serialize() == {
+    assert preflighted(Dog.where((Dog.bark_volume > 3) & (Animal.name == "Ada"))).serialize() == {
         "and": {
             "operands": [
                 {"greaterThan": {"attr": "Dog.barkVolume", "value": 3}},
@@ -254,7 +260,7 @@ def test_a_mixed_conjunction_never_launders_the_descendants_term_upward() -> Non
     # combination as the left operand's position would let a `Dog` member into
     # an `Animal` query with no diagnostic at all.
     with pytest.raises(OperationRejectedError) as caught:
-        gated(
+        preflighted(
             Animal.where(
                 (Animal.name == "Ada") & (Dog.bark_volume > 3)  # pyright: ignore[reportArgumentType]
             )
@@ -267,7 +273,7 @@ def test_the_same_laundering_is_refused_in_the_other_operand_order_too() -> None
     # rejection a rule about the terms rather than about which one was typed
     # first.
     with pytest.raises(OperationRejectedError) as caught:
-        gated(
+        preflighted(
             Animal.where(
                 (Dog.bark_volume > 3) & (Animal.name == "Ada")  # pyright: ignore[reportArgumentType]
             )
@@ -279,8 +285,12 @@ def test_a_disjunction_addresses_the_meet_in_either_operand_order() -> None:
     # `|` carries the identical parameter, so the acceptance half holds for it
     # in both orders too — the combinator, not the combination, is what the
     # position comes from.
-    ancestor_first = gated(Dog.where((Animal.name == "Ada") | (Dog.bark_volume > 3))).serialize()
-    descendant_first = gated(Dog.where((Dog.bark_volume > 3) | (Animal.name == "Ada"))).serialize()
+    ancestor_first = preflighted(
+        Dog.where((Animal.name == "Ada") | (Dog.bark_volume > 3))
+    ).serialize()
+    descendant_first = preflighted(
+        Dog.where((Dog.bark_volume > 3) | (Animal.name == "Ada"))
+    ).serialize()
     assert ancestor_first == {
         "or": {
             "operands": [
@@ -303,7 +313,7 @@ def test_a_disjunction_launders_no_more_than_a_conjunction_does() -> None:
     # And the rejection half for `|`, on the operand order a left-biased
     # combinator would have admitted.
     with pytest.raises(OperationRejectedError) as caught:
-        gated(
+        preflighted(
             Animal.where(
                 (Animal.name == "Ada") | (Dog.bark_volume > 3)  # pyright: ignore[reportArgumentType]
             )
@@ -318,7 +328,7 @@ def test_the_disjunctions_laundering_is_refused_in_the_other_operand_order_too()
     # meet in THIS order, so this is the case that would survive losing the
     # reflected twin.
     with pytest.raises(OperationRejectedError) as caught:
-        gated(
+        preflighted(
             Animal.where(
                 (Dog.bark_volume > 3) | (Animal.name == "Ada")  # pyright: ignore[reportArgumentType]
             )
@@ -331,7 +341,7 @@ def test_a_conjunction_of_one_positions_terms_keeps_that_position() -> None:
     # position: two `Dog` terms combine to a `Dog` predicate, which the `Animal`
     # query refuses statically and the validator refuses again.
     with pytest.raises(OperationRejectedError) as caught:
-        gated(
+        preflighted(
             Animal.where(
                 (Dog.bark_volume > 3) & (Dog.bark_volume < 9)  # pyright: ignore[reportArgumentType]
             )
@@ -343,7 +353,7 @@ def test_a_narrow_scope_is_how_a_descendants_member_reaches_an_ancestor_position
     # The sanctioned spelling of the first rejection above: `narrow` takes the
     # subtype's predicate and answers one in the narrowing class's own position,
     # so this composes where the bare subtype predicate cannot.
-    assert gated(Animal.where(Animal.narrow(Dog, where=Dog.bark_volume > 3))).serialize() == {
+    assert preflighted(Animal.where(Animal.narrow(Dog, where=Dog.bark_volume > 3))).serialize() == {
         "narrow": {
             "entity": "Animal",
             "to": ["Dog"],
@@ -362,7 +372,7 @@ def test_a_comparison_literal_is_the_wire_value_rather_than_the_members_python_t
     # comparison literal as a number, so a value parameter narrowed to the
     # member's Python type would refuse the canonical spelling. The value stays
     # the wire's, and no suppression belongs here.
-    assert gated(SnapOrder.where(SnapOrder.price >= 600.00), _ORDERS).serialize() == {
+    assert preflighted(SnapOrder.where(SnapOrder.price >= 600.00), _ORDERS).serialize() == {
         "greaterThanEquals": {"attr": "SnapOrder.price", "value": 600.00}
     }
 
@@ -373,11 +383,11 @@ def test_an_equality_literal_is_judged_by_the_model_rather_than_by_the_signature
     # authoring-time one on a flat attribute. Where the neutral contract states a
     # literal-type rule, the model-aware validator is what states it: the same
     # mismatch one value-object hop deeper is refused by name.
-    assert gated(SnapOrder.where(SnapOrder.price == "abc"), _ORDERS).serialize() == {
+    assert preflighted(SnapOrder.where(SnapOrder.price == "abc"), _ORDERS).serialize() == {
         "eq": {"attr": "SnapOrder.price", "value": "abc"}
     }
     with pytest.raises(OperationRejectedError) as caught:
-        gated(SnapOrderStatus.where(SnapOrderStatus.primary_tag.label == 42), _ORDERS)
+        preflighted(SnapOrderStatus.where(SnapOrderStatus.primary_tag.label == 42), _ORDERS)
     assert caught.value.rule == "nested-literal-type-mismatch"
 
 
@@ -422,7 +432,7 @@ def test_a_subtype_sort_key_never_orders_an_ancestor_result() -> None:
     # key's attribute reference draws against the ordered rows' position.
     key: SortKey[Animal] = Dog.bark_volume.desc()  # pyright: ignore[reportAssignmentType]
     with pytest.raises(OperationRejectedError) as caught:
-        gated(Animal.where().order_by(key))
+        preflighted(Animal.where().order_by(key))
     assert caught.value.rule == "subtype-attribute-outside-narrow-scope"
 
 
@@ -430,7 +440,7 @@ def test_an_unrelated_entitys_sort_key_never_orders_the_queried_result() -> None
     # The non-family half of the same rule, which no narrow could rescue.
     key: SortKey[SnapOrder] = SnapOrderStatus.code.asc()  # pyright: ignore[reportAssignmentType]
     with pytest.raises(OperationRejectedError) as caught:
-        gated(SnapOrder.where().order_by(key), _ORDERS)
+        preflighted(SnapOrder.where().order_by(key), _ORDERS)
     assert caught.value.rule == "attribute-outside-active-position"
 
 
@@ -439,7 +449,7 @@ def test_an_ancestors_sort_key_orders_a_union_narrowed_result() -> None:
     # applies to every concrete a two-subtype narrow leaves in the position, so
     # `SortKey[Animal]` lands in a `Cat | Dog` result and the validator agrees.
     key: SortKey[Cat | Dog] = Animal.name.asc()
-    assert gated(Animal.where().narrow(Cat, Dog).order_by(key)).serialize() == {
+    assert preflighted(Animal.where().narrow(Cat, Dog).order_by(key)).serialize() == {
         "orderBy": {
             "operand": {
                 "narrow": {"entity": "Animal", "to": ["Cat", "Dog"], "operand": {"all": {}}}
@@ -455,7 +465,7 @@ def test_a_subtype_sort_key_never_orders_a_union_narrowed_result() -> None:
     # exactly what the validator says of the same query.
     key: SortKey[Cat | Dog] = Dog.bark_volume.asc()  # pyright: ignore[reportAssignmentType]
     with pytest.raises(OperationRejectedError) as caught:
-        gated(Animal.where().narrow(Cat, Dog).order_by(key))
+        preflighted(Animal.where().narrow(Cat, Dog).order_by(key))
     assert caught.value.rule == "subtype-attribute-outside-narrow-scope"
 
 
@@ -463,7 +473,7 @@ def test_a_sort_key_orders_the_result_a_single_subtype_narrow_moved_to() -> None
     # And the acceptance a narrow to ONE subtype buys: the same key the
     # un-narrowed query refused is applicable once the result is `Dog`.
     key: SortKey[Dog] = Dog.bark_volume.desc()
-    assert gated(Animal.where().narrow(Dog).order_by(key)).serialize() == {
+    assert preflighted(Animal.where().narrow(Dog).order_by(key)).serialize() == {
         "orderBy": {
             "operand": {"narrow": {"entity": "Animal", "to": ["Dog"], "operand": {"all": {}}}},
             "keys": [{"attr": "Dog.barkVolume", "direction": "desc"}],
@@ -476,7 +486,7 @@ def test_null_placement_stays_on_the_sort_key_and_keeps_its_position() -> None:
     # Key rather than the canonical node, and the single-shot rule stays the
     # canonical node's own.
     key: SortKey[Dog] = Dog.bark_volume.desc().nulls_first()
-    assert gated(Animal.where().narrow(Dog).order_by(key)).serialize()["orderBy"] == {
+    assert preflighted(Animal.where().narrow(Dog).order_by(key)).serialize()["orderBy"] == {
         "operand": {"narrow": {"entity": "Animal", "to": ["Dog"], "operand": {"all": {}}}},
         "keys": [{"attr": "Dog.barkVolume", "direction": "desc", "nulls": "first"}],
     }
@@ -523,7 +533,7 @@ def test_an_unfiltered_query_written_at_another_position_is_refused_statically()
     # records why: an `all` node names no position, so nothing downstream can
     # tell these two apart — which is exactly why the parameter is the only
     # place the mistake is visible at all.
-    assert gated(Animal.where(Dog.all)).serialize() == {"all": {}}  # pyright: ignore[reportArgumentType]
+    assert preflighted(Animal.where(Dog.all)).serialize() == {"all": {}}  # pyright: ignore[reportArgumentType]
 
 
 def test_an_unfiltered_query_is_the_whole_filter_and_composes_with_nothing() -> None:
@@ -551,8 +561,10 @@ def test_the_unfiltered_query_survives_a_class_reached_through_a_type_parameter(
         return cls.all
 
     dogs: AllPredicate[Dog] = unfiltered(Dog)
-    assert gated(Dog.where(dogs)).serialize() == {"all": {}}
-    assert gated(Animal.where(Animal.all)).serialize() == gated(Animal.where()).serialize()
+    assert preflighted(Dog.where(dogs)).serialize() == {"all": {}}
+    assert (
+        preflighted(Animal.where(Animal.all)).serialize() == preflighted(Animal.where()).serialize()
+    )
 
 
 def test_a_member_named_all_collides_with_the_query_root() -> None:
@@ -567,6 +579,20 @@ def test_a_member_named_all_collides_with_the_query_root() -> None:
     assert caught.value.code == "entity-reserved-member-name"
 
 
+def test_a_declared_class_body_admits_no_stray_query_root_descriptor() -> None:
+    # The `ignored_types` exemption that lets `Entity`'s own body bind the
+    # descriptor reaches that framework root alone. A declared class body carries
+    # members, so binding the same descriptor there under any other name is
+    # refused as the unannotated attribute it is, rather than quietly becoming a
+    # second, undeclared spelling of the query root.
+    query_root = Entity.__dict__["all"]
+    with pytest.raises(PydanticUserError, match="non-annotated attribute"):
+
+        class _Stray(Entity, table="stray", namespace=_NS):  # pyright: ignore[reportUnusedClass] - class creation itself is the rejection, so nothing binds
+            id: Attr[int] = attr(primary_key=True)
+            everything = query_root
+
+
 # --------------------------------------------------------------------------- #
 # Relationship paths: covariant in the source they start from and the target   #
 # they reach                                                                   #
@@ -579,7 +605,7 @@ def test_a_descendants_path_is_a_legal_include_source_of_its_ancestors_query() -
     # path-ROOT guard says, so the query accepts it and the guard resolves inside
     # the position.
     source: RelationshipPath[Beast, Any] = Hound.keeper
-    assert gated(Beast.where().include(source), _BESTIARY).serialize() == {
+    assert preflighted(Beast.where().include(source), _BESTIARY).serialize() == {
         "deepFetch": {
             "operand": {"all": {}},
             "paths": [
@@ -598,7 +624,7 @@ def test_an_ancestors_path_is_not_an_include_source_of_a_descendants_query() -> 
     # contain.
     source: RelationshipPath[Hound, Any] = Beast.keeper  # pyright: ignore[reportAssignmentType]
     with pytest.raises(OperationRejectedError) as caught:
-        gated(Hound.where().include(source), _BESTIARY)
+        preflighted(Hound.where().include(source), _BESTIARY)
     assert caught.value.rule == "narrow-outside-position"
 
 
@@ -607,7 +633,7 @@ def test_an_unrelated_entitys_path_is_never_an_include_source() -> None:
     # half of `Order.where(...).include(Customer.notes)`.
     source: RelationshipPath[Beast, Any] = Keeper.beasts  # pyright: ignore[reportAssignmentType]
     with pytest.raises(OperationRejectedError) as caught:
-        gated(Beast.where().include(source), _BESTIARY)
+        preflighted(Beast.where().include(source), _BESTIARY)
     assert caught.value.rule == "narrow-outside-position"
 
 
@@ -617,7 +643,7 @@ def test_a_hop_narrowed_to_a_descendant_stands_where_the_broad_hop_does() -> Non
     # broad one does not satisfy the narrowed position.
     narrowed: RelationshipPath[Keeper, Beast] = Keeper.beasts.narrow(Hound)
     broad: RelationshipPath[Keeper, Hound] = Keeper.beasts  # pyright: ignore[reportAssignmentType]
-    assert gated(Keeper.where().include(narrowed), _BESTIARY).serialize() == {
+    assert preflighted(Keeper.where().include(narrowed), _BESTIARY).serialize() == {
         "deepFetch": {
             "operand": {"all": {}},
             "paths": [{"segments": [{"rel": "Keeper.beasts", "narrow": {"to": ["Hound"]}}]}],
@@ -631,7 +657,7 @@ def test_a_hop_narrows_only_to_subtypes_of_what_it_points_at() -> None:
     # receiver's own target rather than by a type-parameter bound, which may not
     # itself be generic.
     with pytest.raises(OperationRejectedError) as caught:
-        gated(
+        preflighted(
             Keeper.where().include(Keeper.beasts.narrow(Badge)),  # pyright: ignore[reportArgumentType]
             _BESTIARY,
         )
@@ -665,7 +691,7 @@ def test_a_relationship_hop_past_the_first_erases_and_the_gate_refuses_it() -> N
     # reaches no class for, so nothing about it is typed — no suppression belongs
     # on this line — and the model states the whole rule at the gate.
     with pytest.raises(ValueError, match="names no declared relationship on Beast"):
-        gated(Keeper.where().include(Keeper.beasts.no_such_hop), _BESTIARY)
+        preflighted(Keeper.where().include(Keeper.beasts.no_such_hop), _BESTIARY)
 
 
 def test_an_authored_chain_stops_at_the_second_hop() -> None:
@@ -687,7 +713,9 @@ def test_a_value_object_member_past_the_occurrence_erases() -> None:
     # foreign-Entity nested predicate is still refused statically, while the
     # member's own existence is a model question the gate answers.
     with pytest.raises(OperationRejectedError) as caught:
-        gated(SnapOrderStatus.where(SnapOrderStatus.primary_tag.no_such_member == "x"), _ORDERS)
+        preflighted(
+            SnapOrderStatus.where(SnapOrderStatus.primary_tag.no_such_member == "x"), _ORDERS
+        )
     assert caught.value.rule == "nested-path-unknown-member"
 
 
@@ -704,7 +732,7 @@ def test_a_narrow_inside_a_quantifier_must_name_the_relationship_target_exactly(
     # contravariant parameter while the rule refuses it: relationship scope does
     # not clamp.
     with pytest.raises(OperationRejectedError) as caught:
-        gated(AnimalOwner.where(AnimalOwner.pets.any(Animal.narrow(Dog))))
+        preflighted(AnimalOwner.where(AnimalOwner.pets.any(Animal.narrow(Dog))))
     assert caught.value.rule == "narrow-outside-relationship-target"
 
 
@@ -713,5 +741,5 @@ def test_a_narrow_to_a_class_the_position_excludes_is_refused_at_the_gate() -> N
     # parameter's bound may not itself be generic, so the narrowed subtypes
     # cannot be bounded by the narrowing position.
     with pytest.raises(OperationRejectedError) as caught:
-        gated(Animal.where(Animal.narrow(AnimalOwner)))
+        preflighted(Animal.where(Animal.narrow(AnimalOwner)))
     assert caught.value.rule == "narrow-outside-position"

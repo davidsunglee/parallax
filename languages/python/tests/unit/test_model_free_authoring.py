@@ -123,6 +123,29 @@ def test_connect_refuses_a_model_that_composed_no_entity_class() -> None:
     assert caught.value.code == "snapshot-class-backed-model-required"
 
 
+def test_connect_refuses_a_bare_accepted_metamodel() -> None:
+    # The other way the runtime narrowing can fail. `__init__` still admits a
+    # bare accepted Metamodel for the neutral write lanes, so `connect` — the
+    # developer entry point — must answer it with the same connection refusal
+    # rather than by reaching for a class index it does not have.
+    with pytest.raises(SnapshotConnectionError) as caught:
+        Database.connect(NoIoPort(), model_of(WIDGETS), clock=FixedClock(FIXED))  # pyright: ignore[reportArgumentType] - the runtime narrowing is what this proves
+    assert caught.value.code == "snapshot-class-backed-model-required"
+
+
+def test_a_bare_metamodel_database_refuses_a_read_before_it_resolves_the_target() -> None:
+    # The connection refusal precedes preflight on BOTH entry points. A Database
+    # that cannot materialize a Snapshot answers that first, so a query this
+    # model also does not declare still reports the connection rather than the
+    # target.
+    port = RecordingPort()
+    database = Database(port, model_of(WIDGETS), clock=FixedClock(FIXED))
+    with pytest.raises(SnapshotConnectionError) as caught:
+        database.find(Gizmo.where(Gizmo.id == 1))
+    assert caught.value.code == "snapshot-class-backed-model-required"
+    assert port.ops == []
+
+
 def test_a_bare_metamodel_database_serves_writes_and_refuses_a_modeled_read() -> None:
     # The first-party neutral form the conformance adapter constructs: the write
     # lanes name Entities rather than classes, so they run, while a read that
@@ -169,6 +192,15 @@ def _boundary_verdict(member: str, value: object) -> str | None:
     return None
 
 
+def _copy_verdict(member: str, value: object) -> str | None:
+    """The same, through ``model_copy(update=...)``'s own name resolution."""
+    try:
+        Widget(id=1, label="x", version=1).model_copy(update={member: value})
+    except ModelCopyError as error:
+        return str(error)
+    return None
+
+
 @pytest.mark.parametrize(
     ("member", "value"),
     [
@@ -181,21 +213,26 @@ def _boundary_verdict(member: str, value: object) -> str | None:
         pytest.param("label", "x", id="accepted"),
     ],
 )
-def test_the_typed_path_and_the_write_boundary_reach_one_verdict(
-    member: str, value: object
-) -> None:
-    # Only the resolution in front of the judgement differs between the two
-    # callers, so both reach the same verdict AND render it identically — which
-    # is what "one validator, two callers" means once the model has disappeared
-    # from one of them.
+def test_every_assignment_surface_reaches_one_verdict(member: str, value: object) -> None:
+    # Only the resolution in front of the judgement differs between the three
+    # callers, so all of them reach the same verdict AND render it identically —
+    # which is what "one validator" means once the model has disappeared from
+    # two of them. `model_copy` is in this comparison because an edited copy
+    # becomes a write: a rule it does not apply is a rule the write path is
+    # entered around.
     assert _typed_verdict(member, value) == _boundary_verdict(member, value)
+    assert _copy_verdict(member, value) == _boundary_verdict(member, value)
 
 
-def test_both_callers_classify_a_read_only_member_the_same_way() -> None:
+def test_every_surface_classifies_a_read_only_member_the_same_way() -> None:
     # The rule the Python specification states and the implementation never
-    # applied. It lands in the extracted judgement, so one edit gave it to both.
+    # applied. It lands in the extracted judgement, so one edit gave it to all
+    # three surfaces, including the edited copy that would otherwise carry a
+    # changed read-only value into `tx.update`.
     with pytest.raises(ModelCopyError, match="read-only fields may not be assigned"):
         Widget.computed.set("x")
+    with pytest.raises(ModelCopyError, match="read-only fields may not be assigned"):
+        Widget(id=1, label="x", version=1).model_copy(update={"computed": "x"})
     with pytest.raises(WriteAssignmentError) as caught:
         validate_write_assignment(model_of(WIDGETS), WIDGETS.meta(Widget), "computed", "x")
     assert caught.value.rule == "read-only"

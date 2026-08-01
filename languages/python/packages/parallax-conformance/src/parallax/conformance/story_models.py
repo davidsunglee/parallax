@@ -4,7 +4,7 @@ Mirrors ``models/account.yaml``, ``models/wallet.yaml``, ``models/position.yaml`
 and the FULL ``models/orders.yaml`` family (``Order`` / ``OrderItem`` /
 ``OrderStatus`` / ``OrderTag`` / ``OrderNote``, every declared relationship
 included), each
-composed into the sealed hub named for its corpus model. ``Order`` / ``OrderItem``
+composed into the Domain Model named for its corpus model. ``Order`` / ``OrderItem``
 carry the family's full relationship set so the SAME classes serve the API
 Conformance Suite's navigate / deep-fetch / snapshot-graph examples and stories.
 

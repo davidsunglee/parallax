@@ -2,7 +2,7 @@
 
 Every module in the cluster may depend on this one; it depends on none of them,
 imports only the standard library and class-free core identity values, and
-retains structured values rather than classes, hubs, or declarations.
+retains structured values rather than classes, models, or declarations.
 Rejections carry a stable code drawn from a closed per-family set, so a caller
 branches on the rule that fired rather than on a message substring.
 
@@ -138,8 +138,15 @@ class UnloadedRelationshipError(AttributeError):
 
 
 class ModelCopyError(TypeError):
-    """A ``model_copy(update=...)`` call names an unassignable member (spec §3):
-    unknown, primary-key, framework-owned, or a relationship."""
+    """An assignment the §3 rule family refuses, whichever surface authored it.
+
+    Two surfaces raise it, because the rules are one set: ``model_copy(update=
+    ...)`` and ``Attr.set(...)``. A name that reaches no assignable member —
+    unknown or a relationship — is refused by the surface itself; every other
+    refusal is the shared assignment judgement's, so this class equally carries a
+    primary-key, read-only, or framework-owned target, a value that does not
+    match the member's declared type, and a cleared member that is not nullable.
+    """
 
 
 class ProvenanceError(ValueError):

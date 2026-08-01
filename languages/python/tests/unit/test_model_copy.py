@@ -254,5 +254,5 @@ def test_model_copy_still_validates_an_explicitly_touched_axis_field() -> None:
         tx_start=dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
         tx_end=INFINITY,
     )
-    with pytest.raises(ValueError, match="tx_end"):
+    with pytest.raises(ModelCopyError, match="tx_end"):
         balance.model_copy(update={"tx_end": "not-a-datetime"})

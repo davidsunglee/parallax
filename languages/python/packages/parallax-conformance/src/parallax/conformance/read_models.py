@@ -9,13 +9,14 @@ abstract subtype and a polymorphic owner), the non-owner portion of
 ``Bitemporal`` base because temporal shape is family-wide and root-owned), and
 ``models/person.yaml`` (a one-to-one dependent relationship).
 
-Each family is composed into its own sealed hub here, named for the corpus model
-it mirrors, because an Entity Class belongs to exactly one hub for its lifetime:
-the descriptor no-drift guard, the API-suite read stories, and the unit lane all
-compose the same hub rather than a second one over the same classes. The animal
+Each family is composed into its own Domain Model here, named for the corpus
+model it mirrors, so the descriptor no-drift guard, the API-suite read stories,
+and the unit lane all reach one composition per corpus model. A class may
+participate in any number of Domain Models, so this is a convenience the readers
+share rather than a rule any of them could break. The animal
 family is the one exception — ``models/animal.yaml`` also declares the
 polymorphic owner ``Person``, whose canonical name collides with this module's
-own ``Person`` (``models/person.yaml``), so the owner and the family's hub live
+own ``Person`` (``models/person.yaml``), so the owner and the family's model live
 together in :mod:`parallax.conformance.animal_owner`.
 
 Owned by ``parallax.conformance`` rather than by the test suite because
@@ -165,8 +166,8 @@ DOCUMENT_MODEL = DomainModel(Document, FinancialDocument, Invoice, Receipt, Memo
 
 # --------------------------------------------------------------------------- #
 # Animal: table-per-hierarchy (models/animal.yaml). The family's polymorphic   #
-# owner and the hub composing them both live in `animal_owner` (this module's  #
-# own docstring).                                                              #
+# owner and the model composing them both live in `animal_owner` (this         #
+# module's own docstring).                                                     #
 # --------------------------------------------------------------------------- #
 class Animal(
     Entity,
@@ -177,8 +178,8 @@ class Animal(
     id: Attr[int] = attr(primary_key=True)
     name: Attr[str] = attr(max_length=32)
     owner_id: Attr[int | None]
-    # A relationship target is read as a SPELLING and resolved in the hub's own
-    # candidate set, so this names `animal_owner.Person` — the owner
+    # A relationship target is read as a SPELLING and resolved in the composed
+    # model's own candidate set, so this names `animal_owner.Person` — the owner
     # `models/animal.yaml` declares — never this module's unrelated `Person`
     # (`models/person.yaml`), which shares only the canonical name.
     owner: Rel["Person | None"] = rel(reverse_of="animals")

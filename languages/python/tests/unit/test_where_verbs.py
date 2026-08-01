@@ -107,14 +107,15 @@ def test_set_on_a_scalar_passes_a_plain_literal_through_unchanged() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Assignability and declared-type agreement are model facts, and an Attribute   #
-# Expression built from a bound class carries its hub's Metamodel Binding, so   #
-# `.set(...)` applies the SAME shared rule the engine/serialized path applies   #
-# to a case-authored predicate-write assignment                                 #
-# (`~parallax.core.inheritance.validate_write_assignment`, the "one validator,  #
-# two callers" pattern; `test_write_instructions.py` is the other caller).      #
-# The rejection is spelled `ModelCopyError` because §5's assignment rules are   #
-# one family with `model_copy`'s own `update=` rules (§3), which raise it.      #
+# Assignability and declared-type agreement are facts of the MEMBER, not of a   #
+# whole model, and an Attribute Expression built from a class carries the       #
+# member's own declared Metadata — so `.set(...)` reaches the SAME judgement    #
+# (`~parallax.core.metamodel.judge_assignment`) the engine/serialized path      #
+# reaches for a case-authored predicate-write assignment, and `model_copy`      #
+# reaches for an edited copy. Only the resolution in front of it differs        #
+# (`test_write_instructions.py` and `test_model_free_authoring.py` are the      #
+# other callers). The rejection is spelled `ModelCopyError` because §5's        #
+# assignment rules are one family with `model_copy`'s own `update=` rules (§3). #
 # --------------------------------------------------------------------------- #
 def test_set_on_a_primary_key_attribute_raises() -> None:
     with pytest.raises(ModelCopyError, match="primary-key fields may not be assigned"):

@@ -244,12 +244,16 @@ class Database:
         (inject a fixed clock in tests).
 
         ``model`` narrows to a class-backed Domain Model statically and at run
-        time alike: a descriptor-backed one raises
+        time alike, and the runtime narrowing answers both ways it can fail with
+        one refusal: a descriptor-backed Domain Model composes no Entity Class,
+        and a bare accepted Metamodel — the neutral write-lane form
+        :meth:`__init__` still admits — has no class index to ask for at all.
+        Both raise
         :class:`~parallax.snapshot.handle._errors.SnapshotConnectionError` here,
         before the adapter is inspected. One model connects to any number of
         Databases, and one Entity Class participates in any number of models.
         """
-        if class_index(model) is None:
+        if not isinstance(model, DomainModel) or class_index(model) is None:  # pyright: ignore[reportUnnecessaryIsInstance] - the runtime half of the same narrowing: an untyped caller reaches this with the bare Metamodel `__init__` admits
             raise SnapshotConnectionError(
                 "a Snapshot materializes Entity Class instances, so connect() takes a "
                 "class-backed DomainModel (snapshot-class-backed-model-required); the model "
@@ -272,10 +276,14 @@ class Database:
         own binding (``snapshot: Snapshot[Order] = db.find(...)``) for static
         typing.
         """
+        # The connection refusal precedes preflight, exactly as it does on
+        # `Transaction.find`: a Database that cannot materialize a Snapshot at
+        # all answers that before it answers anything about this query, so the
+        # two entry points refuse a classless connection in the same order.
+        classes = self._connected.materializing()
         lowered = preflight_find(statement, model=self._meta)
         target, op = lowered.target, lowered.operation
         pin = deep_fetch_statement_pin(op, declaring_metadata(self._meta, lowered.root))
-        classes = self._connected.materializing()
         if is_milestone_set_op(op):
             history_result = find_history(op, self._meta, self._dialect, target, self._port)
             return snapshot_from_history_result(history_result, target, self._meta, classes)

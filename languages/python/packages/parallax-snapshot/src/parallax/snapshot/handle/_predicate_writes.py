@@ -98,20 +98,32 @@ def buffer_predicate(
        write target only as a bare statement") — one carrying nothing but
        a predicate; every other clause is rejected (`EntityStatement.
        is_bare`, subsuming ``.distinct()``).
-    2. **Inheritance rejection** (`m-inheritance` "Per-object writes are
+    2. **Target resolution, then operation validation** — the selecting
+       predicate is a canonical ``m-op-algebra`` operation and is measured
+       against the connected model from its own resolved root, the SAME
+       ``validate_operation`` vocabulary a read's
+       :func:`~parallax.snapshot.handle._preflight.preflight_find` applies
+       and in the SAME order. Authoring reaches no model, so this is the
+       only place the whole-model rules — an attribute reference outside
+       the active position, an ambiguous Entity spelling, an inverted
+       ``between`` window, a literal disagreeing with its member's declared
+       type — are enforced on a predicate-selected write. It runs here, at
+       build, so a rejection precedes every buffer and the resolving read's
+       own force-flush.
+    3. **Inheritance rejection** (`m-inheritance` "Per-object writes are
        keyed; set-based inheritance writes are out of scope") — BEFORE any
        SQL, the SAME ``subtype-write-set-based-unsupported`` classification
        a keyless keyed write raises.
-    3. **Valid-Time-bound validation** — a Bitemporal target requires
+    4. **Valid-Time-bound validation** — a Bitemporal target requires
        ``valid_from``; a Transaction-Time-Only or non-temporal target takes none; the
        ``*Until`` forms additionally require ``until``, with
        ``valid_from < until`` — an equal or reversed window rejects
        HERE, at build, before any buffering (:func:`validate_until`).
-    4. **Build + validate the canonical instruction** (the SAME
+    5. **Build + validate the canonical instruction** (the SAME
        deserialize/`validate_instruction` round trip a keyed write buys in
        ``Transaction._buffer`` — non-empty/no-duplicate assignments are the
        schema's own check).
-    5. **Dispatch**: an unversioned, non-temporal target buffers READLESS
+    6. **Dispatch**: an unversioned, non-temporal target buffers READLESS
        (one statement, `m-batch-write`); a versioned or temporal one
        MATERIALIZES (``_materialize_predicate_write``, ADR 0014).
     """
@@ -122,6 +134,7 @@ def buffer_predicate(
             "as_of_range / narrow / include are all rejected on a write target (python.md §5)"
         )
     entity = entity_of(meta, statement.target)
+    op_algebra.validate_operation(entity, statement.predicate, meta)
     inheritance.reject_predicate_write(entity)
     declaring_entity = declaring(meta, entity)
     valid_from_literal = validate_valid_from(declaring_entity, mutation, valid_from)

@@ -68,13 +68,13 @@ def _final_find_expect_rows(case_id: str) -> list[dict[str, Any]]:
 
 
 def _reset_for(case_id: str, provisioner: Any) -> DomainModel:
-    """Provision one case's schema and fixtures, and answer the hub to connect with.
+    """Provision one case's schema and fixtures, and answer the model to connect with.
 
-    The schema comes from the case's own corpus model and the hub from the class
-    family mirroring it: the two are structurally identical (the descriptor
-    no-drift guard is the proof), and only the class-backed hub carries the
-    Metamodel Binding a story's own observing find needs to materialize typed
-    instances.
+    The schema comes from the case's own corpus model and the Domain Model from
+    the class family mirroring it: the two are structurally identical (the
+    descriptor no-drift guard is the proof), and only the class-backed model
+    carries the class index a story's own observing find needs to materialize
+    typed instances.
     """
     case = _CASES[case_id]
     provisioner.reset(engine.load_case_metamodel(case), case_fixtures(case))
