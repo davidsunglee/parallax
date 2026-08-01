@@ -552,8 +552,12 @@ class Transaction:
         )
 
     def _buffer_predicate_instruction(self, instruction: PredicateWrite) -> None:
-        """Buffer an ALREADY-BUILT, already-validated predicate write
-        (:func:`~parallax.snapshot.handle._predicate_writes.buffer_predicate_instruction`).
+        """Buffer an ALREADY-BUILT predicate write
+        (:func:`~parallax.snapshot.handle._predicate_writes.buffer_predicate_instruction`),
+        which the caller has already passed through
+        :func:`~parallax.core.unit_work.instructions.validate_instruction`
+        against this transaction's own model — the single model-aware gate
+        covering the selecting predicate as well as the assignments.
 
         This method is a FROZEN external seam, not an ordinary private helper:
         the conformance engine's predicate-write translation calls it directly
@@ -562,8 +566,7 @@ class Transaction:
         (`m-case-format` "predicate-shaped case entries deserialize to
         PredicateWrite through the existing serde and
         buffer through Transaction's own seam"). The typed ``_where`` verbs
-        above and the engine converge on the SAME free function below, so the
-        two callers can never diverge in behavior.
+        above and the engine converge on the SAME free function below.
         """
         buffer_predicate_instruction(self._uow, self._meta, self._conn, self._dialect, instruction)
 

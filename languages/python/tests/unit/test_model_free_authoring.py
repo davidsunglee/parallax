@@ -1,12 +1,11 @@
-"""What lifting the one-model-per-class rule buys, and what still refuses.
+"""What composition binds, and what a model still refuses.
 
 Composing an Entity Class into a Domain Model binds nothing, so the same class
 participates in as many models as compose it, one model connects to as many
 Databases as connect to it, and query authoring reaches no model at all. Those
-are the properties this suite pins, together with the two refusals that replace
-the ones the claim rule was providing: a model that names no Entity Class cannot
-serve a Snapshot, and a query target the connected model does not declare is
-refused before any I/O.
+are the properties this suite pins, together with the two refusals a model does
+own: a model that names no Entity Class cannot serve a Snapshot, and a query
+target the connected model does not declare is refused before any I/O.
 
 The assignment half is here too. Extracting the judgement is what lets the typed
 path state its whole rule without a model, so the parity between it and the
@@ -47,8 +46,8 @@ class Gizmo(Entity, table="gizmo", namespace=_NS):
     id: Attr[int] = attr(primary_key=True)
 
 
-# The SAME `Widget` class object composed into two models, which is what the
-# claim rule made unconstructible.
+# The SAME `Widget` class object composed into two models: a class names an
+# Entity of every model that composed it, so both of these are authoritative.
 WIDGETS = DomainModel(Widget)
 WIDGETS_AND_GIZMOS = DomainModel(Widget, Gizmo)
 
@@ -172,7 +171,7 @@ def test_a_bare_metamodel_transaction_refuses_a_read_before_it_can_force_flush()
 
 
 # --------------------------------------------------------------------------- #
-# One judgement, two callers                                                   #
+# One judgement, three callers                                                 #
 # --------------------------------------------------------------------------- #
 def _typed_verdict(member: str, value: object) -> str | None:
     """What ``.set(...)`` says about ``value``, or absence — the member alone."""

@@ -1,7 +1,7 @@
 [project]
 name = "parallax-core"
 version = "0.1.0"
-description = "Parallax common runtime: the class-free engine spine (metamodel hub, op-algebra, SQL lowering, unit of work, abstract database port)."
+description = "Parallax common runtime: the class-free engine spine (domain model, op-algebra, SQL lowering, unit of work, abstract database port)."
 readme = "README.md"
 requires-python = ">=3.12"
 license = "Apache-2.0"

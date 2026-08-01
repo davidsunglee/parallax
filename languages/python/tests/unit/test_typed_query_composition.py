@@ -147,7 +147,8 @@ _BESTIARY = DomainModel(Keeper, Badge, Beast, Hound, Feline)
 
 
 def preflighted(statement: Statement, models: DomainModel = _ANIMALS) -> Statement:
-    """``statement`` after the shared read preflight accepted it against ``models``.
+    """``statement`` after the shared read preflight accepted it against ``models``,
+    which defaults to the animal composition every composition case is written over.
 
     Runs exactly what executing the statement would run before any I/O, and
     answers the statement itself so a case can go on to assert its canonical

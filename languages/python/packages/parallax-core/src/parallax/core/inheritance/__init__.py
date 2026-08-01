@@ -307,8 +307,9 @@ def validate_write_assignment(
     write-side member-name resolution. The verdict itself — assignability,
     nullability, declared-type conformance, and Value Object document shape — is
     :func:`~parallax.core.metamodel.judge_assignment`'s, the one judgement the
-    typed ``.set(...)`` path reaches without a model at all. Only the resolution
-    in front of it differs between the two callers, never the rule.
+    typed ``.set(...)`` path and ``Entity.model_copy(update=...)`` both reach
+    without a model at all. Only the resolution in front of it differs between
+    the three callers, never the rule.
 
     The judgement names the member relative to its own owner, so this caller
     prefixes the addressed Entity: an assignment reported here reads

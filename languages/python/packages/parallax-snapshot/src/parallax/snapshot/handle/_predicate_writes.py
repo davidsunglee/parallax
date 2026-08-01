@@ -89,41 +89,41 @@ def buffer_predicate(
     valid_from: dt.datetime | None,
     until: dt.datetime | None = None,
 ) -> None:
-    """The neutral seam every ``_where`` verb shares — the SAME seam the
-    conformance engine's predicate-write translation drives, so the
-    developer-facing verbs and the corpus-driven
-    engine path can never diverge in behavior.
+    """The typed-authoring entry to the predicate-write lane: it turns a bare
+    :class:`~parallax.core.entity.Statement` plus typed ``Attr.set(...)``
+    assignments into the canonical
+    :class:`~parallax.core.unit_work.PredicateWrite` the conformance engine
+    builds directly from a case document, then hands it to the shared
+    :func:`buffer_predicate_instruction` seam. Every model-aware rule lives on
+    the far side of that hand-off (step 4), so the two ingresses cannot diverge
+    on what they reject.
 
     1. **Bare-statement guard** (`python.md` §5 "A statement becomes a
        write target only as a bare statement") — one carrying nothing but
        a predicate; every other clause is rejected (`EntityStatement.
-       is_bare`, subsuming ``.distinct()``).
-    2. **Target resolution, then operation validation** — the selecting
-       predicate is a canonical ``m-op-algebra`` operation and is measured
-       against the connected model from its own resolved root, the SAME
-       ``validate_operation`` vocabulary a read's
-       :func:`~parallax.snapshot.handle._preflight.preflight_find` applies
-       and in the SAME order. Authoring reaches no model, so this is the
-       only place the whole-model rules — an attribute reference outside
-       the active position, an ambiguous Entity spelling, an inverted
-       ``between`` window, a literal disagreeing with its member's declared
-       type — are enforced on a predicate-selected write. It runs here, at
-       build, so a rejection precedes every buffer and the resolving read's
-       own force-flush.
-    3. **Inheritance rejection** (`m-inheritance` "Per-object writes are
-       keyed; set-based inheritance writes are out of scope") — BEFORE any
-       SQL, the SAME ``subtype-write-set-based-unsupported`` classification
-       a keyless keyed write raises.
-    4. **Valid-Time-bound validation** — a Bitemporal target requires
+       is_bare`, subsuming ``.distinct()``). Typed-only: the canonical
+       instruction has no clause to carry.
+    2. **Target resolution and inheritance rejection** (`m-inheritance`
+       "Per-object writes are keyed; set-based inheritance writes are out of
+       scope") — BEFORE any SQL, the SAME
+       ``subtype-write-set-based-unsupported`` classification a keyless keyed
+       write raises.
+    3. **Valid-Time-bound validation** — a Bitemporal target requires
        ``valid_from``; a Transaction-Time-Only or non-temporal target takes none; the
        ``*Until`` forms additionally require ``until``, with
        ``valid_from < until`` — an equal or reversed window rejects
        HERE, at build, before any buffering (:func:`validate_until`).
-    5. **Build + validate the canonical instruction** (the SAME
+       Typed-only: the ``dt.datetime`` arguments are normalized to the
+       instruction's own instant literals here.
+    4. **Build + validate the canonical instruction** (the SAME
        deserialize/`validate_instruction` round trip a keyed write buys in
        ``Transaction._buffer`` — non-empty/no-duplicate assignments are the
-       schema's own check).
-    6. **Dispatch**: an unversioned, non-temporal target buffers READLESS
+       schema's own check). ``validate_instruction`` is where the whole
+       ``validate_operation`` vocabulary reaches the selecting predicate, so an
+       inverted ``between`` window or an attribute outside the active position
+       is refused here, at build, before every buffer and before the resolving
+       read's own force-flush.
+    5. **Dispatch**: an unversioned, non-temporal target buffers READLESS
        (one statement, `m-batch-write`); a versioned or temporal one
        MATERIALIZES (``_materialize_predicate_write``, ADR 0014).
     """
@@ -134,7 +134,6 @@ def buffer_predicate(
             "as_of_range / narrow / include are all rejected on a write target (python.md §5)"
         )
     entity = entity_of(meta, statement.target)
-    op_algebra.validate_operation(entity, statement.predicate, meta)
     inheritance.reject_predicate_write(entity)
     declaring_entity = declaring(meta, entity)
     valid_from_literal = validate_valid_from(declaring_entity, mutation, valid_from)
@@ -173,15 +172,22 @@ def buffer_predicate_instruction(
     conformance engine's own predicate-write translation (`m-case-format`
     "predicate-shaped case entries deserialize
     to PredicateWrite through the existing serde and buffer through
-    Transaction's own seam"): given an ALREADY-BUILT, already-validated
+    Transaction's own seam"): given an ALREADY-BUILT
     :class:`~parallax.core.unit_work.PredicateWrite` instruction, reject an
     inheritance-family target (`m-inheritance`), then dispatch READLESS
     (`m-batch-write`) or MATERIALIZE (`m-opt-lock`, ADR 0014). The typed
     ``_where`` verbs (:func:`buffer_predicate`) build ``instruction`` from
     a bare :class:`~parallax.core.entity.Statement` plus typed
     ``Attr.set(...)`` assignments first; the engine builds it directly
-    from the case's own canonical write-instruction document — both
-    converge HERE, so the two callers can never diverge in behavior.
+    from the case's own canonical write-instruction document.
+
+    **Every caller passes ``instruction`` through
+    :func:`~parallax.core.unit_work.instructions.validate_instruction` against
+    ``meta`` first**, which is where the model-aware rules — member-name
+    honesty, assignability, and the whole ``validate_operation`` vocabulary over
+    the selecting predicate — are stated once for both ingresses. This seam
+    itself performs only the inheritance rejection, because that rejection is
+    about the SNAPSHOT-level dispatch it is about to make.
 
     ``Transaction._buffer_predicate_instruction`` is the thin method that
     delegates here. It keeps its leading underscore and its exact signature

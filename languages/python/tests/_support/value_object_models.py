@@ -49,4 +49,5 @@ class Customer(Entity, table="customer", namespace=_NS):
 
 
 CUSTOMER_MODEL = DomainModel(Customer)
-"""``models/customer.yaml``'s Customer alone — the Value Object examples' hub."""
+"""``models/customer.yaml``'s Customer alone — the Domain Model the Value Object
+examples are executed against."""

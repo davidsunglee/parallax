@@ -21,7 +21,7 @@ from types import MappingProxyType
 from typing import Any, cast
 
 import pytest
-from _transact_support import BALANCE as BALANCE_HUB
+from _transact_support import BALANCE as BALANCE_MODEL
 from _transact_support import WHERE_POSITION_META, RecordingPort, WherePosition, db_for
 
 # The module itself, not a name from it: the call-count regression below
@@ -952,7 +952,7 @@ def test_a_temporal_materializing_update_eliminates_a_no_op_row_and_chains_the_r
             mm.Balance.where(mm.Balance.value < 1_000_000.00), mm.Balance.value.set(Decimal("5.00"))
         )
 
-    db_for(BALANCE_HUB, port).transact(fn, concurrency="optimistic")
+    db_for(BALANCE_MODEL, port).transact(fn, concurrency="optimistic")
     writes = [op for op in port.ops if op[0] == "write"]
     # Row 1 already holds the assigned value and is streamed out before it
     # ever reaches a column builder; only row 2's close + chain reach the
@@ -968,5 +968,5 @@ def test_a_temporal_materializing_update_with_every_row_a_no_op_buffers_nothing(
             mm.Balance.where(mm.Balance.value < 1_000_000.00), mm.Balance.value.set(Decimal("5.00"))
         )
 
-    db_for(BALANCE_HUB, port).transact(fn, concurrency="optimistic")
+    db_for(BALANCE_MODEL, port).transact(fn, concurrency="optimistic")
     assert not any(op[0] == "write" for op in port.ops)

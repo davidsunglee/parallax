@@ -400,7 +400,21 @@ def _emit_bounds(body: dict[str, object], valid_from: str | None, until: str | N
 # Member-name honesty (metamodel-aware build-time validator).                  #
 # --------------------------------------------------------------------------- #
 def validate_instruction(instruction: WriteInstruction, model: AcceptedMetamodel) -> None:
-    """Validate an instruction's member names against the metamodel.
+    """Validate an instruction against the metamodel: its selecting predicate,
+    then its member names.
+
+    A predicate-selected instruction's ``target.predicate`` is measured with the
+    WHOLE ``validate_operation`` vocabulary from its own resolved root — an
+    attribute reference outside the active position, an ambiguous Entity
+    spelling, an inverted ``between`` window, a literal disagreeing with its
+    member's declared type (`m-case-format` "The model-aware validator validates
+    the predicate ..., checks entity scope and bare-predicate rules, [then]
+    rejects ... unassignable assignments"). Predicate scope is checked BEFORE the
+    assignments for that reason. This is the only model-aware gate every
+    predicate-write ingress shares — the typed ``_where`` verbs and the
+    conformance engine's own translation both reach the buffering seam through
+    here — so a rejection always precedes buffering, the materializing resolve,
+    and any SQL.
 
     A keyed write row key must name a declared attribute or value object of the
     entity — for an inheritance-family participant, ANCESTRY-EFFECTIVE: every
@@ -424,9 +438,11 @@ def validate_instruction(instruction: WriteInstruction, model: AcceptedMetamodel
     primary-key or framework-owned (version) target and any scalar value that
     does not conform to its declared neutral type
     (`python.md:667-676`/`m-case-format.md:700` -- the SAME classification a
-    `.set(...)`-built assignment is rejected with at build time,
-    `entity._expressions.AttributeExpr.set`; the "one validator, two callers"
-    pattern neither scope can otherwise share, `core/spec/modules.md` section 7 DAG).
+    `.set(...)`-built assignment and an `Entity.model_copy(update=...)` entry are
+    rejected with at build time (`entity._expressions.AttributeExpr.set`,
+    `entity._entity.Entity.model_copy`); one validator, three callers, which is
+    the sharing neither scope could otherwise reach across the
+    `core/spec/modules.md` section 7 DAG).
     """
     if isinstance(instruction, KeyedWrite):
         entity = _entity(model, instruction.entity)
@@ -439,6 +455,7 @@ def validate_instruction(instruction: WriteInstruction, model: AcceptedMetamodel
                 )
     else:
         entity = _entity(model, instruction.target.entity)
+        op_algebra.validate_operation(entity, instruction.target.predicate, model)
         members = _declared_members(model, entity)
         seen: set[str] = set()
         for assignment in instruction.assignments:

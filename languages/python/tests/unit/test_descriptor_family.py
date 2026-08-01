@@ -75,7 +75,7 @@ _INDEPENDENT_FAMILIES: Final[dict[str, Any]] = {
     ]
 }
 """Two families that share no ancestry, each rooted and each with its own
-strategy — the shape a hub model assembles from independently declared
+strategy — the shape a Domain Model assembles from independently declared
 families."""
 
 
