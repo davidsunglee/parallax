@@ -594,6 +594,26 @@ mutations, exceptions, or exports.
   further, and one that broadens back out (a `Cat` narrow inside a `Dog`
   scope) is rejected at build time (`narrow-outside-position`, the corpus's
   threaded-position rule).
+- **What a narrowing signature does not judge.** A type parameter's bound may
+  not itself be generic, so no narrowing form states statically that the
+  classes it names are subtypes of the position it narrows. Each form solves
+  its parameter from those classes and spends it on what the narrowing
+  *produces*: `Entity.narrow(*subtypes, where=...)` measures the scoped `where=`
+  against them, and `FindQuery.narrow(*subtypes)` moves the result parameter to
+  their union, so a subtype-declared Sort Key becomes applicable exactly where
+  the narrow makes it so. Neither can also constrain what the narrowing starts
+  *from*, and the two are mutually exclusive in one signature because `type[…]`
+  is covariant: a parameter naming the position accepts a descendant and
+  rejects an unrelated class but cannot name the narrowed result, while one
+  naming the result carries it and accepts anything. So
+  `Animal.narrow(Dog)` and `Order.narrow(Customer)` are alike accepted by the
+  checker, and an unrelated narrow target is refused by the model-aware rule
+  alone (`narrow-outside-position`) — a named, immediate refusal rather than a
+  wrong answer, and the one place this binding's static rejections have no
+  static half. Hop narrowing is the exception and keeps one:
+  `Owner.pets.narrow(Dog)` carries its bound on the **receiver** — the hop's own
+  target — which states the same rule without a generic bound, so
+  `narrow-outside-relationship-target` is refused in the editor as well.
 - **Temporal-read spelling.** Query-level and dimension-keyed, with Valid
   Time and Transaction Time as the only public vocabulary:
 
