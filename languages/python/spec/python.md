@@ -301,9 +301,13 @@ mutations, exceptions, or exports.
   `m-inheritance`, `m-deep-fetch`, `m-sql`, semantic validation, planning,
   compatibility cases, and claiming frontends atomically.
   `Entity.where(...)` requires at least one Predicate, as a required positional
-  parameter: `Entity.where()` is a static error and Python's own call binding
-  raises `TypeError`, while an argument sequence that is empty only after a
-  dynamic expansion raises `QueryDefinitionError(query-clause-invalid)`.
+  parameter, so the empty call is refused by the parameter rather than by a
+  clause rule: `Entity.where()` is a static error and Python's own call binding
+  raises `TypeError`. A dynamically expanded argument sequence is no different,
+  because expansion precedes binding — `Entity.where(*predicates)` over an empty
+  `predicates` binds no first argument and raises the same `TypeError`, never
+  reaching a Find Query. No `QueryDefinitionError` code answers an empty
+  `where(...)`.
   `Entity.all` is the
   non-callable, target-bound Predicate spelling an explicitly
   unfiltered query and lowers to the canonical `all` operation:
@@ -1700,10 +1704,13 @@ or descriptor authoring form and performs no audit stamping.
   or Database Port access. It never raises `QueryDefinitionError`. Whether an
   operation **scans an axis** is one `m-temporal-read` question with one
   answer, asked here and again by the executor dispatch that sends a scan to
-  the milestone-set read: a result-shaping directive lowering between the deep
+  the milestone-set read. The question is asked of the whole operation, not of
+  its outermost node: a result-shaping directive lowering between the deep
   fetch and the temporal wrapper — `.history().order_by(...).limit(...)
-  .include(...)` — is peeled by the same recognizer, so a directive can neither
-  hide the deferred Feature from this seam nor divert a scan away from the
+  .include(...)` — is peeled, and a bitemporal nest of one wrapper per
+  dimension is walked through, so one scanned dimension answers *scan* however
+  the other dimension is pinned. Neither a directive nor an enclosing pin can
+  hide the deferred Feature from this seam or divert a scan away from the
   milestone-set executor.
 - **Closed-world relationships.** An included to-one is the related node or
   `None` (loaded-null); an included to-many is a `tuple` (possibly empty —

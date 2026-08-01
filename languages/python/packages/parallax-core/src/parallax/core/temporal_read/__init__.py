@@ -586,22 +586,26 @@ def statement_pin(op: Operation, entity: EntityMetadata) -> Pin:
 
 
 def scans_an_axis(op: Operation) -> bool:
-    """Whether ``op`` SCANS a temporal axis (``asOfRange`` / ``history``) rather
-    than pinning it — the milestone-set read shape, and the negative half of
-    :func:`statement_pin`'s "a scan is not a pin" rule.
+    """Whether ``op`` SCANS ANY temporal axis (``asOfRange`` / ``history``)
+    rather than pinning every axis it names — the milestone-set read shape, and
+    the negative half of :func:`statement_pin`'s "a scan is not a pin" rule.
 
-    The sole answer to this question in the tree: the read executors dispatch a
-    milestone-set find on it, and the Snapshot deferred-feature seam classifies
-    ``snapshot-history-includes`` on it, so those two can never disagree about
-    which reads scan.
+    A read pins or unpins each dimension with its own wrapper, so a bitemporal
+    read nests one wrapper per dimension and the WHOLE nest decides: one scanned
+    dimension answers a milestone set however the other dimension is pinned, and
+    ``asOf(validTime, history(transactionTime, …))`` therefore scans.
 
     Directives are peeled first, so a scan stays a scan under any result-shaping
     wrapper. An outer ``deepFetch`` is deliberately NOT peeled: this scope takes
-    no ``m-deep-fetch`` edge, and the callers that must see through one hold the
-    graph-shaping question themselves.
+    no ``m-deep-fetch`` edge, so a caller composing the two holds the
+    graph-shaping question itself.
     """
-    core, _directives = _peel_directives(op)
-    return isinstance(core, (AsOfRange, History))
+    current, _directives = _peel_directives(op)
+    while isinstance(current, (AsOf, AsOfRange, History)):
+        if isinstance(current, (AsOfRange, History)):
+            return True
+        current = current.operand
+    return False
 
 
 def _peel_directives(op: Operation) -> tuple[Operation, list[Limit | OrderBy | Distinct]]:
@@ -610,12 +614,12 @@ def _peel_directives(op: Operation) -> tuple[Operation, list[Limit | OrderBy | D
     Returns the inner core and the peeled directive nodes outermost-first, so they
     can be rebuilt around the rewritten predicate.
 
-    The peeled set is ``m-op-algebra``'s row-preserving result directives —
-    ``limit`` / ``orderBy`` / ``distinct`` — read off the algebra rather than off
-    whichever clauses one authoring surface happens to offer. ``distinct`` is
-    peeled for that reason alone: the Python Find Query surface authors none
-    today, while a deserialized operation carries one, so dropping it would make
-    this walk answer a canonical operation wrongly.
+    The peeled set is ``m-op-algebra``'s closed set of row-preserving result
+    directives — ``limit`` / ``orderBy`` / ``distinct`` — read off the algebra
+    rather than off whichever clauses an authoring surface offers. ``distinct``
+    is peeled for that reason alone: every canonical operation reaches this
+    walk, including one deserialized rather than authored, so a member left
+    unpeeled would make the walk answer a legal operation wrongly.
     """
     directives: list[Limit | OrderBy | Distinct] = []
     current = op
