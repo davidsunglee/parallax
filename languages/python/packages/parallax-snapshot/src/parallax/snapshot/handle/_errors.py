@@ -7,11 +7,16 @@ nothing but the standard library, which is what lets the read-preflight seam
 enforcement scopes grant disjoint dependencies, so either importing the other
 would drag a scope the importer may not reach.
 
-That emptiness is load-bearing rather than incidental, so it is enforced rather
-than described: ``spec/python.md`` §7 gives this module its own child scope with
-a grant row of ``(none)``, and the generated import-linter contract therefore
-forbids every first-party scope outside this package. Any first-party import
-added here fails ``just python-check-imports``.
+That emptiness is load-bearing rather than incidental, so ``spec/python.md`` §7
+gives this module its own child scope with a grant row of ``(none)``. The
+generated import-linter contract forbids every first-party scope OUTSIDE
+``parallax.snapshot.handle``, which is the whole of what makes the two consumers
+legal: each may name this module only because reaching it reaches nothing they
+are not already granted. A sibling inside the package is the residue that
+contract cannot state — a ``forbidden`` row is package-scoped, so a child's row
+cannot name its own parent — and it is only harmless while the sibling named
+carries no first-party import of its own. Add nothing here without checking
+that; ``just python-check-imports`` proves the outside half, not that one.
 
 Every name here is spelled bare: privacy is carried by this MODULE's leading
 underscore and by the package's frozen ``__all__``, not by per-name underscores.

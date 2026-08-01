@@ -18,10 +18,12 @@ the §7 prose rows, the §7 fence, and :data:`SUPPORT_SCOPE_DEPS`. Editing any o
 of them alone fails generation, and so does editing two of them consistently
 while the third disagrees.
 
-A scope whose reason for existing is a boundary its own closure crosses — the
-read preflight seam and the Database Port — declares that boundary in
-:data:`CLOSURE_EXCLUSIONS`, which emits a second contract asking whether the
-scope NAMES the boundary, a question the complement of a closure cannot ask.
+A forbidden row is the complement of a *closure*, so a scope is never forbidden
+what its own grants reach transitively. A scope that exists in order to stay
+clear of some boundary therefore has to be granted narrowly enough that the
+boundary falls outside its closure — the read preflight seam grants the Entity
+statement submodule rather than the whole frontend for exactly that reason —
+rather than granted widely and excepted afterwards.
 
 The core conformance-family exception (``modules.md``) is encoded structurally:
 conformance scopes (``parallax.conformance.*``) are exempt on the *importing*
@@ -146,6 +148,20 @@ SUPPORT_SCOPE_DEPS: Mapping[str, frozenset[str]] = {
             "parallax.core._formation_profile",
         }
     ),
+    # The statement surface is scoped apart from the rest of the Entity frontend
+    # so a consumer that needs only `Statement` can grant only this, rather than
+    # the whole frontend and everything model formation drags behind it. It is
+    # the frontend's only member with no Hub-construction edge: nothing here
+    # reaches `parallax.core._formation_profile`, and therefore nothing here
+    # reaches a Database Port.
+    "parallax.core.entity.statement": frozenset(
+        {
+            "parallax.core.base",
+            "parallax.core.metamodel",
+            "parallax.core.op_algebra",
+            "parallax.core.temporal_read",
+        }
+    ),
     "parallax.snapshot.handle": frozenset(
         {
             "parallax.snapshot.materialize",
@@ -183,13 +199,15 @@ SUPPORT_SCOPE_DEPS: Mapping[str, frozenset[str]] = {
     # The read gate is scoped apart from its own package so the generated
     # contract proves what its module docstring claims: a preflight that resolves
     # a target and validates an operation names no SQL generation, no dialect, no
-    # Database Port, no deep-fetch planning and no materialization. Only the port
-    # is inside this row's own closure (`entity -> _formation_profile -> opt_lock
-    # -> unit_work -> db_port`), so it is the one target the complement cannot
-    # forbid and is declared in :data:`CLOSURE_EXCLUSIONS` instead.
+    # Database Port, no deep-fetch planning and no materialization. The grant is
+    # the statement submodule rather than the whole Entity frontend precisely so
+    # the Database Port falls OUTSIDE this row's closure: the frontend package
+    # reaches one through `_formation_profile -> opt_lock -> unit_work ->
+    # db_port`, and a forbidden row is the complement of a closure, so a grant
+    # wide enough to include that chain could never forbid its endpoint.
     "parallax.snapshot.handle._preflight": frozenset(
         {
-            "parallax.core.entity",
+            "parallax.core.entity.statement",
             "parallax.core.metamodel",
             "parallax.core.op_algebra",
         }
@@ -228,6 +246,7 @@ SUPPORT_SCOPE_DEPS: Mapping[str, frozenset[str]] = {
 #   to :data:`SUPPORT_SCOPE_DEPS` but not registered here therefore fails the
 #   ownership check instead of silently producing that skipped contract.
 CHILD_SCOPE_PARENT: Mapping[str, str] = {
+    "parallax.core.entity.statement": "parallax.core.entity",
     "parallax.descriptor._hub": "parallax.descriptor",
     "parallax.snapshot.handle._wrap": "parallax.snapshot.handle",
     "parallax.snapshot.handle._preflight": "parallax.snapshot.handle",
@@ -237,25 +256,6 @@ CHILD_SCOPE_PARENT: Mapping[str, str] = {
     "parallax.snapshot.handle._keyed_sql": "parallax.snapshot.handle",
     "parallax.snapshot.handle._write_lowering": "parallax.snapshot.handle",
     "parallax.snapshot.handle._step_lowering": "parallax.snapshot.handle",
-}
-
-# Scopes a source scope may not NAME even though its own grant closure reaches
-# them, keyed by that source scope.
-#
-# A forbidden row is the complement of a closure, so a scope can never be
-# forbidden something it reaches indirectly — and a scope whose reason for
-# existing is a boundary its grants happen to cross needs exactly that gap
-# closed. Each entry becomes a second ``forbidden`` contract carrying
-# ``allow_indirect_imports``, which asks the one question the complement cannot:
-# does this scope import the target ITSELF? The legitimate chain through a
-# granted scope stays permitted, and stays governed by that granted scope's own
-# row, without any part of the complement being withdrawn to allow it.
-#
-# `_preflight` resolves a query target and validates an operation before any
-# I/O, so it must name no Database Port; its `parallax.core.entity` grant
-# reaches one through `_formation_profile -> opt_lock -> unit_work -> db_port`.
-CLOSURE_EXCLUSIONS: Mapping[str, frozenset[str]] = {
-    "parallax.snapshot.handle._preflight": frozenset({"parallax.core.db_port"}),
 }
 
 # The conformance-family enforcement scopes that carry a module tag and thus
@@ -409,7 +409,17 @@ def _row_grants(cell: str, scope: str) -> frozenset[str]:
     prose in that cell names no enforcement scope (``psycopg`` is a third-party
     distribution, not a scope) and is not a grant. A backticked token that is
     neither shape is a spec error rather than something to skip quietly.
+
+    :data:`_NO_GRANTS` is the one unbackticked token that carries meaning here —
+    it is how this column spells an empty grant — so naming it beside a real
+    grant is the same contradiction the fence rejects, and is rejected the same
+    way. Both representations must refuse it, or §7 could state the
+    contradiction in one of them and still pass parity.
     """
+    if _NO_GRANTS in cell and cell.replace(_NO_GRANTS, "").strip(" ,"):
+        raise ValueError(
+            f"§7 prose row for {scope!r} declares {_NO_GRANTS} beside a real grant: {cell!r}"
+        )
     grants: set[str] = set()
     for token in _BACKTICKED.findall(cell):
         if token.startswith("parallax."):
@@ -543,6 +553,10 @@ def child_grant_exceptions(adjacency: Mapping[str, frozenset[str]], scope: str) 
     reaches further through it, and only the descendant's *direct* extra grants
     need naming.
 
+    A grant naming a CHILD scope is covered when the ancestor containing it is
+    reachable: the ancestor's package covers the child, so that grant adds
+    nothing the subtree could not already import and needs no exception.
+
     Entries are wildcarded over the granted scope's modules because the grant is
     scope-wide while the concrete importee is not derivable here.
     ``unmatched_ignore_imports_alerting`` defaults to ``error``, so an exception
@@ -553,34 +567,8 @@ def child_grant_exceptions(adjacency: Mapping[str, frozenset[str]], scope: str) 
         f"{child} -> {grant}.**"
         for child in scope_descendants(scope)
         for grant in adjacency.get(child, frozenset())
-        if grant not in reachable
+        if grant not in reachable and not (scope_ancestors(grant) & reachable)
     )
-
-
-def check_closure_exclusions(adjacency: Mapping[str, frozenset[str]]) -> None:
-    """Fail when a closure exclusion contradicts the grant graph or carries nothing.
-
-    An exclusion that names a DIRECT grant is a contradiction: §7 would both
-    permit and forbid the same edge. One its source cannot reach at all is
-    already covered by the generated complement — and covered more strongly,
-    indirect chains included — so keeping it would leave a declaration that
-    looks load-bearing and is not.
-    """
-    for scope, excluded in CLOSURE_EXCLUSIONS.items():
-        if scope not in adjacency:
-            raise ValueError(f"closure exclusion names an undeclared scope {scope!r}")
-        granted = sorted(excluded & adjacency[scope])
-        if granted:
-            raise ValueError(
-                f"scope {scope!r} both grants and excludes {granted}: §7 cannot "
-                "permit and forbid one edge"
-            )
-        idle = sorted(excluded - transitive_closure(adjacency, scope))
-        if idle:
-            raise ValueError(
-                f"closure exclusion for {scope!r} names {idle}, which its grant "
-                "closure does not reach — the generated complement already forbids it"
-            )
 
 
 def build_adjacency(edges: Iterable[tuple[str, str]]) -> dict[str, frozenset[str]]:
@@ -649,9 +637,13 @@ def compute_forbidden(adjacency: Mapping[str, frozenset[str]]) -> dict[str, list
     itself lacks: :func:`child_grant_exceptions` carries that asymmetry as one
     named exception rather than widening what the whole subtree may import.
 
-    What a scope's closure DOES reach is out of this row's reach by
-    construction, so :data:`CLOSURE_EXCLUSIONS` is carried by a second contract
-    rather than by widening this one.
+    Reaching a child scope also omits that child's ancestors, for the same
+    package-scoped reason: a forbidden entry naming the ancestor package would
+    also forbid the granted child inside it, so the row could not both permit
+    the narrow grant and forbid the wide package. Only the ancestor's own NAME
+    is given up — whatever the rest of that package reaches stays forbidden, and
+    is reported as an indirect chain, which is what lets a narrowed grant put a
+    target the wide package reaches back inside this row.
     """
     production_sources = sorted(node for node in adjacency if node not in CONFORMANCE_SCOPES)
     production_targets = set(adjacency) - CONFORMANCE_SCOPES - set(CHILD_SCOPE_PARENT)
@@ -659,7 +651,8 @@ def compute_forbidden(adjacency: Mapping[str, frozenset[str]]) -> dict[str, list
     forbidden: dict[str, list[str]] = {}
     for scope in production_sources:
         allowed = transitive_closure(adjacency, scope)
-        blocked = all_targets - allowed - {scope} - scope_ancestors(scope)
+        reached_ancestors = {a for granted in allowed for a in scope_ancestors(granted)}
+        blocked = all_targets - allowed - {scope} - scope_ancestors(scope) - reached_ancestors
         forbidden[scope] = sorted(blocked)
     return forbidden
 
@@ -673,15 +666,7 @@ def _toml_str_list(values: Iterable[str], indent: str = "    ") -> str:
 
 
 def render_block(forbidden: Mapping[str, list[str]], exceptions: Mapping[str, list[str]]) -> str:
-    """Render the ``[tool.importlinter]`` section (contracts sorted by scope).
-
-    A scope with a closure exclusion gets a SECOND contract after its own row.
-    The two ask different questions of the same scope — the row asks what it can
-    reach, the exclusion contract asks what it names — so they cannot be folded
-    into one: a single row carrying ``allow_indirect_imports`` would stop
-    reporting every chain, and one carrying the excluded target without it would
-    break on the granted chain that legitimately reaches it.
-    """
+    """Render the ``[tool.importlinter]`` section (one contract per scope, sorted)."""
     lines: list[str] = [
         f"# Generated by {_TOOL} from core/spec/modules.md and spec/python.md §7"
         " — do not edit by hand.",
@@ -700,15 +685,6 @@ def render_block(forbidden: Mapping[str, list[str]], exceptions: Mapping[str, li
         if ignored:
             lines.append(f"ignore_imports = {_toml_str_list(ignored)}")
         lines.append(f"forbidden_modules = {_toml_str_list(blocked)}")
-        excluded = sorted(CLOSURE_EXCLUSIONS.get(scope, frozenset()))
-        if excluded:
-            lines.append("")
-            lines.append("[[tool.importlinter.contracts]]")
-            lines.append(f'name = "{scope} names none of its excluded scopes itself"')
-            lines.append('type = "forbidden"')
-            lines.append(f'source_modules = ["{scope}"]')
-            lines.append("allow_indirect_imports = true")
-            lines.append(f"forbidden_modules = {_toml_str_list(excluded)}")
     return "\n".join(lines)
 
 
@@ -731,7 +707,6 @@ def generate() -> str:
     check_child_scopes()
     edges = parse_dependency_graph(MODULES_MD.read_text())
     adjacency = build_adjacency(edges)
-    check_closure_exclusions(adjacency)
     forbidden = compute_forbidden(adjacency)
     exceptions = {scope: child_grant_exceptions(adjacency, scope) for scope in forbidden}
     return render_block(forbidden, exceptions)

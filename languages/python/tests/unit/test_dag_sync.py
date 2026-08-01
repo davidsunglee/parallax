@@ -18,10 +18,11 @@ importer exemption), and the support-scope additions:
   package's Hub-construction seam — is admitted for that child alone and stays
   forbidden to every other module its parent's row governs;
 * a zero-grant child scope, whose emptiness IS its contract, with a canary
-  proving any first-party import inside it breaks the gate; and
-* closure exclusions, the second contract that asks whether a scope NAMES a
-  boundary its own granted closure reaches — with a canary importing the
-  Database Port directly into the read-preflight seam.
+  proving any import from outside its own package breaks the gate; and
+* a child scope named as another scope's GRANT, which is how the read-preflight
+  seam takes the Entity statement surface without taking what the rest of the
+  frontend reaches — with two canaries, one importing the Database Port into the
+  seam directly and one reaching it through a chain.
 """
 
 from __future__ import annotations
@@ -328,6 +329,27 @@ def test_parse_support_scope_table_rejects_a_backticked_non_scope_grant() -> Non
         )
 
 
+def test_parse_support_scope_table_rejects_no_grants_beside_a_real_grant() -> None:
+    # The same contradiction the fence rejects, in the representation that
+    # spells an empty grant outright. If only one of the two refused it, §7
+    # could state the contradiction in the prose and still pass parity — the
+    # fence and `SUPPORT_SCOPE_DEPS` would simply be made to agree with the
+    # grant, and nothing would report that the row also declared none.
+    with pytest.raises(ValueError, match=r"declares \(none\) beside a real grant"):
+        dag.parse_support_scope_table(
+            f"{_HEADER}\n| Thing (support) | `parallax.core.thing` | "
+            "`parallax.core.thing` | (none), `m-core` | x |\n"
+        )
+
+
+def test_parse_support_scope_table_reads_no_grants_alone_as_an_empty_row() -> None:
+    prose = dag.parse_support_scope_table(
+        f"{_HEADER}\n| Thing (support) | `parallax.core.thing` | "
+        "`parallax.core.thing` | (none) | x |\n"
+    )
+    assert prose == {"parallax.core.thing": frozenset()}
+
+
 def test_a_tampered_prose_row_alone_fails_generation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -598,62 +620,62 @@ def test_parse_support_scope_graph_rejects_no_grants_beside_a_real_grant() -> No
 
 
 # --------------------------------------------------------------------------
-# Closure exclusions: the boundary a scope's own grants reach.
+# A child scope as a GRANT: the narrow part of a wide package.
 # --------------------------------------------------------------------------
-def test_the_preflight_seam_is_forbidden_the_port_its_own_closure_reaches() -> None:
-    # The gap the complement alone leaves open: `parallax.core.entity` reaches
-    # `_formation_profile -> opt_lock -> unit_work -> db_port`, so the port is
-    # inside the seam's closure and its row can never forbid it.
+def test_the_preflight_seam_grants_the_statement_scope_not_the_frontend() -> None:
+    # The whole point of the narrowing: the frontend PACKAGE reaches the port
+    # (`_formation_profile -> opt_lock -> unit_work -> db_port`), and a forbidden
+    # row is the complement of a closure, so granting the package would put the
+    # port permanently out of the row's reach. The statement child scope does not
+    # reach it, so the ordinary row forbids it.
     adjacency = dag.build_adjacency(dag.parse_dependency_graph(dag.MODULES_MD.read_text()))
     scope = "parallax.snapshot.handle._preflight"
-    assert "parallax.core.db_port" in dag.transitive_closure(adjacency, scope)
-    assert "parallax.core.db_port" not in dag.compute_forbidden(adjacency)[scope]
-    # The exclusion is what closes it, as a second contract carrying
-    # `allow_indirect_imports` — the granted chain stays legal, the name does not.
-    assert dag.CLOSURE_EXCLUSIONS[scope] == frozenset({"parallax.core.db_port"})
+    assert dag.SUPPORT_SCOPE_DEPS[scope] == frozenset(
+        {
+            "parallax.core.entity.statement",
+            "parallax.core.metamodel",
+            "parallax.core.op_algebra",
+        }
+    )
+    assert "parallax.core.db_port" in dag.transitive_closure(adjacency, "parallax.core.entity")
+    assert "parallax.core.db_port" not in dag.transitive_closure(adjacency, scope)
+    blocked = dag.compute_forbidden(adjacency)[scope]
+    assert "parallax.core.db_port" in blocked
+    # And every hop of the chain the frontend would have carried in with it.
+    assert "parallax.core._formation_profile" in blocked
+    assert "parallax.core.opt_lock" in blocked
+    assert "parallax.core.unit_work" in blocked
+    # No second contract and no exception mechanism: one ordinary row per scope.
     block = dag.generate()
-    assert f'name = "{scope} names none of its excluded scopes itself"' in block
-    assert "allow_indirect_imports = true" in block
+    assert "allow_indirect_imports" not in block
+    assert block.count(f'source_modules = ["{scope}"]') == 1
 
 
-def test_check_closure_exclusions_rejects_an_excluded_direct_grant(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # Permitting and forbidding one edge is a spec contradiction, not a stricter
-    # rule: the row would grant `m-op-algebra` while the exclusion refused it.
+def test_granting_a_child_scope_omits_that_childs_ancestors_from_the_row() -> None:
+    # A forbidden entry is package-scoped, so naming `parallax.core.entity` would
+    # also forbid the `parallax.core.entity.statement` the row exists to permit.
+    # Only the ancestor's NAME is given up — what the rest of that package reaches
+    # stays forbidden, and the `_hub` canary below proves it is still reported.
     adjacency = dag.build_adjacency(dag.parse_dependency_graph(dag.MODULES_MD.read_text()))
-    monkeypatch.setattr(
-        dag,
-        "CLOSURE_EXCLUSIONS",
-        {"parallax.snapshot.handle._preflight": frozenset({"parallax.core.op_algebra"})},
-    )
-    with pytest.raises(ValueError, match="both grants and excludes"):
-        dag.check_closure_exclusions(adjacency)
+    forbidden = dag.compute_forbidden(adjacency)
+    scope = "parallax.snapshot.handle._preflight"
+    assert "parallax.core.entity" not in dag.transitive_closure(adjacency, scope)
+    assert "parallax.core.entity" not in forbidden[scope]
+    # A scope granted neither the child nor its parent is still forbidden the
+    # parent outright.
+    assert "parallax.core.entity" in forbidden["parallax.descriptor"]
 
 
-def test_check_closure_exclusions_rejects_an_exclusion_that_carries_nothing(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # A scope the source cannot reach at all is already forbidden by the
-    # complement — and forbidden more strongly, indirect chains included — so an
-    # exclusion there would look load-bearing and enforce nothing new.
+def test_the_statement_scope_is_narrower_than_the_frontend_it_sits_in() -> None:
     adjacency = dag.build_adjacency(dag.parse_dependency_graph(dag.MODULES_MD.read_text()))
-    monkeypatch.setattr(
-        dag,
-        "CLOSURE_EXCLUSIONS",
-        {"parallax.snapshot.handle._preflight": frozenset({"parallax.core.sql_gen"})},
-    )
-    with pytest.raises(ValueError, match="grant closure does not reach"):
-        dag.check_closure_exclusions(adjacency)
-
-
-def test_check_closure_exclusions_rejects_an_undeclared_source(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    adjacency = dag.build_adjacency(dag.parse_dependency_graph(dag.MODULES_MD.read_text()))
-    monkeypatch.setattr(dag, "CLOSURE_EXCLUSIONS", {"parallax.core.ghost": frozenset[str]()})
-    with pytest.raises(ValueError, match="undeclared scope"):
-        dag.check_closure_exclusions(adjacency)
+    forbidden = dag.compute_forbidden(adjacency)
+    assert dag.CHILD_SCOPE_PARENT["parallax.core.entity.statement"] == "parallax.core.entity"
+    assert set(forbidden["parallax.core.entity"]) < set(forbidden["parallax.core.entity.statement"])
+    assert "parallax.core._formation_profile" in forbidden["parallax.core.entity.statement"]
+    # A child named as another scope's grant needs no `ignore_imports` entry from
+    # its own parent's row: the parent package already covers it.
+    assert dag.child_grant_exceptions(adjacency, "parallax.core.entity") == []
+    assert dag.child_grant_exceptions(adjacency, "parallax.snapshot.handle") == []
 
 
 # --------------------------------------------------------------------------
@@ -706,16 +728,12 @@ def test_the_hub_seam_stays_confined_to_the_descriptor_child_scope() -> None:
 
 
 # --------------------------------------------------------------------------
-# Canary 5: the read-preflight seam may not name a Database Port.
+# Canary 5: the read-preflight seam may not reach a Database Port — by name...
 # --------------------------------------------------------------------------
 def test_a_direct_port_import_in_the_preflight_seam_fails_lint_imports() -> None:
     lint_imports = shutil.which("lint-imports")
     assert lint_imports is not None, "lint-imports must be installed in the dev env"
 
-    # The seam's own row cannot reject this — `parallax.core.db_port` is inside
-    # the closure its `parallax.core.entity` grant reaches — so only the closure
-    # exclusion's contract can, which is the whole reason the module is scoped
-    # apart from its package.
     target = PY_ROOT / "packages/parallax-snapshot/src/parallax/snapshot/handle/_preflight.py"
     original = target.read_text()
     target.write_text(f"{original}import parallax.core.db_port  # deliberate port violation\n")
@@ -726,16 +744,45 @@ def test_a_direct_port_import_in_the_preflight_seam_fails_lint_imports() -> None
 
     assert result.returncode != 0, result.stdout
     assert (
-        "parallax.snapshot.handle._preflight names none of its excluded scopes itself BROKEN"
+        "parallax.snapshot.handle._preflight may import only its permitted dependencies BROKEN"
         in result.stdout
     )
-    # The reported chain is one hop long: what the contract catches is the name,
-    # not the reach.
     assert "parallax.snapshot.handle._preflight -> parallax.core.db_port" in result.stdout
 
 
 # --------------------------------------------------------------------------
-# Canary 6: the refusal leaf may name no first-party scope at all.
+# ...and Canary 6: nor through a chain. This is the half a row carrying
+# `allow_indirect_imports` cannot prove.
+# --------------------------------------------------------------------------
+def test_an_indirect_reach_out_of_the_preflight_seam_fails_lint_imports() -> None:
+    lint_imports = shutil.which("lint-imports")
+    assert lint_imports is not None, "lint-imports must be installed in the dev env"
+
+    # `parallax.core.entity._hub` is a NAME the seam's row permits: granting the
+    # `parallax.core.entity.statement` child omits its ancestor package from the
+    # row. What the row still forbids is where that name leads — the Hub's
+    # model-formation edge, and through it the chain toward the port that made
+    # the whole frontend too wide a grant.
+    target = PY_ROOT / "packages/parallax-snapshot/src/parallax/snapshot/handle/_preflight.py"
+    original = target.read_text()
+    target.write_text(f"{original}import parallax.core.entity._hub  # deliberate reach violation\n")
+    try:
+        result = subprocess.run([lint_imports], cwd=PY_ROOT, capture_output=True, text=True)
+    finally:
+        target.write_text(original)
+
+    assert result.returncode != 0, result.stdout
+    assert (
+        "parallax.snapshot.handle._preflight may import only its permitted dependencies BROKEN"
+        in result.stdout
+    )
+    # Two hops: the seam names the Hub, the Hub names model formation.
+    assert "parallax.snapshot.handle._preflight -> parallax.core.entity._hub" in result.stdout
+    assert "parallax.core.entity._hub -> parallax.core._formation_profile" in result.stdout
+
+
+# --------------------------------------------------------------------------
+# Canary 7: the refusal leaf may name no first-party scope outside its package.
 # --------------------------------------------------------------------------
 def test_a_first_party_import_in_the_refusal_leaf_fails_lint_imports() -> None:
     lint_imports = shutil.which("lint-imports")

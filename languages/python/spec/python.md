@@ -2313,7 +2313,7 @@ legalizes a forbidden edge.
 | `m-snapshot-read` | `parallax.snapshot.materialize` | `parallax.snapshot.materialize` | `m-deep-fetch` | generated forbidden contracts + cross-package contract |
 | Snapshot handle and composition surface (support) | `parallax.snapshot.handle` | `parallax.snapshot.handle` | `parallax.snapshot.materialize`, `parallax.core.entity`, `m-core`, `m-metamodel`, `m-op-algebra`, `m-inheritance`, `m-storage-layout`, `m-temporal-read`, `m-deep-fetch`, `m-navigate`, `m-dialect`, `m-db-port`, `m-sql`, `m-unit-work`, `m-read-lock`, `m-auto-retry`, `m-opt-lock`, `m-batch-write`, `m-txtime-write`, `m-bitemp-write` | generated forbidden contracts + cross-package contract |
 | Snapshot handle wrapping (support, child of `parallax.snapshot.handle`) | `parallax.snapshot.handle._wrap` | `parallax.snapshot.handle._wrap` | `parallax.snapshot.materialize`, `parallax.core.entity`, `m-metamodel`, `m-relationship`, `m-inheritance`, `m-temporal-read` | generated forbidden contracts |
-| Snapshot read preflight (support, child of `parallax.snapshot.handle`) | `parallax.snapshot.handle._preflight` | `parallax.snapshot.handle._preflight` | `parallax.core.entity`, `m-metamodel`, `m-op-algebra` | generated forbidden contracts, plus the `m-db-port` closure exclusion below |
+| Snapshot read preflight (support, child of `parallax.snapshot.handle`) | `parallax.snapshot.handle._preflight` | `parallax.snapshot.handle._preflight` | `parallax.core.entity.statement`, `m-metamodel`, `m-op-algebra` | generated forbidden contracts |
 | Snapshot handle refusals (support, child of `parallax.snapshot.handle`) | `parallax.snapshot.handle._errors` | `parallax.snapshot.handle._errors` | (none) | generated forbidden contracts |
 | Snapshot handle write lowering (support, child group of `parallax.snapshot.handle`) | `parallax.snapshot.handle._family`, `._write_types`, `._keyed_sql`, `._write_lowering`, `._step_lowering` | those five scopes, sharing one grant row | `m-core`, `m-metamodel`, `m-inheritance`, `m-storage-layout`, `m-temporal-read`, `m-dialect`, `m-db-port`, `m-sql`, `m-unit-work`, `m-opt-lock`, `m-txtime-write`, `m-bitemp-write` | generated forbidden contracts |
 | `m-case-format` | `parallax.conformance.case_format` (dev-only) | `parallax.conformance.case_format` | `m-core` | generated forbidden contracts (dev tree) |
@@ -2321,6 +2321,7 @@ legalizes a forbidden edge.
 | `m-api-conformance` | `languages/python/tests/api` (dev-only) | `tests.api` | `m-case-format` (harnesses the public surface) | pytest collection boundary |
 | Descriptor Hub orchestration (support, child of `parallax.descriptor`) | `parallax.descriptor._hub` | `parallax.descriptor._hub` | `parallax.core.entity` (private Hub-construction seam only) | generated forbidden contracts + cross-package contract |
 | Entity and Find Query frontend (support) | `parallax.core.entity` | `parallax.core.entity` | `m-core`, `m-metamodel`, `m-inheritance`, `m-relationship`, `m-op-algebra`, `m-temporal-read`, `parallax.core._formation_profile` | generated forbidden contracts |
+| Statement surface (support, child of `parallax.core.entity`) | `parallax.core.entity.statement` | `parallax.core.entity.statement` | `m-core`, `m-metamodel`, `m-op-algebra`, `m-temporal-read` | generated forbidden contracts |
 | Concrete Postgres adapter (support) | `parallax.postgres.adapter` | `parallax.postgres` | `m-core`, `m-db-port`, `m-db-error`, `m-dialect`, psycopg | generated forbidden contracts + cross-package contract |
 | Composition root (support) | application/test code calling `parallax.snapshot.connect` | (application-owned) | `parallax.snapshot`, `parallax.postgres` | only the root imports a concrete adapter |
 
@@ -2365,6 +2366,10 @@ parallax.core.entity --> parallax.core.relationship
 parallax.core.entity --> parallax.core.op_algebra
 parallax.core.entity --> parallax.core.temporal_read
 parallax.core.entity --> parallax.core._formation_profile
+parallax.core.entity.statement --> parallax.core.base
+parallax.core.entity.statement --> parallax.core.metamodel
+parallax.core.entity.statement --> parallax.core.op_algebra
+parallax.core.entity.statement --> parallax.core.temporal_read
 parallax.snapshot.handle --> parallax.snapshot.materialize
 parallax.snapshot.handle --> parallax.core.entity
 parallax.snapshot.handle --> parallax.core.base
@@ -2391,7 +2396,7 @@ parallax.snapshot.handle._wrap --> parallax.core.metamodel
 parallax.snapshot.handle._wrap --> parallax.core.relationship
 parallax.snapshot.handle._wrap --> parallax.core.inheritance
 parallax.snapshot.handle._wrap --> parallax.core.temporal_read
-parallax.snapshot.handle._preflight --> parallax.core.entity
+parallax.snapshot.handle._preflight --> parallax.core.entity.statement
 parallax.snapshot.handle._preflight --> parallax.core.metamodel
 parallax.snapshot.handle._preflight --> parallax.core.op_algebra
 parallax.snapshot.handle._errors --> (none)
@@ -2506,9 +2511,14 @@ parallax.postgres --> parallax.core.dialect
   Hub type. `parallax.snapshot.handle._errors` is the empty case: the
   read-preflight and write-lowering scopes raise one error class while granting
   disjoint dependencies, so the module holding it may reach nothing at all, and
-  a grant row of `(none)` is what makes that emptiness a gate rather than a
-  convention. All are generated as ordinary contract sources, and none is a new
-  supported import path. Because
+  a grant row of `(none)` forbids it every scope outside its own package. Since
+  a `forbidden` row is package-scoped on both sides, no child row can name its
+  own parent, so a same-package sibling import is the one thing a zero-grant row
+  does not reach; it stays a convention. `parallax.core.entity.statement` is the
+  **grantable** case: a child scope may also be named as another scope's grant,
+  which is how a consumer takes a narrow part of a package without taking what
+  the rest of that package reaches. All are generated as ordinary contract
+  sources, and none is a new supported import path. Because
   import-linter's `forbidden` contracts are package-scoped on both sides, a
   child is emitted only as a contract **source**: naming it as a forbidden
   target of its own parent would overlap the parent's source package and be
@@ -2525,21 +2535,26 @@ parallax.postgres --> parallax.core.dialect
   retained on purpose — navigation stays reachable through `m-snapshot-read`
   → `m-deep-fetch` → `m-navigate`, so removing it would forbid nothing while
   contradicting the deliberate edge described above.
-- **Closure exclusions.** A forbidden row is the complement of a closure, so a
-  scope is never forbidden a scope it reaches indirectly through its own
-  grants. Where a scope exists in order to prove it does not name some
-  boundary, that boundary is declared as a **closure exclusion** in
-  `check_dag_sync.CLOSURE_EXCLUSIONS`, which puts it back into the row and
-  emits one wildcarded `ignore_imports` entry per direct grant whose closure
-  reaches it. The direct import the exclusion exists to catch is a different
-  first hop and stays caught; the residual indirect reach is governed by the
-  granted scope's own row. `parallax.snapshot.handle._preflight` →
-  `m-db-port` is the one declared exclusion: the seam resolves a target and
-  validates an operation before any I/O, while its `parallax.core.entity` grant
-  reaches `parallax.core._formation_profile` → `m-opt-lock` → `m-unit-work` →
-  `m-db-port`. An exclusion naming a direct grant, or one its source cannot
-  reach at all, fails generation, so an exclusion cannot contradict a row or
-  quietly carry nothing.
+- **Boundaries a scope must not reach.** A forbidden row is the complement of a
+  closure, so a scope is never forbidden what its own grants reach transitively.
+  A scope that exists in order to stay clear of some boundary must therefore be
+  granted narrowly enough that the boundary falls **outside** its closure; there
+  is no exception mechanism that puts a reachable target back into a row.
+  `parallax.snapshot.handle._preflight` is the case in point: the seam resolves
+  a target and validates an operation before any I/O, so it must reach no
+  Database Port, and the `parallax.core.entity` package reaches one through
+  `parallax.core._formation_profile` → `m-opt-lock` → `m-unit-work` →
+  `m-db-port`. Its grant is therefore the child scope
+  `parallax.core.entity.statement`, whose own closure stops at `m-core`,
+  `m-metamodel`, `m-op-algebra` and `m-temporal-read`, and the ordinary
+  generated row forbids `m-db-port` — along with `m-opt-lock`, `m-unit-work` and
+  `parallax.core._formation_profile` — with indirect chains reported.
+  Granting a child scope omits that child's ancestors from the row, because a
+  forbidden entry naming the ancestor package would also forbid the granted
+  child inside it. Only the ancestor's **name** is given up: what the rest of
+  that package reaches stays forbidden and is reported as an indirect chain, so
+  `_preflight` naming `parallax.core.entity._hub` still breaks the gate on
+  `_hub`'s own edge to `parallax.core._formation_profile`.
 - **Filesystem ownership.** `languages/python/tools/check_scope_ownership.py`
   walks every `packages/*/src/**/*.py` file in the production distributions and
   proves it resolves to exactly one **most-specific** enforcement scope of this
