@@ -1035,6 +1035,28 @@ forbidden_modules = [
 ]
 
 [[tool.importlinter.contracts]]
+name = "parallax.snapshot.handle._preflight may import only its permitted dependencies"
+type = "forbidden"
+source_modules = ["parallax.snapshot.handle._preflight"]
+forbidden_modules = [
+    "parallax.conformance",
+    "parallax.core.auto_retry",
+    "parallax.core.batch_write",
+    "parallax.core.bitemp_write",
+    "parallax.core.db_error",
+    "parallax.core.deep_fetch",
+    "parallax.core.dialect",
+    "parallax.core.navigate",
+    "parallax.core.pk_gen",
+    "parallax.core.read_lock",
+    "parallax.core.sql_gen",
+    "parallax.core.txtime_write",
+    "parallax.descriptor",
+    "parallax.postgres",
+    "parallax.snapshot.materialize",
+]
+
+[[tool.importlinter.contracts]]
 name = "parallax.snapshot.handle._step_lowering may import only its permitted dependencies"
 type = "forbidden"
 source_modules = ["parallax.snapshot.handle._step_lowering"]

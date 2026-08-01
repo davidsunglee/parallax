@@ -520,6 +520,7 @@ def test_scope_descendants_inverts_the_child_chain() -> None:
     assert dag.scope_descendants("parallax.snapshot.handle") == frozenset(
         {
             "parallax.snapshot.handle._wrap",
+            "parallax.snapshot.handle._preflight",
             "parallax.snapshot.handle._family",
             "parallax.snapshot.handle._write_types",
             "parallax.snapshot.handle._keyed_sql",

@@ -17,14 +17,16 @@ from decimal import Decimal
 from typing import cast
 
 import pytest
+from _transact_support import ACCOUNT, NoIoPort
 
+from _support import mirrored_models as mm
 from parallax.conformance import models
 from parallax.core.base import INFINITY
 from parallax.core.db_port import DbPort, Row
 from parallax.core.dialect import POSTGRES
 from parallax.core.metamodel import EntityIdentity
 from parallax.core.op_algebra import deserialize
-from parallax.snapshot import handle
+from parallax.snapshot import QueryTargetError, handle
 from parallax.snapshot.materialize import Node
 
 _MODELS = models.load_models()
@@ -418,3 +420,18 @@ def test_find_history_refuses_a_plan_carrying_deep_fetch_levels() -> None:
     )
     with pytest.raises(ValueError, match="no deep-fetch levels"):
         handle.find_history(op, policy, POSTGRES, "Policy", port)
+
+
+# --------------------------------------------------------------------------- #
+# The shared read-preflight seam (`_preflight.preflight_find`)                 #
+# --------------------------------------------------------------------------- #
+def test_db_find_refuses_a_target_the_connected_model_does_not_declare() -> None:
+    # `Person` is a perfectly declared Entity — of another model. What makes the
+    # query unanswerable is the CONNECTED model, which is why the refusal is a
+    # RuntimeError and why it names neither the query nor the model. Preflight
+    # resolves the target before anything else, so the port is never touched:
+    # `NoIoPort` raises on any read or write.
+    db = handle.Database.connect(NoIoPort(), ACCOUNT)
+    with pytest.raises(QueryTargetError) as caught:
+        db.find(mm.Person.where(mm.Person.id == 1))
+    assert caught.value.code == "query-target-not-in-model"

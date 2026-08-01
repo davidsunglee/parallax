@@ -2313,6 +2313,7 @@ legalizes a forbidden edge.
 | `m-snapshot-read` | `parallax.snapshot.materialize` | `parallax.snapshot.materialize` | `m-deep-fetch` | generated forbidden contracts + cross-package contract |
 | Snapshot handle and composition surface (support) | `parallax.snapshot.handle` | `parallax.snapshot.handle` | `parallax.snapshot.materialize`, `parallax.core.entity`, `m-core`, `m-metamodel`, `m-op-algebra`, `m-inheritance`, `m-storage-layout`, `m-temporal-read`, `m-deep-fetch`, `m-navigate`, `m-dialect`, `m-db-port`, `m-sql`, `m-unit-work`, `m-read-lock`, `m-auto-retry`, `m-opt-lock`, `m-batch-write`, `m-txtime-write`, `m-bitemp-write` | generated forbidden contracts + cross-package contract |
 | Snapshot handle wrapping (support, child of `parallax.snapshot.handle`) | `parallax.snapshot.handle._wrap` | `parallax.snapshot.handle._wrap` | `parallax.snapshot.materialize`, `parallax.core.entity`, `m-metamodel`, `m-relationship`, `m-inheritance`, `m-temporal-read` | generated forbidden contracts |
+| Snapshot read preflight (support, child of `parallax.snapshot.handle`) | `parallax.snapshot.handle._preflight` | `parallax.snapshot.handle._preflight` | `parallax.core.entity`, `m-metamodel`, `m-op-algebra` | generated forbidden contracts |
 | Snapshot handle write lowering (support, child group of `parallax.snapshot.handle`) | `parallax.snapshot.handle._family`, `._write_types`, `._keyed_sql`, `._write_lowering`, `._step_lowering` | those five scopes, sharing one grant row | `m-core`, `m-metamodel`, `m-inheritance`, `m-storage-layout`, `m-temporal-read`, `m-dialect`, `m-db-port`, `m-sql`, `m-unit-work`, `m-opt-lock`, `m-txtime-write`, `m-bitemp-write` | generated forbidden contracts |
 | `m-case-format` | `parallax.conformance.case_format` (dev-only) | `parallax.conformance.case_format` | `m-core` | generated forbidden contracts (dev tree) |
 | `m-conformance-adapter` | `parallax.conformance.cli` (dev-only) | `parallax.conformance.cli` | `m-case-format`, plus any claimed behavioral or support scope it harnesses — the core conformance-family exception | generated forbidden contracts (dev tree) |
@@ -2385,6 +2386,9 @@ parallax.snapshot.handle._wrap --> parallax.core.metamodel
 parallax.snapshot.handle._wrap --> parallax.core.relationship
 parallax.snapshot.handle._wrap --> parallax.core.inheritance
 parallax.snapshot.handle._wrap --> parallax.core.temporal_read
+parallax.snapshot.handle._preflight --> parallax.core.entity
+parallax.snapshot.handle._preflight --> parallax.core.metamodel
+parallax.snapshot.handle._preflight --> parallax.core.op_algebra
 parallax.snapshot.handle._family --> parallax.core.base
 parallax.snapshot.handle._family --> parallax.core.metamodel
 parallax.snapshot.handle._family --> parallax.core.inheritance

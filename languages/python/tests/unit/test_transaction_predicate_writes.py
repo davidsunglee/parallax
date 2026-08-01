@@ -16,6 +16,7 @@ from typing import cast
 
 import pytest
 from _transact_support import (
+    ACCOUNT,
     BALANCE,
     FIXED,
     ORDERS,
@@ -47,6 +48,7 @@ from parallax.core.dialect import POSTGRES
 from parallax.core.unit_work import (
     FixedClock,
 )
+from parallax.snapshot import QueryTargetError
 from parallax.snapshot.handle import Database, Transaction
 
 
@@ -853,3 +855,15 @@ def test_delete_where_rejects_a_distinct_statement_end_to_end() -> None:
 
     with pytest.raises(ValueError, match="bare statement"):
         Database.connect(NoIoPort(), PERSON, clock=FixedClock(FIXED)).transact(fn)
+
+
+def test_update_where_refuses_a_target_the_connected_model_does_not_declare() -> None:
+    # Target resolution answers the write side with the SAME refusal a read's
+    # preflight raises, because it is the same failure: the connected model
+    # declares no such Entity. It precedes buffering and every adapter touch.
+    def fn(tx: Transaction) -> None:
+        tx.update_where(mm.Person.where(mm.Person.id == 1), mm.Person.name.set("Ada"))
+
+    with pytest.raises(QueryTargetError) as caught:
+        Database.connect(NoIoPort(), ACCOUNT, clock=FixedClock(FIXED)).transact(fn)
+    assert caught.value.code == "query-target-not-in-model"

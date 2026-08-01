@@ -34,6 +34,10 @@ public-surface check promises. Where the exported names live:
 - :mod:`~parallax.snapshot.handle._transaction` — :class:`Transaction`: the
   developer verbs a ``db.transact`` closure drives, and the participating
   :meth:`Transaction.find`.
+- :mod:`~parallax.snapshot.handle._errors` — :class:`QueryTargetError`, the
+  refusal of a query whose target the connected model does not declare, raised
+  by the shared read-preflight seam and by the write side's target resolution
+  alike. It is defined in a dependency-free leaf so both can name it.
 - :mod:`~parallax.snapshot.handle._read` — :func:`find` and :func:`find_history`,
   the one production find executor, plus the result surface they build
   (:class:`Snapshot`, :class:`Execution`, :class:`ExecutedStatement`,
@@ -52,8 +56,10 @@ public-surface check promises. Where the exported names live:
   engine's scenario grading share.
 
 The modules behind no exported name (``_wrap``, ``_family``, ``_keyed_sql``,
-``_predicate_writes``) are reached only through the modules above; each
-documents its own place in the package's acyclic internal graph.
+``_predicate_writes``, ``_preflight``) are reached only through the modules
+above; each documents its own place in the package's acyclic internal graph.
+``_preflight`` in particular stays unexported: the read gate is an intra-package
+seam, and its own §7 scope is what proves it reaches no port.
 """
 
 from __future__ import annotations
@@ -64,6 +70,7 @@ from parallax.snapshot.handle._database import (
     TransactionOwnershipError,
     connect,
 )
+from parallax.snapshot.handle._errors import QueryTargetError
 from parallax.snapshot.handle._planning import build_write_planner, plan_temporal_close
 from parallax.snapshot.handle._read import (
     ExecutedStatement,
@@ -94,6 +101,7 @@ __all__ = [
     "HistoryFindResult",
     "MilestoneGraph",
     "NoResultFound",
+    "QueryTargetError",
     "Snapshot",
     "TooManyResultsFound",
     "Transaction",

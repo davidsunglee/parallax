@@ -36,6 +36,7 @@ def test_top_package_public_surfaces() -> None:
         "Snapshot",
         "Execution",
         "NoResultFound",
+        "QueryTargetError",
         "TooManyResultsFound",
         "TransactionOwnershipError",
     }

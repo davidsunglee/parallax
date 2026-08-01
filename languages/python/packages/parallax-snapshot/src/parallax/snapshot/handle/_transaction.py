@@ -13,7 +13,9 @@ conformance engine calls — are thin delegates that thread
 :mod:`parallax.snapshot.handle._predicate_writes`, which buffers through
 ``uow.buffer`` and never reaches back into this class.
 
-Depends on :mod:`parallax.snapshot.handle._read` (the shared find executor plus
+Depends on :mod:`parallax.snapshot.handle._preflight` (the shared read gate
+``find`` passes before touching the unit of work),
+:mod:`parallax.snapshot.handle._read` (the shared find executor plus
 the pin / result-conversion helpers ``find`` needs),
 :mod:`parallax.snapshot.handle._write_inputs` (verb-input validation, the
 sparse-row build, and the observation machinery), and
@@ -55,6 +57,7 @@ from parallax.snapshot.handle._predicate_writes import (
     buffer_predicate,
     buffer_predicate_instruction,
 )
+from parallax.snapshot.handle._preflight import preflight_find
 from parallax.snapshot.handle._read import (
     Snapshot,
     declaring_metadata,
@@ -359,8 +362,11 @@ class Transaction:
         force-flushes pending writes first (read-your-own-writes), and
         the transaction's participation mode renders the read-lock suffix
         (``locking`` takes the dialect's shared row lock; ``optimistic`` takes
-        none). Otherwise identical to :meth:`Database.find` — the SAME shared
-        find executor, the SAME frozen-node wrapping. Returns ``Snapshot[Any]``:
+        none). Otherwise identical to :meth:`Database.find` — the SAME
+        :func:`~parallax.snapshot.handle._preflight.preflight_find` gate, which
+        runs BEFORE the force-flush so a refused read flushes nothing, the SAME
+        shared find executor, the SAME frozen-node wrapping. Returns
+        ``Snapshot[Any]``:
         the concrete root type is resolved only at runtime (from the
         statement's own target), so callers annotate their own binding
         (``snapshot: Snapshot[Order] = tx.find(...)``) for static typing.
@@ -380,11 +386,11 @@ class Transaction:
         (a MILESTONE-SET read — `.history()` / `.as_of_range()` — records
         nothing here; its own dispatch branch returns before this point).
         """
-        target = statement.target
-        op = statement.operation()
-        read_target = entity_by_name(self._meta, target)
-        assert read_target is not None  # a statement's target is always declared
-        pin = deep_fetch_statement_pin(op, declaring_metadata(self._meta, read_target))
+        # Preflight precedes `uow.read` deliberately: that read force-flushes
+        # pending buffered writes, so a refused read must be refused before it.
+        lowered = preflight_find(statement, model=self._meta)
+        target, op = lowered.target, lowered.operation
+        pin = deep_fetch_statement_pin(op, declaring_metadata(self._meta, lowered.root))
         lock = read_lock.mode_for(self._uow.settings.concurrency)
         if is_milestone_set_op(op):
             history_result = self._uow.read(

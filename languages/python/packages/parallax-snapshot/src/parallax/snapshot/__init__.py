@@ -6,7 +6,9 @@ composition-root entry point — application code constructs a concrete adapter
 and calls ``parallax.snapshot.connect(adapter, meta)``), :class:`Snapshot`
 (``Snapshot[T]``), and :class:`Execution`. :class:`NoResultFound` /
 :class:`TooManyResultsFound` are ``Snapshot.result()`` / ``.result_or_none()``'s
-own arity errors, and :class:`TransactionOwnershipError` is the demarcation's
+own arity errors, :class:`QueryTargetError` is the refusal of a query whose
+target the connected model does not declare, and
+:class:`TransactionOwnershipError` is the demarcation's
 refusal of a nested ``transact`` through a handle that did not open it. The
 handle classes (``Database``, ``Transaction``) and the lowering seam stay
 importable from :mod:`parallax.snapshot.handle`.
@@ -15,6 +17,7 @@ importable from :mod:`parallax.snapshot.handle`.
 from parallax.snapshot.handle import (
     Execution,
     NoResultFound,
+    QueryTargetError,
     Snapshot,
     TooManyResultsFound,
     TransactionOwnershipError,
@@ -24,6 +27,7 @@ from parallax.snapshot.handle import (
 __all__ = [
     "Execution",
     "NoResultFound",
+    "QueryTargetError",
     "Snapshot",
     "TooManyResultsFound",
     "TransactionOwnershipError",
