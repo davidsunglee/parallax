@@ -207,18 +207,20 @@ def test_render_usage_guide_empty() -> None:
 
 def test_render_usage_guide_with_examples() -> None:
     text = api_suite.render_usage_guide(
-        [Example("m-op-algebra-002", "Point read", "Order.where()")]
+        [Example("m-op-algebra-002", "Point read", "Order.where(Order.all)")]
     )
     assert "## Point read" in text
     assert "`m-op-algebra-002`" in text
-    assert "Order.where()" in text
+    assert "Order.where(Order.all)" in text
 
 
 @pytest.mark.parametrize(
     "examples",
     [
         pytest.param([], id="empty"),
-        pytest.param([Example("m-op-algebra-002", "Point read", "Order.where()")], id="populated"),
+        pytest.param(
+            [Example("m-op-algebra-002", "Point read", "Order.where(Order.all)")], id="populated"
+        ),
     ],
 )
 def test_render_usage_guide_is_markdownlint_clean(examples: list[Example]) -> None:

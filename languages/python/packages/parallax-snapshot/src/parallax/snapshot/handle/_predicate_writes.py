@@ -2,7 +2,8 @@
 
 The set-based half of the spec §5 write surface, as
 free functions rather than :class:`~parallax.snapshot.handle.Transaction`
-methods: bare-statement and Valid-Time-window validation into a canonical
+methods: mutation-compatibility, Assignment composition, and Valid-Time-window
+validation into a canonical
 :class:`~parallax.core.unit_work.PredicateWrite`, the readless-vs-materialize
 dispatch, the minimal resolving read, per-row no-op elimination, and
 Materialized Write Group buffering.
@@ -35,14 +36,15 @@ from __future__ import annotations
 
 import datetime as dt
 from collections.abc import Sequence
-from typing import Any, cast
+from typing import Any, Final, cast
 
 from parallax.core import deep_fetch, inheritance, op_algebra, read_lock
 from parallax.core.db_port import DbPort, Row
 from parallax.core.dialect import Dialect, LockMode
-from parallax.core.entity import AttributeAssignment
-from parallax.core.entity import Statement as EntityStatement
-from parallax.core.metamodel import AttributeMetadata, EntityMetadata, Metamodel
+from parallax.core.entity import AttributeAssignment, FindQuery
+from parallax.core.entity._query import mutation_selection
+from parallax.core.metamodel import AttributeMetadata, EntityIdentity, EntityMetadata, Metamodel
+from parallax.core.op_algebra import QueryDefinitionError
 from parallax.core.sql_gen import Statement, compile_read
 from parallax.core.unit_work import (
     LATEST_PINNED,
@@ -76,6 +78,10 @@ from parallax.snapshot.handle._write_inputs import (
     validate_valid_from,
 )
 
+# The predicate mutations that carry Assignments; the rest take none at all and
+# their verbs' signatures say so.
+_ASSIGNMENT_BEARING: Final[frozenset[PredicateMutation]] = frozenset({"update", "updateUntil"})
+
 
 def buffer_predicate(
     uow: UnitOfWork,
@@ -83,36 +89,49 @@ def buffer_predicate(
     conn: DbPort,
     dialect: Dialect,
     mutation: PredicateMutation,
-    statement: EntityStatement,
+    query: FindQuery[Any, Any],
     assignments: Sequence[AttributeAssignment[Any]],
     *,
     valid_from: dt.datetime | None,
     until: dt.datetime | None = None,
 ) -> None:
-    """The typed-authoring entry to the predicate-write lane: it turns a bare
-    :class:`~parallax.core.entity.Statement` plus typed ``Attr.set(...)``
-    assignments into the canonical
+    """The typed-authoring entry to the predicate-write lane: it turns a
+    mutation-compatible :class:`~parallax.core.entity.FindQuery` plus typed
+    ``Attr.set(...)`` assignments into the canonical
     :class:`~parallax.core.unit_work.PredicateWrite` the conformance engine
     builds directly from a case document, then hands it to the shared
     :func:`buffer_predicate_instruction` seam.
 
-    Steps 1 and 3 are TYPED-ONLY — they judge inputs the canonical instruction
-    has no way to carry (a statement's clauses, a ``dt.datetime`` bound). Every
-    rule that measures the INSTRUCTION itself is stated in
-    ``validate_instruction`` (step 4), which the conformance engine calls too,
-    so the two ingresses classify one instruction identically.
+    Steps 1 through 3 are TYPED-ONLY — they judge inputs the canonical
+    instruction has no way to carry (a query's clauses, an Assignment list
+    composed against a query, a ``dt.datetime`` bound). Every rule that measures
+    the INSTRUCTION itself is stated in ``validate_instruction`` (step 5), which
+    the conformance engine calls too, so the two ingresses classify one
+    instruction identically.
 
-    1. **Bare-statement guard** (`python.md` §5 "A statement becomes a
-       write target only as a bare statement") — one carrying nothing but
-       a predicate; every other clause is rejected (`EntityStatement.
-       is_bare`, subsuming ``.distinct()``). Typed-only: the canonical
-       instruction has no clause to carry, and the instruction-level
-       counterpart is ``validate_instruction``'s own bare-predicate rule.
-    2. **Target resolution** — the write-side spelling of a read's preflight
+    1. **Mutation compatibility** (`python.md` §5 "A query becomes a write
+       target only in its mutation-compatible form") — one carrying nothing but
+       a target and a predicate; every result-shaping, temporal, narrowing, and
+       deep-fetch clause is rejected
+       (:func:`~parallax.core.entity._query.mutation_selection`,
+       ``query-not-mutation-compatible``). Typed-only: the canonical instruction
+       has no clause to carry, and the instruction-level counterpart is
+       ``validate_instruction``'s own bare-predicate rule. What it answers is the
+       ephemeral Predicate Selection the rest of this function reads, which never
+       leaves this lane.
+    2. **Assignment-list and exact-target composition** — an assignment-bearing
+       mutation needs at least one Assignment, no two naming one member, and
+       every one addressing the query's exact target Entity
+       (``query-assignment-target-mismatch``). Typed-only: only this ingress
+       COMPOSES independently authored Assignments with a query, and it is
+       refused before anything is built from either.
+    3. **Target resolution** — the write-side spelling of a read's preflight
        (:func:`entity_of`, ``query-target-not-in-model``): a Find Query the
        connected model declares no Entity for is refused as a query, before
-       anything is built from it.
-    3. **Valid-Time-bound validation and rendering** — a Bitemporal target
+       anything is built from it. The query retains its Entity Identity, so the
+       lookup is by exact spelling rather than by a bare name two namespaces
+       could share.
+    4. **Valid-Time-bound validation and rendering** — a Bitemporal target
        requires ``valid_from``; a Transaction-Time-Only or non-temporal target
        takes none; the ``*Until`` forms additionally require ``until``, with
        ``valid_from < until`` — an equal or reversed window rejects HERE, at
@@ -120,39 +139,34 @@ def buffer_predicate(
        this ingress takes ``dt.datetime`` arguments, and this step is the sole
        place one is touched — :func:`validate_valid_from` and
        :func:`validate_until` normalize each bound to UTC and RETURN the
-       canonical instant literal step 4 writes into the instruction. It runs
+       canonical instant literal step 5 writes into the instruction. It runs
        BEFORE that build so a :class:`~parallax.core.unit_work.PredicateWrite`
        is canonical from the moment it exists: a bound slot only ever holds
        what `write-instruction.schema.json` defines an instant to be — an
        ISO-8601 UTC timestamp, or the open-bound sentinel — so nothing
        downstream of this lane, the buffering seam and the planner and SQL
        generation alike, has to defend against anything else.
-    4. **Build + validate the canonical instruction** (the SAME
+    5. **Build + validate the canonical instruction** (the SAME
        deserialize/`validate_instruction` round trip a keyed write buys in
-       ``Transaction._buffer`` — non-empty/no-duplicate assignments are the
-       schema's own check). ``validate_instruction`` measures the selecting
+       ``Transaction._buffer``). ``validate_instruction`` measures the selecting
        predicate with the whole ``validate_operation`` vocabulary and the
        bare-predicate rule, then rejects an inheritance-family target, then the
        assignments — so an inverted ``between`` window, an attribute outside
        the active position, a result modifier, or a set-based family write is
        refused here, at build, before every buffer and before the resolving
        read's own force-flush.
-    5. **Hand off** to :func:`buffer_predicate_instruction`, which dispatches
+    6. **Hand off** to :func:`buffer_predicate_instruction`, which dispatches
        READLESS (one statement, `m-batch-write`) or MATERIALIZING
        (``_materialize_predicate_write``, ADR 0014).
 
-    Steps 3 and 4 both refuse a write, so a call carrying an invalid bound AND
+    Steps 4 and 5 both refuse a write, so a call carrying an invalid bound AND
     an invalid predicate classifies by its bound. Either refusal is correct;
     only which one surfaces first is fixed here, and it is fixed in favour of
     never constructing a non-canonical instruction.
     """
-    if not statement.is_bare():
-        raise ValueError(
-            f"{statement.target}: a set-based write target must be a bare statement "
-            "(nothing but a predicate) — order_by / limit / distinct / as_of / history / "
-            "as_of_range / narrow / include are all rejected on a write target (python.md §5)"
-        )
-    entity = entity_of(meta, statement.target)
+    selection = mutation_selection(query)
+    _reject_uncomposable_assignments(selection.target, mutation, assignments)
+    entity = entity_of(meta, selection.target.canonical)
     declaring_entity = declaring(meta, entity)
     valid_from_literal = validate_valid_from(declaring_entity, mutation, valid_from)
     until_literal: str | None = None
@@ -163,8 +177,8 @@ def buffer_predicate(
     doc: dict[str, object] = {
         "mutation": mutation,
         "target": {
-            "entity": statement.target,
-            "predicate": op_algebra.serialize(statement.predicate),
+            "entity": selection.target.name,
+            "predicate": op_algebra.serialize(selection.predicate),
         },
     }
     if assignments:
@@ -177,6 +191,51 @@ def buffer_predicate(
     assert isinstance(instruction, PredicateWrite)  # this seam always builds the predicate shape
     instructions.validate_instruction(instruction, meta)
     buffer_predicate_instruction(uow, meta, conn, dialect, instruction)
+
+
+def _reject_uncomposable_assignments(
+    target: EntityIdentity,
+    mutation: PredicateMutation,
+    assignments: Sequence[AttributeAssignment[Any]],
+) -> None:
+    """Refuse an Assignment list that does not compose with ``target``.
+
+    An Assignment is already valid on its own — ``.set(...)`` judged it against
+    the member it was built from — so what is left is whether the list and the
+    query compose: an assignment-bearing mutation assigns something, assigns each
+    member once, and assigns only members of the position it writes. The last is
+    the exact-target rule: a set-based write names one Entity, and an Assignment
+    built through an ancestor addresses that ancestor's position rather than this
+    one. Ancestry never rescues it, because a set-based write over an inheritance
+    family is unsupported outright — which the canonical instruction's own
+    validation states, one step later and for both ingresses.
+
+    Delete and terminate forms take no Assignments at all, which their signatures
+    already state; the emptiness rule is therefore asked only of the mutations
+    that carry them.
+    """
+    if mutation in _ASSIGNMENT_BEARING and not assignments:
+        raise QueryDefinitionError(
+            code="query-assignment-target-mismatch",
+            message=f"a predicate-selected {mutation} requires at least one assignment",
+        )
+    seen: set[str] = set()
+    for assignment in assignments:
+        ref = assignment.attr
+        if ref.entity != target.name:
+            raise QueryDefinitionError(
+                code="query-assignment-target-mismatch",
+                message=(
+                    f"{ref}: a predicate-selected write assigns members of its exact target "
+                    f"{target.name}, and this assignment addresses {ref.entity}"
+                ),
+            )
+        if ref.attribute in seen:
+            raise QueryDefinitionError(
+                code="query-assignment-target-mismatch",
+                message=f"{ref}: assigned twice in one predicate-selected write",
+            )
+        seen.add(ref.attribute)
 
 
 def buffer_predicate_instruction(
@@ -195,7 +254,7 @@ def buffer_predicate_instruction(
     inheritance-family target (`m-inheritance`), then dispatch it READLESS
     (`m-batch-write`) or MATERIALIZE it (`m-opt-lock`, ADR 0014). The typed
     ``_where`` verbs (:func:`buffer_predicate`) build ``instruction`` from
-    a bare :class:`~parallax.core.entity.Statement` plus typed
+    a mutation-compatible :class:`~parallax.core.entity.FindQuery` plus typed
     ``Attr.set(...)`` assignments first; the engine builds it directly
     from the case's own canonical write-instruction document.
 
@@ -324,7 +383,7 @@ def _materialize_predicate_write(
     # temporal are mutually exclusive). Minimal-read discipline (`m-sql`)
     # then projects the ASSIGNED value-object document(s) only — never every
     # declared one, matching an ordinary read's own need-driven projection.
-    assignment_bearing = instruction.mutation in ("update", "updateUntil")
+    assignment_bearing = instruction.mutation in _ASSIGNMENT_BEARING
     predecessor_need = version_attr is None and is_temporal
     needs_documents: bool | frozenset[str]
     if predecessor_need:

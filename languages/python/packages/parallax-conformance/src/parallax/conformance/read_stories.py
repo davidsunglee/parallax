@@ -3,7 +3,7 @@
 shipped surface, never serialization-only.
 
 Every entry is ONE case-driven idiomatic read example: a pure ``build()``
-returning the SAME idiomatic ``Statement`` expression
+returning the SAME idiomatic ``FindQuery`` expression
 ``tests/api/test_operation_no_drift.py``'s ``BUILDERS`` proves
 no-drift against the corpus's own ``when.operation`` (the query-shape half),
 plus the ``case_id`` / ``title`` / ``model`` it mirrors. Execution is
@@ -50,7 +50,7 @@ from __future__ import annotations
 import datetime as dt
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Final
+from typing import Any, Final
 
 from parallax.conformance.graph_models import Coverage, Policy
 from parallax.conformance.read_models import (
@@ -65,7 +65,7 @@ from parallax.conformance.read_models import (
 )
 from parallax.conformance.read_models import Balance as _Balance
 from parallax.conformance.story_models import Account, Order, OrderItem, OrderStatus
-from parallax.core import Statement
+from parallax.core import FindQuery
 from parallax.core.temporal_read import LATEST
 from parallax.core.unit_work import Concurrency
 
@@ -102,7 +102,7 @@ class ReadStory:
     case_id: str
     title: str
     model: str
-    build: Callable[[], Statement]
+    build: Callable[[], FindQuery[Any, Any]]
     snippet: str
     concurrency: Concurrency | None = None
 
@@ -193,76 +193,79 @@ READ_STORIES: Final[tuple[ReadStory, ...]] = (
         "m-op-algebra-032",
         "Ordering and limiting",
         "orders",
-        lambda: Order.where().order_by(Order.active.desc(), Order.qty.asc()).limit(2),
-        "op = Order.where().order_by(Order.active.desc(), Order.qty.asc()).limit(2)",
+        lambda: Order.where(Order.all).order_by(Order.active.desc(), Order.qty.asc()).limit(2),
+        "op = Order.where(Order.all).order_by(Order.active.desc(), Order.qty.asc()).limit(2)",
     ),
     # -- m-temporal-read, models/balance.yaml -------------------------------- #
     ReadStory(
         "m-temporal-read-003",
         "As-of read at a past instant",
         "balance",
-        lambda: _Balance.where().as_of(tx_time=dt.datetime(2024, 4, 1, tzinfo=dt.UTC)),
-        "op = Balance.where().as_of(tx_time=datetime(2024, 4, 1, tzinfo=UTC))",
+        lambda: _Balance.where(_Balance.all).as_of(tx_time=dt.datetime(2024, 4, 1, tzinfo=dt.UTC)),
+        "op = Balance.where(Balance.all).as_of(tx_time=datetime(2024, 4, 1, tzinfo=UTC))",
     ),
     # -- m-navigate (relationship existence), models/orders.yaml ------------- #
     ReadStory(
         "m-navigate-002",
-        "Relationship existence (bare `.any()`)",
+        "Relationship existence (bare `.exists()`)",
         "orders",
-        lambda: Order.where(Order.items.any()),
-        "op = Order.where(Order.items.any())",
+        lambda: Order.where(Order.items.exists()),
+        "op = Order.where(Order.items.exists())",
     ),
     ReadStory(
         "m-navigate-003",
-        "Relationship absence (bare `.none()`)",
+        "Relationship absence (bare `.not_exists()`)",
         "orders",
-        lambda: Order.where(Order.items.none()),
-        "op = Order.where(Order.items.none())",
+        lambda: Order.where(Order.items.not_exists()),
+        "op = Order.where(Order.items.not_exists())",
     ),
     ReadStory(
         "m-navigate-004",
         "Relationship existence with a predicate",
         "orders",
-        lambda: Order.where(Order.items.any(OrderItem.quantity >= 4)),
-        "op = Order.where(Order.items.any(OrderItem.quantity >= 4))",
+        lambda: Order.where(Order.items.exists(OrderItem.quantity >= 4)),
+        "op = Order.where(Order.items.exists(OrderItem.quantity >= 4))",
     ),
     ReadStory(
         "m-navigate-006",
         "A navigation filter composed with a scalar predicate",
         "orders",
-        lambda: Order.where(Order.items.none(), Order.active.is_(True)),
-        "op = Order.where(Order.items.none(), Order.active.is_(True))",
+        lambda: Order.where(Order.items.not_exists(), Order.active.is_(True)),
+        "op = Order.where(Order.items.not_exists(), Order.active.is_(True))",
     ),
     ReadStory(
         "m-navigate-008",
         "Multi-hop relationship existence",
         "orders",
-        lambda: Order.where(Order.items.any(OrderItem.statuses.any(OrderStatus.code == "PACKED"))),
-        'op = Order.where(Order.items.any(OrderItem.statuses.any(OrderStatus.code == "PACKED")))',
+        lambda: Order.where(
+            Order.items.exists(OrderItem.statuses.exists(OrderStatus.code == "PACKED"))
+        ),
+        "op = Order.where(Order.items.exists("
+        'OrderItem.statuses.exists(OrderStatus.code == "PACKED")))',
     ),
     ReadStory(
         "m-navigate-009",
         "Existence over a to-one (nullable) relationship",
         "orders",
-        lambda: OrderStatus.where(OrderStatus.order_item.any()),
-        "op = OrderStatus.where(OrderStatus.order_item.any())",
+        lambda: OrderStatus.where(OrderStatus.order_item.exists()),
+        "op = OrderStatus.where(OrderStatus.order_item.exists())",
     ),
     ReadStory(
         "m-navigate-010",
         "Negated multi-hop relationship existence",
         "orders",
-        lambda: Order.where(Order.items.none(OrderItem.statuses.any())),
-        "op = Order.where(Order.items.none(OrderItem.statuses.any()))",
+        lambda: Order.where(Order.items.not_exists(OrderItem.statuses.exists())),
+        "op = Order.where(Order.items.not_exists(OrderItem.statuses.exists()))",
     ),
     # -- m-navigate x m-temporal-read (per-hop as-of), models/policy.yaml ---- #
     ReadStory(
         "m-navigate-018",
         "A semi-join across a temporal hop, explicitly pinned to latest",
         "policy",
-        lambda: Policy.where(Policy.coverages.any(Coverage.amount >= 600.00)).as_of(
+        lambda: Policy.where(Policy.coverages.exists(Coverage.amount >= 600.00)).as_of(
             tx_time=LATEST, valid_time=LATEST
         ),
-        "op = Policy.where(Policy.coverages.any(Coverage.amount >= 600.00)).as_of(\n"
+        "op = Policy.where(Policy.coverages.exists(Coverage.amount >= 600.00)).as_of(\n"
         "    tx_time=LATEST, valid_time=LATEST\n"
         ")",
     ),
@@ -270,16 +273,16 @@ READ_STORIES: Final[tuple[ReadStory, ...]] = (
         "m-navigate-023",
         "The same semi-join, defaulted to latest (no `.as_of()` at all)",
         "policy",
-        lambda: Policy.where(Policy.coverages.any(Coverage.amount >= 600.00)),
-        "op = Policy.where(Policy.coverages.any(Coverage.amount >= 600.00))",
+        lambda: Policy.where(Policy.coverages.exists(Coverage.amount >= 600.00)),
+        "op = Policy.where(Policy.coverages.exists(Coverage.amount >= 600.00))",
     ),
     # -- m-inheritance (TPH/TPCS rows reads), payment/document/animal.yaml --- #
     ReadStory(
         "m-inheritance-001",
         "Table-per-hierarchy concrete-target read",
         "payment",
-        lambda: CardPayment.where(),
-        "op = CardPayment.where()",
+        lambda: CardPayment.where(CardPayment.all),
+        "op = CardPayment.where(CardPayment.all)",
     ),
     # `m-inheritance-003` (Payment abstract-root, familyVariant),
     # `m-inheritance-013`/`-015` (Animal narrowed to Pet / an OR of Dog+Cat
@@ -299,8 +302,8 @@ READ_STORIES: Final[tuple[ReadStory, ...]] = (
         "m-inheritance-005",
         "Table-per-concrete-subtype concrete read",
         "document",
-        lambda: Invoice.where(),
-        "op = Invoice.where()",
+        lambda: Invoice.where(Invoice.all),
+        "op = Invoice.where(Invoice.all)",
     ),
     ReadStory(
         "m-inheritance-012",
@@ -313,22 +316,24 @@ READ_STORIES: Final[tuple[ReadStory, ...]] = (
         "m-inheritance-070",
         "Polymorphic navigation over table-per-concrete-subtype (grouped OR)",
         "document",
-        lambda: Folder.where(Folder.documents.any()),
-        "op = Folder.where(Folder.documents.any())",
+        lambda: Folder.where(Folder.documents.exists()),
+        "op = Folder.where(Folder.documents.exists())",
     ),
     ReadStory(
         "m-inheritance-071",
         "The same polymorphic navigation, narrowed to one abstract subtype",
         "document",
-        lambda: Folder.where(Folder.documents.any(Document.narrow(FinancialDocument))),
-        "op = Folder.where(Folder.documents.any(Document.narrow(FinancialDocument)))",
+        lambda: Folder.where(Folder.documents.exists(Document.narrow(FinancialDocument))),
+        "op = Folder.where(Folder.documents.exists(Document.narrow(FinancialDocument)))",
     ),
     ReadStory(
         "m-inheritance-100",
         "Table-per-concrete-subtype concrete-target read pinning an inherited root-owned axis",
         "rate",
-        lambda: DepositRate.where().as_of(tx_time=dt.datetime(2024, 1, 15, tzinfo=dt.UTC)),
-        "op = DepositRate.where().as_of(tx_time=datetime(2024, 1, 15, tzinfo=UTC))",
+        lambda: DepositRate.where(DepositRate.all).as_of(
+            tx_time=dt.datetime(2024, 1, 15, tzinfo=dt.UTC)
+        ),
+        "op = DepositRate.where(DepositRate.all).as_of(tx_time=datetime(2024, 1, 15, tzinfo=UTC))",
     ),
     # -- m-read-lock (the runtime lock/omit matrix), models/account.yaml ----- #
     # The `api-conformance`-lane runtime half of
@@ -347,14 +352,11 @@ READ_STORIES: Final[tuple[ReadStory, ...]] = (
         "op = Account.where(Account.id == 2)",
         concurrency="locking",
     ),
-    ReadStory(
-        "m-read-lock-003",
-        "A locking-mode projection read omits the shared read lock",
-        "account",
-        lambda: Account.where().distinct(),
-        "op = Account.where().distinct()",
-        concurrency="locking",
-    ),
+    # `m-read-lock-003` — the locking-mode PROJECTION read — is deliberately
+    # absent: its operation is a `distinct` projection, and the Find Query
+    # surface has no `distinct` clause at all (`python.md` §2 states the clause
+    # set exactly and excludes it, because a Find Query always returns complete
+    # root Entities). See `api_suite.CASE_SKIP_REASONS` for the reasoned skip.
     ReadStory(
         "m-read-lock-005",
         "An optimistic-mode read omits the shared read lock",

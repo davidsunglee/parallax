@@ -1,7 +1,8 @@
 """Predicate-selected (`*_where`) write unit tests for `parallax.snapshot.handle`.
 
 The set-based verb family (`python.md` §5) covers the
-bare-statement guard, inheritance rejection, Valid-Time-bound validation, readless
+mutation-compatibility guard, Assignment composition, inheritance rejection,
+Valid-Time-bound validation, readless
 dispatch for an unversioned non-temporal target, and materialization — the
 resolving read's need-sensitive projection, per-row no-op elimination, and
 atomic-unit buffering (ADR 0014) — across audit-only, bitemporal, and versioned
@@ -13,7 +14,7 @@ from __future__ import annotations
 import datetime as dt
 import re
 from decimal import Decimal
-from typing import cast
+from typing import Any, cast
 
 import pytest
 from _transact_support import (
@@ -40,13 +41,14 @@ from parallax.core import (
     Bitemporal,
     DomainModel,
     Entity,
+    FindQuery,
     Int32,
+    QueryDefinitionError,
     TxTemporal,
     ValueObject,
     attr,
     inheritance,
 )
-from parallax.core import Statement as EntityStatement
 from parallax.core.base import InstantError
 from parallax.core.db_port import JsonDocument, Row
 from parallax.core.dialect import POSTGRES
@@ -117,8 +119,9 @@ _WHERE_SUBSCRIBER_META = DomainModel(WhereSubscriber)
 
 
 # --------------------------------------------------------------------------- #
-# Predicate-selected `_where` verb family (`python.md` §5): the bare-statement #
-# guard, inheritance rejection, Valid-Time-                                   #
+# Predicate-selected `_where` verb family (`python.md` §5): the mutation-      #
+# compatibility guard, Assignment composition, inheritance rejection, Valid-   #
+# Time-                                                                        #
 # bound validation, readless dispatch, and materialization (resolve + per-row #
 # no-op elimination + the atomic-unit buffering, ADR 0014).                    #
 # --------------------------------------------------------------------------- #
@@ -193,27 +196,81 @@ def test_readless_update_where_reorders_assignments_to_layout_slot_order() -> No
     ]
 
 
-def test_where_verb_rejects_a_non_bare_statement() -> None:
+def test_where_verb_rejects_a_query_that_is_not_mutation_compatible() -> None:
     port = RecordingPort()
 
     def fn(tx: Transaction) -> None:
         tx.delete_where(mm.Person.where(mm.Person.id == 1).limit(1))
 
-    with pytest.raises(ValueError, match="bare statement"):
+    with pytest.raises(QueryDefinitionError) as caught:
         Database.connect(port, PERSON, clock=FixedClock(FIXED)).transact(fn)
+    assert caught.value.code == "query-not-mutation-compatible"
     assert not any(op[0] == "write" for op in port.ops)
 
 
 def test_where_verb_rejects_an_inheritance_family_target() -> None:
+    # The assignment names a member `CardPayment` itself declares, so the
+    # composition step accepts it and the family rejection is what refuses the
+    # write — which is the point: a set-based write over an inheritance family is
+    # unsupported whatever it assigns.
     port = RecordingPort()
 
     def fn(tx: Transaction) -> None:
         tx.update_where(
-            im.CardPayment.where(im.CardPayment.id == 1), im.CardPayment.amount.set(Decimal("1.00"))
+            im.CardPayment.where(im.CardPayment.id == 1), im.CardPayment.card_network.set("visa")
         )
 
     with pytest.raises(inheritance.InheritanceError, match="subtype-write-set-based-unsupported"):
         Database.connect(port, PAYMENT, clock=FixedClock(FIXED)).transact(fn)
+    assert not any(op[0] in ("read", "write") for op in port.ops)
+
+
+def test_where_verb_rejects_an_assignment_addressing_another_entity() -> None:
+    # A set-based write assigns members of its exact target, and an inherited
+    # member's Assignment addresses the DECLARING Entity — here the family root.
+    # The typed ingress composes the Assignment list with the query before it
+    # resolves anything, so this classifies as a composition failure; the
+    # canonical instruction the conformance engine hands `validate_instruction`
+    # carries no query to compose with, and still classifies the family first
+    # (`test_write_instructions.py`).
+    port = RecordingPort()
+
+    def fn(tx: Transaction) -> None:
+        tx.update_where(
+            im.CardPayment.where(im.CardPayment.id == 1), im.Payment.amount.set(Decimal("1.00"))
+        )
+
+    with pytest.raises(QueryDefinitionError, match=r"Payment\.amount") as caught:
+        Database.connect(port, PAYMENT, clock=FixedClock(FIXED)).transact(fn)
+    assert caught.value.code == "query-assignment-target-mismatch"
+    assert not any(op[0] in ("read", "write") for op in port.ops)
+
+
+def test_an_assignment_bearing_verb_requires_an_assignment() -> None:
+    port = RecordingPort()
+
+    def fn(tx: Transaction) -> None:
+        tx.update_where(mm.Person.where(mm.Person.id == 1))
+
+    with pytest.raises(QueryDefinitionError, match="at least one assignment") as caught:
+        Database.connect(port, PERSON, clock=FixedClock(FIXED)).transact(fn)
+    assert caught.value.code == "query-assignment-target-mismatch"
+    assert not any(op[0] in ("read", "write") for op in port.ops)
+
+
+def test_one_member_is_assigned_once_in_a_predicate_selected_write() -> None:
+    port = RecordingPort()
+
+    def fn(tx: Transaction) -> None:
+        tx.update_where(
+            mm.Person.where(mm.Person.id == 1),
+            mm.Person.name.set("Ada"),
+            mm.Person.name.set("Grace"),
+        )
+
+    with pytest.raises(QueryDefinitionError, match="assigned twice") as caught:
+        Database.connect(port, PERSON, clock=FixedClock(FIXED)).transact(fn)
+    assert caught.value.code == "query-assignment-target-mismatch"
     assert not any(op[0] in ("read", "write") for op in port.ops)
 
 
@@ -837,32 +894,33 @@ def test_materializing_terminate_until_where_rejects_a_reversed_window_bound() -
 
 
 # --------------------------------------------------------------------------- #
-# The behavioral bare-statement rejection is covered end to end. `is_bare()`  #
-# returning `False` in `test_where_verbs.py` is necessary but an actual        #
-# `tx.update_where` or                                                       #
-# `tx.delete_where` call handed a `.distinct()` statement must itself raise    #
-# the rejection (python.md §5), never merely be provable through the predicate #
-# alone. A port that raises on any I/O proves the guard runs BEFORE the        #
-# connection is ever touched.                                                  #
+# The behavioral mutation-compatibility rejection is covered end to end.        #
+# `mutation_selection` refusing a clause-bearing query in `test_where_verbs.py` #
+# is necessary but an actual `tx.update_where` or `tx.delete_where` call handed #
+# one must itself raise the rejection (python.md §5), never merely be provable  #
+# through the seam alone. A port that raises on any I/O proves the guard runs   #
+# BEFORE the connection is ever touched.                                        #
 # --------------------------------------------------------------------------- #
-def test_update_where_rejects_a_distinct_statement_end_to_end() -> None:
-    statement = mm.Person.where(mm.Person.id == 1).distinct()
+def test_update_where_rejects_an_ordered_query_end_to_end() -> None:
+    query = mm.Person.where(mm.Person.id == 1).order_by(mm.Person.id.asc())
 
     def fn(tx: Transaction) -> None:
-        tx.update_where(statement, mm.Person.name.set("Ada"))
+        tx.update_where(query, mm.Person.name.set("Ada"))
 
-    with pytest.raises(ValueError, match="bare statement"):
+    with pytest.raises(QueryDefinitionError) as caught:
         Database.connect(NoIoPort(), PERSON, clock=FixedClock(FIXED)).transact(fn)
+    assert caught.value.code == "query-not-mutation-compatible"
 
 
-def test_delete_where_rejects_a_distinct_statement_end_to_end() -> None:
-    statement = mm.Person.where(mm.Person.id == 1).distinct()
+def test_delete_where_rejects_an_ordered_query_end_to_end() -> None:
+    query = mm.Person.where(mm.Person.id == 1).order_by(mm.Person.id.asc())
 
     def fn(tx: Transaction) -> None:
-        tx.delete_where(statement)
+        tx.delete_where(query)
 
-    with pytest.raises(ValueError, match="bare statement"):
+    with pytest.raises(QueryDefinitionError) as caught:
         Database.connect(NoIoPort(), PERSON, clock=FixedClock(FIXED)).transact(fn)
+    assert caught.value.code == "query-not-mutation-compatible"
 
 
 def test_update_where_refuses_a_target_the_connected_model_does_not_declare() -> None:
@@ -1105,15 +1163,15 @@ def test_no_typed_bound_reaches_the_frozen_ingress_uncanonicalized() -> None:
 
 def _bounded_write(
     tx: Transaction,
-    statement: EntityStatement,
+    query: FindQuery[Any, Any],
     valid_from: dt.datetime,
     until: dt.datetime | None,
 ) -> None:
     assignment = WherePosition.value.set(Decimal("300.00"))
     if until is None:
-        tx.update_where(statement, assignment, valid_from=valid_from)
+        tx.update_where(query, assignment, valid_from=valid_from)
     else:
-        tx.update_until_where(statement, assignment, valid_from=valid_from, until=until)
+        tx.update_until_where(query, assignment, valid_from=valid_from, until=until)
 
 
 # --------------------------------------------------------------------------- #

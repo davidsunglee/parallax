@@ -155,7 +155,7 @@ SUPPORT_SCOPE_DEPS: Mapping[str, frozenset[str]] = {
     # does not reach the Hub-construction boundary: nothing here reaches
     # `parallax.core._formation_profile`, and therefore nothing here reaches a
     # Database Port.
-    "parallax.core.entity.statement": frozenset(
+    "parallax.core.entity._query": frozenset(
         {
             "parallax.core.base",
             "parallax.core.metamodel",
@@ -216,7 +216,7 @@ SUPPORT_SCOPE_DEPS: Mapping[str, frozenset[str]] = {
     # wide enough to include that chain could never forbid its endpoint.
     "parallax.snapshot.handle._preflight": frozenset(
         {
-            "parallax.core.entity.statement",
+            "parallax.core.entity._query",
             "parallax.core.metamodel",
             "parallax.core.op_algebra",
         }
@@ -265,7 +265,7 @@ SUPPORT_SCOPE_DEPS: Mapping[str, frozenset[str]] = {
 #   fails when a module beside one is import-free and undeclared — a sibling
 #   shape such a row cannot reach.
 CHILD_SCOPE_PARENT: Mapping[str, str] = {
-    "parallax.core.entity.statement": "parallax.core.entity",
+    "parallax.core.entity._query": "parallax.core.entity",
     "parallax.core.entity._expressions": "parallax.core.entity",
     "parallax.descriptor._hub": "parallax.descriptor",
     "parallax.snapshot.handle._wrap": "parallax.snapshot.handle",

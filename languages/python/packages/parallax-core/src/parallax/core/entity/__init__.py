@@ -4,7 +4,7 @@ The sole supported Python model-authoring surface: the frozen ``Entity`` and
 ``ValueObject`` bases and their temporal framework siblings, the ``Attr[T]`` /
 ``Rel[T]`` member annotations with the ``attr`` / ``rel`` / ``index`` / ``asc`` /
 ``desc`` factories, the core-algebra spellings those take, ``DomainModel`` and
-its closed error-code sets, the statement surface, and the closed-world
+its closed error-code sets, the Find Query surface, and the closed-world
 relationship load-state vocabulary. The underscored modules behind these names
 are implementation detail rather than caller seams.
 
@@ -82,9 +82,9 @@ from parallax.core.entity._members import (
     rel,
 )
 from parallax.core.entity._model import DomainModel
+from parallax.core.entity._query import FindQuery, UnsupportedFeatureError
 from parallax.core.entity._value_object import ValueObject, ValueObjectMeta, to_document
 from parallax.core.entity.graph_state import is_loaded, narrowed
-from parallax.core.entity.statement import Statement, UnsupportedFeatureError
 
 __all__ = [
     "ENTITY_DEFINITION_CODES",
@@ -115,6 +115,7 @@ __all__ = [
     "EntityDeclaration",
     "EntityDefinitionError",
     "EntityMeta",
+    "FindQuery",
     "Float32",
     "FrameworkOwnedAxisError",
     "IndexSpec",
@@ -131,7 +132,6 @@ __all__ = [
     "ReverseRelSpec",
     "Sequence",
     "SortKey",
-    "Statement",
     "TablePerHierarchy",
     "TxTemporal",
     "UnloadedRelationshipError",

@@ -713,7 +713,7 @@ def test_the_preflight_seam_grants_the_statement_scope_not_the_frontend() -> Non
     scope = "parallax.snapshot.handle._preflight"
     assert dag.SUPPORT_SCOPE_DEPS[scope] == frozenset(
         {
-            "parallax.core.entity.statement",
+            "parallax.core.entity._query",
             "parallax.core.metamodel",
             "parallax.core.op_algebra",
         }
@@ -734,7 +734,7 @@ def test_the_preflight_seam_grants_the_statement_scope_not_the_frontend() -> Non
 
 def test_granting_a_child_scope_omits_that_childs_ancestors_from_the_row() -> None:
     # A forbidden entry is package-scoped, so naming `parallax.core.entity` would
-    # also forbid the `parallax.core.entity.statement` the row exists to permit.
+    # also forbid the `parallax.core.entity._query` the row exists to permit.
     # Only the ancestor's NAME is given up — what the rest of that package reaches
     # stays forbidden, and the `_hub` canary below proves it is still reported.
     adjacency = dag.build_adjacency(dag.parse_dependency_graph(dag.MODULES_MD.read_text()))
@@ -750,9 +750,9 @@ def test_granting_a_child_scope_omits_that_childs_ancestors_from_the_row() -> No
 def test_the_statement_scope_is_narrower_than_the_frontend_it_sits_in() -> None:
     adjacency = dag.build_adjacency(dag.parse_dependency_graph(dag.MODULES_MD.read_text()))
     forbidden = dag.compute_forbidden(adjacency)
-    assert dag.CHILD_SCOPE_PARENT["parallax.core.entity.statement"] == "parallax.core.entity"
-    assert set(forbidden["parallax.core.entity"]) < set(forbidden["parallax.core.entity.statement"])
-    assert "parallax.core._formation_profile" in forbidden["parallax.core.entity.statement"]
+    assert dag.CHILD_SCOPE_PARENT["parallax.core.entity._query"] == "parallax.core.entity"
+    assert set(forbidden["parallax.core.entity"]) < set(forbidden["parallax.core.entity._query"])
+    assert "parallax.core._formation_profile" in forbidden["parallax.core.entity._query"]
     # A child named as another scope's grant needs no `ignore_imports` entry from
     # its own parent's row: the parent package already covers it.
     assert dag.child_grant_exceptions(adjacency, "parallax.core.entity") == []
@@ -840,7 +840,7 @@ def test_an_indirect_reach_out_of_the_preflight_seam_fails_lint_imports() -> Non
     assert lint_imports is not None, "lint-imports must be installed in the dev env"
 
     # `parallax.core.entity._model` is a NAME the seam's row permits: granting the
-    # `parallax.core.entity.statement` child omits its ancestor package from the
+    # `parallax.core.entity._query` child omits its ancestor package from the
     # row. What the row still forbids is where that name leads — the Domain Model's
     # model-formation edge, and through it the chain toward the port that made
     # the whole frontend too wide a grant.

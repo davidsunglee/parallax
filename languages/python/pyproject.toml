@@ -456,9 +456,9 @@ forbidden_modules = [
 ]
 
 [[tool.importlinter.contracts]]
-name = "parallax.core.entity.statement may import only its permitted dependencies"
+name = "parallax.core.entity._query may import only its permitted dependencies"
 type = "forbidden"
-source_modules = ["parallax.core.entity.statement"]
+source_modules = ["parallax.core.entity._query"]
 forbidden_modules = [
     "parallax.conformance",
     "parallax.core._formation_profile",

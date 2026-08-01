@@ -1,7 +1,7 @@
 """Unit pins for the ``_where`` verb family's own build-time surface
 (python.md §5): the ``.set(...)`` assignment DSL
-(``entity/_expressions.py``) and the bare-statement guard
-(``entity/statement.py``). The materializing/readless DISPATCH and the
+(``entity/_expressions.py``) and the mutation-compatibility guard
+(``entity/_query.py``). The materializing/readless DISPATCH and the
 rendered SQL are pinned in ``test_transaction_predicate_writes.py`` /
 ``test_write_lowering.py`` /
 ``test_engine.py``; these tests isolate the two build-time, entity-scoped
@@ -12,14 +12,27 @@ from __future__ import annotations
 
 import datetime as dt
 from decimal import Decimal
+from typing import Any
 
 import pytest
 
 from _support import mirrored_models as mm
 from _support import snapshot_models as sm
 from _support import value_object_models as vom
-from parallax.core import Attr, DomainModel, Entity, ModelCopyError, TxTemporal, ValueObject, attr
+from parallax.core import (
+    Attr,
+    DomainModel,
+    Entity,
+    FindQuery,
+    ModelCopyError,
+    QueryDefinitionError,
+    TxTemporal,
+    ValueObject,
+    attr,
+)
 from parallax.core.entity import AttributeAssignment
+from parallax.core.entity._query import mutation_selection
+from parallax.core.op_algebra import All
 from parallax.core.temporal_read import LATEST, TX_TIME
 
 _FIXED = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
@@ -215,52 +228,59 @@ def test_set_on_a_nullable_scalar_with_none_is_accepted() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# `Statement.is_bare()` — the single write-target guard every `_where` verb    #
-# shares (python.md §5). Each non-default clause is tested independently, so  #
-# the guard cannot be satisfied by an accidental combination.                  #
+# `mutation_selection(query)` — the single write-target guard every `_where`   #
+# verb shares (python.md §5). Each clause is tested independently, so the      #
+# guard cannot be satisfied by an accidental combination, and the accepted     #
+# case proves the seam answers the target and predicate a write is built from. #
 # --------------------------------------------------------------------------- #
-def test_is_bare_true_for_a_plain_predicate_statement() -> None:
-    statement = vom.Customer.where(vom.Customer.name == "Ada")
-    assert statement.is_bare() is True
+def test_a_plain_predicate_query_is_mutation_compatible() -> None:
+    query = vom.Customer.where(vom.Customer.name == "Ada")
+    selection = mutation_selection(query)
+    assert selection.target == vom.Customer.identity
+    assert selection.predicate == (vom.Customer.name == "Ada").op
 
 
-def test_is_bare_true_for_a_zero_predicate_find_all_statement() -> None:
-    assert vom.Customer.where().is_bare() is True
+def test_an_explicitly_unfiltered_query_is_mutation_compatible() -> None:
+    assert mutation_selection(vom.Customer.where(vom.Customer.all)).predicate == All()
 
 
-def test_is_bare_false_with_order_by() -> None:
-    statement = vom.Customer.where(vom.Customer.name == "Ada").order_by(vom.Customer.id.asc())
-    assert statement.is_bare() is False
+def _refused(query: FindQuery[Any, Any], clause: str) -> None:
+    with pytest.raises(QueryDefinitionError, match=clause) as caught:
+        mutation_selection(query)
+    assert caught.value.code == "query-not-mutation-compatible"
 
 
-def test_is_bare_false_with_limit() -> None:
-    statement = vom.Customer.where(vom.Customer.name == "Ada").limit(1)
-    assert statement.is_bare() is False
+def test_an_ordered_query_is_not_mutation_compatible() -> None:
+    _refused(
+        vom.Customer.where(vom.Customer.name == "Ada").order_by(vom.Customer.id.asc()), "order_by"
+    )
 
 
-def test_is_bare_false_with_distinct() -> None:
-    # The spec's own enumeration omits `.distinct()`; the guard checks it
-    # anyway (any non-default field), resolving that prose gap by
-    # construction rather than a special case.
-    statement = vom.Customer.where(vom.Customer.name == "Ada").distinct()
-    assert statement.is_bare() is False
+def test_a_limited_query_is_not_mutation_compatible() -> None:
+    _refused(vom.Customer.where(vom.Customer.name == "Ada").limit(1), "limit")
 
 
-def test_is_bare_false_with_as_of() -> None:
-    statement = _WhereTemporalLedger.where(_WhereTemporalLedger.id == 1).as_of(tx_time=LATEST)
-    assert statement.is_bare() is False
+def test_a_pinned_query_is_not_mutation_compatible() -> None:
+    _refused(
+        _WhereTemporalLedger.where(_WhereTemporalLedger.id == 1).as_of(tx_time=LATEST), "as_of"
+    )
 
 
-def test_is_bare_false_with_history() -> None:
-    statement = _WhereTemporalLedger.where(_WhereTemporalLedger.id == 1).history(TX_TIME)
-    assert statement.is_bare() is False
+def test_a_milestone_set_query_is_not_mutation_compatible() -> None:
+    _refused(_WhereTemporalLedger.where(_WhereTemporalLedger.id == 1).history(TX_TIME), "history")
 
 
-def test_is_bare_false_with_include() -> None:
-    statement = sm.SnapOrder.where(sm.SnapOrder.id == 1).include(sm.SnapOrder.items)
-    assert statement.is_bare() is False
+def test_an_including_query_is_not_mutation_compatible() -> None:
+    _refused(sm.SnapOrder.where(sm.SnapOrder.id == 1).include(sm.SnapOrder.items), "include")
 
 
-def test_is_bare_false_with_narrow() -> None:
-    statement = sm.Animal.where(sm.Animal.name == "Rex").narrow(sm.Dog)
-    assert statement.is_bare() is False
+def test_a_narrowed_query_is_not_mutation_compatible() -> None:
+    _refused(sm.Animal.where(sm.Animal.name == "Rex").narrow(sm.Dog), "narrow")
+
+
+def test_every_carried_clause_is_named_at_once() -> None:
+    # The refusal names what the query actually carries rather than the first
+    # clause it happens to find, so a caller fixes the query in one pass.
+    query = vom.Customer.where(vom.Customer.name == "Ada").order_by(vom.Customer.id.asc()).limit(1)
+    with pytest.raises(QueryDefinitionError, match="order_by, limit"):
+        mutation_selection(query)
