@@ -1,11 +1,11 @@
 """``parallax.snapshot.handle._preflight`` — the shared read-preflight seam.
 
 Every modeled read passes through :func:`preflight_find` before any I/O:
-:meth:`Database.find`, :meth:`Transaction.find`, and later the Session read
-boundary call it rather than reimplementing a step of it. The seam resolves the
-query's target in the connected model and validates its canonical operation from
-that resolved root, in that order, and returns the one :class:`LoweredRead` the
-caller keeps for the rest of that execution.
+:meth:`Database.find` and :meth:`Transaction.find` call it rather than
+reimplementing a step of it. The seam resolves the query's target in the
+connected model and validates its canonical operation from that resolved root,
+in that order, and returns the one :class:`LoweredRead` the caller keeps for the
+rest of that execution.
 
 The order is the contract, not an implementation detail. Target resolution is
 not redundant with operation validation: a find-all query carries no attribute
@@ -17,7 +17,11 @@ This is its own module precisely so that it can be proven to touch no port. Its
 ``spec/python.md`` §7 scope grants only the Entity frontend, the Metamodel
 Interface, and the operation algebra, so the generated import-linter contract
 forbids it — directly or through any chain — from reaching SQL generation, a
-dialect, a Database Port adapter, deep-fetch planning, or materialization. A
+dialect, a concrete Database Port adapter, deep-fetch planning, or
+materialization. The abstract Database Port is the one boundary that grant set
+does reach, through the Entity frontend's own model-formation edge, so §7
+declares it a closure exclusion and a second generated contract asks the
+narrower question the complement cannot: whether this module NAMES a port. A
 helper that needs any of those does not belong here.
 
 Every name here is spelled bare: privacy is carried by this MODULE's leading

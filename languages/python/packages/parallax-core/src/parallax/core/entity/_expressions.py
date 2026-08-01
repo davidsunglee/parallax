@@ -37,6 +37,13 @@ position, a descendant's member is not addressable from an ancestor position.
 ``E`` appears in no field of the value, so the contravariance is stated by a
 checker-only phantom method rather than inferred from the runtime shape.
 
+Recommended style, not a rule the parameters enforce: START EVERY TERM FROM THE
+QUERIED ENTITY. Prefer ``Dog.where((Dog.name == n) & (Dog.bark_volume > v))``
+over spelling an inherited member through the class that declares it. It costs
+nothing on the wire — ``Dog.name`` and ``Animal.name`` emit the identical
+operation, because the expression is built from the declaring class either way —
+and it leaves every composition in one position, which is trivially well-typed.
+
 What the parameters do NOT catch is recorded where it is decided rather than
 discovered. A predicate's value is a WIRE LITERAL, not a member value: the
 neutral contract spells a decimal member's comparison as the number ``600.00``,
@@ -228,18 +235,37 @@ class Predicate[E]:
             is the input position, and it is the whole mechanism.
             """
 
-    # A combination addresses every position BOTH operands address, and that
-    # intersection is unspellable here — so a combination takes the LEFT
-    # operand's position. Requiring both operands to share one position instead
-    # would refuse `Animal.name == n` combined with `Dog.bark_volume > v` in a
-    # `Dog` query, which no rule refuses. What the choice gives up is a
-    # combination whose right operand is the narrower one: it reads as the
-    # left's position, and the model-aware validator states the rule the
-    # parameter then cannot.
-    def __and__(self, other: Predicate[Any]) -> Predicate[E]:
+        def __rand__[F](self: Predicate[F], other: Predicate[F], /) -> Predicate[F]:
+            """The reflected twin of :meth:`__and__`, for the checker alone.
+
+            A checker solves ``F`` from the LEFT operand before it reads the
+            right one, so a combination whose right operand is the NARROWER of
+            the two would otherwise fail to check at all. A checker falls back
+            to the right operand's reflected operator exactly then, and that
+            solves ``F`` from the narrower side — which is the meet either way,
+            so one composition reads identically in both operand orders.
+
+            Never reached at run time: :meth:`__and__` is defined and accepts
+            every predicate, so Python never consults this, and the operand
+            order of the tree that gets built is always left to right.
+            """
+            ...
+
+        def __ror__[F](self: Predicate[F], other: Predicate[F], /) -> Predicate[F]:
+            """The reflected twin of :meth:`__or__` (see :meth:`__rand__`)."""
+            ...
+
+    # A combination addresses every position BOTH operands address — the MEET of
+    # the two — and solving ONE parameter from both operands is how that meet is
+    # spelled: `E` is contravariant, so `Predicate[X]` satisfies `Predicate[F]`
+    # only where `F` is a subtype of `X`, and the only `F` both operands satisfy
+    # is the narrower position. So `Animal.name == n` combined with
+    # `Dog.bark_volume > v` addresses `Dog`: a `Dog` query takes it, an `Animal`
+    # query is refused statically, and neither answer turns on operand order.
+    def __and__[F](self: Predicate[F], other: Predicate[F], /) -> Predicate[F]:
         return Predicate(And(operands=(*and_terms(self), *and_terms(other))))
 
-    def __or__(self, other: Predicate[Any]) -> Predicate[E]:
+    def __or__[F](self: Predicate[F], other: Predicate[F], /) -> Predicate[F]:
         return Predicate(Or(operands=(*_or_terms(self), *_or_terms(other))))
 
     def __invert__(self) -> Predicate[E]:

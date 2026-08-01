@@ -2313,7 +2313,8 @@ legalizes a forbidden edge.
 | `m-snapshot-read` | `parallax.snapshot.materialize` | `parallax.snapshot.materialize` | `m-deep-fetch` | generated forbidden contracts + cross-package contract |
 | Snapshot handle and composition surface (support) | `parallax.snapshot.handle` | `parallax.snapshot.handle` | `parallax.snapshot.materialize`, `parallax.core.entity`, `m-core`, `m-metamodel`, `m-op-algebra`, `m-inheritance`, `m-storage-layout`, `m-temporal-read`, `m-deep-fetch`, `m-navigate`, `m-dialect`, `m-db-port`, `m-sql`, `m-unit-work`, `m-read-lock`, `m-auto-retry`, `m-opt-lock`, `m-batch-write`, `m-txtime-write`, `m-bitemp-write` | generated forbidden contracts + cross-package contract |
 | Snapshot handle wrapping (support, child of `parallax.snapshot.handle`) | `parallax.snapshot.handle._wrap` | `parallax.snapshot.handle._wrap` | `parallax.snapshot.materialize`, `parallax.core.entity`, `m-metamodel`, `m-relationship`, `m-inheritance`, `m-temporal-read` | generated forbidden contracts |
-| Snapshot read preflight (support, child of `parallax.snapshot.handle`) | `parallax.snapshot.handle._preflight` | `parallax.snapshot.handle._preflight` | `parallax.core.entity`, `m-metamodel`, `m-op-algebra` | generated forbidden contracts |
+| Snapshot read preflight (support, child of `parallax.snapshot.handle`) | `parallax.snapshot.handle._preflight` | `parallax.snapshot.handle._preflight` | `parallax.core.entity`, `m-metamodel`, `m-op-algebra` | generated forbidden contracts, plus the `m-db-port` closure exclusion below |
+| Snapshot handle refusals (support, child of `parallax.snapshot.handle`) | `parallax.snapshot.handle._errors` | `parallax.snapshot.handle._errors` | (none) | generated forbidden contracts |
 | Snapshot handle write lowering (support, child group of `parallax.snapshot.handle`) | `parallax.snapshot.handle._family`, `._write_types`, `._keyed_sql`, `._write_lowering`, `._step_lowering` | those five scopes, sharing one grant row | `m-core`, `m-metamodel`, `m-inheritance`, `m-storage-layout`, `m-temporal-read`, `m-dialect`, `m-db-port`, `m-sql`, `m-unit-work`, `m-opt-lock`, `m-txtime-write`, `m-bitemp-write` | generated forbidden contracts |
 | `m-case-format` | `parallax.conformance.case_format` (dev-only) | `parallax.conformance.case_format` | `m-core` | generated forbidden contracts (dev tree) |
 | `m-conformance-adapter` | `parallax.conformance.cli` (dev-only) | `parallax.conformance.cli` | `m-case-format`, plus any claimed behavioral or support scope it harnesses — the core conformance-family exception | generated forbidden contracts (dev tree) |
@@ -2341,7 +2342,11 @@ fails when they disagree with each other or when its own `SUPPORT_SCOPE_DEPS`
 table disagrees with either, so the generated contracts cannot drift from this
 section and no single representation can be edited alone. In the rows, only a
 backticked module tag or `parallax.*` scope declares a grant; unbackticked
-prose (`psycopg`) names no enforcement scope.
+prose (`psycopg`) names no enforcement scope. A scope granting nothing has no
+edge to write and must still be declared, because its emptiness is what it
+enforces: both representations spell it `(none)` — the dependency column
+outright, the block as the edge target — and naming `(none)` beside a real
+grant is rejected as a contradiction.
 
 ```support-scope-graph
 parallax.core._formation_profile --> parallax.core.metamodel
@@ -2389,6 +2394,7 @@ parallax.snapshot.handle._wrap --> parallax.core.temporal_read
 parallax.snapshot.handle._preflight --> parallax.core.entity
 parallax.snapshot.handle._preflight --> parallax.core.metamodel
 parallax.snapshot.handle._preflight --> parallax.core.op_algebra
+parallax.snapshot.handle._errors --> (none)
 parallax.snapshot.handle._family --> parallax.core.base
 parallax.snapshot.handle._family --> parallax.core.metamodel
 parallax.snapshot.handle._family --> parallax.core.inheritance
@@ -2492,11 +2498,16 @@ parallax.postgres --> parallax.core.dialect
   its own private implementation modules when the child's declared grants are
   materially narrower than the parent's closure or when one orchestration leaf
   requires a narrowly additive first-party grant that must remain forbidden to
-  the rest of the parent package. The two declared children of
-  `parallax.snapshot.handle` are narrower wrapping and write-lowering scopes.
+  the rest of the parent package. The four declared children of
+  `parallax.snapshot.handle` are the narrower wrapping, read-preflight and
+  write-lowering scopes plus the zero-grant refusal leaf.
   `parallax.descriptor._hub` is the additive case: its sole extra grant is the
   first-party Entity Hub seam required to construct and read the one concrete
-  Hub type. All are generated as ordinary contract sources, and none is a new
+  Hub type. `parallax.snapshot.handle._errors` is the empty case: the
+  read-preflight and write-lowering scopes raise one error class while granting
+  disjoint dependencies, so the module holding it may reach nothing at all, and
+  a grant row of `(none)` is what makes that emptiness a gate rather than a
+  convention. All are generated as ordinary contract sources, and none is a new
   supported import path. Because
   import-linter's `forbidden` contracts are package-scoped on both sides, a
   child is emitted only as a contract **source**: naming it as a forbidden
@@ -2514,6 +2525,21 @@ parallax.postgres --> parallax.core.dialect
   retained on purpose — navigation stays reachable through `m-snapshot-read`
   → `m-deep-fetch` → `m-navigate`, so removing it would forbid nothing while
   contradicting the deliberate edge described above.
+- **Closure exclusions.** A forbidden row is the complement of a closure, so a
+  scope is never forbidden a scope it reaches indirectly through its own
+  grants. Where a scope exists in order to prove it does not name some
+  boundary, that boundary is declared as a **closure exclusion** in
+  `check_dag_sync.CLOSURE_EXCLUSIONS`, which puts it back into the row and
+  emits one wildcarded `ignore_imports` entry per direct grant whose closure
+  reaches it. The direct import the exclusion exists to catch is a different
+  first hop and stays caught; the residual indirect reach is governed by the
+  granted scope's own row. `parallax.snapshot.handle._preflight` →
+  `m-db-port` is the one declared exclusion: the seam resolves a target and
+  validates an operation before any I/O, while its `parallax.core.entity` grant
+  reaches `parallax.core._formation_profile` → `m-opt-lock` → `m-unit-work` →
+  `m-db-port`. An exclusion naming a direct grant, or one its source cannot
+  reach at all, fails generation, so an exclusion cannot contradict a row or
+  quietly carry nothing.
 - **Filesystem ownership.** `languages/python/tools/check_scope_ownership.py`
   walks every `packages/*/src/**/*.py` file in the production distributions and
   proves it resolves to exactly one **most-specific** enforcement scope of this
@@ -2552,7 +2578,7 @@ hatchling.
 |---|---|---|---|---|---|
 | `parallax-core` (the common runtime) | production | all `parallax.core.*` scopes of §7 (behavioral modules, Entity/Find Query frontend, driver-free postgres dialect strategy) | `pydantic` | (none) | `parallax.core`: the `Entity`/`TxTemporal`/`Bitemporal`/`ValueObject` bases, `Attr`, `Rel`, `attr`, `rel`, `index`, `desc`, `asc`, `Int32`, `Float32`, `MAX`, `Sequence`, the cardinality, persistence, inheritance role and strategy values, `MetamodelHub`, `FindQuery`, `Predicate`, `LATEST`, `VALID_TIME`, `TX_TIME`, `Pin`, `Edge`, and its documented errors |
 | `parallax-descriptor` (descriptor interchange) | production, optional | `parallax.descriptor` (`m-descriptor` plus its private Hub orchestration) | `pyyaml`, `jsonschema` | `parallax-core` | `parallax.descriptor`: `hub_from_document`, `hub_from_json`, `hub_from_yaml`, `export_document`, `export_json`, `export_yaml`, `DescriptorError`, `DescriptorSyntaxError`, `DescriptorSchemaError`, `DescriptorValueError`, `DescriptorSchemaViolation`, `DescriptorValueViolation`, `DescriptorExportError` |
-| `parallax-snapshot` (snapshot lifecycle extension) | production | `parallax.snapshot.*` (`materialize`, `handle`) | (none beyond core) | `parallax-core` | `parallax.snapshot`: `connect()`, `Snapshot[T]`, `Execution`, `is_view_loaded`, `view`, `pin_of`, `edge_of`, `UnloadedRelationshipError`, `QueryOwnershipError`, `DeferredFeatureError`, `SnapshotConnectionError`, `SnapshotDecodingError`, `SnapshotMaterializationError`, `SnapshotInspectionError`, `TransactionOwnershipError` |
+| `parallax-snapshot` (snapshot lifecycle extension) | production | `parallax.snapshot.*` (`materialize`, `handle`) | (none beyond core) | `parallax-core` | `parallax.snapshot`: `connect()`, `Snapshot[T]`, `Execution`, `is_view_loaded`, `view`, `pin_of`, `edge_of`, `UnloadedRelationshipError`, `QueryOwnershipError`, `DeferredFeatureError`, `SnapshotConnectionError`, `SnapshotDecodingError`, `SnapshotMaterializationError`, `SnapshotInspectionError`, `TransactionOwnershipError`, `QueryTargetError` |
 | `parallax-postgres` (Postgres database adapter) | production | `parallax.postgres.*` (concrete port over psycopg) | `psycopg[binary]` (sole declarer) | `parallax-core` | `parallax.postgres`: `PostgresAdapter` |
 | `parallax-conformance` | development-only | `parallax.conformance.*` (CLI, case format, corpus loading, provider harness) | `testcontainers`, `jsonschema` | `parallax-core`, `parallax-descriptor`, `parallax-snapshot`, `parallax-postgres` | `parallax-conformance` console script (`describe` / `compile` / `run`) |
 
