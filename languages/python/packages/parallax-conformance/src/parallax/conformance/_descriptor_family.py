@@ -100,9 +100,10 @@ def validate(metamodel: Metamodel) -> None:
 
     The check order pins each corpus ``rejectedRule``: parent resolution,
     acyclicity, strategy and family-owned-fact locality, ancestry-reaches-a-root,
-    missing-root detection, then the selected strategy's table/tag formation
-    rules. The last three are asked once per independent family, so a descriptor
-    declaring several never has one family's root or strategy answer for another.
+    missing-root detection, the family's own concrete membership, then the
+    selected strategy's table/tag formation rules. The last four are asked once
+    per independent family, so a descriptor declaring several never has one
+    family's root, membership, or strategy answer for another.
     """
     participants = _participants(metamodel)
     if not participants:
@@ -119,6 +120,8 @@ def validate(metamodel: Metamodel) -> None:
         (_reject_missing_root(root, members), members)
         for root, members in _families(participants, by_name)
     ]
+    for root, members in rooted:
+        _reject_missing_concrete_subtype(root, members)
     for root, members in rooted:
         _reject_strategy_storage(root, members)
     for root, members in rooted:
@@ -282,6 +285,18 @@ def _reject_missing_root(root: Entity | None, members: tuple[Entity, ...]) -> En
             f"inheritance participants {sorted(member.name for member in members)} declare no root",
         )
     return root
+
+
+def _reject_missing_concrete_subtype(root: Entity, participants: tuple[Entity, ...]) -> None:
+    """Reject a family that declares no concrete subtype: only concrete subtypes
+    own rows, so every position in such a family resolves over no rows at all."""
+    if any(_inh(entity).role == "concrete-subtype" for entity in participants):
+        return
+    raise InheritanceError(
+        "inheritance-missing-concrete-subtype",
+        f"the family rooted at {root.name} declares no concrete subtype",
+        entity=root.name,
+    )
 
 
 def _reject_strategy_storage(root: Entity, participants: tuple[Entity, ...]) -> None:

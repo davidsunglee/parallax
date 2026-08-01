@@ -1,0 +1,20 @@
+# Negative (m-op-algebra positional rule): a predicate reference names an entity the
+# read is not positioned at, and no narrow can bring it into scope.
+#
+# The read is positioned at `Animal` (the family root, the default a rejected case
+# takes), and the predicate references `Person.name` — `Person` is the plain owner
+# entity, in no inheritance family with the animal family. This is the shape that
+# makes the rule load-bearing rather than pedantic: `Animal` declares a `name` of its
+# own, so a lowering that keeps only the reference's LOCAL part would silently emit
+# `t0.name = ?` and answer a different question than the one asked — on a
+# predicate-selected write, against different rows. `subtype-attribute-outside-narrow-scope`
+# is the sibling rule for a reference INSIDE the position's family, where narrowing is
+# the remedy; here nothing is, so the rule is `attribute-outside-active-position`.
+model: models/animal.yaml
+tags: [m-op-algebra, m-inheritance, rejected, negative, slice-snapshot-1, slice-managed-1]
+shape: rejected
+when:
+  operation:
+    eq: { attr: Person.name, value: Ada }
+then:
+  rejectedRule: attribute-outside-active-position

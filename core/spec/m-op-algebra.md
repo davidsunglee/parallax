@@ -665,6 +665,24 @@ Consequences:
   subset of that subtype's is rejected
   (`subtype-attribute-outside-narrow-scope`); wrapping the predicate in a `narrow`
   to that subtype makes it valid.
+- **An attribute reference outside the active position's family is rejected
+  outright.** The rule above is the **family** half of one positional rule: an
+  attribute reference is applicable only where the active position's effective set
+  is a subset of the referenced Entity's. When the referenced Entity and the active
+  position share **no** inheritance family — an unrelated Entity, or one in another
+  family — no `narrow` can make the reference applicable, so it is rejected as
+  `attribute-outside-active-position` rather than as a scope a narrow could fix. The
+  two rules partition one condition: same family, `subtype-attribute-outside-narrow-scope`;
+  different family, `attribute-outside-active-position`.
+- **An order key's attribute reference is checked at the position it orders.**
+  An `orderBy` key names an attribute exactly as a predicate does and takes the
+  same positional rule, but the position it is asked of is the one its **ordered
+  rows** occupy: a **top-level `narrow`** in the ordered operand — the node a
+  whole-result narrowing produces, reached through the result-shaping and temporal
+  wrappers that may carry it — moves that position, while a `narrow` appearing as a
+  predicate term inside a boolean combinator is a filter and moves nothing. So
+  ordering an abstract position by a concrete subtype's attribute is rejected, and
+  ordering that same position **narrowed to** that subtype is not.
 - **The serde preserves the authored `to` list verbatim.** Semantic validation and
   SQL lowering derive the effective concrete set without rewriting the submitted
   operation, so two authored spellings that resolve to the same set (`to: [Pet]`

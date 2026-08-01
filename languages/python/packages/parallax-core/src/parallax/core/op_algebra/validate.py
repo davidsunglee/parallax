@@ -23,14 +23,18 @@ Rule provenance:
   type-check both bounds FIRST, so a mistyped bound is named as a type mismatch
   rather than ordered as a raw literal.
 - `narrow-outside-position` / `narrow-empty-effective-set` /
-  `subtype-attribute-outside-narrow-scope` — `m-op-algebra` "Subtype narrowing"
-  / "The four-step validation rule": a `narrow` node's resolved concrete set is
-  clamped (intersected) against the **active polymorphic position** threaded
-  through the read (the queried `targetEntity`, re-narrowed by every enclosing
-  `narrow`), and a predicate referencing a concrete-subtype-declared attribute
-  needs the active position narrowed to a compatible subtype. A deep-fetch
+  `subtype-attribute-outside-narrow-scope` / `attribute-outside-active-position`
+  — `m-op-algebra` "Subtype narrowing" / "The four-step validation rule": a
+  `narrow` node's resolved concrete set is clamped (intersected) against the
+  **active polymorphic position** threaded through the read (the queried
+  `targetEntity`, re-narrowed by every enclosing `narrow`), and an attribute
+  reference — in a predicate or in an `orderBy` key — must be applicable to every
+  concrete in that position. The two attribute rules partition one condition by
+  whether the reference's Entity and the position share an inheritance family:
+  inside one, narrowing is the remedy; outside it, nothing is. A deep-fetch
   path's own root `{entity, to}` guard resolves at that same queried position
-  and is clamped by the same rule.
+  and is clamped by the same rule. An order key is asked of the position its
+  ordered rows occupy, which a top-level `narrow` under the ordering moves.
 - `narrow-outside-relationship-target` — `m-navigate` "Polymorphic navigation":
   a `narrow` inside a navigation filter's `op` (or a deep-fetch path segment's
   hop narrow) does **not** clamp; its `entity` MUST name the relationship
@@ -165,10 +169,13 @@ def _collect_entities(op: Operation, names: set[str]) -> None:
         case And(operands=operands) | Or(operands=operands):
             for operand in operands:
                 _collect_entities(operand, names)
+        case OrderBy(operand=operand, keys=keys):
+            _collect_entities(operand, names)
+            for key in keys:
+                names.add(_class_of(key.attr))
         case (
             Not(operand=operand)
             | Group(operand=operand)
-            | OrderBy(operand=operand)
             | Limit(operand=operand)
             | Distinct(operand=operand)
             | AsOf(operand=operand)
@@ -273,10 +280,14 @@ def _walk(op: Operation, model: Metamodel, scope: _PositionScope) -> None:
         case And(operands=operands) | Or(operands=operands):
             for operand in operands:
                 _walk(operand, model, scope)
+        case OrderBy(operand=operand, keys=keys):
+            _walk(operand, model, scope)
+            ordered = _ordered_scope(operand, model, scope)
+            for key in keys:
+                _check_attr_ref(key.attr, model, ordered)
         case (
             Not(operand=operand)
             | Group(operand=operand)
-            | OrderBy(operand=operand)
             | Limit(operand=operand)
             | Distinct(operand=operand)
             | AsOf(operand=operand)
@@ -349,12 +360,33 @@ def _lookup_entity(model: Metamodel, name: str) -> EntityMetadata | None:
 
 
 def _effective_set(model: Metamodel, entity: EntityMetadata) -> frozenset[str]:
-    """``entity``'s effective concrete-subtype set (by declared name): itself for
-    a standalone Entity, else its family view's concrete descendants."""
+    """``entity``'s effective concrete-subtype set: itself for a standalone Entity,
+    else its family view's concrete descendants.
+
+    Members are CANONICAL spellings, so two Entities sharing a local name across
+    namespaces stay distinct members of the sets every positional comparison here
+    is a subset test over. The authored spelling a reference or a `to` entry uses
+    is resolved to its Entity first, so the canonical form is an internal
+    normalization rather than a requirement on the wire.
+    """
     view = inheritance.view(model).entity(entity.identity)
     if view is None:  # pragma: no cover - the facet covers every accepted Entity
-        return frozenset({entity.identity.name})
-    return frozenset(identity.name for identity in view.concrete_subtypes)
+        return frozenset({entity.identity.canonical})
+    return frozenset(identity.canonical for identity in view.concrete_subtypes)
+
+
+def _family_set(model: Metamodel, entity: EntityMetadata) -> frozenset[str]:
+    """The effective concrete-subtype set of ``entity``'s whole inheritance family
+    — every position a `narrow` could bring ``entity``'s members into scope from.
+
+    A standalone Entity's family is itself, so this equals its effective set and
+    the two positional rules stay distinguishable for it.
+    """
+    view = inheritance.view(model).entity(entity.identity)
+    root = None if view is None else model.entity(view.root)
+    if root is None:  # pragma: no cover - the facet covers every accepted Entity
+        return _effective_set(model, entity)
+    return _effective_set(model, root)
 
 
 def _resolve_to_set(to: Sequence[str], model: Metamodel) -> frozenset[str]:
@@ -420,6 +452,55 @@ def _validate_narrow(
     return _PositionScope(effective=resolved)
 
 
+def _ordered_scope(op: Operation, model: Metamodel, scope: _PositionScope) -> _PositionScope:
+    """The position an `orderBy`'s ordered rows occupy.
+
+    A whole-result narrowing lowers to a TOP-LEVEL ``narrow`` under the ordering
+    wrapper, so the rows an order key sees are that narrow's resolved set, reached
+    through the result-shaping and temporal wrappers that may sit between. A
+    ``narrow`` appearing as a predicate term inside a boolean combinator is a
+    filter over the same position and moves nothing (`m-op-algebra`).
+    """
+    match op:
+        case Narrow(entity=entity, to=to):
+            return _validate_narrow(entity, to, scope, model)
+        case (
+            OrderBy(operand=operand)
+            | Limit(operand=operand)
+            | Distinct(operand=operand)
+            | AsOf(operand=operand)
+            | AsOfRange(operand=operand)
+            | History(operand=operand)
+        ):
+            return _ordered_scope(operand, model, scope)
+        case _:
+            return scope
+
+
+def _ambiguous_bare_name(model: Metamodel, name: str) -> bool:
+    """Whether ``name`` is a bare local spelling two namespaces share.
+
+    :func:`~parallax.core.metamodel.entity_by_name` answers such a spelling with a
+    miss rather than a silent first match, so the reference resolves nowhere and
+    the caller says which spelling would.
+    """
+    return sum(1 for entity in model.entities if entity.identity.name == name) > 1
+
+
+def _unresolved_reference(model: Metamodel, reference: str, class_name: str) -> ValueError:
+    if _ambiguous_bare_name(model, class_name):
+        canonical = sorted(
+            entity.identity.canonical
+            for entity in model.entities
+            if entity.identity.name == class_name
+        )
+        return ValueError(
+            f"{reference!r}: the bare Entity spelling {class_name!r} is shared by "
+            f"{canonical}; name the position canonically"
+        )
+    return ValueError(f"{reference!r} names no declared entity or value object {class_name!r}")
+
+
 def _check_attr_ref(attr_ref: str, model: Metamodel, scope: _PositionScope) -> None:
     class_name, _, _attr_name = attr_ref.rpartition(".")
     entity = _lookup_entity(model, class_name)
@@ -431,22 +512,35 @@ def _check_attr_ref(attr_ref: str, model: Metamodel, scope: _PositionScope) -> N
                 "queryable entity; a value object has no identity or table and is "
                 "queried only through its owner (m-value-object contract 5)",
             )
-        raise ValueError(f"{attr_ref!r} names no declared entity or value object {class_name!r}")
-    _check_subtype_attribute_scope(model, entity, scope)
+        raise _unresolved_reference(model, attr_ref, class_name)
+    _check_attribute_position(model, entity, scope)
 
 
-def _check_subtype_attribute_scope(
+def _check_attribute_position(
     model: Metamodel, entity: EntityMetadata, scope: _PositionScope
 ) -> None:
-    if entity.inheritance is None:
-        return
+    """The positional rule: an attribute reference MUST be applicable to every
+    concrete in the active position.
+
+    The subset test is the whole rule and generalizes to a standalone Entity,
+    whose effective set is itself. Only the classification splits, on whether a
+    `narrow` could ever be the remedy: within the reference's own inheritance
+    family it can, and outside it nothing can.
+    """
     own_effective = _effective_set(model, entity)
-    if not scope.effective <= own_effective:
+    if scope.effective <= own_effective:
+        return
+    if scope.effective <= _family_set(model, entity):
         raise OperationRejectedError(
             "subtype-attribute-outside-narrow-scope",
-            f"{entity.identity.name} is not available to every concrete in the active "
+            f"{entity.identity.canonical} is not available to every concrete in the active "
             f"position {sorted(scope.effective)}; narrow to {sorted(own_effective)} first",
         )
+    raise OperationRejectedError(
+        "attribute-outside-active-position",
+        f"{entity.identity.canonical} shares no inheritance family with the active position "
+        f"{sorted(scope.effective)}, so no narrow makes its attributes addressable here",
+    )
 
 
 # --------------------------------------------------------------------------- #

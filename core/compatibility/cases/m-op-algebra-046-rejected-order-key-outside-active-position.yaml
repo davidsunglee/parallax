@@ -1,0 +1,23 @@
+# Negative (m-op-algebra positional rule): an ORDER KEY reference names an entity the
+# read is not positioned at.
+#
+# The sibling of m-op-algebra-045 through the other reference site: an `orderBy` key
+# names an attribute exactly as a predicate does, so its `Class` prefix takes the same
+# positional rule. The read is positioned at `Animal` and orders by `Person.name`,
+# which no narrow can bring into scope. The distinction this pins is that a result
+# directive is not a validation gap: dropping an order key's prefix silently orders by
+# the queried entity's own same-named attribute, so an unchecked key changes the
+# answer's ORDER the way an unchecked predicate changes its membership. The ordered
+# operand carries no narrow, so the position an order key is asked of is the queried
+# one.
+model: models/animal.yaml
+tags: [m-op-algebra, m-inheritance, rejected, negative, slice-snapshot-1, slice-managed-1]
+shape: rejected
+when:
+  operation:
+    orderBy:
+      operand: { all: {} }
+      keys:
+        - { attr: Person.name }
+then:
+  rejectedRule: attribute-outside-active-position

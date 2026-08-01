@@ -372,22 +372,31 @@ def test_a_standalone_entity_forms_a_position_only_alone() -> None:
 
 
 def test_a_position_with_no_concrete_subtype_projects_empty_sequences() -> None:
-    rootless = identity("Rootless")
+    # A CHILDLESS abstract subtype: the family composes a concrete elsewhere, so it
+    # forms (a family composing none of them does not), yet this position's own
+    # descent reaches no row-owning node and projects nothing.
+    root = identity("Root")
     orphan = identity("Orphan")
+    real = identity("Real")
     model = form_metamodel(
         source(
             Declaration(
-                identity=rootless,
-                attributes=(key(rootless),),
+                identity=root,
+                attributes=(key(root),),
                 inheritance=AbstractRoot(TablePerConcreteSubtype()),
             ),
             Declaration(
                 identity=orphan,
-                inheritance=AbstractSubtype(ExactEntityReference(rootless)),
+                inheritance=AbstractSubtype(ExactEntityReference(root)),
+            ),
+            Declaration(
+                identity=real,
+                container=Table("real"),
+                inheritance=ConcreteSubtype(ExactEntityReference(root)),
             ),
         )
     )
-    projected = inheritance.view(model).position([rootless])
+    projected = inheritance.view(model).position([orphan])
     assert projected is not None
     assert projected.concrete_subtypes == ()
     assert projected.superset_attributes == ()

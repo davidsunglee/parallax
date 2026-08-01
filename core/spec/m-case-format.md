@@ -262,6 +262,15 @@ of an abstract target is consistent, a sibling or a broader position is not. For
 non-inheritance entity the effective set is the entity itself, so "subset" reduces
 to the pre-inheritance "equal".
 
+This cross-check reads the case's declared `targetEntity` and is deliberately
+weaker than the operation rule it guards: `m-op-algebra`'s positional rule asks
+each reference of the **active position** — the queried position as re-narrowed by
+every enclosing `narrow`, and, for an order key, the position the ordered rows
+occupy — and classifies a violation as `subtype-attribute-outside-narrow-scope`
+or `attribute-outside-active-position` (below). A read case whose references pass
+this cross-check can still be refused by that rule, and MUST be authored so it is
+not: a `rejected` case is the shape that pins the refusal.
+
 An abstract-target read (an abstract `targetEntity`, or an abstract position
 `narrow`ed with `m-op-algebra`'s `narrow` node) materializes complete concrete
 instances. Every leaf — a `then.rows` entry or a `then.graph` node — carries a
@@ -1054,10 +1063,17 @@ rules:
   position, cannot broaden back out (`m-op-algebra` × `m-inheritance`).
 - `narrow-empty-effective-set` — a `narrow`'s authored `to` list resolves to the
   **empty** concrete-subtype set (`m-op-algebra` × `m-inheritance`).
-- `subtype-attribute-outside-narrow-scope` — a predicate references a
+- `subtype-attribute-outside-narrow-scope` — a predicate or order key references a
   concrete-subtype-declared attribute at a polymorphic position that is not
   `narrow`ed to that subtype, so the attribute is not available to every concrete
-  in the effective set (`m-op-algebra` × `m-inheritance`).
+  in the effective set (`m-op-algebra` × `m-inheritance`). The reference and the
+  position share an inheritance family, so narrowing is the remedy; when they do
+  not, the rule is `attribute-outside-active-position` below.
+- `attribute-outside-active-position` — a predicate or order key references an
+  attribute of an Entity that shares **no** inheritance family with the active
+  position, so the reference is applicable nowhere in the read and no `narrow`
+  can make it so (`m-op-algebra` positional rule). An order key is asked of the
+  position its ordered rows occupy, which a top-level `narrow` moves.
 - `narrow-outside-relationship-target` — a `narrow` in a navigation filter's `op`,
   or a deep-fetch path segment's `narrow`, that **either** names an `entity` which is
   not the **relationship target** exactly (a relationship-scope narrow MUST set
@@ -1104,6 +1120,7 @@ carried inline under `when.model`):
 `inheritance-unknown-parent`, `inheritance-cycle`,
 `inheritance-missing-root`,
 `inheritance-concrete-without-abstract-root`,
+`inheritance-missing-concrete-subtype`,
 `inheritance-tph-root-table-required`,
 `inheritance-tph-descendant-table-forbidden`,
 `inheritance-tpcs-abstract-table-forbidden`,

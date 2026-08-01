@@ -440,6 +440,13 @@ owns the complete code-set declaration; this module owns each code's meaning.
   is the distinct concrete-without-abstract-root case below.)
 - **Concrete under an abstract root** — every concrete subtype has an abstract
   root ancestor (`inheritance-concrete-without-abstract-root`).
+- **At least one concrete subtype** — a family contains at least one concrete
+  subtype (`inheritance-missing-concrete-subtype`). Only concrete subtypes own
+  rows, so a family of a root and abstract subtypes alone resolves **every** one
+  of its positions to an **empty** effective concrete set: no read selects a row,
+  no narrow has anything to narrow to, and no write names a target. The rule is
+  asked of the family as **composed** — a model is free to compose a family's
+  concrete leaves partially, but not to compose none of them.
 - **TPH table ownership** — the root declares exactly one table
   (`inheritance-tph-root-table-required`) and every descendant omits it
   (`inheritance-tph-descendant-table-forbidden`). The root remains abstract,

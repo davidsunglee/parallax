@@ -843,6 +843,7 @@
             "inheritance-cycle",
             "inheritance-missing-root",
             "inheritance-concrete-without-abstract-root",
+            "inheritance-missing-concrete-subtype",
             "inheritance-tph-root-table-required",
             "inheritance-tph-descendant-table-forbidden",
             "inheritance-tpcs-abstract-table-forbidden",
@@ -861,6 +862,7 @@
             "narrow-outside-position",
             "narrow-empty-effective-set",
             "subtype-attribute-outside-narrow-scope",
+            "attribute-outside-active-position",
             "narrow-outside-relationship-target"
           ]
         },

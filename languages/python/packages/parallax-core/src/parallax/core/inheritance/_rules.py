@@ -58,6 +58,7 @@ __all__ = [
     "ISSUE_CODES",
     "MATERIALIZATION_KEY_COLLISION",
     "MEMBER_SHADOWING",
+    "MISSING_CONCRETE_SUBTYPE",
     "MISSING_ROOT",
     "MISSING_TAG_VALUE",
     "OPTIMISTIC_LOCKING_NOT_ROOT_OWNED",
@@ -87,6 +88,13 @@ CONCRETE_WITHOUT_ABSTRACT_ROOT: Final[IssueCode] = "inheritance-concrete-without
 """A concrete subtype's ancestry reaches no abstract root. Only an abstract root
 names a family and declares its strategy, so this subtype's physical mapping is
 undetermined."""
+
+MISSING_CONCRETE_SUBTYPE: Final[IssueCode] = "inheritance-missing-concrete-subtype"
+"""A family contains no concrete subtype. Only concrete subtypes own rows, so
+every position in such a family resolves over the empty effective concrete set:
+no read selects a row, no narrow has anything to narrow to, and no write names a
+target. The rule is asked of the family as composed, so composing a family's
+concrete leaves partially is legal and composing none of them is not."""
 
 STRATEGY_REDECLARED: Final[IssueCode] = "inheritance-strategy-redeclared"
 """A non-root position declares the family strategy. The accepted inheritance
@@ -164,6 +172,7 @@ ISSUE_CODES: Final[frozenset[IssueCode]] = frozenset(
         CYCLE,
         MISSING_ROOT,
         CONCRETE_WITHOUT_ABSTRACT_ROOT,
+        MISSING_CONCRETE_SUBTYPE,
         STRATEGY_REDECLARED,
         MISSING_TAG_VALUE,
         DUPLICATE_TAG_VALUE,
@@ -517,6 +526,23 @@ def _concrete_subtype_issues(
     return issues
 
 
+def _missing_concrete_issue(
+    root: EntityIdentity, members: Sequence[InheritanceParticipant]
+) -> MetamodelIssue | None:
+    """The defect of a family that composes no row-owning position.
+
+    Asked before the strategy rules because it is a question about the family's
+    membership rather than about how that membership maps to storage.
+    """
+    if any(isinstance(member.inheritance, ConcreteSubtype) for member in members):
+        return None
+    return MetamodelIssue(
+        MISSING_CONCRETE_SUBTYPE,
+        EntityLocation(root),
+        message="this family contains no concrete subtype, so every position in it owns no rows",
+    )
+
+
 def _family_issues(
     root: EntityIdentity,
     members: Sequence[InheritanceParticipant],
@@ -567,6 +593,9 @@ def validate_inheritance(candidate: CandidateMetamodel) -> tuple[MetamodelIssue,
             for issue in _materialization_key_issues(declarations, family_root=chain[0]):
                 materialization_issues.setdefault((issue.location, issue.related), issue)
     for family in topology.families:
+        missing_concrete = _missing_concrete_issue(family.root, family.members)
+        if missing_concrete is not None:
+            issues.append(missing_concrete)
         issues.extend(_family_issues(family.root, family.members, family.strategy))
     issues.extend(materialization_issues.values())
     return tuple(issues)

@@ -3,7 +3,10 @@
 # `Pet.parent = Paw` and `Paw.parent = Pet` — a two-node cycle. Parent links MUST be
 # acyclic (a closed tree has no cycles), so a model-aware validator MUST reject the
 # family before any SQL. Every named parent resolves (so it is not unknown-parent);
-# only the acyclicity check catches it.
+# only the acyclicity check catches it. `Dog` carries the rooted family's one
+# concrete subtype so the rooted half is otherwise WELL FORMED (a family with no
+# concrete subtype is its own rule, m-inheritance-121) and this case isolates the
+# cycle, which reaches neither `Animal` nor `Dog`.
 model: models/payment.yaml
 tags: [m-inheritance, m-descriptor, rejected, negative, slice-snapshot-1, slice-managed-1]
 shape: rejected
@@ -18,6 +21,13 @@ when:
           tag: { column: kind }
         attributes:
           - { name: id, type: int64, column: id, primaryKey: true }
+      - name: Dog
+        inheritance:
+          role: concrete-subtype
+          parent: Animal
+          tagValue: dog
+        attributes:
+          - { name: barkVolume, type: int32, column: bark_volume, nullable: true }
       - name: Pet
         inheritance:
           role: abstract-subtype

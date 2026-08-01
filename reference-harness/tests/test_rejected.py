@@ -32,6 +32,7 @@ from reference_harness.case_runner import ALL_REJECTED_RULES, CaseFailure, run_c
 from reference_harness.inheritance import (
     ABSTRACT_WRITE_TARGET,
     INHERITANCE_CONCRETE_WITHOUT_ABSTRACT_ROOT,
+    INHERITANCE_MISSING_CONCRETE_SUBTYPE,
     INHERITANCE_MISSING_ROOT,
     INHERITANCE_MISSING_TAG_VALUE,
     INHERITANCE_TEMPORAL_AXES_NOT_ROOT_OWNED,
@@ -265,6 +266,52 @@ def test_zero_root_abstract_orphan_family_is_rejected() -> None:
     with pytest.raises(RejectionError) as exc:
         validate_family(descriptor)
     assert exc.value.rule == INHERITANCE_MISSING_ROOT
+
+
+def test_a_family_with_no_concrete_subtype_is_rejected() -> None:
+    # Every other family rule passes — the parent resolves, there is exactly one
+    # root, the root owns the shared table, no descendant repeats it, and the
+    # tagValue rules have no concrete subtype to ask about. That is the point:
+    # only concrete subtypes own rows, so this family's every position resolves
+    # over the EMPTY effective concrete set and needs a rule of its own.
+    descriptor = {
+        "entities": [
+            _tph_root(),
+            {
+                "name": "Pet",
+                "inheritance": {"role": "abstract-subtype", "parent": "Animal"},
+                "attributes": [
+                    {"name": "licenseId", "type": "string", "column": "license_id"},
+                ],
+            },
+        ]
+    }
+    with pytest.raises(RejectionError) as exc:
+        validate_family(descriptor)
+    assert exc.value.rule == INHERITANCE_MISSING_CONCRETE_SUBTYPE
+
+
+def test_a_rooted_family_with_no_concrete_is_rejected_beside_a_complete_one() -> None:
+    # The rule is asked per family: a complete neighbour does not answer for the
+    # concrete-less one, exactly as it does not answer for a rootless one.
+    descriptor = {
+        "entities": [
+            _tph_root(),
+            {
+                "name": "Dog",
+                "inheritance": {"role": "concrete-subtype", "parent": "Animal", "tagValue": "dog"},
+                "attributes": [{"name": "barkVolume", "type": "int32", "column": "bark_volume"}],
+            },
+            {
+                "name": "Document",
+                "inheritance": {"role": "root", "strategy": "table-per-concrete-subtype"},
+                "attributes": [{"name": "id", "type": "int64", "column": "id", "primaryKey": True}],
+            },
+        ]
+    }
+    with pytest.raises(RejectionError) as exc:
+        validate_family(descriptor)
+    assert exc.value.rule == INHERITANCE_MISSING_CONCRETE_SUBTYPE
 
 
 def test_concrete_without_abstract_root_is_not_reclassified_as_missing_root() -> None:
