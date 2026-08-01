@@ -509,6 +509,16 @@ class Rel[T]:
     ``target`` is the canonical spelling of the Entity this relationship points
     at, so a continuing hop keeps the namespace a local name would drop.
 
+    The class-access overloads resolve the path's target parameter to the
+    relationship's ELEMENT type across all three declared annotation shapes —
+    ``Rel[tuple[X, ...]]``, ``Rel[X | None]``, and ``Rel[X]`` all yield a path
+    reaching ``X`` — because a hop reaches related objects one at a time however
+    many of them there are. Declaration order is load-bearing: overload
+    resolution is first-match and a bare ``R`` unifies with anything, so each
+    specialized ``self`` must precede the catch-all, and the collection shape
+    must precede the optional one because a collection satisfies ``R | None``
+    with ``R`` solved to the collection itself.
+
     A subtype does not redeclare an inherited relationship, so class access
     through one (``Dog.owner`` where ``Animal`` declares ``owner``) reaches this
     same descriptor and keeps the one relationship identity ``Animal.owner``. What
@@ -527,10 +537,20 @@ class Rel[T]:
         self._target = target
 
     @overload
-    def __get__(self, obj: None, _owner: type, /) -> RelationshipPath: ...
+    def __get__[E, R](
+        self: Rel[tuple[R, ...]], obj: None, owner: type[E], /
+    ) -> RelationshipPath[E, R]: ...
+    @overload
+    def __get__[E, R](
+        self: Rel[R | None], obj: None, owner: type[E], /
+    ) -> RelationshipPath[E, R]: ...
+    @overload
+    def __get__[E, R](self: Rel[R], obj: None, owner: type[E], /) -> RelationshipPath[E, R]: ...
     @overload
     def __get__(self, obj: object, _owner: type | None = None, /) -> T: ...
-    def __get__(self, obj: object | None, _owner: type | None = None) -> RelationshipPath | T:
+    def __get__(
+        self, obj: object | None, _owner: type | None = None
+    ) -> RelationshipPath[Any, Any] | T:
         if obj is None:
             return RelationshipPath(
                 segments=(PathSegment(rel=str(self._ref)),),

@@ -200,6 +200,16 @@ def define_reserved_member_name() -> type:
     return Bad
 
 
+def define_reserved_query_root_name() -> type:
+    """A member taking the class-level query-root name ``all``."""
+
+    class Bad(Entity, table="bad"):
+        id: Attr[int] = attr(primary_key=True)
+        all: Attr[str]
+
+    return Bad
+
+
 def define_reserved_temporal_name() -> type:
     """A member redeclaring a framework temporal name below a temporal root."""
 

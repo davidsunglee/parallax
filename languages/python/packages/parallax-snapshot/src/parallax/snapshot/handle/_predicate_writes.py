@@ -35,7 +35,7 @@ from __future__ import annotations
 
 import datetime as dt
 from collections.abc import Sequence
-from typing import cast
+from typing import Any, cast
 
 from parallax.core import deep_fetch, inheritance, op_algebra, read_lock
 from parallax.core.db_port import DbPort, Row
@@ -84,7 +84,7 @@ def buffer_predicate(
     dialect: Dialect,
     mutation: PredicateMutation,
     statement: EntityStatement,
-    assignments: Sequence[AttributeAssignment],
+    assignments: Sequence[AttributeAssignment[Any]],
     *,
     valid_from: dt.datetime | None,
     until: dt.datetime | None = None,

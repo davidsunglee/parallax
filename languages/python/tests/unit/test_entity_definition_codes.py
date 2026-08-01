@@ -51,6 +51,7 @@ _PROBES: dict[str, str] = {
     "define_decimal_without_precision": "entity-option-context-invalid",
     "define_narrowing_on_wrong_family": "entity-option-context-invalid",
     "define_reserved_member_name": "entity-reserved-member-name",
+    "define_reserved_query_root_name": "entity-reserved-member-name",
     "define_reserved_temporal_name": "entity-reserved-member-name",
     "define_class_var_reserved_name": "entity-reserved-member-name",
     "define_shadowed_declaration_member": "entity-reserved-member-name",

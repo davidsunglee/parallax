@@ -18,7 +18,13 @@ from typing import Any, Literal
 
 from parallax.core.base import normalize_instant
 from parallax.core.entity._declaration import declaration_of
-from parallax.core.entity._expressions import Predicate, RelationshipPath, and_terms
+from parallax.core.entity._expressions import (
+    AllPredicate,
+    Predicate,
+    RelationshipPath,
+    SortKey,
+    and_terms,
+)
 from parallax.core.metamodel import AsOfAxisMetadata, TemporalDimension
 from parallax.core.op_algebra import (
     All,
@@ -87,11 +93,16 @@ class Statement:
     # predicate (single-shot, like ``as_of``).
     is_narrowed: bool = False
 
-    def order_by(self, *keys: OrderKey) -> Statement:
-        """Order the result by one or more keys (``Attr.asc()`` / ``Attr.desc()``)."""
+    def order_by(self, *keys: SortKey[Any]) -> Statement:
+        """Order the result by one or more Sort Keys (``Attr.asc()`` / ``Attr.desc()``).
+
+        A Sort Key carries the position it was built from and the canonical
+        ordering term it holds; the statement keeps the term alone, because the
+        ordered rows' position is a property of the query rather than of a key.
+        """
         if not keys:
             raise ValueError("order_by requires at least one key")
-        return replace(self, order_keys=self.order_keys + tuple(keys))
+        return replace(self, order_keys=self.order_keys + tuple(key.key for key in keys))
 
     def limit(self, count: int) -> Statement:
         """Cap the result row count (a positive integer)."""
@@ -184,7 +195,7 @@ class Statement:
         name: _DimensionName = "valid_time" if dimension.dimension == "validTime" else "tx_time"
         return self._with_temporal(History(operand=self.predicate, dimension=self._dimension(name)))
 
-    def include(self, *paths: RelationshipPath) -> Statement:
+    def include(self, *paths: RelationshipPath[Any, Any]) -> Statement:
         """Deep-fetch one or more relationship paths (python.md §2):
         ``Order.where(...).include(Order.items.statuses, Order.tags)``. One
         path grammar shared with predicates; a longer path implies its
@@ -337,7 +348,7 @@ def _instant(value: _Pin) -> str:
 
 def build_statement(
     target: str,
-    predicates: tuple[Predicate[Any], ...],
+    predicates: tuple[Predicate[Any] | AllPredicate[Any], ...],
     *,
     as_of_axes: tuple[AsOfAxisMetadata, ...] = (),
 ) -> Statement:
@@ -351,7 +362,7 @@ def build_statement(
     return Statement(target=target, predicate=_conjoined(predicates), as_of_axes=as_of_axes)
 
 
-def _conjoined(predicates: tuple[Predicate[Any], ...]) -> Operation:
+def _conjoined(predicates: tuple[Predicate[Any] | AllPredicate[Any], ...]) -> Operation:
     if not predicates:
         return All()
     if len(predicates) == 1:

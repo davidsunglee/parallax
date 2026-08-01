@@ -341,7 +341,7 @@ def test_a_directly_built_relationship_path_keys_the_same_narrowed_view() -> Non
         relationships={"pets[Dog]": [_dog()]},
     )
     (root,) = wrap((owner,), "AnimalOwner", _ANIMAL)
-    path = RelationshipPath(
+    path: RelationshipPath[sm.AnimalOwner, sm.Dog] = RelationshipPath(
         segments=(PathSegment(rel="AnimalOwner.pets", narrow=("Dog",)),), target="Dog"
     )
     assert is_loaded(root, path) is True

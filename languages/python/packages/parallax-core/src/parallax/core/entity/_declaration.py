@@ -160,6 +160,7 @@ the class object itself."""
 # declaration at class level, so the collision is rejected where it is authored.
 RESERVED_MEMBER_NAMES: Final[frozenset[str]] = frozenset(
     {
+        "all",
         "where",
         "narrow",
         "include",
@@ -350,6 +351,7 @@ def build_class(
     mint: object | None,
     axes: tuple[TemporalDimension, ...],
     header: EntityHeader | None,
+    ignored_types: tuple[type, ...] = (),
 ) -> type:
     """Build one declared class, rejecting anything outside the grammar.
 
@@ -357,8 +359,14 @@ def build_class(
     configuration itself and forwards no class-header keyword to Pydantic. A
     framework root carries markers only: no identity, no declaration payload, no
     header rules, and it is never a Domain Model candidate.
+
+    ``ignored_types`` is the frontend's own class-body descriptor vocabulary —
+    a query-root descriptor a frontend base installs is a class attribute
+    Pydantic would otherwise refuse as an unannotated field at import time. The
+    engine still owns the configuration; a frontend contributes only the types
+    its own bases install.
     """
-    ns["model_config"] = ConfigDict(frozen=True)
+    ns["model_config"] = ConfigDict(frozen=True, ignored_types=ignored_types)
     if mint is not None:
         if mint is not FRAMEWORK_MINT:
             raise EntityDefinitionError(

@@ -127,8 +127,11 @@ def test_set_on_a_framework_owned_version_attribute_raises() -> None:
 
 
 def test_set_on_a_scalar_with_a_mismatched_type_raises() -> None:
+    # An assignment's value is the member's own, so the parameter refuses this
+    # before anything runs; the suppression is what lets the runtime rule be
+    # exercised, and the two must agree.
     with pytest.raises(ModelCopyError, match="does not match the declared type"):
-        mm.Person.name.set(42)
+        mm.Person.name.set(42)  # pyright: ignore[reportArgumentType]
 
 
 def test_set_states_its_rule_from_the_descriptors_member_alone() -> None:
@@ -163,12 +166,15 @@ def test_set_refuses_a_read_only_member() -> None:
 # --------------------------------------------------------------------------- #
 def test_set_on_a_value_object_with_a_non_document_value_raises() -> None:
     with pytest.raises(ModelCopyError, match="does not match the declared type"):
-        vom.Customer.address.set(42)
+        vom.Customer.address.set(42)  # pyright: ignore[reportArgumentType]
 
 
 def test_set_on_a_value_object_with_a_well_formed_document_is_accepted() -> None:
+    # The one accepted spelling the value parameter costs: a Value Object member
+    # equally takes its already-rendered document, which the rules still judge
+    # and the member's declared type no longer admits.
     assignment = vom.Customer.address.set(
-        {"street": "1 Aurora Ave", "city": "Oslo", "geo": None, "phones": []}
+        {"street": "1 Aurora Ave", "city": "Oslo", "geo": None, "phones": []}  # pyright: ignore[reportArgumentType]
     )
     assert assignment.value == {
         "street": "1 Aurora Ave",
@@ -184,8 +190,10 @@ def test_set_on_a_value_object_with_a_well_formed_document_is_accepted() -> None
 # `None` bypass validation.                                                     #
 # --------------------------------------------------------------------------- #
 def test_set_on_a_non_nullable_value_object_with_none_raises() -> None:
+    # A non-nullable member's declared type excludes `None`, so the parameter
+    # refuses the clearing assignment the runtime rule refuses too.
     with pytest.raises(ModelCopyError, match="required value object is absent"):
-        _WhereShipment.destination.set(None)
+        _WhereShipment.destination.set(None)  # pyright: ignore[reportArgumentType]
 
 
 def test_set_on_a_nullable_value_object_with_none_is_accepted() -> None:
@@ -197,7 +205,7 @@ def test_set_on_a_nullable_value_object_with_none_is_accepted() -> None:
 
 def test_set_on_a_non_nullable_scalar_with_none_raises() -> None:
     with pytest.raises(ModelCopyError, match="required attribute is absent"):
-        _WhereShipment.name.set(None)
+        _WhereShipment.name.set(None)  # pyright: ignore[reportArgumentType]
 
 
 def test_set_on_a_nullable_scalar_with_none_is_accepted() -> None:
