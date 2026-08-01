@@ -1,0 +1,24 @@
+# Negative (m-op-algebra positional rule): a predicate reference names an unrelated
+# entity in a model that declares NO inheritance family at all.
+#
+# The read is positioned at `Order` (the model's first entity, the default a rejected
+# case takes) and the predicate references `OrderItem.sku` — a separate row-owning
+# entity reached only by navigating `Order.items`. The distinction this pins against
+# m-op-algebra-045 is that the rule is NOT an inheritance rule wearing a second name:
+# 045 rejects a foreign reference inside a model whose queried position happens to be
+# a family root, so a validator that runs the positional check only for descriptors
+# declaring an inheritance family still passes it. Here there is no family to enter,
+# and a standalone entity's effective concrete set is itself, so the identical subset
+# test — {Order} is not a subset of {OrderItem} — is the whole rule. Both entities
+# declare a `sku`, so a lowering keeping only the reference's LOCAL part would emit
+# `t0.sku = ?` against the orders table and answer a question about items with rows
+# about orders. `subtype-attribute-outside-narrow-scope` cannot apply: the two
+# entities share no family, so no narrow is a remedy.
+model: models/orders.yaml
+tags: [m-op-algebra, rejected, negative, slice-snapshot-1, slice-managed-1]
+shape: rejected
+when:
+  operation:
+    eq: { attr: OrderItem.sku, value: SKU-1 }
+then:
+  rejectedRule: attribute-outside-active-position

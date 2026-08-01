@@ -272,9 +272,104 @@ def test_inherited_attribute_is_always_in_scope() -> None:
     )
 
 
-def test_non_inheritance_model_is_a_noop() -> None:
+def test_non_inheritance_model_accepts_its_own_entitys_attribute() -> None:
     defs = load_model(_COMPATIBILITY_ROOT, "models/customer.yaml").entity_defs
     validate_operation_inheritance(defs, {"eq": {"attr": "Customer.name", "value": "Ada"}})
+
+
+def test_a_standalone_entitys_attribute_is_outside_an_unrelated_standalone_position() -> None:
+    # The positional rule is not an inheritance rule wearing a second name: with no
+    # family anywhere in the descriptor, a standalone entity's effective concrete set
+    # is itself, so the same subset test rejects `OrderItem.sku` at `Order`. Both
+    # entities declare a `sku`, so an unchecked reference reads the orders table for
+    # a question about items. Pinned by m-op-algebra-047.
+    defs = load_model(_COMPATIBILITY_ROOT, "models/orders.yaml").entity_defs
+    with pytest.raises(RejectionError) as exc:
+        validate_operation_inheritance(defs, {"eq": {"attr": "OrderItem.sku", "value": "SKU-1"}})
+    assert exc.value.rule == ATTRIBUTE_OUTSIDE_ACTIVE_POSITION
+
+    with pytest.raises(RejectionError) as ordered:
+        validate_operation_inheritance(
+            defs, {"orderBy": {"operand": {"all": {}}, "keys": [{"attr": "OrderItem.sku"}]}}
+        )
+    assert ordered.value.rule == ATTRIBUTE_OUTSIDE_ACTIVE_POSITION
+
+
+def test_a_navigation_filter_re_roots_the_position_in_a_non_inheritance_model() -> None:
+    # The hop's target is the active position for the inner predicate, so the related
+    # entity's own attribute is in scope there and the SOURCE entity's is not.
+    defs = load_model(_COMPATIBILITY_ROOT, "models/orders.yaml").entity_defs
+    validate_operation_inheritance(
+        defs,
+        {"exists": {"rel": "Order.items", "op": {"eq": {"attr": "OrderItem.sku", "value": "s"}}}},
+    )
+    with pytest.raises(RejectionError) as exc:
+        validate_operation_inheritance(
+            defs,
+            {"exists": {"rel": "Order.items", "op": {"eq": {"attr": "Order.sku", "value": "s"}}}},
+        )
+    assert exc.value.rule == ATTRIBUTE_OUTSIDE_ACTIVE_POSITION
+
+
+def test_a_canonically_spelled_reference_resolves_to_the_entity_it_names() -> None:
+    # The class part is the spelling up to the LAST dot, so a namespaced position
+    # names its entity rather than its leading namespace segment. Splitting on the
+    # first dot instead yields `parallax`, which names no entity, and the reference
+    # escapes the positional check entirely.
+    defs = _animal_defs()
+    validate_operation_inheritance(
+        defs, {"eq": {"attr": "parallax.compatibility.Animal.name", "value": "Rex"}}
+    )
+    with pytest.raises(RejectionError) as foreign:
+        validate_operation_inheritance(
+            defs, {"eq": {"attr": "parallax.compatibility.Person.name", "value": "Ada"}}
+        )
+    assert foreign.value.rule == ATTRIBUTE_OUTSIDE_ACTIVE_POSITION
+    with pytest.raises(RejectionError) as subtype:
+        validate_operation_inheritance(
+            defs, {"eq": {"attr": "parallax.compatibility.Dog.barkVolume", "value": 5}}
+        )
+    assert subtype.value.rule == SUBTYPE_ATTRIBUTE_OUTSIDE_NARROW_SCOPE
+
+
+_TWO_NAMESPACES: list[dict[str, Any]] = [
+    {
+        "name": "Customer",
+        "namespace": "crm",
+        "table": "crm_customer",
+        "attributes": [
+            {"name": "id", "type": "int64", "column": "id", "primaryKey": True},
+            {"name": "name", "type": "string", "column": "name", "maxLength": 32},
+        ],
+    },
+    {
+        "name": "Customer",
+        "namespace": "sales",
+        "table": "sales_customer",
+        "attributes": [
+            {"name": "id", "type": "int64", "column": "id", "primaryKey": True},
+            {"name": "name", "type": "string", "column": "name", "maxLength": 32},
+        ],
+    },
+]
+
+
+def test_two_namespaces_sharing_a_local_name_stay_distinct_positions() -> None:
+    # Each namespace's entity is its own effective concrete set, so a canonically
+    # spelled reference to the OTHER namespace's same-named entity is outside the
+    # position rather than silently equal to it.
+    validate_operation_inheritance(
+        _TWO_NAMESPACES,
+        {"eq": {"attr": "crm.Customer.name", "value": "Ada"}},
+        position="crm.Customer",
+    )
+    with pytest.raises(RejectionError) as exc:
+        validate_operation_inheritance(
+            _TWO_NAMESPACES,
+            {"eq": {"attr": "sales.Customer.name", "value": "Ada"}},
+            position="crm.Customer",
+        )
+    assert exc.value.rule == ATTRIBUTE_OUTSIDE_ACTIVE_POSITION
 
 
 def test_an_unrelated_entitys_attribute_is_outside_the_active_position() -> None:
@@ -325,6 +420,80 @@ def test_an_order_key_reads_the_position_a_top_level_narrow_moved_it_to() -> Non
     }
     with pytest.raises(RejectionError) as exc:
         validate_operation_inheritance(_animal_defs(), unnarrowed)
+    assert exc.value.rule == SUBTYPE_ATTRIBUTE_OUTSIDE_NARROW_SCOPE
+
+
+_NARROW_TO_DOG: dict[str, Any] = {
+    "narrow": {"entity": "Animal", "to": ["Dog"], "operand": {"all": {}}}
+}
+_DEEP_FETCH_PATHS: list[dict[str, Any]] = [{"segments": [{"rel": "Animal.owner"}]}]
+
+
+def _carrying_wrappers() -> list[tuple[str, dict[str, Any]]]:
+    """One operand per wrapper `m-op-algebra` names as carrying the ordered narrow."""
+    return [
+        ("bare", _NARROW_TO_DOG),
+        ("limit", {"limit": {"operand": _NARROW_TO_DOG, "count": 5}}),
+        ("distinct", {"distinct": {"operand": _NARROW_TO_DOG}}),
+        ("deepFetch", {"deepFetch": {"operand": _NARROW_TO_DOG, "paths": _DEEP_FETCH_PATHS}}),
+        (
+            "asOf",
+            {
+                "asOf": {
+                    "operand": _NARROW_TO_DOG,
+                    "dimension": "validTime",
+                    "coordinate": "latest",
+                }
+            },
+        ),
+        ("history", {"history": {"operand": _NARROW_TO_DOG, "dimension": "validTime"}}),
+        (
+            "orderBy",
+            {"orderBy": {"operand": _NARROW_TO_DOG, "keys": [{"attr": "Animal.name"}]}},
+        ),
+        (
+            "limit(deepFetch)",
+            {
+                "limit": {
+                    "operand": {
+                        "deepFetch": {"operand": _NARROW_TO_DOG, "paths": _DEEP_FETCH_PATHS}
+                    },
+                    "count": 5,
+                }
+            },
+        ),
+    ]
+
+
+@pytest.mark.parametrize(("label", "operand"), _carrying_wrappers(), ids=lambda value: str(value))
+def test_every_result_shaping_wrapper_carries_the_ordered_position(
+    label: str, operand: dict[str, Any]
+) -> None:
+    # A wrapper that returns its operand's own rows cannot move the position those
+    # rows occupy, so the ordered narrow is reached through all of them alike —
+    # `deepFetch` included, which attaches fetched levels rather than replacing the
+    # rows. Missing one silently rejects an order key that IS in scope.
+    assert label
+    validate_operation_inheritance(
+        _animal_defs(),
+        {"orderBy": {"operand": operand, "keys": [{"attr": "Dog.barkVolume"}]}},
+    )
+
+
+@pytest.mark.parametrize("combinator", ["and", "or", "group", "not"])
+def test_a_narrow_inside_a_boolean_combinator_moves_no_ordered_position(combinator: str) -> None:
+    # A narrow used as a predicate term filters the same position rather than
+    # narrowing the result, so the order key is still asked of the whole family.
+    operand = (
+        {combinator: {"operands": [_NARROW_TO_DOG]}}
+        if combinator in ("and", "or")
+        else {combinator: {"operand": _NARROW_TO_DOG}}
+    )
+    with pytest.raises(RejectionError) as exc:
+        validate_operation_inheritance(
+            _animal_defs(),
+            {"orderBy": {"operand": operand, "keys": [{"attr": "Dog.barkVolume"}]}},
+        )
     assert exc.value.rule == SUBTYPE_ATTRIBUTE_OUTSIDE_NARROW_SCOPE
 
 

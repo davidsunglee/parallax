@@ -900,17 +900,22 @@ def validate_family_defs(entity_defs: list[dict[str, Any]]) -> None:
                 _validate_materialization_keys(chain, family_variant=True)
 
 
-# --- operation-level narrow / subtype-scope validation (raises RejectionError) --
+# --- operation-level narrow / attribute-position validation (RejectionError) ----
 
 
-def _has_inheritance(entity_defs: list[dict[str, Any]]) -> bool:
-    return any(inheritance_of(d) is not None for d in entity_defs if isinstance(d, dict))
+def _default_position(entity_defs: list[dict[str, Any]]) -> str | None:
+    """The position an operation carrying no ``targetEntity`` starts from.
 
-
-def _root_name(entity_defs: list[dict[str, Any]]) -> str | None:
+    ``m-op-algebra``'s model-aware default: the inheritance family root when the
+    descriptor declares one, else its first declared entity — the position a
+    single-entity case queries.
+    """
     for definition in entity_defs:
         if isinstance(definition, dict) and role_of(definition) == ROLE_ROOT:
             return definition["name"]
+    for definition in entity_defs:
+        if isinstance(definition, dict) and "name" in definition:
+            return str(definition["name"])
     return None
 
 
@@ -1038,24 +1043,28 @@ def validate_operation_inheritance(
     operation: Any,
     position: str | None = None,
 ) -> None:
-    """Reject an operation that narrows or references subtypes incompatibly.
+    """Reject an operation that narrows or references entities outside its position.
 
     The read-side counterpart of the write-derivation oracle: it walks the operation
-    tree of an inheritance family and raises :class:`RejectionError` with the
-    violated ``m-op-algebra`` narrow rule. A no-op for a descriptor with no
-    inheritance family. *position* is the polymorphic position the operation starts
-    from (a read's ``targetEntity``); a rejected operation case carries no
-    ``targetEntity``, so *position* defaults to the family root. Each ``narrow``'s
-    subset check binds to this ACTIVE position (threaded and re-narrowed at every
-    hop) intersected with the narrow's own ``entity``-declared position — NOT to
-    ``effective_concrete_set(narrow.entity)`` alone — so a narrow cannot broaden
-    beyond the position actually in scope even when its ``entity`` names a broader
-    one.
+    tree and raises :class:`RejectionError` with the violated ``m-op-algebra`` narrow
+    or positional-attribute rule. It runs on EVERY descriptor, not only one declaring
+    an inheritance family: a standalone entity's effective concrete set is itself, so
+    the same subset test rejects a reference naming an unrelated entity
+    (``attribute-outside-active-position``) with no special case.
+
+    *position* is the polymorphic position the operation starts from (a read's
+    ``targetEntity``); a rejected operation case carries no ``targetEntity``, so
+    *position* defaults to what ``m-op-algebra`` fixes — the inheritance family root
+    when the descriptor declares one, else its first declared entity.
+
+    Each ``narrow``'s subset check binds to the ACTIVE position (threaded and
+    re-narrowed at every hop) intersected with the narrow's own ``entity``-declared
+    position — NOT to ``effective_concrete_set(narrow.entity)`` alone — so a narrow
+    cannot broaden beyond the position actually in scope even when its ``entity``
+    names a broader one.
     """
-    if not _has_inheritance(entity_defs):
-        return
     family = Family(entity_defs)
-    start = position if position is not None else _root_name(entity_defs)
+    start = position if position is not None else _default_position(entity_defs)
     if start is None:
         return
     _walk_narrow(family, family.effective_concrete_set(start), operation)
@@ -1154,7 +1163,7 @@ def _walk_narrow(
         ordered_set = _ordered_position(family, current_set, operand, outside_rule)
         for key in body.get("keys", []) or []:
             if isinstance(key, dict):
-                _check_subtype_attr(family, ordered_set, key.get("attr"))
+                _check_attribute_position(family, ordered_set, key.get("attr"))
     elif tag == "deepFetch":
         # A deep-fetch path narrows at two positions with two different rules. Its
         # ROOT `{entity, to}` guard names the queried position and is clamped to the
@@ -1181,8 +1190,13 @@ def _walk_narrow(
                     resolve_hop_effective_set(family, rel, to_list)
         _walk_narrow(family, current_set, body.get("operand"), outside_rule, expected_entity)
     elif tag in ATTRIBUTE_REFERENCE_TAGS:
-        _check_subtype_attr(family, current_set, body.get("attr"))
+        _check_attribute_position(family, current_set, body.get("attr"))
     # nested* / all / none carry no queried-position subtype-attribute reference here.
+
+
+_ORDERED_POSITION_WRAPPERS: frozenset[str] = frozenset(
+    {"orderBy", "limit", "distinct", "deepFetch", "asOf", "asOfRange", "history"}
+)
 
 
 def _ordered_position(
@@ -1192,9 +1206,13 @@ def _ordered_position(
 
     A whole-result narrowing lowers to a TOP-LEVEL ``narrow`` under the ordering
     wrapper, so an order key is asked of that narrow's resolved set, reached
-    through the result-shaping and temporal wrappers that may sit between. A
-    ``narrow`` inside a boolean combinator is a predicate term over the same
-    position and moves nothing (m-op-algebra).
+    through every wrapper `m-op-algebra` names as carrying it: the result-shaping
+    directives (``orderBy`` / ``limit`` / ``distinct`` / ``deepFetch``) and the
+    temporal wrappers (``asOf`` / ``asOfRange`` / ``history``). None of them
+    re-roots the rows its operand yields — ``deepFetch`` attaches fetched levels
+    to those same rows — so all of them pass the position through. A ``narrow``
+    inside a boolean combinator is a predicate term over the same position and
+    moves nothing (m-op-algebra).
     """
     if not isinstance(node, dict) or len(node) != 1:
         return current_set
@@ -1205,24 +1223,30 @@ def _ordered_position(
         return resolve_clamped_narrow(
             family, current_set, body.get("entity"), body.get("to", []) or [], outside_rule
         )
-    if tag in ("orderBy", "limit", "distinct", "asOf", "asOfRange", "history"):
+    if tag in _ORDERED_POSITION_WRAPPERS:
         return _ordered_position(family, current_set, body.get("operand"), outside_rule)
     return current_set
 
 
-def _check_subtype_attr(family: Family, current_set: list[str], attr_ref: Any) -> None:
+def _check_attribute_position(family: Family, current_set: list[str], attr_ref: Any) -> None:
     """Reject an attribute reference that is not applicable to the active position.
 
     An attribute is available only to the concrete descendants of the entity that
     DECLARES it; if the current (possibly narrowed) position's effective set is not
-    a subset of those concretes, the reference is out of scope. The classification
-    splits on whether a narrow could ever be the remedy: within the reference's own
-    inheritance family it can (``subtype-attribute-outside-narrow-scope``), and
-    outside it nothing can (``attribute-outside-active-position``).
+    a subset of those concretes, the reference is out of scope. The subset test is
+    the whole rule and generalizes to a standalone entity, whose effective set is
+    itself; only the classification splits, on whether a narrow could ever be the
+    remedy — within the reference's own inheritance family it can
+    (``subtype-attribute-outside-narrow-scope``), and outside it nothing can
+    (``attribute-outside-active-position``).
+
+    The class part is the reference's spelling up to its LAST dot, so a canonically
+    spelled position (``<namespace>.<Entity>.<attribute>``) resolves to the entity it
+    names rather than to its leading namespace segment.
     """
     if not isinstance(attr_ref, str) or "." not in attr_ref:
         return
-    cls, _, attr_name = attr_ref.partition(".")
+    cls, _, attr_name = attr_ref.rpartition(".")
     if cls not in family.defs:
         return  # an unknown entity — other validation owns this
     declaring = family.declaring_entity(cls, attr_name) if inheritance_of(family.defs[cls]) else cls

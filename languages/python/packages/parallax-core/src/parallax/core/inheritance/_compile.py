@@ -127,9 +127,10 @@ def _concrete_subtypes(
 
     A standalone Entity is its own trivial set: a read of it returns rows of
     exactly one shape, which is what an effective concrete-subtype set names.
-    The set is empty only for a CHILDLESS abstract subtype — validation rejects a
-    family that contains no concrete subtype at all, so a family root always
-    reaches one.
+    The set is empty exactly for an abstract position with no concrete descendant
+    — an abstract subtype whose own branch composes none, whether or not it has
+    abstract children of its own. A family ROOT always reaches one, because
+    validation rejects a family that contains no concrete subtype at all.
     """
     if entity.inheritance is None:
         return (entity.identity,)

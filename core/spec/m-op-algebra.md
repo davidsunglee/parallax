@@ -678,11 +678,15 @@ Consequences:
   An `orderBy` key names an attribute exactly as a predicate does and takes the
   same positional rule, but the position it is asked of is the one its **ordered
   rows** occupy: a **top-level `narrow`** in the ordered operand — the node a
-  whole-result narrowing produces, reached through the result-shaping and temporal
-  wrappers that may carry it — moves that position, while a `narrow` appearing as a
-  predicate term inside a boolean combinator is a filter and moves nothing. So
+  whole-result narrowing produces — moves that position, while a `narrow` appearing
+  as a predicate term inside a boolean combinator is a filter and moves nothing. So
   ordering an abstract position by a concrete subtype's attribute is rejected, and
-  ordering that same position **narrowed to** that subtype is not.
+  ordering that same position **narrowed to** that subtype is not. The wrappers
+  that may carry the `narrow` between it and the `orderBy` are exactly those
+  returning their operand's **own rows**: `orderBy`, `limit`, `distinct`,
+  `deepFetch` — which attaches fetched levels to those rows rather than replacing
+  them — and the temporal `asOf`, `asOfRange`, and `history`. A validator resolves
+  the ordered position **through that closed set and no other node**.
 - **The serde preserves the authored `to` list verbatim.** Semantic validation and
   SQL lowering derive the effective concrete set without rewriting the submitted
   operation, so two authored spellings that resolve to the same set (`to: [Pet]`
