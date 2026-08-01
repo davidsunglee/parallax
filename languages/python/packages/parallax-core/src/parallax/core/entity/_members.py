@@ -431,6 +431,15 @@ class Attr[T]:
     assignment built from it is validated against that hub's model; instance
     access yields the member value. A non-data descriptor, so Pydantic's instance
     ``__dict__`` legitimately shadows the instance branch.
+
+    The class-access overload parameterizes the expression by the class the
+    access went THROUGH, not the one that declares the member: an inherited
+    member reached from a subtype addresses the subtype's position, which is what
+    makes an ancestor's member usable from a descendant position and a
+    descendant's member unusable from an ancestor's. The wire keeps the DECLARING
+    Entity either way, so a subtype spelling of an inherited member is the one
+    composition the parameter refuses where the model would have accepted it —
+    spell such a member through the class that declares it.
     """
 
     __slots__ = ("_py_name", "_ref")
@@ -440,10 +449,10 @@ class Attr[T]:
         self._py_name = py_name
 
     @overload
-    def __get__(self, obj: None, _owner: type, /) -> AttributeExpr: ...
+    def __get__[E](self, obj: None, owner: type[E], /) -> AttributeExpr[E, T]: ...
     @overload
     def __get__(self, obj: object, _owner: type | None = None, /) -> T: ...
-    def __get__(self, obj: object | None, _owner: type | None = None) -> AttributeExpr | T:
+    def __get__(self, obj: object | None, _owner: type | None = None) -> AttributeExpr[Any, T] | T:
         if obj is None:
             return AttributeExpr(
                 self._ref.entity,
@@ -460,7 +469,12 @@ class Attr[T]:
 
 class ElementAttr[T]:
     """A Value Object member's descriptor: class access yields an element-scoped
-    expression carrying no entity prefix, instance access yields the value."""
+    expression carrying no entity prefix, instance access yields the value.
+
+    The class-access overload parameterizes the expression by the Value Object
+    class the access went through, so an element predicate names the Value Object
+    it addresses rather than an Entity.
+    """
 
     __slots__ = ("_canonical", "_py_name")
 
@@ -469,10 +483,12 @@ class ElementAttr[T]:
         self._py_name = py_name
 
     @overload
-    def __get__(self, obj: None, _owner: type, /) -> ElementAttributeExpr: ...
+    def __get__[V](self, obj: None, owner: type[V], /) -> ElementAttributeExpr[V, T]: ...
     @overload
     def __get__(self, obj: object, _owner: type | None = None, /) -> T: ...
-    def __get__(self, obj: object | None, _owner: type | None = None) -> ElementAttributeExpr | T:
+    def __get__(
+        self, obj: object | None, _owner: type | None = None
+    ) -> ElementAttributeExpr[Any, T] | T:
         if obj is None:
             return ElementAttributeExpr((self._canonical,))
         # A non-data descriptor, so Pydantic's own instance `__dict__` shadows

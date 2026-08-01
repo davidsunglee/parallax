@@ -331,8 +331,15 @@ class Entity(BaseModel, metaclass=EntityMeta, _mint=FRAMEWORK_MINT):
     """The frozen base every Parallax Entity Class extends."""
 
     @classmethod
-    def where(cls, *predicates: Predicate) -> Statement:
+    def where[E: Entity](cls: type[E], *predicates: Predicate[E]) -> Statement:
         """Build a side-effect-free statement conjoining ``predicates`` (empty is find-all).
+
+        Each predicate is measured against the queried position twice. The
+        parameter measures it before anything runs — a Predicate is
+        contravariant, so an ancestor's predicate addresses this position and a
+        descendant's does not — and the model-aware validator measures it again
+        as the statement is built, which is what covers the wire path and any
+        untyped caller.
 
         An inheritance participant's temporal axes resolve through its family
         root, so a concrete subtype accepts its inherited axis spelling even
@@ -357,13 +364,20 @@ class Entity(BaseModel, metaclass=EntityMeta, _mint=FRAMEWORK_MINT):
         )
 
     @classmethod
-    def narrow(cls, *subtypes: type, where: Predicate | None = None) -> Predicate:
+    def narrow[E: Entity](
+        cls: type[E], *subtypes: type, where: Predicate[Any] | None = None
+    ) -> Predicate[E]:
         """The scoped subtype-narrowing constructor (spec §2).
 
         ``to`` preserves the authored subtype list verbatim, and ``where=`` grants
         attribute scope to those subtypes' declared members inside its own operand
         alone. An ordinary predicate: it composes like any other, and inside a
         relationship quantifier it must name exactly the relationship target.
+
+        The narrowed predicate addresses the narrowing class's own position — the
+        sanctioned way to reach a descendant's member from an ancestor position —
+        so the ``where=`` scope is the one place a subtype's predicate legitimately
+        lands in an ancestor's query.
         """
         to = tuple(declaration_of(subtype).identity.name for subtype in subtypes)
         operand: Operation = where.op if where is not None else All()

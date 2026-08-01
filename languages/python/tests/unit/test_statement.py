@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import datetime as dt
 from decimal import Decimal
+from typing import Any
 
 import pytest
 
@@ -52,7 +53,7 @@ class Widget(Entity, table="widget", namespace=_NS):
 _WIDGETS = MetamodelHub(Widget)
 
 
-def _op(pred: Predicate) -> dict[str, object]:
+def _op(pred: Predicate[Any]) -> dict[str, object]:
     from parallax.core.op_algebra import serialize
 
     return serialize(pred.op)
@@ -156,7 +157,9 @@ def test_directive_guards() -> None:
 
 
 def test_nested_value_object_expression_paths() -> None:
-    address = AttributeExpr("Customer", "address")
+    # Built directly rather than through class access, so it names no Entity
+    # Class and its parameters carry nothing.
+    address: AttributeExpr[Any, Any] = AttributeExpr("Customer", "address")
     assert _op(address.city == "Oslo") == {
         "nestedEq": {"path": "Customer.address.city", "value": "Oslo"}
     }
