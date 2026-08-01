@@ -557,7 +557,8 @@ class Transaction:
         which the caller has already passed through
         :func:`~parallax.core.unit_work.instructions.validate_instruction`
         against this transaction's own model — the single model-aware gate
-        covering the selecting predicate as well as the assignments.
+        covering the selecting predicate, the inheritance-family rejection, and
+        the assignments.
 
         This method is a FROZEN external seam, not an ordinary private helper:
         the conformance engine's predicate-write translation calls it directly
