@@ -14,10 +14,11 @@ exactly the state in which ``check_dag_sync`` would emit it into its own
 parent's forbidden row, where import-linter silently skips it.
 
 The guarantee under test is **one most-specific owner plus any declared
-ancestor scopes**, not one owner outright: ten committed files legitimately
-match both a child scope and its parent, which is what child scopes are for.
-``test_declared_child_scope_files_are_owned_twice`` pins that, so the
-documented claim and the implemented behaviour cannot drift apart again.
+ancestor scopes**, not one owner outright: a file inside a declared child scope
+legitimately matches both the child and its parent, which is what child scopes
+are for. ``test_declared_child_scope_files_are_owned_twice`` pins that as a
+property of the scope tables, so the documented claim and the implemented
+behaviour cannot drift apart again.
 """
 
 from __future__ import annotations
@@ -82,31 +83,24 @@ def test_every_exemption_is_genuinely_unowned_today() -> None:
 
 def test_declared_child_scope_files_are_owned_twice() -> None:
     # The check does NOT promise one owner per file. It promises one
-    # most-specific owner plus declared ancestors, and these ten files are the
-    # intended two-owner state child scopes exist to create — not a defect and
-    # not something to weaken the check into forbidding.
+    # most-specific owner plus declared ancestors, and a file inside a declared
+    # child scope is the intended two-owner state child scopes exist to create —
+    # not a defect and not something to weaken the check into forbidding. Stated
+    # as a property of the scope tables rather than as a file list, so declaring
+    # another child scope does not move a literal here.
     scopes = own.declared_scopes()
-    doubled = {
-        path: own.owning_scopes(own.module_path(path), scopes)
-        for path in own.production_files()
-        if len(own.owning_scopes(own.module_path(path), scopes)) > 1
-    }
-    assert sorted(Path(path).name for path in doubled) == [
-        "_errors.py",
-        "_family.py",
-        "_hub.py",
-        "_keyed_sql.py",
-        "_preflight.py",
-        "_step_lowering.py",
-        "_wrap.py",
-        "_write_lowering.py",
-        "_write_types.py",
-        "statement.py",
-    ]
+    doubled: dict[str, list[str]] = {}
+    for path in own.production_files():
+        owners = own.owning_scopes(own.module_path(path), scopes)
+        if len(owners) > 1:
+            doubled[path] = owners
     for path, owners in doubled.items():
         assert own.is_declared_chain(owners, dag.CHILD_SCOPE_PARENT), path
         parent = dag.CHILD_SCOPE_PARENT[owners[-1]]
         assert owners == [parent, owners[-1]], path
+    # Every declared child scope owns at least one file, and every doubly owned
+    # file belongs to one — so the two-owner set is exactly what §7 declares.
+    assert {owners[-1] for owners in doubled.values()} == set(dag.CHILD_SCOPE_PARENT)
     # ...and the tree is clean regardless: declared overlap never fails.
     assert own.main([]) == 0
 
@@ -123,7 +117,7 @@ def test_the_success_message_states_the_guarantee_it_actually_proves(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     # The message is the only thing most readers of this gate ever see, so it
-    # must not promise one owner per file when ten files have two.
+    # must not promise one owner per file while child-scope files have two.
     scopes = own.declared_scopes()
     nested = sum(
         1

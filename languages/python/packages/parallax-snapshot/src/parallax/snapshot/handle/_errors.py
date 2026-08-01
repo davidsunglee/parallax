@@ -9,14 +9,15 @@ would drag a scope the importer may not reach.
 
 That emptiness is load-bearing rather than incidental, so ``spec/python.md`` §7
 gives this module its own child scope with a grant row of ``(none)``. The
-generated import-linter contract forbids every first-party scope OUTSIDE
-``parallax.snapshot.handle``, which is the whole of what makes the two consumers
-legal: each may name this module only because reaching it reaches nothing they
-are not already granted. A sibling inside the package is the residue that
-contract cannot state — a ``forbidden`` row is package-scoped, so a child's row
-cannot name its own parent — and it is only harmless while the sibling named
-carries no first-party import of its own. Add nothing here without checking
-that; ``just python-check-imports`` proves the outside half, not that one.
+generated import-linter contract forbids every first-party scope outside
+``parallax.snapshot.handle`` AND every sibling child scope inside it, which is
+the whole of what makes the two consumers legal: each may name this module only
+because reaching it reaches nothing they are not already granted. A ``forbidden``
+row is package-scoped, so the one name the row cannot state is the shared parent
+package itself; what that leaves unstated is a sibling module §7 declares no
+child scope over, and importing one still breaks the gate on whatever it reaches
+outside the package. ``just python-check-imports`` is what keeps this module's
+dependency-freedom enforced rather than conventional.
 
 Every name here is spelled bare: privacy is carried by this MODULE's leading
 underscore and by the package's frozen ``__all__``, not by per-name underscores.

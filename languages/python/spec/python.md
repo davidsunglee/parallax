@@ -2510,20 +2510,29 @@ parallax.postgres --> parallax.core.dialect
   first-party Entity Hub seam required to construct and read the one concrete
   Hub type. `parallax.snapshot.handle._errors` is the empty case: the
   read-preflight and write-lowering scopes raise one error class while granting
-  disjoint dependencies, so the module holding it may reach nothing at all, and
-  a grant row of `(none)` forbids it every scope outside its own package. Since
-  a `forbidden` row is package-scoped on both sides, no child row can name its
-  own parent, so a same-package sibling import is the one thing a zero-grant row
-  does not reach; it stays a convention. `parallax.core.entity.statement` is the
-  **grantable** case: a child scope may also be named as another scope's grant,
+  disjoint dependencies, so the module holding it may reach nothing at all. A
+  grant row of `(none)` forbids it every scope outside its own package **and**
+  every sibling child scope inside it. A sibling is neither an ancestor nor a
+  descendant of a zero-grant scope, so — unlike the shared parent package, which
+  a package-scoped `forbidden` row cannot name from inside — it is a target the
+  row can state, and a same-package sibling import is refused rather than left
+  to convention. Only a **zero-grant** row takes its siblings as targets: a
+  scope with grants has a closure to complement, and naming siblings in its row
+  would forbid intra-package edges this section permits. What such a row still
+  cannot state is a sibling module over which this section declares no child
+  scope; importing one is caught on whatever that module reaches outside the
+  package instead. `parallax.core.entity.statement` is the **grantable**
+  case: a child scope may also be named as another scope's grant,
   which is how a consumer takes a narrow part of a package without taking what
   the rest of that package reaches. All are generated as ordinary contract
   sources, and none is a new supported import path. Because
   import-linter's `forbidden` contracts are package-scoped on both sides, a
-  child is emitted only as a contract **source**: naming it as a forbidden
-  target of its own parent would overlap the parent's source package and be
-  skipped, and the parent's existing row already forbids the same targets for
-  every descendant. When a child has an additive grant, the generator keeps the
+  child is emitted as a contract **source**, and as a forbidden target only in
+  a *sibling's* zero-grant row: naming it as a forbidden target of its own
+  parent would overlap the parent's source package and be skipped, and naming
+  it in any other scope's row would only restate what the parent's own entry
+  already forbids for every descendant. When a child has an additive grant,
+  the generator keeps the
   parent's forbidden row unchanged and emits one wildcarded `ignore_imports`
   entry for each exact child-to-direct-grant edge. Ignoring that first hop also
   withdraws import-linter's indirect chains through it; no transitive grant
@@ -2545,8 +2554,9 @@ parallax.postgres --> parallax.core.dialect
   Database Port, and the `parallax.core.entity` package reaches one through
   `parallax.core._formation_profile` → `m-opt-lock` → `m-unit-work` →
   `m-db-port`. Its grant is therefore the child scope
-  `parallax.core.entity.statement`, whose own closure stops at `m-core`,
-  `m-metamodel`, `m-op-algebra` and `m-temporal-read`, and the ordinary
+  `parallax.core.entity.statement`, whose own closure is `m-core`,
+  `m-metamodel`, `m-op-algebra`, `m-temporal-read` and — reached through the
+  last two — `m-inheritance` and `m-model-formation`, and the ordinary
   generated row forbids `m-db-port` — along with `m-opt-lock`, `m-unit-work` and
   `parallax.core._formation_profile` — with indirect chains reported.
   Granting a child scope omits that child's ancestors from the row, because a
