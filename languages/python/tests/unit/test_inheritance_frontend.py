@@ -22,15 +22,15 @@ from parallax.core import (
     Attr,
     Bitemporal,
     ConcreteSubtype,
+    DomainModel,
     Entity,
     EntityDefinitionError,
     Int32,
-    MetamodelHub,
     TablePerHierarchy,
     attr,
     inheritance,
 )
-from parallax.core.entity._hub import sealed_model
+from parallax.core.entity._model import model_of
 from parallax.core.metamodel import (
     AbstractSubtype,
     Column,
@@ -159,7 +159,7 @@ def test_a_tph_descendant_declaring_a_table_is_a_formation_issue() -> None:
         note: Attr[str | None] = attr(max_length=32)
 
     with pytest.raises(MetamodelValidationError) as caught:
-        MetamodelHub(TphRoot, TphLeaf)
+        DomainModel(TphRoot, TphLeaf)
     assert _issue_codes(caught.value) == [inheritance.TPH_DESCENDANT_TABLE_FORBIDDEN]
 
 
@@ -176,7 +176,7 @@ def test_a_tpcs_root_declaring_a_table_is_a_formation_issue() -> None:
         note: Attr[str | None] = attr(max_length=32)
 
     with pytest.raises(MetamodelValidationError) as caught:
-        MetamodelHub(TpcsRoot, TpcsLeaf)
+        DomainModel(TpcsRoot, TpcsLeaf)
     assert _issue_codes(caught.value) == [inheritance.TPCS_ABSTRACT_TABLE_FORBIDDEN]
 
 
@@ -189,7 +189,7 @@ def test_a_descendant_declaring_its_own_version_attribute_is_a_formation_issue()
         version: Attr[int] = attr(type=Int32, optimistic_locking=True)
 
     with pytest.raises(MetamodelValidationError) as caught:
-        MetamodelHub(OvenRoot, OvenLeaf)
+        DomainModel(OvenRoot, OvenLeaf)
     assert _issue_codes(caught.value) == [inheritance.OPTIMISTIC_LOCKING_NOT_ROOT_OWNED]
 
 
@@ -205,7 +205,7 @@ def test_a_root_declaring_the_version_attribute_is_accepted() -> None:
     ):
         capacity: Attr[int | None] = attr(type=Int32)
 
-    view = inheritance.view(sealed_model(MetamodelHub(ApplianceRoot, ApplianceLeaf)).model)
+    view = inheritance.view(model_of(DomainModel(ApplianceRoot, ApplianceLeaf)))
     position = view.entity(_identity("ApplianceLeaf"))
     assert position is not None
     assert position.applicable_attribute("version") is not None
@@ -244,7 +244,7 @@ def test_a_descendant_declares_exactly_the_mode_it_authored() -> None:
 
 def test_a_descendant_authored_persistence_makes_the_family_an_invalid_model() -> None:
     with pytest.raises(MetamodelValidationError) as caught:
-        MetamodelHub(_Ledger, _AuditLedger)
+        DomainModel(_Ledger, _AuditLedger)
     (issue,) = caught.value.issues
     assert issue.code == inheritance.PERSISTENCE_NOT_ROOT_OWNED
     assert issue.location == EntityLocation(_identity("_AuditLedger"))
@@ -252,7 +252,7 @@ def test_a_descendant_authored_persistence_makes_the_family_an_invalid_model() -
 
 
 def test_a_descendant_that_declares_no_mode_inherits_the_root_owned_one() -> None:
-    view = inheritance.view(sealed_model(MetamodelHub(_Ledger, _SilentLedger)).model)
+    view = inheritance.view(model_of(DomainModel(_Ledger, _SilentLedger)))
     silent = view.entity(_identity("_SilentLedger"))
     assert silent is not None
     assert silent.persistence is PersistenceMode.READ_ONLY

@@ -34,9 +34,10 @@ from typing import Any
 from parallax.core import opt_lock, read_lock
 from parallax.core.db_port import DbPort
 from parallax.core.dialect import Dialect
-from parallax.core.entity import AttributeAssignment, MetamodelBinding, full_row, primary_key_row
+from parallax.core.entity import AttributeAssignment, full_row, primary_key_row
 from parallax.core.entity import Entity as EntityBase
 from parallax.core.entity import Statement as EntityStatement
+from parallax.core.entity._model import ClassIndex
 from parallax.core.metamodel import EntityMetadata, Metamodel, entity_by_name
 from parallax.core.unit_work import (
     KeyedMutation,
@@ -52,6 +53,7 @@ from parallax.core.unit_work import (
 # by the private MODULE names and by the package's frozen `__all__`, not by
 # per-name underscores, which under pyright strict would make every intra-package
 # import a reportPrivateUsage error.
+from parallax.snapshot.handle._errors import SnapshotConnectionError
 from parallax.snapshot.handle._family import declaring as declaring_of
 from parallax.snapshot.handle._predicate_writes import (
     buffer_predicate,
@@ -103,7 +105,7 @@ class Transaction:
     delegates to the unit of work, which fences use-after-scope).
     """
 
-    __slots__ = ("_binding", "_conn", "_dialect", "_inserted_keys", "_meta", "_uow")
+    __slots__ = ("_classes", "_conn", "_dialect", "_inserted_keys", "_meta", "_uow")
 
     def __init__(
         self,
@@ -111,13 +113,13 @@ class Transaction:
         conn: DbPort,
         meta: Metamodel,
         dialect: Dialect,
-        binding: MetamodelBinding | None,
+        classes: ClassIndex | None,
     ) -> None:
         self._uow = uow
         self._conn = conn
         self._meta = meta
         self._dialect = dialect
-        self._binding = binding
+        self._classes = classes
         # The object keys THIS transaction buffered an insert for — the
         # read-your-own-writes exemption from the §5 prior-observation license
         # (`_require_observed_milestone`): a same-transaction insert IS the
@@ -386,8 +388,9 @@ class Transaction:
         (a MILESTONE-SET read — `.history()` / `.as_of_range()` — records
         nothing here; its own dispatch branch returns before this point).
         """
-        # Preflight precedes `uow.read` deliberately: that read force-flushes
+        # Both refusals precede `uow.read` deliberately: that read force-flushes
         # pending buffered writes, so a refused read must be refused before it.
+        classes = _materializing(self._classes)
         lowered = preflight_find(statement, model=self._meta)
         target, op = lowered.target, lowered.operation
         pin = deep_fetch_statement_pin(op, declaring_metadata(self._meta, lowered.root))
@@ -396,12 +399,12 @@ class Transaction:
             history_result = self._uow.read(
                 lambda: find_history(op, self._meta, self._dialect, target, self._conn)
             )
-            return snapshot_from_history_result(history_result, target, self._meta, self._binding)
+            return snapshot_from_history_result(history_result, target, self._meta, classes)
         find_result = self._uow.read(
             lambda: find(op, self._meta, self._dialect, target, self._conn, lock=lock)
         )
         record_observations(self._uow, self._meta, find_result, pin)
-        return snapshot_from_find_result(find_result, target, self._meta, pin, self._binding)
+        return snapshot_from_find_result(find_result, target, self._meta, pin, classes)
 
     def _buffer(
         self,
@@ -563,3 +566,18 @@ class Transaction:
         two callers can never diverge in behavior.
         """
         buffer_predicate_instruction(self._uow, self._meta, self._conn, self._dialect, instruction)
+
+
+def _materializing(classes: ClassIndex | None) -> ClassIndex:
+    """The class index a modeled read needs, or refuse before ``uow.read``.
+
+    Absent only for the first-party construction that connects a Database to a
+    bare accepted Metamodel for neutral write work; ``Database.connect`` admits
+    no such model, so an application never reaches this.
+    """
+    if classes is None:
+        raise SnapshotConnectionError(
+            "this Transaction's Database was connected to a model that composed no Entity "
+            "Class, so it cannot materialize a Snapshot (snapshot-class-backed-model-required)"
+        )
+    return classes

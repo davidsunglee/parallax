@@ -23,8 +23,8 @@ import yaml
 from parallax.core import (
     MANY_TO_ONE,
     Attr,
+    DomainModel,
     Entity,
-    MetamodelHub,
     MetamodelLookupError,
     Rel,
     attr,
@@ -90,7 +90,7 @@ def _document() -> Mapping[str, object]:
     return cast("Mapping[str, object]", yaml.safe_load(_YAML))
 
 
-def _class_backed() -> tuple[MetamodelHub, type]:
+def _class_backed() -> tuple[DomainModel, type]:
     """The same model as classes, with one of its Entity Classes.
 
     A successful construction claims its classes permanently, so every caller
@@ -113,7 +113,7 @@ def _class_backed() -> tuple[MetamodelHub, type]:
         author_id: Attr[int] = attr(name="authorId", column="authorId")
         author: Rel[Author] = rel(cardinality=MANY_TO_ONE, join=("author_id", "id"))
 
-    return MetamodelHub(Author, Book), Author
+    return DomainModel(Author, Book), Author
 
 
 # --------------------------------------------------------------------------- #
@@ -136,14 +136,14 @@ def test_every_door_yields_the_same_sealed_model() -> None:
         ]
 
 
-def test_a_descriptor_backed_hub_claims_no_class() -> None:
-    # A descriptor-backed hub creates no Metamodel Binding, so a class key is not
-    # a lookup it can answer at all — the identity spelling is.
+def test_a_descriptor_backed_model_composes_no_class() -> None:
+    # A descriptor-backed model composes no Entity Class, so a class key names
+    # no Entity of it at all — the identity spelling is what it answers.
     _, author_class = _class_backed()
     built = hub_from_yaml(_YAML)
     with pytest.raises(MetamodelLookupError) as caught:
         built.meta(author_class)
-    assert caught.value.code == "metamodel-class-not-bound"
+    assert caught.value.code == "metamodel-entity-not-found"
 
 
 def test_the_text_doors_accept_utf8_bytes() -> None:
@@ -250,7 +250,7 @@ def test_export_reads_a_json_compatible_tree_of_ordinary_containers() -> None:
 )
 def test_a_serialization_defect_surfaces_as_an_export_error_with_no_partial_output(
     monkeypatch: pytest.MonkeyPatch,
-    door: Callable[[MetamodelHub], str],
+    door: Callable[[DomainModel], str],
     serializer: str,
     target: str,
 ) -> None:

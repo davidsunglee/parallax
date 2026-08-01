@@ -39,9 +39,9 @@ from parallax.core import (
     Attr,
     Bitemporal,
     ConcreteSubtype,
+    DomainModel,
     Entity,
     Int32,
-    MetamodelHub,
     Rel,
     TablePerHierarchy,
     TxTemporal,
@@ -97,7 +97,7 @@ class Balance(
     value: Attr[Decimal] = attr(column="val", precision=18, scale=2)
 
 
-BALANCE_MODEL = MetamodelHub(Balance)
+BALANCE_MODEL = DomainModel(Balance)
 
 
 # --------------------------------------------------------------------------- #
@@ -121,7 +121,7 @@ class CashPayment(Payment, namespace=_NS, inheritance=ConcreteSubtype(tag_value=
     tendered: Attr[Decimal | None] = attr(precision=18, scale=2)
 
 
-PAYMENT_MODEL = MetamodelHub(Payment, CardPayment, CashPayment)
+PAYMENT_MODEL = DomainModel(Payment, CardPayment, CashPayment)
 
 
 # --------------------------------------------------------------------------- #
@@ -160,7 +160,7 @@ class Folder(
     documents: Rel[tuple[Document, ...]] = rel(cardinality=ONE_TO_MANY, join=("id", "folder_id"))
 
 
-DOCUMENT_MODEL = MetamodelHub(Document, FinancialDocument, Invoice, Receipt, Memo, Folder)
+DOCUMENT_MODEL = DomainModel(Document, FinancialDocument, Invoice, Receipt, Memo, Folder)
 
 
 # --------------------------------------------------------------------------- #
@@ -229,7 +229,7 @@ class LoanRate(Rate, table="loan_rate", namespace=_NS, inheritance=ConcreteSubty
     spread: Attr[Decimal | None] = attr(precision=18, scale=2)
 
 
-RATE_MODEL = MetamodelHub(Rate, DepositRate, LoanRate)
+RATE_MODEL = DomainModel(Rate, DepositRate, LoanRate)
 
 
 # --------------------------------------------------------------------------- #
@@ -263,4 +263,4 @@ class Passport(
     holder: Rel[Person | None] = rel(reverse_of="passport")
 
 
-PERSON_MODEL = MetamodelHub(Person, Passport)
+PERSON_MODEL = DomainModel(Person, Passport)

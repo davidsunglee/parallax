@@ -17,12 +17,14 @@ Value Object element-scoped carrier, always building element-relative ``nested*`
 nodes for use inside a quantifier's ``where=`` scope.
 
 Nodes here name no declaration and import no frontend: this module reaches no
-owner class, no declaration engine, and no hub. What a node does carry is what
-its seeding class access handed it — the Metamodel Binding of the hub that class
-belongs to, and, for a Relationship Path, the class-aware resolver that answers a
-deeper hop. That is how a model-stated rule fires as the node is built: an
-assignment's assignability and declared-type agreement, and a deeper hop's own
-resolution. A node built directly carries neither and states no such rule.
+owner class, no declaration engine, no Domain Model, and no Metamodel. What a
+node does carry is what its seeding class access handed it — for an Attribute
+Expression, the member's own declared Metadata, which is exactly what an
+assignment's assignability, nullability, and declared-type rules read. Every
+rule that needs a whole model instead — an attribute reference's position, a
+narrow's effective set, an include path's legality, and a relationship hop past
+the first — is stated once at execution preflight, against the model actually
+connected.
 
 Type parameters read the same way everywhere in the frontend: ``E`` is the Entity
 a value is rooted at — its position; ``S`` a subtype of that position; ``R`` the
@@ -60,12 +62,16 @@ so the member's existence and type are runtime questions too.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol, cast, runtime_checkable
 
 from parallax.core.entity._errors import ModelCopyError
-from parallax.core.inheritance import WriteAssignmentError, validate_write_assignment
-from parallax.core.metamodel import entity_by_name
+from parallax.core.metamodel import (
+    AttributeMetadata,
+    ValueObjectMetadata,
+    WriteAssignmentError,
+    judge_assignment,
+)
 from parallax.core.op_algebra import (
     And,
     Between,
@@ -100,8 +106,6 @@ from parallax.core.op_algebra import (
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from parallax.core.entity._binding import MetamodelBinding
-
 __all__ = [
     "UNLOADED",
     "AttributeAssignment",
@@ -114,7 +118,20 @@ __all__ = [
     "and_terms",
     "conjoin",
     "serialize_member",
+    "snake_to_camel",
 ]
+
+
+def snake_to_camel(name: str) -> str:
+    """The canonical member name a snake_case Python spelling denotes.
+
+    An operation reference names members canonically, so this is the rule that
+    turns an authored member spelling into the one the wire carries. It lives
+    beside the references it builds because a relationship hop past the first
+    reaches no declaration and has only the spelling to go on.
+    """
+    head, *tail = name.split("_")
+    return head + "".join(part[:1].upper() + part[1:] for part in tail)
 
 
 @runtime_checkable
@@ -311,25 +328,26 @@ class AttributeExpr[E, T]:
     every predicate this expression builds is rooted at — and ``T`` the member's
     declared Python type.
 
-    ``binding`` is the Metamodel Binding of the hub the seeding class belongs to,
-    carried so an assignment is validated against exactly that model. It is
-    absent for an expression built directly and for one seeded from a class no
-    hub composed.
+    ``member`` is the seeding member's own declared Metadata, which the
+    declaration that installed the descriptor was already holding. It is what
+    ``.set(...)`` judges against, so an assignment states its whole rule with no
+    model anywhere; it is absent for an expression built directly, which
+    therefore states no assignment rule and leaves it to the write boundary.
     """
 
-    __slots__ = ("_binding", "_entity", "_head", "_path")
+    __slots__ = ("_entity", "_head", "_member", "_path")
 
     def __init__(
         self,
         entity: str,
         head: str,
         path: tuple[str, ...] = (),
-        binding: MetamodelBinding | None = None,
+        member: AttributeMetadata | ValueObjectMetadata | None = None,
     ) -> None:
         self._entity = entity
         self._head = head
         self._path = path
-        self._binding = binding
+        self._member = member
 
     @property
     def ref(self) -> AttributeRef:
@@ -340,7 +358,7 @@ class AttributeExpr[E, T]:
         # A deeper value-object hop: Customer.address.city / .geo.country.
         if name.startswith("_"):
             raise AttributeError(name)
-        return AttributeExpr(self._entity, self._head, (*self._path, name), self._binding)
+        return AttributeExpr(self._entity, self._head, (*self._path, name), self._member)
 
     def _dotted(self) -> str:
         return ".".join((self._entity, self._head, *self._path))
@@ -487,27 +505,25 @@ class AttributeExpr[E, T]:
 
         The rules are stated once for ``model_copy(update=...)`` (spec §3) and
         referenced by the assignment-bearing verbs, so both rejection points call
-        one validator and neither can drift: a primary-key or framework-owned
-        target is refused, a scalar value must match its declared neutral type,
-        and a Value Object value must be a well-formed document — with ``None``
-        legal only where the member is nullable. The rejection is spelled
-        ``ModelCopyError`` because it is that same family.
+        one judgement and neither can drift: a primary-key, read-only, or
+        framework-owned target is refused, a scalar value must match its declared
+        neutral type, and a Value Object value must be a well-formed document —
+        with ``None`` legal only where the member is nullable. The rejection is
+        spelled ``ModelCopyError`` because it is that same family.
 
-        An expression carrying no Binding reaches no model and so states no rule.
-        Neither does one whose Entity a second namespace names locally too: an
-        operation reference spells its Entity locally everywhere, so such a
-        reference addresses no operation at all. Both leave the rule to the write
-        boundary, which states it again where the model is certain.
+        The member the descriptor installed is the whole input, so this states
+        its rule with no model: which member a name resolves to was decided by
+        Python's own attribute lookup, and ``inheritance-member-shadowing``
+        guarantees that resolution is unambiguous within any accepted model. An
+        expression built directly carries no member and states no rule, leaving
+        it to the write boundary.
         """
-        if self._binding is None:
-            return
-        entity = entity_by_name(self._binding.model, self._entity)
-        if entity is None:  # pragma: no cover - an ambiguous local name states no rule
+        if self._member is None:
             return
         try:
-            validate_write_assignment(self._binding.model, entity, self._head, value)
+            judge_assignment(self._member, value)
         except WriteAssignmentError as error:
-            raise ModelCopyError(str(error)) from error
+            raise ModelCopyError(f"{self._entity}.{error}") from error
 
     def __bool__(self) -> bool:
         raise TypeError(_BOOL_HINT)
@@ -653,21 +669,6 @@ def _subtype_names(subtype: type) -> tuple[str, str]:
     return subtype.__name__, subtype.__name__
 
 
-class _HopResolver(Protocol):
-    """How a Relationship Path continues past the hop it was seeded with.
-
-    A deeper hop names a Python member of the path's current target, and only
-    that Entity's own class answers which declaration that is. The class-aware
-    member module supplies one of these when it seeds a path, so continuing is a
-    call to what the path was handed rather than a class this module reached for:
-    given the path's Binding, its canonical target spelling, and the member name,
-    it answers that member's own single-hop path, or raises ``AttributeError``
-    when the target or the member resolves to none.
-    """
-
-    def __call__(self, binding: MetamodelBinding, target: str, name: str) -> RelationshipPath: ...
-
-
 @dataclass(frozen=True, slots=True)
 class RelationshipPath:
     """A chained class-level relationship reference (``Order.items``,
@@ -679,9 +680,13 @@ class RelationshipPath:
     ``PathSegment`` shape, whose relationship references name their owner locally
     as the wire does; ``target`` is the canonical Entity spelling the path
     currently points at, namespace included, so two namespaces sharing a local
-    Entity name stay distinguishable. The first hop is statically typed through
-    the relationship descriptor's overload; a deeper hop is a declaration
-    question, so it is answered by the resolver the seeding class access supplied.
+    Entity name stay distinguishable.
+
+    ``target`` is absent once the path has continued past the hop its descriptor
+    seeded: what a continued hop points at is a declaration fact of an Entity
+    this module reaches no class for, and authoring reaches no model to resolve
+    it in. A path with no target cannot continue, and the model states the whole
+    rule for the hop it did take at execution preflight.
 
     ``source`` is the Entity the seeding class access reached the first hop
     THROUGH, kept separate from that hop's own relationship identity: ``Dog.owner``
@@ -695,15 +700,8 @@ class RelationshipPath:
     """
 
     segments: tuple[PathSegment, ...]
-    target: str
+    target: str | None
     source: str | None = None
-    # The Binding of the hub the seeding class belongs to, carried so a deeper
-    # hop resolves in exactly that model. Absent only for a path built directly,
-    # which cannot continue.
-    binding: MetamodelBinding | None = field(default=None, repr=False, compare=False)
-    # The resolver the seeding relationship descriptor handed over, absent for
-    # that same directly built path.
-    resolve_hop: _HopResolver | None = field(default=None, repr=False, compare=False)
 
     @property
     def ref(self) -> RelationshipRef:
@@ -712,33 +710,37 @@ class RelationshipPath:
         return RelationshipRef(owner, relationship)
 
     def __getattr__(self, name: str) -> RelationshipPath:
-        """The next hop, answered by the resolver this path carries.
+        """The next hop, spelled from this path's target and the member's name.
 
-        The hop names a *Python* member of the current target, and only that
-        Entity's own declaration knows which member that is: a member may
-        override its canonical name or inherit its declaration, so a canonical
-        name re-derived from the Python spelling would miss either. The resolver
-        answers the whole hop — the declared member, the segment it seeds, and
-        the Entity it points at — and this path only appends it, so one hop reads
-        exactly as the first hop it continues.
+        Authoring reaches no model, so the segment is composed rather than
+        resolved: the target's own local Entity name, and the canonical member
+        name the Python spelling denotes. Whether that names a declared
+        relationship — and what it points at — is settled at execution preflight,
+        which resolves every segment against the connected model.
+
+        Two authoring facts erase here in consequence, and both are refused at
+        preflight rather than accepted wrongly: a member whose declaration
+        renames it, and one an ancestor declares rather than the target itself.
+        Spell either through ``.include(...)`` on a path rooted at the Entity
+        that declares it.
+
+        Only the hop's segment continues this path: a deeper hop is a member
+        lookup on the current target and qualifies nothing about where the path
+        is rooted.
         """
         if name.startswith("_"):
             raise AttributeError(name)
-        if self.binding is None or self.resolve_hop is None:
+        if self.target is None:
             raise AttributeError(
-                f"{self.target}.{name}: a deeper relationship hop resolves against the "
-                "composed model, which this path does not carry"
+                f"{self.segments[-1].rel}.{name}: this path already continued past the hop "
+                "its descriptor seeded, and query authoring reaches no model to resolve "
+                "what that hop points at"
             )
-        hop = self.resolve_hop(self.binding, self.target, name)
-        # Only the hop's segments continue this path: a deeper hop's own seeding
-        # access is a member lookup on the current target, which qualifies nothing
-        # about where the path is rooted.
+        _, _, local = self.target.rpartition(".")
         return RelationshipPath(
-            segments=(*self.segments, *hop.segments),
-            target=hop.target,
+            segments=(*self.segments, PathSegment(rel=f"{local}.{snake_to_camel(name)}")),
+            target=None,
             source=self.source,
-            binding=self.binding,
-            resolve_hop=self.resolve_hop,
         )
 
     def narrow(self, *subtypes: type) -> RelationshipPath:
@@ -751,13 +753,7 @@ class RelationshipPath:
         new_target = self.target
         if len(narrowed) == 1:  # a hop narrowed to one subtype points at that subtype
             _, new_target = narrowed[0]
-        return RelationshipPath(
-            segments=(*head, new_last),
-            target=new_target,
-            source=self.source,
-            binding=self.binding,
-            resolve_hop=self.resolve_hop,
-        )
+        return RelationshipPath(segments=(*head, new_last), target=new_target, source=self.source)
 
     def any(self, *predicates: Predicate[Any]) -> Predicate[Any]:
         """The single-hop relationship quantifier: ``>= 1`` related row

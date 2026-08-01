@@ -30,7 +30,7 @@ from pydantic._internal._model_construction import ModelMetaclass
 from parallax.core.base import FLOAT32, INT32, Decimal, Float32, Int32, NeutralType
 from parallax.core.base import infer_neutral_type as _infer_neutral_type
 from parallax.core.entity._errors import EntityDefinitionError
-from parallax.core.entity._expressions import AttributeRef, RelationshipRef
+from parallax.core.entity._expressions import AttributeRef, RelationshipRef, snake_to_camel
 from parallax.core.entity._members import (
     AbstractSubtype,
     Attr,
@@ -79,11 +79,13 @@ from parallax.core.metamodel import (
     UnresolvedRelationshipOrder,
     UnresolvedReverseRelationshipDeclaration,
     ValueObjectAttributeDeclaration,
+    ValueObjectMetadata,
     ValueObjectOccurrenceDeclaration,
     ValueObjectShapeDeclaration,
     ValueObjectShapeKey,
     default_column_name,
     resolve_entity_reference,
+    value_object_metadata,
 )
 from parallax.core.metamodel import AbstractSubtype as AcceptedAbstractSubtype
 from parallax.core.metamodel import ConcreteSubtype as AcceptedConcreteSubtype
@@ -123,7 +125,7 @@ FRAMEWORK_MINT: Final = object()
 Only the two frontend modules hold it. It guards against a mistyped header
 rather than against a determined caller: anyone willing to import a private
 module can obtain it, and the result is an inert class that declares nothing and
-is never a hub candidate.
+is never a Domain Model candidate.
 """
 
 _KIND: Final = "__parallax_kind__"
@@ -274,12 +276,6 @@ class ValueObjectShape:
     many_py: frozenset[str]
 
 
-def snake_to_camel(name: str) -> str:
-    """The canonical camelCase member name a snake_case declaration name denotes."""
-    head, *tail = name.split("_")
-    return head + "".join(part[:1].upper() + part[1:] for part in tail)
-
-
 def declaration_of(cls: type) -> EntityDeclaration:
     """``cls``'s own Entity declaration, or a loud rejection when it has none."""
     declaration = cls.__dict__.get(_DECLARATION)
@@ -319,11 +315,11 @@ def is_declared_class(candidate: object, kind: DeclarationKind) -> bool:
 
 
 def is_entity_class(candidate: object) -> bool:
-    """Whether ``candidate`` is a domain Entity Class — a hub candidate.
+    """Whether ``candidate`` is a domain Entity Class — a model candidate.
 
     The total, nonthrowing counterpart of :func:`declaration_of`. A framework
     root carries the Entity kind marker but no declaration, so it answers false
-    here exactly as it is refused as a hub argument.
+    here exactly as it is refused as a Domain Model argument.
     """
     return is_declared_class(candidate, DeclarationKind.ENTITY) and isinstance(
         cast("type", candidate).__dict__.get(_DECLARATION), EntityDeclaration
@@ -360,7 +356,7 @@ def build_class(
     Every Parallax class is implicitly frozen, so the engine sets the Pydantic
     configuration itself and forwards no class-header keyword to Pydantic. A
     framework root carries markers only: no identity, no declaration payload, no
-    header rules, and it is never a hub candidate.
+    header rules, and it is never a Domain Model candidate.
     """
     ns["model_config"] = ConfigDict(frozen=True)
     if mint is not None:
@@ -518,7 +514,7 @@ def _shape_of_annotation(
 ) -> _Shape:
     """The multiplicity, optionality, and inner type an annotation declares.
 
-    A relationship target is read as a spelling and never evaluated: the hub
+    A relationship target is read as a spelling and never evaluated: the composed
     candidate set is the only scope a target resolves in, so a class object is
     Exact and every text form is a name — qualified or relative to the declaring
     Entity — however the annotation path happened to deliver it. Every other
@@ -850,6 +846,11 @@ def _build_entity(
     attributes: list[AttributeMetadata] = []
     relationships: list[UnresolvedRelationshipDeclaration] = []
     occurrences: list[ValueObjectOccurrenceDeclaration] = []
+    # Each installed descriptor's own member Metadata, which is what makes an
+    # assignment judgeable without a model. A Value Object occurrence is expanded
+    # through the compiler's own seam, so a descriptor carries the identical shape
+    # the accepted model publishes.
+    members: dict[str, AttributeMetadata | ValueObjectMetadata] = {}
     column_to_py: dict[str, str] = {}
     name_to_py: dict[str, str] = {}
     py_to_name: dict[str, str] = {}
@@ -922,15 +923,15 @@ def _build_entity(
             vo_classes[py_name] = vo_class
             if shape.multiplicity is Multiplicity.MANY:
                 many_py.add(py_name)
-            occurrences.append(
-                ValueObjectOccurrenceDeclaration(
-                    name=canonical,
-                    storage=Column(column),
-                    shape=shape_of(vo_class).shape,
-                    multiplicity=shape.multiplicity,
-                    nullable=shape.nullable,
-                )
+            occurrence = ValueObjectOccurrenceDeclaration(
+                name=canonical,
+                storage=Column(column),
+                shape=shape_of(vo_class).shape,
+                multiplicity=shape.multiplicity,
+                nullable=shape.nullable,
             )
+            occurrences.append(occurrence)
+            members[canonical] = value_object_metadata(identity, occurrence)
             continue
         if shape.multiplicity is Multiplicity.MANY:
             raise EntityDefinitionError(
@@ -944,7 +945,9 @@ def _build_entity(
             framework_owned_py.add(py_name)
         if canonical in axis_names:
             axis_governed_py.add(py_name)
-        attributes.append(_attribute(identity, canonical, column, attr_spec, shape, where))
+        attribute = _attribute(identity, canonical, column, attr_spec, shape, where)
+        attributes.append(attribute)
+        members[canonical] = attribute
 
     _install_fields(
         annotations, ns, shapes, vo_classes, many_py, axis_governed=frozenset(axis_governed_py)
@@ -973,7 +976,9 @@ def _build_entity(
     )
     cls = _pydantic_class(mcs, cls_name, bases, ns)
     for py_name, canonical in py_to_name.items():
-        setattr(cls, py_name, Attr(AttributeRef(identity.name, canonical), py_name))
+        setattr(
+            cls, py_name, Attr(AttributeRef(identity.name, canonical), py_name, members[canonical])
+        )
     for canonical, py_name in relationship_py.items():
         setattr(
             cls,
@@ -1356,7 +1361,7 @@ def _entity_reference(shape: _Shape, where: str) -> EntityReference:
 
     A class target and a qualified string are already exact; a bare string is
     relative to the declaring Entity's namespace. Resolution never consults
-    module globals — the hub candidate set is the only scope.
+    module globals — the composed candidate set is the only scope.
     """
     if shape.base is not None:
         if not isinstance(shape.base, type) or _DECLARATION not in shape.base.__dict__:

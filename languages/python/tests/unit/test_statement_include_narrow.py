@@ -2,13 +2,14 @@
 ``.include(*paths)`` (deep-fetch, chained ``Rel[T]`` class access, hop-level
 ``.narrow()``), relationship ``.any()`` / ``.none()`` quantifiers, the
 ``Entity.narrow(...)`` constructor, and the statement-level ``.narrow(...)``
-clause. Every example is validated immediately at build, against the model the
-target's own hub sealed, never deferred to execution.
+clause. Authoring reaches no model, so what a spelling BUILDS is checked here
+directly and what a model makes of it runs through the shared read gate
+`preflight_find`, the seam every execution path calls.
 
-A deeper relationship hop is the one thing a path cannot answer for itself: it is
-a model question, so it resolves through the Metamodel Binding the seeding class
-access supplied. ``test_relationship_hops`` pins that resolution; here it is
-exercised only as far as a multi-hop include needs it.
+A deeper relationship hop is composed rather than resolved: the segment is
+spelled from the path's own target, and the model settles its legality at that
+same gate. ``test_relationship_hops`` pins the composition and the two authoring
+facts it erases; here a multi-hop include is exercised only as far as it needs.
 """
 
 from __future__ import annotations
@@ -17,6 +18,7 @@ import pytest
 
 from _support import inheritance_models as im
 from _support import snapshot_models as sm
+from parallax.conformance import read_models
 from parallax.conformance.animal_owner import ANIMAL_MODEL as _ANIMAL_MODEL
 from parallax.conformance.graph_models import Policy
 from parallax.conformance.read_models import Animal, Cat, Dog, Pet, WildBoar
@@ -26,8 +28,8 @@ from parallax.core import (
     AbstractRoot,
     Attr,
     ConcreteSubtype,
+    DomainModel,
     Entity,
-    MetamodelHub,
     Rel,
     TablePerHierarchy,
     UnsupportedFeatureError,
@@ -35,7 +37,8 @@ from parallax.core import (
     rel,
 )
 from parallax.core.entity import RelationshipPath
-from parallax.core.entity.statement import build_statement
+from parallax.core.entity._model import model_of
+from parallax.core.entity.statement import Statement, build_statement
 from parallax.core.op_algebra import (
     All,
     DeepFetch,
@@ -48,10 +51,19 @@ from parallax.core.op_algebra import (
     PathRootNarrow,
     PathSegment,
 )
+from parallax.snapshot.handle._preflight import preflight_find
 
 # The animal family is queryable only through the hub that seals it with its own
 # polymorphic owner, so importing the hub is what binds these classes.
 assert _ANIMAL_MODEL is not None
+_DOCUMENTS = read_models.DOCUMENT_MODEL
+
+
+def gated(statement: Statement, models: DomainModel = _ANIMAL_MODEL) -> Statement:
+    """``statement`` through the shared read gate, as executing it would run it."""
+    preflight_find(statement, model=model_of(models))
+    return statement
+
 
 _LOCAL_NS = "parallax.tests.include"
 
@@ -78,7 +90,7 @@ class Hound(Beast, namespace=_LOCAL_NS, inheritance=ConcreteSubtype(tag_value="h
     handler: Rel[Keeper | None] = rel(cardinality=MANY_TO_ONE, join=("keeper_id", "id"))
 
 
-KENNEL = MetamodelHub(Beast, Hound, Keeper)
+KENNEL = DomainModel(Beast, Hound, Keeper)
 
 
 # --------------------------------------------------------------------------- #
@@ -105,16 +117,18 @@ def test_multi_hop_include_resolves_the_deeper_hop_against_the_model() -> None:
     )
 
 
-def test_a_deeper_hop_on_a_path_that_carries_no_model_is_refused() -> None:
-    # A second hop is a model question, so a path built directly cannot answer it.
-    bare = RelationshipPath(segments=(PathSegment(rel="SnapOrder.items"),), target="SnapOrderItem")
-    with pytest.raises(AttributeError, match="resolves against the composed model"):
+def test_a_path_that_already_continued_cannot_continue_again() -> None:
+    # A composed hop points at an Entity the path names no class for, so a third
+    # hop has no owner to spell itself from.
+    bare = RelationshipPath(segments=(PathSegment(rel="SnapOrder.items"),), target=None)
+    with pytest.raises(AttributeError, match="already continued past the hop"):
         _ = bare.statuses
 
 
-def test_a_deeper_hop_naming_no_declared_relationship_is_refused() -> None:
-    with pytest.raises(AttributeError, match="declares no relationship"):
-        _ = sm.SnapOrder.items.bogus_relationship
+def test_a_deeper_hop_naming_no_declared_relationship_is_refused_at_the_gate() -> None:
+    statement = sm.SnapOrder.where().include(sm.SnapOrder.items.bogus_relationship)
+    with pytest.raises(ValueError, match="names no declared relationship on SnapOrderItem"):
+        gated(statement, sm.SNAP_ORDERS_MODEL)
 
 
 def test_include_accumulates_across_calls() -> None:
@@ -227,12 +241,12 @@ def test_a_guarded_path_keeps_its_root_guard_through_deeper_and_narrowed_hops() 
     )
 
 
-def test_a_root_guard_outside_the_queried_position_is_rejected_at_build() -> None:
+def test_a_root_guard_outside_the_queried_position_is_rejected_at_the_gate() -> None:
     # A read already narrowed to the Pet branch cannot guard a path to the sibling
     # WildBoar: the guard is clamped to the active position exactly as an
     # operation-position narrow is.
     with pytest.raises(OperationRejectedError) as exc:
-        Pet.where().include(WildBoar.owner)
+        gated(Pet.where().include(WildBoar.owner))
     assert exc.value.rule == "narrow-outside-position"
 
 
@@ -313,7 +327,7 @@ def test_narrow_broadening_outside_the_threaded_position_is_rejected() -> None:
     # FinancialDocument's effective set is {Invoice, Receipt}; nesting a
     # same-position narrow to Memo (outside it) must be rejected.
     with pytest.raises(OperationRejectedError) as caught:
-        im.FinancialDocument.where(im.FinancialDocument.narrow(im.Memo))
+        gated(im.FinancialDocument.where(im.FinancialDocument.narrow(im.Memo)), _DOCUMENTS)
     assert caught.value.rule == "narrow-outside-position"
 
 
@@ -343,38 +357,44 @@ def test_clause_and_constructor_forms_converge_on_the_identical_node() -> None:
     assert via_clause == via_constructor
 
 
-def test_subtype_attribute_outside_narrow_scope_is_rejected_at_where_build_time() -> None:
-    # The where() call itself validates immediately with the UNCONSTRAINED
-    # position — a later `.narrow(...)` clause grants no retroactive scope.
-    # The suppression is the static half: `Predicate` is contravariant, so a
-    # subtype's predicate never reaches an ancestor's position, and an ignore
-    # that goes idle fails `just python-typecheck`.
+def test_subtype_attribute_outside_narrow_scope_is_rejected_at_the_gate() -> None:
+    # The predicate is measured against the UNCONSTRAINED queried position — a
+    # later `.narrow(...)` clause grants no retroactive scope. The suppression is
+    # the static half: `Predicate` is contravariant, so a subtype's predicate
+    # never reaches an ancestor's position, and an ignore that goes idle fails
+    # `just python-typecheck`.
     with pytest.raises(OperationRejectedError) as caught:
-        im.Document.where(im.Invoice.amount_due > 3)  # pyright: ignore[reportArgumentType]
+        gated(im.Document.where(im.Invoice.amount_due > 3), _DOCUMENTS)  # pyright: ignore[reportArgumentType]
     assert caught.value.rule == "subtype-attribute-outside-narrow-scope"
 
 
-def test_a_statement_built_with_no_binding_states_no_model_rule_at_all() -> None:
-    # The Binding is the model a build-time rule is stated over, so a statement
-    # built without one carries the very predicate the bound `Document.where(...)`
-    # above refuses. That is what lets the operation-shaping clauses be exercised
-    # with no whole model behind them.
+def test_a_statement_states_no_model_rule_until_it_reaches_a_model() -> None:
+    # Authoring reaches no model, so a statement carries the very predicate the
+    # gated `Document.where(...)` above refuses. That is what lets the
+    # operation-shaping clauses be exercised with no whole model behind them, and
+    # it is why the rule is stated where the model is certain.
     out_of_scope = im.Invoice.amount_due > 3
     statement = build_statement("Document", (out_of_scope,))
-    assert statement.binding is None
     assert statement.operation() == out_of_scope.op
     assert statement.limit(2).operation() == Limit(operand=out_of_scope.op, count=2)
 
 
-def test_narrow_clause_after_an_out_of_scope_where_predicate_never_legalizes_it() -> None:
-    # `.where(Invoice.amount_due > 3)` ALREADY raises before `.narrow(...)` is
-    # even reached — the statement-level clause grants no retroactive scope.
-    # The suppression is the static half of the same rule (see above).
-    with pytest.raises(OperationRejectedError) as caught:
-        im.Document.where(
-            im.Invoice.amount_due > 3  # pyright: ignore[reportArgumentType]
-        ).narrow(im.Invoice)
-    assert caught.value.rule == "subtype-attribute-outside-narrow-scope"
+def test_the_narrow_clauses_no_retroactive_scope_rule_is_static_only() -> None:
+    # The clause and the scoped constructor converge on ONE canonical node, so no
+    # model-aware rule can refuse the first spelling while accepting the second:
+    # the operation the gate sees is the same document either way, and its own
+    # rule makes the narrowed set the position its operand is measured in.
+    #
+    # What still refuses the spelling is the parameter: `Predicate[Invoice]` never
+    # addresses a `Document` position, so the suppression below is load-bearing
+    # and an ignore that goes idle fails `just python-typecheck`. That is the
+    # whole remaining force of "a narrow clause grants no retroactive scope".
+    narrowed = im.Document.where(
+        im.Invoice.amount_due > 3  # pyright: ignore[reportArgumentType]
+    ).narrow(im.Invoice)
+    scoped = im.Document.where(im.Document.narrow(im.Invoice, where=im.Invoice.amount_due > 3))
+    assert narrowed.operation() == scoped.operation()
+    gated(narrowed, _DOCUMENTS)
 
 
 # --------------------------------------------------------------------------- #

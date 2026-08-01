@@ -45,13 +45,13 @@ from parallax.core.dialect import POSTGRES, Dialect
 # by the private MODULE names and by the package's frozen `__all__`, not by
 # per-name underscores, which under pyright strict would make every intra-package
 # import a reportPrivateUsage error.
-from parallax.core.entity import MetamodelBinding, MetamodelHub
+from parallax.core.entity import DomainModel
 from parallax.core.entity import Statement as EntityStatement
 
 # First-party support, deliberately absent from `parallax.core.entity`'s exports:
-# this composition root connects to an accepted `Metamodel`, so it needs both
-# facts out of a hub.
-from parallax.core.entity._hub import sealed_model
+# this composition root connects to an accepted `Metamodel` and materializes
+# rows, so it needs both facts out of a Domain Model.
+from parallax.core.entity._model import ClassIndex, class_index, model_of
 from parallax.core.metamodel import Metamodel
 from parallax.core.unit_work import (
     Clock,
@@ -71,6 +71,7 @@ from parallax.core.unit_work import (
     enforce_affected_rows,
     run_unit_of_work,
 )
+from parallax.snapshot.handle._errors import SnapshotConnectionError
 from parallax.snapshot.handle._planning import build_write_planner
 from parallax.snapshot.handle._preflight import preflight_find
 from parallax.snapshot.handle._read import (
@@ -132,6 +133,29 @@ class TransactionOwnershipError(RuntimeError):
 
 
 @dataclass(frozen=True, slots=True)
+class _ConnectedModel:
+    """The model one ``Database`` serves: its accepted metadata and class index.
+
+    Owned by the Database rather than by any query value, and carrying no
+    identity of its own — two Databases over one Domain Model hold equal state
+    and neither is preferred, while a query built from classes this model never
+    composed is refused by target resolution rather than by ownership.
+    """
+
+    meta: Metamodel
+    classes: ClassIndex | None
+
+    def materializing(self) -> ClassIndex:
+        """The class index a modeled read needs, or refuse before any I/O."""
+        if self.classes is None:
+            raise SnapshotConnectionError(
+                "this Database was connected to a model that composed no Entity Class, so it "
+                "cannot materialize a Snapshot (snapshot-class-backed-model-required)"
+            )
+        return self.classes
+
+
+@dataclass(frozen=True, slots=True)
 class _ResolvedOptions:
     """The outermost boundary's resolved ``db.transact`` options.
 
@@ -171,24 +195,31 @@ class _Demarcation:
 class Database:
     """A connected Parallax database handle: one adapter, one metamodel (spec §5)."""
 
-    __slots__ = ("_binding", "_clock", "_dialect", "_meta", "_planner", "_port")
+    __slots__ = ("_clock", "_connected", "_dialect", "_meta", "_planner", "_port")
 
     def __init__(
         self,
         port: DbPort,
-        meta: MetamodelHub | Metamodel,
+        model: DomainModel | Metamodel,
         *,
         dialect: Dialect = POSTGRES,
         clock: Clock | None = None,
     ) -> None:
+        """Connect to ``model``, which the developer entry point narrows further.
+
+        A bare accepted Metamodel is the first-party neutral-write form the
+        conformance adapter constructs: it serves the write lanes, which name
+        Entities rather than classes, and refuses every modeled read.
+        :meth:`connect` admits only a class-backed Domain Model, so an
+        application never reaches that state.
+        """
+        self._connected = (
+            _ConnectedModel(meta=model_of(model), classes=class_index(model))
+            if isinstance(model, DomainModel)
+            else _ConnectedModel(meta=model, classes=None)
+        )
         self._port = port
-        self._meta: Metamodel
-        self._binding: MetamodelBinding | None
-        if isinstance(meta, MetamodelHub):
-            sealed = sealed_model(meta)
-            self._meta, self._binding = sealed.model, sealed.binding
-        else:
-            self._meta, self._binding = meta, None
+        self._meta: Metamodel = self._connected.meta
         self._dialect = dialect
         self._clock: Clock = clock if clock is not None else SystemClock()
         # One Write Planner per connected Metamodel, reused across every
@@ -200,24 +231,31 @@ class Database:
     def connect(
         cls,
         adapter: DbPort,
-        meta: MetamodelHub | Metamodel,
+        model: DomainModel,
         *,
         dialect: Dialect = POSTGRES,
         clock: Clock | None = None,
     ) -> Database:
-        """Wire a concrete ``m-db-port`` adapter to the metamodel it will serve.
+        """Wire a concrete ``m-db-port`` adapter to the Domain Model it will serve.
 
         The composition-root entry point (spec §8): only the root names a
         concrete adapter; everything above works against the port. ``dialect``
         defaults to the sole adapter's; ``clock`` defaults to the system clock
         (inject a fixed clock in tests).
 
-        A class-backed hub additionally carries the Metamodel Binding every
-        class-requiring capability needs — ``Snapshot[T]`` wrapping above all.
-        A bare accepted Metamodel connects just as well and serves the whole
-        neutral-row read path; only wrapping refuses.
+        ``model`` narrows to a class-backed Domain Model statically and at run
+        time alike: a descriptor-backed one raises
+        :class:`~parallax.snapshot.handle._errors.SnapshotConnectionError` here,
+        before the adapter is inspected. One model connects to any number of
+        Databases, and one Entity Class participates in any number of models.
         """
-        return cls(adapter, meta, dialect=dialect, clock=clock)
+        if class_index(model) is None:
+            raise SnapshotConnectionError(
+                "a Snapshot materializes Entity Class instances, so connect() takes a "
+                "class-backed DomainModel (snapshot-class-backed-model-required); the model "
+                "given composed no Entity Class"
+            )
+        return cls(adapter, model, dialect=dialect, clock=clock)
 
     def find(self, statement: EntityStatement) -> Snapshot[Any]:
         """Execute ``statement`` exactly once, materializing fully, and return
@@ -237,11 +275,12 @@ class Database:
         lowered = preflight_find(statement, model=self._meta)
         target, op = lowered.target, lowered.operation
         pin = deep_fetch_statement_pin(op, declaring_metadata(self._meta, lowered.root))
+        classes = self._connected.materializing()
         if is_milestone_set_op(op):
             history_result = find_history(op, self._meta, self._dialect, target, self._port)
-            return snapshot_from_history_result(history_result, target, self._meta, self._binding)
+            return snapshot_from_history_result(history_result, target, self._meta, classes)
         find_result = find(op, self._meta, self._dialect, target, self._port)
-        return snapshot_from_find_result(find_result, target, self._meta, pin, self._binding)
+        return snapshot_from_find_result(find_result, target, self._meta, pin, classes)
 
     def transact[T](
         self,
@@ -313,10 +352,12 @@ class Database:
         # holds; a joining call inherits the active unit of work's own.
         model = self._meta
 
+        classes = self._connected.classes
+
         def attempt() -> T:
             def in_txn(conn: DbPort) -> T:
                 def body(uow: UnitOfWork) -> T:
-                    tx = Transaction(uow, conn, self._meta, self._dialect, self._binding)
+                    tx = Transaction(uow, conn, self._meta, self._dialect, classes)
                     # Published for joining calls; visible only while core's
                     # active-transaction binding is, so it needs no cleanup.
                     uow.companion = _Demarcation(tx=tx, options=options, owner=self)

@@ -59,9 +59,9 @@ from parallax.conformance.vo_models import (
 from parallax.core import (
     MAX,
     Attr,
+    DomainModel,
     Entity,
     Float32,
-    MetamodelHub,
     Sequence,
     attr,
     index,
@@ -108,7 +108,7 @@ class Attendee(
     name: Attr[str] = attr(max_length=64)
 
 
-PK_MAX_MODEL = MetamodelHub(Attendee)
+PK_MAX_MODEL = DomainModel(Attendee)
 
 
 class PkSequence(
@@ -177,7 +177,7 @@ class Voucher(
     label: Attr[str] = attr(max_length=64)
 
 
-PK_SEQUENCE_MODEL = MetamodelHub(PkSequence, Badge, Ticket, Pass, Voucher)
+PK_SEQUENCE_MODEL = DomainModel(PkSequence, Badge, Ticket, Pass, Voucher)
 
 
 class WritableScalar(
@@ -201,7 +201,7 @@ class WritableScalar(
     label: Attr[str | None] = attr(max_length=8)
 
 
-WRITABLE_SCALARS_MODEL = MetamodelHub(WritableScalar)
+WRITABLE_SCALARS_MODEL = DomainModel(WritableScalar)
 
 
 class Taxpayer(
@@ -224,9 +224,9 @@ class Taxpayer(
     name: Attr[str] = attr(max_length=64)
 
 
-TAXPAYER_MODEL = MetamodelHub(Taxpayer)
+TAXPAYER_MODEL = DomainModel(Taxpayer)
 
-MIRRORED: list[tuple[str, MetamodelHub]] = [
+MIRRORED: list[tuple[str, DomainModel]] = [
     ("account", ACCOUNT_MODEL),
     ("pk-max", PK_MAX_MODEL),
     ("person", PERSON_MODEL),

@@ -7,7 +7,8 @@ hands the class body to the shared declaration engine.
 
 Because the engine builds the declaration payload eagerly, an Entity Class *is*
 its own ``UnresolvedEntityDeclaration``: the metaclass publishes the nine
-declaration members on the class object, so a hub composes classes directly with
+declaration members on the class object, so a Domain Model composes classes
+directly with
 no adapter and no mirrored record graph.
 """
 
@@ -20,7 +21,6 @@ from typing import TYPE_CHECKING, Any, Self, cast
 from pydantic import BaseModel
 from pydantic._internal._model_construction import ModelMetaclass
 
-from parallax.core.entity._binding import binding_of
 from parallax.core.entity._declaration import (
     DECLARATION_MEMBER_NAMES as _DECLARATION_MEMBERS,
 )
@@ -33,10 +33,8 @@ from parallax.core.entity._declaration import (
     members_of,
 )
 from parallax.core.entity._errors import (
-    METAMODEL_CLASS_NOT_BOUND,
     EntityDefinitionError,
     FrameworkOwnedAxisError,
-    MetamodelStateError,
     ModelCopyError,
     ProvenanceError,
 )
@@ -338,30 +336,19 @@ class Entity(BaseModel, metaclass=EntityMeta, _mint=FRAMEWORK_MINT):
         parameter measures it before anything runs — a Predicate is
         contravariant, so an ancestor's predicate addresses this position and a
         descendant's does not — and the model-aware validator measures it again
-        as the statement is built, which is what covers the wire path and any
+        at execution preflight, which is what covers the wire path and any
         untyped caller.
+
+        Authoring reaches no model, so a class composed into no model at all is
+        as queryable as any other: the query simply has no connected model to be
+        executed against yet, and a Database refuses one whose target it does not
+        declare.
 
         An inheritance participant's temporal axes resolve through its family
         root, so a concrete subtype accepts its inherited axis spelling even
         though its own declaration carries no axis.
-
-        Every predicate is validated against this class's own hub as the
-        statement is built. A class no hub has claimed therefore raises
-        :class:`~parallax.core.entity.MetamodelStateError` with
-        ``metamodel-class-not-bound``: there is no model to state a rule over.
         """
-        binding = binding_of(cls)
-        if binding is None:
-            raise MetamodelStateError(
-                code=METAMODEL_CLASS_NOT_BOUND,
-                message=(
-                    f"{cls.__name__} belongs to no hub; compose it into a MetamodelHub "
-                    "before querying it"
-                ),
-            )
-        return build_statement(
-            cls.identity.name, predicates, as_of_axes=_family_axes(cls), binding=binding
-        )
+        return build_statement(cls.identity.name, predicates, as_of_axes=_family_axes(cls))
 
     @classmethod
     def narrow[E: Entity](

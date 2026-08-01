@@ -1,12 +1,15 @@
-"""How a Relationship Path resolves the hop after its first (python.md §2).
+"""How a Relationship Path continues past its first hop (python.md §2).
 
-The first hop is the relationship descriptor's own; every hop past it is a
-declaration question, answered by the class-aware resolver that descriptor hands
-the path alongside its Metamodel Binding. These fixtures pin the three authoring
-facts a canonical name re-derived from the Python spelling loses — a ``name=``
-override on the hop's own member, a member the target inherits rather than
-declares, and a namespaced target whose bare name a second namespace also
-carries — and that the path itself reaches no class without the resolver.
+The first hop is the relationship descriptor's own and carries the declaration's
+exact facts — its canonical member name and its target's namespaced spelling.
+Every hop past it is composed rather than resolved: authoring reaches no model,
+so the segment is spelled from the path's target and the member's own name, and
+the model states the whole rule at execution preflight.
+
+These fixtures pin both halves — what a composed hop spells, and what preflight
+does with it — including the two authoring facts that erase in consequence: a
+member its declaration renames, and one an ancestor declares rather than the
+target itself. Both are refused rather than accepted wrongly.
 
 This module omits ``from __future__ import annotations`` so a relationship target
 spelled as a class object reaches the engine live, which is what lets one module
@@ -21,15 +24,17 @@ from parallax.core import (
     AbstractRoot,
     Attr,
     ConcreteSubtype,
+    DomainModel,
     Entity,
-    MetamodelHub,
+    OperationRejectedError,
     Rel,
     TablePerHierarchy,
     attr,
     rel,
 )
 from parallax.core.entity import RelationshipPath, RelationshipRef
-from parallax.core.op_algebra import DeepFetch, NavigationPath, PathSegment
+from parallax.core.entity._model import model_of
+from parallax.core.op_algebra import DeepFetch, NavigationPath, PathSegment, validate_operation
 
 
 class Leaf(Entity, table="leaf", namespace="orchard"):
@@ -50,7 +55,7 @@ class Root(Entity, table="root", namespace="orchard"):
     branches: Rel[tuple[Branch, ...]] = rel(cardinality=ONE_TO_MANY, join=("id", "root_id"))
 
 
-ORCHARD = MetamodelHub(Root, Branch, Leaf)
+ORCHARD = DomainModel(Root, Branch, Leaf)
 
 
 class SalesNote(Entity, table="sales_note", name="Note", namespace="sales"):
@@ -73,7 +78,8 @@ class SalesOrder(Entity, table="sales_order", name="Order", namespace="sales"):
     customer: Rel[SalesCustomer] = rel(cardinality=MANY_TO_ONE, join=("customer_id", "id"))
 
 
-LEDGER = MetamodelHub(SalesOrder, SalesCustomer, SalesNote, CrmCustomer)
+LEDGER = DomainModel(SalesOrder, SalesCustomer, SalesNote)
+TWO_NAMESPACE_LEDGER = DomainModel(SalesOrder, SalesCustomer, SalesNote, CrmCustomer)
 
 
 class Toy(Entity, table="toy", namespace="pets"):
@@ -103,59 +109,78 @@ class Owner(Entity, table="owner", namespace="pets"):
     dogs: Rel[tuple[Dog, ...]] = rel(cardinality=ONE_TO_MANY, join=("id", "owner_id"))
 
 
-PETS = MetamodelHub(Owner, Animal, Dog, Toy)
+PETS = DomainModel(Owner, Animal, Dog, Toy)
 
 
-def test_a_deeper_hop_reads_the_python_member_off_the_bound_class() -> None:
-    # `Branch.leaves` declares the canonical name `canopy`, so re-deriving a
-    # canonical name from the Python spelling would miss the declaration.
-    path = Root.branches.leaves
-    assert [segment.rel for segment in path.segments] == ["Root.branches", "Branch.canopy"]
-
-
-def test_a_deeper_hop_reads_a_member_the_target_inherits() -> None:
-    # `Dog` declares no relationship of its own; `toys` is its family's, and the
-    # hop names it exactly as the class does.
-    path = Owner.dogs.toys
-    assert [segment.rel for segment in path.segments] == ["Owner.dogs", "Animal.playthings"]
-    assert path.target == "pets.Toy"
-
-
-def test_an_inherited_deeper_hop_validates_as_an_include_path() -> None:
-    statement = Owner.where().include(Owner.dogs.toys)
-    operation = statement.operation()
+def _preflight(models: DomainModel, root: type[Entity], path: RelationshipPath) -> DeepFetch:
+    """Build the include operation ``path`` authors and validate it as a read does."""
+    operation = root.where().include(path).operation()
     assert isinstance(operation, DeepFetch)
-    assert operation.paths == (
-        NavigationPath(
-            segments=(PathSegment(rel="Owner.dogs"), PathSegment(rel="Animal.playthings"))
-        ),
-    )
+    validate_operation(models.meta(root), operation, model_of(models))
+    return operation
 
 
-def test_a_deeper_hop_keeps_the_target_namespace() -> None:
-    path = Root.branches.leaves
-    assert path.target == "orchard.Leaf"
-
-
-def test_a_deeper_hop_resolves_a_target_whose_bare_name_two_namespaces_share() -> None:
-    # `crm.Customer` carries the same bare name as `sales.Customer`, so a bare
-    # target name is ambiguous and resolves to neither.
+def test_a_deeper_hop_spells_its_owner_from_the_paths_target() -> None:
+    # The owner is the hop target's own local Entity name, and the member is the
+    # canonical name its Python spelling denotes.
     path = SalesOrder.customer.notes
     assert [segment.rel for segment in path.segments] == ["Order.customer", "Customer.notes"]
-    assert path.target == "sales.Note"
 
 
-def test_a_renamed_deeper_hop_validates_as_an_include_path() -> None:
-    # The segments a hop builds are the wire's own, so the model accepts them:
-    # `.include(...)` validates immediately, at statement build.
-    statement = Root.where().include(Root.branches.leaves)
-    operation = statement.operation()
-    assert isinstance(operation, DeepFetch)
+def test_a_deeper_hop_camel_cases_a_snake_case_member_spelling() -> None:
+    assert Owner.dogs.some_member.segments[-1].rel == "Dog.someMember"
+
+
+def test_a_deeper_hop_validates_as_an_include_path() -> None:
+    operation = _preflight(LEDGER, SalesOrder, SalesOrder.customer.notes)
     assert operation.paths == (
         NavigationPath(
-            segments=(PathSegment(rel="Root.branches"), PathSegment(rel="Branch.canopy"))
+            segments=(PathSegment(rel="Order.customer"), PathSegment(rel="Customer.notes"))
         ),
     )
+
+
+def test_a_deeper_hop_across_namespaces_needs_an_unambiguous_local_name() -> None:
+    # The wire spells a relationship owner locally, so the hop taken from
+    # `Order.customer` reads `Customer.notes` however the path's own target was
+    # spelled. A model whose bare `Customer` resolves to one Entity accepts it; a
+    # second namespace declaring the same local name makes the reference resolve
+    # nowhere, which is the reference rule rather than anything about the hop.
+    operation = _preflight(LEDGER, SalesOrder, SalesOrder.customer.notes)
+    with pytest.raises(OperationRejectedError) as caught:
+        validate_operation(
+            TWO_NAMESPACE_LEDGER.meta(SalesOrder), operation, model_of(TWO_NAMESPACE_LEDGER)
+        )
+    assert caught.value.rule == "reference-ambiguous-entity-name"
+
+
+def test_a_renamed_deeper_member_erases_and_preflight_refuses_it() -> None:
+    # `Branch.leaves` declares the canonical name `canopy`. A composed hop has no
+    # declaration to read, so it spells `Branch.leaves` — which the model refuses
+    # rather than silently fetching the wrong relationship. Reaching the member
+    # through a path rooted at the Entity that declares it keeps the exact name.
+    with pytest.raises(ValueError, match="names no declared relationship on Branch"):
+        _preflight(ORCHARD, Root, Root.branches.leaves)
+    assert Branch.leaves.segments == (PathSegment(rel="Branch.canopy"),)
+
+
+def test_an_inherited_deeper_member_erases_and_preflight_refuses_it() -> None:
+    # `Dog` declares no relationship of its own; `toys` is its family's, declared
+    # on `Animal` under the canonical name `playthings`. A composed hop names
+    # neither the declaring Entity nor that name.
+    with pytest.raises(ValueError, match="names no declared relationship on Dog"):
+        _preflight(PETS, Owner, Owner.dogs.toys)
+
+
+def test_a_hop_naming_no_relationship_of_the_target_is_refused_at_preflight() -> None:
+    with pytest.raises(ValueError, match="names no declared relationship on Customer"):
+        _preflight(LEDGER, SalesOrder, SalesOrder.customer.missing)
+
+
+def test_a_hop_naming_an_attribute_of_the_target_is_refused_at_preflight() -> None:
+    # `customerId` is a declared member of the hop's target, but not a relationship.
+    with pytest.raises(ValueError, match="names no declared relationship on Customer"):
+        _preflight(LEDGER, SalesOrder, SalesOrder.customer.customer_id)
 
 
 def test_a_first_hop_target_is_the_canonical_entity_spelling() -> None:
@@ -170,17 +195,6 @@ def test_a_first_hop_reference_names_its_owner_locally_and_its_declared_member()
     assert Root.branches.ref == RelationshipRef("Root", "branches")
     assert Branch.leaves.ref == RelationshipRef("Branch", "canopy")
     assert SalesOrder.customer.ref == RelationshipRef("Order", "customer")
-
-
-def test_a_hop_naming_no_relationship_of_the_target_is_refused() -> None:
-    with pytest.raises(AttributeError, match="declares no relationship"):
-        _ = Root.branches.missing
-
-
-def test_a_hop_naming_an_attribute_of_the_target_is_refused() -> None:
-    # `root_id` is a declared member of the hop's target, but not a relationship.
-    with pytest.raises(AttributeError, match="declares no relationship"):
-        _ = Root.branches.root_id
 
 
 def test_a_hop_narrowed_to_one_class_targets_it_canonically() -> None:
@@ -203,20 +217,16 @@ def test_a_hop_narrowed_to_a_class_declaring_no_identity_names_it_pythonically()
     assert path.target == "Bare"
 
 
-def test_a_path_carrying_a_model_but_no_resolver_cannot_continue() -> None:
-    # Class awareness is handed to a path, never reached for: with the Binding
-    # kept and only the resolver withheld, the hop that resolves off a seeded
-    # path has nothing left to ask.
-    seeded = Root.branches
-    without_resolver = RelationshipPath(
-        segments=seeded.segments, target=seeded.target, binding=seeded.binding
-    )
-    with pytest.raises(AttributeError, match="resolves against the composed model"):
-        _ = without_resolver.leaves
+def test_a_path_that_already_continued_cannot_continue_again() -> None:
+    # What a composed hop points at is a declaration fact of an Entity this path
+    # reaches no class for, so a third hop has no owner to spell itself from.
+    continued = SalesOrder.customer.notes
+    assert continued.target is None
+    with pytest.raises(AttributeError, match="already continued past the hop"):
+        _ = continued.deeper
 
 
-def test_a_hop_past_a_narrow_to_a_class_outside_the_model_is_refused() -> None:
-    # A narrow takes any class, so a path can be pointed at an Entity another
-    # hub owns; continuing from there has no model to resolve in.
-    with pytest.raises(AttributeError, match="is not an Entity Class of the model"):
-        _ = Root.branches.narrow(SalesCustomer).notes
+def test_a_directly_built_path_carries_no_target_and_cannot_continue() -> None:
+    built = RelationshipPath(segments=(PathSegment(rel="Order.customer"),), target=None)
+    with pytest.raises(AttributeError, match="already continued past the hop"):
+        _ = built.notes

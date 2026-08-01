@@ -797,7 +797,7 @@ def test_the_hub_seam_stays_confined_to_the_descriptor_child_scope() -> None:
     assert lint_imports is not None, "lint-imports must be installed in the dev env"
 
     canary = PY_ROOT / "packages/parallax-descriptor/src/parallax/descriptor/_canary_seam.py"
-    canary.write_text("import parallax.core.entity._hub  # deliberate seam violation\n")
+    canary.write_text("import parallax.core.entity._model  # deliberate seam violation\n")
     try:
         result = subprocess.run([lint_imports], cwd=PY_ROOT, capture_output=True, text=True)
     finally:
@@ -839,14 +839,16 @@ def test_an_indirect_reach_out_of_the_preflight_seam_fails_lint_imports() -> Non
     lint_imports = shutil.which("lint-imports")
     assert lint_imports is not None, "lint-imports must be installed in the dev env"
 
-    # `parallax.core.entity._hub` is a NAME the seam's row permits: granting the
+    # `parallax.core.entity._model` is a NAME the seam's row permits: granting the
     # `parallax.core.entity.statement` child omits its ancestor package from the
-    # row. What the row still forbids is where that name leads — the Hub's
+    # row. What the row still forbids is where that name leads — the Domain Model's
     # model-formation edge, and through it the chain toward the port that made
     # the whole frontend too wide a grant.
     target = PY_ROOT / "packages/parallax-snapshot/src/parallax/snapshot/handle/_preflight.py"
     original = target.read_text()
-    target.write_text(f"{original}import parallax.core.entity._hub  # deliberate reach violation\n")
+    target.write_text(
+        f"{original}import parallax.core.entity._model  # deliberate reach violation\n"
+    )
     try:
         result = subprocess.run([lint_imports], cwd=PY_ROOT, capture_output=True, text=True)
     finally:
@@ -857,9 +859,33 @@ def test_an_indirect_reach_out_of_the_preflight_seam_fails_lint_imports() -> Non
         "parallax.snapshot.handle._preflight may import only its permitted dependencies BROKEN"
         in result.stdout
     )
-    # Two hops: the seam names the Hub, the Hub names model formation.
-    assert "parallax.snapshot.handle._preflight -> parallax.core.entity._hub" in result.stdout
-    assert "parallax.core.entity._hub -> parallax.core._formation_profile" in result.stdout
+    # Two hops: the seam names the Domain Model, which names model formation.
+    assert "parallax.snapshot.handle._preflight -> parallax.core.entity._model" in result.stdout
+    assert "parallax.core.entity._model -> parallax.core._formation_profile" in result.stdout
+
+
+# --------------------------------------------------------------------------
+# Canary 6b: query authoring reaches no model. The expression scope's row is
+# what proves it — the module docstring's claim is otherwise unenforced.
+# --------------------------------------------------------------------------
+def test_reaching_model_formation_from_the_expression_scope_fails_lint_imports() -> None:
+    lint_imports = shutil.which("lint-imports")
+    assert lint_imports is not None, "lint-imports must be installed in the dev env"
+
+    target = PY_ROOT / "packages/parallax-core/src/parallax/core/entity/_expressions.py"
+    original = target.read_text()
+    target.write_text(f"{original}import parallax.core._formation_profile  # deliberate reach\n")
+    try:
+        result = subprocess.run([lint_imports], cwd=PY_ROOT, capture_output=True, text=True)
+    finally:
+        target.write_text(original)
+
+    assert result.returncode != 0, result.stdout
+    assert (
+        "parallax.core.entity._expressions may import only its permitted dependencies BROKEN"
+        in result.stdout
+    )
+    assert "parallax.core.entity._expressions -> parallax.core._formation_profile" in result.stdout
 
 
 # --------------------------------------------------------------------------

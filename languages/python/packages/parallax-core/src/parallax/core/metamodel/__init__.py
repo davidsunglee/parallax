@@ -4,10 +4,12 @@ The representation-independent model contract: canonical identities, lexical
 reference resolution, the closed metadata vocabularies, the formation-state
 protocol family, the shared Metamodel Issue value with its canonical ordering
 law, the fixed foundational resolver, the one Metadata Compiler that produces
-the sole accepted metadata graph, and the structural conformance of a written
-document to a Value Object occurrence. It owns no JSON/YAML spelling, no
+the sole accepted metadata graph, the structural conformance of a written
+document to a Value Object occurrence, and the verdict one already-resolved
+member returns on one written value. It owns no JSON/YAML spelling, no
 inherited or effective semantic view, no query or SQL behavior, and no
-lifecycle. ``m-metamodel`` depends only on ``m-core``.
+lifecycle — deciding WHICH member a name resolves to stays with the scopes that
+own family-effective resolution. ``m-metamodel`` depends only on ``m-core``.
 
 Closed structured vocabularies use one of two spellings: an ``enum.Enum`` when
 no member carries a payload, and one frozen dataclass per variant behind a
@@ -30,6 +32,7 @@ from parallax.core.metamodel._compile import (
     accept_metamodel,
     compile_metadata,
     is_compiled_metadata,
+    value_object_metadata,
 )
 from parallax.core.metamodel._identities import (
     AttributeIdentity,
@@ -64,6 +67,7 @@ from parallax.core.metamodel._issues import (
     canonical_location_key,
     sort_issues,
 )
+from parallax.core.metamodel._judgement import WriteAssignmentError, judge_assignment
 from parallax.core.metamodel._naming import default_column_name
 from parallax.core.metamodel._resolve import (
     AS_OF_ATTRIBUTE_DUPLICATE,
@@ -268,6 +272,7 @@ __all__ = [
     "ValueObjectShapeDeclaration",
     "ValueObjectShapeKey",
     "VoDocumentViolation",
+    "WriteAssignmentError",
     "accept_metamodel",
     "canonical_issue_key",
     "canonical_location_key",
@@ -277,8 +282,10 @@ __all__ = [
     "inheritance_parent",
     "is_candidate_metamodel",
     "is_compiled_metadata",
+    "judge_assignment",
     "resolve",
     "resolve_entity_reference",
     "sort_issues",
+    "value_object_metadata",
     "vo_document_violation",
 ]

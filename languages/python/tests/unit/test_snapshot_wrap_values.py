@@ -21,12 +21,12 @@ from parallax.core import (
     Attr,
     Bitemporal,
     ConcreteSubtype,
+    DomainModel,
     Entity,
-    MetamodelHub,
     ValueObject,
     attr,
 )
-from parallax.core.entity._hub import sealed_model
+from parallax.core.entity._model import model_of
 from parallax.core.temporal_read import Pin, edge_of, pin_of
 from parallax.snapshot.handle import Execution, NoResultFound, Snapshot, TooManyResultsFound
 from parallax.snapshot.materialize import Node
@@ -108,7 +108,7 @@ class _WrapScalarProfile(Entity, table="wrap_scalar_profile", namespace="paralla
     profile: Attr[str] = attr(max_length=32)
 
 
-_SCALAR_PROFILE = MetamodelHub(_WrapScalarProfile)
+_SCALAR_PROFILE = DomainModel(_WrapScalarProfile)
 
 
 # The SAME entity as the class above, except `profile` is declared a value
@@ -127,7 +127,7 @@ class _WrapVoProfile(
     profile: Attr[_WrapDocumentProfile]
 
 
-_PROFILE_AS_VALUE_OBJECT = sealed_model(MetamodelHub(_WrapVoProfile)).model
+_PROFILE_AS_VALUE_OBJECT = model_of(DomainModel(_WrapVoProfile))
 
 
 def test_a_value_object_member_with_no_bound_class_is_refused() -> None:
@@ -195,7 +195,7 @@ class _WrapTemporalLeaf(
     grade: Attr[str | None] = attr(max_length=8)
 
 
-_TEMPORAL_TPCS = MetamodelHub(_WrapTemporalRoot, _WrapTemporalLeaf)
+_TEMPORAL_TPCS = DomainModel(_WrapTemporalRoot, _WrapTemporalLeaf)
 
 
 def test_temporal_tpcs_concrete_node_carries_pin_and_edge() -> None:

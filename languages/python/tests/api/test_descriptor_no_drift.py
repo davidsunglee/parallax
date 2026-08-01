@@ -27,7 +27,7 @@ from _support import mirrored_models as mm
 from parallax.conformance import case_format, models
 
 if TYPE_CHECKING:
-    from parallax.core import MetamodelHub
+    from parallax.core import DomainModel
     from parallax.core.metamodel import (
         EntityMetadata,
         Metamodel,
@@ -87,7 +87,7 @@ def test_mirrored_and_reasoned_models_partition_the_corpus() -> None:
 
 
 @pytest.mark.parametrize("stem, hub", mm.MIRRORED, ids=[stem for stem, _ in mm.MIRRORED])
-def test_idiomatic_classes_form_the_corpus_model(stem: str, hub: MetamodelHub) -> None:
+def test_idiomatic_classes_form_the_corpus_model(stem: str, hub: DomainModel) -> None:
     corpus = _corpus(stem)
     assert [entity.identity for entity in hub.entities] == [
         entity.identity for entity in corpus.entities

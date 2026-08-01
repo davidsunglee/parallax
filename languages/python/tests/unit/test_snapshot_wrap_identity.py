@@ -11,12 +11,10 @@ from __future__ import annotations
 
 import copy
 import datetime as dt
-import pickle
 from decimal import Decimal
 from typing import cast
 
 import pytest
-from _metamodel_support import Declaration, source
 from _snapshot_wrap_support import wrap
 
 from _support import snapshot_models as sm
@@ -24,29 +22,13 @@ from parallax.conformance import read_models
 from parallax.conformance.story_models import ORDERS_MODEL
 from parallax.conformance.story_models import Order as _soOrder
 from parallax.core import is_loaded, narrowed
-from parallax.core._formation_profile import form_metamodel
 from parallax.core.entity import RelationshipPath, UnloadedRelationshipError
-from parallax.core.metamodel import ConcreteSubtype, EntityIdentity, ExactEntityReference
+from parallax.core.metamodel import EntityIdentity
 from parallax.core.op_algebra import PathSegment
 from parallax.snapshot.materialize import Node
 
 _ORDERS = sm.SNAP_ORDERS_MODEL
 _ANIMAL = sm.ANIMAL_MODEL
-# A model the database DOES declare a concrete "Iguana" family member for (a
-# legitimate Entity, resolvable through the Inheritance Facet) but which the
-# hub's binding names no class for — the exact scenario `_wrap`'s own
-# `LookupError` guards, distinct from `identity_key`'s unrelated `KeyError` for
-# a name the model itself does not know at all. The extra concrete is a
-# hand-built declaration composed beside the classes, which are their own.
-_IGUANA = Declaration(
-    identity=EntityIdentity("parallax.compatibility", "Iguana"),
-    inheritance=ConcreteSubtype(
-        ExactEntityReference(EntityIdentity("parallax.compatibility", "Pet")), "iguana"
-    ),
-)
-_ANIMAL_WITH_UNBOUND_CONCRETE = form_metamodel(
-    source(sm.Animal, sm.Pet, sm.Dog, sm.Cat, sm.WildBoar, sm.AnimalOwner, _IGUANA)
-)
 _DOCUMENT = read_models.DOCUMENT_MODEL
 
 
@@ -377,35 +359,10 @@ def test_narrowed_view_key_survives_copy_and_deepcopy_of_the_path() -> None:
     path = sm.AnimalOwner.pets.narrow(sm.Dog)
     for reconstructed in (copy.copy(path), copy.deepcopy(path)):
         assert reconstructed == path
-        assert reconstructed.binding is path.binding
         assert is_loaded(root, reconstructed) is True
         view = cast("tuple[object, ...]", narrowed(root, reconstructed))
         assert len(view) == 1
         assert type(view[0]) is sm.Dog
-
-
-def test_a_bound_relationship_path_cannot_be_pickled() -> None:
-    with pytest.raises(TypeError):
-        pickle.dumps(sm.AnimalOwner.pets.narrow(sm.Dog))
-
-
-def test_wrap_raises_lookup_error_for_an_entity_no_class_is_bound_to() -> None:
-    owner = Node(
-        fields={"id": 10, "name": "Alice"},
-        pk_columns=("id",),
-        relationships={"animals": [_dog(), _iguana()]},
-    )
-    with pytest.raises(LookupError, match="Iguana"):
-        wrap((owner,), "AnimalOwner", _ANIMAL, model=_ANIMAL_WITH_UNBOUND_CONCRETE)
-
-
-def _iguana() -> Node:
-    return Node(
-        fields={"id": 3, "name": "Iggy", "owner_id": 10},
-        pk_columns=("id",),
-        resolved_entity=EntityIdentity("parallax.compatibility", "Iguana"),
-        family_variant="Iguana",
-    )
 
 
 # --------------------------------------------------------------------------- #

@@ -27,7 +27,7 @@ def test_top_package_public_surfaces() -> None:
     # `parallax.core` publishes the model-definition surface; the concrete
     # Postgres adapter surface and the snapshot developer surface
     # (`Snapshot[T]` / `Execution`, §8) are published alongside `connect()`.
-    assert {"Entity", "ValueObject", "Attr", "Rel", "attr", "rel", "MetamodelHub"} <= set(
+    assert {"Entity", "ValueObject", "Attr", "Rel", "attr", "rel", "DomainModel"} <= set(
         parallax.core.__all__
     )
     assert "meta" not in parallax.core.__all__
@@ -37,6 +37,7 @@ def test_top_package_public_surfaces() -> None:
         "Execution",
         "NoResultFound",
         "QueryTargetError",
+        "SnapshotConnectionError",
         "TooManyResultsFound",
         "TransactionOwnershipError",
     }

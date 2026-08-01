@@ -28,9 +28,9 @@ from parallax.core import (
     AbstractSubtype,
     Attr,
     ConcreteSubtype,
+    DomainModel,
     Entity,
     Int32,
-    MetamodelHub,
     Rel,
     TablePerHierarchy,
     ValueObject,
@@ -106,7 +106,7 @@ class SnapOrderStatus(Entity, table="snap_order_status", namespace=_NS):
     tags: Attr[tuple[Tag, ...]]
 
 
-SNAP_ORDERS_MODEL = MetamodelHub(SnapOrder, SnapOrderItem, SnapOrderStatus)
+SNAP_ORDERS_MODEL = DomainModel(SnapOrder, SnapOrderItem, SnapOrderStatus)
 
 
 class Animal(
@@ -147,4 +147,4 @@ class AnimalOwner(Entity, table="person", namespace=_NS):
     pets: Rel[tuple[Pet, ...]] = rel(cardinality=ONE_TO_MANY, join=("id", "owner_id"))
 
 
-ANIMAL_MODEL = MetamodelHub(Animal, Pet, Dog, Cat, WildBoar, AnimalOwner)
+ANIMAL_MODEL = DomainModel(Animal, Pet, Dog, Cat, WildBoar, AnimalOwner)

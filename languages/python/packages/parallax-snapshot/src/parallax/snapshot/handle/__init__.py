@@ -22,10 +22,10 @@ public-surface check promises. Where the exported names live:
 
 - :mod:`~parallax.snapshot.handle._database` — :class:`Database`, :func:`connect`,
   :class:`TransactionOptionConflictError`, :class:`TransactionOwnershipError`:
-  the composition root and the spec §5 callback demarcation (sentinel-backed
-  options, join through the exact originating ``Database`` with the
-  option-conflict check, the ``m-auto-retry`` bounded retry loop, and the
-  injected flush executor).
+  the composition root (which connects only to a class-backed Domain Model) and
+  the spec §5 callback demarcation (sentinel-backed options, join through the
+  exact originating ``Database`` with the option-conflict check, the
+  ``m-auto-retry`` bounded retry loop, and the injected flush executor).
 - :mod:`~parallax.snapshot.handle._planning` — :func:`build_write_planner`, the
   one factory that wires ``m-batch-write``, ``m-opt-lock``, ``m-txtime-write``,
   and ``m-bitemp-write`` into a :class:`~parallax.core.unit_work.WritePlanner`'s
@@ -37,7 +37,9 @@ public-surface check promises. Where the exported names live:
 - :mod:`~parallax.snapshot.handle._errors` — :class:`QueryTargetError`, the
   refusal of a query whose target the connected model does not declare, raised
   by the shared read-preflight seam and by the write side's target resolution
-  alike. It is defined in a dependency-free leaf so both can name it.
+  alike, and :class:`SnapshotConnectionError`, the refusal of a model that names
+  no Entity Class to materialize into. Both are defined in a dependency-free leaf
+  so every raiser can name them.
 - :mod:`~parallax.snapshot.handle._read` — :func:`find` and :func:`find_history`,
   the one production find executor, plus the result surface they build
   (:class:`Snapshot`, :class:`Execution`, :class:`ExecutedStatement`,
@@ -70,7 +72,7 @@ from parallax.snapshot.handle._database import (
     TransactionOwnershipError,
     connect,
 )
-from parallax.snapshot.handle._errors import QueryTargetError
+from parallax.snapshot.handle._errors import QueryTargetError, SnapshotConnectionError
 from parallax.snapshot.handle._planning import build_write_planner, plan_temporal_close
 from parallax.snapshot.handle._read import (
     ExecutedStatement,
@@ -103,6 +105,7 @@ __all__ = [
     "NoResultFound",
     "QueryTargetError",
     "Snapshot",
+    "SnapshotConnectionError",
     "TooManyResultsFound",
     "Transaction",
     "TransactionOptionConflictError",

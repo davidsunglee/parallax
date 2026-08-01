@@ -17,7 +17,7 @@ from parallax.core import (
     ONE_TO_MANY,
     Attr,
     Bitemporal,
-    MetamodelHub,
+    DomainModel,
     Rel,
     attr,
     index,
@@ -83,4 +83,4 @@ class Claim(
     reserve: Attr[Decimal] = attr(precision=18, scale=2)
 
 
-POLICY_MODEL = MetamodelHub(Policy, Coverage, Claim)
+POLICY_MODEL = DomainModel(Policy, Coverage, Claim)

@@ -50,10 +50,10 @@ from parallax.conformance.graph_stories import (
 from parallax.conformance.read_models import Cat, Dog
 from parallax.conformance.read_stories import READ_STORIES, ReadStory
 from parallax.conformance.stories import WRITE_STORIES, WriteStory
-from parallax.core import LATEST, MetamodelHub, edge_of, is_loaded, narrowed, pin_of
+from parallax.core import LATEST, DomainModel, edge_of, is_loaded, narrowed, pin_of
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity import UnloadedRelationshipError, to_document
-from parallax.core.entity._hub import sealed_model
+from parallax.core.entity._model import model_of
 from parallax.snapshot import connect
 
 _CASES = {c.case_id: c for c in case_format.load_cases()}
@@ -67,7 +67,7 @@ def _final_find_expect_rows(case_id: str) -> list[dict[str, Any]]:
     return cast("list[dict[str, Any]]", finds[-1]["expectRows"])
 
 
-def _reset_for(case_id: str, provisioner: Any) -> MetamodelHub:
+def _reset_for(case_id: str, provisioner: Any) -> DomainModel:
     """Provision one case's schema and fixtures, and answer the hub to connect with.
 
     The schema comes from the case's own corpus model and the hub from the class
@@ -118,7 +118,7 @@ def test_story_runs_through_the_shipped_surface(story: WriteStory, provisioner: 
         "dict[str, list[dict[str, Any]]]",
         case_document(_CASES[story.case_id])["then"]["tableState"],
     )
-    observed_state = engine.read_table_state(provisioner.port, sealed_model(meta).model, POSTGRES)
+    observed_state = engine.read_table_state(provisioner.port, model_of(meta), POSTGRES)
     assert set(observed_state) >= set(expected_state), (story.case_id, observed_state)
     for table, expected_rows in expected_state.items():
         compare_rows(observed_state[table], expected_rows)

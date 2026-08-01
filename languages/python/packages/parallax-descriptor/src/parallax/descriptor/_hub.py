@@ -3,7 +3,7 @@
 The six public functions of ``parallax.descriptor``: three that create a
 descriptor-backed hub and three that export any sealed hub back to canonical
 form. This module alone reaches the Python-specific Hub-construction seam
-``MetamodelHub._from_unresolved`` — the private, versioned first-party seam that
+``DomainModel._from_unresolved`` — the private, versioned first-party seam that
 seals a fixed-source hub with no Entity Class binding. It is not a supported
 third-party frontend extension point, and there is no registration, discovery,
 or lazy-import mechanism behind it.
@@ -20,7 +20,7 @@ from collections.abc import Mapping
 
 import yaml
 
-from parallax.core.entity._hub import MetamodelHub, sealed_model
+from parallax.core.entity._model import DomainModel, model_of
 from parallax.core.metamodel import UnresolvedMetamodel
 from parallax.descriptor._adapter import unresolved_metamodel
 from parallax.descriptor._export import DescriptorExportError, ExportTarget
@@ -37,7 +37,7 @@ __all__ = [
 ]
 
 
-def hub_from_document(document: Mapping[str, object]) -> MetamodelHub:
+def hub_from_document(document: Mapping[str, object]) -> DomainModel:
     """Seal an already-decoded descriptor ``document`` into a hub.
 
     Schema validation is the first gate, so this door never raises
@@ -59,7 +59,7 @@ def hub_from_document(document: Mapping[str, object]) -> MetamodelHub:
     return _sealed(unresolved_metamodel(ingest_document(document)))
 
 
-def hub_from_json(text: str | bytes) -> MetamodelHub:
+def hub_from_json(text: str | bytes) -> DomainModel:
     """Seal a JSON descriptor document into a hub.
 
     ``text`` is JSON source, decoded as UTF-8 when supplied as bytes. Adds phase
@@ -70,13 +70,13 @@ def hub_from_json(text: str | bytes) -> MetamodelHub:
     return _sealed(parse_json(text))
 
 
-def hub_from_yaml(text: str | bytes) -> MetamodelHub:
+def hub_from_yaml(text: str | bytes) -> DomainModel:
     """Seal a YAML descriptor document into a hub — the YAML sibling of
     :func:`hub_from_json`, reporting ``format="yaml"``."""
     return _sealed(parse_yaml(text))
 
 
-def export_document(hub: MetamodelHub) -> dict[str, object]:
+def export_document(hub: DomainModel) -> dict[str, object]:
     """The canonical minimal descriptor document for ``hub``'s sealed model.
 
     A fresh tree of ordinary mappings, lists, and JSON-compatible scalar values
@@ -88,10 +88,10 @@ def export_document(hub: MetamodelHub) -> dict[str, object]:
     and the original cause, returns no partial output, and leaves ``hub``
     unchanged.
     """
-    return _document_of_model(sealed_model(hub).model)
+    return _document_of_model(model_of(hub))
 
 
-def export_json(hub: MetamodelHub) -> str:
+def export_json(hub: DomainModel) -> str:
     """``hub``'s canonical descriptor document as JSON text.
 
     Deterministic: repeated results are byte-identical, and key order is the
@@ -104,17 +104,17 @@ def export_json(hub: MetamodelHub) -> str:
     return _text(hub, "json")
 
 
-def export_yaml(hub: MetamodelHub) -> str:
+def export_yaml(hub: DomainModel) -> str:
     """``hub``'s canonical descriptor document as YAML text — the YAML sibling
     of :func:`export_json`, reporting target ``yaml``."""
     return _text(hub, "yaml")
 
 
-def _sealed(source: UnresolvedMetamodel) -> MetamodelHub:
-    return MetamodelHub._from_unresolved(source)  # pyright: ignore[reportPrivateUsage] - first-party seam calls the hub's own private constructor
+def _sealed(source: UnresolvedMetamodel) -> DomainModel:
+    return DomainModel._from_unresolved(source)  # pyright: ignore[reportPrivateUsage] - first-party seam calls the hub's own private constructor
 
 
-def _text(hub: MetamodelHub, target: ExportTarget) -> str:
+def _text(hub: DomainModel, target: ExportTarget) -> str:
     """One canonical document rendered in ``target``'s concrete syntax.
 
     :func:`export_document` already reports a conversion defect as

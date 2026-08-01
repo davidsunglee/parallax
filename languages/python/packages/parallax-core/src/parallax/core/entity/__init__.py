@@ -3,7 +3,7 @@
 The sole supported Python model-authoring surface: the frozen ``Entity`` and
 ``ValueObject`` bases and their temporal framework siblings, the ``Attr[T]`` /
 ``Rel[T]`` member annotations with the ``attr`` / ``rel`` / ``index`` / ``asc`` /
-``desc`` factories, the core-algebra spellings those take, ``MetamodelHub`` and
+``desc`` factories, the core-algebra spellings those take, ``DomainModel`` and
 its closed error-code sets, the statement surface, and the closed-world
 relationship load-state vocabulary. The underscored modules behind these names
 are implementation detail rather than caller seams.
@@ -15,7 +15,6 @@ imports no descriptor interchange code at all.
 
 from __future__ import annotations
 
-from parallax.core.entity._binding import MetamodelBinding, binding_of
 from parallax.core.entity._declaration import EntityDeclaration, shape_of, snake_to_camel
 from parallax.core.entity._entity import (
     Bitemporal,
@@ -34,12 +33,10 @@ from parallax.core.entity._errors import (
     ENTITY_DEFINITION_CODES,
     METAMODEL_DEFINITION_CODES,
     METAMODEL_LOOKUP_CODES,
-    METAMODEL_STATE_CODES,
     EntityDefinitionError,
     FrameworkOwnedAxisError,
     MetamodelDefinitionError,
     MetamodelLookupError,
-    MetamodelStateError,
     ModelCopyError,
     ProvenanceError,
     UnloadedRelationshipError,
@@ -54,7 +51,6 @@ from parallax.core.entity._expressions import (
     RelationshipPath,
     RelationshipRef,
 )
-from parallax.core.entity._hub import MetamodelHub
 from parallax.core.entity._members import (
     MANY_TO_ONE,
     MAX,
@@ -83,6 +79,7 @@ from parallax.core.entity._members import (
     index,
     rel,
 )
+from parallax.core.entity._model import DomainModel
 from parallax.core.entity._value_object import ValueObject, ValueObjectMeta, to_document
 from parallax.core.entity.graph_state import is_loaded, narrowed
 from parallax.core.entity.statement import Statement, UnsupportedFeatureError
@@ -93,7 +90,6 @@ __all__ = [
     "MAX",
     "METAMODEL_DEFINITION_CODES",
     "METAMODEL_LOOKUP_CODES",
-    "METAMODEL_STATE_CODES",
     "ONE_TO_MANY",
     "ONE_TO_ONE",
     "READ_ONLY",
@@ -110,6 +106,7 @@ __all__ = [
     "Bitemporal",
     "ConcreteSubtype",
     "DefiningRelSpec",
+    "DomainModel",
     "ElementAttributeExpr",
     "Entity",
     "EntityDeclaration",
@@ -119,11 +116,8 @@ __all__ = [
     "FrameworkOwnedAxisError",
     "IndexSpec",
     "Int32",
-    "MetamodelBinding",
     "MetamodelDefinitionError",
-    "MetamodelHub",
     "MetamodelLookupError",
-    "MetamodelStateError",
     "ModelCopyError",
     "OrderTerm",
     "Predicate",
@@ -143,7 +137,6 @@ __all__ = [
     "WireNames",
     "asc",
     "attr",
-    "binding_of",
     "canonical_row",
     "changed_fields",
     "desc",
