@@ -4,7 +4,7 @@ m-value-object).
 Each rejected rule is pinned with the exact identifier `validate_operation`
 raises, alongside the representative VALID operations that must NOT be
 rejected — including the corpus boundary case (an equivalent-spelling narrow
-that is NOT outside the active position). The 18 in-slice rejected corpus
+that is NOT outside the active position). The 19 in-slice rejected corpus
 cases are additionally round-tripped through the real validator here (not
 just via the engine's rejected sweep), so a regression in either the node
 construction or the model resolution fails at the unit layer first.
@@ -187,7 +187,7 @@ def _rejects(op: Operation, meta: Metamodel, target: str) -> OperationRejectedEr
 
 
 # --------------------------------------------------------------------------- #
-# The 18 in-slice rejected corpus cases, round-tripped end to end.            #
+# The 19 in-slice rejected corpus cases, round-tripped end to end.            #
 # --------------------------------------------------------------------------- #
 _REJECTED_CASE_IDS = (
     "m-inheritance-040",
@@ -203,6 +203,7 @@ _REJECTED_CASE_IDS = (
     "m-op-algebra-044",
     "m-op-algebra-045",
     "m-op-algebra-046",
+    "m-op-algebra-047",
     "m-value-object-034",
     "m-value-object-035",
     "m-value-object-036",
@@ -1015,21 +1016,57 @@ def test_an_order_key_reads_the_position_a_top_level_narrow_moved_it_to() -> Non
     assert exc.rule == "subtype-attribute-outside-narrow-scope"
 
 
-def test_an_order_keys_position_is_seen_through_the_wrappers_that_carry_the_narrow() -> None:
-    op = OrderBy(
-        operand=Distinct(operand=Narrow(entity="Animal", to=("Dog",), operand=All())),
-        keys=(OrderKey(attr="Dog.barkVolume"),),
-    )
+_NARROW_TO_DOG = Narrow(entity="Animal", to=("Dog",), operand=All())
+_OWNER_PATH = NavigationPath(segments=(PathSegment(rel="Animal.owner"),))
+
+
+@pytest.mark.parametrize(
+    "operand",
+    [
+        _NARROW_TO_DOG,
+        Limit(operand=_NARROW_TO_DOG, count=5),
+        Distinct(operand=_NARROW_TO_DOG),
+        DeepFetch(operand=_NARROW_TO_DOG, paths=(_OWNER_PATH,)),
+        AsOf(operand=_NARROW_TO_DOG, dimension="validTime", coordinate="latest"),
+        AsOfRange(
+            operand=_NARROW_TO_DOG,
+            dimension="validTime",
+            start="2024-01-01T00:00:00Z",
+            end="2024-02-01T00:00:00Z",
+        ),
+        History(operand=_NARROW_TO_DOG, dimension="validTime"),
+        OrderBy(operand=_NARROW_TO_DOG, keys=(OrderKey(attr="Animal.name"),)),
+        Limit(operand=DeepFetch(operand=_NARROW_TO_DOG, paths=(_OWNER_PATH,)), count=5),
+    ],
+    ids=lambda operand: type(operand).__name__,
+)
+def test_an_order_keys_position_is_seen_through_every_wrapper_that_carries_the_narrow(
+    operand: Operation,
+) -> None:
+    # A wrapper that returns its operand's own rows cannot move the position those
+    # rows occupy, so the ordered narrow is reached through all of them alike —
+    # `deepFetch` included, which attaches fetched levels rather than replacing the
+    # rows. Omitting one silently rejects an order key that IS in scope.
+    op = OrderBy(operand=operand, keys=(OrderKey(attr="Dog.barkVolume"),))
     _validate("Animal", op, _ANIMAL)
 
 
-def test_a_narrow_inside_a_combinator_does_not_move_an_order_keys_position() -> None:
-    # A narrow under `and` is a predicate term over the same position, not the
-    # whole-result narrowing an order key reads.
-    op = OrderBy(
-        operand=And(operands=(All(), Narrow(entity="Animal", to=("Dog",), operand=All()))),
-        keys=(OrderKey(attr="Dog.barkVolume"),),
-    )
+@pytest.mark.parametrize(
+    "operand",
+    [
+        And(operands=(All(), _NARROW_TO_DOG)),
+        Or(operands=(NoneOp(), _NARROW_TO_DOG)),
+        Group(operand=_NARROW_TO_DOG),
+        Not(operand=_NARROW_TO_DOG),
+    ],
+    ids=lambda operand: type(operand).__name__,
+)
+def test_a_narrow_inside_a_combinator_does_not_move_an_order_keys_position(
+    operand: Operation,
+) -> None:
+    # A narrow under a boolean combinator is a predicate term over the same
+    # position, not the whole-result narrowing an order key reads.
+    op = OrderBy(operand=operand, keys=(OrderKey(attr="Dog.barkVolume"),))
     exc = _rejects(op, _ANIMAL, "Animal")
     assert exc.rule == "subtype-attribute-outside-narrow-scope"
 

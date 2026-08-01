@@ -217,8 +217,10 @@ class OperationRejectedError(ValueError):
 class _PositionScope:
     """The threaded polymorphic-position state (`m-op-algebra` four-step rule).
 
-    ``effective`` is the active position's effective concrete-subtype set (by
-    declared name). ``relationship_target`` is the canonical name of the
+    ``effective`` is the active position's effective concrete-subtype set, whose
+    members are CANONICAL Entity spellings (:func:`_effective_set`), so two
+    Entities sharing a local name across namespaces stay distinct members of every
+    subset test taken over it. ``relationship_target`` is the canonical name of the
     relationship target, set only while validating inside a navigation filter's
     `op` (`m-navigate`): a `narrow` encountered there does not clamp like a
     same-position narrow — its `entity` must name this target exactly.
@@ -234,11 +236,12 @@ def validate_operation(root: EntityMetadata, op: Operation, model: Metamodel) ->
     ``root`` is the read's queried root position, already resolved to accepted
     Metadata by the caller — the `targetEntity` a normal read case authors, or,
     for a `when.operation` `rejected` case that carries none, the model-aware
-    default `m-op-algebra` fixes (the inheritance family root, or the model's
-    own single entity). It seeds the initial active position for the narrow /
-    subtype-attribute checks; the value-object structural checks below resolve
-    their own entity from each node's own `Class.member` reference and do not
-    otherwise depend on ``root``.
+    default `m-op-algebra` fixes (the inheritance family root, or the model's own
+    first entity). It seeds the initial active position for the narrow checks and
+    the positional attribute checks, which measure every attribute reference — an
+    unrelated standalone Entity's as much as a subtype's — against that position;
+    the value-object structural checks below resolve their own entity from each
+    node's own `Class.member` reference and do not otherwise depend on ``root``.
     """
     scope = _PositionScope(effective=_effective_set(model, root))
     _walk(op, model, scope)
@@ -457,9 +460,13 @@ def _ordered_scope(op: Operation, model: Metamodel, scope: _PositionScope) -> _P
 
     A whole-result narrowing lowers to a TOP-LEVEL ``narrow`` under the ordering
     wrapper, so the rows an order key sees are that narrow's resolved set, reached
-    through the result-shaping and temporal wrappers that may sit between. A
-    ``narrow`` appearing as a predicate term inside a boolean combinator is a
-    filter over the same position and moves nothing (`m-op-algebra`).
+    through every wrapper `m-op-algebra` names as carrying it: the result-shaping
+    directives (``orderBy`` / ``limit`` / ``distinct`` / ``deepFetch``) and the
+    temporal wrappers (``asOf`` / ``asOfRange`` / ``history``). None of them
+    re-roots the rows its operand yields — ``deepFetch`` attaches fetched levels to
+    those same rows — so all of them pass the position through. A ``narrow``
+    appearing as a predicate term inside a boolean combinator is a filter over the
+    same position and moves nothing (`m-op-algebra`).
     """
     match op:
         case Narrow(entity=entity, to=to):
@@ -468,6 +475,7 @@ def _ordered_scope(op: Operation, model: Metamodel, scope: _PositionScope) -> _P
             OrderBy(operand=operand)
             | Limit(operand=operand)
             | Distinct(operand=operand)
+            | DeepFetch(operand=operand)
             | AsOf(operand=operand)
             | AsOfRange(operand=operand)
             | History(operand=operand)

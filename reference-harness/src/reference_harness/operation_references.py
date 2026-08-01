@@ -44,7 +44,9 @@ ATTRIBUTE_REFERENCE_TAGS = frozenset(
 # path; ``nestedExists`` / ``nestedNotExists`` carry a ``Class.valueObject`` path
 # plus an OPTIONAL element-scoped ``where``. That ``where`` uses element-relative
 # refs (no leading class), so it names no queried class and is intentionally NOT
-# descended for scope — the class always comes from the required ``path``.
+# descended for scope — the class always comes from the required ``path``. This is
+# why a path's class is extracted differently from an ``attr`` / ``rel`` class,
+# whose member name is a single trailing segment.
 PATH_REFERENCE_TAGS = frozenset(
     {
         "nestedEq",
@@ -69,7 +71,25 @@ PATH_REFERENCE_TAGS = frozenset(
 )
 
 
-def _add_reference_class(reference: Any, classes: set[str]) -> None:
+def _add_member_reference_class(reference: Any, classes: set[str]) -> None:
+    """Add the class part of a ``Class.member`` reference (an ``attr`` or a ``rel``).
+
+    The class is the spelling up to the LAST dot, so a canonically spelled position
+    (``<namespace>.<Entity>.<member>``) contributes the entity it names rather than
+    its leading namespace segment.
+    """
+    if isinstance(reference, str) and "." in reference:
+        classes.add(reference.rsplit(".", 1)[0])
+
+
+def _add_path_reference_class(reference: Any, classes: set[str]) -> None:
+    """Add the class part of a value-object ``path`` (``Class.valueObject[.…]``).
+
+    A path's trailing segments are declared value-object members rather than one
+    member name, so its class is the FIRST segment — the same resolution the
+    nested-path resolvers perform. Namespaced spellings therefore do not resolve
+    here, exactly as they do not in those resolvers.
+    """
     if isinstance(reference, str) and "." in reference:
         classes.add(reference.split(".", 1)[0])
 
@@ -98,11 +118,11 @@ def collect_reference_classes(
     if not isinstance(body, dict):
         return
     if tag in ATTRIBUTE_REFERENCE_TAGS:
-        _add_reference_class(body.get("attr"), classes)
+        _add_member_reference_class(body.get("attr"), classes)
     elif tag in PATH_REFERENCE_TAGS:
-        _add_reference_class(body.get("path"), classes)
+        _add_path_reference_class(body.get("path"), classes)
     elif tag in ("navigate", "exists", "notExists"):
-        _add_reference_class(body.get("rel"), classes)
+        _add_member_reference_class(body.get("rel"), classes)
     elif tag in ("and", "or"):
         for operand in body.get("operands", []) or []:
             collect_reference_classes(
@@ -126,7 +146,7 @@ def _collect_result_modifier_classes(tag: str, body: dict[str, Any], classes: se
             if segments:
                 segment = segments[0]
                 rel = segment.get("rel") if isinstance(segment, dict) else segment
-                _add_reference_class(rel, classes)
+                _add_member_reference_class(rel, classes)
             # A path-ROOT narrow contributes nothing here, for the same reason the
             # `narrow` node below does not: its `entity` names a polymorphic
             # POSITION rather than referencing a queried member, and naming a
@@ -144,13 +164,13 @@ def _collect_result_modifier_classes(tag: str, body: dict[str, Any], classes: se
         collect_reference_classes(body.get("operand"), classes, descend_result_modifiers=True)
         for key in body.get("keys", []) or []:
             if isinstance(key, dict):
-                _add_reference_class(key.get("attr"), classes)
+                _add_member_reference_class(key.get("attr"), classes)
     elif tag == "groupBy":
         collect_reference_classes(body.get("operand"), classes, descend_result_modifiers=True)
         for key in body.get("keys", []) or []:
-            _add_reference_class(key, classes)
+            _add_member_reference_class(key, classes)
         for aggregate in body.get("aggregates", []) or []:
             if isinstance(aggregate, dict) and len(aggregate) == 1:
                 inner = next(iter(aggregate.values()))
                 if isinstance(inner, dict):
-                    _add_reference_class(inner.get("attr"), classes)
+                    _add_member_reference_class(inner.get("attr"), classes)
