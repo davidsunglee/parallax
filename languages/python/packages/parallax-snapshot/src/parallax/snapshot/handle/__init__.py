@@ -21,9 +21,11 @@ package imports one except the three sanctioned test seams — so a name's
 public-surface check promises. Where the exported names live:
 
 - :mod:`~parallax.snapshot.handle._database` — :class:`Database`, :func:`connect`,
-  :class:`TransactionOptionConflictError`: the composition root and the spec §5
-  callback demarcation (sentinel-backed options, join with the option-conflict
-  check, the ``m-auto-retry`` bounded retry loop, and the injected flush executor).
+  :class:`TransactionOptionConflictError`, :class:`TransactionOwnershipError`:
+  the composition root and the spec §5 callback demarcation (sentinel-backed
+  options, join through the exact originating ``Database`` with the
+  option-conflict check, the ``m-auto-retry`` bounded retry loop, and the
+  injected flush executor).
 - :mod:`~parallax.snapshot.handle._planning` — :func:`build_write_planner`, the
   one factory that wires ``m-batch-write``, ``m-opt-lock``, ``m-txtime-write``,
   and ``m-bitemp-write`` into a :class:`~parallax.core.unit_work.WritePlanner`'s
@@ -59,6 +61,7 @@ from __future__ import annotations
 from parallax.snapshot.handle._database import (
     Database,
     TransactionOptionConflictError,
+    TransactionOwnershipError,
     connect,
 )
 from parallax.snapshot.handle._planning import build_write_planner, plan_temporal_close
@@ -95,6 +98,7 @@ __all__ = [
     "TooManyResultsFound",
     "Transaction",
     "TransactionOptionConflictError",
+    "TransactionOwnershipError",
     "TransactionTimePinReadOnlyError",
     "WriteLoweringError",
     "build_write_planner",

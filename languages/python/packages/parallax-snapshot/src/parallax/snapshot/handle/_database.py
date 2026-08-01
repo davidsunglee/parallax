@@ -21,11 +21,12 @@ This is the TOP of the package's internal graph: it imports
 :mod:`~parallax.snapshot.handle._write_types`, and
 :mod:`~parallax.snapshot.handle._planning` for the one Write Planner it builds
 once per connected Metamodel, and nothing in the package imports it except
-``handle/__init__.py``, which re-exports its three public names
-(:class:`Database`, :func:`connect`, :class:`TransactionOptionConflictError`)
-through the frozen ``__all__``. Because only those three cross the boundary,
-every helper here keeps its leading underscore — the cross-module bare-name
-convention the sibling modules follow has nothing to bite on.
+``handle/__init__.py``, which re-exports its four public names
+(:class:`Database`, :func:`connect`, :class:`TransactionOptionConflictError`,
+:class:`TransactionOwnershipError`) through the frozen ``__all__``. Because only
+those four cross the boundary, every helper here keeps its leading underscore —
+the cross-module bare-name convention the sibling modules follow has nothing to
+bite on.
 """
 
 from __future__ import annotations
@@ -83,7 +84,12 @@ from parallax.snapshot.handle._read import (
 from parallax.snapshot.handle._transaction import Transaction
 from parallax.snapshot.handle._write_lowering import stream_lowered
 
-__all__ = ["Database", "TransactionOptionConflictError", "connect"]
+__all__ = [
+    "Database",
+    "TransactionOptionConflictError",
+    "TransactionOwnershipError",
+    "connect",
+]
 
 # The audit-neutral Subject Identity every production planning request
 # carries: private, module-local, and captured through the boundary's own
@@ -102,6 +108,25 @@ class TransactionOptionConflictError(ValueError):
     resolved setting raises; an explicit equal value and an omitted option are
     accepted (spec §5).
     """
+
+
+class TransactionOwnershipError(RuntimeError):
+    """A nested ``db.transact`` call was made through a foreign ``Database``.
+
+    The active demarcation records the exact ``Database`` object that opened it,
+    and a nested call joins only through that same object. An alias of the owner
+    joins and receives the identical :class:`Transaction`; every different handle
+    is refused even when it carries the same model, adapter, dialect, clock, or
+    otherwise equivalent configuration, because the owner is scoped state rather
+    than a registry keyed by any of those.
+
+    The refusal precedes rollback-only joining, the option-conflict check,
+    closure execution, Unit of Work mutation, SQL, and adapter access, and
+    retains neither handle — :data:`code` and the message are its whole public
+    state.
+    """
+
+    code: Final[str] = "transaction-owner-mismatch"
 
 
 @dataclass(frozen=True, slots=True)
@@ -128,13 +153,17 @@ class _Demarcation:
     """What the outermost boundary publishes on the unit of work's ``companion``.
 
     A joining ``db.transact`` call needs the same :class:`Transaction` to hand
-    its closure and the boundary's resolved options for the conflict check;
-    both ride core's single per-thread active binding, so their visibility ends
-    exactly when it does (no handle-owned thread-local, nothing to clean up).
+    its closure, the boundary's resolved options for the conflict check, and the
+    exact :class:`Database` that opened the boundary so ownership can be settled
+    before either; all three ride core's single per-thread active binding, so
+    their visibility ends exactly when it does (no handle-owned thread-local,
+    nothing to clean up). ``owner`` is a strong reference deliberately: it is
+    scoped state whose lifetime is the demarcation's, not a registry entry.
     """
 
     tx: Transaction
     options: _ResolvedOptions
+    owner: Database
 
 
 class Database:
@@ -223,10 +252,13 @@ class Database:
         outermost defaults when this call opens the transaction* (``retries=10``,
         ``concurrency="locking"``, ``retry_optimistic_conflicts=False``) *and
         inherit the active transaction's settings when it joins one*. A call
-        while a transaction is active on the current thread joins it — the
-        closure receives the **same** :class:`Transaction`, its value returns
-        immediately, and an explicit option that conflicts with the boundary
-        raises :class:`TransactionOptionConflictError`. The outermost boundary
+        while a transaction is active on the current thread joins it, but only
+        through the exact ``Database`` that opened the boundary — any other
+        handle raises :class:`TransactionOwnershipError` before every later
+        joining check. A joining call's closure receives the **same**
+        :class:`Transaction`, its value returns immediately, and an explicit
+        option that conflicts with the boundary raises
+        :class:`TransactionOptionConflictError`. The outermost boundary
         owns commit, abort, and the ``m-auto-retry`` bounded retry loop; abort
         withholds the callback value, and an inner failure dooms the whole
         transaction (rollback-only) even if caught.
@@ -238,6 +270,13 @@ class Database:
                 raise UnitOfWorkError(
                     "a bare unit of work is active on this thread; db.transact can "
                     "only join a transaction it opened"
+                )
+            if demarcation.owner is not self:
+                raise TransactionOwnershipError(
+                    "this Database did not open the active transaction, so it cannot "
+                    "join it (transaction-owner-mismatch); only the exact Database "
+                    "object that opened the boundary joins, however equivalent "
+                    "another handle's model, adapter, dialect, or clock may be"
                 )
             _check_join_options(
                 demarcation.options,
@@ -275,7 +314,7 @@ class Database:
                     tx = Transaction(uow, conn, self._meta, self._dialect, self._binding)
                     # Published for joining calls; visible only while core's
                     # active-transaction binding is, so it needs no cleanup.
-                    uow.companion = _Demarcation(tx=tx, options=options)
+                    uow.companion = _Demarcation(tx=tx, options=options, owner=self)
                     return fn(tx)
 
                 return run_unit_of_work(
