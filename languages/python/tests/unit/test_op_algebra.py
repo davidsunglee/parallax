@@ -322,7 +322,6 @@ def test_order_key_null_placement_is_single_shot() -> None:
 
 _QUERY_SPEC_CODES = frozenset(
     {
-        "query-hub-mismatch",
         "query-target-mismatch",
         "query-expression-invalid",
         "query-path-invalid",
@@ -334,9 +333,9 @@ _QUERY_SPEC_CODES = frozenset(
 )
 
 
-def test_the_query_definition_code_set_is_exactly_the_eight_spec_codes() -> None:
+def test_the_query_definition_code_set_is_exactly_the_seven_spec_codes() -> None:
     assert QUERY_DEFINITION_CODES == _QUERY_SPEC_CODES
-    assert len(QUERY_DEFINITION_CODES) == 8
+    assert len(QUERY_DEFINITION_CODES) == 7
 
 
 def test_a_code_outside_the_closed_query_set_cannot_be_raised() -> None:

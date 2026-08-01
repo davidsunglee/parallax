@@ -589,13 +589,16 @@ class AttributeExpr[E, T]:
     def _reject_unassignable(self, value: object) -> None:
         """Apply the shared assignment rule family to a rendered value (spec §5).
 
-        The rules are stated once for ``model_copy(update=...)`` (spec §3) and
-        referenced by the assignment-bearing verbs, so both rejection points call
-        one judgement and neither can drift: a primary-key, read-only, or
+        The rules are one set, stated once in
+        :func:`~parallax.core.metamodel.judge_assignment` and called from every
+        surface that assigns: here, ``Entity.model_copy(update=...)`` (spec §3),
+        and the serialized write boundary. A primary-key, read-only, or
         framework-owned target is refused, a scalar value must match its declared
         neutral type, and a Value Object value must be a well-formed document —
-        with ``None`` legal only where the member is nullable. The rejection is
-        spelled ``ModelCopyError`` because it is that same family.
+        with ``None`` legal only where the member is nullable. Only the
+        resolution in front of the judgement differs between the three, so none
+        of them can drift. The rejection is spelled ``ModelCopyError`` because it
+        is that same family.
 
         The member the descriptor installed is the whole input, so this states
         its rule with no model: which member a name resolves to was decided by
@@ -853,7 +856,8 @@ class RelationshipPath[E, R]:
             raise AttributeError(
                 f"{self.segments[-1].rel}.{name}: this path already continued past the hop "
                 "its descriptor seeded, and query authoring reaches no model to resolve "
-                "what that hop points at"
+                f"what that hop points at — root the deeper traversal at the Entity {name!r} "
+                "is declared on and add it as its own `.include(...)` path"
             )
         _, _, local = self.target.rpartition(".")
         return RelationshipPath(
@@ -880,7 +884,17 @@ class RelationshipPath[E, R]:
         a per-model fact, settled at preflight, and the answered path keeps the
         hop's declared target — a hop narrow does not move where a quantifier's
         interior predicates are measured, since a quantifier reads the hop alone.
+
+        At least one subtype is required, like every other narrowing form. A
+        segment records "no narrow" as an empty alternative list, so accepting a
+        narrow to nothing would answer the broad path itself — the request would
+        vanish rather than be refused, and the deep fetch would mark the broad
+        relationship loaded. The sibling forms are refused at preflight
+        (``narrow-empty-effective-set``); this one has no such refusal to fall
+        back on, because it lowers to no node of its own.
         """
+        if not subtypes:
+            raise ValueError("narrow requires at least one subtype")
         narrowed = tuple(_subtype_names(subtype) for subtype in subtypes)
         *head, last = self.segments
         new_last = PathSegment(rel=last.rel, narrow=tuple(local for local, _ in narrowed))

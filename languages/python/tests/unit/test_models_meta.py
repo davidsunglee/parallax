@@ -2,8 +2,8 @@
 
 The three key forms answer one object, enumeration is canonical Entity order,
 local member sequences keep declaration order, and every miss carries a code.
-Classes are declared at module scope here because this suite composes exactly one
-hub and never competes for a claim.
+Classes are declared at module scope because nothing here needs a per-test
+declaration: one composition answers every lookup this suite asks.
 """
 
 from __future__ import annotations

@@ -45,6 +45,7 @@ from parallax.core import (
 )
 from parallax.core.db_port import JsonDocument, Row
 from parallax.core.dialect import POSTGRES
+from parallax.core.op_algebra import OperationRejectedError
 from parallax.core.unit_work import (
     FixedClock,
 )
@@ -867,3 +868,60 @@ def test_update_where_refuses_a_target_the_connected_model_does_not_declare() ->
     with pytest.raises(QueryTargetError) as caught:
         Database.connect(NoIoPort(), ACCOUNT, clock=FixedClock(FIXED)).transact(fn)
     assert caught.value.code == "query-target-not-in-model"
+
+
+# --------------------------------------------------------------------------- #
+# The selecting predicate is a canonical operation and carries the WHOLE       #
+# model-aware operation vocabulary, not just the rules the write instruction   #
+# itself states. Authoring reaches no model, so a `_where` verb is the only    #
+# place these can be enforced on a predicate-selected write; the two rules     #
+# below come from different families so the pin covers the vocabulary rather   #
+# than one rule.                                                               #
+# --------------------------------------------------------------------------- #
+def test_update_where_refuses_an_inverted_between_window_before_any_sql() -> None:
+    def fn(tx: Transaction) -> None:
+        tx.update_where(mm.Person.where(mm.Person.id.between(10, 1)), mm.Person.name.set("Ada"))
+
+    with pytest.raises(OperationRejectedError) as caught:
+        Database.connect(NoIoPort(), PERSON, clock=FixedClock(FIXED)).transact(fn)
+    assert caught.value.rule == "between-bounds-inverted"
+
+
+def test_delete_where_refuses_an_attribute_outside_the_written_position() -> None:
+    # A second rule family — the positional reference check — over the same
+    # connected model, which declares both Entities and relates them.
+    def fn(tx: Transaction) -> None:
+        tx.delete_where(mm.Person.where(mm.Passport.number == "X"))  # pyright: ignore[reportArgumentType]
+
+    with pytest.raises(OperationRejectedError) as caught:
+        Database.connect(NoIoPort(), PERSON, clock=FixedClock(FIXED)).transact(fn)
+    assert caught.value.rule == "attribute-outside-active-position"
+
+
+def test_where_verb_rejection_precedes_a_pending_writes_force_flush() -> None:
+    # The ordering Phase 3 established for reads holds for a predicate write
+    # too: the resolving read a materializing verb performs force-flushes
+    # pending writes, so a refused predicate write must be refused before
+    # `uow.read` and before `uow.buffer` — otherwise an invalid write flushes
+    # a valid one.
+    port = RecordingPort(rows=[_position_row()])
+    valid_from = dt.datetime(2024, 7, 1, tzinfo=dt.UTC)
+
+    def fn(tx: Transaction) -> None:
+        tx.insert(WherePosition(id=9, acct_num="A", value=Decimal("1.00")), valid_from=valid_from)
+        with pytest.raises(OperationRejectedError):
+            tx.update_where(
+                WherePosition.where(WherePosition.id.between(10, 1)),
+                WherePosition.value.set(Decimal("300.00")),
+                valid_from=valid_from,
+            )
+        assert port.ops == [("begin",)]
+        raise _Abandon
+
+    with pytest.raises(_Abandon):
+        Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(fn)
+
+
+class _Abandon(Exception):
+    """Abandons the transaction once the ordering above is proven, so the
+    pending insert never has to be a valid committed write."""

@@ -123,10 +123,10 @@ class WriteStory:
     the system clock (`Database.connect`'s own default).
 
     ``model`` names the corpus model the story mirrors, which is also how a
-    consumer reaches the sealed hub of Entity Classes to connect with
+    consumer reaches the Domain Model of Entity Classes to connect with
     (:data:`~parallax.conformance.class_models.MODELS`) — a story's own
     observing find materializes typed instances, so it needs the class-backed
-    hub rather than the ingested corpus descriptor."""
+    model rather than the ingested corpus descriptor."""
 
     case_id: str
     title: str

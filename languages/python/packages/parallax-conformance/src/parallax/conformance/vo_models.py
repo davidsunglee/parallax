@@ -1,4 +1,4 @@
-"""Value-object-bearing Entity Classes, one sealed hub per corpus model.
+"""Value-object-bearing Entity Classes, one Domain Model per corpus model.
 
 ``models/supplier.yaml`` (Transaction-Time-Only, the first production-reachable
 temporal x value-object combination), ``models/branch.yaml`` (bitemporal, the
@@ -24,7 +24,7 @@ Customer's ``elevation``/``point`` refinement. ``Contact``'s own composite is a
 DIFFERENT, deliberately mostly-REQUIRED shape (the write-validation exemplar), so
 it gets its own ``ContactAddress``/``ContactGeo``/``ContactPoint``/
 ``ContactPhone`` classes rather than reusing ``Address``/``Geo``/``Phone``.
-A Value Object class is never a hub candidate and is reached only through the
+A Value Object class is never a Domain Model candidate and is reached only through the
 occurrences that contain it, so the identical simple names (``Geo``, ``Phone``,
 ``Point``) recur freely across modules.
 

@@ -223,6 +223,18 @@ def test_a_hop_narrowed_to_a_class_declaring_no_identity_names_it_pythonically()
     assert path.target == "Bare"
 
 
+def test_a_hop_narrow_to_no_subtype_is_refused_rather_than_erased() -> None:
+    # A segment spells "no narrow" as an empty alternative list, so a narrow to
+    # nothing would answer a path byte-identical to the broad one — the request
+    # would disappear and the deep fetch would mark the broad relationship
+    # loaded. The sibling narrowing forms lower to a `narrow` node the model
+    # refuses as `narrow-empty-effective-set`; this one lowers to no node, so the
+    # arity is its own rule (`python.md` "Every Python narrowing form requires at
+    # least one subtype alternative").
+    with pytest.raises(ValueError, match="at least one subtype"):
+        Root.branches.narrow()
+
+
 def test_a_path_that_already_continued_cannot_continue_again() -> None:
     # What a composed hop points at is a declaration fact of an Entity this path
     # reaches no class for, so a third hop has no owner to spell itself from.

@@ -1,7 +1,7 @@
 """Idiomatic Entity Classes the API-suite graph stories build statements over.
 
 A mirror of ``models/policy.yaml`` (``Policy`` / ``Coverage`` / ``Claim``,
-bitemporal entities that also relate), composed into the one sealed hub named for
+bitemporal entities that also relate), composed into the Domain Model named for
 that model. Owned by ``parallax.conformance`` for the same reason
 ``story_models`` is: ``graph_stories.py`` is a real dev-only package module (its
 snippets render into the Usage Guide via ``gen-usage-guide``, which runs outside

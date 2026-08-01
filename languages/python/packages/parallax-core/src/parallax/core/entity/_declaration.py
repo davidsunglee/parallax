@@ -255,6 +255,10 @@ class MemberNames:
     py_to_name: dict[str, str]
     relationship_py: dict[str, str]
     relationship_shapes: dict[str, RelationshipAnnotation]
+    members: dict[str, AttributeMetadata | ValueObjectMetadata]
+    """Each Python member name to the accepted Metadata its declaration built —
+    the same object the ``Attr`` descriptor installs, so a rule stated over a
+    member reaches the identical facts from a name and from an expression."""
     pk_py: frozenset[str]
     framework_owned_py: frozenset[str]
     axis_governed_py: frozenset[str]
@@ -364,9 +368,15 @@ def build_class(
     a query-root descriptor a frontend base installs is a class attribute
     Pydantic would otherwise refuse as an unannotated field at import time. The
     engine still owns the configuration; a frontend contributes only the types
-    its own bases install.
+    its own bases install. It reaches ONLY a framework root's own configuration,
+    the one body that installs such a descriptor: a declared class body carries
+    members and nothing else, so it keeps Pydantic's unannotated-attribute
+    rejection whole rather than inheriting a blanket exemption for a type it
+    never binds.
     """
-    ns["model_config"] = ConfigDict(frozen=True, ignored_types=ignored_types)
+    ns["model_config"] = ConfigDict(
+        frozen=True, ignored_types=ignored_types if mint is not None else ()
+    )
     if mint is not None:
         if mint is not FRAMEWORK_MINT:
             raise EntityDefinitionError(
@@ -977,6 +987,7 @@ def _build_entity(
         py_to_name=py_to_name,
         relationship_py=relationship_py,
         relationship_shapes=relationship_shapes,
+        members={py_name: members[canonical] for py_name, canonical in py_to_name.items()},
         pk_py=frozenset(pk_py),
         framework_owned_py=frozenset(framework_owned_py),
         axis_governed_py=frozenset(axis_governed_py),

@@ -290,7 +290,7 @@ def accepted_relationship_targets() -> type:
     """Every relationship-target spelling the grammar admits as text.
 
     A bare name is Relative and a qualified one is Exact, on both paths: a
-    spelling resolves against the hub candidate set, never against the module
+    spelling resolves against the model's candidate set, never against the module
     the class happens to be declared in. A qualified spelling is therefore not a
     resolvable Python name, and carries the suppressions that costs.
     """

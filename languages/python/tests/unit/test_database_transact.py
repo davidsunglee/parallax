@@ -237,11 +237,13 @@ def test_a_different_database_over_the_same_model_and_adapter_is_refused() -> No
     assert port.begins == 1
 
 
-def _equal_account_hub() -> DomainModel:
-    """A hub whose declarations are structurally equal to ``ACCOUNT``'s.
+def _equal_account_model() -> DomainModel:
+    """A model whose declarations are structurally equal to ``ACCOUNT``'s.
 
-    An Entity Class belongs to one hub for its object lifetime, so a fresh class
-    object per call is what makes an equal-but-distinct model constructible.
+    A fresh class object per call is what makes the two models DISTINCT while
+    their accepted Metamodels stay equal entity for entity — composing the same
+    class twice would answer one model's classes from both and prove nothing
+    about structural equality.
     """
 
     class Account(
@@ -261,9 +263,9 @@ def _equal_account_hub() -> DomainModel:
 def test_a_structurally_equal_model_establishes_no_ownership() -> None:
     port = RecordingPort()
     owner = account_db(port)
-    foreign = db_for(_equal_account_hub(), port)
+    foreign = db_for(_equal_account_model(), port)
     # The two accepted models are equal entity for entity, and that buys nothing.
-    assert list(model_of(ACCOUNT).entities) == list(model_of(_equal_account_hub()).entities)
+    assert list(model_of(ACCOUNT).entities) == list(model_of(_equal_account_model()).entities)
 
     def outer(_tx: Transaction) -> str:
         with pytest.raises(TransactionOwnershipError):

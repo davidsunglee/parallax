@@ -580,8 +580,10 @@ def test_wire_names_expose_the_member_roles_the_write_path_needs() -> None:
     assert names.pk_py == frozenset({"id"})
     assert names.framework_owned_py == frozenset({"version"})
     assert names.relationship_py == {"customer": "customer", "coupon": "coupon"}
-    assert "id" not in names.assignable_py
-    assert "version" not in names.assignable_py
+    # The member map carries the declared Metadata each name resolves to, which
+    # is what decides assignability — there is no second name set restating it.
+    assert set(names.members) == set(names.py_to_name)
+    assert names.members["qty"] in Order.attributes
 
 
 @pytest.mark.skipif(

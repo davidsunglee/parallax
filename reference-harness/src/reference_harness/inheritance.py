@@ -39,7 +39,7 @@ import copy
 from typing import TYPE_CHECKING, Any
 
 from .naming import default_column_name
-from .operation_references import ATTRIBUTE_REFERENCE_TAGS
+from .operation_references import ATTRIBUTE_REFERENCE_TAGS, PATH_REFERENCE_TAGS
 from .value_object_resolve import RejectionError
 
 if TYPE_CHECKING:
@@ -1013,6 +1013,14 @@ def _check_member_reference(family: Family, reference: Any) -> None:
         _check_reference_entity_name(family, reference, reference.rpartition(".")[0])
 
 
+def _check_path_reference(family: Family, reference: Any) -> None:
+    """Check the entity spelling of a nested value-object ``path``, whose class
+    part is its FIRST segment — every trailing segment is a declared
+    value-object member rather than one member name."""
+    if isinstance(reference, str) and "." in reference:
+        _check_reference_entity_name(family, reference, reference.split(".", 1)[0])
+
+
 def resolve_clamped_narrow(
     family: Family,
     current_set: list[str],
@@ -1245,9 +1253,57 @@ def _walk_narrow(
                         _check_reference_entity_name(family, name, name)
                     resolve_hop_effective_set(family, rel, to_list)
         _walk_narrow(family, current_set, body.get("operand"), outside_rule, expected_entity)
+    elif tag == "groupBy":
+        # An aggregation names entities in three further reference positions —
+        # each group key, each projected aggregate's `attr`, and the `attr` of
+        # every aggregate a `having` leaf compares — and `m-op-algebra` "Entity
+        # spellings in a reference position" governs all of them. Only the
+        # resolution half applies here: a group key and an aggregate `attr` are
+        # not subtype-attribute references at the queried position, so their
+        # applicability is `m-agg`'s question rather than this walk's.
+        _walk_narrow(family, current_set, body.get("operand"), outside_rule, expected_entity)
+        for key in body.get("keys", []) or []:
+            _check_member_reference(family, key)
+        for aggregate in body.get("aggregates", []) or []:
+            _check_aggregate_reference(family, aggregate)
+        _check_having_references(family, body.get("having"))
     elif tag in ATTRIBUTE_REFERENCE_TAGS:
         _check_attribute_position(family, current_set, body.get("attr"))
-    # nested* / all / none carry no queried-position subtype-attribute reference here.
+    elif tag in PATH_REFERENCE_TAGS:
+        # A nested value-object `path` spells its entity as the FIRST segment
+        # rather than the part before the last dot, because every trailing
+        # segment is a declared value-object member. Its resolution is checked
+        # here so an ambiguous entity spelling is refused as such, rather than
+        # reaching the value-object resolver and being reported as an unknown
+        # member of a path that names no entity at all. The path's own
+        # applicability to the active position stays that resolver's question.
+        _check_path_reference(family, body.get("path"))
+    # all / none carry no reference to a queried position here.
+
+
+def _check_aggregate_reference(family: Family, aggregate: Any) -> None:
+    """Check the entity spelling of one aggregate function's ``attr``.
+
+    ``count`` alone may omit ``attr`` (``count(*)``), which names nothing.
+    """
+    if isinstance(aggregate, dict) and len(aggregate) == 1:
+        body = next(iter(aggregate.values()))
+        if isinstance(body, dict):
+            _check_member_reference(family, body.get("attr"))
+
+
+def _check_having_references(family: Family, node: Any) -> None:
+    """Check every aggregate reference a ``having`` expression compares."""
+    if not isinstance(node, dict) or len(node) != 1:
+        return
+    tag, body = next(iter(node.items()))
+    if not isinstance(body, dict):
+        return
+    if tag in ("and", "or"):
+        for operand in body.get("operands", []) or []:
+            _check_having_references(family, operand)
+        return
+    _check_aggregate_reference(family, body.get("agg"))
 
 
 _ORDERED_POSITION_WRAPPERS: frozenset[str] = frozenset(

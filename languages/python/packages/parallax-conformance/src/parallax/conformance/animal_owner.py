@@ -1,14 +1,14 @@
-"""``models/animal.yaml``'s own polymorphic owner, and the family's hub.
+"""``models/animal.yaml``'s own polymorphic owner, and the family's model.
 
 ``models/animal.yaml`` declares an owner entity also named ``Person`` — the same
 canonical name ``read_models.Person`` (``models/person.yaml``) carries. Two
 models each naming a ``Person`` is unremarkable once a model is an explicit
-class set: this owner and that one are different classes in different hubs, and
+class set: this owner and that one are different classes in different models, and
 neither can see the other.
 
-The hub below is the whole of ``models/animal.yaml``: the owner plus the family
-it names. It lives here rather than beside the family in
-:mod:`parallax.conformance.read_models` because a hub composes the complete
+The Domain Model below is the whole of ``models/animal.yaml``: the owner plus
+the family it names. It lives here rather than beside the family in
+:mod:`parallax.conformance.read_models` because a model composes the complete
 class set, and the owner is declared here.
 
 This module deliberately avoids ``from __future__ import annotations`` so the

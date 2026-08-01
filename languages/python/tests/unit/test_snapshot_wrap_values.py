@@ -95,13 +95,13 @@ def test_a_null_cardinality_many_value_object_column_wraps_to_an_empty_tuple() -
 # --------------------------------------------------------------------------- #
 # A model / class disagreement about a member's SHAPE.                         #
 #                                                                              #
-# A class-backed hub compiles its model FROM the classes, so the two agree by  #
-# construction there — but they are two independent sources in the conformance #
-# lane, where the model is authored YAML and the class is a hand-written       #
-# mirror. A model that calls a member a value object while the bound class     #
-# maps it as a scalar has no ValueObject class to construct, and               #
-# `_wrap_member` must say so rather than hand back the raw decoded dict typed  #
-# as the declared VO (spec §3's instances-only contract).                      #
+# A class-backed model compiles its Metamodel FROM the classes, so the two     #
+# agree by construction there — but they are two independent sources in the    #
+# conformance lane, where the model is authored YAML and the class is a        #
+# hand-written mirror. A model that calls a member a value object while the    #
+# composed class maps it as a scalar has no ValueObject class to construct,    #
+# and `_wrap_member` must say so rather than hand back the raw decoded dict    #
+# typed as the declared VO (spec §3's instances-only contract).                #
 # --------------------------------------------------------------------------- #
 class _WrapScalarProfile(Entity, table="wrap_scalar_profile", namespace="parallax.compatibility"):
     id: Attr[int] = attr(primary_key=True)

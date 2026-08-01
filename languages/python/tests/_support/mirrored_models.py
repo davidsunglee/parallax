@@ -1,12 +1,13 @@
-"""The corpus models the class frontend mirrors, each as one sealed hub.
+"""The corpus models the class frontend mirrors, each as one Domain Model.
 
-Every hub here composes exactly the classes of one corpus model, so the
+Every model here composes exactly the classes of one corpus model, so the
 descriptor no-drift guard can compare the accepted Metamodel a class family
-forms against the one that model's YAML forms. Most hubs are **re-exported** from
-the installed ``parallax.conformance`` package: an Entity Class belongs to
-exactly one hub for its lifetime, so the API-suite's own execution and this proof
-compose the same hub rather than a second one over a second copy of the same
-classes. The families declared below are the ones no story or example needs — a
+forms against the one that model's YAML forms. Most are **re-exported** from
+the installed ``parallax.conformance`` package, so the API-suite's own execution
+and this proof measure the same composition rather than a second one over a
+second copy of the same classes — a redundancy the guard gains nothing from,
+not a composition a class could not join.
+The families declared below are the ones no story or example needs — a
 declaration feature the guard must cover whose corpus carrier nothing else
 exercises — so they live with the proof that is their only reader.
 
@@ -248,7 +249,7 @@ MIRRORED: list[tuple[str, DomainModel]] = [
     ("writable-scalars", WRITABLE_SCALARS_MODEL),
     ("taxpayer", TAXPAYER_MODEL),
 ]
-"""Corpus model stem -> the hub the idiomatic classes for it compose into."""
+"""Corpus model stem -> the Domain Model the idiomatic classes for it compose into."""
 
 UNMIRRORED: Mapping[str, str] = MappingProxyType(
     {
@@ -333,7 +334,8 @@ UNMIRRORED: Mapping[str, str] = MappingProxyType(
             "the root-owned optimistic-lock version `account` proves"
         ),
         "workshop": (
-            "no mirror authored; a hub composes any number of classes and the mirrored `document` "
+            "no mirror authored; a model composes any number of classes and the mirrored "
+            "`document` "
             "already relates an owner to an abstract root, so two independent families in one "
             "descriptor add no construct"
         ),

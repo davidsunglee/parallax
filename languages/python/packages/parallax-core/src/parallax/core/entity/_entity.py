@@ -51,7 +51,10 @@ from parallax.core.metamodel import (
     TemporalDimension,
     UnresolvedInheritance,
     UnresolvedRelationshipDeclaration,
+    ValueObjectMetadata,
     ValueObjectOccurrenceDeclaration,
+    WriteAssignmentError,
+    judge_assignment,
 )
 from parallax.core.op_algebra import All, Narrow, Operation
 
@@ -201,7 +204,12 @@ class WireNames:
     name_to_py: dict[str, str]
     py_to_name: dict[str, str]
     relationship_py: dict[str, str]
-    assignable_py: frozenset[str]
+    members: dict[str, AttributeMetadata | ValueObjectMetadata]
+    """Each Python member name to the accepted Metadata that decides what may be
+    written to it. Which members are assignable is not recorded here as a name
+    set: that is :func:`~parallax.core.metamodel.judge_assignment`'s verdict, and
+    a second spelling of it here is exactly the drift the single judgement
+    exists to prevent."""
     pk_py: frozenset[str]
     framework_owned_py: frozenset[str]
     axis_governed_py: frozenset[str]
@@ -214,6 +222,7 @@ def wire_names_of(cls: type) -> WireNames:
     name_to_py: dict[str, str] = {}
     py_to_name: dict[str, str] = {}
     relationship_py: dict[str, str] = {}
+    members: dict[str, AttributeMetadata | ValueObjectMetadata] = {}
     pk_py: set[str] = set()
     framework_owned_py: set[str] = set()
     axis_governed_py: set[str] = set()
@@ -228,6 +237,7 @@ def wire_names_of(cls: type) -> WireNames:
         name_to_py.update(names.name_to_py)
         py_to_name.update(names.py_to_name)
         relationship_py.update(names.relationship_py)
+        members.update(names.members)
         pk_py.update(names.pk_py)
         framework_owned_py.update(names.framework_owned_py)
         axis_governed_py.update(names.axis_governed_py)
@@ -241,7 +251,7 @@ def wire_names_of(cls: type) -> WireNames:
         name_to_py=name_to_py,
         py_to_name=py_to_name,
         relationship_py=relationship_py,
-        assignable_py=frozenset(py_to_name) - pk_py - framework_owned_py,
+        members=members,
         pk_py=frozenset(pk_py),
         framework_owned_py=frozenset(framework_owned_py),
         axis_governed_py=frozenset(axis_governed_py),
@@ -331,24 +341,35 @@ def effective_change_set(copy: object) -> dict[str, object]:
     }
 
 
-def _validate_copy_keys(cls_name: str, names: WireNames, update: Mapping[str, Any]) -> None:
-    """Reject an unassignable ``model_copy(update=...)`` key (spec §3)."""
-    for py_name in update:
-        if py_name in names.assignable_py:
-            continue
+def _validate_copy_update(cls_name: str, names: WireNames, update: Mapping[str, Any]) -> None:
+    """Reject an unassignable ``model_copy(update=...)`` entry (spec §3).
+
+    The split is by what each half can know. Resolving a Python name to a member
+    is a class-shaped question and is answered here: a relationship member and an
+    undeclared name never reach a member at all. Everything a resolved member
+    then decides — primary-key, read-only, and framework-owned targets, in that
+    order, plus declared-type and nullability conformance — is
+    :func:`~parallax.core.metamodel.judge_assignment`'s single verdict, the SAME
+    one ``Attr.set(...)`` and the serialized write boundary reach, so an edited
+    copy and a write can never disagree about what may be assigned.
+
+    A Value Object value is rendered to its canonical document before it is
+    judged, exactly as ``.set(...)`` renders it, so both paths judge one shape;
+    the copy itself still merges the caller's own live value.
+    """
+    for py_name, value in update.items():
         if py_name in names.relationship_py.values():
             raise ModelCopyError(
                 f"{cls_name}.{py_name}: relationship members are not assignable via model_copy "
                 "(no cascade or association-mutation semantics to lower it to)"
             )
-        if py_name in names.pk_py:
-            raise ModelCopyError(f"{cls_name}.{py_name}: primary-key members may not be assigned")
-        if py_name in names.framework_owned_py:
-            raise ModelCopyError(
-                f"{cls_name}.{py_name}: framework-owned members (the version column) may not "
-                "be assigned"
-            )
-        raise ModelCopyError(f"{cls_name}.{py_name}: unknown member name")
+        member = names.members.get(py_name)
+        if member is None:
+            raise ModelCopyError(f"{cls_name}.{py_name}: unknown member name")
+        try:
+            judge_assignment(member, serialize_member(value))
+        except WriteAssignmentError as error:
+            raise ModelCopyError(f"{cls_name}.{error}") from error
 
 
 class Entity(BaseModel, metaclass=EntityMeta, _mint=FRAMEWORK_MINT):
@@ -418,10 +439,11 @@ class Entity(BaseModel, metaclass=EntityMeta, _mint=FRAMEWORK_MINT):
 
         A copy carries a Change Record mapping each touched member to its
         earliest original across copy chains. Unlike Pydantic's own
-        ``model_copy``, ``update=`` data is validated: unknown, primary-key,
-        framework-owned, and relationship members raise, and every value passes
-        the §2 input policies because the merged instance goes back through the
-        ordinary constructor.
+        ``model_copy``, ``update=`` data is validated: an unknown or
+        relationship member raises, every remaining entry is judged by the SAME
+        assignment rules ``Attr.set(...)`` and the serialized write boundary
+        apply (:func:`_validate_copy_update`), and the merged instance still
+        goes back through the ordinary constructor for the §2 input policies.
 
         An axis-governed member this copy's ``update`` never names is carried
         forward without re-validation: a materialized current milestone's value
@@ -434,7 +456,7 @@ class Entity(BaseModel, metaclass=EntityMeta, _mint=FRAMEWORK_MINT):
             object.__setattr__(copied, "__parallax_changes__", carried)
             return copied
         names = wire_names_of(type(self))
-        _validate_copy_keys(type(self).__name__, names, update)
+        _validate_copy_update(type(self).__name__, names, update)
         declared = set(names.py_to_name)
         merged = {k: v for k, v in self.__dict__.items() if k in declared}
         merged.update(update)

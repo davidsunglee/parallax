@@ -408,7 +408,7 @@ SKIP_REASONS: Final[dict[str, str]] = {
         "of its own, so it carries no class mirror to write an instance-native story "
         "against (`tests/_support/mirrored_models.py`'s own UNMIRRORED reason). Its physical "
         "Column and Table mapping rejects are model-declaration invariants the Rule "
-        "Set classifies at hub construction (a `MetamodelValidationError` issue), not "
+        "Set classifies at model construction (a `MetamodelValidationError` issue), not "
         "an operation or write the Usage Guide's statement- and verb-level examples "
         "could spell"
     ),
@@ -719,7 +719,7 @@ _INHERITANCE_SET_BASED_UNSUPPORTED_UNREACHABLE_REASON: Final[str] = (
 # (098/099, `inheritance-temporal-axes-not-root-owned`), a descendant declaring
 # its own `optimisticLocking` attribute (102/103,
 # `inheritance-optimistic-locking-not-root-owned`, ADR 0027) — are rejected
-# either at class creation as an `EntityDefinitionError` or at hub construction
+# either at class creation as an `EntityDefinitionError` or at model construction
 # as the shared formation-time `inheritance-*` issue
 # (`test_inheritance_frontend.py`), never as `InheritanceError.rule`. No case in
 # this group can therefore reproduce `then.rejectedRule` through the public
@@ -775,7 +775,7 @@ _ORDERS_GRAPH_SIBLING_REASON: Final[str] = (
 # `models/person.yaml`'s own Person/Passport pair and `models/animal.yaml`'s
 # own polymorphic owner (ALSO named `Person`) both name one canonical Entity,
 # which is unremarkable once a model is an explicit class set: they are
-# different classes in different hubs (`read_models.PERSON_MODEL` and
+# different classes in different models (`read_models.PERSON_MODEL` and
 # `animal_owner.ANIMAL_MODEL`), so both flip to executable graph stories
 # (`graph_stories.py`) and no case-scoped reason remains for either.
 #

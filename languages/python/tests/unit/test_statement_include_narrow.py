@@ -55,14 +55,20 @@ from parallax.core.op_algebra import (
 )
 from parallax.snapshot.handle._preflight import preflight_find
 
-# The animal family is queryable only through the hub that seals it with its own
-# polymorphic owner, so importing the hub is what binds these classes.
+# The animal family's model composes its own polymorphic owner alongside it, so
+# it is the composition every case here is measured against at the gate below.
+# Authoring reaches no model; connecting is what makes these classes queryable.
 assert _ANIMAL_MODEL is not None
 _DOCUMENTS = read_models.DOCUMENT_MODEL
 
 
-def gated(statement: Statement, models: DomainModel = _ANIMAL_MODEL) -> Statement:
-    """``statement`` through the shared read gate, as executing it would run it."""
+def preflighted(statement: Statement, models: DomainModel = _ANIMAL_MODEL) -> Statement:
+    """``statement`` after the shared read preflight accepted it against ``models``.
+
+    Runs exactly what executing the statement would run before any I/O, and
+    answers the statement itself so a case can go on to assert its canonical
+    lowering. A rejection propagates.
+    """
     preflight_find(statement, model=model_of(models))
     return statement
 
@@ -132,7 +138,7 @@ def test_a_path_that_already_continued_cannot_continue_again() -> None:
 def test_a_deeper_hop_naming_no_declared_relationship_is_refused_at_the_gate() -> None:
     statement = sm.SnapOrder.where().include(sm.SnapOrder.items.bogus_relationship)
     with pytest.raises(ValueError, match="names no declared relationship on SnapOrderItem"):
-        gated(statement, sm.SNAP_ORDERS_MODEL)
+        preflighted(statement, sm.SNAP_ORDERS_MODEL)
 
 
 def test_include_accumulates_across_calls() -> None:
@@ -250,7 +256,7 @@ def test_a_root_guard_outside_the_queried_position_is_rejected_at_the_gate() -> 
     # WildBoar: the guard is clamped to the active position exactly as an
     # operation-position narrow is.
     with pytest.raises(OperationRejectedError) as exc:
-        gated(Pet.where().include(WildBoar.owner))
+        preflighted(Pet.where().include(WildBoar.owner))
     assert exc.value.rule == "narrow-outside-position"
 
 
@@ -331,7 +337,7 @@ def test_narrow_broadening_outside_the_threaded_position_is_rejected() -> None:
     # FinancialDocument's effective set is {Invoice, Receipt}; nesting a
     # same-position narrow to Memo (outside it) must be rejected.
     with pytest.raises(OperationRejectedError) as caught:
-        gated(im.FinancialDocument.where(im.FinancialDocument.narrow(im.Memo)), _DOCUMENTS)
+        preflighted(im.FinancialDocument.where(im.FinancialDocument.narrow(im.Memo)), _DOCUMENTS)
     assert caught.value.rule == "narrow-outside-position"
 
 
@@ -368,7 +374,7 @@ def test_subtype_attribute_outside_narrow_scope_is_rejected_at_the_gate() -> Non
     # never reaches an ancestor's position, and an ignore that goes idle fails
     # `just python-typecheck`.
     with pytest.raises(OperationRejectedError) as caught:
-        gated(im.Document.where(im.Invoice.amount_due > 3), _DOCUMENTS)  # pyright: ignore[reportArgumentType]
+        preflighted(im.Document.where(im.Invoice.amount_due > 3), _DOCUMENTS)  # pyright: ignore[reportArgumentType]
     assert caught.value.rule == "subtype-attribute-outside-narrow-scope"
 
 
@@ -398,7 +404,7 @@ def test_the_narrow_clauses_no_retroactive_scope_rule_is_static_only() -> None:
     ).narrow(im.Invoice)
     scoped = im.Document.where(im.Document.narrow(im.Invoice, where=im.Invoice.amount_due > 3))
     assert narrowed.operation() == scoped.operation()
-    gated(narrowed, _DOCUMENTS)
+    preflighted(narrowed, _DOCUMENTS)
 
 
 # --------------------------------------------------------------------------- #
