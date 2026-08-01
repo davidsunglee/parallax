@@ -1055,6 +1055,13 @@ forbidden_modules = [
     "parallax.core.value_object",
     "parallax.descriptor",
     "parallax.postgres",
+    "parallax.snapshot.handle._family",
+    "parallax.snapshot.handle._keyed_sql",
+    "parallax.snapshot.handle._preflight",
+    "parallax.snapshot.handle._step_lowering",
+    "parallax.snapshot.handle._wrap",
+    "parallax.snapshot.handle._write_lowering",
+    "parallax.snapshot.handle._write_types",
     "parallax.snapshot.materialize",
 ]
 

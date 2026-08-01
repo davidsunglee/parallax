@@ -12,13 +12,16 @@ importer exemption), and the support-scope additions:
   the support-scope graph — the prose table rows and the ``support-scope-graph``
   fence — with a drift canary per representation, including the state in which
   two of the three are edited consistently and the third is left stale; and
-* child scopes are emitted as contract *sources* only, with a ``lint-imports``
+* child scopes are emitted as contract *sources*, and as forbidden *targets*
+  only in a sibling's zero-grant row, with a ``lint-imports``
   canary proving a child contract blocks an import its parent's row permits, and
   a second canary proving the one asymmetric child grant — the descriptor
   package's Hub-construction seam — is admitted for that child alone and stays
   forbidden to every other module its parent's row governs;
-* a zero-grant child scope, whose emptiness IS its contract, with a canary
-  proving any import from outside its own package breaks the gate; and
+* a zero-grant child scope, whose emptiness IS its contract, with two canaries —
+  one importing a scope from outside its own package, one importing a sibling
+  child scope inside it, the half a package-scoped row can only reach by naming
+  siblings as targets; and
 * a child scope named as another scope's GRANT, which is how the read-preflight
   seam takes the Entity statement surface without taking what the rest of the
   frontend reaches — with two canaries, one importing the Database Port into the
@@ -350,6 +353,24 @@ def test_parse_support_scope_table_reads_no_grants_alone_as_an_empty_row() -> No
     assert prose == {"parallax.core.thing": frozenset()}
 
 
+def test_no_grants_beside_unbackticked_prose_is_still_an_empty_row() -> None:
+    # The other direction of the same rule: §7 says only a backticked module tag
+    # or `parallax.*` scope declares a grant, so `psycopg` — the exact
+    # unbackticked spelling the Postgres row already carries — contradicts
+    # nothing. Rejecting on "text survived removing (none)" would refuse a row
+    # this section explicitly permits.
+    prose = dag.parse_support_scope_table(
+        f"{_HEADER}\n| Thing (support) | `parallax.core.thing` | "
+        "`parallax.core.thing` | (none), psycopg | x |\n"
+    )
+    assert prose == {"parallax.core.thing": frozenset()}
+    explained = dag.parse_support_scope_table(
+        f"{_HEADER}\n| Thing (support) | `parallax.core.thing` | "
+        "`parallax.core.thing` | (none) — nothing first-party at all | x |\n"
+    )
+    assert explained == {"parallax.core.thing": frozenset()}
+
+
 def test_a_tampered_prose_row_alone_fails_generation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -504,16 +525,58 @@ def test_check_child_scopes_rejects_a_child_outside_its_parent(
         dag.check_child_scopes()
 
 
-def test_child_scopes_are_never_forbidden_targets() -> None:
+def test_a_child_scope_is_a_forbidden_target_only_in_a_sibling_zero_grant_row() -> None:
     # import-linter >= 2.12 silently skips a forbidden module that overlaps the
     # contract's own source package, so a child inside its parent's row would be
-    # a contract that looks present and enforces nothing. Children are sources
-    # only; the parent's row already covers every descendant for other scopes.
+    # a contract that looks present and enforces nothing — and naming a child in
+    # any unrelated scope's row would only restate the parent's own entry. The
+    # one row that does name children is a zero-grant scope's, and only its
+    # siblings, which overlap nothing.
     adjacency = dag.build_adjacency(dag.parse_dependency_graph(dag.MODULES_MD.read_text()))
     forbidden = dag.compute_forbidden(adjacency)
     assert set(dag.CHILD_SCOPE_PARENT) <= set(forbidden)
     for scope, blocked in forbidden.items():
-        assert not (set(blocked) & set(dag.CHILD_SCOPE_PARENT)), scope
+        children_named = set(blocked) & set(dag.CHILD_SCOPE_PARENT)
+        expected: frozenset[str] = (
+            dag.scope_siblings(scope) if not adjacency[scope] else frozenset()
+        )
+        assert children_named == expected, scope
+        # Whatever a row names, it never names something it overlaps.
+        assert not (children_named & (dag.scope_ancestors(scope) | dag.scope_descendants(scope)))
+    # A parent still never forbids its own children.
+    for parent in set(dag.CHILD_SCOPE_PARENT.values()):
+        assert not (set(forbidden[parent]) & dag.scope_descendants(parent)), parent
+
+
+def test_scope_siblings_are_the_other_children_of_one_parent() -> None:
+    assert dag.scope_siblings("parallax.snapshot.handle._errors") == frozenset(
+        {
+            "parallax.snapshot.handle._wrap",
+            "parallax.snapshot.handle._preflight",
+            "parallax.snapshot.handle._family",
+            "parallax.snapshot.handle._write_types",
+            "parallax.snapshot.handle._keyed_sql",
+            "parallax.snapshot.handle._write_lowering",
+            "parallax.snapshot.handle._step_lowering",
+        }
+    )
+    # A scope's own name is never among its siblings, an only child has none,
+    # and a scope that is nobody's child has none either.
+    assert dag.scope_siblings("parallax.descriptor._hub") == frozenset()
+    assert dag.scope_siblings("parallax.snapshot.handle") == frozenset()
+    assert dag.scope_siblings("parallax.core.base") == frozenset()
+
+
+def test_only_a_zero_grant_row_takes_its_siblings_as_targets() -> None:
+    # A scope with grants has a closure to complement; widening every child row
+    # to name its siblings would forbid intra-package edges §7 permits — the
+    # write-lowering cluster's five modules import one another.
+    adjacency = dag.build_adjacency(dag.parse_dependency_graph(dag.MODULES_MD.read_text()))
+    forbidden = dag.compute_forbidden(adjacency)
+    assert adjacency["parallax.snapshot.handle._family"]
+    assert (
+        "parallax.snapshot.handle._write_types" not in forbidden["parallax.snapshot.handle._family"]
+    )
 
 
 def test_a_child_row_omits_its_own_ancestors() -> None:
@@ -601,6 +664,22 @@ def test_a_zero_grant_scope_is_forbidden_every_first_party_scope() -> None:
     assert set(dag.SUPPORT_SCOPE_DEPS) - set(dag.CHILD_SCOPE_PARENT) - blocked == {
         "parallax.snapshot.handle"
     }
+
+
+def test_a_zero_grant_row_also_forbids_every_sibling_child_scope() -> None:
+    # The half a scope-outside-the-package row cannot state: the shared parent
+    # package overlaps the source and is skipped, but a sibling is neither
+    # ancestor nor descendant, so it is a target the row can name — which is
+    # what makes this module's emptiness a gate rather than a convention.
+    adjacency = dag.build_adjacency(dag.parse_dependency_graph(dag.MODULES_MD.read_text()))
+    forbidden = dag.compute_forbidden(adjacency)
+    scope = "parallax.snapshot.handle._errors"
+    blocked = set(forbidden[scope])
+    assert dag.scope_siblings(scope) <= blocked
+    assert "parallax.snapshot.handle._write_types" in blocked
+    # The parent itself stays out, because a package-scoped row cannot forbid
+    # the package it sits inside.
+    assert "parallax.snapshot.handle" not in blocked
 
 
 def test_the_fence_spells_a_zero_grant_scope_with_the_no_grants_target() -> None:
@@ -803,6 +882,38 @@ def test_a_first_party_import_in_the_refusal_leaf_fails_lint_imports() -> None:
     assert (
         "parallax.snapshot.handle._errors may import only its permitted dependencies BROKEN"
         in result.stdout
+    )
+
+
+# --------------------------------------------------------------------------
+# ...and Canary 8: nor a sibling INSIDE its package. This is the half the
+# outside-the-package row cannot state, and the reason the row names siblings.
+# --------------------------------------------------------------------------
+def test_a_sibling_import_in_the_refusal_leaf_fails_lint_imports() -> None:
+    lint_imports = shutil.which("lint-imports")
+    assert lint_imports is not None, "lint-imports must be installed in the dev env"
+
+    # `_write_types` imports nothing first-party at all, so there is no chain out
+    # of the package to report: only the sibling entry in the zero-grant row can
+    # catch this. Both consumer scopes may import `_write_types` freely, so
+    # neither consumer's row reports it either.
+    target = PY_ROOT / "packages/parallax-snapshot/src/parallax/snapshot/handle/_errors.py"
+    original = target.read_text()
+    target.write_text(
+        f"{original}import parallax.snapshot.handle._write_types  # deliberate sibling violation\n"
+    )
+    try:
+        result = subprocess.run([lint_imports], cwd=PY_ROOT, capture_output=True, text=True)
+    finally:
+        target.write_text(original)
+
+    assert result.returncode != 0, result.stdout
+    assert (
+        "parallax.snapshot.handle._errors may import only its permitted dependencies BROKEN"
+        in result.stdout
+    )
+    assert (
+        "parallax.snapshot.handle._errors -> parallax.snapshot.handle._write_types" in result.stdout
     )
 
 

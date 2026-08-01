@@ -16,10 +16,7 @@ an exact, justified package-interface exemption.
 **A file matching two scopes is not by itself a finding.** Where §7 declares a
 child scope over a private implementation module, every file inside it matches
 both the child and the parent, and that is the point: the child's own grant row
-is what governs it. Ten files are in exactly that state today (the ``handle``
-write-lowering group, ``handle._wrap``, ``handle._preflight``,
-``handle._errors``, ``descriptor._hub``, and ``core.entity.statement``). What
-fails is overlap that *nobody declared*.
+is what governs it. What fails is overlap that *nobody declared*.
 
 Three findings fail the check:
 

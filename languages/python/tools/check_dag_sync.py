@@ -150,10 +150,11 @@ SUPPORT_SCOPE_DEPS: Mapping[str, frozenset[str]] = {
     ),
     # The statement surface is scoped apart from the rest of the Entity frontend
     # so a consumer that needs only `Statement` can grant only this, rather than
-    # the whole frontend and everything model formation drags behind it. It is
-    # the frontend's only member with no Hub-construction edge: nothing here
-    # reaches `parallax.core._formation_profile`, and therefore nothing here
-    # reaches a Database Port.
+    # the whole frontend and everything model formation drags behind it. The
+    # invariant this scope carries is that the statement surface preflight needs
+    # does not reach the Hub-construction boundary: nothing here reaches
+    # `parallax.core._formation_profile`, and therefore nothing here reaches a
+    # Database Port.
     "parallax.core.entity.statement": frozenset(
         {
             "parallax.core.base",
@@ -215,8 +216,9 @@ SUPPORT_SCOPE_DEPS: Mapping[str, frozenset[str]] = {
     # The refusal leaf's emptiness IS its contract: `_preflight` and `_family`
     # raise one error class while their scopes grant disjoint dependencies, so
     # either naming the other would drag in a scope the importer may not reach.
-    # A zero-grant scope forbids every first-party scope outside its own package,
-    # which is what keeps that emptiness enforced rather than conventional.
+    # A zero-grant scope forbids every first-party scope outside its own package
+    # AND every sibling child scope inside it, which is what keeps that
+    # emptiness enforced rather than conventional.
     "parallax.snapshot.handle._errors": frozenset(),
     "parallax.snapshot.handle._family": _LOWERING_GROUP_DEPS,
     "parallax.snapshot.handle._write_types": _LOWERING_GROUP_DEPS,
@@ -414,12 +416,12 @@ def _row_grants(cell: str, scope: str) -> frozenset[str]:
     it is how this column spells an empty grant — so naming it beside a real
     grant is the same contradiction the fence rejects, and is rejected the same
     way. Both representations must refuse it, or §7 could state the
-    contradiction in one of them and still pass parity.
+    contradiction in one of them and still pass parity. What contradicts
+    :data:`_NO_GRANTS` is a *grant*, not any surviving text: unbackticked prose
+    declares nothing, so it may sit beside :data:`_NO_GRANTS` exactly as it may
+    sit beside a real grant. The contradiction is therefore tested against the
+    parsed grants rather than against the leftover characters.
     """
-    if _NO_GRANTS in cell and cell.replace(_NO_GRANTS, "").strip(" ,"):
-        raise ValueError(
-            f"§7 prose row for {scope!r} declares {_NO_GRANTS} beside a real grant: {cell!r}"
-        )
     grants: set[str] = set()
     for token in _BACKTICKED.findall(cell):
         if token.startswith("parallax."):
@@ -437,6 +439,10 @@ def _row_grants(cell: str, scope: str) -> frozenset[str]:
                 f"§7 prose row for {scope!r} grants {token!r}, which is neither a "
                 "module tag nor a `parallax.*` enforcement scope"
             )
+    if _NO_GRANTS in cell and grants:
+        raise ValueError(
+            f"§7 prose row for {scope!r} declares {_NO_GRANTS} beside a real grant: {cell!r}"
+        )
     return frozenset(grants)
 
 
@@ -540,6 +546,22 @@ def scope_descendants(scope: str) -> frozenset[str]:
     return frozenset(child for child in CHILD_SCOPE_PARENT if scope in scope_ancestors(child))
 
 
+def scope_siblings(scope: str) -> frozenset[str]:
+    """Every other declared child scope sharing ``scope``'s immediate parent.
+
+    A sibling neither contains ``scope`` nor is contained by it, so — unlike the
+    shared parent package — it is a forbiddable target in ``scope``'s own row.
+    """
+    parent = CHILD_SCOPE_PARENT.get(scope)
+    if parent is None:
+        return frozenset()
+    return frozenset(
+        sibling
+        for sibling, sibling_parent in CHILD_SCOPE_PARENT.items()
+        if sibling_parent == parent and sibling != scope
+    )
+
+
 def child_grant_exceptions(adjacency: Mapping[str, frozenset[str]], scope: str) -> list[str]:
     """``ignore_imports`` entries for grants a declared descendant holds alone.
 
@@ -625,13 +647,24 @@ def compute_forbidden(adjacency: Mapping[str, frozenset[str]]) -> dict[str, list
     edge — so every production scope is forbidden from importing any conformance
     scope, modelled or not.
 
-    Child scopes (:data:`CHILD_SCOPE_PARENT`) are sources only, never targets.
-    import-linter's ``forbidden`` contracts are package-scoped on both sides, so
-    a child named inside its own parent's forbidden row overlaps that contract's
-    source package and is silently skipped; and naming a child in some *other*
-    scope's row would only restate what the parent's own entry already forbids
-    for every descendant. For the same overlap reason a child's own row omits
-    its ancestors.
+    Child scopes (:data:`CHILD_SCOPE_PARENT`) are excluded from the general
+    target set. import-linter's ``forbidden`` contracts are package-scoped on
+    both sides, so a child named inside its own parent's forbidden row overlaps
+    that contract's source package and is silently skipped; and naming a child
+    in some *other* scope's row would only restate what the parent's own entry
+    already forbids for every descendant. For the same overlap reason a child's
+    own row omits its ancestors.
+
+    A **zero-grant** scope is the one source that also takes its SIBLING child
+    scopes as targets (:func:`scope_siblings`). A scope granted nothing may
+    import nothing, and the general target set cannot say so: everything left
+    inside the shared parent package is unreachable from the row, since the
+    package itself is an ancestor and overlaps. A sibling is neither ancestor
+    nor descendant, so it does not overlap and import-linter checks the pair —
+    which is what turns "this module imports nothing first-party" into a gate
+    rather than a convention. Siblings are added only for a zero-grant source:
+    a scope with grants has a closure to complement, and widening every child's
+    row to name its siblings would forbid intra-package edges §7 permits.
 
     A row stays tight even where a declared descendant holds a grant the scope
     itself lacks: :func:`child_grant_exceptions` carries that asymmetry as one
@@ -652,7 +685,10 @@ def compute_forbidden(adjacency: Mapping[str, frozenset[str]]) -> dict[str, list
     for scope in production_sources:
         allowed = transitive_closure(adjacency, scope)
         reached_ancestors = {a for granted in allowed for a in scope_ancestors(granted)}
-        blocked = all_targets - allowed - {scope} - scope_ancestors(scope) - reached_ancestors
+        targets = all_targets
+        if not adjacency[scope]:
+            targets = all_targets | scope_siblings(scope)
+        blocked = targets - allowed - {scope} - scope_ancestors(scope) - reached_ancestors
         forbidden[scope] = sorted(blocked)
     return forbidden
 
