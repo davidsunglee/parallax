@@ -27,6 +27,7 @@ from _transact_support import (
     FIXED,
     NEW_ROW,
     PERSON,
+    NoIoPort,
     RecordingPort,
     account_db,
     db_for,
@@ -36,6 +37,7 @@ from _transact_support import (
 
 from _support import mirrored_models as mm
 from _support.planner_probes import TEST_SUBJECT_IDENTITY
+from parallax.core import Attr, Entity, Int32, MetamodelHub, attr, index
 from parallax.core.db_error import DatabaseError
 from parallax.core.entity._hub import sealed_model
 from parallax.core.unit_work import (
@@ -56,6 +58,7 @@ from parallax.snapshot.handle import (
     Database,
     Transaction,
     TransactionOptionConflictError,
+    TransactionOwnershipError,
     build_write_planner,
 )
 
@@ -194,6 +197,125 @@ def test_bare_unit_of_work_on_the_thread_is_refused() -> None:
         planner=build_write_planner(model),
         subject_identity=TEST_SUBJECT_IDENTITY,
     )
+
+
+# --------------------------------------------------------------------------- #
+# Exact originating-Database ownership (ADR 0007): the demarcation records the  #
+# exact `Database` that opened it, and a nested `transact` joins only through   #
+# that object. Settled BEFORE everything the join section above pins.           #
+# --------------------------------------------------------------------------- #
+def test_an_alias_of_the_owner_joins_and_receives_the_identical_transaction() -> None:
+    port = RecordingPort()
+    db = account_db(port)
+    alias = db  # a second name for one object — the only thing that ever joins
+
+    def outer(tx: Transaction) -> int:
+        assert alias.transact(lambda inner_tx: (inner_tx is tx, 42)) == (True, 42)
+        return 42
+
+    assert db.transact(outer) == 42
+    assert port.begins == 1
+
+
+def test_a_different_database_over_the_same_model_and_adapter_is_refused() -> None:
+    port = RecordingPort()
+    owner = account_db(port)
+    foreign = account_db(port)  # same hub, same adapter, same clock; a different object
+
+    def outer(_tx: Transaction) -> str:
+        with pytest.raises(TransactionOwnershipError) as excinfo:
+            foreign.transact(_must_not_run)
+        assert excinfo.value.code == "transaction-owner-mismatch"
+        # Neither handle is retained: the refusal names no Database at all.
+        assert repr(owner) not in str(excinfo.value)
+        assert repr(foreign) not in str(excinfo.value)
+        return "survived"
+
+    # Refusing the join opened no second database transaction and did not doom
+    # the outer one — nothing entered the joined frame.
+    assert owner.transact(outer) == "survived"
+    assert port.begins == 1
+
+
+def _equal_account_hub() -> MetamodelHub:
+    """A hub whose declarations are structurally equal to ``ACCOUNT``'s.
+
+    An Entity Class belongs to one hub for its object lifetime, so a fresh class
+    object per call is what makes an equal-but-distinct model constructible.
+    """
+
+    class Account(
+        Entity,
+        table="account",
+        namespace="parallax.compatibility",
+        indices=(index("account_pk", "id", unique=True), index("account_owner", "owner")),
+    ):
+        id: Attr[int] = attr(primary_key=True)
+        owner: Attr[str] = attr(max_length=64)
+        balance: Attr[Decimal] = attr(precision=18, scale=2)
+        version: Attr[int] = attr(type=Int32, optimistic_locking=True)
+
+    return MetamodelHub(Account)
+
+
+def test_a_structurally_equal_model_establishes_no_ownership() -> None:
+    port = RecordingPort()
+    owner = account_db(port)
+    foreign = db_for(_equal_account_hub(), port)
+    # The two accepted models are equal entity for entity, and that buys nothing.
+    assert list(sealed_model(ACCOUNT).model.entities) == list(
+        sealed_model(_equal_account_hub()).model.entities
+    )
+
+    def outer(_tx: Transaction) -> str:
+        with pytest.raises(TransactionOwnershipError):
+            foreign.transact(_must_not_run)
+        return "survived"
+
+    assert owner.transact(outer) == "survived"
+
+
+def test_the_ownership_refusal_reaches_no_adapter() -> None:
+    port = NoIoPort()
+    owner = Database.connect(port, ACCOUNT, clock=FixedClock(FIXED))
+    foreign = Database.connect(port, ACCOUNT, clock=FixedClock(FIXED))
+
+    def outer(_tx: Transaction) -> str:
+        # `NoIoPort` raises on any read or write, so returning at all is the
+        # proof that the refusal performed none.
+        with pytest.raises(TransactionOwnershipError):
+            foreign.transact(_must_not_run)
+        return "survived"
+
+    assert owner.transact(outer) == "survived"
+
+
+def test_ownership_is_settled_before_rollback_only_and_option_conflicts() -> None:
+    port = RecordingPort()
+    owner = account_db(port)
+    foreign = account_db(port)
+
+    def outer(_tx: Transaction) -> str:
+        # Doom the boundary, so rollback-only joining would refuse ANY join.
+        with pytest.raises(RuntimeError, match="inner failure"):
+            owner.transact(_raise_inner)
+        # A foreign handle carrying a conflicting option: the doomed boundary
+        # and the option conflict would each raise, and neither is the answer.
+        with pytest.raises(TransactionOwnershipError):
+            foreign.transact(_must_not_run, retries=3)
+        # Nothing beyond the outer boundary's own `begin` ever reached the port.
+        assert port.ops == [("begin",)]
+        # Through the owner, the same conflicting option answers next…
+        with pytest.raises(TransactionOptionConflictError, match="retries"):
+            owner.transact(_must_not_run, retries=3)
+        # …and with no option left to conflict, the doomed boundary answers last.
+        with pytest.raises(RollbackOnlyError):
+            owner.transact(_must_not_run)
+        return "unreachable value"
+
+    with pytest.raises(RollbackOnlyError):
+        owner.transact(outer)
+    assert port.ops == [("begin",), ("rollback",)]
 
 
 # --------------------------------------------------------------------------- #

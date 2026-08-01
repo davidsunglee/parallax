@@ -223,6 +223,7 @@
     "NoResultFound",
     "Snapshot",
     "TooManyResultsFound",
+    "TransactionOwnershipError",
     "connect"
   ],
   "parallax.snapshot.handle": [
@@ -237,6 +238,7 @@
     "TooManyResultsFound",
     "Transaction",
     "TransactionOptionConflictError",
+    "TransactionOwnershipError",
     "TransactionTimePinReadOnlyError",
     "WriteLoweringError",
     "build_write_planner",
