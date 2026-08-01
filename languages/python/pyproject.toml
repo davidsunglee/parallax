@@ -425,6 +425,36 @@ forbidden_modules = [
 ]
 
 [[tool.importlinter.contracts]]
+name = "parallax.core.entity.statement may import only its permitted dependencies"
+type = "forbidden"
+source_modules = ["parallax.core.entity.statement"]
+forbidden_modules = [
+    "parallax.conformance",
+    "parallax.core._formation_profile",
+    "parallax.core.auto_retry",
+    "parallax.core.batch_write",
+    "parallax.core.bitemp_write",
+    "parallax.core.db_error",
+    "parallax.core.db_port",
+    "parallax.core.deep_fetch",
+    "parallax.core.dialect",
+    "parallax.core.navigate",
+    "parallax.core.opt_lock",
+    "parallax.core.pk_gen",
+    "parallax.core.read_lock",
+    "parallax.core.relationship",
+    "parallax.core.sql_gen",
+    "parallax.core.storage_layout",
+    "parallax.core.txtime_write",
+    "parallax.core.unit_work",
+    "parallax.core.value_object",
+    "parallax.descriptor",
+    "parallax.postgres",
+    "parallax.snapshot.handle",
+    "parallax.snapshot.materialize",
+]
+
+[[tool.importlinter.contracts]]
 name = "parallax.core.inheritance may import only its permitted dependencies"
 type = "forbidden"
 source_modules = ["parallax.core.inheritance"]
@@ -1076,29 +1106,27 @@ type = "forbidden"
 source_modules = ["parallax.snapshot.handle._preflight"]
 forbidden_modules = [
     "parallax.conformance",
+    "parallax.core._formation_profile",
     "parallax.core.auto_retry",
     "parallax.core.batch_write",
     "parallax.core.bitemp_write",
     "parallax.core.db_error",
+    "parallax.core.db_port",
     "parallax.core.deep_fetch",
     "parallax.core.dialect",
     "parallax.core.navigate",
+    "parallax.core.opt_lock",
     "parallax.core.pk_gen",
     "parallax.core.read_lock",
+    "parallax.core.relationship",
     "parallax.core.sql_gen",
+    "parallax.core.storage_layout",
     "parallax.core.txtime_write",
+    "parallax.core.unit_work",
+    "parallax.core.value_object",
     "parallax.descriptor",
     "parallax.postgres",
     "parallax.snapshot.materialize",
-]
-
-[[tool.importlinter.contracts]]
-name = "parallax.snapshot.handle._preflight names none of its excluded scopes itself"
-type = "forbidden"
-source_modules = ["parallax.snapshot.handle._preflight"]
-allow_indirect_imports = true
-forbidden_modules = [
-    "parallax.core.db_port",
 ]
 
 [[tool.importlinter.contracts]]

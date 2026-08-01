@@ -197,6 +197,19 @@ def test_a_disjunction_launders_no_more_than_a_conjunction_does() -> None:
     assert caught.value.rule == "subtype-attribute-outside-narrow-scope"
 
 
+def test_the_disjunctions_laundering_is_refused_in_the_other_operand_order_too() -> None:
+    # `|`'s commuted rejection, the twin of the `&` pair above. Without it the
+    # descendant-first `__or__` could broaden or turn left-biased while every
+    # other cell in the table stayed green: the forward operator alone solves the
+    # meet in THIS order, so this is the case that would survive losing the
+    # reflected twin.
+    with pytest.raises(OperationRejectedError) as caught:
+        Animal.where(
+            (Dog.bark_volume > 3) | (Animal.name == "Ada")  # pyright: ignore[reportArgumentType]
+        )
+    assert caught.value.rule == "subtype-attribute-outside-narrow-scope"
+
+
 def test_a_conjunction_of_one_positions_terms_keeps_that_position() -> None:
     # The composition does not launder a subtype's terms into an ancestor
     # position: two `Dog` terms combine to a `Dog` predicate, which the `Animal`

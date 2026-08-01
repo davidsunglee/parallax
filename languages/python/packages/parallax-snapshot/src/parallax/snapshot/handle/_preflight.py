@@ -14,15 +14,16 @@ target. And on a participating read, preflight runs BEFORE ``uow.read``, whose
 force-flush would otherwise turn a refused read into a write.
 
 This is its own module precisely so that it can be proven to touch no port. Its
-``spec/python.md`` §7 scope grants only the Entity frontend, the Metamodel
-Interface, and the operation algebra, so the generated import-linter contract
-forbids it — directly or through any chain — from reaching SQL generation, a
-dialect, a concrete Database Port adapter, deep-fetch planning, or
-materialization. The abstract Database Port is the one boundary that grant set
-does reach, through the Entity frontend's own model-formation edge, so §7
-declares it a closure exclusion and a second generated contract asks the
-narrower question the complement cannot: whether this module NAMES a port. A
-helper that needs any of those does not belong here.
+``spec/python.md`` §7 scope grants only the Entity frontend's statement
+submodule, the Metamodel Interface, and the operation algebra, so the generated
+import-linter contract forbids it — directly or through any chain — from
+reaching SQL generation, a dialect, any Database Port, deep-fetch planning, or
+materialization. The grant stops at :mod:`parallax.core.entity.statement`
+rather than the frontend package because the package reaches a Database Port
+through its Hub-construction edge (``_formation_profile -> m-opt-lock ->
+m-unit-work -> m-db-port``), and a forbidden row is the complement of a closure:
+granting the package would put the port inside this seam's own closure, where no
+row could forbid it. A helper that needs any of those does not belong here.
 
 Every name here is spelled bare: privacy is carried by this MODULE's leading
 underscore and by the package's frozen ``__all__``, not by per-name underscores
@@ -34,7 +35,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from parallax.core.entity import Statement as EntityStatement
+from parallax.core.entity.statement import Statement as EntityStatement
 from parallax.core.metamodel import EntityMetadata, Metamodel, entity_by_name
 from parallax.core.op_algebra import Operation, validate_operation
 from parallax.snapshot.handle._errors import QueryTargetError
