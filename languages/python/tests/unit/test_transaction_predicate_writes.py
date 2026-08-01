@@ -46,6 +46,7 @@ from parallax.core import (
     attr,
     inheritance,
 )
+from parallax.core import Statement as EntityStatement
 from parallax.core.base import InstantError
 from parallax.core.db_port import JsonDocument, Row
 from parallax.core.dialect import POSTGRES
@@ -912,33 +913,42 @@ def test_delete_where_refuses_an_attribute_outside_the_written_position() -> Non
 # last. A compound-invalid typed write must therefore classify by its           #
 # PREDICATE, which is also the classification the conformance ingress gives the #
 # same instruction (it takes no `dt.datetime` at all, so it has no other        #
-# candidate). Rendering a bound is not judging it.                              #
+# candidate). Nothing is read off a `dt.datetime` before the predicate rules    #
+# run — not its awareness, and not its UTC normalization, which is itself       #
+# partial: an extreme offset carries `datetime.min` out of the representable    #
+# range. The three kinds below stand for the whole argument space (a bound      #
+# whose rendering rejects, one whose rendering overflows, one that renders      #
+# cleanly), on each of the two bound slots.                                     #
 # --------------------------------------------------------------------------- #
 _NAIVE = dt.datetime(2024, 7, 1)
 _AWARE = dt.datetime(2024, 8, 1, tzinfo=dt.UTC)
+_EXTREME_OFFSET = dt.datetime.min.replace(tzinfo=dt.timezone(dt.timedelta(hours=14)))
 
 
-def test_an_invalid_predicate_outranks_a_naive_valid_from() -> None:
+@pytest.mark.parametrize(
+    ("valid_from", "until"),
+    [
+        (_NAIVE, None),
+        (_AWARE, None),
+        (_EXTREME_OFFSET, None),
+        (_AWARE, _NAIVE),
+        (_AWARE, dt.datetime(2024, 9, 1, tzinfo=dt.UTC)),
+        (_AWARE, _EXTREME_OFFSET),
+    ],
+    ids=[
+        "naive-valid-from",
+        "aware-valid-from",
+        "extreme-offset-valid-from",
+        "naive-until",
+        "aware-until",
+        "extreme-offset-until",
+    ],
+)
+def test_an_invalid_predicate_outranks_every_temporal_bound(
+    valid_from: dt.datetime, until: dt.datetime | None
+) -> None:
     def fn(tx: Transaction) -> None:
-        tx.update_where(
-            WherePosition.where(WherePosition.id.between(10, 1)),
-            WherePosition.value.set(Decimal("300.00")),
-            valid_from=_NAIVE,
-        )
-
-    with pytest.raises(OperationRejectedError) as caught:
-        Database.connect(NoIoPort(), WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(fn)
-    assert caught.value.rule == "between-bounds-inverted"
-
-
-def test_an_invalid_predicate_outranks_a_naive_until() -> None:
-    def fn(tx: Transaction) -> None:
-        tx.update_until_where(
-            WherePosition.where(WherePosition.id.between(10, 1)),
-            WherePosition.value.set(Decimal("300.00")),
-            valid_from=_AWARE,
-            until=_NAIVE,
-        )
+        _bounded_write(tx, WherePosition.where(WherePosition.id.between(10, 1)), valid_from, until)
 
     with pytest.raises(OperationRejectedError) as caught:
         Database.connect(NoIoPort(), WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(fn)
@@ -946,36 +956,74 @@ def test_an_invalid_predicate_outranks_a_naive_until() -> None:
 
 
 @pytest.mark.parametrize(
-    ("valid_from", "until"),
-    [(_NAIVE, None), (_AWARE, _NAIVE)],
-    ids=["naive-valid-from", "naive-until"],
+    ("valid_from", "until", "expected"),
+    [
+        (_NAIVE, None, InstantError),
+        (_EXTREME_OFFSET, None, OverflowError),
+        (_AWARE, _NAIVE, InstantError),
+        (_AWARE, _EXTREME_OFFSET, OverflowError),
+    ],
+    ids=[
+        "naive-valid-from",
+        "extreme-offset-valid-from",
+        "naive-until",
+        "extreme-offset-until",
+    ],
 )
-def test_a_naive_bound_is_still_refused_once_the_predicate_is_valid(
-    valid_from: dt.datetime, until: dt.datetime | None
+def test_a_deferred_bound_is_still_refused_once_the_predicate_is_valid(
+    valid_from: dt.datetime, until: dt.datetime | None, expected: type[Exception]
 ) -> None:
-    # Deferring the judgement never loses it: the verbatim literal a naive
-    # bound renders to is refused before any buffering, by the same step that
-    # decides whether the target's profile admits a bound at all.
+    # Deferring the temporal step never loses a rejection, only reorders it:
+    # each bound is still judged where it is rendered, before any buffering and
+    # by the same step that decides whether the target's profile admits a bound
+    # at all.
     port = RecordingPort(rows=[])
 
     def fn(tx: Transaction) -> None:
-        if until is None:
-            tx.update_where(
-                WherePosition.where(WherePosition.id == 1),
-                WherePosition.value.set(Decimal("300.00")),
-                valid_from=valid_from,
-            )
-        else:
-            tx.update_until_where(
-                WherePosition.where(WherePosition.id == 1),
-                WherePosition.value.set(Decimal("300.00")),
-                valid_from=valid_from,
-                until=until,
-            )
+        _bounded_write(tx, WherePosition.where(WherePosition.id == 1), valid_from, until)
 
-    with pytest.raises(InstantError, match="naive datetime"):
+    with pytest.raises(expected):
         Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(fn)
     assert port.ops == [("begin",), ("rollback",)]
+
+
+def test_a_deferred_bound_reaches_the_buffer_as_its_canonical_utc_literal() -> None:
+    # Deferring the rendering does not weaken it. The instruction that reaches
+    # the buffering seam carries `validate_valid_from` / `validate_until`'s own
+    # canonical literals, so a bound authored at a NON-UTC offset lands in the
+    # rectangle split as the same instant in UTC — never the caller's spelling,
+    # and never the presence marker the predicate rules were validated with.
+    port = RecordingPort(rows=[_position_row()])
+
+    def fn(tx: Transaction) -> None:
+        _bounded_write(
+            tx,
+            WherePosition.where(WherePosition.id == 1),
+            dt.datetime(2024, 7, 1, 5, tzinfo=dt.timezone(dt.timedelta(hours=5))),
+            dt.datetime(2024, 9, 1, 2, tzinfo=dt.timezone(dt.timedelta(hours=2))),
+        )
+
+    Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(
+        fn, concurrency="optimistic"
+    )
+    writes = [op for op in port.ops if op[0] == "write"]
+    assert len(writes) == 4  # close + head + middle + tail
+    middle_binds = cast("tuple[object, ...]", writes[2][2])
+    assert "2024-07-01T00:00:00+00:00" in middle_binds  # the authored `valid_from`, in UTC
+    assert "2024-09-01T00:00:00+00:00" in middle_binds  # the authored `until`, in UTC
+
+
+def _bounded_write(
+    tx: Transaction,
+    statement: EntityStatement,
+    valid_from: dt.datetime,
+    until: dt.datetime | None,
+) -> None:
+    assignment = WherePosition.value.set(Decimal("300.00"))
+    if until is None:
+        tx.update_where(statement, assignment, valid_from=valid_from)
+    else:
+        tx.update_until_where(statement, assignment, valid_from=valid_from, until=until)
 
 
 # --------------------------------------------------------------------------- #

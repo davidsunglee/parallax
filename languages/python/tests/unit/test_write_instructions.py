@@ -856,11 +856,11 @@ def test_a_whole_result_narrow_is_never_a_bare_write_predicate() -> None:
 
 
 _ANIMAL = models.accepted_model(_MODELS["animal"])
-# `Person` owns the polymorphic `animals` (-> the abstract root `Animal`) and
-# `pets` (-> the abstract subtype `Pet`), and is itself a plain non-family,
-# non-temporal, unversioned entity — so a predicate write on it is legal and the
-# narrow inside its navigation filter is the only thing under test.
-_PET_NARROW: dict[str, Any] = {
+# `Person` owns the polymorphic `animals` (-> the abstract root `Animal`) and is
+# itself a plain non-family, non-temporal, unversioned entity — so a predicate
+# write on it is legal and the narrow inside its navigation filter is the only
+# thing under test.
+_ANIMAL_TO_DOG_NARROW: dict[str, Any] = {
     "narrow": {"entity": "Animal", "to": ["Dog"], "operand": {"all": {}}}
 }
 
@@ -868,16 +868,16 @@ _PET_NARROW: dict[str, Any] = {
 @pytest.mark.parametrize(
     ("position", "predicate"),
     [
-        ("exists", {"exists": {"rel": "Person.animals", "op": _PET_NARROW}}),
-        ("notExists", {"notExists": {"rel": "Person.animals", "op": _PET_NARROW}}),
-        ("navigate", {"navigate": {"rel": "Person.animals", "op": _PET_NARROW}}),
+        ("exists", {"exists": {"rel": "Person.animals", "op": _ANIMAL_TO_DOG_NARROW}}),
+        ("notExists", {"notExists": {"rel": "Person.animals", "op": _ANIMAL_TO_DOG_NARROW}}),
+        ("navigate", {"navigate": {"rel": "Person.animals", "op": _ANIMAL_TO_DOG_NARROW}}),
         (
             "and",
             {
                 "and": {
                     "operands": [
                         {"eq": {"attr": "Person.name", "value": "Ada"}},
-                        {"exists": {"rel": "Person.animals", "op": _PET_NARROW}},
+                        {"exists": {"rel": "Person.animals", "op": _ANIMAL_TO_DOG_NARROW}},
                     ]
                 }
             },
@@ -888,13 +888,27 @@ _PET_NARROW: dict[str, Any] = {
                 "or": {
                     "operands": [
                         {"eq": {"attr": "Person.name", "value": "Ada"}},
-                        {"exists": {"rel": "Person.animals", "op": _PET_NARROW}},
+                        {"exists": {"rel": "Person.animals", "op": _ANIMAL_TO_DOG_NARROW}},
                     ]
                 }
             },
         ),
-        ("not", {"not": {"operand": {"exists": {"rel": "Person.animals", "op": _PET_NARROW}}}}),
-        ("group", {"group": {"operand": {"exists": {"rel": "Person.animals", "op": _PET_NARROW}}}}),
+        (
+            "not",
+            {
+                "not": {
+                    "operand": {"exists": {"rel": "Person.animals", "op": _ANIMAL_TO_DOG_NARROW}}
+                }
+            },
+        ),
+        (
+            "group",
+            {
+                "group": {
+                    "operand": {"exists": {"rel": "Person.animals", "op": _ANIMAL_TO_DOG_NARROW}}
+                }
+            },
+        ),
     ],
     ids=["exists", "not-exists", "navigate", "and", "or", "not", "group"],
 )
