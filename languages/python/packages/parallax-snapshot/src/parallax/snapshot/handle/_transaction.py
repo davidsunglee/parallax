@@ -378,7 +378,7 @@ class Transaction:
         from an implicit resolving read at write time. Every materialized node
         of a TEMPORAL entity likewise records its whole observed predecessor
         milestone plus PIN PROVENANCE (its Transaction-Time Basis, derived from
-        this statement's own Transaction-Time pin below): a later temporal
+        this query's own Transaction-Time pin below): a later temporal
         write's close/chain, or a locking-mode write's historical-observation
         license (`~parallax.core.opt_lock.check_locking_license`), derives from
         THIS observation, never a shadow lookup or an implicit resolving read

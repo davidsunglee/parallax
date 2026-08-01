@@ -9,6 +9,7 @@ independently of the Docker-gated API suite.
 from __future__ import annotations
 
 import datetime as dt
+from dataclasses import fields
 from decimal import Decimal
 from typing import Any
 
@@ -31,7 +32,8 @@ from parallax.core import (
     TxTemporal,
     attr,
 )
-from parallax.core.entity._query import build_find_query
+from parallax.core.entity._query import build_find_query, lower_find_query
+from parallax.core.metamodel import EntityIdentity
 
 _NS = "parallax.compatibility"
 
@@ -274,6 +276,25 @@ def test_every_clause_answers_a_new_query_and_leaves_its_receiver_alone() -> Non
     limited = base.limit(3)
     assert limited is not base
     assert lowered_document(base) == {"all": {}}
+
+
+def test_a_lowering_carries_a_target_identity_and_an_operation_and_nothing_else() -> None:
+    lowered = lower_find_query(Widget.where(Widget.id == 1))
+    assert lowered.target == EntityIdentity(_NS, "Widget")
+    assert lowered.operation == (Widget.id == 1).op
+    # The exact shape: an Entity Identity and a canonical operation, with no
+    # model, class index, feature tag, provider state, SQL, or serialization.
+    assert [field.name for field in fields(lowered)] == ["target", "operation"]
+
+
+def test_lowering_is_never_memoized() -> None:
+    # Each call builds a fresh value from the same clauses, so nothing a caller
+    # holds is shared with a later execution. The seam-level statement of what
+    # `test_snapshot_find` proves across two `db.find` calls.
+    query = Widget.where(Widget.id == 1)
+    first, second = lower_find_query(query), lower_find_query(query)
+    assert first is not second
+    assert first == second
 
 
 # --------------------------------------------------------------------------- #

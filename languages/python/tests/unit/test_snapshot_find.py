@@ -14,19 +14,22 @@ from __future__ import annotations
 import datetime as dt
 from collections.abc import Callable, Sequence
 from decimal import Decimal
-from typing import cast
+from typing import Any, cast
 
 import pytest
-from _transact_support import ACCOUNT, NoIoPort
+from _transact_support import ACCOUNT, PERSON, NoIoPort
 
 from _support import mirrored_models as mm
 from parallax.conformance import models
 from parallax.core.base import INFINITY
 from parallax.core.db_port import DbPort, Row
 from parallax.core.dialect import POSTGRES
+from parallax.core.entity import FindQuery
+from parallax.core.entity._query import LoweredFindQuery, lower_find_query
 from parallax.core.metamodel import EntityIdentity
 from parallax.core.op_algebra import deserialize
 from parallax.snapshot import QueryTargetError, handle
+from parallax.snapshot.handle import _preflight
 from parallax.snapshot.materialize import Node
 
 _MODELS = models.load_models()
@@ -435,3 +438,26 @@ def test_db_find_refuses_a_target_the_connected_model_does_not_declare() -> None
     with pytest.raises(QueryTargetError) as caught:
         db.find(mm.Person.where(mm.Person.id == 1))
     assert caught.value.code == "query-target-not-in-model"
+
+
+def test_two_executions_of_one_query_lower_it_twice(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Lowering is memoized nowhere: a Find Query caches no lowering and the seam
+    # holds no global memo, so each execution builds its own value and keeps it
+    # locally. The two are equal — lowering is deterministic — and distinct, so
+    # no execution is ever handed a lowering another one still holds.
+    lowerings: list[LoweredFindQuery] = []
+    original = lower_find_query
+
+    def recording(query: FindQuery[Any, Any]) -> LoweredFindQuery:
+        lowered = original(query)
+        lowerings.append(lowered)
+        return lowered
+
+    monkeypatch.setattr(_preflight, "lower_find_query", recording)
+    query = mm.Person.where(mm.Person.id == 1)
+    db = handle.Database.connect(QueuePort([[], []]), PERSON)
+    db.find(query)
+    db.find(query)
+    first, second = lowerings
+    assert first is not second
+    assert first == second
