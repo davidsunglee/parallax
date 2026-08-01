@@ -279,8 +279,11 @@ def reject_predicate_write(entity: EntityMetadata) -> None:
     the developer-facing ``_where`` verb family (`python.md` §5) and the
     conformance engine's predicate-write translation both run before they
     buffer, so no ingress can classify an inheritance-family predicate write
-    differently; :mod:`~parallax.core.unit_work.write_planner` calls it again at
-    flush as the structural refusal before SQL. A
+    differently. Two callers stand behind it, each covering a route that call
+    cannot: ``parallax.snapshot.handle``'s directly reachable buffering seam,
+    before it can resolve a materializing family target against a real
+    connection, and :mod:`~parallax.core.unit_work.write_planner` at flush, as
+    the structural refusal before SQL for whatever was buffered. A
     no-op for a non-participant ``entity`` (every entity outside an
     inheritance family accepts a predicate-selected write, subject to every
     OTHER m-batch-write / m-opt-lock rule).

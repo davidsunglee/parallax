@@ -41,6 +41,7 @@ __all__ = [
     "ORDERS",
     "PAYMENT",
     "PERSON",
+    "RATE",
     "SHIPMENT",
     "WHERE_POSITION_META",
     "NoIoPort",
@@ -62,6 +63,11 @@ SHIPMENT = MODELS["shipment"]
 PAYMENT = MODELS["payment"]
 PERSON = MODELS["person"]
 ORDERS = MODELS["orders"]
+# The BITEMPORAL inheritance family (`models/rate.yaml`, table-per-concrete-
+# subtype): the only corpus model whose target both participates in a family
+# AND materializes, so a predicate write on it takes the resolving-read route
+# rather than the readless one `payment.yaml` takes.
+RATE = MODELS["rate"]
 
 
 FIXED = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)

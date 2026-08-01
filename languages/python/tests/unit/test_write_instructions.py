@@ -825,11 +825,17 @@ def test_a_bare_navigation_filter_carrying_no_inner_operation_is_accepted(
     wi.validate_instruction(instruction, orders)  # must not raise
 
 
-def test_a_narrow_is_never_a_bare_write_predicate() -> None:
-    # A `narrow` names a polymorphic position, so it is refused as a non-bare
-    # predicate BEFORE the inheritance-family rejection the target would also
-    # earn — `python.md` §5 lists `narrow` among the clauses rejected on any
-    # write target.
+# A `narrow` is the one entry of `python.md` §5's enumeration whose meaning is
+# POSITIONAL. `m-op-algebra` draws the line: a top-level narrow is "the node a
+# whole-result narrowing produces" — the `.narrow()` clause on the write target
+# — while "a `narrow` appearing as a predicate term inside a boolean combinator
+# is a filter" over the unchanged position, as is one inside a navigation
+# filter's `op`, where it narrows the relationship target the hop reaches. The
+# refused half first.
+def test_a_whole_result_narrow_is_never_a_bare_write_predicate() -> None:
+    # The narrow wraps the WHOLE predicate, which is the result position: it is
+    # refused BEFORE the inheritance-family rejection this target would also
+    # earn.
     instruction = wi.deserialize(
         {
             "mutation": "delete",
@@ -845,8 +851,93 @@ def test_a_narrow_is_never_a_bare_write_predicate() -> None:
             },
         }
     )
-    with pytest.raises(wi.WriteInstructionError, match="`narrow` is a result modifier"):
+    with pytest.raises(wi.WriteInstructionError, match="whole-result narrowing"):
         wi.validate_instruction(instruction, _PAYMENT)
+
+
+_ANIMAL = models.accepted_model(_MODELS["animal"])
+# `Person` owns the polymorphic `animals` (-> the abstract root `Animal`) and
+# `pets` (-> the abstract subtype `Pet`), and is itself a plain non-family,
+# non-temporal, unversioned entity — so a predicate write on it is legal and the
+# narrow inside its navigation filter is the only thing under test.
+_PET_NARROW: dict[str, Any] = {
+    "narrow": {"entity": "Animal", "to": ["Dog"], "operand": {"all": {}}}
+}
+
+
+@pytest.mark.parametrize(
+    ("position", "predicate"),
+    [
+        ("exists", {"exists": {"rel": "Person.animals", "op": _PET_NARROW}}),
+        ("notExists", {"notExists": {"rel": "Person.animals", "op": _PET_NARROW}}),
+        ("navigate", {"navigate": {"rel": "Person.animals", "op": _PET_NARROW}}),
+        (
+            "and",
+            {
+                "and": {
+                    "operands": [
+                        {"eq": {"attr": "Person.name", "value": "Ada"}},
+                        {"exists": {"rel": "Person.animals", "op": _PET_NARROW}},
+                    ]
+                }
+            },
+        ),
+        (
+            "or",
+            {
+                "or": {
+                    "operands": [
+                        {"eq": {"attr": "Person.name", "value": "Ada"}},
+                        {"exists": {"rel": "Person.animals", "op": _PET_NARROW}},
+                    ]
+                }
+            },
+        ),
+        ("not", {"not": {"operand": {"exists": {"rel": "Person.animals", "op": _PET_NARROW}}}}),
+        ("group", {"group": {"operand": {"exists": {"rel": "Person.animals", "op": _PET_NARROW}}}}),
+    ],
+    ids=["exists", "not-exists", "navigate", "and", "or", "not", "group"],
+)
+def test_a_predicate_scoped_narrow_is_a_filter_and_is_accepted(
+    position: str, predicate: dict[str, Any]
+) -> None:
+    assert position in predicate
+    instruction = wi.deserialize(
+        {"mutation": "delete", "target": {"entity": "Person", "predicate": predicate}}
+    )
+    op_algebra.validate_operation(
+        next(e for e in _ANIMAL.entities if e.identity.name == "Person"),
+        cast("wi.PredicateWrite", instruction).target.predicate,
+        _ANIMAL,
+    )
+    wi.validate_instruction(instruction, _ANIMAL)  # must not raise
+
+
+def test_a_result_modifier_inside_a_predicate_scoped_narrow_is_still_rejected() -> None:
+    # Admitting the narrow does not admit what it wraps: the recursion descends
+    # through a filter narrow's own operand exactly as it does a boolean one's.
+    instruction = wi.deserialize(
+        {
+            "mutation": "delete",
+            "target": {
+                "entity": "Person",
+                "predicate": {
+                    "exists": {
+                        "rel": "Person.animals",
+                        "op": {
+                            "narrow": {
+                                "entity": "Animal",
+                                "to": ["Dog"],
+                                "operand": {"limit": {"operand": {"all": {}}, "count": 5}},
+                            }
+                        },
+                    }
+                },
+            },
+        }
+    )
+    with pytest.raises(wi.WriteInstructionError, match="`limit` is a result modifier"):
+        wi.validate_instruction(instruction, _ANIMAL)
 
 
 def test_a_deep_fetch_is_never_a_bare_write_predicate() -> None:
