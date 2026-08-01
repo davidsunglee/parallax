@@ -15,8 +15,8 @@ import pytest
 from parallax.core import (
     MANY_TO_ONE,
     Attr,
+    DomainModel,
     Entity,
-    MetamodelHub,
     MetamodelLookupError,
     Rel,
     ValueObject,
@@ -25,16 +25,10 @@ from parallax.core import (
     rel,
 )
 from parallax.core.entity import METAMODEL_LOOKUP_CODES
-from parallax.core.entity._hub import MetamodelHub as _Hub
+from parallax.core.entity._model import DomainModel as _Fixed
 from parallax.core.metamodel import EntityIdentity, UnresolvedEntityDeclaration
 
-_SPEC_CODES = frozenset(
-    {
-        "metamodel-invalid-entity-reference",
-        "metamodel-entity-not-found",
-        "metamodel-class-not-bound",
-    }
-)
+_SPEC_CODES = frozenset({"metamodel-invalid-entity-reference", "metamodel-entity-not-found"})
 
 
 class Address(ValueObject):
@@ -63,7 +57,7 @@ class Ownerless(Entity, table="ownerless"):
     id: Attr[int] = attr(primary_key=True)
 
 
-MODELS = MetamodelHub(Depot, Zone, Ownerless)
+MODELS = DomainModel(Depot, Zone, Ownerless)
 
 
 def test_the_three_key_forms_answer_one_object() -> None:
@@ -122,22 +116,22 @@ def test_an_absent_identity_is_not_found() -> None:
     assert caught.value.code == "metamodel-entity-not-found"
 
 
-def test_a_class_this_hub_did_not_claim_is_not_bound() -> None:
+def test_a_class_this_model_did_not_compose_names_no_entity_of_it() -> None:
     class Foreign(Entity, table="foreign"):
         id: Attr[int] = attr(primary_key=True)
 
     with pytest.raises(MetamodelLookupError) as caught:
         MODELS.meta(Foreign)
-    assert caught.value.code == "metamodel-class-not-bound"
+    assert caught.value.code == "metamodel-entity-not-found"
 
 
-def test_a_descriptor_backed_hub_serves_the_same_metadata_and_claims_no_class() -> None:
-    fixed = _Hub._from_unresolved(_Source())  # pyright: ignore[reportPrivateUsage] - unit test drives the hub's private constructor
+def test_a_descriptor_backed_model_serves_the_same_metadata_and_composes_no_class() -> None:
+    fixed = _Fixed._from_unresolved(_Source())  # pyright: ignore[reportPrivateUsage] - unit test drives the model's private constructor
     assert [entity.identity.canonical for entity in fixed.entities] == ["ops.Depot", "ops.Zone"]
     assert fixed.meta("ops.Depot").identity == EntityIdentity("ops", "Depot")
     with pytest.raises(MetamodelLookupError) as caught:
         fixed.meta(Depot)
-    assert caught.value.code == "metamodel-class-not-bound"
+    assert caught.value.code == "metamodel-entity-not-found"
 
 
 def test_the_lookup_code_set_is_closed() -> None:
@@ -150,8 +144,8 @@ class _Source:
     """A minimal Unresolved Metamodel standing in for the Descriptor Frontend.
 
     It reuses the two Entity Classes as declarations, which is exactly what the
-    seam accepts: a nonempty sequence of ``UnresolvedEntityDeclaration`` views
-    with no Python binding input.
+    seam accepts: a nonempty sequence of ``UnresolvedEntityDeclaration`` views,
+    composing no Entity Class of its own.
     """
 
     @property

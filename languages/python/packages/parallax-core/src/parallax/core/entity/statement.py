@@ -13,14 +13,13 @@ operation the corpus authors (the operation no-drift guard).
 from __future__ import annotations
 
 import datetime as dt
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, replace
 from typing import Any, Literal
 
 from parallax.core.base import normalize_instant
-from parallax.core.entity._binding import MetamodelBinding
 from parallax.core.entity._declaration import declaration_of
 from parallax.core.entity._expressions import Predicate, RelationshipPath, and_terms
-from parallax.core.metamodel import AsOfAxisMetadata, TemporalDimension, entity_by_name
+from parallax.core.metamodel import AsOfAxisMetadata, TemporalDimension
 from parallax.core.op_algebra import (
     All,
     And,
@@ -37,7 +36,6 @@ from parallax.core.op_algebra import (
     OrderKey,
     PathRootNarrow,
     serialize,
-    validate_operation,
 )
 from parallax.core.op_algebra.nodes import TemporalDimension as WireDimension
 from parallax.core.temporal_read import TX_TIME, VALID_TIME, Latest, TemporalDimensionConstant
@@ -88,11 +86,6 @@ class Statement:
     # Whether the statement-level ``.narrow(...)`` clause already wrapped the
     # predicate (single-shot, like ``as_of``).
     is_narrowed: bool = False
-    # The Metamodel Binding of the target's own hub, captured at ``Entity.where``:
-    # the model every predicate is validated against, so a rule stated over the
-    # model fires as the statement is built rather than at execution. Absent only
-    # for a Statement built directly, which validates nothing.
-    binding: MetamodelBinding | None = field(default=None, repr=False, compare=False)
 
     def order_by(self, *keys: OrderKey) -> Statement:
         """Order the result by one or more keys (``Attr.asc()`` / ``Attr.desc()``)."""
@@ -195,9 +188,10 @@ class Statement:
         """Deep-fetch one or more relationship paths (python.md §2):
         ``Order.where(...).include(Order.items.statuses, Order.tags)``. One
         path grammar shared with predicates; a longer path implies its
-        intermediates. Accumulates across calls (not single-shot). Validated
-        against the metamodel immediately (never at execution, never at the
-        database) — an undeclared hop or an illegal narrow raises here.
+        intermediates. Accumulates across calls (not single-shot). Every hop's
+        legality — an undeclared relationship, a value-object segment, an illegal
+        hop narrow — is a whole-model question, so it is settled at execution
+        preflight rather than here.
 
         A path seeded through a subtype (``include(Dog.owner, Cat.owner)``) carries
         that class's path-root guard, so the two are one relationship fetched for
@@ -215,7 +209,6 @@ class Statement:
             NavigationPath(segments=path.segments, narrow=self._root_guard(path.source))
             for path in paths
         )
-        _validate(self.binding, self.target, DeepFetch(operand=self.predicate, paths=new_paths))
         return replace(self, include_paths=new_paths)
 
     def _root_guard(self, source: str | None) -> PathRootNarrow | None:
@@ -240,17 +233,18 @@ class Statement:
         ``Animal.where(...).narrow(Dog, Cat)``. A PURE result-set narrowing
         that wraps the already-conjoined ``where`` predicate as the single
         top-level ``narrow``'s operand (zero predicates ⇒ ``all``) and grants
-        NO attribute scope to the already-built ``where`` arguments (those
-        validated immediately at ``Entity.where`` build time, under the
-        UNCONSTRAINED position) — single-shot, like ``as_of``. Converges on
-        the identical canonical node as
+        NO attribute scope to the already-built ``where`` arguments — single-shot,
+        like ``as_of``. Converges on the identical canonical node as
         ``Entity.where(Entity.narrow(Dog, where=...))``.
+
+        Single-shot is a clause fact and is refused here; which concrete subtypes
+        the named classes resolve to is a per-model fact and is settled at
+        execution preflight.
         """
         if self.is_narrowed:
             raise ValueError("a narrow clause is single-shot; derive from the un-narrowed base")
         to = tuple(declaration_of(subtype).identity.name for subtype in subtypes)
         node = Narrow(entity=self.target, to=to, operand=self.predicate)
-        _validate(self.binding, self.target, node)
         return replace(self, predicate=node, is_narrowed=True)
 
     def operation(self) -> Operation:
@@ -346,32 +340,15 @@ def build_statement(
     predicates: tuple[Predicate[Any], ...],
     *,
     as_of_axes: tuple[AsOfAxisMetadata, ...] = (),
-    binding: MetamodelBinding | None = None,
 ) -> Statement:
     """Build a :class:`Statement` conjoining ``predicates`` (empty is find-all).
 
-    The conjoined predicate is validated against ``binding``'s model as it is
-    built, so a subtype attribute reached outside a narrow scope is refused
-    here rather than at execution.
+    Authoring reaches no model, so nothing here measures a predicate against one.
+    Every rule that needs a whole model — an attribute reference's position, a
+    narrow's effective set, a hop's legality — is stated once at execution
+    preflight, which is also what covers the wire path and any untyped caller.
     """
-    predicate = _conjoined(predicates)
-    _validate(binding, target, predicate)
-    return Statement(target=target, predicate=predicate, as_of_axes=as_of_axes, binding=binding)
-
-
-def _validate(binding: MetamodelBinding | None, target: str, node: Operation) -> None:
-    """Validate ``node`` against the model ``binding``'s hub sealed.
-
-    A Statement built directly carries no Binding and validates nothing, which
-    is what lets the operation-shaping clauses be exercised without a whole
-    model behind them.
-    """
-    if binding is None:
-        return
-    root = entity_by_name(binding.model, target)
-    if root is None:  # pragma: no cover - the target is an Entity of its own hub
-        return
-    validate_operation(root, node, binding.model)
+    return Statement(target=target, predicate=_conjoined(predicates), as_of_axes=as_of_axes)
 
 
 def _conjoined(predicates: tuple[Predicate[Any], ...]) -> Operation:

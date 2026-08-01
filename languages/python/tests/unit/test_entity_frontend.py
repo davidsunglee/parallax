@@ -24,7 +24,6 @@ from parallax.core import (
     ConcreteSubtype,
     Entity,
     EntityDefinitionError,
-    MetamodelStateError,
     QueryDefinitionError,
     Rel,
     TxTemporal,
@@ -509,17 +508,14 @@ def test_class_level_member_access_seeds_operation_nodes() -> None:
     assert path.target == "sales.Customer"
 
 
-def test_a_statement_over_a_class_no_hub_claimed_names_the_missing_binding() -> None:
-    # Every predicate is validated against the class's own hub as the statement
-    # is built, so a class no hub has claimed — every class in this module — has
-    # no model to state a rule over and says so instead of building.
-    with pytest.raises(MetamodelStateError) as caught:
-        Order.where(Order.id == 1)
-    assert caught.value.code == "metamodel-class-not-bound"
-    assert caught.value.message == (
-        "Order belongs to no hub; compose it into a MetamodelHub before querying it"
-    )
-    assert caught.value.entities == ()
+def test_a_statement_over_a_class_no_model_composed_still_builds() -> None:
+    # Query authoring reaches no model, so composition is not a precondition of
+    # it: every class in this module belongs to no DomainModel, and a statement
+    # over one is an ordinary statement. Whether the queried Entity is declared
+    # is the connected model's question, answered at execution preflight.
+    statement = Order.where(Order.id == 1)
+    assert statement.target == "Order"
+    assert serialize(statement.operation()) == {"eq": {"attr": "Order.id", "value": 1}}
 
 
 def test_instance_access_returns_the_member_value_and_relationships_stay_closed_world() -> None:

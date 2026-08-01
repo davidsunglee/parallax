@@ -48,12 +48,8 @@ from typing import Final, cast
 from parallax.core.base import normalize_instant
 from parallax.core.db_port import Row
 from parallax.core.entity import Entity as EntityBase
-from parallax.core.entity import (
-    binding_of,
-    canonical_row,
-    effective_change_set,
-    primary_key_row,
-)
+from parallax.core.entity import canonical_row, effective_change_set, primary_key_row
+from parallax.core.entity._declaration import declaration_of
 from parallax.core.metamodel import (
     AttributeMetadata,
     EntityMetadata,
@@ -473,19 +469,19 @@ def predecessor_payload(layout: EntityLayoutView, row: Row) -> dict[str, object]
 
 def metadata_of_instance(meta: Metamodel, instance: EntityBase) -> EntityMetadata:
     """``instance``'s accepted Entity Metadata within ``meta``, or a loud
-    ``TypeError`` when its class belongs to no hub or to a different one.
+    ``TypeError`` when the connected model declares no such Entity.
 
-    Membership is decided by the Metamodel Binding the class was claimed by, and
-    that Binding must be the one that sealed ``meta`` itself — never by the
-    Entity Identity it names. Identity is not unique across hubs: two distinct
-    classes in two separate models may declare the same one, so resolving an
-    identity out of one hub and looking it up in another would silently accept a
-    foreign instance and key its write against the wrong model.
+    Membership is decided by the Entity Identity the instance's class declares:
+    one class participates in any number of models, so belonging is a question
+    about this model rather than about the class. What a shared identity cannot
+    settle — whether a foreign class's MEMBERS are this model's — is settled one
+    layer down and unchanged: every keyed write still routes ``deserialize`` ->
+    ``validate_write`` -> ``validate_instruction`` against the connected model,
+    where member-name honesty and the declared-type walk reject a foreign
+    instance's row.
     """
     cls = type(instance)
-    binding = binding_of(cls)
-    identity = None if binding is None or binding.model is not meta else binding.identity_of(cls)
-    metadata = None if identity is None else meta.entity(identity)
+    metadata = meta.entity(declaration_of(cls).identity)
     if metadata is None:
         raise TypeError(f"{cls.__name__} is not an Entity Class of this model")
     return metadata

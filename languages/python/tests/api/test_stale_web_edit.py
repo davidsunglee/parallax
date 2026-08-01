@@ -42,7 +42,7 @@ from parallax.conformance.stale_web_edit import (
 )
 from parallax.conformance.vo_models import Address, Branch, Geo
 from parallax.core import opt_lock
-from parallax.core.entity._hub import sealed_model
+from parallax.core.entity._model import model_of
 from parallax.core.unit_work import OptimisticLockConflictError
 from parallax.snapshot import connect
 from parallax.snapshot.handle import Database, Transaction
@@ -76,7 +76,7 @@ def _seed_branch(db: Database, *, id: int = 1) -> None:
 # The AUDIT-ONLY variant (Balance — a single Transaction-Time dimension).                #
 # --------------------------------------------------------------------------- #
 def test_audit_only_stale_web_edit_updates_the_displayed_milestone(provisioner: Any) -> None:
-    provisioner.reset(sealed_model(_BALANCE).model, {})
+    provisioner.reset(model_of(_BALANCE), {})
     db = connect(provisioner.port, _BALANCE, clock=ScriptedClock([_I1, _I2]))
     _seed_balance(db)
 
@@ -97,7 +97,7 @@ def test_audit_only_stale_web_edit_raises_historical_observation_in_locking_mode
     # locking-mode write over it raises before any DML, even with no
     # concurrent writer at all — the shared read lock would protect the
     # WRONG milestone once one exists.
-    provisioner.reset(sealed_model(_BALANCE).model, {})
+    provisioner.reset(model_of(_BALANCE), {})
     db = connect(provisioner.port, _BALANCE, clock=ScriptedClock([_I1, _I2]))
     _seed_balance(db)
     _node, edge = render_balance_milestone(db, id=1)
@@ -116,7 +116,7 @@ def test_audit_only_stale_web_edit_raises_historical_observation_in_locking_mode
 # The BITEMPORAL variant (Branch — both axes transported).                    #
 # --------------------------------------------------------------------------- #
 def test_bitemporal_stale_web_edit_updates_the_displayed_rectangle(provisioner: Any) -> None:
-    provisioner.reset(sealed_model(_BRANCH).model, {})
+    provisioner.reset(model_of(_BRANCH), {})
     db = connect(provisioner.port, _BRANCH, clock=ScriptedClock([_I1, _I2]))
     _seed_branch(db)
 
@@ -138,7 +138,7 @@ def test_bitemporal_stale_web_edit_optimistic_conflict_surfaces(provisioner: Any
     # and the submit: the transported edge's own `in_z` is now stale, so the
     # submit's gated close matches zero rows -- the conflict, surfaced
     # through the PUBLIC verb, never a detached object's own merge-back.
-    provisioner.reset(sealed_model(_BRANCH).model, {})
+    provisioner.reset(model_of(_BRANCH), {})
     db = connect(provisioner.port, _BRANCH, clock=ScriptedClock([_I1, _I3]))
     _seed_branch(db)
 

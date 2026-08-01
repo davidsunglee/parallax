@@ -1,31 +1,30 @@
-"""The Metamodel Hub: one explicit, sealed model over a fixed source.
+"""The Domain Model: one explicit, sealed model over a fixed source.
 
-``MetamodelHub(*classes)`` returns a fully sealed hub or raises. There is no
-``seal()`` operation and no unsealed, sealing, or rejected state, so every hub a
-caller can name is authoritative and no model-dependent operation performs a
+``DomainModel(*classes)`` returns a fully sealed model or raises. There is no
+``seal()`` operation and no unsealed, sealing, or rejected state, so every model
+a caller can name is authoritative and no model-dependent operation performs a
 lifecycle check.
 
 Construction runs one fixed sequence: left-to-right argument validation, whole-
-model formation, and — for a class-backed hub — the Python realization phase,
-which checks relationship annotation agreement and then claims the complete
-class set atomically. A hub under construction belongs to the thread building
-it: nothing else can name it until the claim publishes the Metamodel Binding
-that retains it. So the hub assigns its own state before claiming, and the
-atomic claim is at once the last step that can fail and the only step that
-makes anything observable — a failure anywhere leaves neither a half-built hub
-nor an orphaned class claim.
+model formation, and — for a class-backed model — the Python realization phase,
+which checks relationship annotation agreement. A Domain Model binds nothing and
+owns no identity, so an Entity Class participates in as many models as compose
+it and construction has no synchronization point. What a class-backed model
+holds is an index of the classes it composed, which exists so a materializing
+runtime can decide which class a returned row instantiates. The same class may
+legitimately mean different things in two models: partial inheritance families
+compose, so an Entity's effective concrete-subtype set is a per-model fact.
 """
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from types import MappingProxyType
 
 from parallax.core._formation_profile import form_metamodel
-from parallax.core.entity._binding import MetamodelBinding, claim
 from parallax.core.entity._declaration import declaration_of, is_entity_class, members_of
 from parallax.core.entity._errors import (
-    METAMODEL_CLASS_NOT_BOUND,
     METAMODEL_DUPLICATE_ENTITY_CLASS,
     METAMODEL_EMPTY,
     METAMODEL_ENTITY_NOT_FOUND,
@@ -50,7 +49,7 @@ from parallax.core.metamodel import (
 )
 from parallax.core.relationship import view as relationship_view
 
-__all__ = ["MetamodelHub", "SealedModel", "sealed_model"]
+__all__ = ["ClassIndex", "DomainModel", "class_index", "model_of"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,18 +63,40 @@ class _ClassSource:
     entities: tuple[UnresolvedEntityDeclaration, ...]
 
 
-class MetamodelHub:
-    """One sealed model, composed from a fixed source.
+@dataclass(frozen=True, slots=True)
+class ClassIndex:
+    """The immutable bidirectional Entity Identity to Entity Class index one
+    class-backed Domain Model composed.
 
-    A class-backed hub additionally binds each Entity Class to its Entity
-    Identity for that class object's lifetime; a descriptor-backed hub creates no
-    binding. Both expose the identical compiler-owned accepted metadata.
+    It exists for materialization — deciding which class a returned row
+    instantiates — and is never an authorization structure: a class appears here
+    because this model composed it, never because it belongs to this model.
     """
 
-    __slots__ = ("_binding", "_model")
+    by_class: Mapping[type, EntityIdentity]
+    by_identity: Mapping[EntityIdentity, type]
+
+    def identity_of(self, cls: type) -> EntityIdentity | None:
+        """The Entity Identity ``cls`` was composed under here, or ``None``."""
+        return self.by_class.get(cls)
+
+    def class_of(self, identity: EntityIdentity) -> type | None:
+        """The Entity Class composed under ``identity`` here, or ``None``."""
+        return self.by_identity.get(identity)
+
+
+class DomainModel:
+    """One sealed model, composed from a fixed source.
+
+    A class-backed model additionally holds the index of the Entity Classes it
+    composed; a descriptor-backed model composes none and holds none. Both expose
+    the identical compiler-owned accepted metadata.
+    """
+
+    __slots__ = ("_classes", "_model")
 
     _model: Metamodel
-    _binding: MetamodelBinding | None
+    _classes: ClassIndex | None
 
     def __init__(self, *classes: UnresolvedEntityDeclaration) -> None:
         """Compose ``classes`` into one sealed model, or raise.
@@ -92,40 +113,31 @@ class MetamodelHub:
         Formation raises :class:`~parallax.core.model_formation.
         MetamodelValidationError` on model defects; realization raises
         :class:`EntityDefinitionError` with
-        ``entity-relationship-annotation-mismatch`` on annotation disagreement
-        and :class:`~parallax.core.entity.MetamodelStateError` with
-        ``metamodel-class-already-bound`` when another sealed hub already owns
-        any of these classes.
+        ``entity-relationship-annotation-mismatch`` on annotation disagreement.
         """
         entity_classes = _validated(classes)
         model = form_metamodel(_ClassSource(classes))
         _reject_annotation_mismatches(entity_classes, model)
-        binding = MetamodelBinding(
-            model=model,
-            classes={cls: declaration_of(cls).identity for cls in entity_classes},
-            owner=self,
-        )
-        self._publish(model, binding)
-        claim(binding)
+        self._publish(model, _class_index(entity_classes))
 
     @classmethod
-    def _from_unresolved(cls, source: UnresolvedMetamodel) -> MetamodelHub:
-        """Seal ``source`` into a fixed-source hub with no Entity Class binding.
+    def _from_unresolved(cls, source: UnresolvedMetamodel) -> DomainModel:
+        """Seal ``source`` into a fixed-source model composing no Entity Class.
 
         The private, versioned first-party seam the Descriptor Frontend reaches
-        hub construction through. It is not a supported third-party extension
+        model construction through. It is not a supported third-party extension
         point, and no registration, discovery, or lazy-import mechanism supplies
         it.
         """
         model = form_metamodel(source)
-        hub = cls.__new__(cls)
-        hub._publish(model, None)
-        return hub
+        domain = cls.__new__(cls)
+        domain._publish(model, None)
+        return domain
 
-    def _publish(self, model: Metamodel, binding: MetamodelBinding | None) -> None:
-        """Complete the hub's own state while it is still private to its builder."""
+    def _publish(self, model: Metamodel, classes: ClassIndex | None) -> None:
+        """Complete the model's own state in one step."""
         self._model = model
-        self._binding = binding
+        self._classes = classes
 
     @property
     def entities(self) -> Sequence[EntityMetadata]:
@@ -135,15 +147,16 @@ class MetamodelHub:
     def meta(self, key: type | str | EntityIdentity) -> EntityMetadata:
         """The accepted local metadata ``key`` names within this model.
 
-        ``key`` is an Entity Class of this hub, a canonical spelling
+        ``key`` is an Entity Class this model composed, a canonical spelling
         (``"sales.Order"``, or a bare ``"Order"`` for an unnamespaced Entity), or
         an :class:`EntityIdentity`. All three answer the same object.
 
         Raises :class:`MetamodelLookupError` with
         ``metamodel-invalid-entity-reference`` for a string that is not a
-        canonical spelling, ``metamodel-class-not-bound`` for a class this hub
-        did not claim, and ``metamodel-entity-not-found`` when the key is
-        well-formed but names no Entity here.
+        canonical spelling, and ``metamodel-entity-not-found`` when the key is
+        well-formed but names no Entity here — a class this model did not compose
+        included, since a class names an Entity of the models that composed it
+        and of no other.
         """
         identity = self._identity(key)
         metadata = self._model.entity(identity)
@@ -159,43 +172,46 @@ class MetamodelHub:
             return key
         if isinstance(key, str):
             return _parsed_identity(key)
-        identity = None if self._binding is None else self._binding.identity_of(key)
+        identity = None if self._classes is None else self._classes.identity_of(key)
         if identity is None:
             raise MetamodelLookupError(
-                code=METAMODEL_CLASS_NOT_BOUND,
+                code=METAMODEL_ENTITY_NOT_FOUND,
                 message=(
-                    f"{key.__name__} is not bound to this hub; a class belongs to the one "
-                    "hub that claimed it, and a descriptor-backed hub claims none"
+                    f"this model composed no Entity Class {key.__name__}; a class names an "
+                    "Entity of the models that composed it and of no other"
                 ),
             )
         return identity
 
 
-@dataclass(frozen=True, slots=True)
-class SealedModel:
-    """What one sealed hub holds, for a first-party runtime that is not the hub.
+def model_of(model: DomainModel) -> Metamodel:
+    """The accepted Metamodel ``model`` sealed.
 
-    The Snapshot composition root connects to an accepted ``Metamodel`` rather
-    than to the hub itself, so it needs both facts out of one; ``binding`` is
-    absent exactly for a descriptor-backed hub, whose model names no class.
-
-    Reachable only through this private module — ``parallax.core.entity`` exports
-    neither this class nor :func:`sealed_model` — so the pair is first-party
-    support rather than developer surface.
+    A free function rather than a property: reading the accepted model out of a
+    Domain Model is a first-party runtime seam, not part of the developer
+    surface, which is ``meta(...)`` and ``entities`` alone.
     """
-
-    model: Metamodel
-    binding: MetamodelBinding | None
+    return model._model  # pyright: ignore[reportPrivateUsage] - first-party seam reads the model's own sealed metamodel
 
 
-def sealed_model(hub: MetamodelHub) -> SealedModel:
-    """The accepted Metamodel and Metamodel Binding ``hub`` sealed.
+def class_index(model: DomainModel) -> ClassIndex | None:
+    """``model``'s Entity Class index, absent exactly for a descriptor-backed one.
 
-    A free function rather than a method: reading a hub's own model is a
-    first-party runtime seam, not part of the developer surface, which is
-    ``meta(...)`` and ``entities`` alone.
+    The companion of :func:`model_of` for the one capability that needs classes:
+    a runtime that instantiates result rows. Reachable only through this private
+    module — ``parallax.core.entity`` exports neither function — so the pair is
+    first-party support rather than developer surface.
     """
-    return SealedModel(hub._model, hub._binding)  # pyright: ignore[reportPrivateUsage] - first-party seam reads the hub's own sealed model/binding pair
+    return model._classes  # pyright: ignore[reportPrivateUsage] - first-party seam reads the model's own class index
+
+
+def _class_index(classes: Sequence[type]) -> ClassIndex:
+    """The bidirectional index over ``classes`` and the identities they declare."""
+    by_class = {cls: declaration_of(cls).identity for cls in classes}
+    return ClassIndex(
+        by_class=MappingProxyType(dict(by_class)),
+        by_identity=MappingProxyType({identity: cls for cls, identity in by_class.items()}),
+    )
 
 
 def _validated(classes: tuple[UnresolvedEntityDeclaration, ...]) -> tuple[type, ...]:
@@ -203,7 +219,7 @@ def _validated(classes: tuple[UnresolvedEntityDeclaration, ...]) -> tuple[type, 
     if not classes:
         raise MetamodelDefinitionError(
             code=METAMODEL_EMPTY,
-            message="a hub composes at least one Entity Class",
+            message="a domain model composes at least one Entity Class",
         )
     seen: set[UnresolvedEntityDeclaration] = set()
     checked: list[type] = []

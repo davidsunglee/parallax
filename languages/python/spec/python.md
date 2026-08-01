@@ -2322,6 +2322,7 @@ legalizes a forbidden edge.
 | Descriptor Hub orchestration (support, child of `parallax.descriptor`) | `parallax.descriptor._hub` | `parallax.descriptor._hub` | `parallax.core.entity` (private Hub-construction seam only) | generated forbidden contracts + cross-package contract |
 | Entity and Find Query frontend (support) | `parallax.core.entity` | `parallax.core.entity` | `m-core`, `m-metamodel`, `m-inheritance`, `m-relationship`, `m-op-algebra`, `m-temporal-read`, `parallax.core._formation_profile` | generated forbidden contracts |
 | Statement surface (support, child of `parallax.core.entity`) | `parallax.core.entity.statement` | `parallax.core.entity.statement` | `m-core`, `m-metamodel`, `m-op-algebra`, `m-temporal-read` | generated forbidden contracts |
+| Query expression values (support, child of `parallax.core.entity`) | `parallax.core.entity._expressions` | `parallax.core.entity._expressions` | `m-metamodel`, `m-op-algebra` | generated forbidden contracts |
 | Concrete Postgres adapter (support) | `parallax.postgres.adapter` | `parallax.postgres` | `m-core`, `m-db-port`, `m-db-error`, `m-dialect`, psycopg | generated forbidden contracts + cross-package contract |
 | Composition root (support) | application/test code calling `parallax.snapshot.connect` | (application-owned) | `parallax.snapshot`, `parallax.postgres` | only the root imports a concrete adapter |
 
@@ -2370,6 +2371,8 @@ parallax.core.entity.statement --> parallax.core.base
 parallax.core.entity.statement --> parallax.core.metamodel
 parallax.core.entity.statement --> parallax.core.op_algebra
 parallax.core.entity.statement --> parallax.core.temporal_read
+parallax.core.entity._expressions --> parallax.core.metamodel
+parallax.core.entity._expressions --> parallax.core.op_algebra
 parallax.snapshot.handle --> parallax.snapshot.materialize
 parallax.snapshot.handle --> parallax.core.entity
 parallax.snapshot.handle --> parallax.core.base
@@ -2530,7 +2533,11 @@ parallax.postgres --> parallax.core.dialect
   `parallax.core.entity.statement` is the **grantable**
   case: a child scope may also be named as another scope's grant,
   which is how a consumer takes a narrow part of a package without taking what
-  the rest of that package reaches. All are generated as ordinary contract
+  the rest of that package reaches. `parallax.core.entity._expressions` is the
+  narrowing case within one package: query authoring reaches no model, so the
+  values a developer composes must reach no model formation and no whole-model
+  semantic view, and the row is what proves it rather than the module docstring
+  alone. All are generated as ordinary contract
   sources, and none is a new supported import path. Because
   import-linter's `forbidden` contracts are package-scoped on both sides, a
   child is emitted as a contract **source**, and as a forbidden target only in

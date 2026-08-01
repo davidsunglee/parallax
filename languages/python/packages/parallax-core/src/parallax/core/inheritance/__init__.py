@@ -24,7 +24,6 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 
-from parallax.core.base import coerce_neutral_input, matches_neutral_type
 from parallax.core.inheritance._compile import (
     MODEL_COMPILER,
     InheritanceModelCompiler,
@@ -74,12 +73,14 @@ from parallax.core.inheritance._table_groups import (
 from parallax.core.metamodel import (
     AbstractRoot,
     AbstractSubtype,
+    AttributeMetadata,
     ConcreteSubtype,
     EntityIdentity,
     EntityMetadata,
     PrimaryKey,
-    VoDocumentViolation,
-    vo_document_violation,
+    ValueObjectMetadata,
+    WriteAssignmentError,
+    judge_assignment,
 )
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
 
@@ -294,166 +295,48 @@ def reject_predicate_write(entity: EntityMetadata) -> None:
     )
 
 
-class WriteAssignmentError(ValueError):
-    """A predicate-write assignment (`.set(...)`-built or case-authored) names
-    an unassignable target or an ill-typed value (`python.md:667-676`;
-    `m-case-format.md:700`/`:711` "framework-owned/unassignable assignments").
-    ``rule`` is the shared classification both callers reuse verbatim in their
-    own error text."""
-
-    def __init__(self, rule: str, message: str) -> None:
-        super().__init__(message)
-        self.rule = rule
-
-
 def validate_write_assignment(
     model: AcceptedMetamodel, entity: EntityMetadata, name: str, value: object
 ) -> None:
     """The ONE predicate-write assignment check every caller applies to one
-    `{attr, value}` pair (`m-opt-lock` "Version values are framework-owned";
-    `python.md` §5 "each field may be assigned at most once"): mirroring
-    `model_copy`'s own assignability rule (`parallax.core.entity._entity.
-    _validate_copy_keys`), a primary-key or optimistic-locking (version)
-    target is rejected outright — a family's version/key columns are declared
-    only on the root, so this walk reads the Inheritance Facet's FAMILY-EFFECTIVE
-    applicable members, exactly like every other write-side member-name
-    resolution. Neither `entity._expressions.AttributeExpr.set` (the typed path,
-    `parallax.core.entity`) nor `unit_work.instructions.validate_instruction`
-    (the case-authored engine/serialized path, `parallax.core.unit_work`) may
-    import the other (`core/spec/modules.md` §7 DAG), so this classification
-    lives here, the ONE scope both already depend on — the "one validator, two
-    callers" pattern (`parallax.core.op_algebra.validate_operation` /
-    `parallax.core.unit_work.write_validate.validate_write`'s own precedent)
-    extended across a DAG boundary neither scope alone can bridge.
+    `{attr, value}` pair, resolved family-effectively and then judged.
 
-    For an ordinary scalar attribute, a non-``None`` ``value`` MUST also
-    conform to its declared `m-core` neutral type (`matches_neutral_type` over
-    the input-policy-coerced value, `~parallax.core.base.coerce_neutral_input`
-    — the SAME exact scalar-value policy `write_validate` applies to a keyed
-    write row). A ``None`` value is a legal CLEARING
-    assignment ONLY when the attribute is declared ``nullable`` (mirroring
-    `write_validate`'s own null short-circuit, which is likewise
-    nullable-gated, `_check_entity_attribute`) — a NON-nullable scalar assigned
-    ``None`` is rejected with the SAME `"required attribute is absent (or
-    null)"` wording `write_validate`'s own required-attribute check uses
-    (`None` is an explicit clearing attempt here, never an omitted/sparse
-    member the way an absent keyed-write row key is, so this check is
-    UNCONDITIONAL — there is no mutation-aware sparseness concept at the
-    assignment boundary, every named assignment is "present" by construction).
+    Resolution is this scope's half: a family's version and key columns are
+    declared only on the root, so ``name`` is matched against the Inheritance
+    Facet's FAMILY-EFFECTIVE applicable members, exactly like every other
+    write-side member-name resolution. The verdict itself — assignability,
+    nullability, declared-type conformance, and Value Object document shape — is
+    :func:`~parallax.core.metamodel.judge_assignment`'s, the one judgement the
+    typed ``.set(...)`` path reaches without a model at all. Only the resolution
+    in front of it differs between the two callers, never the rule.
 
-    A ``name`` naming a VALUE-OBJECT member instead (FAMILY-EFFECTIVE through the
-    same facet view) is likewise validated: a non-``None`` ``value`` MUST be a
-    well-formed document against the member's declared composite — the SAME
-    error-neutral structural walk `write_validate`'s own declared-composite
-    check reuses (`parallax.core.metamodel.vo_document_violation`), so a
-    non-document value (e.g. ``Customer.address.set(42)``, typed or the
-    equivalent serialized ``PredicateWrite`` assignment) is rejected with this
-    function's OWN established wording style; a well-formed document is accepted
-    — assigning a value object is not itself rejected (the combination is
-    structurally accepted). A ``None`` value is likewise a legal clearing
-    assignment ONLY when the value object is declared ``nullable``
-    (`m-value-object` "A `nullable: false` value object MUST be present at write
-    time") — a NON-nullable value object assigned ``None`` is rejected reusing
-    `vo_document_violation`'s own ``"value-object-missing"`` rendering
-    (`_vo_assignment_error`, the SAME `"required value object is absent (or
-    null)"` wording a nested required-VO violation already renders) rather than
-    forking new text. A ``name`` this family declares NEITHER a scalar attribute
-    NOR a value object for (one `validate_instruction`'s own
-    member-name-honesty gate already rejects as wholly undeclared) is out of
-    this function's scope — it returns silently, leaving that classification to
-    its own owning check.
+    The judgement names the member relative to its own owner, so this caller
+    prefixes the addressed Entity: an assignment reported here reads
+    ``Order.total: …`` however deep in a Value Object the violation was found.
+
+    A ``name`` this family declares NEITHER a scalar attribute NOR a value object
+    for (one `validate_instruction`'s own member-name-honesty gate already
+    rejects as wholly undeclared) is out of this function's scope — it returns
+    silently, leaving that classification to its own owning check.
     """
     position = _entity_view(view(model), entity.identity)
     owner = entity.identity.name
     for attribute in position.applicable_attributes:
-        if attribute.identity.name != name:
-            continue
-        if isinstance(attribute.primary_key, PrimaryKey):
-            raise WriteAssignmentError(
-                "primary-key", f"{owner}.{name}: primary-key fields may not be assigned"
-            )
-        if attribute.optimistic_locking:
-            raise WriteAssignmentError(
-                "optimistic-locking",
-                f"{owner}.{name}: framework-owned fields (the version column) may not be assigned",
-            )
-        if value is None:
-            if not attribute.nullable:
-                raise WriteAssignmentError(
-                    "value-type-mismatch",
-                    f"{owner}.{name}: required attribute is absent (or null)",
-                )
+        if attribute.identity.name == name:
+            _judged(owner, attribute, value)
             return
-        if not matches_neutral_type(coerce_neutral_input(value, attribute.type), attribute.type):
-            raise WriteAssignmentError(
-                "value-type-mismatch",
-                f"{owner}.{name}: value {value!r} does not match the declared type "
-                f"{attribute.type!r}",
-            )
-        return
     for value_object in position.applicable_value_objects:
-        if value_object.identity.path[-1] != name:
-            continue
-        if value is None:
-            if not value_object.nullable:
-                raise _vo_assignment_error(
-                    owner, name, VoDocumentViolation("", "value-object-missing")
-                )
+        if value_object.identity.path[-1] == name:
+            _judged(owner, value_object, value)
             return
-        violation = vo_document_violation(value_object, value)
-        if violation is not None:
-            raise _vo_assignment_error(owner, name, violation)
-        return
 
 
-def _vo_assignment_error(
-    entity_name: str, name: str, violation: VoDocumentViolation
-) -> WriteAssignmentError:
-    """Render :func:`validate_write_assignment`'s OWN rule vocabulary and
-    message text (the ``"value-type-mismatch"`` rule, the SAME one a scalar
-    mismatch raises — a malformed value-object assignment is, from this
-    function's own vocabulary, just another shape of "the value does not
-    match the declared type") from a shared, error-neutral
-    ``parallax.core.metamodel._vo_document`` violation — that module owns no
-    text of its own, see its own docstring."""
-    path = _joined(f"{entity_name}.{name}", violation.path)
-    if violation.reason == "not-a-list":
-        return WriteAssignmentError(
-            "value-type-mismatch",
-            f"{path}: value {violation.value!r} does not match the declared type — a `many` "
-            "value object must bind a list of documents",
-        )
-    if violation.reason == "not-a-document":
-        return WriteAssignmentError(
-            "value-type-mismatch",
-            f"{path}: value {violation.value!r} does not match the declared type — expected a "
-            "document (mapping)",
-        )
-    if violation.reason == "attribute-missing":
-        return WriteAssignmentError(
-            "value-type-mismatch", f"{path}: required attribute is absent (or null)"
-        )
-    if violation.reason == "value-object-missing":
-        return WriteAssignmentError(
-            "value-type-mismatch", f"{path}: required value object is absent (or null)"
-        )
-    return WriteAssignmentError(
-        "value-type-mismatch",
-        f"{path}: value {violation.value!r} does not match the declared type "
-        f"{violation.declared_type!r}",
-    )
-
-
-def _joined(base: str, path: str) -> str:
-    """``base`` plus a shared-walk violation's own relative ``path`` — a nested
-    member dot-joins, a ``many`` element index attaches bracket-first (no dot,
-    mirroring `write_validate`'s own owner-string convention, e.g.
-    ``"Customer.address.phones[0].number"``)."""
-    if not path:
-        return base
-    if path.startswith("["):
-        return f"{base}{path}"
-    return f"{base}.{path}"
+def _judged(owner: str, member: AttributeMetadata | ValueObjectMetadata, value: object) -> None:
+    """Judge ``member`` against ``value``, re-raising owner-qualified."""
+    try:
+        judge_assignment(member, value)
+    except WriteAssignmentError as error:
+        raise WriteAssignmentError(error.rule, f"{owner}.{error}") from error
 
 
 def _concrete_accepted_field_names(

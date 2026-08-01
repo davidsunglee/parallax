@@ -43,8 +43,8 @@ from parallax.conformance.vo_models import (
 from parallax.core.base import INFINITY, TemporalBound
 from parallax.core.db_port import Bind, DbPort, Row
 from parallax.core.dialect import POSTGRES
-from parallax.core.entity import MetamodelHub
-from parallax.core.entity._hub import sealed_model
+from parallax.core.entity import DomainModel
+from parallax.core.entity._model import model_of
 from parallax.core.metamodel import EntityMetadata
 from parallax.core.unit_work import WriteRejectedError, validate_write
 from parallax.snapshot.handle import Database, Transaction
@@ -489,7 +489,7 @@ INCOMPLETE_DOCUMENT_BUILDERS: dict[str, tuple[str, Callable[[], object]]] = {
 }
 
 
-def _rejected_write_target(hub: MetamodelHub) -> EntityMetadata:
+def _rejected_write_target(hub: DomainModel) -> EntityMetadata:
     """The Entity a rejected `when.write` resolves against (`engine._rejected_target`'s
     own convention): these models declare no family, so it is the model's one Entity —
     unpacking fails loudly if that ever stops holding."""
@@ -513,7 +513,7 @@ def test_the_declared_structure_classifies_the_corpus_rule(case_id: str) -> None
     case = _CASES[case_id]
     expected_rule = case_document(case)["then"]["rejectedRule"]
     hub = MODELS[_case_model_stem(case_id)]
-    model = sealed_model(hub).model
+    model = model_of(hub)
     target = _rejected_write_target(hub)
     # The case authors its row in the wire spellings a read golden uses, so it
     # decodes to native carriers first — exactly as `engine.run_rejected_case`

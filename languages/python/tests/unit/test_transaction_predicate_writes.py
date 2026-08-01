@@ -35,9 +35,9 @@ from parallax.conformance.story_models import Order
 from parallax.core import (
     Attr,
     Bitemporal,
+    DomainModel,
     Entity,
     Int32,
-    MetamodelHub,
     TxTemporal,
     ValueObject,
     attr,
@@ -66,7 +66,7 @@ class WhereLedger(TxTemporal, table="where_ledger", namespace="parallax.compatib
     address: Attr[WhereLedgerAddress | None]
 
 
-_WHERE_LEDGER_META = MetamodelHub(WhereLedger)
+_WHERE_LEDGER_META = DomainModel(WhereLedger)
 
 
 # A local bitemporal, value-object-bearing entity combines `WherePosition`'s
@@ -83,7 +83,7 @@ class WhereRectangle(Bitemporal, table="where_rectangle", namespace="parallax.co
     address: Attr[WhereRectangleAddress | None]
 
 
-_WHERE_RECTANGLE_META = MetamodelHub(WhereRectangle)
+_WHERE_RECTANGLE_META = DomainModel(WhereRectangle)
 
 
 # A local versioned non-temporal, value-object-bearing entity mirrors
@@ -105,7 +105,7 @@ class WhereSubscriber(Entity, table="where_subscriber", namespace="parallax.comp
     profile: Attr[WhereSubscriberProfile | None]
 
 
-_WHERE_SUBSCRIBER_META = MetamodelHub(WhereSubscriber)
+_WHERE_SUBSCRIBER_META = DomainModel(WhereSubscriber)
 
 
 # --------------------------------------------------------------------------- #

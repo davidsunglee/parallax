@@ -18,7 +18,6 @@ from dataclasses import dataclass
 from typing import Any, Final, overload
 
 from parallax.core.base import FLOAT32, INT32, Float32, Int32, NeutralType
-from parallax.core.entity._binding import MetamodelBinding, binding_of
 from parallax.core.entity._errors import EntityDefinitionError, UnloadedRelationshipError
 from parallax.core.entity._expressions import (
     UNLOADED,
@@ -34,6 +33,7 @@ from parallax.core.metamodel import (
     NOT_PRIMARY_KEY,
     TABLE_PER_CONCRETE_SUBTYPE,
     AbstractRoot,
+    AttributeMetadata,
     AttributePrimaryKey,
     Cardinality,
     Max,
@@ -43,7 +43,7 @@ from parallax.core.metamodel import (
     Sequence,
     SortDirection,
     TablePerHierarchy,
-    entity_by_name,
+    ValueObjectMetadata,
 )
 from parallax.core.op_algebra import PathSegment
 
@@ -427,10 +427,10 @@ class Attr[T]:
     """The scalar and Value Object member annotation, and the descriptor it installs.
 
     Class access yields an :class:`~parallax.core.entity._expressions.AttributeExpr`
-    predicate seed carrying the accessed class's own Metamodel Binding, so an
-    assignment built from it is validated against that hub's model; instance
-    access yields the member value. A non-data descriptor, so Pydantic's instance
-    ``__dict__`` legitimately shadows the instance branch.
+    predicate seed carrying this member's own declared Metadata, which is every
+    fact an assignment built from it is judged against; instance access yields
+    the member value. A non-data descriptor, so Pydantic's instance ``__dict__``
+    legitimately shadows the instance branch.
 
     The class-access overload parameterizes the expression by the class the
     access went THROUGH, not the one that declares the member: an inherited
@@ -442,11 +442,14 @@ class Attr[T]:
     spell such a member through the class that declares it.
     """
 
-    __slots__ = ("_py_name", "_ref")
+    __slots__ = ("_member", "_py_name", "_ref")
 
-    def __init__(self, ref: AttributeRef, py_name: str) -> None:
+    def __init__(
+        self, ref: AttributeRef, py_name: str, member: AttributeMetadata | ValueObjectMetadata
+    ) -> None:
         self._ref = ref
         self._py_name = py_name
+        self._member = member
 
     @overload
     def __get__[E](self, obj: None, owner: type[E], /) -> AttributeExpr[E, T]: ...
@@ -454,11 +457,7 @@ class Attr[T]:
     def __get__(self, obj: object, _owner: type | None = None, /) -> T: ...
     def __get__(self, obj: object | None, _owner: type | None = None) -> AttributeExpr[Any, T] | T:
         if obj is None:
-            return AttributeExpr(
-                self._ref.entity,
-                self._ref.attribute,
-                binding=None if _owner is None else binding_of(_owner),
-            )
+            return AttributeExpr(self._ref.entity, self._ref.attribute, member=self._member)
         # As with `ElementAttr` below, Pydantic's own instance `__dict__`
         # shadows this branch under ordinary attribute access; it is reached only
         # by invoking the descriptor directly, the documented instance-access
@@ -496,31 +495,6 @@ class ElementAttr[T]:
         # invoking the descriptor directly.
         value: T = obj.__dict__[self._py_name]
         return value
-
-
-def _hop(binding: MetamodelBinding, target: str, name: str) -> RelationshipPath:
-    """The single-hop path the Python member ``name`` names on ``target``.
-
-    How a Relationship Path continues past its first hop, handed to every path
-    this module seeds. The hop names a *Python* member, and only the target's own
-    Entity Class answers which declaration that is: a member may override its
-    canonical name or inherit its declaration, so a canonical name re-derived
-    from the Python spelling would miss either. Asking the class is a class
-    lookup, which belongs here — the path itself reaches no class.
-
-    Raises ``AttributeError`` when ``target`` names no Entity Class of the
-    Binding's model, or when that class declares no such relationship.
-    """
-    entity = entity_by_name(binding.model, target)
-    owner = None if entity is None else binding.class_of(entity.identity)
-    if owner is None:
-        raise AttributeError(
-            f"{target}.{name}: {target!r} is not an Entity Class of the model this path resolves in"
-        )
-    hop = getattr(owner, name, None)
-    if not isinstance(hop, RelationshipPath):
-        raise AttributeError(f"{target}.{name}: {target} declares no relationship")
-    return hop
 
 
 class Rel[T]:
@@ -562,8 +536,6 @@ class Rel[T]:
                 segments=(PathSegment(rel=str(self._ref)),),
                 target=self._target,
                 source=_access_source(_owner),
-                binding=None if _owner is None else binding_of(_owner),
-                resolve_hop=_hop,
             )
         value = obj.__dict__[self._py_name]
         if value is UNLOADED:

@@ -20,9 +20,9 @@ from parallax.core import (
     VALID_TIME,
     Attr,
     AttributeExpr,
+    DomainModel,
     Entity,
     Int32,
-    MetamodelHub,
     Predicate,
     Statement,
     attr,
@@ -50,7 +50,7 @@ class Widget(Entity, table="widget", namespace=_NS):
     made_on: Attr[dt.date]
 
 
-_WIDGETS = MetamodelHub(Widget)
+_WIDGETS = DomainModel(Widget)
 
 
 def _op(pred: Predicate[Any]) -> dict[str, object]:

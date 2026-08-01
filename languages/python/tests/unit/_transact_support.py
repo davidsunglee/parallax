@@ -20,7 +20,7 @@ from typing import Final, cast
 
 from _support import mirrored_models as mm
 from parallax.conformance.class_models import MODELS
-from parallax.core import Attr, Bitemporal, MetamodelHub, attr
+from parallax.core import Attr, Bitemporal, DomainModel, attr
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import Bind, DbPort, Row
 from parallax.core.dialect import POSTGRES
@@ -80,7 +80,7 @@ class WherePosition(Bitemporal, table="where_position", namespace="parallax.comp
     value: Attr[Decimal] = attr(precision=18, scale=2)
 
 
-WHERE_POSITION_META = MetamodelHub(WherePosition)
+WHERE_POSITION_META = DomainModel(WherePosition)
 
 
 NEW_ROW: Row = {"id": 7, "owner": "Newton", "balance": 5.00, "version": 1}
@@ -173,7 +173,7 @@ def account_db(port: RecordingPort) -> Database:
     return connect(port, ACCOUNT, clock=FixedClock(FIXED))
 
 
-def db_for(meta: MetamodelHub, port: RecordingPort) -> Database:
+def db_for(meta: DomainModel, port: RecordingPort) -> Database:
     return Database.connect(port, meta, clock=FixedClock(FIXED))
 
 

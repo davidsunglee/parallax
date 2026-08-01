@@ -16,7 +16,7 @@ engine reads the live ``Attr[T]`` / ``Rel[T]`` objects directly.
 """
 
 from parallax.conformance.read_models import Animal, Cat, Dog, Pet, WildBoar
-from parallax.core import ONE_TO_MANY, Attr, Entity, MetamodelHub, Rel, attr, index, rel
+from parallax.core import ONE_TO_MANY, Attr, DomainModel, Entity, Rel, attr, index, rel
 
 _NS = "parallax.compatibility"
 
@@ -38,6 +38,6 @@ class Person(
     pets: Rel[tuple[Pet, ...]] = rel(cardinality=ONE_TO_MANY, join=("id", "owner_id"))
 
 
-ANIMAL_MODEL = MetamodelHub(Person, Animal, Pet, Dog, Cat, WildBoar)
+ANIMAL_MODEL = DomainModel(Person, Animal, Pet, Dog, Cat, WildBoar)
 """``models/animal.yaml`` as one sealed model: the owner plus the whole family
 it names, which is what a ``Database`` exercising this family connects with."""

@@ -49,6 +49,7 @@ from _support import snapshot_models as sm
 from _support import value_object_models as vm
 from _support.corpus import case_document
 from parallax.conformance import case_format
+from parallax.conformance.animal_owner import ANIMAL_MODEL as ANIMAL_OWNER_MODEL
 from parallax.conformance.animal_owner import Person as AnimalOwnerPerson
 from parallax.conformance.graph_models import Policy
 from parallax.conformance.read_models import Animal as AnimalRoot
@@ -63,8 +64,9 @@ from parallax.conformance.read_models import (
     WildBoar,
 )
 from parallax.conformance.read_stories import READ_STORIES
-from parallax.conformance.story_models import Order
+from parallax.conformance.story_models import ORDERS_MODEL, Order
 from parallax.conformance.vo_models import (
+    CONTACT_MODEL,
     Branch,
     Contact,
     ContactPhone,
@@ -72,9 +74,11 @@ from parallax.conformance.vo_models import (
     CustomerPhone,
     Supplier,
 )
-from parallax.core import Entity, OperationRejectedError, Predicate, Statement
+from parallax.core import DomainModel, Entity, OperationRejectedError, Predicate, Statement
+from parallax.core.entity._model import model_of
 from parallax.core.op_algebra import serialize
 from parallax.core.temporal_read import LATEST
+from parallax.snapshot.handle._preflight import preflight_find
 
 # case id -> the idiomatic statement that must serialize to the case's operation.
 BUILDERS: dict[str, Callable[[], Statement]] = {
@@ -263,11 +267,31 @@ def test_rejected_predicate_serializes_to_the_corpus_operation(case_id: str) -> 
     assert serialize(predicate.op) == expected
 
 
+# case id -> the Domain Model the rejected statement is executed against.
+# Authoring reaches no model, so the rule fires at the shared read gate rather
+# than at `Entity.where`; the model each target belongs to is what states it.
+REJECTED_MODELS: dict[str, DomainModel] = {
+    "m-op-algebra-039": ORDERS_MODEL,
+    "m-op-algebra-040": vm.CUSTOMER_MODEL,
+    "m-op-algebra-041": vm.CUSTOMER_MODEL,
+    "m-op-algebra-042": vm.CUSTOMER_MODEL,
+    "m-op-algebra-043": CONTACT_MODEL,
+    "m-op-algebra-044": CONTACT_MODEL,
+    "m-value-object-038": vm.CUSTOMER_MODEL,
+    "m-op-algebra-045": ANIMAL_OWNER_MODEL,
+    "m-inheritance-040": sm.ANIMAL_MODEL,
+    "m-inheritance-041": sm.ANIMAL_MODEL,
+    "m-inheritance-064": ANIMAL_OWNER_MODEL,
+    "m-inheritance-072": ANIMAL_OWNER_MODEL,
+    "m-inheritance-042": sm.ANIMAL_MODEL,
+}
+
+
 @pytest.mark.parametrize("case_id", sorted(REJECTED_BUILDERS), ids=sorted(REJECTED_BUILDERS))
-def test_idiomatic_statement_build_rejects_the_corpus_rule(case_id: str) -> None:
+def test_idiomatic_statement_rejects_the_corpus_rule_at_the_read_gate(case_id: str) -> None:
     expected_rule = case_document(_CASES[case_id])["then"]["rejectedRule"]
     target = REJECTED_TARGETS[case_id]
-    predicate = REJECTED_BUILDERS[case_id]()
+    statement = target.where(REJECTED_BUILDERS[case_id]())
     with pytest.raises(OperationRejectedError) as exc_info:
-        target.where(predicate)
+        preflight_find(statement, model=model_of(REJECTED_MODELS[case_id]))
     assert exc_info.value.rule == expected_rule

@@ -163,6 +163,14 @@ SUPPORT_SCOPE_DEPS: Mapping[str, frozenset[str]] = {
             "parallax.core.temporal_read",
         }
     ),
+    # Query authoring reaches no model: an Attribute Expression carries the
+    # member its descriptor installed and a Relationship Path composes its own
+    # segments, so the values a developer builds state their rules from accepted
+    # metadata alone. Granting neither model formation nor any whole-model
+    # semantic view is what makes that provable rather than asserted.
+    "parallax.core.entity._expressions": frozenset(
+        {"parallax.core.metamodel", "parallax.core.op_algebra"}
+    ),
     "parallax.snapshot.handle": frozenset(
         {
             "parallax.snapshot.materialize",
@@ -258,6 +266,7 @@ SUPPORT_SCOPE_DEPS: Mapping[str, frozenset[str]] = {
 #   shape such a row cannot reach.
 CHILD_SCOPE_PARENT: Mapping[str, str] = {
     "parallax.core.entity.statement": "parallax.core.entity",
+    "parallax.core.entity._expressions": "parallax.core.entity",
     "parallax.descriptor._hub": "parallax.descriptor",
     "parallax.snapshot.handle._wrap": "parallax.snapshot.handle",
     "parallax.snapshot.handle._preflight": "parallax.snapshot.handle",

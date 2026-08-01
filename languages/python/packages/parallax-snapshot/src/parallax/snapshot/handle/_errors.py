@@ -28,7 +28,26 @@ from __future__ import annotations
 
 from typing import Final
 
-__all__ = ["QueryTargetError"]
+__all__ = ["QueryTargetError", "SnapshotConnectionError"]
+
+
+class SnapshotConnectionError(ValueError):
+    """A modeled read was asked of a Database over a model that names no class.
+
+    A Snapshot answers Entity Class instances, so serving one needs a
+    class-backed :class:`~parallax.core.DomainModel` — one that composed Entity
+    Classes and therefore holds the index deciding which class a returned row
+    instantiates. :meth:`Database.connect` refuses a model that composed none
+    before the adapter is touched; the first-party construction that admits a
+    bare accepted Metamodel for neutral write work is refused here instead, at
+    the read it cannot serve and still before any SQL.
+
+    The refusal is about materialization capability and never about identity or
+    ownership: any class-backed model serves, however many other Databases
+    already serve it. :data:`code` and the message are its whole public state.
+    """
+
+    code: Final[str] = "snapshot-class-backed-model-required"
 
 
 class QueryTargetError(RuntimeError):

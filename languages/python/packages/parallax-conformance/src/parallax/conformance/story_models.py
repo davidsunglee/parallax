@@ -26,9 +26,9 @@ from parallax.core import (
     ONE_TO_MANY,
     Attr,
     Bitemporal,
+    DomainModel,
     Entity,
     Int32,
-    MetamodelHub,
     Rel,
     asc,
     attr,
@@ -69,7 +69,7 @@ class Account(
     version: Attr[int] = attr(type=Int32, optimistic_locking=True)
 
 
-ACCOUNT_MODEL = MetamodelHub(Account)
+ACCOUNT_MODEL = DomainModel(Account)
 
 
 class Wallet(
@@ -89,7 +89,7 @@ class Wallet(
     balance: Attr[Decimal] = attr(precision=18, scale=2)
 
 
-WALLET_MODEL = MetamodelHub(Wallet)
+WALLET_MODEL = DomainModel(Wallet)
 
 
 class Position(
@@ -113,7 +113,7 @@ class Position(
     value: Attr[Decimal] = attr(column="val", precision=18, scale=2)
 
 
-POSITION_MODEL = MetamodelHub(Position)
+POSITION_MODEL = DomainModel(Position)
 
 
 class Order(
@@ -255,4 +255,4 @@ class OrderNote(
     resolved_on: Attr[dt.date | None]
 
 
-ORDERS_MODEL = MetamodelHub(Order, OrderItem, OrderStatus, OrderTag, OrderNote)
+ORDERS_MODEL = DomainModel(Order, OrderItem, OrderStatus, OrderTag, OrderNote)

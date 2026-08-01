@@ -18,7 +18,7 @@ import pytest
 from _support import mirrored_models as mm
 from _support import snapshot_models as sm
 from _support import value_object_models as vom
-from parallax.core import Attr, Entity, MetamodelHub, ModelCopyError, TxTemporal, ValueObject, attr
+from parallax.core import Attr, DomainModel, Entity, ModelCopyError, TxTemporal, ValueObject, attr
 from parallax.core.entity import AttributeAssignment
 from parallax.core.temporal_read import LATEST, TX_TIME
 
@@ -57,8 +57,8 @@ class _WhereShipment(Entity, table="where_shipment", namespace="parallax.compati
     destination: Attr[_WhereShipmentDestination]
 
 
-_WHERE_LEDGER = MetamodelHub(_WhereTemporalLedger)
-_WHERE_SHIPMENT = MetamodelHub(_WhereShipment)
+_WHERE_LEDGER = DomainModel(_WhereTemporalLedger)
+_WHERE_SHIPMENT = DomainModel(_WhereShipment)
 
 
 # --------------------------------------------------------------------------- #
@@ -131,13 +131,28 @@ def test_set_on_a_scalar_with_a_mismatched_type_raises() -> None:
         mm.Person.name.set(42)
 
 
-def test_set_on_an_attribute_of_an_unclaimed_class_stays_permissive() -> None:
-    # A class no hub composed reaches no model, so there is no rule to state:
-    # the assignment builds and the write path rejects it.
-    class _Unclaimed(Entity, table="unclaimed", namespace="parallax.compatibility"):
+def test_set_states_its_rule_from_the_descriptors_member_alone() -> None:
+    # A class no model composed still judges its own assignments: the descriptor
+    # carries the member's declared Metadata, which is every fact the rule reads.
+    class _Uncomposed(Entity, table="uncomposed", namespace="parallax.compatibility"):
         id: Attr[int] = attr(primary_key=True)
+        label: Attr[str] = attr(max_length=8)
 
-    assert _Unclaimed.id.set(2).value == 2
+    assert _Uncomposed.label.set("x").value == "x"
+    with pytest.raises(ModelCopyError, match="primary-key fields may not be assigned"):
+        _Uncomposed.id.set(2)
+
+
+def test_set_refuses_a_read_only_member() -> None:
+    # The Python specification states the rule and the extracted judgement is
+    # where it lands: read-only sits beside primary-key and framework-owned as an
+    # unassignable target, on the typed path and the write boundary alike.
+    class _Computed(Entity, table="computed", namespace="parallax.compatibility"):
+        id: Attr[int] = attr(primary_key=True)
+        derived: Attr[str] = attr(max_length=8, read_only=True)
+
+    with pytest.raises(ModelCopyError, match="read-only fields may not be assigned"):
+        _Computed.derived.set("x")
 
 
 # --------------------------------------------------------------------------- #

@@ -12,7 +12,7 @@ only a module on the configured ``pythonpath`` resolves reliably regardless of
 collection order.
 """
 
-from parallax.core import Attr, Entity, MetamodelHub, ValueObject, attr
+from parallax.core import Attr, DomainModel, Entity, ValueObject, attr
 
 _NS = "parallax.compatibility"
 
@@ -48,5 +48,5 @@ class Customer(Entity, table="customer", namespace=_NS):
     address: Attr[Address | None]
 
 
-CUSTOMER_MODEL = MetamodelHub(Customer)
+CUSTOMER_MODEL = DomainModel(Customer)
 """``models/customer.yaml``'s Customer alone — the Value Object examples' hub."""

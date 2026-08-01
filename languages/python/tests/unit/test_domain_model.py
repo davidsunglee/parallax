@@ -1,9 +1,9 @@
-"""``MetamodelHub`` construction: argument validation, formation, and realization.
+"""``DomainModel`` construction: argument validation, formation, and realization.
 
-Every class here is declared inside its test. A successful construction claims
-its classes permanently, so a module-level model would make the suite's
-constructions interfere with each other — fresh class objects are the isolation
-mechanism the design prescribes.
+Each test declares the classes its own scenario needs, so a failure names the
+declaration it is about. Nothing here isolates one construction from another:
+composing a class into a model binds nothing, so the same class is free to
+appear in as many models as any test cares to build.
 """
 
 from __future__ import annotations
@@ -18,10 +18,10 @@ from parallax.core import (
     AbstractRoot,
     Attr,
     ConcreteSubtype,
+    DomainModel,
     Entity,
     EntityDefinitionError,
     MetamodelDefinitionError,
-    MetamodelHub,
     Rel,
     TablePerHierarchy,
     TxTemporal,
@@ -29,8 +29,9 @@ from parallax.core import (
     attr,
     rel,
 )
-from parallax.core.entity import METAMODEL_DEFINITION_CODES
-from parallax.core.entity._binding import binding_of
+from parallax.core.entity import METAMODEL_DEFINITION_CODES, MetamodelLookupError
+from parallax.core.entity._model import class_index, model_of
+from parallax.core.inheritance import view as inheritance_view
 from parallax.core.model_formation import MetamodelValidationError
 
 _SPEC_CODES = frozenset(
@@ -45,9 +46,9 @@ def _value_object_class() -> type:
     return Point
 
 
-def test_a_hub_over_no_source_is_empty_with_no_argument_index() -> None:
+def test_a_model_over_no_source_is_empty_with_no_argument_index() -> None:
     with pytest.raises(MetamodelDefinitionError) as caught:
-        MetamodelHub()
+        DomainModel()
     assert caught.value.code == "metamodel-empty"
     assert caught.value.index is None
 
@@ -69,7 +70,7 @@ def test_an_argument_that_is_not_a_domain_entity_class_is_rejected_by_position(
         id: Attr[int] = attr(primary_key=True)
 
     with pytest.raises(MetamodelDefinitionError) as caught:
-        MetamodelHub(Widget, make_argument())  # pyright: ignore[reportArgumentType] - deliberate non-Entity-Class argument drives constructor validation
+        DomainModel(Widget, make_argument())  # pyright: ignore[reportArgumentType] - deliberate non-Entity-Class argument drives constructor validation
     assert caught.value.code == "metamodel-invalid-entity-class"
     assert caught.value.index == 1
 
@@ -82,7 +83,7 @@ def test_a_repeated_class_object_is_rejected_at_its_own_index() -> None:
         id: Attr[int] = attr(primary_key=True)
 
     with pytest.raises(MetamodelDefinitionError) as caught:
-        MetamodelHub(Gadget, Doodad, Gadget)
+        DomainModel(Gadget, Doodad, Gadget)
     assert caught.value.code == "metamodel-duplicate-entity-class"
     assert caught.value.index == 2
 
@@ -94,7 +95,7 @@ def test_arguments_are_checked_left_to_right() -> None:
     # Argument 1 is invalid and argument 2 repeats argument 0; the leftmost
     # defect is the one reported.
     with pytest.raises(MetamodelDefinitionError) as caught:
-        MetamodelHub(Sprocket, object(), Sprocket)  # pyright: ignore[reportArgumentType] - deliberate non-Entity-Class argument drives constructor validation
+        DomainModel(Sprocket, object(), Sprocket)  # pyright: ignore[reportArgumentType] - deliberate non-Entity-Class argument drives constructor validation
     assert (caught.value.code, caught.value.index) == ("metamodel-invalid-entity-class", 1)
 
 
@@ -112,7 +113,7 @@ def test_two_distinct_classes_sharing_one_identity_reach_whole_model_validation(
         id: Attr[int] = attr(primary_key=True)
 
     with pytest.raises(MetamodelValidationError) as caught:
-        MetamodelHub(First, Second)
+        DomainModel(First, Second)
     assert [issue.code for issue in caught.value.issues] == ["metamodel-duplicate-entity-identity"]
 
 
@@ -125,10 +126,10 @@ def test_a_target_outside_the_candidate_set_is_a_model_defect() -> None:
         elsewhere_id: Attr[int]
         elsewhere: Rel[Elsewhere] = rel(cardinality=MANY_TO_ONE, join=("elsewhere_id", "id"))
 
-    # `Elsewhere` exists as a class but is not composed into this hub, and
+    # `Elsewhere` exists as a class but is not composed into this model, and
     # resolution is confined to the candidate set.
     with pytest.raises(MetamodelValidationError) as caught:
-        MetamodelHub(Dangling)
+        DomainModel(Dangling)
     assert [issue.code for issue in caught.value.issues] == [
         "metamodel-unresolved-entity-reference"
     ]
@@ -150,7 +151,7 @@ def test_every_annotation_mismatch_is_reported_together_in_canonical_order() -> 
         orders: Rel[Order] = rel(reverse_of="customer")
 
     with pytest.raises(EntityDefinitionError) as caught:
-        MetamodelHub(Order, Customer, Coupon)
+        DomainModel(Order, Customer, Coupon)
     assert caught.value.code == "entity-relationship-annotation-mismatch"
     reported = [line.strip() for line in caught.value.message.splitlines()[1:]]
     assert reported == [
@@ -170,7 +171,7 @@ def test_a_to_one_direction_may_not_be_spelled_many() -> None:
         shelf: Rel[tuple[Shelf, ...]] = rel(cardinality=MANY_TO_ONE, join=("shelf_id", "id"))
 
     with pytest.raises(EntityDefinitionError) as caught:
-        MetamodelHub(Shelf, Book)
+        DomainModel(Shelf, Book)
     assert caught.value.code == "entity-relationship-annotation-mismatch"
     reported = [line.strip() for line in caught.value.message.splitlines()[1:]]
     assert reported == [
@@ -199,7 +200,7 @@ def test_an_agreeing_annotation_set_seals() -> None:
         customer_id: Attr[int]
         customer: Rel[Customer] = rel(cardinality=ONE_TO_ONE, join=("customer_id", "id"))
 
-    models = MetamodelHub(Order, Customer, Coupon, Profile)
+    models = DomainModel(Order, Customer, Coupon, Profile)
     assert [entity.identity.name for entity in models.entities] == [
         "Coupon",
         "Customer",
@@ -223,11 +224,11 @@ def test_an_inherited_join_source_decides_optionality_family_effectively() -> No
         # loaded-null answer follows the family-effective attribute.
         region: Rel[Region | None] = rel(cardinality=MANY_TO_ONE, join=("region_id", "id"))
 
-    models = MetamodelHub(Region, Site, Depot)
+    models = DomainModel(Region, Site, Depot)
     assert models.meta(Depot).declared_relationships[0].identity.name == "region"
 
 
-def test_a_failed_realization_publishes_no_binding() -> None:
+def test_a_failed_realization_leaves_its_classes_composable() -> None:
     class Node(Entity, table="node"):
         id: Attr[int] = attr(primary_key=True)
 
@@ -237,30 +238,77 @@ def test_a_failed_realization_publishes_no_binding() -> None:
         node: Rel[Node | None] = rel(cardinality=MANY_TO_ONE, join=("node_id", "id"))
 
     with pytest.raises(EntityDefinitionError):
-        MetamodelHub(Node, Edge)
+        DomainModel(Node, Edge)
 
-    # Realization raised before the claim, so `Node` was never bound and a
-    # corrected hub still owns it.
-    assert binding_of(Node) is None
-    models = MetamodelHub(Node)
+    models = DomainModel(Node)
     assert models.meta(Node).identity.name == "Node"
 
 
-def test_a_failed_publication_leaves_no_orphaned_claim(monkeypatch: pytest.MonkeyPatch) -> None:
-    class Probe(Entity, table="probe"):
+def test_one_class_composes_into_any_number_of_models() -> None:
+    class Region(Entity, table="region"):
         id: Attr[int] = attr(primary_key=True)
 
-    def refuse(*_: object) -> None:
-        raise RuntimeError("publication failed")
+    class Site(Entity, table="site"):
+        id: Attr[int] = attr(primary_key=True)
+        region_id: Attr[int]
+        region: Rel[Region] = rel(cardinality=MANY_TO_ONE, join=("region_id", "id"))
 
-    monkeypatch.setattr(MetamodelHub, "_publish", refuse)
-    with pytest.raises(RuntimeError):
-        MetamodelHub(Probe)
-    monkeypatch.undo()
+    narrow = DomainModel(Region)
+    wide = DomainModel(Region, Site)
 
-    # A claim is permanent, so anything that can fail must fail before it. A
-    # step that raised after claiming would strand `Probe` on a hub no caller
-    # ever received and no later hub could take.
-    assert binding_of(Probe) is None
-    models = MetamodelHub(Probe)
-    assert models.meta(Probe).identity.name == "Probe"
+    assert narrow.meta(Region).identity == wide.meta(Region).identity
+    assert [entity.identity.name for entity in narrow.entities] == ["Region"]
+    assert [entity.identity.name for entity in wide.entities] == ["Region", "Site"]
+
+
+def test_an_entity_class_the_model_did_not_compose_names_no_entity_of_it() -> None:
+    class Composed(Entity, table="composed"):
+        id: Attr[int] = attr(primary_key=True)
+
+    class Absent(Entity, table="absent"):
+        id: Attr[int] = attr(primary_key=True)
+
+    models = DomainModel(Composed)
+    with pytest.raises(MetamodelLookupError) as caught:
+        models.meta(Absent)
+    assert caught.value.code == "metamodel-entity-not-found"
+
+
+def test_a_partial_family_publishes_a_narrower_effective_concrete_set() -> None:
+    # The intended per-model semantics rather than a defect: an Entity's
+    # effective concrete-subtype set is a fact of the model that composed it, so
+    # the same root legitimately answers different sets in two models.
+    class Animal(
+        Entity, table="animal", inheritance=AbstractRoot(TablePerHierarchy(tag_column="kind"))
+    ):
+        id: Attr[int] = attr(primary_key=True)
+
+    class Dog(Animal, inheritance=ConcreteSubtype(tag_value="dog")):
+        pass
+
+    class Cat(Animal, inheritance=ConcreteSubtype(tag_value="cat")):
+        pass
+
+    dogs_only = DomainModel(Animal, Dog)
+    both = DomainModel(Animal, Dog, Cat)
+
+    assert _concretes(dogs_only, Animal) == ("Dog",)
+    assert _concretes(both, Animal) == ("Cat", "Dog")
+
+
+def _concretes(models: DomainModel, root: type) -> tuple[str, ...]:
+    position = inheritance_view(model_of(models)).entity(models.meta(root).identity)
+    assert position is not None
+    return tuple(identity.name for identity in position.concrete_subtypes)
+
+
+def test_a_class_backed_model_indexes_every_class_it_composed_both_ways() -> None:
+    class Widget(Entity, table="widget"):
+        id: Attr[int] = attr(primary_key=True)
+
+    models = DomainModel(Widget)
+    index = class_index(models)
+    assert index is not None
+    identity = index.identity_of(Widget)
+    assert identity is not None
+    assert index.class_of(identity) is Widget

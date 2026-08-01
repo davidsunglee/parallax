@@ -37,9 +37,9 @@ from _transact_support import (
 
 from _support import mirrored_models as mm
 from _support.planner_probes import TEST_SUBJECT_IDENTITY
-from parallax.core import Attr, Entity, Int32, MetamodelHub, attr, index
+from parallax.core import Attr, DomainModel, Entity, Int32, attr, index
 from parallax.core.db_error import DatabaseError
-from parallax.core.entity._hub import sealed_model
+from parallax.core.entity._model import model_of
 from parallax.core.unit_work import (
     CardinalityCorruptionError,
     EscapedTransactionError,
@@ -187,7 +187,7 @@ def test_bare_unit_of_work_on_the_thread_is_refused() -> None:
         with pytest.raises(UnitOfWorkError, match="bare unit of work"):
             db.transact(lambda _tx: None)
 
-    model = sealed_model(ACCOUNT).model
+    model = model_of(ACCOUNT)
     run_unit_of_work(
         body,
         settings=TransactionSettings(),
@@ -237,7 +237,7 @@ def test_a_different_database_over_the_same_model_and_adapter_is_refused() -> No
     assert port.begins == 1
 
 
-def _equal_account_hub() -> MetamodelHub:
+def _equal_account_hub() -> DomainModel:
     """A hub whose declarations are structurally equal to ``ACCOUNT``'s.
 
     An Entity Class belongs to one hub for its object lifetime, so a fresh class
@@ -255,7 +255,7 @@ def _equal_account_hub() -> MetamodelHub:
         balance: Attr[Decimal] = attr(precision=18, scale=2)
         version: Attr[int] = attr(type=Int32, optimistic_locking=True)
 
-    return MetamodelHub(Account)
+    return DomainModel(Account)
 
 
 def test_a_structurally_equal_model_establishes_no_ownership() -> None:
@@ -263,9 +263,7 @@ def test_a_structurally_equal_model_establishes_no_ownership() -> None:
     owner = account_db(port)
     foreign = db_for(_equal_account_hub(), port)
     # The two accepted models are equal entity for entity, and that buys nothing.
-    assert list(sealed_model(ACCOUNT).model.entities) == list(
-        sealed_model(_equal_account_hub()).model.entities
-    )
+    assert list(model_of(ACCOUNT).entities) == list(model_of(_equal_account_hub()).entities)
 
     def outer(_tx: Transaction) -> str:
         with pytest.raises(TransactionOwnershipError):

@@ -41,8 +41,8 @@ from parallax.core import (
     ONE_TO_MANY,
     Attr,
     Bitemporal,
+    DomainModel,
     Entity,
-    MetamodelHub,
     Rel,
     TxTemporal,
     ValueObject,
@@ -118,7 +118,7 @@ class Supplier(
     address: Attr[Address | None]
 
 
-SUPPLIER_MODEL = MetamodelHub(Supplier)
+SUPPLIER_MODEL = DomainModel(Supplier)
 
 
 class Branch(
@@ -138,7 +138,7 @@ class Branch(
     address: Attr[Address | None]
 
 
-BRANCH_MODEL = MetamodelHub(Branch)
+BRANCH_MODEL = DomainModel(Branch)
 
 
 # --------------------------------------------------------------------------- #
@@ -184,7 +184,7 @@ class Contact(
     address: Attr[ContactAddress | None]
 
 
-CONTACT_MODEL = MetamodelHub(Contact)
+CONTACT_MODEL = DomainModel(Contact)
 
 
 # --------------------------------------------------------------------------- #
@@ -209,7 +209,7 @@ class Shipment(
     destination: Attr[Destination]
 
 
-SHIPMENT_MODEL = MetamodelHub(Shipment)
+SHIPMENT_MODEL = DomainModel(Shipment)
 
 
 # --------------------------------------------------------------------------- #
@@ -311,4 +311,4 @@ class Depot(
     customer: Rel[Customer | None] = rel(reverse_of="depots")
 
 
-CUSTOMER_MODEL = MetamodelHub(Customer, Location, Depot)
+CUSTOMER_MODEL = DomainModel(Customer, Location, Depot)

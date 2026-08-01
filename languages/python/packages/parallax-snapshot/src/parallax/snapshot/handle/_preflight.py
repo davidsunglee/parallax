@@ -20,7 +20,7 @@ import-linter contract forbids it — directly or through any chain — from
 reaching SQL generation, a dialect, any Database Port, deep-fetch planning, or
 materialization. The grant stops at :mod:`parallax.core.entity.statement`
 rather than the frontend package because the package reaches a Database Port
-through its Hub-construction edge (``_formation_profile -> m-opt-lock ->
+through its model-construction edge (``_formation_profile -> m-opt-lock ->
 m-unit-work -> m-db-port``), and a forbidden row is the complement of a closure:
 granting the package would put the port inside this seam's own closure, where no
 row could forbid it. A helper that needs any of those does not belong here.

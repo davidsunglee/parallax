@@ -1,6 +1,6 @@
 """``parallax.descriptor`` — the optional Descriptor Frontend (m-descriptor).
 
-Three doors create a descriptor-backed :class:`~parallax.core.MetamodelHub` from
+Three doors create a descriptor-backed :class:`~parallax.core.DomainModel` from
 a canonical model descriptor — an already-decoded document, JSON text, or YAML
 text — and three export a class-backed or descriptor-backed hub back to that
 canonical form. The record vocabulary, the canonical-schema machinery, serde,

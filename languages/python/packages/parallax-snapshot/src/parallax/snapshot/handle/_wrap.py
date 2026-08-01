@@ -7,8 +7,8 @@ caller, and the frozen graphs it builds reach callers as ``Snapshot`` roots.
 
 Converts one materialized neutral graph
 (:class:`~parallax.snapshot.materialize.Node`) into frozen instances of the
-Entity Classes the caller's own hub bound — the ``Snapshot[T]`` node vocabulary.
-Construction goes through Pydantic's ``model_construct`` (skips validation —
+Entity Classes the connected Domain Model composed — the ``Snapshot[T]`` node
+vocabulary. Construction goes through Pydantic's ``model_construct`` (skips validation —
 the rows already passed through the database) plus the implementation-private
 ``object.__setattr__`` backdoor (spec §3's own wording) so:
 
@@ -40,7 +40,7 @@ Physical and relationship facts come from the accepted Metamodel and its facets:
 each row's own concrete Entity resolves through ``m-metamodel`` name lookup, its
 navigable relationships through the Relationship Facet, its family-effective
 value objects and declaring root through the Inheritance Facet, and its concrete
-Python class through the Metamodel Binding's Identity-to-Class index.
+Python class through the connected model's Identity-to-Class index.
 
 Polymorphic children materialize as their CONCRETE classes: ``familyVariant``,
 when the neutral row carries it, names the concrete entity directly; a
@@ -64,9 +64,10 @@ from dataclasses import dataclass
 from typing import cast
 
 from parallax.core import inheritance, relationship
-from parallax.core.entity import UNLOADED, MetamodelBinding, shape_of, wire_names_of
+from parallax.core.entity import UNLOADED, shape_of, wire_names_of
 from parallax.core.entity import Entity as EntityBase
 from parallax.core.entity import ValueObject as ValueObjectBase
+from parallax.core.entity._model import ClassIndex
 from parallax.core.metamodel import (
     EntityMetadata,
     Metamodel,
@@ -89,10 +90,10 @@ _EDGE_ATTR = "__parallax_edge__"
 class _Wrapping:
     """Everything one :func:`wrap_graph` call holds constant across its recursion.
 
-    ``model`` and ``binding`` are one hub's two faces — the accepted metadata and
-    the Identity-to-Class index it published — and only the composition root ever
-    pairs them, so carrying them together is what keeps one hub's index from
-    resolving classes for another hub's model. ``pin`` is the whole-graph as-of
+    ``model`` and ``classes`` are one Domain Model's two faces — the accepted
+    metadata and the Identity-to-Class index it composed — and only the
+    composition root ever pairs them, so carrying them together is what keeps one
+    model's index from resolving classes for another. ``pin`` is the whole-graph as-of
     coordinate every temporal node reached receives; ``merged`` is the finished
     discovery pass; and ``cache`` is the graph-local identity map the recursion
     itself fills, so a logical row wraps to exactly one instance however many
@@ -100,24 +101,19 @@ class _Wrapping:
     """
 
     model: Metamodel
-    binding: MetamodelBinding | None
+    classes: ClassIndex
     pin: Pin
     merged: Mapping[object, _MergedNode]
     cache: dict[object, object]
 
     def class_of(self, entity: EntityMetadata) -> type:
-        """The Entity Class this hub bound ``entity`` to.
+        """The Entity Class ``entity`` was composed as.
 
-        Wrapping is a class-requiring capability, so a model whose hub claimed no
-        class — every descriptor-backed hub — refuses here rather than earlier:
-        the neutral-row read path itself needs no class.
+        Total: a Database connects only to a class-backed Domain Model, so every
+        Entity a materialized row can resolve to has a class here.
         """
-        cls = None if self.binding is None else self.binding.class_of(entity.identity)
-        if cls is None:
-            raise LookupError(
-                f"{entity.identity.canonical!r} is bound to no Entity Class; compose a "
-                "class-backed hub before wrapping a Snapshot[T] result"
-            )
+        cls = self.classes.class_of(entity.identity)
+        assert cls is not None, entity.identity.canonical
         return cls
 
 
@@ -126,16 +122,12 @@ def wrap_graph(
     root_entity: str,
     model: Metamodel,
     pin: Pin,
-    binding: MetamodelBinding | None,
+    classes: ClassIndex,
 ) -> tuple[object, ...]:
     """Wrap one materialized graph's root nodes (and, transitively, everything
     reachable through them) into frozen instances of the Entity Classes
-    ``binding`` claimed, attaching the SAME whole-graph ``pin`` to every temporal
+    ``classes`` indexes, attaching the SAME whole-graph ``pin`` to every temporal
     node reached.
-
-    ``binding`` is absent for a descriptor-backed model, which names no class at
-    all; every node then fails the class lookup, because wrapping is exactly the
-    capability that requires one.
 
     Two passes: :func:`_discover` walks the whole per-view forest once,
     grouping every distinct ``Node`` object by its logical identity key, then
@@ -148,7 +140,7 @@ def wrap_graph(
     for node in nodes:
         _discover(node, root_entity, model, visited, groups)
     wrapping = _Wrapping(
-        model=model, binding=binding, pin=pin, merged=_merged_fields(groups), cache={}
+        model=model, classes=classes, pin=pin, merged=_merged_fields(groups), cache={}
     )
     return tuple(_wrap(node, root_entity, wrapping) for node in nodes)
 

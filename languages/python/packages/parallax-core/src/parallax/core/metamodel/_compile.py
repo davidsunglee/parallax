@@ -58,6 +58,7 @@ __all__ = [
     "accept_metamodel",
     "compile_metadata",
     "is_compiled_metadata",
+    "value_object_metadata",
 ]
 
 
@@ -259,7 +260,7 @@ def _entity_metadata(declaration: EntityDeclaration) -> EntityMetadata:
         declared_attributes=tuple(declaration.attributes),
         declared_relationships=tuple(declaration.relationships),
         declared_value_objects=tuple(
-            _value_object_metadata(declaration.identity, occurrence)
+            value_object_metadata(declaration.identity, occurrence)
             for occurrence in declaration.value_objects
         ),
         declared_as_of_axes=tuple(declaration.as_of_axes),
@@ -268,9 +269,17 @@ def _entity_metadata(declaration: EntityDeclaration) -> EntityMetadata:
     )
 
 
-def _value_object_metadata(
+def value_object_metadata(
     entity: EntityIdentity, occurrence: ValueObjectOccurrenceDeclaration
 ) -> ValueObjectMetadata:
+    """One top-level occurrence declaration expanded into path-identified Metadata.
+
+    Expansion is a pure reading of the declaration — it decides no validity and
+    consults no other Entity — so a frontend holding one declared occurrence can
+    obtain its Metadata without a model. Compilation reaches the same function for
+    every occurrence of every Entity it accepts, which is what keeps the shape a
+    descriptor carries identical to the one the accepted model publishes.
+    """
     identity = ValueObjectIdentity(entity, (occurrence.name,))
     attributes, nested = _expand_shape(entity, identity, occurrence.shape, frozenset())
     return _ValueObjectMetadata(

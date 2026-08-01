@@ -39,7 +39,7 @@ from _transact_support import (
 
 from _support import mirrored_models as mm
 from parallax.conformance.class_models import MODELS
-from parallax.core import LATEST, Attr, Entity, MetamodelHub, attr, opt_lock
+from parallax.core import LATEST, Attr, DomainModel, Entity, attr, opt_lock
 from parallax.core.db_port import Row
 from parallax.core.dialect import POSTGRES
 from parallax.core.unit_work import (
@@ -882,26 +882,27 @@ def test_an_edited_copy_of_a_finite_transaction_time_pinned_node_stays_writable(
 # which is the only fixture it needs — it lives here with the rest of the      #
 # keyed-verb region.                                                           #
 # --------------------------------------------------------------------------- #
-def test_a_keyed_verb_refuses_an_instance_of_an_uncompiled_class() -> None:
-    # `Entity` (the framework root) declares nothing and is never a hub
-    # candidate, so an instance of it is a binding lookup miss while still
-    # satisfying every caller's `EntityBase` annotation. The keyed verbs must
-    # name that as a TypeError rather than fail later on a missing declaration;
-    # the raising port proves the guard runs before any I/O.
-    def fn(tx: Transaction) -> None:
-        tx.delete(Entity())
+def test_a_keyed_verb_refuses_an_instance_of_an_undeclared_class() -> None:
+    # A class this model composed no Entity for is refused as a TypeError rather
+    # than failing later on a missing declaration; the raising port proves the
+    # guard runs before any I/O.
+    class _Elsewhere(Entity, table="elsewhere", namespace="parallax.compatibility"):
+        id: Attr[int] = attr(primary_key=True)
 
-    with pytest.raises(TypeError, match="Entity is not an Entity Class of this model"):
+    def fn(tx: Transaction) -> None:
+        tx.delete(_Elsewhere(id=1))
+
+    with pytest.raises(TypeError, match="_Elsewhere is not an Entity Class of this model"):
         Database.connect(NoIoPort(), PERSON, clock=FixedClock(FIXED)).transact(fn)
 
 
-# Two DISTINCT classes in two SEPARATE hubs may legitimately declare the same
-# Entity Identity — nothing forbids it, since a class belongs to exactly one hub
-# and the claim rule is per class object, not per identity. The guard must
-# therefore key on the hub a class actually belongs to and not on the identity it
-# happens to name: an instance of `_TwinLeft` handed to a database connected to
-# `_TwinRight`'s hub is a foreign object, and accepting it would let a keyed
-# write resolve its columns against the wrong model entirely.
+# Two DISTINCT classes may legitimately declare the same Entity Identity in two
+# separate models. Membership is decided by the identity the instance's class
+# declares, so a `_TwinLeft` instance handed to a database connected to
+# `_TwinRight`'s model resolves — and the guarantee the old object-identity guard
+# provided survives one layer down: `deserialize` -> `validate_write` ->
+# `validate_instruction` runs against the connected model, where member-name
+# honesty rejects the foreign class's own members.
 class _TwinLeft(Entity, table="twin", name="Twin", namespace="parallax.compatibility"):
     id: Attr[int] = attr(primary_key=True)
     left_only: Attr[str] = attr(max_length=8)
@@ -912,19 +913,25 @@ class _TwinRight(Entity, table="twin", name="Twin", namespace="parallax.compatib
     right_only: Attr[str] = attr(max_length=8)
 
 
-_TWIN_LEFT = MetamodelHub(_TwinLeft)
-_TWIN_RIGHT = MetamodelHub(_TwinRight)
+_TWIN_LEFT = DomainModel(_TwinLeft)
+_TWIN_RIGHT = DomainModel(_TwinRight)
 
 
-def test_a_keyed_verb_refuses_an_instance_bound_to_another_hub() -> None:
+def test_a_foreign_twins_members_are_refused_by_the_write_boundary() -> None:
+    port = RecordingPort()
+
     def fn(tx: Transaction) -> None:
-        tx.delete(_TwinLeft(id=1, left_only="x"))
+        tx.insert(_TwinLeft(id=1, left_only="x"))
 
-    with pytest.raises(TypeError, match="_TwinLeft is not an Entity Class of this model"):
-        Database.connect(NoIoPort(), _TWIN_RIGHT, clock=FixedClock(FIXED)).transact(fn)
+    # The connected model's own declared-type walk sees a row carrying none of
+    # the members `Twin` declares here, which is exactly the substitution the
+    # object-identity guard used to catch one layer earlier.
+    with pytest.raises(WriteRejectedError, match=r"Twin\.rightOnly: required attribute is absent"):
+        db_for(_TWIN_RIGHT, port).transact(fn)
+    assert [op[0] for op in port.ops] == ["begin", "rollback"]
 
 
-def test_the_keyed_entity_class_guard_still_accepts_its_own_hubs_instance() -> None:
+def test_the_keyed_entity_class_guard_still_accepts_its_own_models_instance() -> None:
     port = RecordingPort()
 
     def fn(tx: Transaction) -> None:

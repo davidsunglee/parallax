@@ -42,11 +42,11 @@ from parallax.conformance.vo_models import (
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
-    from parallax.core import MetamodelHub
+    from parallax.core import DomainModel
 
 __all__ = ["MODELS"]
 
-MODELS: Mapping[str, MetamodelHub] = MappingProxyType(
+MODELS: Mapping[str, DomainModel] = MappingProxyType(
     {
         "account": ACCOUNT_MODEL,
         "animal": ANIMAL_MODEL,

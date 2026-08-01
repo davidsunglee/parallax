@@ -30,7 +30,7 @@ from typing import Any, Final, cast
 from parallax.core import deep_fetch, inheritance, op_algebra
 from parallax.core.db_port import DbPort, Row
 from parallax.core.dialect import Dialect, LockMode
-from parallax.core.entity import MetamodelBinding
+from parallax.core.entity._model import ClassIndex
 from parallax.core.metamodel import AsOfAxisMetadata as AcceptedAsOfAxis
 from parallax.core.metamodel import EntityMetadata, Metamodel, TemporalDimension, entity_by_name
 from parallax.core.sql_gen import CompiledRead, MaterializedReadRow, Statement, compile_read
@@ -556,18 +556,18 @@ def _pin_from_milestone(entity: EntityMetadata, milestone_pin: Mapping[str, obje
 
 
 def snapshot_from_find_result(
-    result: FindResult, target: str, meta: Metamodel, pin: Pin, binding: MetamodelBinding | None
+    result: FindResult, target: str, meta: Metamodel, pin: Pin, classes: ClassIndex
 ) -> Snapshot[Any]:
-    roots = wrap_graph(result.nodes, target, meta, pin, binding)
+    roots = wrap_graph(result.nodes, target, meta, pin, classes)
     return Snapshot(roots, pin, result.execution)
 
 
 def snapshot_from_history_result(
-    result: HistoryFindResult, target: str, meta: Metamodel, binding: MetamodelBinding | None
+    result: HistoryFindResult, target: str, meta: Metamodel, classes: ClassIndex
 ) -> Snapshot[Any]:
     entity = declaring_metadata(meta, _metadata(meta, target))
     roots: list[Any] = []
     for graph in result.graphs:
         milestone_pin = _pin_from_milestone(entity, graph.pin)
-        roots.extend(wrap_graph(graph.nodes, target, meta, milestone_pin, binding))
+        roots.extend(wrap_graph(graph.nodes, target, meta, milestone_pin, classes))
     return Snapshot(tuple(roots), Pin(), result.execution)
