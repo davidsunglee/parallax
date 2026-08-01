@@ -74,6 +74,36 @@ attributes, relationship declarations, As-Of Axes, and Value Objects;
 `m-navigate` owns behavior over the compiled `m-relationship` facet; `m-sql`
 owns SQL lowering; `m-temporal-read` owns temporal interval behavior.
 
+### Entity spellings in a reference position
+
+Every operation position that names an Entity spells it **bare and dot-free**: the
+`Class` prefix of an `attr`, a `rel`, an `orderBy` key, a `groupBy` key, an
+aggregate function's `attr`, and a nested value-object `path`; a `narrow`'s
+`entity` and each of its `to` entries; and a `deepFetch` path's hop `rel` and root
+guard. No reference grammar in `operation.schema.json` admits a namespace segment.
+
+Entity Identity, however, is **namespace-qualified** (`m-metamodel`), so one model
+may declare the same local name in two namespaces. A reference position naming
+such a name resolves to **no single Entity**, and a resolver **MUST** reject it
+(`reference-ambiguous-entity-name`) rather than answer it with the first matching
+declaration — that first match would be applicable, lowerable, and wrong,
+answering against one Entity's table for a spelling that names another's equally.
+
+This rule and the two positional rules under *Subtype narrowing* partition one
+condition in resolution order: this one fires when a reference resolves to **more
+than one** Entity and therefore to none; those fire when a reference **did**
+resolve, to an Entity outside the active position.
+
+The refusal is a property of the **reference site**, not of the model. Both
+Entities remain declarable, remain materializable under their exact qualified
+identities, and remain readable through any position that names them
+unambiguously — a family root, or a relationship target a hop resolves through a
+declaration rather than through the operation's own spelling. A position carried
+**beside** an operation rather than inside it — the queried position a read names,
+or the target entity of a predicate-selected write — is the same bare spelling and
+resolves by the same rule; the surface owning that position names the refusal in
+its own vocabulary rather than in this one.
+
 ### Identities
 
 | Operation | Encoding | Meaning |
@@ -673,7 +703,10 @@ Consequences:
   family — no `narrow` can make the reference applicable, so it is rejected as
   `attribute-outside-active-position` rather than as a scope a narrow could fix. The
   two rules partition one condition: same family, `subtype-attribute-outside-narrow-scope`;
-  different family, `attribute-outside-active-position`.
+  different family, `attribute-outside-active-position`. Both presuppose a
+  reference that **resolved**; one whose bare spelling two namespaces share
+  resolves nowhere and is `reference-ambiguous-entity-name` (*Entity spellings in
+  a reference position*).
 - **An order key's attribute reference is checked at the position it orders.**
   An `orderBy` key names an attribute exactly as a predicate does and takes the
   same positional rule, but the position it is asked of is the one its **ordered

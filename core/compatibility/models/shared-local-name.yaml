@@ -1,0 +1,55 @@
+# Shared local name: one model declaring the SAME local Entity name in two
+# namespaces — the reference-position exemplar for `reference-ambiguous-entity-name`
+# (m-op-algebra "Entity spellings in a reference position").
+#
+# This descriptor is an instance of core/schemas/metamodel.schema.json. Entity
+# Identity is namespace-qualified (m-metamodel), so `archive.SharedVariant` and
+# `catalog.SharedVariant` are two distinct Entities that a model may declare
+# together — models/materialization-key-compatibility.yaml already does, and
+# m-inheritance-120 requires it. What such a pair cannot do is be NAMED in an
+# operation reference position: every reference grammar in operation.schema.json
+# spells its Entity bare and dot-free, so `SharedVariant` there names neither one.
+#
+#   Register              (parallax.compatibility) — the queried position; owns the
+#                          `variant` relationship into archive.SharedVariant
+#   archive.SharedVariant — declares `archiveLabel`
+#   catalog.SharedVariant — declares `catalogLabel`
+#
+# The shipped materialization-key model is NOT reusable for this: it declares two
+# independent family roots, and a `rejected` case names no `targetEntity`, so the
+# model-aware default (`the` inheritance family root, singular, else the first
+# declared entity) has no answer there. This model declares no inheritance at all,
+# which also keeps the rule visibly independent of the family rules beside it.
+#
+# The two labels are deliberately DIFFERENT names declared on only one twin each,
+# so a resolver that answered a bare spelling with its first declaration would find
+# `archiveLabel` perfectly applicable at the hop position and emit SQL against
+# archive_shared for a reference that names two tables' worth of Entities.
+#
+# There are NO fixtures and NO golden SQL for this model: its case asserts a
+# pre-SQL refusal, so nothing is ever provisioned or executed.
+entities:
+  - name: Register
+    namespace: parallax.compatibility
+    table: register
+    attributes:
+      - { name: id, type: int64, primaryKey: true }
+      - { name: variantId, type: int64 }
+    relationships:
+      - name: variant
+        cardinality: many-to-one
+        join:
+          source: variantId
+          target: { entity: archive.SharedVariant, attribute: id }
+  - name: SharedVariant
+    namespace: archive
+    table: archive_shared
+    attributes:
+      - { name: id, type: int64, primaryKey: true }
+      - { name: archiveLabel, type: string, maxLength: 64 }
+  - name: SharedVariant
+    namespace: catalog
+    table: catalog_shared
+    attributes:
+      - { name: id, type: int64, primaryKey: true }
+      - { name: catalogLabel, type: string, maxLength: 64 }

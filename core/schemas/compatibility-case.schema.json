@@ -863,7 +863,8 @@
             "narrow-empty-effective-set",
             "subtype-attribute-outside-narrow-scope",
             "attribute-outside-active-position",
-            "narrow-outside-relationship-target"
+            "narrow-outside-relationship-target",
+            "reference-ambiguous-entity-name"
           ]
         },
         "roundTrips": {

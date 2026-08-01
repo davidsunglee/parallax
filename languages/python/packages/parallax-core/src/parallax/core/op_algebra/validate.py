@@ -35,6 +35,15 @@ Rule provenance:
   path's own root `{entity, to}` guard resolves at that same queried position
   and is clamped by the same rule. An order key is asked of the position its
   ordered rows occupy, which a top-level `narrow` under the ordering moves.
+- `reference-ambiguous-entity-name` — `m-op-algebra` "Entity spellings in a
+  reference position": every reference position — an `attr`, a `rel`, an `orderBy`
+  key, a nested path's root, a `narrow`'s `entity` and `to` entries, a deep-fetch
+  path's hops and root guard — spells its Entity BARE, so a local name two
+  namespaces of the model declare names no single Entity and resolves nowhere. It
+  is the resolution half of the positional rules above, which presuppose a
+  reference that resolved: those fire when a reference resolves to an Entity
+  outside the position, this one when it resolves to more than one and therefore
+  to none.
 - `narrow-outside-relationship-target` — `m-navigate` "Polymorphic navigation":
   a `narrow` inside a navigation filter's `op` (or a deep-fetch path segment's
   hop narrow) does **not** clamp; its `entity` MUST name the relationship
@@ -362,6 +371,60 @@ def _lookup_entity(model: Metamodel, name: str) -> EntityMetadata | None:
     return entity_by_name(model, name)
 
 
+def _ambiguous_reference(
+    model: Metamodel, reference: str, class_name: str
+) -> OperationRejectedError | None:
+    """The `reference-ambiguous-entity-name` rejection ``reference`` earns when
+    ``class_name`` is a bare local spelling two namespaces of ``model`` share, or
+    absence when it names at most one Entity.
+
+    Every operation reference position carries a bare, dot-free Entity spelling, so
+    a local name two namespaces declare names no single Entity there:
+    :func:`~parallax.core.metamodel.entity_by_name` answers it with a miss rather
+    than a silent first match, and the refusal names the canonical spellings that
+    would resolve. Both Entities stay declarable and stay reachable through a
+    position that names them unambiguously — the reference is refused, never the
+    declaration.
+    """
+    canonical = sorted(
+        entity.identity.canonical for entity in model.entities if entity.identity.name == class_name
+    )
+    if len(canonical) < 2:
+        return None
+    return OperationRejectedError(
+        "reference-ambiguous-entity-name",
+        f"{reference!r}: the bare Entity spelling {class_name!r} is shared by {canonical}, "
+        "so it names no single Entity in this model and the reference resolves nowhere "
+        "(m-op-algebra reference resolution)",
+    )
+
+
+def _check_reference_entity_name(model: Metamodel, reference: str, class_name: str) -> None:
+    """Refuse ``reference`` if its Entity spelling names more than one Entity.
+
+    Used at the positions that otherwise TOLERATE a miss: a `narrow`'s `entity` and
+    `to` entries collapse an unresolved name into the empty set, which the narrow
+    rules then classify. Asking here names an ambiguous spelling as the resolution
+    failure it is, rather than as the narrow rule its silence would produce.
+    """
+    ambiguous = _ambiguous_reference(model, reference, class_name)
+    if ambiguous is not None:
+        raise ambiguous
+
+
+def _unresolved_reference(model: Metamodel, reference: str, class_name: str) -> ValueError:
+    """The error a reference whose Entity spelling resolves to nothing raises.
+
+    Two unrelated failures share that miss: a spelling more than one Entity answers
+    to is the classified `reference-ambiguous-entity-name` rejection, while a
+    spelling no Entity answers to at all is an authoring error with no rejected-rule
+    classification of its own.
+    """
+    return _ambiguous_reference(model, reference, class_name) or ValueError(
+        f"{reference!r} names no declared entity or value object {class_name!r}"
+    )
+
+
 def _effective_set(model: Metamodel, entity: EntityMetadata) -> frozenset[str]:
     """``entity``'s effective concrete-subtype set: itself for a standalone Entity,
     else its family view's concrete descendants.
@@ -393,11 +456,21 @@ def _family_set(model: Metamodel, entity: EntityMetadata) -> frozenset[str]:
 
 
 def _resolve_to_set(to: Sequence[str], model: Metamodel) -> frozenset[str]:
+    """The union of the effective concrete sets ``to``'s entries resolve to.
+
+    A `narrow`'s `entity` and each `to` entry are reference positions, so a bare
+    spelling two namespaces share is refused here rather than contributing nothing
+    and surfacing as an empty or out-of-position resolved set. A name no Entity
+    answers to still contributes nothing: which of the narrow rules that leaves is
+    the caller's to classify.
+    """
     resolved: set[str] = set()
     for name in to:
         entity = _lookup_entity(model, name)
-        if entity is not None:
-            resolved.update(_effective_set(model, entity))
+        if entity is None:
+            _check_reference_entity_name(model, name, name)
+            continue
+        resolved.update(_effective_set(model, entity))
     return frozenset(resolved)
 
 
@@ -412,7 +485,9 @@ def _validate_narrow(
     carve-out (`m-navigate`)."""
     if scope.relationship_target is not None:
         # Relationship scope does NOT clamp: `entity` MUST name the relationship
-        # target exactly, never a broader or other position.
+        # target exactly, never a broader or other position. A spelling that names
+        # no single Entity fails to resolve before it can be compared to the target.
+        _check_reference_entity_name(model, entity, entity)
         target = _lookup_entity(model, entity)
         if target is None or target.identity.canonical != scope.relationship_target:
             raise OperationRejectedError(
@@ -485,30 +560,6 @@ def _ordered_scope(op: Operation, model: Metamodel, scope: _PositionScope) -> _P
             return scope
 
 
-def _ambiguous_bare_name(model: Metamodel, name: str) -> bool:
-    """Whether ``name`` is a bare local spelling two namespaces share.
-
-    :func:`~parallax.core.metamodel.entity_by_name` answers such a spelling with a
-    miss rather than a silent first match, so the reference resolves nowhere and
-    the caller says which spelling would.
-    """
-    return sum(1 for entity in model.entities if entity.identity.name == name) > 1
-
-
-def _unresolved_reference(model: Metamodel, reference: str, class_name: str) -> ValueError:
-    if _ambiguous_bare_name(model, class_name):
-        canonical = sorted(
-            entity.identity.canonical
-            for entity in model.entities
-            if entity.identity.name == class_name
-        )
-        return ValueError(
-            f"{reference!r}: the bare Entity spelling {class_name!r} is shared by "
-            f"{canonical}; name the position canonically"
-        )
-    return ValueError(f"{reference!r} names no declared entity or value object {class_name!r}")
-
-
 def _check_attr_ref(attr_ref: str, model: Metamodel, scope: _PositionScope) -> None:
     class_name, _, _attr_name = attr_ref.rpartition(".")
     entity = _lookup_entity(model, class_name)
@@ -566,8 +617,8 @@ def _declaration_target(declaration: RelationshipDeclaration) -> EntityIdentity:
 def _relationship_target(rel_ref: str, model: Metamodel, *, wrong_kind_rule: str) -> EntityMetadata:
     class_name, _, member_name = rel_ref.rpartition(".")
     entity = _lookup_entity(model, class_name)
-    if entity is None:  # pragma: no cover - a referenced relationship owner is in the closure
-        raise ValueError(f"{rel_ref!r} names no declared entity {class_name!r}")
+    if entity is None:
+        raise _unresolved_reference(model, rel_ref, class_name)
     declaration = entity.relationship(member_name)
     if declaration is not None:
         target = model.entity(_declaration_target(declaration))
@@ -664,8 +715,8 @@ def _resolve_nested_leaf(path: str, model: Metamodel) -> ValueObjectAttributeMet
         )
     class_name, vo_name, *segments = parts
     entity = _lookup_entity(model, class_name)
-    if entity is None:  # pragma: no cover - a referenced value-object owner is in the closure
-        raise ValueError(f"{path!r}: {class_name!r} names no declared entity")
+    if entity is None:
+        raise _unresolved_reference(model, path, class_name)
     vo = entity.value_object(vo_name)
     if vo is None:
         raise OperationRejectedError(
@@ -699,8 +750,8 @@ def _check_nested_vo_terminated(path: str, model: Metamodel) -> _VoContainer:
         )
     class_name, vo_name, *segments = parts
     entity = _lookup_entity(model, class_name)
-    if entity is None:  # pragma: no cover - a referenced value-object owner is in the closure
-        raise ValueError(f"{path!r}: {class_name!r} names no declared entity")
+    if entity is None:
+        raise _unresolved_reference(model, path, class_name)
     vo = entity.value_object(vo_name)
     if vo is None:
         raise OperationRejectedError(

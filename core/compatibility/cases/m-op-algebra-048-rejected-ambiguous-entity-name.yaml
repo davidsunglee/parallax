@@ -1,0 +1,37 @@
+# Negative (m-op-algebra reference resolution): a predicate reference spells an
+# Entity name two namespaces of the model declare, so it resolves to no Entity at
+# all and is refused before any SQL.
+#
+# The read is positioned at `Register` (the model's first entity, the default a
+# rejected case takes) and the predicate reaches `archive.SharedVariant` through
+# the `variant` hop, which re-roots the inner position at that Entity. The
+# reference `SharedVariant.archiveLabel` is spelled the only way an operation can
+# spell it — bare and dot-free, per the `attributeRef` grammar — and the model
+# declares `SharedVariant` in BOTH `archive` and `catalog`, so the spelling names
+# two Entities and therefore none.
+#
+# The hop is what pins the case at its weakest point: `archiveLabel` is declared on
+# exactly one of the twins, and the hop's position is exactly that one, so a
+# resolver answering a bare spelling with its FIRST matching declaration finds the
+# reference perfectly applicable, accepts silently, and emits a predicate against
+# archive_shared for a spelling that names two tables' Entities. Nothing later
+# catches it: the positional rules presuppose a reference that RESOLVED.
+#
+# This is the distinction against `attribute-outside-active-position`
+# (m-op-algebra-045/047): that rule fires when a reference resolves to an Entity
+# OUTSIDE the position, this one when it resolves to more than one and therefore to
+# none. It is a rule about the reference SITE, not about the declarations: both
+# Entities stay declarable, materializable under their exact qualified identities,
+# and readable through a position that names them unambiguously — which is why
+# m-inheritance-120 reads its two-namespace model untouched.
+model: models/shared-local-name.yaml
+tags: [m-op-algebra, rejected, negative, slice-snapshot-1, slice-managed-1]
+shape: rejected
+when:
+  operation:
+    exists:
+      rel: Register.variant
+      op:
+        eq: { attr: SharedVariant.archiveLabel, value: A-1 }
+then:
+  rejectedRule: reference-ambiguous-entity-name

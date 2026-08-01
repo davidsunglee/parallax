@@ -29,6 +29,7 @@ from reference_harness.inheritance import (
     ATTRIBUTE_OUTSIDE_ACTIVE_POSITION,
     NARROW_EMPTY_EFFECTIVE_SET,
     NARROW_OUTSIDE_POSITION,
+    REFERENCE_AMBIGUOUS_ENTITY_NAME,
     SUBTYPE_ATTRIBUTE_OUTSIDE_NARROW_SCOPE,
     Family,
     tag_value_to_subtype,
@@ -370,6 +371,82 @@ def test_two_namespaces_sharing_a_local_name_stay_distinct_positions() -> None:
             position="crm.Customer",
         )
     assert exc.value.rule == ATTRIBUTE_OUTSIDE_ACTIVE_POSITION
+
+
+def _shared_local_name_defs() -> list[dict[str, Any]]:
+    return load_model(_COMPATIBILITY_ROOT, "models/shared-local-name.yaml").entity_defs
+
+
+# Every position that names an entity, spelled the only way the operation grammars
+# allow — bare — against the model declaring `SharedVariant` in two namespaces. The
+# rule is about the spelling failing to resolve, so it fires wherever a position is
+# named, not only where an attribute is referenced.
+_AMBIGUOUS_BY_POSITION: dict[str, dict[str, Any]] = {
+    "attr": {"eq": {"attr": "SharedVariant.archiveLabel", "value": "A-1"}},
+    "orderBy.keys": {
+        "orderBy": {"operand": {"all": {}}, "keys": [{"attr": "SharedVariant.archiveLabel"}]}
+    },
+    "rel": {"exists": {"rel": "SharedVariant.register", "op": {"all": {}}}},
+    "narrow.entity": {
+        "narrow": {"entity": "SharedVariant", "to": ["Register"], "operand": {"all": {}}}
+    },
+    "narrow.to": {
+        "narrow": {"entity": "Register", "to": ["SharedVariant"], "operand": {"all": {}}}
+    },
+    "deepFetch.segment.rel": {
+        "deepFetch": {
+            "operand": {"all": {}},
+            "paths": [{"segments": [{"rel": "SharedVariant.register"}]}],
+        }
+    },
+    "deepFetch.segment.narrow.to": {
+        "deepFetch": {
+            "operand": {"all": {}},
+            "paths": [
+                {"segments": [{"rel": "Register.variant", "narrow": {"to": ["SharedVariant"]}}]}
+            ],
+        }
+    },
+    "deepFetch.path.narrow.entity": {
+        "deepFetch": {
+            "operand": {"all": {}},
+            "paths": [
+                {
+                    "narrow": {"entity": "SharedVariant", "to": ["Register"]},
+                    "segments": [{"rel": "Register.variant"}],
+                }
+            ],
+        }
+    },
+    "relationship-scope narrow.entity": {
+        "exists": {
+            "rel": "Register.variant",
+            "op": {
+                "narrow": {"entity": "SharedVariant", "to": ["Register"], "operand": {"all": {}}}
+            },
+        }
+    },
+}
+
+
+@pytest.mark.parametrize("position", sorted(_AMBIGUOUS_BY_POSITION))
+def test_a_bare_name_two_namespaces_share_is_rejected_in_every_reference_position(
+    position: str,
+) -> None:
+    with pytest.raises(RejectionError) as exc:
+        validate_operation_inheritance(_shared_local_name_defs(), _AMBIGUOUS_BY_POSITION[position])
+    assert exc.value.rule == REFERENCE_AMBIGUOUS_ENTITY_NAME
+    assert "archive.SharedVariant" in exc.value.detail
+    assert "catalog.SharedVariant" in exc.value.detail
+
+
+def test_an_unambiguous_bare_name_still_resolves_in_a_two_namespace_model() -> None:
+    # The refusal is a property of the SPELLING, not of the model: the same model
+    # answers every bare name only one namespace declares, so declaring the
+    # collision costs the rest of the model nothing.
+    defs = _shared_local_name_defs()
+    validate_operation_inheritance(defs, {"eq": {"attr": "Register.id", "value": 1}})
+    validate_operation_inheritance(defs, {"exists": {"rel": "Register.variant", "op": {"all": {}}}})
 
 
 def test_an_unrelated_entitys_attribute_is_outside_the_active_position() -> None:
