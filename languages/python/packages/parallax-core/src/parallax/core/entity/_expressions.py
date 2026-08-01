@@ -33,11 +33,17 @@ and ``V`` a Value Object class. ``E``, ``S``, and ``R`` are always Entities and
 ``T`` never is, so a signature is readable without tracing where each parameter
 was solved.
 
-:class:`Predicate` is contravariant in ``E``, which is the inheritance rule
-expressed as variance: an ancestor's member is addressable from a descendant
+:class:`Predicate`, :class:`AllPredicate`, :class:`SortKey`, and
+:class:`AttributeAssignment` are contravariant in ``E``, which is the inheritance
+rule expressed as variance: an ancestor's member is addressable from a descendant
 position, a descendant's member is not addressable from an ancestor position.
-``E`` appears in no field of the value, so the contravariance is stated by a
-checker-only phantom method rather than inferred from the runtime shape.
+:class:`RelationshipPath` is COVARIANT in both parameters, for the opposite
+reason: its source narrows which queried objects the path starts from, so any
+descendant of the queried Entity is a legal include source, and its target is
+what the path points at, so a narrowed hop stands wherever the broad one does.
+``E`` and ``R`` appear in no field of any of these values, so each variance claim
+is stated by its own checker-only phantom rather than inferred from the runtime
+shape.
 
 Recommended style, not a rule the parameters enforce: START EVERY TERM FROM THE
 QUERIED ENTITY. Prefer ``Dog.where((Dog.name == n) & (Dog.bark_volume > v))``
@@ -108,6 +114,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "UNLOADED",
+    "AllPredicate",
     "AttributeAssignment",
     "AttributeExpr",
     "AttributeRef",
@@ -115,6 +122,7 @@ __all__ = [
     "Predicate",
     "RelationshipPath",
     "RelationshipRef",
+    "SortKey",
     "and_terms",
     "conjoin",
     "serialize_member",
@@ -214,20 +222,92 @@ class RelationshipRef:
 
 
 @dataclass(frozen=True, slots=True)
-class AttributeAssignment:
+class AttributeAssignment[E]:
     """One typed ``_where``-verb assignment (``Attr.set(value)``, spec §5).
 
     The entity-scoped spelling of a predicate-write assignment, built on the same
     attribute-expression surface a predicate is built on. This scope stays free of
     ``parallax.core.unit_work``, so the write boundary translates it to the
     canonical write assignment.
+
+    Contravariant in ``E`` for the reason a Predicate is: an assignment written
+    against an ancestor's member applies to every descendant position, and one
+    written against a descendant's member applies to none of its ancestors'.
     """
 
     attr: AttributeRef
     value: object
 
+    if TYPE_CHECKING:
+
+        def _assigns_to(self, entity: E) -> None:
+            """Never defined at run time and never called: the input position
+            that makes ``E`` contravariant (see :class:`Predicate`)."""
+
     def __str__(self) -> str:
         return str(self.attr)
+
+
+@dataclass(frozen=True, slots=True)
+class SortKey[E]:
+    """One ordering term over the Entity position ``E``.
+
+    Wraps the canonical ``OrderKey`` rather than being one, so a sort key carries
+    the position it was built from while the node it holds stays serializable and
+    parameter-free. The Null Placement modifiers stay here — an Attribute
+    Expression exposes neither — and delegate to the canonical node, so the
+    single-shot placement rule has one implementation.
+
+    Contravariant in ``E``: an ancestor's member orders every descendant
+    position, and a descendant's member orders none of its ancestors'. That is
+    the same rule the validator states of an order key's attribute reference
+    against the ordered rows' active position.
+    """
+
+    key: OrderKey
+
+    if TYPE_CHECKING:
+
+        def _orders(self, entity: E) -> None:
+            """Never defined at run time and never called: the input position
+            that makes ``E`` contravariant (see :class:`Predicate`)."""
+
+    def nulls_first(self) -> SortKey[E]:
+        """This key with NULLs placed first. Single-shot (m-op-algebra)."""
+        return SortKey(self.key.nulls_first())
+
+    def nulls_last(self) -> SortKey[E]:
+        """This key with NULLs placed last — the default, stated explicitly."""
+        return SortKey(self.key.nulls_last())
+
+
+@dataclass(frozen=True, slots=True)
+class AllPredicate[E]:
+    """The explicitly unfiltered query over the Entity position ``E``
+    (``Entity.all``).
+
+    A distinct type rather than a :class:`Predicate`, and deliberately without
+    boolean operators: ``all`` is the whole filter or it is not the filter at
+    all, so combining it with a term is neither a spelling the algebra has nor
+    one a developer means. Both refusals hold on both sides — no operator to
+    call at run time, and none to solve for statically.
+
+    Contravariant in ``E`` like every other addressed value. Nothing on the wire
+    distinguishes ``Dog.all`` from ``Animal.all`` — an ``all`` node names no
+    position — so this parameter is the only thing that refuses an unfiltered
+    query written against a position the query is not at.
+    """
+
+    op: Operation
+
+    if TYPE_CHECKING:
+
+        def _addresses(self, entity: E) -> None:
+            """Never defined at run time and never called: the input position
+            that makes ``E`` contravariant (see :class:`Predicate`)."""
+
+    def __bool__(self) -> bool:
+        raise TypeError(_BOOL_HINT)
 
 
 @dataclass(frozen=True, slots=True)
@@ -292,7 +372,7 @@ class Predicate[E]:
         raise TypeError(_BOOL_HINT)
 
 
-def and_terms(pred: Predicate[Any]) -> tuple[Operation, ...]:
+def and_terms(pred: Predicate[Any] | AllPredicate[Any]) -> tuple[Operation, ...]:
     if isinstance(pred.op, And):
         return pred.op.operands  # flatten same-combinator nesting (order-preserving)
     if isinstance(pred.op, Or):
@@ -466,7 +546,7 @@ class AttributeExpr[E, T]:
     def contains(self, value: str, *, case_insensitive: bool = False) -> Predicate[E]:
         return self._string("contains", value, case_insensitive)
 
-    def asc(self) -> OrderKey:
+    def asc(self) -> SortKey[E]:
         """An ascending order-by key over this attribute.
 
         Only the Sort Key these converters produce carries the single-shot
@@ -474,13 +554,13 @@ class AttributeExpr[E, T]:
         Expression itself exposes neither, so placement is authorable exactly where
         a direction is.
         """
-        return OrderKey(attr=str(self.ref), direction="asc")
+        return SortKey(OrderKey(attr=str(self.ref), direction="asc"))
 
-    def desc(self) -> OrderKey:
+    def desc(self) -> SortKey[E]:
         """A descending order-by key over this attribute (see :meth:`asc`)."""
-        return OrderKey(attr=str(self.ref), direction="desc")
+        return SortKey(OrderKey(attr=str(self.ref), direction="desc"))
 
-    def set(self, value: object) -> AttributeAssignment:
+    def set(self, value: T) -> AttributeAssignment[E]:
         """A set-based ``_where``-verb assignment (``Account.balance.set(0)``, spec §5).
 
         Only a top-level scalar attribute or Value Object member is assignable: a
@@ -489,6 +569,12 @@ class AttributeExpr[E, T]:
         to its canonical document here, the same translation every other write
         input receives, and the rendered value is what the assignment rules then
         see — so the typed path and the serialized path judge one shape.
+
+        The value parameter is the member's own declared type, unlike a
+        comparison's: an assignment's value genuinely IS a member value rather
+        than a wire literal. The rendered document a Value Object member equally
+        accepts is what that narrowing costs — a spelling the rules still judge
+        and the parameter no longer admits.
         """
         if self._path:
             raise TypeError(
@@ -670,11 +756,23 @@ def _subtype_names(subtype: type) -> tuple[str, str]:
 
 
 @dataclass(frozen=True, slots=True)
-class RelationshipPath:
+class RelationshipPath[E, R]:
     """A chained class-level relationship reference (``Order.items``,
     ``Order.items.statuses``) — the seed of the ``.include(...)`` deep-fetch
     spelling, the hop-level ``.narrow(*subtypes)`` narrowed-view request, and
     the single-hop relationship quantifiers ``.any()``/``.none()``.
+
+    ``E`` is the Entity the seeding class access went through — where the path
+    starts — and ``R`` the Entity it currently points at. Both are covariant. A
+    path rooted at a descendant stands wherever one rooted at its ancestor is
+    wanted, because a narrower source is a legal include source of a broader
+    queried position and authors the path-root guard that says so; a path
+    narrowed to a descendant target stands wherever the broad hop does, because
+    everything it reaches is also reached by the broad one.
+
+    ``R`` is ``Any`` past the first hop, where the target erases (see
+    :meth:`__getattr__`), so a deeper hop's interior predicates and narrows are
+    measured only at execution preflight.
 
     ``segments`` is the traversal so far in ``m-deep-fetch``'s own
     ``PathSegment`` shape, whose relationship references name their owner locally
@@ -703,13 +801,30 @@ class RelationshipPath:
     target: str | None
     source: str | None = None
 
+    if TYPE_CHECKING:
+
+        def _starts_from(self) -> E:
+            """Never defined at run time and never called.
+
+            ``E`` appears in no field, so without an output position a checker
+            infers it as bivariant and a sibling Entity's path would satisfy an
+            include-source parameter. This is the output position, and it is the
+            whole mechanism (see :class:`Predicate` for the contravariant twin).
+            """
+            ...
+
+        def _reaches(self) -> R:
+            """Never defined at run time and never called: the output position
+            that makes ``R`` covariant (see :meth:`_starts_from`)."""
+            ...
+
     @property
     def ref(self) -> RelationshipRef:
         """The first hop's relationship reference (mirrors ``AttributeExpr.ref``)."""
         owner, _, relationship = self.segments[0].rel.rpartition(".")
         return RelationshipRef(owner, relationship)
 
-    def __getattr__(self, name: str) -> RelationshipPath:
+    def __getattr__(self, name: str) -> RelationshipPath[E, Any]:
         """The next hop, spelled from this path's target and the member's name.
 
         Authoring reaches no model, so the segment is composed rather than
@@ -718,11 +833,15 @@ class RelationshipPath:
         relationship — and what it points at — is settled at execution preflight,
         which resolves every segment against the connected model.
 
-        Two authoring facts erase here in consequence, and both are refused at
+        Three authoring facts erase here in consequence, and each is refused at
         preflight rather than accepted wrongly: a member whose declaration
-        renames it, and one an ancestor declares rather than the target itself.
-        Spell either through ``.include(...)`` on a path rooted at the Entity
-        that declares it.
+        renames it, one an ancestor declares rather than the target itself, and
+        what the hop points at — which caps an authored chain at two hops,
+        because a third would have no owner to spell its segment from. ``R``
+        cannot supply it: a type parameter is checker-only, and this is where the
+        segment string is built. Spell a longer traversal through
+        ``.include(...)`` on a path rooted at the Entity the deeper hop starts
+        from.
 
         Only the hop's segment continues this path: a deeper hop is a member
         lookup on the current target and qualifies nothing about where the path
@@ -743,10 +862,25 @@ class RelationshipPath:
             source=self.source,
         )
 
-    def narrow(self, *subtypes: type) -> RelationshipPath:
+    def narrow[N](self: RelationshipPath[Any, N], *subtypes: type[N]) -> RelationshipPath[E, N]:
         """A hop-level narrowed-view request (``Owner.pets.narrow(Dog)``),
         continuable to a deeper hop. Requests the derived narrowed view
-        (spec §3), never marking the broad relationship loaded."""
+        (spec §3), never marking the broad relationship loaded.
+
+        Each named class must be a subtype of what the hop points at, which is
+        the static half of ``narrow-outside-relationship-target``: a hop narrows
+        to subtypes of its own target, never to another position. That bound is
+        carried by the specialized ``self`` rather than by a type-parameter
+        bound, because a bound may not itself be generic; solving one parameter
+        from the receiver states the same rule. That the specialized ``self``
+        spells the source as ``Any`` is deliberate: naming it ``E`` there would
+        put the source in an input position and collapse it from covariant to
+        invariant, and the source's covariance is what the include-source rule is
+        stated with. Which concrete subtypes the named classes resolve to remains
+        a per-model fact, settled at preflight, and the answered path keeps the
+        hop's declared target — a hop narrow does not move where a quantifier's
+        interior predicates are measured, since a quantifier reads the hop alone.
+        """
         narrowed = tuple(_subtype_names(subtype) for subtype in subtypes)
         *head, last = self.segments
         new_last = PathSegment(rel=last.rel, narrow=tuple(local for local, _ in narrowed))
@@ -755,12 +889,24 @@ class RelationshipPath:
             _, new_target = narrowed[0]
         return RelationshipPath(segments=(*head, new_last), target=new_target, source=self.source)
 
-    def any(self, *predicates: Predicate[Any]) -> Predicate[Any]:
+    def any(self, *predicates: Predicate[R]) -> Predicate[Any]:
         """The single-hop relationship quantifier: ``>= 1`` related row
-        (optionally matching ``predicates``), serializing to ``exists``."""
+        (optionally matching ``predicates``), serializing to ``exists``.
+
+        The interior predicates address what the hop points at — the position the
+        validator threads into this node — so they carry the hop's target rather
+        than the path's source.
+
+        The quantifier itself answers an unaddressed predicate rather than one at
+        the path's source: a Predicate is contravariant, so answering
+        ``Predicate[E]`` would put the source in an input position and collapse
+        it from covariant to invariant, and the source's covariance is what the
+        include-source rule is stated with. A quantifier naming another position's
+        relationship keeps its preflight rejection.
+        """
         return Predicate(Exists(rel=self._single_hop_ref(), op=conjoin(predicates)))
 
-    def none(self, *predicates: Predicate[Any]) -> Predicate[Any]:
+    def none(self, *predicates: Predicate[R]) -> Predicate[Any]:
         """The complement of :meth:`any` — ``notExists``."""
         return Predicate(NotExists(rel=self._single_hop_ref(), op=conjoin(predicates)))
 

@@ -2,6 +2,7 @@
   "parallax.core": [
     "AbstractRoot",
     "AbstractSubtype",
+    "AllPredicate",
     "Attr",
     "AttributeExpr",
     "Bitemporal",
@@ -30,6 +31,7 @@
     "Rel",
     "RelationshipPath",
     "Sequence",
+    "SortKey",
     "Statement",
     "TABLE_PER_CONCRETE_SUBTYPE",
     "TX_TIME",

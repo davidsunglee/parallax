@@ -453,7 +453,7 @@ class Transaction:
     def update_where(
         self,
         statement: EntityStatement,
-        *assignments: AttributeAssignment,
+        *assignments: AttributeAssignment[Any],
         valid_from: dt.datetime | None = None,
     ) -> None:
         """A predicate-selected ``update`` (`python.md` §5): ``statement`` MUST
@@ -513,7 +513,7 @@ class Transaction:
     def update_until_where(
         self,
         statement: EntityStatement,
-        *assignments: AttributeAssignment,
+        *assignments: AttributeAssignment[Any],
         valid_from: dt.datetime,
         until: dt.datetime,
     ) -> None:

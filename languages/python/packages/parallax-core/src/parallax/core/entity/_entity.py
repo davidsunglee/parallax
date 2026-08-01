@@ -38,7 +38,7 @@ from parallax.core.entity._errors import (
     ModelCopyError,
     ProvenanceError,
 )
-from parallax.core.entity._expressions import Predicate, serialize_member
+from parallax.core.entity._expressions import AllPredicate, Predicate, serialize_member
 from parallax.core.entity._members import Attr, IndexSpec, InheritanceRole
 from parallax.core.entity.statement import Statement, build_statement
 from parallax.core.metamodel import (
@@ -73,6 +73,28 @@ __all__ = [
     "primary_key_row",
     "wire_names_of",
 ]
+
+
+class _All:
+    """The ``Entity.all`` descriptor: class access yields the explicitly
+    unfiltered query over the accessing class's own position.
+
+    It lives in ``Entity``'s class body rather than on ``EntityMeta``, and that
+    placement is the whole point. A type checker resolving a member through
+    ``type[...]`` reads the metaclass declaration itself and does not apply the
+    descriptor protocol to it, so a metaclass spelling would answer correctly at
+    a literal class reference and silently lose the Entity parameter the moment
+    the class arrived through a type variable — which is exactly where a generic
+    helper over Entity Classes needs it.
+
+    Only class access is spelled: an instance is already the single row it is,
+    so ``instance.all`` names nothing and the signature refuses it.
+    """
+
+    __slots__ = ()
+
+    def __get__[E](self, obj: None, owner: type[E], /) -> AllPredicate[E]:
+        return AllPredicate(All())
 
 
 class EntityMeta(ModelMetaclass):
@@ -159,6 +181,10 @@ class EntityMeta(ModelMetaclass):
             mint=_mint,
             axes=_axes,
             header=EntityHeader(table, name, namespace, persistence, inheritance, indices),
+            # `Entity.all` is a class-body descriptor, which Pydantic's own
+            # namespace inspection would otherwise refuse as an unannotated
+            # field the moment `Entity` itself is created.
+            ignored_types=(_All,),
         )
 
 
@@ -328,8 +354,15 @@ def _validate_copy_keys(cls_name: str, names: WireNames, update: Mapping[str, An
 class Entity(BaseModel, metaclass=EntityMeta, _mint=FRAMEWORK_MINT):
     """The frozen base every Parallax Entity Class extends."""
 
+    all = _All()
+    """The explicitly unfiltered query over this Entity (``Animal.all``).
+
+    A distinct type from a Predicate, carrying no boolean operators: an
+    unfiltered query is the whole filter or it is not the filter at all.
+    """
+
     @classmethod
-    def where[E: Entity](cls: type[E], *predicates: Predicate[E]) -> Statement:
+    def where[E: Entity](cls: type[E], *predicates: Predicate[E] | AllPredicate[E]) -> Statement:
         """Build a side-effect-free statement conjoining ``predicates`` (empty is find-all).
 
         Each predicate is measured against the queried position twice. The
@@ -351,8 +384,8 @@ class Entity(BaseModel, metaclass=EntityMeta, _mint=FRAMEWORK_MINT):
         return build_statement(cls.identity.name, predicates, as_of_axes=_family_axes(cls))
 
     @classmethod
-    def narrow[E: Entity](
-        cls: type[E], *subtypes: type, where: Predicate[Any] | None = None
+    def narrow[E: Entity, S: Entity](
+        cls: type[E], *subtypes: type[S], where: Predicate[S] | None = None
     ) -> Predicate[E]:
         """The scoped subtype-narrowing constructor (spec §2).
 
@@ -365,6 +398,16 @@ class Entity(BaseModel, metaclass=EntityMeta, _mint=FRAMEWORK_MINT):
         sanctioned way to reach a descendant's member from an ancestor position —
         so the ``where=`` scope is the one place a subtype's predicate legitimately
         lands in an ancestor's query.
+
+        ``S`` is solved from the named subtypes and is what the scoped predicate
+        is measured against, so a ``where=`` addressing a position outside the
+        narrowed set is refused before anything runs, while the answer stays in
+        the narrowing class's own position. Whether the named classes are
+        subtypes of that position at all is NOT stated here: a type parameter's
+        bound may not itself be generic, so ``S`` cannot be bounded by ``E``, and
+        a class outside the position keeps only its preflight rejection
+        (``narrow-outside-position``) — as does the per-model question of which
+        concrete subtypes the named classes resolve to.
         """
         to = tuple(declaration_of(subtype).identity.name for subtype in subtypes)
         operand: Operation = where.op if where is not None else All()

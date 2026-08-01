@@ -16,6 +16,8 @@ spelled as a class object reaches the engine live, which is what lets one module
 declare two Entities that share the canonical name ``Customer``.
 """
 
+from typing import Any
+
 import pytest
 
 from parallax.core import (
@@ -112,7 +114,9 @@ class Owner(Entity, table="owner", namespace="pets"):
 PETS = DomainModel(Owner, Animal, Dog, Toy)
 
 
-def _preflight(models: DomainModel, root: type[Entity], path: RelationshipPath) -> DeepFetch:
+def _preflight(
+    models: DomainModel, root: type[Entity], path: RelationshipPath[Any, Any]
+) -> DeepFetch:
     """Build the include operation ``path`` authors and validate it as a read does."""
     operation = root.where().include(path).operation()
     assert isinstance(operation, DeepFetch)
@@ -208,11 +212,13 @@ def test_a_hop_narrowed_to_one_class_targets_it_canonically() -> None:
 def test_a_hop_narrowed_to_a_class_declaring_no_identity_names_it_pythonically() -> None:
     # A narrow reads each class's declared identity structurally; a class
     # carrying none is named by its Python name, and the model refuses it where
-    # the narrow is validated.
+    # the narrow is validated. The hop's own target bounds what it may narrow
+    # to, so a class outside it is refused statically as well — the suppression
+    # is what lets this probe reach the runtime spelling behind that rule.
     class Bare:
         pass
 
-    path = Root.branches.narrow(Bare)
+    path = Root.branches.narrow(Bare)  # pyright: ignore[reportArgumentType]
     assert path.segments[-1].narrow == ("Bare",)
     assert path.target == "Bare"
 
@@ -227,6 +233,8 @@ def test_a_path_that_already_continued_cannot_continue_again() -> None:
 
 
 def test_a_directly_built_path_carries_no_target_and_cannot_continue() -> None:
-    built = RelationshipPath(segments=(PathSegment(rel="Order.customer"),), target=None)
+    built: RelationshipPath[SalesOrder, Any] = RelationshipPath(
+        segments=(PathSegment(rel="Order.customer"),), target=None
+    )
     with pytest.raises(AttributeError, match="already continued past the hop"):
         _ = built.notes

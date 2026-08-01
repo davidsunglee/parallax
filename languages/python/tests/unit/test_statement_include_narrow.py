@@ -14,6 +14,8 @@ facts it erases; here a multi-hop include is exercised only as far as it needs.
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 from _support import inheritance_models as im
@@ -120,7 +122,9 @@ def test_multi_hop_include_resolves_the_deeper_hop_against_the_model() -> None:
 def test_a_path_that_already_continued_cannot_continue_again() -> None:
     # A composed hop points at an Entity the path names no class for, so a third
     # hop has no owner to spell itself from.
-    bare = RelationshipPath(segments=(PathSegment(rel="SnapOrder.items"),), target=None)
+    bare: RelationshipPath[sm.SnapOrder, Any] = RelationshipPath(
+        segments=(PathSegment(rel="SnapOrder.items"),), target=None
+    )
     with pytest.raises(AttributeError, match="already continued past the hop"):
         _ = bare.statuses
 

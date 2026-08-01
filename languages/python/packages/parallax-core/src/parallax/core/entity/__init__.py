@@ -43,6 +43,7 @@ from parallax.core.entity._errors import (
 )
 from parallax.core.entity._expressions import (
     UNLOADED,
+    AllPredicate,
     AttributeAssignment,
     AttributeExpr,
     AttributeRef,
@@ -50,6 +51,7 @@ from parallax.core.entity._expressions import (
     Predicate,
     RelationshipPath,
     RelationshipRef,
+    SortKey,
 )
 from parallax.core.entity._members import (
     MANY_TO_ONE,
@@ -98,6 +100,7 @@ __all__ = [
     "UNLOADED",
     "AbstractRoot",
     "AbstractSubtype",
+    "AllPredicate",
     "Attr",
     "AttrSpec",
     "AttributeAssignment",
@@ -127,6 +130,7 @@ __all__ = [
     "RelationshipRef",
     "ReverseRelSpec",
     "Sequence",
+    "SortKey",
     "Statement",
     "TablePerHierarchy",
     "TxTemporal",

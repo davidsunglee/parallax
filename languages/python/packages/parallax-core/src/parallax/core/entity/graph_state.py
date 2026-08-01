@@ -10,6 +10,8 @@ derived view key deep fetch produced when it planned the read.
 
 from __future__ import annotations
 
+from typing import Any
+
 from parallax.core.entity._entity import wire_names_of
 from parallax.core.entity._errors import UnloadedRelationshipError
 from parallax.core.entity._expressions import UNLOADED, RelationshipPath
@@ -19,7 +21,7 @@ __all__ = ["is_loaded", "narrowed"]
 _NARROWED_ATTR = "__parallax_narrowed__"
 
 
-def _view_key(path: str | RelationshipPath) -> str:
+def _view_key(path: str | RelationshipPath[Any, Any]) -> str:
     """The relationship-name-or-narrowed-view key ``path`` names.
 
     A bare string passes through unchanged; a relationship path derives its key
@@ -35,7 +37,7 @@ def _view_key(path: str | RelationshipPath) -> str:
     return f"{rel_local}[{','.join(sorted(last.narrow))}]"
 
 
-def is_loaded(node: object, path: str | RelationshipPath) -> bool:
+def is_loaded(node: object, path: str | RelationshipPath[Any, Any]) -> bool:
     """Whether ``node``'s relationship (or narrowed view) ``path`` names was
     included by the find that produced it — never raises, never issues SQL
     (spec §3)."""
@@ -51,7 +53,7 @@ def is_loaded(node: object, path: str | RelationshipPath) -> bool:
     return value is not UNLOADED
 
 
-def narrowed(node: object, path: str | RelationshipPath) -> object:
+def narrowed(node: object, path: str | RelationshipPath[Any, Any]) -> object:
     """The narrowed view ``path`` names (spec §3): a to-many hop's own tuple, or
     the related node / ``None`` for a to-one narrowed view. Raises
     :class:`~parallax.core.entity._errors.UnloadedRelationshipError` naming the
