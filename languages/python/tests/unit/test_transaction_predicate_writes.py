@@ -906,34 +906,45 @@ def test_delete_where_refuses_an_attribute_outside_the_written_position() -> Non
 
 
 # --------------------------------------------------------------------------- #
-# `m-case-format` enumerates the validator's order: it "validates the           #
-# predicate ..., checks entity scope and bare-predicate rules, rejects          #
-# duplicate or framework-owned/unassignable assignments, and requires ONLY the  #
-# temporal coordinates the target profile uses" — the temporal coordinates      #
-# last. A compound-invalid typed write must therefore classify by its           #
-# PREDICATE, which is also the classification the conformance ingress gives the #
-# same instruction (it takes no `dt.datetime` at all, so it has no other        #
-# candidate). Nothing is read off a `dt.datetime` before the predicate rules    #
-# run — not its awareness, and not its UTC normalization, which is itself       #
-# partial: an extreme offset carries `datetime.min` out of the representable    #
-# range. The three kinds below stand for the whole argument space (a bound      #
-# whose rendering rejects, one whose rendering overflows, one that renders      #
-# cleanly), on each of the two bound slots.                                     #
+# A typed `_where` verb validates and RENDERS both Valid-Time bounds BEFORE it  #
+# builds the canonical instruction, so a `PredicateWrite` holds an ISO-8601 UTC #
+# instant in a temporal slot from the moment it exists —                        #
+# `write-instruction.schema.json`'s own definition of an instant — never a      #
+# caller's spelling and never anything else standing in for one.                #
+#                                                                               #
+# A call that is invalid in BOTH places therefore classifies by its BOUND.      #
+# Both refusals are correct and neither is lost; only their order is fixed, and #
+# it is fixed by the point at which the instruction must already be canonical.  #
+# The predicate's own refusal is undiminished — the SAME predicate under a      #
+# RENDERABLE bound still classifies `between-bounds-inverted`, which is also    #
+# what the conformance ingress gives the same instruction (it takes no          #
+# `dt.datetime` at all, so it has no other candidate).                          #
+#                                                                               #
+# The three kinds below stand for the whole argument space — a bound whose      #
+# rendering rejects, one whose rendering overflows, one that renders cleanly —  #
+# on each of the two bound slots.                                               #
 # --------------------------------------------------------------------------- #
 _NAIVE = dt.datetime(2024, 7, 1)
 _AWARE = dt.datetime(2024, 8, 1, tzinfo=dt.UTC)
 _EXTREME_OFFSET = dt.datetime.min.replace(tzinfo=dt.timezone(dt.timedelta(hours=14)))
+_NON_UTC_VALID_FROM = dt.datetime(2024, 7, 1, 5, tzinfo=dt.timezone(dt.timedelta(hours=5)))
+_NON_UTC_UNTIL = dt.datetime(2024, 9, 1, 2, tzinfo=dt.timezone(dt.timedelta(hours=2)))
 
 
 @pytest.mark.parametrize(
-    ("valid_from", "until"),
+    ("valid_from", "until", "expected", "rule"),
     [
-        (_NAIVE, None),
-        (_AWARE, None),
-        (_EXTREME_OFFSET, None),
-        (_AWARE, _NAIVE),
-        (_AWARE, dt.datetime(2024, 9, 1, tzinfo=dt.UTC)),
-        (_AWARE, _EXTREME_OFFSET),
+        (_NAIVE, None, InstantError, None),
+        (_AWARE, None, OperationRejectedError, "between-bounds-inverted"),
+        (_EXTREME_OFFSET, None, OverflowError, None),
+        (_AWARE, _NAIVE, InstantError, None),
+        (
+            _AWARE,
+            dt.datetime(2024, 9, 1, tzinfo=dt.UTC),
+            OperationRejectedError,
+            "between-bounds-inverted",
+        ),
+        (_AWARE, _EXTREME_OFFSET, OverflowError, None),
     ],
     ids=[
         "naive-valid-from",
@@ -944,15 +955,19 @@ _EXTREME_OFFSET = dt.datetime.min.replace(tzinfo=dt.timezone(dt.timedelta(hours=
         "extreme-offset-until",
     ],
 )
-def test_an_invalid_predicate_outranks_every_temporal_bound(
-    valid_from: dt.datetime, until: dt.datetime | None
+def test_a_temporal_bound_is_judged_before_an_invalid_predicate(
+    valid_from: dt.datetime,
+    until: dt.datetime | None,
+    expected: type[Exception],
+    rule: str | None,
 ) -> None:
     def fn(tx: Transaction) -> None:
         _bounded_write(tx, WherePosition.where(WherePosition.id.between(10, 1)), valid_from, until)
 
-    with pytest.raises(OperationRejectedError) as caught:
+    with pytest.raises(expected) as caught:
         Database.connect(NoIoPort(), WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(fn)
-    assert caught.value.rule == "between-bounds-inverted"
+    if rule is not None:
+        assert cast("OperationRejectedError", caught.value).rule == rule
 
 
 @pytest.mark.parametrize(
@@ -970,13 +985,13 @@ def test_an_invalid_predicate_outranks_every_temporal_bound(
         "extreme-offset-until",
     ],
 )
-def test_a_deferred_bound_is_still_refused_once_the_predicate_is_valid(
+def test_an_unrenderable_bound_is_refused_before_any_buffering(
     valid_from: dt.datetime, until: dt.datetime | None, expected: type[Exception]
 ) -> None:
-    # Deferring the temporal step never loses a rejection, only reorders it:
-    # each bound is still judged where it is rendered, before any buffering and
-    # by the same step that decides whether the target's profile admits a bound
-    # at all.
+    # A bound is judged by the same step that renders it and that decides
+    # whether the target's profile admits a bound at all, so an unrenderable one
+    # is refused before the instruction exists — and therefore before the
+    # buffering seam, the resolving read, and every statement.
     port = RecordingPort(rows=[])
 
     def fn(tx: Transaction) -> None:
@@ -987,20 +1002,19 @@ def test_a_deferred_bound_is_still_refused_once_the_predicate_is_valid(
     assert port.ops == [("begin",), ("rollback",)]
 
 
-def test_a_deferred_bound_reaches_the_buffer_as_its_canonical_utc_literal() -> None:
-    # Deferring the rendering does not weaken it. The instruction that reaches
-    # the buffering seam carries `validate_valid_from` / `validate_until`'s own
-    # canonical literals, so a bound authored at a NON-UTC offset lands in the
-    # rectangle split as the same instant in UTC — never the caller's spelling,
-    # and never the presence marker the predicate rules were validated with.
+def test_a_non_utc_bound_reaches_the_buffer_as_its_canonical_utc_literal() -> None:
+    # The instruction that reaches the buffering seam carries
+    # `validate_valid_from` / `validate_until`'s own canonical literals, so a
+    # bound authored at a NON-UTC offset lands in the rectangle split as the
+    # same instant in UTC, never as the caller's spelling.
     port = RecordingPort(rows=[_position_row()])
 
     def fn(tx: Transaction) -> None:
         _bounded_write(
             tx,
             WherePosition.where(WherePosition.id == 1),
-            dt.datetime(2024, 7, 1, 5, tzinfo=dt.timezone(dt.timedelta(hours=5))),
-            dt.datetime(2024, 9, 1, 2, tzinfo=dt.timezone(dt.timedelta(hours=2))),
+            _NON_UTC_VALID_FROM,
+            _NON_UTC_UNTIL,
         )
 
     Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(
@@ -1011,6 +1025,82 @@ def test_a_deferred_bound_reaches_the_buffer_as_its_canonical_utc_literal() -> N
     middle_binds = cast("tuple[object, ...]", writes[2][2])
     assert "2024-07-01T00:00:00+00:00" in middle_binds  # the authored `valid_from`, in UTC
     assert "2024-09-01T00:00:00+00:00" in middle_binds  # the authored `until`, in UTC
+
+
+def test_no_typed_bound_reaches_the_frozen_ingress_uncanonicalized() -> None:
+    # WHAT THIS PINS. A `PredicateWrite` this lane builds never carries a
+    # non-canonical value in a canonical field, proved on the shape that binds
+    # BOTH Valid-Time slots into SQL — a bitemporal `updateUntil`, whose
+    # rectangle split emits four statements:
+    #
+    #   - a bound that cannot render never becomes an instruction, so the frozen
+    #     ingress is never reached and no statement is ever issued;
+    #   - a bound that can render arrives already normalized, so the four
+    #     statements a typed call produces are INDISTINGUISHABLE from the ones
+    #     the frozen ingress produces for the canonical instruction the
+    #     conformance engine would hand it. Anything other than the canonical
+    #     literal in either slot would show up as a differing bind.
+    #
+    # WHAT IT DOES NOT PIN: what the seam itself tolerates. Neither
+    # `_buffer_predicate_instruction` nor `validate_instruction` reads a bound,
+    # and `write-instruction.schema.json` types a Valid-Time instant as a
+    # non-empty string with no pattern, so a caller that hand-authors a document
+    # containing a malformed instant still deserializes and still reaches SQL
+    # through this same seam. Refusing that belongs to the instruction serde;
+    # what belongs here is that no Parallax code path ever produces such a
+    # value.
+    idle = RecordingPort(rows=[_position_row()])
+
+    def unrenderable(tx: Transaction) -> None:
+        tx.update_until_where(
+            WherePosition.where(WherePosition.id == 1),
+            WherePosition.value.set(Decimal("300.00")),
+            valid_from=_EXTREME_OFFSET,
+            until=_NON_UTC_UNTIL,
+        )
+
+    with pytest.raises(OverflowError):
+        Database.connect(idle, WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(unrenderable)
+    assert idle.ops == [("begin",), ("rollback",)]
+
+    typed_port = RecordingPort(rows=[_position_row()])
+
+    def typed(tx: Transaction) -> None:
+        tx.update_until_where(
+            WherePosition.where(WherePosition.id == 1),
+            WherePosition.value.set(Decimal("300.00")),
+            valid_from=_NON_UTC_VALID_FROM,
+            until=_NON_UTC_UNTIL,
+        )
+
+    Database.connect(typed_port, WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(
+        typed, concurrency="optimistic"
+    )
+
+    canonical = instructions.deserialize(
+        {
+            "mutation": "updateUntil",
+            "target": {
+                "entity": "WherePosition",
+                "predicate": {"eq": {"attr": "WherePosition.id", "value": 1}},
+            },
+            "assignments": [{"attr": "WherePosition.value", "value": Decimal("300.00")}],
+            "validFrom": "2024-07-01T00:00:00+00:00",
+            "until": "2024-09-01T00:00:00+00:00",
+        }
+    )
+    assert isinstance(canonical, PredicateWrite)
+    seam_port = RecordingPort(rows=[_position_row()])
+
+    def frozen(tx: Transaction) -> None:
+        tx._buffer_predicate_instruction(canonical)  # pyright: ignore[reportPrivateUsage] - the conformance engine's own route into the frozen seam
+
+    Database.connect(seam_port, WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(
+        frozen, concurrency="optimistic"
+    )
+    typed_writes = [op for op in typed_port.ops if op[0] == "write"]
+    assert len(typed_writes) == 4  # close + head + middle + tail
+    assert typed_writes == [op for op in seam_port.ops if op[0] == "write"]
 
 
 def _bounded_write(
