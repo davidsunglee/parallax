@@ -35,7 +35,8 @@ from __future__ import annotations
 
 import datetime as dt
 from collections.abc import Sequence
-from typing import Any, cast
+from dataclasses import replace
+from typing import Any, Final, cast
 
 from parallax.core import deep_fetch, inheritance, op_algebra, read_lock
 from parallax.core.db_port import DbPort, Row
@@ -55,7 +56,6 @@ from parallax.core.unit_work import (
     TemporalColumns,
     UnitOfWork,
     VersionColumns,
-    instant_literal,
     instructions,
     whole,
 )
@@ -76,6 +76,20 @@ from parallax.snapshot.handle._write_inputs import (
     validate_until,
     validate_valid_from,
 )
+
+# What a typed Valid-Time bound occupies its instruction slot with WHILE the
+# predicate rules run (:func:`buffer_predicate` step 3). The pairing rule
+# `deserialize` enforces — a bounded `*Until` carries BOTH `validFrom` and
+# `until` (`write-instruction.schema.json`) — is structural, so presence is the
+# whole of a bound the predicate rules can be shown, and this stands in for
+# EVERY typed bound, whatever its value: deriving the slot's content from the
+# `dt.datetime` is exactly what would run UTC normalization ahead of the
+# predicate rejection `m-case-format` orders first. Deliberately not
+# instant-shaped, and it reaches no buffer: step 4 replaces both slots with the
+# canonical literals before :func:`buffer_predicate_instruction` is called, so a
+# bound that survives to a buffer is always one `validate_valid_from` /
+# `validate_until` rendered.
+_BOUND_PENDING_RENDER: Final = "<bound pending render>"
 
 
 def buffer_predicate(
@@ -103,6 +117,15 @@ def buffer_predicate(
     ``validate_instruction`` (step 3), which the conformance engine calls too,
     so the two ingresses classify one instruction identically.
 
+    `m-case-format` orders the predicate rules BEFORE the temporal coordinates
+    ("The model-aware validator validates the predicate ..., checks entity scope
+    and bare-predicate rules, ... and requires only the temporal coordinates the
+    target profile uses"), so the WHOLE of what this ingress does with a
+    ``dt.datetime`` — normalizing it to UTC, rendering its literal, and judging
+    it — happens at step 4, after step 3. Step 3 carries only the bound's
+    PRESENCE (:data:`_BOUND_PENDING_RENDER`); the instruction that reaches the
+    seam carries step 4's own canonical literals.
+
     1. **Bare-statement guard** (`python.md` §5 "A statement becomes a
        write target only as a bare statement") — one carrying nothing but
        a predicate; every other clause is rejected (`EntityStatement.
@@ -123,15 +146,18 @@ def buffer_predicate(
        the active position, a result modifier, or a set-based family write is
        refused here, at build, before every buffer and before the resolving
        read's own force-flush.
-    4. **Valid-Time-bound validation** — a Bitemporal target requires
-       ``valid_from``; a Transaction-Time-Only or non-temporal target takes none; the
-       ``*Until`` forms additionally require ``until``, with
-       ``valid_from < until`` — an equal or reversed window rejects
-       HERE, at build, before any buffering (:func:`validate_until`).
-       Typed-only: only this ingress takes ``dt.datetime`` arguments, whose
-       WIRE FORM step 3 renders (:func:`_rendered_bound`) but whose every
-       judgement — a naive value, and a profile that admits no bound — is
-       this step's.
+    4. **Valid-Time-bound validation and rendering** — a Bitemporal target
+       requires ``valid_from``; a Transaction-Time-Only or non-temporal target
+       takes none; the ``*Until`` forms additionally require ``until``, with
+       ``valid_from < until`` — an equal or reversed window rejects HERE, at
+       build, before any buffering (:func:`validate_until`). Typed-only: only
+       this ingress takes ``dt.datetime`` arguments, and this step is the sole
+       place one is touched — :func:`validate_valid_from` and
+       :func:`validate_until` normalize each bound to UTC and RETURN the
+       canonical instant literal, which replaces the step-3 placeholder in the
+       instruction handed on. A naive value and a UTC normalization that
+       overflows the representable range are both this step's rejections, and
+       both therefore come after the predicate's.
     5. **Hand off** to :func:`buffer_predicate_instruction`, which dispatches
        READLESS (one statement, `m-batch-write`) or MATERIALIZING
        (``_materialize_predicate_write``, ADR 0014).
@@ -153,45 +179,27 @@ def buffer_predicate(
     }
     if assignments:
         doc["assignments"] = [{"attr": str(a.attr), "value": a.value} for a in assignments]
-    # Rendered, not yet judged: whether the bound is aware and whether this
-    # target's profile ADMITS one at all are both step 4's questions, which the
-    # spec orders after the predicate (:func:`_rendered_bound`).
     if valid_from is not None:
-        doc["validFrom"] = _rendered_bound(valid_from)
+        doc["validFrom"] = _BOUND_PENDING_RENDER
     if until is not None:
-        doc["until"] = _rendered_bound(until)
+        doc["until"] = _BOUND_PENDING_RENDER
     instruction = instructions.deserialize(doc)
     assert isinstance(instruction, PredicateWrite)  # this seam always builds the predicate shape
     instructions.validate_instruction(instruction, meta)
 
     declaring_entity = declaring(meta, entity)
-    validate_valid_from(declaring_entity, mutation, valid_from)
+    valid_from_literal = validate_valid_from(declaring_entity, mutation, valid_from)
+    until_literal: str | None = None
     if until is not None:
         assert valid_from is not None  # `*_until_where` verbs require both together
-        validate_until(declaring_entity, mutation, valid_from, until)
-    buffer_predicate_instruction(uow, meta, conn, dialect, instruction)
-
-
-def _rendered_bound(value: dt.datetime) -> str:
-    """Render a typed Valid-Time bound to the canonical instruction literal
-    WITHOUT judging it.
-
-    `m-case-format` orders the predicate rules before the temporal coordinates,
-    so nothing about a bound may pre-empt a predicate rejection: an inverted
-    ``between`` and a naive ``valid_from`` in one call must classify as the
-    predicate rejection, exactly as it does through the conformance ingress,
-    which carries no ``dt.datetime`` at all. An AWARE value renders canonically
-    (:func:`~parallax.core.unit_work.instant_literal`); a naive one renders
-    verbatim, because :func:`~parallax.snapshot.handle._write_inputs.
-    validate_valid_from` and :func:`~parallax.snapshot.handle._write_inputs.
-    validate_until` reject every naive bound on their own step — a bitemporal
-    target through ``normalize_instant``, any other profile because it admits
-    no bound at all — so a verbatim literal is always refused before it can
-    reach a buffer.
-    """
-    if value.utcoffset() is None:
-        return value.isoformat()
-    return instant_literal(value)
+        until_literal = validate_until(declaring_entity, mutation, valid_from, until)
+    buffer_predicate_instruction(
+        uow,
+        meta,
+        conn,
+        dialect,
+        replace(instruction, valid_from=valid_from_literal, until=until_literal),
+    )
 
 
 def buffer_predicate_instruction(
@@ -217,7 +225,10 @@ def buffer_predicate_instruction(
     **Every caller passes ``instruction`` through
     :func:`~parallax.core.unit_work.instructions.validate_instruction` against
     ``meta`` first** — :func:`buffer_predicate` at its step 3, the engine before
-    it opens the transaction. EVERY model-aware rule is stated there, in the
+    it opens the transaction. What that call validated and what arrives here are
+    the same instruction: a typed ingress renders its Valid-Time bounds into it
+    afterwards, and ``validate_instruction`` reads no bound at all. EVERY
+    model-aware rule is stated there, in the
     order `m-case-format` fixes: the whole ``validate_operation`` vocabulary and
     the bare-predicate rule over the selecting predicate, the
     inheritance-family rejection, then member-name honesty and assignability.
