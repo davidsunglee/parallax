@@ -217,8 +217,11 @@ SUPPORT_SCOPE_DEPS: Mapping[str, frozenset[str]] = {
     # raise one error class while their scopes grant disjoint dependencies, so
     # either naming the other would drag in a scope the importer may not reach.
     # A zero-grant scope forbids every first-party scope outside its own package
-    # AND every sibling child scope inside it, which is what keeps that
-    # emptiness enforced rather than conventional.
+    # AND every sibling child scope inside it; `tools/check_scope_ownership.py`
+    # supplies the one fact no scope table can carry — that no import-free
+    # module sits beside it undeclared, which is the only shape neither the row
+    # nor a chain out of it would reach. Together they keep that emptiness
+    # enforced rather than conventional.
     "parallax.snapshot.handle._errors": frozenset(),
     "parallax.snapshot.handle._family": _LOWERING_GROUP_DEPS,
     "parallax.snapshot.handle._write_types": _LOWERING_GROUP_DEPS,
@@ -239,14 +242,20 @@ SUPPORT_SCOPE_DEPS: Mapping[str, frozenset[str]] = {
 # relation is declared rather than derived from dotted-path prefixes so that two
 # independent consumers must agree about it:
 #
-# * this generator emits a child only as a contract *source*. Naming a child in
-#   its own parent's ``forbidden_modules`` would overlap the parent's source
-#   package, which import-linter >= 2.12 silently skips — the contract would
-#   look present and enforce nothing.
+# * this generator emits a child as a contract *source*, and as a forbidden
+#   *target* only in a SIBLING's zero-grant row (:func:`scope_siblings`).
+#   Naming a child in its own parent's ``forbidden_modules`` would overlap the
+#   parent's source package, which import-linter >= 2.12 silently skips — the
+#   contract would look present and enforce nothing — and naming it in an
+#   unrelated scope's row would only restate the parent's own entry. A sibling
+#   overlaps neither way, which is what lets a scope granted nothing forbid it.
 # * ``tools/check_scope_ownership.py`` allows a production file to resolve to
 #   more than one scope only along a chain declared here. A nested scope added
 #   to :data:`SUPPORT_SCOPE_DEPS` but not registered here therefore fails the
-#   ownership check instead of silently producing that skipped contract.
+#   ownership check instead of silently producing that skipped contract. That
+#   tool also reads this table to find the siblings a zero-grant row names, and
+#   fails when a module beside one is import-free and undeclared — the one
+#   sibling shape such a row cannot reach.
 CHILD_SCOPE_PARENT: Mapping[str, str] = {
     "parallax.core.entity.statement": "parallax.core.entity",
     "parallax.descriptor._hub": "parallax.descriptor",
@@ -660,9 +669,12 @@ def compute_forbidden(adjacency: Mapping[str, frozenset[str]]) -> dict[str, list
     import nothing, and the general target set cannot say so: everything left
     inside the shared parent package is unreachable from the row, since the
     package itself is an ancestor and overlaps. A sibling is neither ancestor
-    nor descendant, so it does not overlap and import-linter checks the pair —
-    which is what turns "this module imports nothing first-party" into a gate
-    rather than a convention. Siblings are added only for a zero-grant source:
+    nor descendant, so it does not overlap and import-linter checks the pair.
+    That turns "this module imports nothing first-party" into a gate rather
+    than a convention, together with ``tools/check_scope_ownership.py``, which
+    refuses the one sibling shape this row cannot reach: a module beside the
+    scope that is import-free and covered by no declared child scope.
+    Siblings are added only for a zero-grant source:
     a scope with grants has a closure to complement, and widening every child's
     row to name its siblings would forbid intra-package edges §7 permits.
 

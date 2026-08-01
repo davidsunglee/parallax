@@ -18,7 +18,7 @@ child scope over a private implementation module, every file inside it matches
 both the child and the parent, and that is the point: the child's own grant row
 is what governs it. What fails is overlap that *nobody declared*.
 
-Three findings fail the check:
+Four findings fail the check:
 
 * **unowned** — the file matches no declared scope and is not exempt;
 * **undeclared overlapping owners** — the file matches several scopes that do
@@ -27,8 +27,32 @@ Three findings fail the check:
   nested scope the generator does not know about is emitted into its own
   parent's forbidden row, where import-linter silently skips it — a contract
   that looks present and enforces nothing;
+* **import-free module beside a zero-grant scope** — see below;
 * **stale exemption** — an exempt path that no longer exists, or that a scope
   now owns, so the exemption is carrying nothing.
+
+Zero-grant scopes
+-----------------
+
+A scope §7 grants nothing may import nothing, and its generated row says so by
+forbidding every scope outside its own package plus its declared *sibling*
+child scopes. Two module shapes are outside that row's reach: the shared parent
+package, which a package-scoped ``forbidden`` row can never name from inside,
+and a sibling module over which §7 declares no child scope. The second one is
+reachable here, and it is only invisible when it imports nothing first-party:
+importing a sibling that has first-party imports of its own breaks the row on
+an indirect chain to whatever that sibling reaches. So the invariant that turns
+the zero-grant row into a complete gate is that **every module inside such a
+package either resolves to a scope the row can name or carries a first-party
+import** — and that is a fact about files, which is why it is checked here and
+not in ``check_dag_sync.py``, whose inputs are scopes.
+
+The rule is derived from the scope tables (every declared child scope granted
+nothing, and the package holding it), not written against one package; today it
+selects ``parallax.snapshot.handle``, the only package with a zero-grant scope.
+The parent package's own interface module is outside the rule because no scope
+declaration could bring it inside a row that structurally cannot name its own
+ancestor.
 
 The scope inventory is *imported* from ``check_dag_sync`` rather than restated,
 so §7 stays declared exactly once. This check and
@@ -54,6 +78,7 @@ on any finding, and so backs both the local gate and CI.
 from __future__ import annotations
 
 import argparse
+import ast
 import sys
 from collections.abc import Mapping
 from itertools import pairwise
@@ -109,6 +134,65 @@ def is_declared_chain(owners: list[str], children: Mapping[str, str]) -> bool:
     return all(children.get(deeper) == shallower for shallower, deeper in pairwise(owners))
 
 
+def first_party_imports(source: str) -> frozenset[str]:
+    """Every first-party module an ``import`` statement in ``source`` names.
+
+    First party is the distribution root ``check_dag_sync.ROOT_PACKAGES`` are
+    spelled under, so the two tools agree on what import-linter treats as a
+    first-party edge. A relative import is first-party whatever it resolves to
+    and is recorded unresolved. Imports guarded by ``TYPE_CHECKING`` count:
+    import-linter's graph contains them too.
+    """
+    roots = frozenset(root.split(".", 1)[0] for root in dag.ROOT_PACKAGES)
+
+    def first_party(name: str) -> bool:
+        return any(name == root or name.startswith(f"{root}.") for root in roots)
+
+    found: set[str] = set()
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.Import):
+            found.update(alias.name for alias in node.names if first_party(alias.name))
+        elif isinstance(node, ast.ImportFrom):
+            if node.level:
+                found.add("." * node.level + (node.module or ""))
+            elif node.module is not None and first_party(node.module):
+                found.add(node.module)
+    return frozenset(found)
+
+
+def zero_grant_scopes() -> Mapping[str, str]:
+    """Declared child scopes §7 grants nothing, mapped to the package holding them."""
+    return {
+        scope: parent
+        for scope, parent in dag.CHILD_SCOPE_PARENT.items()
+        if scope in dag.SUPPORT_SCOPE_DEPS and not dag.SUPPORT_SCOPE_DEPS[scope]
+    }
+
+
+def modules_escaping_a_zero_grant_row(paths: list[str], scopes: frozenset[str]) -> list[str]:
+    """Import-free modules a zero-grant scope's forbidden row cannot reach.
+
+    Such a module is named by no contract and reaches nothing that is, so
+    importing it from the zero-grant module would pass ``lint-imports``. Sibling
+    modules that do carry first-party imports need no entry in the row: the
+    import is caught on the chain through them.
+    """
+    found: set[str] = set()
+    for scope, parent in zero_grant_scopes().items():
+        nameable = dag.scope_siblings(scope) | {scope}
+        for relative in paths:
+            module = module_path(relative)
+            if not module.startswith(f"{parent}."):
+                continue
+            owners = owning_scopes(module, scopes)
+            if owners and owners[-1] in nameable:
+                continue
+            if first_party_imports((PACKAGES / relative).read_text()):
+                continue
+            found.add(f"{relative} (imports nothing first-party, and {scope} cannot name it)")
+    return sorted(found)
+
+
 def production_files() -> list[str]:
     """Every ``packages/*/src/**/*.py`` path outside the dev-only conformance tree."""
     found: list[str] = []
@@ -133,6 +217,10 @@ def audit(
     A file with several owners is a finding only when they are not a declared
     chain: a file inside a declared child scope legitimately matches the child
     and every ancestor above it.
+
+    Ownership alone does not settle a package holding a zero-grant scope, whose
+    row is only complete while every module beside it is either nameable in that
+    row or reachable through a first-party import, so that arm runs here too.
     """
     unowned: list[str] = []
     overlapping: list[str] = []
@@ -153,6 +241,9 @@ def audit(
     findings = {
         "production files owned by no enforcement scope": sorted(unowned),
         "production files owned by scopes with no declared nesting": sorted(overlapping),
+        "import-free modules a zero-grant scope's contract cannot name": (
+            modules_escaping_a_zero_grant_row(paths, scopes)
+        ),
         "exemptions that no longer describe the tree": stale,
     }
     return {label: found for label, found in findings.items() if found}
@@ -176,7 +267,8 @@ def main(argv: list[str] | None = None) -> int:
             f"{_TOOL}: all {len(paths)} production source files resolve to exactly one "
             f"most-specific enforcement scope (plus any declared ancestor scopes: "
             f"{nested} file(s) sit inside a declared child scope) or an exact "
-            f"exemption ({len(EXEMPTIONS)})"
+            f"exemption ({len(EXEMPTIONS)}); beside a zero-grant scope, every module "
+            f"is one its row can name or carries a first-party import"
         )
         return 0
 
@@ -186,7 +278,9 @@ def main(argv: list[str] | None = None) -> int:
         "  so no gate constrains what it imports; a file under several scopes that\n"
         "  are not a declared parent/child chain has an enforcement model nothing\n"
         "  agrees on, and a child scope missing from CHILD_SCOPE_PARENT generates a\n"
-        "  contract import-linter silently skips.",
+        "  contract import-linter silently skips. An import-free module beside a\n"
+        "  zero-grant scope is reached by neither that scope's forbidden row nor any\n"
+        "  chain out of it, so the row would stop proving the scope imports nothing.",
         file=sys.stderr,
     )
     for label in sorted(findings):

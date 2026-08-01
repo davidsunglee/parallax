@@ -14,10 +14,12 @@ generated import-linter contract forbids every first-party scope outside
 the whole of what makes the two consumers legal: each may name this module only
 because reaching it reaches nothing they are not already granted. A ``forbidden``
 row is package-scoped, so the one name the row cannot state is the shared parent
-package itself; what that leaves unstated is a sibling module §7 declares no
-child scope over, and importing one still breaks the gate on whatever it reaches
-outside the package. ``just python-check-imports`` is what keeps this module's
-dependency-freedom enforced rather than conventional.
+package itself. A sibling module §7 declares no child scope over is not stated
+either; such a module always carries a first-party import of its own, because
+``just python-check-scope-ownership`` fails on an import-free module written
+beside this scope, so importing one breaks the gate on the chain through it.
+Those two gates together are what keep this module's dependency-freedom
+enforced rather than conventional.
 
 Every name here is spelled bare: privacy is carried by this MODULE's leading
 underscore and by the package's frozen ``__all__``, not by per-name underscores.
