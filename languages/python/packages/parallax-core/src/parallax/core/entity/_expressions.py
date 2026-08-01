@@ -23,12 +23,38 @@ belongs to, and, for a Relationship Path, the class-aware resolver that answers 
 deeper hop. That is how a model-stated rule fires as the node is built: an
 assignment's assignability and declared-type agreement, and a deeper hop's own
 resolution. A node built directly carries neither and states no such rule.
+
+Type parameters read the same way everywhere in the frontend: ``E`` is the Entity
+a value is rooted at — its position; ``S`` a subtype of that position; ``R`` the
+related Entity a relationship hop reaches; ``T`` a declared Python value type;
+and ``V`` a Value Object class. ``E``, ``S``, and ``R`` are always Entities and
+``T`` never is, so a signature is readable without tracing where each parameter
+was solved.
+
+:class:`Predicate` is contravariant in ``E``, which is the inheritance rule
+expressed as variance: an ancestor's member is addressable from a descendant
+position, a descendant's member is not addressable from an ancestor position.
+``E`` appears in no field of the value, so the contravariance is stated by a
+checker-only phantom method rather than inferred from the runtime shape.
+
+What the parameters do NOT catch is recorded where it is decided rather than
+discovered. A predicate's value is a WIRE LITERAL, not a member value: the
+neutral contract spells a decimal member's comparison as the number ``600.00``,
+so a value parameter narrowed to the member's declared Python type would refuse
+the canonical spelling. ``__eq__`` / ``__ne__`` keep ``object`` for a second
+reason on top of that one: narrowing them is a Liskov violation against
+``object.__eq__``. So ``Order.total == "abc"`` is not a static rejection, and
+where the neutral contract states a literal-type rule the model-aware validator
+is what states it — the same mismatch one value-object hop deeper draws
+``nested-literal-type-mismatch``. A value-object hop past the occurrence
+(``Customer.address.city``) likewise keeps its Entity and erases its leaf type,
+so the member's existence and type are runtime questions too.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Protocol, cast, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, cast, runtime_checkable
 
 from parallax.core.entity._errors import ModelCopyError
 from parallax.core.inheritance import WriteAssignmentError, validate_write_assignment
@@ -181,25 +207,49 @@ class AttributeAssignment:
 
 
 @dataclass(frozen=True, slots=True)
-class Predicate:
-    """A built operation predicate; composes with ``&`` / ``|`` / ``~``."""
+class Predicate[E]:
+    """A built operation predicate over the Entity position ``E``; composes with
+    ``&`` / ``|`` / ``~``.
+
+    Contravariant in ``E``: a predicate rooted at an ancestor addresses any
+    descendant position, and one rooted at a descendant addresses none of its
+    ancestors' positions.
+    """
 
     op: Operation
 
-    def __and__(self, other: Predicate) -> Predicate:
+    if TYPE_CHECKING:
+
+        def _addresses(self, entity: E) -> None:
+            """Never defined at run time and never called.
+
+            ``E`` appears in no field, so without an input position a checker
+            infers it as bivariant and both assignment directions succeed. This
+            is the input position, and it is the whole mechanism.
+            """
+
+    # A combination addresses every position BOTH operands address, and that
+    # intersection is unspellable here — so a combination takes the LEFT
+    # operand's position. Requiring both operands to share one position instead
+    # would refuse `Animal.name == n` combined with `Dog.bark_volume > v` in a
+    # `Dog` query, which no rule refuses. What the choice gives up is a
+    # combination whose right operand is the narrower one: it reads as the
+    # left's position, and the model-aware validator states the rule the
+    # parameter then cannot.
+    def __and__(self, other: Predicate[Any]) -> Predicate[E]:
         return Predicate(And(operands=(*and_terms(self), *and_terms(other))))
 
-    def __or__(self, other: Predicate) -> Predicate:
+    def __or__(self, other: Predicate[Any]) -> Predicate[E]:
         return Predicate(Or(operands=(*_or_terms(self), *_or_terms(other))))
 
-    def __invert__(self) -> Predicate:
+    def __invert__(self) -> Predicate[E]:
         return Predicate(Not(operand=self.op))
 
     def __bool__(self) -> bool:
         raise TypeError(_BOOL_HINT)
 
 
-def and_terms(pred: Predicate) -> tuple[Operation, ...]:
+def and_terms(pred: Predicate[Any]) -> tuple[Operation, ...]:
     if isinstance(pred.op, And):
         return pred.op.operands  # flatten same-combinator nesting (order-preserving)
     if isinstance(pred.op, Or):
@@ -207,13 +257,13 @@ def and_terms(pred: Predicate) -> tuple[Operation, ...]:
     return (pred.op,)
 
 
-def _or_terms(pred: Predicate) -> tuple[Operation, ...]:
+def _or_terms(pred: Predicate[Any]) -> tuple[Operation, ...]:
     if isinstance(pred.op, Or):
         return pred.op.operands  # flatten; an `and` under an `or` needs no group
     return (pred.op,)
 
 
-def conjoin(predicates: Sequence[Predicate]) -> Operation | None:
+def conjoin(predicates: Sequence[Predicate[Any]]) -> Operation | None:
     """The big-AND of ``predicates`` (flattened, order-preserving), or ``None``
     for zero arguments — the shared builder behind every variadic predicate
     scope, so a bare presence test, a single predicate, and a conjunction can
@@ -228,8 +278,12 @@ def conjoin(predicates: Sequence[Predicate]) -> Operation | None:
     return And(operands=tuple(operands))
 
 
-class AttributeExpr:
+class AttributeExpr[E, T]:
     """A class-level attribute/value-object expression (the seed of a predicate).
+
+    ``E`` is the Entity the seeding class access went through — the position
+    every predicate this expression builds is rooted at — and ``T`` the member's
+    declared Python type.
 
     ``binding`` is the Metamodel Binding of the hub the seeding class belongs to,
     carried so an assignment is validated against exactly that model. It is
@@ -256,7 +310,7 @@ class AttributeExpr:
         """The scalar attribute reference (only for a non-nested attribute)."""
         return AttributeRef(self._entity, self._head)
 
-    def __getattr__(self, name: str) -> AttributeExpr:
+    def __getattr__(self, name: str) -> AttributeExpr[E, Any]:
         # A deeper value-object hop: Customer.address.city / .geo.country.
         if name.startswith("_"):
             raise AttributeError(name)
@@ -265,66 +319,66 @@ class AttributeExpr:
     def _dotted(self) -> str:
         return ".".join((self._entity, self._head, *self._path))
 
-    def _cmp(self, kind: str, value: Scalar) -> Predicate:
+    def _cmp(self, kind: str, value: Scalar) -> Predicate[E]:
         if self._path:
             return Predicate(
                 NestedComparison(op=_NESTED_CMP[kind], path=self._dotted(), value=value)
             )
         return Predicate(Comparison(op=_SCALAR_CMP[kind], attr=str(self.ref), value=value))
 
-    def __eq__(self, other: object) -> Predicate:  # type: ignore[override] - DSL comparison builds a Predicate, not object's bool
+    def __eq__(self, other: object) -> Predicate[E]:  # type: ignore[override] - DSL comparison builds a Predicate, not object's bool
         return self._cmp("eq", _as_scalar(other))
 
-    def __ne__(self, other: object) -> Predicate:  # type: ignore[override] - DSL comparison builds a Predicate, not object's bool
+    def __ne__(self, other: object) -> Predicate[E]:  # type: ignore[override] - DSL comparison builds a Predicate, not object's bool
         return self._cmp("ne", _as_scalar(other))
 
-    def __gt__(self, other: Scalar) -> Predicate:
+    def __gt__(self, other: Scalar) -> Predicate[E]:
         return self._cmp("gt", other)
 
-    def __ge__(self, other: Scalar) -> Predicate:
+    def __ge__(self, other: Scalar) -> Predicate[E]:
         return self._cmp("ge", other)
 
-    def __lt__(self, other: Scalar) -> Predicate:
+    def __lt__(self, other: Scalar) -> Predicate[E]:
         return self._cmp("lt", other)
 
-    def __le__(self, other: Scalar) -> Predicate:
+    def __le__(self, other: Scalar) -> Predicate[E]:
         return self._cmp("le", other)
 
-    def is_(self, value: bool) -> Predicate:
+    def is_(self, value: bool) -> Predicate[E]:
         """The lint-clean boolean spelling; serializes to the identical ``eq`` node."""
         return self._cmp("eq", value)
 
-    def in_(self, values: list[Scalar]) -> Predicate:
+    def in_(self, values: list[Scalar]) -> Predicate[E]:
         return self._membership("nestedIn", "in", values)
 
-    def not_in(self, values: list[Scalar]) -> Predicate:
+    def not_in(self, values: list[Scalar]) -> Predicate[E]:
         return self._membership("nestedNotIn", "notIn", values)
 
     def _membership(
         self, nested_op: NestedMembershipOp, scalar_op: MembershipOp, values: list[Scalar]
-    ) -> Predicate:
+    ) -> Predicate[E]:
         if self._path:
             return Predicate(
                 NestedMembership(op=nested_op, path=self._dotted(), values=tuple(values))
             )
         return Predicate(Membership(op=scalar_op, attr=str(self.ref), values=tuple(values)))
 
-    def between(self, lower: Scalar, upper: Scalar) -> Predicate:
+    def between(self, lower: Scalar, upper: Scalar) -> Predicate[E]:
         if self._path:
             return Predicate(NestedRange(path=self._dotted(), lower=lower, upper=upper))
         return Predicate(Between(attr=str(self.ref), lower=lower, upper=upper))
 
-    def is_null(self) -> Predicate:
+    def is_null(self) -> Predicate[E]:
         if self._path:
             return Predicate(NestedNullCheck(op="nestedIsNull", path=self._dotted()))
         return Predicate(NullCheck(op="isNull", attr=str(self.ref)))
 
-    def is_not_null(self) -> Predicate:
+    def is_not_null(self) -> Predicate[E]:
         if self._path:
             return Predicate(NestedNullCheck(op="nestedIsNotNull", path=self._dotted()))
         return Predicate(NullCheck(op="isNotNull", attr=str(self.ref)))
 
-    def any(self, *predicates: Predicate) -> Predicate:
+    def any(self, *predicates: Predicate[Any]) -> Predicate[E]:
         """The value-object member is present/non-empty (optionally matching
         ``predicates``, same-element composed): ``nestedExists`` over this
         value-object-terminated path. Zero arguments emit the bare presence
@@ -332,11 +386,11 @@ class AttributeExpr:
         element-scoped attributes, never re-prefixed."""
         return Predicate(NestedExists(path=self._dotted(), where=conjoin(predicates)))
 
-    def none(self, *predicates: Predicate) -> Predicate:
+    def none(self, *predicates: Predicate[Any]) -> Predicate[E]:
         """The complement of :meth:`any` — ``nestedNotExists``."""
         return Predicate(NestedNotExists(path=self._dotted(), where=conjoin(predicates)))
 
-    def _string(self, op: StringOp, value: str, case_insensitive: bool) -> Predicate:
+    def _string(self, op: StringOp, value: str, case_insensitive: bool) -> Predicate[E]:
         # The fluent surface authors the canonical minimal form: an unset flag
         # omits `caseInsensitive` (None), a set flag emits `true`. It never
         # authors an explicit `false` — that only arises from deserializing a
@@ -353,19 +407,19 @@ class AttributeExpr:
             )
         return Predicate(StringMatch(op=op, attr=str(self.ref), value=value, case_insensitive=flag))
 
-    def like(self, value: str, *, case_insensitive: bool = False) -> Predicate:
+    def like(self, value: str, *, case_insensitive: bool = False) -> Predicate[E]:
         return self._string("like", value, case_insensitive)
 
-    def not_like(self, value: str, *, case_insensitive: bool = False) -> Predicate:
+    def not_like(self, value: str, *, case_insensitive: bool = False) -> Predicate[E]:
         return self._string("notLike", value, case_insensitive)
 
-    def starts_with(self, value: str, *, case_insensitive: bool = False) -> Predicate:
+    def starts_with(self, value: str, *, case_insensitive: bool = False) -> Predicate[E]:
         return self._string("startsWith", value, case_insensitive)
 
-    def ends_with(self, value: str, *, case_insensitive: bool = False) -> Predicate:
+    def ends_with(self, value: str, *, case_insensitive: bool = False) -> Predicate[E]:
         return self._string("endsWith", value, case_insensitive)
 
-    def contains(self, value: str, *, case_insensitive: bool = False) -> Predicate:
+    def contains(self, value: str, *, case_insensitive: bool = False) -> Predicate[E]:
         return self._string("contains", value, case_insensitive)
 
     def asc(self) -> OrderKey:
@@ -457,8 +511,12 @@ def serialize_member(value: object) -> object:
     return value
 
 
-class ElementAttributeExpr:
+class ElementAttributeExpr[V, T]:
     """A Value Object element-scoped attribute expression (``Phone.type``).
+
+    ``V`` is the Value Object class the member was reached through and ``T`` its
+    declared Python type, so mixing two Value Objects' members inside one
+    quantifier scope is refused the same way mixing two Entities' members is.
 
     Always builds element-relative ``nested*`` nodes with no leading entity
     prefix, for use inside a relationship or value-object quantifier's interior
@@ -471,7 +529,7 @@ class ElementAttributeExpr:
     def __init__(self, path: tuple[str, ...]) -> None:
         self._path = path
 
-    def __getattr__(self, name: str) -> ElementAttributeExpr:
+    def __getattr__(self, name: str) -> ElementAttributeExpr[V, Any]:
         if name.startswith("_"):
             raise AttributeError(name)
         return ElementAttributeExpr((*self._path, name))
@@ -479,42 +537,42 @@ class ElementAttributeExpr:
     def _dotted(self) -> str:
         return ".".join(self._path)
 
-    def _cmp(self, kind: str, value: Scalar) -> Predicate:
+    def _cmp(self, kind: str, value: Scalar) -> Predicate[V]:
         return Predicate(NestedComparison(op=_NESTED_CMP[kind], path=self._dotted(), value=value))
 
-    def __eq__(self, other: object) -> Predicate:  # type: ignore[override] - DSL comparison builds a Predicate, not object's bool
+    def __eq__(self, other: object) -> Predicate[V]:  # type: ignore[override] - DSL comparison builds a Predicate, not object's bool
         return self._cmp("eq", _as_scalar(other))
 
-    def __ne__(self, other: object) -> Predicate:  # type: ignore[override] - DSL comparison builds a Predicate, not object's bool
+    def __ne__(self, other: object) -> Predicate[V]:  # type: ignore[override] - DSL comparison builds a Predicate, not object's bool
         return self._cmp("ne", _as_scalar(other))
 
-    def __gt__(self, other: Scalar) -> Predicate:
+    def __gt__(self, other: Scalar) -> Predicate[V]:
         return self._cmp("gt", other)
 
-    def __ge__(self, other: Scalar) -> Predicate:
+    def __ge__(self, other: Scalar) -> Predicate[V]:
         return self._cmp("ge", other)
 
-    def __lt__(self, other: Scalar) -> Predicate:
+    def __lt__(self, other: Scalar) -> Predicate[V]:
         return self._cmp("lt", other)
 
-    def __le__(self, other: Scalar) -> Predicate:
+    def __le__(self, other: Scalar) -> Predicate[V]:
         return self._cmp("le", other)
 
-    def is_(self, value: bool) -> Predicate:
+    def is_(self, value: bool) -> Predicate[V]:
         return self._cmp("eq", value)
 
-    def in_(self, values: list[Scalar]) -> Predicate:
+    def in_(self, values: list[Scalar]) -> Predicate[V]:
         return Predicate(NestedMembership(op="nestedIn", path=self._dotted(), values=tuple(values)))
 
-    def not_in(self, values: list[Scalar]) -> Predicate:
+    def not_in(self, values: list[Scalar]) -> Predicate[V]:
         return Predicate(
             NestedMembership(op="nestedNotIn", path=self._dotted(), values=tuple(values))
         )
 
-    def between(self, lower: Scalar, upper: Scalar) -> Predicate:
+    def between(self, lower: Scalar, upper: Scalar) -> Predicate[V]:
         return Predicate(NestedRange(path=self._dotted(), lower=lower, upper=upper))
 
-    def _string(self, op: StringOp, value: str, case_insensitive: bool) -> Predicate:
+    def _string(self, op: StringOp, value: str, case_insensitive: bool) -> Predicate[V]:
         return Predicate(
             NestedStringMatch(
                 op=_NESTED_STRINGS[op],
@@ -524,25 +582,25 @@ class ElementAttributeExpr:
             )
         )
 
-    def like(self, value: str, *, case_insensitive: bool = False) -> Predicate:
+    def like(self, value: str, *, case_insensitive: bool = False) -> Predicate[V]:
         return self._string("like", value, case_insensitive)
 
-    def not_like(self, value: str, *, case_insensitive: bool = False) -> Predicate:
+    def not_like(self, value: str, *, case_insensitive: bool = False) -> Predicate[V]:
         return self._string("notLike", value, case_insensitive)
 
-    def starts_with(self, value: str, *, case_insensitive: bool = False) -> Predicate:
+    def starts_with(self, value: str, *, case_insensitive: bool = False) -> Predicate[V]:
         return self._string("startsWith", value, case_insensitive)
 
-    def ends_with(self, value: str, *, case_insensitive: bool = False) -> Predicate:
+    def ends_with(self, value: str, *, case_insensitive: bool = False) -> Predicate[V]:
         return self._string("endsWith", value, case_insensitive)
 
-    def contains(self, value: str, *, case_insensitive: bool = False) -> Predicate:
+    def contains(self, value: str, *, case_insensitive: bool = False) -> Predicate[V]:
         return self._string("contains", value, case_insensitive)
 
-    def is_null(self) -> Predicate:
+    def is_null(self) -> Predicate[V]:
         return Predicate(NestedNullCheck(op="nestedIsNull", path=self._dotted()))
 
-    def is_not_null(self) -> Predicate:
+    def is_not_null(self) -> Predicate[V]:
         return Predicate(NestedNullCheck(op="nestedIsNotNull", path=self._dotted()))
 
     def __bool__(self) -> bool:
@@ -675,12 +733,12 @@ class RelationshipPath:
             resolve_hop=self.resolve_hop,
         )
 
-    def any(self, *predicates: Predicate) -> Predicate:
+    def any(self, *predicates: Predicate[Any]) -> Predicate[Any]:
         """The single-hop relationship quantifier: ``>= 1`` related row
         (optionally matching ``predicates``), serializing to ``exists``."""
         return Predicate(Exists(rel=self._single_hop_ref(), op=conjoin(predicates)))
 
-    def none(self, *predicates: Predicate) -> Predicate:
+    def none(self, *predicates: Predicate[Any]) -> Predicate[Any]:
         """The complement of :meth:`any` — ``notExists``."""
         return Predicate(NotExists(rel=self._single_hop_ref(), op=conjoin(predicates)))
 

@@ -11,7 +11,7 @@ rejections a Value Object body owns.
 from __future__ import annotations
 
 from decimal import Decimal
-from typing import cast
+from typing import Any, cast
 
 import pytest
 from value_object_bad_models import (
@@ -102,14 +102,16 @@ def test_a_top_level_occurrence_derives_storage_while_nested_members_remain_colu
     assert all(not hasattr(attribute, "storage") for attribute in mailing_address.shape.attributes)
 
 
-def _element(expression: object) -> ElementAttributeExpr:
+def _element(expression: object) -> ElementAttributeExpr[Any, Any]:
     """The element-scoped carrier a Value Object's class access yields.
 
     Statically the descriptor is typed by its ``Attr[T]`` annotation, so the
-    element-scoped runtime carrier is narrowed once here.
+    element-scoped runtime carrier is narrowed once here. Its own parameters are
+    erased rather than recovered: an ``isinstance`` narrowing answers the class,
+    never what it was specialized with.
     """
     assert isinstance(expression, ElementAttributeExpr)
-    return expression
+    return cast("ElementAttributeExpr[Any, Any]", expression)
 
 
 def test_element_scoped_access_builds_paths_with_no_entity_prefix() -> None:

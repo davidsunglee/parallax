@@ -346,8 +346,11 @@ def test_clause_and_constructor_forms_converge_on_the_identical_node() -> None:
 def test_subtype_attribute_outside_narrow_scope_is_rejected_at_where_build_time() -> None:
     # The where() call itself validates immediately with the UNCONSTRAINED
     # position — a later `.narrow(...)` clause grants no retroactive scope.
+    # The suppression is the static half: `Predicate` is contravariant, so a
+    # subtype's predicate never reaches an ancestor's position, and an ignore
+    # that goes idle fails `just python-typecheck`.
     with pytest.raises(OperationRejectedError) as caught:
-        im.Document.where(im.Invoice.amount_due > 3)
+        im.Document.where(im.Invoice.amount_due > 3)  # pyright: ignore[reportArgumentType]
     assert caught.value.rule == "subtype-attribute-outside-narrow-scope"
 
 
@@ -366,8 +369,11 @@ def test_a_statement_built_with_no_binding_states_no_model_rule_at_all() -> None
 def test_narrow_clause_after_an_out_of_scope_where_predicate_never_legalizes_it() -> None:
     # `.where(Invoice.amount_due > 3)` ALREADY raises before `.narrow(...)` is
     # even reached — the statement-level clause grants no retroactive scope.
+    # The suppression is the static half of the same rule (see above).
     with pytest.raises(OperationRejectedError) as caught:
-        im.Document.where(im.Invoice.amount_due > 3).narrow(im.Invoice)
+        im.Document.where(
+            im.Invoice.amount_due > 3  # pyright: ignore[reportArgumentType]
+        ).narrow(im.Invoice)
     assert caught.value.rule == "subtype-attribute-outside-narrow-scope"
 
 

@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import datetime as dt
 from collections.abc import Callable
+from typing import Any
 
 import pytest
 
@@ -209,7 +210,7 @@ def test_expression_rejects_bool_misuse() -> None:
 # attempting to build it through `Entity.where(...)` raises                   #
 # `OperationRejectedError` naming the EXACT `then.rejectedRule`.               #
 # --------------------------------------------------------------------------- #
-REJECTED_BUILDERS: dict[str, Callable[[], Predicate]] = {
+REJECTED_BUILDERS: dict[str, Callable[[], Predicate[Any]]] = {
     "m-op-algebra-039": lambda: Order.price.between(50.75, 20.00),
     "m-op-algebra-040": lambda: vm.Customer.address.geo.elevation.between(12, 5),
     "m-op-algebra-041": lambda: vm.Customer.address.phones.any(vm.Phone.number.between(42, 7)),

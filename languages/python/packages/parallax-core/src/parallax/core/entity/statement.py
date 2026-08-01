@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import datetime as dt
 from dataclasses import dataclass, field, replace
-from typing import Literal
+from typing import Any, Literal
 
 from parallax.core.base import normalize_instant
 from parallax.core.entity._binding import MetamodelBinding
@@ -343,7 +343,7 @@ def _instant(value: _Pin) -> str:
 
 def build_statement(
     target: str,
-    predicates: tuple[Predicate, ...],
+    predicates: tuple[Predicate[Any], ...],
     *,
     as_of_axes: tuple[AsOfAxisMetadata, ...] = (),
     binding: MetamodelBinding | None = None,
@@ -374,7 +374,7 @@ def _validate(binding: MetamodelBinding | None, target: str, node: Operation) ->
     validate_operation(root, node, binding.model)
 
 
-def _conjoined(predicates: tuple[Predicate, ...]) -> Operation:
+def _conjoined(predicates: tuple[Predicate[Any], ...]) -> Operation:
     if not predicates:
         return All()
     if len(predicates) == 1:
