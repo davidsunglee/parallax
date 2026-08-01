@@ -21,6 +21,8 @@ from _transact_support import ACCOUNT, PERSON, NoIoPort
 
 from _support import mirrored_models as mm
 from parallax.conformance import models
+from parallax.conformance.graph_models import POLICY_MODEL, Policy
+from parallax.core import LATEST, TX_TIME
 from parallax.core.base import INFINITY
 from parallax.core.db_port import DbPort, Row
 from parallax.core.dialect import POSTGRES
@@ -28,7 +30,7 @@ from parallax.core.entity import FindQuery
 from parallax.core.entity._query import LoweredFindQuery, lower_find_query
 from parallax.core.metamodel import EntityIdentity
 from parallax.core.op_algebra import deserialize
-from parallax.snapshot import QueryTargetError, handle
+from parallax.snapshot import DeferredFeatureError, QueryTargetError, handle
 from parallax.snapshot.handle import _preflight
 from parallax.snapshot.materialize import Node
 
@@ -438,6 +440,70 @@ def test_db_find_refuses_a_target_the_connected_model_does_not_declare() -> None
     with pytest.raises(QueryTargetError) as caught:
         db.find(mm.Person.where(mm.Person.id == 1))
     assert caught.value.code == "query-target-not-in-model"
+
+
+def test_db_find_refuses_a_deferred_execution_feature_by_name() -> None:
+    # `.history()` with `.include(...)` is a VALID query the implementation has
+    # not built yet, so the refusal names the Feature rather than calling the
+    # query wrong. `NoIoPort` raises on any read or write: classification runs
+    # before SQL generation, connection acquisition, and adapter access alike.
+    db = handle.Database.connect(NoIoPort(), POLICY_MODEL)
+    query = Policy.where(Policy.all).history(TX_TIME).include(Policy.coverages)
+    with pytest.raises(DeferredFeatureError) as caught:
+        db.find(query)
+    assert caught.value.code == "execution-feature-deferred"
+    assert caught.value.features == ("snapshot-history-includes",)
+
+
+def test_a_pinned_axis_with_includes_is_not_deferred() -> None:
+    # The deferral is the milestone SET combined with includes, never a temporal
+    # read combined with includes: an `as_of` pin answers one graph, which the
+    # deep-fetch executor has always served. The root level comes back empty, so
+    # the child level short-circuits and one statement is the whole execution.
+    port = QueuePort([[]])
+    db = handle.Database.connect(port, POLICY_MODEL)
+    query = Policy.where(Policy.all).as_of(tx_time=LATEST).include(Policy.coverages)
+    assert db.find(query).results() == []
+    assert len(port.executed) == 1
+
+
+def test_result_shaping_wrappers_do_not_hide_a_deferred_feature() -> None:
+    # Ordering and a limit lower BETWEEN the deep fetch and the temporal
+    # wrapper, so recognizing the combination means peeling them: a deferral is
+    # a property of the read, never of how its rows are shaped afterwards.
+    db = handle.Database.connect(NoIoPort(), POLICY_MODEL)
+    query = (
+        Policy.where(Policy.all)
+        .history(TX_TIME)
+        .order_by(Policy.id.asc())
+        .limit(5)
+        .include(Policy.coverages)
+    )
+    with pytest.raises(DeferredFeatureError) as caught:
+        db.find(query)
+    assert caught.value.features == ("snapshot-history-includes",)
+
+
+def test_an_undeclared_target_outranks_a_deferred_feature() -> None:
+    # One query, both faults. Target resolution is step 1 and classification is
+    # step 3, so the connected model's inability to answer at all is what
+    # surfaces — a deferral result is never exposed for a query the model does
+    # not even declare a target for.
+    db = handle.Database.connect(NoIoPort(), ACCOUNT)
+    query = Policy.where(Policy.all).history(TX_TIME).include(Policy.coverages)
+    with pytest.raises(QueryTargetError) as caught:
+        db.find(query)
+    assert caught.value.code == "query-target-not-in-model"
+
+
+def test_a_refusal_reports_every_matching_feature_in_ascending_order() -> None:
+    # The installed inventory holds ONE member, and a second is a coordinated
+    # contract change rather than a test fixture, so the multi-match promise is
+    # pinned on the value that carries it: `features` is every match, ascending,
+    # whatever order the matching set iterated in.
+    error = DeferredFeatureError(frozenset({"snapshot-history-includes", "a-staged-feature"}))
+    assert error.features == ("a-staged-feature", "snapshot-history-includes")
+    assert "a-staged-feature, snapshot-history-includes" in str(error)
 
 
 def test_two_executions_of_one_query_lower_it_twice(monkeypatch: pytest.MonkeyPatch) -> None:

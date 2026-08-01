@@ -793,14 +793,14 @@ _ORDERS_GRAPH_SIBLING_REASON: Final[str] = (
 # (`graph_stories.py`) and no case-scoped reason remains for either.
 #
 # `.history()`/`.as_of_range()` combined with `.include(...)` is an EXPLICIT,
-# documented deferral (spec §3 `snapshot-history-includes`): `FindQuery`
-# refuses the combination with `UnsupportedFeatureError` naming it. Not a gap —
-# a designed-in refusal.
+# documented deferral (spec §3 `snapshot-history-includes`): the combination
+# builds as an ordinary valid Find Query and the read preflight refuses it by
+# name. Not a gap — a designed-in refusal, at execution rather than at build.
 _SNAPSHOT_HISTORY_INCLUDES_UNSUPPORTED_REASON: Final[str] = (
     "`.history()`/`.as_of_range()` combined with `.include(...)` is an EXPLICIT, "
-    "designed-in deferral (spec §3 `snapshot-history-includes`): `FindQuery` refuses "
-    "the combination with `UnsupportedFeatureError` naming it — not a capability gap, a "
-    "documented refusal"
+    "designed-in deferral (spec §3 `snapshot-history-includes`): the query builds and "
+    "the read preflight refuses it as `DeferredFeatureError(execution-feature-deferred)` "
+    "naming the Feature — not a capability gap, a documented refusal"
 )
 
 # Value-object nested/absence/cast/array-traversal PREDICATE reads: rows-form,

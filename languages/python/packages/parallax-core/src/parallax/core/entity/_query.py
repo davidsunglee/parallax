@@ -32,7 +32,7 @@ from __future__ import annotations
 
 import datetime as dt
 from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING, Any, ClassVar, Literal, overload
+from typing import TYPE_CHECKING, Any, Literal, overload
 
 from parallax.core.base import normalize_instant
 from parallax.core.entity._declaration import declaration_of
@@ -72,16 +72,10 @@ __all__ = [
     "FindQuery",
     "LoweredFindQuery",
     "MutationSelection",
-    "UnsupportedFeatureError",
     "build_find_query",
     "lower_find_query",
     "mutation_selection",
 ]
-
-
-class UnsupportedFeatureError(ValueError):
-    """A deferred (not invalid) query combination (spec §3): naming the
-    deferral, distinct from a validation error."""
 
 
 class _Unset:
@@ -103,8 +97,6 @@ _DimensionName = Literal["valid_time", "tx_time"]
 class _AsOfClause:
     """One axis PINNED at a coordinate (``asOf``)."""
 
-    scans: ClassVar[bool] = False
-
     dimension: WireDimension
     coordinate: str
 
@@ -115,8 +107,6 @@ class _AsOfClause:
 @dataclass(frozen=True, slots=True)
 class _AsOfRangeClause:
     """One axis SCANNED across a half-open window (``asOfRange``)."""
-
-    scans: ClassVar[bool] = True
 
     dimension: WireDimension
     start: str
@@ -129,8 +119,6 @@ class _AsOfRangeClause:
 @dataclass(frozen=True, slots=True)
 class _HistoryClause:
     """One axis's full milestone set (``history``)."""
-
-    scans: ClassVar[bool] = True
 
     dimension: WireDimension
 
@@ -204,11 +192,6 @@ class FindQuery[E, S]:
         if not paths:
             raise QueryDefinitionError(
                 code="query-clause-invalid", message="include requires at least one path"
-            )
-        if self._scans_an_axis():
-            raise UnsupportedFeatureError(
-                "`.include(...)` combined with `.history()` / `.as_of_range()` is deferred "
-                "(snapshot-history-includes, spec §3)"
             )
         added = tuple(
             NavigationPath(segments=path.segments, narrow=self._root_guard(path.source))
@@ -352,11 +335,6 @@ class FindQuery[E, S]:
         tx_time: _Window | _Unset = _UNSET,
     ) -> FindQuery[E, S]:
         """Scan one or both axes across a half-open ``[from, to)`` window (edge points)."""
-        if self._include:
-            raise UnsupportedFeatureError(
-                "`.as_of_range()` combined with `.include(...)` is deferred "
-                "(snapshot-history-includes, spec §3)"
-            )
         clauses: list[_TemporalClause] = []
         if not isinstance(tx_time, _Unset):
             start, end = tx_time
@@ -384,11 +362,6 @@ class FindQuery[E, S]:
                     "history() takes its dimension as the exported VALID_TIME / TX_TIME "
                     f"constant; a string dimension spelling is rejected (got {dimension!r})"
                 ),
-            )
-        if self._include:
-            raise UnsupportedFeatureError(
-                "`.history()` combined with `.include(...)` is deferred "
-                "(snapshot-history-includes, spec §3)"
             )
         name: _DimensionName = "valid_time" if dimension.dimension == "validTime" else "tx_time"
         return self._with_temporal((_HistoryClause(self._dimension(name)),))
@@ -427,12 +400,6 @@ class FindQuery[E, S]:
                 ),
             )
         return replace(self, _temporal=clauses)
-
-    def _scans_an_axis(self) -> bool:
-        """Whether this query's temporal clause SCANS an axis (``history`` /
-        ``as_of_range``) rather than pinning it — the
-        ``snapshot-history-includes`` deferral boundary."""
-        return any(clause.scans for clause in self._temporal)
 
     def _dimension(self, name: _DimensionName) -> WireDimension:
         """The canonical wire dimension for the developer-surface coordinate

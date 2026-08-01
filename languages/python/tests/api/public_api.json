@@ -40,7 +40,6 @@
     "TxTemporal",
     "UndeclaredAxisError",
     "UnloadedRelationshipError",
-    "UnsupportedFeatureError",
     "VALID_TIME",
     "ValueObject",
     "asc",
@@ -223,6 +222,7 @@
     "PostgresAdapter"
   ],
   "parallax.snapshot": [
+    "DeferredFeatureError",
     "Execution",
     "NoResultFound",
     "QueryTargetError",
@@ -234,6 +234,7 @@
   ],
   "parallax.snapshot.handle": [
     "Database",
+    "DeferredFeatureError",
     "ExecutedStatement",
     "Execution",
     "FindResult",

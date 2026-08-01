@@ -40,6 +40,9 @@ public-surface check promises. Where the exported names live:
   alike, and :class:`SnapshotConnectionError`, the refusal of a model that names
   no Entity Class to materialize into. Both are defined in a dependency-free leaf
   so every raiser can name them.
+- :mod:`~parallax.snapshot.handle._features` — :class:`DeferredFeatureError`,
+  beside the fixed inventory of Deferred Execution Features it reports and the
+  recognizer that matches a canonical operation against them.
 - :mod:`~parallax.snapshot.handle._read` — :func:`find` and :func:`find_history`,
   the one production find executor, plus the result surface they build
   (:class:`Snapshot`, :class:`Execution`, :class:`ExecutedStatement`,
@@ -73,6 +76,7 @@ from parallax.snapshot.handle._database import (
     connect,
 )
 from parallax.snapshot.handle._errors import QueryTargetError, SnapshotConnectionError
+from parallax.snapshot.handle._features import DeferredFeatureError
 from parallax.snapshot.handle._planning import build_write_planner, plan_temporal_close
 from parallax.snapshot.handle._read import (
     ExecutedStatement,
@@ -97,6 +101,7 @@ from parallax.snapshot.handle._write_types import WriteLoweringError
 
 __all__ = [
     "Database",
+    "DeferredFeatureError",
     "ExecutedStatement",
     "Execution",
     "FindResult",

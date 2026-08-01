@@ -533,9 +533,10 @@ def deep_fetch_statement_pin(op: op_algebra.Operation, entity: EntityMetadata) -
     directive-peeling (`Limit`/`OrderBy`/`Distinct` only) cannot see a
     `DeepFetch` wrapper — this composition is the
     handle's own job. A milestone-set read (`.history()`/`.as_of_range()`)
-    never carries an outer `DeepFetch` (`Statement.include`/`.history`/
-    `.as_of_range` mutually refuse the combination, spec §3
-    ``snapshot-history-includes``), so this peel is unconditionally safe.
+    never reaches here carrying an outer `DeepFetch`: that combination builds as
+    an ordinary valid Find Query and the read preflight refuses it by name
+    (spec §3 ``snapshot-history-includes``) before any pin is derived, so this
+    peel is unconditionally safe.
     """
     pin_op = op.operand if isinstance(op, op_algebra.DeepFetch) else op
     return statement_pin(pin_op, entity)

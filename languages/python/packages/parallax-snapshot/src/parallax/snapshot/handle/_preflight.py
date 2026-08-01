@@ -3,16 +3,25 @@
 Every modeled read passes through :func:`preflight_find` before any I/O:
 :meth:`Database.find` and :meth:`Transaction.find` call it rather than
 reimplementing a step of it. The seam lowers the Find Query, resolves its target
-in the connected model, and validates the canonical operation from that resolved
-root, in that order, and returns the one
+in the connected model, validates the canonical operation from that resolved
+root, and classifies it against Snapshot's Deferred Execution Features, in that
+order, and returns the one
 :class:`~parallax.core.entity.LoweredFindQuery` the caller keeps for the rest of
 that execution.
 
 The order is the contract, not an implementation detail. Target resolution is
 not redundant with operation validation: a find-all query carries no attribute
 reference anywhere, so operation validation would never observe an undeclared
-target. And on a participating read, preflight runs BEFORE ``uow.read``, whose
-force-flush would otherwise turn a refused read into a write.
+target. Classification comes last because it presupposes both — a query the
+connected model cannot answer is refused as such and exposes no deferral result,
+even where its operation would match one. And on a participating read, preflight
+runs BEFORE ``uow.read``, whose force-flush would otherwise turn a refused read
+into a write.
+
+Deferred-Feature classification belongs to modeled READ execution alone. A
+predicate-selected write reaches its own boundary, which requires a
+mutation-compatible Find Query first, so a read-shaped query is refused as
+``query-not-mutation-compatible`` there and never classified here.
 
 This is its own module precisely so that it can be proven to touch no port. Its
 ``spec/python.md`` §7 scope grants only the Entity frontend's query submodule,
@@ -40,6 +49,7 @@ from parallax.core.entity._query import FindQuery, LoweredFindQuery, lower_find_
 from parallax.core.metamodel import Metamodel
 from parallax.core.op_algebra import validate_operation
 from parallax.snapshot.handle._errors import QueryTargetError
+from parallax.snapshot.handle._features import DeferredFeatureError, deferred_features
 
 __all__ = ["preflight_find"]
 
@@ -56,11 +66,13 @@ def preflight_find(query: FindQuery[Any, Any], *, model: Metamodel) -> LoweredFi
     exact, namespace-aware, and immune to the bare-name ambiguity a
     two-namespace model creates. Raises
     :class:`~parallax.snapshot.handle._errors.QueryTargetError` when ``model``
-    declares no Entity for it, and
+    declares no Entity for it,
     :class:`~parallax.core.op_algebra.OperationRejectedError` when the operation
-    is not applicable from that resolved root. Performs no SQL generation,
-    Database Port or connection work, transaction demarcation, or
-    materialization.
+    is not applicable from that resolved root, and
+    :class:`~parallax.snapshot.handle._features.DeferredFeatureError` when it is
+    applicable but requires a Feature this implementation has not built yet.
+    Performs no SQL generation, Database Port or connection work, transaction
+    demarcation, or materialization.
     """
     lowered = lower_find_query(query)
     root = model.entity(lowered.target)
@@ -70,4 +82,7 @@ def preflight_find(query: FindQuery[Any, Any], *, model: Metamodel) -> LoweredFi
             "(query-target-not-in-model)"
         )
     validate_operation(root, lowered.operation, model)
+    deferred = deferred_features(lowered.operation)
+    if deferred:
+        raise DeferredFeatureError(deferred)
     return lowered
