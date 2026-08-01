@@ -4,7 +4,7 @@ m-value-object).
 Each rejected rule is pinned with the exact identifier `validate_operation`
 raises, alongside the representative VALID operations that must NOT be
 rejected — including the corpus boundary case (an equivalent-spelling narrow
-that is NOT outside the active position). The 16 in-slice rejected corpus
+that is NOT outside the active position). The 18 in-slice rejected corpus
 cases are additionally round-tripped through the real validator here (not
 just via the engine's rejected sweep), so a regression in either the node
 construction or the model resolution fails at the unit layer first.
@@ -75,41 +75,44 @@ from parallax.descriptor._records import (
 def test_referenced_entities_collects_every_class_the_operation_names() -> None:
     # The reachable-closure seed the Entity frontend forms its early-validation
     # model from: the `Class` prefix of every attribute / nested-path /
-    # relationship reference, plus every `narrow` entity and subtype, reached
-    # through every wrapper and combinator.
+    # relationship reference, plus every `narrow` entity and subtype and every
+    # order key, reached through every wrapper and combinator.
     op = DeepFetch(
-        operand=AsOf(
-            operand=And(
-                operands=(
-                    Not(
-                        operand=Group(
-                            operand=Or(
-                                operands=(
-                                    Comparison(op="eq", attr="Animal.name", value="x"),
-                                    Between(attr="Dog.barkVolume", lower=1, upper=3),
-                                    NullCheck(op="isNull", attr="Cat.whisker"),
-                                    StringMatch(op="like", attr="Pet.tag", value="p"),
-                                    Membership(op="in", attr="WildBoar.id", values=(1,)),
+        operand=OrderBy(
+            operand=AsOf(
+                operand=And(
+                    operands=(
+                        Not(
+                            operand=Group(
+                                operand=Or(
+                                    operands=(
+                                        Comparison(op="eq", attr="Animal.name", value="x"),
+                                        Between(attr="Dog.barkVolume", lower=1, upper=3),
+                                        NullCheck(op="isNull", attr="Cat.whisker"),
+                                        StringMatch(op="like", attr="Pet.tag", value="p"),
+                                        Membership(op="in", attr="WildBoar.id", values=(1,)),
+                                    )
                                 )
                             )
-                        )
-                    ),
-                    Narrow(entity="Animal", to=("Dog", "Cat"), operand=All()),
-                    Navigate(
-                        rel="Person.pets",
-                        op=NestedComparison(op="nestedEq", path="Pet.spec.n", value="v"),
-                    ),
-                    Exists(rel="Owner.kennels", op=None),
-                    NotExists(rel="Kennel.owners", op=None),
-                    NestedMembership(op="nestedIn", path="Order.address.zip", values=("1",)),
-                    NestedNullCheck(op="nestedIsNull", path="Item.meta.flag"),
-                    NestedExists(path="Status.tags", where=None),
-                    NestedNotExists(path="Status.notes", where=None),
-                    NoneOp(),
-                )
+                        ),
+                        Narrow(entity="Animal", to=("Dog", "Cat"), operand=All()),
+                        Navigate(
+                            rel="Person.pets",
+                            op=NestedComparison(op="nestedEq", path="Pet.spec.n", value="v"),
+                        ),
+                        Exists(rel="Owner.kennels", op=None),
+                        NotExists(rel="Kennel.owners", op=None),
+                        NestedMembership(op="nestedIn", path="Order.address.zip", values=("1",)),
+                        NestedNullCheck(op="nestedIsNull", path="Item.meta.flag"),
+                        NestedExists(path="Status.tags", where=None),
+                        NestedNotExists(path="Status.notes", where=None),
+                        NoneOp(),
+                    )
+                ),
+                dimension="validTime",
+                coordinate="latest",
             ),
-            dimension="validTime",
-            coordinate="latest",
+            keys=(OrderKey(attr="Sorted.rank"),),
         ),
         paths=(
             NavigationPath(
@@ -135,6 +138,7 @@ def test_referenced_entities_collects_every_class_the_operation_names() -> None:
             "Leaf",
             "Trunk",
             "Branch",
+            "Sorted",
         }
     )
 
@@ -183,7 +187,7 @@ def _rejects(op: Operation, meta: Metamodel, target: str) -> OperationRejectedEr
 
 
 # --------------------------------------------------------------------------- #
-# The 16 in-slice rejected corpus cases, round-tripped end to end.            #
+# The 18 in-slice rejected corpus cases, round-tripped end to end.            #
 # --------------------------------------------------------------------------- #
 _REJECTED_CASE_IDS = (
     "m-inheritance-040",
@@ -197,6 +201,8 @@ _REJECTED_CASE_IDS = (
     "m-op-algebra-042",
     "m-op-algebra-043",
     "m-op-algebra-044",
+    "m-op-algebra-045",
+    "m-op-algebra-046",
     "m-value-object-034",
     "m-value-object-035",
     "m-value-object-036",
@@ -389,23 +395,13 @@ def test_redundant_self_narrow_is_valid() -> None:
 
 
 def test_narrow_empty_effective_set_rejects() -> None:
-    # A synthetic family whose abstract subtype has NO concrete descendants at
-    # all: `to` resolves to the empty concrete-subtype set.
-    empty_family = Metamodel(
-        entities=(
-            Entity(
-                name="Root",
-                table="root",
-                attributes=(Attribute(name="id", type="int64", column="id", primary_key=True),),
-                inheritance=Inheritance(
-                    role="root", strategy="table-per-hierarchy", tag_column="kind"
-                ),
-            ),
-            Entity(name="Ghost", inheritance=Inheritance(role="abstract-subtype", parent="Root")),
-        )
-    )
-    op = Narrow(entity="Root", to=("Ghost",), operand=All())
-    exc = _rejects(op, empty_family, "Root")
+    # An abstract subtype with NO concrete descendants: `to` resolves to the empty
+    # concrete-subtype set. The childless subtype must sit in a family that DOES
+    # compose a concrete elsewhere — a family composing none of them never forms
+    # (`inheritance-missing-concrete-subtype`), so the operation rule is reached
+    # only through this shape.
+    op = Narrow(entity="Animal", to=("Ghost",), operand=All())
+    exc = _rejects(op, _ANIMAL_WITH_A_CHILDLESS_SUBTYPE, "Animal")
     assert exc.rule == "narrow-empty-effective-set"
 
 
@@ -429,6 +425,43 @@ def test_subtype_attribute_within_narrow_scope_accepts() -> None:
 
 def test_root_declared_attribute_needs_no_narrow() -> None:
     _validate("Animal", Comparison(op="eq", attr="Animal.name", value="Rex"), _ANIMAL)
+
+
+def test_an_ancestors_attribute_is_addressable_from_a_descendant_position() -> None:
+    # The contravariant half the family rule keeps: an ancestor's member applies to
+    # every concrete under it, so it applies at a narrower position too.
+    _validate("Dog", Comparison(op="eq", attr="Animal.name", value="Rex"), _ANIMAL)
+
+
+# --------------------------------------------------------------------------- #
+# attribute-outside-active-position — the non-family half of the same rule.   #
+# --------------------------------------------------------------------------- #
+def test_an_unrelated_entitys_attribute_is_outside_the_active_position() -> None:
+    # The read is positioned at `Order` and the predicate names `OrderItem.id`.
+    # Both entities declare an `id`, so a lowering that keeps only the reference's
+    # local part would emit `t0.id = ?` and silently answer a different question —
+    # on a predicate-selected write, against different rows. The two share no
+    # inheritance family, so no narrow is a remedy and the narrow-scope rule would
+    # name one that does not exist.
+    op = Comparison(op="eq", attr="OrderItem.id", value=1)
+    exc = _rejects(op, _ORDERS, "Order")
+    assert exc.rule == "attribute-outside-active-position"
+
+
+def test_a_sibling_familys_attribute_is_outside_the_active_position() -> None:
+    # Neither entity is standalone: `Person` is a plain entity and the position is
+    # the whole animal family. The split is by FAMILY membership, not by whether
+    # either side happens to participate in inheritance at all.
+    op = Comparison(op="eq", attr="Person.name", value="Ada")
+    exc = _rejects(op, _ANIMAL, "Animal")
+    assert exc.rule == "attribute-outside-active-position"
+
+
+def test_the_related_entity_is_the_active_position_inside_a_navigation_filter() -> None:
+    # The hop re-roots the position at the relationship target, so a reference that
+    # is foreign at the queried position is native inside the filter.
+    op = Exists(rel="Person.pets", op=Comparison(op="eq", attr="Animal.name", value="Rex"))
+    _validate("Person", op, _ANIMAL)
 
 
 # --------------------------------------------------------------------------- #
@@ -943,3 +976,116 @@ def test_negation_and_grouping_and_result_shaping_wrappers_propagate() -> None:
 def test_none_and_all_are_no_ops() -> None:
     _validate("Customer", All(), _CUSTOMER)
     _validate("Customer", NoneOp(), _CUSTOMER)
+
+
+# --------------------------------------------------------------------------- #
+# Order keys carry attribute references, so they take the positional rule too. #
+# --------------------------------------------------------------------------- #
+def test_an_order_key_outside_the_active_position_rejects() -> None:
+    op = OrderBy(operand=All(), keys=(OrderKey(attr="OrderItem.sku"),))
+    exc = _rejects(op, _ORDERS, "Order")
+    assert exc.rule == "attribute-outside-active-position"
+
+
+def test_an_order_key_at_the_queried_position_accepts() -> None:
+    _validate("Order", OrderBy(operand=All(), keys=(OrderKey(attr="Order.sku"),)), _ORDERS)
+
+
+def test_every_order_key_is_checked_not_only_the_first() -> None:
+    op = OrderBy(
+        operand=All(),
+        keys=(OrderKey(attr="Order.sku"), OrderKey(attr="OrderItem.sku", direction="desc")),
+    )
+    exc = _rejects(op, _ORDERS, "Order")
+    assert exc.rule == "attribute-outside-active-position"
+
+
+def test_an_order_key_reads_the_position_a_top_level_narrow_moved_it_to() -> None:
+    # `orderBy` WRAPS the narrow, so the rows it orders are the narrowed ones: a
+    # concrete subtype's key is legal exactly when the result was narrowed to that
+    # subtype, and not before.
+    narrowed = OrderBy(
+        operand=Narrow(entity="Animal", to=("Dog",), operand=All()),
+        keys=(OrderKey(attr="Dog.barkVolume"),),
+    )
+    _validate("Animal", narrowed, _ANIMAL)
+
+    unnarrowed = OrderBy(operand=All(), keys=(OrderKey(attr="Dog.barkVolume"),))
+    exc = _rejects(unnarrowed, _ANIMAL, "Animal")
+    assert exc.rule == "subtype-attribute-outside-narrow-scope"
+
+
+def test_an_order_keys_position_is_seen_through_the_wrappers_that_carry_the_narrow() -> None:
+    op = OrderBy(
+        operand=Distinct(operand=Narrow(entity="Animal", to=("Dog",), operand=All())),
+        keys=(OrderKey(attr="Dog.barkVolume"),),
+    )
+    _validate("Animal", op, _ANIMAL)
+
+
+def test_a_narrow_inside_a_combinator_does_not_move_an_order_keys_position() -> None:
+    # A narrow under `and` is a predicate term over the same position, not the
+    # whole-result narrowing an order key reads.
+    op = OrderBy(
+        operand=And(operands=(All(), Narrow(entity="Animal", to=("Dog",), operand=All()))),
+        keys=(OrderKey(attr="Dog.barkVolume"),),
+    )
+    exc = _rejects(op, _ANIMAL, "Animal")
+    assert exc.rule == "subtype-attribute-outside-narrow-scope"
+
+
+def test_an_order_key_rooted_at_a_value_object_names_the_root_misuse() -> None:
+    op = OrderBy(operand=All(), keys=(OrderKey(attr="address.city"),))
+    exc = _rejects(op, _CUSTOMER, "Customer")
+    assert exc.rule == "find-root-value-object"
+
+
+# --------------------------------------------------------------------------- #
+# Namespace-aware reference resolution.                                       #
+# --------------------------------------------------------------------------- #
+_TWO_NAMESPACES = Metamodel(
+    entities=(
+        Entity(
+            name="Customer",
+            namespace="crm",
+            table="crm_customer",
+            attributes=(
+                Attribute(name="id", type="int64", column="id", primary_key=True),
+                Attribute(name="name", type="string", column="name", max_length=32),
+            ),
+        ),
+        Entity(
+            name="Customer",
+            namespace="sales",
+            table="sales_customer",
+            attributes=(
+                Attribute(name="id", type="int64", column="id", primary_key=True),
+                Attribute(name="name", type="string", column="name", max_length=32),
+            ),
+        ),
+    )
+)
+
+
+def test_a_canonical_reference_resolves_across_namespaces() -> None:
+    op = Comparison(op="eq", attr="crm.Customer.name", value="Ada")
+    _validate("crm.Customer", op, _TWO_NAMESPACES)
+
+
+def test_a_canonical_reference_to_the_other_namespace_is_outside_the_position() -> None:
+    op = Comparison(op="eq", attr="sales.Customer.name", value="Ada")
+    exc = _rejects(op, _TWO_NAMESPACES, "crm.Customer")
+    assert exc.rule == "attribute-outside-active-position"
+
+
+def test_a_bare_reference_two_namespaces_share_resolves_nowhere() -> None:
+    # `entity_by_name` answers an ambiguous bare spelling with a miss rather than a
+    # silent first match, so the reference names no position at all — an authoring
+    # error the message answers with the spellings that would resolve, not a
+    # classified operation rejection.
+    op = Comparison(op="eq", attr="Customer.name", value="Ada")
+    with pytest.raises(ValueError, match="shared by") as caught:
+        _validate("crm.Customer", op, _TWO_NAMESPACES)
+    assert not isinstance(caught.value, OperationRejectedError)
+    assert "crm.Customer" in str(caught.value)
+    assert "sales.Customer" in str(caught.value)

@@ -1022,6 +1022,7 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-inheritance-115": _INHERITANCE_DESCRIPTOR_REJECT_UNREACHABLE_REASON,
     "m-inheritance-116": _INHERITANCE_DESCRIPTOR_REJECT_UNREACHABLE_REASON,
     "m-inheritance-117": _INHERITANCE_DESCRIPTOR_REJECT_UNREACHABLE_REASON,
+    "m-inheritance-121": _INHERITANCE_DESCRIPTOR_REJECT_UNREACHABLE_REASON,
     # -- m-navigate: `navigate`-tagged corpus spelling redundancy ------------ #
     "m-navigate-001": _NAVIGATE_TAG_REDUNDANT_REASON,
     "m-navigate-005": _NAVIGATE_TAG_REDUNDANT_REASON,

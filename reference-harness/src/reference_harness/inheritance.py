@@ -82,6 +82,9 @@ INHERITANCE_UNKNOWN_PARENT = "inheritance-unknown-parent"
 INHERITANCE_CYCLE = "inheritance-cycle"
 INHERITANCE_MISSING_ROOT = "inheritance-missing-root"
 INHERITANCE_CONCRETE_WITHOUT_ABSTRACT_ROOT = "inheritance-concrete-without-abstract-root"
+# Only concrete subtypes own rows, so a family of a root and abstract subtypes
+# alone resolves every one of its positions to the EMPTY effective concrete set.
+INHERITANCE_MISSING_CONCRETE_SUBTYPE = "inheritance-missing-concrete-subtype"
 INHERITANCE_TPH_ROOT_TABLE_REQUIRED = "inheritance-tph-root-table-required"
 INHERITANCE_TPH_DESCENDANT_TABLE_FORBIDDEN = "inheritance-tph-descendant-table-forbidden"
 INHERITANCE_TPCS_ABSTRACT_TABLE_FORBIDDEN = "inheritance-tpcs-abstract-table-forbidden"
@@ -109,6 +112,7 @@ MODEL_REJECTED_RULES: frozenset[str] = frozenset(
         INHERITANCE_CYCLE,
         INHERITANCE_MISSING_ROOT,
         INHERITANCE_CONCRETE_WITHOUT_ABSTRACT_ROOT,
+        INHERITANCE_MISSING_CONCRETE_SUBTYPE,
         INHERITANCE_TPH_ROOT_TABLE_REQUIRED,
         INHERITANCE_TPH_DESCENDANT_TABLE_FORBIDDEN,
         INHERITANCE_TPCS_ABSTRACT_TABLE_FORBIDDEN,
@@ -131,6 +135,9 @@ MODEL_REJECTED_RULES: frozenset[str] = frozenset(
 NARROW_OUTSIDE_POSITION = "narrow-outside-position"
 NARROW_EMPTY_EFFECTIVE_SET = "narrow-empty-effective-set"
 SUBTYPE_ATTRIBUTE_OUTSIDE_NARROW_SCOPE = "subtype-attribute-outside-narrow-scope"
+# The non-family half of the same positional rule: the referenced entity shares no
+# inheritance family with the active position, so no narrow is a remedy.
+ATTRIBUTE_OUTSIDE_ACTIVE_POSITION = "attribute-outside-active-position"
 # A narrow in a navigation filter's `op` (or a deep-fetch path segment) that
 # resolves outside the relationship target's effective concrete set.
 NARROW_OUTSIDE_RELATIONSHIP_TARGET = "narrow-outside-relationship-target"
@@ -140,6 +147,7 @@ OPERATION_REJECTED_RULES: frozenset[str] = frozenset(
         NARROW_OUTSIDE_POSITION,
         NARROW_EMPTY_EFFECTIVE_SET,
         SUBTYPE_ATTRIBUTE_OUTSIDE_NARROW_SCOPE,
+        ATTRIBUTE_OUTSIDE_ACTIVE_POSITION,
         NARROW_OUTSIDE_RELATIONSHIP_TARGET,
     }
 )
@@ -794,6 +802,22 @@ def validate_family_defs(entity_defs: list[dict[str, Any]]) -> None:
                 f"family has exactly one root",
             )
 
+    # 7a. Every family contains at least one concrete subtype. Only concrete
+    #     subtypes own rows, so a family of a root and abstract subtypes alone
+    #     resolves every one of its positions to the EMPTY effective concrete set:
+    #     no read selects a row and no write names a target. Asked after the root
+    #     rules (a rootless family has no position to ask this of) and before the
+    #     strategy-scoped mapping rules (this is a question about the family's
+    #     membership, not about how that membership maps to storage).
+    for top, members in families:
+        if any(role_of(member) == ROLE_CONCRETE for member in members):
+            continue
+        raise RejectionError(
+            INHERITANCE_MISSING_CONCRETE_SUBTYPE,
+            f"the family rooted at {family.defs[top]['name']!r} declares no concrete "
+            f"subtype, so every position in it owns no rows",
+        )
+
     # Strategy-scoped checks, asked of each family under ITS OWN root's strategy.
     for top, members in families:
         root_definition = family.defs[top]
@@ -1125,10 +1149,12 @@ def _walk_narrow(
     elif tag in ("not", "group", "distinct", "limit", "asOf", "asOfRange", "history"):
         _walk_narrow(family, current_set, body.get("operand"), outside_rule, expected_entity)
     elif tag == "orderBy":
-        _walk_narrow(family, current_set, body.get("operand"), outside_rule, expected_entity)
+        operand = body.get("operand")
+        _walk_narrow(family, current_set, operand, outside_rule, expected_entity)
+        ordered_set = _ordered_position(family, current_set, operand, outside_rule)
         for key in body.get("keys", []) or []:
             if isinstance(key, dict):
-                _check_subtype_attr(family, current_set, key.get("attr"))
+                _check_subtype_attr(family, ordered_set, key.get("attr"))
     elif tag == "deepFetch":
         # A deep-fetch path narrows at two positions with two different rules. Its
         # ROOT `{entity, to}` guard names the queried position and is clamped to the
@@ -1159,23 +1185,54 @@ def _walk_narrow(
     # nested* / all / none carry no queried-position subtype-attribute reference here.
 
 
+def _ordered_position(
+    family: Family, current_set: list[str], node: Any, outside_rule: str
+) -> list[str]:
+    """The position an ``orderBy``'s ordered rows occupy.
+
+    A whole-result narrowing lowers to a TOP-LEVEL ``narrow`` under the ordering
+    wrapper, so an order key is asked of that narrow's resolved set, reached
+    through the result-shaping and temporal wrappers that may sit between. A
+    ``narrow`` inside a boolean combinator is a predicate term over the same
+    position and moves nothing (m-op-algebra).
+    """
+    if not isinstance(node, dict) or len(node) != 1:
+        return current_set
+    tag, body = next(iter(node.items()))
+    if not isinstance(body, dict):
+        return current_set
+    if tag == "narrow":
+        return resolve_clamped_narrow(
+            family, current_set, body.get("entity"), body.get("to", []) or [], outside_rule
+        )
+    if tag in ("orderBy", "limit", "distinct", "asOf", "asOfRange", "history"):
+        return _ordered_position(family, current_set, body.get("operand"), outside_rule)
+    return current_set
+
+
 def _check_subtype_attr(family: Family, current_set: list[str], attr_ref: Any) -> None:
-    """Reject a concrete-subtype-declared attribute used outside a compatible narrow.
+    """Reject an attribute reference that is not applicable to the active position.
 
     An attribute is available only to the concrete descendants of the entity that
     DECLARES it; if the current (possibly narrowed) position's effective set is not
-    a subset of those concretes, the reference is out of scope.
+    a subset of those concretes, the reference is out of scope. The classification
+    splits on whether a narrow could ever be the remedy: within the reference's own
+    inheritance family it can (``subtype-attribute-outside-narrow-scope``), and
+    outside it nothing can (``attribute-outside-active-position``).
     """
     if not isinstance(attr_ref, str) or "." not in attr_ref:
         return
     cls, _, attr_name = attr_ref.partition(".")
-    if cls not in family.defs or inheritance_of(family.defs[cls]) is None:
-        return  # a non-inheritance entity has no polymorphic scoping
-    declaring = family.declaring_entity(cls, attr_name)
+    if cls not in family.defs:
+        return  # an unknown entity — other validation owns this
+    declaring = family.declaring_entity(cls, attr_name) if inheritance_of(family.defs[cls]) else cls
     if declaring is None:
         return  # unknown attribute — other validation owns this
-    possessing = set(family.concrete_descendants(declaring))
-    if not set(current_set) <= possessing:
+    possessing = set(family.effective_concrete_set(declaring))
+    if set(current_set) <= possessing:
+        return
+    root = family.root_of(declaring) or declaring
+    if set(current_set) <= set(family.effective_concrete_set(root)):
         raise RejectionError(
             SUBTYPE_ATTRIBUTE_OUTSIDE_NARROW_SCOPE,
             f"attribute {attr_ref!r} is declared on {declaring!r}; the current "
@@ -1183,6 +1240,12 @@ def _check_subtype_attr(family: Family, current_set: list[str], attr_ref: Any) -
             f"set {sorted(possessing)}, so the attribute is not available to every "
             f"concrete in scope",
         )
+    raise RejectionError(
+        ATTRIBUTE_OUTSIDE_ACTIVE_POSITION,
+        f"attribute {attr_ref!r} is declared on {declaring!r}, which shares no "
+        f"inheritance family with the active position {sorted(current_set)}, so no "
+        f"narrow makes it addressable here",
+    )
 
 
 # --- abstract-read materialization oracle (familyVariant + projection) ---------

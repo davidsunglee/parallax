@@ -26,6 +26,7 @@ import pytest
 from reference_harness.case import Case, load_model
 from reference_harness.case_runner import CaseFailure, _materialize_family_variant, _resolve_hop
 from reference_harness.inheritance import (
+    ATTRIBUTE_OUTSIDE_ACTIVE_POSITION,
     NARROW_EMPTY_EFFECTIVE_SET,
     NARROW_OUTSIDE_POSITION,
     SUBTYPE_ATTRIBUTE_OUTSIDE_NARROW_SCOPE,
@@ -274,6 +275,57 @@ def test_inherited_attribute_is_always_in_scope() -> None:
 def test_non_inheritance_model_is_a_noop() -> None:
     defs = load_model(_COMPATIBILITY_ROOT, "models/customer.yaml").entity_defs
     validate_operation_inheritance(defs, {"eq": {"attr": "Customer.name", "value": "Ada"}})
+
+
+def test_an_unrelated_entitys_attribute_is_outside_the_active_position() -> None:
+    # `Person` is the plain owner entity, in no inheritance family with the animals.
+    # Narrowing cannot bring it into scope, so the reference takes the non-family
+    # half of the positional rule rather than the narrow-scope half. `Animal`
+    # declares a `name` of its own, so an unchecked reference would silently answer
+    # a different question.
+    with pytest.raises(RejectionError) as exc:
+        validate_operation_inheritance(
+            _animal_defs(), {"eq": {"attr": "Person.name", "value": "Ada"}}
+        )
+    assert exc.value.rule == ATTRIBUTE_OUTSIDE_ACTIVE_POSITION
+
+
+def test_a_related_entitys_attribute_is_in_scope_inside_a_navigation_filter() -> None:
+    # The hop re-roots the active position at the relationship target, so the inner
+    # predicate is asked of Pet's concretes, not of Person's.
+    validate_operation_inheritance(
+        _animal_defs(),
+        {"exists": {"rel": "Person.pets", "op": {"eq": {"attr": "Animal.name", "value": "Rex"}}}},
+        position="Person",
+    )
+
+
+def test_an_order_key_outside_the_active_position_is_rejected() -> None:
+    with pytest.raises(RejectionError) as exc:
+        validate_operation_inheritance(
+            _animal_defs(),
+            {"orderBy": {"operand": {"all": {}}, "keys": [{"attr": "Person.name"}]}},
+        )
+    assert exc.value.rule == ATTRIBUTE_OUTSIDE_ACTIVE_POSITION
+
+
+def test_an_order_key_reads_the_position_a_top_level_narrow_moved_it_to() -> None:
+    # `orderBy` wraps the narrow, so the ordered rows are the NARROWED ones: a Dog
+    # sort key is legal exactly when the result was narrowed to Dog, and not before.
+    narrowed = {
+        "orderBy": {
+            "operand": {"narrow": {"entity": "Animal", "to": ["Dog"], "operand": {"all": {}}}},
+            "keys": [{"attr": "Dog.barkVolume"}],
+        }
+    }
+    validate_operation_inheritance(_animal_defs(), narrowed)
+
+    unnarrowed = {
+        "orderBy": {"operand": {"all": {}}, "keys": [{"attr": "Dog.barkVolume"}]},
+    }
+    with pytest.raises(RejectionError) as exc:
+        validate_operation_inheritance(_animal_defs(), unnarrowed)
+    assert exc.value.rule == SUBTYPE_ATTRIBUTE_OUTSIDE_NARROW_SCOPE
 
 
 # --- familyVariant + projection superset derivation -------------------------

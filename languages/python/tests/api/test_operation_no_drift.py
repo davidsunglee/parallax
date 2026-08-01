@@ -217,6 +217,10 @@ REJECTED_BUILDERS: dict[str, Callable[[], Predicate]] = {
     "m-op-algebra-043": lambda: Contact.address.phones.expires.starts_with("2024"),
     "m-op-algebra-044": lambda: Contact.address.phones.any(ContactPhone.expires.ends_with("-01")),
     "m-value-object-038": lambda: vm.Customer.address.city == 42,
+    # The animal-owner mirror composes `Person` alongside the family, so a
+    # predicate over the owner is CONSTRUCTIBLE at the family position and is
+    # refused for naming an entity outside it rather than for naming nothing.
+    "m-op-algebra-045": lambda: AnimalOwnerPerson.name == "Ada",
     "m-inheritance-040": lambda: sm.Pet.narrow(sm.WildBoar),
     "m-inheritance-041": lambda: sm.Dog.bark_volume > 5,
     "m-inheritance-042": lambda: sm.Pet.narrow(sm.Dog, where=sm.Animal.narrow(sm.Cat)),
@@ -242,6 +246,7 @@ REJECTED_TARGETS: dict[str, type[Entity]] = {
     "m-op-algebra-043": Contact,
     "m-op-algebra-044": Contact,
     "m-value-object-038": vm.Customer,
+    "m-op-algebra-045": AnimalRoot,
     "m-inheritance-040": sm.Animal,
     "m-inheritance-041": sm.Animal,
     "m-inheritance-064": AnimalOwnerPerson,

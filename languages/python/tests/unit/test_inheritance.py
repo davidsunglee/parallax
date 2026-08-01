@@ -403,6 +403,7 @@ _RULE_SET_REJECTIONS: Final[Mapping[str, IssueCode]] = {
     ),
     "m-inheritance-031-rejected-tph-missing-tag-value": inheritance.MISSING_TAG_VALUE,
     "m-inheritance-032-rejected-missing-root": inheritance.MISSING_ROOT,
+    "m-inheritance-121-rejected-missing-concrete-subtype": inheritance.MISSING_CONCRETE_SUBTYPE,
     "m-inheritance-098-rejected-temporal-axes-on-abstract-subtype": (
         inheritance.TEMPORAL_AXES_NOT_ROOT_OWNED
     ),
@@ -485,6 +486,7 @@ def test_the_owned_issue_code_set_is_closed() -> None:
         "inheritance-duplicate-tag-value",
         "inheritance-materialization-key-collision",
         "inheritance-member-shadowing",
+        "inheritance-missing-concrete-subtype",
         "inheritance-missing-root",
         "inheritance-missing-tag-value",
         "inheritance-optimistic-locking-not-root-owned",
@@ -670,6 +672,49 @@ def test_a_table_per_concrete_subtype_concrete_declares_its_own_container() -> N
     )
     assert [issue.code for issue in issues] == [inheritance.TPCS_CONCRETE_TABLE_REQUIRED]
     assert issues[0].location == EntityLocation(_LEAF)
+
+
+def test_a_family_of_abstract_positions_alone_owns_no_rows() -> None:
+    # Every other family rule passes — one root, a resolvable parent, the shared
+    # container on the root, and no concrete subtype to want a tag value. Only
+    # concrete subtypes own rows, so this family's every position resolves over the
+    # empty effective concrete set, and the defect is reported at its root.
+    issues = _rule_issues(
+        _hierarchy(),
+        Declaration(identity=_LEAF, inheritance=AbstractSubtype(ExactEntityReference(_ROOT))),
+    )
+    assert [issue.code for issue in issues] == [inheritance.MISSING_CONCRETE_SUBTYPE]
+    assert issues[0].location == EntityLocation(_ROOT)
+
+
+def test_a_family_keeps_one_concrete_and_says_nothing() -> None:
+    # The partial-family boundary: composing SOME of a family's concrete leaves is
+    # legal, so one concrete beside an abstract subtype is an accepted model.
+    assert (
+        _codes(
+            _hierarchy(),
+            Declaration(identity=_LEAF, inheritance=AbstractSubtype(ExactEntityReference(_ROOT))),
+            _concrete(identity("Twig"), parent=_LEAF),
+        )
+        == []
+    )
+
+
+def test_each_family_answers_the_concrete_membership_rule_for_itself() -> None:
+    # A complete neighbour does not answer for a concrete-less family, exactly as it
+    # does not answer for a rootless one.
+    other_root = identity("Journal")
+    issues = _rule_issues(
+        _hierarchy(),
+        _concrete(_LEAF),
+        Declaration(
+            identity=other_root,
+            attributes=(key(other_root),),
+            inheritance=AbstractRoot(TablePerConcreteSubtype()),
+        ),
+    )
+    assert [issue.code for issue in issues] == [inheritance.MISSING_CONCRETE_SUBTYPE]
+    assert issues[0].location == EntityLocation(other_root)
 
 
 def test_a_family_without_a_primary_key_is_unidentifiable_at_every_position() -> None:

@@ -1,0 +1,36 @@
+# Negative (m-inheritance family invariants): a composed family contains no concrete
+# subtype.
+#
+# `Animal` is a well-formed table-per-hierarchy root and `Pet` a well-formed abstract
+# subtype under it — every other family rule passes: the parent resolves, there is
+# exactly one root, the root owns the shared table, no descendant repeats it, no
+# concrete subtype is missing a tagValue (there is no concrete subtype at all), and
+# `concrete-without-abstract-root` is vacuously satisfied. That is exactly why this
+# needs a rule of its own: only concrete subtypes own rows, so every position in this
+# family resolves over the EMPTY effective concrete set — no read can select a row, no
+# narrow has anything to narrow to, and no write can name a target. The operation-level
+# `narrow-empty-effective-set` names the same emptiness reached by narrowing; this
+# names it reached by composition, and a model-aware validator MUST reject it at
+# formation, before any SQL.
+model: models/payment.yaml
+tags: [m-inheritance, m-descriptor, rejected, negative, slice-snapshot-1, slice-managed-1]
+shape: rejected
+when:
+  model:
+    entities:
+      - name: Animal
+        table: animal
+        inheritance:
+          strategy: table-per-hierarchy
+          role: root
+          tag: { column: kind }
+        attributes:
+          - { name: id, type: int64, column: id, primaryKey: true }
+      - name: Pet
+        inheritance:
+          role: abstract-subtype
+          parent: Animal
+        attributes:
+          - { name: licenseId, type: string, column: license_id, nullable: true }
+then:
+  rejectedRule: inheritance-missing-concrete-subtype
