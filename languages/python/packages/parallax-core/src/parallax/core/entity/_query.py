@@ -32,7 +32,7 @@ from __future__ import annotations
 
 import datetime as dt
 from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING, Any, Literal, overload
+from typing import TYPE_CHECKING, Any, Literal, cast, overload
 
 from parallax.core.base import normalize_instant
 from parallax.core.entity._declaration import declaration_of
@@ -41,11 +41,10 @@ from parallax.core.entity._expressions import (
     Predicate,
     RelationshipPath,
     SortKey,
-    and_terms,
+    conjoin,
 )
 from parallax.core.metamodel import AsOfAxisMetadata, EntityIdentity, TemporalDimension
 from parallax.core.op_algebra import (
-    And,
     AsOf,
     AsOfRange,
     DeepFetch,
@@ -334,18 +333,25 @@ class FindQuery[E, S]:
         valid_time: _Window | _Unset = _UNSET,
         tx_time: _Window | _Unset = _UNSET,
     ) -> FindQuery[E, S]:
-        """Scan one or both axes across a half-open ``[from, to)`` window (edge points)."""
+        """Scan one or both axes across a half-open ``[from, to)`` window (edge points).
+
+        Each window is an exact built-in two-item ``tuple`` of finite instants
+        ordered ``start < end``. A list, a ``tuple`` subclass, any other
+        iterable, an endpoint that would need coercion, a :data:`LATEST`
+        endpoint, and an equal or reversed window are each refused HERE — an
+        ``asOfRange``'s bounds are canonically finite and ordered
+        (``operation.schema.json``'s ``finiteTemporalInstant``, `m-temporal-read`
+        "scans every milestone whose interval overlaps ``[start, end)``"), so
+        the clause is never built carrying anything else and no scan reaches SQL
+        with a reversed window or a ``latest`` bind.
+        """
         clauses: list[_TemporalClause] = []
         if not isinstance(tx_time, _Unset):
-            start, end = tx_time
-            clauses.append(
-                _AsOfRangeClause(self._dimension("tx_time"), _instant(start), _instant(end))
-            )
+            start, end = _window(tx_time, "tx_time")
+            clauses.append(_AsOfRangeClause(self._dimension("tx_time"), start, end))
         if not isinstance(valid_time, _Unset):
-            start, end = valid_time
-            clauses.append(
-                _AsOfRangeClause(self._dimension("valid_time"), _instant(start), _instant(end))
-            )
+            start, end = _window(valid_time, "valid_time")
+            clauses.append(_AsOfRangeClause(self._dimension("valid_time"), start, end))
         return self._with_temporal(tuple(clauses))
 
     def history(self, dimension: TemporalDimensionConstant) -> FindQuery[E, S]:
@@ -541,6 +547,53 @@ def _instant(value: _Pin) -> str:
     return normalize_instant(value).isoformat()
 
 
+def _window(value: object, axis: _DimensionName) -> tuple[str, str]:
+    """``value`` as one scan window's canonical ``(start, end)`` literals.
+
+    Takes the value a caller actually passed rather than the one the parameter
+    promises, because this is the rule a dynamically composed argument meets: a
+    scan window is judged as a SHAPE — exactly a built-in two-item ``tuple``,
+    both endpoints finite instants, ordered — and nothing is coerced into that
+    shape. A ``LATEST`` endpoint fails it by definition: Latest pins an axis,
+    and an ``asOfRange`` bound is finite.
+    """
+    if type(value) is not tuple:
+        raise QueryDefinitionError(
+            code="query-clause-invalid",
+            message=(
+                f"{axis}= takes an exact built-in tuple; a list, a tuple subclass, and "
+                f"any other iterable are refused rather than coerced (got {value!r})"
+            ),
+        )
+    endpoints = cast("tuple[object, ...]", value)
+    if len(endpoints) != 2:
+        raise QueryDefinitionError(
+            code="query-clause-invalid",
+            message=(
+                f"{axis}= takes a two-item window, the (start, end) edge points (got {value!r})"
+            ),
+        )
+    start, end = endpoints
+    if not isinstance(start, dt.datetime) or not isinstance(end, dt.datetime):
+        raise QueryDefinitionError(
+            code="query-clause-invalid",
+            message=(
+                f"{axis}= takes two finite instants; LATEST pins an axis rather than "
+                f"scanning one, and nothing else is coerced (got {value!r})"
+            ),
+        )
+    first, last = normalize_instant(start), normalize_instant(end)
+    if first >= last:
+        raise QueryDefinitionError(
+            code="query-clause-invalid",
+            message=(
+                f"{axis}= scans the half-open window [start, end), so start < end; "
+                f"{first.isoformat()} does not precede {last.isoformat()}"
+            ),
+        )
+    return first.isoformat(), last.isoformat()
+
+
 def build_find_query(
     target: EntityIdentity,
     predicates: tuple[Predicate[Any] | AllPredicate[Any], ...],
@@ -571,13 +624,6 @@ def build_find_query(
                 "is the whole filter or it is not the filter at all"
             ),
         )
-    return FindQuery(_target=target, _predicate=_conjoined(predicates), _as_of_axes=as_of_axes)
-
-
-def _conjoined(predicates: tuple[Predicate[Any] | AllPredicate[Any], ...]) -> Operation:
-    if len(predicates) == 1:
-        return predicates[0].op
-    operands: list[Operation] = []
-    for predicate in predicates:
-        operands.extend(and_terms(predicate))
-    return And(operands=tuple(operands))
+    predicate = conjoin(predicates)
+    assert predicate is not None  # the empty argument list is refused above
+    return FindQuery(_target=target, _predicate=predicate, _as_of_axes=as_of_axes)

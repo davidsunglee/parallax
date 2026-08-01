@@ -208,16 +208,16 @@ def test_expression_rejects_bool_misuse() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Rejected-case build-time proofs (m-op-algebra / m-navigate / m-value-object): #
-# a rejected case's `when.operation` never becomes a Statement                 #
-# — the SAME model-aware `validate_operation` the corpus's own rejected lane   #
-# calls (m-conformance-adapter) runs INSIDE `Entity.where(Entity.all)` /                 #
-# `.narrow()`, raising before a Statement is ever returned. No-drift here is   #
-# two proofs: the raw built predicate serializes to the case's own            #
-# `when.operation` (the SAME structural comparison every other example makes, #
-# minus the `Statement` wrapper a rejected build never produces), and         #
-# attempting to build it through `Entity.where(...)` raises                   #
-# `OperationRejectedError` naming the EXACT `then.rejectedRule`.               #
+# Rejected-case proofs (m-op-algebra / m-navigate / m-value-object): a rejected #
+# case's `when.operation` never reaches execution — the SAME model-aware       #
+# `validate_operation` the corpus's own rejected lane calls                    #
+# (m-conformance-adapter) runs at the shared read gate rather than at          #
+# `Entity.where`, because authoring reaches no model. No-drift here is two     #
+# proofs: the raw built predicate serializes to the case's own                 #
+# `when.operation` (the SAME structural comparison every other example makes,  #
+# over the predicate alone rather than a whole lowered query), and executing   #
+# the Find Query built from it raises `OperationRejectedError` naming the      #
+# EXACT `then.rejectedRule`.                                                   #
 # --------------------------------------------------------------------------- #
 REJECTED_BUILDERS: dict[str, Callable[[], Predicate[Any]]] = {
     "m-op-algebra-039": lambda: Order.price.between(50.75, 20.00),

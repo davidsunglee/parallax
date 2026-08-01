@@ -145,7 +145,9 @@ mutations, exceptions, or exports.
   an assignment-bearing mutation checks nonemptiness, duplicates, and exact
   target compatibility when combining already-valid Assignments with its
   Find Query.
-- **Opaque immutable Find Query.** `FindQuery[T]` is exported for annotations
+- **Opaque immutable Find Query.** `FindQuery[E, S]` — the Entity QUERIED and
+  the Entity the result RETURNS, which `narrow` and only `narrow` moves — is
+  exported for annotations
   and fluent use, but direct `FindQuery(...)` construction is unsupported;
   `Entity.where(...)` is its sole public constructor. Every clause returns a
   new value and leaves its receiver unchanged. Target, Predicate, include, and
@@ -298,8 +300,11 @@ mutations, exceptions, or exports.
   prefix. The core expansion updates `m-op-algebra`, its schema,
   `m-inheritance`, `m-deep-fetch`, `m-sql`, semantic validation, planning,
   compatibility cases, and claiming frontends atomically.
-  `Entity.where(...)` requires at least one Predicate; zero arguments raise
-  `QueryDefinitionError(query-clause-invalid)`. `Entity.all` is the
+  `Entity.where(...)` requires at least one Predicate, as a required positional
+  parameter: `Entity.where()` is a static error and Python's own call binding
+  raises `TypeError`, while an argument sequence that is empty only after a
+  dynamic expansion raises `QueryDefinitionError(query-clause-invalid)`.
+  `Entity.all` is the
   non-callable, target-bound Predicate spelling an explicitly
   unfiltered query and lowers to the canonical `all` operation:
   `Animal.where(Animal.all)`. It is legal only as the sole `where(...)`
@@ -465,8 +470,10 @@ mutations, exceptions, or exports.
   independent flat comparisons that different elements could satisfy.
   A nested `between(lower, upper)` validates both bounds against the leaf's
   declared neutral type, exactly as every other nested literal is validated.
-  Top-level and nested `between` alike then compare the two bounds as the
-  Predicate is built into a Statement: a `lower` strictly greater than its
+  Top-level and nested `between` alike then compare the two bounds where every
+  other operation rule is stated — `validate_operation`, reached at execution
+  preflight for a read and at the write boundary for a predicate-selected
+  write: a `lower` strictly greater than its
   `upper` names an empty range and raises
   `OperationRejectedError(between-bounds-inverted)` rather than compiling to a
   `BETWEEN` that silently matches nothing. The comparison is by literal kind —
@@ -495,9 +502,11 @@ mutations, exceptions, or exports.
   `Order.where(...).include(Order.items.statuses, Order.tags)`. One path
   grammar shared with predicates; longer paths imply their intermediates
   (glossary Relationship Path). The first hop is statically typed via descriptor
-  `__get__` overloads; deeper hops resolve dynamically and are validated
-  against the metamodel during Find Query construction — never at execution and
-  never at the database. An access class equal to the Find Query target authors
+  `__get__` overloads; deeper hops are composed dynamically from the path's own
+  target and the member's spelling, because authoring reaches no model, and
+  every hop's legality — an undeclared or renamed relationship, a value-object
+  segment, an illegal hop narrow — is validated against the connected model at
+  execution preflight, never at the database. An access class equal to the Find Query target authors
   a broad path root. An access class naming a descendant authors the path-root
   `narrow: {entity, to}` and is legal whenever it resolves to a nonempty subset
   of the query's effective position; a root `FindQuery.narrow(...)` constrains

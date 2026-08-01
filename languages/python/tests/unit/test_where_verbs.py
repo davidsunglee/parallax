@@ -39,7 +39,7 @@ _FIXED = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
 
 
 # A small LOCAL Transaction-Time-Only entity, unregistered elsewhere — the
-# `.as_of()` / `.history()` bare-statement-guard tests need a real temporal
+# `.as_of()` / `.history()` mutation-compatibility tests need a real temporal
 # class, and no shared test-fixture entity mirror declares one (mirroring the
 # same local-class pattern `test_snapshot_wrap_values.py`'s own `_WrapTemporalRoot`
 # uses).

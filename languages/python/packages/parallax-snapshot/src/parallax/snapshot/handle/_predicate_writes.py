@@ -102,7 +102,7 @@ def buffer_predicate(
     builds directly from a case document, then hands it to the shared
     :func:`buffer_predicate_instruction` seam.
 
-    Steps 1 through 3 are TYPED-ONLY — they judge inputs the canonical
+    Steps 1, 2, and 4 are TYPED-ONLY — they judge inputs the canonical
     instruction has no way to carry (a query's clauses, an Assignment list
     composed against a query, a ``dt.datetime`` bound). Every rule that measures
     the INSTRUCTION itself is stated in ``validate_instruction`` (step 5), which
@@ -260,7 +260,7 @@ def buffer_predicate_instruction(
 
     **Every caller passes ``instruction`` through
     :func:`~parallax.core.unit_work.instructions.validate_instruction` against
-    ``meta`` first** — :func:`buffer_predicate` at its step 4, the engine before
+    ``meta`` first** — :func:`buffer_predicate` at its step 5, the engine before
     it opens the transaction. EVERY model-aware rule is stated there, in the
     order `m-case-format` fixes: the whole ``validate_operation`` vocabulary and
     the bare-predicate rule over the selecting predicate, the
@@ -326,8 +326,8 @@ def _materialize_predicate_write(
     ``optimistic`` ⇒ none) — the SAME rule a real ``Transaction.find``
     applies.
 
-    A TEMPORAL target's raw predicate carries no as-of wrapper (a bare
-    statement forbids ``.as_of()``/``.history()``, python.md §5) — exactly
+    A TEMPORAL target's raw predicate carries no as-of wrapper (a
+    mutation-compatible Find Query carries no temporal clause, python.md §5) — exactly
     like an ordinary find's omitted axis, it must still default every
     declared axis to its CURRENT milestone (`m-temporal-read` "default-
     latest"), so the resolve routes through the SAME

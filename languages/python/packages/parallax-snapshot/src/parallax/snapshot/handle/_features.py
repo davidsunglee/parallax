@@ -64,8 +64,12 @@ class DeferredFeatureError(RuntimeError):
 
     :data:`code` and :data:`features` are its whole public state; it retains
     neither the query, the operation, the model, nor the Database. ``features``
-    lists EVERY Feature the operation matched, ascending, so a caller reads the
-    complete reason rather than whichever match was found first.
+    is NONEMPTY and ascending, listing EVERY Feature the operation matched, so a
+    caller reads the complete reason rather than whichever match was found
+    first. The constructor enforces the nonemptiness: an empty match set is the
+    ordinary answer for a query this implementation executes, so raising it
+    would name no deferral at all, and this class is exported — a caller can
+    reach the constructor directly.
 
     Raised before SQL generation, connection acquisition, Database Port access,
     and — on a participating read — before the unit of work's force-flush, so a
@@ -75,6 +79,11 @@ class DeferredFeatureError(RuntimeError):
     code: Final[str] = "execution-feature-deferred"
 
     def __init__(self, features: frozenset[str]) -> None:
+        if not features:
+            raise ValueError(
+                "a deferred-feature refusal names at least one Feature; an empty match "
+                "set means the query is executable and nothing is refused"
+            )
         ordered = tuple(sorted(features))
         super().__init__(
             f"{self.code}: this Snapshot implementation has deferred "
