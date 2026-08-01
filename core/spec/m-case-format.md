@@ -1074,6 +1074,15 @@ rules:
   position, so the reference is applicable nowhere in the read and no `narrow`
   can make it so (`m-op-algebra` positional rule). An order key is asked of the
   position its ordered rows occupy, which a top-level `narrow` moves.
+- `reference-ambiguous-entity-name` — a reference position names an Entity by a
+  **bare local name** that two namespaces of the model declare, so it resolves to
+  no single Entity and the reference resolves nowhere (`m-op-algebra` reference
+  resolution). It is the resolution half of the two positional rules above, which
+  presuppose a reference that resolved: they fire when a reference resolves to an
+  Entity **outside** the position, this one when it resolves to **more than one**
+  and therefore to none. The rule refuses the **reference**, never the
+  declarations — each Entity stays declarable, materializable under its exact
+  qualified identity, and readable through a position naming it unambiguously.
 - `narrow-outside-relationship-target` — a `narrow` in a navigation filter's `op`,
   or a deep-fetch path segment's `narrow`, that **either** names an `entity` which is
   not the **relationship target** exactly (a relationship-scope narrow MUST set

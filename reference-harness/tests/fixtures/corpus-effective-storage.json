@@ -651,6 +651,29 @@
       "valueObject": {}
     }
   },
+  "models/shared-local-name.yaml": {
+    "archive.SharedVariant": {
+      "attribute": {
+        "archiveLabel": "archive_label",
+        "id": "id"
+      },
+      "valueObject": {}
+    },
+    "catalog.SharedVariant": {
+      "attribute": {
+        "catalogLabel": "catalog_label",
+        "id": "id"
+      },
+      "valueObject": {}
+    },
+    "parallax.compatibility.Register": {
+      "attribute": {
+        "id": "id",
+        "variantId": "variant_id"
+      },
+      "valueObject": {}
+    }
+  },
   "models/shipment.yaml": {
     "parallax.compatibility.Shipment": {
       "attribute": {

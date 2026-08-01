@@ -2879,6 +2879,89 @@
       ]
     }
   },
+  "models/shared-local-name.yaml": {
+    "archive_shared": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "archive.SharedVariant"
+          ],
+          "column": "id",
+          "contributor": "attribute:archive.SharedVariant.id",
+          "declaringOwner": "archive.SharedVariant",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "archive.SharedVariant"
+          ],
+          "column": "archive_label",
+          "contributor": "attribute:archive.SharedVariant.archiveLabel",
+          "declaringOwner": "archive.SharedVariant",
+          "effectiveNullable": false,
+          "tier": "domain"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0
+      ]
+    },
+    "catalog_shared": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "catalog.SharedVariant"
+          ],
+          "column": "id",
+          "contributor": "attribute:catalog.SharedVariant.id",
+          "declaringOwner": "catalog.SharedVariant",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "catalog.SharedVariant"
+          ],
+          "column": "catalog_label",
+          "contributor": "attribute:catalog.SharedVariant.catalogLabel",
+          "declaringOwner": "catalog.SharedVariant",
+          "effectiveNullable": false,
+          "tier": "domain"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0
+      ]
+    },
+    "register": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Register"
+          ],
+          "column": "id",
+          "contributor": "attribute:parallax.compatibility.Register.id",
+          "declaringOwner": "parallax.compatibility.Register",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Register"
+          ],
+          "column": "variant_id",
+          "contributor": "attribute:parallax.compatibility.Register.variantId",
+          "declaringOwner": "parallax.compatibility.Register",
+          "effectiveNullable": false,
+          "tier": "domain"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0
+      ]
+    }
+  },
   "models/shipment.yaml": {
     "shipment": {
       "columns": [

@@ -4,7 +4,7 @@ m-value-object).
 Each rejected rule is pinned with the exact identifier `validate_operation`
 raises, alongside the representative VALID operations that must NOT be
 rejected — including the corpus boundary case (an equivalent-spelling narrow
-that is NOT outside the active position). The 19 in-slice rejected corpus
+that is NOT outside the active position). The 20 in-slice rejected corpus
 cases are additionally round-tripped through the real validator here (not
 just via the engine's rejected sweep), so a regression in either the node
 construction or the model resolution fails at the unit layer first.
@@ -148,11 +148,13 @@ _ANIMAL = corpus_models.load_model(_MODEL_DIR / "animal.yaml")
 _CONTACT = corpus_models.load_model(_MODEL_DIR / "contact.yaml")
 _CUSTOMER = corpus_models.load_model(_MODEL_DIR / "customer.yaml")
 _ORDERS = corpus_models.load_model(_MODEL_DIR / "orders.yaml")
+_SHARED_LOCAL_NAME = corpus_models.load_model(_MODEL_DIR / "shared-local-name.yaml")
 _MODEL_BY_FILE: Mapping[str, Metamodel] = {
     "animal.yaml": _ANIMAL,
     "contact.yaml": _CONTACT,
     "customer.yaml": _CUSTOMER,
     "orders.yaml": _ORDERS,
+    "shared-local-name.yaml": _SHARED_LOCAL_NAME,
 }
 # The animal family plus one abstract subtype with no concrete descendants — the
 # only way a `to` list resolves to the empty set.
@@ -187,7 +189,7 @@ def _rejects(op: Operation, meta: Metamodel, target: str) -> OperationRejectedEr
 
 
 # --------------------------------------------------------------------------- #
-# The 19 in-slice rejected corpus cases, round-tripped end to end.            #
+# The 20 in-slice rejected corpus cases, round-tripped end to end.            #
 # --------------------------------------------------------------------------- #
 _REJECTED_CASE_IDS = (
     "m-inheritance-040",
@@ -204,6 +206,7 @@ _REJECTED_CASE_IDS = (
     "m-op-algebra-045",
     "m-op-algebra-046",
     "m-op-algebra-047",
+    "m-op-algebra-048",
     "m-value-object-034",
     "m-value-object-035",
     "m-value-object-036",
@@ -403,6 +406,15 @@ def test_narrow_empty_effective_set_rejects() -> None:
     # only through this shape.
     op = Narrow(entity="Animal", to=("Ghost",), operand=All())
     exc = _rejects(op, _ANIMAL_WITH_A_CHILDLESS_SUBTYPE, "Animal")
+    assert exc.rule == "narrow-empty-effective-set"
+
+
+def test_a_narrow_to_a_name_the_model_does_not_declare_resolves_to_nothing() -> None:
+    # A `to` entry naming NO Entity contributes nothing and leaves the resolved set
+    # empty, which the narrow rules classify. Only a spelling naming MORE than one
+    # Entity is named as a resolution failure of its own.
+    op = Narrow(entity="Animal", to=("Bogus",), operand=All())
+    exc = _rejects(op, _ANIMAL, "Animal")
     assert exc.rule == "narrow-empty-effective-set"
 
 
@@ -1117,12 +1129,68 @@ def test_a_canonical_reference_to_the_other_namespace_is_outside_the_position() 
 
 def test_a_bare_reference_two_namespaces_share_resolves_nowhere() -> None:
     # `entity_by_name` answers an ambiguous bare spelling with a miss rather than a
-    # silent first match, so the reference names no position at all — an authoring
-    # error the message answers with the spellings that would resolve, not a
-    # classified operation rejection.
+    # silent first match, so the reference names no position at all — the classified
+    # refusal, whose message answers with the spellings that would resolve.
     op = Comparison(op="eq", attr="Customer.name", value="Ada")
-    with pytest.raises(ValueError, match="shared by") as caught:
-        _validate("crm.Customer", op, _TWO_NAMESPACES)
-    assert not isinstance(caught.value, OperationRejectedError)
-    assert "crm.Customer" in str(caught.value)
-    assert "sales.Customer" in str(caught.value)
+    exc = _rejects(op, _TWO_NAMESPACES, "crm.Customer")
+    assert exc.rule == "reference-ambiguous-entity-name"
+    assert "crm.Customer" in str(exc)
+    assert "sales.Customer" in str(exc)
+
+
+# Every position that names an Entity, spelled the only way the operation grammars
+# allow — bare — against the corpus model declaring `SharedVariant` in two
+# namespaces. The rule is about the spelling failing to resolve, so it fires
+# wherever a position is named, not only where an attribute is referenced.
+_AMBIGUOUS_BY_POSITION: Mapping[str, Operation] = {
+    "attr": Comparison(op="eq", attr="SharedVariant.archiveLabel", value="A-1"),
+    "between.attr": Between(attr="SharedVariant.archiveLabel", lower="a", upper="b"),
+    "orderBy.keys": OrderBy(operand=All(), keys=(OrderKey(attr="SharedVariant.archiveLabel"),)),
+    "rel": Exists(rel="SharedVariant.register", op=All()),
+    "nested path": NestedComparison(op="nestedEq", path="SharedVariant.spec.label", value="A-1"),
+    "nestedExists path": NestedExists(path="SharedVariant.spec", where=None),
+    "narrow.entity": Narrow(entity="SharedVariant", to=("Register",), operand=All()),
+    "narrow.to": Narrow(entity="Register", to=("SharedVariant",), operand=All()),
+    "deepFetch.segment.rel": DeepFetch(
+        operand=All(),
+        paths=(NavigationPath(segments=(PathSegment(rel="SharedVariant.register"),)),),
+    ),
+    "deepFetch.segment.narrow": DeepFetch(
+        operand=All(),
+        paths=(
+            NavigationPath(
+                segments=(PathSegment(rel="Register.variant", narrow=("SharedVariant",)),)
+            ),
+        ),
+    ),
+    "deepFetch.path.narrow.entity": DeepFetch(
+        operand=All(),
+        paths=(
+            NavigationPath(
+                segments=(PathSegment(rel="Register.variant"),),
+                narrow=PathRootNarrow(entity="SharedVariant", to=("Register",)),
+            ),
+        ),
+    ),
+    "relationship-scope narrow.entity": Exists(
+        rel="Register.variant",
+        op=Narrow(entity="SharedVariant", to=("Register",), operand=All()),
+    ),
+}
+
+
+@pytest.mark.parametrize("position", sorted(_AMBIGUOUS_BY_POSITION))
+def test_an_ambiguous_bare_name_is_rejected_in_every_reference_position(position: str) -> None:
+    exc = _rejects(_AMBIGUOUS_BY_POSITION[position], _SHARED_LOCAL_NAME, "Register")
+    assert exc.rule == "reference-ambiguous-entity-name"
+    assert "archive.SharedVariant" in str(exc)
+    assert "catalog.SharedVariant" in str(exc)
+
+
+def test_an_unambiguous_bare_name_still_resolves_in_a_two_namespace_model() -> None:
+    # The refusal is a property of the SPELLING, not of the model: the same model
+    # answers every bare name only one namespace declares, and the relationship
+    # declaration reaches `archive.SharedVariant` by its qualified identity, so
+    # declaring the collision costs the rest of the model nothing.
+    _validate("Register", Comparison(op="eq", attr="Register.id", value=1), _SHARED_LOCAL_NAME)
+    _validate("Register", Exists(rel="Register.variant", op=All()), _SHARED_LOCAL_NAME)

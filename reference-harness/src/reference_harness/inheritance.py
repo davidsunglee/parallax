@@ -141,6 +141,10 @@ ATTRIBUTE_OUTSIDE_ACTIVE_POSITION = "attribute-outside-active-position"
 # A narrow in a navigation filter's `op` (or a deep-fetch path segment) that
 # resolves outside the relationship target's effective concrete set.
 NARROW_OUTSIDE_RELATIONSHIP_TARGET = "narrow-outside-relationship-target"
+# The resolution half of the positional rules: a reference position spells its
+# entity BARE, so a local name two namespaces of the model declare names no single
+# entity and the reference resolves nowhere.
+REFERENCE_AMBIGUOUS_ENTITY_NAME = "reference-ambiguous-entity-name"
 
 OPERATION_REJECTED_RULES: frozenset[str] = frozenset(
     {
@@ -149,6 +153,7 @@ OPERATION_REJECTED_RULES: frozenset[str] = frozenset(
         SUBTYPE_ATTRIBUTE_OUTSIDE_NARROW_SCOPE,
         ATTRIBUTE_OUTSIDE_ACTIVE_POSITION,
         NARROW_OUTSIDE_RELATIONSHIP_TARGET,
+        REFERENCE_AMBIGUOUS_ENTITY_NAME,
     }
 )
 
@@ -242,6 +247,15 @@ class _IdentityDefinitions(dict[str, dict[str, Any]]):
             return name
         matches = self._local_keys.get(name, [])
         return matches[0] if len(matches) == 1 else name
+
+    def ambiguous_spellings(self, name: str) -> tuple[str, ...]:
+        """The canonical spellings ``name`` would name when more than one namespace
+        declares it, else empty — an exact identity and an unambiguous local alias
+        both resolve, so both answer empty."""
+        if dict.__contains__(self, name):
+            return ()
+        matches = self._local_keys.get(name, [])
+        return tuple(sorted(matches)) if len(matches) > 1 else ()
 
     def __contains__(self, name: object) -> bool:
         return isinstance(name, str) and dict.__contains__(self, self.canonical_key(name))
@@ -971,6 +985,34 @@ def resolve_hop_effective_set(
     return ordered, True
 
 
+def _check_reference_entity_name(family: Family, reference: Any, name: Any) -> None:
+    """Reject a reference position whose entity spelling names more than one entity.
+
+    Every reference position spells its entity BARE — the operation grammars admit
+    no namespace segment — so a local name two namespaces of the model declare names
+    no single entity there and the reference resolves nowhere. Refusing it is a
+    REFERENCE-site rule: both entities stay declarable, and each stays reachable
+    through a position that names it unambiguously.
+    """
+    if not isinstance(name, str):
+        return
+    canonical = family.defs.ambiguous_spellings(name)
+    if canonical:
+        raise RejectionError(
+            REFERENCE_AMBIGUOUS_ENTITY_NAME,
+            f"{reference!r}: the bare entity spelling {name!r} is shared by "
+            f"{list(canonical)}, so it names no single entity in this model and the "
+            f"reference resolves nowhere",
+        )
+
+
+def _check_member_reference(family: Family, reference: Any) -> None:
+    """Check the entity spelling of a ``Class.member`` reference (an ``attr`` or a
+    ``rel``), whose class part is the spelling up to its LAST dot."""
+    if isinstance(reference, str) and "." in reference:
+        _check_reference_entity_name(family, reference, reference.rpartition(".")[0])
+
+
 def resolve_clamped_narrow(
     family: Family,
     current_set: list[str],
@@ -990,8 +1032,15 @@ def resolve_clamped_narrow(
     check to the intersection (rather than to ``effective_concrete_set(entity)``
     alone) is what stops a nested narrow, or one whose ``entity`` is broader than
     the threaded position, from broadening back out.
+
+    ``entity`` and every ``to`` entry are reference positions, so a spelling that
+    names no single entity is refused there before either subset check: unresolved,
+    it would otherwise contribute nothing and surface as the empty or
+    outside-position set the narrow rules classify.
     """
     names = [t for t in to_list if isinstance(t, str)] if isinstance(to_list, list) else []
+    for name in [entity, *names]:
+        _check_reference_entity_name(family, name, name)
     entity_set = family.effective_concrete_set(entity) if isinstance(entity, str) else []
     current = set(current_set)
     position_set = [c for c in entity_set if c in current]
@@ -1106,6 +1155,7 @@ def _walk_narrow(
         # `narrow-outside-relationship-target`. A non-polymorphic (or unresolved)
         # target contributes its own singleton set. Re-seeds `expected_entity` to the
         # new hop's target (never inherits the enclosing position's).
+        _check_member_reference(family, body.get("rel"))
         op = body.get("op")
         if op is None:
             return
@@ -1116,6 +1166,9 @@ def _walk_narrow(
     if tag == "narrow":
         entity = body.get("entity")
         to_list = body.get("to", []) or []
+        # A spelling that names no single entity fails to resolve before it can be
+        # compared to the relationship target or clamped to the active position.
+        _check_reference_entity_name(family, entity, entity)
         # Relationship-scope naming (m-navigate): when this narrow sits at a navigation
         # filter's relationship-target position, its `entity` MUST NAME that target
         # exactly — subtypes are reached via `to`, not by renaming (or broadening) the
@@ -1185,8 +1238,11 @@ def _walk_narrow(
             segments = path.get("segments") if isinstance(path, dict) else None
             for segment in segments if isinstance(segments, list) else []:
                 rel = segment.get("rel") if isinstance(segment, dict) else None
+                _check_member_reference(family, rel)
                 if isinstance(rel, str) and isinstance(segment.get("narrow"), dict):
                     to_list = segment["narrow"].get("to")
+                    for name in to_list if isinstance(to_list, list) else []:
+                        _check_reference_entity_name(family, name, name)
                     resolve_hop_effective_set(family, rel, to_list)
         _walk_narrow(family, current_set, body.get("operand"), outside_rule, expected_entity)
     elif tag in ATTRIBUTE_REFERENCE_TAGS:
@@ -1242,10 +1298,13 @@ def _check_attribute_position(family: Family, current_set: list[str], attr_ref: 
 
     The class part is the reference's spelling up to its LAST dot, so a canonically
     spelled position (``<namespace>.<Entity>.<attribute>``) resolves to the entity it
-    names rather than to its leading namespace segment.
+    names rather than to its leading namespace segment. A bare class part two
+    namespaces share resolves to no single entity and is refused before the position
+    is asked about at all.
     """
     if not isinstance(attr_ref, str) or "." not in attr_ref:
         return
+    _check_member_reference(family, attr_ref)
     cls, _, attr_name = attr_ref.rpartition(".")
     if cls not in family.defs:
         return  # an unknown entity — other validation owns this

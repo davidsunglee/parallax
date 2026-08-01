@@ -63,10 +63,11 @@ def test_op_algebra_resolver_rejects_an_ambiguous_bare_name() -> None:
     root = entity_by_name(model, "a.Person")
     assert root is not None
     # A narrow whose `entity` is the ambiguous bare "Person" must not silently
-    # resolve to whichever namespace's Person appears first; the miss collapses
-    # the resolved set, so the narrow is rejected rather than validated against
-    # an arbitrarily chosen Entity.
+    # resolve to whichever namespace's Person appears first. The miss is named as
+    # the resolution failure it is, not as the empty resolved set it would
+    # otherwise collapse into: a narrow rule would invite narrowing differently,
+    # while the spelling itself is what names no position.
     op = Narrow(entity="Person", to=("Person",), operand=All())
     with pytest.raises(OperationRejectedError) as excinfo:
         validate_operation(root, op, model)
-    assert excinfo.value.rule == "narrow-empty-effective-set"
+    assert excinfo.value.rule == "reference-ambiguous-entity-name"

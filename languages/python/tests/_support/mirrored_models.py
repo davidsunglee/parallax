@@ -313,6 +313,11 @@ UNMIRRORED: Mapping[str, str] = MappingProxyType(
             "no mirror authored; the mirrored `writable-scalars` carries the same scalar set, so "
             "the only construct this model adds is `persistence=READ_ONLY`"
         ),
+        "shared-local-name": (
+            "portable compatibility-only model: it exists to make one local Entity name "
+            "ambiguous in a reference position, and its declarations are the mirrored "
+            "`orders`' many-to-one join with different namespaces"
+        ),
         "storage-layout": (
             "no mirror authored; it places the mirrored `payment`'s table-per-hierarchy family, "
             "the mirrored `document`'s table-per-concrete-subtype family, and the mirrored "
@@ -337,7 +342,7 @@ UNMIRRORED: Mapping[str, str] = MappingProxyType(
 """Corpus model stem -> why the class frontend does not mirror it.
 
 Every reason here is either a redundant declaration shape or an unwritten
-mirror. **No corpus model is unmirrorable:** the class grammar can author all 36,
+mirror. **No corpus model is unmirrorable:** the class grammar can author all 39,
 so this mapping records the guard's chosen breadth, not a grammar limit. A reason
 that ever becomes a real limit belongs in the grammar's own specification instead.
 """
