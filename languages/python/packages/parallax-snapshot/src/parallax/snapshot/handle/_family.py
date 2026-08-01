@@ -15,8 +15,9 @@ through :func:`entity_layout`: the row-owning Entity's canonical slot selection.
 selected contributor identity onto that layout's slots, so no write-side module
 composes a physical column sequence of its own.
 
-This is the package's bottom leaf: it imports no other handle module, so every
-write-side module (`_keyed_sql`, `_write_lowering`, `_write_inputs`,
+This is the package's bottom leaf but one: it imports no handle module except
+the dependency-free refusal leaf :mod:`parallax.snapshot.handle._errors`, so
+every write-side module (`_keyed_sql`, `_write_lowering`, `_write_inputs`,
 `_transaction`, `_predicate_writes`) may import it freely without any risk of a
 cycle. Each helper is read from at least two of those, which is precisely why
 the module exists — an inheritance participant declares its as-of axes and its
@@ -46,6 +47,7 @@ from parallax.core.metamodel import (
     entity_by_name,
 )
 from parallax.core.storage_layout import ColumnContributor, EntityLayoutView
+from parallax.snapshot.handle._errors import QueryTargetError
 
 __all__ = [
     "assignment_member",
@@ -83,11 +85,15 @@ def entity_of(model: Metamodel, name: str) -> EntityMetadata:
     no descriptor record graph and no entity-scope seam): a write target is an
     unambiguous declared name, resolved by
     :func:`~parallax.core.metamodel.entity_by_name`'s ambiguity-rejecting
-    bare-or-canonical rule. Raises :class:`KeyError` when the model declares no
-    such Entity, mirroring the record graph's own lookup."""
+    bare-or-canonical rule. Raises :class:`QueryTargetError` when the connected
+    model declares no such Entity — the same refusal a read's preflight answers
+    with, because it is the same failure."""
     entity = entity_by_name(model, name)
-    if entity is None:  # pragma: no cover - a write target always names a declared Entity
-        raise KeyError(name)
+    if entity is None:
+        raise QueryTargetError(
+            "the connected model declares no Entity for this write's target "
+            "(query-target-not-in-model)"
+        )
     return entity
 
 

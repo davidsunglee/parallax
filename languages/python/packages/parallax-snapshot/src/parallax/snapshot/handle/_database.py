@@ -17,6 +17,7 @@ classification branch (``_optimistic_conflict_retriable``) is composed here too.
 
 This is the TOP of the package's internal graph: it imports
 :mod:`parallax.snapshot.handle._read`, :mod:`~parallax.snapshot.handle._transaction`,
+:mod:`~parallax.snapshot.handle._preflight` for the shared read gate,
 :mod:`~parallax.snapshot.handle._write_lowering`,
 :mod:`~parallax.snapshot.handle._write_types`, and
 :mod:`~parallax.snapshot.handle._planning` for the one Write Planner it builds
@@ -51,7 +52,7 @@ from parallax.core.entity import Statement as EntityStatement
 # this composition root connects to an accepted `Metamodel`, so it needs both
 # facts out of a hub.
 from parallax.core.entity._hub import sealed_model
-from parallax.core.metamodel import Metamodel, entity_by_name
+from parallax.core.metamodel import Metamodel
 from parallax.core.unit_work import (
     Clock,
     Concurrency,
@@ -71,6 +72,7 @@ from parallax.core.unit_work import (
     run_unit_of_work,
 )
 from parallax.snapshot.handle._planning import build_write_planner
+from parallax.snapshot.handle._preflight import preflight_find
 from parallax.snapshot.handle._read import (
     Snapshot,
     declaring_metadata,
@@ -222,16 +224,19 @@ class Database:
         ``Snapshot[T]`` (spec §3). Non-transactional: no read lock, no
         participation mode. ``.history()`` / ``.as_of_range()`` return one root
         per milestone, each edge-pinned at its own milestone's from-instant.
+
+        Target resolution and operation validation are the shared
+        :func:`~parallax.snapshot.handle._preflight.preflight_find` seam's, so
+        this and :meth:`Transaction.find` differ only in locking, unit-of-work
+        wrapping, and observation recording.
         Returns ``Snapshot[Any]``: the concrete root type is resolved only at
         runtime (from the statement's own target), so callers annotate their
         own binding (``snapshot: Snapshot[Order] = db.find(...)``) for static
         typing.
         """
-        target = statement.target
-        op = statement.operation()
-        read_target = entity_by_name(self._meta, target)
-        assert read_target is not None  # a statement's target is always declared
-        pin = deep_fetch_statement_pin(op, declaring_metadata(self._meta, read_target))
+        lowered = preflight_find(statement, model=self._meta)
+        target, op = lowered.target, lowered.operation
+        pin = deep_fetch_statement_pin(op, declaring_metadata(self._meta, lowered.root))
         if is_milestone_set_op(op):
             history_result = find_history(op, self._meta, self._dialect, target, self._port)
             return snapshot_from_history_result(history_result, target, self._meta, self._binding)

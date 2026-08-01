@@ -175,6 +175,18 @@ SUPPORT_SCOPE_DEPS: Mapping[str, frozenset[str]] = {
             "parallax.core.temporal_read",
         }
     ),
+    # The read gate is scoped apart from its own package so the generated
+    # contract proves what its module docstring claims: a preflight that resolves
+    # a target and validates an operation cannot reach SQL generation, a dialect,
+    # a Database Port adapter, deep-fetch planning, or materialization — by any
+    # chain, since forbidden contracts report indirect imports too.
+    "parallax.snapshot.handle._preflight": frozenset(
+        {
+            "parallax.core.entity",
+            "parallax.core.metamodel",
+            "parallax.core.op_algebra",
+        }
+    ),
     "parallax.snapshot.handle._family": _LOWERING_GROUP_DEPS,
     "parallax.snapshot.handle._write_types": _LOWERING_GROUP_DEPS,
     "parallax.snapshot.handle._keyed_sql": _LOWERING_GROUP_DEPS,
@@ -205,6 +217,7 @@ SUPPORT_SCOPE_DEPS: Mapping[str, frozenset[str]] = {
 CHILD_SCOPE_PARENT: Mapping[str, str] = {
     "parallax.descriptor._hub": "parallax.descriptor",
     "parallax.snapshot.handle._wrap": "parallax.snapshot.handle",
+    "parallax.snapshot.handle._preflight": "parallax.snapshot.handle",
     "parallax.snapshot.handle._family": "parallax.snapshot.handle",
     "parallax.snapshot.handle._write_types": "parallax.snapshot.handle",
     "parallax.snapshot.handle._keyed_sql": "parallax.snapshot.handle",

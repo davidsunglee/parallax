@@ -221,6 +221,7 @@
   "parallax.snapshot": [
     "Execution",
     "NoResultFound",
+    "QueryTargetError",
     "Snapshot",
     "TooManyResultsFound",
     "TransactionOwnershipError",
@@ -234,6 +235,7 @@
     "HistoryFindResult",
     "MilestoneGraph",
     "NoResultFound",
+    "QueryTargetError",
     "Snapshot",
     "TooManyResultsFound",
     "Transaction",

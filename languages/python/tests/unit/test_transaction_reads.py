@@ -15,6 +15,7 @@ from typing import cast
 
 import pytest
 from _transact_support import (
+    ACCOUNT,
     BALANCE,
     FIND_SQL,
     FIND_SQL_NO_LOCK,
@@ -23,6 +24,7 @@ from _transact_support import (
     INSERT_SQL,
     NEW_ROW,
     PAYMENT,
+    NoIoPort,
     RecordingPort,
     account_db,
     balance_row,
@@ -42,6 +44,7 @@ from parallax.core.unit_work import (
     FixedClock,
     OptimisticLockConflictError,
 )
+from parallax.snapshot import QueryTargetError
 from parallax.snapshot.handle import Database, Transaction
 
 # `_pin_from_milestone` stays private because production callers are confined to
@@ -458,3 +461,35 @@ def test_pin_from_milestone_skips_an_axis_absent_from_the_milestone_pin() -> Non
     pin = _pin_from_milestone(position, {"transactionTime": _MILESTONE_INSTANT})
     assert pin.tx_time == _MILESTONE_INSTANT
     assert pin.valid_time is None
+
+
+# --------------------------------------------------------------------------- #
+# The shared read-preflight seam (`_preflight.preflight_find`), on the         #
+# participating path: the ordering is what these pin. `uow.read` force-flushes #
+# pending writes, so a read the connected model cannot answer must be refused  #
+# BEFORE the unit of work is touched — otherwise an invalid read becomes a     #
+# write.                                                                       #
+# --------------------------------------------------------------------------- #
+def test_tx_find_refuses_a_foreign_target_with_no_adapter_activity() -> None:
+    def fn(tx: Transaction) -> None:
+        tx.find(mm.Person.where(mm.Person.id == 1))
+
+    with pytest.raises(QueryTargetError) as caught:
+        Database.connect(NoIoPort(), ACCOUNT, clock=FixedClock(FIXED)).transact(fn)
+    assert caught.value.code == "query-target-not-in-model"
+
+
+def test_tx_find_preflight_rejects_before_a_pending_write_can_flush() -> None:
+    port = RecordingPort()
+
+    def fn(tx: Transaction) -> None:
+        tx.insert(new_account())
+        with pytest.raises(QueryTargetError):
+            tx.find(mm.Person.where(mm.Person.id == 1))
+        # The buffered insert is still pending: preflight refused ahead of
+        # `uow.read`, so the force-flush that a valid read performs
+        # (`test_find_force_flushes_pending_writes_first`) never ran.
+        assert port.ops == [("begin",)]
+
+    Database.connect(port, ACCOUNT, clock=FixedClock(FIXED)).transact(fn)
+    assert port.ops == [("begin",), ("write", INSERT_SQL, (7, "Newton", 5.00, 1)), ("commit",)]
